@@ -8,18 +8,19 @@ move to a better parent once the tree has formed. That avoids churn, but it can
 leave a peer behind a worse relay after a better direct or lower-level parent is
 available.
 
-This PR keeps that default unchanged and adds opt-in evidence paths for parent
-upgrades:
+This PR keeps proactive parent upgrades disabled by default and adds opt-in
+evidence paths for parent upgrades:
 
 - `direct`: use ranked tracker candidates directly.
 - `probe`: require a live candidate reply before attempting the reparent.
 - `shadow`: repeatedly observe one probed candidate before promotion.
 
-By default, `shadow` is probe-observation shadowing and does not duplicate the
-data plane through a second parent. This branch also adds an explicit
-experimental dual-path cutover option for active data flows; it is disabled
-unless `parentShadowDualPathMs > 0` and the caller has intentionally disabled
-the active data guard.
+When parent upgrades are enabled without an explicit mode, `shadow` is now the
+runtime default. Shadow cutover is make-before-break by default for
+incomplete/live channels: after the candidate accepts `JOIN`, the old parent is
+kept until the candidate delivers live data or the bounded dual-path window
+expires. The active data guard still prevents proactive active-flow upgrades
+unless callers opt into that risk.
 
 ## Current conclusion
 
@@ -48,6 +49,18 @@ channels. Relay candidates keep the general `parentUpgradeMinFreeSlots` and
 meaningful, but the evidence still argues against flipping the runtime upgrade
 default in this PR.
 
+The latest default-candidate hardening adds a signal-based post-promotion grace:
+after shadow promotion, the previous parent remains attached until the candidate
+continues to win fresh data, otherwise the peer rolls back and leaves the
+candidate. The default live proof window now requires `32` fresh
+candidate-first messages and a material candidate-vs-current-parent lead before
+promotion. This is stronger than immediate cutover and stronger than
+"candidate arrived first": a move must prove that the alternate path is
+meaningfully faster during dual-path observation before it can add root fanout.
+The material lead threshold is currently `128ms` average candidate-first lead for
+the default shadow proof; lower-lead moves are treated as weak evidence and do
+not promote.
+
 Root admission now also has a branch-value signal:
 `parentUpgradeRootMinSubtreeGain`. It admits a root candidate when
 `levelGain * (1 + directChildren)` is high enough. This does not require global
@@ -64,28 +77,38 @@ turns the dangerous root upgrade sequence from "many peers probe the same stale
 slot and race it" into "one peer gets a bounded claim, peers below the requested
 margin get no token, and the claim is consumed or expires quickly." Stale-root
 verification is also sampled with a small per-peer base probability
-(`parentUpgradeStaleRootProbeProbability`, default `0.03125`) so an
+(`parentUpgradeStaleRootProbeProbability`, default `0.015625`) so an
 advertised-full root is not probed by every eligible peer at once. A branch peer
-gets a bounded sample boost only when this local peer is maintaining one
-channel: ordinary branch-gain candidates cap at `0.2`, while stronger subtree
-gain candidates cap at `0.25`. Quiet, completed single-channel leaves get a
-`0.5` stale-full root verification budget so a positive idle case is not lost to
-the tiny base sample. Peers participating in multiple writer trees do not
-receive these boosts; instead, quiet settled rounds rotate the sample key and
-ramp only up to `4x` the base probability. Their direct-root promotions also
-face the stricter multi-channel root child-pressure cap. These are control-plane
-guards for proactive root upgrades; they do not change ordinary tree formation
-semantics or the disabled-by-default runtime posture.
+gets a bounded sample boost when this local peer carries downstream children:
+multi-channel branch peers cap at `0.03125`, ordinary single-channel
+branch-gain candidates cap at `0.2`, and stronger single-channel subtree-gain
+candidates cap at `0.25`. Quiet, completed single-channel leaves get a `0.5`
+stale-full root verification budget so a positive idle case is not lost to the
+tiny base sample. Settled leaves participating in multiple writer trees require
+three signals before spending default stale-root probe budget: a fresh tracker
+response advertising root capacity, recent slow parent-delivery evidence from a
+completed batch, and a low-rate deterministic sample. Callers can still raise
+`parentUpgradeStaleRootProbeProbability` explicitly to opt into more
+multi-channel pressure. Direct-root promotions also face the stricter
+multi-channel root child-pressure cap. These are control-plane guards for
+proactive root upgrades; they do not change ordinary tree formation semantics or
+the disabled-by-default runtime posture.
 
 The evaluator now has an explicit default-candidate preset:
 `--parentUpgradePreset default-candidate`. It evaluates the policy we would
 consider for a later default flip without changing runtime defaults in this PR:
-shadow mode, non-leaf upgrades allowed, stale-root live verification enabled
-with `0.03125` deterministic rotating base sampling,
-branch-aware root admission, and stricter evidence limits
-(`maxProbePerUpgrade <= 2`, `maxRootChildrenDelta <= 2`, and
+shadow mode, leaf-only upgrades, stale-root live verification enabled with
+`0.015625` deterministic rotating base sampling, tracker-fresh plus
+outcome-gated stale-root probing for settled multi-channel leaves, branch-aware
+root admission, make-before-break shadow cutover (`parentShadowDualPathMs=5000`,
+`parentShadowDualPathMinMessages=32`, average candidate lead at least `128ms`),
+and stricter evidence limits
+(`maxProbePerUpgrade <= 8`, `maxRootChildrenDelta <= 2`, and
 `maxRootUploadPctDelta <= 1` percentage point). This turns "we tried some flags"
-into a named, repeatable default-candidate contract.
+into a named, repeatable default-candidate contract. Because default
+multi-channel stale-root verification is now conservative and signal-gated, a
+no-op run is valid default-readiness evidence; any run that does send proactive
+upgrade traffic must still satisfy the utility and pressure limits.
 
 Root reservation tokens now also remember the requester's spare-slot margin. A
 token protects only one child slot from overfill, but the root rejects the token
@@ -143,34 +166,45 @@ of publishing, so this check distinguishes
 settle time. The active snapshot includes data, repair, and quiet guard skips,
 plus active probes, shadow starts, shadow promotions, and proactive reparents.
 
-There is now a separate opt-in active-flow shadow cutover path. In shadow mode,
-when `parentUpgradeDataGuard` is disabled and `parentShadowDualPathMs > 0`, a
-peer can attach the candidate as a temporary second parent without leaving the
-old parent. Promotion is allowed only after data from the candidate actually
-arrives during the dual-path window (`parentShadowDualPathMinMessages`, default
-`1`). If no fresh candidate data arrives before the deadline, the peer sends
-`LEAVE` to the candidate and keeps the old parent. This is the make-before-break
-direction for future active upgrades, but it is deliberately not part of the
-default-candidate policy yet because the broader live-stream evidence still
-needs root-pressure, duplicate, and multi-writer soak thresholds.
+Shadow mode now has a bounded active-flow cutover path. When
+`parentUpgradeDataGuard` is disabled, a peer can attach the candidate as a
+temporary second parent without leaving the old parent. Promotion is allowed
+only after fresh candidate-first data arrives during the dual-path window
+(`parentShadowDualPathMinMessages`, default `32` in shadow mode), the candidate
+beats the current parent by a bounded message-count margin, and the same window
+records candidate-vs-current-parent first-arrival lead samples averaging at
+least `128ms`. After promotion, the previous parent remains attached as a backup
+until the candidate continues to win fresh data; if the previous parent wins the
+grace sample or the deadline expires, the peer rolls back to the previous parent
+and sends `LEAVE` to the candidate. If no fresh candidate-first proof arrives
+before the initial deadline, the peer sends `LEAVE` to the candidate, keeps the
+old parent, and defers another upgrade attempt until a full fresh-data sample
+window has passed.
+This make-before-break-and-rollback gate is now part of the default-candidate
+policy; the separate active-flow runner forces the guard open only to prove the
+mechanism.
 
 Focused local runner evidence for the active dual-path case:
 
 ```bash
-node packages/transport/pubsub/dist/test/fanout-tree-sim.runner.js '{"nodes":42,"bootstraps":1,"subscribers":32,"relayFraction":0.5,"candidateScoringMode":"weighted","joinConcurrency":1,"joinPhases":true,"joinPhaseSettleMs":300,"messages":180,"msgRate":60,"msgSize":128,"streamRxDelayMs":1,"settleMs":2000,"deadlineMs":1000,"timeoutMs":60000,"trackerQueryIntervalMs":500,"repair":true,"rootUploadLimitBps":100000000,"relayUploadLimitBps":100000000,"rootMaxChildren":2,"relayMaxChildren":4,"dropDataFrameRate":0,"churnEveryMs":0,"lateRootConnectAfterMs":750,"lateRootDuringPublish":true,"lateRootMaxChildren":12,"lateRootConnectFraction":0.6,"parentUpgradeIntervalMs":250,"parentUpgradeLeafOnly":false,"parentUpgradeMinLevelGain":1,"parentUpgradeRootMinLevelGain":1,"parentUpgradeRootMinSubtreeGain":1,"parentUpgradeNonRootMinLevelGain":1,"parentUpgradeMinFreeSlots":0,"parentUpgradeRootMinFreeSlots":0,"parentUpgradeMaxChildLoadRatio":1,"parentUpgradeRootMaxChildLoadRatio":1,"parentUpgradeCooldownMs":500,"parentUpgradeQuietMs":0,"parentUpgradeRepairQuietMs":0,"parentUpgradeMaxPerPeer":1,"parentUpgradeRepairGuard":false,"parentUpgradeDataGuard":false,"parentUpgradeMode":"shadow","parentUpgradeVerifyStaleRootCapacity":true,"parentUpgradeStaleRootProbeProbability":1,"parentProbeTimeoutMs":300,"parentProbeMaxPerRound":1,"parentProbeMaxLagMessages":100,"parentShadowObserveMs":0,"parentShadowMinObservations":1,"parentShadowDualPathMs":1000,"parentShadowDualPathMinMessages":1}'
+node packages/transport/pubsub/dist/test/fanout-tree-sim.runner.js '{"nodes":42,"bootstraps":1,"subscribers":32,"relayFraction":0.5,"candidateScoringMode":"weighted","joinConcurrency":1,"joinPhases":true,"joinPhaseSettleMs":300,"messages":180,"msgRate":60,"msgSize":128,"streamRxDelayMs":1,"settleMs":2000,"deadlineMs":1000,"timeoutMs":60000,"trackerQueryIntervalMs":500,"repair":true,"rootUploadLimitBps":100000000,"relayUploadLimitBps":100000000,"rootMaxChildren":2,"relayMaxChildren":4,"dropDataFrameRate":0,"churnEveryMs":0,"lateRootConnectAfterMs":750,"lateRootDuringPublish":true,"lateRootMaxChildren":12,"lateRootConnectFraction":0.6,"parentUpgradeIntervalMs":250,"parentUpgradeLeafOnly":false,"parentUpgradeMinLevelGain":1,"parentUpgradeRootMinLevelGain":1,"parentUpgradeRootMinSubtreeGain":1,"parentUpgradeNonRootMinLevelGain":1,"parentUpgradeMinFreeSlots":0,"parentUpgradeRootMinFreeSlots":0,"parentUpgradeMaxChildLoadRatio":1,"parentUpgradeRootMaxChildLoadRatio":1,"parentUpgradeCooldownMs":500,"parentUpgradeQuietMs":0,"parentUpgradeRepairQuietMs":0,"parentUpgradeMaxPerPeer":1,"parentUpgradeRepairGuard":false,"parentUpgradeDataGuard":false,"parentUpgradeStaleRootProbeProbability":1,"parentProbeTimeoutMs":300,"parentProbeMaxPerRound":1,"parentProbeMaxLagMessages":100,"parentShadowObserveMs":0,"parentShadowMinObservations":1,"parentShadowDualPathMs":1000,"parentShadowDualPathMinMessages":1}'
 ```
 
-The latest local run produced `10` active shadow promotions, `100%` delivery,
-`100%` deadline delivery, `29` duplicates, and `1.005x` data overhead. That is a
-positive mechanism test, not default-readiness proof. The ordinary
+The latest local readiness run produced `5` active shadow promotions, `100%`
+delivery, `100%` deadline delivery, `321` duplicates, and `1.056x` data
+overhead. That is a positive mechanism test, not default-readiness proof. The
+ordinary
 `ci-live-stream` default-candidate strict run still requires zero active probes,
 zero shadow starts, zero active promotions, and zero proactive reparents.
 
 The PR fanout gate now includes this active dual-path scenario as a bounded
-mechanism check. It requires at least one proactive reparent and at least one
-active shadow promotion, while still bounding delivery and data overhead. This
-keeps the default-candidate safety gate separate from the opt-in
-make-before-break mechanism gate.
+mechanism check. It intentionally omits `parentUpgradeMode` and
+`parentUpgradeVerifyStaleRootCapacity`; the assertions require the opt-in
+runtime default to resolve to shadow mode with bounded stale-root verification.
+It requires at least one proactive reparent and at least one active shadow
+promotion, while still bounding delivery and data overhead. This keeps the
+default-candidate safety gate separate from the forced active-flow mechanism
+gate.
 
 The shared-network multi-writer evaluator extends that default-readiness check
 across several independent writer-root trees in one in-memory network. Writers
@@ -254,14 +288,13 @@ rejects stay local because the tracker can only represent coarse capacity, not
 the stricter proactive-upgrade admission policy.
 
 Tracker-advertised capacity remains a protective pre-filter for ordinary
-candidates. Stale-full root verification is now explicit opt-in via
-`parentUpgradeVerifyStaleRootCapacity`; leaving it on by default caused herd-like
-root probes in constrained fanout. Root reservations and stale-root sampling make
-stale-root verification less bursty, but they do not remove the need for the
-opt-in guard: the cheapest safe action under constrained fanout is still not to
-probe an advertised-full root unless the scenario is explicitly testing
-settled-topology improvement. The normal default trusts tracker capacity and
-stays quiet when a root is advertised full.
+candidates. Stale-full root verification is enabled only for the shadow-mode
+parent-upgrade default and remains bounded by deterministic sampling, live
+capacity probes, reject cooldowns, and root reservations. Direct and probe modes
+still trust tracker capacity unless `parentUpgradeVerifyStaleRootCapacity` is
+explicitly enabled. The cheapest safe action under constrained fanout is still
+not to join an advertised-full root directly; the default path may only sample
+and promote through the shadow/probe admission path.
 
 ## Reproduce the comparison
 
@@ -447,60 +480,73 @@ not hard failures because the baseline and treatment are independent async
 simulations and local guard timers can legitimately fire in one run but not the
 other. The churn variant additionally caps active guard wakeups per subscriber
 slot so the policy cannot pass by spinning local timers under load.
-`ci-multi-idle` fails unless each seed has at least one useful promoted tree,
-aggregate probes stay bounded by successful upgrades, max proactive reparent per
-peer/channel is `1`, and every root stays within the same per-root child and
-upload-pressure limits. `ci-multi-hotspot-idle` is stricter as evidence and
-looser as a CI smoke gate: it still requires useful promotion, bounded per-peer
-reparents, root-child, and root-upload safety, but it allows the same `1.2`
-pressure-scenario cost ratio as the large single-writer idle pressure run and
-no longer claims the hotspot probe-per-upgrade ratio is default-ready.
+`ci-multi-idle` now treats zero proactive work as a valid default-safety
+outcome. If a seed does promote, aggregate probes must stay bounded by
+successful upgrades, max proactive reparent per peer/channel is `1`, and every
+root stays within the same per-root child and upload-pressure limits.
+`ci-multi-hotspot-idle` is stricter as evidence and looser as a CI smoke gate:
+it allows the same `1.2` pressure-scenario cost ratio as the large single-writer
+idle pressure run, but default stale-root probing for settled multi-channel
+leaves requires the fresh-tracker plus slow-parent-delivery signal, so the
+expected two-batch default outcome is no proactive work unless that signal has
+already been learned.
 `ci-multi-sparse-idle` is a
 high-cardinality pressure check: inactive writer trees must send zero
 probes/shadows/upgrades, while any active-tree upgrades remain bounded by the
 same cost and root-pressure gates. Global p95 latency is printed for all
 multi-writer idle scenarios, but the utility gate is the changed-branch p95 or
 global p95 improvement because concurrent writer timers can move unrelated p95
-samples while promoted branches improve.
-The PR Fanout Gate runs one-seed `ci-multi-live`, `ci-multi-live-churn`,
-`ci-multi-video-live`, `ci-multi-idle`, `ci-multi-sparse-idle`, and
-`ci-multi-hotspot-idle` smoke checks; the documented three-seed commands are the
-stronger review/evidence suite.
+samples while promoted branches improve. Hotspot promoted-branch regression is
+also normalized by same-run active non-promoted tree regression, because the
+baseline and treatment simulations are independent and a non-upgraded writer
+tree can absorb timer jitter that would otherwise be misattributed to the
+promotion.
+The PR Fanout Gate keeps live safety as a one-seed smoke check for
+`ci-multi-live`, `ci-multi-live-churn`, and `ci-multi-video-live`, but runs the
+idle default-safety gate over seeds `1,2,3`. Conservative stale-root sampling
+means a multi-writer idle seed can validly do zero upgrade work; the bounded
+three-seed gate catches accidental probe pressure without pushing the runtime
+toward unsafe default behavior.
 
-Latest local strict evidence after adding multi-writer pressure scenarios:
+Latest local readiness evidence after the conservative, signal-gated
+multi-channel stale-root gate and the material dual-path lead proof:
 
-- Single-writer default-candidate suite, seeds `1,2,3`: `ci-small`, `ci-loss`,
-  `ci-constrained`, and `ci-idle-upgrade` were all `3/3` viable. `ci-idle-upgrade`
-  promoted in every seed with `4` upgrades from `4` probes total in the latest
-  focused repeat.
-- Multi-writer clean live, seeds `1,2,3`: `3/3` viable, `0` upgrades, `0`
-  probes, `0` active probes, `0` active upgrades, `57` active guard skips.
-- Multi-writer live churn, seeds `1,2,3`: `3/3` viable, `0` upgrades, `0`
-  probes, `0` active probes, `0` active upgrades, `106` active guard skips
-  across `756` subscriber slots.
-- Multi-writer idle, seeds `1,2,3`: latest settled run was `3/3` viable, `4`
-  upgrades from `5` probes, `4` useful promoted trees, `0` active
-  probes/upgrades, `17` active guard skips, average promoted-branch p95 gain
-  about `54.2ms`, average control bpp delta about `+2.7%`, max root-child delta
-  `1`, largest per-seed root-child delta sum `2`, max root upload delta about
-  `0.02` percentage points, and max proactive reparent per peer/channel `1`.
-- High writer-cardinality sparse idle, seeds `1,2,3`: `3/3` viable, `12`
-  writer trees with `4` active writers, inactive trees sent `0`
-  probes/shadows/upgrades, active trees made `6` useful promotions with `6`
-  upgrades from `8` probes, average promoted-branch p95 gain about `30.6ms`, max
-  root-child delta `1`, largest per-seed root-child delta sum `4`, max root
-  upload delta about `0.02` percentage points, average control bpp delta about
-  `+3.4%`, and max proactive reparent per peer/channel `1`.
-- Hotspot-root idle, seeds `1,2,3`: after applying a `20s` rejected-candidate
-  cooldown floor only for multi-channel peers, the latest full settled run was
-  `3/3` viable. It produced `8` useful promoted trees, `8` upgrades from `13`
-  probes, `0` active probes/upgrades, average promoted-branch p95 gain about
-  `34.8ms`, average control bpp delta about `-6.1%`, max root-child delta `1`,
-  largest per-seed root-child delta sum `3`, max root upload delta about `0.01`
-  percentage points, and max proactive reparent per peer/channel `1`. This
-  removes the narrow hotspot cost failure from the previous run without making
-  single-writer idle promotion more passive, but still needs longer multi-seed
-  confirmation before making runtime upgrades default behavior.
+- Active shadow dual-path mechanism gate: passed with `5` active shadow
+  promotions, `100%` delivery, `100%` deadline delivery, and `1.056x` data
+  overhead. This is a forced opt-in mechanism check, not default-readiness
+  evidence.
+- Single-writer live default-candidate safety: passed as a no-op with `0`
+  proactive upgrades, `0` probes, `0` shadow starts, and active data/repair guard
+  skips.
+- Multi-writer live default-candidate safety, seed `1`: `ci-multi-live`,
+  `ci-multi-live-churn`, and `ci-multi-video-live` all passed with `0` proactive
+  upgrades, `0` probes, and `0` shadow starts. Active guard skips were
+  observability only.
+- Multi-writer idle default-candidate safety, seeds `1,2,3`: after tightening
+  the material lead proof to `128ms`, the full readiness run passed `3/3` with
+  `1` useful promoted tree from `1` upgrade and `2` probes, `0` active-publish
+  probes/upgrades, max root-child delta `1`, root-child delta sum `1`, max root
+  upload delta `0.00` percentage points, and promoted-branch p95 gain `219ms`.
+- Multi-writer sparse-idle default-candidate safety, seeds `1,2,3`: the full
+  readiness run passed `3/3` as a no-op safety result with `0` probes, `0`
+  shadows, `0` upgrades, inactive writer trees silent, max root-child delta `0`,
+  and max root upload delta `0.00` percentage points. A separate focused strict
+  repeat still showed the learned-slow-parent signal can fire usefully in this
+  scenario, but the full gate's default result is intentionally conservative.
+- Multi-writer hotspot-idle default-candidate safety, seeds `1,2,3`: the latest
+  full readiness run passed `3/3` with `2` useful promoted trees from `2`
+  upgrades and `4` probes, `0` active-publish
+  probes/upgrades, max root-child delta `1`, root-child delta sum `1`, and max
+  root upload delta `0.01` percentage points. This keeps the earlier bad shape
+  constrained: shallow root moves must now prove learned slow-parent evidence and
+  a material candidate lead before adding root pressure.
+- Single-channel idle improvement evidence remains separate: the
+  `ci-idle-upgrade` default-candidate suite still exercises useful promotion in
+  the simpler one-writer topology, while multi-channel root-pressure improvement
+  either requires a prior slow completed batch or an explicit higher stale-root
+  probe probability. This is the key default tradeoff: the first batch after a
+  new root shortcut appears cannot be improved without speculative probing; the
+  default policy can only learn safely for later batches.
 
 The evaluator separates `promoted` runs from `guarded` runs. A guarded run sent
 probes but made no parent move, so it is useful as a safety/cost check, not as
@@ -509,7 +555,8 @@ when a mode actually promotes a new parent; guarded runs are judged on delivery,
 control/tracker/repair cost, maintenance churn, orphan area, and root pressure.
 `ci-idle-upgrade` is stricter than the safety scenarios: strict mode fails unless
 it produces at least one useful promotion, improves the promoted branch or global
-second-batch p95 latency, keeps probe-to-upgrade ratio at `<= 2`, and keeps max
+second-batch p95 latency, keeps probe-to-upgrade ratio within the configured
+default-candidate cap, and keeps max
 reparents per peer at `<= 1`.
 
 No-op idle runs are now reported as `effect=no-op` even when they fail the
@@ -589,9 +636,10 @@ Local smoke runs on this branch showed:
   stale-root sampling at `0.25` still produced useful branch gains, but allowed
   root children to grow by `4` in two seeds, failing the default-candidate
   `maxRootChildrenDelta <= 2` gate. The current candidate keeps the base
-  stale-root sample rate at `0.03125`, rotates multi-channel samples across
-  quiet settled rounds up to `0.125`, allows a `0.2` ordinary single-channel
-  branch boost and a `0.25` stronger-branch boost, gives quiet completed
+  stale-root sample rate at `0.015625`, gates settled multi-channel leaf probes
+  on fresh tracker capacity plus slow parent-delivery evidence, allows a `0.2`
+  ordinary single-channel branch boost and a `0.25` stronger-branch boost, gives
+  quiet completed
   single-channel leaves a `0.5` stale-full root verification budget, caps
   single-channel root child pressure at `0.4`, tightens multi-channel root child
   pressure to `0.2`, and feeds root-pressure rejects back to trackers as
@@ -626,10 +674,10 @@ Local smoke runs on this branch showed:
   skips split across data and repair guards depending on where each peer is in
   the stream/repair cycle; the important invariant is still `0` active probes
   and `0` active proactive reparents.
-  Deadline-delivery deltas stayed within the `2` percentage-point live-flow
-  material-jitter gate. The aggregate shape remains `3/3 no-op`: any total
-  maintenance reparents are from churn/disconnect handling, not proactive
-  upgrades.
+  Deadline-delivery and repair deltas are observability for no-op live runs,
+  because baseline and treatment are independent async simulations. The hard
+  gate is `0` parent-upgrade traffic; any total maintenance reparents are from
+  churn/disconnect handling, not proactive upgrades.
 - Shared-network `ci-multi-live`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
   `4` concurrent writer roots, `40` peers, and `112` joined subscriber slots.
@@ -660,48 +708,37 @@ Local smoke runs on this branch showed:
 - Shared-network `ci-multi-idle`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. Each run used
   the same `4` writer roots and overlapping subscriber set, but with a narrow
-  initial root fanout and a bounded late-root capacity window. The aggregate
-  shape was `3/3` viable, `4` useful promoted trees across `12` writer trees,
-  `4` proactive upgrades, `5` probes, `0` active-publish probes/upgrades, and
-  `17` active guard skips. With the multi-channel `20s` reject cooldown floor,
-  the latest settled aggregate remains `3/3` viable with average
-  promoted-branch p95 gain about `54.2ms`, average control bpp delta about
-  `+2.7%`, per-root child delta max `1`, largest per-seed root-child delta sum
-  `2`, max root upload delta about `0.02` percentage points, and max `1`
-  proactive reparent per peer/channel.
-- Larger shared-network scale checks, seed `1`, `--nodes 80 --writers 8
-  --subscribersPerTree 56 --parentUpgradePreset default-candidate --strict 1`:
-  passed for both live and idle. The live run joined `448/448` subscriber slots,
-  made `0` proactive upgrades, sent `0` parent probes, started `0` shadow
-  observations, recorded active guard skips on all `8` writer trees, and kept
-  root-child delta at `0`. The idle run also joined `448/448` subscriber slots,
-  promoted all `8` writer trees with `16` proactive upgrades and `32` probes,
-  improved second-batch p95 from `1145ms` to `1004ms`, improved deadline
-  delivery from `79.96%` to `83.81%`, kept max root-child delta at `2`, kept
-  root upload delta around `0.02` percentage points, reduced average control bpp
-  by about `8.8%`, and kept max proactive reparent per peer/channel at `1`.
+  initial root fanout and a bounded late-root capacity window. After adding the
+  slow-parent-delivery gate and material dual-path lead proof, the focused
+  full readiness default-candidate run was `3/3` viable with `1` proactive
+  upgrade from `2` probes, `1` useful promoted tree, `0` active proactive work,
+  max root-child delta `1`, root-child delta sum `1`, max root upload delta
+  `0.00` percentage points, and promoted-branch p95 gain `219ms`.
+- Larger shared-network scale checks with the earlier multi-channel stale-root
+  probing behavior showed useful idle improvements but also exposed shallow
+  non-useful promotions. The current default candidate keeps multi-channel
+  root-pressure improvement only when a peer has learned slow parent delivery,
+  receives fresh root capacity, and proves a material dual-path lead.
 - High writer-cardinality idle, `ci-multi-sparse-idle`, seeds `1,2,3`,
   `--parentUpgradePreset default-candidate --strict 1`: passed. This run joins
   `12` writer trees but only publishes on `4`; inactive writer trees must stay
-  silent. After rotating stale-root sampling and the stricter multi-channel
-  root-pressure cap, the latest aggregate result was `3/3` viable, `6` useful
-  promoted trees, `6` upgrades from `8` probes, `0` inactive-tree
-  upgrades/probes/shadows, max root-child delta `1`, max root-child delta sum
-  `4`, max root upload delta about `0.02` percentage points, average control bpp
-  delta about `+3.4%`, and max `1` proactive reparent per peer/channel. Global
-  p95 is printed here but
-  intentionally not used as the utility gate because the scenario is a
-  high-cardinality pressure/no-idle-work check.
+  silent. After tightening the material lead proof to `128ms`, the full
+  readiness run was `3/3` viable as a no-op safety result: `0` probes, `0`
+  shadows, `0` upgrades, inactive writer trees sent `0`
+  probes/shadows/upgrades, max root-child delta was `0`, and max root upload
+  delta was `0.00` percentage points. A separate focused strict repeat produced
+  useful proactive upgrades, so this scenario still covers both useful-signal
+  behavior and conservative default no-op behavior.
+  Global p95 is printed here but intentionally not used as the utility gate
+  because the scenario is a high-cardinality pressure/no-idle-work check.
 - Hotspot-root idle, `ci-multi-hotspot-idle`, seeds `1,2,3`,
-  `--parentUpgradePreset default-candidate --strict 1`: after the multi-channel
-  `20s` rejected-candidate cooldown floor, the latest full settled run was `3/3`
-  viable. It reported `8` useful promoted trees, `8` upgrades from `13` probes,
-  `0` active probes/upgrades, average promoted-branch p95 gain about `34.8ms`,
-  max root-child delta `1`, largest per-seed root-child delta sum `3`, max root
-  upload delta about `0.01` percentage points, average control bpp delta about
-  `-6.1%`, and max `1` proactive reparent per peer/channel. This is the first
-  local multi-seed hotspot result that looks plausibly default-candidate-safe,
-  but it should be treated as a confidence gain, not a default flip by itself.
+  `--parentUpgradePreset default-candidate --strict 1`: passed. The full
+  readiness run was `3/3` viable with `2` useful proactive upgrades from `4`
+  probes, max root-child delta `1`, root-child delta sum `1`, max root upload
+  delta `0.01` percentage points, and average promoted-branch p95 gain
+  `328.5ms`. This fixes the earlier hotspot failure shape where default
+  stale-root sampling could promote shallow moves without enough changed-branch
+  value.
 - The simulator now reports root upload pressure separately from max relay/root
   upload pressure. This matters for streamer-like workloads: root-child fanout
   count is a useful structural signal, but root upload percentage is the direct
@@ -727,11 +764,12 @@ Local smoke runs on this branch showed:
   `rootPressure` and shadow capacity rejects once the root crosses that
   conservative load cap, and those rejects now feed short-lived no-capacity
   tracker updates so other peers stop chasing the same stale-full root.
-- Stale-root sampling now rotates over settled parent-upgrade rounds. A fixed
-  low sample rate reduced probe pressure but could leave a useful settled tree
-  with no sampled peer in a seed. Rotating the deterministic sample key preserves
-  bounded per-round pressure while giving quiet channels repeated chances to
-  find a better root parent.
+- Stale-root sampling rotates over settled parent-upgrade rounds for the
+  non-default multi-channel opt-in path. A fixed low sample rate reduced probe
+  pressure but could leave a useful settled tree with no sampled peer in a seed.
+  Rotating the deterministic sample key preserves bounded per-round pressure
+  while giving explicitly opted-in quiet channels repeated chances to find a
+  better root parent.
 - Root spare-slot margin is independently tunable via
   `parentUpgradeRootMinFreeSlots`. This lets evidence runs require roots to be
   wider open than relays before consuming sender-side fanout capacity.
@@ -816,7 +854,7 @@ The current default candidate, if later evidence holds across more seeds and
 larger topologies, is bounded shadow upgrades with data/repair/quiet guards,
 spare-capacity hysteresis, race-aware root reservations, short-lived tracker
 no-capacity dampening after consumed root reservations, rotating stale-root
-verification at base `0.03125`, channel-cardinality-aware branch sampling,
+verification at base `0.015625`, channel-cardinality-aware branch sampling,
 branch-aware root admission, and a `20s` rejected-candidate cooldown floor for
 multi-channel peers. Quiet completed single-channel leaves get a `0.5`
 stale-full root verification budget, but root reservations and root-pressure

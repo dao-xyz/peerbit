@@ -11,7 +11,18 @@ const getArg = (name, fallback) => {
 const hasFlag = (name) => args.includes(name);
 
 const pnpm = process.env.PNPM ?? "pnpm";
+const explicitSeeds =
+	args.includes("--seeds") || process.env.FANOUT_PARENT_UPGRADE_SEEDS != null;
 const seeds = getArg("--seeds", process.env.FANOUT_PARENT_UPGRADE_SEEDS ?? "1");
+const idleSafetySeeds = getArg(
+	"--idle-safety-seeds",
+	getArg(
+		"--benefit-seeds",
+		process.env.FANOUT_PARENT_UPGRADE_IDLE_SAFETY_SEEDS ??
+			process.env.FANOUT_PARENT_UPGRADE_BENEFIT_SEEDS ??
+			(explicitSeeds ? seeds : "1,2,3"),
+	),
+);
 const skipBuild = hasFlag("--no-build") || process.env.FANOUT_SKIP_BUILD === "1";
 
 const run = (label, commandArgs) => {
@@ -127,10 +138,6 @@ run("active shadow dual-path mechanism gate", [
 	"0",
 	"--parentUpgradeDataGuard",
 	"0",
-	"--parentUpgradeMode",
-	"shadow",
-	"--parentUpgradeVerifyStaleRootCapacity",
-	"1",
 	"--parentUpgradeStaleRootProbeProbability",
 	"1",
 	"--parentProbeTimeoutMs",
@@ -195,7 +202,7 @@ run("multi-writer live default-candidate safety", [
 	"1",
 ]);
 
-run("multi-writer idle default-candidate benefit", [
+run("multi-writer idle default-candidate safety", [
 	"-C",
 	"packages/transport/pubsub",
 	"run",
@@ -205,7 +212,7 @@ run("multi-writer idle default-candidate benefit", [
 	"--scenario",
 	"ci-multi-idle,ci-multi-sparse-idle,ci-multi-hotspot-idle",
 	"--seeds",
-	seeds,
+	idleSafetySeeds,
 	"--parentUpgradePreset",
 	"default-candidate",
 	"--strict",

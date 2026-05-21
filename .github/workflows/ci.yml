@@ -424,8 +424,6 @@ jobs:
             --parentUpgradeMaxPerPeer 1 \
             --parentUpgradeRepairGuard 0 \
             --parentUpgradeDataGuard 0 \
-            --parentUpgradeMode shadow \
-            --parentUpgradeVerifyStaleRootCapacity 1 \
             --parentUpgradeStaleRootProbeProbability 1 \
             --parentProbeTimeoutMs 300 \
             --parentProbeMaxPerRound 1 \

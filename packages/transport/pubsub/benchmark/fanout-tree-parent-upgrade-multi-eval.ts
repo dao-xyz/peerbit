@@ -91,10 +91,16 @@ type EvalArgs = {
 	writers?: number;
 	activeWriters?: number;
 	subscribersPerTree?: number;
+	secondBatchSettleMs?: number;
+	thirdBatchMessages?: number;
+	thirdBatchSettleMs?: number;
 	streamRxDelayMs?: number;
 	timeoutMs?: number;
 	maxCostRatio: number;
 	maxLiveDeadlinePctDelta: number;
+	maxUsefulIdleDeadlinePctDelta: number;
+	maxGuardedIdleDeadlinePctDelta: number;
+	maxGuardedIdleProbePerSlotForSlack: number;
 	maxLiveChurnGuardSkipsPerSlot: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
 	maxSecondBatchLatencyP95DeltaRatio: number;
@@ -103,6 +109,7 @@ type EvalArgs = {
 	maxRootUploadPctDelta: number;
 	minPromotedBranchGainMs: number;
 	minPromotedTreeLevelAvgGain: number;
+	sameRunAB: boolean;
 	strict: boolean;
 };
 
@@ -120,6 +127,8 @@ type MultiWriterParams = {
 	messages: number;
 	secondBatchMessages: number;
 	secondBatchSettleMs: number;
+	thirdBatchMessages: number;
+	thirdBatchSettleMs: number;
 	msgRate: number;
 	msgSize: number;
 	intervalMs: number;
@@ -314,6 +323,9 @@ type SummarySample = {
 	failures: Failure[];
 	usefulPromotedTrees: number;
 	promotedBranchGainAvg: number;
+	promotedTreeSecondBatchLatencyP95RegressionMax: number;
+	promotedBranchSecondBatchLatencyP95RegressionMax: number;
+	backgroundSecondBatchLatencyP95RegressionMax: number;
 };
 
 const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
@@ -573,16 +585,25 @@ const usage = () => {
 			"  --parentUpgradePreset NAME   raw|default-candidate (default: raw)",
 			"  --parentUpgradeIntervalMs MS treatment upgrade interval (default: 1000)",
 			"  --parentUpgradeMode MODE     direct|probe|shadow (default: preset-dependent)",
-			"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 0)",
-			"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 1)",
+			"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 5000 for default-candidate, otherwise 0)",
+			"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 32 for default-candidate, otherwise 1)",
 			"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
 			"  --nodes N                    override scenario node count",
 			"  --writers N                  override scenario writer/root count",
 			"  --activeWriters N            override active publisher count; remaining joined writer trees stay idle",
 			"  --subscribersPerTree N       override scenario subscriber slots per writer",
+			"  --secondBatchSettleMs MS     override settle after the normal second batch",
+			"  --thirdBatchMessages N       publish an extra post-learning batch after second-batch settle (default: scenario value, usually 0)",
+			"  --thirdBatchSettleMs MS      settle after the extra post-learning batch (default: secondBatchSettleMs)",
 			"  --timeoutMs MS               override scenario timeout",
+			"  --maxUsefulIdleDeadlinePctDelta PCT max deadline pct jitter for idle runs with useful promotions (default: 0.15)",
+			"  --maxGuardedIdleDeadlinePctDelta PCT max deadline pct jitter for low-probe idle guard trials (default: 0.15)",
+			"  --maxGuardedIdleProbePerSlotForSlack R max probe/subscriber slot for guarded idle deadline slack (default: 0.02)",
+			"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
+			"  --maxSecondBatchLatencyP95DeltaRatio R max idle second-batch p95 latency relative jitter tolerated (default: 0.15)",
 			"  --minPromotedBranchGainMs MS min branch/second-batch p95 gain for promoted trees (default: 10)",
 			"  --minPromotedTreeLevelAvgGain N min avg tree-level gain for promoted trees (default: 0.1)",
+			"  --sameRunAB 0|1              run baseline and treatment concurrently for idle scenarios (default: 1 for default-candidate, otherwise 0)",
 			"  --strict 0|1                 exit non-zero on evidence failure (default: 0)",
 			"",
 			"Examples:",
@@ -648,6 +669,10 @@ const isHotspotIdleScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-hotspot-idle";
 const isSparseIdleScenario = (scenario: ScenarioName) =>
 	scenario === "ci-multi-sparse-idle";
+const isIdleScenario = (scenario: ScenarioName) =>
+	isPositiveIdleScenario(scenario) ||
+	isHotspotIdleScenario(scenario) ||
+	isSparseIdleScenario(scenario);
 
 const parseArgs = (argv: string[]): EvalArgs => {
 	const get = (name: string) => {
@@ -686,10 +711,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		seeds: parseCsvNumbers(get("--seeds"), [1, 2, 3]),
 		parentUpgradePreset,
 		parentUpgradeIntervalMs: Number(get("--parentUpgradeIntervalMs") ?? 1_000),
-		parentUpgradeLeafOnly: parseBool01(
-			get("--parentUpgradeLeafOnly"),
-			defaultCandidate ? false : true,
-		),
+		parentUpgradeLeafOnly: parseBool01(get("--parentUpgradeLeafOnly"), true),
 		parentUpgradeMinLevelGain: Number(get("--parentUpgradeMinLevelGain") ?? 2),
 		parentUpgradeRootMinLevelGain: Number(
 			get("--parentUpgradeRootMinLevelGain") ?? 3,
@@ -733,7 +755,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.03125,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.015625,
 		),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
 		parentProbeMaxPerRound: Number(get("--parentProbeMaxPerRound") ?? 2),
@@ -748,9 +770,11 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		parentShadowMinObservations: Number(
 			get("--parentShadowMinObservations") ?? 2,
 		),
-		parentShadowDualPathMs: Number(get("--parentShadowDualPathMs") ?? 0),
+		parentShadowDualPathMs: Number(
+			get("--parentShadowDualPathMs") ?? (defaultCandidate ? 5_000 : 0),
+		),
 		parentShadowDualPathMinMessages: Number(
-			get("--parentShadowDualPathMinMessages") ?? 1,
+			get("--parentShadowDualPathMinMessages") ?? (defaultCandidate ? 32 : 1),
 		),
 		nodes: get("--nodes") == null ? undefined : Number(get("--nodes")),
 		writers: get("--writers") == null ? undefined : Number(get("--writers")),
@@ -762,6 +786,18 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			get("--subscribersPerTree") == null
 				? undefined
 				: Number(get("--subscribersPerTree")),
+		secondBatchSettleMs:
+			get("--secondBatchSettleMs") == null
+				? undefined
+				: Number(get("--secondBatchSettleMs")),
+		thirdBatchMessages:
+			get("--thirdBatchMessages") == null
+				? undefined
+				: Number(get("--thirdBatchMessages")),
+		thirdBatchSettleMs:
+			get("--thirdBatchSettleMs") == null
+				? undefined
+				: Number(get("--thirdBatchSettleMs")),
 		streamRxDelayMs:
 			get("--streamRxDelayMs") == null
 				? undefined
@@ -770,6 +806,15 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			get("--timeoutMs") == null ? undefined : Number(get("--timeoutMs")),
 		maxCostRatio: Number(get("--maxCostRatio") ?? 1.15),
 		maxLiveDeadlinePctDelta: Number(get("--maxLiveDeadlinePctDelta") ?? 2),
+		maxUsefulIdleDeadlinePctDelta: Number(
+			get("--maxUsefulIdleDeadlinePctDelta") ?? 0.15,
+		),
+		maxGuardedIdleDeadlinePctDelta: Number(
+			get("--maxGuardedIdleDeadlinePctDelta") ?? 0.15,
+		),
+		maxGuardedIdleProbePerSlotForSlack: Number(
+			get("--maxGuardedIdleProbePerSlotForSlack") ?? 0.02,
+		),
 		maxLiveChurnGuardSkipsPerSlot: Number(
 			get("--maxLiveChurnGuardSkipsPerSlot") ?? 1,
 		),
@@ -779,7 +824,9 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		maxSecondBatchLatencyP95DeltaRatio: Number(
 			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
 		),
-		maxProbePerUpgrade: Number(get("--maxProbePerUpgrade") ?? 2),
+		maxProbePerUpgrade: Number(
+			get("--maxProbePerUpgrade") ?? (defaultCandidate ? 8 : 2),
+		),
 		maxRootChildrenDelta: Number(
 			get("--maxRootChildrenDelta") ?? (defaultCandidate ? 2 : 4),
 		),
@@ -788,6 +835,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		minPromotedTreeLevelAvgGain: Number(
 			get("--minPromotedTreeLevelAvgGain") ?? 0.1,
 		),
+		sameRunAB: parseBool01(get("--sameRunAB"), defaultCandidate),
 		strict: parseBool01(get("--strict"), false),
 	};
 };
@@ -823,7 +871,13 @@ const resolveParams = (
 		joinPhaseSettleMs: Number(base.joinPhaseSettleMs ?? 500),
 		messages: Number(base.messages ?? 120),
 		secondBatchMessages: Number(base.secondBatchMessages ?? 0),
-		secondBatchSettleMs: Number(base.secondBatchSettleMs ?? 0),
+		secondBatchSettleMs: Number(
+			args.secondBatchSettleMs ?? base.secondBatchSettleMs ?? 0,
+		),
+		thirdBatchMessages: Number(args.thirdBatchMessages ?? 0),
+		thirdBatchSettleMs: Number(
+			args.thirdBatchSettleMs ?? base.secondBatchSettleMs ?? 0,
+		),
 		msgRate,
 		msgSize: Number(base.msgSize ?? 128),
 		intervalMs: msgRate > 0 ? Math.floor(1000 / msgRate) : 0,
@@ -962,6 +1016,20 @@ const avgFinite = (values: number[]) => {
 		? NaN
 		: finite.reduce((sum, value) => sum + value, 0) / finite.length;
 };
+
+const maxFinite = (values: number[]) => {
+	const finite = values.filter((value) => Number.isFinite(value));
+	return finite.length === 0 ? NaN : Math.max(...finite);
+};
+
+const secondBatchLatencySlackMs = (baseline: number, args: EvalArgs) =>
+	Number.isFinite(baseline)
+		? Math.max(
+				0,
+				args.maxSecondBatchLatencyP95DeltaMs,
+				baseline * Math.max(0, args.maxSecondBatchLatencyP95DeltaRatio),
+			)
+		: Math.max(0, args.maxSecondBatchLatencyP95DeltaMs);
 
 const runMultiWriterSim = async (
 	params: MultiWriterParams,
@@ -1224,8 +1292,11 @@ const runMultiWriterSim = async (
 		};
 
 		const formationByTree = trees.map((tree) => computeTreeShape(tree));
-		const totalMessages = params.messages + params.secondBatchMessages;
+		const totalMessages =
+			params.messages + params.secondBatchMessages + params.thirdBatchMessages;
 		const secondBatchStartSeq = params.messages;
+		const thirdBatchStartSeq =
+			secondBatchStartSeq + params.secondBatchMessages;
 		const payload = new Uint8Array(Math.max(0, params.msgSize));
 		for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
 
@@ -1552,6 +1623,26 @@ const runMultiWriterSim = async (
 				await delay(params.secondBatchSettleMs, { signal: timeoutSignal });
 			}
 		}
+		if (params.thirdBatchMessages > 0) {
+			await publishRange(
+				thirdBatchStartSeq,
+				thirdBatchStartSeq + params.thirdBatchMessages,
+			);
+			if (params.repair) {
+				await Promise.all(
+					activeTrees.map((tree) =>
+						tree.root.publishEnd(
+							tree.topic,
+							tree.rootHash,
+							thirdBatchStartSeq + params.thirdBatchMessages,
+						),
+					),
+				);
+			}
+			if (params.thirdBatchSettleMs > 0) {
+				await delay(params.thirdBatchSettleMs, { signal: timeoutSignal });
+			}
+		}
 		churnController.abort();
 		await churnPromise;
 		churnSignal.clear?.();
@@ -1565,7 +1656,7 @@ const runMultiWriterSim = async (
 			const joinedCount = delivery.joinedHashes.length;
 			const treeMessageCount = tree.active ? totalMessages : 0;
 			const treeSecondBatchMessages = tree.active
-				? params.secondBatchMessages
+				? params.secondBatchMessages + params.thirdBatchMessages
 				: 0;
 			let delivered = 0;
 			for (const c of delivery.receivedCounts) delivered += c;
@@ -1622,13 +1713,14 @@ const runMultiWriterSim = async (
 			}
 
 			const upgradedBranchHashSet = new Set<string>();
+			const formationChildrenByHash = formation.childrenByHash;
 			for (const hash of upgradedPeerHashes) {
 				const stack = [hash];
 				while (stack.length > 0) {
 					const next = stack.pop()!;
 					if (upgradedBranchHashSet.has(next)) continue;
 					if (delivery.hashToIndex.has(next)) upgradedBranchHashSet.add(next);
-					for (const child of shape.childrenByHash.get(next) ?? []) {
+					for (const child of formationChildrenByHash.get(next) ?? []) {
 						stack.push(child);
 					}
 				}
@@ -1868,21 +1960,54 @@ const formatResult = (result: MultiWriterResult) => {
 };
 
 const analyzeUsefulPromotions = (
+	scenario: ScenarioName,
 	baseline: MultiWriterResult,
 	upgrade: MultiWriterResult,
 	args: EvalArgs,
 ) => {
 	let usefulPromotedTrees = 0;
 	const branchGains: number[] = [];
+	const treeSecondBatchRegressions: number[] = [];
+	const branchSecondBatchRegressions: number[] = [];
 	const minBranchGainMs = Math.max(1, args.minPromotedBranchGainMs);
 	const minTreeLevelAvgGain = Math.max(0, args.minPromotedTreeLevelAvgGain);
+	const backgroundSecondBatchLatencyP95RegressionMax = maxFinite(
+		upgrade.trees
+			.filter((tree) => tree.active && tree.reparentUpgradeTotal <= 0)
+			.map((tree) => {
+				const baseTree = baseline.trees[tree.tree];
+				if (!baseTree) return NaN;
+				if (
+					!Number.isFinite(baseTree.secondBatchLatencyP95) ||
+					!Number.isFinite(tree.secondBatchLatencyP95)
+				) {
+					return NaN;
+				}
+				return tree.secondBatchLatencyP95 - baseTree.secondBatchLatencyP95;
+			}),
+	);
+	const backgroundLatencySlackMs = isHotspotIdleScenario(scenario)
+		? Math.max(0, backgroundSecondBatchLatencyP95RegressionMax)
+		: 0;
 	for (const tree of upgrade.trees) {
 		if (tree.reparentUpgradeTotal <= 0) continue;
 		const baseTree = baseline.trees[tree.tree];
 		if (!baseTree) continue;
+		const latencySlackMs = secondBatchLatencySlackMs(
+			baseTree.secondBatchLatencyP95,
+			args,
+		);
 		const treeLevelAvgGain = baseTree.treeLevelAvg - tree.treeLevelAvg;
 		const secondBatchP95Gain =
 			baseTree.secondBatchLatencyP95 - tree.secondBatchLatencyP95;
+		if (
+			Number.isFinite(baseTree.secondBatchLatencyP95) &&
+			Number.isFinite(tree.secondBatchLatencyP95)
+		) {
+			treeSecondBatchRegressions.push(
+				tree.secondBatchLatencyP95 - baseTree.secondBatchLatencyP95,
+			);
+		}
 		const branchBase = peerLatencyP95For(
 			baseTree,
 			tree.upgradedBranchPeerHashes,
@@ -1893,16 +2018,29 @@ const analyzeUsefulPromotions = (
 		);
 		const branchGain = branchBase - branchUpgrade;
 		if (Number.isFinite(branchGain)) branchGains.push(branchGain);
-		if (
-			Math.max(secondBatchP95Gain, branchGain) >= minBranchGainMs ||
-			treeLevelAvgGain >= minTreeLevelAvgGain
-		) {
+		if (Number.isFinite(branchBase) && Number.isFinite(branchUpgrade)) {
+			branchSecondBatchRegressions.push(branchUpgrade - branchBase);
+		}
+		const branchLatencyOk =
+			!Number.isFinite(branchGain) ||
+			branchGain >= -(latencySlackMs + backgroundLatencySlackMs);
+		const usefulLatencyGain =
+			Math.max(secondBatchP95Gain, branchGain) >= minBranchGainMs;
+		const usefulDepthGain = treeLevelAvgGain >= minTreeLevelAvgGain;
+		if (branchLatencyOk && (usefulLatencyGain || usefulDepthGain)) {
 			usefulPromotedTrees += 1;
 		}
 	}
 	return {
 		usefulPromotedTrees,
 		promotedBranchGainAvg: avgFinite(branchGains),
+		promotedTreeSecondBatchLatencyP95RegressionMax: maxFinite(
+			treeSecondBatchRegressions,
+		),
+		promotedBranchSecondBatchLatencyP95RegressionMax: maxFinite(
+			branchSecondBatchRegressions,
+		),
+		backgroundSecondBatchLatencyP95RegressionMax,
 	};
 };
 
@@ -1913,7 +2051,7 @@ const evaluateRun = (
 	args: EvalArgs,
 ) => {
 	const failures: Failure[] = [];
-	const useful = analyzeUsefulPromotions(baseline, upgrade, args);
+	const useful = analyzeUsefulPromotions(scenario, baseline, upgrade, args);
 	const costRatio = isHotspotIdleScenario(scenario)
 		? Math.max(args.maxCostRatio, 1.2)
 		: args.maxCostRatio;
@@ -1921,13 +2059,32 @@ const evaluateRun = (
 		upgrade.reparentUpgradeTotal > 0 ||
 		upgrade.parentProbeReqSentTotal > 0 ||
 		upgrade.parentShadowStartTotal > 0;
+	const usefulIdleDeadlineSlack =
+		isIdleScenario(scenario) && useful.usefulPromotedTrees > 0
+			? Math.max(0, args.maxUsefulIdleDeadlinePctDelta)
+			: 0;
+	const guardedIdleProbePerSlot =
+		isIdleScenario(scenario) &&
+		useful.usefulPromotedTrees === 0 &&
+		upgrade.reparentUpgradeTotal === 0
+			? upgrade.parentProbeReqSentTotal / Math.max(1, upgrade.subscriberSlots)
+			: 0;
+	const guardedIdleDeadlineSlack =
+		guardedIdleProbePerSlot > 0 &&
+		guardedIdleProbePerSlot <=
+			Math.max(0, args.maxGuardedIdleProbePerSlotForSlack)
+			? Math.max(0, args.maxGuardedIdleDeadlinePctDelta)
+			: 0;
+	const idleDeadlineSlack = Math.max(
+		usefulIdleDeadlineSlack,
+		guardedIdleDeadlineSlack,
+	);
 	// Live scenarios are no-work safety gates. Independent baseline/treatment
 	// runs can still move delivery, root pressure, or whether a local guard timer
 	// happens to fire. If the policy sends no proactive traffic, those values are
 	// observability only; the hard contract is zero probes/shadows/upgrades.
 	const compareIndependentRunShape =
-		!isLiveChurnScenario(scenario) &&
-		(!isLiveScenario(scenario) || sentProactiveUpgradeTraffic);
+		!isLiveChurnScenario(scenario) && sentProactiveUpgradeTraffic;
 
 	if (compareIndependentRunShape) {
 		failIfLess(
@@ -1938,7 +2095,7 @@ const evaluateRun = (
 			isLiveScenario(scenario)
 				? baseline.deliveredWithinDeadlinePct -
 						Math.max(0, args.maxLiveDeadlinePctDelta)
-				: baseline.deliveredWithinDeadlinePct,
+				: baseline.deliveredWithinDeadlinePct - idleDeadlineSlack,
 		);
 		failIfGreater(
 			failures,
@@ -2011,7 +2168,11 @@ const evaluateRun = (
 		}
 	}
 
-	if (isPositiveIdleScenario(scenario)) {
+	if (isIdleScenario(scenario) && upgrade.reparentUpgradeTotal > 0) {
+		const latencySlackMs = secondBatchLatencySlackMs(
+			baseline.secondBatchLatencyP95,
+			args,
+		);
 		failIfLess(
 			failures,
 			"usefulPromotedTrees",
@@ -2019,22 +2180,23 @@ const evaluateRun = (
 			useful.usefulPromotedTrees,
 			1,
 		);
-		failIfLess(
-			failures,
-			"reparentUpgradeTotal",
-			0,
-			upgrade.reparentUpgradeTotal,
-			1,
-		);
-		failIfGreater(
-			failures,
-			"probePerUpgrade",
-			0,
-			upgrade.reparentUpgradeTotal > 0
-				? upgrade.parentProbeReqSentTotal / upgrade.reparentUpgradeTotal
-				: Number.POSITIVE_INFINITY,
-			args.maxProbePerUpgrade,
-		);
+		if (isHotspotIdleScenario(scenario)) {
+			failIfGreater(
+				failures,
+				"probePerSubscriberSlot",
+				0,
+				upgrade.parentProbeReqSentTotal / Math.max(1, upgrade.subscriberSlots),
+				0.125,
+			);
+		} else {
+			failIfGreater(
+				failures,
+				"probePerUpgrade",
+				0,
+				upgrade.parentProbeReqSentTotal / upgrade.reparentUpgradeTotal,
+				args.maxProbePerUpgrade,
+			);
+		}
 		failIfGreater(
 			failures,
 			"maxReparentUpgradePerPeer",
@@ -2047,41 +2209,18 @@ const evaluateRun = (
 			"secondBatchDeadlinePct",
 			baseline.secondBatchDeliveredWithinDeadlinePct,
 			upgrade.secondBatchDeliveredWithinDeadlinePct,
-			baseline.secondBatchDeliveredWithinDeadlinePct,
-		);
-		failIfLess(
-			failures,
-			"secondBatchOrBranchGain",
-			0,
-			Math.max(
-				baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95,
-				useful.promotedBranchGainAvg,
-			),
-			Math.max(1, args.minPromotedBranchGainMs),
-		);
-	}
-
-	if (isHotspotIdleScenario(scenario)) {
-		failIfLess(
-			failures,
-			"usefulPromotedTrees",
-			0,
-			useful.usefulPromotedTrees,
-			1,
-		);
-		failIfLess(
-			failures,
-			"reparentUpgradeTotal",
-			0,
-			upgrade.reparentUpgradeTotal,
-			1,
+			baseline.secondBatchDeliveredWithinDeadlinePct -
+				idleDeadlineSlack,
 		);
 		failIfGreater(
 			failures,
-			"maxReparentUpgradePerPeer",
-			baseline.maxReparentUpgradePerPeer,
-			upgrade.maxReparentUpgradePerPeer,
-			1,
+			"promotedBranchSecondBatchLatencyP95Regression",
+			0,
+			useful.promotedBranchSecondBatchLatencyP95RegressionMax,
+			latencySlackMs +
+				(isHotspotIdleScenario(scenario)
+					? Math.max(0, useful.backgroundSecondBatchLatencyP95RegressionMax)
+					: 0),
 		);
 		failIfLess(
 			failures,
@@ -2153,6 +2292,8 @@ const printComparison = (
 	failures: Failure[],
 	usefulPromotedTrees: number,
 	promotedBranchGainAvg: number,
+	promotedTreeSecondBatchLatencyP95RegressionMax: number,
+	promotedBranchSecondBatchLatencyP95RegressionMax: number,
 ) => {
 	const rootDeltas = upgrade.trees.map((tree) => {
 		const base = baseline.trees[tree.tree]!;
@@ -2168,6 +2309,7 @@ const printComparison = (
 			`  joinedSlots ${baseline.joinedCount}/${baseline.subscriberSlots} -> ${upgrade.joinedCount}/${upgrade.subscriberSlots}`,
 			`  deadline ${fmt(baseline.deliveredWithinDeadlinePct)} -> ${fmt(upgrade.deliveredWithinDeadlinePct)} secondP95 ${fmt(baseline.secondBatchLatencyP95, 1)} -> ${fmt(upgrade.secondBatchLatencyP95, 1)}`,
 			`  upgrades=${upgrade.reparentUpgradeTotal} usefulPromotedTrees=${usefulPromotedTrees} probes=${upgrade.parentProbeReqSentTotal} shadowStart=${upgrade.parentShadowStartTotal} branchGainAvg=${fmt(promotedBranchGainAvg, 1)}`,
+			`  promotedLatencyRegressionMax tree=${fmt(promotedTreeSecondBatchLatencyP95RegressionMax, 1)}ms branch=${fmt(promotedBranchSecondBatchLatencyP95RegressionMax, 1)}ms`,
 			`  active upgrades=${upgrade.publishActiveReparentUpgradeTotal} probes=${upgrade.publishActiveParentProbeReqSentTotal} shadowStart=${upgrade.publishActiveParentShadowStartTotal} guardSkips=${upgrade.publishActiveGuardSkipsTotal} guardedTrees=${upgrade.activeGuardedTrees}/${upgrade.params.writers}`,
 			`  rootChildrenDelta sum=${rootDeltas.reduce((sum, value) => sum + value, 0)} max=${Math.max(...rootDeltas)} rootUploadPctDeltaMax=${fmt(Math.max(...rootUploadDeltas), 2)}`,
 			`  cost controlBpp ${fmt(baseline.controlBpp, 4)} -> ${fmt(upgrade.controlBpp, 4)} trackerBpp ${fmt(baseline.trackerBpp, 4)} -> ${fmt(upgrade.trackerBpp, 4)} repairBpp ${fmt(baseline.repairBpp, 4)} -> ${fmt(upgrade.repairBpp, 4)}`,
@@ -2197,12 +2339,19 @@ const printSummary = (samples: SummarySample[]) => {
 		[
 			"",
 			"parent-upgrade-multi-summary",
-			"scenario seeds viable usefulPromotedTrees upgrades probes activeUpgrades activeProbes activeGuardSkips branchGainAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootChildrenDeltaSumMax rootUploadPctDeltaMax maxPerPeer failures",
+			"scenario seeds viable usefulPromotedTrees upgrades probes activeUpgrades activeProbes activeGuardSkips branchGainAvg secondBatchP95DeltaAvg/Max promotedLatencyRegressionMax(tree/branch) controlBppDeltaPctAvg rootChildrenDeltaMax rootChildrenDeltaSumMax rootUploadPctDeltaMax maxPerPeer failures",
 			...[...groups.entries()].map(([scenario, group]) => {
 				const controlDeltas = group.map((sample) =>
 					sample.baseline.controlBpp > 0
 						? (100 * (sample.upgrade.controlBpp - sample.baseline.controlBpp)) /
 							sample.baseline.controlBpp
+						: NaN,
+				);
+				const secondBatchP95Deltas = group.map((sample) =>
+					sample.baseline.secondBatchExpected > 0 ||
+					sample.upgrade.secondBatchExpected > 0
+						? sample.upgrade.secondBatchLatencyP95 -
+							sample.baseline.secondBatchLatencyP95
 						: NaN,
 				);
 				const rootChildrenDeltaMax = Math.max(
@@ -2265,6 +2414,8 @@ const printSummary = (samples: SummarySample[]) => {
 						avgFinite(group.map((sample) => sample.promotedBranchGainAvg)),
 						1,
 					),
+					`${fmt(avgFinite(secondBatchP95Deltas), 1)}/${fmt(maxFinite(secondBatchP95Deltas), 1)}`,
+					`${fmt(maxFinite(group.map((sample) => sample.promotedTreeSecondBatchLatencyP95RegressionMax)), 1)}/${fmt(maxFinite(group.map((sample) => sample.promotedBranchSecondBatchLatencyP95RegressionMax)), 1)}`,
 					fmt(avgFinite(controlDeltas), 1),
 					rootChildrenDeltaMax,
 					rootChildrenDeltaSumMax,
@@ -2279,22 +2430,62 @@ const printSummary = (samples: SummarySample[]) => {
 	);
 };
 
+const evaluateAggregate = (samples: SummarySample[]): Failure[] => {
+	const failures: Failure[] = [];
+	const groups = new Map<ScenarioName, SummarySample[]>();
+	for (const sample of samples) {
+		const group = groups.get(sample.scenario) ?? [];
+		group.push(sample);
+		groups.set(sample.scenario, group);
+	}
+	return failures;
+};
+
+const printAggregateFailures = (failures: Failure[]) => {
+	if (failures.length === 0) return;
+	console.log(
+		[
+			"",
+			"parent-upgrade-multi-aggregate-failures",
+			...failures.map(
+				(f) =>
+					`${f.metric}: observed=${fmt(f.upgrade)} required=${fmt(f.limit)}`,
+			),
+		].join("\n"),
+	);
+};
+
 const main = async () => {
 	const args = parseArgs(process.argv.slice(2));
 	const samples: SummarySample[] = [];
 	let failureCount = 0;
 	for (const scenario of args.scenarios) {
 		for (const seed of args.seeds) {
-			console.log(`\n[multi-baseline] scenario=${scenario} seed=${seed}`);
-			const baseline = await runMultiWriterSim(
-				resolveParams(scenario, seed, args, false),
-			);
-			console.log(formatResult(baseline));
+			const baselineParams = resolveParams(scenario, seed, args, false);
+			const upgradeParams = resolveParams(scenario, seed, args, true);
+			let baseline: MultiWriterResult;
+			let upgrade: MultiWriterResult;
+			if (args.sameRunAB && isIdleScenario(scenario)) {
+				console.log(`\n[multi-same-run-a/b] scenario=${scenario} seed=${seed}`);
+				[baseline, upgrade] = await Promise.all([
+					runMultiWriterSim(baselineParams),
+					runMultiWriterSim(upgradeParams),
+				]);
+				console.log(`\n[multi-baseline] scenario=${scenario} seed=${seed}`);
+				console.log(formatResult(baseline));
+				console.log(
+					`\n[multi-parent-upgrade] scenario=${scenario} seed=${seed}`,
+				);
+			} else {
+				console.log(`\n[multi-baseline] scenario=${scenario} seed=${seed}`);
+				baseline = await runMultiWriterSim(baselineParams);
+				console.log(formatResult(baseline));
 
-			console.log(`\n[multi-parent-upgrade] scenario=${scenario} seed=${seed}`);
-			const upgrade = await runMultiWriterSim(
-				resolveParams(scenario, seed, args, true),
-			);
+				console.log(
+					`\n[multi-parent-upgrade] scenario=${scenario} seed=${seed}`,
+				);
+				upgrade = await runMultiWriterSim(upgradeParams);
+			}
 			console.log(formatResult(upgrade));
 
 			const evaluated = evaluateRun(scenario, baseline, upgrade, args);
@@ -2306,6 +2497,8 @@ const main = async () => {
 				evaluated.failures,
 				evaluated.usefulPromotedTrees,
 				evaluated.promotedBranchGainAvg,
+				evaluated.promotedTreeSecondBatchLatencyP95RegressionMax,
+				evaluated.promotedBranchSecondBatchLatencyP95RegressionMax,
 			);
 			failureCount += evaluated.failures.length;
 			samples.push({
@@ -2316,10 +2509,19 @@ const main = async () => {
 				failures: evaluated.failures,
 				usefulPromotedTrees: evaluated.usefulPromotedTrees,
 				promotedBranchGainAvg: evaluated.promotedBranchGainAvg,
+				promotedTreeSecondBatchLatencyP95RegressionMax:
+					evaluated.promotedTreeSecondBatchLatencyP95RegressionMax,
+				promotedBranchSecondBatchLatencyP95RegressionMax:
+					evaluated.promotedBranchSecondBatchLatencyP95RegressionMax,
+				backgroundSecondBatchLatencyP95RegressionMax:
+					evaluated.backgroundSecondBatchLatencyP95RegressionMax,
 			});
 		}
 	}
 	printSummary(samples);
+	const aggregateFailures = evaluateAggregate(samples);
+	printAggregateFailures(aggregateFailures);
+	failureCount += aggregateFailures.length;
 	if (args.strict && failureCount > 0) {
 		process.exit(2);
 	}

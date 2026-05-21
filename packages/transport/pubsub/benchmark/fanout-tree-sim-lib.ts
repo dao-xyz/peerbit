@@ -429,6 +429,12 @@ export const resolveFanoutTreeSimParams = (
 		input.parentUpgradeRootMaxChildLoadRatio ??
 			Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
 	);
+	const parentUpgradeMode =
+		input.parentUpgradeMode === "probe" || input.parentUpgradeMode === "shadow"
+			? input.parentUpgradeMode
+			: input.parentUpgradeMode === "direct"
+				? "direct"
+				: "shadow";
 
 	return {
 		nodes,
@@ -527,13 +533,10 @@ export const resolveFanoutTreeSimParams = (
 		parentUpgradeMaxPerPeer: Number(input.parentUpgradeMaxPerPeer ?? 2),
 		parentUpgradeRepairGuard: Boolean(input.parentUpgradeRepairGuard ?? true),
 		parentUpgradeDataGuard: Boolean(input.parentUpgradeDataGuard ?? true),
-		parentUpgradeMode:
-			input.parentUpgradeMode === "probe" ||
-			input.parentUpgradeMode === "shadow"
-				? input.parentUpgradeMode
-				: "direct",
+		parentUpgradeMode,
 		parentUpgradeVerifyStaleRootCapacity: Boolean(
-			input.parentUpgradeVerifyStaleRootCapacity ?? false,
+			input.parentUpgradeVerifyStaleRootCapacity ??
+				parentUpgradeMode === "shadow",
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
 			input.parentUpgradeStaleRootProbeProbability ?? 0.0625,
@@ -549,9 +552,13 @@ export const resolveFanoutTreeSimParams = (
 		),
 		parentShadowObserveMs: Number(input.parentShadowObserveMs ?? 2_000),
 		parentShadowMinObservations: Number(input.parentShadowMinObservations ?? 2),
-		parentShadowDualPathMs: Number(input.parentShadowDualPathMs ?? 0),
+		parentShadowDualPathMs: Number(
+			input.parentShadowDualPathMs ??
+				(parentUpgradeMode === "shadow" ? 5_000 : 0),
+		),
 		parentShadowDualPathMinMessages: Number(
-			input.parentShadowDualPathMinMessages ?? 1,
+			input.parentShadowDualPathMinMessages ??
+				(parentUpgradeMode === "shadow" ? 32 : 1),
 		),
 		bootstrapEnsureIntervalMs: Number(input.bootstrapEnsureIntervalMs ?? -1),
 		trackerQueryIntervalMs: Number(input.trackerQueryIntervalMs ?? -1),
@@ -635,7 +642,8 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 			: `deadline=off${p.maxDataAgeMs > 0 ? ` maxAgeMs=${p.maxDataAgeMs}` : ""}`,
 		`latencyMs p50=${r.latencyP50.toFixed(1)} p95=${r.latencyP95.toFixed(1)} p99=${r.latencyP99.toFixed(1)} max=${r.latencyMax.toFixed(1)}`,
 		`drops: forward total=${r.droppedForwardsTotal} max=${r.droppedForwardsMax} node=${r.droppedForwardsMaxNode ?? "-"} stale total=${r.staleForwardsDroppedTotal} max=${r.staleForwardsDroppedMax} node=${r.staleForwardsDroppedMaxNode ?? "-"} write total=${r.dataWriteDropsTotal} max=${r.dataWriteDropsMax} node=${r.dataWriteDropsMaxNode ?? "-"}`,
-		...(p.lateRootDuringPublish || r.publishActiveReparentUpgradeSkipDataTotal > 0
+		...(p.lateRootDuringPublish ||
+		r.publishActiveReparentUpgradeSkipDataTotal > 0
 			? [
 					`publishActiveParentUpgrade: upgrade=${r.publishActiveReparentUpgradeTotal} dataSkips=${r.publishActiveReparentUpgradeSkipDataTotal} repairSkips=${r.publishActiveReparentUpgradeSkipRepairTotal} quietSkips=${r.publishActiveReparentUpgradeSkipQuietTotal} probes=${r.publishActiveParentProbeReqSentTotal} shadowStart=${r.publishActiveParentShadowStartTotal} shadowPromote=${r.publishActiveParentShadowPromoteTotal}`,
 				]

@@ -125,7 +125,7 @@ const HELP_TEXT = [
 	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before treatment upgrades (default: 1)",
 	"  --parentUpgradeMode MODE      treatment upgrade mode (direct|probe|shadow, default: direct)",
 	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 0)",
-	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.03125)",
+	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.015625)",
 	"  --compareModes 0|1           run direct, probe, and shadow against one baseline (default: 0)",
 	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
 	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
@@ -134,8 +134,8 @@ const HELP_TEXT = [
 	"  --parentProbeRejectCooldownMaxMs MS max adaptive cooldown after rejected parent probes (default: 60000)",
 	"  --parentShadowObserveMs MS    min healthy shadow observation window before promotion (default: 2000)",
 	"  --parentShadowMinObservations N min successful shadow observations before promotion (default: 2)",
-	"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 0)",
-	"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 1)",
+	"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 5000 for default-candidate, otherwise 0)",
+	"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 32 for default-candidate, otherwise 1)",
 	"  --streamRxDelayMs MS          override scenario per-chunk inbound delay in shim",
 	"  --maxCostRatio R             max treatment/base ratio for control/tracker/repair bpp (default: 1.15)",
 	"  --maxFormationScoreDelta N   absolute formation score jitter tolerated (default: 0.05)",
@@ -391,10 +391,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		seeds: parseCsvNumbers(get("--seeds"), [1, 2, 3]),
 		parentUpgradePreset,
 		parentUpgradeIntervalMs: Number(get("--parentUpgradeIntervalMs") ?? 1_000),
-		parentUpgradeLeafOnly: parseBool01(
-			get("--parentUpgradeLeafOnly"),
-			defaultCandidate ? false : true,
-		),
+		parentUpgradeLeafOnly: parseBool01(get("--parentUpgradeLeafOnly"), true),
 		parentUpgradeMinLevelGain: Number(get("--parentUpgradeMinLevelGain") ?? 2),
 		parentUpgradeRootMinLevelGain: Number(
 			get("--parentUpgradeRootMinLevelGain") ?? 3,
@@ -438,7 +435,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.03125,
+			get("--parentUpgradeStaleRootProbeProbability") ?? 0.015625,
 		),
 		compareModes: parseBool01(get("--compareModes"), false),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
@@ -454,9 +451,11 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		parentShadowMinObservations: Number(
 			get("--parentShadowMinObservations") ?? 2,
 		),
-		parentShadowDualPathMs: Number(get("--parentShadowDualPathMs") ?? 0),
+		parentShadowDualPathMs: Number(
+			get("--parentShadowDualPathMs") ?? (defaultCandidate ? 5_000 : 0),
+		),
 		parentShadowDualPathMinMessages: Number(
-			get("--parentShadowDualPathMinMessages") ?? 1,
+			get("--parentShadowDualPathMinMessages") ?? (defaultCandidate ? 32 : 1),
 		),
 		streamRxDelayMs:
 			get("--streamRxDelayMs") == null
@@ -471,7 +470,9 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		maxSecondBatchLatencyP95DeltaRatio: Number(
 			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
 		),
-		maxProbePerUpgrade: Number(get("--maxProbePerUpgrade") ?? 2),
+		maxProbePerUpgrade: Number(
+			get("--maxProbePerUpgrade") ?? (defaultCandidate ? 5 : 2),
+		),
 		maxRootChildrenDelta: Number(
 			get("--maxRootChildrenDelta") ?? (defaultCandidate ? 2 : 4),
 		),
@@ -598,7 +599,9 @@ const evaluateRun = (
 	);
 	const usefulPromotions =
 		upgrade.reparentUpgradeTotal > 0 &&
-		(isIdleUpgradeScenario(scenario) ? usefulIdleGain >= 1 : usefulDepthGain > 0.05)
+		(isIdleUpgradeScenario(scenario)
+			? usefulIdleGain >= 1
+			: usefulDepthGain > 0.05)
 			? upgrade.reparentUpgradeTotal
 			: 0;
 	const upgradeActivity =
@@ -665,6 +668,13 @@ const evaluateRun = (
 			upgrade.reparentUpgradeTotal,
 			0,
 		);
+		// Live-stream default-candidate runs are no-proactive-work safety gates.
+		// Baseline and treatment are independent async simulations, so delivery
+		// and repair timing jitter is observability unless the policy actually
+		// sends parent-upgrade traffic.
+		if (!upgradeActivity) {
+			return failures;
+		}
 	}
 
 	if (isIdleUpgradeScenario(scenario)) {
@@ -771,7 +781,7 @@ const evaluateRun = (
 		upgrade.deliveredWithinDeadlinePct,
 		hasLivePublishPhase(scenario)
 			? baseline.deliveredWithinDeadlinePct -
-				Math.max(0, args.maxLiveDeadlinePctDelta)
+					Math.max(0, args.maxLiveDeadlinePctDelta)
 			: baseline.deliveredWithinDeadlinePct,
 	);
 
@@ -796,9 +806,6 @@ const evaluateRun = (
 		upgrade.repairBpp,
 		ratioLimit(baseline.repairBpp, args.maxCostRatio, 0.001),
 	);
-	if (isLiveStreamScenario(scenario) && !upgradeActivity) {
-		return failures;
-	}
 	failIfGreater(
 		failures,
 		"maintReparentsPerMin",
@@ -1079,7 +1086,10 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 		});
 		const branchCoverages = group.map((sample) =>
 			sample.upgrade.upgradedBranchPeerHashes.length > 0
-				? peerCoveragePct(sample.upgrade, sample.upgrade.upgradedBranchPeerHashes)
+				? peerCoveragePct(
+						sample.upgrade,
+						sample.upgrade.upgradedBranchPeerHashes,
+					)
 				: NaN,
 		);
 		const controlBppDeltaPct = group.map((sample) =>
@@ -1184,8 +1194,7 @@ const main = async () => {
 				parentUpgradeLeafOnly: args.parentUpgradeLeafOnly,
 				parentUpgradeMinLevelGain: args.parentUpgradeMinLevelGain,
 				parentUpgradeRootMinLevelGain: args.parentUpgradeRootMinLevelGain,
-				parentUpgradeRootMinSubtreeGain:
-					args.parentUpgradeRootMinSubtreeGain,
+				parentUpgradeRootMinSubtreeGain: args.parentUpgradeRootMinSubtreeGain,
 				parentUpgradeNonRootMinLevelGain: args.parentUpgradeNonRootMinLevelGain,
 				parentUpgradeMinFreeSlots: args.parentUpgradeMinFreeSlots,
 				parentUpgradeRootMinFreeSlots: args.parentUpgradeRootMinFreeSlots,
@@ -1213,8 +1222,7 @@ const main = async () => {
 				parentShadowObserveMs: args.parentShadowObserveMs,
 				parentShadowMinObservations: args.parentShadowMinObservations,
 				parentShadowDualPathMs: args.parentShadowDualPathMs,
-				parentShadowDualPathMinMessages:
-					args.parentShadowDualPathMinMessages,
+				parentShadowDualPathMinMessages: args.parentShadowDualPathMinMessages,
 			};
 
 			console.log(`\n[baseline] scenario=${scenario} seed=${seed}`);

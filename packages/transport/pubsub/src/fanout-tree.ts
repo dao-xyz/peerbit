@@ -416,11 +416,12 @@ export type FanoutTreeJoinOptions = {
 	/**
 	 * Parent-upgrade strategy.
 	 *
-	 * - `direct` (default): join a better advertised parent directly.
+	 * - `direct`: join a better advertised parent directly.
 	 * - `probe`: first ask candidate parents for fresh level/capacity/data-state,
 	 *   then only join a bounded winner.
-	 * - `shadow`: keep the current parent active, repeatedly probe one candidate
-	 *   over an observation window, then promote only after it remains healthy.
+	 * - `shadow` (default): keep the current parent active, repeatedly probe one
+	 *   candidate over an observation window, then promote only after it remains
+	 *   healthy.
 	 */
 	parentUpgradeMode?: "direct" | "probe" | "shadow";
 
@@ -428,8 +429,10 @@ export type FanoutTreeJoinOptions = {
 	 * Allow shadow mode to probe a direct root candidate even when tracker
 	 * capacity says the root is full.
 	 *
-	 * Defaults to `false` because stale-root probing can create herd pressure
-	 * under constrained root fanout.
+	 * Defaults to `true` in shadow mode and `false` otherwise. Shadow mode keeps
+	 * this bounded by `parentUpgradeStaleRootProbeProbability` and live capacity
+	 * probes, while direct/probe modes avoid stale-root pressure unless explicitly
+	 * enabled.
 	 */
 	parentUpgradeVerifyStaleRootCapacity?: boolean;
 
@@ -437,14 +440,13 @@ export type FanoutTreeJoinOptions = {
 	 * Deterministic per-peer base sampling probability for stale-root verification.
 	 *
 	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
-	 * tracker capacity says the root is full. Defaults to `0.03125` to avoid every
+	 * tracker capacity says the root is full. Defaults to `0.015625` to avoid every
 	 * eligible peer probing the same advertised-full root at once. Single-channel
 	 * branch peers may use a bounded sample boost, capped at `0.25`; quiet,
-	 * completed single-channel leaves may use a `0.5` sample. Peers maintaining
-	 * multiple local channels do not receive these boosts; instead, quiet settled
-	 * rounds rotate the sample key and ramp only up to `4x` the base probability
-	 * so concurrent writer trees can eventually improve without multiplying the
-	 * same stale-root pressure.
+	 * completed single-channel leaves may use a `0.5` sample. Settled leaves that
+	 * maintain multiple local channels require fresh tracker capacity, recent slow
+	 * parent-delivery evidence, and a low-rate deterministic sample at the default
+	 * probability; raise this value explicitly to opt into more pressure.
 	 */
 	parentUpgradeStaleRootProbeProbability?: number;
 
@@ -491,14 +493,16 @@ export type FanoutTreeJoinOptions = {
 	 * In shadow mode, keep the old parent attached for this long after a
 	 * candidate accepts JOIN before promoting during active data flow.
 	 *
-	 * This is an opt-in make-before-break cutover. Set to `0` to preserve the
-	 * existing immediate post-probe promotion behavior.
+	 * Defaults to `5000` in shadow mode and `0` otherwise. Set to `0` to use
+	 * immediate post-probe promotion.
 	 */
 	parentShadowDualPathMs?: number;
 
 	/**
 	 * Minimum live messages that must arrive from a shadow-attached candidate
 	 * before active-flow promotion is allowed.
+	 *
+	 * Defaults to `32` in shadow mode and `1` otherwise.
 	 */
 	parentShadowDualPathMinMessages?: number;
 
@@ -1298,8 +1302,30 @@ type ParentShadowState = {
 	freeSlots: number;
 	haveToExclusive: number;
 	liveDataMessages: number;
+	liveFirstDataMessages: number;
+	liveParentFirstDataMessages: number;
+	liveCandidateLeadSamples: number;
+	liveCandidateLeadMsTotal: number;
+	liveCandidateFirstAtBySeq: Map<number, number>;
+	liveParentFirstAtBySeq: Map<number, number>;
+	liveComparedSeqs: Set<number>;
 	liveMaxSeqSeen: number;
 	liveLastDataAt: number;
+};
+
+type ParentUpgradeGraceState = {
+	previousParent: string;
+	candidateParent: string;
+	previousLevel: number;
+	previousRouteFromRoot?: string[];
+	previousLastParentDataAt: number;
+	previousReceivedAnyParentData: boolean;
+	timer: ReturnType<typeof setTimeout>;
+	candidateFirstMessages: number;
+	previousFirstMessages: number;
+	minCandidateFirstMessages: number;
+	minCandidateAdvantageMessages: number;
+	maxPreviousFirstMessages: number;
 };
 
 type TrackerEntry = {
@@ -1762,6 +1788,7 @@ type ChannelState = {
 	parentUpgradeLastAt: number;
 	parentUpgradeBackoffMs: number;
 	parentUpgradeBackoffUntil: number;
+	parentUpgradeRetryAfterSeq: number;
 	parentUpgradeStaleRootProbeRound: number;
 	parentUpgradeTrackerNoCapacityUntil: number;
 	parentProbeRejectBackoffMsByHash: Map<string, number>;
@@ -1842,6 +1869,9 @@ type ChannelState = {
 	parentRepairUnansweredStreak: number;
 	lastParentDataAt: number;
 	receivedAnyParentData: boolean;
+	parentDataLatencySamples: number;
+	parentDataLatencyEwmaMs: number;
+	parentDataLatencyMaxMs: number;
 	channelPeers: Map<string, number>;
 	knownCandidateAddrs: Map<string, Multiaddr[]>;
 	lazyPeers: Set<string>;
@@ -1874,6 +1904,7 @@ type ChannelState = {
 		{ token: number; expiresAt: number; minFreeSlots: number }
 	>;
 	parentProbeRejectUntilByHash: Map<string, number>;
+	parentUpgradeGrace?: ParentUpgradeGraceState;
 	parentShadow?: ParentShadowState;
 	pendingRouteQuery: Map<number, { resolve(route?: string[]): void }>;
 	pendingUnicastAck: Map<bigint, PendingUnicastAck>;
@@ -2077,6 +2108,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		string,
 		ProviderAnnounceState
 	>();
+	private parentUpgradeShadowInFlightSuffixKey?: string;
 	private readonly defaultUploadOverheadBytes = 128;
 	private readonly random: () => number;
 	private readonly unicastAckNodeTag32: number;
@@ -2974,6 +3006,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parentUpgradeLastAt: 0,
 			parentUpgradeBackoffMs: 0,
 			parentUpgradeBackoffUntil: 0,
+			parentUpgradeRetryAfterSeq: -1,
 			parentUpgradeStaleRootProbeRound: 0,
 			parentUpgradeTrackerNoCapacityUntil: 0,
 			parentProbeRejectBackoffMsByHash: new Map(),
@@ -3034,6 +3067,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parentRepairUnansweredStreak: 0,
 			lastParentDataAt: 0,
 			receivedAnyParentData: false,
+			parentDataLatencySamples: 0,
+			parentDataLatencyEwmaMs: 0,
+			parentDataLatencyMaxMs: 0,
 			channelPeers: new Map<string, number>(),
 			knownCandidateAddrs: new Map<string, Multiaddr[]>(),
 			lazyPeers: new Set<string>(),
@@ -3109,18 +3145,147 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.pendingUnicastAck.clear();
 	}
 
+	private resetParentDataLatency(ch: ChannelState) {
+		ch.parentDataLatencySamples = 0;
+		ch.parentDataLatencyEwmaMs = 0;
+		ch.parentDataLatencyMaxMs = 0;
+	}
+
+	private noteParentDataLatency(ch: ChannelState, timestamp: bigint) {
+		const sentAt = Number(timestamp);
+		if (!Number.isFinite(sentAt) || sentAt <= 0) return;
+		const latencyMs = Date.now() - sentAt;
+		if (!Number.isFinite(latencyMs) || latencyMs < 0 || latencyMs > 60_000) {
+			return;
+		}
+		const samples = Math.min(0xffff, ch.parentDataLatencySamples + 1);
+		ch.parentDataLatencySamples = samples;
+		ch.parentDataLatencyEwmaMs =
+			samples <= 1
+				? latencyMs
+				: ch.parentDataLatencyEwmaMs * 0.875 + latencyMs * 0.125;
+		ch.parentDataLatencyMaxMs = Math.max(ch.parentDataLatencyMaxMs, latencyMs);
+	}
+
+	private clearParentUpgradeGrace(
+		ch: ChannelState,
+		notifyPreviousParent = false,
+		notifyCandidateParent = false,
+	): Array<Promise<void>> {
+		const grace = ch.parentUpgradeGrace;
+		if (!grace) return [];
+		clearTimeout(grace.timer);
+		ch.parentUpgradeGrace = undefined;
+		const sends: Array<Promise<void>> = [];
+		if (notifyPreviousParent && grace.previousParent !== ch.parent) {
+			sends.push(
+				this._sendControl(grace.previousParent, encodeLeave(ch.id.key)).catch(
+					() => {},
+				),
+			);
+		}
+		if (notifyCandidateParent && grace.candidateParent !== ch.parent) {
+			sends.push(
+				this._sendControl(grace.candidateParent, encodeLeave(ch.id.key)).catch(
+					() => {},
+				),
+			);
+		}
+		return sends;
+	}
+
+	private commitParentUpgradeGrace(ch: ChannelState) {
+		const grace = ch.parentUpgradeGrace;
+		if (!grace) return;
+		clearTimeout(grace.timer);
+		ch.parentUpgradeGrace = undefined;
+		if (ch.closed || ch.parent !== grace.candidateParent) return;
+		void this._sendControl(grace.previousParent, encodeLeave(ch.id.key)).catch(
+			() => {},
+		);
+	}
+
+	private rollbackParentUpgradeGrace(ch: ChannelState) {
+		const grace = ch.parentUpgradeGrace;
+		if (!grace) return;
+		clearTimeout(grace.timer);
+		ch.parentUpgradeGrace = undefined;
+		if (ch.closed || ch.parent !== grace.candidateParent) return;
+		ch.parent = grace.previousParent;
+		ch.level = grace.previousLevel;
+		ch.routeFromRoot = grace.previousRouteFromRoot
+			? [...grace.previousRouteFromRoot]
+			: undefined;
+		ch.lastParentDataAt = grace.previousLastParentDataAt;
+		ch.receivedAnyParentData = grace.previousReceivedAnyParentData;
+		this.resetParentDataLatency(ch);
+		this.touchPeerHint(ch, grace.previousParent);
+		void this._sendControl(grace.candidateParent, encodeLeave(ch.id.key)).catch(
+			() => {},
+		);
+		void this.announceToTrackers(ch, this.closeController.signal).catch(
+			() => {},
+		);
+	}
+
+	private startParentUpgradeGrace(
+		ch: ChannelState,
+		options: Omit<ParentUpgradeGraceState, "timer"> & { timeoutMs: number },
+	) {
+		if (ch.closed || options.previousParent === options.candidateParent) return;
+		void Promise.all(this.clearParentUpgradeGrace(ch, true, true)).catch(
+			() => {},
+		);
+		const timeoutMs = Math.max(0, Math.floor(options.timeoutMs));
+		if (timeoutMs <= 0) {
+			void this._sendControl(
+				options.previousParent,
+				encodeLeave(ch.id.key),
+			).catch(() => {});
+			return;
+		}
+		const timer = setTimeout(
+			() => this.rollbackParentUpgradeGrace(ch),
+			timeoutMs,
+		);
+		ch.parentUpgradeGrace = {
+			previousParent: options.previousParent,
+			candidateParent: options.candidateParent,
+			previousLevel: options.previousLevel,
+			previousRouteFromRoot: options.previousRouteFromRoot
+				? [...options.previousRouteFromRoot]
+				: undefined,
+			previousLastParentDataAt: options.previousLastParentDataAt,
+			previousReceivedAnyParentData: options.previousReceivedAnyParentData,
+			timer,
+			candidateFirstMessages: options.candidateFirstMessages,
+			previousFirstMessages: options.previousFirstMessages,
+			minCandidateFirstMessages: options.minCandidateFirstMessages,
+			minCandidateAdvantageMessages: options.minCandidateAdvantageMessages,
+			maxPreviousFirstMessages: options.maxPreviousFirstMessages,
+		};
+	}
+
 	private detachFromParent(ch: ChannelState) {
+		if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+			this.parentUpgradeShadowInFlightSuffixKey = undefined;
+		}
+		void Promise.all(this.clearParentUpgradeGrace(ch, true, true)).catch(
+			() => {},
+		);
 		ch.parent = undefined;
 		ch.level = Number.POSITIVE_INFINITY;
 		ch.routeFromRoot = undefined;
 		ch.routeByPeer.clear();
 		ch.lastParentDataAt = 0;
 		ch.receivedAnyParentData = false;
+		this.resetParentDataLatency(ch);
 		ch.pendingJoin.clear();
 		ch.pendingParentProbe.clear();
 		ch.parentShadow = undefined;
 		ch.parentUpgradeBackoffMs = 0;
 		ch.parentUpgradeBackoffUntil = 0;
+		ch.parentUpgradeRetryAfterSeq = -1;
 		ch.parentUpgradeStaleRootProbeRound = 0;
 		ch.parentUpgradeTrackerNoCapacityUntil = 0;
 		ch.parentProbeRejectUntilByHash.clear();
@@ -3202,6 +3367,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				this._sendControl(ch.parent, encodeLeave(ch.id.key)).catch(() => {}),
 			);
 		}
+		pendingSends.push(
+			...this.clearParentUpgradeGrace(ch, notifyParent && !ch.isRoot, false),
+		);
 		if (kickChildren && ch.children.size > 0) {
 			pendingSends.push(this.kickChildren(ch).catch(() => {}));
 		}
@@ -3212,6 +3380,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.parentProbeRejectUntilByHash.clear();
 		ch.parentProbeRejectBackoffMsByHash.clear();
 		ch.parentShadow = undefined;
+		if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+			this.parentUpgradeShadowInFlightSuffixKey = undefined;
+		}
 		ch.pendingRouteQuery.clear();
 		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel closed"));
 		for (const pending of ch.pendingRouteProxy.values()) {
@@ -6015,6 +6186,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		) {
 			return { run: false, reason: "data" };
 		}
+		if (options.dataGuard && ch.parentUpgradeRetryAfterSeq >= 0) {
+			if (ch.maxSeqSeen <= ch.parentUpgradeRetryAfterSeq) {
+				return { run: false, reason: "data" };
+			}
+			ch.parentUpgradeRetryAfterSeq = -1;
+		}
 		if (options.maxPerPeer > 0 && ch.parentUpgradeCount >= options.maxPerPeer) {
 			return { run: false, reason: "budget" };
 		}
@@ -6165,13 +6342,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			? Math.max(0, parentUpgradeRootMaxChildLoadRatioRaw)
 			: Math.min(parentUpgradeMaxChildLoadRatio, 0.4);
 		const parentUpgradeStaleRootProbeProbabilityRaw = Number(
-			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.03125,
+			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.015625,
 		);
 		const parentUpgradeStaleRootProbeProbability = Number.isFinite(
 			parentUpgradeStaleRootProbeProbabilityRaw,
 		)
 			? Math.max(0, Math.min(1, parentUpgradeStaleRootProbeProbabilityRaw))
-			: 0.03125;
+			: 0.015625;
 		const parentUpgradeCooldownMs = Math.max(
 			0,
 			Math.floor(joinOpts.parentUpgradeCooldownMs ?? 5_000),
@@ -6205,9 +6382,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			joinOpts.parentUpgradeMode === "probe" ||
 			joinOpts.parentUpgradeMode === "shadow"
 				? joinOpts.parentUpgradeMode
-				: "direct";
+				: joinOpts.parentUpgradeMode === "direct"
+					? "direct"
+					: "shadow";
 		const parentUpgradeVerifyStaleRootCapacity =
-			joinOpts.parentUpgradeVerifyStaleRootCapacity === true;
+			joinOpts.parentUpgradeVerifyStaleRootCapacity ??
+			parentUpgradeMode === "shadow";
 		const parentProbeTimeoutMs = Math.max(
 			1,
 			Math.floor(joinOpts.parentProbeTimeoutMs ?? 500),
@@ -6238,11 +6418,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const parentShadowDualPathMs = Math.max(
 			0,
-			Math.floor(joinOpts.parentShadowDualPathMs ?? 0),
+			Math.floor(
+				joinOpts.parentShadowDualPathMs ??
+					(parentUpgradeMode === "shadow" ? 5_000 : 0),
+			),
 		);
 		const parentShadowDualPathMinMessages = Math.max(
 			1,
-			Math.floor(joinOpts.parentShadowDualPathMinMessages ?? 1),
+			Math.floor(
+				joinOpts.parentShadowDualPathMinMessages ??
+					(parentUpgradeMode === "shadow" ? 32 : 1),
+			),
 		);
 		const candidateScoringModeRaw =
 			joinOpts.candidateScoringMode ?? "ranked-shuffle";
@@ -6435,6 +6621,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						ch.pendingJoin.clear();
 						ch.pendingParentProbe.clear();
 						ch.parentShadow = undefined;
+						void Promise.all(
+							this.clearParentUpgradeGrace(ch, true, true),
+						).catch(() => {});
+						if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+							this.parentUpgradeShadowInFlightSuffixKey = undefined;
+						}
+						ch.parentUpgradeRetryAfterSeq = -1;
 						ch.parentProbeRejectUntilByHash.clear();
 						ch.parentProbeRejectBackoffMsByHash.clear();
 						nextParentUpgradeCheckAt = 0;
@@ -6498,6 +6691,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									maxChildLoadRatio: parentUpgradeMaxChildLoadRatio,
 									rootMaxChildLoadRatio: parentUpgradeRootMaxChildLoadRatio,
 									mode: parentUpgradeMode,
+									leafOnly: parentUpgradeLeafOnly,
 									trackerPeers: ch.cachedBootstrapPeers.filter((h) =>
 										Boolean(this.peers.get(h)),
 									),
@@ -6512,8 +6706,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									shadowObserveMs: parentShadowObserveMs,
 									shadowMinObservations: parentShadowMinObservations,
 									shadowDualPathMs: parentShadowDualPathMs,
-									shadowDualPathMinMessages:
-										parentShadowDualPathMinMessages,
+									shadowDualPathMinMessages: parentShadowDualPathMinMessages,
 									failedBackoffMinMs: parentUpgradeFailedBackoffMinMs,
 									failedBackoffMaxMs: parentUpgradeFailedBackoffMaxMs,
 								});
@@ -6524,6 +6717,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									ch.parentUpgradeLastAt = Date.now();
 									ch.parentUpgradeBackoffMs = 0;
 									ch.parentUpgradeBackoffUntil = 0;
+									ch.parentUpgradeRetryAfterSeq = -1;
 									ch.parentUpgradeStaleRootProbeRound = 0;
 								}
 							}
@@ -7022,6 +7216,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				bidPerByte: number;
 				source: number;
 			};
+			leafOnly: boolean;
 			joinAttemptsPerRound: number;
 			joinReqTimeoutMs: number;
 			minLevelGain: number;
@@ -7051,6 +7246,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	): Promise<boolean> {
 		const currentParent = ch.parent;
 		if (!currentParent || ch.closed || ch.isRoot || ch.level <= 1) return false;
+		if (
+			options.mode === "shadow" &&
+			this.parentUpgradeShadowInFlightSuffixKey != null &&
+			this.parentUpgradeShadowInFlightSuffixKey !== ch.id.suffixKey
+		) {
+			ch.metrics.reparentUpgradeSkipBudget += 1;
+			return false;
+		}
 		const staleRootProbeRound = Math.max(
 			0,
 			Math.floor(ch.parentUpgradeStaleRootProbeRound || 0),
@@ -7066,6 +7269,28 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const clearFailedBackoff = () => {
 			ch.parentUpgradeBackoffMs = 0;
 			ch.parentUpgradeBackoffUntil = 0;
+		};
+		const clearShadowInFlight = () => {
+			if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+				this.parentUpgradeShadowInFlightSuffixKey = undefined;
+			}
+		};
+		const resetShadow = () => {
+			if (!ch.parentShadow) return;
+			ch.parentShadow = undefined;
+			clearShadowInFlight();
+			ch.metrics.parentShadowReset += 1;
+		};
+		const deferParentUpgradeRetryUntilFreshData = (multiplier = 1) => {
+			const minFreshMessages = Math.max(
+				1,
+				Math.floor(options.shadowDualPathMinMessages ?? 1) *
+					Math.max(1, Math.floor(multiplier)),
+			);
+			ch.parentUpgradeRetryAfterSeq = Math.max(
+				ch.parentUpgradeRetryAfterSeq,
+				ch.maxSeqSeen + minFreshMessages - 1,
+			);
 		};
 		const applyFailedBackoff = () => {
 			const minMs = Math.max(0, Math.floor(options.failedBackoffMinMs ?? 0));
@@ -7163,12 +7388,136 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 		}
 		const singleChannelBranch = ch.children.size > 0 && localChannelCount <= 1;
+		const multiChannelBranch = ch.children.size > 0 && localChannelCount > 1;
 		const endedAndComplete =
 			ch.endSeqExclusive > 0 &&
 			ch.missingSeqs.size === 0 &&
 			ch.nextExpectedSeq >= ch.endSeqExclusive;
 		const singleChannelSettledLeaf =
 			ch.children.size === 0 && localChannelCount <= 1 && endedAndComplete;
+		const multiChannelSettledLeaf =
+			ch.children.size === 0 && localChannelCount > 1 && endedAndComplete;
+		const knownChannelPeerCount = Math.max(1, ch.channelPeers?.size ?? 1);
+		const defaultStaleRootProbeProbability = 0.015625;
+		const configuredStaleRootProbeProbabilityRaw = Number(
+			options.staleRootProbeProbability ?? defaultStaleRootProbeProbability,
+		);
+		const staleRootProbeBaseProbability = Number.isFinite(
+			configuredStaleRootProbeProbabilityRaw,
+		)
+			? Math.max(0, Math.min(1, configuredStaleRootProbeProbabilityRaw))
+			: defaultStaleRootProbeProbability;
+		const defaultMultiChannelSettledLeafRootCandidate =
+			options.leafOnly &&
+			multiChannelSettledLeaf &&
+			staleRootProbeBaseProbability <= defaultStaleRootProbeProbability;
+		const hasDefaultMultiChannelLeafRootSignal = () => {
+			if (!defaultMultiChannelSettledLeafRootCandidate) return true;
+			if (!isEnoughLevelGain(ch.id.root, 0)) return false;
+			if ((ch.parentDataLatencySamples ?? 0) < 8) return false;
+			if (
+				(ch.parentDataLatencyEwmaMs ?? 0) < 64 &&
+				(ch.parentDataLatencyMaxMs ?? 0) < 256
+			) {
+				return false;
+			}
+			const sampleProbability = Math.max(
+				defaultStaleRootProbeProbability,
+				Math.min(0.0625, 1 / Math.max(16, knownChannelPeerCount)),
+			);
+			return (
+				stableUnitInterval(
+					`${ch.id.suffixKey}:${this.publicKeyHash}:${ch.id.root}:multi-channel-leaf-root-signal:${ch.maxSeqSeen}`,
+				) < sampleProbability
+			);
+		};
+		const defaultMultiChannelLeafRootSignal =
+			hasDefaultMultiChannelLeafRootSignal();
+		if (
+			defaultMultiChannelSettledLeafRootCandidate &&
+			defaultMultiChannelLeafRootSignal &&
+			ch.id.root !== this.publicKeyHash &&
+			isDirectNeighbor(ch.id.root) &&
+			(options.trackerPeers?.length ?? 0) > 0
+		) {
+			const rootMinFreeSlots = Math.max(
+				0,
+				Math.floor(options.rootMinFreeSlots ?? options.minFreeSlots),
+			);
+			const cachedRoot = ch.cachedTrackerCandidates.find(
+				(c) => c.hash === ch.id.root,
+			);
+			if (!cachedRoot || cachedRoot.freeSlots < rootMinFreeSlots) {
+				const refreshed = await this.queryTrackers(
+					ch,
+					options.trackerPeers ?? [],
+					Math.max(16, ch.cachedTrackerCandidates.length),
+					Math.max(1, Math.floor(options.probeTimeoutMs ?? 500)),
+					options.signal,
+				).catch((): TrackerCandidate[] => []);
+				if (refreshed.length > 0) {
+					ch.cachedTrackerCandidates = refreshed;
+				}
+			}
+		}
+		const configuredRejectCooldownMs = Math.max(
+			0,
+			Math.floor(options.probeRejectCooldownMs ?? 10_000),
+		);
+		const rejectCooldownMs =
+			localChannelCount > 1
+				? Math.max(configuredRejectCooldownMs, 20_000)
+				: configuredRejectCooldownMs;
+		const rejectCooldownMaxMs = Math.max(
+			rejectCooldownMs,
+			Math.floor(options.probeRejectCooldownMaxMs ?? 60_000),
+		);
+		const clearProbeRejectBackoff = (candidateHash: string) => {
+			ch.parentProbeRejectUntilByHash.delete(candidateHash);
+			ch.parentProbeRejectBackoffMsByHash.delete(candidateHash);
+		};
+		const rejectProbeCandidate = (candidateHash: string) => {
+			if (rejectCooldownMs <= 0) return;
+			const nextBackoffMs =
+				(ch.parentProbeRejectBackoffMsByHash.get(candidateHash) ?? 0) > 0
+					? Math.min(
+							rejectCooldownMaxMs,
+							Math.max(
+								rejectCooldownMs,
+								(ch.parentProbeRejectBackoffMsByHash.get(candidateHash) ?? 0) *
+									2,
+							),
+						)
+					: rejectCooldownMs;
+			ch.parentProbeRejectBackoffMsByHash.set(candidateHash, nextBackoffMs);
+			const jitter =
+				0.75 +
+				upgradeRandom(`probe-reject:${candidateHash}:${nextBackoffMs}`) * 0.5;
+			ch.parentProbeRejectUntilByHash.set(
+				candidateHash,
+				Date.now() + Math.max(1, Math.floor(nextBackoffMs * jitter)),
+			);
+			while (
+				ch.parentProbeRejectBackoffMsByHash.size >
+				KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES
+			) {
+				const oldest = ch.parentProbeRejectBackoffMsByHash.keys().next()
+					.value as string | undefined;
+				if (!oldest) break;
+				ch.parentProbeRejectBackoffMsByHash.delete(oldest);
+				ch.parentProbeRejectUntilByHash.delete(oldest);
+			}
+			while (
+				ch.parentProbeRejectUntilByHash.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES
+			) {
+				const oldest = ch.parentProbeRejectUntilByHash.keys().next().value as
+					| string
+					| undefined;
+				if (!oldest) break;
+				ch.parentProbeRejectUntilByHash.delete(oldest);
+				ch.parentProbeRejectBackoffMsByHash.delete(oldest);
+			}
+		};
 		const minFreeSlotsFor = (hash: string) =>
 			hash === ch.id.root
 				? Math.max(
@@ -7265,15 +7614,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				options.mode === "shadow" &&
 				c.hash === ch.id.root;
 			const requiredMinFreeSlots = minFreeSlotsFor(c.hash);
+			if (
+				c.hash === ch.id.root &&
+				defaultMultiChannelSettledLeafRootCandidate &&
+				!defaultMultiChannelLeafRootSignal
+			) {
+				ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
+				continue;
+			}
 			if (canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
-				const staleRootProbeProbabilityRaw = Number(
-					options.staleRootProbeProbability ?? 0.03125,
-				);
-				const staleRootProbeBaseProbability = Number.isFinite(
-					staleRootProbeProbabilityRaw,
-				)
-					? Math.max(0, Math.min(1, staleRootProbeProbabilityRaw))
-					: 0.03125;
 				const staleRootProbeProbability =
 					singleChannelBranch && staleRootProbeBaseProbability > 0
 						? (() => {
@@ -7286,13 +7635,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									Math.min(branchCap, staleRootProbeBaseProbability * 8),
 								);
 							})()
+						: multiChannelBranch && staleRootProbeBaseProbability > 0
+							? Math.max(
+									staleRootProbeBaseProbability,
+									Math.min(0.03125, staleRootProbeBaseProbability * 2),
+								)
 							: singleChannelSettledLeaf && staleRootProbeBaseProbability > 0
 								? 0.5
-						: Math.min(
-								1,
-								staleRootProbeBaseProbability *
-									Math.max(1, Math.min(4, staleRootProbeRound + 1)),
-							);
+								: multiChannelSettledLeaf && options.leafOnly
+									? staleRootProbeBaseProbability >
+									  defaultStaleRootProbeProbability
+										? Math.max(
+												staleRootProbeBaseProbability,
+												Math.min(0.125, 3 / knownChannelPeerCount),
+											)
+										: 0
+									: Math.min(
+											1,
+											staleRootProbeBaseProbability *
+												Math.max(1, Math.min(4, staleRootProbeRound + 1)),
+										);
 				const staleRootProbeScore = stableUnitInterval(
 					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe:${staleRootProbeRound}`,
 				);
@@ -7445,18 +7807,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				Math.floor(options.probeTimeoutMs ?? 500),
 			);
 			const maxLag = Math.max(0, Math.floor(options.probeMaxLagMessages ?? 0));
-			const configuredRejectCooldownMs = Math.max(
-				0,
-				Math.floor(options.probeRejectCooldownMs ?? 10_000),
-			);
-			const rejectCooldownMs =
-				localChannelCount > 1
-					? Math.max(configuredRejectCooldownMs, 20_000)
-					: configuredRejectCooldownMs;
-			const rejectCooldownMaxMs = Math.max(
-				rejectCooldownMs,
-				Math.floor(options.probeRejectCooldownMaxMs ?? 60_000),
-			);
 			const now = Date.now();
 			const candidatesToProbe: typeof ordered = [];
 			const shadowCandidate =
@@ -7515,58 +7865,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				);
 			};
 
-			const clearProbeRejectBackoff = (candidateHash: string) => {
-				ch.parentProbeRejectUntilByHash.delete(candidateHash);
-				ch.parentProbeRejectBackoffMsByHash.delete(candidateHash);
-			};
-			const rejectProbeCandidate = (candidateHash: string) => {
-				if (rejectCooldownMs <= 0) return;
-				const nextBackoffMs =
-					(ch.parentProbeRejectBackoffMsByHash.get(candidateHash) ?? 0) > 0
-						? Math.min(
-								rejectCooldownMaxMs,
-								Math.max(
-									rejectCooldownMs,
-									(ch.parentProbeRejectBackoffMsByHash.get(candidateHash) ??
-										0) * 2,
-								),
-							)
-						: rejectCooldownMs;
-				ch.parentProbeRejectBackoffMsByHash.set(candidateHash, nextBackoffMs);
-				const jitter =
-					0.75 +
-					upgradeRandom(`probe-reject:${candidateHash}:${nextBackoffMs}`) * 0.5;
-				ch.parentProbeRejectUntilByHash.set(
-					candidateHash,
-					Date.now() + Math.max(1, Math.floor(nextBackoffMs * jitter)),
-				);
-				while (
-					ch.parentProbeRejectBackoffMsByHash.size >
-					KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES
-				) {
-					const oldest = ch.parentProbeRejectBackoffMsByHash.keys().next()
-						.value as string | undefined;
-					if (!oldest) break;
-					ch.parentProbeRejectBackoffMsByHash.delete(oldest);
-					ch.parentProbeRejectUntilByHash.delete(oldest);
-				}
-				while (
-					ch.parentProbeRejectUntilByHash.size >
-					KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES
-				) {
-					const oldest = ch.parentProbeRejectUntilByHash.keys().next().value as
-						| string
-						| undefined;
-					if (!oldest) break;
-					ch.parentProbeRejectUntilByHash.delete(oldest);
-					ch.parentProbeRejectBackoffMsByHash.delete(oldest);
-				}
-			};
-			const resetShadow = () => {
-				if (!ch.parentShadow) return;
-				ch.parentShadow = undefined;
-				ch.metrics.parentShadowReset += 1;
-			};
 			const rejectShadowCandidate = (
 				candidateHash: string,
 				reason:
@@ -7603,6 +7901,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						break;
 				}
 				if (ch.parentShadow?.hash === candidateHash) resetShadow();
+				deferParentUpgradeRetryUntilFreshData();
 			};
 
 			const probed = await Promise.all(
@@ -7745,6 +8044,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					Math.floor(options.shadowObserveMs ?? 2_000),
 				);
 				const minObservations = shadowMinObservationsForGate;
+				const requireDataForShadowPromotion =
+					Math.max(0, Math.floor(options.shadowDualPathMs ?? 0)) > 0;
 				const selected =
 					ch.parentShadow != null
 						? (ordered.find(
@@ -7758,7 +8059,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (
 					endedAndComplete &&
 					selected.hash === ch.id.root &&
-					selected.level === 0
+					selected.level === 0 &&
+					!requireDataForShadowPromotion
 				) {
 					if (!ch.parentShadow || ch.parentShadow.hash !== selected.hash) {
 						ch.parentShadow = {
@@ -7773,9 +8075,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									? selected.haveToExclusive
 									: 0,
 							liveDataMessages: 0,
+							liveFirstDataMessages: 0,
+							liveParentFirstDataMessages: 0,
+							liveCandidateLeadSamples: 0,
+							liveCandidateLeadMsTotal: 0,
+							liveCandidateFirstAtBySeq: new Map(),
+							liveParentFirstAtBySeq: new Map(),
+							liveComparedSeqs: new Set(),
 							liveMaxSeqSeen: -1,
 							liveLastDataAt: 0,
 						};
+						this.parentUpgradeShadowInFlightSuffixKey = ch.id.suffixKey;
 						ch.metrics.parentShadowStart += 1;
 					} else {
 						ch.parentShadow.observations += 1;
@@ -7803,9 +8113,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									? selected.haveToExclusive
 									: 0,
 							liveDataMessages: 0,
+							liveFirstDataMessages: 0,
+							liveParentFirstDataMessages: 0,
+							liveCandidateLeadSamples: 0,
+							liveCandidateLeadMsTotal: 0,
+							liveCandidateFirstAtBySeq: new Map(),
+							liveParentFirstAtBySeq: new Map(),
+							liveComparedSeqs: new Set(),
 							liveMaxSeqSeen: -1,
 							liveLastDataAt: 0,
 						};
+						this.parentUpgradeShadowInFlightSuffixKey = ch.id.suffixKey;
 						ch.metrics.parentShadowStart += 1;
 						return false;
 					}
@@ -7855,10 +8173,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				1,
 				Math.floor(options.shadowDualPathMinMessages ?? 1),
 			);
+			const shadowDualPathMinAdvantageMessages = Math.max(
+				1,
+				Math.min(16, Math.ceil(shadowDualPathMinMessages / 2)),
+			);
+			const shadowDualPathMinLeadSamples = Math.max(
+				1,
+				Math.min(32, shadowDualPathMinMessages),
+			);
+			const shadowDualPathMaxParentFirstMessages = Math.max(
+				0,
+				Math.floor(shadowDualPathMinMessages / 8),
+			);
+			const shadowDualPathMinLeadMsAvg =
+				shadowDualPathMinMessages <= 1 ? 0 : 128;
 			const useShadowDualPath =
 				options.mode === "shadow" &&
 				shadowDualPathMs > 0 &&
-				!endedAndComplete &&
 				previousParent != null &&
 				previousParent !== candidate.hash;
 			const seqAtShadowAttach = ch.maxSeqSeen;
@@ -7883,9 +8214,30 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (res.ok) {
 				if (useShadowDualPath) {
+					const acceptedParentLevel = Number.isFinite(res.parentLevel)
+						? Math.max(0, Math.floor(res.parentLevel!))
+						: candidate.level;
+					if (!isEnoughLevelGain(candidate.hash, acceptedParentLevel)) {
+						void this._sendControl(
+							candidate.hash,
+							encodeLeave(ch.id.key),
+						).catch(() => {});
+						resetShadow();
+						rejectProbeCandidate(candidate.hash);
+						deferParentUpgradeRetryUntilFreshData(2);
+						applyFailedBackoff();
+						return false;
+					}
 					const shadow = ch.parentShadow;
 					if (shadow?.hash === candidate.hash) {
 						shadow.liveDataMessages = 0;
+						shadow.liveFirstDataMessages = 0;
+						shadow.liveParentFirstDataMessages = 0;
+						shadow.liveCandidateLeadSamples = 0;
+						shadow.liveCandidateLeadMsTotal = 0;
+						shadow.liveCandidateFirstAtBySeq.clear();
+						shadow.liveParentFirstAtBySeq.clear();
+						shadow.liveComparedSeqs.clear();
 						shadow.liveMaxSeqSeen = seqAtShadowAttach;
 						shadow.liveLastDataAt = 0;
 					}
@@ -7896,7 +8248,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						const currentShadow = ch.parentShadow;
 						const observedFreshCandidateData =
 							currentShadow?.hash === candidate.hash &&
-							currentShadow.liveDataMessages >= shadowDualPathMinMessages &&
+							currentShadow.liveFirstDataMessages >=
+								shadowDualPathMinMessages &&
+							currentShadow.liveParentFirstDataMessages <=
+								shadowDualPathMaxParentFirstMessages &&
+							currentShadow.liveFirstDataMessages >=
+								currentShadow.liveParentFirstDataMessages +
+									shadowDualPathMinAdvantageMessages &&
+							currentShadow.liveCandidateLeadSamples >=
+								shadowDualPathMinLeadSamples &&
+							currentShadow.liveCandidateLeadMsTotal >=
+								currentShadow.liveCandidateLeadSamples *
+									shadowDualPathMinLeadMsAvg &&
 							currentShadow.liveMaxSeqSeen > seqAtShadowAttach;
 						if (observedFreshCandidateData) {
 							const parentRoute = res.parentRouteFromRoot;
@@ -7913,18 +8276,34 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									? currentShadow.liveLastDataAt
 									: Date.now();
 							ch.receivedAnyParentData = true;
+							this.resetParentDataLatency(ch);
 							this.touchPeerHint(ch, candidate.hash);
 							if (previousParent) {
-								void this
-									._sendControl(previousParent, encodeLeave(ch.id.key))
-									.catch(() => {});
+								this.startParentUpgradeGrace(ch, {
+									previousParent,
+									candidateParent: candidate.hash,
+									previousLevel,
+									previousRouteFromRoot,
+									previousLastParentDataAt,
+									previousReceivedAnyParentData,
+									candidateFirstMessages: 0,
+									previousFirstMessages: 0,
+									minCandidateFirstMessages: shadowDualPathMinMessages,
+									minCandidateAdvantageMessages:
+										shadowDualPathMinAdvantageMessages,
+									maxPreviousFirstMessages:
+										shadowDualPathMaxParentFirstMessages,
+									timeoutMs: shadowDualPathMs,
+								});
 							}
 							ch.metrics.parentShadowPromote += 1;
 							ch.parentShadow = undefined;
+							clearShadowInFlight();
 							clearFailedBackoff();
-							void this
-								.announceToTrackers(ch, this.closeController.signal)
-								.catch(() => {});
+							void this.announceToTrackers(
+								ch,
+								this.closeController.signal,
+							).catch(() => {});
 							return true;
 						}
 
@@ -7946,8 +8325,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					);
 					if (ch.parentShadow) {
 						ch.parentShadow = undefined;
+						clearShadowInFlight();
 						ch.metrics.parentShadowReset += 1;
 					}
+					// A shadow cutover can only be proven by fresh data. If no
+					// candidate-first data arrived, wait for enough newer data before
+					// spending more probes on the same channel. Also cool down this
+					// candidate; accepting JOIN without proving live data is a weak
+					// parent signal, not a reason to probe it repeatedly.
+					rejectProbeCandidate(candidate.hash);
+					deferParentUpgradeRetryUntilFreshData(2);
 					applyFailedBackoff();
 					return false;
 				}
@@ -7960,10 +8347,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (options.mode === "shadow") {
 						ch.metrics.parentShadowPromote += 1;
 						ch.parentShadow = undefined;
+						clearShadowInFlight();
 						clearFailedBackoff();
 					}
 					return true;
 				}
+				return false;
+			}
+
+			if (useShadowDualPath) {
+				if (ch.parent === previousParent) {
+					ch.level = previousLevel;
+					ch.routeFromRoot = previousRouteFromRoot;
+					ch.lastParentDataAt = previousLastParentDataAt;
+					ch.receivedAnyParentData = previousReceivedAnyParentData;
+				}
+				if (ch.parentShadow?.hash === candidate.hash) {
+					ch.parentShadow = undefined;
+					clearShadowInFlight();
+					ch.metrics.parentShadowReset += 1;
+				}
+				rejectProbeCandidate(candidate.hash);
+				deferParentUpgradeRetryUntilFreshData(2);
+				applyFailedBackoff();
 				return false;
 			}
 		}
@@ -9011,6 +9417,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch.joinedAtLeastOnce = true;
 					ch.lastParentDataAt = Date.now();
 					ch.parentRepairUnansweredStreak = 0;
+					this.resetParentDataLatency(ch);
 					// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
 					// if callers enable `staleAfterMs`, we should be able to detach even
 					// before the first data message arrives (for example, during churn
@@ -9435,6 +9842,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.pendingJoin.clear();
 				ch.pendingParentProbe.clear();
 				ch.parentShadow = undefined;
+				void Promise.all(this.clearParentUpgradeGrace(ch, true, true)).catch(
+					() => {},
+				);
+				if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+					this.parentUpgradeShadowInFlightSuffixKey = undefined;
+				}
 				ch.pendingRouteQuery.clear();
 				this.abortPendingUnicastAcks(
 					ch,
@@ -9527,15 +9940,108 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.receivedAnyParentData = true;
 				ch.parentRepairUnansweredStreak = 0;
 			}
+			const hadCachedBeforeData = this.getCached(ch, seq) != null;
+			if (ch.parent && fromHash === ch.parent && !hadCachedBeforeData) {
+				this.noteParentDataLatency(ch, message.header.timestamp);
+			}
 			ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
+			if (
+				ch.parentUpgradeRetryAfterSeq >= 0 &&
+				seq > ch.parentUpgradeRetryAfterSeq
+			) {
+				ch.parentUpgradeRetryAfterSeq = -1;
+			}
 			const parentShadow = ch.parentShadow;
-			if (parentShadow != null && parentShadow.hash === fromHash) {
+			if (parentShadow != null) {
 				const now = Date.now();
-				if (seq > parentShadow.liveMaxSeqSeen) {
-					parentShadow.liveMaxSeqSeen = seq;
-					parentShadow.liveDataMessages += 1;
+				const pruneShadowSeqMap = (map: Map<number, number>) => {
+					while (map.size > 512) {
+						const oldest = map.keys().next().value as number | undefined;
+						if (oldest == null) break;
+						map.delete(oldest);
+					}
+				};
+				const pruneShadowSeqSet = (set: Set<number>) => {
+					while (set.size > 512) {
+						const oldest = set.keys().next().value as number | undefined;
+						if (oldest == null) break;
+						set.delete(oldest);
+					}
+				};
+				const rememberShadowArrival = (map: Map<number, number>) => {
+					if (map.has(seq)) return map.get(seq);
+					map.set(seq, now);
+					pruneShadowSeqMap(map);
+					return now;
+				};
+				const recordCandidateLead = (
+					candidateAt: number | undefined,
+					parentAt: number | undefined,
+				) => {
+					if (
+						candidateAt == null ||
+						parentAt == null ||
+						parentShadow.liveComparedSeqs.has(seq)
+					) {
+						return;
+					}
+					parentShadow.liveComparedSeqs.add(seq);
+					pruneShadowSeqSet(parentShadow.liveComparedSeqs);
+					if (candidateAt < parentAt) {
+						parentShadow.liveCandidateLeadSamples += 1;
+						parentShadow.liveCandidateLeadMsTotal += parentAt - candidateAt;
+					}
+				};
+				if (parentShadow.hash === fromHash) {
+					const candidateAt = rememberShadowArrival(
+						parentShadow.liveCandidateFirstAtBySeq,
+					);
+					recordCandidateLead(
+						candidateAt,
+						parentShadow.liveParentFirstAtBySeq.get(seq),
+					);
+					if (seq > parentShadow.liveMaxSeqSeen) {
+						parentShadow.liveMaxSeqSeen = seq;
+						parentShadow.liveDataMessages += 1;
+					}
+					if (!hadCachedBeforeData) {
+						parentShadow.liveFirstDataMessages += 1;
+					}
+					parentShadow.liveLastDataAt = now;
+				} else if (ch.parent != null && fromHash === ch.parent) {
+					const parentAt = rememberShadowArrival(
+						parentShadow.liveParentFirstAtBySeq,
+					);
+					recordCandidateLead(
+						parentShadow.liveCandidateFirstAtBySeq.get(seq),
+						parentAt,
+					);
+					if (!hadCachedBeforeData) {
+						parentShadow.liveParentFirstDataMessages += 1;
+					}
 				}
-				parentShadow.liveLastDataAt = now;
+			}
+			const parentUpgradeGrace = ch.parentUpgradeGrace;
+			if (parentUpgradeGrace != null && !hadCachedBeforeData) {
+				if (fromHash === parentUpgradeGrace.candidateParent) {
+					parentUpgradeGrace.candidateFirstMessages += 1;
+				} else if (fromHash === parentUpgradeGrace.previousParent) {
+					parentUpgradeGrace.previousFirstMessages += 1;
+				}
+				if (
+					parentUpgradeGrace.previousFirstMessages >
+					parentUpgradeGrace.maxPreviousFirstMessages
+				) {
+					this.rollbackParentUpgradeGrace(ch);
+				} else if (
+					parentUpgradeGrace.candidateFirstMessages >=
+						parentUpgradeGrace.minCandidateFirstMessages &&
+					parentUpgradeGrace.candidateFirstMessages >=
+						parentUpgradeGrace.previousFirstMessages +
+							parentUpgradeGrace.minCandidateAdvantageMessages
+				) {
+					this.commitParentUpgradeGrace(ch);
+				}
 			}
 			this.noteReceivedSeq(ch, fromHash, seq);
 
