@@ -118,6 +118,22 @@ type NativePreparedPlainEntry = {
 	trimmedEntries?: PreparedNativeLogEntry[];
 };
 
+export type PreparedRawEntryV0Facts = {
+	cid: string;
+	hashDigestBytes: Uint8Array;
+	byteLength: number;
+	clockId: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	next: string[];
+	type: EntryType;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	metaBytes: Uint8Array;
+	signatureVerified: boolean;
+};
+
 type MaybePromise<T> = T | Promise<T>;
 
 type PlainAppendChainCommitOnlyProperties<T> = {
@@ -207,6 +223,9 @@ type NativeEntryV0Encoder = {
 	): Promise<NativePreparedPlainEntry>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
 	calculateRawCidV1Batch?(blocks: Uint8Array[]): Promise<string[]>;
+	prepareRawEntryV0Batch?(
+		blocks: Uint8Array[],
+	): Promise<PreparedRawEntryV0Facts[]>;
 	verifyEd25519Batch?(
 		inputs: Ed25519VerifyBatchInput[],
 	): Promise<boolean[]>;
@@ -245,6 +264,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 	prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
 	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
 	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
+	prepareRawEntryV0Batch?: NativeEntryV0Encoder["prepareRawEntryV0Batch"];
 	verifyEd25519Batch?: NativeEntryV0Encoder["verifyEd25519Batch"];
 	verifyEntryV0Ed25519Batch?: NativeEntryV0Encoder["verifyEntryV0Ed25519Batch"];
 	verifyEntryV0Ed25519StorageBatch?: NativeEntryV0Encoder["verifyEntryV0Ed25519StorageBatch"];
@@ -264,6 +284,7 @@ const nativeEntryV0EncoderFromModule = (mod: {
 		prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
 		calculateRawCidV1: mod.calculateRawCidV1,
 		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
+		prepareRawEntryV0Batch: mod.prepareRawEntryV0Batch,
 		verifyEd25519Batch: mod.verifyEd25519Batch,
 		verifyEntryV0Ed25519Batch: mod.verifyEntryV0Ed25519Batch,
 		verifyEntryV0Ed25519StorageBatch: mod.verifyEntryV0Ed25519StorageBatch,
@@ -323,6 +344,19 @@ export const calculateRawCidV1Batch = async (
 	return Promise.all(
 		blocks.map(async (bytes) => (await calculateRawCid(bytes)).cid),
 	);
+};
+
+export const prepareRawEntryV0Batch = async (
+	blocks: Uint8Array[],
+): Promise<PreparedRawEntryV0Facts[] | undefined> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.prepareRawEntryV0Batch?.(blocks);
 };
 
 export type Ed25519VerifyBatchInput = {

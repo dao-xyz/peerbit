@@ -509,6 +509,9 @@ type WasmModule = {
 	) => EntryV0PreparedPlainEntryRow;
 	calculate_raw_cid_v1: (bytes: Uint8Array) => string;
 	calculate_raw_cid_v1_batch: (blocks: Uint8Array[]) => string[];
+	prepare_raw_entry_v0_batch: (
+		blocks: Uint8Array[],
+	) => RawEntryV0PreparedFactsRow[];
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -1624,6 +1627,22 @@ export type EntryV0CommittedPlainEntry = Omit<
 	trimmedEntries?: NativeLogEntry[];
 };
 
+export type RawEntryV0PreparedFacts = {
+	cid: string;
+	hashDigestBytes: Uint8Array;
+	byteLength: number;
+	clockId: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	next: string[];
+	type: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	metaBytes: Uint8Array;
+	signatureVerified: boolean;
+};
+
 type EntryV0PreparedPlainEntryRow = [
 	Uint8Array,
 	string,
@@ -1633,6 +1652,22 @@ type EntryV0PreparedPlainEntryRow = [
 	Uint8Array,
 	Uint8Array,
 	Uint8Array?,
+];
+
+type RawEntryV0PreparedFactsRow = [
+	string,
+	Uint8Array,
+	number,
+	Uint8Array,
+	string,
+	number,
+	string,
+	string[],
+	number,
+	Uint8Array | undefined,
+	Uint8Array,
+	Uint8Array,
+	boolean,
 ];
 
 type EntryV0PreparedPlainEntryStorageRow = [
@@ -1809,6 +1844,36 @@ const preparedPlainEntryStorageFactsTrimRow = ([
 const preparedPlainEntryRows = (
 	rows: EntryV0PreparedPlainEntryRow[],
 ): EntryV0PreparedPlainEntry[] => rows.map(preparedPlainEntryRow);
+
+const rawEntryV0PreparedFactsFromRow = ([
+	cid,
+	hashDigestBytes,
+	byteLength,
+	clockId,
+	wallTime,
+	logical,
+	gid,
+	next,
+	type,
+	metaData,
+	payloadData,
+	metaBytes,
+	signatureVerified,
+]: RawEntryV0PreparedFactsRow): RawEntryV0PreparedFacts => ({
+	cid,
+	hashDigestBytes,
+	byteLength,
+	clockId,
+	wallTime: BigInt(wallTime),
+	logical,
+	gid,
+	next,
+	type,
+	metaData,
+	payloadData,
+	metaBytes,
+	signatureVerified,
+});
 
 const committedPlainEntryRow = ([
 	cid,
@@ -2302,6 +2367,16 @@ export const calculateRawCidV1Batch = async (
 	}
 	const wasm = await loadWasm();
 	return wasm.calculate_raw_cid_v1_batch(blocks);
+};
+
+export const prepareRawEntryV0Batch = async (
+	blocks: Uint8Array[],
+): Promise<RawEntryV0PreparedFacts[]> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const wasm = await loadWasm();
+	return wasm.prepare_raw_entry_v0_batch(blocks).map(rawEntryV0PreparedFactsFromRow);
 };
 
 export const createLogGraphIndex = () => LogGraphIndex.create();

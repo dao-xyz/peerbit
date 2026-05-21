@@ -12,6 +12,7 @@ import {
 	encodeEntryV0StorageBatchWithCids,
 	encodeEntryV0StorageWithCid,
 	prepareEntryV0PlainChain,
+	prepareRawEntryV0Batch,
 	signEd25519,
 	verifyEd25519Batch,
 	verifyEntryV0Ed25519Batch,
@@ -646,6 +647,22 @@ describe("native EntryV0 encoding", () => {
 			bytes: nativeStorage,
 			cid: TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
 		});
+		const [rawFacts] = await prepareRawEntryV0Batch([nativeStorage]);
+		expect(rawFacts).to.include({
+			cid: TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+			byteLength: nativeStorage.byteLength,
+			wallTime,
+			logical,
+			gid,
+			type: APPEND,
+			signatureVerified: true,
+		});
+		expect([...rawFacts!.clockId]).to.deep.equal([...clockId]);
+		expect(rawFacts!.next).to.deep.equal(next);
+		expect([...rawFacts!.metaData!]).to.deep.equal([...metaData]);
+		expect([...rawFacts!.payloadData]).to.deep.equal([...payloadData]);
+		expect(rawFacts!.hashDigestBytes.byteLength).to.equal(32);
+		expect(rawFacts!.metaBytes.byteLength).to.be.greaterThan(0);
 	});
 
 	it("matches TS/Borsh encoding without optional entry metadata", async () => {

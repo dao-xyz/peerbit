@@ -3388,6 +3388,87 @@ pub fn calculate_raw_cid_v1_batch(blocks: Array) -> Result<Array, JsValue> {
 }
 
 #[wasm_bindgen]
+pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
+    let mut rows = Vec::with_capacity(blocks.length() as usize);
+    let mut parsed_signatures = Vec::with_capacity(blocks.length() as usize);
+    let mut parsed_public_keys = Vec::with_capacity(blocks.length() as usize);
+    let mut parsed_messages = Vec::with_capacity(blocks.length() as usize);
+    for i in 0..blocks.length() {
+        let bytes = required_bytes_from_array(&blocks, i, "entry storage")?;
+        let (cid, digest) = calculate_raw_cid_v1_parts(&bytes);
+        let storage = parse_plain_entry_v0_storage(&bytes)?;
+        let meta = parse_raw_entry_v0_meta(storage.meta)?;
+        let payload = parse_raw_entry_v0_payload(storage.payload)?;
+        let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
+        validate_signature_lengths(&parsed_signature.signature, &parsed_signature.public_key)?;
+        let signature_bytes: [u8; 64] = parsed_signature
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+        let public_key_bytes: [u8; 32] = parsed_signature
+            .public_key
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 public key length 32"))?;
+        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+            .map_err(|_| JsValue::from_str("Invalid Ed25519 public key"))?;
+        parsed_signatures.push(Signature::from_bytes(&signature_bytes));
+        parsed_public_keys.push(verifying_key);
+        parsed_messages.push(encode_entry_v0_parts_unsigned_for_signing(
+            storage.meta,
+            storage.payload,
+        ));
+
+        let row = Array::new();
+        row.push(&JsValue::from_str(&cid));
+        row.push(&Uint8Array::from(digest.as_slice()));
+        row.push(&JsValue::from_f64(bytes.len() as f64));
+        row.push(&Uint8Array::from(meta.clock_id.as_slice()));
+        row.push(&JsValue::from_str(&meta.wall_time.to_string()));
+        row.push(&JsValue::from_f64(meta.logical as f64));
+        row.push(&JsValue::from_str(&meta.gid));
+
+        let next = Array::new();
+        for hash in meta.next {
+            next.push(&JsValue::from_str(&hash));
+        }
+        row.push(&next);
+        row.push(&JsValue::from_f64(meta.entry_type as f64));
+        match meta.meta_data {
+            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        row.push(&Uint8Array::from(payload.data.as_slice()));
+        row.push(&Uint8Array::from(storage.meta));
+        rows.push(row);
+    }
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    let verified = if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        vec![true; rows.len()]
+    } else {
+        let mut out = Vec::with_capacity(rows.len());
+        for i in 0..rows.len() {
+            out.push(
+                parsed_public_keys[i]
+                    .verify(&parsed_messages[i], &parsed_signatures[i])
+                    .is_ok(),
+            );
+        }
+        out
+    };
+    let out = Array::new();
+    for (index, row) in rows.into_iter().enumerate() {
+        row.push(&JsValue::from_bool(verified[index]));
+        out.push(&row);
+    }
+    Ok(out)
+}
+
+#[wasm_bindgen]
 pub fn benchmark_plain_entry_v0_core(
     clock_id: Uint8Array,
     private_key: Uint8Array,
@@ -3773,6 +3854,31 @@ struct ParsedEntryV0StorageSignature {
     public_key: Vec<u8>,
 }
 
+struct ParsedSignatureWithKey {
+    signature: Vec<u8>,
+    public_key: Vec<u8>,
+}
+
+struct ParsedPlainEntryV0Storage<'a> {
+    meta: &'a [u8],
+    payload: &'a [u8],
+    signature_with_key: &'a [u8],
+}
+
+struct ParsedRawEntryV0Meta {
+    clock_id: Vec<u8>,
+    wall_time: u64,
+    logical: u32,
+    gid: String,
+    next: Vec<String>,
+    entry_type: u8,
+    meta_data: Option<Vec<u8>>,
+}
+
+struct ParsedRawEntryV0Payload {
+    data: Vec<u8>,
+}
+
 struct BorshReader<'a> {
     bytes: &'a [u8],
     offset: usize,
@@ -3815,9 +3921,24 @@ impl<'a> BorshReader<'a> {
         ))
     }
 
+    fn read_u64(&mut self, label: &str) -> Result<u64, JsValue> {
+        let bytes = self.read_exact(8, label)?;
+        Ok(u64::from_le_bytes(
+            bytes
+                .try_into()
+                .map_err(|_| JsValue::from_str("Expected u64 bytes"))?,
+        ))
+    }
+
     fn read_bytes(&mut self, label: &str) -> Result<&'a [u8], JsValue> {
         let len = self.read_u32(label)? as usize;
         self.read_exact(len, label)
+    }
+
+    fn read_string(&mut self, label: &str) -> Result<String, JsValue> {
+        let bytes = self.read_bytes(label)?;
+        String::from_utf8(bytes.to_vec())
+            .map_err(|_| JsValue::from_str(&format!("Expected UTF-8 string for {label}")))
     }
 }
 
@@ -3838,9 +3959,7 @@ fn read_plain_decrypted_thing_bytes<'a>(
     reader.read_bytes(label)
 }
 
-fn parse_plain_entry_v0_storage_signature(
-    bytes: &[u8],
-) -> Result<ParsedEntryV0StorageSignature, JsValue> {
+fn parse_plain_entry_v0_storage(bytes: &[u8]) -> Result<ParsedPlainEntryV0Storage<'_>, JsValue> {
     let mut reader = BorshReader::new(bytes);
     if reader.read_u8("entry variant")? != 0 {
         return Err(JsValue::from_str("Expected EntryV0 variant"));
@@ -3872,7 +3991,28 @@ fn parse_plain_entry_v0_storage_signature(
         ));
     }
 
-    let mut signature_reader = BorshReader::new(signature_with_key);
+    Ok(ParsedPlainEntryV0Storage {
+        meta,
+        payload,
+        signature_with_key,
+    })
+}
+
+fn parse_plain_entry_v0_storage_signature(
+    bytes: &[u8],
+) -> Result<ParsedEntryV0StorageSignature, JsValue> {
+    let storage = parse_plain_entry_v0_storage(bytes)?;
+    let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
+
+    Ok(ParsedEntryV0StorageSignature {
+        signable: encode_entry_v0_parts_unsigned_for_signing(storage.meta, storage.payload),
+        signature: parsed_signature.signature,
+        public_key: parsed_signature.public_key,
+    })
+}
+
+fn parse_plain_signature_with_key(bytes: &[u8]) -> Result<ParsedSignatureWithKey, JsValue> {
+    let mut signature_reader = BorshReader::new(bytes);
     if signature_reader.read_u8("signature variant")? != 0 {
         return Err(JsValue::from_str("Expected SignatureWithKey variant"));
     }
@@ -3896,11 +4036,78 @@ fn parse_plain_entry_v0_storage_signature(
         ));
     }
 
-    Ok(ParsedEntryV0StorageSignature {
-        signable: encode_entry_v0_parts_unsigned_for_signing(meta, payload),
+    Ok(ParsedSignatureWithKey {
         signature,
         public_key,
     })
+}
+
+fn read_string_vec(reader: &mut BorshReader<'_>, label: &str) -> Result<Vec<String>, JsValue> {
+    let len = reader.read_u32(label)? as usize;
+    let mut values = Vec::with_capacity(len);
+    for _ in 0..len {
+        values.push(reader.read_string(label)?);
+    }
+    Ok(values)
+}
+
+fn read_optional_bytes(
+    reader: &mut BorshReader<'_>,
+    label: &str,
+) -> Result<Option<Vec<u8>>, JsValue> {
+    match reader.read_u8(label)? {
+        0 => Ok(None),
+        1 => Ok(Some(reader.read_bytes(label)?.to_vec())),
+        _ => Err(JsValue::from_str(&format!(
+            "Expected optional bytes tag for {label}"
+        ))),
+    }
+}
+
+fn parse_raw_entry_v0_meta(bytes: &[u8]) -> Result<ParsedRawEntryV0Meta, JsValue> {
+    let mut reader = BorshReader::new(bytes);
+    if reader.read_u8("meta variant")? != 0 {
+        return Err(JsValue::from_str("Expected EntryV0 meta variant"));
+    }
+    if reader.read_u8("clock variant")? != 0 {
+        return Err(JsValue::from_str("Expected LamportClock variant"));
+    }
+    let clock_id = reader.read_bytes("clock id")?.to_vec();
+    if reader.read_u8("timestamp variant")? != 0 {
+        return Err(JsValue::from_str("Expected Timestamp variant"));
+    }
+    let wall_time = reader.read_u64("timestamp wall time")?;
+    let logical = reader.read_u32("timestamp logical")?;
+    let gid = reader.read_string("meta gid")?;
+    let next = read_string_vec(&mut reader, "meta next")?;
+    let entry_type = reader.read_u8("meta type")?;
+    let meta_data = read_optional_bytes(&mut reader, "meta data")?;
+    if !reader.is_done() {
+        return Err(JsValue::from_str("Unexpected trailing EntryV0 meta bytes"));
+    }
+    Ok(ParsedRawEntryV0Meta {
+        clock_id,
+        wall_time,
+        logical,
+        gid,
+        next,
+        entry_type,
+        meta_data,
+    })
+}
+
+fn parse_raw_entry_v0_payload(bytes: &[u8]) -> Result<ParsedRawEntryV0Payload, JsValue> {
+    let mut reader = BorshReader::new(bytes);
+    if reader.read_u8("payload variant")? != 0 {
+        return Err(JsValue::from_str("Expected EntryV0 payload variant"));
+    }
+    let data = reader.read_bytes("payload data")?.to_vec();
+    if !reader.is_done() {
+        return Err(JsValue::from_str(
+            "Unexpected trailing EntryV0 payload bytes",
+        ));
+    }
+    Ok(ParsedRawEntryV0Payload { data })
 }
 
 fn encode_entry_v0(input: EntryV0EncodeInput, signature: Option<SignatureInput>) -> Vec<u8> {

@@ -2,10 +2,17 @@ import { deserialize, field, fixedArray, variant, vec } from "@dao-xyz/borsh";
 import {
 	Entry,
 	EntryType,
+	LamportClock as Clock,
+	Meta,
+	Payload,
 	type PreparedNativeLogEntry,
 	ShallowEntry,
 	ShallowMeta,
+	Timestamp,
 	calculateRawCidV1Batch,
+	prepareRawEntryV0Batch,
+	type PreparedRawEntryV0Facts,
+	verifyEntryV0Ed25519StorageBatch,
 } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
@@ -86,6 +93,167 @@ export class RawExchangeHeadsMessage extends TransportMessage {
 		if (props.reserved) {
 			this.reserved = props.reserved;
 		}
+	}
+}
+
+class PreparedRawExchangeEntry<T> extends Entry<T> {
+	hash!: string;
+	size: number;
+	createdLocally?: boolean;
+	meta: Meta;
+
+	private payloadValue?: Payload<T>;
+	private materialized?: Entry<T>;
+	private keychain?: unknown;
+	private encodingValue?: Log<T>["encoding"];
+
+	constructor(
+		private readonly bytes: Uint8Array,
+		private readonly facts: PreparedRawEntryV0Facts,
+	) {
+		super();
+		this.size = facts.byteLength;
+		this.meta = new Meta({
+			gid: facts.gid,
+			clock: new Clock({
+				id: facts.clockId,
+				timestamp: new Timestamp({
+					wallTime: facts.wallTime,
+					logical: facts.logical,
+				}),
+			}),
+			next: facts.next,
+			type: facts.type as EntryType,
+			data: facts.metaData,
+		});
+	}
+
+	init(props: any): this {
+		this.keychain = props.keychain ?? props._keychain;
+		this.encodingValue = props.encoding ?? props._encoding;
+		this.materialized?.init(props);
+		return this;
+	}
+
+	private get encoding(): Log<T>["encoding"] {
+		if (!this.encodingValue) {
+			throw new Error("Not initialized");
+		}
+		return this.encodingValue;
+	}
+
+	get payload(): Payload<T> {
+		if (!this.payloadValue) {
+			this.payloadValue = new Payload({
+				data: this.facts.payloadData,
+				encoding: this.encoding,
+			});
+		}
+		return this.payloadValue;
+	}
+
+	get signatures() {
+		return this.materialize().signatures;
+	}
+
+	get publicKeys() {
+		return this.materialize().publicKeys;
+	}
+
+	get __peerbitSignatureVerified() {
+		return this.facts.signatureVerified;
+	}
+
+	getMeta(): Meta {
+		return this.meta;
+	}
+
+	getMetaBytes(): Uint8Array {
+		return this.facts.metaBytes;
+	}
+
+	getHashDigestBytes(): Uint8Array {
+		return this.facts.hashDigestBytes;
+	}
+
+	getClock(): Clock {
+		return this.meta.clock;
+	}
+
+	getNext(): string[] {
+		return this.meta.next;
+	}
+
+	getSignatures() {
+		return this.materialize().getSignatures();
+	}
+
+	getPayloadValue(): T {
+		return this.payload.getValue(this.encoding);
+	}
+
+	override getStorageBytes(): Uint8Array {
+		return this.bytes;
+	}
+
+	async verifySignatures(): Promise<boolean> {
+		if (this.facts.signatureVerified) {
+			return true;
+		}
+		try {
+			const result = await verifyEntryV0Ed25519StorageBatch([this.bytes]);
+			if (result) {
+				return result.every(Boolean);
+			}
+		} catch {
+			// Fall back to full materialization for encrypted or non-Ed25519 entries.
+		}
+		return this.materialize().verifySignatures();
+	}
+
+	equals(other: Entry<T>): boolean {
+		return this.hash === other.hash || this.materialize().equals(other);
+	}
+
+	toSignable(): Entry<T> {
+		return this.materialize().toSignable();
+	}
+
+	toShallow(isHead: boolean): ShallowEntry {
+		return new ShallowEntry({
+			hash: this.hash,
+			payloadSize: this.facts.payloadData.byteLength,
+			head: isHead,
+			meta: new ShallowMeta({
+				gid: this.meta.gid,
+				data: this.meta.data,
+				clock: this.meta.clock,
+				next: this.meta.next,
+				type: this.meta.type,
+			}),
+		});
+	}
+
+	private materialize(): Entry<T> {
+		if (this.materialized) {
+			return this.materialized;
+		}
+		const entry = deserialize(this.bytes, Entry) as Entry<T>;
+		entry.hash = undefined as any;
+		Entry.prepareMultihashBytes(entry, this.bytes, this.hash);
+		entry.hash = this.hash;
+		entry.size = this.size;
+		entry.init({
+			keychain: this.keychain as any,
+			encoding: this.encoding,
+		});
+		prepareRawExchangeHeadEntryFacts(entry, {
+			hash: this.hash,
+			bytes: this.bytes,
+			gidRefrences: [],
+		});
+		this.materialized = entry;
+		return entry;
 	}
 }
 
@@ -390,10 +558,76 @@ const prepareRawExchangeHeadEntryFacts = (
 	Entry.prepareNativeLogEntry(entry, nativeEntry);
 };
 
+const preparePreparedRawExchangeHeadEntryFacts = (
+	entry: Entry<any>,
+	head: Pick<RawEntryWithRefs, "hash" | "bytes">,
+	facts: PreparedRawEntryV0Facts,
+) => {
+	const meta = entry.meta;
+	const payloadSize = facts.payloadData.byteLength;
+	const shallowEntry = new ShallowEntry({
+		hash: head.hash,
+		payloadSize,
+		head: true,
+		meta: new ShallowMeta({
+			gid: meta.gid,
+			data: meta.data,
+			clock: meta.clock,
+			next: meta.next,
+			type: meta.type,
+		}),
+	});
+	const nativeEntry: PreparedNativeLogEntry = {
+		hash: head.hash,
+		gid: facts.gid,
+		next: facts.next,
+		type: facts.type,
+		head: true,
+		payloadSize,
+		data: facts.metaData,
+		clock: {
+			timestamp: {
+				wallTime: facts.wallTime,
+				logical: facts.logical,
+			},
+		},
+	};
+	Entry.prepareShallowEntry(entry, shallowEntry);
+	Entry.prepareNativeLogEntry(entry, nativeEntry);
+};
+
 export const materializeVerifiedRawExchangeHeadsMessage = async (
 	message: RawExchangeHeadsMessage,
 	log: Log<any>,
 ): Promise<ExchangeHeadsMessage<any>> => {
+	const preparedFacts = await prepareRawEntryV0Batch(
+		message.heads.map((head) => head.bytes),
+	).catch(() => undefined);
+	if (preparedFacts) {
+		const materialized = new ExchangeHeadsMessage({
+			heads: message.heads.map((head, index) => {
+				const facts = preparedFacts[index]!;
+				if (facts.cid !== head.hash) {
+					throw new Error("Raw exchange head hash did not match bytes");
+				}
+				const entry = new PreparedRawExchangeEntry(head.bytes, facts);
+				Entry.prepareMultihashBytes(entry, head.bytes, head.hash);
+				entry.hash = head.hash;
+				entry.size = facts.byteLength;
+				entry.init({
+					keychain: log.keychain,
+					encoding: log.encoding,
+				});
+				preparePreparedRawExchangeHeadEntryFacts(entry, head, facts);
+				return new EntryWithRefs({
+					entry,
+					gidRefrences: head.gidRefrences,
+				});
+			}),
+		});
+		materialized.reserved = message.reserved;
+		return materialized;
+	}
 	const calculatedHashes = await calculateRawCidV1Batch(
 		message.heads.map((head) => head.bytes),
 	);

@@ -814,6 +814,9 @@ const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
 const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
 const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
 const NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES = 16;
+const hasPreverifiedSignature = (entry: Entry<any>) =>
+	(entry as { __peerbitSignatureVerified?: unknown }).__peerbitSignatureVerified ===
+	true;
 // In sparse topologies (browser/relay), peers can learn about replicators via broadcast
 // replication announcements without having a direct connection that emits unsubscribe
 // on abrupt churn. Probe conservatively so a single missed ACK does not evict a
@@ -8412,7 +8415,11 @@ export class SharedLog<
 			checkMinReplicasLimit(replicas);
 
 			// Don't verify entries that we have created (TODO should we? perf impact?)
-			if (!entry.createdLocally && !(await entry.verifySignatures())) {
+			if (
+				!entry.createdLocally &&
+				!hasPreverifiedSignature(entry) &&
+				!(await entry.verifySignatures())
+			) {
 				return false;
 			}
 			return true;
@@ -8486,7 +8493,7 @@ export class SharedLog<
 
 				checkMinReplicasLimit(replicas);
 
-				if (!entry.createdLocally) {
+				if (!entry.createdLocally && !hasPreverifiedSignature(entry)) {
 					signaturesToVerify.push(entry);
 				}
 			}
