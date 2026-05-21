@@ -3439,8 +3439,7 @@ pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
             Some(data) => row.push(&Uint8Array::from(data.as_slice())),
             None => row.push(&JsValue::UNDEFINED),
         };
-        row.push(&Uint8Array::from(payload.data.as_slice()));
-        row.push(&Uint8Array::from(storage.meta));
+        row.push(&JsValue::from_f64(payload.data_len as f64));
         rows.push(row);
     }
     let message_refs = parsed_messages
@@ -3876,7 +3875,7 @@ struct ParsedRawEntryV0Meta {
 }
 
 struct ParsedRawEntryV0Payload {
-    data: Vec<u8>,
+    data_len: usize,
 }
 
 struct BorshReader<'a> {
@@ -4101,13 +4100,13 @@ fn parse_raw_entry_v0_payload(bytes: &[u8]) -> Result<ParsedRawEntryV0Payload, J
     if reader.read_u8("payload variant")? != 0 {
         return Err(JsValue::from_str("Expected EntryV0 payload variant"));
     }
-    let data = reader.read_bytes("payload data")?.to_vec();
+    let data_len = reader.read_bytes("payload data")?.len();
     if !reader.is_done() {
         return Err(JsValue::from_str(
             "Unexpected trailing EntryV0 payload bytes",
         ));
     }
-    Ok(ParsedRawEntryV0Payload { data })
+    Ok(ParsedRawEntryV0Payload { data_len })
 }
 
 fn encode_entry_v0(input: EntryV0EncodeInput, signature: Option<SignatureInput>) -> Vec<u8> {

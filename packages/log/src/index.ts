@@ -13,5 +13,4 @@ export * from "./trim.js";
 export * from "./change.js";
 export * from "./entry-v0.js";
 export * from "./entry-create.js";
-export * from "./payload.js";
 export type { TrimToByteLengthOption, TrimToLengthOption } from "./trim.js";

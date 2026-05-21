@@ -1638,8 +1638,7 @@ export type RawEntryV0PreparedFacts = {
 	next: string[];
 	type: number;
 	metaData?: Uint8Array;
-	payloadData: Uint8Array;
-	metaBytes: Uint8Array;
+	payloadByteLength: number;
 	signatureVerified: boolean;
 };
 
@@ -1665,8 +1664,7 @@ type RawEntryV0PreparedFactsRow = [
 	string[],
 	number,
 	Uint8Array | undefined,
-	Uint8Array,
-	Uint8Array,
+	number,
 	boolean,
 ];
 
@@ -1856,8 +1854,7 @@ const rawEntryV0PreparedFactsFromRow = ([
 	next,
 	type,
 	metaData,
-	payloadData,
-	metaBytes,
+	payloadByteLength,
 	signatureVerified,
 ]: RawEntryV0PreparedFactsRow): RawEntryV0PreparedFacts => ({
 	cid,
@@ -1870,8 +1867,7 @@ const rawEntryV0PreparedFactsFromRow = ([
 	next,
 	type,
 	metaData,
-	payloadData,
-	metaBytes,
+	payloadByteLength,
 	signatureVerified,
 });
 

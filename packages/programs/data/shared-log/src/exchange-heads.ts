@@ -4,7 +4,6 @@ import {
 	EntryType,
 	LamportClock as Clock,
 	Meta,
-	Payload,
 	type PreparedNativeLogEntry,
 	ShallowEntry,
 	ShallowMeta,
@@ -102,7 +101,6 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	createdLocally?: boolean;
 	meta: Meta;
 
-	private payloadValue?: Payload<T>;
 	private materialized?: Entry<T>;
 	private keychain?: unknown;
 	private encodingValue?: Log<T>["encoding"];
@@ -142,14 +140,8 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		return this.encodingValue;
 	}
 
-	get payload(): Payload<T> {
-		if (!this.payloadValue) {
-			this.payloadValue = new Payload({
-				data: this.facts.payloadData,
-				encoding: this.encoding,
-			});
-		}
-		return this.payloadValue;
+	get payload() {
+		return this.materialize().payload;
 	}
 
 	get signatures() {
@@ -168,8 +160,12 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		return this.meta;
 	}
 
-	getMetaBytes(): Uint8Array {
-		return this.facts.metaBytes;
+	getMetaBytes(): Uint8Array | undefined {
+		return (
+			this.materialize() as Entry<T> & {
+				getMetaBytes?: () => Uint8Array | undefined;
+			}
+		).getMetaBytes?.();
 	}
 
 	getHashDigestBytes(): Uint8Array {
@@ -188,8 +184,8 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		return this.materialize().getSignatures();
 	}
 
-	getPayloadValue(): T {
-		return this.payload.getValue(this.encoding);
+	getPayloadValue(): Promise<T> | T {
+		return this.materialize().getPayloadValue();
 	}
 
 	override getStorageBytes(): Uint8Array {
@@ -222,7 +218,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	toShallow(isHead: boolean): ShallowEntry {
 		return new ShallowEntry({
 			hash: this.hash,
-			payloadSize: this.facts.payloadData.byteLength,
+			payloadSize: this.facts.payloadByteLength,
 			head: isHead,
 			meta: new ShallowMeta({
 				gid: this.meta.gid,
@@ -564,7 +560,7 @@ const preparePreparedRawExchangeHeadEntryFacts = (
 	facts: PreparedRawEntryV0Facts,
 ) => {
 	const meta = entry.meta;
-	const payloadSize = facts.payloadData.byteLength;
+	const payloadSize = facts.payloadByteLength;
 	const shallowEntry = new ShallowEntry({
 		hash: head.hash,
 		payloadSize,

@@ -129,8 +129,7 @@ export type PreparedRawEntryV0Facts = {
 	next: string[];
 	type: EntryType;
 	metaData?: Uint8Array;
-	payloadData: Uint8Array;
-	metaBytes: Uint8Array;
+	payloadByteLength: number;
 	signatureVerified: boolean;
 };
 
