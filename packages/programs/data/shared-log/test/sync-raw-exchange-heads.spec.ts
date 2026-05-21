@@ -419,6 +419,19 @@ describe("raw exchange-head sync", () => {
 					})),
 				);
 			const selfHash = db.node.identity.publicKey.hashcode();
+			const nativePlanner =
+				(db.log as any)._nativeBackbone ?? (db.log as any)._nativeRangePlanner;
+			expect(nativePlanner).to.exist;
+			const nativeBatchPlanStub = sinon
+				.stub(nativePlanner, "planLeadersForGidsBatch")
+				.callsFake((...args: unknown[]) =>
+					[
+						...(args[0] as Iterable<{ gid: string; replicas: number }>),
+					].map((_item, index) => ({
+						coordinates: [index],
+						leaders: new Map([[selfHash, { intersecting: true }]]),
+					})),
+				);
 			const waitForGidStub = sinon
 				.stub(db.log as any, "_waitForGidReplicators")
 				.callsFake(async (_gid, _replicas, _waitFor, options: any) => {
@@ -442,7 +455,11 @@ describe("raw exchange-head sync", () => {
 					session.peers[0].identity.publicKey.hashcode(),
 				);
 				const queuedHashes: string[] = [];
-				expect(responseAddStub.callCount).to.be.greaterThan(0);
+				expect(nativeBatchPlanStub.callCount).to.equal(1);
+				const plannedItems = [...nativeBatchPlanStub.firstCall.args[0]];
+				expect(plannedItems.length).to.be.greaterThan(0);
+				expect(waitForGidStub.callCount).to.equal(0);
+				expect(responseAddStub.callCount).to.equal(plannedItems.length);
 				for (const call of responseAddStub.getCalls()) {
 					expect(call.args[0].hashes).to.have.length(1);
 					expect(call.args[0].peers).to.deep.equal([
@@ -456,6 +473,7 @@ describe("raw exchange-head sync", () => {
 			} finally {
 				waitForEntryStub.restore();
 				waitForGidStub.restore();
+				nativeBatchPlanStub.restore();
 				nativeMetadataStub.restore();
 				hasManyStub.restore();
 				responseAddStub.restore();

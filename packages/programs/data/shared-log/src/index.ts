@@ -9482,6 +9482,12 @@ export class SharedLog<
 					msg.hashes,
 				);
 				const presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
+				const nativeLocalLeaderHints =
+					await this.planCurrentNativeRequestPruneLocalLeaders({
+						hashes: msg.hashes,
+						nativeEntryMetadata,
+						presentBlocks,
+					});
 
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
@@ -9546,7 +9552,9 @@ export class SharedLog<
 								},
 							};
 
-							if (nativeEntry) {
+							if (nativeLocalLeaderHints.has(hash)) {
+								isLeader = true;
+							} else if (nativeEntry) {
 								await this._waitForGidReplicators(
 									gid,
 									replicas,
@@ -10609,6 +10617,62 @@ export class SharedLog<
 			return backboneMetadata;
 		}
 		return backboneMetadata.map((entry, index) => entry ?? indexMetadata[index]);
+	}
+
+	private async planCurrentNativeRequestPruneLocalLeaders(properties: {
+		hashes: string[];
+		nativeEntryMetadata?: Array<
+			{ gid: string; data?: Uint8Array } | undefined | null
+		>;
+		presentBlocks?: boolean[] | undefined;
+	}): Promise<Set<string>> {
+		const planner = this._nativeBackbone ?? this._nativeRangePlanner;
+		if (
+			!planner ||
+			!properties.nativeEntryMetadata ||
+			!properties.presentBlocks
+		) {
+			return new Set();
+		}
+
+		const hashes: string[] = [];
+		const entries: Array<{ gid: string; replicas: number }> = [];
+		for (let i = 0; i < properties.hashes.length; i++) {
+			const hash = properties.hashes[i]!;
+			const nativeEntry = properties.nativeEntryMetadata[i];
+			if (
+				!nativeEntry ||
+				properties.presentBlocks[i] !== true ||
+				this._checkedPrune.getPendingDelete(hash)
+			) {
+				continue;
+			}
+			hashes.push(hash);
+			entries.push({
+				gid: nativeEntry.gid,
+				replicas: decodeReplicas({
+					meta: {
+						data: nativeEntry.data,
+					},
+				}).getValue(this),
+			});
+		}
+		if (entries.length === 0) {
+			return new Set();
+		}
+
+		const context = await this.createLeaderSelectionContext();
+		const nativePlans = planner.planLeadersForGidsBatch(
+			entries,
+			this.createNativeLeaderOptions(context),
+		);
+		const localLeaderHashes = new Set<string>();
+		for (let i = 0; i < nativePlans.length; i++) {
+			if (nativePlans[i]?.leaders.has(context.selfHash)) {
+				localLeaderHashes.add(hashes[i]!);
+			}
+		}
+		return localLeaderHashes;
 	}
 
 	private createReusableReceiveCoordinatePlans(
