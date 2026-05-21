@@ -625,6 +625,57 @@ describe("native peerbit backbone", () => {
 		expect(backbone.graph.payloadSizeSum()).to.equal(4);
 	});
 
+	it("commits blocks graph and coordinates in one native batch", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const prepared = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "gid-combined",
+			payloadData: new Uint8Array([1, 2, 3]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+
+		target.graph.commitBlocksGraphAndCoordinatesBatch(
+			[
+				{
+					hash: prepared.hash,
+					gid: "gid-combined",
+					next: [],
+					type: 0,
+					payloadSize: prepared.byteLength,
+					clock: { timestamp: { wallTime: 1n, logical: 0 } },
+					bytes: prepared.bytes,
+				},
+			],
+			{
+				hashes: [prepared.hash],
+				gids: ["gid-combined"],
+				hashNumbers: ["7"],
+				coordinateBatches: [["42"]],
+				nextHashBatches: [[]],
+				assignedToRangeBoundaries: new Uint8Array([1]),
+				requestedReplicas: [1],
+			},
+		);
+
+		expect(target.hasBlock(prepared.hash)).to.equal(true);
+		expect(target.hasLogEntry(prepared.hash)).to.equal(true);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal([prepared.hash]);
+		expect(target.hasCoordinateIndexHash(prepared.hash)).to.equal(true);
+	});
+
 	it("returns flat unique reference rows for native exchange-head planning", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

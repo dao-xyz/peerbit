@@ -51,6 +51,7 @@ import {
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
+	NativeBackboneCoordinateCommitColumns,
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
@@ -367,6 +368,31 @@ type PreparedCoordinatePersistence<R extends "u32" | "u64"> = {
 type ResidentCoordinateEntry<R extends "u32" | "u64"> =
 	| EntryReplicated<R>
 	| SharedLogCoordinateNativeFields<R>;
+
+type CoordinatePersistBatchItem<R extends "u32" | "u64"> = {
+	coordinates: NumberFromType<R>[];
+	entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+	leaders: LeaderMap | false;
+	replicas: number;
+	prev?: EntryReplicated<R>;
+	assignedToRangeBoundary?: boolean;
+	commitNative?: boolean;
+	commitNativeBackbone?: boolean;
+	hashNumber?: NumberFromType<R>;
+	prepared?: PreparedCoordinatePersistence<R>;
+};
+
+type NativeBackboneReceiveCoordinateRow<R extends "u32" | "u64"> = {
+	item: CoordinatePersistBatchItem<R>;
+	prepared: PreparedCoordinatePersistence<R>;
+	fields: SharedLogCoordinateNativeFields<R>;
+	deleteHashes: string[];
+};
+
+type NativeBackboneReceiveCoordinateBatch<R extends "u32" | "u64"> = {
+	rows: NativeBackboneReceiveCoordinateRow<R>[];
+	rollbackCoordinateEntries?: Map<string, ResidentCoordinateEntry<R>>;
+};
 
 type RepairDispatchEntry<R extends "u32" | "u64"> = ResidentCoordinateEntry<R>;
 
@@ -9380,8 +9406,47 @@ export class SharedLog<
 								preparedAppendFacts.push(prepared);
 							}
 						}
+						// Network joins bypass SharedLog.join(), but churn repair scans
+						// the coordinate index to redistribute entries after membership changes.
+						const entriesToPersist = joinPlans.flatMap(
+							(plan) => plan.toPersist,
+						);
+						const coordinatePersistFallbackEntries: Entry<any>[] = [];
+						const reusableCoordinatePersistItems: CoordinatePersistBatchItem<R>[] =
+							[];
+						for (const entry of entriesToPersist) {
+							const reusablePlan = reusableCoordinatePlans.get(entry.hash);
+							if (!reusablePlan) {
+								coordinatePersistFallbackEntries.push(entry);
+								continue;
+							}
+							reusableCoordinatePersistItems.push({
+								coordinates: reusablePlan.plan.coordinates,
+								entry,
+								leaders: reusablePlan.plan.leaders,
+								replicas: reusablePlan.replicas,
+								assignedToRangeBoundary:
+									reusablePlan.plan.assignedToRangeBoundary,
+								prepared: reusablePlan.prepared,
+							});
+						}
+						const reusableCoordinatePersistItemCount =
+							reusableCoordinatePersistItems.length;
+						let nativePreparedCoordinateBatch:
+							| NativeBackboneReceiveCoordinateBatch<R>
+							| undefined;
+						const nativeReceiveCoordinateBatch = canUsePreparedAppendFacts
+							? this.createBackboneOnlyReceiveCoordinateBatch(
+									reusableCoordinatePersistItems,
+								)
+							: undefined;
 						const nativePreparedJoinCommit = canUsePreparedAppendFacts
-							? this.createNativeBackbonePreparedJoinCommit()
+							? this.createNativeBackbonePreparedJoinCommit(
+									nativeReceiveCoordinateBatch,
+									(batch) => {
+										nativePreparedCoordinateBatch = batch;
+									},
+								)
 							: undefined;
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
@@ -9418,39 +9483,26 @@ export class SharedLog<
 								details: { hashOnlyEntryAdded, joinedPreparedFacts },
 							});
 						}
-						// Network joins bypass SharedLog.join(), but churn repair scans
-						// the coordinate index to redistribute entries after membership changes.
-						const entriesToPersist = joinPlans.flatMap(
-							(plan) => plan.toPersist,
-						);
 						const coordinatePersistStartedAt = syncProfileStart(syncProfile);
 						let nativeBackboneOnlyPersistedHashes: Set<string> | undefined;
-						const coordinatePersistFallbackEntries: Entry<any>[] = [];
-						const reusableCoordinatePersistItems: Parameters<
-							typeof this.persistCoordinatesBatch
-						>[0] = [];
-						for (const entry of entriesToPersist) {
-							const reusablePlan = reusableCoordinatePlans.get(entry.hash);
-							if (!reusablePlan) {
-								coordinatePersistFallbackEntries.push(entry);
-								continue;
+						if (nativePreparedCoordinateBatch) {
+							try {
+								nativeBackboneOnlyPersistedHashes =
+									await this.finishBackboneOnlyReceiveCoordinateBatch(
+										nativePreparedCoordinateBatch,
+									);
+							} catch (error) {
+								this.rollbackBackboneOnlyReceiveCoordinateBatch(
+									nativePreparedCoordinateBatch,
+								);
+								throw error;
 							}
-							reusableCoordinatePersistItems.push({
-								coordinates: reusablePlan.plan.coordinates,
-								entry,
-								leaders: reusablePlan.plan.leaders,
-								replicas: reusablePlan.replicas,
-								assignedToRangeBoundary:
-									reusablePlan.plan.assignedToRangeBoundary,
-								prepared: reusablePlan.prepared,
-							});
+						} else {
+							nativeBackboneOnlyPersistedHashes =
+								await this.persistBackboneOnlyReceiveCoordinateBatch(
+									reusableCoordinatePersistItems,
+								);
 						}
-						const reusableCoordinatePersistItemCount =
-							reusableCoordinatePersistItems.length;
-						nativeBackboneOnlyPersistedHashes =
-							await this.persistBackboneOnlyReceiveCoordinateBatch(
-								reusableCoordinatePersistItems,
-							);
 						if (
 							nativeBackboneOnlyPersistedHashes &&
 							nativeBackboneOnlyPersistedHashes.size > 0
@@ -10955,12 +11007,11 @@ export class SharedLog<
 		return reusablePlans;
 	}
 
-	private async persistBackboneOnlyReceiveCoordinateBatch(
-		items: Parameters<typeof this.persistCoordinatesBatch>[0],
-	): Promise<Set<string> | undefined> {
-		const backbone = this._nativeBackbone;
+	private createBackboneOnlyReceiveCoordinateBatch(
+		items: CoordinatePersistBatchItem<R>[],
+	): NativeBackboneReceiveCoordinateBatch<R> | undefined {
 		if (
-			!backbone ||
+			!this._nativeBackbone ||
 			items.length === 0 ||
 			!this.canUseBackboneOnlyCoordinatePersistence()
 		) {
@@ -10983,74 +11034,109 @@ export class SharedLog<
 			return undefined;
 		}
 
-		const rollbackCoordinateEntries = this.snapshotResidentCoordinateEntries(
-			rows.flatMap((row) => [row.item.entry.hash, ...row.deleteHashes]),
-		);
+		return {
+			rows,
+			rollbackCoordinateEntries: this.snapshotResidentCoordinateEntries(
+				rows.flatMap((row) => [row.item.entry.hash, ...row.deleteHashes]),
+			),
+		};
+	}
 
+	private nativeBackboneReceiveCoordinateRowsToColumns(
+		rows: NativeBackboneReceiveCoordinateRow<R>[],
+	): NativeBackboneCoordinateCommitColumns {
+		const hashes = new Array<string>(rows.length);
+		const gids = new Array<string>(rows.length);
+		const hashNumbers = new Array<string>(rows.length);
+		const coordinateBatches = new Array<string[]>(rows.length);
+		const nextHashBatches = new Array<string[]>(rows.length);
+		const assignedToRangeBoundaries = new Uint8Array(rows.length);
+		const requestedReplicas = new Array<number>(rows.length);
+		for (let i = 0; i < rows.length; i++) {
+			const { item, prepared, fields, deleteHashes } = rows[i]!;
+			hashes[i] = item.entry.hash;
+			gids[i] = fields.gid;
+			hashNumbers[i] = fields.hashNumberString ?? fields.hashNumber.toString();
+			coordinateBatches[i] =
+				fields.coordinateStrings ??
+				fields.coordinates.map((coordinate) => coordinate.toString());
+			nextHashBatches[i] = deleteHashes;
+			assignedToRangeBoundaries[i] =
+				prepared.assignedToRangeBoundary === true ? 1 : 0;
+			requestedReplicas[i] = item.replicas;
+		}
+		return {
+			hashes,
+			gids,
+			hashNumbers,
+			coordinateBatches,
+			nextHashBatches,
+			assignedToRangeBoundaries,
+			requestedReplicas,
+		};
+	}
+
+	private async finishBackboneOnlyReceiveCoordinateBatch(
+		batch: NativeBackboneReceiveCoordinateBatch<R>,
+	): Promise<Set<string>> {
+		const persistedHashes = new Set<string>();
+		for (const { item, prepared, fields, deleteHashes } of batch.rows) {
+			persistedHashes.add(item.entry.hash);
+			this._residentEntryCoordinatesByHash?.set(
+				item.entry.hash,
+				prepared.coordinateEntry ?? fields,
+			);
+			for (const deletedHash of deleteHashes) {
+				this._residentEntryCoordinatesByHash?.delete(deletedHash);
+			}
+			for (const coordinate of item.coordinates) {
+				this.coordinateToHash.add(coordinate, item.entry.hash);
+			}
+		}
+
+		const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
+		if (isPromiseLike(flushed)) {
+			await flushed;
+		}
+		return persistedHashes;
+	}
+
+	private rollbackBackboneOnlyReceiveCoordinateBatch(
+		batch: NativeBackboneReceiveCoordinateBatch<R>,
+	): void {
+		for (const { item } of batch.rows) {
+			this.rollbackNativeBackboneCoordinateAppend(
+				item.entry.hash,
+				batch.rollbackCoordinateEntries,
+			);
+		}
+	}
+
+	private async persistBackboneOnlyReceiveCoordinateBatch(
+		items: CoordinatePersistBatchItem<R>[],
+	): Promise<Set<string> | undefined> {
+		const backbone = this._nativeBackbone;
+		const batch = this.createBackboneOnlyReceiveCoordinateBatch(items);
+		if (!backbone || !batch) {
+			return undefined;
+		}
 		try {
-			const hashes = new Array<string>(rows.length);
-			const gids = new Array<string>(rows.length);
-			const hashNumbers = new Array<string>(rows.length);
-			const coordinateBatches = new Array<string[]>(rows.length);
-			const nextHashBatches = new Array<string[]>(rows.length);
-			const assignedToRangeBoundaries = new Uint8Array(rows.length);
-			const requestedReplicas = new Array<number>(rows.length);
-			for (let i = 0; i < rows.length; i++) {
-				const { item, prepared, fields, deleteHashes } = rows[i]!;
-				hashes[i] = item.entry.hash;
-				gids[i] = fields.gid;
-				hashNumbers[i] =
-					fields.hashNumberString ?? fields.hashNumber.toString();
-				coordinateBatches[i] =
-					fields.coordinateStrings ??
-					fields.coordinates.map((coordinate) => coordinate.toString());
-				nextHashBatches[i] = deleteHashes;
-				assignedToRangeBoundaries[i] =
-					prepared.assignedToRangeBoundary === true ? 1 : 0;
-				requestedReplicas[i] = item.replicas;
-			}
-			backbone.commitEntryCoordinatesColumnsBatch({
-				hashes,
-				gids,
-				hashNumbers,
-				coordinateBatches,
-				nextHashBatches,
-				assignedToRangeBoundaries,
-				requestedReplicas,
-			});
-
-			const persistedHashes = new Set<string>();
-			for (const { item, prepared, fields, deleteHashes } of rows) {
-				persistedHashes.add(item.entry.hash);
-				this._residentEntryCoordinatesByHash?.set(
-					item.entry.hash,
-					prepared.coordinateEntry ?? fields,
-				);
-				for (const deletedHash of deleteHashes) {
-					this._residentEntryCoordinatesByHash?.delete(deletedHash);
-				}
-				for (const coordinate of item.coordinates) {
-					this.coordinateToHash.add(coordinate, item.entry.hash);
-				}
-			}
-
-			const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
-			if (isPromiseLike(flushed)) {
-				await flushed;
-			}
-			return persistedHashes;
+			backbone.commitEntryCoordinatesColumnsBatch(
+				this.nativeBackboneReceiveCoordinateRowsToColumns(batch.rows),
+			);
+			return await this.finishBackboneOnlyReceiveCoordinateBatch(batch);
 		} catch (error) {
-			for (const { item } of rows) {
-				this.rollbackNativeBackboneCoordinateAppend(
-					item.entry.hash,
-					rollbackCoordinateEntries,
-				);
-			}
+			this.rollbackBackboneOnlyReceiveCoordinateBatch(batch);
 			throw error;
 		}
 	}
 
-	private createNativeBackbonePreparedJoinCommit():
+	private createNativeBackbonePreparedJoinCommit(
+		coordinateBatch?: NativeBackboneReceiveCoordinateBatch<R>,
+		onCoordinatesCommitted?: (
+			batch: NativeBackboneReceiveCoordinateBatch<R>,
+		) => void,
+	):
 		| ((input: {
 				entries: PreparedAppendJoinFacts[];
 				headFlags: boolean[];
@@ -11087,7 +11173,17 @@ export class SharedLog<
 					bytes: entry.bytes,
 				};
 			}
-			backbone.graph.commitBlocksAndGraphBatch(commitEntries);
+			if (coordinateBatch && coordinateBatch.rows.length > 0) {
+				backbone.graph.commitBlocksGraphAndCoordinatesBatch(
+					commitEntries,
+					this.nativeBackboneReceiveCoordinateRowsToColumns(
+						coordinateBatch.rows,
+					),
+				);
+				onCoordinatesCommitted?.(coordinateBatch);
+			} else {
+				backbone.graph.commitBlocksAndGraphBatch(commitEntries);
+			}
 			return true;
 		};
 	}
@@ -11825,25 +11921,7 @@ export class SharedLog<
 	}
 
 	private async persistCoordinatesBatch(
-		items: Array<{
-			coordinates: NumberFromType<R>[];
-			entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
-			leaders:
-				| Map<
-						string,
-						{
-							intersecting: boolean;
-						}
-				  >
-				| false;
-			replicas: number;
-			prev?: EntryReplicated<R>;
-			assignedToRangeBoundary?: boolean;
-			commitNative?: boolean;
-			commitNativeBackbone?: boolean;
-			hashNumber?: NumberFromType<R>;
-			prepared?: PreparedCoordinatePersistence<R>;
-		}>,
+		items: CoordinatePersistBatchItem<R>[],
 	): Promise<boolean[]> {
 		if (items.length === 0) {
 			return [];

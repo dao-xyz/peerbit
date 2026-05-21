@@ -717,6 +717,122 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("commits raw receive blocks graph and coordinates through one native backbone transaction", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const coordinateStore = new NativeBackboneMemoryCoordinatePersistenceStore();
+			const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+				coordinateStore,
+			);
+			const sourceOpenArgs: any = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: { rawExchangeHeads: true },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const targetOpenArgs: any = {
+				...sourceOpenArgs,
+				nativeBackbone: {
+					optional: false,
+					coordinatePersistence,
+				},
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: sourceOpenArgs,
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: targetOpenArgs,
+			});
+
+			const hashes: string[] = [];
+			for (let i = 0; i < 4; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const combinedCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitBlocksGraphAndCoordinatesBatch",
+			);
+			const blockGraphCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitBlocksAndGraphBatch",
+			);
+			const coordinateCommitSpy = sinon.spy(
+				backbone,
+				"commitEntryCoordinatesColumnsBatch",
+			);
+			const backboneOnlyPersistSpy = sinon.spy(
+				sharedLog,
+				"persistBackboneOnlyReceiveCoordinateBatch",
+			);
+			const finishSpy = sinon.spy(
+				sharedLog,
+				"finishBackboneOnlyReceiveCoordinateBatch",
+			);
+			try {
+				await target.log.onMessage(message!, {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				expect(target.log.log.length).to.equal(hashes.length);
+				expect(combinedCommitSpy.callCount).to.equal(1);
+				expect(combinedCommitSpy.firstCall.args[0]).to.have.length(
+					hashes.length,
+				);
+				expect(combinedCommitSpy.firstCall.args[1].hashes).to.have.length(
+					hashes.length,
+				);
+				expect(blockGraphCommitSpy.callCount).to.equal(0);
+				expect(coordinateCommitSpy.callCount).to.equal(0);
+				expect(backboneOnlyPersistSpy.callCount).to.equal(0);
+				expect(finishSpy.callCount).to.equal(1);
+				expect(backbone.getEntryCoordinateHashes()).to.have.length(
+					hashes.length,
+				);
+				expect(
+					coordinateStore.files.get("coordinates.wal")?.byteLength,
+				).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+			} finally {
+				finishSpy.restore();
+				backboneOnlyPersistSpy.restore();
+				coordinateCommitSpy.restore();
+				blockGraphCommitSpy.restore();
+				combinedCommitSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("batches request-prune bookkeeping while queuing only newly confirmed hashes", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),

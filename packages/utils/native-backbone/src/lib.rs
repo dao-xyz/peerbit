@@ -774,6 +774,53 @@ impl NativePeerbitBackbone {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_log_blocks_graph_and_coordinates_batch(
+        &mut self,
+        hashes: Array,
+        block_bytes: Array,
+        gids: Array,
+        nexts: Array,
+        entry_types: Uint8Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        payload_sizes: Uint32Array,
+        heads: Uint8Array,
+        datas: Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: Array,
+        coordinate_batches: Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Array,
+    ) -> Result<(), JsValue> {
+        self.blocks.put_many(hashes.clone(), block_bytes)?;
+        self.log.put_many(
+            hashes,
+            gids,
+            nexts,
+            entry_types,
+            wall_times,
+            logicals,
+            payload_sizes,
+            heads,
+            datas,
+        )?;
+        if coordinate_hashes.length() > 0 {
+            self.commit_entry_coordinates_batch(
+                coordinate_hashes,
+                coordinate_gids,
+                coordinate_hash_numbers,
+                coordinate_batches,
+                coordinate_next_hash_batches,
+                coordinate_assigned_to_range_boundaries,
+                coordinate_requested_replicas,
+            )?;
+        }
+        Ok(())
+    }
+
     pub fn graph_delete(&mut self, hash: &str) -> bool {
         self.log.delete(hash)
     }

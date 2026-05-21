@@ -178,6 +178,25 @@ type NativePeerbitBackboneHandle = {
 		heads: Uint8Array,
 		datas: Array<Uint8Array | undefined>,
 	) => void;
+	commit_log_blocks_graph_and_coordinates_batch: (
+		hashes: string[],
+		blockBytes: Uint8Array[],
+		gids: string[],
+		nexts: string[][],
+		entryTypes: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		payloadSizes: Uint32Array,
+		heads: Uint8Array,
+		datas: Array<Uint8Array | undefined>,
+		coordinateHashes: string[],
+		coordinateGids: string[],
+		coordinateHashNumbers: string[],
+		coordinateBatches: string[][],
+		coordinateNextHashBatches: string[][],
+		coordinateAssignedToRangeBoundaries: Uint8Array,
+		coordinateRequestedReplicas: number[],
+	) => void;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
 	graph_oldest_entries: (limit: number) => unknown[];
@@ -1248,6 +1267,16 @@ export type NativeBackboneLogCommitEntry = NativeBackboneLogEntry & {
 	bytes: Uint8Array;
 };
 
+export type NativeBackboneCoordinateCommitColumns = {
+	hashes: string[];
+	gids: string[];
+	hashNumbers: string[];
+	coordinateBatches: string[][];
+	nextHashBatches: string[][];
+	assignedToRangeBoundaries: Uint8Array;
+	requestedReplicas: number[];
+};
+
 export type NativeBackboneTrimmedEntry = {
 	hash: string;
 	gid: string;
@@ -2121,6 +2150,62 @@ const compactPreparedCommitFactsWithTrimHashesFromRow = (
 	};
 };
 
+const nativeLogCommitEntryColumns = (
+	entries: NativeBackboneLogCommitEntry[],
+) => {
+	const hashes = new Array<string>(entries.length);
+	const blockBytes = new Array<Uint8Array>(entries.length);
+	const gids = new Array<string>(entries.length);
+	const nexts = new Array<string[]>(entries.length);
+	const entryTypes = new Uint8Array(entries.length);
+	const wallTimes = new BigUint64Array(entries.length);
+	const logicals = new Uint32Array(entries.length);
+	const payloadSizes = new Uint32Array(entries.length);
+	const heads = new Uint8Array(entries.length);
+	const datas = new Array<Uint8Array | undefined>(entries.length);
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i]!;
+		hashes[i] = entry.hash;
+		blockBytes[i] = entry.bytes;
+		gids[i] = entry.gid;
+		nexts[i] = entry.next;
+		entryTypes[i] = entry.type;
+		wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
+		logicals[i] = entry.clock.timestamp.logical ?? 0;
+		payloadSizes[i] = entry.payloadSize ?? 0;
+		heads[i] = (entry.head ?? true) ? 1 : 0;
+		datas[i] = entry.data;
+	}
+	return {
+		hashes,
+		blockBytes,
+		gids,
+		nexts,
+		entryTypes,
+		wallTimes,
+		logicals,
+		payloadSizes,
+		heads,
+		datas,
+	};
+};
+
+const validateNativeBackboneCoordinateCommitColumns = (
+	columns: NativeBackboneCoordinateCommitColumns,
+): void => {
+	const length = columns.hashes.length;
+	if (
+		columns.gids.length !== length ||
+		columns.hashNumbers.length !== length ||
+		columns.coordinateBatches.length !== length ||
+		columns.nextHashBatches.length !== length ||
+		columns.assignedToRangeBoundaries.length !== length ||
+		columns.requestedReplicas.length !== length
+	) {
+		throw new Error("Expected equal native coordinate commit column lengths");
+	}
+};
+
 export class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
@@ -2225,40 +2310,48 @@ export class NativeBackboneLogGraph {
 		if (entries.length === 0) {
 			return;
 		}
-		const hashes = new Array<string>(entries.length);
-		const blockBytes = new Array<Uint8Array>(entries.length);
-		const gids = new Array<string>(entries.length);
-		const nexts = new Array<string[]>(entries.length);
-		const entryTypes = new Uint8Array(entries.length);
-		const wallTimes = new BigUint64Array(entries.length);
-		const logicals = new Uint32Array(entries.length);
-		const payloadSizes = new Uint32Array(entries.length);
-		const heads = new Uint8Array(entries.length);
-		const datas = new Array<Uint8Array | undefined>(entries.length);
-		for (let i = 0; i < entries.length; i++) {
-			const entry = entries[i]!;
-			hashes[i] = entry.hash;
-			blockBytes[i] = entry.bytes;
-			gids[i] = entry.gid;
-			nexts[i] = entry.next;
-			entryTypes[i] = entry.type;
-			wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
-			logicals[i] = entry.clock.timestamp.logical ?? 0;
-			payloadSizes[i] = entry.payloadSize ?? 0;
-			heads[i] = (entry.head ?? true) ? 1 : 0;
-			datas[i] = entry.data;
-		}
+		const columns = nativeLogCommitEntryColumns(entries);
 		this.native.commit_log_blocks_and_graph_batch(
-			hashes,
-			blockBytes,
-			gids,
-			nexts,
-			entryTypes,
-			wallTimes,
-			logicals,
-			payloadSizes,
-			heads,
-			datas,
+			columns.hashes,
+			columns.blockBytes,
+			columns.gids,
+			columns.nexts,
+			columns.entryTypes,
+			columns.wallTimes,
+			columns.logicals,
+			columns.payloadSizes,
+			columns.heads,
+			columns.datas,
+		);
+	}
+
+	commitBlocksGraphAndCoordinatesBatch(
+		entries: NativeBackboneLogCommitEntry[],
+		coordinates: NativeBackboneCoordinateCommitColumns,
+	): void {
+		if (entries.length === 0) {
+			return;
+		}
+		validateNativeBackboneCoordinateCommitColumns(coordinates);
+		const columns = nativeLogCommitEntryColumns(entries);
+		this.native.commit_log_blocks_graph_and_coordinates_batch(
+			columns.hashes,
+			columns.blockBytes,
+			columns.gids,
+			columns.nexts,
+			columns.entryTypes,
+			columns.wallTimes,
+			columns.logicals,
+			columns.payloadSizes,
+			columns.heads,
+			columns.datas,
+			coordinates.hashes,
+			coordinates.gids,
+			coordinates.hashNumbers,
+			coordinates.coordinateBatches,
+			coordinates.nextHashBatches,
+			coordinates.assignedToRangeBoundaries,
+			coordinates.requestedReplicas,
 		);
 	}
 
