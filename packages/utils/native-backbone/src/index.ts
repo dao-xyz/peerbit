@@ -197,6 +197,21 @@ type NativePeerbitBackboneHandle = {
 		coordinateAssignedToRangeBoundaries: Uint8Array,
 		coordinateRequestedReplicas: number[],
 	) => void;
+	prepare_raw_receive_batch: (
+		blocks: Uint8Array[],
+	) => NativeBackboneRawReceivePreparedFactsRow[];
+	commit_prepared_raw_receive_batch: (
+		hashes: string[],
+		heads: Uint8Array,
+		coordinateHashes: string[],
+		coordinateGids: string[],
+		coordinateHashNumbers: string[],
+		coordinateBatches: string[][],
+		coordinateNextHashBatches: string[][],
+		coordinateAssignedToRangeBoundaries: Uint8Array,
+		coordinateRequestedReplicas: number[],
+	) => boolean;
+	clear_prepared_raw_receive_entries: (hashes: string[]) => number;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
 	graph_oldest_entries: (limit: number) => unknown[];
@@ -1277,6 +1292,38 @@ export type NativeBackboneCoordinateCommitColumns = {
 	requestedReplicas: number[];
 };
 
+export type NativeBackboneRawReceivePreparedFacts = {
+	cid: string;
+	hashDigestBytes: Uint8Array;
+	byteLength: number;
+	clockId: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	next: string[];
+	type: number;
+	metaBytes: Uint8Array;
+	metaData?: Uint8Array;
+	payloadByteLength: number;
+	signatureVerified: boolean;
+};
+
+type NativeBackboneRawReceivePreparedFactsRow = [
+	string,
+	Uint8Array,
+	number,
+	Uint8Array,
+	string,
+	number,
+	string,
+	string[],
+	number,
+	Uint8Array,
+	Uint8Array | undefined,
+	number,
+	boolean,
+];
+
 export type NativeBackboneTrimmedEntry = {
 	hash: string;
 	gid: string;
@@ -2206,6 +2253,47 @@ const validateNativeBackboneCoordinateCommitColumns = (
 	}
 };
 
+const emptyNativeBackboneCoordinateCommitColumns =
+	(): NativeBackboneCoordinateCommitColumns => ({
+		hashes: [],
+		gids: [],
+		hashNumbers: [],
+		coordinateBatches: [],
+		nextHashBatches: [],
+		assignedToRangeBoundaries: new Uint8Array(0),
+		requestedReplicas: [],
+	});
+
+const rawReceivePreparedFactsFromRow = ([
+	cid,
+	hashDigestBytes,
+	byteLength,
+	clockId,
+	wallTime,
+	logical,
+	gid,
+	next,
+	type,
+	metaBytes,
+	metaData,
+	payloadByteLength,
+	signatureVerified,
+]: NativeBackboneRawReceivePreparedFactsRow): NativeBackboneRawReceivePreparedFacts => ({
+	cid,
+	hashDigestBytes,
+	byteLength,
+	clockId,
+	wallTime: BigInt(wallTime),
+	logical,
+	gid,
+	next,
+	type,
+	metaBytes,
+	metaData,
+	payloadByteLength,
+	signatureVerified,
+});
+
 export class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
@@ -2352,6 +2440,33 @@ export class NativeBackboneLogGraph {
 			coordinates.nextHashBatches,
 			coordinates.assignedToRangeBoundaries,
 			coordinates.requestedReplicas,
+		);
+	}
+
+	commitPreparedRawReceiveBatch(
+		hashes: string[],
+		headFlags: boolean[],
+		coordinates?: NativeBackboneCoordinateCommitColumns,
+	): boolean {
+		if (hashes.length === 0) {
+			return true;
+		}
+		if (hashes.length !== headFlags.length) {
+			throw new Error("Expected equal raw receive hash and head lengths");
+		}
+		const coordinateColumns =
+			coordinates ?? emptyNativeBackboneCoordinateCommitColumns();
+		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
+		return this.native.commit_prepared_raw_receive_batch(
+			hashes,
+			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			coordinateColumns.hashes,
+			coordinateColumns.gids,
+			coordinateColumns.hashNumbers,
+			coordinateColumns.coordinateBatches,
+			coordinateColumns.nextHashBatches,
+			coordinateColumns.assignedToRangeBoundaries,
+			coordinateColumns.requestedReplicas,
 		);
 	}
 
@@ -3115,6 +3230,21 @@ export class NativePeerbitBackbone {
 
 	hasBlock(hash: string): boolean {
 		return this.native.has_block(hash);
+	}
+
+	prepareRawReceiveBatch(
+		blocks: Uint8Array[],
+	): NativeBackboneRawReceivePreparedFacts[] {
+		if (blocks.length === 0) {
+			return [];
+		}
+		return this.native
+			.prepare_raw_receive_batch(blocks)
+			.map(rawReceivePreparedFactsFromRow);
+	}
+
+	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
+		return this.native.clear_prepared_raw_receive_entries(iterableToArray(hashes));
 	}
 
 	getEntryCoordinateHashes(): string[] {

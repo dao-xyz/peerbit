@@ -82,6 +82,42 @@ impl LogIndexEntry {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct PreparedRawEntryV0 {
+    pub cid: String,
+    pub hash_digest_bytes: Vec<u8>,
+    pub byte_length: usize,
+    pub clock_id: Vec<u8>,
+    pub wall_time: u64,
+    pub logical: u32,
+    pub gid: String,
+    pub next: Vec<String>,
+    pub entry_type: u8,
+    pub meta_bytes: Vec<u8>,
+    pub meta_data: Option<Vec<u8>>,
+    pub payload_byte_length: usize,
+    pub signature_verified: bool,
+    pub storage_bytes: Vec<u8>,
+}
+
+impl PreparedRawEntryV0 {
+    pub fn log_index_entry(&self, head: bool) -> Result<LogIndexEntry, JsValue> {
+        Ok(LogIndexEntry::new_with_data(
+            self.cid.clone(),
+            self.gid.clone(),
+            self.next.clone(),
+            self.entry_type,
+            self.wall_time,
+            self.logical,
+            self.payload_byte_length
+                .try_into()
+                .map_err(|_| JsValue::from_str("Payload byte length exceeds u32"))?,
+            head,
+            self.meta_data.clone(),
+        ))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct JoinPlan {
     pub skip: bool,
@@ -880,9 +916,17 @@ impl NativeLogBlockStore {
             self.put_entry(key, value);
         }
     }
+
+    pub fn put_entries_core(&mut self, entries: Vec<(String, Vec<u8>)>) {
+        self.put_entries(entries);
+    }
 }
 
 impl NativeLogIndex {
+    pub fn put_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
+        self.inner.put_many(entries);
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder(
         &mut self,
@@ -3389,12 +3433,26 @@ pub fn calculate_raw_cid_v1_batch(blocks: Array) -> Result<Array, JsValue> {
 
 #[wasm_bindgen]
 pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
-    let mut rows = Vec::with_capacity(blocks.length() as usize);
-    let mut parsed_signatures = Vec::with_capacity(blocks.length() as usize);
-    let mut parsed_public_keys = Vec::with_capacity(blocks.length() as usize);
-    let mut parsed_messages = Vec::with_capacity(blocks.length() as usize);
+    let mut raw_blocks = Vec::with_capacity(blocks.length() as usize);
     for i in 0..blocks.length() {
-        let bytes = required_bytes_from_array(&blocks, i, "entry storage")?;
+        raw_blocks.push(required_bytes_from_array(&blocks, i, "entry storage")?);
+    }
+    let entries = prepare_raw_entry_v0_blocks(raw_blocks)?;
+    let out = Array::new();
+    for entry in &entries {
+        out.push(&prepared_raw_entry_v0_to_row(entry));
+    }
+    Ok(out)
+}
+
+pub fn prepare_raw_entry_v0_blocks(
+    blocks: Vec<Vec<u8>>,
+) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+    let mut entries = Vec::with_capacity(blocks.len());
+    let mut parsed_signatures = Vec::with_capacity(blocks.len());
+    let mut parsed_public_keys = Vec::with_capacity(blocks.len());
+    let mut parsed_messages = Vec::with_capacity(blocks.len());
+    for bytes in blocks {
         let (cid, digest) = calculate_raw_cid_v1_parts(&bytes);
         let storage = parse_plain_entry_v0_storage(&bytes)?;
         let meta = parse_raw_entry_v0_meta(storage.meta)?;
@@ -3420,38 +3478,32 @@ pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
             storage.payload,
         ));
 
-        let row = Array::new();
-        row.push(&JsValue::from_str(&cid));
-        row.push(&Uint8Array::from(digest.as_slice()));
-        row.push(&JsValue::from_f64(bytes.len() as f64));
-        row.push(&Uint8Array::from(meta.clock_id.as_slice()));
-        row.push(&JsValue::from_str(&meta.wall_time.to_string()));
-        row.push(&JsValue::from_f64(meta.logical as f64));
-        row.push(&JsValue::from_str(&meta.gid));
-
-        let next = Array::new();
-        for hash in meta.next {
-            next.push(&JsValue::from_str(&hash));
-        }
-        row.push(&next);
-        row.push(&JsValue::from_f64(meta.entry_type as f64));
-        row.push(&Uint8Array::from(storage.meta));
-        match meta.meta_data {
-            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
-            None => row.push(&JsValue::UNDEFINED),
-        };
-        row.push(&JsValue::from_f64(payload.data_len as f64));
-        rows.push(row);
+        entries.push(PreparedRawEntryV0 {
+            cid,
+            hash_digest_bytes: digest.to_vec(),
+            byte_length: bytes.len(),
+            clock_id: meta.clock_id,
+            wall_time: meta.wall_time,
+            logical: meta.logical,
+            gid: meta.gid,
+            next: meta.next,
+            entry_type: meta.entry_type,
+            meta_bytes: storage.meta.to_vec(),
+            meta_data: meta.meta_data,
+            payload_byte_length: payload.data_len,
+            signature_verified: false,
+            storage_bytes: bytes,
+        });
     }
     let message_refs = parsed_messages
         .iter()
         .map(|message| message.as_slice())
         .collect::<Vec<_>>();
     let verified = if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
-        vec![true; rows.len()]
+        vec![true; entries.len()]
     } else {
-        let mut out = Vec::with_capacity(rows.len());
-        for i in 0..rows.len() {
+        let mut out = Vec::with_capacity(entries.len());
+        for i in 0..entries.len() {
             out.push(
                 parsed_public_keys[i]
                     .verify(&parsed_messages[i], &parsed_signatures[i])
@@ -3460,12 +3512,36 @@ pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
         }
         out
     };
-    let out = Array::new();
-    for (index, row) in rows.into_iter().enumerate() {
-        row.push(&JsValue::from_bool(verified[index]));
-        out.push(&row);
+    for (entry, verified) in entries.iter_mut().zip(verified) {
+        entry.signature_verified = verified;
     }
-    Ok(out)
+    Ok(entries)
+}
+
+fn prepared_raw_entry_v0_to_row(entry: &PreparedRawEntryV0) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(&entry.cid));
+    row.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
+    row.push(&JsValue::from_f64(entry.byte_length as f64));
+    row.push(&Uint8Array::from(entry.clock_id.as_slice()));
+    row.push(&JsValue::from_str(&entry.wall_time.to_string()));
+    row.push(&JsValue::from_f64(entry.logical as f64));
+    row.push(&JsValue::from_str(&entry.gid));
+
+    let next = Array::new();
+    for hash in &entry.next {
+        next.push(&JsValue::from_str(hash));
+    }
+    row.push(&next);
+    row.push(&JsValue::from_f64(entry.entry_type as f64));
+    row.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
+    match &entry.meta_data {
+        Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+        None => row.push(&JsValue::UNDEFINED),
+    };
+    row.push(&JsValue::from_f64(entry.payload_byte_length as f64));
+    row.push(&JsValue::from_bool(entry.signature_verified));
+    row
 }
 
 #[wasm_bindgen]

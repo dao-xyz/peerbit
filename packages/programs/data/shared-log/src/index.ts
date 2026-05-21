@@ -9008,6 +9008,7 @@ export class SharedLog<
 					}),
 					this.log,
 					syncProfile,
+					{ nativeBackbone: this._nativeBackbone },
 				);
 				rawMaterializedKnownMissing = true;
 				if (syncProfile) {
@@ -9608,6 +9609,9 @@ export class SharedLog<
 							}
 						}
 					}
+					this._nativeBackbone?.clearPreparedRawReceiveEntries(
+						filteredHeads.map((head) => head.entry.hash),
+					);
 					if (
 						confirmedHashes.size > 0 &&
 						!context.from.equals(this.node.identity.publicKey)
@@ -11155,6 +11159,24 @@ export class SharedLog<
 			if (!trustedMissing || entries.length === 0) {
 				return false;
 			}
+			const coordinateColumns =
+				coordinateBatch && coordinateBatch.rows.length > 0
+					? this.nativeBackboneReceiveCoordinateRowsToColumns(
+							coordinateBatch.rows,
+						)
+					: undefined;
+			if (
+				backbone.graph.commitPreparedRawReceiveBatch(
+					entries.map((entry) => entry.hash),
+					headFlags,
+					coordinateColumns,
+				)
+			) {
+				if (coordinateBatch) {
+					onCoordinatesCommitted?.(coordinateBatch);
+				}
+				return true;
+			}
 			const commitEntries = new Array<NativeBackboneLogCommitEntry>(
 				entries.length,
 			);
@@ -11176,9 +11198,7 @@ export class SharedLog<
 			if (coordinateBatch && coordinateBatch.rows.length > 0) {
 				backbone.graph.commitBlocksGraphAndCoordinatesBatch(
 					commitEntries,
-					this.nativeBackboneReceiveCoordinateRowsToColumns(
-						coordinateBatch.rows,
-					),
+					coordinateColumns!,
 				);
 				onCoordinatesCommitted?.(coordinateBatch);
 			} else {

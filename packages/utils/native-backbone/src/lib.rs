@@ -11,8 +11,9 @@ use peerbit_indexer_core::schema::{
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
-    LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
-    NativeLogBlockStore, NativeLogIndex,
+    prepare_raw_entry_v0_blocks, LogIndexEntry, NativeCommittedEntryFacts,
+    NativeEntryV0PlainBuilder, NativeLogAppendProfile, NativeLogBlockStore, NativeLogIndex,
+    PreparedRawEntryV0,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
@@ -43,8 +44,14 @@ pub struct NativePeerbitBackbone {
     document_context_head_field: Option<u32>,
     document_projection_plans: Vec<ParsedProjectionPlan>,
     builder: NativeEntryV0PlainBuilder,
+    pending_raw_receive_entries: HashMap<String, PendingRawReceiveEntry>,
     append_profile_enabled: bool,
     append_profile: NativeBackboneAppendProfile,
+}
+
+struct PendingRawReceiveEntry {
+    storage_bytes: Vec<u8>,
+    entry: LogIndexEntry,
 }
 
 struct DocumentIndexAppendCommit {
@@ -213,6 +220,7 @@ impl NativePeerbitBackbone {
             document_context_head_field: None,
             document_projection_plans: Vec::new(),
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
+            pending_raw_receive_entries: HashMap::new(),
             append_profile_enabled: false,
             append_profile: NativeBackboneAppendProfile::default(),
         })
@@ -745,6 +753,81 @@ impl NativePeerbitBackbone {
             payload_sizes,
             datas,
         )
+    }
+
+    pub fn prepare_raw_receive_batch(&mut self, blocks: Array) -> Result<Array, JsValue> {
+        let prepared = prepare_raw_entry_v0_blocks(bytes_vec_from_array(blocks)?)?;
+        let out = Array::new();
+        for entry in prepared {
+            let row = prepared_raw_entry_v0_to_row(&entry);
+            let log_entry = entry.log_index_entry(true)?;
+            self.pending_raw_receive_entries.insert(
+                entry.cid.clone(),
+                PendingRawReceiveEntry {
+                    storage_bytes: entry.storage_bytes,
+                    entry: log_entry,
+                },
+            );
+            out.push(&row);
+        }
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_prepared_raw_receive_batch(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: Array,
+        coordinate_batches: Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
+
+        let mut block_entries = Vec::with_capacity(hashes.len());
+        let mut graph_entries = Vec::with_capacity(hashes.len());
+        for (index, hash) in hashes.iter().enumerate() {
+            let Some(pending) = self.pending_raw_receive_entries.get(hash) else {
+                return Ok(false);
+            };
+            block_entries.push((hash.clone(), pending.storage_bytes.clone()));
+            let mut graph_entry = pending.entry.clone();
+            graph_entry.head = heads.get_index(index as u32) != 0;
+            graph_entries.push(graph_entry);
+        }
+
+        self.blocks.put_entries_core(block_entries);
+        self.log.put_entries_core(graph_entries);
+        if coordinate_hashes.length() > 0 {
+            self.commit_entry_coordinates_batch(
+                coordinate_hashes,
+                coordinate_gids,
+                coordinate_hash_numbers,
+                coordinate_batches,
+                coordinate_next_hash_batches,
+                coordinate_assigned_to_range_boundaries,
+                coordinate_requested_replicas,
+            )?;
+        }
+        for hash in hashes {
+            self.pending_raw_receive_entries.remove(&hash);
+        }
+        Ok(true)
+    }
+
+    pub fn clear_prepared_raw_receive_entries(&mut self, hashes: Array) -> Result<usize, JsValue> {
+        let mut removed = 0;
+        for hash in strings_from_array(hashes)? {
+            if self.pending_raw_receive_entries.remove(&hash).is_some() {
+                removed += 1;
+            }
+        }
+        Ok(removed)
     }
 
     pub fn commit_log_blocks_and_graph_batch(
@@ -4030,6 +4113,27 @@ fn native_backbone_trim_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
     out
 }
 
+fn prepared_raw_entry_v0_to_row(entry: &PreparedRawEntryV0) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(&entry.cid));
+    row.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
+    row.push(&JsValue::from_f64(entry.byte_length as f64));
+    row.push(&Uint8Array::from(entry.clock_id.as_slice()));
+    row.push(&JsValue::from_str(&entry.wall_time.to_string()));
+    row.push(&JsValue::from_f64(entry.logical as f64));
+    row.push(&JsValue::from_str(&entry.gid));
+    row.push(&strings_to_array(entry.next.clone()));
+    row.push(&JsValue::from_f64(entry.entry_type as f64));
+    row.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
+    match &entry.meta_data {
+        Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+        None => row.push(&JsValue::UNDEFINED),
+    };
+    row.push(&JsValue::from_f64(entry.payload_byte_length as f64));
+    row.push(&JsValue::from_bool(entry.signature_verified));
+    row
+}
+
 fn string_field(row: &Array, index: u32, label: &str) -> Result<String, JsValue> {
     row.get(index)
         .as_string()
@@ -4137,6 +4241,18 @@ fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
                 .as_string()
                 .ok_or_else(|| JsValue::from_str("Expected string array"))?,
         );
+    }
+    Ok(out)
+}
+
+fn bytes_vec_from_array(values: Array) -> Result<Vec<Vec<u8>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for index in 0..values.length() {
+        let value = values.get(index);
+        if value.is_undefined() || value.is_null() {
+            return Err(JsValue::from_str("Expected bytes array"));
+        }
+        out.push(Uint8Array::new(&value).to_vec());
     }
     Ok(out)
 }

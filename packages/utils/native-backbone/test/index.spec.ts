@@ -676,6 +676,56 @@ describe("native peerbit backbone", () => {
 		expect(target.hasCoordinateIndexHash(prepared.hash)).to.equal(true);
 	});
 
+	it("prepares raw receive entries and commits them by hash", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const prepared = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "gid-raw-receive",
+			payloadData: new Uint8Array([4, 5, 6]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+
+		const [facts] = target.prepareRawReceiveBatch([prepared.bytes]);
+		expect(facts.cid).to.equal(prepared.hash);
+		expect(facts.gid).to.equal("gid-raw-receive");
+		expect(
+			target.graph.commitPreparedRawReceiveBatch(
+				[prepared.hash],
+				[true],
+				{
+					hashes: [prepared.hash],
+					gids: ["gid-raw-receive"],
+					hashNumbers: ["9"],
+					coordinateBatches: [["11"]],
+					nextHashBatches: [[]],
+					assignedToRangeBoundaries: new Uint8Array([0]),
+					requestedReplicas: [1],
+				},
+			),
+		).to.equal(true);
+
+		expect(target.hasBlock(prepared.hash)).to.equal(true);
+		expect(target.hasLogEntry(prepared.hash)).to.equal(true);
+		expect(target.graph.heads()).to.deep.equal([prepared.hash]);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal([prepared.hash]);
+		expect(
+			target.graph.commitPreparedRawReceiveBatch([prepared.hash], [true]),
+		).to.equal(false);
+	});
+
 	it("returns flat unique reference rows for native exchange-head planning", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

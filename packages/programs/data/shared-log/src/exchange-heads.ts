@@ -26,6 +26,11 @@ import {
 const logger = loggerFn("peerbit:shared-log:exchange-heads");
 const warn = logger.newScope("warn");
 
+type RawReceiveNativeBackbone = {
+	prepareRawReceiveBatch(blocks: Uint8Array[]): PreparedRawEntryV0Facts[];
+	clearPreparedRawReceiveEntries?(hashes: Iterable<string>): number;
+};
+
 // Stored in the reserved bytes so older peers ignore the hint.
 export const EXCHANGE_HEADS_REPAIR_HINT = 1;
 
@@ -595,6 +600,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	message: RawExchangeHeadsMessage,
 	log: Log<any>,
 	profile?: SyncProfileFn,
+	options?: { nativeBackbone?: RawReceiveNativeBackbone },
 ): Promise<ExchangeHeadsMessage<any>> => {
 	const blocks = new Array<Uint8Array>(message.heads.length);
 	let rawBytes = 0;
@@ -604,9 +610,24 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		rawBytes += bytes.byteLength;
 	}
 	const nativePrepareStartedAt = syncProfileStart(profile);
-	const preparedFacts = await prepareRawEntryV0Batch(blocks).catch(
-		() => undefined,
-	);
+	let preparedFacts: PreparedRawEntryV0Facts[] | undefined;
+	let nativePrepareSource: "backbone" | "log" | undefined;
+	if (options?.nativeBackbone) {
+		try {
+			preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks);
+			nativePrepareSource = "backbone";
+		} catch {
+			preparedFacts = undefined;
+		}
+	}
+	if (!preparedFacts) {
+		preparedFacts = await prepareRawEntryV0Batch(blocks)
+			.then((facts) => {
+				nativePrepareSource = "log";
+				return facts;
+			})
+			.catch(() => undefined);
+	}
 	if (preparedFacts) {
 		emitSyncProfileDuration(profile, nativePrepareStartedAt, {
 			name: "sharedLog.rawReceive.prepareFacts",
@@ -614,11 +635,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			entries: message.heads.length,
 			bytes: rawBytes,
 			messages: 1,
-			details: { native: true },
+			details: { native: true, source: nativePrepareSource },
 		});
 		const wrapStartedAt = syncProfileStart(profile);
-		const materialized = new ExchangeHeadsMessage({
-			heads: message.heads.map((head, index) => {
+		let materializedHeads: EntryWithRefs<any>[];
+		try {
+			materializedHeads = message.heads.map((head, index) => {
 				const facts = preparedFacts[index]!;
 				if (facts.cid !== head.hash) {
 					throw new Error("Raw exchange head hash did not match bytes");
@@ -635,7 +657,17 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 					entry,
 					gidRefrences: head.gidRefrences,
 				});
-			}),
+			});
+		} catch (error) {
+			if (nativePrepareSource === "backbone") {
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
+					preparedFacts.map((facts) => facts.cid),
+				);
+			}
+			throw error;
+		}
+		const materialized = new ExchangeHeadsMessage({
+			heads: materializedHeads,
 		});
 		materialized.reserved = message.reserved;
 		emitSyncProfileDuration(profile, wrapStartedAt, {

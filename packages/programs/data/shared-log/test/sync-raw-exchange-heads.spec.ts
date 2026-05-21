@@ -528,6 +528,10 @@ describe("raw exchange-head sync", () => {
 
 			const sharedLog = target.log as any;
 			const backbone = sharedLog._nativeBackbone;
+			const nativePreparedCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitPreparedRawReceiveBatch",
+			);
 			const nativeCommitSpy = sinon.spy(
 				backbone.graph,
 				"commitBlocksAndGraphBatch",
@@ -553,10 +557,11 @@ describe("raw exchange-head sync", () => {
 				} as any);
 
 				expect(target.log.log.length).to.equal(hashes.length);
-				expect(nativeCommitSpy.callCount).to.equal(1);
-				expect(nativeCommitSpy.firstCall.args[0]).to.have.length(
+				expect(nativePreparedCommitSpy.callCount).to.equal(1);
+				expect(nativePreparedCommitSpy.firstCall.args[0]).to.have.length(
 					hashes.length,
 				);
+				expect(nativeCommitSpy.callCount).to.equal(0);
 				expect(blockPutColumnsSpy.callCount).to.equal(0);
 				expect(graphPutBatchSpy.callCount).to.equal(0);
 				expect(graphPutAppendChainSpy.callCount).to.equal(0);
@@ -570,6 +575,7 @@ describe("raw exchange-head sync", () => {
 				graphPutBatchSpy.restore();
 				blockPutColumnsSpy.restore();
 				nativeCommitSpy.restore();
+				nativePreparedCommitSpy.restore();
 			}
 		} finally {
 			await session.stop();
@@ -778,6 +784,10 @@ describe("raw exchange-head sync", () => {
 
 			const sharedLog = target.log as any;
 			const backbone = sharedLog._nativeBackbone;
+			const nativePreparedCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitPreparedRawReceiveBatch",
+			);
 			const combinedCommitSpy = sinon.spy(
 				backbone.graph,
 				"commitBlocksGraphAndCoordinatesBatch",
@@ -804,13 +814,14 @@ describe("raw exchange-head sync", () => {
 				} as any);
 
 				expect(target.log.log.length).to.equal(hashes.length);
-				expect(combinedCommitSpy.callCount).to.equal(1);
-				expect(combinedCommitSpy.firstCall.args[0]).to.have.length(
+				expect(nativePreparedCommitSpy.callCount).to.equal(1);
+				expect(nativePreparedCommitSpy.firstCall.args[0]).to.have.length(
 					hashes.length,
 				);
-				expect(combinedCommitSpy.firstCall.args[1].hashes).to.have.length(
+				expect(nativePreparedCommitSpy.firstCall.args[2].hashes).to.have.length(
 					hashes.length,
 				);
+				expect(combinedCommitSpy.callCount).to.equal(0);
 				expect(blockGraphCommitSpy.callCount).to.equal(0);
 				expect(coordinateCommitSpy.callCount).to.equal(0);
 				expect(backboneOnlyPersistSpy.callCount).to.equal(0);
@@ -827,6 +838,7 @@ describe("raw exchange-head sync", () => {
 				coordinateCommitSpy.restore();
 				blockGraphCommitSpy.restore();
 				combinedCommitSpy.restore();
+				nativePreparedCommitSpy.restore();
 			}
 		} finally {
 			await session.stop();
