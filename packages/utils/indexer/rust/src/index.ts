@@ -157,6 +157,28 @@ type NativeRustIndex<T extends Record<string, any>> = {
 		byteElementIndexLimit: number,
 		keys: string[],
 	) => void;
+	put_shared_log_coordinates_and_delete_keys_void?: (
+		keys: string[],
+		ids: types.IdKey[],
+		values: T[],
+		hashField: number,
+		hashNumberField: number,
+		gidField: number,
+		coordinatesField: number,
+		coordinatesArrayField: number,
+		wallTimeField: number,
+		assignedToRangeBoundaryField: number,
+		metaField: number,
+		hashes: string[],
+		hashNumbers: string[],
+		gids: string[],
+		coordinates: string[][],
+		wallTimes: string[],
+		assignedToRangeBoundaries: Uint8Array,
+		metaBytes: Uint8Array[],
+		byteElementIndexLimit: number,
+		deleteKeys: string[][],
+	) => void;
 	put_shared_log_coordinate_encoded_and_delete_keys_void?: (
 		key: string,
 		id: types.IdKey,
@@ -2672,29 +2694,17 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		});
 
 		if (!this.snapshotFile) {
-			for (const entry of prepared) {
-				this.putSharedLogCoordinateNativeValueAndDeleteKeysNoReturn(
-					entry.value,
-					entry.id,
-					entry.deleteKeys,
-					entry.nativeFields,
-					entry.storeKey,
-				);
-			}
+			this.putSharedLogCoordinateNativeValuesAndDeleteKeysBatchNoReturn(
+				prepared,
+			);
 			return;
 		}
 
 		return this.enqueueMutation(async () => {
 			await this.appendPutAndDeletesBatch(prepared);
-			for (const entry of prepared) {
-				this.putSharedLogCoordinateNativeValueAndDeleteKeysNoReturn(
-					entry.value,
-					entry.id,
-					entry.deleteKeys,
-					entry.nativeFields,
-					entry.storeKey,
-				);
-			}
+			this.putSharedLogCoordinateNativeValuesAndDeleteKeysBatchNoReturn(
+				prepared,
+			);
 			await this.compactIfNeeded();
 		});
 	}
@@ -3648,6 +3658,67 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			value,
 			...this.getSharedLogCoordinateNativePutArgs(fields),
 			deleteKeys,
+		);
+	}
+
+	private putSharedLogCoordinateNativeValuesAndDeleteKeysBatchNoReturn(
+		entries: Array<{
+			value: T;
+			id: types.IdKey;
+			storeKey: string;
+			nativeFields: SharedLogCoordinateNativeFields;
+			deleteKeys: string[];
+		}>,
+	): void {
+		const native = this.getNative();
+		const nativePutBatch =
+			native.put_shared_log_coordinates_and_delete_keys_void;
+		if (!nativePutBatch) {
+			for (const entry of entries) {
+				this.putSharedLogCoordinateNativeValueAndDeleteKeysNoReturn(
+					entry.value,
+					entry.id,
+					entry.deleteKeys,
+					entry.nativeFields,
+					entry.storeKey,
+				);
+			}
+			return;
+		}
+
+		nativePutBatch.call(
+			native,
+			entries.map((entry) => entry.storeKey),
+			entries.map((entry) => entry.id),
+			entries.map((entry) => entry.value),
+			...this.getSharedLogCoordinateNativeFieldIdArgs(),
+			entries.map((entry) => entry.nativeFields.hash),
+			entries.map(
+				(entry) =>
+					entry.nativeFields.hashNumberString ??
+					entry.nativeFields.hashNumber.toString(),
+			),
+			entries.map((entry) => entry.nativeFields.gid),
+			entries.map(
+				(entry) =>
+					entry.nativeFields.coordinateStrings ??
+					entry.nativeFields.coordinates.map((coordinate) =>
+						coordinate.toString(),
+					),
+			),
+			entries.map(
+				(entry) =>
+					entry.nativeFields.wallTimeString ??
+					entry.nativeFields.wallTime.toString(),
+			),
+			new Uint8Array(
+				entries.map((entry) =>
+					entry.nativeFields.assignedToRangeBoundary ? 1 : 0,
+				),
+			),
+			entries.map((entry) => entry.nativeFields.metaBytes),
+			this.byteElementIndexLimit,
+			entries.map((entry) => entry.deleteKeys),
 		);
 	}
 

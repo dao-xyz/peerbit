@@ -618,6 +618,95 @@ impl NativeRustIndex {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinates_and_delete_keys_void(
+        &mut self,
+        keys: Array,
+        ids: Array,
+        values: Array,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hashes: Array,
+        hash_numbers: Array,
+        gids: Array,
+        coordinates: Array,
+        wall_times: Array,
+        assigned_to_range_boundaries: Uint8Array,
+        meta_bytes: Array,
+        byte_element_index_limit: usize,
+        delete_keys: Array,
+    ) -> Result<(), JsValue> {
+        let len = keys.length();
+        if ids.length() != len
+            || values.length() != len
+            || hashes.length() != len
+            || hash_numbers.length() != len
+            || gids.length() != len
+            || coordinates.length() != len
+            || wall_times.length() != len
+            || assigned_to_range_boundaries.length() != len
+            || meta_bytes.length() != len
+            || delete_keys.length() != len
+        {
+            return Err(js_error("Mismatched shared-log coordinate batch lengths"));
+        }
+
+        for index in 0..len {
+            let key = required_array_string(&keys, index, "shared-log coordinate key")?;
+            let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+                hash_field,
+                hash_number_field,
+                gid_field,
+                coordinates_field,
+                coordinates_array_field,
+                wall_time_field,
+                assigned_to_range_boundary_field,
+                meta_field,
+                hash: required_array_string(&hashes, index, "shared-log coordinate hash")?,
+                hash_number: required_array_string(
+                    &hash_numbers,
+                    index,
+                    "shared-log coordinate hashNumber",
+                )?,
+                gid: required_array_string(&gids, index, "shared-log coordinate gid")?,
+                coordinates: required_nested_array(
+                    &coordinates,
+                    index,
+                    "shared-log coordinate coordinates",
+                )?,
+                wall_time: required_array_string(
+                    &wall_times,
+                    index,
+                    "shared-log coordinate wallTime",
+                )?,
+                assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index) != 0,
+                meta_bytes: Uint8Array::new(&meta_bytes.get(index)).to_vec(),
+                byte_element_index_limit,
+            })?;
+            let keys_to_delete =
+                required_nested_array(&delete_keys, index, "shared-log coordinate deleteKeys")?;
+            let keys_to_delete: Vec<_> = keys_to_delete
+                .iter()
+                .filter_map(|key| key.as_string())
+                .collect();
+
+            self.store
+                .put(key.clone(), ids.get(index), values.get(index));
+            self.planner.index.put(key, fields);
+            for key in &keys_to_delete {
+                self.planner.index.delete(key);
+                self.store.delete(key);
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn put_shared_log_coordinate_encoded_and_delete_keys_void(
         &mut self,
         key: String,
@@ -950,6 +1039,21 @@ fn parse_u64_string(value: &str, field: &str) -> Result<u64, JsValue> {
     value
         .parse::<u64>()
         .map_err(|_| js_error(format!("Invalid shared-log {field}")))
+}
+
+fn required_array_string(array: &Array, index: u32, field: &str) -> Result<String, JsValue> {
+    array
+        .get(index)
+        .as_string()
+        .ok_or_else(|| js_error(format!("Invalid {field}")))
+}
+
+fn required_nested_array(array: &Array, index: u32, field: &str) -> Result<Array, JsValue> {
+    let value = array.get(index);
+    if !Array::is_array(&value) {
+        return Err(js_error(format!("Invalid {field}")));
+    }
+    Ok(Array::from(&value))
 }
 
 fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {

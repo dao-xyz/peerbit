@@ -1,5 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
-use js_sys::{Array, BigUint64Array};
+use js_sys::{Array, BigUint64Array, Uint8Array};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -2062,6 +2062,67 @@ impl NativeSharedLogState {
         self.inner.put_entry_coordinate_state(hash, entry);
         for next_hash in next_hashes {
             self.inner.delete_entry_coordinate_state(&next_hash);
+        }
+        Ok(())
+    }
+
+    pub fn commit_entry_coordinates_batch(
+        &mut self,
+        hashes: Array,
+        gids: Array,
+        hash_numbers: Array,
+        coordinate_batches: Array,
+        next_hash_batches: Array,
+        assigned_to_range_boundaries: Uint8Array,
+        requested_replicas: Array,
+    ) -> Result<(), JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let gids = strings_from_array(gids)?;
+        let hash_numbers = strings_from_array(hash_numbers)?;
+        let coordinate_batches = cursor_batches_from_array(coordinate_batches)?;
+        let next_hash_batches = string_batches_from_array(next_hash_batches, "next hash batch")?;
+        let requested_replicas = usize_from_array(requested_replicas)?;
+        ensure_same_len(hashes.len(), gids.len(), "coordinate commit gid")?;
+        ensure_same_len(
+            hashes.len(),
+            hash_numbers.len(),
+            "coordinate commit hash number",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            coordinate_batches.len(),
+            "coordinate commit coordinates",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            next_hash_batches.len(),
+            "coordinate commit next hashes",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            assigned_to_range_boundaries.length() as usize,
+            "coordinate commit assigned flags",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            requested_replicas.len(),
+            "coordinate commit replica counts",
+        )?;
+
+        for index in 0..hashes.len() {
+            let entry = EntryCoordinateState {
+                gid: gids[index].clone(),
+                hash_number: parse_u64(&hash_numbers[index])?,
+                coordinates: coordinate_batches[index].clone(),
+                assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index as u32)
+                    != 0,
+                requested_replicas: requested_replicas[index],
+            };
+            self.inner
+                .put_entry_coordinate_state(hashes[index].clone(), entry);
+            for next_hash in &next_hash_batches[index] {
+                self.inner.delete_entry_coordinate_state(next_hash);
+            }
         }
         Ok(())
     }

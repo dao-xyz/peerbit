@@ -997,6 +997,84 @@ impl NativePeerbitBackbone {
         self.delete_coordinate_core_batch(next_hashes_for_core)
     }
 
+    pub fn commit_entry_coordinates_batch(
+        &mut self,
+        hashes: Array,
+        gids: Array,
+        hash_numbers: Array,
+        coordinate_batches: Array,
+        next_hash_batches: Array,
+        assigned_to_range_boundaries: Uint8Array,
+        requested_replicas: Array,
+    ) -> Result<(), JsValue> {
+        let hashes_for_core = hashes.clone();
+        let gids_for_core = gids.clone();
+        let hash_numbers_for_core = hash_numbers.clone();
+        let coordinate_batches_for_core = coordinate_batches.clone();
+        let next_hash_batches_for_core = next_hash_batches.clone();
+        let assigned_to_range_boundaries_for_core = assigned_to_range_boundaries.clone();
+        let requested_replicas_for_core = requested_replicas.clone();
+        self.shared_log.commit_entry_coordinates_batch(
+            hashes,
+            gids,
+            hash_numbers,
+            coordinate_batches,
+            next_hash_batches,
+            assigned_to_range_boundaries,
+            requested_replicas,
+        )?;
+
+        let hashes = strings_from_array(hashes_for_core)?;
+        let gids = strings_from_array(gids_for_core)?;
+        let hash_numbers = strings_from_array(hash_numbers_for_core)?;
+        let coordinate_batches = coordinate_batches_from_array(coordinate_batches_for_core)?;
+        let next_hash_batches =
+            string_batches_from_array(next_hash_batches_for_core, "coordinate commit next hashes")?;
+        let requested_replicas = usize_values_from_array(requested_replicas_for_core)?;
+        ensure_same_len(hashes.len(), gids.len(), "coordinate commit gid")?;
+        ensure_same_len(
+            hashes.len(),
+            hash_numbers.len(),
+            "coordinate commit hash number",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            coordinate_batches.len(),
+            "coordinate commit coordinates",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            next_hash_batches.len(),
+            "coordinate commit next hashes",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            assigned_to_range_boundaries_for_core.length() as usize,
+            "coordinate commit assigned flags",
+        )?;
+        ensure_same_len(
+            hashes.len(),
+            requested_replicas.len(),
+            "coordinate commit replicas",
+        )?;
+
+        for index in 0..hashes.len() {
+            self.put_coordinate_core(
+                hashes[index].clone(),
+                gids[index].clone(),
+                parse_u64_string(&hash_numbers[index], "coordinate hash number")?,
+                coordinate_batches[index].clone(),
+                assigned_to_range_boundaries_for_core.get_index(index as u32) != 0,
+                requested_replicas[index],
+                0,
+                Vec::new(),
+                true,
+            );
+            self.delete_coordinate_core_strings(next_hash_batches[index].clone());
+        }
+        Ok(())
+    }
+
     pub fn add_gid_peers(
         &mut self,
         gid: String,
@@ -3939,6 +4017,55 @@ fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
         );
     }
     Ok(out)
+}
+
+fn string_batches_from_array(values: Array, label: &str) -> Result<Vec<Vec<String>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for index in 0..values.length() {
+        let value = values.get(index);
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str(&format!("Expected {label}")));
+        }
+        out.push(strings_from_array(Array::from(&value))?);
+    }
+    Ok(out)
+}
+
+fn coordinate_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for index in 0..values.length() {
+        let value = values.get(index);
+        if !Array::is_array(&value) {
+            return Err(JsValue::from_str("Expected coordinate batch array"));
+        }
+        out.push(coordinate_numbers_from_array(Array::from(&value))?);
+    }
+    Ok(out)
+}
+
+fn usize_values_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
+    let mut out = Vec::with_capacity(values.length() as usize);
+    for index in 0..values.length() {
+        let value = values
+            .get(index)
+            .as_f64()
+            .ok_or_else(|| JsValue::from_str("Expected unsigned integer array"))?;
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
+            return Err(JsValue::from_str("Expected unsigned integer array"));
+        }
+        out.push(value as usize);
+    }
+    Ok(out)
+}
+
+fn ensure_same_len(left: usize, right: usize, label: &str) -> Result<(), JsValue> {
+    if left == right {
+        Ok(())
+    } else {
+        Err(JsValue::from_str(&format!(
+            "Mismatched {label} input lengths"
+        )))
+    }
 }
 
 fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {

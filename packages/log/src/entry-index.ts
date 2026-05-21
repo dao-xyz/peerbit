@@ -1503,6 +1503,12 @@ export class EntryIndex<T> {
 							this.properties.nativeGraph.graph,
 						)
 					: undefined;
+			const deferBatchIndexWrite =
+				properties.deferIndexWrite === true &&
+				!!putBatch &&
+				!!this.properties.nativeGraph &&
+				!this.properties.onGidRemoved &&
+				entries.every((entry) => entry.meta.type !== EntryType.CUT);
 			const nativeEntries: NativeLogEntry[] = [];
 			for (let i = 0; i < entries.length; i++) {
 				const entry = entries[i];
@@ -1580,17 +1586,10 @@ export class EntryIndex<T> {
 				},
 			});
 
-			if (nativeCommitOwnsHotIndex) {
-				this.schedulePendingIndexWriteFlush();
-			} else if (putBatch) {
-				const indexPutStartedAt = entryIndexProfileStart(profile);
-				await putBatch.call(this.properties.index, shallowEntries);
-				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
-					name: "log.entryIndex.putAppendBatch.indexPut",
-					component: "log",
-					entries: shallowEntries.length,
-					messages: 1,
-				});
+			const putNativeEntries = (allowLoopFallback: boolean) => {
+				if (nativeEntries.length === 0) {
+					return;
+				}
 				if (nativeGraphPutAppendChain) {
 					const nativePutStartedAt = entryIndexProfileStart(profile);
 					nativeGraphPutAppendChain(nativeEntries);
@@ -1611,7 +1610,7 @@ export class EntryIndex<T> {
 						messages: 1,
 						details: { method: "putBatch" },
 					});
-				} else {
+				} else if (allowLoopFallback) {
 					const nativePutStartedAt = entryIndexProfileStart(profile);
 					for (const nativeEntry of nativeEntries) {
 						this.properties.nativeGraph?.graph.put(nativeEntry);
@@ -1624,28 +1623,36 @@ export class EntryIndex<T> {
 						details: { method: "putLoop" },
 					});
 				}
-			} else if (nativeEntries.length > 0) {
-				if (nativeGraphPutAppendChain) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					nativeGraphPutAppendChain(nativeEntries);
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putAppendChain" },
-					});
-				} else if (nativeGraphPutBatch) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					nativeGraphPutBatch(nativeEntries);
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putBatch" },
-					});
+			};
+
+			if (nativeCommitOwnsHotIndex) {
+				this.schedulePendingIndexWriteFlush();
+			} else if (deferBatchIndexWrite) {
+				const indexPutStartedAt = entryIndexProfileStart(profile);
+				for (const shallowEntry of shallowEntries) {
+					this.pendingIndexWrites.set(shallowEntry.hash, shallowEntry);
 				}
+				this.schedulePendingIndexWriteFlush();
+				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+					name: "log.entryIndex.putAppendBatch.indexPut",
+					component: "log",
+					entries: shallowEntries.length,
+					messages: 1,
+					details: { deferred: true },
+				});
+				putNativeEntries(true);
+			} else if (putBatch) {
+				const indexPutStartedAt = entryIndexProfileStart(profile);
+				await putBatch.call(this.properties.index, shallowEntries);
+				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+					name: "log.entryIndex.putAppendBatch.indexPut",
+					component: "log",
+					entries: shallowEntries.length,
+					messages: 1,
+				});
+				putNativeEntries(true);
+			} else if (nativeEntries.length > 0) {
+				putNativeEntries(false);
 			}
 
 			if (externalNexts.size > 0) {

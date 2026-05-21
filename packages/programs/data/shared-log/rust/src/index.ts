@@ -336,6 +336,15 @@ type NativeSharedLogStateHandle = {
 		assignedToRangeBoundary: boolean,
 		requestedReplicas: number,
 	) => void;
+	commit_entry_coordinates_batch?: (
+		hashes: string[],
+		gids: string[],
+		hashNumbers: string[],
+		coordinateBatches: string[][],
+		nextHashBatches: string[][],
+		assignedToRangeBoundaries: Uint8Array,
+		requestedReplicas: number[],
+	) => void;
 	count_entry_coordinates_in_ranges: (
 		start1: string[],
 		end1: string[],
@@ -1146,6 +1155,59 @@ export class SharedLogNativeState {
 			[...nextHashes],
 			assignedToRangeBoundary,
 			requestedReplicas ?? coordinateRows.length,
+		);
+	}
+
+	commitEntryCoordinatesBatch(
+		entries: Iterable<{
+			hash: string;
+			gid: string;
+			coordinates: Iterable<bigint | number | string>;
+			nextHashes: Iterable<string>;
+			assignedToRangeBoundary?: boolean;
+			requestedReplicas?: number;
+			hashNumber?: bigint | number | string;
+		}>,
+	): void {
+		const rows = [...entries].map((entry) => {
+			const coordinates = [...entry.coordinates].map(asIntegerString);
+			return {
+				hash: entry.hash,
+				gid: entry.gid,
+				hashNumber: asIntegerString(entry.hashNumber ?? 0),
+				coordinates,
+				nextHashes: [...entry.nextHashes],
+				assignedToRangeBoundary:
+					entry.assignedToRangeBoundary === true ? 1 : 0,
+				requestedReplicas: entry.requestedReplicas ?? coordinates.length,
+			};
+		});
+		if (rows.length === 0) {
+			return;
+		}
+		const nativeCommitBatch = this.native.commit_entry_coordinates_batch;
+		if (!nativeCommitBatch) {
+			for (const row of rows) {
+				this.native.commit_entry_coordinates(
+					row.hash,
+					row.gid,
+					row.hashNumber,
+					row.coordinates,
+					row.nextHashes,
+					row.assignedToRangeBoundary === 1,
+					row.requestedReplicas,
+				);
+			}
+			return;
+		}
+		nativeCommitBatch(
+			rows.map((row) => row.hash),
+			rows.map((row) => row.gid),
+			rows.map((row) => row.hashNumber),
+			rows.map((row) => row.coordinates),
+			rows.map((row) => row.nextHashes),
+			new Uint8Array(rows.map((row) => row.assignedToRangeBoundary)),
+			rows.map((row) => row.requestedReplicas),
 		);
 	}
 

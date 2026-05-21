@@ -9376,6 +9376,7 @@ export class SharedLog<
 							__peerbitBatchIndependent: true,
 							__peerbitEntriesAlreadyMissing: true,
 							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
+							__peerbitDeferIndexWrite: true,
 							__peerbitOnAppendHashes: (hashes: string[]) => {
 								for (const hash of hashes) {
 									if (hashOnlyEntryAdded && !this._pendingIHave.has(hash)) {
@@ -11732,29 +11733,69 @@ export class SharedLog<
 			return results;
 		}
 
+		const nativeCoordinateCommits = changed.filter(
+			({ item }) => item.commitNative !== false,
+		);
+		if (nativeCoordinateCommits.length > 0 && this._nativeSharedLogState) {
+			if (this._nativeSharedLogState.commitEntryCoordinatesBatch) {
+				this._nativeSharedLogState.commitEntryCoordinatesBatch(
+					nativeCoordinateCommits.map(({ item, prepared }) => ({
+						hash: item.entry.hash,
+						gid: prepared.fields.gid,
+						coordinates: item.coordinates,
+						nextHashes: item.entry.meta.next,
+						assignedToRangeBoundary: prepared.assignedToRangeBoundary,
+						requestedReplicas: item.replicas,
+						hashNumber: prepared.fields.hashNumber,
+					})),
+				);
+			} else {
+				for (const { item, prepared } of nativeCoordinateCommits) {
+					this._nativeSharedLogState.commitEntryCoordinates(
+						item.entry.hash,
+						prepared.fields.gid,
+						item.coordinates,
+						item.entry.meta.next,
+						prepared.assignedToRangeBoundary,
+						item.replicas,
+						prepared.fields.hashNumber,
+					);
+				}
+			}
+		}
+
+		const nativeBackboneCoordinateCommits = changed.filter(
+			({ item }) => item.commitNativeBackbone !== false,
+		);
+		if (nativeBackboneCoordinateCommits.length > 0 && this._nativeBackbone) {
+			if (this._nativeBackbone.commitEntryCoordinatesBatch) {
+				this._nativeBackbone.commitEntryCoordinatesBatch(
+					nativeBackboneCoordinateCommits.map(({ item, prepared }) => ({
+						hash: item.entry.hash,
+						gid: prepared.fields.gid,
+						coordinates: item.coordinates,
+						nextHashes: item.entry.meta.next,
+						assignedToRangeBoundary: prepared.assignedToRangeBoundary,
+						requestedReplicas: item.replicas,
+						hashNumber: prepared.fields.hashNumber,
+					})),
+				);
+			} else {
+				for (const { item, prepared } of nativeBackboneCoordinateCommits) {
+					this._nativeBackbone.commitEntryCoordinates(
+						item.entry.hash,
+						prepared.fields.gid,
+						item.coordinates,
+						item.entry.meta.next,
+						prepared.assignedToRangeBoundary,
+						item.replicas,
+						prepared.fields.hashNumber,
+					);
+				}
+			}
+		}
+
 		for (const { item, prepared } of changed) {
-			if (item.commitNative !== false) {
-				this._nativeSharedLogState?.commitEntryCoordinates(
-					item.entry.hash,
-					prepared.fields.gid,
-					item.coordinates,
-					item.entry.meta.next,
-					prepared.assignedToRangeBoundary,
-					item.replicas,
-					prepared.fields.hashNumber,
-				);
-			}
-			if (item.commitNativeBackbone !== false) {
-				this._nativeBackbone?.commitEntryCoordinates(
-					item.entry.hash,
-					prepared.fields.gid,
-					item.coordinates,
-					item.entry.meta.next,
-					prepared.assignedToRangeBoundary,
-					item.replicas,
-					prepared.fields.hashNumber,
-				);
-			}
 			if (this._residentEntryCoordinatesByHash) {
 				this._residentEntryCoordinatesByHash.set(
 					item.entry.hash,

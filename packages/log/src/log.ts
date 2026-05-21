@@ -2292,6 +2292,8 @@ export class Log<T> {
 			__peerbitCanAppendAlreadyValidated?: boolean;
 			/** Internal: trusted caller can consume joined append hashes without a full Change object. */
 			__peerbitOnAppendHashes?: InternalAppendHashesSink;
+			/** Internal: trusted caller can tolerate deferred generic index persistence. */
+			__peerbitDeferIndexWrite?: boolean;
 			/** Internal: optional diagnostic sink for trusted batched join paths. */
 			__peerbitProfile?: InternalProfileSink;
 		},
@@ -2491,6 +2493,7 @@ export class Log<T> {
 			__peerbitEntriesAlreadyMissing?: boolean;
 			__peerbitCanAppendAlreadyValidated?: boolean;
 			__peerbitOnAppendHashes?: InternalAppendHashesSink;
+			__peerbitDeferIndexWrite?: boolean;
 			__peerbitProfile?: InternalProfileSink;
 		},
 	): Promise<boolean> {
@@ -2609,6 +2612,7 @@ export class Log<T> {
 				unique: trustedMissing,
 				heads: headFlags,
 				prepared: preparedBatch.prepared,
+				deferIndexWrite: options.__peerbitDeferIndexWrite,
 				profile,
 			});
 			emitInternalProfileDuration(profile, indexStartedAt, {

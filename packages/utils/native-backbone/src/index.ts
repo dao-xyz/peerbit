@@ -239,6 +239,15 @@ type NativePeerbitBackboneHandle = {
 		assignedToRangeBoundary: boolean,
 		requestedReplicas: number,
 	) => void;
+	commit_entry_coordinates_batch?: (
+		hashes: string[],
+		gids: string[],
+		hashNumbers: string[],
+		coordinateBatches: string[][],
+		nextHashBatches: string[][],
+		assignedToRangeBoundaries: Uint8Array,
+		requestedReplicas: number[],
+	) => void;
 	add_gid_peers: (gid: string, peers: string[], reset: boolean) => number;
 	remove_gid_peer: (peer: string, gid?: string) => void;
 	remove_gid_peers?: (peer: string, gids: string[]) => void;
@@ -3266,6 +3275,58 @@ export class NativePeerbitBackbone {
 			iterableToArray(nextHashes),
 			assignedToRangeBoundary,
 			requestedReplicas,
+		);
+	}
+
+	commitEntryCoordinatesBatch(
+		entries: Iterable<{
+			hash: string;
+			gid: string;
+			coordinates: Iterable<bigint | number | string>;
+			nextHashes: Iterable<string>;
+			assignedToRangeBoundary: boolean;
+			requestedReplicas: number;
+			hashNumber: bigint | number | string;
+		}>,
+	): void {
+		const rows = [...entries].map((entry) => {
+			const coordinates = [...entry.coordinates].map(integerString);
+			return {
+				hash: entry.hash,
+				gid: entry.gid,
+				hashNumber: integerString(entry.hashNumber),
+				coordinates,
+				nextHashes: iterableToArray(entry.nextHashes),
+				assignedToRangeBoundary: entry.assignedToRangeBoundary ? 1 : 0,
+				requestedReplicas: entry.requestedReplicas,
+			};
+		});
+		if (rows.length === 0) {
+			return;
+		}
+		const nativeCommitBatch = this.native.commit_entry_coordinates_batch;
+		if (!nativeCommitBatch) {
+			for (const row of rows) {
+				this.native.commit_entry_coordinates(
+					row.hash,
+					row.gid,
+					row.hashNumber,
+					row.coordinates,
+					row.nextHashes,
+					row.assignedToRangeBoundary === 1,
+					row.requestedReplicas,
+				);
+			}
+			return;
+		}
+		nativeCommitBatch(
+			rows.map((row) => row.hash),
+			rows.map((row) => row.gid),
+			rows.map((row) => row.hashNumber),
+			rows.map((row) => row.coordinates),
+			rows.map((row) => row.nextHashes),
+			new Uint8Array(rows.map((row) => row.assignedToRangeBoundary)),
+			rows.map((row) => row.requestedReplicas),
 		);
 	}
 
