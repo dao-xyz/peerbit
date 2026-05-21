@@ -10574,12 +10574,30 @@ export class SharedLog<
 
 		const coordinates = properties.plan.coordinates as NumberFromType<R>[];
 		const hashNumber = properties.plan.hashNumber as NumberFromType<R>;
+		const entryMeta = properties.entry.meta;
 		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
+		if (metaBytes) {
+			const wallTime = entryMeta.clock.timestamp.wallTime;
+			return {
+				assignedToRangeBoundary,
+				fields: {
+					hash: properties.plan.hash,
+					hashNumber,
+					hashNumberString: properties.plan.hashNumberString,
+					gid: properties.plan.gid,
+					coordinates,
+					coordinateStrings: properties.plan.coordinateStrings,
+					wallTime,
+					wallTimeString: wallTime.toString(),
+					assignedToRangeBoundary,
+					metaBytes,
+				},
+			};
+		}
 		const coordinateEntry = new this.indexableDomain.constructorEntry({
 			assignedToRangeBoundary,
 			coordinates,
-			meta: properties.entry.meta,
-			metaBytes,
+			meta: entryMeta,
 			hash: properties.plan.hash,
 			hashNumber,
 		});

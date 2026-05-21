@@ -92,6 +92,10 @@ describe("raw exchange-head sync", () => {
 				db2.log as any,
 				"persistCoordinatesBatch",
 			);
+			const coordinatePrepareSpy = sinon.spy(
+				db2.log as any,
+				"createCoordinatePersistenceEntryFromNativePlan",
+			);
 			const sharedOnChangeSpy = sinon.spy(db2.log as any, "onChange");
 			const receivedEntriesSpy = sinon.spy(
 				db2.log.syncronizer as any,
@@ -145,6 +149,16 @@ describe("raw exchange-head sync", () => {
 			expect(planJoinSpy.callCount).to.equal(0);
 			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
+			expect(coordinatePrepareSpy.callCount).to.be.greaterThan(0);
+			expect(
+				coordinatePrepareSpy.returnValues.some(
+					(prepared) =>
+						prepared &&
+						prepared !== false &&
+						!prepared.coordinateEntry &&
+						prepared.fields?.metaBytes instanceof Uint8Array,
+				),
+			).equal(true);
 			expect(receivedEntriesSpy.callCount).to.equal(1);
 			expect(receivedEntriesSpy.firstCall.args[0].entries).to.have.length(
 				entryCount,
@@ -164,6 +178,7 @@ describe("raw exchange-head sync", () => {
 			expect(materializeProfile.bytes).to.be.greaterThan(0);
 			receivedEntriesSpy.restore();
 			sharedOnChangeSpy.restore();
+			coordinatePrepareSpy.restore();
 			persistBatchSpy.restore();
 			coordinateBatchSpy.restore();
 			planJoinSpy.restore();
