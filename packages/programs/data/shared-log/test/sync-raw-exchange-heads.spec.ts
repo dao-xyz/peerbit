@@ -6,6 +6,7 @@ import { expect } from "chai";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import {
+	EntryWithRefs,
 	ExchangeHeadsMessage,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
@@ -13,9 +14,53 @@ import {
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
+import { groupByGid } from "../src/utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe("raw exchange-head sync", () => {
+	it("groups already-materialized entry refs without async meta reads", async () => {
+		const session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		try {
+			const store = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					replicate: false,
+					setup: {
+						domain: createReplicationDomainHash("u32"),
+						type: "u32" as const,
+						syncronizer: SimpleSyncronizer,
+						name: "u32-simple-raw",
+					},
+				},
+			});
+			const first = await store.add(uuid(), { meta: { next: [] } });
+			const second = await store.add(uuid(), { meta: { next: [] } });
+			const firstGetMetaSpy = sinon.spy(first.entry, "getMeta");
+			const secondGetMetaSpy = sinon.spy(second.entry, "getMeta");
+			try {
+				const grouped = await groupByGid([
+					new EntryWithRefs({
+						entry: first.entry,
+						gidRefrences: [],
+					}),
+					new EntryWithRefs({
+						entry: second.entry,
+						gidRefrences: [],
+					}),
+				]);
+				expect(grouped.size).equal(2);
+				expect(firstGetMetaSpy.callCount).equal(0);
+				expect(secondGetMetaSpy.callCount).equal(0);
+			} finally {
+				secondGetMetaSpy.restore();
+				firstGetMetaSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("uses raw exchange heads for capable simple-sync peers", async () => {
 		const session = await TestSession.disconnected(2, [
 			{

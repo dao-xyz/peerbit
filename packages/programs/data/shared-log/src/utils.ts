@@ -2,6 +2,14 @@ import { Entry, ShallowEntry } from "@peerbit/log";
 import type { EntryWithRefs } from "./exchange-heads.js";
 import { type EntryReplicated, isEntryReplicated } from "./ranges.js";
 
+const getEntryGid = async (entry: Entry<any>): Promise<string> => {
+	try {
+		return entry.meta.gid;
+	} catch {
+		return (await entry.getMeta()).gid;
+	}
+};
+
 export const groupByGid = async <
 	T extends
 		| ShallowEntry
@@ -15,12 +23,12 @@ export const groupByGid = async <
 	for (const head of entries) {
 		const gid =
 			head instanceof Entry
-				? (await head.getMeta()).gid
+				? await getEntryGid(head)
 				: head instanceof ShallowEntry
 					? head.meta.gid
 					: isEntryReplicated(head)
 						? head.gid
-						: (await head.entry.getMeta()).gid;
+						: await getEntryGid(head.entry);
 		let value = groupByGid.get(gid);
 		if (!value) {
 			value = [];
