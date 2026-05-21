@@ -14,7 +14,7 @@ import {
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
-import { groupByGid } from "../src/utils.js";
+import { groupByGid, tryGroupByGidSync } from "../src/utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
 
 describe("raw exchange-head sync", () => {
@@ -39,7 +39,7 @@ describe("raw exchange-head sync", () => {
 			const firstGetMetaSpy = sinon.spy(first.entry, "getMeta");
 			const secondGetMetaSpy = sinon.spy(second.entry, "getMeta");
 			try {
-				const grouped = await groupByGid([
+				const heads = [
 					new EntryWithRefs({
 						entry: first.entry,
 						gidRefrences: [],
@@ -48,7 +48,10 @@ describe("raw exchange-head sync", () => {
 						entry: second.entry,
 						gidRefrences: [],
 					}),
-				]);
+				];
+				const syncGrouped = tryGroupByGidSync(heads);
+				expect(syncGrouped?.size).equal(2);
+				const grouped = await groupByGid(heads);
 				expect(grouped.size).equal(2);
 				expect(firstGetMetaSpy.callCount).equal(0);
 				expect(secondGetMetaSpy.callCount).equal(0);

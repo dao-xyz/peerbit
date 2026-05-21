@@ -10,6 +10,56 @@ const getEntryGid = async (entry: Entry<any>): Promise<string> => {
 	}
 };
 
+const getEntryGidSync = (entry: Entry<any>): string | undefined => {
+	try {
+		return entry.meta.gid;
+	} catch {
+		return undefined;
+	}
+};
+
+const getHeadGidSync = <
+	T extends
+		| ShallowEntry
+		| Entry<any>
+		| EntryWithRefs<any>
+		| EntryReplicated<any>,
+>(
+	head: T,
+): string | undefined =>
+	head instanceof Entry
+		? getEntryGidSync(head)
+		: head instanceof ShallowEntry
+			? head.meta.gid
+			: isEntryReplicated(head)
+				? head.gid
+				: getEntryGidSync(head.entry);
+
+export const tryGroupByGidSync = <
+	T extends
+		| ShallowEntry
+		| Entry<any>
+		| EntryWithRefs<any>
+		| EntryReplicated<any>,
+>(
+	entries: T[],
+): Map<string, T[]> | undefined => {
+	const groupByGid: Map<string, T[]> = new Map();
+	for (const head of entries) {
+		const gid = getHeadGidSync(head);
+		if (gid == null) {
+			return undefined;
+		}
+		let value = groupByGid.get(gid);
+		if (!value) {
+			value = [];
+			groupByGid.set(gid, value);
+		}
+		value.push(head);
+	}
+	return groupByGid;
+};
+
 export const groupByGid = async <
 	T extends
 		| ShallowEntry
@@ -19,6 +69,11 @@ export const groupByGid = async <
 >(
 	entries: T[],
 ): Promise<Map<string, T[]>> => {
+	const syncGrouped = tryGroupByGidSync(entries);
+	if (syncGrouped) {
+		return syncGrouped;
+	}
+
 	const groupByGid: Map<string, T[]> = new Map();
 	for (const head of entries) {
 		const gid =

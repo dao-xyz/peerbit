@@ -213,7 +213,7 @@ import {
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
 } from "./sync/simple.js";
-import { groupByGid } from "./utils.js";
+import { groupByGid, tryGroupByGidSync } from "./utils.js";
 
 type SharedLogServicesWithFanout = {
 	fanout?: FanoutTree;
@@ -8979,7 +8979,9 @@ export class SharedLog<
 						return;
 					}
 					const receivePlanStartedAt = syncProfileStart(syncProfile);
-					const groupedByGid = await groupByGid(filteredHeads);
+					const groupedByGid =
+						tryGroupByGidSync(filteredHeads) ??
+						(await groupByGid(filteredHeads));
 					const maxReplicasFromHeadsByGid =
 						await this.getMaxReplicasFromHeadsBatch(groupedByGid.keys());
 					type ReceivedGidJoinPlan = {
