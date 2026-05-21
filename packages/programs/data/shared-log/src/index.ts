@@ -8848,6 +8848,7 @@ export class SharedLog<
 			}
 
 			const syncProfile = this._logProperties?.sync?.profile;
+			let rawMaterializedKnownMissing = false;
 			if (msg instanceof RawExchangeHeadsMessage) {
 				const fromIsSelf = context.from.equals(this.node.identity.publicKey);
 				const rawExistingStartedAt = syncProfileStart(syncProfile);
@@ -8900,6 +8901,7 @@ export class SharedLog<
 					}),
 					this.log,
 				);
+				rawMaterializedKnownMissing = true;
 				if (syncProfile) {
 					emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
 						name: "sharedLog.rawReceive.materialize",
@@ -8931,15 +8933,16 @@ export class SharedLog<
 					const filteredHeads: EntryWithRefs<any>[] = [];
 					const confirmedHashes = new Set<string>();
 					const existingStartedAt = syncProfileStart(syncProfile);
-					const existingHashes = await this.log.hasMany(
-						heads.map((head) => head.entry.hash),
-					);
+					const existingHashes = rawMaterializedKnownMissing
+						? new Set<string>()
+						: await this.log.hasMany(heads.map((head) => head.entry.hash));
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, existingStartedAt, {
 							name: "sharedLog.receive.existingHeads",
 							component: "shared-log",
 							entries: heads.length,
 							messages: 1,
+							details: { rawMaterializedKnownMissing },
 						});
 					}
 					for (const head of heads) {

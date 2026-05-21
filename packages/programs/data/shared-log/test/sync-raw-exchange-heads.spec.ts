@@ -281,6 +281,7 @@ describe("raw exchange-head sync", () => {
 			const db2 = await session.peers[1].open(store.clone(), {
 				args: openArgs,
 			});
+			const lowerHasManySpy = sinon.spy(db2.log.log, "hasMany");
 
 			const entryCount = 6;
 			const hashes: string[] = [];
@@ -322,7 +323,10 @@ describe("raw exchange-head sync", () => {
 				expect(hasAnyHeadBatchSpy.callCount).to.equal(1);
 				expect(hasAnyHeadBatchSpy.firstCall.args[0]).to.have.length(entryCount);
 				expect(hasAnyHeadSpy.callCount).to.equal(0);
+				expect(lowerHasManySpy.callCount).to.equal(1);
+				expect(lowerHasManySpy.firstCall.args[0]).to.have.length(entryCount);
 			} finally {
+				lowerHasManySpy.restore();
 				hasAnyHeadSpy.restore();
 				hasAnyHeadBatchSpy.restore();
 				singleSpy.restore();
