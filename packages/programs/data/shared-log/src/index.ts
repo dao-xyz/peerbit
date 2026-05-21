@@ -9308,20 +9308,33 @@ export class SharedLog<
 							});
 						}
 						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
-						const mergeEntryByHash = new Map(
-							allToMerge.map((entry) => [entry.hash, entry]),
-						);
+						const hashOnlyEntryAdded =
+							!!this.syncronizer.onEntryAddedHash &&
+							this._pendingIHave.size === 0;
+						let mergeEntryByHash: Map<string, Entry<any>> | undefined;
+						const materializeMergedEntry = (hash: string) => {
+							mergeEntryByHash ??= new Map(
+								allToMerge.map((entry) => [entry.hash, entry]),
+							);
+							const entry = mergeEntryByHash.get(hash);
+							if (!entry) {
+								throw new Error("Missing merged entry for appended hash");
+							}
+							return entry;
+						};
 						await this.log.join(allToMerge, {
 							__peerbitBatchIndependent: true,
 							__peerbitEntriesAlreadyMissing: true,
 							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
 							__peerbitOnAppendHashes: (hashes: string[]) => {
 								for (const hash of hashes) {
-									const entry = mergeEntryByHash.get(hash);
-									if (!entry) {
+									if (hashOnlyEntryAdded && !this._pendingIHave.has(hash)) {
+										this.onEntryAddedHash(hash);
 										continue;
 									}
-									this.onEntryAddedHash(hash, () => entry);
+									this.onEntryAddedHash(hash, () =>
+										materializeMergedEntry(hash),
+									);
 								}
 							},
 							__peerbitProfile: syncProfile,
@@ -9332,6 +9345,7 @@ export class SharedLog<
 								component: "shared-log",
 								entries: allToMerge.length,
 								messages: 1,
+								details: { hashOnlyEntryAdded },
 							});
 						}
 						// Network joins bypass SharedLog.join(), but churn repair scans
@@ -13684,9 +13698,12 @@ export class SharedLog<
 		this.syncronizer.onEntryAdded(entry);
 	}
 
-	private onEntryAddedHash(hash: string, materializeEntry: () => Entry<any>) {
+	private onEntryAddedHash(hash: string, materializeEntry?: () => Entry<any>) {
 		const ih = this._pendingIHave.get(hash);
 		if (ih) {
+			if (!materializeEntry) {
+				throw new Error("Missing entry materializer for pending IHave");
+			}
 			const entry = materializeEntry();
 			ih.clear();
 			ih.callback(entry);
@@ -13696,6 +13713,9 @@ export class SharedLog<
 		if (this.syncronizer.onEntryAddedHash) {
 			this.syncronizer.onEntryAddedHash(hash);
 			return;
+		}
+		if (!materializeEntry) {
+			throw new Error("Missing entry materializer for synchronizer update");
 		}
 		this.syncronizer.onEntryAdded(materializeEntry());
 	}

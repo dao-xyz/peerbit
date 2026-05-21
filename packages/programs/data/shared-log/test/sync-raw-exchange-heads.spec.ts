@@ -240,6 +240,11 @@ describe("raw exchange-head sync", () => {
 			expect([...markKnownSpy.firstCall.args[0]]).to.have.length(entryCount);
 			expect(sharedOnChangeSpy.callCount).to.equal(0);
 			expect(entryAddedHashSpy.callCount).to.equal(entryCount);
+			expect(
+				entryAddedHashSpy
+					.getCalls()
+					.every((call) => call.args.length === 1),
+			).equal(true);
 			const profileNames = profileEvents.map((event) => event.name);
 			expect(profileNames).to.include("sharedLog.rawReceive.materialize");
 			expect(profileNames).to.include("sharedLog.receive.lowerLogJoin");
@@ -253,6 +258,10 @@ describe("raw exchange-head sync", () => {
 				(event) => event.name === "sharedLog.canAppendBatch.metadata",
 			);
 			expect(metadataProfile.details.replicaCacheHits).to.equal(entryCount);
+			const lowerLogJoinProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.lowerLogJoin",
+			);
+			expect(lowerLogJoinProfile.details.hashOnlyEntryAdded).to.equal(true);
 			receivedEntryHashesSpy.restore();
 			receivedEntriesSpy.restore();
 			markKnownSpy.restore();
