@@ -9526,25 +9526,101 @@ export class SharedLog<
 					}
 				}
 			} else if (msg instanceof RequestIPrune) {
+				const requestPruneStartedAt = syncProfileStart(syncProfile);
 				const from = context.from.hashcode();
+				const coordinatorCleanupStartedAt = syncProfileStart(syncProfile);
 				this.removeEntriesKnownByPeer(msg.hashes, from);
 				this.removePruneRequestsSent(msg.hashes, from);
 				this._checkedPrune.removeConfirmedReplicators(msg.hashes, from);
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, coordinatorCleanupStartedAt, {
+						name: "sharedLog.receive.requestPrune.coordinatorCleanup",
+						component: "shared-log",
+						entries: msg.hashes.length,
+						messages: 1,
+						details: { hashes: msg.hashes.length },
+					});
+				}
+				const metadataStartedAt = syncProfileStart(syncProfile);
 				const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
 					msg.hashes,
 				);
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, metadataStartedAt, {
+						name: "sharedLog.receive.requestPrune.nativeMetadata",
+						component: "shared-log",
+						entries: msg.hashes.length,
+						messages: 1,
+						details: {
+							nativeEntries:
+								nativeEntryMetadata?.reduce(
+									(sum, entry) => sum + (entry ? 1 : 0),
+									0,
+								) ?? 0,
+						},
+					});
+				}
+				const blockHasManyStartedAt = syncProfileStart(syncProfile);
 				const presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, blockHasManyStartedAt, {
+						name: "sharedLog.receive.requestPrune.blockHasMany",
+						component: "shared-log",
+						entries: msg.hashes.length,
+						messages: 1,
+						details: {
+							batched: presentBlocks != null,
+							presentBlocks:
+								presentBlocks?.reduce(
+									(sum, present) => sum + (present ? 1 : 0),
+									0,
+								) ?? 0,
+						},
+					});
+				}
+				const nativeLeaderPlanStartedAt = syncProfileStart(syncProfile);
 				const nativeLeaderHints =
 					await this.planCurrentNativeRequestPruneLeaderHints({
 						hashes: msg.hashes,
 						nativeEntryMetadata,
 						presentBlocks,
 					});
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, nativeLeaderPlanStartedAt, {
+						name: "sharedLog.receive.requestPrune.nativeLeaderPlan",
+						component: "shared-log",
+						entries: msg.hashes.length,
+						messages: 1,
+						details: {
+							localLeaders: nativeLeaderHints.localLeaderHashes.size,
+							plannedEntries: nativeLeaderHints.replicaCounts.size,
+							peerHistoryGids: nativeLeaderHints.peerHistoryGids.length,
+						},
+					});
+				}
+				const gidCleanupStartedAt = syncProfileStart(syncProfile);
 				this.removePeerFromGidPeerHistoryBatch(
 					from,
 					nativeLeaderHints.peerHistoryGids,
 				);
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, gidCleanupStartedAt, {
+						name: "sharedLog.receive.requestPrune.gidCleanup",
+						component: "shared-log",
+						entries: nativeLeaderHints.peerHistoryGids.length,
+						messages: 1,
+					});
+				}
 
+				const requestPruneLoopStartedAt = syncProfileStart(syncProfile);
+				let presentEntries = 0;
+				let indexedFallbackLookups = 0;
+				let fallbackBlockChecks = 0;
+				let pendingDeleteEntries = 0;
+				let leaderResponses = 0;
+				let pendingIHaveCreated = 0;
+				let pendingIHaveExtended = 0;
+				const leaderResponseHashes: string[] = [];
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
 
@@ -9552,16 +9628,25 @@ export class SharedLog<
 					const indexedEntry = nativeEntry
 						? undefined
 						: await this.log.entryIndex.getShallow(hash);
+					if (!nativeEntry) {
+						indexedFallbackLookups += 1;
+					}
 					let isLeader = false;
 
+					const hasPresentBlock = presentBlocks
+						? presentBlocks[i] === true
+						: await this.log.blocks.has(hash);
+					if (!presentBlocks) {
+						fallbackBlockChecks += 1;
+					}
 					if (
 						(nativeEntry || indexedEntry) &&
-						(presentBlocks
-							? presentBlocks[i] === true
-							: await this.log.blocks.has(hash))
+						hasPresentBlock
 					) {
+						presentEntries += 1;
 						const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 						if (pendingDelete) {
+							pendingDeleteEntries += 1;
 							const pendingEntry =
 								indexedEntry?.value ??
 								(await this.log.entryIndex.getShallow(hash))?.value;
@@ -9625,16 +9710,16 @@ export class SharedLog<
 					}
 
 					if (isLeader) {
-						this.responseToPruneDebouncedFn.add({
-							hashes: [hash],
-							peers: [from],
-						});
+						leaderResponses += 1;
+						leaderResponseHashes.push(hash);
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
 						if (prevPendingIHave) {
+							pendingIHaveExtended += 1;
 							prevPendingIHave.requesting.add(from);
 							prevPendingIHave.resetTimeout();
 						} else {
+							pendingIHaveCreated += 1;
 							const requesting = new Set([from]);
 
 							let timeout = setTimeout(() => {
@@ -9686,6 +9771,36 @@ export class SharedLog<
 							this._pendingIHave.set(hash, pendingIHave);
 						}
 					}
+				}
+				if (leaderResponseHashes.length > 0) {
+					this.responseToPruneDebouncedFn.add({
+						hashes: leaderResponseHashes,
+						peers: [from],
+					});
+				}
+				if (syncProfile) {
+					emitSyncProfileDuration(syncProfile, requestPruneLoopStartedAt, {
+						name: "sharedLog.receive.requestPrune.loop",
+						component: "shared-log",
+						entries: msg.hashes.length,
+						messages: 1,
+						details: {
+							presentEntries,
+							indexedFallbackLookups,
+							fallbackBlockChecks,
+							pendingDeleteEntries,
+							leaderResponses,
+							leaderResponseBatches: leaderResponseHashes.length > 0 ? 1 : 0,
+							pendingIHaveCreated,
+							pendingIHaveExtended,
+						},
+					});
+					emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {
+						name: "sharedLog.receive.requestPrune.total",
+						component: "shared-log",
+						entries: msg.hashes.length,
+						messages: 1,
+					});
 				}
 			} else if (msg instanceof ResponseIPrune) {
 				const lateResponses: string[] = [];

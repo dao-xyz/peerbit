@@ -383,12 +383,16 @@ describe("raw exchange-head sync", () => {
 				name: "u32-simple-raw",
 			};
 			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
 			const db = await session.peers[1].open(store.clone(), {
 				args: {
 					replicate: false,
 					setup,
 					nativeGraph: true,
 					timeUntilRoleMaturity: 0,
+					sync: {
+						profile: (event: any) => profileEvents.push(event),
+					},
 				},
 			});
 			const hashes: string[] = [];
@@ -486,17 +490,49 @@ describe("raw exchange-head sync", () => {
 					plannedItems.length,
 				);
 				expect(waitForGidStub.callCount).to.equal(0);
-				expect(responseAddStub.callCount).to.equal(plannedItems.length);
-				for (const call of responseAddStub.getCalls()) {
-					expect(call.args[0].hashes).to.have.length(1);
-					expect(call.args[0].peers).to.deep.equal([
+				expect(responseAddStub.callCount).to.equal(
+					plannedItems.length > 0 ? 1 : 0,
+				);
+				if (plannedItems.length > 0) {
+					const [queued] = responseAddStub.firstCall.args;
+					expect(queued.hashes).to.have.length(plannedItems.length);
+					expect(queued.peers).to.deep.equal([
 						session.peers[0].identity.publicKey.hashcode(),
 					]);
-					const [queuedHash] = call.args[0].hashes;
-					expect(hashes).to.include(queuedHash);
-					queuedHashes.push(queuedHash);
+					for (const queuedHash of queued.hashes) {
+						expect(hashes).to.include(queuedHash);
+						queuedHashes.push(queuedHash);
+					}
 				}
 				expect(new Set(queuedHashes).size).to.equal(queuedHashes.length);
+				const profileNames = profileEvents.map((event) => event.name);
+				expect(profileNames).to.include.members([
+					"sharedLog.receive.requestPrune.coordinatorCleanup",
+					"sharedLog.receive.requestPrune.nativeMetadata",
+					"sharedLog.receive.requestPrune.blockHasMany",
+					"sharedLog.receive.requestPrune.nativeLeaderPlan",
+					"sharedLog.receive.requestPrune.gidCleanup",
+					"sharedLog.receive.requestPrune.loop",
+					"sharedLog.receive.requestPrune.total",
+				]);
+				const loopProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.requestPrune.loop",
+				);
+				expect(loopProfile.entries).to.equal(hashes.length);
+				expect(loopProfile.details.leaderResponses).to.equal(
+					plannedItems.length,
+				);
+				expect(
+					loopProfile.details.leaderResponses +
+						loopProfile.details.pendingIHaveCreated +
+						loopProfile.details.pendingIHaveExtended,
+				).to.equal(hashes.length);
+				expect(loopProfile.details.leaderResponseBatches).to.equal(
+					plannedItems.length > 0 ? 1 : 0,
+				);
+				expect(loopProfile.details.pendingIHaveCreated).to.equal(
+					hashes.length - plannedItems.length,
+				);
 			} finally {
 				waitForEntryStub.restore();
 				waitForGidStub.restore();
