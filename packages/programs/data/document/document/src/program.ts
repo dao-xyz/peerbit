@@ -253,7 +253,14 @@ const documentIndexStoreKey = (id: indexerTypes.IdKey): string => {
 	return `${typeof key}:${key.toString()}`;
 };
 
-type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
+type NativeDocumentAppendTransactionContext = {
+	getContext: () => Context;
+	getContextBytes: () => Uint8Array;
+};
+
+// Internal native document write boundary. Keep Entry/context access lazy so the
+// native commit facts can flow through the hot path without eager JS objects.
+type NativeDocumentAppendTransaction<T, I extends Record<string, any>> = {
 	document: T;
 	key: indexerTypes.IdKey;
 	operation?: PutOperation;
@@ -283,6 +290,11 @@ type DocumentAppendCommitFacts<T, I extends Record<string, any>> = {
 		| null
 		| undefined;
 };
+
+type DocumentAppendCommitFacts<
+	T,
+	I extends Record<string, any>,
+> = NativeDocumentAppendTransaction<T, I>;
 
 type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 	document: T;
@@ -349,7 +361,7 @@ type NativeDocumentAppendManyCommitInput<T, I extends Record<string, any>> = {
 type DocumentAppendManyCommitFacts<T, I extends Record<string, any>> = {
 	entries: Entry<Operation>[];
 	removed: ShallowOrFullEntry<Operation>[];
-	commits: DocumentAppendCommitFacts<T, I>[];
+	commits: NativeDocumentAppendTransaction<T, I>[];
 };
 
 type InferR<D> = D extends ReplicationDomain<any, any, infer I> ? I : "u32";
@@ -1561,7 +1573,7 @@ export class Documents<
 
 	private commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
-	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
+	): MaybePromise<NativeDocumentAppendTransaction<T, I>> {
 		const appendOptions = {
 			...input.options,
 			meta: {
@@ -1668,7 +1680,7 @@ export class Documents<
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: NativeDocumentAppendResult,
 		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
-	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
+	): MaybePromise<NativeDocumentAppendTransaction<T, I>> {
 		return mapMaybePromise(
 			this.createDocumentAppendCommitFacts(
 				input,
@@ -1773,7 +1785,7 @@ export class Documents<
 			) => NativeBackboneDocumentIndexCommitInput | undefined;
 		},
 		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
-	): Promise<DocumentAppendCommitFacts<T, I>> {
+	): Promise<NativeDocumentAppendTransaction<T, I>> {
 		if (this.isNativeMode()) {
 			throw this.nativeModeError("requires native payload append support");
 		}
@@ -1852,7 +1864,7 @@ export class Documents<
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		appended: NativeDocumentAppendResult,
 		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
-	): MaybePromise<DocumentAppendCommitFacts<T, I>> {
+	): MaybePromise<NativeDocumentAppendTransaction<T, I>> {
 		const append = appended.appendCommit;
 		const existing =
 			input.unique || input.existing === null ? null : input.existing;
@@ -1901,8 +1913,7 @@ export class Documents<
 			size: number;
 		},
 		nativeBackboneDocumentIndex = input.nativeBackboneDocumentIndex,
-	): DocumentAppendCommitFacts<T, I> {
-		const append = appended.appendCommit;
+	): NativeDocumentAppendTransaction<T, I> {
 		let contextValues:
 			| {
 					created: bigint;
@@ -1914,7 +1925,6 @@ export class Documents<
 			| undefined;
 		let context: Context | undefined;
 		let contextBytes: Uint8Array | undefined;
-		let contextualEncodedValueParts: ContextualEncodedValueParts | undefined;
 		const getContextValues = () => {
 			if (contextValues) {
 				return contextValues;
@@ -1938,6 +1948,25 @@ export class Documents<
 		const getContext = () => (context ??= new Context(getContextValues()));
 		const getContextBytes = () =>
 			(contextBytes ??= encodeDocumentContextSuffix(getContext()));
+		return this.createNativeDocumentAppendTransaction(
+			input,
+			appended,
+			{
+				getContext,
+				getContextBytes,
+			},
+			nativeBackboneDocumentIndex,
+		);
+	}
+
+	private createNativeDocumentAppendTransaction(
+		input: NativeDocumentAppendCommitFactsInput<T, I>,
+		appended: NativeDocumentAppendResult,
+		contextAccessors: NativeDocumentAppendTransactionContext,
+		nativeBackboneDocumentIndex = input.nativeBackboneDocumentIndex,
+	): NativeDocumentAppendTransaction<T, I> {
+		const append = appended.appendCommit;
+		let contextualEncodedValueParts: ContextualEncodedValueParts | undefined;
 		return {
 			document: input.document,
 			key: input.key,
@@ -1950,15 +1979,15 @@ export class Documents<
 			removed: appended.removed,
 			append,
 			get context() {
-				return getContext();
+				return contextAccessors.getContext();
 			},
 			get contextBytes() {
-				return getContextBytes();
+				return contextAccessors.getContextBytes();
 			},
 			get contextualEncodedValueParts() {
 				return (contextualEncodedValueParts ??= {
 					prefix: input.documentBytes,
-					suffix: getContextBytes(),
+					suffix: contextAccessors.getContextBytes(),
 				});
 			},
 			nativeBackboneDocumentIndexCommitted:
@@ -1984,7 +2013,7 @@ export class Documents<
 			input: NativeDocumentAppendCommitFactsInput<T, I>;
 			appended: NativeDocumentAppendResult;
 		}>,
-	): Promise<DocumentAppendCommitFacts<T, I>[]> {
+	): Promise<NativeDocumentAppendTransaction<T, I>[]> {
 		const contextInputs = rows.map(({ input, appended }) => {
 			const append = appended.appendCommit;
 			const existing =
@@ -2021,7 +2050,7 @@ export class Documents<
 			contextBytes: Uint8Array;
 		},
 		preparedNativeBackboneDocumentIndex = input.nativeBackboneDocumentIndex,
-	): DocumentAppendCommitFacts<T, I> {
+	): NativeDocumentAppendTransaction<T, I> {
 		const append = appended.appendCommit;
 		const context = new Context(contextPlan);
 		const nativeBackboneDocumentIndex =
@@ -2036,38 +2065,15 @@ export class Documents<
 							{ entryPublicKeys: [this.log.log.identity.publicKey] },
 						)
 					: undefined);
-		return {
-			document: input.document,
-			key: input.key,
-			operation: input.operation,
-			encodedDocument: input.documentBytes,
-			operationPayloadBytes: input.operationPayloadBytes,
-			get entry() {
-				return appended.entry;
+		return this.createNativeDocumentAppendTransaction(
+			input,
+			appended,
+			{
+				getContext: () => context,
+				getContextBytes: () => contextPlan.contextBytes,
 			},
-			removed: appended.removed,
-			append,
-			context,
-			contextBytes: contextPlan.contextBytes,
-			contextualEncodedValueParts: {
-				prefix: input.documentBytes,
-				suffix: contextPlan.contextBytes,
-			},
-			nativeBackboneDocumentIndexCommitted:
-				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
-			nativeBackboneDocumentIndexTrimmedHeadsProcessed:
-				appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
-			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
-				? {
-						valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
-						projection: nativeBackboneDocumentIndex.projection,
-						indexable: nativeBackboneDocumentIndex.indexable,
-						getIndexable: nativeBackboneDocumentIndex.getIndexable,
-					}
-				: undefined,
-			unique: input.unique,
-			existing: input.existing,
-		};
+			nativeBackboneDocumentIndex,
+		);
 	}
 
 	private hasDocumentChangeConsumers(): boolean {
