@@ -145,6 +145,27 @@ type NativePeerbitBackboneHandle = {
 		head: boolean,
 		data?: Uint8Array,
 	) => void;
+	graph_put_batch: (
+		hashes: string[],
+		gids: string[],
+		nexts: string[][],
+		entryTypes: Uint8Array,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		payloadSizes: Uint32Array,
+		heads: Uint8Array,
+		datas: Array<Uint8Array | undefined>,
+	) => void;
+	graph_put_append_chain: (
+		hashes: string[],
+		gid: string,
+		initialNext: string[],
+		entryType: number,
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		payloadSizes: Uint32Array,
+		datas: Array<Uint8Array | undefined>,
+	) => void;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
 	graph_oldest_entries: (limit: number) => unknown[];
@@ -2117,15 +2138,71 @@ export class NativeBackboneLogGraph {
 	}
 
 	putBatch(entries: NativeBackboneLogEntry[]): void {
-		for (const entry of entries) {
-			this.put(entry);
+		if (entries.length === 0) {
+			return;
 		}
+		const hashes = new Array<string>(entries.length);
+		const gids = new Array<string>(entries.length);
+		const nexts = new Array<string[]>(entries.length);
+		const entryTypes = new Uint8Array(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		const payloadSizes = new Uint32Array(entries.length);
+		const heads = new Uint8Array(entries.length);
+		const datas = new Array<Uint8Array | undefined>(entries.length);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes[i] = entry.hash;
+			gids[i] = entry.gid;
+			nexts[i] = entry.next;
+			entryTypes[i] = entry.type;
+			wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
+			logicals[i] = entry.clock.timestamp.logical ?? 0;
+			payloadSizes[i] = entry.payloadSize ?? 0;
+			heads[i] = (entry.head ?? true) ? 1 : 0;
+			datas[i] = entry.data;
+		}
+		this.native.graph_put_batch(
+			hashes,
+			gids,
+			nexts,
+			entryTypes,
+			wallTimes,
+			logicals,
+			payloadSizes,
+			heads,
+			datas,
+		);
 	}
 
 	putAppendChain(entries: NativeBackboneLogEntry[]): void {
-		for (const entry of entries) {
-			this.put(entry);
+		if (entries.length === 0) {
+			return;
 		}
+		const first = entries[0]!;
+		const hashes = new Array<string>(entries.length);
+		const wallTimes = new BigUint64Array(entries.length);
+		const logicals = new Uint32Array(entries.length);
+		const payloadSizes = new Uint32Array(entries.length);
+		const datas = new Array<Uint8Array | undefined>(entries.length);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			hashes[i] = entry.hash;
+			wallTimes[i] = BigInt(entry.clock.timestamp.wallTime);
+			logicals[i] = entry.clock.timestamp.logical ?? 0;
+			payloadSizes[i] = entry.payloadSize ?? 0;
+			datas[i] = entry.data;
+		}
+		this.native.graph_put_append_chain(
+			hashes,
+			first.gid,
+			first.next,
+			first.type,
+			wallTimes,
+			logicals,
+			payloadSizes,
+			datas,
+		);
 	}
 
 	prepareEntryV0PlainEntryCommit(

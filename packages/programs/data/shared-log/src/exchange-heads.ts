@@ -596,16 +596,23 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	log: Log<any>,
 	profile?: SyncProfileFn,
 ): Promise<ExchangeHeadsMessage<any>> => {
+	const blocks = new Array<Uint8Array>(message.heads.length);
+	let rawBytes = 0;
+	for (let i = 0; i < message.heads.length; i++) {
+		const bytes = message.heads[i]!.bytes;
+		blocks[i] = bytes;
+		rawBytes += bytes.byteLength;
+	}
 	const nativePrepareStartedAt = syncProfileStart(profile);
-	const preparedFacts = await prepareRawEntryV0Batch(
-		message.heads.map((head) => head.bytes),
-	).catch(() => undefined);
+	const preparedFacts = await prepareRawEntryV0Batch(blocks).catch(
+		() => undefined,
+	);
 	if (preparedFacts) {
 		emitSyncProfileDuration(profile, nativePrepareStartedAt, {
 			name: "sharedLog.rawReceive.prepareFacts",
 			component: "shared-log",
 			entries: message.heads.length,
-			bytes: message.heads.reduce((sum, head) => sum + head.bytes.byteLength, 0),
+			bytes: rawBytes,
 			messages: 1,
 			details: { native: true },
 		});
@@ -643,14 +650,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		name: "sharedLog.rawReceive.prepareFacts",
 		component: "shared-log",
 		entries: message.heads.length,
-		bytes: message.heads.reduce((sum, head) => sum + head.bytes.byteLength, 0),
+		bytes: rawBytes,
 		messages: 1,
 		details: { native: false },
 	});
 	const hashStartedAt = syncProfileStart(profile);
-	const calculatedHashes = await calculateRawCidV1Batch(
-		message.heads.map((head) => head.bytes),
-	);
+	const calculatedHashes = await calculateRawCidV1Batch(blocks);
 	emitSyncProfileDuration(profile, hashStartedAt, {
 		name: "sharedLog.rawReceive.calculateHashes",
 		component: "shared-log",

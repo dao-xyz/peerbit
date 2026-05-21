@@ -590,6 +590,41 @@ describe("native peerbit backbone", () => {
 		expect(backbone.blockLength).equal(0);
 	});
 
+	it("tracks heads and next adjacency through append-chain graph batches", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const entry = (
+			hash: string,
+			next: string[],
+			wallTime: bigint,
+			head?: boolean,
+		) => ({
+			hash,
+			gid: "gid-chain",
+			next,
+			type: 0,
+			head,
+			payloadSize: 1,
+			clock: { timestamp: { wallTime, logical: 0 } },
+		});
+
+		backbone.graph.put(entry("root", [], 1n));
+		backbone.graph.putAppendChain([
+			entry("a", ["root"], 2n, false),
+			entry("b", ["a"], 3n, false),
+			entry("c", ["b"], 4n, true),
+		]);
+
+		expect(backbone.graph.heads()).to.deep.equal(["c"]);
+		expect(backbone.graph.countHasNext("root")).to.equal(1);
+		expect(backbone.graph.countHasNext("a")).to.equal(1);
+		expect(backbone.graph.countHasNext("b")).to.equal(1);
+		expect(backbone.graph.payloadSizeSum()).to.equal(4);
+	});
+
 	it("returns flat unique reference rows for native exchange-head planning", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

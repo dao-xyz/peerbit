@@ -699,6 +699,54 @@ impl NativePeerbitBackbone {
         )
     }
 
+    pub fn graph_put_batch(
+        &mut self,
+        hashes: Array,
+        gids: Array,
+        nexts: Array,
+        entry_types: Uint8Array,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        payload_sizes: Uint32Array,
+        heads: Uint8Array,
+        datas: Array,
+    ) -> Result<(), JsValue> {
+        self.log.put_many(
+            hashes,
+            gids,
+            nexts,
+            entry_types,
+            wall_times,
+            logicals,
+            payload_sizes,
+            heads,
+            datas,
+        )
+    }
+
+    pub fn graph_put_append_chain(
+        &mut self,
+        hashes: Array,
+        gid: String,
+        initial_next: Array,
+        entry_type: u8,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        payload_sizes: Uint32Array,
+        datas: Array,
+    ) -> Result<(), JsValue> {
+        self.log.put_append_chain(
+            hashes,
+            gid,
+            initial_next,
+            entry_type,
+            wall_times,
+            logicals,
+            payload_sizes,
+            datas,
+        )
+    }
+
     pub fn graph_delete(&mut self, hash: &str) -> bool {
         self.log.delete(hash)
     }
