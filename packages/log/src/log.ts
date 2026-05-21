@@ -2545,7 +2545,7 @@ export class Log<T> {
 		},
 	): Promise<boolean> {
 		if (
-			entries.length < 2 ||
+			entries.length === 0 ||
 			options?.__peerbitCanAppendAlreadyValidated !== true ||
 			entries.some((entry) => this._joining.has(entry.hash))
 		) {

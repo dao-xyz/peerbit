@@ -296,6 +296,77 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("uses prepared raw join for a single received raw head", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const openArgs = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				sync: { rawExchangeHeads: true },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: openArgs,
+			});
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: openArgs,
+			});
+			const { entry } = await db1.add(uuid(), { meta: { next: [] } });
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				db1.log.log,
+				[entry.hash],
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const lowerPutAppendBatchSpy = sinon.spy(
+				db2.log.log.entryIndex,
+				"putAppendBatch",
+			);
+			const lowerPutAppendFactsBatchSpy = sinon.spy(
+				db2.log.log.entryIndex,
+				"putAppendFactsBatch",
+			);
+			try {
+				await db2.log.onMessage(message!, {
+					from: db1.node.identity.publicKey,
+				} as any);
+
+				expect(db2.log.log.length).to.equal(1);
+				expect(lowerPutAppendFactsBatchSpy.callCount).to.equal(1);
+				expect(lowerPutAppendFactsBatchSpy.firstCall.args[0]).to.have.length(1);
+				expect(
+					lowerPutAppendFactsBatchSpy.firstCall.args[0][0].nativeEntry,
+				).to.exist;
+				expect(lowerPutAppendBatchSpy.callCount).to.equal(0);
+			} finally {
+				lowerPutAppendFactsBatchSpy.restore();
+				lowerPutAppendBatchSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("batch plans independent raw heads before joining when not replicating", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),
@@ -364,13 +435,13 @@ describe("raw exchange-head sync", () => {
 
 				expect(db2.log.log.length).to.equal(entryCount);
 				expect(sharedPlanEntryLeaderBatchSpy.callCount).to.equal(1);
-					expect(batchSpy.callCount).to.be.greaterThan(0);
-					expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
-					expect(singleSpy.callCount).to.equal(0);
-					expect(hasAnyHeadBatchSpy.callCount).to.equal(0);
-					expect(hasAnyHeadSpy.callCount).to.equal(0);
-					expect(lowerHasManySpy.callCount).to.equal(1);
-					expect(lowerHasManySpy.firstCall.args[0]).to.have.length(entryCount);
+				expect(batchSpy.callCount).to.be.greaterThan(0);
+				expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
+				expect(singleSpy.callCount).to.equal(0);
+				expect(hasAnyHeadBatchSpy.callCount).to.equal(0);
+				expect(hasAnyHeadSpy.callCount).to.equal(0);
+				expect(lowerHasManySpy.callCount).to.equal(1);
+				expect(lowerHasManySpy.firstCall.args[0]).to.have.length(entryCount);
 			} finally {
 				lowerHasManySpy.restore();
 				hasAnyHeadSpy.restore();
