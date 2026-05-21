@@ -9271,10 +9271,22 @@ export class SharedLog<
 							});
 						}
 						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
+						const mergeEntryByHash = new Map(
+							allToMerge.map((entry) => [entry.hash, entry]),
+						);
 						await this.log.join(allToMerge, {
 							__peerbitBatchIndependent: true,
 							__peerbitEntriesAlreadyMissing: true,
 							__peerbitCanAppendAlreadyValidated: canAppendAlreadyValidated,
+							__peerbitOnAppendHashes: (hashes: string[]) => {
+								for (const hash of hashes) {
+									const entry = mergeEntryByHash.get(hash);
+									if (!entry) {
+										continue;
+									}
+									this.onEntryAddedHash(hash, () => entry);
+								}
+							},
 							__peerbitProfile: syncProfile,
 						});
 						if (syncProfile) {

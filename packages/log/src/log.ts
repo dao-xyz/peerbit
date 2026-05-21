@@ -90,6 +90,7 @@ type InternalProfileEvent = {
 	details?: Record<string, InternalProfileValue>;
 };
 type InternalProfileSink = (event: InternalProfileEvent) => void;
+type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
 
 const internalProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
 const internalProfileStart = (sink: InternalProfileSink | undefined) =>
@@ -2289,6 +2290,8 @@ export class Log<T> {
 			__peerbitEntriesAlreadyMissing?: boolean;
 			/** Internal: set only by trusted Peerbit join paths after validation. */
 			__peerbitCanAppendAlreadyValidated?: boolean;
+			/** Internal: trusted caller can consume joined append hashes without a full Change object. */
+			__peerbitOnAppendHashes?: InternalAppendHashesSink;
 			/** Internal: optional diagnostic sink for trusted batched join paths. */
 			__peerbitProfile?: InternalProfileSink;
 		},
@@ -2487,6 +2490,7 @@ export class Log<T> {
 			__peerbitBatchIndependent?: boolean;
 			__peerbitEntriesAlreadyMissing?: boolean;
 			__peerbitCanAppendAlreadyValidated?: boolean;
+			__peerbitOnAppendHashes?: InternalAppendHashesSink;
 			__peerbitProfile?: InternalProfileSink;
 		},
 	): Promise<boolean> {
@@ -2606,21 +2610,30 @@ export class Log<T> {
 				messages: 1,
 			});
 
-			const change: Change<T> = {
-				added: entries.map((entry, index) => ({
-					head: headFlags[index]!,
-					entry,
-				})),
-				removed: [],
-			};
 			const changeStartedAt = internalProfileStart(profile);
-			await options.onChange?.(change);
-			await this._onChange?.(change);
+			if (options.__peerbitOnAppendHashes && !options.onChange) {
+				await options.__peerbitOnAppendHashes(
+					entries.map((entry) => entry.hash),
+				);
+			} else {
+				const change: Change<T> = {
+					added: entries.map((entry, index) => ({
+						head: headFlags[index]!,
+						entry,
+					})),
+					removed: [],
+				};
+				await options.onChange?.(change);
+				await this._onChange?.(change);
+			}
 			emitInternalProfileDuration(profile, changeStartedAt, {
 				name: "log.joinIndependent.change",
 				component: "log",
 				entries: entries.length,
 				messages: 1,
+				details: {
+					hashOnly: !!options.__peerbitOnAppendHashes && !options.onChange,
+				},
 			});
 		})().finally(() => {
 			for (const entry of entries) {
