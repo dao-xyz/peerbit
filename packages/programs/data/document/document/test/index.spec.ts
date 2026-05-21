@@ -1036,6 +1036,10 @@ describe("index", () => {
 					store.docs.index,
 					"_putStoredIdentityWithContext",
 				);
+				const documentTransactionSpy = sinon.spy(
+					store.docs as any,
+					"createNativeDocumentAppendTransaction",
+				);
 
 				try {
 					const first = new Document({
@@ -1086,6 +1090,16 @@ describe("index", () => {
 						backboneCompactStorageTransactionSpy.secondCall.returnValue
 							.documentTrimmedHeadsProcessed,
 					).equal(true);
+					const secondTransaction =
+						documentTransactionSpy.secondCall?.returnValue;
+					expect(secondTransaction?.coordinateFields?.hash).equal(
+						secondTransaction?.append.hash,
+					);
+					expect(secondTransaction?.coordinateFields?.gid).equal(
+						secondTransaction?.append.gid,
+					);
+					expect(secondTransaction?.coordinateFields?.coordinates).to.have
+						.length.greaterThan(0);
 					expect(
 						backboneDocumentHeadLookupSpy.calledWith(
 							nativeFieldPathHash(["__context", "head"]),
@@ -1122,6 +1136,7 @@ describe("index", () => {
 						"backbone-storage-2",
 					);
 				} finally {
+					documentTransactionSpy.restore();
 					documentStoredIdentityPutSpy.restore();
 					backendStoredContextPutSpy.restore();
 					backboneDocumentPutSpy.restore();

@@ -213,11 +213,26 @@ type PlainPutCommitPlan<T, I extends Record<string, any>> = {
 		| undefined;
 };
 
+type NativeDocumentCoordinateFacts = {
+	hash: string;
+	hashNumber: number | bigint;
+	hashNumberString?: string;
+	gid: string;
+	coordinates: Array<number | bigint>;
+	coordinateStrings?: string[];
+	wallTime: bigint;
+	wallTimeString?: string;
+	assignedToRangeBoundary: boolean;
+	metaBytes: Uint8Array;
+};
+
 type LocalAppendCommitFacts = {
 	hash: string;
 	gid: string;
 	wallTime: bigint;
 	payloadSize: number;
+	hashNumber?: number | bigint;
+	coordinateFields?: NativeDocumentCoordinateFacts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
 };
@@ -271,6 +286,7 @@ type NativeDocumentAppendTransaction<T, I extends Record<string, any>> = {
 	removed: ShallowOrFullEntry<Operation>[];
 	removedHashes?: string[];
 	append: LocalAppendCommitFacts;
+	coordinateFields?: NativeDocumentCoordinateFacts;
 	context: Context;
 	contextBytes: Uint8Array;
 	contextualEncodedValueParts: ContextualEncodedValueParts;
@@ -1981,6 +1997,7 @@ export class Documents<
 			removed: appended.removed,
 			removedHashes: appended.removedHashes,
 			append,
+			coordinateFields: append.coordinateFields,
 			get context() {
 				return contextAccessors.getContext();
 			},
