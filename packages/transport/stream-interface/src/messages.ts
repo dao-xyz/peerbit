@@ -262,22 +262,27 @@ export type WithExtraSigners = {
 	) => Promise<SignatureWithKey> | SignatureWithKey)[];
 };
 
+// Application traffic classes. Keep these values wire-compatible; priorities
+// are serialized as numbers and higher values map to higher-priority lanes.
+export const BACKGROUND_MESSAGE_PRIORITY = 0;
+export const CONVERGENCE_MESSAGE_PRIORITY = 1;
+export const FOREGROUND_READ_MESSAGE_PRIORITY = 2;
 // Control-path responses like ACKs should be able to cut through congested data lanes.
 export const ACK_CONTROL_PRIORITY = 3;
 
 const getDefaultPriorityFromMode = (mode: DeliveryMode) => {
 	if (mode instanceof SilentDelivery) {
-		return 0;
+		return BACKGROUND_MESSAGE_PRIORITY;
 	}
 	if (mode instanceof AnyWhere) {
-		return 0;
+		return BACKGROUND_MESSAGE_PRIORITY;
 	}
 	if (mode instanceof AcknowledgeAnyWhere) {
-		return 1;
+		return CONVERGENCE_MESSAGE_PRIORITY;
 	}
 
 	if (mode instanceof AcknowledgeDelivery) {
-		return 1;
+		return CONVERGENCE_MESSAGE_PRIORITY;
 	}
 	if (mode instanceof TracedDelivery) {
 		return ACK_CONTROL_PRIORITY;

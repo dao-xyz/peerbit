@@ -16,6 +16,7 @@ import {
 	StringMatchMethod,
 	toId,
 } from "@peerbit/indexer-interface";
+import { FOREGROUND_READ_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import type { ShallowEntry } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { Entry, type ShallowOrFullEntry } from "./entry.js";
@@ -23,7 +24,7 @@ import type { SortFn } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 
 const log = baseLogger.newScope("entry-index");
-const LOG_ENTRY_REMOTE_READ_PRIORITY = 2;
+const LOG_ENTRY_REMOTE_READ_PRIORITY = FOREGROUND_READ_MESSAGE_PRIORITY;
 
 export type ResultsIterator<T> = {
 	close: () => void | Promise<void>;

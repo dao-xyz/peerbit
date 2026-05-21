@@ -6,7 +6,11 @@ import {
 } from "@peerbit/crypto";
 import { Program } from "@peerbit/program";
 import { type PeerId } from "@peerbit/pubsub";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import {
+	CONVERGENCE_MESSAGE_PRIORITY,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -180,8 +184,8 @@ describe("rpc", () => {
 				}),
 				{
 					amount: 1,
-					priority: 1,
-					responsePriority: 2,
+					priority: CONVERGENCE_MESSAGE_PRIORITY,
+					responsePriority: FOREGROUND_READ_MESSAGE_PRIORITY,
 					expiresAt: Date.now() + 5_000,
 				},
 			);
@@ -193,9 +197,15 @@ describe("rpc", () => {
 
 			const requestMessage = requestEventFromResponder[0]!.detail.message;
 			const responseMessage = responseEventsFromRequester[0]!.detail.message;
-			expect(requestMessage.header.priority).to.equal(1);
-			expect(requestMessage.header.responsePriority).to.equal(2);
-			expect(responseMessage.header.priority).to.equal(2);
+			expect(requestMessage.header.priority).to.equal(
+				CONVERGENCE_MESSAGE_PRIORITY,
+			);
+			expect(requestMessage.header.responsePriority).to.equal(
+				FOREGROUND_READ_MESSAGE_PRIORITY,
+			);
+			expect(responseMessage.header.priority).to.equal(
+				FOREGROUND_READ_MESSAGE_PRIORITY,
+			);
 			expect(Number(responseMessage.header.expires)).to.equal(
 				Number(requestMessage.header.expires),
 			);

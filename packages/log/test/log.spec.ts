@@ -1,5 +1,9 @@
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { HashmapIndices } from "@peerbit/indexer-simple";
+import {
+	CONVERGENCE_MESSAGE_PRIORITY,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
+} from "@peerbit/stream-interface";
 import assert from "assert";
 import { expect } from "chai";
 import { Timestamp } from "../src/clock.js";
@@ -195,7 +199,7 @@ describe("properties", function () {
 				{ remote: true },
 			);
 			assert.deepStrictEqual(entry, undefined);
-			expect(priority).to.eq(2);
+			expect(priority).to.eq(FOREGROUND_READ_MESSAGE_PRIORITY);
 		});
 
 		it("preserves explicit remote entry priority", async () => {
@@ -211,10 +215,10 @@ describe("properties", function () {
 
 			const entry = await log.get(
 				"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
-				{ remote: { timeout: 123, priority: 1 } },
+				{ remote: { timeout: 123, priority: CONVERGENCE_MESSAGE_PRIORITY } },
 			);
 			assert.deepStrictEqual(entry, undefined);
-			expect(priority).to.eq(1);
+			expect(priority).to.eq(CONVERGENCE_MESSAGE_PRIORITY);
 		});
 
 		it("injects remote.from when resolveRemotePeers is configured", async () => {
@@ -245,7 +249,7 @@ describe("properties", function () {
 			);
 			assert.deepStrictEqual(entry, undefined);
 			expect(observedFrom).to.deep.equal(fromPeers);
-			expect(observedPriority).to.eq(2);
+			expect(observedPriority).to.eq(FOREGROUND_READ_MESSAGE_PRIORITY);
 		});
 	});
 

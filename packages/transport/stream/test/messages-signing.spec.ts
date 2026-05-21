@@ -4,7 +4,11 @@ import { PreHash, SignatureWithKey, sha256 } from "@peerbit/crypto";
 import {
 	ACK_CONTROL_PRIORITY,
 	AcknowledgeDelivery,
+	AnyWhere,
+	BACKGROUND_MESSAGE_PRIORITY,
+	CONVERGENCE_MESSAGE_PRIORITY,
 	DataMessage,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
 	MessageHeader,
 	SilentDelivery,
 	Signatures,
@@ -54,6 +58,30 @@ const importForeignCrypto = async () => {
 };
 
 describe("message signing", () => {
+	it("defines the transport priority lane mapping", () => {
+		expect(BACKGROUND_MESSAGE_PRIORITY).to.equal(0);
+		expect(CONVERGENCE_MESSAGE_PRIORITY).to.equal(1);
+		expect(FOREGROUND_READ_MESSAGE_PRIORITY).to.equal(2);
+		expect(ACK_CONTROL_PRIORITY).to.equal(3);
+	});
+
+	it("defaults background delivery modes onto the background lane", () => {
+		const silent = new MessageHeader({
+			session: 1,
+			mode: new SilentDelivery({
+				to: ["peer-a"],
+				redundancy: 1,
+			}),
+		});
+		const anywhere = new MessageHeader({
+			session: 1,
+			mode: new AnyWhere(),
+		});
+
+		expect(silent.priority).to.equal(BACKGROUND_MESSAGE_PRIORITY);
+		expect(anywhere.priority).to.equal(BACKGROUND_MESSAGE_PRIORITY);
+	});
+
 	it("normalizes foreign crypto signatures before serializing data-messages", async () => {
 		const { foreign, cleanup } = await importForeignCrypto();
 		try {
@@ -237,7 +265,7 @@ describe("message signing", () => {
 			mode: new TracedDelivery(["peer-a"]),
 		});
 
-		expect(request.priority).to.equal(1);
+		expect(request.priority).to.equal(CONVERGENCE_MESSAGE_PRIORITY);
 		expect(request.responsePriority).to.equal(ACK_CONTROL_PRIORITY);
 		expect(ack.priority).to.equal(ACK_CONTROL_PRIORITY);
 	});

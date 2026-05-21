@@ -17,7 +17,8 @@ export type SyncPriorityFn<R extends "u32" | "u64"> = (
 
 export type SyncOptions<R extends "u32" | "u64"> = {
 	/**
-	 * Higher numbers are synced first.
+	 * Orders entries inside a sync batch; higher numbers are selected first.
+	 * This does not change the transport message priority/lane.
 	 * The callback should be fast and side-effect free.
 	 */
 	priority?: SyncPriorityFn<R>;

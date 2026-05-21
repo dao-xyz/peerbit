@@ -1,4 +1,5 @@
 import { Cache } from "@peerbit/cache";
+import { CONVERGENCE_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
@@ -10,6 +11,10 @@ import {
 } from "../src/sync/simple.js";
 
 describe("sync-chunking", () => {
+	it("uses the convergence transport priority for sync messages", () => {
+		expect(SYNC_MESSAGE_PRIORITY).to.equal(CONVERGENCE_MESSAGE_PRIORITY);
+	});
+
 	it("chunks hash maybe-sync messages", async () => {
 		const send = sinon.stub().resolves();
 		const rpc = { send } as any;
