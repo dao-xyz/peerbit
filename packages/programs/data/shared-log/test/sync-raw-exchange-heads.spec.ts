@@ -364,14 +364,13 @@ describe("raw exchange-head sync", () => {
 
 				expect(db2.log.log.length).to.equal(entryCount);
 				expect(sharedPlanEntryLeaderBatchSpy.callCount).to.equal(1);
-				expect(batchSpy.callCount).to.be.greaterThan(0);
-				expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
-				expect(singleSpy.callCount).to.equal(0);
-				expect(hasAnyHeadBatchSpy.callCount).to.equal(1);
-				expect(hasAnyHeadBatchSpy.firstCall.args[0]).to.have.length(entryCount);
-				expect(hasAnyHeadSpy.callCount).to.equal(0);
-				expect(lowerHasManySpy.callCount).to.equal(1);
-				expect(lowerHasManySpy.firstCall.args[0]).to.have.length(entryCount);
+					expect(batchSpy.callCount).to.be.greaterThan(0);
+					expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
+					expect(singleSpy.callCount).to.equal(0);
+					expect(hasAnyHeadBatchSpy.callCount).to.equal(0);
+					expect(hasAnyHeadSpy.callCount).to.equal(0);
+					expect(lowerHasManySpy.callCount).to.equal(1);
+					expect(lowerHasManySpy.firstCall.args[0]).to.have.length(entryCount);
 			} finally {
 				lowerHasManySpy.restore();
 				hasAnyHeadSpy.restore();

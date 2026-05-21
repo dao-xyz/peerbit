@@ -9090,7 +9090,6 @@ export class SharedLog<
 						isLeader?: boolean;
 						fromIsLeader?: boolean;
 						leaders?: LeaderMap | false;
-						gidReferenceHeads?: boolean[];
 					};
 					const isReplicating = this._isReplicating;
 					const receiveGroups: ReceivedGidInput[] = [];
@@ -9143,34 +9142,6 @@ export class SharedLog<
 							group.isLeader = leaderPlan.isLeader;
 							group.fromIsLeader = leaderPlan.leaders.has(contextFromHash);
 						}
-						const gidReferenceInputs: string[][] = [];
-						const gidReferenceTargets: Array<{
-							group: ReceivedGidInput;
-							offset: number;
-						}> = [];
-						for (const group of receiveGroups) {
-							const keepAsLeader =
-								group.isLeader ||
-								(isRepairHint && group.fromIsLeader === true);
-							if (keepAsLeader) {
-								continue;
-							}
-							const offset = gidReferenceInputs.length;
-							for (const entry of group.entries) {
-								gidReferenceInputs.push(entry.gidRefrences);
-							}
-							gidReferenceTargets.push({ group, offset });
-						}
-						if (gidReferenceInputs.length > 0) {
-							const gidReferenceHeads =
-								await this.hasAnyHeadForGidSets(gidReferenceInputs);
-							for (const { group, offset } of gidReferenceTargets) {
-								group.gidReferenceHeads = gidReferenceHeads.slice(
-									offset,
-									offset + group.entries.length,
-								);
-							}
-						}
 					}
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, receivePlanStartedAt, {
@@ -9219,7 +9190,6 @@ export class SharedLog<
 						isLeader: plannedIsLeader,
 						fromIsLeader: plannedFromIsLeader,
 						leaders: plannedLeaders,
-						gidReferenceHeads: precomputedGidReferenceHeads,
 					} of receiveGroups) {
 						const fn = async () => {
 							let isLeader = false;
@@ -9277,12 +9247,13 @@ export class SharedLog<
 							// truly no longer owns the entry.
 							const acceptsTargetedRepair = isRepairHint && fromIsLeader;
 							const keepAsLeader = isLeader || acceptsTargetedRepair;
-							const gidReferenceHeads = keepAsLeader
-								? undefined
-								: (precomputedGidReferenceHeads ??
-									(await this.hasAnyHeadForGidSets(
-										entries.map((entry) => entry.gidRefrences),
-									)));
+							let gidReferenceHeads: boolean[] | undefined;
+							const getGidReferenceHeads = async () => {
+								gidReferenceHeads ??= await this.hasAnyHeadForGidSets(
+									entries.map((entry) => entry.gidRefrences),
+								);
+								return gidReferenceHeads;
+							};
 							if (keepAsLeader) {
 								for (const entry of entries) {
 									this.pruneDebouncedFn.delete(entry.entry.hash);
@@ -9310,7 +9281,8 @@ export class SharedLog<
 									toMerge.push(entry.entry);
 									toPersist.push(entry.entry);
 								} else {
-									if (gidReferenceHeads?.[i]) {
+									const referenceHeads = await getGidReferenceHeads();
+									if (referenceHeads[i]) {
 										toMerge.push(entry.entry);
 										(toDelete || (toDelete = [])).push(entry.entry);
 										continue outer;
