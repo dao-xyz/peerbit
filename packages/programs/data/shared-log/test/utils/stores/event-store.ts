@@ -14,6 +14,7 @@ import {
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
 	type SharedAppendOptions,
+	type SharedLogOptions,
 	type SharedLogFanoutOptions,
 	SharedLog,
 } from "../../../src/index.js";
@@ -78,6 +79,8 @@ export type Args<
 	sync?: SyncOptions<R>;
 	domain?: ReplicationDomainConstructor<D>;
 	nativeGraph?: boolean;
+	nativeBackbone?: SharedLogOptions<Operation<T>, D, R>["nativeBackbone"];
+	nativeRangePlanner?: SharedLogOptions<Operation<T>, D, R>["nativeRangePlanner"];
 };
 @variant("event_store")
 export class EventStore<
@@ -152,6 +155,8 @@ export class EventStore<
 			syncronizer: properties?.setup?.syncronizer as SynchronizerConstructor<R>,
 			sync: properties?.sync,
 			nativeGraph: properties?.nativeGraph,
+			nativeBackbone: properties?.nativeBackbone,
+			nativeRangePlanner: properties?.nativeRangePlanner,
 
 			// staticArgs was unused; keep open args explicit in tests
 		});

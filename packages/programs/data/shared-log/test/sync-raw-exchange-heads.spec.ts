@@ -1,5 +1,9 @@
 import { keys } from "@libp2p/crypto";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
+import {
+	NativeBackboneCoordinatePersistence,
+	NativeBackboneMemoryCoordinatePersistenceStore,
+} from "@peerbit/native-backbone";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -457,6 +461,141 @@ describe("raw exchange-head sync", () => {
 				singleSpy.restore();
 				batchSpy.restore();
 				sharedPlanEntryLeaderBatchSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("persists receive coordinate items through native backbone WAL without generic coordinate index writes", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const coordinateStore = new NativeBackboneMemoryCoordinatePersistenceStore();
+			const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+				coordinateStore,
+			);
+			const sourceOpenArgs: any = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const targetOpenArgs: any = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				nativeBackbone: {
+					optional: false,
+					coordinatePersistence,
+				},
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: sourceOpenArgs,
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: targetOpenArgs,
+			});
+
+			const hashes: string[] = [];
+			const entries: any[] = [];
+			for (let i = 0; i < 4; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+				entries.push(entry);
+			}
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+			expect(sharedLog._nativeBackboneCoordinatePersistence).to.exist;
+			expect(sharedLog._residentEntryCoordinatesByHash).to.be.instanceOf(Map);
+			expect(sharedLog.canUseBackboneOnlyCoordinatePersistence()).to.equal(
+				true,
+			);
+			const backboneCommitSpy = sinon.spy(backbone, "commitEntryCoordinatesBatch");
+			const backboneOnlyPersistSpy = sinon.spy(
+				sharedLog,
+				"persistBackboneOnlyReceiveCoordinateBatch",
+			);
+			const flushOnAppendSpy = sinon.spy(
+				sharedLog._nativeBackboneCoordinatePersistence,
+				"flushJournalOnAppend",
+			);
+			const coordinateIndexBatchPutSpy =
+				coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn
+					? sinon.spy(
+							coordinateIndex,
+							"putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn",
+						)
+					: undefined;
+			const coordinateIndexPutSpy =
+				coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn
+					? sinon.spy(
+							coordinateIndex,
+							"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+						)
+					: undefined;
+			try {
+				const persistItems: any[] = [];
+				for (const entry of entries) {
+					const replicas = 1;
+					const plan = await sharedLog.planEntryLeaders(entry, replicas, {
+						roleAge: 0,
+						persist: false,
+					});
+					const prepared =
+						sharedLog.createCoordinatePersistenceEntryFromLeaderPlan({
+							entry,
+							plan,
+							replicas,
+						});
+					expect(prepared).to.not.equal(false);
+					persistItems.push({
+						coordinates: plan.coordinates,
+						entry,
+						leaders: plan.leaders,
+						replicas,
+						assignedToRangeBoundary: plan.assignedToRangeBoundary,
+						prepared,
+					});
+				}
+				const persisted =
+					await sharedLog.persistBackboneOnlyReceiveCoordinateBatch(
+						persistItems,
+					);
+
+				expect(backboneOnlyPersistSpy.callCount).to.equal(1);
+				expect(persisted?.size).to.equal(hashes.length);
+				expect(backboneCommitSpy.callCount).to.equal(1);
+				expect(coordinateIndexBatchPutSpy?.callCount ?? 0).to.equal(0);
+				expect(coordinateIndexPutSpy?.callCount ?? 0).to.equal(0);
+				expect(flushOnAppendSpy.callCount).to.equal(1);
+				expect(backbone.getEntryCoordinateHashes()).to.have.length(
+					hashes.length,
+				);
+				expect(
+					coordinateStore.files.get("coordinates.wal")?.byteLength,
+				).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+			} finally {
+				coordinateIndexPutSpy?.restore();
+				coordinateIndexBatchPutSpy?.restore();
+				flushOnAppendSpy.restore();
+				backboneOnlyPersistSpy.restore();
+				backboneCommitSpy.restore();
 			}
 		} finally {
 			await session.stop();

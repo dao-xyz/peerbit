@@ -3304,8 +3304,7 @@ export class NativePeerbitBackbone {
 		if (rows.length === 0) {
 			return;
 		}
-		const nativeCommitBatch = this.native.commit_entry_coordinates_batch;
-		if (!nativeCommitBatch) {
+		if (!this.native.commit_entry_coordinates_batch) {
 			for (const row of rows) {
 				this.native.commit_entry_coordinates(
 					row.hash,
@@ -3319,7 +3318,7 @@ export class NativePeerbitBackbone {
 			}
 			return;
 		}
-		nativeCommitBatch(
+		this.native.commit_entry_coordinates_batch(
 			rows.map((row) => row.hash),
 			rows.map((row) => row.gid),
 			rows.map((row) => row.hashNumber),

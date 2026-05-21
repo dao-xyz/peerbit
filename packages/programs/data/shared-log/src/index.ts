@@ -9418,6 +9418,7 @@ export class SharedLog<
 							(plan) => plan.toPersist,
 						);
 						const coordinatePersistStartedAt = syncProfileStart(syncProfile);
+						let nativeBackboneOnlyPersistedHashes: Set<string> | undefined;
 						const coordinatePersistFallbackEntries: Entry<any>[] = [];
 						const reusableCoordinatePersistItems: Parameters<
 							typeof this.persistCoordinatesBatch
@@ -9437,6 +9438,30 @@ export class SharedLog<
 									reusablePlan.plan.assignedToRangeBoundary,
 								prepared: reusablePlan.prepared,
 							});
+						}
+						const reusableCoordinatePersistItemCount =
+							reusableCoordinatePersistItems.length;
+						nativeBackboneOnlyPersistedHashes =
+							await this.persistBackboneOnlyReceiveCoordinateBatch(
+								reusableCoordinatePersistItems,
+							);
+						if (
+							nativeBackboneOnlyPersistedHashes &&
+							nativeBackboneOnlyPersistedHashes.size > 0
+						) {
+							for (
+								let i = reusableCoordinatePersistItems.length - 1;
+								i >= 0;
+								i--
+							) {
+								if (
+									nativeBackboneOnlyPersistedHashes.has(
+										reusableCoordinatePersistItems[i]!.entry.hash,
+									)
+								) {
+									reusableCoordinatePersistItems.splice(i, 1);
+								}
+							}
 						}
 						if (reusableCoordinatePersistItems.length > 0) {
 							await this.persistCoordinatesBatch(
@@ -9461,7 +9486,9 @@ export class SharedLog<
 								entries: entriesToPersist.length,
 								messages: 1,
 								details: {
-									reusedLeaderPlans: reusableCoordinatePersistItems.length,
+									reusedLeaderPlans: reusableCoordinatePersistItemCount,
+									nativeBackboneOnly:
+										nativeBackboneOnlyPersistedHashes?.size ?? 0,
 								},
 							});
 						}
@@ -10920,6 +10947,82 @@ export class SharedLog<
 			});
 		}
 		return reusablePlans;
+	}
+
+	private async persistBackboneOnlyReceiveCoordinateBatch(
+		items: Parameters<typeof this.persistCoordinatesBatch>[0],
+	): Promise<Set<string> | undefined> {
+		const backbone = this._nativeBackbone;
+		if (
+			!backbone ||
+			items.length === 0 ||
+			!this.canUseBackboneOnlyCoordinatePersistence()
+		) {
+			return undefined;
+		}
+
+		const rows = items
+			.filter((item) => item.prepared)
+			.map((item) => {
+				const prepared = item.prepared!;
+				const deleteHashes = item.entry.meta.next;
+				return {
+					item,
+					prepared,
+					fields: prepared.fields,
+					deleteHashes,
+				};
+			});
+		if (rows.length === 0) {
+			return undefined;
+		}
+
+		const rollbackCoordinateEntries = this.snapshotResidentCoordinateEntries(
+			rows.flatMap((row) => [row.item.entry.hash, ...row.deleteHashes]),
+		);
+
+		try {
+			backbone.commitEntryCoordinatesBatch(
+				rows.map(({ item, prepared }) => ({
+					hash: item.entry.hash,
+					gid: prepared.fields.gid,
+					coordinates: item.coordinates,
+					nextHashes: item.entry.meta.next,
+					assignedToRangeBoundary: prepared.assignedToRangeBoundary,
+					requestedReplicas: item.replicas,
+					hashNumber: prepared.fields.hashNumber,
+				})),
+			);
+
+			const persistedHashes = new Set<string>();
+			for (const { item, prepared, fields, deleteHashes } of rows) {
+				persistedHashes.add(item.entry.hash);
+				this._residentEntryCoordinatesByHash?.set(
+					item.entry.hash,
+					prepared.coordinateEntry ?? fields,
+				);
+				for (const deletedHash of deleteHashes) {
+					this._residentEntryCoordinatesByHash?.delete(deletedHash);
+				}
+				for (const coordinate of item.coordinates) {
+					this.coordinateToHash.add(coordinate, item.entry.hash);
+				}
+			}
+
+			const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
+			if (isPromiseLike(flushed)) {
+				await flushed;
+			}
+			return persistedHashes;
+		} catch (error) {
+			for (const { item } of rows) {
+				this.rollbackNativeBackboneCoordinateAppend(
+					item.entry.hash,
+					rollbackCoordinateEntries,
+				);
+			}
+			throw error;
+		}
 	}
 
 	private createCoordinatePersistenceEntryFromLeaderPlan(properties: {
