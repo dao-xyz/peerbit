@@ -25,6 +25,23 @@ The goal of this evidence is narrower than "enable by default now":
   churn.
 - Preserve deterministic repro paths for future seed failures.
 
+## Review Map
+
+The PR is intentionally broad, but the review surface has distinct buckets:
+
+- Runtime mechanism: `src/fanout-tree.ts` and the small option re-export in
+  `src/index.ts`.
+- Deterministic coverage: `test/fanout-tree.spec.ts`,
+  `test/fanout-topics.spec.ts`, and the sim runner/spec wrappers.
+- Evidence harness: `benchmark/fanout-tree-parent-upgrade-*.ts`,
+  `benchmark/fanout-tree-sim*.ts`, and
+  `scripts/fanout-parent-upgrade-default-ready.mjs`.
+- Automation: the PR fanout gate in `.github/workflows/ci.yml`, plus the
+  nightly parent-upgrade matrix in `.github/workflows/nightly-sims.yml`.
+- Small non-fanout stabilization: `packages/programs/data/shared-log/src/index.ts`
+  awaits internal index shutdown during close. This is not part of the fanout
+  mechanism; it is kept because part-7 stability is a gating risk for this PR.
+
 ## Policy Under Test
 
 The named evaluator preset is:
