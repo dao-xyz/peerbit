@@ -1754,19 +1754,17 @@ impl NativePeerbitBackbone {
         payload_size: u32,
         document_index_commit: DocumentIndexAppendCommit,
     ) -> Result<Array, JsValue> {
-        let (entry_facts, _) = self
+        let entry_facts = self
             .log
-            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder(
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder(
                 &self.builder,
                 &mut self.blocks,
                 wall_time,
                 logical,
                 gid,
-                Vec::new(),
                 entry_type,
                 optional_bytes_from_js(meta_data),
                 payload_data.to_vec(),
-                None,
                 None,
             )?;
         self.put_document_index_for_append(

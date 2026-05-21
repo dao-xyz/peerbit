@@ -256,6 +256,28 @@ impl LogGraphIndex {
         }
     }
 
+    pub fn put_no_next(&mut self, entry: LogIndexEntry) {
+        debug_assert!(entry.next.is_empty());
+        let hash = entry.hash.clone();
+        let payload_size = entry.payload_size as u64;
+        let head = entry.head;
+        let wall_time = entry.wall_time;
+        let logical = entry.logical;
+
+        if self.entries.contains_key(&hash) {
+            self.delete(&hash);
+        }
+        self.entries.insert(hash.clone(), entry);
+        self.ordered_entries
+            .insert((wall_time, logical, hash.clone()));
+        self.payload_size_total += payload_size;
+        if head {
+            self.heads.insert(hash.clone());
+        } else {
+            self.heads.shift_remove(&hash);
+        }
+    }
+
     pub fn delete(&mut self, hash: &str) -> Option<LogIndexEntry> {
         let entry = self.entries.shift_remove(hash)?;
         self.heads.shift_remove(hash);
@@ -886,6 +908,69 @@ impl NativeLogIndex {
                 profile.as_deref_mut(),
             )?;
         Ok((facts, trimmed.into_hashes()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<NativeCommittedEntryFacts, JsValue> {
+        let core_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
+            &builder.clock_id,
+            &builder.public_key,
+            &builder.signing_key,
+            wall_time,
+            logical,
+            gid,
+            Vec::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            profile.as_deref_mut(),
+        )?;
+        if let Some(started) = core_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.entry_core_ms += js_sys::Date::now() - started;
+            }
+        }
+        let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let entry = core.entry.clone();
+        let facts = NativeCommittedEntryFacts {
+            hash: core.hash.clone(),
+            next: core.next,
+            meta_bytes: core.meta_bytes,
+            byte_length: core.storage_bytes.len(),
+            hash_digest_bytes: core.hash_digest_bytes,
+        };
+        if let Some(started) = facts_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.facts_ms += js_sys::Date::now() - started;
+            }
+        }
+        let block_put_started = profile.as_ref().map(|_| js_sys::Date::now());
+        block_store.put_entry(core.hash, core.storage_bytes);
+        if let Some(started) = block_put_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.block_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let graph_put_started = profile.as_ref().map(|_| js_sys::Date::now());
+        self.inner.put_no_next(entry);
+        if let Some(started) = graph_put_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.graph_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        Ok(facts)
     }
 
     #[allow(clippy::too_many_arguments)]
