@@ -2749,18 +2749,26 @@ describe("index", () => {
 						store.docs as any,
 						"tryHandlePreparedPlainPutCommitRemovedFromHeads",
 					);
+					const transactionSpy = sinon.spy(
+						store.docs as any,
+						"createNativeDocumentAppendTransaction",
+					);
 					try {
 						const first = new Document({ id: uuid(), name: "trimmed" });
 						const second = new Document({ id: uuid(), name: "kept" });
 						await store.docs.put(first, { unique: true });
 						await store.docs.put(second, { unique: true });
+						const secondTransaction = transactionSpy.secondCall?.returnValue;
 						expect(hashTrimNoReturnSpy.callCount).greaterThan(0);
 						expect(hashTrimSpy.callCount).equal(0);
 						expect(entryTrimSpy.callCount).equal(0);
 						expect(removedHeadsSpy.callCount).equal(0);
+						expect(secondTransaction?.removed).to.deep.equal([]);
+						expect(secondTransaction?.removedHashes).to.have.length(1);
 						expect(await store.docs.get(first.id)).equal(undefined);
 						expect((await store.docs.get(second.id))?.name).equal("kept");
 					} finally {
+						transactionSpy.restore();
 						removedHeadsSpy.restore();
 						entryTrimSpy.restore();
 						hashTrimNoReturnSpy.restore();

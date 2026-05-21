@@ -225,6 +225,7 @@ type LocalAppendCommitFacts = {
 type NativeDocumentAppendResult = {
 	entry: Entry<Operation>;
 	removed: ShallowOrFullEntry<Operation>[];
+	removedHashes?: string[];
 	appendCommit: LocalAppendCommitFacts;
 };
 
@@ -268,6 +269,7 @@ type NativeDocumentAppendTransaction<T, I extends Record<string, any>> = {
 	operationPayloadBytes: Uint8Array;
 	entry: Entry<Operation>;
 	removed: ShallowOrFullEntry<Operation>[];
+	removedHashes?: string[];
 	append: LocalAppendCommitFacts;
 	context: Context;
 	contextBytes: Uint8Array;
@@ -1977,6 +1979,7 @@ export class Documents<
 				return appended.entry;
 			},
 			removed: appended.removed,
+			removedHashes: appended.removedHashes,
 			append,
 			get context() {
 				return contextAccessors.getContext();
@@ -2133,11 +2136,14 @@ export class Documents<
 		const shouldPrepareChange = this.hasDocumentChangeConsumers();
 		const removedAlreadyHandled =
 			commit.nativeBackboneDocumentIndexTrimmedHeadsProcessed === true;
+		const removedHashes = commit.removedHashes ?? [];
+		const hasRemovedFacts =
+			commit.removed.length > 0 || removedHashes.length > 0;
 		const existing =
 			commit.unique || commit.existing === null ? null : commit.existing;
 		if (
 			!shouldPrepareChange &&
-			(commit.removed.length === 0 || removedAlreadyHandled) &&
+			(!hasRemovedFacts || removedAlreadyHandled) &&
 			commit.nativeBackboneDocumentIndexCommitted
 		) {
 			if (!this.strictHistory && existing) {
@@ -2175,8 +2181,35 @@ export class Documents<
 
 		const finishRemoved = (): MaybePromise<void> => {
 			if (!shouldPrepareChange) {
-				if (commit.removed.length === 0 || removedAlreadyHandled) {
+				if (!hasRemovedFacts || removedAlreadyHandled) {
 					return undefined;
+				}
+				if (commit.removed.length === 0 && removedHashes.length > 0) {
+					const handled =
+						this.tryHandlePreparedPlainPutCommitRemovedHashesFromHeads(
+							removedHashes,
+							modified,
+						);
+					if (handled !== undefined) {
+						return mapMaybePromise(handled, (handledHeads) => {
+							if (handledHeads.size === removedHashes.length) {
+								return undefined;
+							}
+							const remaining = removedHashes.filter(
+								(hash) => !handledHeads.has(hash),
+							);
+							return remaining.length === 0
+								? undefined
+								: this.handlePreparedPlainPutCommitRemovedHashes(
+										remaining,
+										modified,
+									);
+						});
+					}
+					return this.handlePreparedPlainPutCommitRemovedHashes(
+						removedHashes,
+						modified,
+					);
 				}
 				const handled = this.tryHandlePreparedPlainPutCommitRemovedFromHeads(
 					commit.removed,
@@ -2201,6 +2234,13 @@ export class Documents<
 				);
 			}
 			if (commit.removed.length === 0) {
+				if (removedHashes.length > 0) {
+					return this.handlePreparedPlainPutCommitRemovedHashes(
+						removedHashes,
+						modified,
+						documentsChanged!,
+					);
+				}
 				this.dispatchDocumentChangeIfObserved(documentsChanged!);
 				return;
 			}
@@ -2350,6 +2390,30 @@ export class Documents<
 		return mapMaybePromise(this._index.delManyMaybe(deleteKeys), () => handled);
 	}
 
+	private tryHandlePreparedPlainPutCommitRemovedHashesFromHeads(
+		removedHashes: string[],
+		modified: Set<string | number | bigint>,
+	): MaybePromise<Set<string>> | undefined {
+		const handled = new Set<string>();
+		const deleteKeys: indexerTypes.IdKey[] = [];
+		for (const hash of removedHashes) {
+			const resolved = this._index.tryGetIdentityIndexedKeyByHead(hash);
+			if (!resolved.supported) {
+				return;
+			}
+			if (!resolved.key) {
+				continue;
+			}
+			handled.add(hash);
+			if (modified.has(resolved.key.primitive)) {
+				continue;
+			}
+			deleteKeys.push(resolved.key);
+			modified.add(resolved.key.primitive);
+		}
+		return mapMaybePromise(this._index.delManyMaybe(deleteKeys), () => handled);
+	}
+
 	private async handlePreparedPlainPutCommitRemoved(
 		removedEntries: ShallowOrFullEntry<Operation>[],
 		modified: Set<string | number | bigint>,
@@ -2382,6 +2446,47 @@ export class Documents<
 							type: "full",
 							ignoreMissing: true,
 						});
+			if (!entry) {
+				continue;
+			}
+			try {
+				await this.collectRemovedDocumentChange(
+					await entry.getPayloadValue(),
+					modified,
+					documentsChanged,
+				);
+			} catch (error) {
+				if (error instanceof AccessError) {
+					continue;
+				}
+				throw error;
+			}
+		}
+
+		if (documentsChanged) {
+			this.dispatchDocumentChangeIfObserved(documentsChanged);
+		}
+	}
+
+	private async handlePreparedPlainPutCommitRemovedHashes(
+		removedHashes: string[],
+		modified: Set<string | number | bigint>,
+		documentsChanged?: DocumentsChange<T, I>,
+	): Promise<void> {
+		const handledRemovedHeads =
+			await this.collectRemovedDocumentChangesFromIndexedHeadHashes(
+				removedHashes,
+				modified,
+				documentsChanged,
+			);
+		for (const hash of removedHashes) {
+			if (handledRemovedHeads.has(hash)) {
+				continue;
+			}
+			const entry = await this.log.log.entryIndex.get(hash, {
+				type: "full",
+				ignoreMissing: true,
+			});
 			if (!entry) {
 				continue;
 			}
@@ -2564,21 +2669,33 @@ export class Documents<
 		modified: Set<string | number | bigint>,
 		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<Set<string>> {
-		const shallowRemoved = removed.filter(
-			(entry): entry is ShallowEntry => !(entry instanceof Entry),
+		const shallowRemovedHashes = removed
+			.filter((entry): entry is ShallowEntry => !(entry instanceof Entry))
+			.map((entry) => entry.hash);
+		return this.collectRemovedDocumentChangesFromIndexedHeadHashes(
+			shallowRemovedHashes,
+			modified,
+			documentsChanged,
 		);
-		if (shallowRemoved.length === 0) {
+	}
+
+	private async collectRemovedDocumentChangesFromIndexedHeadHashes(
+		removedHashes: string[],
+		modified: Set<string | number | bigint>,
+		documentsChanged?: DocumentsChange<T, I>,
+	): Promise<Set<string>> {
+		if (removedHashes.length === 0) {
 			return new Set();
 		}
 		if (!documentsChanged) {
 			const handled = new Set<string>();
 			const deleteKeys: indexerTypes.IdKey[] = [];
-			for (const entry of shallowRemoved) {
-				const key = await this._index.getIdentityIndexedKeyByHead(entry.hash);
+			for (const hash of removedHashes) {
+				const key = await this._index.getIdentityIndexedKeyByHead(hash);
 				if (!key) {
 					continue;
 				}
-				handled.add(entry.hash);
+				handled.add(hash);
 				if (modified.has(key.primitive)) {
 					continue;
 				}
@@ -2589,7 +2706,7 @@ export class Documents<
 			return handled;
 		}
 		const indexedByHead = await this._index.getIdentityIndexedByHeads(
-			shallowRemoved.map((entry) => entry.hash),
+			removedHashes,
 		);
 		if (!indexedByHead) {
 			return new Set();
@@ -2597,13 +2714,13 @@ export class Documents<
 
 		const handled = new Set<string>();
 		const deleteKeys: indexerTypes.IdKey[] = [];
-		for (let i = 0; i < shallowRemoved.length; i++) {
+		for (let i = 0; i < removedHashes.length; i++) {
 			const indexed = indexedByHead[i];
 			if (!indexed) {
 				continue;
 			}
 			const key = indexed.id;
-			handled.add(shallowRemoved[i]!.hash);
+			handled.add(removedHashes[i]!);
 			if (modified.has(key.primitive)) {
 				continue;
 			}
