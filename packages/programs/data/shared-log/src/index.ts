@@ -9630,6 +9630,7 @@ export class SharedLog<
 				let presentEntries = 0;
 				let indexedFallbackLookups = 0;
 				let fallbackBlockChecks = 0;
+				let skippedIndexedLookupsForMissingBlocks = 0;
 				let pendingDeleteEntries = 0;
 				let leaderResponses = 0;
 				let pendingIHaveCreated = 0;
@@ -9639,12 +9640,9 @@ export class SharedLog<
 					const hash = msg.hashes[i]!;
 
 					const nativeEntry = nativeEntryMetadata?.[i];
-					const indexedEntry = nativeEntry
-						? undefined
-						: await this.log.entryIndex.getShallow(hash);
-					if (!nativeEntry) {
-						indexedFallbackLookups += 1;
-					}
+					let indexedEntry:
+						| Awaited<ReturnType<typeof this.log.entryIndex.getShallow>>
+						| undefined;
 					let isLeader = false;
 
 					const hasPresentBlock = presentBlocks
@@ -9652,6 +9650,12 @@ export class SharedLog<
 						: await this.log.blocks.has(hash);
 					if (!presentBlocks) {
 						fallbackBlockChecks += 1;
+					}
+					if (!nativeEntry && hasPresentBlock) {
+						indexedEntry = await this.log.entryIndex.getShallow(hash);
+						indexedFallbackLookups += 1;
+					} else if (!nativeEntry) {
+						skippedIndexedLookupsForMissingBlocks += 1;
 					}
 					if (
 						(nativeEntry || indexedEntry) &&
@@ -9807,6 +9811,7 @@ export class SharedLog<
 							leaderResponseBatches: leaderResponseHashes.length > 0 ? 1 : 0,
 							pendingIHaveCreated,
 							pendingIHaveExtended,
+							skippedIndexedLookupsForMissingBlocks,
 						},
 					});
 					emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {

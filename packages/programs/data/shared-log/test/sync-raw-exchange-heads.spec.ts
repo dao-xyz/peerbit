@@ -643,6 +643,78 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("skips request-prune indexed lookups for missing blocks", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const source = await session.peers[0].open(store.clone(), {
+				args: { replicate: false, setup, nativeGraph: true },
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					timeUntilRoleMaturity: 0,
+					sync: {
+						profile: (event: any) => profileEvents.push(event),
+					},
+				},
+			});
+			const hashes: string[] = [];
+			for (let i = 0; i < 4; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			const getShallowSpy = sinon.spy(target.log.log.entryIndex, "getShallow");
+			const hasManyStub = sinon
+				.stub(target.log.log.blocks as any, "hasMany")
+				.resolves(hashes.map(() => false));
+			try {
+				await target.log.onMessage(new RequestIPrune({ hashes }), {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				expect(hasManyStub.callCount).to.equal(1);
+				expect(getShallowSpy.callCount).to.equal(0);
+				const pending = (target.log as any)._pendingIHave as Map<
+					string,
+					{ clear?: () => void }
+				>;
+				expect(pending.size).to.equal(hashes.length);
+				for (const value of pending.values()) {
+					value.clear?.();
+				}
+				pending.clear();
+
+				const loopProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.requestPrune.loop",
+				);
+				expect(loopProfile.details.indexedFallbackLookups).to.equal(0);
+				expect(
+					loopProfile.details.skippedIndexedLookupsForMissingBlocks,
+				).to.equal(hashes.length);
+				expect(loopProfile.details.pendingIHaveCreated).to.equal(hashes.length);
+			} finally {
+				hasManyStub.restore();
+				getShallowSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("skips raw entry materialization for already-present heads", async () => {
 		const session = await TestSession.disconnected(2, [
 			{
