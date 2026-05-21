@@ -335,6 +335,10 @@ type ReusableReceiveCoordinatePlan<R extends "u32" | "u64"> = {
 };
 
 type DecodedReplicaCountMap = ReadonlyMap<string, number>;
+type NativeRequestPruneLeaderHints = {
+	localLeaderHashes: Set<string>;
+	replicaCounts: Map<string, number>;
+};
 
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 	hash: string;
@@ -9482,8 +9486,8 @@ export class SharedLog<
 					msg.hashes,
 				);
 				const presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
-				const nativeLocalLeaderHints =
-					await this.planCurrentNativeRequestPruneLocalLeaders({
+				const nativeLeaderHints =
+					await this.planCurrentNativeRequestPruneLeaderHints({
 						hashes: msg.hashes,
 						nativeEntryMetadata,
 						presentBlocks,
@@ -9528,11 +9532,13 @@ export class SharedLog<
 							}
 						} else {
 							const gid = nativeEntry?.gid ?? indexedEntry!.value.meta.gid;
-							const replicas = decodeReplicas({
-								meta: {
-									data: nativeEntry?.data ?? indexedEntry!.value.meta.data,
-								},
-							}).getValue(this);
+							const replicas =
+								nativeLeaderHints.replicaCounts.get(hash) ??
+								decodeReplicas({
+									meta: {
+										data: nativeEntry?.data ?? indexedEntry!.value.meta.data,
+									},
+								}).getValue(this);
 
 							this.removePeerFromGidPeerHistory(
 								context.from!.hashcode(),
@@ -9552,7 +9558,7 @@ export class SharedLog<
 								},
 							};
 
-							if (nativeLocalLeaderHints.has(hash)) {
+							if (nativeLeaderHints.localLeaderHashes.has(hash)) {
 								isLeader = true;
 							} else if (nativeEntry) {
 								await this._waitForGidReplicators(
@@ -10619,24 +10625,29 @@ export class SharedLog<
 		return backboneMetadata.map((entry, index) => entry ?? indexMetadata[index]);
 	}
 
-	private async planCurrentNativeRequestPruneLocalLeaders(properties: {
+	private async planCurrentNativeRequestPruneLeaderHints(properties: {
 		hashes: string[];
 		nativeEntryMetadata?: Array<
 			{ gid: string; data?: Uint8Array } | undefined | null
 		>;
 		presentBlocks?: boolean[] | undefined;
-	}): Promise<Set<string>> {
+	}): Promise<NativeRequestPruneLeaderHints> {
+		const empty = (): NativeRequestPruneLeaderHints => ({
+			localLeaderHashes: new Set(),
+			replicaCounts: new Map(),
+		});
 		const planner = this._nativeBackbone ?? this._nativeRangePlanner;
 		if (
 			!planner ||
 			!properties.nativeEntryMetadata ||
 			!properties.presentBlocks
 		) {
-			return new Set();
+			return empty();
 		}
 
 		const hashes: string[] = [];
 		const entries: Array<{ gid: string; replicas: number }> = [];
+		const replicaCounts = new Map<string, number>();
 		for (let i = 0; i < properties.hashes.length; i++) {
 			const hash = properties.hashes[i]!;
 			const nativeEntry = properties.nativeEntryMetadata[i];
@@ -10647,18 +10658,23 @@ export class SharedLog<
 			) {
 				continue;
 			}
+			const replicas = decodeReplicas({
+				meta: {
+					data: nativeEntry.data,
+				},
+			}).getValue(this);
 			hashes.push(hash);
+			replicaCounts.set(hash, replicas);
 			entries.push({
 				gid: nativeEntry.gid,
-				replicas: decodeReplicas({
-					meta: {
-						data: nativeEntry.data,
-					},
-				}).getValue(this),
+				replicas,
 			});
 		}
 		if (entries.length === 0) {
-			return new Set();
+			return {
+				localLeaderHashes: new Set(),
+				replicaCounts,
+			};
 		}
 
 		const context = await this.createLeaderSelectionContext();
@@ -10672,7 +10688,10 @@ export class SharedLog<
 				localLeaderHashes.add(hashes[i]!);
 			}
 		}
-		return localLeaderHashes;
+		return {
+			localLeaderHashes,
+			replicaCounts,
+		};
 	}
 
 	private createReusableReceiveCoordinatePlans(
