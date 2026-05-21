@@ -2,8 +2,12 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,request-prune-native-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-coordinate-wal,request-prune-native-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
+import {
+	NativeBackboneCoordinatePersistence,
+	NativeBackboneMemoryCoordinatePersistenceStore,
+} from "@peerbit/native-backbone";
 import { TestSession } from "@peerbit/test-utils";
 import { performance } from "node:perf_hooks";
 import { v4 as uuid } from "uuid";
@@ -19,6 +23,7 @@ import { EventStore } from "../test/utils/stores/event-store.js";
 
 type Scenario =
 	| "raw-receive-native"
+	| "raw-receive-native-coordinate-wal"
 	| "request-prune-native-confirm"
 	| "request-prune-pending-ihave";
 
@@ -29,6 +34,7 @@ type ProfileSummary = {
 	maxMs: number;
 	entries: number;
 	messages: number;
+	nativeBackboneOnly: number;
 };
 
 type BenchRow = {
@@ -61,6 +67,7 @@ const parseCounts = (value: string | undefined) =>
 const parseScenarios = (value: string | undefined): Scenario[] => {
 	const scenarios = (value ?? [
 		"raw-receive-native",
+		"raw-receive-native-coordinate-wal",
 		"request-prune-native-confirm",
 		"request-prune-pending-ihave",
 	].join(","))
@@ -70,6 +77,7 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 	for (const scenario of scenarios) {
 		if (
 			scenario !== "raw-receive-native" &&
+			scenario !== "raw-receive-native-coordinate-wal" &&
 			scenario !== "request-prune-native-confirm" &&
 			scenario !== "request-prune-pending-ihave"
 		) {
@@ -104,6 +112,7 @@ const summarizeProfileEvents = (
 				maxMs: 0,
 				entries: 0,
 				messages: 0,
+				nativeBackboneOnly: 0,
 			};
 			summaries.set(event.name, summary);
 		}
@@ -113,22 +122,40 @@ const summarizeProfileEvents = (
 		summary.maxMs = Math.max(summary.maxMs, durationMs);
 		summary.entries += event.entries ?? 0;
 		summary.messages += event.messages ?? 0;
+		summary.nativeBackboneOnly +=
+			typeof event.details?.nativeBackboneOnly === "number"
+				? event.details.nativeBackboneOnly
+				: 0;
 	}
 	return [...summaries.values()].sort((a, b) => b.totalMs - a.totalMs);
 };
 
-const createOpenArgs = (profileEvents: SyncProfileEvent[]) => ({
-	replicate: false,
-	setup,
-	nativeGraph: true,
-	keep: () => true,
-	timeUntilRoleMaturity: 0,
-	respondToIHaveTimeout: 1,
-	sync: {
-		rawExchangeHeads: true,
-		profile: (event: SyncProfileEvent) => profileEvents.push(event),
-	},
-});
+const createOpenArgs = (
+	profileEvents: SyncProfileEvent[],
+	options?: { coordinateWal?: boolean },
+) => {
+	const nativeBackbone = options?.coordinateWal
+		? {
+				optional: false,
+				coordinatePersistence: new NativeBackboneCoordinatePersistence(
+					new NativeBackboneMemoryCoordinatePersistenceStore(),
+				),
+			}
+		: undefined;
+	return {
+		replicate: false,
+		setup,
+		nativeGraph: true,
+		nativeBackbone,
+		keep: () => true,
+		timeUntilRoleMaturity: 0,
+		respondToIHaveTimeout: 1,
+		sync: {
+			rawExchangeHeads: true,
+			profile: (event: SyncProfileEvent) => profileEvents.push(event),
+		},
+	};
+};
 
 const appendIndependentEntries = async (
 	store: EventStore<string, any>,
@@ -163,7 +190,11 @@ const createRawMessages = async (
 	return messages;
 };
 
-const runRawReceive = async (count: number, run: number): Promise<BenchRow> => {
+const runRawReceive = async (
+	count: number,
+	run: number,
+	options?: { coordinateWal?: boolean },
+): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
 		indexer: (directory) => createRustIndexer(directory),
 	});
@@ -173,7 +204,7 @@ const runRawReceive = async (count: number, run: number): Promise<BenchRow> => {
 			args: createOpenArgs([]),
 		});
 		const db2 = await session.peers[1].open(new EventStore<string, any>(), {
-			args: createOpenArgs(profileEvents),
+			args: createOpenArgs(profileEvents, options),
 		});
 		const hashes = await appendIndependentEntries(db1, count);
 		const messages = await createRawMessages(db1, hashes);
@@ -193,7 +224,9 @@ const runRawReceive = async (count: number, run: number): Promise<BenchRow> => {
 		}
 
 		return {
-			scenario: "raw-receive-native",
+			scenario: options?.coordinateWal
+				? "raw-receive-native-coordinate-wal"
+				: "raw-receive-native",
 			count,
 			run,
 			elapsedMs: elapsed,
@@ -345,6 +378,9 @@ const runScenario = async (
 ): Promise<BenchRow> => {
 	if (scenario === "raw-receive-native") {
 		return runRawReceive(count, run);
+	}
+	if (scenario === "raw-receive-native-coordinate-wal") {
+		return runRawReceive(count, run, { coordinateWal: true });
 	}
 	if (scenario === "request-prune-native-confirm") {
 		return runRequestPruneNativeConfirm(count, run);
