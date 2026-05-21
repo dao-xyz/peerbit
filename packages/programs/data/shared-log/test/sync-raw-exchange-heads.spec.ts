@@ -249,6 +249,10 @@ describe("raw exchange-head sync", () => {
 			);
 			expect(materializeProfile.entries).to.equal(entryCount);
 			expect(materializeProfile.bytes).to.be.greaterThan(0);
+			const metadataProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.canAppendBatch.metadata",
+			);
+			expect(metadataProfile.details.replicaCacheHits).to.equal(entryCount);
 			receivedEntryHashesSpy.restore();
 			receivedEntriesSpy.restore();
 			markKnownSpy.restore();

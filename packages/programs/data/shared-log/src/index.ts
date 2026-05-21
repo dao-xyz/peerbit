@@ -334,6 +334,8 @@ type ReusableReceiveCoordinatePlan<R extends "u32" | "u64"> = {
 	prepared: PreparedCoordinatePersistence<R>;
 };
 
+type DecodedReplicaCountMap = ReadonlyMap<string, number>;
+
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 	hash: string;
 	hashNumber: NumberFromType<R>;
@@ -8407,16 +8409,27 @@ export class SharedLog<
 		return inputs;
 	}
 
-	private async canAppendBatch(entries: Entry<T>[], profile?: SyncProfileFn) {
+	private async canAppendBatch(
+		entries: Entry<T>[],
+		profile?: SyncProfileFn,
+		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
+	) {
 		try {
 			const signaturesToVerify: Entry<T>[] = [];
 			const checkStartedAt = syncProfileStart(profile);
+			let replicaCacheHits = 0;
 			for (const entry of entries) {
 				if (!entry.meta.data) {
 					warn("Received entry without meta data, skipping");
 					return false;
 				}
-				const replicas = decodeReplicas(entry).getValue(this);
+				let replicas: number;
+				if (options?.decodedReplicaCounts?.has(entry.hash)) {
+					replicas = options.decodedReplicaCounts.get(entry.hash)!;
+					replicaCacheHits++;
+				} else {
+					replicas = decodeReplicas(entry).getValue(this);
+				}
 				if (Number.isFinite(replicas) === false) {
 					return false;
 				}
@@ -8434,6 +8447,7 @@ export class SharedLog<
 					entries: entries.length,
 					count: signaturesToVerify.length,
 					messages: 1,
+					details: { replicaCacheHits },
 				});
 			}
 			if (signaturesToVerify.length === 0) {
@@ -8491,11 +8505,12 @@ export class SharedLog<
 	private async canSkipLowerLogCanAppendForNetworkJoin(
 		entries: Entry<T>[],
 		profile?: SyncProfileFn,
+		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
 	): Promise<boolean> {
 		if (entries.length === 0 || this._logProperties?.canAppend) {
 			return false;
 		}
-		return this.canAppendBatch(entries, profile);
+		return this.canAppendBatch(entries, profile, options);
 	}
 
 	async getCover(
@@ -8979,6 +8994,19 @@ export class SharedLog<
 						return;
 					}
 					const receivePlanStartedAt = syncProfileStart(syncProfile);
+					const receiveReplicaCounts = new Map<string, number>();
+					const decodeReceiveReplicaCount = (entry: {
+						hash: string;
+						meta: { data?: Uint8Array };
+					}) => {
+						const cached = receiveReplicaCounts.get(entry.hash);
+						if (cached !== undefined) {
+							return cached;
+						}
+						const replicas = decodeReplicas(entry).getValue(this);
+						receiveReplicaCounts.set(entry.hash, replicas);
+						return replicas;
+					};
 					const groupedByGid =
 						tryGroupByGidSync(filteredHeads) ??
 						(await groupByGid(filteredHeads));
@@ -9011,9 +9039,19 @@ export class SharedLog<
 						const maxReplicasFromHead =
 							maxReplicasFromHeadsByGid.get(gid) ??
 							this.replicas.min.getValue(this);
-						const maxReplicasFromNewEntries = maxReplicas(
-							this,
-							entries.map((x) => x.entry),
+						let maxRequestedReplicasFromNewEntries = 0;
+						for (const entry of entries) {
+							maxRequestedReplicasFromNewEntries = Math.max(
+								decodeReceiveReplicaCount(entry.entry),
+								maxRequestedReplicasFromNewEntries,
+							);
+						}
+						const lower = this.replicas.min?.getValue(this) || 1;
+						const higher =
+							this.replicas.max?.getValue(this) ?? Number.MAX_SAFE_INTEGER;
+						const maxReplicasFromNewEntries = Math.max(
+							Math.min(higher, maxRequestedReplicasFromNewEntries),
+							lower,
 						);
 						receiveGroups.push({
 							gid,
@@ -9239,7 +9277,9 @@ export class SharedLog<
 						(plan): plan is ReceivedGidJoinPlan => !!plan,
 					);
 					const reusableCoordinatePlans =
-						this.createReusableReceiveCoordinatePlans(receiveGroups);
+						this.createReusableReceiveCoordinatePlans(receiveGroups, {
+							decodedReplicaCounts: receiveReplicaCounts,
+						});
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
 							name: "sharedLog.receive.joinPlan",
@@ -9256,6 +9296,7 @@ export class SharedLog<
 							await this.canSkipLowerLogCanAppendForNetworkJoin(
 								allToMerge,
 								syncProfile,
+								{ decodedReplicaCounts: receiveReplicaCounts },
 							);
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, validateStartedAt, {
@@ -9328,7 +9369,9 @@ export class SharedLog<
 							await this.planEntryLeaderBatch(
 								coordinatePersistFallbackEntries.map((entry) => ({
 									entry,
-									replicas: decodeReplicas(entry).getValue(this),
+									replicas:
+										receiveReplicaCounts.get(entry.hash) ??
+										decodeReplicas(entry).getValue(this),
 									options: { roleAge: 0, persist: {} },
 								})),
 							);
@@ -10563,6 +10606,7 @@ export class SharedLog<
 			maxMaxReplicas: number;
 			leaderPlan?: EntryLeaderPlan<R>;
 		}>,
+		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
 	): Map<string, ReusableReceiveCoordinatePlan<R>> {
 		const reusablePlans = new Map<string, ReusableReceiveCoordinatePlan<R>>();
 		if (this.timeUntilRoleMaturity > 0) {
@@ -10574,7 +10618,9 @@ export class SharedLog<
 			if (!plan) {
 				continue;
 			}
-			const replicas = decodeReplicas(group.latestEntry).getValue(this);
+			const replicas =
+				options?.decodedReplicaCounts?.get(group.latestEntry.hash) ??
+				decodeReplicas(group.latestEntry).getValue(this);
 			if (replicas !== group.maxMaxReplicas) {
 				continue;
 			}
