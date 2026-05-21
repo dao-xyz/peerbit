@@ -508,7 +508,42 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_hashes: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
 	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_trim_hashes: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes: (
 		wallTime: bigint,
 		logical: number,
 		gid: string,
@@ -1975,26 +2010,34 @@ const preparedCommitFactsFromRow = (
 	return prepared;
 };
 
-const preparedCommitFactsWithTrimHashesFromRow = (
+const compactPreparedCommitFactsWithTrimHashesFromRow = (
 	row: unknown[],
 ): NativeBackboneCommittedEntry & {
 	trimmedEntryHashes?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
 } => {
-	const isTrimRow =
-		Array.isArray(row) &&
-		row.length >= 2 &&
-		Array.isArray(row[0]) &&
-		Array.isArray(row[1]);
-	const prepared = committedEntryFromRow((isTrimRow ? row[0] : row) as unknown[]);
-	if (!isTrimRow) {
-		return prepared;
-	}
+	const [hash, byteLength, metaBytes, fourth] = row as [
+		string,
+		number,
+		Uint8Array | undefined,
+		Uint8Array | string[] | undefined,
+	];
+	const hasDigestRow = fourth instanceof Uint8Array;
+	const hashDigestBytes = hasDigestRow ? fourth : undefined;
+	const trimHashOffset = hasDigestRow ? 4 : 3;
+	const trimHashRows = row[trimHashOffset] as string[] | undefined;
+	const documentTrimmedHeadsProcessed = row[trimHashOffset + 1] as
+		| boolean
+		| undefined;
 	return {
-		...prepared,
-		trimmedEntryHashes: row[1] as string[],
-		documentTrimmedHeadsProcessed:
-			typeof row[2] === "boolean" ? row[2] : undefined,
+		cid: hash,
+		hash,
+		next: [],
+		metaBytes,
+		byteLength,
+		hashDigestBytes,
+		trimmedEntryHashes: trimHashRows ?? [],
+		documentTrimmedHeadsProcessed,
 	};
 };
 
@@ -2109,8 +2152,8 @@ export class NativeBackboneLogGraph {
 			input.trimLengthTo != null &&
 			(input.next == null || input.next.length === 0)
 		) {
-			return preparedCommitFactsWithTrimHashesFromRow(
-				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_trim_hashes(
+			return compactPreparedCommitFactsWithTrimHashesFromRow(
+				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes(
 					BigInt(input.wallTime),
 					input.logical ?? 0,
 					input.gid,
@@ -2156,8 +2199,8 @@ export class NativeBackboneLogGraph {
 			input.trimLengthTo != null &&
 			(input.next == null || input.next.length === 0)
 		) {
-			return preparedCommitFactsWithTrimHashesFromRow(
-				this.native.prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes(
+			return compactPreparedCommitFactsWithTrimHashesFromRow(
+				this.native.prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_hashes(
 					BigInt(input.wallTime),
 					input.logical ?? 0,
 					input.gid,
