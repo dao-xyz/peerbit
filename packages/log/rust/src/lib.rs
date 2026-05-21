@@ -616,6 +616,77 @@ impl LogGraphIndex {
         })
     }
 
+    pub fn plan_join_batch(
+        &self,
+        hashes: &[String],
+        nexts: &[Vec<String>],
+        entry_types: &[u8],
+        reset: bool,
+        cut_checks: Option<(&[String], &[u64], &[u32])>,
+    ) -> Vec<JoinPlan> {
+        let cut_heads_by_gid = cut_checks.map(|_| {
+            let mut by_gid: HashMap<&str, Vec<&LogIndexEntry>> = HashMap::new();
+            for hash in &self.heads {
+                if let Some(entry) = self.entries.get(hash) {
+                    if entry.entry_type == ENTRY_TYPE_CUT {
+                        by_gid.entry(entry.gid.as_str()).or_default().push(entry);
+                    }
+                }
+            }
+            by_gid
+        });
+
+        let mut plans = Vec::with_capacity(hashes.len());
+        for i in 0..hashes.len() {
+            let hash = &hashes[i];
+            let current_nexts = &nexts[i];
+            let entry_type = entry_types[i];
+            let cut_check = cut_checks
+                .map(|(gids, wall_times, logicals)| (gids[i].as_str(), wall_times[i], logicals[i]));
+            let cut_checked = cut_check.is_some();
+            if !reset && self.has(hash) {
+                plans.push(JoinPlan {
+                    skip: true,
+                    missing_parents: Vec::new(),
+                    cut_checked,
+                    covered_by_cut: false,
+                });
+                continue;
+            }
+
+            let covered_by_cut = match (cut_check, cut_heads_by_gid.as_ref()) {
+                (Some((gid, wall_time, logical)), Some(cut_heads)) => cut_heads
+                    .get(gid)
+                    .map(|heads| {
+                        heads.iter().any(|entry| {
+                            entry.next.iter().any(|next| next == hash)
+                                && compare_clock(wall_time, logical, entry).is_lt()
+                        })
+                    })
+                    .unwrap_or(false),
+                _ => false,
+            };
+
+            let missing_parents = if entry_type == ENTRY_TYPE_CUT || covered_by_cut {
+                Vec::new()
+            } else {
+                current_nexts
+                    .iter()
+                    .filter(|next| reset || !self.has(next))
+                    .cloned()
+                    .collect()
+            };
+
+            plans.push(JoinPlan {
+                skip: false,
+                missing_parents,
+                cut_checked,
+                covered_by_cut,
+            });
+        }
+        plans
+    }
+
     fn set_head(&mut self, hash: &str, head: bool) {
         let Some(entry) = self.entries.get_mut(hash) else {
             return;
@@ -2124,28 +2195,52 @@ impl NativeLogIndex {
             return Err(JsValue::from_str("Expected equal cut-check column lengths"));
         }
 
-        let out = Array::new();
+        let mut parsed_hashes = Vec::with_capacity(len as usize);
+        let mut parsed_nexts = Vec::with_capacity(len as usize);
+        let mut parsed_entry_types = Vec::with_capacity(len as usize);
+        let mut parsed_gids = if cut_check {
+            Vec::with_capacity(len as usize)
+        } else {
+            Vec::new()
+        };
+        let mut parsed_wall_times = if cut_check {
+            Vec::with_capacity(len as usize)
+        } else {
+            Vec::new()
+        };
+        let mut parsed_logicals = if cut_check {
+            Vec::with_capacity(len as usize)
+        } else {
+            Vec::new()
+        };
         for i in 0..len {
-            let hash = required_string_from_array(&hashes, i)?;
-            let next = strings_from_array(required_array_from_array(&nexts, i)?)?;
-            let (gid, wall_time, logical) = if cut_check {
-                (
-                    Some(required_string_from_array(&gids, i)?),
-                    Some(wall_times.get_index(i)),
-                    Some(logicals.get_index(i)),
-                )
-            } else {
-                (None, None, None)
-            };
-            out.push(&join_plan_to_row(self.inner.plan_join(
-                &hash,
-                &next,
-                entry_types.get_index(i),
-                reset,
-                gid.as_deref(),
-                wall_time,
-                logical,
-            )));
+            parsed_hashes.push(required_string_from_array(&hashes, i)?);
+            parsed_nexts.push(strings_from_array(required_array_from_array(&nexts, i)?)?);
+            parsed_entry_types.push(entry_types.get_index(i));
+            if cut_check {
+                parsed_gids.push(required_string_from_array(&gids, i)?);
+                parsed_wall_times.push(wall_times.get_index(i));
+                parsed_logicals.push(logicals.get_index(i));
+            }
+        }
+        let cut_checks = if cut_check {
+            Some((
+                parsed_gids.as_slice(),
+                parsed_wall_times.as_slice(),
+                parsed_logicals.as_slice(),
+            ))
+        } else {
+            None
+        };
+        let out = Array::new();
+        for plan in self.inner.plan_join_batch(
+            &parsed_hashes,
+            &parsed_nexts,
+            &parsed_entry_types,
+            reset,
+            cut_checks,
+        ) {
+            out.push(&join_plan_to_row(plan));
         }
         Ok(out)
     }
@@ -4818,6 +4913,45 @@ mod tests {
                 cut_checked: true,
                 covered_by_cut: false
             }
+        );
+    }
+
+    #[test]
+    fn batch_plans_join_cut_coverage() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new(
+            "cut",
+            "g",
+            vec!["old".to_string()],
+            CUT,
+            2,
+            0,
+            1,
+            true,
+        ));
+
+        assert_eq!(
+            index.plan_join_batch(
+                &["old".to_string(), "new".to_string()],
+                &[vec!["missing".to_string()], vec!["missing".to_string()]],
+                &[APPEND, APPEND],
+                false,
+                Some((&["g".to_string(), "g".to_string()], &[1, 3], &[0, 0],)),
+            ),
+            vec![
+                JoinPlan {
+                    skip: false,
+                    missing_parents: Vec::new(),
+                    cut_checked: true,
+                    covered_by_cut: true
+                },
+                JoinPlan {
+                    skip: false,
+                    missing_parents: vec!["missing".to_string()],
+                    cut_checked: true,
+                    covered_by_cut: false
+                }
+            ]
         );
     }
 

@@ -50,6 +50,35 @@ const TIMESTAMP_WALL_TIME_KEY = [
 ];
 const TIMESTAMP_LOGICAL_KEY = ["meta", "clock", "timestamp", "logical"];
 
+type EntryIndexProfileValue = string | number | boolean | undefined;
+type EntryIndexProfileEvent = {
+	name: string;
+	component?: string;
+	durationMs?: number;
+	entries?: number;
+	messages?: number;
+	count?: number;
+	details?: Record<string, EntryIndexProfileValue>;
+};
+type EntryIndexProfileSink = (event: EntryIndexProfileEvent) => void;
+
+const entryIndexProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
+const entryIndexProfileStart = (sink: EntryIndexProfileSink | undefined) =>
+	sink ? entryIndexProfileNow() : 0;
+const emitEntryIndexProfileDuration = (
+	sink: EntryIndexProfileSink | undefined,
+	startedAt: number,
+	event: Omit<EntryIndexProfileEvent, "durationMs">,
+) => {
+	if (!sink) {
+		return;
+	}
+	sink({
+		...event,
+		durationMs: entryIndexProfileNow() - startedAt,
+	});
+};
+
 type BlocksWithGetMany = Blocks & {
 	getMany?: (
 		cids: string[],
@@ -1161,32 +1190,62 @@ export class EntryIndex<T> {
 	async planJoinBatch(
 		entries: Array<Pick<Entry<T>, "hash" | "meta">>,
 		reset?: boolean,
+		profile?: EntryIndexProfileSink,
 	): Promise<JoinPlan[]> {
 		if (entries.length === 0) {
 			return [];
 		}
 		if (this.properties.nativeGraph?.graph.planJoinBatch) {
-			return this.properties.nativeGraph.graph.planJoinBatch(
-				entries.map((entry) => ({
-					hash: entry.hash,
-					next: entry.meta.next,
-					type: entry.meta.type,
-					cutCheck: this.properties.nativeGraph!.useHeads
-						? {
-								gid: entry.meta.gid,
-								wallTime: entry.meta.clock.timestamp.wallTime,
-								logical: entry.meta.clock.timestamp.logical,
-							}
-						: undefined,
-				})),
+			const prepareStartedAt = entryIndexProfileStart(profile);
+			const nativeInputs = entries.map((entry) => ({
+				hash: entry.hash,
+				next: entry.meta.next,
+				type: entry.meta.type,
+				cutCheck: this.properties.nativeGraph!.useHeads
+					? {
+							gid: entry.meta.gid,
+							wallTime: entry.meta.clock.timestamp.wallTime,
+							logical: entry.meta.clock.timestamp.logical,
+						}
+					: undefined,
+			}));
+			emitEntryIndexProfileDuration(profile, prepareStartedAt, {
+				name: "log.entryIndex.planJoinBatch.prepareNative",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: {
+					cutChecks: nativeInputs.reduce(
+						(sum, input) => sum + (input.cutCheck ? 1 : 0),
+						0,
+					),
+				},
+			});
+			const nativeStartedAt = entryIndexProfileStart(profile);
+			const plans = this.properties.nativeGraph.graph.planJoinBatch(
+				nativeInputs,
 				reset === true,
 			);
+			emitEntryIndexProfileDuration(profile, nativeStartedAt, {
+				name: "log.entryIndex.planJoinBatch.nativeGraph",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+			return plans;
 		}
 
+		const fallbackStartedAt = entryIndexProfileStart(profile);
 		const plans: JoinPlan[] = [];
 		for (const entry of entries) {
 			plans.push(await this.planJoin(entry, reset));
 		}
+		emitEntryIndexProfileDuration(profile, fallbackStartedAt, {
+			name: "log.entryIndex.planJoinBatch.fallback",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
 		return plans;
 	}
 
@@ -1382,6 +1441,7 @@ export class EntryIndex<T> {
 			};
 			heads?: boolean[];
 			deferIndexWrite?: boolean;
+			profile?: EntryIndexProfileSink;
 		},
 	) {
 		if (entries.length === 0) {
@@ -1410,6 +1470,8 @@ export class EntryIndex<T> {
 		}
 
 		const promise = (async () => {
+			const profile = properties.profile;
+			const prepareStartedAt = entryIndexProfileStart(profile);
 			const externalNexts = new Set<string>(
 				properties.externalNextHashes ?? [],
 			);
@@ -1502,30 +1564,99 @@ export class EntryIndex<T> {
 					}
 				}
 			}
+			emitEntryIndexProfileDuration(profile, prepareStartedAt, {
+				name: "log.entryIndex.putAppendBatch.prepare",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: {
+					unique: properties.unique,
+					usedPreparedShallowEntries:
+						properties.prepared?.shallowEntries.length ?? 0,
+					usedPreparedNativeEntries:
+						properties.prepared?.nativeEntries?.length ?? 0,
+					nativeEntries: nativeEntries.length,
+					discoverExternalNexts: shouldDiscoverExternalNexts,
+				},
+			});
 
 			if (nativeCommitOwnsHotIndex) {
 				this.schedulePendingIndexWriteFlush();
 			} else if (putBatch) {
+				const indexPutStartedAt = entryIndexProfileStart(profile);
 				await putBatch.call(this.properties.index, shallowEntries);
+				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+					name: "log.entryIndex.putAppendBatch.indexPut",
+					component: "log",
+					entries: shallowEntries.length,
+					messages: 1,
+				});
 				if (nativeGraphPutAppendChain) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
 					nativeGraphPutAppendChain(nativeEntries);
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putAppendChain" },
+					});
 				} else if (nativeGraphPutBatch) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
 					nativeGraphPutBatch(nativeEntries);
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putBatch" },
+					});
 				} else {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
 					for (const nativeEntry of nativeEntries) {
 						this.properties.nativeGraph?.graph.put(nativeEntry);
 					}
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putLoop" },
+					});
 				}
 			} else if (nativeEntries.length > 0) {
 				if (nativeGraphPutAppendChain) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
 					nativeGraphPutAppendChain(nativeEntries);
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putAppendChain" },
+					});
 				} else if (nativeGraphPutBatch) {
+					const nativePutStartedAt = entryIndexProfileStart(profile);
 					nativeGraphPutBatch(nativeEntries);
+					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+						component: "log",
+						entries: nativeEntries.length,
+						messages: 1,
+						details: { method: "putBatch" },
+					});
 				}
 			}
 
 			if (externalNexts.size > 0) {
+				const externalNextStartedAt = entryIndexProfileStart(profile);
 				await this.privateUpdateNextHeadHashes([...externalNexts], false);
+				emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
+					name: "log.entryIndex.putAppendBatch.externalNexts",
+					component: "log",
+					entries: externalNexts.size,
+					messages: 1,
+				});
 			}
 		})().finally(() => {
 			for (const entry of entries) {

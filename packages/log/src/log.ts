@@ -2525,7 +2525,11 @@ export class Log<T> {
 		});
 
 		const planStartedAt = internalProfileStart(profile);
-		const joinPlans = await this.entryIndex.planJoinBatch(entries, false);
+		const joinPlans = await this.entryIndex.planJoinBatch(
+			entries,
+			false,
+			profile,
+		);
 		emitInternalProfileDuration(profile, planStartedAt, {
 			name: "log.joinIndependent.plan",
 			component: "log",
@@ -2598,16 +2602,21 @@ export class Log<T> {
 				messages: 1,
 			});
 			const indexStartedAt = internalProfileStart(profile);
+			const trustedMissing =
+				options.__peerbitEntriesAlreadyMissing === true &&
+				batchHashes.size === entries.length;
 			await this.entryIndex.putAppendBatch(entries, {
-				unique: false,
+				unique: trustedMissing,
 				heads: headFlags,
 				prepared: preparedBatch.prepared,
+				profile,
 			});
 			emitInternalProfileDuration(profile, indexStartedAt, {
 				name: "log.joinIndependent.entryIndex",
 				component: "log",
 				entries: entries.length,
 				messages: 1,
+				details: { trustedMissing },
 			});
 
 			const changeStartedAt = internalProfileStart(profile);
