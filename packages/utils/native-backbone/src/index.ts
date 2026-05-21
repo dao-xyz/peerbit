@@ -200,6 +200,9 @@ type NativePeerbitBackboneHandle = {
 	prepare_raw_receive_batch: (
 		blocks: Uint8Array[],
 	) => NativeBackboneRawReceivePreparedFactsRow[];
+	prepare_raw_receive_columns_batch?: (
+		blocks: Uint8Array[],
+	) => NativeBackboneRawReceivePreparedFactsColumns;
 	commit_prepared_raw_receive_batch: (
 		hashes: string[],
 		heads: Uint8Array,
@@ -1324,6 +1327,22 @@ type NativeBackboneRawReceivePreparedFactsRow = [
 	boolean,
 ];
 
+type NativeBackboneRawReceivePreparedFactsColumns = [
+	string[],
+	Uint8Array[],
+	Uint32Array,
+	Uint8Array[],
+	BigUint64Array,
+	Uint32Array,
+	string[],
+	string[][],
+	Uint8Array,
+	Uint8Array[],
+	Array<Uint8Array | undefined>,
+	Uint32Array,
+	Uint8Array,
+];
+
 export type NativeBackboneTrimmedEntry = {
 	hash: string;
 	gid: string;
@@ -2294,6 +2313,59 @@ const rawReceivePreparedFactsFromRow = ([
 	signatureVerified,
 });
 
+const rawReceivePreparedFactsFromColumns = ([
+	cids,
+	hashDigestBytes,
+	byteLengths,
+	clockIds,
+	wallTimes,
+	logicals,
+	gids,
+	nexts,
+	types,
+	metaBytes,
+	metaDatas,
+	payloadByteLengths,
+	signatureVerified,
+]: NativeBackboneRawReceivePreparedFactsColumns): NativeBackboneRawReceivePreparedFacts[] => {
+	const length = cids.length;
+	if (
+		hashDigestBytes.length !== length ||
+		byteLengths.length !== length ||
+		clockIds.length !== length ||
+		wallTimes.length !== length ||
+		logicals.length !== length ||
+		gids.length !== length ||
+		nexts.length !== length ||
+		types.length !== length ||
+		metaBytes.length !== length ||
+		metaDatas.length !== length ||
+		payloadByteLengths.length !== length ||
+		signatureVerified.length !== length
+	) {
+		throw new Error("Expected equal raw receive prepared column lengths");
+	}
+	const out = new Array<NativeBackboneRawReceivePreparedFacts>(length);
+	for (let i = 0; i < length; i++) {
+		out[i] = {
+			cid: cids[i]!,
+			hashDigestBytes: hashDigestBytes[i]!,
+			byteLength: byteLengths[i]!,
+			clockId: clockIds[i]!,
+			wallTime: wallTimes[i]!,
+			logical: logicals[i]!,
+			gid: gids[i]!,
+			next: nexts[i]!,
+			type: types[i]!,
+			metaBytes: metaBytes[i]!,
+			metaData: metaDatas[i],
+			payloadByteLength: payloadByteLengths[i]!,
+			signatureVerified: signatureVerified[i] !== 0,
+		};
+	}
+	return out;
+};
+
 export class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
@@ -3237,6 +3309,11 @@ export class NativePeerbitBackbone {
 	): NativeBackboneRawReceivePreparedFacts[] {
 		if (blocks.length === 0) {
 			return [];
+		}
+		if (this.native.prepare_raw_receive_columns_batch) {
+			return rawReceivePreparedFactsFromColumns(
+				this.native.prepare_raw_receive_columns_batch(blocks),
+			);
 		}
 		return this.native
 			.prepare_raw_receive_batch(blocks)

@@ -773,6 +773,68 @@ impl NativePeerbitBackbone {
         Ok(out)
     }
 
+    pub fn prepare_raw_receive_columns_batch(&mut self, blocks: Array) -> Result<Array, JsValue> {
+        let prepared = prepare_raw_entry_v0_blocks(bytes_vec_from_array(blocks)?)?;
+        let len = prepared.len();
+        let cids = Array::new();
+        let hash_digest_bytes = Array::new();
+        let mut byte_lengths = Vec::with_capacity(len);
+        let clock_ids = Array::new();
+        let mut wall_times = Vec::with_capacity(len);
+        let mut logicals = Vec::with_capacity(len);
+        let gids = Array::new();
+        let nexts = Array::new();
+        let mut entry_types = Vec::with_capacity(len);
+        let meta_bytes = Array::new();
+        let meta_datas = Array::new();
+        let mut payload_byte_lengths = Vec::with_capacity(len);
+        let mut signature_verified = Vec::with_capacity(len);
+
+        for entry in prepared {
+            cids.push(&JsValue::from_str(&entry.cid));
+            hash_digest_bytes.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
+            byte_lengths.push(entry.byte_length as u32);
+            clock_ids.push(&Uint8Array::from(entry.clock_id.as_slice()));
+            wall_times.push(entry.wall_time);
+            logicals.push(entry.logical);
+            gids.push(&JsValue::from_str(&entry.gid));
+            nexts.push(&strings_to_array(entry.next.clone()));
+            entry_types.push(entry.entry_type);
+            meta_bytes.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
+            match &entry.meta_data {
+                Some(data) => meta_datas.push(&Uint8Array::from(data.as_slice())),
+                None => meta_datas.push(&JsValue::UNDEFINED),
+            };
+            payload_byte_lengths.push(entry.payload_byte_length as u32);
+            signature_verified.push(u8::from(entry.signature_verified));
+
+            let log_entry = entry.log_index_entry(true)?;
+            self.pending_raw_receive_entries.insert(
+                entry.cid.clone(),
+                PendingRawReceiveEntry {
+                    storage_bytes: entry.storage_bytes,
+                    entry: log_entry,
+                },
+            );
+        }
+
+        let out = Array::new();
+        out.push(&cids);
+        out.push(&hash_digest_bytes);
+        out.push(&Uint32Array::from(byte_lengths.as_slice()));
+        out.push(&clock_ids);
+        out.push(&BigUint64Array::from(wall_times.as_slice()));
+        out.push(&Uint32Array::from(logicals.as_slice()));
+        out.push(&gids);
+        out.push(&nexts);
+        out.push(&Uint8Array::from(entry_types.as_slice()));
+        out.push(&meta_bytes);
+        out.push(&meta_datas);
+        out.push(&Uint32Array::from(payload_byte_lengths.as_slice()));
+        out.push(&Uint8Array::from(signature_verified.as_slice()));
+        Ok(out)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn commit_prepared_raw_receive_batch(
         &mut self,
@@ -788,15 +850,22 @@ impl NativePeerbitBackbone {
     ) -> Result<bool, JsValue> {
         let hashes = strings_from_array(hashes)?;
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
+        if hashes
+            .iter()
+            .any(|hash| !self.pending_raw_receive_entries.contains_key(hash))
+        {
+            return Ok(false);
+        }
 
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
         for (index, hash) in hashes.iter().enumerate() {
-            let Some(pending) = self.pending_raw_receive_entries.get(hash) else {
-                return Ok(false);
-            };
-            block_entries.push((hash.clone(), pending.storage_bytes.clone()));
-            let mut graph_entry = pending.entry.clone();
+            let pending = self
+                .pending_raw_receive_entries
+                .remove(hash)
+                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+            block_entries.push((hash.clone(), pending.storage_bytes));
+            let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
             graph_entries.push(graph_entry);
         }
@@ -813,9 +882,6 @@ impl NativePeerbitBackbone {
                 coordinate_assigned_to_range_boundaries,
                 coordinate_requested_replicas,
             )?;
-        }
-        for hash in hashes {
-            self.pending_raw_receive_entries.remove(&hash);
         }
         Ok(true)
     }
