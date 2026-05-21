@@ -328,6 +328,12 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	assignedToRangeBoundary?: boolean;
 };
 
+type ReusableReceiveCoordinatePlan<R extends "u32" | "u64"> = {
+	plan: EntryLeaderPlan<R>;
+	replicas: number;
+	prepared: PreparedCoordinatePersistence<R>;
+};
+
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 	hash: string;
 	hashNumber: NumberFromType<R>;
@@ -9220,6 +9226,8 @@ export class SharedLog<
 					const joinPlans = (await Promise.all(promises)).filter(
 						(plan): plan is ReceivedGidJoinPlan => !!plan,
 					);
+					const reusableCoordinatePlans =
+						this.createReusableReceiveCoordinatePlans(receiveGroups);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
 							name: "sharedLog.receive.joinPlan",
@@ -9271,19 +9279,49 @@ export class SharedLog<
 							(plan) => plan.toPersist,
 						);
 						const coordinatePersistStartedAt = syncProfileStart(syncProfile);
-						await this.planEntryLeaderBatch(
-							entriesToPersist.map((entry) => ({
+						const coordinatePersistFallbackEntries: Entry<any>[] = [];
+						const reusableCoordinatePersistItems: Parameters<
+							typeof this.persistCoordinatesBatch
+						>[0] = [];
+						for (const entry of entriesToPersist) {
+							const reusablePlan = reusableCoordinatePlans.get(entry.hash);
+							if (!reusablePlan) {
+								coordinatePersistFallbackEntries.push(entry);
+								continue;
+							}
+							reusableCoordinatePersistItems.push({
+								coordinates: reusablePlan.plan.coordinates,
 								entry,
-								replicas: decodeReplicas(entry).getValue(this),
-								options: { roleAge: 0, persist: {} },
-							})),
-						);
+								leaders: reusablePlan.plan.leaders,
+								replicas: reusablePlan.replicas,
+								assignedToRangeBoundary:
+									reusablePlan.plan.assignedToRangeBoundary,
+								prepared: reusablePlan.prepared,
+							});
+						}
+						if (reusableCoordinatePersistItems.length > 0) {
+							await this.persistCoordinatesBatch(
+								reusableCoordinatePersistItems,
+							);
+						}
+						if (coordinatePersistFallbackEntries.length > 0) {
+							await this.planEntryLeaderBatch(
+								coordinatePersistFallbackEntries.map((entry) => ({
+									entry,
+									replicas: decodeReplicas(entry).getValue(this),
+									options: { roleAge: 0, persist: {} },
+								})),
+							);
+						}
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, coordinatePersistStartedAt, {
 								name: "sharedLog.receive.coordinatePersist",
 								component: "shared-log",
 								entries: entriesToPersist.length,
 								messages: 1,
+								details: {
+									reusedLeaderPlans: reusableCoordinatePersistItems.length,
+								},
 							});
 						}
 						for (const merged of allToMerge) {
@@ -10501,6 +10539,87 @@ export class SharedLog<
 			return backboneMetadata;
 		}
 		return backboneMetadata.map((entry, index) => entry ?? indexMetadata[index]);
+	}
+
+	private createReusableReceiveCoordinatePlans(
+		receiveGroups: Array<{
+			latestEntry: ShallowOrFullEntry<any>;
+			maxMaxReplicas: number;
+			leaderPlan?: EntryLeaderPlan<R>;
+		}>,
+	): Map<string, ReusableReceiveCoordinatePlan<R>> {
+		const reusablePlans = new Map<string, ReusableReceiveCoordinatePlan<R>>();
+		if (this.timeUntilRoleMaturity > 0) {
+			return reusablePlans;
+		}
+
+		for (const group of receiveGroups) {
+			const plan = group.leaderPlan;
+			if (!plan) {
+				continue;
+			}
+			const replicas = decodeReplicas(group.latestEntry).getValue(this);
+			if (replicas !== group.maxMaxReplicas) {
+				continue;
+			}
+			const prepared = this.createCoordinatePersistenceEntryFromLeaderPlan({
+				entry: group.latestEntry,
+				plan,
+				replicas,
+			});
+			if (!prepared) {
+				continue;
+			}
+			reusablePlans.set(group.latestEntry.hash, {
+				plan,
+				replicas,
+				prepared,
+			});
+		}
+		return reusablePlans;
+	}
+
+	private createCoordinatePersistenceEntryFromLeaderPlan(properties: {
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+		plan: EntryLeaderPlan<R>;
+		replicas: number;
+	}): PreparedCoordinatePersistence<R> | false {
+		const assignedToRangeBoundary =
+			properties.plan.assignedToRangeBoundary ??
+			shouldAssignToRangeBoundary(
+				properties.plan.leaders,
+				properties.replicas,
+			);
+		const hashNumber = this.getEntryHashNumber(properties.entry);
+		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
+		if (metaBytes) {
+			const wallTime = properties.entry.meta.clock.timestamp.wallTime;
+			return {
+				assignedToRangeBoundary,
+				fields: {
+					hash: properties.entry.hash,
+					hashNumber,
+					hashNumberString: hashNumber.toString(),
+					gid: properties.entry.meta.gid,
+					coordinates: properties.plan.coordinates,
+					coordinateStrings: properties.plan.coordinates.map((coordinate) =>
+						coordinate.toString(),
+					),
+					wallTime,
+					wallTimeString: wallTime.toString(),
+					assignedToRangeBoundary,
+					metaBytes,
+				},
+			};
+		}
+		return this.createCoordinatePersistenceEntry({
+			coordinates: properties.plan.coordinates,
+			entry: properties.entry,
+			leaders: properties.plan.leaders,
+			replicas: properties.replicas,
+			assignedToRangeBoundary,
+			hashNumber,
+		});
 	}
 
 	private createCoordinatePersistenceEntry(properties: {

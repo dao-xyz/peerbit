@@ -302,6 +302,10 @@ describe("raw exchange-head sync", () => {
 				break;
 			}
 			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+			const sharedPlanEntryLeaderBatchSpy = sinon.spy(
+				db2.log as any,
+				"planEntryLeaderBatch",
+			);
 			const nativePlanner = (db2.log as any)._nativeRangePlanner;
 			expect(nativePlanner).to.exist;
 			const batchSpy = sinon.spy(nativePlanner, "planLeadersForGidsBatch");
@@ -317,6 +321,7 @@ describe("raw exchange-head sync", () => {
 				} as any);
 
 				expect(db2.log.log.length).to.equal(entryCount);
+				expect(sharedPlanEntryLeaderBatchSpy.callCount).to.equal(1);
 				expect(batchSpy.callCount).to.be.greaterThan(0);
 				expect(batchSpy.firstCall.args[0]).to.have.length(entryCount);
 				expect(singleSpy.callCount).to.equal(0);
@@ -331,6 +336,7 @@ describe("raw exchange-head sync", () => {
 				hasAnyHeadBatchSpy.restore();
 				singleSpy.restore();
 				batchSpy.restore();
+				sharedPlanEntryLeaderBatchSpy.restore();
 			}
 		} finally {
 			await session.stop();
