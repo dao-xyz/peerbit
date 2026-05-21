@@ -338,6 +338,10 @@ describe("raw exchange-head sync", () => {
 			}
 			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
 
+			const lowerNativeGraph = db2.log.log.entryIndex.properties.nativeGraph!
+				.graph as any;
+			const putAppendChainSpy = sinon.spy(lowerNativeGraph, "putAppendChain");
+			const putBatchSpy = sinon.spy(lowerNativeGraph, "putBatch");
 			const lowerPutAppendBatchSpy = sinon.spy(
 				db2.log.log.entryIndex,
 				"putAppendBatch",
@@ -357,10 +361,14 @@ describe("raw exchange-head sync", () => {
 				expect(
 					lowerPutAppendFactsBatchSpy.firstCall.args[0][0].nativeEntry,
 				).to.exist;
+				expect(putAppendChainSpy.callCount).to.equal(1);
+				expect(putBatchSpy.callCount).to.equal(0);
 				expect(lowerPutAppendBatchSpy.callCount).to.equal(0);
 			} finally {
 				lowerPutAppendFactsBatchSpy.restore();
 				lowerPutAppendBatchSpy.restore();
+				putBatchSpy.restore();
+				putAppendChainSpy.restore();
 			}
 		} finally {
 			await session.stop();

@@ -2642,8 +2642,11 @@ export class Log<T> {
 			const trustedMissing =
 				resolvedOptions.__peerbitEntriesAlreadyMissing === true &&
 				batchHashes.size === entries.length;
+			const externalNextHashes =
+				entries.length === 1 ? entries[0]!.meta.next : undefined;
 			await this.entryIndex.putAppendFactsBatch(entries, {
 				unique: trustedMissing,
+				externalNextHashes,
 				heads: headFlags,
 				deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
 				profile,
