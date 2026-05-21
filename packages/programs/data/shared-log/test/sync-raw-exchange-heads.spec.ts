@@ -150,6 +150,10 @@ describe("raw exchange-head sync", () => {
 				db2.log.syncronizer as any,
 				"onReceivedEntries",
 			);
+			const receivedEntryHashesSpy = sinon.spy(
+				db2.log.syncronizer as any,
+				"onReceivedEntryHashes",
+			);
 
 			let exchangeHeads = 0;
 			let rawExchangeHeads = 0;
@@ -222,8 +226,9 @@ describe("raw exchange-head sync", () => {
 						prepared.fields?.metaBytes instanceof Uint8Array,
 				),
 			).equal(true);
-			expect(receivedEntriesSpy.callCount).to.equal(1);
-			expect(receivedEntriesSpy.firstCall.args[0].entries).to.have.length(
+			expect(receivedEntriesSpy.callCount).to.equal(0);
+			expect(receivedEntryHashesSpy.callCount).to.equal(1);
+			expect(receivedEntryHashesSpy.firstCall.args[0].hashes).to.have.length(
 				entryCount,
 			);
 			expect(sharedOnChangeSpy.callCount).to.equal(1);
@@ -239,6 +244,7 @@ describe("raw exchange-head sync", () => {
 			);
 			expect(materializeProfile.entries).to.equal(entryCount);
 			expect(materializeProfile.bytes).to.be.greaterThan(0);
+			receivedEntryHashesSpy.restore();
 			receivedEntriesSpy.restore();
 			sharedOnChangeSpy.restore();
 			coordinatePrepareSpy.restore();

@@ -1691,6 +1691,13 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.onReceivedEntries(properties);
 	}
 
+	onReceivedEntryHashes(properties: {
+		hashes: string[];
+		from: PublicSignKey;
+	}): Promise<void> | void {
+		return this.simple.onReceivedEntryHashes(properties);
+	}
+
 	onEntryAdded(entry: Entry<any>): void {
 		this.invalidateLocalRangeEncoderCache();
 		return this.simple.onEntryAdded(entry);

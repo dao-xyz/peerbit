@@ -168,8 +168,8 @@ describe("sync-repair-session", () => {
 		} as any;
 		known.add("a");
 		known.add("b");
-		sync.onReceivedEntries({
-			entries: [{ entry: { hash: "a" } }, { entry: { hash: "b" } }] as any,
+		sync.onReceivedEntryHashes({
+			hashes: ["a", "b"],
 			from,
 		});
 

@@ -877,15 +877,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entries: EntryWithRefs<any>[];
 		from: PublicSignKey;
 	}): Promise<void> | void {
-		const resolvedHashes: string[] = [];
-		for (const entry of properties.entries) {
-			resolvedHashes.push(entry.entry.hash);
-			this.clearSyncInFlightForPeer(
-				properties.from.hashcode(),
-				entry.entry.hash,
-			);
+		return this.onReceivedEntryHashes({
+			hashes: properties.entries.map((entry) => entry.entry.hash),
+			from: properties.from,
+		});
+	}
+
+	onReceivedEntryHashes(properties: {
+		hashes: string[];
+		from: PublicSignKey;
+	}): Promise<void> | void {
+		for (const hash of properties.hashes) {
+			this.clearSyncInFlightForPeer(properties.from.hashcode(), hash);
 		}
-		this.markRepairSessionResolvedHashes(resolvedHashes);
+		this.markRepairSessionResolvedHashes(properties.hashes);
 	}
 
 	async queueSync(
@@ -987,25 +992,25 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			coordinateHashCount = coordinateHashes.length;
 			stringHashCount = stringHashes.length;
 
-			if (coordinateHashes.length > 0) {
-				const chunks = this.chunk(
-					coordinateHashes,
-					this.maxCoordinatesPerMessage,
-				);
-				coordinateMessages = chunks.length;
-				for (const chunk of chunks) {
-					await this.rpc.send(
-						this.syncOptions?.rawExchangeHeads
-							? new RequestMaybeSyncCoordinateCapabilities({
-									hashNumbers: chunk,
-								})
-							: new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
-						{
-							mode: new SilentDelivery({ to, redundancy: 1 }),
-							priority: SYNC_MESSAGE_PRIORITY,
-						},
+				if (coordinateHashes.length > 0) {
+					const chunks = this.chunk(
+						coordinateHashes,
+						this.maxCoordinatesPerMessage,
 					);
-				}
+					coordinateMessages = chunks.length;
+					for (const chunk of chunks) {
+						await this.rpc.send(
+							this.syncOptions?.rawExchangeHeads
+								? new RequestMaybeSyncCoordinateCapabilities({
+										hashNumbers: chunk,
+									})
+								: new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
+							{
+								mode: new SilentDelivery({ to, redundancy: 1 }),
+								priority: SYNC_MESSAGE_PRIORITY,
+							},
+						);
+					}
 				}
 				if (stringHashes.length > 0) {
 					const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);

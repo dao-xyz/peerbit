@@ -9084,16 +9084,26 @@ export class SharedLog<
 					}
 
 					const notifyStartedAt = syncProfileStart(syncProfile);
-					await this.syncronizer.onReceivedEntries({
-						entries: filteredHeads,
-						from: context.from!,
-					});
+					if (this.syncronizer.onReceivedEntryHashes) {
+						await this.syncronizer.onReceivedEntryHashes({
+							hashes: filteredHeads.map((head) => head.entry.hash),
+							from: context.from!,
+						});
+					} else {
+						await this.syncronizer.onReceivedEntries({
+							entries: filteredHeads,
+							from: context.from!,
+						});
+					}
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, notifyStartedAt, {
 							name: "sharedLog.receive.notifySynchronizer",
 							component: "shared-log",
 							entries: filteredHeads.length,
 							messages: 1,
+							details: {
+								hashOnly: !!this.syncronizer.onReceivedEntryHashes,
+							},
 						});
 					}
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
