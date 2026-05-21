@@ -34,6 +34,7 @@ import {
 	AcknowledgeAnyWhere,
 	AcknowledgeDelivery,
 	AnyWhere,
+	BACKGROUND_MESSAGE_PRIORITY,
 	DataMessage,
 	DeliveryError,
 	Goodbye,
@@ -500,7 +501,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		if (!this.outboundQueue) {
 			return undefined;
 		}
-		if (lane === getLaneFromPriority(0)) {
+		if (lane === getLaneFromPriority(BACKGROUND_MESSAGE_PRIORITY)) {
 			return Math.max(
 				0,
 				this.outboundQueue.maxBufferedBytes -
@@ -3528,7 +3529,10 @@ export abstract class DirectStream<
 		if (limitBytes == null) {
 			return undefined;
 		}
-		if (getLaneFromPriority(priority) === getLaneFromPriority(0)) {
+		if (
+			getLaneFromPriority(priority) ===
+			getLaneFromPriority(BACKGROUND_MESSAGE_PRIORITY)
+		) {
 			return Math.max(
 				0,
 				limitBytes - this.outboundQueueOptions.reservedTotalPriorityBytes,

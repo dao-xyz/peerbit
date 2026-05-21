@@ -1,6 +1,7 @@
 import { serialize } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForNeighbour } from "@peerbit/stream";
+import { CONVERGENCE_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
@@ -581,7 +582,7 @@ describe("transport", function () {
 					remote: {
 						timeout: 5_000,
 						from: [store(session, 0).publicKeyHash],
-						priority: 1,
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
 					},
 				}))!,
 			),
@@ -591,15 +592,21 @@ describe("transport", function () {
 			.getCalls()
 			.find((call) => call.args[0] instanceof BlockRequest);
 		expect(requestCall, "expected block request publish").to.exist;
-		expect(requestCall!.args[1]?.priority).to.equal(1);
-		expect(requestCall!.args[1]?.responsePriority).to.equal(1);
+		expect(requestCall!.args[1]?.priority).to.equal(
+			CONVERGENCE_MESSAGE_PRIORITY,
+		);
+		expect(requestCall!.args[1]?.responsePriority).to.equal(
+			CONVERGENCE_MESSAGE_PRIORITY,
+		);
 		expect(requestCall!.args[1]?.expiresAt).to.be.a("number");
 
 		const responseCall = responsePublish
 			.getCalls()
 			.find((call) => call.args[0] instanceof BlockResponse);
 		expect(responseCall, "expected block response publish").to.exist;
-		expect(responseCall!.args[1]?.priority).to.equal(1);
+		expect(responseCall!.args[1]?.priority).to.equal(
+			CONVERGENCE_MESSAGE_PRIORITY,
+		);
 		expect(responseCall!.args[1]?.expiresAt).to.equal(
 			requestCall!.args[1]?.expiresAt,
 		);
@@ -641,7 +648,7 @@ describe("transport", function () {
 			remote: {
 				timeout: 5_000,
 				from: [store(session, 1).publicKeyHash],
-				priority: 1,
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
 			},
 		});
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
@@ -674,7 +681,7 @@ describe("transport", function () {
 			remote: {
 				timeout: 5_000,
 				from: [store(session, 0).publicKeyHash],
-				priority: 1,
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
 			},
 		});
 		expect(droppedResponses).to.equal(1);

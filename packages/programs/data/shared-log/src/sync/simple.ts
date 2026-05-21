@@ -9,7 +9,10 @@ import {
 } from "@peerbit/indexer-interface";
 import { Entry, Log } from "@peerbit/log";
 import type { RPC, RequestContext } from "@peerbit/rpc";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import {
+	CONVERGENCE_MESSAGE_PRIORITY,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import {
 	EntryWithRefs,
 	createExchangeHeadsMessages,
@@ -121,9 +124,9 @@ const SESSION_POLL_INTERVAL_MS = 100;
 const DEFAULT_MAX_HASHES_PER_MESSAGE = 1_024;
 const DEFAULT_MAX_COORDINATES_PER_MESSAGE = 1_024;
 const DEFAULT_MAX_CONVERGENT_TRACKED_HASHES = 4_096;
-// Keep convergence sync above the default/background lane. Dropping it to
-// priority 0 lets repair traffic starve behind foreground work and breaks liveness.
-export const SYNC_MESSAGE_PRIORITY = 1;
+// Keep convergence sync above the default/background lane. Dropping it to the
+// background priority lets repair traffic starve behind foreground work.
+export const SYNC_MESSAGE_PRIORITY = CONVERGENCE_MESSAGE_PRIORITY;
 // Retry missing entry requests when the first response was lost (for example, due to
 // pubsub stream warmup). Keep it coarse-grained so we do not hammer the network under
 // large historical backfills.

@@ -54,6 +54,8 @@ import {
 	ACK_CONTROL_PRIORITY,
 	AcknowledgeDelivery,
 	AnyWhere,
+	BACKGROUND_MESSAGE_PRIORITY,
+	CONVERGENCE_MESSAGE_PRIORITY,
 	createRequestTransportContext,
 	DataMessage,
 	MessageHeader,
@@ -1085,7 +1087,7 @@ export class SharedLog<
 			header: new MessageHeader({
 				session: 0,
 				mode: new AnyWhere(),
-				priority: 0,
+				priority: BACKGROUND_MESSAGE_PRIORITY,
 			}),
 		});
 		contextMessage.header.timestamp = envelope.timestamp;
@@ -1117,7 +1119,7 @@ export class SharedLog<
 			header: new MessageHeader({
 				session: 0,
 				mode: new AnyWhere(),
-				priority: 0,
+				priority: BACKGROUND_MESSAGE_PRIORITY,
 			}),
 		});
 		contextMessage.header.timestamp = detail.timestamp;
@@ -2019,7 +2021,7 @@ export class SharedLog<
 					segmentIds: rangesToUnreplicate.map((x) => x.id),
 				}),
 				{
-					priority: 1,
+					priority: CONVERGENCE_MESSAGE_PRIORITY,
 				},
 			);
 		}
@@ -2167,7 +2169,7 @@ export class SharedLog<
 			this.node.identity.publicKey,
 		);
 		await this.rpc.send(new StoppedReplicating({ segmentIds }), {
-			priority: 1,
+			priority: CONVERGENCE_MESSAGE_PRIORITY,
 		});
 	}
 
@@ -2193,7 +2195,7 @@ export class SharedLog<
 			// announce that we are no longer replicating
 
 			await this.rpc.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-				priority: 1,
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
 			});
 		}
 
@@ -2677,7 +2679,7 @@ export class SharedLog<
 					return options.announce(message);
 				} else {
 					await this.rpc.send(message, {
-						priority: 1,
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
 					});
 				}
 			}
@@ -2906,7 +2908,7 @@ export class SharedLog<
 				i + REPAIR_CONFIRMATION_HASH_BATCH_SIZE,
 			);
 			await this.rpc.send(new ConfirmEntriesMessage({ hashes: chunk }), {
-				priority: 1,
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
 				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
 			});
 		}
@@ -4353,7 +4355,7 @@ export class SharedLog<
 							to: allRequestingPeers,
 							redundancy: 1,
 						}),
-						priority: 1,
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
 					});
 			},
 			() => {
@@ -5271,7 +5273,7 @@ export class SharedLog<
 						try {
 							await this.rpc
 								.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-									priority: 1,
+									priority: CONVERGENCE_MESSAGE_PRIORITY,
 									signal: abort.signal,
 								})
 								.catch(() => {});
@@ -5318,7 +5320,7 @@ export class SharedLog<
 					try {
 						await this.rpc
 							.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-								priority: 1,
+								priority: CONVERGENCE_MESSAGE_PRIORITY,
 								signal: abort.signal,
 							})
 							.catch(() => {});
@@ -6237,7 +6239,7 @@ export class SharedLog<
 
 			if (messageToSend) {
 				await this.rpc.send(messageToSend, {
-					priority: 1,
+					priority: CONVERGENCE_MESSAGE_PRIORITY,
 				});
 			}
 		}
@@ -7433,7 +7435,7 @@ export class SharedLog<
 							to: [to], // TODO group by peers?
 							redundancy: 1,
 						}),
-						priority: 1,
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
 					},
 				);
 			}
