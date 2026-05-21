@@ -175,7 +175,11 @@ import type {
 	Syncronizer,
 } from "./sync/index.js";
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
-import { ConfirmEntriesMessage, SimpleSyncronizer } from "./sync/simple.js";
+import {
+	ConfirmEntriesMessage,
+	SYNC_MESSAGE_PRIORITY,
+	SimpleSyncronizer,
+} from "./sync/simple.js";
 import { groupByGid } from "./utils.js";
 
 const toLocalPublicSignKey = (
@@ -2918,7 +2922,7 @@ export class SharedLog<
 		)) {
 			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
-				priority: 1,
+				priority: SYNC_MESSAGE_PRIORITY,
 				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
 			});
 		}

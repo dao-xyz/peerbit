@@ -39,7 +39,10 @@ import {
 	emitSyncProfileEvent,
 	syncProfileStart,
 } from "./profile.js";
-import { SimpleSyncronizer } from "./simple.js";
+import {
+	SYNC_MESSAGE_PRIORITY,
+	SimpleSyncronizer,
+} from "./simple.js";
 
 export const logger = loggerFn("peerbit:shared-log:rateless");
 
@@ -1258,7 +1261,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		const sendStartedAt = syncProfileStart(profile);
 		const sendResult = this.simple.rpc.send(startSync, {
 			mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
-			priority: 1,
+			priority: SYNC_MESSAGE_PRIORITY,
 		});
 		if (profile) {
 			void Promise.resolve(sendResult).then(
@@ -1338,7 +1341,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					}),
 					{
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-						priority: 1,
+						priority: SYNC_MESSAGE_PRIORITY,
 					},
 				);
 				if (profile) {
@@ -1520,7 +1523,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: 1,
+					priority: SYNC_MESSAGE_PRIORITY,
 				},
 			);
 			if (profile) {
@@ -1557,7 +1560,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: 1,
+					priority: SYNC_MESSAGE_PRIORITY,
 				},
 			);
 			if (profile) {
@@ -1597,7 +1600,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				}),
 				{
 					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: 1,
+					priority: SYNC_MESSAGE_PRIORITY,
 				},
 			);
 			if (profile) {
