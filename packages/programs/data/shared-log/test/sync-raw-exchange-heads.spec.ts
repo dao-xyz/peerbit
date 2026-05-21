@@ -537,7 +537,10 @@ describe("raw exchange-head sync", () => {
 			expect(sharedLog.canUseBackboneOnlyCoordinatePersistence()).to.equal(
 				true,
 			);
-			const backboneCommitSpy = sinon.spy(backbone, "commitEntryCoordinatesBatch");
+			const backboneCommitSpy = sinon.spy(
+				backbone,
+				"commitEntryCoordinatesColumnsBatch",
+			);
 			const backboneOnlyPersistSpy = sinon.spy(
 				sharedLog,
 				"persistBackboneOnlyReceiveCoordinateBatch",
@@ -592,6 +595,9 @@ describe("raw exchange-head sync", () => {
 				expect(backboneOnlyPersistSpy.callCount).to.equal(1);
 				expect(persisted?.size).to.equal(hashes.length);
 				expect(backboneCommitSpy.callCount).to.equal(1);
+				expect(backboneCommitSpy.firstCall.args[0].hashes).to.have.length(
+					hashes.length,
+				);
 				expect(coordinateIndexBatchPutSpy?.callCount ?? 0).to.equal(0);
 				expect(coordinateIndexPutSpy?.callCount ?? 0).to.equal(0);
 				expect(flushOnAppendSpy.callCount).to.equal(1);

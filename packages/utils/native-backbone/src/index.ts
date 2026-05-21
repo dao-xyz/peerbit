@@ -3318,28 +3318,72 @@ export class NativePeerbitBackbone {
 		if (rows.length === 0) {
 			return;
 		}
+		this.commitEntryCoordinatesColumnsBatch({
+			hashes: rows.map((row) => row.hash),
+			gids: rows.map((row) => row.gid),
+			hashNumbers: rows.map((row) => row.hashNumber),
+			coordinateBatches: rows.map((row) => row.coordinates),
+			nextHashBatches: rows.map((row) => row.nextHashes),
+			assignedToRangeBoundaries: new Uint8Array(
+				rows.map((row) => row.assignedToRangeBoundary),
+			),
+			requestedReplicas: rows.map((row) => row.requestedReplicas),
+		});
+	}
+
+	commitEntryCoordinatesColumnsBatch(columns: {
+		hashes: string[];
+		gids: string[];
+		hashNumbers: string[];
+		coordinateBatches: string[][];
+		nextHashBatches: string[][];
+		assignedToRangeBoundaries: Uint8Array;
+		requestedReplicas: number[];
+	}): void {
+		const {
+			hashes,
+			gids,
+			hashNumbers,
+			coordinateBatches,
+			nextHashBatches,
+			assignedToRangeBoundaries,
+			requestedReplicas,
+		} = columns;
+		if (hashes.length === 0) {
+			return;
+		}
+		if (
+			hashes.length !== gids.length ||
+			hashes.length !== hashNumbers.length ||
+			hashes.length !== coordinateBatches.length ||
+			hashes.length !== nextHashBatches.length ||
+			hashes.length !== assignedToRangeBoundaries.length ||
+			hashes.length !== requestedReplicas.length
+		) {
+			throw new Error("Expected equal coordinate column lengths");
+		}
 		if (!this.native.commit_entry_coordinates_batch) {
-			for (const row of rows) {
+			for (let i = 0; i < hashes.length; i++) {
 				this.native.commit_entry_coordinates(
-					row.hash,
-					row.gid,
-					row.hashNumber,
-					row.coordinates,
-					row.nextHashes,
-					row.assignedToRangeBoundary === 1,
-					row.requestedReplicas,
+					hashes[i]!,
+					gids[i]!,
+					hashNumbers[i]!,
+					coordinateBatches[i]!,
+					nextHashBatches[i]!,
+					assignedToRangeBoundaries[i] === 1,
+					requestedReplicas[i]!,
 				);
 			}
 			return;
 		}
 		this.native.commit_entry_coordinates_batch(
-			rows.map((row) => row.hash),
-			rows.map((row) => row.gid),
-			rows.map((row) => row.hashNumber),
-			rows.map((row) => row.coordinates),
-			rows.map((row) => row.nextHashes),
-			new Uint8Array(rows.map((row) => row.assignedToRangeBoundary)),
-			rows.map((row) => row.requestedReplicas),
+			hashes,
+			gids,
+			hashNumbers,
+			coordinateBatches,
+			nextHashBatches,
+			assignedToRangeBoundaries,
+			requestedReplicas,
 		);
 	}
 

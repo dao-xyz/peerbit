@@ -10982,17 +10982,36 @@ export class SharedLog<
 		);
 
 		try {
-			backbone.commitEntryCoordinatesBatch(
-				rows.map(({ item, prepared }) => ({
-					hash: item.entry.hash,
-					gid: prepared.fields.gid,
-					coordinates: item.coordinates,
-					nextHashes: item.entry.meta.next,
-					assignedToRangeBoundary: prepared.assignedToRangeBoundary,
-					requestedReplicas: item.replicas,
-					hashNumber: prepared.fields.hashNumber,
-				})),
-			);
+			const hashes = new Array<string>(rows.length);
+			const gids = new Array<string>(rows.length);
+			const hashNumbers = new Array<string>(rows.length);
+			const coordinateBatches = new Array<string[]>(rows.length);
+			const nextHashBatches = new Array<string[]>(rows.length);
+			const assignedToRangeBoundaries = new Uint8Array(rows.length);
+			const requestedReplicas = new Array<number>(rows.length);
+			for (let i = 0; i < rows.length; i++) {
+				const { item, prepared, fields, deleteHashes } = rows[i]!;
+				hashes[i] = item.entry.hash;
+				gids[i] = fields.gid;
+				hashNumbers[i] =
+					fields.hashNumberString ?? fields.hashNumber.toString();
+				coordinateBatches[i] =
+					fields.coordinateStrings ??
+					fields.coordinates.map((coordinate) => coordinate.toString());
+				nextHashBatches[i] = deleteHashes;
+				assignedToRangeBoundaries[i] =
+					prepared.assignedToRangeBoundary === true ? 1 : 0;
+				requestedReplicas[i] = item.replicas;
+			}
+			backbone.commitEntryCoordinatesColumnsBatch({
+				hashes,
+				gids,
+				hashNumbers,
+				coordinateBatches,
+				nextHashBatches,
+				assignedToRangeBoundaries,
+				requestedReplicas,
+			});
 
 			const persistedHashes = new Set<string>();
 			for (const { item, prepared, fields, deleteHashes } of rows) {
