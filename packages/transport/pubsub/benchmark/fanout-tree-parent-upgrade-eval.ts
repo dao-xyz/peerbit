@@ -4,6 +4,8 @@
  * This intentionally runs the same scenario and seed twice: first with the
  * default stability-first behavior, then with bounded parent upgrades enabled.
  */
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
 	DEFAULT_PARENT_UPGRADE_SEEDS,
 	type EvidenceFailure as Failure,
@@ -38,6 +40,7 @@ type EvalArgs = ParentUpgradePresetConfig & {
 	seeds: number[];
 	compareModes: boolean;
 	streamRxDelayMs: number | undefined;
+	jsonOut: string | undefined;
 	maxCostRatio: number;
 	maxFormationScoreDelta: number;
 	maxLiveDeadlinePctDelta: number;
@@ -112,6 +115,7 @@ const HELP_TEXT = [
 	"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 5000 for default-candidate, otherwise 0)",
 	"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 32 for default-candidate, otherwise 1)",
 	"  --streamRxDelayMs MS          override scenario per-chunk inbound delay in shim",
+	"  --jsonOut FILE               write compact JSON evidence summary",
 	"  --maxCostRatio R             max treatment/base ratio for control/tracker/repair bpp (default: 1.15)",
 	"  --maxFormationScoreDelta N   absolute formation score jitter tolerated (default: 0.05)",
 	"  --maxLiveDeadlinePctDelta N  max live-flow deadline pct jitter tolerated (default: 2)",
@@ -339,6 +343,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 			get("--streamRxDelayMs") == null
 				? undefined
 				: Number(get("--streamRxDelayMs")),
+		jsonOut: get("--jsonOut"),
 		maxCostRatio: Number(get("--maxCostRatio") ?? 1.15),
 		maxFormationScoreDelta: Number(get("--maxFormationScoreDelta") ?? 0.05),
 		maxLiveDeadlinePctDelta: Number(get("--maxLiveDeadlinePctDelta") ?? 2),
@@ -1048,6 +1053,77 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 	console.log(lines.join("\n"));
 };
 
+const compactResult = (result: FanoutTreeSimResult) => ({
+	params: {
+		seed: result.params.seed,
+		nodes: result.params.nodes,
+		subscribers: result.params.subscribers,
+		streamRxDelayMs: result.params.streamRxDelayMs,
+		deadlineMs: result.params.deadlineMs,
+	},
+	joinedCount: result.joinedCount,
+	subscriberCount: result.subscriberCount,
+	expected: result.expected,
+	delivered: result.delivered,
+	deliveredPct: result.deliveredPct,
+	deliveredWithinDeadlinePct: result.deliveredWithinDeadlinePct,
+	secondBatchExpected: result.secondBatchExpected,
+	secondBatchDeliveredWithinDeadlinePct:
+		result.secondBatchDeliveredWithinDeadlinePct,
+	secondBatchLatencyP95: result.secondBatchLatencyP95,
+	formationScore: result.formationScore,
+	treeLevelAvg: result.treeLevelAvg,
+	treeLevelP95: result.treeLevelP95,
+	formationStretchP95: result.formationStretchP95,
+	treeRootChildren: result.treeRootChildren,
+	rootUploadFracPct: result.rootUploadFracPct,
+	reparentUpgradeTotal: result.reparentUpgradeTotal,
+	parentProbeReqSentTotal: result.parentProbeReqSentTotal,
+	parentShadowStartTotal: result.parentShadowStartTotal,
+	parentShadowPromoteTotal: result.parentShadowPromoteTotal,
+	publishActiveReparentUpgradeTotal: result.publishActiveReparentUpgradeTotal,
+	publishActiveParentProbeReqSentTotal:
+		result.publishActiveParentProbeReqSentTotal,
+	publishActiveGuardSkipsTotal:
+		result.publishActiveReparentUpgradeSkipDataTotal +
+		result.publishActiveReparentUpgradeSkipRepairTotal +
+		result.publishActiveReparentUpgradeSkipQuietTotal,
+	maintReparentsPerMin: result.maintReparentsPerMin,
+	maintMaxReparentsPerPeer: result.maintMaxReparentsPerPeer,
+	maintOrphanArea: result.maintOrphanArea,
+	duplicates: result.duplicates,
+	dataOverheadFactor: result.overheadFactorData,
+	controlBpp: result.controlBpp,
+	trackerBpp: result.trackerBpp,
+	repairBpp: result.repairBpp,
+});
+
+const writeJsonSummary = async (args: EvalArgs, samples: SummarySample[]) => {
+	if (!args.jsonOut) return;
+	await mkdir(dirname(args.jsonOut), { recursive: true });
+	await writeFile(
+		args.jsonOut,
+		JSON.stringify(
+			{
+				kind: "fanout-tree-parent-upgrade-eval",
+				generatedAt: new Date().toISOString(),
+				args,
+				samples: samples.map((sample) => ({
+					scenario: sample.scenario,
+					mode: sample.mode,
+					seed: sample.seed,
+					viable: sample.failures.length === 0,
+					failures: sample.failures,
+					baseline: compactResult(sample.baseline),
+					upgrade: compactResult(sample.upgrade),
+				})),
+			},
+			null,
+			2,
+		) + "\n",
+	);
+};
+
 const main = async () => {
 	const args = parseArgs(process.argv.slice(2));
 	let failureCount = 0;
@@ -1119,6 +1195,7 @@ const main = async () => {
 		}
 	}
 	printAggregateSummary(summarySamples);
+	await writeJsonSummary(args, summarySamples);
 
 	if (args.strict && failureCount > 0) {
 		process.exit(2);

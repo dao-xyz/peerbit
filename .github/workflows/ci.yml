@@ -384,6 +384,12 @@ jobs:
             --no-build \
             --seeds 1 \
             --idle-safety-seeds 1
+      - name: Upload fanout gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fanout-gate-pr-${{ github.run_id }}
+          path: sim-results
 
   shared_log_sync_batch_gate_pr:
     if: github.event_name == 'pull_request'

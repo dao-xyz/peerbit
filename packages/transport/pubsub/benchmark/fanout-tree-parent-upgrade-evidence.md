@@ -115,6 +115,11 @@ limits remain hard gates. This avoids treating saturated-runner timer noise as
 a product regression while still rejecting actual delivery loss or expensive
 promotion.
 
+The PR fanout gate uploads `sim-results` artifacts. Parent-upgrade evaluators
+can write compact JSON summaries through `--jsonOut`; default-ready records
+single-live, multi-live, multi-idle, and slow-hotspot timing evidence so a red
+gate can be inspected without scraping the raw Actions log.
+
 `ci-loss` and the CI `fanout-tree-sim` gate cover stream data-frame loss and
 churn with repair enabled. The multi-writer live-churn scenarios cover
 multi-root topic pressure and require the default-candidate policy to avoid

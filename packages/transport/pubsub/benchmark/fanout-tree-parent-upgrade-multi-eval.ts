@@ -5,6 +5,8 @@ import {
 } from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
 import { delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { FanoutTree } from "../src/index.js";
 import {
 	DEFAULT_PARENT_UPGRADE_SEEDS,
@@ -77,6 +79,7 @@ type EvalArgs = ParentUpgradePresetConfig & {
 	thirdBatchSettleMs?: number;
 	streamRxDelayMs?: number;
 	timeoutMs?: number;
+	jsonOut?: string;
 	maxCostRatio: number;
 	maxLiveDeadlinePctDelta: number;
 	maxUsefulIdleDeadlinePctDelta: number;
@@ -575,6 +578,7 @@ const usage = () => {
 			"  --thirdBatchMessages N       publish an extra post-learning batch after second-batch settle (default: scenario value, usually 0)",
 			"  --thirdBatchSettleMs MS      settle after the extra post-learning batch (default: secondBatchSettleMs)",
 			"  --timeoutMs MS               override scenario timeout",
+			"  --jsonOut FILE               write compact JSON evidence summary",
 			"  --maxUsefulIdleDeadlinePctDelta PCT max deadline pct jitter for idle runs with useful promotions (default: 0.15)",
 			"  --maxGuardedIdleDeadlinePctDelta PCT max deadline pct jitter for low-probe idle guard trials (default: 0.15)",
 			"  --maxGuardedIdleProbePerSlotForSlack R max probe/subscriber slot for guarded idle deadline slack (default: 0.02)",
@@ -689,6 +693,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 				: Number(get("--streamRxDelayMs")),
 		timeoutMs:
 			get("--timeoutMs") == null ? undefined : Number(get("--timeoutMs")),
+		jsonOut: get("--jsonOut"),
 		maxCostRatio: Number(get("--maxCostRatio") ?? 1.15),
 		maxLiveDeadlinePctDelta: Number(get("--maxLiveDeadlinePctDelta") ?? 2),
 		maxUsefulIdleDeadlinePctDelta: Number(
@@ -2292,6 +2297,119 @@ const printAggregateFailures = (failures: Failure[]) => {
 	);
 };
 
+const compactTreeResult = (tree: TreeResult) => ({
+	tree: tree.tree,
+	active: tree.active,
+	joinedCount: tree.joinedCount,
+	subscriberCount: tree.subscriberCount,
+	expected: tree.expected,
+	delivered: tree.delivered,
+	deliveredPct: tree.deliveredPct,
+	deliveredWithinDeadlinePct: tree.deliveredWithinDeadlinePct,
+	secondBatchExpected: tree.secondBatchExpected,
+	secondBatchDeliveredWithinDeadlinePct:
+		tree.secondBatchDeliveredWithinDeadlinePct,
+	secondBatchLatencyP95: tree.secondBatchLatencyP95,
+	reparentUpgradeTotal: tree.reparentUpgradeTotal,
+	parentProbeReqSentTotal: tree.parentProbeReqSentTotal,
+	parentShadowStartTotal: tree.parentShadowStartTotal,
+	parentShadowPromoteTotal: tree.parentShadowPromoteTotal,
+	publishActiveGuardSkipsTotal:
+		tree.publishActiveReparentUpgradeSkipDataTotal +
+		tree.publishActiveReparentUpgradeSkipRepairTotal +
+		tree.publishActiveReparentUpgradeSkipQuietTotal,
+	rootChildren: tree.treeRootChildren,
+	rootUploadFracPct: tree.rootUploadFracPct,
+	maxReparentUpgradePerPeer: tree.maxReparentUpgradePerPeer,
+	duplicates: tree.duplicates,
+	dataOverheadFactor: tree.dataOverheadFactor,
+	controlBytesSent: tree.controlBytesSent,
+	controlBytesSentTracker: tree.controlBytesSentTracker,
+	controlBytesSentRepair: tree.controlBytesSentRepair,
+});
+
+const compactResult = (result: MultiWriterResult) => ({
+	params: {
+		scenario: result.params.scenario,
+		seed: result.params.seed,
+		nodes: result.params.nodes,
+		writers: result.params.writers,
+		activeWriters: result.params.activeWriters,
+		subscribersPerTree: result.params.subscribersPerTree,
+		streamRxDelayMs: result.params.streamRxDelayMs,
+		deadlineMs: result.params.deadlineMs,
+		secondBatchMessages: result.params.secondBatchMessages,
+		secondBatchSettleMs: result.params.secondBatchSettleMs,
+	},
+	joinedCount: result.joinedCount,
+	subscriberSlots: result.subscriberSlots,
+	expected: result.expected,
+	delivered: result.delivered,
+	deliveredPct: result.deliveredPct,
+	deliveredWithinDeadlinePct: result.deliveredWithinDeadlinePct,
+	secondBatchExpected: result.secondBatchExpected,
+	secondBatchDeliveredWithinDeadlinePct:
+		result.secondBatchDeliveredWithinDeadlinePct,
+	secondBatchLatencyP95: result.secondBatchLatencyP95,
+	reparentUpgradeTotal: result.reparentUpgradeTotal,
+	parentProbeReqSentTotal: result.parentProbeReqSentTotal,
+	parentShadowStartTotal: result.parentShadowStartTotal,
+	parentShadowPromoteTotal: result.parentShadowPromoteTotal,
+	publishActiveGuardSkipsTotal: result.publishActiveGuardSkipsTotal,
+	activeGuardedTrees: result.activeGuardedTrees,
+	treeLevelAvg: result.treeLevelAvg,
+	treeLevelP95: result.treeLevelP95,
+	rootChildrenSum: result.rootChildrenSum,
+	rootChildrenMax: result.rootChildrenMax,
+	rootUploadPctMax: result.rootUploadPctMax,
+	maxReparentUpgradePerPeer: result.maxReparentUpgradePerPeer,
+	duplicates: result.duplicates,
+	dataOverheadFactor: result.dataOverheadFactor,
+	controlBpp: result.controlBpp,
+	trackerBpp: result.trackerBpp,
+	repairBpp: result.repairBpp,
+	network: result.network,
+	trees: result.trees.map(compactTreeResult),
+});
+
+const writeJsonSummary = async (
+	args: EvalArgs,
+	samples: SummarySample[],
+	aggregateFailures: Failure[],
+) => {
+	if (!args.jsonOut) return;
+	await mkdir(dirname(args.jsonOut), { recursive: true });
+	await writeFile(
+		args.jsonOut,
+		JSON.stringify(
+			{
+				kind: "fanout-tree-parent-upgrade-multi-eval",
+				generatedAt: new Date().toISOString(),
+				args,
+				aggregateFailures,
+				samples: samples.map((sample) => ({
+					scenario: sample.scenario,
+					seed: sample.seed,
+					viable: sample.failures.length === 0,
+					failures: sample.failures,
+					usefulPromotedTrees: sample.usefulPromotedTrees,
+					promotedBranchGainAvg: sample.promotedBranchGainAvg,
+					promotedTreeSecondBatchLatencyP95RegressionMax:
+						sample.promotedTreeSecondBatchLatencyP95RegressionMax,
+					promotedBranchSecondBatchLatencyP95RegressionMax:
+						sample.promotedBranchSecondBatchLatencyP95RegressionMax,
+					backgroundSecondBatchLatencyP95RegressionMax:
+						sample.backgroundSecondBatchLatencyP95RegressionMax,
+					baseline: compactResult(sample.baseline),
+					upgrade: compactResult(sample.upgrade),
+				})),
+			},
+			null,
+			2,
+		) + "\n",
+	);
+};
+
 const main = async () => {
 	const args = parseArgs(process.argv.slice(2));
 	const samples: SummarySample[] = [];
@@ -2358,6 +2476,7 @@ const main = async () => {
 	printSummary(samples);
 	const aggregateFailures = evaluateAggregate(samples);
 	printAggregateFailures(aggregateFailures);
+	await writeJsonSummary(args, samples, aggregateFailures);
 	failureCount += aggregateFailures.length;
 	if (args.strict && failureCount > 0) {
 		process.exit(2);

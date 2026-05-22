@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { mkdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const args = process.argv.slice(2);
@@ -12,6 +14,15 @@ const hasFlag = (name) => args.includes(name);
 
 const pnpm = process.env.PNPM ?? "pnpm";
 const skipBuild = hasFlag("--no-build") || process.env.FANOUT_SKIP_BUILD === "1";
+const outDir = resolve(
+	getArg(
+		"--outDir",
+		process.env.FANOUT_PARENT_UPGRADE_OUT_DIR ??
+			"sim-results/fanout-parent-upgrade-default-ready",
+	),
+);
+mkdirSync(outDir, { recursive: true });
+const jsonOut = (name) => ["--jsonOut", resolve(outDir, `${name}.json`)];
 
 const run = (label, commandArgs) => {
 	console.log(`\n[fanout-default-ready] ${label}`);
@@ -195,6 +206,7 @@ run("single-writer live default-candidate safety", [
 	...defaultCandidateArgs(),
 	"--maxDataOverheadRatio",
 	"1.05",
+	...jsonOut("single-live"),
 	"--strict",
 	"1",
 ]);
@@ -213,6 +225,7 @@ run("multi-writer live default-candidate safety", [
 	...defaultCandidateArgs(),
 	"--maxDataOverheadRatio",
 	"1.05",
+	...jsonOut("multi-live"),
 	"--strict",
 	"1",
 ]);
@@ -236,6 +249,30 @@ run("multi-writer idle default-candidate safety", [
 	"2",
 	"--maxDataOverheadRatio",
 	"1.05",
+	...jsonOut("multi-idle"),
 	"--strict",
 	"1",
+]);
+
+run("multi-writer slow hotspot timing evidence", [
+	"-C",
+	"packages/transport/pubsub",
+	"run",
+	"bench",
+	"--",
+	"fanout-tree-parent-upgrade-multi-eval",
+	"--scenario",
+	"ci-multi-hotspot-idle",
+	"--seeds",
+	idleSafetySeeds,
+	...defaultCandidateArgs(),
+	"--streamRxDelayMs",
+	"12",
+	"--maxUsefulIdleDeadlinePctDelta",
+	"2",
+	"--maxDataOverheadRatio",
+	"1.05",
+	...jsonOut("multi-hotspot-slow"),
+	"--strict",
+	"0",
 ]);
