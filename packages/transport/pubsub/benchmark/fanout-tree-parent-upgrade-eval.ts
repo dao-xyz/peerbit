@@ -5,20 +5,21 @@
  * default stability-first behavior, then with bounded parent upgrades enabled.
  */
 import {
+	DEFAULT_PARENT_UPGRADE_SEEDS,
+	type ParentUpgradePresetConfig,
+	type UpgradeMode,
+	defaultEvidenceLimitsForPreset,
+	parentUpgradeRuntimeOptions,
+	parseBool01,
+	parseCsvNumbers,
+	parseParentUpgradePresetConfig,
+} from "./fanout-tree-parent-upgrade-preset.js";
+import {
 	type FanoutTreeSimParams,
 	type FanoutTreeSimResult,
 	formatFanoutTreeSimResult,
 	runFanoutTreeSim,
 } from "./fanout-tree-sim-lib.js";
-import {
-	DEFAULT_PARENT_UPGRADE_SEEDS,
-	type ParentUpgradePresetConfig,
-	type UpgradeMode,
-	defaultEvidenceLimitsForPreset,
-	parseBool01,
-	parseCsvNumbers,
-	parseParentUpgradePresetConfig,
-} from "./fanout-tree-parent-upgrade-preset.js";
 
 type ScenarioName =
 	| "ci-small"
@@ -1069,39 +1070,7 @@ const main = async () => {
 				...(args.streamRxDelayMs == null
 					? {}
 					: { streamRxDelayMs: args.streamRxDelayMs }),
-				parentUpgradeIntervalMs: args.parentUpgradeIntervalMs,
-				parentUpgradeLeafOnly: args.parentUpgradeLeafOnly,
-				parentUpgradeMinLevelGain: args.parentUpgradeMinLevelGain,
-				parentUpgradeRootMinLevelGain: args.parentUpgradeRootMinLevelGain,
-				parentUpgradeRootMinSubtreeGain: args.parentUpgradeRootMinSubtreeGain,
-				parentUpgradeNonRootMinLevelGain: args.parentUpgradeNonRootMinLevelGain,
-				parentUpgradeMinFreeSlots: args.parentUpgradeMinFreeSlots,
-				parentUpgradeRootMinFreeSlots: args.parentUpgradeRootMinFreeSlots,
-				parentUpgradeMaxChildLoadRatio: args.parentUpgradeMaxChildLoadRatio,
-				parentUpgradeRootMaxChildLoadRatio:
-					args.parentUpgradeRootMaxChildLoadRatio,
-				parentUpgradeCooldownMs: args.parentUpgradeCooldownMs,
-				parentUpgradeFailedBackoffMinMs: args.parentUpgradeFailedBackoffMinMs,
-				parentUpgradeFailedBackoffMaxMs: args.parentUpgradeFailedBackoffMaxMs,
-				parentUpgradeQuietMs: args.parentUpgradeQuietMs,
-				parentUpgradeRepairQuietMs: args.parentUpgradeRepairQuietMs,
-				parentUpgradeMaxPerPeer: args.parentUpgradeMaxPerPeer,
-				parentUpgradeRepairGuard: args.parentUpgradeRepairGuard,
-				parentUpgradeDataGuard: args.parentUpgradeDataGuard,
-				parentUpgradeMode: args.parentUpgradeMode,
-				parentUpgradeVerifyStaleRootCapacity:
-					args.parentUpgradeVerifyStaleRootCapacity,
-				parentUpgradeStaleRootProbeProbability:
-					args.parentUpgradeStaleRootProbeProbability,
-				parentProbeTimeoutMs: args.parentProbeTimeoutMs,
-				parentProbeMaxPerRound: args.parentProbeMaxPerRound,
-				parentProbeMaxLagMessages: args.parentProbeMaxLagMessages,
-				parentProbeRejectCooldownMs: args.parentProbeRejectCooldownMs,
-				parentProbeRejectCooldownMaxMs: args.parentProbeRejectCooldownMaxMs,
-				parentShadowObserveMs: args.parentShadowObserveMs,
-				parentShadowMinObservations: args.parentShadowMinObservations,
-				parentShadowDualPathMs: args.parentShadowDualPathMs,
-				parentShadowDualPathMinMessages: args.parentShadowDualPathMinMessages,
+				...parentUpgradeRuntimeOptions(args),
 			};
 
 			console.log(`\n[baseline] scenario=${scenario} seed=${seed}`);

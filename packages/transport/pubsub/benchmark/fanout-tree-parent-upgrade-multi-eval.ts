@@ -7,20 +7,21 @@ import { delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { FanoutTree } from "../src/index.js";
 import {
+	DEFAULT_PARENT_UPGRADE_SEEDS,
+	type ParentUpgradePresetConfig,
+	type UpgradeMode,
+	defaultEvidenceLimitsForPreset,
+	parentUpgradeRuntimeOptions,
+	parseBool01,
+	parseCsvNumbers,
+	parseParentUpgradePresetConfig,
+} from "./fanout-tree-parent-upgrade-preset.js";
+import {
 	int,
 	mulberry32,
 	quantile,
 	runWithConcurrency,
 } from "./sim/bench-utils.js";
-import {
-	DEFAULT_PARENT_UPGRADE_SEEDS,
-	type ParentUpgradePresetConfig,
-	type UpgradeMode,
-	defaultEvidenceLimitsForPreset,
-	parseBool01,
-	parseCsvNumbers,
-	parseParentUpgradePresetConfig,
-} from "./fanout-tree-parent-upgrade-preset.js";
 
 /**
  * Shared-network A/B evidence for proactive parent upgrades.
@@ -789,38 +790,7 @@ const resolveParams = (
 				? base.candidateScoringMode
 				: "weighted",
 		trackerQueryIntervalMs: Number(base.trackerQueryIntervalMs ?? 1_000),
-		parentUpgradeIntervalMs: upgradeEnabled ? args.parentUpgradeIntervalMs : 0,
-		parentUpgradeLeafOnly: args.parentUpgradeLeafOnly,
-		parentUpgradeMinLevelGain: args.parentUpgradeMinLevelGain,
-		parentUpgradeRootMinLevelGain: args.parentUpgradeRootMinLevelGain,
-		parentUpgradeRootMinSubtreeGain: args.parentUpgradeRootMinSubtreeGain,
-		parentUpgradeNonRootMinLevelGain: args.parentUpgradeNonRootMinLevelGain,
-		parentUpgradeMinFreeSlots: args.parentUpgradeMinFreeSlots,
-		parentUpgradeRootMinFreeSlots: args.parentUpgradeRootMinFreeSlots,
-		parentUpgradeMaxChildLoadRatio: args.parentUpgradeMaxChildLoadRatio,
-		parentUpgradeRootMaxChildLoadRatio: args.parentUpgradeRootMaxChildLoadRatio,
-		parentUpgradeCooldownMs: args.parentUpgradeCooldownMs,
-		parentUpgradeFailedBackoffMinMs: args.parentUpgradeFailedBackoffMinMs,
-		parentUpgradeFailedBackoffMaxMs: args.parentUpgradeFailedBackoffMaxMs,
-		parentUpgradeQuietMs: args.parentUpgradeQuietMs,
-		parentUpgradeRepairQuietMs: args.parentUpgradeRepairQuietMs,
-		parentUpgradeMaxPerPeer: args.parentUpgradeMaxPerPeer,
-		parentUpgradeRepairGuard: args.parentUpgradeRepairGuard,
-		parentUpgradeDataGuard: args.parentUpgradeDataGuard,
-		parentUpgradeMode: args.parentUpgradeMode,
-		parentUpgradeVerifyStaleRootCapacity:
-			args.parentUpgradeVerifyStaleRootCapacity,
-		parentUpgradeStaleRootProbeProbability:
-			args.parentUpgradeStaleRootProbeProbability,
-		parentProbeTimeoutMs: args.parentProbeTimeoutMs,
-		parentProbeMaxPerRound: args.parentProbeMaxPerRound,
-		parentProbeMaxLagMessages: args.parentProbeMaxLagMessages,
-		parentProbeRejectCooldownMs: args.parentProbeRejectCooldownMs,
-		parentProbeRejectCooldownMaxMs: args.parentProbeRejectCooldownMaxMs,
-		parentShadowObserveMs: args.parentShadowObserveMs,
-		parentShadowMinObservations: args.parentShadowMinObservations,
-		parentShadowDualPathMs: args.parentShadowDualPathMs,
-		parentShadowDualPathMinMessages: args.parentShadowDualPathMinMessages,
+		...parentUpgradeRuntimeOptions(args, upgradeEnabled),
 		lateRootConnectAfterMs: Number(base.lateRootConnectAfterMs ?? -1),
 		lateRootDuringPublish: Boolean(base.lateRootDuringPublish ?? false),
 		lateRootMaxChildren: Number(base.lateRootMaxChildren ?? 0),
@@ -1072,46 +1042,7 @@ const runMultiWriterSim = async (
 						),
 						candidateScoringMode: params.candidateScoringMode,
 						trackerQueryIntervalMs: params.trackerQueryIntervalMs,
-						parentUpgradeIntervalMs: params.parentUpgradeIntervalMs,
-						parentUpgradeLeafOnly: params.parentUpgradeLeafOnly,
-						parentUpgradeMinLevelGain: params.parentUpgradeMinLevelGain,
-						parentUpgradeRootMinLevelGain: params.parentUpgradeRootMinLevelGain,
-						parentUpgradeRootMinSubtreeGain:
-							params.parentUpgradeRootMinSubtreeGain,
-						parentUpgradeNonRootMinLevelGain:
-							params.parentUpgradeNonRootMinLevelGain,
-						parentUpgradeMinFreeSlots: params.parentUpgradeMinFreeSlots,
-						parentUpgradeRootMinFreeSlots: params.parentUpgradeRootMinFreeSlots,
-						parentUpgradeMaxChildLoadRatio:
-							params.parentUpgradeMaxChildLoadRatio,
-						parentUpgradeRootMaxChildLoadRatio:
-							params.parentUpgradeRootMaxChildLoadRatio,
-						parentUpgradeCooldownMs: params.parentUpgradeCooldownMs,
-						parentUpgradeFailedBackoffMinMs:
-							params.parentUpgradeFailedBackoffMinMs,
-						parentUpgradeFailedBackoffMaxMs:
-							params.parentUpgradeFailedBackoffMaxMs,
-						parentUpgradeQuietMs: params.parentUpgradeQuietMs,
-						parentUpgradeRepairQuietMs: params.parentUpgradeRepairQuietMs,
-						parentUpgradeMaxPerPeer: params.parentUpgradeMaxPerPeer,
-						parentUpgradeRepairGuard: params.parentUpgradeRepairGuard,
-						parentUpgradeDataGuard: params.parentUpgradeDataGuard,
-						parentUpgradeMode: params.parentUpgradeMode,
-						parentUpgradeVerifyStaleRootCapacity:
-							params.parentUpgradeVerifyStaleRootCapacity,
-						parentUpgradeStaleRootProbeProbability:
-							params.parentUpgradeStaleRootProbeProbability,
-						parentProbeTimeoutMs: params.parentProbeTimeoutMs,
-						parentProbeMaxPerRound: params.parentProbeMaxPerRound,
-						parentProbeMaxLagMessages: params.parentProbeMaxLagMessages,
-						parentProbeRejectCooldownMs: params.parentProbeRejectCooldownMs,
-						parentProbeRejectCooldownMaxMs:
-							params.parentProbeRejectCooldownMaxMs,
-						parentShadowObserveMs: params.parentShadowObserveMs,
-						parentShadowMinObservations: params.parentShadowMinObservations,
-						parentShadowDualPathMs: params.parentShadowDualPathMs,
-						parentShadowDualPathMinMessages:
-							params.parentShadowDualPathMinMessages,
+						...parentUpgradeRuntimeOptions(params),
 						signal: timeoutSignal,
 					},
 				);
@@ -1177,8 +1108,7 @@ const runMultiWriterSim = async (
 		const totalMessages =
 			params.messages + params.secondBatchMessages + params.thirdBatchMessages;
 		const secondBatchStartSeq = params.messages;
-		const thirdBatchStartSeq =
-			secondBatchStartSeq + params.secondBatchMessages;
+		const thirdBatchStartSeq = secondBatchStartSeq + params.secondBatchMessages;
 		const payload = new Uint8Array(Math.max(0, params.msgSize));
 		for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
 
@@ -2091,8 +2021,7 @@ const evaluateRun = (
 			"secondBatchDeadlinePct",
 			baseline.secondBatchDeliveredWithinDeadlinePct,
 			upgrade.secondBatchDeliveredWithinDeadlinePct,
-			baseline.secondBatchDeliveredWithinDeadlinePct -
-				idleDeadlineSlack,
+			baseline.secondBatchDeliveredWithinDeadlinePct - idleDeadlineSlack,
 		);
 		failIfGreater(
 			failures,

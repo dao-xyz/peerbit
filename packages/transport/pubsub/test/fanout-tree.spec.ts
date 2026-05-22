@@ -261,6 +261,37 @@ const readTestU32BE = (buf: Uint8Array, offset: number) =>
 		buf[offset + 3]!) >>>
 	0;
 
+const createRootReservationMetrics = () => ({
+	dataWriteDrops: 0,
+	parentUpgradeRootReservationCreated: 0,
+	parentUpgradeRootReservationConsumed: 0,
+	parentUpgradeRootReservationRejected: 0,
+	parentUpgradeRootReservationMarginRejected: 0,
+	parentUpgradeRootReservationBlocked: 0,
+	parentUpgradeRootReservationExpired: 0,
+});
+
+const createRootReservationChannel = (overrides: Record<string, any> = {}) => ({
+	id: { key: new Uint8Array(32), root: "root" },
+	isRoot: true,
+	level: 0,
+	children: new Map<string, unknown>(),
+	effectiveMaxChildren: 1,
+	parentUpgradeReservationsByHash: new Map<string, unknown>(),
+	metrics: createRootReservationMetrics(),
+	missingSeqs: new Set<number>(),
+	overloadStreak: 0,
+	maxSeqSeen: -1,
+	droppedForwards: 0,
+	...overrides,
+});
+
+const createParentUpgradeReservationContext = (random: () => number) => ({
+	...parentUpgradeReservationHelpers,
+	random,
+	pruneDisconnectedChildren: () => {},
+});
+
 type ParentUpgradeGateChannel = {
 	children: Map<string, unknown>;
 	missingSeqs: Set<number>;
@@ -922,33 +953,9 @@ describe("fanout-tree", () => {
 	});
 
 	it("reserves scarce root capacity while replying to parent probes", async () => {
-		const ch = {
-			id: { key: new Uint8Array(32), root: "root" },
-			isRoot: true,
-			level: 0,
-			children: new Map(),
-			effectiveMaxChildren: 1,
-			parentUpgradeReservationsByHash: new Map(),
-			metrics: {
-				dataWriteDrops: 0,
-				parentUpgradeRootReservationCreated: 0,
-				parentUpgradeRootReservationConsumed: 0,
-				parentUpgradeRootReservationRejected: 0,
-				parentUpgradeRootReservationMarginRejected: 0,
-				parentUpgradeRootReservationBlocked: 0,
-				parentUpgradeRootReservationExpired: 0,
-			},
-			missingSeqs: new Set(),
-			overloadStreak: 0,
-			maxSeqSeen: -1,
-			droppedForwards: 0,
-		};
+		const ch = createRootReservationChannel();
 		let randomValue = 0.25;
-		const ctx = {
-			...parentUpgradeReservationHelpers,
-			random: () => randomValue,
-			pruneDisconnectedChildren: () => {},
-		};
+		const ctx = createParentUpgradeReservationContext(() => randomValue);
 
 		const first = encodeParentProbeReplyForChannel.call(ctx, ch, 1, "leaf-a");
 		const firstToken = readTestU32BE(first, 60);
@@ -986,35 +993,14 @@ describe("fanout-tree", () => {
 	});
 
 	it("does not reserve root capacity below the requested spare-slot margin", async () => {
-		const metrics = {
-			dataWriteDrops: 0,
-			parentUpgradeRootReservationCreated: 0,
-			parentUpgradeRootReservationConsumed: 0,
-			parentUpgradeRootReservationRejected: 0,
-			parentUpgradeRootReservationBlocked: 0,
-			parentUpgradeRootReservationExpired: 0,
-		};
-		const ch = {
-			id: { key: new Uint8Array(32), root: "root" },
-			isRoot: true,
-			level: 0,
+		const ch = createRootReservationChannel({
 			children: new Map([
 				["child-a", {}],
 				["child-b", {}],
 			]),
 			effectiveMaxChildren: 12,
-			parentUpgradeReservationsByHash: new Map(),
-			metrics,
-			missingSeqs: new Set(),
-			overloadStreak: 0,
-			maxSeqSeen: -1,
-			droppedForwards: 0,
-		};
-		const ctx = {
-			...parentUpgradeReservationHelpers,
-			random: () => 0.25,
-			pruneDisconnectedChildren: () => {},
-		};
+		});
+		const ctx = createParentUpgradeReservationContext(() => 0.25);
 
 		const first = encodeParentProbeReplyForChannel.call(
 			ctx,
@@ -1038,41 +1024,20 @@ describe("fanout-tree", () => {
 		expect(readTestU16BE(second, 42)).to.equal(9);
 		expect(readTestU32BE(second, 60)).to.equal(0);
 		expect(ch.parentUpgradeReservationsByHash.size).to.equal(1);
-		expect(metrics.parentUpgradeRootReservationCreated).to.equal(1);
-		expect(metrics.parentUpgradeRootReservationBlocked).to.equal(1);
+		expect(ch.metrics.parentUpgradeRootReservationCreated).to.equal(1);
+		expect(ch.metrics.parentUpgradeRootReservationBlocked).to.equal(1);
 	});
 
 	it("reports pending root reservations as probe child pressure", async () => {
-		const ch = {
-			id: { key: new Uint8Array(32), root: "root" },
-			isRoot: true,
-			level: 0,
+		const ch = createRootReservationChannel({
 			children: new Map([
 				["child-a", {}],
 				["child-b", {}],
 			]),
 			effectiveMaxChildren: 12,
-			parentUpgradeReservationsByHash: new Map(),
-			metrics: {
-				dataWriteDrops: 0,
-				parentUpgradeRootReservationCreated: 0,
-				parentUpgradeRootReservationConsumed: 0,
-				parentUpgradeRootReservationRejected: 0,
-				parentUpgradeRootReservationMarginRejected: 0,
-				parentUpgradeRootReservationBlocked: 0,
-				parentUpgradeRootReservationExpired: 0,
-			},
-			missingSeqs: new Set(),
-			overloadStreak: 0,
-			maxSeqSeen: -1,
-			droppedForwards: 0,
-		};
+		});
 		let randomValue = 0.25;
-		const ctx = {
-			...parentUpgradeReservationHelpers,
-			random: () => randomValue,
-			pruneDisconnectedChildren: () => {},
-		};
+		const ctx = createParentUpgradeReservationContext(() => randomValue);
 
 		const first = encodeParentProbeReplyForChannel.call(ctx, ch, 1, "leaf-a");
 		expect(readTestU16BE(first, 44)).to.equal(2);
@@ -1085,34 +1050,13 @@ describe("fanout-tree", () => {
 	});
 
 	it("rejects root reservation tokens after the spare-slot margin evaporates", async () => {
-		const ch = {
-			id: { key: new Uint8Array(32), root: "root" },
-			isRoot: true,
-			level: 0,
+		const ch = createRootReservationChannel({
 			children: new Map(
 				Array.from({ length: 4 }, (_value, index) => [`child-${index}`, {}]),
 			),
 			effectiveMaxChildren: 12,
-			parentUpgradeReservationsByHash: new Map(),
-			metrics: {
-				dataWriteDrops: 0,
-				parentUpgradeRootReservationCreated: 0,
-				parentUpgradeRootReservationConsumed: 0,
-				parentUpgradeRootReservationRejected: 0,
-				parentUpgradeRootReservationMarginRejected: 0,
-				parentUpgradeRootReservationBlocked: 0,
-				parentUpgradeRootReservationExpired: 0,
-			},
-			missingSeqs: new Set(),
-			overloadStreak: 0,
-			maxSeqSeen: -1,
-			droppedForwards: 0,
-		};
-		const ctx = {
-			...parentUpgradeReservationHelpers,
-			random: () => 0.25,
-			pruneDisconnectedChildren: () => {},
-		};
+		});
+		const ctx = createParentUpgradeReservationContext(() => 0.25);
 
 		const reply = encodeParentProbeReplyForChannel.call(
 			ctx,
@@ -1141,31 +1085,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("can probe root capacity without reserving a root slot", async () => {
-		const ch = {
-			id: { key: new Uint8Array(32), root: "root" },
-			isRoot: true,
-			level: 0,
-			children: new Map(),
-			effectiveMaxChildren: 1,
-			parentUpgradeReservationsByHash: new Map(),
-			metrics: {
-				dataWriteDrops: 0,
-				parentUpgradeRootReservationCreated: 0,
-				parentUpgradeRootReservationConsumed: 0,
-				parentUpgradeRootReservationRejected: 0,
-				parentUpgradeRootReservationBlocked: 0,
-				parentUpgradeRootReservationExpired: 0,
-			},
-			missingSeqs: new Set(),
-			overloadStreak: 0,
-			maxSeqSeen: -1,
-			droppedForwards: 0,
-		};
-		const ctx = {
-			...parentUpgradeReservationHelpers,
-			random: () => 0.25,
-			pruneDisconnectedChildren: () => {},
-		};
+		const ch = createRootReservationChannel();
+		const ctx = createParentUpgradeReservationContext(() => 0.25);
 
 		const reply = encodeParentProbeReplyForChannel.call(
 			ctx,

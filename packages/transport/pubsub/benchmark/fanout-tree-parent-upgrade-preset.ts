@@ -43,6 +43,44 @@ export type ParentUpgradePresetConfig = {
 	parentShadowDualPathMinMessages: number;
 };
 
+export type ParentUpgradeRuntimeOptions = Omit<
+	ParentUpgradePresetConfig,
+	"parentUpgradePreset"
+>;
+
+const PARENT_UPGRADE_RUNTIME_OPTION_KEYS = [
+	"parentUpgradeIntervalMs",
+	"parentUpgradeLeafOnly",
+	"parentUpgradeMinLevelGain",
+	"parentUpgradeRootMinLevelGain",
+	"parentUpgradeRootMinSubtreeGain",
+	"parentUpgradeNonRootMinLevelGain",
+	"parentUpgradeMinFreeSlots",
+	"parentUpgradeRootMinFreeSlots",
+	"parentUpgradeMaxChildLoadRatio",
+	"parentUpgradeRootMaxChildLoadRatio",
+	"parentUpgradeCooldownMs",
+	"parentUpgradeFailedBackoffMinMs",
+	"parentUpgradeFailedBackoffMaxMs",
+	"parentUpgradeQuietMs",
+	"parentUpgradeRepairQuietMs",
+	"parentUpgradeMaxPerPeer",
+	"parentUpgradeRepairGuard",
+	"parentUpgradeDataGuard",
+	"parentUpgradeMode",
+	"parentUpgradeVerifyStaleRootCapacity",
+	"parentUpgradeStaleRootProbeProbability",
+	"parentProbeTimeoutMs",
+	"parentProbeMaxPerRound",
+	"parentProbeMaxLagMessages",
+	"parentProbeRejectCooldownMs",
+	"parentProbeRejectCooldownMaxMs",
+	"parentShadowObserveMs",
+	"parentShadowMinObservations",
+	"parentShadowDualPathMs",
+	"parentShadowDualPathMinMessages",
+] as const satisfies readonly (keyof ParentUpgradeRuntimeOptions)[];
+
 export const DEFAULT_CANDIDATE_PRESET = "default-candidate" as const;
 export const DEFAULT_PARENT_UPGRADE_SEEDS = [1, 2, 3] as const;
 export const DEFAULT_PARENT_UPGRADE_SEED_CSV =
@@ -60,6 +98,17 @@ export const defaultCandidateArgs = (...args: string[]) => [
 	DEFAULT_CANDIDATE_PRESET,
 	...args,
 ];
+
+export const parentUpgradeRuntimeOptions = (
+	config: ParentUpgradeRuntimeOptions,
+	enabled = true,
+): ParentUpgradeRuntimeOptions =>
+	Object.fromEntries(
+		PARENT_UPGRADE_RUNTIME_OPTION_KEYS.map((key) => [
+			key,
+			key === "parentUpgradeIntervalMs" && !enabled ? 0 : config[key],
+		]),
+	) as ParentUpgradeRuntimeOptions;
 
 export const parseBool01 = (value: string | undefined, fallback: boolean) => {
 	if (value === undefined) return fallback;

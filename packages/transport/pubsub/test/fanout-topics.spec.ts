@@ -1229,6 +1229,22 @@ describe("pubsub (fanout topics)", function () {
 		}
 	};
 
+	const lateDirectRootUpgradeOptions = (
+		options: Parameters<typeof runLateDirectRootScenario>[0],
+	) => ({
+		parentUpgradeIntervalMs: 200,
+		parentUpgradeDataGuard: false,
+		parentUpgradeRepairGuard: false,
+		parentUpgradeRootMinLevelGain: 1,
+		parentUpgradeMinFreeSlots: 1,
+		parentUpgradeRootMinFreeSlots: 1,
+		parentUpgradeFailedBackoffMinMs: 100,
+		parentUpgradeFailedBackoffMaxMs: 100,
+		parentProbeRejectCooldownMs: 100,
+		parentProbeRejectCooldownMaxMs: 100,
+		...options,
+	});
+
 	it("keeps a relay parent after a late direct root edge when parent upgrades are disabled", async () => {
 		await runLateDirectRootScenario({
 			topic: "fanout-direct-no-reparent-to-root",
@@ -1237,64 +1253,40 @@ describe("pubsub (fanout topics)", function () {
 	});
 
 	it("can proactively reparent to the root when a late direct edge becomes available", async () => {
-		await runLateDirectRootScenario({
-			topic: "fanout-direct-reparent-to-root",
-			parentUpgradeIntervalMs: 200,
-			parentUpgradeDataGuard: false,
-			parentUpgradeRepairGuard: false,
-			parentUpgradeMode: "direct",
-			parentUpgradeRootMinLevelGain: 1,
-			parentUpgradeMinFreeSlots: 1,
-			parentUpgradeRootMinFreeSlots: 1,
-			parentUpgradeFailedBackoffMinMs: 100,
-			parentUpgradeFailedBackoffMaxMs: 100,
-			parentProbeRejectCooldownMs: 100,
-			parentProbeRejectCooldownMaxMs: 100,
-			expectedParentAfterDirect: "root",
-		});
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-direct-reparent-to-root",
+				parentUpgradeMode: "direct",
+				expectedParentAfterDirect: "root",
+			}),
+		);
 	});
 
 	it("defaults parent upgrades to shadow mode when enabled", async () => {
-		await runLateDirectRootScenario({
-			topic: "fanout-default-shadow-reparent-to-root",
-			parentUpgradeIntervalMs: 200,
-			parentUpgradeDataGuard: false,
-			parentUpgradeRepairGuard: false,
-			parentUpgradeRootMinLevelGain: 1,
-			parentUpgradeMinFreeSlots: 1,
-			parentUpgradeRootMinFreeSlots: 1,
-			parentUpgradeFailedBackoffMinMs: 100,
-			parentUpgradeFailedBackoffMaxMs: 100,
-			parentProbeRejectCooldownMs: 100,
-			parentProbeRejectCooldownMaxMs: 100,
-			parentShadowObserveMs: 0,
-			parentShadowMinObservations: 1,
-			parentShadowDualPathMs: 0,
-			expectedParentAfterDirect: "root",
-			expectedShadowPromotion: true,
-		});
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-default-shadow-reparent-to-root",
+				parentShadowObserveMs: 0,
+				parentShadowMinObservations: 1,
+				parentShadowDualPathMs: 0,
+				expectedParentAfterDirect: "root",
+				expectedShadowPromotion: true,
+			}),
+		);
 	});
 
 	it("defaults shadow upgrades to make-before-break cutover", async () => {
-		await runLateDirectRootScenario({
-			topic: "fanout-default-shadow-dual-path-waits-for-data",
-			parentUpgradeIntervalMs: 200,
-			parentUpgradeDataGuard: false,
-			parentUpgradeRepairGuard: false,
-			parentUpgradeRootMinLevelGain: 1,
-			parentUpgradeMinFreeSlots: 1,
-			parentUpgradeRootMinFreeSlots: 1,
-			parentUpgradeFailedBackoffMinMs: 100,
-			parentUpgradeFailedBackoffMaxMs: 100,
-			parentProbeRejectCooldownMs: 100,
-			parentProbeRejectCooldownMaxMs: 100,
-			parentShadowObserveMs: 0,
-			parentShadowMinObservations: 1,
-			parentUpgradeQuietMs: 0,
-			parentUpgradeRepairQuietMs: 0,
-			expectedParentAfterDirect: "relay",
-			expectedShadowStartWithoutPromotion: true,
-		});
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-default-shadow-dual-path-waits-for-data",
+				parentShadowObserveMs: 0,
+				parentShadowMinObservations: 1,
+				parentUpgradeQuietMs: 0,
+				parentUpgradeRepairQuietMs: 0,
+				expectedParentAfterDirect: "relay",
+				expectedShadowStartWithoutPromotion: true,
+			}),
+		);
 	});
 
 	it("promotes on a third batch after learning the parent path is slow", async () => {
@@ -1314,42 +1306,26 @@ describe("pubsub (fanout topics)", function () {
 	});
 
 	it("can probe then reparent to the root when a late direct edge becomes available", async () => {
-		await runLateDirectRootScenario({
-			topic: "fanout-probe-reparent-to-root",
-			parentUpgradeIntervalMs: 200,
-			parentUpgradeDataGuard: false,
-			parentUpgradeRepairGuard: false,
-			parentUpgradeMode: "probe",
-			parentUpgradeRootMinLevelGain: 1,
-			parentUpgradeMinFreeSlots: 1,
-			parentUpgradeRootMinFreeSlots: 1,
-			parentUpgradeFailedBackoffMinMs: 100,
-			parentUpgradeFailedBackoffMaxMs: 100,
-			parentProbeRejectCooldownMs: 100,
-			parentProbeRejectCooldownMaxMs: 100,
-			expectedParentAfterDirect: "root",
-		});
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-probe-reparent-to-root",
+				parentUpgradeMode: "probe",
+				expectedParentAfterDirect: "root",
+			}),
+		);
 	});
 
 	it("can shadow-observe then reparent to the root when a late direct edge becomes available", async () => {
-		await runLateDirectRootScenario({
-			topic: "fanout-shadow-reparent-to-root",
-			parentUpgradeIntervalMs: 200,
-			parentUpgradeDataGuard: false,
-			parentUpgradeRepairGuard: false,
-			parentUpgradeMode: "shadow",
-			parentUpgradeRootMinLevelGain: 1,
-			parentUpgradeMinFreeSlots: 1,
-			parentUpgradeRootMinFreeSlots: 1,
-			parentUpgradeFailedBackoffMinMs: 100,
-			parentUpgradeFailedBackoffMaxMs: 100,
-			parentProbeRejectCooldownMs: 100,
-			parentProbeRejectCooldownMaxMs: 100,
-			parentShadowObserveMs: 0,
-			parentShadowMinObservations: 2,
-			parentShadowDualPathMs: 0,
-			expectedParentAfterDirect: "root",
-			expectedShadowPromotion: true,
-		});
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-shadow-reparent-to-root",
+				parentUpgradeMode: "shadow",
+				parentShadowObserveMs: 0,
+				parentShadowMinObservations: 2,
+				parentShadowDualPathMs: 0,
+				expectedParentAfterDirect: "root",
+				expectedShadowPromotion: true,
+			}),
+		);
 	});
 });

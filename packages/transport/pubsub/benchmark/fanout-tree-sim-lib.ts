@@ -7,6 +7,7 @@ import { delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { FanoutTree } from "../src/index.js";
+import { parentUpgradeRuntimeOptions } from "./fanout-tree-parent-upgrade-preset.js";
 import {
 	int,
 	mulberry32,
@@ -968,48 +969,7 @@ export const runFanoutTreeSim = async (
 								? { candidateShuffleTopK: params.candidateShuffleTopK }
 								: {}),
 							candidateScoringMode: params.candidateScoringMode,
-							parentUpgradeIntervalMs: params.parentUpgradeIntervalMs,
-							parentUpgradeLeafOnly: params.parentUpgradeLeafOnly,
-							parentUpgradeMinLevelGain: params.parentUpgradeMinLevelGain,
-							parentUpgradeRootMinLevelGain:
-								params.parentUpgradeRootMinLevelGain,
-							parentUpgradeRootMinSubtreeGain:
-								params.parentUpgradeRootMinSubtreeGain,
-							parentUpgradeNonRootMinLevelGain:
-								params.parentUpgradeNonRootMinLevelGain,
-							parentUpgradeMinFreeSlots: params.parentUpgradeMinFreeSlots,
-							parentUpgradeRootMinFreeSlots:
-								params.parentUpgradeRootMinFreeSlots,
-							parentUpgradeMaxChildLoadRatio:
-								params.parentUpgradeMaxChildLoadRatio,
-							parentUpgradeRootMaxChildLoadRatio:
-								params.parentUpgradeRootMaxChildLoadRatio,
-							parentUpgradeCooldownMs: params.parentUpgradeCooldownMs,
-							parentUpgradeFailedBackoffMinMs:
-								params.parentUpgradeFailedBackoffMinMs,
-							parentUpgradeFailedBackoffMaxMs:
-								params.parentUpgradeFailedBackoffMaxMs,
-							parentUpgradeQuietMs: params.parentUpgradeQuietMs,
-							parentUpgradeRepairQuietMs: params.parentUpgradeRepairQuietMs,
-							parentUpgradeMaxPerPeer: params.parentUpgradeMaxPerPeer,
-							parentUpgradeRepairGuard: params.parentUpgradeRepairGuard,
-							parentUpgradeDataGuard: params.parentUpgradeDataGuard,
-							parentUpgradeMode: params.parentUpgradeMode,
-							parentUpgradeVerifyStaleRootCapacity:
-								params.parentUpgradeVerifyStaleRootCapacity,
-							parentUpgradeStaleRootProbeProbability:
-								params.parentUpgradeStaleRootProbeProbability,
-							parentProbeTimeoutMs: params.parentProbeTimeoutMs,
-							parentProbeMaxPerRound: params.parentProbeMaxPerRound,
-							parentProbeMaxLagMessages: params.parentProbeMaxLagMessages,
-							parentProbeRejectCooldownMs: params.parentProbeRejectCooldownMs,
-							parentProbeRejectCooldownMaxMs:
-								params.parentProbeRejectCooldownMaxMs,
-							parentShadowObserveMs: params.parentShadowObserveMs,
-							parentShadowMinObservations: params.parentShadowMinObservations,
-							parentShadowDualPathMs: params.parentShadowDualPathMs,
-							parentShadowDualPathMinMessages:
-								params.parentShadowDualPathMinMessages,
+							...parentUpgradeRuntimeOptions(params),
 							...(params.bootstrapEnsureIntervalMs >= 0
 								? {
 										bootstrapEnsureIntervalMs: params.bootstrapEnsureIntervalMs,
