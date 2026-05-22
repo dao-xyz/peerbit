@@ -179,6 +179,36 @@ type DocumentPutOptions = SharedAppendOptions<Operation> & {
 	checkRemote?: boolean;
 };
 
+type DocumentPutResult = {
+	readonly entry: Entry<Operation>;
+	removed: ShallowOrFullEntry<Operation>[];
+};
+
+interface DocumentBackend<T> {
+	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult>;
+}
+
+type DocumentBackendPut<T> = (
+	doc: T,
+	options?: DocumentPutOptions,
+) => MaybePromise<DocumentPutResult>;
+
+class CompatDocumentBackend<T> implements DocumentBackend<T> {
+	constructor(private readonly putImpl: DocumentBackendPut<T>) {}
+
+	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult> {
+		return this.putImpl(doc, options);
+	}
+}
+
+class NativeDocumentBackend<T> implements DocumentBackend<T> {
+	constructor(private readonly putImpl: DocumentBackendPut<T>) {}
+
+	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult> {
+		return this.putImpl(doc, options);
+	}
+}
+
 type PreparedPut<T> = {
 	document: T;
 	encodedDocument: Uint8Array;
@@ -454,6 +484,7 @@ export class Documents<
 	private _documentChangeListenerCount = 0;
 	private _documentInternalChangeListenerCount = 0;
 	private _documentChangeListenerTrackingInitialized = false;
+	private _documentBackend!: DocumentBackend<T>;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -472,6 +503,7 @@ export class Documents<
 		this.immutable = properties?.immutable ?? false;
 		this._index = properties?.index || new DocumentIndex();
 		this.trackDocumentChangeListeners();
+		this._documentBackend = this.createDocumentBackend();
 	}
 
 	get index(): DocumentIndex<T, I, D> {
@@ -480,6 +512,12 @@ export class Documents<
 
 	private isNativeMode(): boolean {
 		return this._mode === "native";
+	}
+
+	private createDocumentBackend(): DocumentBackend<T> {
+		return this.isNativeMode()
+			? new NativeDocumentBackend(this.putNativeDocumentBackend.bind(this))
+			: new CompatDocumentBackend(this.putCompatDocumentBackend.bind(this));
 	}
 
 	private nativeModeError(message: string): NativeDocumentModeError {
@@ -959,6 +997,7 @@ export class Documents<
 				)
 			: undefined;
 		this.assertNativeModeReady();
+		this._documentBackend = this.createDocumentBackend();
 	}
 
 	async recover() {
@@ -1314,12 +1353,19 @@ export class Documents<
 		};
 	}
 
-	public async put(doc: T, options?: DocumentPutOptions) {
-		const nativePlainPut = this.assertNativeModePlainPutSupported(doc, options);
+	public async put(
+		doc: T,
+		options?: DocumentPutOptions,
+	): Promise<DocumentPutResult> {
+		return this._documentBackend.put(doc, options);
+	}
+
+	private async putCompatDocumentBackend(
+		doc: T,
+		options?: DocumentPutOptions,
+	): Promise<DocumentPutResult> {
 		const putOptions = this.normalizeNativeModePutOptions(options);
-		const prepared = (
-			nativePlainPut || this.canUsePlainPutFastPath(doc, putOptions)
-		)
+		const prepared = this.canUsePlainPutFastPath(doc, putOptions)
 			? this.preparePlainPut(doc)
 			: this.preparePut(doc);
 		let existingLocalContext:
@@ -1348,7 +1394,6 @@ export class Documents<
 			existingHead,
 			existingLocalContext,
 			putOptions,
-			nativePlainPut,
 		);
 		if (plainPutPlan) {
 			return this.commitPlainPutPlan(plainPutPlan, putOptions);
@@ -1383,6 +1428,37 @@ export class Documents<
 		});
 		this.keepCache?.add(appended.entry.hash);
 		return appended;
+	}
+
+	private async putNativeDocumentBackend(
+		doc: T,
+		options?: DocumentPutOptions,
+	): Promise<DocumentPutResult> {
+		this.assertNativeModePlainPutSupported(doc, options);
+		const putOptions = this.normalizeNativeModePutOptions(options);
+		const prepared = this.preparePlainPut(doc);
+		let existingLocalContext:
+			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+			| null
+			| undefined;
+		let existingHead: string | undefined;
+		if (!putOptions?.unique) {
+			existingLocalContext =
+				(await this.getLocalIndexedContext(prepared.key)) || null;
+			existingHead = existingLocalContext?.value.__context.head;
+		}
+
+		const plainPutPlan = await this.createPlainPutCommitPlan(
+			prepared,
+			existingHead,
+			existingLocalContext,
+			putOptions,
+			true,
+		);
+		if (!plainPutPlan) {
+			throw this.nativeModeError("requires a native plain put commit plan");
+		}
+		return this.commitPlainPutPlan(plainPutPlan, putOptions);
 	}
 
 	public async putMany(

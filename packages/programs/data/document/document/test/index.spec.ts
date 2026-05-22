@@ -2614,6 +2614,54 @@ describe("index", () => {
 					}
 				});
 
+				it("routes strict native puts through the native backend without generic append fallback", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-backend",
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeCommitSpy.callCount).equal(1);
+						expect(fallbackAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-backend",
+						);
+					} finally {
+						nativeCommitSpy.restore();
+						fallbackAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("defaults strict native puts to local native append options", async () => {
 					const rustSession = await TestSession.connected(
 						1,
