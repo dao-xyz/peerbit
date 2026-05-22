@@ -7434,10 +7434,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			) {
 				return false;
 			}
-			const sampleProbability = Math.max(
-				defaultStaleRootProbeProbability,
-				Math.min(0.0625, 1 / Math.max(16, knownChannelPeerCount)),
-			);
+			if (staleRootProbeBaseProbability <= 0) return false;
+			const sampleProbability = Math.min(1, staleRootProbeBaseProbability);
 			return (
 				stableUnitInterval(
 					`${ch.id.suffixKey}:${this.publicKeyHash}:${ch.id.root}:multi-channel-leaf-root-signal:${ch.maxSeqSeen}`,

@@ -63,6 +63,9 @@ type ImproveChannel = {
 	parentUpgradeBackoffUntil: number;
 	parentUpgradeStaleRootProbeRound: number;
 	parentUpgradeTrackerNoCapacityUntil: number;
+	parentDataLatencySamples?: number;
+	parentDataLatencyEwmaMs?: number;
+	parentDataLatencyMaxMs?: number;
 };
 
 type ImproveOptions = {
@@ -78,6 +81,7 @@ type ImproveOptions = {
 	};
 	joinAttemptsPerRound: number;
 	joinReqTimeoutMs: number;
+	leafOnly: boolean;
 	minLevelGain: number;
 	rootMinLevelGain?: number;
 	rootMinSubtreeGain?: number;
@@ -151,6 +155,13 @@ type ImproveContext = {
 		  }
 		| undefined
 	>;
+	queryTrackers: (
+		ch: ImproveChannel,
+		trackerPeers: string[],
+		limit: number,
+		timeoutMs: number,
+		signal: AbortSignal,
+	) => Promise<ImproveCandidate[]>;
 	sendTrackerFeedback: (
 		ch: ImproveChannel,
 		trackerPeers: string[],
@@ -201,6 +212,34 @@ const maybeImproveParent = Reflect.get(
 	ch: ImproveChannel,
 	options: ImproveOptions,
 ) => Promise<boolean>;
+
+const stableUnitInterval = (input: string) => {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < input.length; i++) {
+		hash ^= input.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0) / 0x100000000;
+};
+
+const sampledMultiChannelLeafSuffix = (
+	rootHash: string,
+	selfHash: string,
+	maxSeqSeen: number,
+	probability: number,
+) => {
+	for (let i = 0; i < 10_000; i++) {
+		const suffixKey = `sampled-topic-${i}`;
+		if (
+			stableUnitInterval(
+				`${suffixKey}:${selfHash}:${rootHash}:multi-channel-leaf-root-signal:${maxSeqSeen}`,
+			) < probability
+		) {
+			return suffixKey;
+		}
+	}
+	throw new Error("unable to find sampled suffix key");
+};
 
 const encodeParentProbeReplyForChannel = Reflect.get(
 	FanoutTree.prototype,
@@ -403,6 +442,7 @@ const runMaybeImproveParent = async (args: {
 	options?: Partial<ImproveOptions>;
 	tryJoinOnce?: ImproveContext["tryJoinOnce"];
 	probeParentCandidate?: ImproveContext["probeParentCandidate"];
+	queryTrackers?: ImproveContext["queryTrackers"];
 }) => {
 	const attempts: string[] = [];
 	const feedback: ImproveTrackerFeedback[] = [];
@@ -461,6 +501,7 @@ const runMaybeImproveParent = async (args: {
 		probeParentCandidate:
 			args.probeParentCandidate ??
 			(async (_channel, parentHash) => createProbeReply(parentHash)),
+		queryTrackers: args.queryTrackers ?? (async () => []),
 		sendTrackerFeedback: async (
 			_channel,
 			trackerPeers,
@@ -491,6 +532,7 @@ const runMaybeImproveParent = async (args: {
 		},
 		joinAttemptsPerRound: 8,
 		joinReqTimeoutMs: 1_000,
+		leafOnly: false,
 		minLevelGain: 1,
 		minFreeSlots: 1,
 		failedBackoffMinMs: 5_000,
@@ -1815,6 +1857,75 @@ describe("fanout-tree parent upgrades", () => {
 		expect(probes).to.equal(0);
 		expect(attempts).to.deep.equal([]);
 		expect(ch.metrics.reparentUpgradeSkipCandidateSlots).to.equal(1);
+	});
+
+	it("honors configured sampling for multi-channel leaf root refresh", async () => {
+		const rootHash = "sampled-root";
+		const maxSeqSeen = 9;
+		const suffixKey = sampledMultiChannelLeafSuffix(
+			rootHash,
+			"self",
+			maxSeqSeen,
+			0.015625,
+		);
+		let queries = 0;
+		let probes = 0;
+		const ch = createImproveChannel({
+			id: {
+				root: rootHash,
+				key: new Uint8Array([1, 2, 3]),
+				suffixKey,
+			},
+			endSeqExclusive: maxSeqSeen + 1,
+			nextExpectedSeq: maxSeqSeen + 1,
+			maxSeqSeen,
+			parentDataLatencySamples: 8,
+			parentDataLatencyEwmaMs: 128,
+			parentDataLatencyMaxMs: 300,
+		});
+		const other = createImproveChannel({
+			id: {
+				root: "other-root",
+				key: new Uint8Array([4, 5, 6]),
+				suffixKey: "other-topic",
+			},
+		});
+		const { attempts, result } = await runMaybeImproveParent({
+			peerHashes: ["relay", rootHash, "tracker"],
+			channel: ch,
+			channelsBySuffixKey: new Map([
+				[suffixKey, ch],
+				["other-topic", other],
+			]),
+			cachedTrackerCandidates: [
+				{ hash: rootHash, addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
+			],
+			options: {
+				mode: "shadow",
+				leafOnly: true,
+				minFreeSlots: 2,
+				trackerPeers: ["tracker"],
+				verifyStaleRootCapacity: true,
+				staleRootProbeProbability: 0,
+				shadowObserveMs: 0,
+				shadowMinObservations: 2,
+			},
+			queryTrackers: async () => {
+				queries += 1;
+				return [
+					{ hash: rootHash, addrs: [], level: 0, freeSlots: 2, bidPerByte: 0 },
+				];
+			},
+			probeParentCandidate: async (_channel, parentHash) => {
+				probes += 1;
+				return createProbeReply(parentHash, { freeSlots: 2 });
+			},
+		});
+
+		expect(result).to.equal(false);
+		expect(queries).to.equal(0);
+		expect(probes).to.equal(0);
+		expect(attempts).to.deep.equal([]);
 	});
 
 	it("keeps leaf stale-root sampling below the branch boost", async () => {

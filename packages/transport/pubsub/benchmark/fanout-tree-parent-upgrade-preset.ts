@@ -93,6 +93,8 @@ export const DEFAULT_PARENT_UPGRADE_SEEDS = [1, 2, 3] as const;
 export const DEFAULT_PARENT_UPGRADE_SEED_CSV =
 	DEFAULT_PARENT_UPGRADE_SEEDS.join(",");
 export const DEFAULT_PARENT_UPGRADE_FAST_SEED_CSV = "1";
+const RAW_STALE_ROOT_PROBE_PROBABILITY = 0.015625;
+const DEFAULT_CANDIDATE_STALE_ROOT_PROBE_PROBABILITY = 0.00390625;
 export const PARENT_UPGRADE_FRONTIER_ROOT_CAPS = [
 	"0.2",
 	"0.225",
@@ -122,7 +124,7 @@ export const PARENT_UPGRADE_HELP_TEXT = [
 	"  --parentUpgradeDataGuard 0|1 wait for finite channel completion before treatment upgrades (default: 1)",
 	"  --parentUpgradeMode MODE      treatment upgrade mode (direct|probe|shadow, default: preset-dependent)",
 	"  --parentUpgradeVerifyStaleRootCapacity 0|1 allow shadow probes against tracker-full root (default: 1 for default-candidate, otherwise 0)",
-	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.015625)",
+	"  --parentUpgradeStaleRootProbeProbability R base sample for tracker-full root probes per peer (default: 0.015625, default-candidate: 0.00390625)",
 	"  --parentProbeTimeoutMs MS     timeout for probe-mode parent checks (default: 500)",
 	"  --parentProbeMaxPerRound N    max probe-mode candidates per upgrade check (default: 2)",
 	"  --parentProbeMaxLagMessages N max sequence lag for probe-mode candidates (default: 0)",
@@ -286,7 +288,10 @@ export const parseParentUpgradePresetConfig = (
 			defaultCandidate,
 		),
 		parentUpgradeStaleRootProbeProbability: Number(
-			get("--parentUpgradeStaleRootProbeProbability") ?? 0.015625,
+			get("--parentUpgradeStaleRootProbeProbability") ??
+				(defaultCandidate
+					? DEFAULT_CANDIDATE_STALE_ROOT_PROBE_PROBABILITY
+					: RAW_STALE_ROOT_PROBE_PROBABILITY),
 		),
 		parentProbeTimeoutMs: Number(get("--parentProbeTimeoutMs") ?? 500),
 		parentProbeMaxPerRound: Number(get("--parentProbeMaxPerRound") ?? 2),

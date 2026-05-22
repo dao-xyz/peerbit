@@ -56,7 +56,10 @@ uses:
 - `shadow` mode.
 - Leaf-only proactive upgrades.
 - Live probe verification for stale root tracker state.
-- Deterministic low-rate stale-root sampling.
+- Deterministic low-rate stale-root sampling. The current default-candidate
+  preset uses `1/256` as the base sample rate, lower than the raw evaluator
+  default, because multi-writer hotspot evidence showed that speculative
+  no-promotion probes can perturb deadline delivery.
 - Request-aware root reservation tokens.
 - Separate root pressure and root free-slot guards.
 - Branch-aware root admission through `parentUpgradeRootMinSubtreeGain`.
