@@ -932,11 +932,11 @@ describe("raw exchange-head sync", () => {
 				(event) => event.name === "sharedLog.canAppendBatch.metadata",
 			);
 			expect(metadataProfile.count).to.equal(hashes.length);
-			const verifyProfile = profileEvents.find(
-				(event) => event.name === "sharedLog.canAppendBatch.verifySignatures",
+			const nativeVerifiedCommitProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.nativeVerifiedCommit",
 			);
-			expect(verifyProfile.entries).to.equal(hashes.length);
-			expect(verifyProfile.details.mode).to.equal("backbone-prepared");
+			expect(nativeVerifiedCommitProfile.entries).to.equal(hashes.length);
+			expect(nativeVerifiedCommitProfile.count).to.equal(hashes.length);
 		} finally {
 			await session.stop();
 		}

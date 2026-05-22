@@ -244,6 +244,18 @@ type NativePeerbitBackboneHandle = {
 		coordinateAssignedToRangeBoundaries: Uint8Array,
 		coordinateRequestedReplicas: number[],
 	) => boolean;
+	commit_verified_prepared_raw_receive_join_batch?: (
+		hashes: string[],
+		heads: Uint8Array,
+		verifyHashes: string[],
+		coordinateHashes: string[],
+		coordinateGids: string[],
+		coordinateHashNumbers: string[],
+		coordinateBatches: string[][],
+		coordinateNextHashBatches: string[][],
+		coordinateAssignedToRangeBoundaries: Uint8Array,
+		coordinateRequestedReplicas: number[],
+	) => boolean;
 	clear_prepared_raw_receive_entries: (hashes: string[]) => number;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
@@ -2649,6 +2661,38 @@ export class NativeBackboneLogGraph {
 		return this.native.commit_prepared_raw_receive_join_batch(
 			hashes,
 			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			coordinateColumns.hashes,
+			coordinateColumns.gids,
+			coordinateColumns.hashNumbers,
+			coordinateColumns.coordinateBatches,
+			coordinateColumns.nextHashBatches,
+			coordinateColumns.assignedToRangeBoundaries,
+			coordinateColumns.requestedReplicas,
+		);
+	}
+
+	commitVerifiedPreparedRawReceiveJoinBatch(
+		hashes: string[],
+		headFlags: boolean[],
+		verifyHashes: string[],
+		coordinates?: NativeBackboneCoordinateCommitColumns,
+	): boolean | undefined {
+		if (hashes.length === 0) {
+			return true;
+		}
+		if (hashes.length !== headFlags.length) {
+			throw new Error("Expected equal raw receive hash and head lengths");
+		}
+		if (!this.native.commit_verified_prepared_raw_receive_join_batch) {
+			return undefined;
+		}
+		const coordinateColumns =
+			coordinates ?? emptyNativeBackboneCoordinateCommitColumns();
+		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
+		return this.native.commit_verified_prepared_raw_receive_join_batch(
+			hashes,
+			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			verifyHashes,
 			coordinateColumns.hashes,
 			coordinateColumns.gids,
 			coordinateColumns.hashNumbers,

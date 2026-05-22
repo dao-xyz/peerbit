@@ -8644,18 +8644,16 @@ export class SharedLog<
 		}
 	}
 
-	private canAppendPreparedRawReceiveBatchWithNativeBackbone(
+	private validatePreparedRawReceiveMetadataWithNativeBackbone(
 		entries: Entry<T>[],
 		profile?: SyncProfileFn,
 		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
-	): boolean | undefined {
-		const verifier =
-			this._nativeBackbone?.graph.verifyPreparedRawReceiveEntries;
-		if (!verifier) {
+	): { signatureHashes: string[] } | false | undefined {
+		if (!this._nativeBackbone?.graph.verifyPreparedRawReceiveEntries) {
 			return undefined;
 		}
 		try {
-			const signaturesToVerify: string[] = [];
+			const signatureHashes: string[] = [];
 			const checkStartedAt = syncProfileStart(profile);
 			let replicaCacheHits = 0;
 			let predecodedReplicaHits = 0;
@@ -8685,22 +8683,8 @@ export class SharedLog<
 				checkMinReplicasLimit(replicas);
 
 				if (!entry.createdLocally && !hasPreverifiedSignature(entry)) {
-					signaturesToVerify.push(entry.hash);
+					signatureHashes.push(entry.hash);
 				}
-			}
-
-			if (signaturesToVerify.length === 0) {
-				if (profile) {
-					emitSyncProfileDuration(profile, checkStartedAt, {
-						name: "sharedLog.canAppendBatch.metadata",
-						component: "shared-log",
-						entries: entries.length,
-						count: 0,
-						messages: 1,
-						details: { replicaCacheHits, predecodedReplicaHits },
-					});
-				}
-				return true;
 			}
 
 			if (profile) {
@@ -8708,24 +8692,53 @@ export class SharedLog<
 					name: "sharedLog.canAppendBatch.metadata",
 					component: "shared-log",
 					entries: entries.length,
-					count: signaturesToVerify.length,
+					count: signatureHashes.length,
 					messages: 1,
 					details: { replicaCacheHits, predecodedReplicaHits },
 				});
 			}
+			return { signatureHashes };
+		} catch (error) {
+			if (error instanceof BorshError || error instanceof ReplicationError) {
+				warn("Received payload that could not be decoded, skipping");
+				return false;
+			}
+			return undefined;
+		}
+	}
+
+	private canAppendPreparedRawReceiveBatchWithNativeBackbone(
+		entries: Entry<T>[],
+		profile?: SyncProfileFn,
+		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
+	): boolean | undefined {
+		const verifier =
+			this._nativeBackbone?.graph.verifyPreparedRawReceiveEntries;
+		const validated = this.validatePreparedRawReceiveMetadataWithNativeBackbone(
+			entries,
+			profile,
+			options,
+		);
+		if (!verifier || !validated) {
+			return validated === false ? false : undefined;
+		}
+		if (validated.signatureHashes.length === 0) {
+			return true;
+		}
+		try {
 			const verifyStartedAt = syncProfileStart(profile);
 			const verified = verifier.call(
 				this._nativeBackbone!.graph,
-				signaturesToVerify,
+				validated.signatureHashes,
 			);
-			if (!verified || verified.length !== signaturesToVerify.length) {
+			if (!verified || verified.length !== validated.signatureHashes.length) {
 				return undefined;
 			}
 			if (profile) {
 				emitSyncProfileDuration(profile, verifyStartedAt, {
 					name: "sharedLog.canAppendBatch.verifySignatures",
 					component: "shared-log",
-					entries: signaturesToVerify.length,
+					entries: validated.signatureHashes.length,
 					messages: 1,
 					details: { native: true, mode: "backbone-prepared" },
 				});
@@ -9633,19 +9646,46 @@ export class SharedLog<
 					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
-						const canAppendAlreadyValidated =
-							await this.canSkipLowerLogCanAppendForNetworkJoin(
+						const nativeBackboneCommitValidation =
+							this.validatePreparedRawReceiveMetadataWithNativeBackbone(
 								allToMerge,
 								syncProfile,
 								{ decodedReplicaCounts: receiveReplicaCounts },
 							);
+						let canAppendAlreadyValidated = false;
+						let fallbackCanAppendAlreadyValidated = false;
+						let nativeCommitVerifyHashes: string[] | undefined;
+						let nativeCommitCanValidateAppend = false;
+						if (nativeBackboneCommitValidation === false) {
+							canAppendAlreadyValidated = false;
+						} else if (nativeBackboneCommitValidation) {
+							nativeCommitCanValidateAppend = true;
+							nativeCommitVerifyHashes =
+								nativeBackboneCommitValidation.signatureHashes;
+						} else {
+							canAppendAlreadyValidated =
+								await this.canSkipLowerLogCanAppendForNetworkJoin(
+									allToMerge,
+									syncProfile,
+									{ decodedReplicaCounts: receiveReplicaCounts },
+								);
+							fallbackCanAppendAlreadyValidated =
+								canAppendAlreadyValidated;
+						}
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, validateStartedAt, {
 								name: "sharedLog.receive.validateCanAppend",
 								component: "shared-log",
 								entries: allToMerge.length,
 								messages: 1,
-								cacheHit: canAppendAlreadyValidated,
+								cacheHit:
+									canAppendAlreadyValidated ||
+									nativeCommitCanValidateAppend,
+								details: {
+									nativeCommitCanValidateAppend,
+									nativeCommitVerifyHashes:
+										nativeCommitVerifyHashes?.length ?? 0,
+								},
 							});
 						}
 						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
@@ -9675,7 +9715,8 @@ export class SharedLog<
 							}
 						};
 						const preparedAppendFacts: PreparedAppendJoinFacts[] = [];
-						let canUsePreparedAppendFacts = canAppendAlreadyValidated;
+						let canUsePreparedAppendFacts =
+							canAppendAlreadyValidated || nativeCommitCanValidateAppend;
 						if (canUsePreparedAppendFacts) {
 							for (const entry of allToMerge) {
 								const prepared =
@@ -9728,16 +9769,24 @@ export class SharedLog<
 									(batch) => {
 										nativePreparedCoordinateBatch = batch;
 									},
+									nativeCommitVerifyHashes,
+									syncProfile,
 								)
 							: undefined;
+						const preparedAppendCanValidateAppend =
+							canAppendAlreadyValidated ||
+							(nativeCommitCanValidateAppend &&
+								!!nativePreparedJoinCommit);
+						if (!preparedAppendCanValidateAppend) {
+							canUsePreparedAppendFacts = false;
+						}
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
 							(await this.log.joinPreparedAppendFactsBatch(
 								preparedAppendFacts,
 								{
 									__peerbitEntriesAlreadyMissing: true,
-									__peerbitCanAppendAlreadyValidated:
-										canAppendAlreadyValidated,
+									__peerbitCanAppendAlreadyValidated: true,
 									__peerbitDeferIndexWrite: true,
 									__peerbitOnAppendHashes: onAppendHashes,
 									__peerbitProfile: syncProfile,
@@ -9745,8 +9794,12 @@ export class SharedLog<
 										nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
 										!!nativePreparedJoinCommit &&
-										!!this._nativeBackbone?.graph
-											.commitPreparedRawReceiveJoinBatch,
+										(nativeCommitVerifyHashes &&
+										nativeCommitVerifyHashes.length > 0
+											? !!this._nativeBackbone?.graph
+													.commitVerifiedPreparedRawReceiveJoinBatch
+											: !!this._nativeBackbone?.graph
+													.commitPreparedRawReceiveJoinBatch),
 								},
 							));
 						if (!joinedPreparedFacts) {
@@ -9754,7 +9807,7 @@ export class SharedLog<
 								__peerbitBatchIndependent: true,
 								__peerbitEntriesAlreadyMissing: true,
 								__peerbitCanAppendAlreadyValidated:
-									canAppendAlreadyValidated,
+									fallbackCanAppendAlreadyValidated,
 								__peerbitDeferIndexWrite: true,
 								__peerbitOnAppendHashes: onAppendHashes,
 								__peerbitProfile: syncProfile,
@@ -11425,6 +11478,8 @@ export class SharedLog<
 		onCoordinatesCommitted?: (
 			batch: NativeBackboneReceiveCoordinateBatch<R>,
 		) => void,
+		verifyHashes?: string[],
+		profile?: SyncProfileFn,
 	):
 		| ((input: {
 				entries: PreparedAppendJoinFacts[];
@@ -11437,7 +11492,10 @@ export class SharedLog<
 		if (
 			!backbone ||
 			this.remoteBlocks?.localStore !== backbone.blocks ||
-			this._logProperties?.replicate !== false
+			this._logProperties?.replicate !== false ||
+			(verifyHashes &&
+				verifyHashes.length > 0 &&
+				!backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch)
 		) {
 			return undefined;
 		}
@@ -11453,11 +11511,29 @@ export class SharedLog<
 						)
 					: undefined;
 			if (validatePlan) {
-				const committed = backbone.graph.commitPreparedRawReceiveJoinBatch?.(
-					hashes,
-					headFlags,
-					coordinateColumns,
-				);
+				const verifiedCommitStartedAt = syncProfileStart(profile);
+				const committed =
+					verifyHashes && verifyHashes.length > 0
+						? backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch?.(
+								hashes,
+								headFlags,
+								verifyHashes,
+								coordinateColumns,
+							)
+						: backbone.graph.commitPreparedRawReceiveJoinBatch?.(
+								hashes,
+								headFlags,
+								coordinateColumns,
+							);
+				if (verifyHashes && verifyHashes.length > 0 && profile) {
+					emitSyncProfileDuration(profile, verifiedCommitStartedAt, {
+						name: "sharedLog.receive.nativeVerifiedCommit",
+						component: "shared-log",
+						entries: entries.length,
+						count: verifyHashes.length,
+						messages: 1,
+					});
+				}
 				if (committed === true) {
 					if (coordinateBatch) {
 						onCoordinatesCommitted?.(coordinateBatch);

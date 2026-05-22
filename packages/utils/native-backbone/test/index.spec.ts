@@ -763,6 +763,40 @@ describe("native peerbit backbone", () => {
 		expect(
 			target.graph.commitPreparedRawReceiveBatch([prepared.hash], [true]),
 		).to.equal(false);
+
+		const verifiedCommit =
+			source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 2n,
+				gid: "gid-raw-receive-verified-commit",
+				metaData,
+				payloadData: new Uint8Array([7, 8, 9]),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: true,
+			});
+		target.prepareRawReceiveColumnsBatch(
+			[verifiedCommit.bytes],
+			[verifiedCommit.hash],
+			{ verifySignatures: false },
+		);
+		expect(
+			target.graph.commitVerifiedPreparedRawReceiveJoinBatch(
+				[verifiedCommit.hash],
+				[true],
+				[],
+			),
+		).to.equal(false);
+		expect(
+			target.graph.commitVerifiedPreparedRawReceiveJoinBatch(
+				[verifiedCommit.hash],
+				[true],
+				[verifiedCommit.hash],
+			),
+		).to.equal(true);
+		expect(target.hasBlock(verifiedCommit.hash)).to.equal(true);
+		expect(target.hasLogEntry(verifiedCommit.hash)).to.equal(true);
 	});
 
 	it("plans prepared raw receive groups natively", async () => {
