@@ -1138,6 +1138,27 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKey: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
 	prepare_plain_committed_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -4687,6 +4708,32 @@ export class NativePeerbitBackbone {
 		const baseArgs = nativeStorageAppendArgs(input);
 		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
 		if (input.documentIndex?.useLatestContext && documentIndexArgs) {
+			const projection = input.documentIndex.projection;
+			if (projection) {
+				const row =
+					this.native.prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction(
+						BigInt(input.wallTime),
+						input.logical ?? 0,
+						input.gid,
+						input.type ?? 0,
+						input.metaData,
+						input.payloadData,
+						input.replicas,
+						input.roleAgeMs ?? 0,
+						integerString(input.now ?? Date.now()),
+						input.selfHash ?? "",
+						input.selfReplicating ?? true,
+						input.resolveTrimmedEntries !== false,
+						input.documentIndex.key,
+						input.documentIndex.byteElementIndexLimit ?? 0,
+						input.documentIndex.deleteTrimmedHeads === true,
+						this.documentProjectionPlanId(projection.plan),
+						projection.encodedDocument,
+						projection.signer,
+						input.trimLengthTo,
+					);
+				return committedStorageAppendResultFromRow(this.resolution, row);
+			}
 			const row =
 				this.native.prepare_plain_committed_storage_append_document_index_latest_transaction(
 					BigInt(input.wallTime),

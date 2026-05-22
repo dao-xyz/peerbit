@@ -2724,6 +2724,101 @@ describe("index", () => {
 					}
 				});
 
+				it("reuses cached native projection plans for strict native update puts", async () => {
+					@variant("strict_native_project_update_indexable")
+					class StrictNativeProjectUpdateIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						@field({ type: "u64" })
+						created: bigint;
+
+						constructor(
+							properties?: Partial<StrictNativeProjectUpdateIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+							this.created = properties?.created || 0n;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<StrictNativeProjectUpdateIndexable>({
+						docs: new Documents<Document, StrictNativeProjectUpdateIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeProjectUpdateIndexable,
+								transform: transform.project<
+									Document,
+									StrictNativeProjectUpdateIndexable
+								>({
+									id: transform.field("id"),
+									name: transform.field("name"),
+									created: transform.context("created"),
+								}),
+							},
+						},
+					});
+					const sharedLog = localStore.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const native = (backbone as any).native;
+					const registerProjectionPlanSpy = sinon.spy(
+						native,
+						"register_document_projection_plan",
+					);
+					const latestCachedTransactionSpy = sinon.spy(
+						native,
+						"prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction",
+					);
+					const latestInlineTransactionSpy = sinon.spy(
+						native,
+						"prepare_plain_committed_storage_append_document_index_latest_transaction",
+					);
+					const documentIndexTransformSpy = sinon.spy(
+						localStore.docs.index,
+						"transformer",
+					);
+
+					try {
+						const id = uuid();
+						const first = await localStore.docs.put(
+							new Document({ id, name: "native-project-update-1" }),
+						);
+						const second = await localStore.docs.put(
+							new Document({ id, name: "native-project-update-2" }),
+						);
+						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(registerProjectionPlanSpy.callCount).equal(1);
+						expect(latestCachedTransactionSpy.callCount).equal(2);
+						expect(latestInlineTransactionSpy.callCount).equal(0);
+						expect(documentIndexTransformSpy.callCount).equal(0);
+						const indexed = await localStore.docs.index.get(id, {
+							resolve: false,
+						});
+						expect(indexed?.name).equal("native-project-update-2");
+					} finally {
+						documentIndexTransformSpy.restore();
+						latestInlineTransactionSpy.restore();
+						latestCachedTransactionSpy.restore();
+						registerProjectionPlanSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("defaults strict native puts to local native append options", async () => {
 					const rustSession = await TestSession.connected(
 						1,

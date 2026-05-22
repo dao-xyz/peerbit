@@ -4190,8 +4190,104 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: JsValue,
     ) -> Result<Array, JsValue> {
+        let document_index_commit = document_index_append_commit(
+            document_key,
+            document_value_prefix_bytes,
+            String::new(),
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
+            wall_time,
+            logical,
+            fallback_gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            resolve_trimmed_entries,
+            trim_length_to,
+            document_index_commit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        fallback_gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        resolve_trimmed_entries: bool,
+        document_key: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_index_commit = document_index_cached_projection_append_commit(
+            document_key,
+            String::new(),
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan_id,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
+            wall_time,
+            logical,
+            fallback_gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            resolve_trimmed_entries,
+            trim_length_to,
+            document_index_commit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        fallback_gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        resolve_trimmed_entries: bool,
+        trim_length_to: JsValue,
+        mut document_index_commit: DocumentIndexAppendCommit,
+    ) -> Result<Array, JsValue> {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
-        let previous_context = self.document_context_facts_by_key(&document_key)?;
+        let previous_context = self.document_context_facts_by_key(&document_index_commit.key)?;
         let known_existing = previous_context.is_some();
         let gid = previous_context
             .as_ref()
@@ -4201,19 +4297,10 @@ impl NativePeerbitBackbone {
             .as_ref()
             .map(|context| vec![context.head.clone()])
             .unwrap_or_default();
-        let mut document_index_commit = document_index_append_commit(
-            document_key,
-            document_value_prefix_bytes,
-            previous_context
-                .as_ref()
-                .map(|context| context.created.to_string())
-                .unwrap_or_default(),
-            document_byte_element_index_limit,
-            document_delete_trimmed_heads,
-            document_projection_plan,
-            document_projection_encoded_document,
-            document_projection_signer,
-        )?;
+        if document_index_commit.existing_created.is_none() {
+            document_index_commit.existing_created =
+                previous_context.as_ref().map(|context| context.created);
+        }
         document_index_commit.previous_context = previous_context;
         document_index_commit.known_existing = known_existing;
         self.prepare_plain_storage_append_transaction_inner(
