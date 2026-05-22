@@ -4515,21 +4515,48 @@ export class SharedLog<
 		return { leaders: args.leaders, localLeader: false };
 	}
 
-	private async pruneJoinedEntriesNoLongerLed(entries: Entry<T>[]) {
+	private async pruneJoinedEntriesNoLongerLed(
+		entries: Entry<T>[],
+		options?: {
+			decodedReplicaCounts?: DecodedReplicaCountMap;
+			profile?: SyncProfileFn;
+		},
+	) {
+		if (entries.length === 0 || this.closed) {
+			return;
+		}
 		const selfHash = this.node.identity.publicKey.hashcode();
-		for (const entry of entries) {
+		const leaderItems = entries.map((entry) => ({
+			entry,
+			replicas:
+				options?.decodedReplicaCounts?.get(entry.hash) ??
+				decodeReplicas(entry).getValue(this),
+			options: { roleAge: 0, persist: false as const },
+		}));
+		const nativeBatch = this.canPlanNativeEntryLeaderBatch(leaderItems);
+		const planStartedAt = syncProfileStart(options?.profile);
+		const plans = await this.planEntryLeaderBatch(leaderItems);
+		emitSyncProfileDuration(options?.profile, planStartedAt, {
+			name: "sharedLog.receive.checkedPrune.plan",
+			component: "shared-log",
+			entries: entries.length,
+			messages: 1,
+			details: { nativeBatch },
+		});
+
+		const loopStartedAt = syncProfileStart(options?.profile);
+		let enqueuedPrune = 0;
+		let cancelledLocalLeader = 0;
+		for (let i = 0; i < entries.length; i++) {
 			if (this.closed) {
 				continue;
 			}
-
-			const leaders = await this.findLeadersFromEntry(
-				entry,
-				decodeReplicas(entry).getValue(this),
-				{ roleAge: 0 },
-			);
+			const entry = entries[i]!;
+			const leaders = plans[i]?.leaders ?? new Map();
 
 			if (leaders.has(selfHash)) {
 				await this.cancelCheckedPruneForLocalLeader(entry.hash);
+				cancelledLocalLeader++;
 				continue;
 			}
 
@@ -4545,8 +4572,17 @@ export class SharedLog<
 				key: entry.hash,
 				value: { entry, leaders },
 			});
+			enqueuedPrune++;
 			this.responseToPruneDebouncedFn.delete(entry.hash);
 		}
+		emitSyncProfileDuration(options?.profile, loopStartedAt, {
+			name: "sharedLog.receive.checkedPrune.loop",
+			component: "shared-log",
+			entries: entries.length,
+			count: enqueuedPrune,
+			messages: 1,
+			details: { cancelledLocalLeader },
+		});
 	}
 
 	private async pruneIndexedEntriesNoLongerLed(options?: {
@@ -9960,7 +9996,10 @@ export class SharedLog<
 							confirmedHashes.add(merged.hash);
 						}
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
-						await this.pruneJoinedEntriesNoLongerLed(allToMerge);
+						await this.pruneJoinedEntriesNoLongerLed(allToMerge, {
+							decodedReplicaCounts: receiveReplicaCounts,
+							profile: syncProfile,
+						});
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
 								name: "sharedLog.receive.checkedPrune",
