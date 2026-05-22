@@ -10,6 +10,7 @@ import { dirname } from "node:path";
 import { FanoutTree } from "../src/index.js";
 import {
 	DEFAULT_PARENT_UPGRADE_SEEDS,
+	PARENT_UPGRADE_HELP_TEXT,
 	type EvidenceFailure as Failure,
 	type ParentUpgradePresetConfig,
 	type UpgradeMode,
@@ -558,18 +559,14 @@ const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
 
 const usage = () => {
 	console.log(
-		[
-			"fanout-tree-parent-upgrade-multi-eval.ts",
-			"",
-			"Options:",
-			"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-video-live|ci-multi-idle|ci-multi-sparse-idle|ci-multi-hotspot-idle|all (default: all)",
-			"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
-			"  --parentUpgradePreset NAME   raw|default-candidate (default: raw)",
-			"  --parentUpgradeIntervalMs MS treatment upgrade interval (default: 1000)",
-			"  --parentUpgradeMode MODE     direct|probe|shadow (default: preset-dependent)",
-			"  --parentShadowDualPathMs MS keep old parent during active-flow shadow cutover until candidate data is observed (default: 5000 for default-candidate, otherwise 0)",
-			"  --parentShadowDualPathMinMessages N min candidate data messages before active-flow cutover (default: 32 for default-candidate, otherwise 1)",
-			"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
+			[
+				"fanout-tree-parent-upgrade-multi-eval.ts",
+				"",
+				"Options:",
+				"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-video-live|ci-multi-idle|ci-multi-sparse-idle|ci-multi-hotspot-idle|all (default: all)",
+				"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
+				...PARENT_UPGRADE_HELP_TEXT,
+				"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
 			"  --nodes N                    override scenario node count",
 			"  --writers N                  override scenario writer/root count",
 			"  --activeWriters N            override active publisher count; remaining joined writer trees stay idle",
