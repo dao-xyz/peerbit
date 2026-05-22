@@ -43,6 +43,7 @@ type EvalArgs = ParentUpgradePresetConfig & {
 	maxLiveDeadlinePctDelta: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
 	maxSecondBatchLatencyP95DeltaRatio: number;
+	maxDataOverheadRatio: number;
 	maxProbePerUpgrade: number;
 	maxRootChildrenDelta: number;
 	maxRootUploadPctDelta: number;
@@ -116,6 +117,7 @@ const HELP_TEXT = [
 	"  --maxLiveDeadlinePctDelta N  max live-flow deadline pct jitter tolerated (default: 2)",
 	"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
 	"  --maxSecondBatchLatencyP95DeltaRatio R max idle second-batch p95 latency relative jitter tolerated (default: 0.15)",
+	"  --maxDataOverheadRatio R     max treatment/base data payload overhead factor ratio (default: 1.05)",
 	"  --maxProbePerUpgrade N       max parent probes per successful proactive upgrade (default: preset-dependent)",
 	"  --maxRootChildrenDelta N     max root child-count increase over baseline (default: 4, default-candidate: 2)",
 	"  --maxRootUploadPctDelta N    max root upload pct-of-cap increase over baseline (default: 1)",
@@ -346,6 +348,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		maxSecondBatchLatencyP95DeltaRatio: Number(
 			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
 		),
+		maxDataOverheadRatio: Number(get("--maxDataOverheadRatio") ?? 1.05),
 		maxProbePerUpgrade: Number(
 			get("--maxProbePerUpgrade") ?? evidenceDefaults.maxProbePerUpgrade,
 		),
@@ -662,6 +665,13 @@ const evaluateRun = (
 
 	failIfGreater(
 		failures,
+		"dataOverheadFactor",
+		baseline.overheadFactorData,
+		upgrade.overheadFactorData,
+		ratioLimit(baseline.overheadFactorData, args.maxDataOverheadRatio, 0.01),
+	);
+	failIfGreater(
+		failures,
 		"controlBpp",
 		baseline.controlBpp,
 		upgrade.controlBpp,
@@ -814,6 +824,7 @@ const printComparison = (
 						`  promotedBranchSecondBatchLatencyP95 ${promotedBranchBaselineSecondBatchLatencyP95.toFixed(1)} -> ${promotedBranchUpgradeSecondBatchLatencyP95.toFixed(1)} peers=${upgrade.upgradedBranchPeerHashes.length} coverage=${promotedBranchCoveragePct.toFixed(1)}%`,
 					]
 				: []),
+			`  redundancy dataFactor ${baseline.overheadFactorData.toFixed(3)} -> ${upgrade.overheadFactorData.toFixed(3)} dup ${baseline.duplicates} -> ${upgrade.duplicates}`,
 			`  bpp control ${baseline.controlBpp.toFixed(4)} -> ${upgrade.controlBpp.toFixed(4)} tracker ${baseline.trackerBpp.toFixed(4)} -> ${upgrade.trackerBpp.toFixed(4)} repair ${baseline.repairBpp.toFixed(4)} -> ${upgrade.repairBpp.toFixed(4)}`,
 			`  maintenance reparentsPerMin ${baseline.maintReparentsPerMin.toFixed(2)} -> ${upgrade.maintReparentsPerMin.toFixed(2)} maxReparentsPerPeer ${baseline.maintMaxReparentsPerPeer} -> ${upgrade.maintMaxReparentsPerPeer} orphanArea ${baseline.maintOrphanArea.toFixed(1)} -> ${upgrade.maintOrphanArea.toFixed(1)}`,
 			`  rootChildren ${baseline.treeRootChildren} -> ${upgrade.treeRootChildren} rootUploadPct ${baseline.rootUploadFracPct.toFixed(2)} -> ${upgrade.rootUploadFracPct.toFixed(2)} proactiveUpgrades=${upgrade.reparentUpgradeTotal} usefulPromotions=${usefulPromotions} treeLevelP95Gain=${treeLevelP95Gain.toFixed(1)} treeLevelAvgGain=${treeLevelAvgGain.toFixed(2)}`,
@@ -853,7 +864,7 @@ const printModeTable = (
 ) => {
 	const lines = [
 		`parent-upgrade-mode-table scenario=${scenario} seed=${seed}`,
-		"mode viable effect upgrades probes shadowPromote treeP95Delta treeAvgDelta secondBatchP95Delta promotedBranchGain promotedBranchCoverage rootUploadPctDelta deadlineDelta controlBppDelta repairBppDelta orphanAreaDelta maxReparents",
+		"mode viable effect upgrades probes shadowPromote treeP95Delta treeAvgDelta secondBatchP95Delta promotedBranchGain promotedBranchCoverage rootUploadPctDelta deadlineDelta dataFactorDelta controlBppDelta repairBppDelta orphanAreaDelta maxReparents",
 	];
 	for (const row of rows) {
 		const r = row.result;
@@ -888,6 +899,7 @@ const printModeTable = (
 					baseline.deliveredWithinDeadlinePct,
 					2,
 				),
+				formatDelta(r.overheadFactorData, baseline.overheadFactorData, 3),
 				formatDelta(r.controlBpp, baseline.controlBpp, 4),
 				formatDelta(r.repairBpp, baseline.repairBpp, 4),
 				formatDelta(r.maintOrphanArea, baseline.maintOrphanArea, 1),
@@ -911,7 +923,7 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 	const lines = [
 		"",
 		"parent-upgrade-summary",
-		"scenario mode seeds viable effects upgrades probes activeUpgrades activeProbes activeGuardSkips treeAvgGainAvg secondBatchP95DeltaAvg/Max promotedBranchGainAvg promotedBranchCoverageAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootUploadPctDeltaMax maxReparents failures",
+		"scenario mode seeds viable effects upgrades probes activeUpgrades activeProbes activeGuardSkips treeAvgGainAvg secondBatchP95DeltaAvg/Max promotedBranchGainAvg promotedBranchCoverageAvg dataFactorDeltaPctAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootUploadPctDeltaMax maxReparents failures",
 	];
 	for (const group of groups.values()) {
 		const first = group[0]!;
@@ -957,6 +969,14 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 			sample.baseline.controlBpp > 0
 				? (100 * (sample.upgrade.controlBpp - sample.baseline.controlBpp)) /
 					sample.baseline.controlBpp
+				: NaN,
+		);
+		const dataFactorDeltaPct = group.map((sample) =>
+			sample.baseline.overheadFactorData > 0
+				? (100 *
+						(sample.upgrade.overheadFactorData -
+							sample.baseline.overheadFactorData)) /
+					sample.baseline.overheadFactorData
 				: NaN,
 		);
 		const rootChildrenDeltas = group.map(
@@ -1014,6 +1034,7 @@ const printAggregateSummary = (samples: SummarySample[]) => {
 				`${fmt(avgFinite(secondBatchP95Deltas), 1)}/${fmt(maxFinite(secondBatchP95Deltas), 1)}`,
 				fmt(avgFinite(branchGains), 1),
 				fmt(avgFinite(branchCoverages), 1),
+				fmt(avgFinite(dataFactorDeltaPct), 1),
 				fmt(avgFinite(controlBppDeltaPct), 1),
 				fmt(maxFinite(rootChildrenDeltas), 0),
 				fmt(maxFinite(rootUploadPctDeltas), 2),

@@ -85,6 +85,7 @@ type EvalArgs = ParentUpgradePresetConfig & {
 	maxLiveChurnGuardSkipsPerSlot: number;
 	maxSecondBatchLatencyP95DeltaMs: number;
 	maxSecondBatchLatencyP95DeltaRatio: number;
+	maxDataOverheadRatio: number;
 	maxProbePerUpgrade: number;
 	maxRootChildrenDelta: number;
 	maxRootUploadPctDelta: number;
@@ -253,6 +254,8 @@ type TreeResult = {
 	controlBytesSentRepair: number;
 	controlBytesSentTracker: number;
 	dataPayloadBytesSent: number;
+	duplicates: number;
+	dataOverheadFactor: number;
 };
 
 type MultiWriterResult = {
@@ -283,6 +286,8 @@ type MultiWriterResult = {
 	rootChildrenMax: number;
 	rootUploadPctMax: number;
 	maxReparentUpgradePerPeer: number;
+	duplicates: number;
+	dataOverheadFactor: number;
 	controlBpp: number;
 	trackerBpp: number;
 	repairBpp: number;
@@ -575,6 +580,7 @@ const usage = () => {
 			"  --maxGuardedIdleProbePerSlotForSlack R max probe/subscriber slot for guarded idle deadline slack (default: 0.02)",
 			"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
 			"  --maxSecondBatchLatencyP95DeltaRatio R max idle second-batch p95 latency relative jitter tolerated (default: 0.15)",
+			"  --maxDataOverheadRatio R     max treatment/base data payload overhead factor ratio (default: 1.05)",
 			"  --minPromotedBranchGainMs MS min branch/second-batch p95 gain for promoted trees (default: 10)",
 			"  --minPromotedTreeLevelAvgGain N min avg tree-level gain for promoted trees (default: 0.1)",
 			"  --sameRunAB 0|1              run baseline and treatment concurrently for idle scenarios (default: 1 for default-candidate, otherwise 0)",
@@ -703,6 +709,7 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		maxSecondBatchLatencyP95DeltaRatio: Number(
 			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
 		),
+		maxDataOverheadRatio: Number(get("--maxDataOverheadRatio") ?? 1.05),
 		maxProbePerUpgrade: Number(
 			get("--maxProbePerUpgrade") ?? evidenceDefaults.maxProbePerUpgrade,
 		),
@@ -1458,6 +1465,7 @@ const runMultiWriterSim = async (
 			}
 			const expected = joinedCount * treeMessageCount;
 			const secondBatchExpected = joinedCount * treeSecondBatchMessages;
+			const idealPayloadBytes = expected * Math.max(0, params.msgSize);
 			const secondBatchLatencySamples = delivery.secondBatchLatencySamples.sort(
 				(a, b) => a - b,
 			);
@@ -1578,6 +1586,11 @@ const runMultiWriterSim = async (
 				controlBytesSentRepair,
 				controlBytesSentTracker,
 				dataPayloadBytesSent,
+				duplicates: delivery.duplicates,
+				dataOverheadFactor:
+					idealPayloadBytes <= 0
+						? 1
+						: dataPayloadBytesSent / idealPayloadBytes,
 			});
 		}
 
@@ -1608,6 +1621,11 @@ const runMultiWriterSim = async (
 			.filter((value) => Number.isFinite(value))
 			.sort((a, b) => a - b);
 		const deliveredPayloadBytes = delivered * Math.max(0, params.msgSize);
+		const idealPayloadBytes = expected * Math.max(0, params.msgSize);
+		const dataPayloadBytesSent = treeResults.reduce(
+			(sum, tree) => sum + tree.dataPayloadBytesSent,
+			0,
+		);
 		const controlBytesSent = treeResults.reduce(
 			(sum, tree) => sum + tree.controlBytesSent,
 			0,
@@ -1704,6 +1722,9 @@ const runMultiWriterSim = async (
 				0,
 				...treeResults.map((tree) => tree.maxReparentUpgradePerPeer),
 			),
+			duplicates: treeResults.reduce((sum, tree) => sum + tree.duplicates, 0),
+			dataOverheadFactor:
+				idealPayloadBytes <= 0 ? 1 : dataPayloadBytesSent / idealPayloadBytes,
 			controlBpp:
 				deliveredPayloadBytes <= 0
 					? 0
@@ -1742,6 +1763,7 @@ const formatResult = (result: MultiWriterResult) => {
 		`tree avgLevel=${fmt(result.treeLevelAvg)} p95Level=${fmt(result.treeLevelP95, 1)} rootChildren sum=${result.rootChildrenSum} max=${result.rootChildrenMax} rootUploadPctMax=${fmt(result.rootUploadPctMax)}`,
 		`parentUpgrade upgrades=${result.reparentUpgradeTotal} probes=${result.parentProbeReqSentTotal} shadowStart=${result.parentShadowStartTotal} shadowPromote=${result.parentShadowPromoteTotal} maxPerPeer=${result.maxReparentUpgradePerPeer}`,
 		`publishActive upgrades=${result.publishActiveReparentUpgradeTotal} probes=${result.publishActiveParentProbeReqSentTotal} shadowStart=${result.publishActiveParentShadowStartTotal} shadowPromote=${result.publishActiveParentShadowPromoteTotal} guardSkips=${result.publishActiveGuardSkipsTotal} guardedTrees=${result.activeGuardedTrees}/${p.writers}`,
+		`redundancy dataFactor=${fmt(result.dataOverheadFactor, 3)} dup=${result.duplicates}`,
 		`cost controlBpp=${fmt(result.controlBpp, 4)} trackerBpp=${fmt(result.trackerBpp, 4)} repairBpp=${fmt(result.repairBpp, 4)}`,
 		`network dials=${result.network.dials} connsOpened=${result.network.connectionsOpened} streamsOpened=${result.network.streamsOpened} bytesSent=${result.network.bytesSent}`,
 		...result.trees.map(
@@ -1888,6 +1910,13 @@ const evaluateRun = (
 				? baseline.deliveredWithinDeadlinePct -
 						Math.max(0, args.maxLiveDeadlinePctDelta)
 				: baseline.deliveredWithinDeadlinePct - idleDeadlineSlack,
+		);
+		failIfGreater(
+			failures,
+			"dataOverheadFactor",
+			baseline.dataOverheadFactor,
+			upgrade.dataOverheadFactor,
+			ratioLimit(baseline.dataOverheadFactor, args.maxDataOverheadRatio, 0.01),
 		);
 		failIfGreater(
 			failures,
@@ -2103,6 +2132,7 @@ const printComparison = (
 			`  promotedLatencyRegressionMax tree=${fmt(promotedTreeSecondBatchLatencyP95RegressionMax, 1)}ms branch=${fmt(promotedBranchSecondBatchLatencyP95RegressionMax, 1)}ms`,
 			`  active upgrades=${upgrade.publishActiveReparentUpgradeTotal} probes=${upgrade.publishActiveParentProbeReqSentTotal} shadowStart=${upgrade.publishActiveParentShadowStartTotal} guardSkips=${upgrade.publishActiveGuardSkipsTotal} guardedTrees=${upgrade.activeGuardedTrees}/${upgrade.params.writers}`,
 			`  rootChildrenDelta sum=${rootDeltas.reduce((sum, value) => sum + value, 0)} max=${Math.max(...rootDeltas)} rootUploadPctDeltaMax=${fmt(Math.max(...rootUploadDeltas), 2)}`,
+			`  redundancy dataFactor ${fmt(baseline.dataOverheadFactor, 3)} -> ${fmt(upgrade.dataOverheadFactor, 3)} dup ${baseline.duplicates} -> ${upgrade.duplicates}`,
 			`  cost controlBpp ${fmt(baseline.controlBpp, 4)} -> ${fmt(upgrade.controlBpp, 4)} trackerBpp ${fmt(baseline.trackerBpp, 4)} -> ${fmt(upgrade.trackerBpp, 4)} repairBpp ${fmt(baseline.repairBpp, 4)} -> ${fmt(upgrade.repairBpp, 4)}`,
 			...(failures.length > 0
 				? [
@@ -2130,8 +2160,16 @@ const printSummary = (samples: SummarySample[]) => {
 		[
 			"",
 			"parent-upgrade-multi-summary",
-			"scenario seeds viable usefulPromotedTrees upgrades probes activeUpgrades activeProbes activeGuardSkips branchGainAvg secondBatchP95DeltaAvg/Max promotedLatencyRegressionMax(tree/branch) controlBppDeltaPctAvg rootChildrenDeltaMax rootChildrenDeltaSumMax rootUploadPctDeltaMax maxPerPeer failures",
+			"scenario seeds viable usefulPromotedTrees upgrades probes activeUpgrades activeProbes activeGuardSkips branchGainAvg secondBatchP95DeltaAvg/Max promotedLatencyRegressionMax(tree/branch) dataFactorDeltaPctAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootChildrenDeltaSumMax rootUploadPctDeltaMax maxPerPeer failures",
 			...[...groups.entries()].map(([scenario, group]) => {
+				const dataFactorDeltas = group.map((sample) =>
+					sample.baseline.dataOverheadFactor > 0
+						? (100 *
+								(sample.upgrade.dataOverheadFactor -
+									sample.baseline.dataOverheadFactor)) /
+							sample.baseline.dataOverheadFactor
+						: NaN,
+				);
 				const controlDeltas = group.map((sample) =>
 					sample.baseline.controlBpp > 0
 						? (100 * (sample.upgrade.controlBpp - sample.baseline.controlBpp)) /
@@ -2207,6 +2245,7 @@ const printSummary = (samples: SummarySample[]) => {
 					),
 					`${fmt(avgFinite(secondBatchP95Deltas), 1)}/${fmt(maxFinite(secondBatchP95Deltas), 1)}`,
 					`${fmt(maxFinite(group.map((sample) => sample.promotedTreeSecondBatchLatencyP95RegressionMax)), 1)}/${fmt(maxFinite(group.map((sample) => sample.promotedBranchSecondBatchLatencyP95RegressionMax)), 1)}`,
+					fmt(avgFinite(dataFactorDeltas), 1),
 					fmt(avgFinite(controlDeltas), 1),
 					rootChildrenDeltaMax,
 					rootChildrenDeltaSumMax,

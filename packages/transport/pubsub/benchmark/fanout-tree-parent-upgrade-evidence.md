@@ -99,6 +99,19 @@ active dual-path mechanism check. The active mechanism check intentionally opts
 out of the active data guard to prove make-before-break promotion can work; it
 does not imply that active-flow upgrades are enabled by default.
 
+The default-ready runner now passes an explicit
+`--maxDataOverheadRatio 1.05` gate to the single- and multi-writer evaluators.
+Those evaluators compare baseline and treatment on delivery/deadline,
+control/tracker/repair bytes per delivered payload byte, data payload overhead
+factor, duplicate deliveries, root children/upload pressure, orphan area,
+reparent rate, and active guard skips. This keeps "better tree shape" from
+masking worse data-plane redundancy.
+
+`ci-loss` and the CI `fanout-tree-sim` gate cover stream data-frame loss and
+churn with repair enabled. The multi-writer live-churn scenarios cover
+multi-root topic pressure and require the default-candidate policy to avoid
+proactive upgrade traffic on active flows except for local guard skips.
+
 The nightly soak matrix covers:
 
 - Single-tree live-stream no-op safety.

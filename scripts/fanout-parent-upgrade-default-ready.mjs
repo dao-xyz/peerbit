@@ -193,6 +193,8 @@ run("single-writer live default-candidate safety", [
 	"--seeds",
 	seeds,
 	...defaultCandidateArgs(),
+	"--maxDataOverheadRatio",
+	"1.05",
 	"--strict",
 	"1",
 ]);
@@ -209,6 +211,8 @@ run("multi-writer live default-candidate safety", [
 	"--seeds",
 	seeds,
 	...defaultCandidateArgs(),
+	"--maxDataOverheadRatio",
+	"1.05",
 	"--strict",
 	"1",
 ]);
@@ -225,6 +229,8 @@ run("multi-writer idle default-candidate safety", [
 	"--seeds",
 	idleSafetySeeds,
 	...defaultCandidateArgs(),
+	"--maxDataOverheadRatio",
+	"1.05",
 	"--strict",
 	"1",
 ]);
