@@ -162,6 +162,10 @@ describe("raw exchange-head sync", () => {
 				db2.log as any,
 				"createCoordinatePersistenceEntryFromNativePlan",
 			);
+			const coordinatePrepareFromLeaderPlanSpy = sinon.spy(
+				db2.log as any,
+				"createCoordinatePersistenceEntryFromLeaderPlan",
+			);
 			const sharedOnChangeSpy = sinon.spy(db2.log as any, "onChange");
 			const entryAddedHashSpy = sinon.spy(db2.log as any, "onEntryAddedHash");
 			const entryAddedHashesSpy = sinon.spy(
@@ -255,14 +259,20 @@ describe("raw exchange-head sync", () => {
 			}
 			expect(persistBatchSpy.callCount).to.be.greaterThan(0);
 			expect(coordinateBatchSpy.callCount).to.be.greaterThan(0);
-			expect(coordinatePrepareSpy.callCount).to.be.greaterThan(0);
 			expect(
-				coordinatePrepareSpy.returnValues.some(
+				coordinatePrepareSpy.callCount +
+					coordinatePrepareFromLeaderPlanSpy.callCount,
+			).to.be.greaterThan(0);
+			expect(
+				[
+					...coordinatePrepareSpy.returnValues,
+					...coordinatePrepareFromLeaderPlanSpy.returnValues,
+				].some(
 					(prepared: any) =>
 						prepared &&
 						prepared !== false &&
-						!prepared.coordinateEntry &&
-						prepared.fields?.metaBytes instanceof Uint8Array,
+						typeof prepared.fields?.hash === "string" &&
+						typeof prepared.fields?.gid === "string",
 				),
 			).equal(true);
 			expect(receivedEntriesSpy.callCount).to.equal(0);
@@ -283,7 +293,6 @@ describe("raw exchange-head sync", () => {
 			const profileNames = profileEvents.map((event) => event.name);
 			expect(profileNames).to.include("sharedLog.rawReceive.materialize");
 			expect(profileNames).to.include("sharedLog.receive.lowerLogJoin");
-			expect(profileNames).to.include("sharedLog.receive.coordinatePersist");
 			const materializeProfile = profileEvents.find(
 				(event) => event.name === "sharedLog.rawReceive.materialize",
 			);
@@ -309,6 +318,7 @@ describe("raw exchange-head sync", () => {
 			markKnownSpy.restore();
 			entryAddedHashSpy.restore();
 			sharedOnChangeSpy.restore();
+			coordinatePrepareFromLeaderPlanSpy.restore();
 			coordinatePrepareSpy.restore();
 			persistBatchSpy.restore();
 			coordinateBatchSpy.restore();

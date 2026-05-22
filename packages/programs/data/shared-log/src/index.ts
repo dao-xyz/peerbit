@@ -4434,6 +4434,9 @@ export class SharedLog<
 			leaders: CheckedPruneLeaderMap;
 		};
 	}): Promise<boolean> {
+		if (this.closed || !this.pruneDebouncedFn) {
+			return false;
+		}
 		if (this.keep && (await this.keep(args.value.entry))) {
 			return false;
 		}
@@ -9485,6 +9488,17 @@ export class SharedLog<
 						if (this.canPlanNativeEntryLeaderBatch(immediateLeaderItems)) {
 							immediateReplicatingLeaderPlans =
 								await this.planEntryLeaderBatch(immediateLeaderItems);
+							for (let i = 0; i < immediateReplicatingLeaderPlans.length; i++) {
+								const plan = immediateReplicatingLeaderPlans[i];
+								if (!plan?.isLeader) {
+									continue;
+								}
+								const group = receiveGroups[i]!;
+								group.leaderPlan = plan;
+								group.leaders = plan.leaders;
+								group.isLeader = true;
+								group.fromIsLeader = plan.leaders.has(contextFromHash);
+							}
 						}
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, immediateLeaderStartedAt, {
@@ -9678,6 +9692,8 @@ export class SharedLog<
 					const reusableCoordinatePlans =
 						this.createReusableReceiveCoordinatePlans(receiveGroups, {
 							decodedReplicaCounts: receiveReplicaCounts,
+							allowRoleAgeZeroPlans:
+								immediateReplicatingLeaderPlans !== undefined,
 						});
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
@@ -9879,6 +9895,7 @@ export class SharedLog<
 								nativeBackboneOnlyPersistedHashes =
 									await this.finishBackboneOnlyReceiveCoordinateBatch(
 										nativePreparedCoordinateBatch,
+										syncProfile,
 									);
 							} catch (error) {
 								this.rollbackBackboneOnlyReceiveCoordinateBatch(
@@ -11357,10 +11374,13 @@ export class SharedLog<
 			maxMaxReplicas: number;
 			leaderPlan?: EntryLeaderPlan<R>;
 		}>,
-		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
+		options?: {
+			decodedReplicaCounts?: DecodedReplicaCountMap;
+			allowRoleAgeZeroPlans?: boolean;
+		},
 	): Map<string, ReusableReceiveCoordinatePlan<R>> {
 		const reusablePlans = new Map<string, ReusableReceiveCoordinatePlan<R>>();
-		if (this.timeUntilRoleMaturity > 0) {
+		if (this.timeUntilRoleMaturity > 0 && !options?.allowRoleAgeZeroPlans) {
 			return reusablePlans;
 		}
 
@@ -11463,8 +11483,12 @@ export class SharedLog<
 
 	private async finishBackboneOnlyReceiveCoordinateBatch(
 		batch: NativeBackboneReceiveCoordinateBatch<R>,
+		profile?: SyncProfileFn,
 	): Promise<Set<string>> {
+		const mirrorStartedAt = syncProfileStart(profile);
 		const persistedHashes = new Set<string>();
+		const coordinateToHashRows: [NumberFromType<R>, string][] = [];
+		let deleteCount = 0;
 		for (const { item, prepared, fields, deleteHashes } of batch.rows) {
 			persistedHashes.add(item.entry.hash);
 			this._residentEntryCoordinatesByHash?.set(
@@ -11473,16 +11497,33 @@ export class SharedLog<
 			);
 			for (const deletedHash of deleteHashes) {
 				this._residentEntryCoordinatesByHash?.delete(deletedHash);
+				deleteCount++;
 			}
 			for (const coordinate of item.coordinates) {
-				this.coordinateToHash.add(coordinate, item.entry.hash);
+				coordinateToHashRows.push([coordinate, item.entry.hash]);
 			}
 		}
+		this.coordinateToHash.addMany(coordinateToHashRows);
+		emitSyncProfileDuration(profile, mirrorStartedAt, {
+			name: "sharedLog.receive.coordinateResidentMirror",
+			component: "shared-log",
+			entries: batch.rows.length,
+			count: coordinateToHashRows.length,
+			messages: 1,
+			details: { deletes: deleteCount },
+		});
 
+		const flushStartedAt = syncProfileStart(profile);
 		const flushed = this.flushNativeBackboneCoordinateJournalOnAppend();
 		if (isPromiseLike(flushed)) {
 			await flushed;
 		}
+		emitSyncProfileDuration(profile, flushStartedAt, {
+			name: "sharedLog.receive.coordinateJournalFlush",
+			component: "shared-log",
+			entries: batch.rows.length,
+			messages: 1,
+		});
 		return persistedHashes;
 	}
 
