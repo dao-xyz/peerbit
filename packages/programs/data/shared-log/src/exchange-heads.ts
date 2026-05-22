@@ -444,28 +444,12 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
 		const shallowEntry = this.toShallow(true);
-		const nativeEntry: PreparedNativeLogEntry = {
-			hash: this.hash,
-			gid: preparedRawGid(this.facts, this.factsIndex),
-			next: preparedRawNext(this.facts, this.factsIndex),
-			type: preparedRawType(this.facts, this.factsIndex),
-			head: true,
-			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
-			data: preparedRawMetaData(this.facts, this.factsIndex),
-			clock: {
-				timestamp: {
-					wallTime: preparedRawWallTime(this.facts, this.factsIndex),
-					logical: preparedRawLogical(this.facts, this.factsIndex),
-				},
-			},
-		};
 		return {
 			hash: this.hash,
 			bytes: this.bytes,
 			byteLength: this.size,
 			meta: this.meta,
 			shallowEntry,
-			nativeEntry,
 			materializeEntry: () => this,
 		};
 	}
@@ -575,7 +559,47 @@ class PreparedRawEntryWithRefs<T> {
 	}
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
-		return (this.entry as PreparedRawExchangeEntry<T>).toPreparedAppendJoinFacts();
+		const gid = preparedRawGid(this.facts, this.factsIndex);
+		const next = preparedRawNext(this.facts, this.factsIndex);
+		const type = preparedRawType(this.facts, this.factsIndex) as EntryType;
+		const data = preparedRawMetaData(this.facts, this.factsIndex);
+		const payloadSize = preparedRawPayloadByteLength(
+			this.facts,
+			this.factsIndex,
+		);
+		const clock = new Clock({
+			id: preparedRawClockId(this.facts, this.factsIndex),
+			timestamp: new Timestamp({
+				wallTime: preparedRawWallTime(this.facts, this.factsIndex),
+				logical: preparedRawLogical(this.facts, this.factsIndex),
+			}),
+		});
+		const shallowEntry = new ShallowEntry({
+			hash: this.head.hash,
+			payloadSize,
+			head: true,
+			meta: new ShallowMeta({
+				gid,
+				data,
+				clock,
+				next,
+				type,
+			}),
+		});
+		return {
+			hash: this.head.hash,
+			bytes: this.head.bytes,
+			byteLength: preparedRawByteLength(this.facts, this.factsIndex),
+			meta: {
+				gid,
+				clock,
+				next,
+				type,
+				data,
+			},
+			shallowEntry,
+			materializeEntry: () => this.entry,
+		};
 	}
 }
 

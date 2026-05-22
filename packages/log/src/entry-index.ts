@@ -1751,7 +1751,6 @@ export class EntryIndex<T> {
 					: undefined;
 			const deferBatchIndexWrite =
 				properties.deferIndexWrite === true &&
-				!!putBatch &&
 				!!this.properties.nativeGraph &&
 				entries.every((entry) => entry.meta.type !== EntryType.CUT);
 
@@ -1771,7 +1770,7 @@ export class EntryIndex<T> {
 				if (nativeEntry) {
 					nativeEntry.head = isHead;
 				}
-				if (putBatch) {
+				if (deferBatchIndexWrite || putBatch) {
 					shallowEntries.push(shallowEntry);
 					nativeEntry && nativeEntries.push(nativeEntry);
 				} else {

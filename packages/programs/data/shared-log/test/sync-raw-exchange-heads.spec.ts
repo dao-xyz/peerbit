@@ -253,7 +253,7 @@ describe("raw exchange-head sync", () => {
 				expect(preparedFactsJoinCall).to.exist;
 				expect(
 					preparedFactsJoinCall!.args[0].every(
-						(row: { nativeEntry?: unknown }) => !!row.nativeEntry,
+						(row: { shallowEntry?: unknown }) => !!row.shallowEntry,
 					),
 				).to.equal(true);
 			}
@@ -396,7 +396,7 @@ describe("raw exchange-head sync", () => {
 				expect(lowerPutAppendFactsBatchSpy.callCount).to.equal(1);
 				expect(lowerPutAppendFactsBatchSpy.firstCall.args[0]).to.have.length(1);
 				expect(
-					lowerPutAppendFactsBatchSpy.firstCall.args[0][0].nativeEntry,
+					lowerPutAppendFactsBatchSpy.firstCall.args[0][0].shallowEntry,
 				).to.exist;
 				expect(putAppendChainSpy.callCount).to.equal(1);
 				expect(putBatchSpy.callCount).to.equal(0);
