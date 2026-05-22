@@ -23,6 +23,15 @@ const outDir = resolve(
 );
 mkdirSync(outDir, { recursive: true });
 const jsonOut = (name) => ["--jsonOut", resolve(outDir, `${name}.json`)];
+const pubsubBench = (benchmark, ...benchmarkArgs) => [
+	"-C",
+	"packages/transport/pubsub",
+	"run",
+	"bench",
+	"--",
+	benchmark,
+	...benchmarkArgs,
+];
 
 const run = (label, commandArgs) => {
 	console.log(`\n[fanout-default-ready] ${label}`);
@@ -38,6 +47,9 @@ const run = (label, commandArgs) => {
 	if (result.status !== 0) {
 		process.exit(result.status ?? 1);
 	}
+};
+const runPubsubBench = (label, benchmark, ...benchmarkArgs) => {
+	run(label, pubsubBench(benchmark, ...benchmarkArgs));
 };
 
 if (!skipBuild) {
@@ -69,12 +81,8 @@ const idleSafetySeeds = getArg(
 	),
 );
 
-run("active shadow dual-path mechanism gate", [
-	"-C",
-	"packages/transport/pubsub",
-	"run",
-	"bench",
-	"--",
+runPubsubBench(
+	"active shadow dual-path mechanism gate",
 	"fanout-tree-sim",
 	"--nodes",
 	"42",
@@ -190,14 +198,10 @@ run("active shadow dual-path mechanism gate", [
 	"1",
 	"--assertMinActiveShadowPromoteTotal",
 	"1",
-]);
+);
 
-run("single-writer live default-candidate safety", [
-	"-C",
-	"packages/transport/pubsub",
-	"run",
-	"bench",
-	"--",
+runPubsubBench(
+	"single-writer live default-candidate safety",
 	"fanout-tree-parent-upgrade-eval",
 	"--scenario",
 	"ci-live-stream",
@@ -209,14 +213,10 @@ run("single-writer live default-candidate safety", [
 	...jsonOut("single-live"),
 	"--strict",
 	"1",
-]);
+);
 
-run("multi-writer live default-candidate safety", [
-	"-C",
-	"packages/transport/pubsub",
-	"run",
-	"bench",
-	"--",
+runPubsubBench(
+	"multi-writer live default-candidate safety",
 	"fanout-tree-parent-upgrade-multi-eval",
 	"--scenario",
 	"ci-multi-live,ci-multi-live-churn,ci-multi-video-live",
@@ -228,14 +228,10 @@ run("multi-writer live default-candidate safety", [
 	...jsonOut("multi-live"),
 	"--strict",
 	"1",
-]);
+);
 
-run("multi-writer idle default-candidate safety", [
-	"-C",
-	"packages/transport/pubsub",
-	"run",
-	"bench",
-	"--",
+runPubsubBench(
+	"multi-writer idle default-candidate safety",
 	"fanout-tree-parent-upgrade-multi-eval",
 	"--scenario",
 	"ci-multi-idle,ci-multi-sparse-idle",
@@ -249,14 +245,10 @@ run("multi-writer idle default-candidate safety", [
 	...jsonOut("multi-idle"),
 	"--strict",
 	"1",
-]);
+);
 
-run("multi-writer hotspot idle timing evidence", [
-	"-C",
-	"packages/transport/pubsub",
-	"run",
-	"bench",
-	"--",
+runPubsubBench(
+	"multi-writer hotspot idle timing evidence",
 	"fanout-tree-parent-upgrade-multi-eval",
 	"--scenario",
 	"ci-multi-hotspot-idle",
@@ -270,14 +262,10 @@ run("multi-writer hotspot idle timing evidence", [
 	...jsonOut("multi-hotspot-idle"),
 	"--strict",
 	"0",
-]);
+);
 
-run("multi-writer slow hotspot timing evidence", [
-	"-C",
-	"packages/transport/pubsub",
-	"run",
-	"bench",
-	"--",
+runPubsubBench(
+	"multi-writer slow hotspot timing evidence",
 	"fanout-tree-parent-upgrade-multi-eval",
 	"--scenario",
 	"ci-multi-hotspot-idle",
@@ -293,4 +281,4 @@ run("multi-writer slow hotspot timing evidence", [
 	...jsonOut("multi-hotspot-slow"),
 	"--strict",
 	"0",
-]);
+);
