@@ -30,6 +30,7 @@ type RawReceiveNativeBackbone = {
 	prepareRawReceiveBatch(blocks: Uint8Array[]): PreparedRawEntryV0Facts[];
 	prepareRawReceiveColumnsBatch?(
 		blocks: Uint8Array[],
+		hashes?: string[],
 	): PreparedRawEntryV0FactsColumns | undefined;
 	clearPreparedRawReceiveEntries?(hashes: Iterable<string>): number;
 };
@@ -754,10 +755,13 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	options?: { nativeBackbone?: RawReceiveNativeBackbone },
 ): Promise<ExchangeHeadsMessage<any>> => {
 	const blocks = new Array<Uint8Array>(message.heads.length);
+	const hashes = new Array<string>(message.heads.length);
 	let rawBytes = 0;
 	for (let i = 0; i < message.heads.length; i++) {
-		const bytes = message.heads[i]!.bytes;
+		const head = message.heads[i]!;
+		const bytes = head.bytes;
 		blocks[i] = bytes;
+		hashes[i] = head.hash;
 		rawBytes += bytes.byteLength;
 	}
 	const nativePrepareStartedAt = syncProfileStart(profile);
@@ -767,7 +771,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	if (options?.nativeBackbone) {
 		try {
 			preparedColumns =
-				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks);
+				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks, hashes);
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";
 			} else {

@@ -701,6 +701,14 @@ describe("native peerbit backbone", () => {
 		const [facts] = target.prepareRawReceiveBatch([prepared.bytes]);
 		expect(facts.cid).to.equal(prepared.hash);
 		expect(facts.gid).to.equal("gid-raw-receive");
+		const expectedColumns = target.prepareRawReceiveColumnsBatch(
+			[prepared.bytes],
+			[prepared.hash],
+		);
+		expect(expectedColumns?.[0]).to.deep.equal([prepared.hash]);
+		expect(() =>
+			target.prepareRawReceiveColumnsBatch([prepared.bytes], ["not-a-cid"]),
+		).to.throw("Expected base58btc CID");
 		expect(
 			target.graph.commitPreparedRawReceiveBatch(
 				[prepared.hash],

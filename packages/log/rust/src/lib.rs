@@ -3448,12 +3448,36 @@ pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
 pub fn prepare_raw_entry_v0_blocks(
     blocks: Vec<Vec<u8>>,
 ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+    prepare_raw_entry_v0_blocks_with_expected_cids(blocks, None)
+}
+
+pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
+    blocks: Vec<Vec<u8>>,
+    expected_cids: Option<Vec<String>>,
+) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+    if let Some(expected_cids) = expected_cids.as_ref() {
+        if expected_cids.len() != blocks.len() {
+            return Err(JsValue::from_str(
+                "Expected equal raw entry block and hash lengths",
+            ));
+        }
+    }
     let mut entries = Vec::with_capacity(blocks.len());
     let mut parsed_signatures = Vec::with_capacity(blocks.len());
     let mut parsed_public_keys = Vec::with_capacity(blocks.len());
     let mut parsed_messages = Vec::with_capacity(blocks.len());
-    for bytes in blocks {
-        let (cid, digest) = calculate_raw_cid_v1_parts(&bytes);
+    for (index, bytes) in blocks.into_iter().enumerate() {
+        let digest = calculate_raw_digest_profiled(&bytes, None);
+        let cid = if let Some(expected_cids) = expected_cids.as_ref() {
+            let expected_cid = expected_cids[index].clone();
+            let expected_digest = raw_cid_v1_digest_from_string(&expected_cid)?;
+            if expected_digest != digest {
+                return Err(JsValue::from_str("Raw entry hash did not match bytes"));
+            }
+            expected_cid
+        } else {
+            raw_cid_v1_string_from_digest(&digest)
+        };
         let storage = parse_plain_entry_v0_storage(&bytes)?;
         let meta = parse_raw_entry_v0_meta(storage.meta)?;
         let payload = parse_raw_entry_v0_payload(storage.payload)?;
@@ -3852,6 +3876,26 @@ fn raw_cid_v1_string_from_digest(digest_bytes: &[u8; 32]) -> String {
     cid.push(0x20); // 32 byte digest
     cid.extend_from_slice(digest_bytes.as_slice());
     format!("z{}", bs58::encode(cid).into_string())
+}
+
+fn raw_cid_v1_digest_from_string(cid: &str) -> Result<[u8; 32], JsValue> {
+    let encoded = cid
+        .strip_prefix('z')
+        .ok_or_else(|| JsValue::from_str("Expected base58btc CID"))?;
+    let decoded = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|_| JsValue::from_str("Invalid base58btc CID"))?;
+    if decoded.len() != 36
+        || decoded[0] != 0x01
+        || decoded[1] != 0x55
+        || decoded[2] != 0x12
+        || decoded[3] != 0x20
+    {
+        return Err(JsValue::from_str("Expected raw CIDv1 sha2-256 CID"));
+    }
+    let mut digest = [0u8; 32];
+    digest.copy_from_slice(&decoded[4..36]);
+    Ok(digest)
 }
 
 fn encode_entry_v0_storage_vec(

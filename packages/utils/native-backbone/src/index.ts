@@ -203,6 +203,10 @@ type NativePeerbitBackboneHandle = {
 	prepare_raw_receive_columns_batch?: (
 		blocks: Uint8Array[],
 	) => NativeBackboneRawReceivePreparedFactsColumns;
+	prepare_raw_receive_expected_columns_batch?: (
+		blocks: Uint8Array[],
+		hashes: string[],
+	) => NativeBackboneRawReceivePreparedFactsColumns;
 	commit_prepared_raw_receive_batch: (
 		hashes: string[],
 		heads: Uint8Array,
@@ -3321,7 +3325,11 @@ export class NativePeerbitBackbone {
 
 	prepareRawReceiveColumnsBatch(
 		blocks: Uint8Array[],
+		hashes?: string[],
 	): NativeBackboneRawReceivePreparedFactsColumns | undefined {
+		if (hashes && blocks.length !== hashes.length) {
+			throw new Error("Expected equal raw receive block and hash lengths");
+		}
 		if (blocks.length === 0) {
 			return [
 				[],
@@ -3338,6 +3346,12 @@ export class NativePeerbitBackbone {
 				new Uint32Array(0),
 				new Uint8Array(0),
 			];
+		}
+		if (hashes && this.native.prepare_raw_receive_expected_columns_batch) {
+			return this.native.prepare_raw_receive_expected_columns_batch(
+				blocks,
+				hashes,
+			);
 		}
 		return this.native.prepare_raw_receive_columns_batch?.(blocks);
 	}

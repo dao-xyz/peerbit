@@ -11,9 +11,9 @@ use peerbit_indexer_core::schema::{
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
-    prepare_raw_entry_v0_blocks, LogIndexEntry, NativeCommittedEntryFacts,
-    NativeEntryV0PlainBuilder, NativeLogAppendProfile, NativeLogBlockStore, NativeLogIndex,
-    PreparedRawEntryV0,
+    prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids, LogIndexEntry,
+    NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
+    NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
@@ -775,6 +775,25 @@ impl NativePeerbitBackbone {
 
     pub fn prepare_raw_receive_columns_batch(&mut self, blocks: Array) -> Result<Array, JsValue> {
         let prepared = prepare_raw_entry_v0_blocks(bytes_vec_from_array(blocks)?)?;
+        self.prepare_raw_receive_columns_from_entries(prepared)
+    }
+
+    pub fn prepare_raw_receive_expected_columns_batch(
+        &mut self,
+        blocks: Array,
+        hashes: Array,
+    ) -> Result<Array, JsValue> {
+        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids(
+            bytes_vec_from_array(blocks)?,
+            Some(strings_from_array(hashes)?),
+        )?;
+        self.prepare_raw_receive_columns_from_entries(prepared)
+    }
+
+    fn prepare_raw_receive_columns_from_entries(
+        &mut self,
+        prepared: Vec<PreparedRawEntryV0>,
+    ) -> Result<Array, JsValue> {
         let len = prepared.len();
         let cids = Array::new();
         let hash_digest_bytes = Array::new();
