@@ -48,6 +48,13 @@ export type ParentUpgradeRuntimeOptions = Omit<
 	"parentUpgradePreset"
 >;
 
+export type EvidenceFailure = {
+	metric: string;
+	baseline: number;
+	upgrade: number;
+	limit: number;
+};
+
 const PARENT_UPGRADE_RUNTIME_OPTION_KEYS = [
 	"parentUpgradeIntervalMs",
 	"parentUpgradeLeafOnly",
@@ -126,6 +133,27 @@ export const parseCsvNumbers = (
 		.filter((part) => Number.isFinite(part));
 	return parsed.length > 0 ? parsed : [...fallback];
 };
+
+export const ratioLimit = (
+	baseline: number,
+	ratio: number,
+	absoluteSlack = 1e-9,
+) => Math.max(absoluteSlack, baseline * ratio + absoluteSlack);
+
+export const avgFinite = (values: number[]) => {
+	const finite = values.filter((value) => Number.isFinite(value));
+	return finite.length === 0
+		? NaN
+		: finite.reduce((sum, value) => sum + value, 0) / finite.length;
+};
+
+export const maxFinite = (values: number[]) => {
+	const finite = values.filter((value) => Number.isFinite(value));
+	return finite.length === 0 ? NaN : Math.max(...finite);
+};
+
+export const fmt = (value: number, digits = 2) =>
+	Number.isFinite(value) ? value.toFixed(digits) : "NaN";
 
 export const parseParentUpgradePreset = (
 	value: string | undefined,

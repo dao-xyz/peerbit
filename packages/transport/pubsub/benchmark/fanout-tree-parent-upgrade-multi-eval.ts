@@ -8,13 +8,18 @@ import { anySignal } from "any-signal";
 import { FanoutTree } from "../src/index.js";
 import {
 	DEFAULT_PARENT_UPGRADE_SEEDS,
+	type EvidenceFailure as Failure,
 	type ParentUpgradePresetConfig,
 	type UpgradeMode,
+	avgFinite,
 	defaultEvidenceLimitsForPreset,
+	fmt,
+	maxFinite,
 	parentUpgradeRuntimeOptions,
 	parseBool01,
 	parseCsvNumbers,
 	parseParentUpgradePresetConfig,
+	ratioLimit,
 } from "./fanout-tree-parent-upgrade-preset.js";
 import {
 	int,
@@ -282,13 +287,6 @@ type MultiWriterResult = {
 	trackerBpp: number;
 	repairBpp: number;
 	network: InMemoryNetwork["metrics"];
-};
-
-type Failure = {
-	metric: string;
-	baseline: number;
-	upgrade: number;
-	limit: number;
 };
 
 type SummarySample = {
@@ -822,12 +820,6 @@ const pickDistinct = (
 	return [...chosen];
 };
 
-const fmt = (value: number, digits = 2) =>
-	Number.isFinite(value) ? value.toFixed(digits) : "NaN";
-
-const ratioLimit = (baseline: number, ratio: number, absoluteSlack = 1e-9) =>
-	Math.max(absoluteSlack, baseline * ratio + absoluteSlack);
-
 const failIfGreater = (
 	failures: Failure[],
 	metric: string,
@@ -860,18 +852,6 @@ const peerLatencyP95For = (result: TreeResult, hashes: string[]): number => {
 	}
 	values.sort((a, b) => a - b);
 	return quantile(values, 0.95);
-};
-
-const avgFinite = (values: number[]) => {
-	const finite = values.filter((value) => Number.isFinite(value));
-	return finite.length === 0
-		? NaN
-		: finite.reduce((sum, value) => sum + value, 0) / finite.length;
-};
-
-const maxFinite = (values: number[]) => {
-	const finite = values.filter((value) => Number.isFinite(value));
-	return finite.length === 0 ? NaN : Math.max(...finite);
 };
 
 const secondBatchLatencySlackMs = (baseline: number, args: EvalArgs) =>

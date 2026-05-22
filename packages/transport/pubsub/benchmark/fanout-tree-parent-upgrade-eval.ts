@@ -6,13 +6,18 @@
  */
 import {
 	DEFAULT_PARENT_UPGRADE_SEEDS,
+	type EvidenceFailure as Failure,
 	type ParentUpgradePresetConfig,
 	type UpgradeMode,
+	avgFinite,
 	defaultEvidenceLimitsForPreset,
+	fmt,
+	maxFinite,
 	parentUpgradeRuntimeOptions,
 	parseBool01,
 	parseCsvNumbers,
 	parseParentUpgradePresetConfig,
+	ratioLimit,
 } from "./fanout-tree-parent-upgrade-preset.js";
 import {
 	type FanoutTreeSimParams,
@@ -45,13 +50,6 @@ type EvalArgs = ParentUpgradePresetConfig & {
 	maxReparentsPerPeer: number;
 	maxOrphanAreaRatio: number;
 	strict: boolean;
-};
-
-type Failure = {
-	metric: string;
-	baseline: number;
-	upgrade: number;
-	limit: number;
 };
 
 type EvalEffect = "no-op" | "guarded" | "promoted" | "regressed";
@@ -363,9 +361,6 @@ const parseArgs = (argv: string[]): EvalArgs => {
 		strict: parseBool01(get("--strict"), false),
 	};
 };
-
-const ratioLimit = (baseline: number, ratio: number, absoluteSlack = 1e-9) =>
-	Math.max(absoluteSlack, baseline * ratio + absoluteSlack);
 
 const peerLatencyP95For = (result: FanoutTreeSimResult, hashes: string[]) => {
 	const values: number[] = [];
@@ -845,20 +840,6 @@ const formatDelta = (after: number, before: number, digits = 2) =>
 	Number.isFinite(after) && Number.isFinite(before)
 		? (after - before).toFixed(digits)
 		: "NaN";
-
-const avgFinite = (values: number[]) => {
-	const finite = values.filter((value) => Number.isFinite(value));
-	if (finite.length === 0) return NaN;
-	return finite.reduce((sum, value) => sum + value, 0) / finite.length;
-};
-
-const maxFinite = (values: number[]) => {
-	const finite = values.filter((value) => Number.isFinite(value));
-	return finite.length > 0 ? Math.max(...finite) : NaN;
-};
-
-const fmt = (value: number, digits = 2) =>
-	Number.isFinite(value) ? value.toFixed(digits) : "NaN";
 
 const printModeTable = (
 	scenario: ScenarioName,
