@@ -87,6 +87,8 @@ export class RemoteBlocks implements IBlocks {
 
 	private _loadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<string, InFlightRead>;
+	private _deferredStoredNotificationCids?: Set<string>;
+	private _deferredStoredNotificationTimer?: ReturnType<typeof setTimeout>;
 	_open = false;
 	private _events: TypedEventEmitter<{
 		"peer:reachable": CustomEvent<PublicSignKey>;
@@ -368,6 +370,58 @@ export class RemoteBlocks implements IBlocks {
 
 	notifyStoredMany(cids: string[]): Promise<void> | void {
 		return this.notifyPuts(cids);
+	}
+
+	notifyStoredDeferred(cid: string): void {
+		this.notifyStoredManyDeferred([cid]);
+	}
+
+	notifyStoredManyDeferred(cids: string[]): void {
+		if (!this.options.onPut || cids.length === 0) {
+			return;
+		}
+		let pending = this._deferredStoredNotificationCids;
+		if (!pending) {
+			pending = new Set();
+			this._deferredStoredNotificationCids = pending;
+		}
+		for (const cid of cids) {
+			if (cid) {
+				pending.add(cid);
+			}
+		}
+		if (pending.size === 0 || this._deferredStoredNotificationTimer) {
+			return;
+		}
+		this._deferredStoredNotificationTimer = setTimeout(() => {
+			this._deferredStoredNotificationTimer = undefined;
+			const flushed = this.flushDeferredStoredNotifications();
+			if (flushed && typeof flushed.catch === "function") {
+				flushed.catch((): void => undefined);
+			}
+		}, 0);
+	}
+
+	private flushDeferredStoredNotifications(): Promise<void> | void {
+		const pending = this._deferredStoredNotificationCids;
+		if (!pending || pending.size === 0) {
+			return;
+		}
+		this._deferredStoredNotificationCids = undefined;
+		const waits: Promise<void>[] = [];
+		for (const cid of pending) {
+			try {
+				const result = this.notifyStored(cid);
+				if (result && typeof result.then === "function") {
+					waits.push(result);
+				}
+			} catch {
+				// ignore best-effort hooks
+			}
+		}
+		if (waits.length > 0) {
+			return Promise.all(waits).then((): void => undefined);
+		}
 	}
 
 	private notifyPut(cid: string): Promise<void> | void {
@@ -854,6 +908,11 @@ export class RemoteBlocks implements IBlocks {
 
 		// Wait for processing request
 		this.closeController.abort();
+		if (this._deferredStoredNotificationTimer) {
+			clearTimeout(this._deferredStoredNotificationTimer);
+			this._deferredStoredNotificationTimer = undefined;
+		}
+		await this.flushDeferredStoredNotifications();
 		this._loadFetchQueue.clear();
 		await this._loadFetchQueue.onIdle(); // wait for pending
 		await this.localStore?.stop();

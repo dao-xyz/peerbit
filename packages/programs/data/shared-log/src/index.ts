@@ -5585,12 +5585,7 @@ export class SharedLog<
 							!runtimeOnlyCoordinates &&
 							this.remoteBlocks.hasNotifyStoredHook()
 						) {
-							const announced = this.remoteBlocks.notifyStored(
-								prepared.appendFacts.hash,
-							);
-							if (isPromiseLike(announced)) {
-								announced.catch(() => undefined);
-							}
+							this.remoteBlocks.notifyStoredDeferred(prepared.appendFacts.hash);
 						}
 						const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {

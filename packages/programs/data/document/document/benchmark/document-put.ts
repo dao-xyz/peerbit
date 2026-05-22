@@ -1273,7 +1273,10 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				),
 				patchAsyncMethod(
 					(store.docs.log as any).remoteBlocks ?? {},
-					"notifyStored",
+					typeof (store.docs.log as any).remoteBlocks
+						?.notifyStoredDeferred === "function"
+						? "notifyStoredDeferred"
+						: "notifyStored",
 					profile,
 					"remoteBlockNotifyStoredMs",
 				),
