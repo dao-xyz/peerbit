@@ -349,6 +349,39 @@ impl LogGraphIndex {
         }
     }
 
+    pub fn put_append_entry(&mut self, entry: LogIndexEntry, initial_next: &[String]) {
+        let demotes_initial_nexts = entry.entry_type != ENTRY_TYPE_CUT;
+        let hash = entry.hash.clone();
+        let nexts = entry.next.clone();
+        let payload_size = entry.payload_size as u64;
+        let head = entry.head;
+        let wall_time = entry.wall_time;
+        let logical = entry.logical;
+
+        if self.entries.contains_key(&hash) {
+            self.delete(&hash);
+        }
+        self.entries.insert(hash.clone(), entry);
+        self.ordered_entries
+            .insert((wall_time, logical, hash.clone()));
+        self.payload_size_total += payload_size;
+        if head {
+            self.heads.insert(hash.clone());
+        } else {
+            self.heads.shift_remove(&hash);
+        }
+
+        for next in nexts {
+            self.children.entry(next).or_default().insert(hash.clone());
+        }
+
+        if demotes_initial_nexts {
+            for next in initial_next {
+                self.set_head(next, false);
+            }
+        }
+    }
+
     pub fn put_no_next(&mut self, entry: LogIndexEntry) {
         debug_assert!(entry.next.is_empty());
         let hash = entry.hash.clone();
@@ -1337,7 +1370,7 @@ impl NativeLogIndex {
             }
         }
         let graph_put_started = profile.as_ref().map(|_| js_sys::Date::now());
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         if let Some(started) = graph_put_started {
             if let Some(profile) = profile.as_deref_mut() {
                 profile.graph_put_ms += js_sys::Date::now() - started;
@@ -1721,7 +1754,7 @@ impl NativeLogIndex {
             payload_data,
             true,
         )?;
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -1749,7 +1782,7 @@ impl NativeLogIndex {
             payload_data,
             true,
         )?;
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -1777,7 +1810,7 @@ impl NativeLogIndex {
                 meta_data,
                 payload_data,
             )?;
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -1806,7 +1839,7 @@ impl NativeLogIndex {
                 payload_data.to_vec(),
                 PreparedPlainEntryRowMode::StorageWithFacts,
             )?;
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -1836,7 +1869,7 @@ impl NativeLogIndex {
                 meta_data,
                 payload_data,
             )?;
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
 
         let out = Array::new();
         out.push(&row);
@@ -1874,7 +1907,7 @@ impl NativeLogIndex {
                 payload_data.to_vec(),
                 PreparedPlainEntryRowMode::StorageWithFacts,
             )?;
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
 
         let out = Array::new();
         out.push(&row);
@@ -1945,7 +1978,7 @@ impl NativeLogIndex {
             false,
         )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -1975,7 +2008,7 @@ impl NativeLogIndex {
             false,
         )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -2005,7 +2038,7 @@ impl NativeLogIndex {
                 payload_data,
             )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -2037,7 +2070,7 @@ impl NativeLogIndex {
                 payload_data,
             )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
 
         let out = Array::new();
         out.push(&row);
@@ -2076,7 +2109,7 @@ impl NativeLogIndex {
                 PreparedPlainEntryRowMode::CommitFactsOnly,
             )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -2106,7 +2139,7 @@ impl NativeLogIndex {
                 PreparedPlainEntryRowMode::CommitFactsNoNext,
             )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
         Ok(row)
     }
 
@@ -2139,7 +2172,7 @@ impl NativeLogIndex {
                 PreparedPlainEntryRowMode::CommitFactsOnly,
             )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
 
         let out = Array::new();
         out.push(&row);
@@ -2179,7 +2212,7 @@ impl NativeLogIndex {
                 PreparedPlainEntryRowMode::CommitFactsNoNext,
             )?;
         block_store.put_entries(vec![block]);
-        self.inner.put_append_chain(vec![entry], &initial_nexts);
+        self.inner.put_append_entry(entry, &initial_nexts);
 
         let out = Array::new();
         out.push(&row);
@@ -5091,6 +5124,29 @@ mod tests {
         assert_eq!(index.children("root"), vec!["a"]);
         assert_eq!(index.children("a"), vec!["b"]);
         assert_eq!(index.children("b"), vec!["c"]);
+    }
+
+    #[test]
+    fn puts_single_append_entry_without_one_item_chain_batch() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("root", "g", &[], 1));
+        index.put_append_entry(
+            LogIndexEntry::new("a", "g", vec!["root".to_string()], APPEND, 2, 0, 1, true),
+            &["root".to_string()],
+        );
+
+        assert_eq!(index.heads(None), vec!["a"]);
+        assert_eq!(index.children("root"), vec!["a"]);
+
+        let mut cut_index = LogGraphIndex::new();
+        cut_index.put(entry("root", "g", &[], 1));
+        cut_index.put_append_entry(
+            LogIndexEntry::new("cut", "g", vec!["root".to_string()], CUT, 2, 0, 1, true),
+            &["root".to_string()],
+        );
+
+        assert_eq!(cut_index.heads(None), vec!["root", "cut"]);
+        assert_eq!(cut_index.children("root"), vec!["cut"]);
     }
 
     #[test]
