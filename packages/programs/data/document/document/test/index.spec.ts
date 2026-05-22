@@ -2636,6 +2636,10 @@ describe("index", () => {
 						},
 					});
 					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const compatPlanSpy = sinon.spy(
+						store.docs as any,
+						"createPlainPutCommitPlan",
+					);
 					const nativeCommitSpy = sinon.spy(
 						store.docs as any,
 						"commitNativeDocumentAppend",
@@ -2651,12 +2655,14 @@ describe("index", () => {
 							target: "none",
 						});
 						expect(nativeCommitSpy.callCount).equal(1);
+						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(doc.id))?.name).equal(
 							"native-backend",
 						);
 					} finally {
 						nativeCommitSpy.restore();
+						compatPlanSpy.restore();
 						fallbackAppendSpy.restore();
 						await rustSession.stop();
 					}
