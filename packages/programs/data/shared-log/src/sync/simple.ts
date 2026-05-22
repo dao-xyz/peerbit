@@ -122,6 +122,12 @@ const canReceiveRawExchangeHeads = (
 		message instanceof RequestMaybeSyncCoordinateCapabilities) &&
 	(message.capabilities & SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY) !== 0;
 
+type KnownSyncKeys = {
+	keys: Set<SyncableKey>;
+	checkedCoordinates: boolean;
+	checkedHashes: boolean;
+};
+
 const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,
@@ -902,22 +908,60 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const requestHashes: SyncableKey[] = [];
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
-		const knownCoordinates =
+		const resolveKnownStartedAt = syncProfileStart(profile);
+		const knownKeys =
 			options?.skipCheck === true
 				? undefined
-				: await this.resolveKnownCoordinateKeys(keys);
+				: await this.resolveKnownSyncKeys(keys);
+		if (profile) {
+			emitSyncProfileDuration(profile, resolveKnownStartedAt, {
+				name: "simple.queueSync.resolveKnown",
+				entries: keys.length,
+				count: knownKeys?.keys.size ?? 0,
+				details: {
+					checkedCoordinates: knownKeys?.checkedCoordinates === true,
+					checkedHashes: knownKeys?.checkedHashes === true,
+					skipCheck: options?.skipCheck === true,
+				},
+			});
+		}
+		const fromHash = from.hashcode();
+		let queuedHashAliases: Map<string, SyncableKey> | undefined;
+		const getQueuedSyncKeyForBatch = (key: SyncableKey) => {
+			if (this.syncInFlightQueue.has(key)) {
+				return key;
+			}
+			if (typeof key === "string") {
+				if (!queuedHashAliases) {
+					queuedHashAliases = new Map();
+					for (const queuedKey of this.syncInFlightQueue.keys()) {
+						if (typeof queuedKey !== "bigint") {
+							continue;
+						}
+						const hash = this.coordinateToHash.get(queuedKey);
+						if (hash) {
+							queuedHashAliases.set(hash, queuedKey);
+						}
+					}
+				}
+				return queuedHashAliases.get(key);
+			}
+			const hash = this.coordinateToHash.get(key);
+			return hash && this.syncInFlightQueue.has(hash) ? hash : undefined;
+		};
 
 		try {
+			const loopStartedAt = syncProfileStart(profile);
 			for (const key of keys) {
-				const coordinateOrHash = this.getQueuedSyncKey(key) ?? key;
+				const coordinateOrHash = getQueuedSyncKeyForBatch(key) ?? key;
 				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
 				if (inFlight) {
-					if (!inFlight.find((x) => x.hashcode() === from.hashcode())) {
+					if (!inFlight.find((x) => x.hashcode() === fromHash)) {
 						inFlight.push(from);
-						let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
+						let inverted = this.syncInFlightQueueInverted.get(fromHash);
 						if (!inverted) {
 							inverted = new Set();
-							this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
+							this.syncInFlightQueueInverted.set(fromHash, inverted);
 						}
 						inverted.add(coordinateOrHash);
 					}
@@ -925,23 +969,40 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					options?.skipCheck ||
 					!(await this.checkHasCoordinateOrHash(
 						coordinateOrHash,
-						knownCoordinates,
+						knownKeys,
 					))
 				) {
 					// Track the initial sender so we can retry if the first request is lost.
 					this.syncInFlightQueue.set(coordinateOrHash, [from]);
-					let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
+					let inverted = this.syncInFlightQueueInverted.get(fromHash);
 					if (!inverted) {
 						inverted = new Set();
-						this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
+						this.syncInFlightQueueInverted.set(fromHash, inverted);
 					}
 					inverted.add(coordinateOrHash);
 					requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
+					if (
+						queuedHashAliases &&
+						typeof coordinateOrHash === "bigint"
+					) {
+						const hash = this.coordinateToHash.get(coordinateOrHash);
+						if (hash) {
+							queuedHashAliases.set(hash, coordinateOrHash);
+						}
+					}
 				}
+			}
+			if (profile) {
+				emitSyncProfileDuration(profile, loopStartedAt, {
+					name: "simple.queueSync.plan",
+					entries: keys.length,
+					count: requestHashes.length,
+					targets: 1,
+				});
 			}
 
 			requestHashes.length > 0 &&
-				(await this.requestSync(requestHashes, [from!.hashcode()]));
+				(await this.requestSync(requestHashes, [fromHash]));
 		} finally {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
@@ -1043,40 +1104,62 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 		}
 	}
-	private async resolveKnownCoordinateKeys(keys: SyncableKey[]) {
-		if (!this.resolveHashesForSymbols) {
-			return undefined;
-		}
-		const coordinates = keys.filter(
-			(key): key is bigint => typeof key === "bigint",
-		);
-		if (coordinates.length === 0) {
-			return undefined;
-		}
-		const resolved = await this.resolveHashesForSymbols(coordinates);
-		if (!resolved) {
-			return undefined;
-		}
-		const known = new Set<bigint>();
-		for (const coordinate of coordinates) {
-			const hashes = resolved.get(coordinate);
-			if (!hashes) {
-				continue;
-			}
-			for (const _hash of hashes) {
-				known.add(coordinate);
-				break;
+	private async resolveKnownSyncKeys(
+		keys: SyncableKey[],
+	): Promise<KnownSyncKeys | undefined> {
+		const hashes: string[] = [];
+		const coordinates: bigint[] = [];
+		for (const key of keys) {
+			if (typeof key === "bigint") {
+				coordinates.push(key);
+			} else {
+				hashes.push(key);
 			}
 		}
-		return known;
+		const known: KnownSyncKeys = {
+			keys: new Set(),
+			checkedCoordinates: false,
+			checkedHashes: false,
+		};
+		if (hashes.length > 0) {
+			for (const hash of await this.log.hasMany(hashes)) {
+				known.keys.add(hash);
+			}
+			known.checkedHashes = true;
+		}
+		if (coordinates.length > 0 && this.resolveHashesForSymbols) {
+			const resolved = await this.resolveHashesForSymbols(coordinates);
+			if (resolved) {
+				for (const coordinate of coordinates) {
+					const hashes = resolved.get(coordinate);
+					if (!hashes) {
+						continue;
+					}
+					for (const _hash of hashes) {
+						known.keys.add(coordinate);
+						break;
+					}
+				}
+				known.checkedCoordinates = true;
+			}
+		}
+		return known.checkedCoordinates || known.checkedHashes ? known : undefined;
 	}
 
 	private async checkHasCoordinateOrHash(
 		key: string | bigint,
-		knownCoordinates?: Set<bigint>,
+		knownKeys?: KnownSyncKeys,
 	) {
-		if (typeof key === "bigint" && knownCoordinates) {
-			return knownCoordinates.has(key);
+		if (knownKeys) {
+			if (knownKeys.keys.has(key)) {
+				return true;
+			}
+			if (typeof key === "bigint" && knownKeys.checkedCoordinates) {
+				return false;
+			}
+			if (typeof key === "string" && knownKeys.checkedHashes) {
+				return false;
+			}
 		}
 		return typeof key === "bigint"
 			? (await this.entryIndex.count({ query: { hashNumber: key } })) > 0
