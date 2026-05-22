@@ -2694,6 +2694,10 @@ describe("index", () => {
 						store.docs as any,
 						"createPlainPutCommitPlan",
 					);
+					const storageTransactionSpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+					);
 					try {
 						const id = uuid();
 						const first = await store.docs.put(
@@ -2703,10 +2707,12 @@ describe("index", () => {
 							new Document({ id, name: "native-update-2" }),
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(storageTransactionSpy.callCount).equal(1);
 						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(id))?.name).equal("native-update-2");
 					} finally {
+						storageTransactionSpy.restore();
 						compatPlanSpy.restore();
 						fallbackAppendSpy.restore();
 						await rustSession.stop();

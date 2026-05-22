@@ -5229,6 +5229,22 @@ export class SharedLog<
 				options?.replicate === false,
 			);
 		}
+		const hasDocumentIndexCommit =
+			!!properties?.nativeBackboneDocumentIndex ||
+			!!properties?.prepareNativeBackboneDocumentIndex;
+		if (
+			options?.replicate === false &&
+			hasDocumentIndexCommit &&
+			(appendOptions.meta?.next?.length ?? 0) > 0
+		) {
+			return this.appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
+				payloadData,
+				appendOptions,
+				properties,
+				minReplicasValue,
+				true,
+			);
+		}
 		if (options?.replicate !== false) {
 			return undefined;
 		}
