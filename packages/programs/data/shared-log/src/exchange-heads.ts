@@ -708,6 +708,7 @@ export class ResponseIPrune extends TransportMessage {
 }
 
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
+const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
 export const EXCHANGE_HEADS_RESOLVE_BATCH_SIZE = 256;
 
 export const createExchangeHeadsMessages = async function* (
@@ -911,7 +912,7 @@ export const createRawExchangeHeadsMessages = async function* (
 				}),
 			);
 			size += block.bytes.byteLength;
-			if (size > MAX_EXCHANGE_MESSAGE_SIZE) {
+			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
 				size = 0;
 				yield new RawExchangeHeadsMessage({ heads: current });
 				current = [];
