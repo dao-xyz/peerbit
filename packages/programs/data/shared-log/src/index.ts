@@ -129,7 +129,11 @@ import {
 	ResponseIPrune,
 	createExchangeHeadsMessages,
 	getPreparedRawExchangeAppendFacts,
+	getPreparedRawExchangeGid,
+	getPreparedRawExchangeHashNumber,
+	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
+	getPreparedRawExchangeTimestamp,
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
@@ -466,14 +470,45 @@ const getLatestEntry = (
 	let latest: ShallowOrFullEntry<any> | undefined = undefined;
 	for (const element of entries) {
 		let entry = element instanceof EntryWithRefs ? element.entry : element;
-		if (
-			!latest ||
-			entry.meta.clock.timestamp.compare(latest.meta.clock.timestamp) > 0
-		) {
+		if (!latest || compareEntryTimestamp(entry, latest) > 0) {
 			latest = entry;
 		}
 	}
 	return latest;
+};
+
+const getEntryTimestampParts = (entry: ShallowOrFullEntry<any>) => {
+	if (entry instanceof Entry) {
+		const rawTimestamp = getPreparedRawExchangeTimestamp(entry);
+		if (rawTimestamp) {
+			return rawTimestamp;
+		}
+	}
+	return {
+		wallTime: entry.meta.clock.timestamp.wallTime,
+		logical: entry.meta.clock.timestamp.logical,
+	};
+};
+
+const compareEntryTimestamp = (
+	a: ShallowOrFullEntry<any>,
+	b: ShallowOrFullEntry<any>,
+) => {
+	const aTimestamp = getEntryTimestampParts(a);
+	const bTimestamp = getEntryTimestampParts(b);
+	if (aTimestamp.wallTime > bTimestamp.wallTime) {
+		return 1;
+	}
+	if (aTimestamp.wallTime < bTimestamp.wallTime) {
+		return -1;
+	}
+	if (aTimestamp.logical > bTimestamp.logical) {
+		return 1;
+	}
+	if (aTimestamp.logical < bTimestamp.logical) {
+		return -1;
+	}
+	return 0;
 };
 
 const hashToSeed32 = (str: string) => {
@@ -9340,7 +9375,7 @@ export class SharedLog<
 
 								logger.trace(
 									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
-										entry.entry.meta.gid
+										this.getEntryGid(entry.entry)
 									}. Because not leader`,
 								);
 							}
@@ -9611,7 +9646,7 @@ export class SharedLog<
 						}
 						for (const entries of plan.maybeDelete) {
 							const minReplicas = await this.getMaxReplicasFromHeads(
-								entries[0].entry.meta.gid,
+								this.getEntryGid(entries[0].entry),
 							);
 							if (minReplicas != null) {
 								const isLeader = await this.isLeader({
@@ -11051,7 +11086,7 @@ export class SharedLog<
 			.filter((item) => item.prepared)
 			.map((item) => {
 				const prepared = item.prepared!;
-				const deleteHashes = item.entry.meta.next;
+				const deleteHashes = this.getEntryNext(item.entry);
 				return {
 					item,
 					prepared,
@@ -11266,14 +11301,20 @@ export class SharedLog<
 		const hashNumber = this.getEntryHashNumber(properties.entry);
 		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
 		if (metaBytes) {
-			const wallTime = properties.entry.meta.clock.timestamp.wallTime;
+			const rawTimestamp =
+				properties.entry instanceof Entry
+					? getPreparedRawExchangeTimestamp(properties.entry)
+					: undefined;
+			const wallTime =
+				rawTimestamp?.wallTime ??
+				properties.entry.meta.clock.timestamp.wallTime;
 			return {
 				assignedToRangeBoundary,
 				fields: {
 					hash: properties.entry.hash,
 					hashNumber,
 					hashNumberString: hashNumber.toString(),
-					gid: properties.entry.meta.gid,
+					gid: this.getEntryGid(properties.entry),
 					coordinates: properties.plan.coordinates,
 					coordinateStrings: properties.plan.coordinates.map((coordinate) =>
 						coordinate.toString(),
@@ -11354,7 +11395,7 @@ export class SharedLog<
 	}): PreparedCoordinatePersistence<R> | false {
 		if (
 			properties.plan.hash !== properties.entry.hash ||
-			properties.plan.gid !== properties.entry.meta.gid
+			properties.plan.gid !== this.getEntryGid(properties.entry)
 		) {
 			return false;
 		}
@@ -11369,10 +11410,15 @@ export class SharedLog<
 
 		const coordinates = properties.plan.coordinates as NumberFromType<R>[];
 		const hashNumber = properties.plan.hashNumber as NumberFromType<R>;
-		const entryMeta = properties.entry.meta;
 		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
 		if (metaBytes) {
-			const wallTime = entryMeta.clock.timestamp.wallTime;
+			const rawTimestamp =
+				properties.entry instanceof Entry
+					? getPreparedRawExchangeTimestamp(properties.entry)
+					: undefined;
+			const wallTime =
+				rawTimestamp?.wallTime ??
+				properties.entry.meta.clock.timestamp.wallTime;
 			return {
 				assignedToRangeBoundary,
 				fields: {
@@ -11389,6 +11435,7 @@ export class SharedLog<
 				},
 			};
 		}
+		const entryMeta = properties.entry.meta;
 		const coordinateEntry = new this.indexableDomain.constructorEntry({
 			assignedToRangeBoundary,
 			coordinates,
@@ -12261,7 +12308,27 @@ export class SharedLog<
 	private canPlanNativeHashGid(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 	): entry is ShallowOrFullEntry<any> | EntryReplicated<R> {
-		return this.domain.type === "hash" && typeof entry.meta.gid === "string";
+		return this.domain.type === "hash" && typeof this.getEntryGid(entry) === "string";
+	}
+
+	private getEntryGid(entry: ShallowOrFullEntry<any> | EntryReplicated<R>): string {
+		if (entry instanceof Entry) {
+			const rawGid = getPreparedRawExchangeGid(entry);
+			if (rawGid) {
+				return rawGid;
+			}
+		}
+		return isEntryReplicated(entry) ? entry.gid : entry.meta.gid;
+	}
+
+	private getEntryNext(entry: ShallowOrFullEntry<any> | EntryReplicated<R>): string[] {
+		if (entry instanceof Entry) {
+			const rawNext = getPreparedRawExchangeNext(entry);
+			if (rawNext) {
+				return rawNext;
+			}
+		}
+		return entry.meta.next;
 	}
 
 	private getEntryHashNumber(
@@ -12269,6 +12336,16 @@ export class SharedLog<
 	): NumberFromType<R> {
 		if ("hashNumber" in entry && entry.hashNumber != null) {
 			return entry.hashNumber as NumberFromType<R>;
+		}
+		if (entry instanceof Entry) {
+			const rawHashNumber = getPreparedRawExchangeHashNumber(entry);
+			if (rawHashNumber != null) {
+				return (
+					this.domain.resolution === "u32"
+						? Number(rawHashNumber)
+						: BigInt(rawHashNumber)
+				) as NumberFromType<R>;
+			}
 		}
 		return this.indexableDomain.numbers.bytesToNumber(
 			(entry as EntryWithMetaBytes).getHashDigestBytes?.() ??
@@ -12328,14 +12405,15 @@ export class SharedLog<
 		let assignedToRangeBoundary: boolean | undefined;
 
 		if (this.canPlanNativeHashGid(entry)) {
+			const gid = this.getEntryGid(entry);
 			const plan =
 				(await this._findEntryAssignmentPlanFromHashGid(
-					entry.meta.gid,
+					gid,
 					replicas,
 					options,
 				)) ??
 				(await this._findLeaderPlanFromHashGid(
-					entry.meta.gid,
+					gid,
 					replicas,
 					options,
 				));
@@ -12399,9 +12477,9 @@ export class SharedLog<
 					{
 						entries: itemArray.map((item) => ({
 							entryHash: item.entry.hash,
-							gid: item.entry.meta.gid as string,
+							gid: this.getEntryGid(item.entry),
 							hashNumber: this.getEntryHashNumber(item.entry),
-							nextHashes: item.entry.meta.next,
+							nextHashes: this.getEntryNext(item.entry),
 							replicas: item.replicas,
 						})),
 						selfHash: context.selfHash,
@@ -12458,7 +12536,7 @@ export class SharedLog<
 			const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
 			const nativePlans = nativePlanner!.planLeadersForGidsBatch(
 				itemArray.map((item) => ({
-					gid: item.entry.meta.gid as string,
+					gid: this.getEntryGid(item.entry),
 					replicas: item.replicas,
 				})),
 				this.createNativeLeaderOptions(context, firstItem.options),

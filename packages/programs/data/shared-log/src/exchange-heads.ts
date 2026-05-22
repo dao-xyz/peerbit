@@ -50,6 +50,7 @@ type PreparedRawEntryV0FactsColumns = [
 	payloadByteLengths: Uint32Array,
 	signatureVerified: Uint8Array,
 	requestedReplicas: Uint32Array,
+	hashNumbers: string[],
 ];
 
 type PreparedRawEntryV0FactsSource =
@@ -183,6 +184,14 @@ const preparedRawRequestedReplicas = (
 	return value && value > 0 ? value : undefined;
 };
 
+const preparedRawHashNumber = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? facts[14]?.[index]
+		: facts.hashNumber;
+
 const preparedRawFactsCount = (facts: PreparedRawEntryV0FactsColumns) =>
 	facts[0].length;
 
@@ -272,9 +281,9 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	hash!: string;
 	size: number;
 	createdLocally?: boolean;
-	meta: Meta;
 
 	private materialized?: Entry<T>;
+	private metaValue?: Meta;
 	private keychain?: unknown;
 	private encodingValue?: Log<T>["encoding"];
 
@@ -285,19 +294,26 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	) {
 		super();
 		this.size = preparedRawByteLength(facts, factsIndex);
-		this.meta = new Meta({
-			gid: preparedRawGid(facts, factsIndex),
+	}
+
+	get meta(): Meta {
+		return (this.metaValue ??= new Meta({
+			gid: preparedRawGid(this.facts, this.factsIndex),
 			clock: new Clock({
-				id: preparedRawClockId(facts, factsIndex),
+				id: preparedRawClockId(this.facts, this.factsIndex),
 				timestamp: new Timestamp({
-					wallTime: preparedRawWallTime(facts, factsIndex),
-					logical: preparedRawLogical(facts, factsIndex),
+					wallTime: preparedRawWallTime(this.facts, this.factsIndex),
+					logical: preparedRawLogical(this.facts, this.factsIndex),
 				}),
 			}),
-			next: preparedRawNext(facts, factsIndex),
-			type: preparedRawType(facts, factsIndex) as EntryType,
-			data: preparedRawMetaData(facts, factsIndex),
-		});
+			next: preparedRawNext(this.facts, this.factsIndex),
+			type: preparedRawType(this.facts, this.factsIndex) as EntryType,
+			data: preparedRawMetaData(this.facts, this.factsIndex),
+		}));
+	}
+
+	set meta(value: Meta) {
+		this.metaValue = value;
 	}
 
 	init(props: any): this {
@@ -332,6 +348,26 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 
 	get __peerbitRequestedReplicas() {
 		return preparedRawRequestedReplicas(this.facts, this.factsIndex);
+	}
+
+	get __peerbitHashNumber() {
+		return preparedRawHashNumber(this.facts, this.factsIndex);
+	}
+
+	get __peerbitGid() {
+		return preparedRawGid(this.facts, this.factsIndex);
+	}
+
+	get __peerbitWallTime() {
+		return preparedRawWallTime(this.facts, this.factsIndex);
+	}
+
+	get __peerbitLogical() {
+		return preparedRawLogical(this.facts, this.factsIndex);
+	}
+
+	get __peerbitNext() {
+		return preparedRawNext(this.facts, this.factsIndex);
 	}
 
 	getMeta(): Meta {
@@ -390,16 +426,17 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	toShallow(isHead: boolean): ShallowEntry {
+		const clock = this.getClock();
 		return new ShallowEntry({
 			hash: this.hash,
 			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
 			head: isHead,
 			meta: new ShallowMeta({
-				gid: this.meta.gid,
-				data: this.meta.data,
-				clock: this.meta.clock,
-				next: this.meta.next,
-				type: this.meta.type,
+				gid: preparedRawGid(this.facts, this.factsIndex),
+				data: preparedRawMetaData(this.facts, this.factsIndex),
+				clock,
+				next: preparedRawNext(this.facts, this.factsIndex),
+				type: preparedRawType(this.facts, this.factsIndex) as EntryType,
 			}),
 		});
 	}
@@ -468,6 +505,31 @@ export const getPreparedRawExchangeRequestedReplicas = (
 	entry instanceof PreparedRawExchangeEntry
 		? entry.__peerbitRequestedReplicas
 		: undefined;
+
+export const getPreparedRawExchangeHashNumber = (
+	entry: Entry<any>,
+): string | undefined =>
+	entry instanceof PreparedRawExchangeEntry ? entry.__peerbitHashNumber : undefined;
+
+export const getPreparedRawExchangeGid = (
+	entry: Entry<any>,
+): string | undefined =>
+	entry instanceof PreparedRawExchangeEntry ? entry.__peerbitGid : undefined;
+
+export const getPreparedRawExchangeTimestamp = (
+	entry: Entry<any>,
+): { wallTime: bigint; logical: number } | undefined =>
+	entry instanceof PreparedRawExchangeEntry
+		? {
+				wallTime: entry.__peerbitWallTime,
+				logical: entry.__peerbitLogical,
+			}
+		: undefined;
+
+export const getPreparedRawExchangeNext = (
+	entry: Entry<any>,
+): string[] | undefined =>
+	entry instanceof PreparedRawExchangeEntry ? entry.__peerbitNext : undefined;
 
 @variant([0, 3])
 export class RequestIPrune extends TransportMessage {

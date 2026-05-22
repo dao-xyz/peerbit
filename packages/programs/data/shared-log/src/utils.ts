@@ -1,5 +1,8 @@
 import { Entry, ShallowEntry } from "@peerbit/log";
-import type { EntryWithRefs } from "./exchange-heads.js";
+import {
+	type EntryWithRefs,
+	getPreparedRawExchangeGid,
+} from "./exchange-heads.js";
 import { type EntryReplicated, isEntryReplicated } from "./ranges.js";
 
 const getEntryGid = async (entry: Entry<any>): Promise<string> => {
@@ -28,12 +31,12 @@ const getHeadGidSync = <
 	head: T,
 ): string | undefined =>
 	head instanceof Entry
-		? getEntryGidSync(head)
+		? getPreparedRawExchangeGid(head) ?? getEntryGidSync(head)
 		: head instanceof ShallowEntry
 			? head.meta.gid
 			: isEntryReplicated(head)
 				? head.gid
-				: getEntryGidSync(head.entry);
+			: getPreparedRawExchangeGid(head.entry) ?? getEntryGidSync(head.entry);
 
 export const tryGroupByGidSync = <
 	T extends

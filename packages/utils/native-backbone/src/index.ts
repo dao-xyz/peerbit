@@ -1325,6 +1325,7 @@ export type NativeBackboneRawReceivePreparedFacts = {
 	payloadByteLength: number;
 	signatureVerified: boolean;
 	requestedReplicas?: number;
+	hashNumber?: string;
 };
 
 export type NativeBackboneRawReceivePreparedFactsColumns = [
@@ -1342,6 +1343,7 @@ export type NativeBackboneRawReceivePreparedFactsColumns = [
 	Uint32Array,
 	Uint8Array,
 	Uint32Array,
+	string[],
 ];
 
 type NativeBackboneRawReceivePreparedFactsRow = [
@@ -1359,6 +1361,7 @@ type NativeBackboneRawReceivePreparedFactsRow = [
 	number,
 	boolean,
 	number | undefined,
+	string | undefined,
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -2316,6 +2319,7 @@ const rawReceivePreparedFactsFromRow = ([
 	payloadByteLength,
 	signatureVerified,
 	requestedReplicas,
+	hashNumber,
 ]: NativeBackboneRawReceivePreparedFactsRow): NativeBackboneRawReceivePreparedFacts => ({
 	cid,
 	hashDigestBytes,
@@ -2331,6 +2335,7 @@ const rawReceivePreparedFactsFromRow = ([
 	payloadByteLength,
 	signatureVerified,
 	requestedReplicas,
+	hashNumber,
 });
 
 const rawReceivePreparedFactsFromColumns = ([
@@ -2348,6 +2353,7 @@ const rawReceivePreparedFactsFromColumns = ([
 	payloadByteLengths,
 	signatureVerified,
 	requestedReplicas,
+	hashNumbers,
 ]: NativeBackboneRawReceivePreparedFactsColumns): NativeBackboneRawReceivePreparedFacts[] => {
 	const length = cids.length;
 	if (
@@ -2363,7 +2369,8 @@ const rawReceivePreparedFactsFromColumns = ([
 		metaDatas.length !== length ||
 		payloadByteLengths.length !== length ||
 		signatureVerified.length !== length ||
-		requestedReplicas.length !== length
+		requestedReplicas.length !== length ||
+		hashNumbers.length !== length
 	) {
 		throw new Error("Expected equal raw receive prepared column lengths");
 	}
@@ -2387,6 +2394,7 @@ const rawReceivePreparedFactsFromColumns = ([
 				requestedReplicas[i] && requestedReplicas[i] > 0
 					? requestedReplicas[i]
 					: undefined,
+			hashNumber: hashNumbers[i],
 		};
 	}
 	return out;
@@ -3402,6 +3410,7 @@ export class NativePeerbitBackbone {
 				new Uint32Array(0),
 				new Uint8Array(0),
 				new Uint32Array(0),
+				[],
 			];
 		}
 		if (hashes && this.native.prepare_raw_receive_expected_columns_batch) {

@@ -133,6 +133,7 @@ export type PreparedRawEntryV0Facts = {
 	payloadByteLength: number;
 	signatureVerified: boolean;
 	requestedReplicas?: number;
+	hashNumber?: string;
 };
 
 type MaybePromise<T> = T | Promise<T>;

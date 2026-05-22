@@ -1658,6 +1658,7 @@ export type RawEntryV0PreparedFacts = {
 	payloadByteLength: number;
 	signatureVerified: boolean;
 	requestedReplicas?: number;
+	hashNumber?: string;
 };
 
 type EntryV0PreparedPlainEntryRow = [

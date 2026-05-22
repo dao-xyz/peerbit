@@ -704,12 +704,21 @@ describe("native peerbit backbone", () => {
 		expect(facts.cid).to.equal(prepared.hash);
 		expect(facts.gid).to.equal("gid-raw-receive");
 		expect(facts.requestedReplicas).to.equal(3);
+		const expectedHashNumber = new DataView(
+			prepared.hashDigestBytes!.buffer,
+			prepared.hashDigestBytes!.byteOffset,
+			prepared.hashDigestBytes!.byteLength,
+		).getBigUint64(0, true);
+		expect(facts.hashNumber).to.equal(String(expectedHashNumber));
 		const expectedColumns = target.prepareRawReceiveColumnsBatch(
 			[prepared.bytes],
 			[prepared.hash],
 		);
 		expect(expectedColumns?.[0]).to.deep.equal([prepared.hash]);
 		expect(Array.from(expectedColumns?.[13] ?? [])).to.deep.equal([3]);
+		expect(expectedColumns?.[14]).to.deep.equal([
+			String(expectedHashNumber),
+		]);
 		expect(() =>
 			target.prepareRawReceiveColumnsBatch([prepared.bytes], ["not-a-cid"]),
 		).to.throw("Expected base58btc CID");
