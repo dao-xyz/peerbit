@@ -16,10 +16,12 @@ import {
 } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
+import type { NativeBackboneAppendProfile } from "@peerbit/native-backbone";
 import { TransportMessage } from "./message.js";
 import type { SyncProfileFn } from "./sync/index.js";
 import {
 	emitSyncProfileDuration,
+	emitSyncProfileEvent,
 	syncProfileStart,
 } from "./sync/profile.js";
 
@@ -34,6 +36,46 @@ type RawReceiveNativeBackbone = {
 		options?: { verifySignatures?: boolean },
 	): PreparedRawEntryV0FactsColumns | undefined;
 	clearPreparedRawReceiveEntries?(hashes: Iterable<string>): number;
+	setAppendProfileEnabled?(enabled: boolean): void;
+	resetAppendProfile?(): void;
+	appendProfile?(): NativeBackboneAppendProfile;
+};
+
+const emitNativeBackboneRawPrepareProfile = (
+	profile: SyncProfileFn | undefined,
+	nativeProfile: NativeBackboneAppendProfile | undefined,
+	entries: number,
+	bytes: number,
+) => {
+	if (!profile || !nativeProfile) {
+		return;
+	}
+	const events: Array<[name: string, durationMs: number]> = [
+		[
+			"sharedLog.rawReceive.nativePrepare.inputCopy",
+			nativeProfile.nativeBackboneRawReceiveInputCopyMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.prepare",
+			nativeProfile.nativeBackboneRawReceivePrepareMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.columns",
+			nativeProfile.nativeBackboneRawReceivePrepareColumnsMs,
+		],
+	];
+	for (const [name, durationMs] of events) {
+		if (durationMs > 0) {
+			emitSyncProfileEvent(profile, {
+				name,
+				component: "shared-log",
+				durationMs,
+				entries,
+				bytes,
+				messages: 1,
+			});
+		}
+	}
 };
 
 type PreparedRawEntryV0FactsColumns = [
@@ -1006,6 +1048,15 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	let preparedColumns: PreparedRawEntryV0FactsColumns | undefined;
 	let nativePrepareSource: "backbone-columns" | "backbone" | "log" | undefined;
 	if (options?.nativeBackbone) {
+		const profileNativeBackbone =
+			!!profile &&
+			!!options.nativeBackbone.setAppendProfileEnabled &&
+			!!options.nativeBackbone.resetAppendProfile &&
+			!!options.nativeBackbone.appendProfile;
+		if (profileNativeBackbone) {
+			options.nativeBackbone.resetAppendProfile?.();
+			options.nativeBackbone.setAppendProfileEnabled?.(true);
+		}
 		try {
 			preparedColumns =
 				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
@@ -1022,6 +1073,16 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		} catch {
 			preparedColumns = undefined;
 			preparedFacts = undefined;
+		} finally {
+			if (profileNativeBackbone) {
+				options.nativeBackbone.setAppendProfileEnabled?.(false);
+				emitNativeBackboneRawPrepareProfile(
+					profile,
+					options.nativeBackbone.appendProfile?.(),
+					message.heads.length,
+					rawBytes,
+				);
+			}
 		}
 	}
 	if (!preparedColumns && !preparedFacts) {

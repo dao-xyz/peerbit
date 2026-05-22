@@ -1596,6 +1596,17 @@ export type NativeBackboneAppendProfile = {
 	nativeBackboneDocumentIndexPutMs: number;
 	nativeBackboneDocumentValuePutMs: number;
 	nativeBackboneResultRowMs: number;
+	nativeBackboneRawReceiveInputCopyMs: number;
+	nativeBackboneRawReceivePrepareMs: number;
+	nativeBackboneRawReceivePrepareColumnsMs: number;
+	nativeBackboneRawReceivePendingCheckMs: number;
+	nativeBackboneRawReceiveVerifyMs: number;
+	nativeBackboneRawReceiveVerifyStatusMs: number;
+	nativeBackboneRawReceiveJoinPlanMs: number;
+	nativeBackboneRawReceiveRemoveMs: number;
+	nativeBackboneRawReceiveBlockPutMs: number;
+	nativeBackboneRawReceiveGraphPutMs: number;
+	nativeBackboneRawReceiveCoordinateCommitMs: number;
 };
 
 const nativeBackboneAppendProfileKeys = [
@@ -1636,6 +1647,17 @@ const nativeBackboneAppendProfileKeys = [
 	"nativeBackboneDocumentIndexPutMs",
 	"nativeBackboneDocumentValuePutMs",
 	"nativeBackboneResultRowMs",
+	"nativeBackboneRawReceiveInputCopyMs",
+	"nativeBackboneRawReceivePrepareMs",
+	"nativeBackboneRawReceivePrepareColumnsMs",
+	"nativeBackboneRawReceivePendingCheckMs",
+	"nativeBackboneRawReceiveVerifyMs",
+	"nativeBackboneRawReceiveVerifyStatusMs",
+	"nativeBackboneRawReceiveJoinPlanMs",
+	"nativeBackboneRawReceiveRemoveMs",
+	"nativeBackboneRawReceiveBlockPutMs",
+	"nativeBackboneRawReceiveGraphPutMs",
+	"nativeBackboneRawReceiveCoordinateCommitMs",
 ] as const satisfies readonly (keyof NativeBackboneAppendProfile)[];
 
 export type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];

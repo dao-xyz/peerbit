@@ -55,6 +55,7 @@ import type {
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
+	NativeBackboneAppendProfile,
 	NativeBackboneLogCommitEntry,
 	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneSimpleDocumentProjectionPlan,
@@ -219,7 +220,11 @@ import type {
 	SynchronizerConstructor,
 	Syncronizer,
 } from "./sync/index.js";
-import { emitSyncProfileDuration, syncProfileStart } from "./sync/profile.js";
+import {
+	emitSyncProfileDuration,
+	emitSyncProfileEvent,
+	syncProfileStart,
+} from "./sync/profile.js";
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import {
 	ConfirmEntriesMessage,
@@ -11596,6 +11601,64 @@ export class SharedLog<
 		}
 	}
 
+	private emitNativeBackboneRawCommitProfile(
+		profile: SyncProfileFn | undefined,
+		nativeProfile: NativeBackboneAppendProfile | undefined,
+		entries: number,
+		verifyCount: number,
+	): void {
+		if (!profile || !nativeProfile) {
+			return;
+		}
+		const events: Array<[name: string, durationMs: number, count?: number]> = [
+			[
+				"sharedLog.receive.nativeRawCommit.pendingCheck",
+				nativeProfile.nativeBackboneRawReceivePendingCheckMs,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.verify",
+				nativeProfile.nativeBackboneRawReceiveVerifyMs,
+				verifyCount,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.verifyStatus",
+				nativeProfile.nativeBackboneRawReceiveVerifyStatusMs,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.joinPlan",
+				nativeProfile.nativeBackboneRawReceiveJoinPlanMs,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.removePending",
+				nativeProfile.nativeBackboneRawReceiveRemoveMs,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.blockPut",
+				nativeProfile.nativeBackboneRawReceiveBlockPutMs,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.graphPut",
+				nativeProfile.nativeBackboneRawReceiveGraphPutMs,
+			],
+			[
+				"sharedLog.receive.nativeRawCommit.coordinateCommit",
+				nativeProfile.nativeBackboneRawReceiveCoordinateCommitMs,
+			],
+		];
+		for (const [name, durationMs, count] of events) {
+			if (durationMs > 0) {
+				emitSyncProfileEvent(profile, {
+					name,
+					component: "shared-log",
+					durationMs,
+					entries,
+					count,
+					messages: 1,
+				});
+			}
+		}
+	}
+
 	private createNativeBackbonePreparedJoinCommit(
 		coordinateBatch?: NativeBackboneReceiveCoordinateBatch<R>,
 		onCoordinatesCommitted?: (
@@ -11634,19 +11697,41 @@ export class SharedLog<
 					: undefined;
 			if (validatePlan) {
 				const verifiedCommitStartedAt = syncProfileStart(profile);
-				const committed =
-					verifyHashes && verifyHashes.length > 0
-						? backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch?.(
-								hashes,
-								headFlags,
-								verifyHashes,
-								coordinateColumns,
-							)
-						: backbone.graph.commitPreparedRawReceiveJoinBatch?.(
-								hashes,
-								headFlags,
-								coordinateColumns,
-							);
+				const profileNativeBackbone =
+					!!profile &&
+					!!backbone.resetAppendProfile &&
+					!!backbone.setAppendProfileEnabled &&
+					!!backbone.appendProfile;
+				if (profileNativeBackbone) {
+					backbone.resetAppendProfile();
+					backbone.setAppendProfileEnabled(true);
+				}
+				let committed: boolean | undefined;
+				try {
+					committed =
+						verifyHashes && verifyHashes.length > 0
+							? backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch?.(
+									hashes,
+									headFlags,
+									verifyHashes,
+									coordinateColumns,
+								)
+							: backbone.graph.commitPreparedRawReceiveJoinBatch?.(
+									hashes,
+									headFlags,
+									coordinateColumns,
+								);
+				} finally {
+					if (profileNativeBackbone) {
+						backbone.setAppendProfileEnabled(false);
+						this.emitNativeBackboneRawCommitProfile(
+							profile,
+							backbone.appendProfile(),
+							entries.length,
+							verifyHashes?.length ?? 0,
+						);
+					}
+				}
 				if (verifyHashes && verifyHashes.length > 0 && profile) {
 					emitSyncProfileDuration(profile, verifiedCommitStartedAt, {
 						name: "sharedLog.receive.nativeVerifiedCommit",
