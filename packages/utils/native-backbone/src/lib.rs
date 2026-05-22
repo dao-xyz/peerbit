@@ -78,6 +78,7 @@ struct DocumentIndexAppendCommit {
     byte_element_index_limit: usize,
     delete_trimmed_heads: bool,
     previous_context: Option<DocumentContextFacts>,
+    known_existing: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -645,9 +646,26 @@ impl NativePeerbitBackbone {
     pub fn put_document_encoded_parts_stored(
         &mut self,
         key: String,
+        value_prefix_bytes: Vec<u8>,
+        value_suffix_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        self.put_document_encoded_parts_stored_inner(
+            key,
+            value_prefix_bytes,
+            value_suffix_bytes,
+            byte_element_index_limit,
+            false,
+        )
+    }
+
+    fn put_document_encoded_parts_stored_inner(
+        &mut self,
+        key: String,
         mut value_prefix_bytes: Vec<u8>,
         value_suffix_bytes: Vec<u8>,
         byte_element_index_limit: usize,
+        known_existing: bool,
     ) -> Result<(), JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let extract_started = profile_enabled.then(js_sys::Date::now);
@@ -674,17 +692,22 @@ impl NativePeerbitBackbone {
             self.append_profile.document_index_value_build_ms += js_sys::Date::now() - started;
         }
         let value_put_started = profile_enabled.then(js_sys::Date::now);
-        let previous_value = self
-            .document_values
-            .put_return_previous(key.clone(), value_prefix_bytes);
+        let was_existing = if known_existing {
+            self.document_values.put(key.clone(), value_prefix_bytes);
+            true
+        } else {
+            self.document_values
+                .put_return_previous(key.clone(), value_prefix_bytes)
+                .is_some()
+        };
         if let Some(started) = value_put_started {
             self.append_profile.document_value_put_ms += js_sys::Date::now() - started;
         }
         let index_put_started = profile_enabled.then(js_sys::Date::now);
-        if previous_value.is_none() {
-            self.document_index.put_new_unchecked(key, fields);
-        } else {
+        if was_existing {
             self.document_index.put(key, fields);
+        } else {
+            self.document_index.put_new_unchecked(key, fields);
         }
         if let Some(started) = index_put_started {
             self.append_profile.document_index_put_ms += js_sys::Date::now() - started;
@@ -3411,6 +3434,7 @@ impl NativePeerbitBackbone {
                 byte_element_index_limit: document_byte_element_index_limit,
                 delete_trimmed_heads: false,
                 previous_context: None,
+                known_existing: false,
             });
             self.put_document_index_for_append(
                 document_index_commit,
@@ -4168,6 +4192,7 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let previous_context = self.document_context_facts_by_key(&document_key)?;
+        let known_existing = previous_context.is_some();
         let gid = previous_context
             .as_ref()
             .map(|context| context.gid.clone())
@@ -4190,6 +4215,7 @@ impl NativePeerbitBackbone {
             document_projection_signer,
         )?;
         document_index_commit.previous_context = previous_context;
+        document_index_commit.known_existing = known_existing;
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
@@ -4803,11 +4829,12 @@ impl NativePeerbitBackbone {
                 }
             },
         };
-        self.put_document_encoded_parts_stored(
+        self.put_document_encoded_parts_stored_inner(
             document_index_commit.key,
             value_prefix_bytes,
             context_suffix,
             document_index_commit.byte_element_index_limit,
+            document_index_commit.known_existing,
         )
     }
 
@@ -5176,6 +5203,7 @@ fn document_index_append_commit(
         byte_element_index_limit,
         delete_trimmed_heads,
         previous_context: None,
+        known_existing: false,
     })
 }
 
@@ -5206,6 +5234,7 @@ fn document_index_cached_projection_append_commit(
         byte_element_index_limit,
         delete_trimmed_heads,
         previous_context: None,
+        known_existing: false,
     })
 }
 
