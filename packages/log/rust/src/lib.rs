@@ -254,6 +254,62 @@ impl LogGraphIndex {
         }
     }
 
+    pub fn put_join_batch(&mut self, entries: Vec<LogIndexEntry>) {
+        if entries.is_empty() {
+            return;
+        }
+
+        let external_nexts = {
+            let batch_hashes: HashSet<&str> =
+                entries.iter().map(|entry| entry.hash.as_str()).collect();
+            let mut external_nexts = IndexSet::new();
+            for entry in &entries {
+                if entry.entry_type == ENTRY_TYPE_CUT {
+                    continue;
+                }
+                for next in &entry.next {
+                    if !batch_hashes.contains(next.as_str()) {
+                        external_nexts.insert(next.clone());
+                    }
+                }
+            }
+            external_nexts
+        };
+
+        self.entries.reserve(entries.len());
+        self.heads.reserve(entries.len());
+        self.children.reserve(entries.len());
+        for entry in entries {
+            let hash = entry.hash.clone();
+            let nexts = entry.next.clone();
+            let payload_size = entry.payload_size as u64;
+            let head = entry.head;
+            let wall_time = entry.wall_time;
+            let logical = entry.logical;
+
+            if self.entries.contains_key(&hash) {
+                self.delete(&hash);
+            }
+            self.entries.insert(hash.clone(), entry);
+            self.ordered_entries
+                .insert((wall_time, logical, hash.clone()));
+            self.payload_size_total += payload_size;
+            if head {
+                self.heads.insert(hash.clone());
+            } else {
+                self.heads.shift_remove(&hash);
+            }
+
+            for next in nexts {
+                self.children.entry(next).or_default().insert(hash.clone());
+            }
+        }
+
+        for next in external_nexts {
+            self.set_head(&next, false);
+        }
+    }
+
     pub fn put_append_chain(&mut self, entries: Vec<LogIndexEntry>, initial_next: &[String]) {
         let Some(first) = entries.first() else {
             return;
@@ -820,7 +876,7 @@ pub struct NativeLogIndex {
 
 #[wasm_bindgen]
 pub struct NativeLogBlockStore {
-    entries: IndexMap<String, Vec<u8>>,
+    entries: HashMap<String, Vec<u8>>,
     total_size: u64,
 }
 
@@ -885,7 +941,7 @@ impl NativeLogBlockStore {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         Self {
-            entries: IndexMap::new(),
+            entries: HashMap::new(),
             total_size: 0,
         }
     }
@@ -927,7 +983,7 @@ impl NativeLogBlockStore {
     }
 
     pub fn delete(&mut self, key: &str) -> bool {
-        if let Some((_key, previous)) = self.entries.shift_remove_entry(key) {
+        if let Some(previous) = self.entries.remove(key) {
             self.total_size = self.total_size.saturating_sub(previous.len() as u64);
             true
         } else {
@@ -980,6 +1036,7 @@ impl NativeLogBlockStore {
     }
 
     fn put_entries(&mut self, entries: Vec<(String, Vec<u8>)>) {
+        self.entries.reserve(entries.len());
         for (key, value) in entries {
             self.put_entry(key, value);
         }
@@ -993,6 +1050,10 @@ impl NativeLogBlockStore {
 impl NativeLogIndex {
     pub fn put_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
         self.inner.put_many(entries);
+    }
+
+    pub fn put_join_batch_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
+        self.inner.put_join_batch(entries);
     }
 
     pub fn plan_join_entries_core(
@@ -5030,6 +5091,37 @@ mod tests {
         assert_eq!(index.children("root"), vec!["a"]);
         assert_eq!(index.children("a"), vec!["b"]);
         assert_eq!(index.children("b"), vec!["c"]);
+    }
+
+    #[test]
+    fn puts_join_batch_without_rechecking_internal_heads() {
+        let mut index = LogGraphIndex::new();
+        index.put(entry("root", "g", &[], 1));
+        index.put_join_batch(vec![
+            LogIndexEntry::new("a", "g", vec!["root".to_string()], APPEND, 2, 0, 1, false),
+            LogIndexEntry::new("b", "g", vec!["a".to_string()], APPEND, 3, 0, 1, true),
+            LogIndexEntry::new("c", "g", vec!["root".to_string()], APPEND, 4, 0, 1, true),
+        ]);
+
+        assert_eq!(index.heads(None), vec!["b", "c"]);
+        assert_eq!(index.children("root"), vec!["a", "c"]);
+        assert_eq!(index.children("a"), vec!["b"]);
+
+        let mut cut_index = LogGraphIndex::new();
+        cut_index.put(entry("root", "g", &[], 1));
+        cut_index.put_join_batch(vec![LogIndexEntry::new(
+            "cut",
+            "g",
+            vec!["root".to_string()],
+            CUT,
+            2,
+            0,
+            1,
+            true,
+        )]);
+
+        assert_eq!(cut_index.heads(None), vec!["root", "cut"]);
+        assert_eq!(cut_index.children("root"), vec!["cut"]);
     }
 
     #[test]

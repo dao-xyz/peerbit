@@ -1166,7 +1166,7 @@ impl NativePeerbitBackbone {
         }
 
         self.blocks.put_entries_core(block_entries);
-        self.log.put_entries_core(graph_entries);
+        self.log.put_join_batch_entries_core(graph_entries);
         if coordinate_hashes.length() > 0 {
             self.commit_entry_coordinates_batch(
                 coordinate_hashes,
@@ -1268,7 +1268,7 @@ impl NativePeerbitBackbone {
         }
 
         self.blocks.put_entries_core(block_entries);
-        self.log.put_entries_core(graph_entries);
+        self.log.put_join_batch_entries_core(graph_entries);
         if coordinate_hashes.length() > 0 {
             self.commit_entry_coordinates_batch(
                 coordinate_hashes,
