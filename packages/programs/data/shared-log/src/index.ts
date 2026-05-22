@@ -56,6 +56,7 @@ import type {
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
+	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
 } from "@peerbit/native-backbone";
@@ -9148,11 +9149,6 @@ export class SharedLog<
 						receiveReplicaCounts.set(entry.hash, replicas);
 						return replicas;
 					};
-					const groupedByGid =
-						tryGroupByGidSync(filteredHeads) ??
-						(await groupByGid(filteredHeads));
-					const maxReplicasFromHeadsByGid =
-						await this.getMaxReplicasFromHeadsBatch(groupedByGid.keys());
 					type ReceivedGidJoinPlan = {
 						toMerge: Entry<any>[];
 						toPersist: Entry<any>[];
@@ -9174,36 +9170,121 @@ export class SharedLog<
 					};
 					const isReplicating = this._isReplicating;
 					const receiveGroups: ReceivedGidInput[] = [];
-					for (const [gid, entries] of groupedByGid) {
-						const latestEntry = getLatestEntry(entries)!;
-						const maxReplicasFromHead =
-							maxReplicasFromHeadsByGid.get(gid) ??
-							this.replicas.min.getValue(this);
-						let maxRequestedReplicasFromNewEntries = 0;
-						for (const entry of entries) {
-							maxRequestedReplicasFromNewEntries = Math.max(
-								decodeReceiveReplicaCount(entry.entry),
-								maxRequestedReplicasFromNewEntries,
-							);
+					let nativeRawGroupPlans:
+						| NativeBackboneRawReceiveGroupPlan[]
+						| undefined;
+					if (rawMaterializedKnownMissing && this._nativeBackbone) {
+						const seenGids = new Set<string>();
+						let hasDuplicateGid = false;
+						for (const head of filteredHeads) {
+							const gid = this.getEntryGid(head.entry);
+							if (seenGids.has(gid)) {
+								hasDuplicateGid = true;
+								break;
+							}
+							seenGids.add(gid);
 						}
-						const lower = this.replicas.min?.getValue(this) || 1;
-						const higher =
-							this.replicas.max?.getValue(this) ?? Number.MAX_SAFE_INTEGER;
-						const maxReplicasFromNewEntries = Math.max(
-							Math.min(higher, maxRequestedReplicasFromNewEntries),
-							lower,
+						if (hasDuplicateGid) {
+							nativeRawGroupPlans =
+								this._nativeBackbone.planPreparedRawReceiveGroups(
+									filteredHeads.map((head) => head.entry.hash),
+									{
+										minReplicas: this.replicas.min?.getValue(this) || 1,
+										maxReplicas: this.replicas.max?.getValue(this),
+									},
+								);
+						}
+					}
+					let usedNativeRawGroups = false;
+					if (nativeRawGroupPlans) {
+						const headByHash = new Map(
+							filteredHeads.map((head) => [head.entry.hash, head]),
 						);
-						receiveGroups.push({
-							gid,
-							entries,
-							latestEntry,
-							maxReplicasFromHead,
-							maxReplicasFromNewEntries,
-							maxMaxReplicas: Math.max(
+						let canUseNativeRawGroups = true;
+						for (const plan of nativeRawGroupPlans) {
+							if (plan.hashes.length !== plan.requestedReplicas.length) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							const entries: EntryWithRefs<any>[] = [];
+							for (const hash of plan.hashes) {
+								const entry = headByHash.get(hash);
+								if (!entry) {
+									canUseNativeRawGroups = false;
+									break;
+								}
+								entries.push(entry);
+							}
+							if (!canUseNativeRawGroups) {
+								break;
+							}
+							const latestHead = headByHash.get(plan.latestHash);
+							if (!latestHead) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							for (let i = 0; i < plan.hashes.length; i++) {
+								receiveReplicaCounts.set(
+									plan.hashes[i]!,
+									plan.requestedReplicas[i]!,
+								);
+							}
+							receivePredecodedReplicaHits += plan.hashes.length;
+							receiveGroups.push({
+								gid: plan.gid,
+								entries,
+								latestEntry: latestHead.entry,
+								maxReplicasFromHead: plan.maxReplicasFromHead,
+								maxReplicasFromNewEntries:
+									plan.maxReplicasFromNewEntries,
+								maxMaxReplicas: plan.maxMaxReplicas,
+							});
+						}
+						if (canUseNativeRawGroups) {
+							usedNativeRawGroups = true;
+						} else {
+							receiveGroups.length = 0;
+							receiveReplicaCounts.clear();
+							receivePredecodedReplicaHits = 0;
+						}
+					}
+					if (!usedNativeRawGroups) {
+						const groupedByGid =
+							tryGroupByGidSync(filteredHeads) ??
+							(await groupByGid(filteredHeads));
+						const maxReplicasFromHeadsByGid =
+							await this.getMaxReplicasFromHeadsBatch(groupedByGid.keys());
+						for (const [gid, entries] of groupedByGid) {
+							const latestEntry = getLatestEntry(entries)!;
+							const maxReplicasFromHead =
+								maxReplicasFromHeadsByGid.get(gid) ??
+								this.replicas.min.getValue(this);
+							let maxRequestedReplicasFromNewEntries = 0;
+							for (const entry of entries) {
+								maxRequestedReplicasFromNewEntries = Math.max(
+									decodeReceiveReplicaCount(entry.entry),
+									maxRequestedReplicasFromNewEntries,
+								);
+							}
+							const lower = this.replicas.min?.getValue(this) || 1;
+							const higher =
+								this.replicas.max?.getValue(this) ?? Number.MAX_SAFE_INTEGER;
+							const maxReplicasFromNewEntries = Math.max(
+								Math.min(higher, maxRequestedReplicasFromNewEntries),
+								lower,
+							);
+							receiveGroups.push({
+								gid,
+								entries,
+								latestEntry,
 								maxReplicasFromHead,
 								maxReplicasFromNewEntries,
-							),
-						});
+								maxMaxReplicas: Math.max(
+									maxReplicasFromHead,
+									maxReplicasFromNewEntries,
+								),
+							});
+						}
 					}
 					if (!isReplicating) {
 						const leaderPlans = await this.planEntryLeaderBatch(
@@ -9234,6 +9315,7 @@ export class SharedLog<
 							details: {
 								replicating: isReplicating,
 								predecodedReplicaHits: receivePredecodedReplicaHits,
+								nativeRawGroups: usedNativeRawGroups,
 							},
 						});
 					}

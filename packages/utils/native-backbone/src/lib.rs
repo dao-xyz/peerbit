@@ -52,6 +52,17 @@ pub struct NativePeerbitBackbone {
 struct PendingRawReceiveEntry {
     storage_bytes: Vec<u8>,
     entry: LogIndexEntry,
+    requested_replicas: Option<u32>,
+}
+
+struct PendingRawReceiveGroupPlan {
+    gid: String,
+    hashes: Vec<String>,
+    requested_replicas: Vec<u32>,
+    latest_hash: String,
+    latest_wall_time: u64,
+    latest_logical: u32,
+    max_requested_replicas: u32,
 }
 
 struct DocumentIndexAppendCommit {
@@ -767,6 +778,7 @@ impl NativePeerbitBackbone {
                 PendingRawReceiveEntry {
                     storage_bytes: entry.storage_bytes,
                     entry: log_entry,
+                    requested_replicas: entry.requested_replicas,
                 },
             );
             out.push(&row);
@@ -839,6 +851,7 @@ impl NativePeerbitBackbone {
                 PendingRawReceiveEntry {
                     storage_bytes: entry.storage_bytes,
                     entry: log_entry,
+                    requested_replicas: entry.requested_replicas,
                 },
             );
         }
@@ -860,6 +873,94 @@ impl NativePeerbitBackbone {
         out.push(&Uint32Array::from(requested_replicas.as_slice()));
         out.push(&hash_numbers);
         Ok(out)
+    }
+
+    pub fn plan_prepared_raw_receive_groups(
+        &self,
+        hashes: Array,
+        min_replicas: u32,
+        max_replicas: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        if hashes.is_empty() {
+            return Ok(Array::new().into());
+        }
+
+        let lower = min_replicas.max(1);
+        let higher = if max_replicas.is_undefined() || max_replicas.is_null() {
+            u32::MAX
+        } else {
+            max_replicas
+                .as_f64()
+                .ok_or_else(|| JsValue::from_str("maxReplicas must be a number"))?
+                .max(0.0)
+                .min(u32::MAX as f64) as u32
+        };
+
+        let mut group_indexes: HashMap<String, usize> = HashMap::new();
+        let mut groups: Vec<PendingRawReceiveGroupPlan> = Vec::new();
+
+        for hash in hashes {
+            let Some(pending) = self.pending_raw_receive_entries.get(&hash) else {
+                return Ok(JsValue::UNDEFINED);
+            };
+            let Some(requested_replicas) = pending.requested_replicas else {
+                return Ok(JsValue::UNDEFINED);
+            };
+
+            let group_index = if let Some(index) = group_indexes.get(&pending.entry.gid) {
+                *index
+            } else {
+                let index = groups.len();
+                group_indexes.insert(pending.entry.gid.clone(), index);
+                groups.push(PendingRawReceiveGroupPlan {
+                    gid: pending.entry.gid.clone(),
+                    hashes: Vec::new(),
+                    requested_replicas: Vec::new(),
+                    latest_hash: hash.clone(),
+                    latest_wall_time: pending.entry.wall_time,
+                    latest_logical: pending.entry.logical,
+                    max_requested_replicas: requested_replicas,
+                });
+                index
+            };
+
+            let group = &mut groups[group_index];
+            group.hashes.push(hash.clone());
+            group.requested_replicas.push(requested_replicas);
+            group.max_requested_replicas = group.max_requested_replicas.max(requested_replicas);
+            if pending.entry.wall_time > group.latest_wall_time
+                || (pending.entry.wall_time == group.latest_wall_time
+                    && pending.entry.logical > group.latest_logical)
+            {
+                group.latest_hash = hash;
+                group.latest_wall_time = pending.entry.wall_time;
+                group.latest_logical = pending.entry.logical;
+            }
+        }
+
+        let out = Array::new();
+        for group in groups {
+            let max_head = self
+                .log
+                .max_head_data_u32(Some(group.gid.clone()))
+                .as_f64()
+                .map(|value| value.max(0.0).min(u32::MAX as f64) as u32)
+                .map(|value| clamp_replicas_u32(value, lower, higher))
+                .unwrap_or(lower);
+            let max_new = clamp_replicas_u32(group.max_requested_replicas, lower, higher);
+            let row = Array::new();
+            row.push(&JsValue::from_str(&group.gid));
+            row.push(&strings_to_array(group.hashes));
+            row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
+            row.push(&JsValue::from_str(&group.latest_hash));
+            row.push(&JsValue::from_f64(max_head as f64));
+            row.push(&JsValue::from_f64(max_new as f64));
+            row.push(&JsValue::from_f64(max_head.max(max_new) as f64));
+            out.push(&row);
+        }
+
+        Ok(out.into())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4433,6 +4534,10 @@ fn bytes_vec_from_array(values: Array) -> Result<Vec<Vec<u8>>, JsValue> {
         out.push(Uint8Array::new(&value).to_vec());
     }
     Ok(out)
+}
+
+fn clamp_replicas_u32(value: u32, lower: u32, higher: u32) -> u32 {
+    value.min(higher).max(lower)
 }
 
 fn string_batches_from_array(values: Array, label: &str) -> Result<Vec<Vec<String>>, JsValue> {

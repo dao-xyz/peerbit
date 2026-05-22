@@ -862,6 +862,77 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("uses native raw receive group planning for repeated gids", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const openArgs: any = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: {
+					rawExchangeHeads: true,
+					profile: (event: any) => profileEvents.push(event),
+				},
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: openArgs,
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: openArgs,
+			});
+
+			const hashes: string[] = [];
+			for (let i = 0; i < 3; i++) {
+				const { entry } = await source.add(uuid(), {
+					meta: { next: [], gidSeed: new Uint8Array([9]) },
+				});
+				hashes.push(entry.hash);
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			await target.log.onMessage(message!, {
+				from: source.node.identity.publicKey,
+			} as any);
+
+			expect(target.log.log.length).to.equal(hashes.length);
+			const receivePlanProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.plan",
+			);
+			expect(receivePlanProfile.details.nativeRawGroups).to.equal(true);
+			expect(receivePlanProfile.details.predecodedReplicaHits).to.equal(
+				hashes.length,
+			);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("batches request-prune bookkeeping while queuing only newly confirmed hashes", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),

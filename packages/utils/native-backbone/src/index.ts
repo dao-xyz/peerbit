@@ -207,6 +207,11 @@ type NativePeerbitBackboneHandle = {
 		blocks: Uint8Array[],
 		hashes: string[],
 	) => NativeBackboneRawReceivePreparedFactsColumns;
+	plan_prepared_raw_receive_groups?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas?: number,
+	) => NativeBackboneRawReceiveGroupPlanRow[] | undefined;
 	commit_prepared_raw_receive_batch: (
 		hashes: string[],
 		heads: Uint8Array,
@@ -1328,6 +1333,16 @@ export type NativeBackboneRawReceivePreparedFacts = {
 	hashNumber?: string;
 };
 
+export type NativeBackboneRawReceiveGroupPlan = {
+	gid: string;
+	hashes: string[];
+	requestedReplicas: number[];
+	latestHash: string;
+	maxReplicasFromHead: number;
+	maxReplicasFromNewEntries: number;
+	maxMaxReplicas: number;
+};
+
 export type NativeBackboneRawReceivePreparedFactsColumns = [
 	string[],
 	Uint8Array[],
@@ -1362,6 +1377,16 @@ type NativeBackboneRawReceivePreparedFactsRow = [
 	boolean,
 	number | undefined,
 	string | undefined,
+];
+
+type NativeBackboneRawReceiveGroupPlanRow = [
+	string,
+	string[],
+	Uint32Array,
+	string,
+	number,
+	number,
+	number,
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -2400,6 +2425,24 @@ const rawReceivePreparedFactsFromColumns = ([
 	return out;
 };
 
+const rawReceiveGroupPlanFromRow = ([
+	gid,
+	hashes,
+	requestedReplicas,
+	latestHash,
+	maxReplicasFromHead,
+	maxReplicasFromNewEntries,
+	maxMaxReplicas,
+]: NativeBackboneRawReceiveGroupPlanRow): NativeBackboneRawReceiveGroupPlan => ({
+	gid,
+	hashes,
+	requestedReplicas: Array.from(requestedReplicas),
+	latestHash,
+	maxReplicasFromHead,
+	maxReplicasFromNewEntries,
+	maxMaxReplicas,
+});
+
 export class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
@@ -3424,6 +3467,21 @@ export class NativePeerbitBackbone {
 
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
 		return this.native.clear_prepared_raw_receive_entries(iterableToArray(hashes));
+	}
+
+	planPreparedRawReceiveGroups(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+	): NativeBackboneRawReceiveGroupPlan[] | undefined {
+		if (!this.native.plan_prepared_raw_receive_groups) {
+			return undefined;
+		}
+		const rows = this.native.plan_prepared_raw_receive_groups(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+		);
+		return rows?.map(rawReceiveGroupPlanFromRow);
 	}
 
 	getEntryCoordinateHashes(): string[] {

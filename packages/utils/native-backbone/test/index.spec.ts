@@ -747,6 +747,127 @@ describe("native peerbit backbone", () => {
 		).to.equal(false);
 	});
 
+	it("plans prepared raw receive groups natively", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const replicaData = (replicas: number) =>
+			new Uint8Array([0, replicas, 0, 0, 0]);
+		const first = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "gid-raw-group-a",
+			metaData: replicaData(2),
+			payloadData: new Uint8Array([1]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+		const second = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 3n,
+			gid: "gid-raw-group-a",
+			metaData: replicaData(4),
+			payloadData: new Uint8Array([2]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+		const third = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 2n,
+			gid: "gid-raw-group-b",
+			metaData: replicaData(1),
+			payloadData: new Uint8Array([3]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+
+		target.prepareRawReceiveColumnsBatch(
+			[first.bytes, second.bytes, third.bytes],
+			[first.hash, second.hash, third.hash],
+		);
+
+		const plans = target.planPreparedRawReceiveGroups(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
+		);
+		expect(plans).to.have.length(2);
+		expect(plans?.[0]).to.deep.include({
+			gid: "gid-raw-group-a",
+			latestHash: second.hash,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 3,
+			maxMaxReplicas: 3,
+		});
+		expect(plans?.[0].hashes).to.deep.equal([first.hash, second.hash]);
+		expect(plans?.[0].requestedReplicas).to.deep.equal([2, 4]);
+		expect(plans?.[1]).to.deep.include({
+			gid: "gid-raw-group-b",
+			latestHash: third.hash,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 1,
+			maxMaxReplicas: 1,
+		});
+
+		target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "gid-raw-existing-head",
+			metaData: replicaData(5),
+			payloadData: new Uint8Array([4]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+		const existingGidIncoming =
+			source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 2n,
+				gid: "gid-raw-existing-head",
+				metaData: replicaData(2),
+				payloadData: new Uint8Array([5]),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: true,
+			});
+		target.prepareRawReceiveColumnsBatch(
+			[existingGidIncoming.bytes],
+			[existingGidIncoming.hash],
+		);
+		const [existingHeadPlan] =
+			target.planPreparedRawReceiveGroups([existingGidIncoming.hash], {
+				minReplicas: 1,
+				maxReplicas: 4,
+			}) ?? [];
+		expect(existingHeadPlan).to.deep.include({
+			gid: "gid-raw-existing-head",
+			latestHash: existingGidIncoming.hash,
+			maxReplicasFromHead: 4,
+			maxReplicasFromNewEntries: 2,
+			maxMaxReplicas: 4,
+		});
+		expect(
+			target.planPreparedRawReceiveGroups(["missing"], {
+				minReplicas: 1,
+				maxReplicas: 3,
+			}),
+		).to.equal(undefined);
+	});
+
 	it("validates and commits prepared raw receive joins natively", async () => {
 		const source = await createNativePeerbitBackbone({
 			clockId: publicKey,
