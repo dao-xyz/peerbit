@@ -993,6 +993,7 @@ export class Log<T> {
 		properties: {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
@@ -1021,6 +1022,7 @@ export class Log<T> {
 		properties: {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,

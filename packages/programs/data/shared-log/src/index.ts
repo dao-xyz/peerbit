@@ -5237,14 +5237,22 @@ export class SharedLog<
 		let committedNativeBackboneDocumentIndex:
 			| NativeBackboneDocumentIndexCommitInput
 			| undefined;
+		const nativeCommitProperties = {
+			payloadData,
+			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+		} as {
+			payloadData: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+		};
+		nativeCommitProperties.skipMissingNextJoin = properties?.skipMissingNextJoin;
 		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
 			undefined as T,
 			appendOptions,
-			{
-				payloadData,
-				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-			},
+			nativeCommitProperties,
 			(input) => {
+				const next =
+					"next" in input && Array.isArray(input.next) ? input.next : [];
 				const nativeBackboneDocumentIndex =
 					properties?.nativeBackboneDocumentIndex ??
 					properties?.prepareNativeBackboneDocumentIndex?.({
@@ -5259,7 +5267,7 @@ export class SharedLog<
 				return backbone.graph.prepareEntryV0PlainEntryCommit(
 					{
 						...input,
-						next: [],
+						next,
 						includeMaterializationBytes: false,
 						includeAppendFactsBytes: true,
 						trimLengthTo: input.trimLengthTo,

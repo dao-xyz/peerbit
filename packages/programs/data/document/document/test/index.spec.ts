@@ -2668,6 +2668,51 @@ describe("index", () => {
 					}
 				});
 
+				it("supports strict native update puts with native previous-head joins", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const compatPlanSpy = sinon.spy(
+						store.docs as any,
+						"createPlainPutCommitPlan",
+					);
+					try {
+						const id = uuid();
+						const first = await store.docs.put(
+							new Document({ id, name: "native-update-1" }),
+						);
+						const second = await store.docs.put(
+							new Document({ id, name: "native-update-2" }),
+						);
+						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(compatPlanSpy.callCount).equal(0);
+						expect(fallbackAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal("native-update-2");
+					} finally {
+						compatPlanSpy.restore();
+						fallbackAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("defaults strict native puts to local native append options", async () => {
 					const rustSession = await TestSession.connected(
 						1,
