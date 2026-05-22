@@ -1903,6 +1903,13 @@ const evaluateRun = (
 	if (compareIndependentRunShape) {
 		failIfLess(
 			failures,
+			"deliveredPct",
+			baseline.deliveredPct,
+			upgrade.deliveredPct,
+			baseline.deliveredPct,
+		);
+		failIfLess(
+			failures,
 			"deliveredWithinDeadlinePct",
 			baseline.deliveredWithinDeadlinePct,
 			upgrade.deliveredWithinDeadlinePct,

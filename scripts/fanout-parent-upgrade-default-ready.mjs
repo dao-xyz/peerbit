@@ -229,6 +229,11 @@ run("multi-writer idle default-candidate safety", [
 	"--seeds",
 	idleSafetySeeds,
 	...defaultCandidateArgs(),
+	// Hotspot-idle measures utility under runner timing pressure. Keep delivery,
+	// promoted-branch latency, data overhead, and root pressure strict, but allow
+	// small aggregate deadline jitter when a promotion is otherwise useful.
+	"--maxUsefulIdleDeadlinePctDelta",
+	"2",
 	"--maxDataOverheadRatio",
 	"1.05",
 	"--strict",
