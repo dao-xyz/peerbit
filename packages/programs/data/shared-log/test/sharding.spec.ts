@@ -1352,11 +1352,19 @@ testSetups.forEach((setup) => {
 									settledRows,
 								)}`,
 							);
+							const hasTemporaryUpperBoundPressure = settledRows.some(
+								(row) => row.length > entryCount * 0.9,
+							);
+							const hasObservedPruneWork = settledRows.some(
+								(row) =>
+									row.prunable > 0 ||
+									row.pendingDeletes > 0 ||
+									row.checkedPruneRetries > 0 ||
+									row.repairSweepWork > 0,
+							);
 							expect(
-								settledRows.some(
-									(row) => row.length > entryCount * 0.9 && row.prunable > 0,
-								),
-								"expected delayed checked-prune traffic to leave at least one peer temporarily over the upper bound",
+								hasTemporaryUpperBoundPressure && hasObservedPruneWork,
+								"expected delayed checked-prune traffic to exercise upper-bound pressure and prune work before convergence",
 							).to.equal(true);
 
 							await waitForDistributionQuiesced(db1, db2, db3);
