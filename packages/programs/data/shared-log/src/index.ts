@@ -9692,6 +9692,9 @@ export class SharedLog<
 						const hashOnlyEntryAdded =
 							!!this.syncronizer.onEntryAddedHash &&
 							this._pendingIHave.size === 0;
+						const batchHashOnlyEntryAdded =
+							!!this.syncronizer.onEntryAddedHashes &&
+							this._pendingIHave.size === 0;
 						let mergeEntryByHash: Map<string, Entry<any>> | undefined;
 						const materializeMergedEntry = (hash: string) => {
 							mergeEntryByHash ??= new Map(
@@ -9704,6 +9707,10 @@ export class SharedLog<
 							return entry;
 						};
 						const onAppendHashes = (hashes: string[]) => {
+							if (batchHashOnlyEntryAdded) {
+								this.syncronizer.onEntryAddedHashes?.(hashes);
+								return;
+							}
 							for (const hash of hashes) {
 								if (hashOnlyEntryAdded && !this._pendingIHave.has(hash)) {
 									this.onEntryAddedHash(hash);
@@ -11492,7 +11499,6 @@ export class SharedLog<
 		if (
 			!backbone ||
 			this.remoteBlocks?.localStore !== backbone.blocks ||
-			this._logProperties?.replicate !== false ||
 			(verifyHashes &&
 				verifyHashes.length > 0 &&
 				!backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch)

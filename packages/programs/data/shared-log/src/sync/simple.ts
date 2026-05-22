@@ -887,9 +887,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		hashes: string[];
 		from: PublicSignKey;
 	}): Promise<void> | void {
-		for (const hash of properties.hashes) {
-			this.clearSyncInFlightForPeer(properties.from.hashcode(), hash);
-		}
+		this.clearSyncInFlightForPeerHashes(
+			properties.from.hashcode(),
+			properties.hashes,
+		);
 		this.markRepairSessionResolvedHashes(properties.hashes);
 	}
 
@@ -1170,6 +1171,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.onEntryAddedHash(entry.hash);
 	}
 
+	onEntryAddedHashes(hashes: string[]): void {
+		this.clearSyncProcesses(hashes);
+		this.markRepairSessionResolvedHashes(hashes);
+	}
+
 	onEntryAddedHash(hash: string): void {
 		this.clearSyncProcess(hash);
 		this.markRepairSessionResolvedHashes([hash]);
@@ -1233,8 +1239,63 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
+	private clearSyncInFlightForPeerHashes(
+		publicKeyHash: string,
+		hashes: string[],
+	) {
+		const map = this.syncInFlight.get(publicKeyHash);
+		if (!map || hashes.length === 0) {
+			return;
+		}
+		const keys = new Set<SyncableKey>(hashes);
+		const hashSet = new Set(hashes);
+		for (const key of map.keys()) {
+			if (typeof key !== "bigint") {
+				continue;
+			}
+			const hash = this.coordinateToHash.get(key);
+			if (hash != null && hashSet.has(hash)) {
+				keys.add(key);
+			}
+		}
+		for (const key of keys) {
+			map.delete(key);
+		}
+		if (map.size === 0) {
+			this.syncInFlight.delete(publicKeyHash);
+		}
+	}
+
 	private clearSyncProcess(hash: string) {
 		for (const key of this.getKnownAliases(hash)) {
+			this.clearSyncProcessKey(key);
+		}
+	}
+
+	private clearSyncProcesses(hashes: string[]) {
+		if (hashes.length === 0) {
+			return;
+		}
+		const keys = new Set<SyncableKey>(hashes);
+		const hashSet = new Set(hashes);
+		const maybeAddAlias = (key: SyncableKey) => {
+			if (typeof key !== "bigint") {
+				return;
+			}
+			const hash = this.coordinateToHash.get(key);
+			if (hash != null && hashSet.has(hash)) {
+				keys.add(key);
+			}
+		};
+		for (const key of this.syncInFlightQueue.keys()) {
+			maybeAddAlias(key);
+		}
+		for (const map of this.syncInFlight.values()) {
+			for (const key of map.keys()) {
+				maybeAddAlias(key);
+			}
+		}
+		for (const key of keys) {
 			this.clearSyncProcessKey(key);
 		}
 	}

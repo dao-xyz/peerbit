@@ -4,6 +4,7 @@
 //   cd packages/programs/data/shared-log
 //   CATCHUP_COUNT=5000 CATCHUP_TIMEOUT=60000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //   CATCHUP_SETUPS=u32-simple-native-graph,u32-simple-raw CATCHUP_COUNT=1000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
+//   CATCHUP_SETUPS=u32-simple-raw-native-backbone-coordinate-wal CATCHUP_COUNT=10000 CATCHUP_PROFILE=1 BENCH_JSON=1 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //   CATCHUP_PROFILE=1 CATCHUP_POLL_INTERVAL=10 CATCHUP_SETUPS=u32-simple-raw CATCHUP_COUNT=1000 BENCH_JSON=1 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //
 // Notes:
@@ -11,6 +12,10 @@
 //   algorithmic benches; prefer running it a few times and comparing medians.
 // - For CI regression tracking, consider smaller `CATCHUP_COUNT` values and low run counts.
 import { keys } from "@libp2p/crypto";
+import {
+	NativeBackboneCoordinatePersistence,
+	NativeBackboneMemoryCoordinatePersistenceStore,
+} from "@peerbit/native-backbone";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -39,6 +44,7 @@ const captureProfile = process.env.CATCHUP_PROFILE === "1";
 type CatchupSetup = TestSetupConfig<any> & {
 	nativeGraph?: boolean;
 	rawExchangeHeads?: boolean;
+	nativeBackboneCoordinateWal?: boolean;
 };
 
 const allSetups: CatchupSetup[] = [
@@ -62,6 +68,15 @@ const allSetups: CatchupSetup[] = [
 		name: "u32-simple-raw",
 		nativeGraph: true,
 		rawExchangeHeads: true,
+	},
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple-raw-native-backbone-coordinate-wal",
+		nativeGraph: true,
+		rawExchangeHeads: true,
+		nativeBackboneCoordinateWal: true,
 	},
 	{
 		domain: createReplicationDomainHash("u64"),
@@ -202,6 +217,15 @@ const runOnce = async (setup: CatchupSetup) => {
 	const session = await TestSession.disconnected(2, fixedKeys);
 	const store = new EventStore<string, any>();
 	const profileEvents: SyncProfileEvent[] = [];
+	const createNativeBackboneOptions = () =>
+		setup.nativeBackboneCoordinateWal
+			? {
+					optional: false,
+					coordinatePersistence: new NativeBackboneCoordinatePersistence(
+						new NativeBackboneMemoryCoordinatePersistenceStore(),
+					),
+				}
+			: undefined;
 	const syncOptions =
 		setup.rawExchangeHeads || captureProfile
 			? {
@@ -217,6 +241,7 @@ const runOnce = async (setup: CatchupSetup) => {
 			replicate: { factor: 1 },
 			setup,
 			nativeGraph: setup.nativeGraph,
+			nativeBackbone: createNativeBackboneOptions(),
 			sync: syncOptions,
 		},
 	});
@@ -225,6 +250,7 @@ const runOnce = async (setup: CatchupSetup) => {
 			replicate: { factor: 1 },
 			setup,
 			nativeGraph: setup.nativeGraph,
+			nativeBackbone: createNativeBackboneOptions(),
 			sync: syncOptions,
 		},
 	});

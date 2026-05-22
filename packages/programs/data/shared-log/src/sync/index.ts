@@ -170,6 +170,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 		from: PublicSignKey;
 	}): Promise<void> | void;
 
+	onEntryAddedHashes?(hashes: string[]): void;
 	onEntryAddedHash?(hash: string): void;
 	onEntryAdded(entry: Entry<any>): void;
 	onEntryRemoved(hash: string): void;

@@ -164,6 +164,10 @@ describe("raw exchange-head sync", () => {
 			);
 			const sharedOnChangeSpy = sinon.spy(db2.log as any, "onChange");
 			const entryAddedHashSpy = sinon.spy(db2.log as any, "onEntryAddedHash");
+			const entryAddedHashesSpy = sinon.spy(
+				db2.log.syncronizer as any,
+				"onEntryAddedHashes",
+			);
 			const markKnownSpy = sinon.spy(db2.log as any, "markEntriesKnownByPeer");
 			const receivedEntriesSpy = sinon.spy(
 				db2.log.syncronizer as any,
@@ -269,12 +273,13 @@ describe("raw exchange-head sync", () => {
 			expect(markKnownSpy.callCount).to.equal(1);
 			expect([...markKnownSpy.firstCall.args[0]]).to.have.length(entryCount);
 			expect(sharedOnChangeSpy.callCount).to.equal(0);
-			expect(entryAddedHashSpy.callCount).to.equal(entryCount);
+			expect(entryAddedHashSpy.callCount).to.equal(0);
+			expect(entryAddedHashesSpy.callCount).to.be.greaterThan(0);
 			expect(
-				entryAddedHashSpy
+				entryAddedHashesSpy
 					.getCalls()
-					.every((call) => call.args.length === 1),
-			).equal(true);
+					.reduce((total, call) => total + (call.args[0]?.length ?? 0), 0),
+			).to.equal(entryCount);
 			const profileNames = profileEvents.map((event) => event.name);
 			expect(profileNames).to.include("sharedLog.rawReceive.materialize");
 			expect(profileNames).to.include("sharedLog.receive.lowerLogJoin");
@@ -298,6 +303,7 @@ describe("raw exchange-head sync", () => {
 				(event) => event.name === "sharedLog.receive.lowerLogJoin",
 			);
 			expect(lowerLogJoinProfile.details.hashOnlyEntryAdded).to.equal(true);
+			entryAddedHashesSpy.restore();
 			receivedEntryHashesSpy.restore();
 			receivedEntriesSpy.restore();
 			markKnownSpy.restore();
