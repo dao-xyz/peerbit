@@ -446,6 +446,7 @@ export class Documents<
 	private _optionCanPerformNativeFastPath?: NativeFastPathCanPerformPolicyEvaluator;
 	private _nativeBackboneDocumentIndexEnabled = false;
 	private _mode: DocumentMode = "auto";
+	private _nativeModeReplicatedOpen = false;
 	private _documentChangeListeners: Array<{
 		listener: unknown;
 		capture: boolean;
@@ -513,9 +514,6 @@ export class Documents<
 		}
 		if (options.compatibility != null) {
 			unsupported.push("legacy compatibility");
-		}
-		if (options.replicate !== undefined && options.replicate !== false) {
-			unsupported.push("replication");
 		}
 		if (Program.isPrototypeOf(options.type)) {
 			unsupported.push("program-valued document type");
@@ -676,6 +674,14 @@ export class Documents<
 		if (options?.replicate === false && options.target === "none") {
 			return options;
 		}
+		if (this._nativeModeReplicatedOpen) {
+			return options?.target === "none"
+				? options
+				: {
+						...options,
+						target: "none",
+					};
+		}
 		return {
 			...options,
 			replicate: false,
@@ -786,6 +792,10 @@ export class Documents<
 		this._clazz = options.type;
 		this.canOpen = options.canOpen;
 		this._mode = options.mode ?? "auto";
+		this._nativeModeReplicatedOpen =
+			this.isNativeMode() &&
+			options.replicate !== undefined &&
+			options.replicate !== false;
 		this.assertNativeModeOpenOptions(options);
 
 		/* eslint-disable */

@@ -2658,6 +2658,64 @@ describe("index", () => {
 					}
 				});
 
+				it("allows strict native mode to use open-level replication", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+						{ flushOnAppend: false },
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence,
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const payloadCommitOnlySpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-defaults",
+						});
+						await store.docs.put(doc, { unique: true });
+						expect(payloadCommitOnlySpy.callCount).equal(1);
+						const appendOptions = payloadCommitOnlySpy.firstCall.args[1]!;
+						expect(appendOptions).to.include({
+							target: "none",
+						});
+						expect(appendOptions.replicate).equal(undefined);
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-replicated-defaults",
+						);
+						expect(
+							(store.docs.log as any)._residentEntryCoordinatesByHash.size,
+						).greaterThan(0);
+					} finally {
+						payloadCommitOnlySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("keeps already-local strict native put options by reference", () => {
 					const docs = new Documents<Document>();
 					const nativeDocs = docs as any;
@@ -2679,6 +2737,18 @@ describe("index", () => {
 						replicate: false,
 						target: "none",
 					});
+					nativeDocs._nativeModeReplicatedOpen = true;
+					const replicatedDefaultOptions = { unique: true };
+					const replicatedNormalized =
+						nativeDocs.normalizeNativeModePutOptions(
+							replicatedDefaultOptions,
+						);
+					expect(replicatedNormalized).not.equal(replicatedDefaultOptions);
+					expect(replicatedNormalized).to.include({
+						unique: true,
+						target: "none",
+					});
+					expect(replicatedNormalized).not.to.have.property("replicate");
 				});
 
 				it("does not repeat native policy eligibility checks for strict native puts", async () => {
@@ -2809,22 +2879,6 @@ describe("index", () => {
 						NativeDocumentModeError,
 						"arbitrary canPerform",
 					);
-				});
-
-				it("rejects replicated setup in strict native mode", async () => {
-					const docs = new Documents<Document>();
-					await expect(
-						docs.open({
-							type: Document,
-							mode: "native",
-							replicate: { factor: 1 },
-							nativeBackbone: {
-								optional: false,
-								documentIndex: true,
-							},
-							canPerform: policy.allowAll<Document>(),
-						}),
-					).to.be.rejectedWith(NativeDocumentModeError, "replication");
 				});
 
 				it("rejects unsupported per-put options in strict native mode", async () => {

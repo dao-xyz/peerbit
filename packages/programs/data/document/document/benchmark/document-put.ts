@@ -41,6 +41,7 @@ import {
 //   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
 //   Add "-mode-native" to a rust-peerbit-backbone scenario to open Documents in strict native mode.
+//   Add "-mode-native-replicated" to keep open-level replication in strict native mode.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
 //   Add "-policy-put-signed-public-key" to open with canPerform: policy.put(policy.signedByPublicKey(local public key)).
@@ -89,7 +90,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|coordinate-wal|document-index|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
+		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -108,6 +109,8 @@ const scenarioUsesBufferedCoordinateWal = (name: string) =>
 const scenarioUsesNativeBackboneDocumentIndex = (name: string) =>
 	name.includes("-document-index");
 const scenarioUsesNativeMode = (name: string) => name.includes("-mode-native");
+const scenarioUsesNativeModeReplicated = (name: string) =>
+	name.includes("-mode-native-replicated");
 const scenarioUsesPolicyAllowAll = (name: string) =>
 	name.includes("-policy-allow-all");
 const scenarioUsesPolicySignedPublicKey = (name: string) =>
@@ -775,7 +778,10 @@ const openScenario = async (name: string) => {
 			args: {
 				...(useNativeMode ? { mode: "native" as const } : {}),
 				replicate:
-					useNativeMode || scenarioUsesLocalStore(name) ? false : { factor: 1 },
+					scenarioUsesNativeModeReplicated(name) ||
+					(!useNativeMode && !scenarioUsesLocalStore(name))
+						? { factor: 1 }
+						: false,
 				...(indexOptions ? { index: indexOptions } : {}),
 				...(scenarioUsesPolicyAllowAll(name)
 					? { canPerform: policy.allowAll<Document>() }
