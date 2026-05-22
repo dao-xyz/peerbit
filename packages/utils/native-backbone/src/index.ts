@@ -203,7 +203,14 @@ type NativePeerbitBackboneHandle = {
 	prepare_raw_receive_columns_batch?: (
 		blocks: Uint8Array[],
 	) => NativeBackboneRawReceivePreparedFactsColumns;
+	prepare_raw_receive_unverified_columns_batch?: (
+		blocks: Uint8Array[],
+	) => NativeBackboneRawReceivePreparedFactsColumns;
 	prepare_raw_receive_expected_columns_batch?: (
+		blocks: Uint8Array[],
+		hashes: string[],
+	) => NativeBackboneRawReceivePreparedFactsColumns;
+	prepare_raw_receive_unverified_expected_columns_batch?: (
 		blocks: Uint8Array[],
 		hashes: string[],
 	) => NativeBackboneRawReceivePreparedFactsColumns;
@@ -3433,6 +3440,7 @@ export class NativePeerbitBackbone {
 	prepareRawReceiveColumnsBatch(
 		blocks: Uint8Array[],
 		hashes?: string[],
+		options?: { verifySignatures?: boolean },
 	): NativeBackboneRawReceivePreparedFactsColumns | undefined {
 		if (hashes && blocks.length !== hashes.length) {
 			throw new Error("Expected equal raw receive block and hash lengths");
@@ -3455,6 +3463,23 @@ export class NativePeerbitBackbone {
 				new Uint32Array(0),
 				[],
 			];
+		}
+		if (
+			options?.verifySignatures === false &&
+			hashes &&
+			this.native.prepare_raw_receive_unverified_expected_columns_batch
+		) {
+			return this.native.prepare_raw_receive_unverified_expected_columns_batch(
+				blocks,
+				hashes,
+			);
+		}
+		if (
+			options?.verifySignatures === false &&
+			!hashes &&
+			this.native.prepare_raw_receive_unverified_columns_batch
+		) {
+			return this.native.prepare_raw_receive_unverified_columns_batch(blocks);
 		}
 		if (hashes && this.native.prepare_raw_receive_expected_columns_batch) {
 			return this.native.prepare_raw_receive_expected_columns_batch(

@@ -928,6 +928,14 @@ describe("raw exchange-head sync", () => {
 			expect(receivePlanProfile.details.predecodedReplicaHits).to.equal(
 				hashes.length,
 			);
+			const metadataProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.canAppendBatch.metadata",
+			);
+			expect(metadataProfile.count).to.equal(hashes.length);
+			const verifyProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.canAppendBatch.verifySignatures",
+			);
+			expect(verifyProfile.entries).to.equal(hashes.length);
 		} finally {
 			await session.stop();
 		}

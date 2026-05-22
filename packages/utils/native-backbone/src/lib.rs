@@ -11,7 +11,8 @@ use peerbit_indexer_core::schema::{
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
-    prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids, LogIndexEntry,
+    prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids,
+    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify, LogIndexEntry,
     NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
     NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0,
 };
@@ -791,6 +792,18 @@ impl NativePeerbitBackbone {
         self.prepare_raw_receive_columns_from_entries(prepared)
     }
 
+    pub fn prepare_raw_receive_unverified_columns_batch(
+        &mut self,
+        blocks: Array,
+    ) -> Result<Array, JsValue> {
+        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
+            bytes_vec_from_array(blocks)?,
+            None,
+            false,
+        )?;
+        self.prepare_raw_receive_columns_from_entries(prepared)
+    }
+
     pub fn prepare_raw_receive_expected_columns_batch(
         &mut self,
         blocks: Array,
@@ -799,6 +812,19 @@ impl NativePeerbitBackbone {
         let prepared = prepare_raw_entry_v0_blocks_with_expected_cids(
             bytes_vec_from_array(blocks)?,
             Some(strings_from_array(hashes)?),
+        )?;
+        self.prepare_raw_receive_columns_from_entries(prepared)
+    }
+
+    pub fn prepare_raw_receive_unverified_expected_columns_batch(
+        &mut self,
+        blocks: Array,
+        hashes: Array,
+    ) -> Result<Array, JsValue> {
+        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
+            bytes_vec_from_array(blocks)?,
+            Some(strings_from_array(hashes)?),
+            false,
         )?;
         self.prepare_raw_receive_columns_from_entries(prepared)
     }

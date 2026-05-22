@@ -3496,12 +3496,20 @@ pub fn prepare_raw_entry_v0_batch(blocks: Array) -> Result<Array, JsValue> {
 pub fn prepare_raw_entry_v0_blocks(
     blocks: Vec<Vec<u8>>,
 ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
-    prepare_raw_entry_v0_blocks_with_expected_cids(blocks, None)
+    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(blocks, None, true)
 }
 
 pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
     blocks: Vec<Vec<u8>>,
     expected_cids: Option<Vec<String>>,
+) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(blocks, expected_cids, true)
+}
+
+pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
+    blocks: Vec<Vec<u8>>,
+    expected_cids: Option<Vec<String>>,
+    verify_signatures: bool,
 ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
     if let Some(expected_cids) = expected_cids.as_ref() {
         if expected_cids.len() != blocks.len() {
@@ -3530,26 +3538,28 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
         let meta = parse_raw_entry_v0_meta(storage.meta)?;
         let payload = parse_raw_entry_v0_payload(storage.payload)?;
         let requested_replicas = decode_absolute_replica_data_u32(meta.meta_data.as_deref());
-        let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
-        validate_signature_lengths(&parsed_signature.signature, &parsed_signature.public_key)?;
-        let signature_bytes: [u8; 64] = parsed_signature
-            .signature
-            .as_slice()
-            .try_into()
-            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
-        let public_key_bytes: [u8; 32] = parsed_signature
-            .public_key
-            .as_slice()
-            .try_into()
-            .map_err(|_| JsValue::from_str("Expected Ed25519 public key length 32"))?;
-        let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
-            .map_err(|_| JsValue::from_str("Invalid Ed25519 public key"))?;
-        parsed_signatures.push(Signature::from_bytes(&signature_bytes));
-        parsed_public_keys.push(verifying_key);
-        parsed_messages.push(encode_entry_v0_parts_unsigned_for_signing(
-            storage.meta,
-            storage.payload,
-        ));
+        if verify_signatures {
+            let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
+            validate_signature_lengths(&parsed_signature.signature, &parsed_signature.public_key)?;
+            let signature_bytes: [u8; 64] = parsed_signature
+                .signature
+                .as_slice()
+                .try_into()
+                .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+            let public_key_bytes: [u8; 32] = parsed_signature
+                .public_key
+                .as_slice()
+                .try_into()
+                .map_err(|_| JsValue::from_str("Expected Ed25519 public key length 32"))?;
+            let verifying_key = VerifyingKey::from_bytes(&public_key_bytes)
+                .map_err(|_| JsValue::from_str("Invalid Ed25519 public key"))?;
+            parsed_signatures.push(Signature::from_bytes(&signature_bytes));
+            parsed_public_keys.push(verifying_key);
+            parsed_messages.push(encode_entry_v0_parts_unsigned_for_signing(
+                storage.meta,
+                storage.payload,
+            ));
+        }
 
         entries.push(PreparedRawEntryV0 {
             cid,
@@ -3568,6 +3578,9 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
             storage_bytes: bytes,
             requested_replicas,
         });
+    }
+    if !verify_signatures {
+        return Ok(entries);
     }
     let message_refs = parsed_messages
         .iter()

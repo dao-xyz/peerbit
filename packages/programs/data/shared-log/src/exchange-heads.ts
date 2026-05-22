@@ -31,6 +31,7 @@ type RawReceiveNativeBackbone = {
 	prepareRawReceiveColumnsBatch?(
 		blocks: Uint8Array[],
 		hashes?: string[],
+		options?: { verifySignatures?: boolean },
 	): PreparedRawEntryV0FactsColumns | undefined;
 	clearPreparedRawReceiveEntries?(hashes: Iterable<string>): number;
 };
@@ -982,7 +983,11 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	if (options?.nativeBackbone) {
 		try {
 			preparedColumns =
-				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks, hashes);
+				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
+					blocks,
+					hashes,
+					{ verifySignatures: false },
+				);
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";
 			} else {
