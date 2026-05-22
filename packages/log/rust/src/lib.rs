@@ -98,6 +98,7 @@ pub struct PreparedRawEntryV0 {
     pub payload_byte_length: usize,
     pub signature_verified: bool,
     pub storage_bytes: Vec<u8>,
+    pub requested_replicas: Option<u32>,
 }
 
 impl PreparedRawEntryV0 {
@@ -3528,6 +3529,7 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
         let storage = parse_plain_entry_v0_storage(&bytes)?;
         let meta = parse_raw_entry_v0_meta(storage.meta)?;
         let payload = parse_raw_entry_v0_payload(storage.payload)?;
+        let requested_replicas = decode_absolute_replica_data_u32(meta.meta_data.as_deref());
         let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
         validate_signature_lengths(&parsed_signature.signature, &parsed_signature.public_key)?;
         let signature_bytes: [u8; 64] = parsed_signature
@@ -3564,6 +3566,7 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
             payload_byte_length: payload.data_len,
             signature_verified: false,
             storage_bytes: bytes,
+            requested_replicas,
         });
     }
     let message_refs = parsed_messages
@@ -3612,6 +3615,10 @@ fn prepared_raw_entry_v0_to_row(entry: &PreparedRawEntryV0) -> Array {
     };
     row.push(&JsValue::from_f64(entry.payload_byte_length as f64));
     row.push(&JsValue::from_bool(entry.signature_verified));
+    match entry.requested_replicas {
+        Some(value) => row.push(&JsValue::from_f64(value as f64)),
+        None => row.push(&JsValue::UNDEFINED),
+    };
     row
 }
 
@@ -4716,7 +4723,7 @@ fn required_array_from_array(values: &Array, index: u32) -> Result<Array, JsValu
     Ok(Array::from(&value))
 }
 
-fn decode_absolute_replica_data_u32(data: Option<&[u8]>) -> Option<u32> {
+pub fn decode_absolute_replica_data_u32(data: Option<&[u8]>) -> Option<u32> {
     let data = data?;
     if data.len() != 5 || data[0] != 0 {
         return None;

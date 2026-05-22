@@ -1324,6 +1324,7 @@ export type NativeBackboneRawReceivePreparedFacts = {
 	metaData?: Uint8Array;
 	payloadByteLength: number;
 	signatureVerified: boolean;
+	requestedReplicas?: number;
 };
 
 export type NativeBackboneRawReceivePreparedFactsColumns = [
@@ -1340,6 +1341,7 @@ export type NativeBackboneRawReceivePreparedFactsColumns = [
 	Array<Uint8Array | undefined>,
 	Uint32Array,
 	Uint8Array,
+	Uint32Array,
 ];
 
 type NativeBackboneRawReceivePreparedFactsRow = [
@@ -1356,6 +1358,7 @@ type NativeBackboneRawReceivePreparedFactsRow = [
 	Uint8Array | undefined,
 	number,
 	boolean,
+	number | undefined,
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -2312,6 +2315,7 @@ const rawReceivePreparedFactsFromRow = ([
 	metaData,
 	payloadByteLength,
 	signatureVerified,
+	requestedReplicas,
 ]: NativeBackboneRawReceivePreparedFactsRow): NativeBackboneRawReceivePreparedFacts => ({
 	cid,
 	hashDigestBytes,
@@ -2326,6 +2330,7 @@ const rawReceivePreparedFactsFromRow = ([
 	metaData,
 	payloadByteLength,
 	signatureVerified,
+	requestedReplicas,
 });
 
 const rawReceivePreparedFactsFromColumns = ([
@@ -2342,6 +2347,7 @@ const rawReceivePreparedFactsFromColumns = ([
 	metaDatas,
 	payloadByteLengths,
 	signatureVerified,
+	requestedReplicas,
 ]: NativeBackboneRawReceivePreparedFactsColumns): NativeBackboneRawReceivePreparedFacts[] => {
 	const length = cids.length;
 	if (
@@ -2356,7 +2362,8 @@ const rawReceivePreparedFactsFromColumns = ([
 		metaBytes.length !== length ||
 		metaDatas.length !== length ||
 		payloadByteLengths.length !== length ||
-		signatureVerified.length !== length
+		signatureVerified.length !== length ||
+		requestedReplicas.length !== length
 	) {
 		throw new Error("Expected equal raw receive prepared column lengths");
 	}
@@ -2376,6 +2383,10 @@ const rawReceivePreparedFactsFromColumns = ([
 			metaData: metaDatas[i],
 			payloadByteLength: payloadByteLengths[i]!,
 			signatureVerified: signatureVerified[i] !== 0,
+			requestedReplicas:
+				requestedReplicas[i] && requestedReplicas[i] > 0
+					? requestedReplicas[i]
+					: undefined,
 		};
 	}
 	return out;
@@ -3390,6 +3401,7 @@ export class NativePeerbitBackbone {
 				[],
 				new Uint32Array(0),
 				new Uint8Array(0),
+				new Uint32Array(0),
 			];
 		}
 		if (hashes && this.native.prepare_raw_receive_expected_columns_batch) {

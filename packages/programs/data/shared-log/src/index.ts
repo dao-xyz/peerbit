@@ -129,6 +129,7 @@ import {
 	ResponseIPrune,
 	createExchangeHeadsMessages,
 	getPreparedRawExchangeAppendFacts,
+	getPreparedRawExchangeRequestedReplicas,
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
@@ -8504,6 +8505,7 @@ export class SharedLog<
 			const signaturesToVerify: Entry<T>[] = [];
 			const checkStartedAt = syncProfileStart(profile);
 			let replicaCacheHits = 0;
+			let predecodedReplicaHits = 0;
 			for (const entry of entries) {
 				if (!entry.meta.data) {
 					warn("Received entry without meta data, skipping");
@@ -8514,7 +8516,14 @@ export class SharedLog<
 					replicas = options.decodedReplicaCounts.get(entry.hash)!;
 					replicaCacheHits++;
 				} else {
-					replicas = decodeReplicas(entry).getValue(this);
+					const predecodedReplicas =
+						getPreparedRawExchangeRequestedReplicas(entry);
+					if (predecodedReplicas != null) {
+						replicas = predecodedReplicas;
+						predecodedReplicaHits++;
+					} else {
+						replicas = decodeReplicas(entry).getValue(this);
+					}
 				}
 				if (Number.isFinite(replicas) === false) {
 					return false;
@@ -8533,7 +8542,7 @@ export class SharedLog<
 					entries: entries.length,
 					count: signaturesToVerify.length,
 					messages: 1,
-					details: { replicaCacheHits },
+					details: { replicaCacheHits, predecodedReplicaHits },
 				});
 			}
 			if (signaturesToVerify.length === 0) {
@@ -9083,6 +9092,7 @@ export class SharedLog<
 					}
 					const receivePlanStartedAt = syncProfileStart(syncProfile);
 					const receiveReplicaCounts = new Map<string, number>();
+					let receivePredecodedReplicaHits = 0;
 					const decodeReceiveReplicaCount = (entry: {
 						hash: string;
 						meta: { data?: Uint8Array };
@@ -9091,7 +9101,15 @@ export class SharedLog<
 						if (cached !== undefined) {
 							return cached;
 						}
-						const replicas = decodeReplicas(entry).getValue(this);
+						const predecodedReplicas =
+							entry instanceof Entry
+								? getPreparedRawExchangeRequestedReplicas(entry)
+								: undefined;
+						const replicas =
+							predecodedReplicas ?? decodeReplicas(entry).getValue(this);
+						if (predecodedReplicas != null) {
+							receivePredecodedReplicaHits++;
+						}
 						receiveReplicaCounts.set(entry.hash, replicas);
 						return replicas;
 					};
@@ -9178,7 +9196,10 @@ export class SharedLog<
 							entries: filteredHeads.length,
 							count: receiveGroups.length,
 							messages: 1,
-							details: { replicating: isReplicating },
+							details: {
+								replicating: isReplicating,
+								predecodedReplicaHits: receivePredecodedReplicaHits,
+							},
 						});
 					}
 

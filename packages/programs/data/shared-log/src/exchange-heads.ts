@@ -49,6 +49,7 @@ type PreparedRawEntryV0FactsColumns = [
 	metaDatas: Array<Uint8Array | undefined>,
 	payloadByteLengths: Uint32Array,
 	signatureVerified: Uint8Array,
+	requestedReplicas: Uint32Array,
 ];
 
 type PreparedRawEntryV0FactsSource =
@@ -171,6 +172,16 @@ const preparedRawSignatureVerified = (
 	isPreparedRawEntryV0FactsColumns(facts)
 		? preparedRawColumnValue(facts[12], index, "signature flag") !== 0
 		: facts.signatureVerified;
+
+const preparedRawRequestedReplicas = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) => {
+	const value = isPreparedRawEntryV0FactsColumns(facts)
+		? facts[13]?.[index]
+		: facts.requestedReplicas;
+	return value && value > 0 ? value : undefined;
+};
 
 const preparedRawFactsCount = (facts: PreparedRawEntryV0FactsColumns) =>
 	facts[0].length;
@@ -319,6 +330,10 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		return preparedRawSignatureVerified(this.facts, this.factsIndex);
 	}
 
+	get __peerbitRequestedReplicas() {
+		return preparedRawRequestedReplicas(this.facts, this.factsIndex);
+	}
+
 	getMeta(): Meta {
 		return this.meta;
 	}
@@ -445,6 +460,13 @@ export const getPreparedRawExchangeAppendFacts = (
 ): PreparedAppendJoinFacts | undefined =>
 	entry instanceof PreparedRawExchangeEntry
 		? entry.toPreparedAppendJoinFacts()
+		: undefined;
+
+export const getPreparedRawExchangeRequestedReplicas = (
+	entry: Entry<any>,
+): number | undefined =>
+	entry instanceof PreparedRawExchangeEntry
+		? entry.__peerbitRequestedReplicas
 		: undefined;
 
 @variant([0, 3])

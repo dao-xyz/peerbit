@@ -687,12 +687,14 @@ describe("native peerbit backbone", () => {
 			privateKey,
 			publicKey,
 		});
+		const metaData = new Uint8Array([0, 3, 0, 0, 0]);
 		const prepared = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
 			clockId: publicKey,
 			privateKey,
 			publicKey,
 			wallTime: 1n,
 			gid: "gid-raw-receive",
+			metaData,
 			payloadData: new Uint8Array([4, 5, 6]),
 			includeMaterializationBytes: false,
 			includeAppendFactsBytes: true,
@@ -701,11 +703,13 @@ describe("native peerbit backbone", () => {
 		const [facts] = target.prepareRawReceiveBatch([prepared.bytes]);
 		expect(facts.cid).to.equal(prepared.hash);
 		expect(facts.gid).to.equal("gid-raw-receive");
+		expect(facts.requestedReplicas).to.equal(3);
 		const expectedColumns = target.prepareRawReceiveColumnsBatch(
 			[prepared.bytes],
 			[prepared.hash],
 		);
 		expect(expectedColumns?.[0]).to.deep.equal([prepared.hash]);
+		expect(Array.from(expectedColumns?.[13] ?? [])).to.deep.equal([3]);
 		expect(() =>
 			target.prepareRawReceiveColumnsBatch([prepared.bytes], ["not-a-cid"]),
 		).to.throw("Expected base58btc CID");

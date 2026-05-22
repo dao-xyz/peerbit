@@ -132,6 +132,7 @@ export type PreparedRawEntryV0Facts = {
 	metaData?: Uint8Array;
 	payloadByteLength: number;
 	signatureVerified: boolean;
+	requestedReplicas?: number;
 };
 
 type MaybePromise<T> = T | Promise<T>;

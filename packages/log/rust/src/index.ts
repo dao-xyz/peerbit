@@ -1657,6 +1657,7 @@ export type RawEntryV0PreparedFacts = {
 	metaData?: Uint8Array;
 	payloadByteLength: number;
 	signatureVerified: boolean;
+	requestedReplicas?: number;
 };
 
 type EntryV0PreparedPlainEntryRow = [
@@ -1684,6 +1685,7 @@ type RawEntryV0PreparedFactsRow = [
 	Uint8Array | undefined,
 	number,
 	boolean,
+	number | undefined,
 ];
 
 type EntryV0PreparedPlainEntryStorageRow = [
@@ -1875,6 +1877,7 @@ const rawEntryV0PreparedFactsFromRow = ([
 	metaData,
 	payloadByteLength,
 	signatureVerified,
+	requestedReplicas,
 ]: RawEntryV0PreparedFactsRow): RawEntryV0PreparedFacts => ({
 	cid,
 	hashDigestBytes,
@@ -1889,6 +1892,7 @@ const rawEntryV0PreparedFactsFromRow = ([
 	metaData,
 	payloadByteLength,
 	signatureVerified,
+	requestedReplicas,
 });
 
 const committedPlainEntryRow = ([

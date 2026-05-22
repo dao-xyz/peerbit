@@ -808,6 +808,7 @@ impl NativePeerbitBackbone {
         let meta_datas = Array::new();
         let mut payload_byte_lengths = Vec::with_capacity(len);
         let mut signature_verified = Vec::with_capacity(len);
+        let mut requested_replicas = Vec::with_capacity(len);
 
         for entry in prepared {
             cids.push(&JsValue::from_str(&entry.cid));
@@ -826,6 +827,7 @@ impl NativePeerbitBackbone {
             };
             payload_byte_lengths.push(entry.payload_byte_length as u32);
             signature_verified.push(u8::from(entry.signature_verified));
+            requested_replicas.push(entry.requested_replicas.unwrap_or(0));
 
             let log_entry = entry.log_index_entry(true)?;
             self.pending_raw_receive_entries.insert(
@@ -851,6 +853,7 @@ impl NativePeerbitBackbone {
         out.push(&meta_datas);
         out.push(&Uint32Array::from(payload_byte_lengths.as_slice()));
         out.push(&Uint8Array::from(signature_verified.as_slice()));
+        out.push(&Uint32Array::from(requested_replicas.as_slice()));
         Ok(out)
     }
 
@@ -4293,6 +4296,10 @@ fn prepared_raw_entry_v0_to_row(entry: &PreparedRawEntryV0) -> Array {
     };
     row.push(&JsValue::from_f64(entry.payload_byte_length as f64));
     row.push(&JsValue::from_bool(entry.signature_verified));
+    match entry.requested_replicas {
+        Some(value) => row.push(&JsValue::from_f64(value as f64)),
+        None => row.push(&JsValue::UNDEFINED),
+    };
     row
 }
 

@@ -288,6 +288,12 @@ describe("raw exchange-head sync", () => {
 				(event) => event.name === "sharedLog.canAppendBatch.metadata",
 			);
 			expect(metadataProfile.details.replicaCacheHits).to.equal(entryCount);
+			const receivePlanProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.plan",
+			);
+			expect(receivePlanProfile.details.predecodedReplicaHits).to.equal(
+				entryCount,
+			);
 			const lowerLogJoinProfile = profileEvents.find(
 				(event) => event.name === "sharedLog.receive.lowerLogJoin",
 			);

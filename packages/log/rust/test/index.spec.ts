@@ -655,7 +655,7 @@ describe("native EntryV0 encoding", () => {
 			logical,
 			gid,
 			type: APPEND,
-			signatureVerified: true,
+			signatureVerified: false,
 		});
 		expect([...rawFacts!.clockId]).to.deep.equal([...clockId]);
 		expect(rawFacts!.next).to.deep.equal(next);
