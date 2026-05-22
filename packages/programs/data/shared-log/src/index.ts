@@ -129,6 +129,7 @@ import {
 	RequestIPrune,
 	ResponseIPrune,
 	createExchangeHeadsMessages,
+	getExchangeHeadHash,
 	getPreparedRawExchangeAppendFacts,
 	getPreparedRawExchangeGid,
 	getPreparedRawExchangeHashNumber,
@@ -138,7 +139,6 @@ import {
 	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
 	getPreparedRawExchangeTimestamp,
-	getExchangeHeadHash,
 	initExchangeHeadEntry,
 	isPreparedRawEntryWithRefs,
 	materializeVerifiedRawExchangeHeadsMessage,
@@ -219,10 +219,7 @@ import type {
 	SynchronizerConstructor,
 	Syncronizer,
 } from "./sync/index.js";
-import {
-	emitSyncProfileDuration,
-	syncProfileStart,
-} from "./sync/profile.js";
+import { emitSyncProfileDuration, syncProfileStart } from "./sync/profile.js";
 import { RatelessIBLTSynchronizer } from "./sync/rateless-iblt.js";
 import {
 	ConfirmEntriesMessage,
@@ -477,10 +474,11 @@ const getLatestEntry = (
 	let latest: ShallowOrFullEntry<any> | undefined = undefined;
 	for (const element of entries) {
 		let entry =
-			element instanceof EntryWithRefs || isPreparedRawEntryWithRefs(element as any)
-				? getPreparedRawExchangeHeadShallowEntry(
+			element instanceof EntryWithRefs ||
+			isPreparedRawEntryWithRefs(element as any)
+				? (getPreparedRawExchangeHeadShallowEntry(
 						element as EntryWithRefs<any>,
-					) ?? (element as EntryWithRefs<any>).entry
+					) ?? (element as EntryWithRefs<any>).entry)
 				: element;
 		if (!latest || compareEntryTimestamp(entry, latest) > 0) {
 			latest = entry;
@@ -892,8 +890,8 @@ const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
 const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
 const NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES = 16;
 const hasPreverifiedSignature = (entry: Entry<any>) =>
-	(entry as { __peerbitSignatureVerified?: unknown }).__peerbitSignatureVerified ===
-	true;
+	(entry as { __peerbitSignatureVerified?: unknown })
+		.__peerbitSignatureVerified === true;
 // In sparse topologies (browser/relay), peers can learn about replicators via broadcast
 // replication announcements without having a direct connection that emits unsubscribe
 // on abrupt churn. Probe conservatively so a single missed ACK does not evict a
@@ -7171,10 +7169,13 @@ export class SharedLog<
 				? async (cid) => {
 						// Best-effort directory announce for "get without remote.from" workflows.
 						try {
-							await fanoutService.announceProvider(blockProviderNamespace(cid), {
-								ttlMs: 120_000,
-								bootstrapMaxPeers: 2,
-							});
+							await fanoutService.announceProvider(
+								blockProviderNamespace(cid),
+								{
+									ttlMs: 120_000,
+									bootstrapMaxPeers: 2,
+								},
+							);
 						} catch {
 							// ignore announce failures
 						}
@@ -7215,13 +7216,13 @@ export class SharedLog<
 				>();
 				const selfReplicating = await this.isReplicating();
 				for (const [hash, value] of map) {
-						const checkedPruneLeaders =
-							await this.revalidateCheckedPruneOwnership({
-								hash,
-								entry: value.entry,
-								leaders: value.leaders,
-								selfReplicating,
-							});
+					const checkedPruneLeaders =
+						await this.revalidateCheckedPruneOwnership({
+							hash,
+							entry: value.entry,
+							leaders: value.leaders,
+							selfReplicating,
+						});
 					if (checkedPruneLeaders.localLeader) {
 						const preserveRetry = this._checkedPrune.hasRetry(hash);
 						await this.cancelCheckedPruneForLocalLeader(hash, {
@@ -8443,7 +8444,10 @@ export class SharedLog<
 	): string[] | undefined {
 		this.onEntryAddedHash(appendFacts.hash, materializeEntry);
 		const removedHashes = options?.removedHashes;
-		if (removed.length === 0 && (!removedHashes || removedHashes.length === 0)) {
+		if (
+			removed.length === 0 &&
+			(!removedHashes || removedHashes.length === 0)
+		) {
 			return undefined;
 		}
 		const deferredCoordinateDeleteHashes: string[] = [];
@@ -8599,7 +8603,9 @@ export class SharedLog<
 			let native = false;
 			let nativeMode: "entry-v0" | "signable" | undefined;
 			let verified: boolean[] | undefined;
-			if (signaturesToVerify.length >= NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES) {
+			if (
+				signaturesToVerify.length >= NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES
+			) {
 				try {
 					verified =
 						await verifyEntryV0Ed25519BatchFromEntries(signaturesToVerify);
@@ -9027,25 +9033,25 @@ export class SharedLog<
 				// leaving stale replication segments on remotes (flaky join/leave tests).
 				// Also ensure close is bounded even when shard overlays are mid-reconcile.
 				const abort = new AbortController();
-					const abortTimer = setTimeout(() => {
-						try {
-							abort.abort(
-								new TimeoutError("shared-log close replication reset timed out"),
-							);
-						} catch {
-							abort.abort();
-						}
-					}, 2_000);
+				const abortTimer = setTimeout(() => {
 					try {
-						await this.rpc
-							.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-								priority: CONVERGENCE_MESSAGE_PRIORITY,
-								signal: abort.signal,
-							})
-							.catch(() => {});
-					} finally {
-						clearTimeout(abortTimer);
+						abort.abort(
+							new TimeoutError("shared-log close replication reset timed out"),
+						);
+					} catch {
+						abort.abort();
 					}
+				}, 2_000);
+				try {
+					await this.rpc
+						.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+							priority: CONVERGENCE_MESSAGE_PRIORITY,
+							signal: abort.signal,
+						})
+						.catch(() => {});
+				} finally {
+					clearTimeout(abortTimer);
+				}
 			}
 		} catch {
 			// ignore: close should be resilient even if we were never fully started
@@ -9208,7 +9214,9 @@ export class SharedLog<
 
 				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
-						heads.length === 1 ? getExchangeHeadHash(heads[0]!) : "#" + heads.length
+						heads.length === 1
+							? getExchangeHeadHash(heads[0]!)
+							: "#" + heads.length
 					}, logId: ${this.log.idString}`,
 				);
 
@@ -9279,9 +9287,7 @@ export class SharedLog<
 						receiveReplicaCounts.set(entry.hash, replicas);
 						return replicas;
 					};
-					const decodeReceiveHeadReplicaCount = (
-						head: EntryWithRefs<any>,
-					) => {
+					const decodeReceiveHeadReplicaCount = (head: EntryWithRefs<any>) => {
 						const hash = getExchangeHeadHash(head);
 						const cached = receiveReplicaCounts.get(hash);
 						if (cached !== undefined) {
@@ -9384,8 +9390,7 @@ export class SharedLog<
 								entries,
 								latestEntry: latestHead.entry,
 								maxReplicasFromHead: plan.maxReplicasFromHead,
-								maxReplicasFromNewEntries:
-									plan.maxReplicasFromNewEntries,
+								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
 								maxMaxReplicas: plan.maxMaxReplicas,
 							});
 						}
@@ -9468,6 +9473,32 @@ export class SharedLog<
 							},
 						});
 					}
+					let immediateReplicatingLeaderPlans: EntryLeaderPlan<R>[] | undefined;
+					let immediateReplicatingLeaderPlanHits = 0;
+					if (isReplicating && receiveGroups.length > 0) {
+						const immediateLeaderStartedAt = syncProfileStart(syncProfile);
+						const immediateLeaderItems = receiveGroups.map((group) => ({
+							entry: group.latestEntry,
+							replicas: group.maxMaxReplicas,
+							options: { roleAge: 0, persist: false as const },
+						}));
+						if (this.canPlanNativeEntryLeaderBatch(immediateLeaderItems)) {
+							immediateReplicatingLeaderPlans =
+								await this.planEntryLeaderBatch(immediateLeaderItems);
+						}
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, immediateLeaderStartedAt, {
+								name: "sharedLog.receive.immediateLeaderPlan",
+								component: "shared-log",
+								entries: filteredHeads.length,
+								count: immediateReplicatingLeaderPlans?.length ?? 0,
+								messages: 1,
+								details: {
+									nativeBatch: immediateReplicatingLeaderPlans !== undefined,
+								},
+							});
+						}
+					}
 
 					const notifyStartedAt = syncProfileStart(syncProfile);
 					if (this.syncronizer.onReceivedEntryHashes) {
@@ -9501,45 +9532,59 @@ export class SharedLog<
 					}
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
 
-					for (const {
-						gid,
-						entries,
-						latestEntry,
-						maxReplicasFromHead,
-						maxReplicasFromNewEntries,
-						maxMaxReplicas,
-						leaderPlan,
-						isLeader: plannedIsLeader,
-						fromIsLeader: plannedFromIsLeader,
-						leaders: plannedLeaders,
-					} of receiveGroups) {
+					for (
+						let groupIndex = 0;
+						groupIndex < receiveGroups.length;
+						groupIndex++
+					) {
+						const {
+							gid,
+							entries,
+							latestEntry,
+							maxReplicasFromHead,
+							maxReplicasFromNewEntries,
+							maxMaxReplicas,
+							leaderPlan,
+							isLeader: plannedIsLeader,
+							fromIsLeader: plannedFromIsLeader,
+							leaders: plannedLeaders,
+						} = receiveGroups[groupIndex]!;
 						const fn = async () => {
 							let isLeader = false;
 							let fromIsLeader = false;
 							let leaders: LeaderMap | false;
 							if (isReplicating) {
-								leaders = await this._waitForEntryReplicators(
-									latestEntry,
-									maxMaxReplicas,
-									[
+								const immediatePlan =
+									immediateReplicatingLeaderPlans?.[groupIndex];
+								if (immediatePlan?.isLeader) {
+									immediateReplicatingLeaderPlanHits++;
+									leaders = immediatePlan.leaders;
+									isLeader = true;
+									fromIsLeader = leaders.has(contextFromHash);
+								} else {
+									leaders = await this._waitForEntryReplicators(
+										latestEntry,
+										maxMaxReplicas,
+										[
+											{
+												key: this.node.identity.publicKey.hashcode(),
+												replicator: true,
+											},
+										],
 										{
-											key: this.node.identity.publicKey.hashcode(),
-											replicator: true,
+											// we do this here so that we quickly assume leader role (and also so that 'from' is also assumed to be leader)
+											// TODO potential side effects?
+											roleAge: 0,
+											timeout: 2e4,
+											onLeader: (key) => {
+												isLeader =
+													isLeader ||
+													this.node.identity.publicKey.hashcode() === key;
+												fromIsLeader = fromIsLeader || contextFromHash === key;
+											},
 										},
-									],
-									{
-										// we do this here so that we quickly assume leader role (and also so that 'from' is also assumed to be leader)
-										// TODO potential side effects?
-										roleAge: 0,
-										timeout: 2e4,
-										onLeader: (key) => {
-											isLeader =
-												isLeader ||
-												this.node.identity.publicKey.hashcode() === key;
-											fromIsLeader = fromIsLeader || contextFromHash === key;
-										},
-									},
-								);
+									);
+								}
 							} else {
 								if (plannedLeaders) {
 									leaders = plannedLeaders;
@@ -9612,9 +9657,9 @@ export class SharedLog<
 								}
 
 								logger.trace(
-									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
-										this.getEntryGid(entry.entry)
-									}. Because not leader`,
+									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${this.getEntryGid(
+										entry.entry,
+									)}. Because not leader`,
 								);
 							}
 
@@ -9641,6 +9686,11 @@ export class SharedLog<
 							entries: filteredHeads.length,
 							count: joinPlans.length,
 							messages: 1,
+							details: {
+								immediateReplicatingLeaderPlanHits,
+								immediateReplicatingLeaderPlans:
+									immediateReplicatingLeaderPlans?.length ?? 0,
+							},
 						});
 					}
 					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
@@ -9669,8 +9719,7 @@ export class SharedLog<
 									syncProfile,
 									{ decodedReplicaCounts: receiveReplicaCounts },
 								);
-							fallbackCanAppendAlreadyValidated =
-								canAppendAlreadyValidated;
+							fallbackCanAppendAlreadyValidated = canAppendAlreadyValidated;
 						}
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, validateStartedAt, {
@@ -9679,8 +9728,7 @@ export class SharedLog<
 								entries: allToMerge.length,
 								messages: 1,
 								cacheHit:
-									canAppendAlreadyValidated ||
-									nativeCommitCanValidateAppend,
+									canAppendAlreadyValidated || nativeCommitCanValidateAppend,
 								details: {
 									nativeCommitCanValidateAppend,
 									nativeCommitVerifyHashes:
@@ -9716,9 +9764,7 @@ export class SharedLog<
 									this.onEntryAddedHash(hash);
 									continue;
 								}
-								this.onEntryAddedHash(hash, () =>
-									materializeMergedEntry(hash),
-								);
+								this.onEntryAddedHash(hash, () => materializeMergedEntry(hash));
 							}
 						};
 						const preparedAppendFacts: PreparedAppendJoinFacts[] = [];
@@ -9726,8 +9772,7 @@ export class SharedLog<
 							canAppendAlreadyValidated || nativeCommitCanValidateAppend;
 						if (canUsePreparedAppendFacts) {
 							for (const entry of allToMerge) {
-								const prepared =
-									getPreparedRawExchangeAppendFacts(entry);
+								const prepared = getPreparedRawExchangeAppendFacts(entry);
 								if (!prepared) {
 									canUsePreparedAppendFacts = false;
 									preparedAppendFacts.length = 0;
@@ -9782,8 +9827,7 @@ export class SharedLog<
 							: undefined;
 						const preparedAppendCanValidateAppend =
 							canAppendAlreadyValidated ||
-							(nativeCommitCanValidateAppend &&
-								!!nativePreparedJoinCommit);
+							(nativeCommitCanValidateAppend && !!nativePreparedJoinCommit);
 						if (!preparedAppendCanValidateAppend) {
 							canUsePreparedAppendFacts = false;
 						}
@@ -9797,8 +9841,7 @@ export class SharedLog<
 									__peerbitDeferIndexWrite: true,
 									__peerbitOnAppendHashes: onAppendHashes,
 									__peerbitProfile: syncProfile,
-									__peerbitNativePreparedJoinCommit:
-										nativePreparedJoinCommit,
+									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
 										!!nativePreparedJoinCommit &&
 										(nativeCommitVerifyHashes &&
@@ -10091,10 +10134,7 @@ export class SharedLog<
 					} else if (!nativeEntry) {
 						skippedIndexedLookupsForMissingBlocks += 1;
 					}
-					if (
-						(nativeEntry || indexedEntry) &&
-						hasPresentBlock
-					) {
+					if ((nativeEntry || indexedEntry) && hasPresentBlock) {
 						presentEntries += 1;
 						const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 						if (pendingDelete) {
@@ -10103,12 +10143,11 @@ export class SharedLog<
 								indexedEntry?.value ??
 								(await this.log.entryIndex.getShallow(hash))?.value;
 							if (pendingEntry) {
-								const ownership =
-									await this.revalidateCheckedPruneOwnership({
-										hash,
-										entry: pendingEntry,
-										leaders: new Map(),
-									});
+								const ownership = await this.revalidateCheckedPruneOwnership({
+									hash,
+									entry: pendingEntry,
+									leaders: new Map(),
+								});
 								if (ownership.localLeader) {
 									await this.cancelCheckedPruneForLocalLeader(hash);
 									isLeader = true;
@@ -10528,12 +10567,9 @@ export class SharedLog<
 				options?.strict !== true &&
 				(myRanges.length === 0 ||
 					myRanges.some((range) => range.mode === ReplicationIntent.NonStrict));
-			return nativeCoordinateState.countEntryCoordinatesInRanges(
-				myRanges,
-				{
-					includeAssignedToRangeBoundary,
-				},
-			);
+			return nativeCoordinateState.countEntryCoordinatesInRanges(myRanges, {
+				includeAssignedToRangeBoundary,
+			});
 		}
 		const query = createAssignedRangesQuery(
 			myRanges.map((x) => {
@@ -11180,10 +11216,9 @@ export class SharedLog<
 		) {
 			const nativeCoordinates = (
 				this._nativeBackbone ?? this._nativeRangePlanner
-			)?.getGidCoordinates(
-				entry.meta.gid,
-				minReplicas,
-			) as NumberFromType<R>[] | undefined;
+			)?.getGidCoordinates(entry.meta.gid, minReplicas) as
+				| NumberFromType<R>[]
+				| undefined;
 			if (nativeCoordinates) {
 				return nativeCoordinates;
 			}
@@ -11193,10 +11228,9 @@ export class SharedLog<
 			typeof entry === "number" || typeof entry === "bigint"
 				? entry
 				: await this.domain.fromEntry(entry);
-		const nativeGrid = (this._nativeBackbone ?? this._nativeRangePlanner)?.getGrid(
-			cursor,
-			minReplicas,
-		) as NumberFromType<R>[] | undefined;
+		const nativeGrid = (
+			this._nativeBackbone ?? this._nativeRangePlanner
+		)?.getGrid(cursor, minReplicas) as NumberFromType<R>[] | undefined;
 		return (
 			nativeGrid ?? this.indexableDomain.numbers.getGrid(cursor, minReplicas)
 		);
@@ -11233,7 +11267,9 @@ export class SharedLog<
 		if (!indexMetadata) {
 			return backboneMetadata;
 		}
-		return backboneMetadata.map((entry, index) => entry ?? indexMetadata[index]);
+		return backboneMetadata.map(
+			(entry, index) => entry ?? indexMetadata[index],
+		);
 	}
 
 	private async planCurrentNativeRequestPruneLeaderHints(properties: {
@@ -11601,10 +11637,7 @@ export class SharedLog<
 	}): PreparedCoordinatePersistence<R> | false {
 		const assignedToRangeBoundary =
 			properties.plan.assignedToRangeBoundary ??
-			shouldAssignToRangeBoundary(
-				properties.plan.leaders,
-				properties.replicas,
-			);
+			shouldAssignToRangeBoundary(properties.plan.leaders, properties.replicas);
 		const hashNumber = this.getEntryHashNumber(properties.entry);
 		const metaBytes = (properties.entry as EntryWithMetaBytes).getMetaBytes?.();
 		if (metaBytes) {
@@ -12615,10 +12648,14 @@ export class SharedLog<
 	private canPlanNativeHashGid(
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 	): entry is ShallowOrFullEntry<any> | EntryReplicated<R> {
-		return this.domain.type === "hash" && typeof this.getEntryGid(entry) === "string";
+		return (
+			this.domain.type === "hash" && typeof this.getEntryGid(entry) === "string"
+		);
 	}
 
-	private getEntryGid(entry: ShallowOrFullEntry<any> | EntryReplicated<R>): string {
+	private getEntryGid(
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
+	): string {
 		if (entry instanceof Entry) {
 			const rawGid = getPreparedRawExchangeGid(entry);
 			if (rawGid) {
@@ -12628,7 +12665,9 @@ export class SharedLog<
 		return isEntryReplicated(entry) ? entry.gid : entry.meta.gid;
 	}
 
-	private getEntryNext(entry: ShallowOrFullEntry<any> | EntryReplicated<R>): string[] {
+	private getEntryNext(
+		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
+	): string[] {
 		if (entry instanceof Entry) {
 			const rawNext = getPreparedRawExchangeNext(entry);
 			if (rawNext) {
@@ -12718,12 +12757,7 @@ export class SharedLog<
 					gid,
 					replicas,
 					options,
-				)) ??
-				(await this._findLeaderPlanFromHashGid(
-					gid,
-					replicas,
-					options,
-				));
+				)) ?? (await this._findLeaderPlanFromHashGid(gid, replicas, options));
 			if (plan) {
 				coordinates = plan.coordinates as NumberFromType<R>[];
 				leaders = plan.leaders;
@@ -12780,21 +12814,23 @@ export class SharedLog<
 					return !!persist && !persist.prev;
 				});
 			if (canUseNativeReceiveCoordinateBatch) {
-				const nativePlans = nativeReceivePlanner.planReceiveCoordinatesForGidsBatch(
-					{
-						entries: itemArray.map((item) => ({
-							entryHash: item.entry.hash,
-							gid: this.getEntryGid(item.entry),
-							hashNumber: this.getEntryHashNumber(item.entry),
-							nextHashes: this.getEntryNext(item.entry),
-							replicas: item.replicas,
-						})),
-						selfHash: context.selfHash,
-					},
-					this.createNativeLeaderOptions(context, firstItem.options),
-				);
+				const nativePlans =
+					nativeReceivePlanner.planReceiveCoordinatesForGidsBatch(
+						{
+							entries: itemArray.map((item) => ({
+								entryHash: item.entry.hash,
+								gid: this.getEntryGid(item.entry),
+								hashNumber: this.getEntryHashNumber(item.entry),
+								nextHashes: this.getEntryNext(item.entry),
+								replicas: item.replicas,
+							})),
+							selfHash: context.selfHash,
+						},
+						this.createNativeLeaderOptions(context, firstItem.options),
+					);
 				const plans: EntryLeaderPlan<R>[] = [];
-				const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] = [];
+				const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] =
+					[];
 				for (let i = 0; i < itemArray.length; i++) {
 					const item = itemArray[i]!;
 					const nativePlan = nativePlans[i]!;
@@ -12850,7 +12886,8 @@ export class SharedLog<
 			);
 			const selfHash = this.node.identity.publicKey.hashcode();
 			const plans: EntryLeaderPlan<R>[] = [];
-			const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] = [];
+			const persistItems: Parameters<typeof this.persistCoordinatesBatch>[0] =
+				[];
 			for (let i = 0; i < itemArray.length; i++) {
 				const item = itemArray[i]!;
 				const nativePlan = nativePlans[i]!;
@@ -13214,18 +13251,19 @@ export class SharedLog<
 		}
 
 		const context = await this.createLeaderSelectionContext({ roleAge: 0 });
-		const nativePlan = nativeRepairPlanner!.planRepairDispatchForResidentEntries(
-			{
-				pendingModes: properties.pendingModes,
-				pendingPeersByMode,
-				optimisticPeersByMode,
-				fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
-				fullReplicaRepairCandidateCount:
-					properties.fullReplicaRepairCandidateCount,
-				selfHash: properties.selfHash,
-			},
-			this.createNativeLeaderOptions(context),
-		);
+		const nativePlan =
+			nativeRepairPlanner!.planRepairDispatchForResidentEntries(
+				{
+					pendingModes: properties.pendingModes,
+					pendingPeersByMode,
+					optimisticPeersByMode,
+					fullReplicaRepairCandidates: properties.fullReplicaRepairCandidates,
+					fullReplicaRepairCandidateCount:
+						properties.fullReplicaRepairCandidateCount,
+					selfHash: properties.selfHash,
+				},
+				this.createNativeLeaderOptions(context),
+			);
 
 		const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
 		for (const [mode, targets] of nativePlan) {
@@ -13428,7 +13466,9 @@ export class SharedLog<
 		| undefined
 	> {
 		const planner =
-			this._nativeBackbone ?? this._nativeSharedLogState ?? this._nativeRangePlanner;
+			this._nativeBackbone ??
+			this._nativeSharedLogState ??
+			this._nativeRangePlanner;
 		if (!planner) {
 			return undefined;
 		}
@@ -13769,90 +13809,88 @@ export class SharedLog<
 			const minReplicas = decodeReplicas(entry);
 			const deferredPromise: DeferredPromise<void> = pDefer();
 
-				const clear = () => {
-					const pending = this._checkedPrune.getPendingDelete(entry.hash);
-					if (pending?.promise === deferredPromise) {
-						this._checkedPrune.deletePendingDelete(entry.hash, pending);
-					}
-					clearTimeout(timeout);
-				};
+			const clear = () => {
+				const pending = this._checkedPrune.getPendingDelete(entry.hash);
+				if (pending?.promise === deferredPromise) {
+					this._checkedPrune.deletePendingDelete(entry.hash, pending);
+				}
+				clearTimeout(timeout);
+			};
 
-				const resolve = () => {
-					clearTimeout(timeout);
-					this.clearCheckedPruneRetry(entry.hash);
-					cleanupTimer.push(
-						setTimeout(async () => {
-							this.deleteGidPeerHistory(entry.meta.gid);
-							this.removePruneRequestSent(entry.hash);
-							this._checkedPrune.clearConfirmedReplicators(entry.hash);
+			const resolve = () => {
+				clearTimeout(timeout);
+				this.clearCheckedPruneRetry(entry.hash);
+				cleanupTimer.push(
+					setTimeout(async () => {
+						this.deleteGidPeerHistory(entry.meta.gid);
+						this.removePruneRequestSent(entry.hash);
+						this._checkedPrune.clearConfirmedReplicators(entry.hash);
 
-							const ownership =
-								await this.revalidateCheckedPruneOwnership({
+						const ownership = await this.revalidateCheckedPruneOwnership({
+							hash: entry.hash,
+							entry,
+							leaders: this.checkedPruneLeadersToMap(leaders),
+							selfReplicating: true,
+						});
+						if (ownership.localLeader) {
+							clear();
+							if (!explicitTimeout) {
+								this.scheduleCheckedPruneRetry({ entry, leaders });
+							}
+							deferredPromise.reject(
+								new Error("Failed to delete, is leader again"),
+							);
+							return;
+						}
+
+						this._checkedPrune.markRemoving(entry.hash);
+						return this.log
+							.remove(entry, {
+								recursively: true,
+							})
+							.then(() => {
+								clear();
+								this._checkedPrune.markDone(entry.hash);
+								deferredPromise.resolve();
+							})
+							.catch((e) => {
+								clear();
+								this._checkedPrune.markCancelled(entry.hash, {
+									preserveRetry: false,
+								});
+								deferredPromise.reject(e);
+							})
+							.finally(async () => {
+								this.deleteGidPeerHistory(entry.meta.gid);
+								this.removePruneRequestSent(entry.hash);
+								this._checkedPrune.clearConfirmedReplicators(entry.hash);
+								// TODO in the case we become leader again here we need to re-add the entry
+
+								const ownership = await this.revalidateCheckedPruneOwnership({
 									hash: entry.hash,
 									entry,
 									leaders: this.checkedPruneLeadersToMap(leaders),
 									selfReplicating: true,
 								});
-							if (ownership.localLeader) {
-								clear();
-								if (!explicitTimeout) {
-									this.scheduleCheckedPruneRetry({ entry, leaders });
+								if (ownership.localLeader) {
+									logger.error("Unexpected: Is leader after delete");
 								}
-								deferredPromise.reject(
-									new Error("Failed to delete, is leader again"),
-								);
-								return;
-							}
+							});
+					}, this.waitForPruneDelay),
+				);
+			};
 
-							this._checkedPrune.markRemoving(entry.hash);
-							return this.log
-								.remove(entry, {
-									recursively: true,
-								})
-								.then(() => {
-									clear();
-									this._checkedPrune.markDone(entry.hash);
-									deferredPromise.resolve();
-								})
-								.catch((e) => {
-									clear();
-									this._checkedPrune.markCancelled(entry.hash, {
-										preserveRetry: false,
-									});
-									deferredPromise.reject(e);
-								})
-								.finally(async () => {
-									this.deleteGidPeerHistory(entry.meta.gid);
-									this.removePruneRequestSent(entry.hash);
-									this._checkedPrune.clearConfirmedReplicators(entry.hash);
-									// TODO in the case we become leader again here we need to re-add the entry
-
-									const ownership =
-										await this.revalidateCheckedPruneOwnership({
-											hash: entry.hash,
-											entry,
-											leaders: this.checkedPruneLeadersToMap(leaders),
-											selfReplicating: true,
-										});
-									if (ownership.localLeader) {
-										logger.error("Unexpected: Is leader after delete");
-									}
-								});
-						}, this.waitForPruneDelay),
-					);
-				};
-
-				const reject = (e: any) => {
-					clear();
-					const isCheckedPruneTimeout =
-						e instanceof Error &&
-						typeof e.message === "string" &&
-						e.message.startsWith("Timeout for checked pruning");
-					this._checkedPrune.markCancelled(entry.hash, {
-						preserveRetry: !explicitTimeout && isCheckedPruneTimeout,
-					});
-					deferredPromise.reject(e);
-				};
+			const reject = (e: any) => {
+				clear();
+				const isCheckedPruneTimeout =
+					e instanceof Error &&
+					typeof e.message === "string" &&
+					e.message.startsWith("Timeout for checked pruning");
+				this._checkedPrune.markCancelled(entry.hash, {
+					preserveRetry: !explicitTimeout && isCheckedPruneTimeout,
+				});
+				deferredPromise.reject(e);
+			};
 
 			// Checked prune requests can legitimately take longer than a fixed 10s:
 			// - The remote may not have the entry yet and will wait up to `_respondToIHaveTimeout`
