@@ -219,6 +219,9 @@ type NativePeerbitBackboneHandle = {
 		minReplicas: number,
 		maxReplicas?: number,
 	) => NativeBackboneRawReceiveGroupPlanRow[] | undefined;
+	verify_prepared_raw_receive_entries?: (
+		hashes: string[],
+	) => Uint8Array | undefined;
 	commit_prepared_raw_receive_batch: (
 		hashes: string[],
 		heads: Uint8Array,
@@ -2658,6 +2661,20 @@ export class NativeBackboneLogGraph {
 
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
 		return this.native.clear_prepared_raw_receive_entries(iterableToArray(hashes));
+	}
+
+	verifyPreparedRawReceiveEntries(
+		hashes: Iterable<string>,
+	): boolean[] | undefined {
+		const normalized = iterableToArray(hashes);
+		if (normalized.length === 0) {
+			return [];
+		}
+		const verified =
+			this.native.verify_prepared_raw_receive_entries?.(normalized);
+		return verified
+			? Array.from(verified, (value) => value !== 0)
+			: undefined;
 	}
 
 	prepareEntryV0PlainEntryCommit(

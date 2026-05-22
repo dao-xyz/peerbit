@@ -8644,6 +8644,102 @@ export class SharedLog<
 		}
 	}
 
+	private canAppendPreparedRawReceiveBatchWithNativeBackbone(
+		entries: Entry<T>[],
+		profile?: SyncProfileFn,
+		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
+	): boolean | undefined {
+		const verifier =
+			this._nativeBackbone?.graph.verifyPreparedRawReceiveEntries;
+		if (!verifier) {
+			return undefined;
+		}
+		try {
+			const signaturesToVerify: string[] = [];
+			const checkStartedAt = syncProfileStart(profile);
+			let replicaCacheHits = 0;
+			let predecodedReplicaHits = 0;
+			for (const entry of entries) {
+				if (!entry.meta.data) {
+					warn("Received entry without meta data, skipping");
+					return false;
+				}
+				let replicas: number;
+				if (options?.decodedReplicaCounts?.has(entry.hash)) {
+					replicas = options.decodedReplicaCounts.get(entry.hash)!;
+					replicaCacheHits++;
+				} else {
+					const predecodedReplicas =
+						getPreparedRawExchangeRequestedReplicas(entry);
+					if (predecodedReplicas != null) {
+						replicas = predecodedReplicas;
+						predecodedReplicaHits++;
+					} else {
+						replicas = decodeReplicas(entry).getValue(this);
+					}
+				}
+				if (Number.isFinite(replicas) === false) {
+					return false;
+				}
+
+				checkMinReplicasLimit(replicas);
+
+				if (!entry.createdLocally && !hasPreverifiedSignature(entry)) {
+					signaturesToVerify.push(entry.hash);
+				}
+			}
+
+			if (signaturesToVerify.length === 0) {
+				if (profile) {
+					emitSyncProfileDuration(profile, checkStartedAt, {
+						name: "sharedLog.canAppendBatch.metadata",
+						component: "shared-log",
+						entries: entries.length,
+						count: 0,
+						messages: 1,
+						details: { replicaCacheHits, predecodedReplicaHits },
+					});
+				}
+				return true;
+			}
+
+			if (profile) {
+				emitSyncProfileDuration(profile, checkStartedAt, {
+					name: "sharedLog.canAppendBatch.metadata",
+					component: "shared-log",
+					entries: entries.length,
+					count: signaturesToVerify.length,
+					messages: 1,
+					details: { replicaCacheHits, predecodedReplicaHits },
+				});
+			}
+			const verifyStartedAt = syncProfileStart(profile);
+			const verified = verifier.call(
+				this._nativeBackbone!.graph,
+				signaturesToVerify,
+			);
+			if (!verified || verified.length !== signaturesToVerify.length) {
+				return undefined;
+			}
+			if (profile) {
+				emitSyncProfileDuration(profile, verifyStartedAt, {
+					name: "sharedLog.canAppendBatch.verifySignatures",
+					component: "shared-log",
+					entries: signaturesToVerify.length,
+					messages: 1,
+					details: { native: true, mode: "backbone-prepared" },
+				});
+			}
+			return verified.every(Boolean);
+		} catch (error) {
+			if (error instanceof BorshError || error instanceof ReplicationError) {
+				warn("Received payload that could not be decoded, skipping");
+				return false;
+			}
+			return undefined;
+		}
+	}
+
 	private async canSkipLowerLogCanAppendForNetworkJoin(
 		entries: Entry<T>[],
 		profile?: SyncProfileFn,
@@ -8651,6 +8747,15 @@ export class SharedLog<
 	): Promise<boolean> {
 		if (entries.length === 0 || this._logProperties?.canAppend) {
 			return false;
+		}
+		const nativeBackboneValidated =
+			this.canAppendPreparedRawReceiveBatchWithNativeBackbone(
+				entries,
+				profile,
+				options,
+			);
+		if (nativeBackboneValidated !== undefined) {
+			return nativeBackboneValidated;
 		}
 		return this.canAppendBatch(entries, profile, options);
 	}

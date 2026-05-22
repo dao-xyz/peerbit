@@ -12,9 +12,10 @@ use peerbit_indexer_core::schema::{
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
     prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids,
-    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify, LogIndexEntry,
-    NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
-    NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0,
+    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify,
+    verify_entry_v0_ed25519_storage_slices, LogIndexEntry, NativeCommittedEntryFacts,
+    NativeEntryV0PlainBuilder, NativeLogAppendProfile, NativeLogBlockStore, NativeLogIndex,
+    PreparedRawEntryV0,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
@@ -54,6 +55,7 @@ struct PendingRawReceiveEntry {
     storage_bytes: Vec<u8>,
     entry: LogIndexEntry,
     requested_replicas: Option<u32>,
+    signature_verified: bool,
 }
 
 struct PendingRawReceiveGroupPlan {
@@ -780,6 +782,7 @@ impl NativePeerbitBackbone {
                     storage_bytes: entry.storage_bytes,
                     entry: log_entry,
                     requested_replicas: entry.requested_replicas,
+                    signature_verified: entry.signature_verified,
                 },
             );
             out.push(&row);
@@ -878,6 +881,7 @@ impl NativePeerbitBackbone {
                     storage_bytes: entry.storage_bytes,
                     entry: log_entry,
                     requested_replicas: entry.requested_replicas,
+                    signature_verified: entry.signature_verified,
                 },
             );
         }
@@ -987,6 +991,58 @@ impl NativePeerbitBackbone {
         }
 
         Ok(out.into())
+    }
+
+    pub fn verify_prepared_raw_receive_entries(
+        &mut self,
+        hashes: Array,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        if hashes.is_empty() {
+            return Ok(Uint8Array::new_with_length(0).into());
+        }
+        if hashes
+            .iter()
+            .any(|hash| !self.pending_raw_receive_entries.contains_key(hash))
+        {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let mut out = vec![1u8; hashes.len()];
+        let mut verify_positions = Vec::new();
+        let verified = {
+            let mut storage_refs = Vec::new();
+            for (index, hash) in hashes.iter().enumerate() {
+                let pending = self
+                    .pending_raw_receive_entries
+                    .get(hash)
+                    .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                if !pending.signature_verified {
+                    verify_positions.push(index);
+                    storage_refs.push(pending.storage_bytes.as_slice());
+                }
+            }
+            verify_entry_v0_ed25519_storage_slices(&storage_refs).ok()
+        };
+
+        let Some(verified) = verified else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        if verified.len() != verify_positions.len() {
+            return Err(JsValue::from_str(
+                "Expected equal prepared raw receive verify lengths",
+            ));
+        }
+        for (index, flag) in verify_positions.iter().zip(verified.iter()) {
+            out[*index] = *flag;
+            if *flag != 0 {
+                if let Some(pending) = self.pending_raw_receive_entries.get_mut(&hashes[*index]) {
+                    pending.signature_verified = true;
+                }
+            }
+        }
+
+        Ok(Uint8Array::from(out.as_slice()).into())
     }
 
     #[allow(clippy::too_many_arguments)]

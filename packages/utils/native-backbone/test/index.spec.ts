@@ -731,6 +731,12 @@ describe("native peerbit backbone", () => {
 		expect(unverifiedColumns?.[14]).to.deep.equal([
 			String(expectedHashNumber),
 		]);
+		expect(
+			target.graph.verifyPreparedRawReceiveEntries([prepared.hash]),
+		).to.deep.equal([true]);
+		expect(
+			target.graph.verifyPreparedRawReceiveEntries(["missing"]),
+		).to.equal(undefined);
 		expect(() =>
 			target.prepareRawReceiveColumnsBatch([prepared.bytes], ["not-a-cid"]),
 		).to.throw("Expected base58btc CID");

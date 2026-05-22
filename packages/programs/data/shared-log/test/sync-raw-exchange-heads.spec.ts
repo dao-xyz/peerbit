@@ -936,6 +936,7 @@ describe("raw exchange-head sync", () => {
 				(event) => event.name === "sharedLog.canAppendBatch.verifySignatures",
 			);
 			expect(verifyProfile.entries).to.equal(hashes.length);
+			expect(verifyProfile.details.mode).to.equal("backbone-prepared");
 		} finally {
 			await session.stop();
 		}

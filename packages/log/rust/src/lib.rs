@@ -2445,15 +2445,12 @@ pub fn verify_ed25519_batch(
     Ok(Uint8Array::from(out.as_slice()))
 }
 
-#[wasm_bindgen]
-pub fn verify_entry_v0_ed25519_storage_batch(blocks: Array) -> Result<Uint8Array, JsValue> {
-    let len = blocks.length();
-    let mut parsed_signatures = Vec::with_capacity(len as usize);
-    let mut parsed_public_keys = Vec::with_capacity(len as usize);
-    let mut parsed_messages = Vec::with_capacity(len as usize);
-    for i in 0..len {
-        let bytes = required_bytes_from_array(&blocks, i, "entry storage")?;
-        let parsed = parse_plain_entry_v0_storage_signature(&bytes)?;
+pub fn verify_entry_v0_ed25519_storage_slices(blocks: &[&[u8]]) -> Result<Vec<u8>, JsValue> {
+    let mut parsed_signatures = Vec::with_capacity(blocks.len());
+    let mut parsed_public_keys = Vec::with_capacity(blocks.len());
+    let mut parsed_messages = Vec::with_capacity(blocks.len());
+    for bytes in blocks {
+        let parsed = parse_plain_entry_v0_storage_signature(bytes)?;
         validate_signature_lengths(&parsed.signature, &parsed.public_key)?;
 
         let signature_bytes: [u8; 64] = parsed
@@ -2478,10 +2475,10 @@ pub fn verify_entry_v0_ed25519_storage_batch(blocks: Array) -> Result<Uint8Array
         .map(|message| message.as_slice())
         .collect::<Vec<_>>();
     if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
-        return Ok(Uint8Array::from(vec![1u8; len as usize].as_slice()));
+        return Ok(vec![1u8; blocks.len()]);
     }
 
-    let mut out = Vec::with_capacity(len as usize);
+    let mut out = Vec::with_capacity(blocks.len());
     for i in 0..parsed_signatures.len() {
         out.push(
             if parsed_public_keys[i]
@@ -2495,6 +2492,20 @@ pub fn verify_entry_v0_ed25519_storage_batch(blocks: Array) -> Result<Uint8Array
         );
     }
 
+    Ok(out)
+}
+
+#[wasm_bindgen]
+pub fn verify_entry_v0_ed25519_storage_batch(blocks: Array) -> Result<Uint8Array, JsValue> {
+    let mut storage = Vec::with_capacity(blocks.length() as usize);
+    for i in 0..blocks.length() {
+        storage.push(required_bytes_from_array(&blocks, i, "entry storage")?);
+    }
+    let storage_refs = storage
+        .iter()
+        .map(|bytes| bytes.as_slice())
+        .collect::<Vec<_>>();
+    let out = verify_entry_v0_ed25519_storage_slices(&storage_refs)?;
     Ok(Uint8Array::from(out.as_slice()))
 }
 
