@@ -234,49 +234,23 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 {
 	constructor(private readonly context: NativeDocumentBackendContext<T, I>) {}
 
-	async put(
-		doc: T,
-		options?: DocumentPutOptions,
-	): Promise<DocumentPutResult> {
+	async put(doc: T, options?: DocumentPutOptions): Promise<DocumentPutResult> {
 		this.context.assertPlainPutSupported(doc, options);
 		const putOptions = this.context.normalizePutOptions(options);
 		const prepared = this.context.preparePlainPut(doc);
-		let existingLocalContext:
-			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
-			| null
-			| undefined;
-		let existingHead: string | undefined;
-		if (!putOptions?.unique) {
-			existingLocalContext =
-				(await this.context.getLocalIndexedContext(prepared.key)) || null;
-			existingHead = existingLocalContext?.value.__context.head;
-		}
-
-		const indexedContextNext = existingHead
-			? this.context.nextFromIndexedContext(existingHead, existingLocalContext)
-			: undefined;
-		const next = existingHead
-			? indexedContextNext
-				? [indexedContextNext]
-				: [await this.context.resolveEntry(existingHead)]
-			: [];
-		if (next.some((entry) => !entry)) {
-			throw this.context.nativeModeError(
-				"requires resolving existing document heads",
-			);
-		}
+		const useNativeExistingDocumentContext = !putOptions?.unique;
 
 		const documentAppendCommit = await this.context.commitNativeDocumentAppend({
 			document: prepared.document,
 			key: prepared.key,
 			documentBytes: prepared.encodedDocument,
 			operationPayloadBytes: prepared.operationPayloadBytes,
-			next: next as Entry<Operation>[] | ShallowEntry[],
+			next: [],
 			skipMissingNextJoin: true,
 			resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
 			options: putOptions,
 			unique: putOptions?.unique,
-			existing: existingLocalContext,
+			useNativeExistingDocumentContext,
 		});
 		await this.context.handlePreparedPlainPutCommit(documentAppendCommit);
 		this.context.keepEntry(documentAppendCommit.append.hash);
@@ -345,6 +319,13 @@ type LocalAppendCommitFacts = {
 	coordinateFields?: NativeDocumentCoordinateFacts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: {
+		created: bigint;
+		modified: bigint;
+		head: string;
+		gid: string;
+		size: number;
+	};
 };
 
 type NativeDocumentAppendResult = {
@@ -478,6 +459,7 @@ type NativeDocumentAppendCommitInput<
 	skipMissingNextJoin: boolean;
 	resolveTrimmedEntries: boolean;
 	options?: DocumentPutOptions;
+	useNativeExistingDocumentContext?: boolean;
 };
 
 type NativeDocumentAppendManyCommitInput<T, I extends Record<string, any>> = {
@@ -695,9 +677,7 @@ export class Documents<
 		}
 
 		if (unsupported.length > 0) {
-			throw this.nativeModeError(
-				`does not support ${unsupported.join(", ")}`,
-			);
+			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
 		}
 	}
 
@@ -710,7 +690,9 @@ export class Documents<
 				"requires an attached native backbone document index",
 			);
 		}
-		if (!this._index.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()) {
+		if (
+			!this._index.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()
+		) {
 			throw this.nativeModeError(
 				"requires a native-compatible document index transform",
 			);
@@ -796,9 +778,7 @@ export class Documents<
 			unsupported.push("program-valued document type");
 		}
 		if (unsupported.length > 0) {
-			throw this.nativeModeError(
-				`does not support ${unsupported.join(", ")}`,
-			);
+			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
 		}
 		if (!this.canPerformAllowsPlainPutFastPath(doc)) {
 			throw this.nativeModeError("canPerform policy rejected this document");
@@ -1798,6 +1778,8 @@ export class Documents<
 					skipMissingNextJoin: input.skipMissingNextJoin,
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
 					payloadData: input.operationPayloadBytes,
+					useNativeExistingDocumentContext:
+						input.useNativeExistingDocumentContext,
 					...(nativeDocumentIndexCommit
 						? {
 								nativeBackboneDocumentIndex:
@@ -1826,7 +1808,9 @@ export class Documents<
 				};
 				if (input.operation) {
 					if (this.isNativeMode()) {
-						throw this.nativeModeError("requires payload-backed put operations");
+						throw this.nativeModeError(
+							"requires payload-backed put operations",
+						);
 					}
 					return mapMaybePromise(
 						this.log.appendLocallyPrepared(
@@ -2027,7 +2011,7 @@ export class Documents<
 				{
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
 				},
-		);
+			);
 		if (!appended) {
 			if (this.isNativeMode()) {
 				throw this.nativeModeError(
@@ -2044,7 +2028,8 @@ export class Documents<
 				appendCommit: appended.appendCommits[index]!,
 			},
 		}));
-		const commits = await this.createDocumentAppendCommitFactsBatch(appendInputs);
+		const commits =
+			await this.createDocumentAppendCommitFactsBatch(appendInputs);
 		if (this.isNativeMode()) {
 			for (const commit of commits) {
 				this.assertNativeModeDocumentAppendCommit(commit);
@@ -2063,8 +2048,29 @@ export class Documents<
 		nativeBackboneDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
 	): MaybePromise<NativeDocumentAppendTransaction<T, I>> {
 		const append = appended.appendCommit;
+		const nativePreviousContext =
+			append.documentPreviousContext == null
+				? undefined
+				: new Context(append.documentPreviousContext);
+		const nativePreviousIndexedContext = nativePreviousContext
+			? ({
+					id: input.key,
+					value: {
+						__context: nativePreviousContext,
+					} as IndexedContextOnly<I>,
+				} satisfies indexerTypes.IndexedResult<IndexedContextOnly<I>>)
+			: undefined;
+		const inputWithExisting =
+			input.existing === undefined && nativePreviousIndexedContext
+				? {
+						...input,
+						existing: nativePreviousIndexedContext,
+					}
+				: input;
 		const existing =
-			input.unique || input.existing === null ? null : input.existing;
+			inputWithExisting.unique || inputWithExisting.existing === null
+				? null
+				: inputWithExisting.existing;
 		const contextInput = {
 			existingCreated: existing?.value.__context.created,
 			modified: append.wallTime,
@@ -2074,7 +2080,7 @@ export class Documents<
 		};
 		if (append.nativeBackboneDocumentIndexCommitted) {
 			return this.createDocumentAppendCommitFactsWithLazyContext(
-				input,
+				inputWithExisting,
 				appended,
 				contextInput,
 				nativeBackboneDocumentIndex,
@@ -2083,7 +2089,7 @@ export class Documents<
 		const contextPlan = tryPlanDocumentContext(contextInput);
 		if (contextPlan) {
 			return this.createDocumentAppendCommitFactsWithContext(
-				input,
+				inputWithExisting,
 				appended,
 				contextPlan,
 				nativeBackboneDocumentIndex,
@@ -2091,7 +2097,7 @@ export class Documents<
 		}
 		return planDocumentContext(contextInput).then((plannedContext) =>
 			this.createDocumentAppendCommitFactsWithContext(
-				input,
+				inputWithExisting,
 				appended,
 				plannedContext,
 				nativeBackboneDocumentIndex,
@@ -2195,8 +2201,7 @@ export class Documents<
 				appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
 			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
 				? {
-						valuePrefixBytes:
-							nativeBackboneDocumentIndex.valuePrefixBytes,
+						valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
 						projection: nativeBackboneDocumentIndex.projection,
 						indexable: nativeBackboneDocumentIndex.indexable,
 						getIndexable: nativeBackboneDocumentIndex.getIndexable,
@@ -2901,9 +2906,8 @@ export class Documents<
 			await this._index.delMany(deleteKeys);
 			return handled;
 		}
-		const indexedByHead = await this._index.getIdentityIndexedByHeads(
-			removedHashes,
-		);
+		const indexedByHead =
+			await this._index.getIdentityIndexedByHeads(removedHashes);
 		if (!indexedByHead) {
 			return new Set();
 		}

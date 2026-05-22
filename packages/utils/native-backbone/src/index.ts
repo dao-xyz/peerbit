@@ -1114,6 +1114,30 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
 	prepare_plain_committed_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -1243,6 +1267,14 @@ export type NativeBackboneCoordinatePlan = {
 	coordinateStrings: string[];
 	assignedToRangeBoundary: boolean;
 	requestedReplicas: number;
+};
+
+export type NativeBackboneDocumentContextFacts = {
+	created: bigint;
+	modified: bigint;
+	head: string;
+	gid: string;
+	size: number;
 };
 
 export type NativeBackboneCoordinateFields = NativeBackboneCoordinatePlan & {
@@ -1461,6 +1493,7 @@ export type NativeBackboneAppendInput = {
 		existingCreated?: bigint | number | string;
 		byteElementIndexLimit?: number;
 		deleteTrimmedHeads?: boolean;
+		useLatestContext?: boolean;
 	};
 };
 
@@ -1477,6 +1510,7 @@ export type NativeBackboneAppendResult = {
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: NativeBackboneDocumentContextFacts;
 };
 
 export type NativeBackboneStorageAppendResult = {
@@ -1488,6 +1522,7 @@ export type NativeBackboneStorageAppendResult = {
 	trimmed: NativeBackboneTrimmedEntry[];
 	trimmedHashes?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: NativeBackboneDocumentContextFacts;
 };
 
 type NativeBackboneLogGraphOptions = {
@@ -1897,6 +1932,28 @@ const appendCoordinatePlanFromRow = (
 	};
 };
 
+const documentContextFactsFromRow = (
+	row: unknown[] | undefined,
+): NativeBackboneDocumentContextFacts | undefined => {
+	if (!row) {
+		return undefined;
+	}
+	const [created, modified, head, gid, size] = row as [
+		string,
+		string,
+		string,
+		string,
+		number,
+	];
+	return {
+		created: BigInt(created),
+		modified: BigInt(modified),
+		head,
+		gid,
+		size,
+	};
+};
+
 const coordinateFieldsFromRow = (
 	resolution: RangeResolution,
 	row: unknown[],
@@ -2164,6 +2221,7 @@ const storageAppendResultFromRow = (
 		trimRows,
 		trimHashRows,
 		documentTrimmedHeadsProcessed,
+		documentPreviousContextRow,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -2173,6 +2231,7 @@ const storageAppendResultFromRow = (
 		unknown[],
 		unknown[] | undefined,
 		boolean | undefined,
+		unknown[] | undefined,
 	];
 	return {
 		entry: storageFactsEntryFromRow(entryRow),
@@ -2182,6 +2241,9 @@ const storageAppendResultFromRow = (
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
 		documentTrimmedHeadsProcessed,
+		documentPreviousContext: documentContextFactsFromRow(
+			documentPreviousContextRow,
+		),
 	};
 };
 
@@ -2198,6 +2260,7 @@ const committedStorageAppendResultFromRow = (
 		trimRows,
 		trimHashRows,
 		documentTrimmedHeadsProcessed,
+		documentPreviousContextRow,
 	] = row as [
 		unknown[],
 		unknown[] | undefined,
@@ -2207,6 +2270,7 @@ const committedStorageAppendResultFromRow = (
 		unknown[],
 		unknown[] | undefined,
 		boolean | undefined,
+		unknown[] | undefined,
 	];
 	return {
 		entry: committedStorageFactsEntryFromRow(entryRow),
@@ -2216,6 +2280,9 @@ const committedStorageAppendResultFromRow = (
 		coordinate: appendCoordinatePlanFromRow(resolution, coordinateRow),
 		...trimmedRowsAndHashesResult(trimRows, trimHashRows),
 		documentTrimmedHeadsProcessed,
+		documentPreviousContext: documentContextFactsFromRow(
+			documentPreviousContextRow,
+		),
 	};
 };
 
@@ -2736,7 +2803,9 @@ export class NativeBackboneLogGraph {
 	}
 
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
-		return this.native.clear_prepared_raw_receive_entries(iterableToArray(hashes));
+		return this.native.clear_prepared_raw_receive_entries(
+			iterableToArray(hashes),
+		);
 	}
 
 	verifyPreparedRawReceiveEntries(
@@ -2748,9 +2817,7 @@ export class NativeBackboneLogGraph {
 		}
 		const verified =
 			this.native.verify_prepared_raw_receive_entries?.(normalized);
-		return verified
-			? Array.from(verified, (value) => value !== 0)
-			: undefined;
+		return verified ? Array.from(verified, (value) => value !== 0) : undefined;
 	}
 
 	prepareEntryV0PlainEntryCommit(
@@ -3118,7 +3185,7 @@ export class NativeBackboneLogGraph {
 				cutCheck?.gid,
 				cutCheck?.wallTime == null ? undefined : BigInt(cutCheck.wallTime),
 				cutCheck?.logical,
-		);
+			);
 		return { skip, missingParents, cutChecked, coveredByCut };
 	}
 
@@ -3584,7 +3651,9 @@ export class NativePeerbitBackbone {
 	}
 
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
-		return this.native.clear_prepared_raw_receive_entries(iterableToArray(hashes));
+		return this.native.clear_prepared_raw_receive_entries(
+			iterableToArray(hashes),
+		);
 	}
 
 	planPreparedRawReceiveGroups(
@@ -4617,6 +4686,32 @@ export class NativePeerbitBackbone {
 	): NativeBackboneAppendResult {
 		const baseArgs = nativeStorageAppendArgs(input);
 		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
+		if (input.documentIndex?.useLatestContext && documentIndexArgs) {
+			const row =
+				this.native.prepare_plain_committed_storage_append_document_index_latest_transaction(
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					input.replicas,
+					input.roleAgeMs ?? 0,
+					integerString(input.now ?? Date.now()),
+					input.selfHash ?? "",
+					input.selfReplicating ?? true,
+					input.resolveTrimmedEntries !== false,
+					input.documentIndex.key,
+					input.documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
+					input.documentIndex.byteElementIndexLimit ?? 0,
+					input.documentIndex.deleteTrimmedHeads === true,
+					input.documentIndex.projection?.plan,
+					input.documentIndex.projection?.encodedDocument,
+					input.documentIndex.projection?.signer,
+					input.trimLengthTo,
+				);
+			return committedStorageAppendResultFromRow(this.resolution, row);
+		}
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs

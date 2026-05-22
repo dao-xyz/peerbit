@@ -51,11 +51,11 @@ import {
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
+	NativeBackboneAppendProfile,
 	NativeBackboneCoordinateCommitColumns,
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
-	NativeBackboneAppendProfile,
 	NativeBackboneLogCommitEntry,
 	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneSimpleDocumentProjectionPlan,
@@ -422,6 +422,13 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	coordinateFields?: SharedLogCoordinateNativeFields<R>;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: {
+		created: bigint;
+		modified: bigint;
+		head: string;
+		gid: string;
+		size: number;
+	};
 };
 
 type NativeBackboneDocumentIndexCommitInput = {
@@ -435,6 +442,7 @@ type NativeBackboneDocumentIndexCommitInput = {
 	existingCreated?: bigint;
 	byteElementIndexLimit?: number;
 	deleteTrimmedHeads?: boolean;
+	useLatestContext?: boolean;
 };
 
 type NativeBackboneDocumentIndexAppendFacts = {
@@ -5084,6 +5092,7 @@ export class SharedLog<
 			resolveTrimmedEntries?: boolean;
 			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
 			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+			useNativeExistingDocumentContext?: boolean;
 		},
 	) {
 		return this.appendLocallyPrepared(undefined as T, options, {
@@ -5102,6 +5111,7 @@ export class SharedLog<
 			resolveTrimmedEntries?: boolean;
 			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
 			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+			useNativeExistingDocumentContext?: boolean;
 		},
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
@@ -5171,6 +5181,7 @@ export class SharedLog<
 					resolveTrimmedEntries?: boolean;
 					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
 					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+					useNativeExistingDocumentContext?: boolean;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -5206,6 +5217,7 @@ export class SharedLog<
 					resolveTrimmedEntries?: boolean;
 					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
 					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+					useNativeExistingDocumentContext?: boolean;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -5235,7 +5247,8 @@ export class SharedLog<
 		if (
 			options?.replicate === false &&
 			hasDocumentIndexCommit &&
-			(appendOptions.meta?.next?.length ?? 0) > 0
+			((appendOptions.meta?.next?.length ?? 0) > 0 ||
+				properties?.useNativeExistingDocumentContext === true)
 		) {
 			return this.appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
 				payloadData,
@@ -5261,7 +5274,8 @@ export class SharedLog<
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 		};
-		nativeCommitProperties.skipMissingNextJoin = properties?.skipMissingNextJoin;
+		nativeCommitProperties.skipMissingNextJoin =
+			properties?.skipMissingNextJoin;
 		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
 			undefined as T,
 			appendOptions,
@@ -5364,6 +5378,7 @@ export class SharedLog<
 					resolveTrimmedEntries?: boolean;
 					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
 					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+					useNativeExistingDocumentContext?: boolean;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -5429,33 +5444,55 @@ export class SharedLog<
 				const appendInputWithDocumentIndex = nativeBackboneDocumentIndex
 					? {
 							...appendInput,
-							documentIndex: nativeBackboneDocumentIndex,
+							documentIndex: {
+								...nativeBackboneDocumentIndex,
+								useLatestContext:
+									properties?.useNativeExistingDocumentContext === true,
+							},
 						}
 					: appendInput;
-				backboneAppend =
-					next.length === 0
-						? commitBlocksInBackbone
-							? nativeBackboneDocumentIndex &&
-								properties?.resolveTrimmedEntries === false
-								? backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
-										{
-											...appendInput,
-											documentIndex: nativeBackboneDocumentIndex,
-										},
-									)
-								: backbone.preparePlainCommittedNoNextStorageAppendTransaction(
-										appendInputWithDocumentIndex,
-									)
-							: backbone.preparePlainNoNextStorageAppendTransaction(
-									appendInputWithDocumentIndex,
-								)
-						: commitBlocksInBackbone
-							? backbone.preparePlainCommittedStorageAppendTransaction(
-									appendInputWithDocumentIndex,
-								)
-							: backbone.preparePlainStorageAppendTransaction(
+				if (next.length === 0) {
+					if (commitBlocksInBackbone) {
+						if (
+							nativeBackboneDocumentIndex &&
+							properties?.useNativeExistingDocumentContext === true
+						) {
+							backboneAppend =
+								backbone.preparePlainCommittedStorageAppendTransaction(
 									appendInputWithDocumentIndex,
 								);
+						} else if (
+							nativeBackboneDocumentIndex &&
+							properties?.resolveTrimmedEntries === false
+						) {
+							backboneAppend =
+								backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+									{
+										...appendInput,
+										documentIndex: nativeBackboneDocumentIndex,
+									},
+								);
+						} else {
+							backboneAppend =
+								backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								);
+						}
+					} else {
+						backboneAppend =
+							backbone.preparePlainNoNextStorageAppendTransaction(
+								appendInputWithDocumentIndex,
+							);
+					}
+				} else {
+					backboneAppend = commitBlocksInBackbone
+						? backbone.preparePlainCommittedStorageAppendTransaction(
+								appendInputWithDocumentIndex,
+							)
+						: backbone.preparePlainStorageAppendTransaction(
+								appendInputWithDocumentIndex,
+							);
+				}
 				if (nativeBackboneDocumentIndex) {
 					nativeBackboneDocumentIndexCommitted = true;
 					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
@@ -5464,6 +5501,7 @@ export class SharedLog<
 					properties?.resolveTrimmedEntries === false;
 				return {
 					...backboneAppend.entry,
+					gid: backboneAppend.coordinate.gid,
 					getBytes: commitBlocksInBackbone
 						? (hash: string) => backbone.blocks.get(hash)
 						: undefined,
@@ -5473,6 +5511,7 @@ export class SharedLog<
 					trimmedEntryHashes: useTrimmedHashesOnly
 						? backboneAppend.trimmedHashes
 						: undefined,
+					documentPreviousContext: backboneAppend.documentPreviousContext,
 				};
 			};
 			const hasKnownNoNext =
@@ -5555,6 +5594,8 @@ export class SharedLog<
 						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
 							backboneAppend!.documentTrimmedHeadsProcessed;
 					}
+					appendCommit.documentPreviousContext =
+						prepared.documentPreviousContext;
 					return {
 						get entry() {
 							return prepared.entry;

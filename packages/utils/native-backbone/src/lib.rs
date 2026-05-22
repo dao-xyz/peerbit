@@ -77,6 +77,7 @@ struct DocumentIndexAppendCommit {
     existing_created: Option<u64>,
     byte_element_index_limit: usize,
     delete_trimmed_heads: bool,
+    previous_context: Option<DocumentContextFacts>,
 }
 
 #[derive(Clone, Copy)]
@@ -85,6 +86,15 @@ struct DocumentContextFields {
     modified: u32,
     head: u32,
     gid: u32,
+    size: u32,
+}
+
+#[derive(Clone)]
+struct DocumentContextFacts {
+    created: u64,
+    modified: u64,
+    head: String,
+    gid: String,
     size: u32,
 }
 
@@ -556,11 +566,21 @@ impl NativePeerbitBackbone {
     }
 
     pub fn document_context(&self, key: &str) -> Result<JsValue, JsValue> {
+        Ok(self
+            .document_context_facts_by_key(key)?
+            .map(|context| document_context_facts_to_row(&context).into())
+            .unwrap_or(JsValue::UNDEFINED))
+    }
+
+    fn document_context_facts_by_key(
+        &self,
+        key: &str,
+    ) -> Result<Option<DocumentContextFacts>, JsValue> {
         let Some(fields) = self.document_context_fields else {
-            return Ok(JsValue::UNDEFINED);
+            return Ok(None);
         };
         let Some(document_fields) = self.document_index.document_fields_by_id(key) else {
-            return Ok(JsValue::UNDEFINED);
+            return Ok(None);
         };
         let created = document_u64_field(document_fields, fields.created)
             .ok_or_else(|| JsValue::from_str("Missing document context created field"))?;
@@ -573,14 +593,13 @@ impl NativePeerbitBackbone {
         let size = document_u64_field(document_fields, fields.size)
             .and_then(|value| u32::try_from(value).ok())
             .ok_or_else(|| JsValue::from_str("Missing document context size field"))?;
-
-        let row = Array::new();
-        row.push(&JsValue::from_str(&created.to_string()));
-        row.push(&JsValue::from_str(&modified.to_string()));
-        row.push(&JsValue::from_str(&head));
-        row.push(&JsValue::from_str(&gid));
-        row.push(&JsValue::from_f64(size as f64));
-        Ok(row.into())
+        Ok(Some(DocumentContextFacts {
+            created,
+            modified,
+            head,
+            gid,
+            size,
+        }))
     }
 
     pub fn document_query(
@@ -3391,6 +3410,7 @@ impl NativePeerbitBackbone {
                 existing_created: None,
                 byte_element_index_limit: document_byte_element_index_limit,
                 delete_trimmed_heads: false,
+                previous_context: None,
             });
             self.put_document_index_for_append(
                 document_index_commit,
@@ -4123,6 +4143,74 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_storage_append_document_index_latest_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        fallback_gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        resolve_trimmed_entries: bool,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let previous_context = self.document_context_facts_by_key(&document_key)?;
+        let gid = previous_context
+            .as_ref()
+            .map(|context| context.gid.clone())
+            .unwrap_or(fallback_gid);
+        let next_hashes = previous_context
+            .as_ref()
+            .map(|context| vec![context.head.clone()])
+            .unwrap_or_default();
+        let mut document_index_commit = document_index_append_commit(
+            document_key,
+            document_value_prefix_bytes,
+            previous_context
+                .as_ref()
+                .map(|context| context.created.to_string())
+                .unwrap_or_default(),
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        document_index_commit.previous_context = previous_context;
+        self.prepare_plain_storage_append_transaction_inner(
+            wall_time,
+            logical,
+            gid,
+            next_hashes,
+            entry_type,
+            meta_data,
+            payload_data,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            resolve_trimmed_entries,
+            trim_length_to,
+            true,
+            Some(document_index_commit),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_committed_storage_append_transaction_trim(
         &mut self,
         wall_time: u64,
@@ -4456,6 +4544,9 @@ impl NativePeerbitBackbone {
         let delete_trimmed_document_heads = document_index_commit
             .as_ref()
             .is_some_and(|commit| commit.delete_trimmed_heads);
+        let previous_document_context = document_index_commit
+            .as_ref()
+            .and_then(|commit| commit.previous_context.clone());
         let (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes) = if commit_blocks {
             let input_copy_started = profile_enabled.then(js_sys::Date::now);
             let meta_data = optional_bytes_from_js(meta_data);
@@ -4640,6 +4731,12 @@ impl NativePeerbitBackbone {
         out.push(&trim_rows);
         out.push(&strings_to_array(trim_hashes_for_result));
         out.push(&JsValue::from_bool(document_trimmed_heads_processed));
+        out.push(
+            &previous_document_context
+                .as_ref()
+                .map(|context| document_context_facts_to_row(context).into())
+                .unwrap_or(JsValue::UNDEFINED),
+        );
         if let Some(started) = result_row_started {
             self.append_profile.result_row_ms += js_sys::Date::now() - started;
         }
@@ -5078,6 +5175,7 @@ fn document_index_append_commit(
         )?,
         byte_element_index_limit,
         delete_trimmed_heads,
+        previous_context: None,
     })
 }
 
@@ -5107,6 +5205,7 @@ fn document_index_cached_projection_append_commit(
         )?,
         byte_element_index_limit,
         delete_trimmed_heads,
+        previous_context: None,
     })
 }
 
@@ -5164,6 +5263,16 @@ fn document_entry_to_row(key: &str, value: &[u8]) -> Array {
     let row = Array::new();
     row.push(&JsValue::from_str(key));
     row.push(&Uint8Array::from(value));
+    row
+}
+
+fn document_context_facts_to_row(context: &DocumentContextFacts) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(&context.created.to_string()));
+    row.push(&JsValue::from_str(&context.modified.to_string()));
+    row.push(&JsValue::from_str(&context.head));
+    row.push(&JsValue::from_str(&context.gid));
+    row.push(&JsValue::from_f64(context.size as f64));
     row
 }
 

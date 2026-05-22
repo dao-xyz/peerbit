@@ -1098,8 +1098,9 @@ describe("index", () => {
 					expect(secondTransaction?.coordinateFields?.gid).equal(
 						secondTransaction?.append.gid,
 					);
-					expect(secondTransaction?.coordinateFields?.coordinates).to.have
-						.length.greaterThan(0);
+					expect(
+						secondTransaction?.coordinateFields?.coordinates,
+					).to.have.length.greaterThan(0);
 					expect(
 						backboneDocumentHeadLookupSpy.calledWith(
 							nativeFieldPathHash(["__context", "head"]),
@@ -2563,9 +2564,9 @@ describe("index", () => {
 							replicate: false,
 							target: "none",
 						});
-						expect((store.docs as any)._nativeBackboneDocumentIndexEnabled).equal(
-							false,
-						);
+						expect(
+							(store.docs as any)._nativeBackboneDocumentIndexEnabled,
+						).equal(false);
 						expect(nativeCommitSpy.callCount).equal(0);
 						expect((await store.docs.get(doc.id))?.name).equal("compat");
 					} finally {
@@ -2709,7 +2710,7 @@ describe("index", () => {
 							new Document({ id, name: "native-update-2" }),
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
-						expect(storageTransactionSpy.callCount).equal(1);
+						expect(storageTransactionSpy.callCount).equal(2);
 						expect(indexGetSpy?.callCount).equal(0);
 						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
@@ -2848,10 +2849,9 @@ describe("index", () => {
 					});
 					nativeDocs._nativeModeReplicatedOpen = true;
 					const replicatedDefaultOptions = { unique: true };
-					const replicatedNormalized =
-						nativeDocs.normalizeNativeModePutOptions(
-							replicatedDefaultOptions,
-						);
+					const replicatedNormalized = nativeDocs.normalizeNativeModePutOptions(
+						replicatedDefaultOptions,
+					);
 					expect(replicatedNormalized).not.equal(replicatedDefaultOptions);
 					expect(replicatedNormalized).to.include({
 						unique: true,
@@ -2884,8 +2884,7 @@ describe("index", () => {
 					const originalEvaluator = (store.docs as any)
 						._optionCanPerformNativeFastPath;
 					const nativePolicySpy = sinon.spy(() => true);
-					(store.docs as any)._optionCanPerformNativeFastPath =
-						nativePolicySpy;
+					(store.docs as any)._optionCanPerformNativeFastPath = nativePolicySpy;
 					try {
 						await store.docs.put(
 							new Document({ id: uuid(), name: "native-policy-once" }),
@@ -2984,10 +2983,7 @@ describe("index", () => {
 							},
 							canPerform: () => true,
 						}),
-					).to.be.rejectedWith(
-						NativeDocumentModeError,
-						"arbitrary canPerform",
-					);
+					).to.be.rejectedWith(NativeDocumentModeError, "arbitrary canPerform");
 				});
 
 				it("rejects unsupported per-put options in strict native mode", async () => {
@@ -3015,10 +3011,7 @@ describe("index", () => {
 								target: "none",
 								canAppend: () => true,
 							}),
-						).to.be.rejectedWith(
-							NativeDocumentModeError,
-							"per-call canAppend",
-						);
+						).to.be.rejectedWith(NativeDocumentModeError, "per-call canAppend");
 					} finally {
 						await rustSession.stop();
 					}

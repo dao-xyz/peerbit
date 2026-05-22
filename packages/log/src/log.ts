@@ -6,8 +6,8 @@ import {
 	cidifyString,
 } from "@peerbit/blocks-interface";
 import {
-	type Identity,
 	Ed25519Keypair,
+	type Identity,
 	SignatureWithKey,
 	X25519Keypair,
 	randomBytes,
@@ -133,6 +133,13 @@ type PreparedCommitOnlyAppendResult<T> = {
 	appendFacts: PreparedAppendFacts;
 	shallowEntry: ShallowEntry;
 	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: {
+		created: bigint;
+		modified: bigint;
+		head: string;
+		gid: string;
+		size: number;
+	};
 };
 
 type PreparedIndependentAppendBatch = {
@@ -161,12 +168,15 @@ type NativePreparedNoNextCommit = {
 	getBytes?: (hash: string) => Uint8Array | undefined;
 	cid?: string;
 	hash?: string;
+	gid?: string;
+	next?: string[];
 	byteLength: number;
 	metaBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
 	trimmedEntryHashes?: string[];
 	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: PreparedCommitOnlyAppendResult<unknown>["documentPreviousContext"];
 };
 
 type NativeNoNextCommitInput = {
@@ -1097,7 +1107,8 @@ export class Log<T> {
 			return undefined;
 		}
 		const payloadData =
-			properties.payloadData ?? (data == null ? undefined : this._encoding.encoder(data));
+			properties.payloadData ??
+			(data == null ? undefined : this._encoding.encoder(data));
 		if (!payloadData || !hasPutMany(this._storage)) {
 			return undefined;
 		}
@@ -1128,22 +1139,24 @@ export class Log<T> {
 			if (!hash) {
 				return undefined;
 			}
+			const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
+			const effectiveGid = prepared.gid ?? resolvedGid;
 			const shallowEntry = new ShallowEntry({
 				hash,
 				payloadSize: payloadData.byteLength,
 				head: true,
 				meta: new ShallowMeta({
-					gid: resolvedGid,
+					gid: effectiveGid,
 					data: options.meta?.data,
 					clock,
-					next: EMPTY_NEXT_HASHES,
+					next: effectiveNextHashes,
 					type: entryType,
 				}),
 			});
 			const appendFacts: PreparedAppendFacts = {
 				hash,
-				gid: resolvedGid,
-				next: EMPTY_NEXT_HASHES,
+				gid: effectiveGid,
+				next: effectiveNextHashes,
 				wallTime: clock.timestamp.wallTime,
 				logical: clock.timestamp.logical,
 				clockId: clock.id,
@@ -1162,7 +1175,10 @@ export class Log<T> {
 					prepared.bytes ??
 					prepared.getBytes?.(hash) ??
 					(this._storage.get(hash) as Uint8Array | undefined);
-				if (!bytes || typeof (bytes as { then?: unknown }).then === "function") {
+				if (
+					!bytes ||
+					typeof (bytes as { then?: unknown }).then === "function"
+				) {
 					throw new Error("Missing synchronous native append block bytes");
 				}
 				const entry = deserialize(bytes, Entry) as Entry<T>;
@@ -1183,6 +1199,7 @@ export class Log<T> {
 				appendFacts,
 				shallowEntry,
 				documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
+				documentPreviousContext: prepared.documentPreviousContext,
 			});
 			const finishBlocks = ():
 				| PreparedCommitOnlyAppendResult<T>
@@ -1207,7 +1224,7 @@ export class Log<T> {
 				const putResult = this.entryIndex.putNativeCommittedAppendFacts({
 					hash,
 					unique: true,
-					externalNextHashes: EMPTY_NEXT_HASHES,
+					externalNextHashes: effectiveNextHashes,
 					shallowEntry,
 					isHead: true,
 				});
@@ -1262,7 +1279,8 @@ export class Log<T> {
 			return undefined;
 		}
 		const payloadData =
-			properties.payloadData ?? (data == null ? undefined : this._encoding.encoder(data));
+			properties.payloadData ??
+			(data == null ? undefined : this._encoding.encoder(data));
 		if (!payloadData || !hasPutMany(this._storage)) {
 			return undefined;
 		}
@@ -1283,9 +1301,7 @@ export class Log<T> {
 				return undefined;
 			}
 
-			const nextHashes: string[] = knownNoNextAppend
-				? EMPTY_NEXT_HASHES
-				: [];
+			const nextHashes: string[] = knownNoNextAppend ? EMPTY_NEXT_HASHES : [];
 			let nextGid: string | undefined;
 			if (nexts.length > 0) {
 				if ((appendOptions.meta as { gid?: string } | undefined)?.gid) {
@@ -1332,22 +1348,24 @@ export class Log<T> {
 					if (!hash) {
 						return undefined;
 					}
+					const effectiveNextHashes = prepared.next ?? nextHashes;
+					const effectiveGid = prepared.gid ?? resolvedGid;
 					const shallowEntry = new ShallowEntry({
 						hash,
 						payloadSize: payloadData.byteLength,
 						head: true,
 						meta: new ShallowMeta({
-							gid: resolvedGid,
+							gid: effectiveGid,
 							data: appendOptions.meta?.data,
 							clock,
-							next: nextHashes,
+							next: effectiveNextHashes,
 							type: entryType,
 						}),
 					});
 					const appendFacts: PreparedAppendFacts = {
 						hash,
-						gid: resolvedGid,
-						next: nextHashes,
+						gid: effectiveGid,
+						next: effectiveNextHashes,
 						wallTime: clock.timestamp.wallTime,
 						logical: clock.timestamp.logical,
 						clockId: clock.id,
@@ -1366,7 +1384,10 @@ export class Log<T> {
 							prepared.bytes ??
 							prepared.getBytes?.(hash) ??
 							(this._storage.get(hash) as Uint8Array | undefined);
-						if (!bytes || typeof (bytes as { then?: unknown }).then === "function") {
+						if (
+							!bytes ||
+							typeof (bytes as { then?: unknown }).then === "function"
+						) {
 							throw new Error("Missing synchronous native append block bytes");
 						}
 						const entry = deserialize(bytes, Entry) as Entry<T>;
@@ -1388,6 +1409,7 @@ export class Log<T> {
 						shallowEntry,
 						documentTrimmedHeadsProcessed:
 							prepared.documentTrimmedHeadsProcessed,
+						documentPreviousContext: prepared.documentPreviousContext,
 					});
 					const finishBlocks = ():
 						| PreparedCommitOnlyAppendResult<T>
@@ -1433,6 +1455,7 @@ export class Log<T> {
 										shallowEntry,
 										documentTrimmedHeadsProcessed:
 											prepared.documentTrimmedHeadsProcessed,
+										documentPreviousContext: prepared.documentPreviousContext,
 									}));
 								}
 							}
@@ -1454,6 +1477,7 @@ export class Log<T> {
 								shallowEntry,
 								documentTrimmedHeadsProcessed:
 									prepared.documentTrimmedHeadsProcessed,
+								documentPreviousContext: prepared.documentPreviousContext,
 							}));
 						}
 						if (!prepared.trimmedEntries) {
@@ -1464,13 +1488,10 @@ export class Log<T> {
 								prepared.trimmedEntries,
 							);
 						const consumedResult =
-							this.entryIndex.consumeNativeTrimmedEntriesMaybe(
-								trimmedEntries,
-								{
-									skipNextHeadUpdates: true,
-									deleteBlocks: false,
-								},
-							);
+							this.entryIndex.consumeNativeTrimmedEntriesMaybe(trimmedEntries, {
+								skipNextHeadUpdates: true,
+								deleteBlocks: false,
+							});
 						return mapMaybePromise(consumedResult, (removed) => ({
 							get entry() {
 								return materializeEntry();
@@ -1481,6 +1502,7 @@ export class Log<T> {
 							shallowEntry,
 							documentTrimmedHeadsProcessed:
 								prepared.documentTrimmedHeadsProcessed,
+							documentPreviousContext: prepared.documentPreviousContext,
 						}));
 					};
 					const rollback = (error: unknown): never | Promise<never> => {
@@ -1567,16 +1589,16 @@ export class Log<T> {
 		};
 		const finishTrim = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
 			if (nativeAppendChain.trimmedNativeEntries) {
-				const trimmedEntries =
-					this.entryIndex.nativeLogEntriesToShallowEntries(
-						nativeAppendChain.trimmedNativeEntries,
-					);
-				const consumedResult =
-					this.entryIndex.consumeNativeTrimmedEntriesMaybe(trimmedEntries, {
+				const trimmedEntries = this.entryIndex.nativeLogEntriesToShallowEntries(
+					nativeAppendChain.trimmedNativeEntries,
+				);
+				const consumedResult = this.entryIndex.consumeNativeTrimmedEntriesMaybe(
+					trimmedEntries,
+					{
 						skipNextHeadUpdates: true,
-						deleteBlocks:
-							nativeAppendChain.trimmedNativeBlocksDeleted !== true,
-					});
+						deleteBlocks: nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+					},
+				);
 				return mapMaybePromise(consumedResult, (removed) => ({
 					get entry() {
 						return materializeEntry();
@@ -2744,7 +2766,9 @@ export class Log<T> {
 			entries: entries.length,
 			count: heads.size,
 			messages: 1,
-			details: { batchIndependent: options?.__peerbitBatchIndependent === true },
+			details: {
+				batchIndependent: options?.__peerbitBatchIndependent === true,
+			},
 		});
 
 		if (
