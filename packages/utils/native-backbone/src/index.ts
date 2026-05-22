@@ -69,6 +69,13 @@ type NativePeerbitBackboneHandle = {
 		schemaIr: Uint8Array,
 	) => [number, number, number];
 	set_document_context_head_field: (field: number) => void;
+	set_document_context_fields: (
+		created: number,
+		modified: number,
+		head: number,
+		gid: number,
+		size: number,
+	) => void;
 	register_document_projection_plan: (
 		plan: NativeBackboneSimpleDocumentProjectionPlan,
 	) => number;
@@ -97,6 +104,9 @@ type NativePeerbitBackboneHandle = {
 	) => boolean;
 	document_value_bytes: (key: string) => Uint8Array | undefined;
 	document_entry: (key: string) => [string, Uint8Array] | undefined;
+	document_context: (
+		key: string,
+	) => [string, string, string, string, number] | undefined;
 	document_query: (
 		queryBytes: Uint8Array,
 		sortBytes: Uint8Array,
@@ -3733,6 +3743,22 @@ export class NativePeerbitBackbone {
 		this.native.set_document_context_head_field(field);
 	}
 
+	setDocumentContextFields(fields: {
+		created: number;
+		modified: number;
+		head: number;
+		gid: number;
+		size: number;
+	}): void {
+		this.native.set_document_context_fields(
+			fields.created,
+			fields.modified,
+			fields.head,
+			fields.gid,
+			fields.size,
+		);
+	}
+
 	projectDocumentIndexSimple(
 		encodedDocument: Uint8Array,
 		plan: NativeBackboneSimpleDocumentProjectionPlan,
@@ -3796,6 +3822,12 @@ export class NativePeerbitBackbone {
 
 	documentEntry(key: string): NativeBackboneDocumentEntry | undefined {
 		return this.native.document_entry(key);
+	}
+
+	documentContext(
+		key: string,
+	): [string, string, string, string, number] | undefined {
+		return this.native.document_context(key);
 	}
 
 	documentQuery(

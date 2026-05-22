@@ -897,6 +897,18 @@ export class Documents<
 	private getLocalIndexedContext(
 		key: indexerTypes.IdKey,
 	): Promise<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined> {
+		const getContextById = (
+			this._index.index as {
+				getContextById?: (key: indexerTypes.IdKey) => Context | undefined;
+			}
+		).getContextById;
+		const context = getContextById?.call(this._index.index, key);
+		if (context) {
+			return Promise.resolve({
+				id: key,
+				value: { __context: context } as IndexedContextOnly<I>,
+			});
+		}
 		return this._index.index.get(key, {
 			shape: INDEX_CONTEXT_SHAPE,
 		}) as Promise<

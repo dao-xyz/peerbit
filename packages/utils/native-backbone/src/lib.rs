@@ -4,7 +4,9 @@ use peerbit_indexer_core::persistence::{
     decode_journal, decode_key_value_snapshot, encode_journal_delete_record,
     encode_journal_put_record, encode_key_value_snapshot, JournalRecord, JOURNAL_MAGIC,
 };
-use peerbit_indexer_core::planner::{FieldPath, FieldValue, NativeQueryIndex, SumResult};
+use peerbit_indexer_core::planner::{
+    DocumentFields, FieldPath, FieldValue, NativeQueryIndex, SumResult,
+};
 use peerbit_indexer_core::schema::{
     decode_native_schema_ir, extract_encoded_document_fields_from_parts_with_byte_limits,
     NativeSchemaIr,
@@ -44,6 +46,7 @@ pub struct NativePeerbitBackbone {
     document_values: MemoryByteStorage,
     document_schema_ir: Option<NativeSchemaIr>,
     document_context_head_field: Option<u32>,
+    document_context_fields: Option<DocumentContextFields>,
     document_projection_plans: Vec<ParsedProjectionPlan>,
     builder: NativeEntryV0PlainBuilder,
     pending_raw_receive_entries: HashMap<String, PendingRawReceiveEntry>,
@@ -74,6 +77,15 @@ struct DocumentIndexAppendCommit {
     existing_created: Option<u64>,
     byte_element_index_limit: usize,
     delete_trimmed_heads: bool,
+}
+
+#[derive(Clone, Copy)]
+struct DocumentContextFields {
+    created: u32,
+    modified: u32,
+    head: u32,
+    gid: u32,
+    size: u32,
 }
 
 struct ParsedProjectionPlan {
@@ -254,6 +266,7 @@ impl NativePeerbitBackbone {
             document_values: MemoryByteStorage::new(),
             document_schema_ir: None,
             document_context_head_field: None,
+            document_context_fields: None,
             document_projection_plans: Vec::new(),
             builder: NativeEntryV0PlainBuilder::new(clock_id, private_key, public_key)?,
             pending_raw_receive_entries: HashMap::new(),
@@ -457,6 +470,24 @@ impl NativePeerbitBackbone {
         self.document_context_head_field = Some(field);
     }
 
+    pub fn set_document_context_fields(
+        &mut self,
+        created: u32,
+        modified: u32,
+        head: u32,
+        gid: u32,
+        size: u32,
+    ) {
+        self.document_context_head_field = Some(head);
+        self.document_context_fields = Some(DocumentContextFields {
+            created,
+            modified,
+            head,
+            gid,
+            size,
+        });
+    }
+
     pub fn register_document_projection_plan(&mut self, plan: JsValue) -> Result<u32, JsValue> {
         let id = self.document_projection_plans.len();
         if id > u32::MAX as usize {
@@ -522,6 +553,34 @@ impl NativePeerbitBackbone {
             .get(key)
             .map(|value| document_entry_to_row(key, value).into())
             .unwrap_or(JsValue::UNDEFINED)
+    }
+
+    pub fn document_context(&self, key: &str) -> Result<JsValue, JsValue> {
+        let Some(fields) = self.document_context_fields else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        let Some(document_fields) = self.document_index.document_fields_by_id(key) else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        let created = document_u64_field(document_fields, fields.created)
+            .ok_or_else(|| JsValue::from_str("Missing document context created field"))?;
+        let modified = document_u64_field(document_fields, fields.modified)
+            .ok_or_else(|| JsValue::from_str("Missing document context modified field"))?;
+        let head = document_string_field(document_fields, fields.head)
+            .ok_or_else(|| JsValue::from_str("Missing document context head field"))?;
+        let gid = document_string_field(document_fields, fields.gid)
+            .ok_or_else(|| JsValue::from_str("Missing document context gid field"))?;
+        let size = document_u64_field(document_fields, fields.size)
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| JsValue::from_str("Missing document context size field"))?;
+
+        let row = Array::new();
+        row.push(&JsValue::from_str(&created.to_string()));
+        row.push(&JsValue::from_str(&modified.to_string()));
+        row.push(&JsValue::from_str(&head));
+        row.push(&JsValue::from_str(&gid));
+        row.push(&JsValue::from_f64(size as f64));
+        Ok(row.into())
     }
 
     pub fn document_query(
@@ -5106,6 +5165,21 @@ fn document_entry_to_row(key: &str, value: &[u8]) -> Array {
     row.push(&JsValue::from_str(key));
     row.push(&Uint8Array::from(value));
     row
+}
+
+fn document_u64_field(fields: &DocumentFields, field: u32) -> Option<u64> {
+    match fields.scalar_values(&FieldPath::Id(field))?.first()? {
+        FieldValue::U64(value) => Some(*value),
+        FieldValue::I64(value) if *value >= 0 => Some(*value as u64),
+        _ => None,
+    }
+}
+
+fn document_string_field(fields: &DocumentFields, field: u32) -> Option<String> {
+    match fields.scalar_values(&FieldPath::Id(field))?.first()? {
+        FieldValue::String(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn sum_to_js(sum: SumResult) -> Array {

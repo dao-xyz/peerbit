@@ -232,10 +232,20 @@ type NativeBackboneDocumentIndexTarget = {
 		genericNodes: number;
 	};
 	setDocumentContextHeadField?: (field: number) => void;
+	setDocumentContextFields?: (fields: {
+		created: number;
+		modified: number;
+		head: number;
+		gid: number;
+		size: number;
+	}) => void;
 	documentExactStringFirstKey?: (
 		field: number,
 		value: string,
 	) => string | undefined;
+	documentContext?: (
+		key: string,
+	) => [string, string, string, string, number] | undefined;
 	documentValueBytes?: (key: string) => Uint8Array | undefined;
 	documentEntry?: (key: string) => [string, Uint8Array] | undefined;
 	documentQuery?: (
@@ -1991,9 +2001,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			backbone.configureDocumentSchemaIr(
 				encodeNativeSchemaIr(this.properties.schema, this.fieldDictionary),
 			);
-			backbone.setDocumentContextHeadField?.(
-				nativeFieldId(this.fieldDictionary, ["__context", "head"]),
-			);
+			const contextFields = {
+				created: nativeFieldId(this.fieldDictionary, ["__context", "created"]),
+				modified: nativeFieldId(this.fieldDictionary, [
+					"__context",
+					"modified",
+				]),
+				head: nativeFieldId(this.fieldDictionary, ["__context", "head"]),
+				gid: nativeFieldId(this.fieldDictionary, ["__context", "gid"]),
+				size: nativeFieldId(this.fieldDictionary, ["__context", "size"]),
+			};
+			backbone.setDocumentContextFields?.(contextFields);
+			backbone.setDocumentContextHeadField?.(contextFields.head);
 			backbone.clearDocumentIndex?.();
 			this.populateNativeBackboneDocumentIndex(backbone);
 			this.nativeBackboneDocumentIndex = backbone;
@@ -2032,6 +2051,39 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return {
 			id,
 			value: this.decodeNativeStoredValue(value[1]),
+		};
+	}
+
+	getContextById(
+		id: types.IdKey,
+	):
+		| {
+				created: bigint;
+				modified: bigint;
+				head: string;
+				gid: string;
+				size: number;
+		  }
+		| undefined {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
+		if (!this.nativeBackboneDocumentIndexPrimary) {
+			return;
+		}
+		const row = this.nativeBackboneDocumentIndex?.documentContext?.(
+			keyToStoreKey(id),
+		);
+		if (!row) {
+			return;
+		}
+		return {
+			created: BigInt(row[0]),
+			modified: BigInt(row[1]),
+			head: row[2],
+			gid: row[3],
+			size: row[4],
 		};
 	}
 

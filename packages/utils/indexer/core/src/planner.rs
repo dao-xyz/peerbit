@@ -477,6 +477,11 @@ impl NativeQueryIndex {
             })
     }
 
+    pub fn document_fields_by_id(&self, id: &str) -> Option<&DocumentFields> {
+        let doc_id = self.external_to_internal.get(id)?;
+        self.documents.get(doc_id)
+    }
+
     pub fn search_page(
         &self,
         query: &Query,

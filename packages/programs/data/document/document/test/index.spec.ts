@@ -2698,20 +2698,24 @@ describe("index", () => {
 						store.docs.log as any,
 						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
 					);
+					let indexGetSpy: { restore(): void; callCount: number } | undefined;
 					try {
 						const id = uuid();
 						const first = await store.docs.put(
 							new Document({ id, name: "native-update-1" }),
 						);
+						indexGetSpy = sinon.spy((store.docs as any)._index.index, "get");
 						const second = await store.docs.put(
 							new Document({ id, name: "native-update-2" }),
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 						expect(storageTransactionSpy.callCount).equal(1);
+						expect(indexGetSpy?.callCount).equal(0);
 						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(id))?.name).equal("native-update-2");
 					} finally {
+						indexGetSpy?.restore();
 						storageTransactionSpy.restore();
 						compatPlanSpy.restore();
 						fallbackAppendSpy.restore();
