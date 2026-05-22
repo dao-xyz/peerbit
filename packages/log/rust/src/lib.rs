@@ -724,6 +724,73 @@ impl LogGraphIndex {
         plans
     }
 
+    pub fn plan_join_entry_refs(
+        &self,
+        entries: &[&LogIndexEntry],
+        reset: bool,
+        cut_check: bool,
+    ) -> Vec<JoinPlan> {
+        let cut_heads_by_gid = cut_check.then(|| {
+            let mut by_gid: HashMap<&str, Vec<&LogIndexEntry>> = HashMap::new();
+            for hash in &self.heads {
+                if let Some(entry) = self.entries.get(hash) {
+                    if entry.entry_type == ENTRY_TYPE_CUT {
+                        by_gid.entry(entry.gid.as_str()).or_default().push(entry);
+                    }
+                }
+            }
+            by_gid
+        });
+
+        let mut plans = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let cut_checked = cut_check;
+            if !reset && self.has(&entry.hash) {
+                plans.push(JoinPlan {
+                    skip: true,
+                    missing_parents: Vec::new(),
+                    cut_checked,
+                    covered_by_cut: false,
+                });
+                continue;
+            }
+
+            let covered_by_cut = if cut_check {
+                cut_heads_by_gid
+                    .as_ref()
+                    .and_then(|cut_heads| cut_heads.get(entry.gid.as_str()))
+                    .map(|heads| {
+                        heads.iter().any(|cut_entry| {
+                            cut_entry.next.iter().any(|next| next == &entry.hash)
+                                && compare_clock(entry.wall_time, entry.logical, cut_entry).is_lt()
+                        })
+                    })
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            let missing_parents = if entry.entry_type == ENTRY_TYPE_CUT || covered_by_cut {
+                Vec::new()
+            } else {
+                entry
+                    .next
+                    .iter()
+                    .filter(|next| reset || !self.has(next))
+                    .cloned()
+                    .collect()
+            };
+
+            plans.push(JoinPlan {
+                skip: false,
+                missing_parents,
+                cut_checked,
+                covered_by_cut,
+            });
+        }
+        plans
+    }
+
     fn set_head(&mut self, hash: &str, head: bool) {
         let Some(entry) = self.entries.get_mut(hash) else {
             return;
@@ -973,6 +1040,15 @@ impl NativeLogIndex {
                     (gids.as_slice(), wall_times.as_slice(), logicals.as_slice())
                 }),
         )
+    }
+
+    pub fn plan_join_entry_refs_core(
+        &self,
+        entries: &[&LogIndexEntry],
+        reset: bool,
+        cut_check: bool,
+    ) -> Vec<JoinPlan> {
+        self.inner.plan_join_entry_refs(entries, reset, cut_check)
     }
 
     #[allow(clippy::too_many_arguments)]

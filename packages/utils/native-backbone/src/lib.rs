@@ -1011,28 +1011,25 @@ impl NativePeerbitBackbone {
         if hashes.is_empty() {
             return Ok(Some(Vec::new()));
         }
-        if hashes
-            .iter()
-            .any(|hash| !self.pending_raw_receive_entries.contains_key(hash))
-        {
-            return Ok(None);
-        }
 
         let mut out = vec![1u8; hashes.len()];
         let mut verify_positions = Vec::new();
         let verified = {
             let mut storage_refs = Vec::new();
             for (index, hash) in hashes.iter().enumerate() {
-                let pending = self
-                    .pending_raw_receive_entries
-                    .get(hash)
-                    .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                let Some(pending) = self.pending_raw_receive_entries.get(hash) else {
+                    return Ok(None);
+                };
                 if !pending.signature_verified {
                     verify_positions.push(index);
                     storage_refs.push(pending.storage_bytes.as_slice());
                 }
             }
-            verify_entry_v0_ed25519_storage_slices(&storage_refs).ok()
+            if storage_refs.is_empty() {
+                Some(Vec::new())
+            } else {
+                verify_entry_v0_ed25519_storage_slices(&storage_refs).ok()
+            }
         };
 
         let Some(verified) = verified else {
@@ -1079,12 +1076,12 @@ impl NativePeerbitBackbone {
 
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
-        for (index, hash) in hashes.iter().enumerate() {
+        for (index, hash) in hashes.into_iter().enumerate() {
             let pending = self
                 .pending_raw_receive_entries
-                .remove(hash)
+                .remove(&hash)
                 .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
-            block_entries.push((hash.clone(), pending.storage_bytes));
+            block_entries.push((hash, pending.storage_bytes));
             let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
             graph_entries.push(graph_entry);
@@ -1128,40 +1125,41 @@ impl NativePeerbitBackbone {
             return Ok(false);
         }
 
-        let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
-        let mut graph_entries = Vec::with_capacity(hashes.len());
-        for (index, hash) in hashes.iter().enumerate() {
-            let pending = self
-                .pending_raw_receive_entries
-                .get(hash)
-                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
-            let mut graph_entry = pending.entry.clone();
-            graph_entry.head = heads.get_index(index as u32) != 0;
-            graph_entries.push(graph_entry);
-        }
-
-        let join_plans = self.log.plan_join_entries_core(&graph_entries, false, true);
-        for plan in join_plans {
-            if plan.skip || plan.covered_by_cut || !plan.cut_checked {
-                return Ok(false);
+        {
+            let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+            let mut graph_entries = Vec::with_capacity(hashes.len());
+            for hash in &hashes {
+                let pending = self
+                    .pending_raw_receive_entries
+                    .get(hash)
+                    .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                graph_entries.push(&pending.entry);
             }
-            if plan
-                .missing_parents
-                .iter()
-                .any(|hash| !batch_hashes.contains(hash.as_str()))
-            {
-                return Ok(false);
+            let join_plans = self
+                .log
+                .plan_join_entry_refs_core(&graph_entries, false, true);
+            for plan in join_plans {
+                if plan.skip || plan.covered_by_cut || !plan.cut_checked {
+                    return Ok(false);
+                }
+                if plan
+                    .missing_parents
+                    .iter()
+                    .any(|hash| !batch_hashes.contains(hash.as_str()))
+                {
+                    return Ok(false);
+                }
             }
         }
 
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
-        for (index, hash) in hashes.iter().enumerate() {
+        for (index, hash) in hashes.into_iter().enumerate() {
             let pending = self
                 .pending_raw_receive_entries
-                .remove(hash)
+                .remove(&hash)
                 .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
-            block_entries.push((hash.clone(), pending.storage_bytes));
+            block_entries.push((hash, pending.storage_bytes));
             let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
             graph_entries.push(graph_entry);
@@ -1207,55 +1205,63 @@ impl NativePeerbitBackbone {
         }
 
         let verify_hashes = strings_from_array(verify_hashes)?;
+        let verify_hashes_cover_commit = verify_hashes.len() == hashes.len()
+            && verify_hashes
+                .iter()
+                .zip(hashes.iter())
+                .all(|(verified_hash, hash)| verified_hash == hash);
         let Some(verified) = self.verify_pending_raw_receive_entries(&verify_hashes)? else {
             return Ok(false);
         };
         if verified.iter().any(|flag| *flag == 0) {
             return Ok(false);
         }
-        if hashes.iter().any(|hash| {
-            self.pending_raw_receive_entries
-                .get(hash)
-                .map(|pending| !pending.signature_verified)
-                .unwrap_or(true)
-        }) {
+        if !verify_hashes_cover_commit
+            && hashes.iter().any(|hash| {
+                self.pending_raw_receive_entries
+                    .get(hash)
+                    .map(|pending| !pending.signature_verified)
+                    .unwrap_or(true)
+            })
+        {
             return Ok(false);
         }
 
-        let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
-        let mut graph_entries = Vec::with_capacity(hashes.len());
-        for (index, hash) in hashes.iter().enumerate() {
-            let pending = self
-                .pending_raw_receive_entries
-                .get(hash)
-                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
-            let mut graph_entry = pending.entry.clone();
-            graph_entry.head = heads.get_index(index as u32) != 0;
-            graph_entries.push(graph_entry);
-        }
-
-        let join_plans = self.log.plan_join_entries_core(&graph_entries, false, true);
-        for plan in join_plans {
-            if plan.skip || plan.covered_by_cut || !plan.cut_checked {
-                return Ok(false);
+        {
+            let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+            let mut graph_entries = Vec::with_capacity(hashes.len());
+            for hash in &hashes {
+                let pending = self
+                    .pending_raw_receive_entries
+                    .get(hash)
+                    .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                graph_entries.push(&pending.entry);
             }
-            if plan
-                .missing_parents
-                .iter()
-                .any(|hash| !batch_hashes.contains(hash.as_str()))
-            {
-                return Ok(false);
+            let join_plans = self
+                .log
+                .plan_join_entry_refs_core(&graph_entries, false, true);
+            for plan in join_plans {
+                if plan.skip || plan.covered_by_cut || !plan.cut_checked {
+                    return Ok(false);
+                }
+                if plan
+                    .missing_parents
+                    .iter()
+                    .any(|hash| !batch_hashes.contains(hash.as_str()))
+                {
+                    return Ok(false);
+                }
             }
         }
 
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
-        for (index, hash) in hashes.iter().enumerate() {
+        for (index, hash) in hashes.into_iter().enumerate() {
             let pending = self
                 .pending_raw_receive_entries
-                .remove(hash)
+                .remove(&hash)
                 .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
-            block_entries.push((hash.clone(), pending.storage_bytes));
+            block_entries.push((hash, pending.storage_bytes));
             let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
             graph_entries.push(graph_entry);
