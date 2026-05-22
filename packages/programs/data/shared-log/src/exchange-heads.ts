@@ -492,6 +492,133 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 }
 
+class PreparedRawEntryWithRefs<T> {
+	readonly gidRefrences: string[];
+	private entryValue?: PreparedRawExchangeEntry<T>;
+	private keychain?: unknown;
+	private encodingValue?: Log<T>["encoding"];
+
+	constructor(
+		private readonly head: RawEntryWithRefs,
+		private readonly facts: PreparedRawEntryV0FactsSource,
+		private readonly factsIndex = 0,
+	) {
+		this.gidRefrences = head.gidRefrences;
+	}
+
+	get entry(): Entry<T> {
+		if (!this.entryValue) {
+			const entry = new PreparedRawExchangeEntry<T>(
+				this.head.bytes,
+				this.facts,
+				this.factsIndex,
+			);
+			Entry.prepareMultihashBytes(entry, this.head.bytes, this.head.hash);
+			entry.hash = this.head.hash;
+			entry.size = preparedRawByteLength(this.facts, this.factsIndex);
+			if (this.keychain || this.encodingValue) {
+				entry.init({
+					keychain: this.keychain as any,
+					encoding: this.encodingValue,
+				});
+			}
+			this.entryValue = entry;
+		}
+		return this.entryValue;
+	}
+
+	set entry(value: Entry<T>) {
+		if (value) {
+			this.entryValue = value as PreparedRawExchangeEntry<T>;
+		}
+	}
+
+	initEntry(props: any): void {
+		this.keychain = props.keychain ?? props._keychain;
+		this.encodingValue = props.encoding ?? props._encoding;
+		this.entryValue?.init(props);
+	}
+
+	get hash(): string {
+		return this.head.hash;
+	}
+
+	get preparedGid(): string {
+		return preparedRawGid(this.facts, this.factsIndex);
+	}
+
+	get preparedRequestedReplicas(): number | undefined {
+		return preparedRawRequestedReplicas(this.facts, this.factsIndex);
+	}
+
+	toShallow(isHead = true): ShallowEntry {
+		const clock = new Clock({
+			id: preparedRawClockId(this.facts, this.factsIndex),
+			timestamp: new Timestamp({
+				wallTime: preparedRawWallTime(this.facts, this.factsIndex),
+				logical: preparedRawLogical(this.facts, this.factsIndex),
+			}),
+		});
+		return new ShallowEntry({
+			hash: this.head.hash,
+			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
+			head: isHead,
+			meta: new ShallowMeta({
+				gid: preparedRawGid(this.facts, this.factsIndex),
+				data: preparedRawMetaData(this.facts, this.factsIndex),
+				clock,
+				next: preparedRawNext(this.facts, this.factsIndex),
+				type: preparedRawType(this.facts, this.factsIndex) as EntryType,
+			}),
+		});
+	}
+
+	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
+		return (this.entry as PreparedRawExchangeEntry<T>).toPreparedAppendJoinFacts();
+	}
+}
+
+export const isPreparedRawEntryWithRefs = (
+	head: EntryWithRefs<any>,
+): head is EntryWithRefs<any> & PreparedRawEntryWithRefs<any> =>
+	head instanceof PreparedRawEntryWithRefs;
+
+export const getExchangeHeadHash = (head: EntryWithRefs<any>): string =>
+	isPreparedRawEntryWithRefs(head) ? head.hash : head.entry.hash;
+
+export const initExchangeHeadEntry = (
+	head: EntryWithRefs<any>,
+	props: any,
+): void => {
+	if (isPreparedRawEntryWithRefs(head)) {
+		head.initEntry(props);
+		return;
+	}
+	head.entry.init(props);
+};
+
+export const getPreparedRawExchangeHeadGid = (
+	head: EntryWithRefs<any>,
+): string | undefined =>
+	isPreparedRawEntryWithRefs(head) ? head.preparedGid : undefined;
+
+export const getPreparedRawExchangeHeadRequestedReplicas = (
+	head: EntryWithRefs<any>,
+): number | undefined =>
+	isPreparedRawEntryWithRefs(head) ? head.preparedRequestedReplicas : undefined;
+
+export const getPreparedRawExchangeHeadShallowEntry = (
+	head: EntryWithRefs<any>,
+): ShallowEntry | undefined =>
+	isPreparedRawEntryWithRefs(head) ? head.toShallow(true) : undefined;
+
+export const getPreparedRawExchangeHeadAppendFacts = (
+	head: EntryWithRefs<any>,
+): PreparedAppendJoinFacts | undefined =>
+	isPreparedRawEntryWithRefs(head)
+		? head.toPreparedAppendJoinFacts()
+		: getPreparedRawExchangeAppendFacts(head.entry);
+
 export const getPreparedRawExchangeAppendFacts = (
 	entry: Entry<any>,
 ): PreparedAppendJoinFacts | undefined =>
@@ -893,27 +1020,25 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			) {
 				throw new Error("Raw exchange head prepared column count mismatch");
 			}
-				if (preparedFacts && preparedFacts.length !== message.heads.length) {
-					throw new Error("Raw exchange head prepared fact count mismatch");
-				}
-				const rowFacts = preparedFacts!;
-				materializedHeads = message.heads.map((head, index) => {
-					const facts = preparedColumns ?? rowFacts[index]!;
+			if (preparedFacts && preparedFacts.length !== message.heads.length) {
+				throw new Error("Raw exchange head prepared fact count mismatch");
+			}
+			const rowFacts = preparedFacts!;
+			materializedHeads = message.heads.map((head, index) => {
+				const facts = preparedColumns ?? rowFacts[index]!;
 				if (preparedRawCid(facts, index) !== head.hash) {
 					throw new Error("Raw exchange head hash did not match bytes");
 				}
-				const entry = new PreparedRawExchangeEntry(head.bytes, facts, index);
-				Entry.prepareMultihashBytes(entry, head.bytes, head.hash);
-				entry.hash = head.hash;
-				entry.size = preparedRawByteLength(facts, index);
-				entry.init({
+				const preparedHead = new PreparedRawEntryWithRefs(
+					head,
+					facts,
+					index,
+				);
+				preparedHead.initEntry({
 					keychain: log.keychain,
 					encoding: log.encoding,
 				});
-				return new EntryWithRefs({
-					entry,
-					gidRefrences: head.gidRefrences,
-				});
+				return preparedHead as EntryWithRefs<any>;
 			});
 		} catch (error) {
 			if (nativePrepareSource === "backbone") {

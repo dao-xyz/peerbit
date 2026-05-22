@@ -1,6 +1,7 @@
 import { Entry, ShallowEntry } from "@peerbit/log";
 import {
 	type EntryWithRefs,
+	getPreparedRawExchangeHeadGid,
 	getPreparedRawExchangeGid,
 } from "./exchange-heads.js";
 import { type EntryReplicated, isEntryReplicated } from "./ranges.js";
@@ -36,7 +37,9 @@ const getHeadGidSync = <
 			? head.meta.gid
 			: isEntryReplicated(head)
 				? head.gid
-			: getPreparedRawExchangeGid(head.entry) ?? getEntryGidSync(head.entry);
+				: getPreparedRawExchangeHeadGid(head) ??
+					getPreparedRawExchangeGid(head.entry) ??
+					getEntryGidSync(head.entry);
 
 export const tryGroupByGidSync = <
 	T extends
@@ -86,7 +89,8 @@ export const groupByGid = async <
 					? head.meta.gid
 					: isEntryReplicated(head)
 						? head.gid
-						: await getEntryGid(head.entry);
+						: getPreparedRawExchangeHeadGid(head) ??
+							(await getEntryGid(head.entry));
 		let value = groupByGid.get(gid);
 		if (!value) {
 			value = [];

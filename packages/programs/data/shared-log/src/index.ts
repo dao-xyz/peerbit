@@ -132,9 +132,15 @@ import {
 	getPreparedRawExchangeAppendFacts,
 	getPreparedRawExchangeGid,
 	getPreparedRawExchangeHashNumber,
+	getPreparedRawExchangeHeadGid,
+	getPreparedRawExchangeHeadRequestedReplicas,
+	getPreparedRawExchangeHeadShallowEntry,
 	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
 	getPreparedRawExchangeTimestamp,
+	getExchangeHeadHash,
+	initExchangeHeadEntry,
+	isPreparedRawEntryWithRefs,
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
@@ -470,7 +476,12 @@ const getLatestEntry = (
 ) => {
 	let latest: ShallowOrFullEntry<any> | undefined = undefined;
 	for (const element of entries) {
-		let entry = element instanceof EntryWithRefs ? element.entry : element;
+		let entry =
+			element instanceof EntryWithRefs || isPreparedRawEntryWithRefs(element as any)
+				? getPreparedRawExchangeHeadShallowEntry(
+						element as EntryWithRefs<any>,
+					) ?? (element as EntryWithRefs<any>).entry
+				: element;
 		if (!latest || compareEntryTimestamp(entry, latest) > 0) {
 			latest = entry;
 		}
@@ -9079,7 +9090,7 @@ export class SharedLog<
 
 				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
-						heads.length === 1 ? heads[0].entry.hash : "#" + heads.length
+						heads.length === 1 ? getExchangeHeadHash(heads[0]!) : "#" + heads.length
 					}, logId: ${this.log.idString}`,
 				);
 
@@ -9089,7 +9100,7 @@ export class SharedLog<
 					const existingStartedAt = syncProfileStart(syncProfile);
 					const existingHashes = rawMaterializedKnownMissing
 						? new Set<string>()
-						: await this.log.hasMany(heads.map((head) => head.entry.hash));
+						: await this.log.hasMany(heads.map(getExchangeHeadHash));
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, existingStartedAt, {
 							name: "sharedLog.receive.existingHeads",
@@ -9100,22 +9111,23 @@ export class SharedLog<
 						});
 					}
 					for (const head of heads) {
-						if (!existingHashes.has(head.entry.hash)) {
-							head.entry.init({
+						const headHash = getExchangeHeadHash(head);
+						if (!existingHashes.has(headHash)) {
+							initExchangeHeadEntry(head, {
 								// we need to init because we perhaps need to decrypt gid
 								keychain: this.log.keychain,
 								encoding: this.log.encoding,
 							});
 							filteredHeads.push(head);
 						} else {
-							confirmedHashes.add(head.entry.hash);
+							confirmedHashes.add(headHash);
 						}
 					}
 					const fromIsSelf = context.from.equals(this.node.identity.publicKey);
 					const contextFromHash = context.from.hashcode();
 					if (!fromIsSelf) {
 						this.markEntriesKnownByPeer(
-							heads.map((head) => head.entry.hash),
+							heads.map(getExchangeHeadHash),
 							contextFromHash,
 						);
 					}
@@ -9149,6 +9161,23 @@ export class SharedLog<
 						receiveReplicaCounts.set(entry.hash, replicas);
 						return replicas;
 					};
+					const decodeReceiveHeadReplicaCount = (
+						head: EntryWithRefs<any>,
+					) => {
+						const hash = getExchangeHeadHash(head);
+						const cached = receiveReplicaCounts.get(hash);
+						if (cached !== undefined) {
+							return cached;
+						}
+						const predecodedReplicas =
+							getPreparedRawExchangeHeadRequestedReplicas(head);
+						if (predecodedReplicas != null) {
+							receivePredecodedReplicaHits++;
+							receiveReplicaCounts.set(hash, predecodedReplicas);
+							return predecodedReplicas;
+						}
+						return decodeReceiveReplicaCount(head.entry);
+					};
 					type ReceivedGidJoinPlan = {
 						toMerge: Entry<any>[];
 						toPersist: Entry<any>[];
@@ -9177,7 +9206,9 @@ export class SharedLog<
 						const seenGids = new Set<string>();
 						let hasDuplicateGid = false;
 						for (const head of filteredHeads) {
-							const gid = this.getEntryGid(head.entry);
+							const gid =
+								getPreparedRawExchangeHeadGid(head) ??
+								this.getEntryGid(head.entry);
 							if (seenGids.has(gid)) {
 								hasDuplicateGid = true;
 								break;
@@ -9187,7 +9218,7 @@ export class SharedLog<
 						if (hasDuplicateGid) {
 							nativeRawGroupPlans =
 								this._nativeBackbone.planPreparedRawReceiveGroups(
-									filteredHeads.map((head) => head.entry.hash),
+									filteredHeads.map(getExchangeHeadHash),
 									{
 										minReplicas: this.replicas.min?.getValue(this) || 1,
 										maxReplicas: this.replicas.max?.getValue(this),
@@ -9198,7 +9229,7 @@ export class SharedLog<
 					let usedNativeRawGroups = false;
 					if (nativeRawGroupPlans) {
 						const headByHash = new Map(
-							filteredHeads.map((head) => [head.entry.hash, head]),
+							filteredHeads.map((head) => [getExchangeHeadHash(head), head]),
 						);
 						let canUseNativeRawGroups = true;
 						for (const plan of nativeRawGroupPlans) {
@@ -9262,7 +9293,7 @@ export class SharedLog<
 							let maxRequestedReplicasFromNewEntries = 0;
 							for (const entry of entries) {
 								maxRequestedReplicasFromNewEntries = Math.max(
-									decodeReceiveReplicaCount(entry.entry),
+									decodeReceiveHeadReplicaCount(entry),
 									maxRequestedReplicasFromNewEntries,
 								);
 							}
@@ -9323,12 +9354,19 @@ export class SharedLog<
 					const notifyStartedAt = syncProfileStart(syncProfile);
 					if (this.syncronizer.onReceivedEntryHashes) {
 						await this.syncronizer.onReceivedEntryHashes({
-							hashes: filteredHeads.map((head) => head.entry.hash),
+							hashes: filteredHeads.map(getExchangeHeadHash),
 							from: context.from!,
 						});
 					} else {
 						await this.syncronizer.onReceivedEntries({
-							entries: filteredHeads,
+							entries: filteredHeads.map((head) =>
+								isPreparedRawEntryWithRefs(head)
+									? new EntryWithRefs({
+											entry: head.entry,
+											gidRefrences: head.gidRefrences,
+										})
+									: head,
+							),
 							from: context.from!,
 						});
 					}
@@ -9752,7 +9790,7 @@ export class SharedLog<
 						}
 					}
 					this._nativeBackbone?.clearPreparedRawReceiveEntries(
-						filteredHeads.map((head) => head.entry.hash),
+						filteredHeads.map(getExchangeHeadHash),
 					);
 					if (
 						confirmedHashes.size > 0 &&
