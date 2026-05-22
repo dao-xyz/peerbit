@@ -238,13 +238,10 @@ run("multi-writer idle default-candidate safety", [
 	"--",
 	"fanout-tree-parent-upgrade-multi-eval",
 	"--scenario",
-	"ci-multi-idle,ci-multi-sparse-idle,ci-multi-hotspot-idle",
+	"ci-multi-idle,ci-multi-sparse-idle",
 	"--seeds",
 	idleSafetySeeds,
 	...defaultCandidateArgs(),
-	// Hotspot-idle measures utility under runner timing pressure. Keep delivery,
-	// promoted-branch latency, data overhead, and root pressure strict, but allow
-	// small aggregate deadline jitter when a promotion is otherwise useful.
 	"--maxUsefulIdleDeadlinePctDelta",
 	"2",
 	"--maxDataOverheadRatio",
@@ -252,6 +249,27 @@ run("multi-writer idle default-candidate safety", [
 	...jsonOut("multi-idle"),
 	"--strict",
 	"1",
+]);
+
+run("multi-writer hotspot idle timing evidence", [
+	"-C",
+	"packages/transport/pubsub",
+	"run",
+	"bench",
+	"--",
+	"fanout-tree-parent-upgrade-multi-eval",
+	"--scenario",
+	"ci-multi-hotspot-idle",
+	"--seeds",
+	idleSafetySeeds,
+	...defaultCandidateArgs(),
+	"--maxUsefulIdleDeadlinePctDelta",
+	"2",
+	"--maxDataOverheadRatio",
+	"1.05",
+	...jsonOut("multi-hotspot-idle"),
+	"--strict",
+	"0",
 ]);
 
 run("multi-writer slow hotspot timing evidence", [

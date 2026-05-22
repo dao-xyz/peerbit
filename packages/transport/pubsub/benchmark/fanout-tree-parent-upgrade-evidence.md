@@ -110,13 +110,14 @@ factor, duplicate deliveries, root children/upload pressure, orphan area,
 reparent rate, and active guard skips. This keeps "better tree shape" from
 masking worse data-plane redundancy.
 
-For multi-writer idle utility runs, default-ready also allows up to two
+For stable multi-writer idle utility runs, default-ready also allows up to two
 percentage points of aggregate deadline jitter only when the evaluator has
 already found a useful promotion. Delivery percentage, promoted-branch latency
 regression, data overhead, control/repair cost, root pressure, and reparent
-limits remain hard gates. This avoids treating saturated-runner timer noise as
-a product regression while still rejecting actual delivery loss or expensive
-promotion.
+limits remain hard gates. The hotspot-idle scenarios are recorded as non-strict
+timing evidence in the PR gate because GitHub runners can saturate enough that
+the baseline itself misses delivery/deadline targets; those artifacts are still
+useful for review, but they are not treated as a deterministic merge gate.
 
 The PR fanout gate uploads `sim-results` artifacts. Parent-upgrade evaluators
 can write compact JSON summaries through `--jsonOut`; default-ready records
@@ -135,7 +136,9 @@ The nightly soak matrix covers:
 - Single-tree root pressure frontier.
 - Multi-writer live no-op safety.
 - Multi-writer churn.
-- Multi-writer idle, sparse-idle, hotspot-idle, and scale cases.
+- Multi-writer idle, sparse-idle, hotspot-idle, and scale cases. Hotspot-idle
+  remains non-strict timing evidence for the same baseline-saturation reason as
+  the PR gate.
 
 Nightly artifacts include raw logs plus summary TSVs where available.
 

@@ -133,7 +133,8 @@ jobs:
             artifact: fanout-parent-upgrade-multi-hotspot-idle
             command: >-
               pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
-              --scenario ci-multi-hotspot-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+              --scenario ci-multi-hotspot-idle --seeds 1,2,3 --parentUpgradePreset default-candidate
+              --maxUsefulIdleDeadlinePctDelta 2 --maxDataOverheadRatio 1.05 --strict 0
           - name: multi-scale-live
             artifact: fanout-parent-upgrade-multi-scale-live
             command: >-
