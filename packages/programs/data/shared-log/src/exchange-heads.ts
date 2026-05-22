@@ -28,8 +28,158 @@ const warn = logger.newScope("warn");
 
 type RawReceiveNativeBackbone = {
 	prepareRawReceiveBatch(blocks: Uint8Array[]): PreparedRawEntryV0Facts[];
+	prepareRawReceiveColumnsBatch?(
+		blocks: Uint8Array[],
+	): PreparedRawEntryV0FactsColumns | undefined;
 	clearPreparedRawReceiveEntries?(hashes: Iterable<string>): number;
 };
+
+type PreparedRawEntryV0FactsColumns = [
+	cids: string[],
+	hashDigestBytes: Uint8Array[],
+	byteLengths: Uint32Array,
+	clockIds: Uint8Array[],
+	wallTimes: BigUint64Array,
+	logicals: Uint32Array,
+	gids: string[],
+	nexts: string[][],
+	types: Uint8Array,
+	metaBytes: Uint8Array[],
+	metaDatas: Array<Uint8Array | undefined>,
+	payloadByteLengths: Uint32Array,
+	signatureVerified: Uint8Array,
+];
+
+type PreparedRawEntryV0FactsSource =
+	| PreparedRawEntryV0Facts
+	| PreparedRawEntryV0FactsColumns;
+
+const isPreparedRawEntryV0FactsColumns = (
+	facts: PreparedRawEntryV0FactsSource,
+): facts is PreparedRawEntryV0FactsColumns => Array.isArray(facts);
+
+const preparedRawColumnValue = <T>(
+	values: ArrayLike<T>,
+	index: number,
+	label: string,
+): T => {
+	const value = values[index];
+	if (value === undefined) {
+		throw new Error(`Missing prepared raw receive ${label}`);
+	}
+	return value;
+};
+
+const preparedRawCid = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[0], index, "cid")
+		: facts.cid;
+
+const preparedRawHashDigestBytes = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[1], index, "hash digest")
+		: facts.hashDigestBytes;
+
+const preparedRawByteLength = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[2], index, "byte length")
+		: facts.byteLength;
+
+const preparedRawClockId = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[3], index, "clock id")
+		: facts.clockId;
+
+const preparedRawWallTime = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[4], index, "wall time")
+		: facts.wallTime;
+
+const preparedRawLogical = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[5], index, "logical time")
+		: facts.logical;
+
+const preparedRawGid = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[6], index, "gid")
+		: facts.gid;
+
+const preparedRawNext = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[7], index, "next hashes")
+		: facts.next;
+
+const preparedRawType = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[8], index, "entry type")
+		: facts.type;
+
+const preparedRawMetaBytes = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[9], index, "meta bytes")
+		: facts.metaBytes;
+
+const preparedRawMetaData = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) => (isPreparedRawEntryV0FactsColumns(facts) ? facts[10][index] : facts.metaData);
+
+const preparedRawPayloadByteLength = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[11], index, "payload byte length")
+		: facts.payloadByteLength;
+
+const preparedRawSignatureVerified = (
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+) =>
+	isPreparedRawEntryV0FactsColumns(facts)
+		? preparedRawColumnValue(facts[12], index, "signature flag") !== 0
+		: facts.signatureVerified;
+
+const preparedRawFactsCount = (facts: PreparedRawEntryV0FactsColumns) =>
+	facts[0].length;
+
+const preparedRawFactsHashes = (
+	facts: PreparedRawEntryV0FactsColumns | PreparedRawEntryV0Facts[],
+) =>
+	Array.isArray(facts[0])
+		? [...(facts as PreparedRawEntryV0FactsColumns)[0]]
+		: (facts as PreparedRawEntryV0Facts[]).map((entry) => entry.cid);
 
 // Stored in the reserved bytes so older peers ignore the hint.
 export const EXCHANGE_HEADS_REPAIR_HINT = 1;
@@ -118,22 +268,23 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 
 	constructor(
 		private readonly bytes: Uint8Array,
-		private readonly facts: PreparedRawEntryV0Facts,
+		private readonly facts: PreparedRawEntryV0FactsSource,
+		private readonly factsIndex = 0,
 	) {
 		super();
-		this.size = facts.byteLength;
+		this.size = preparedRawByteLength(facts, factsIndex);
 		this.meta = new Meta({
-			gid: facts.gid,
+			gid: preparedRawGid(facts, factsIndex),
 			clock: new Clock({
-				id: facts.clockId,
+				id: preparedRawClockId(facts, factsIndex),
 				timestamp: new Timestamp({
-					wallTime: facts.wallTime,
-					logical: facts.logical,
+					wallTime: preparedRawWallTime(facts, factsIndex),
+					logical: preparedRawLogical(facts, factsIndex),
 				}),
 			}),
-			next: facts.next,
-			type: facts.type as EntryType,
-			data: facts.metaData,
+			next: preparedRawNext(facts, factsIndex),
+			type: preparedRawType(facts, factsIndex) as EntryType,
+			data: preparedRawMetaData(facts, factsIndex),
 		});
 	}
 
@@ -164,7 +315,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	get __peerbitSignatureVerified() {
-		return this.facts.signatureVerified;
+		return preparedRawSignatureVerified(this.facts, this.factsIndex);
 	}
 
 	getMeta(): Meta {
@@ -172,11 +323,11 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	getMetaBytes(): Uint8Array | undefined {
-		return this.facts.metaBytes;
+		return preparedRawMetaBytes(this.facts, this.factsIndex);
 	}
 
 	getHashDigestBytes(): Uint8Array {
-		return this.facts.hashDigestBytes;
+		return preparedRawHashDigestBytes(this.facts, this.factsIndex);
 	}
 
 	getClock(): Clock {
@@ -200,7 +351,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	async verifySignatures(): Promise<boolean> {
-		if (this.facts.signatureVerified) {
+		if (preparedRawSignatureVerified(this.facts, this.factsIndex)) {
 			return true;
 		}
 		try {
@@ -225,7 +376,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	toShallow(isHead: boolean): ShallowEntry {
 		return new ShallowEntry({
 			hash: this.hash,
-			payloadSize: this.facts.payloadByteLength,
+			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
 			head: isHead,
 			meta: new ShallowMeta({
 				gid: this.meta.gid,
@@ -241,16 +392,16 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		const shallowEntry = this.toShallow(true);
 		const nativeEntry: PreparedNativeLogEntry = {
 			hash: this.hash,
-			gid: this.facts.gid,
-			next: this.facts.next,
-			type: this.facts.type,
+			gid: preparedRawGid(this.facts, this.factsIndex),
+			next: preparedRawNext(this.facts, this.factsIndex),
+			type: preparedRawType(this.facts, this.factsIndex),
 			head: true,
-			payloadSize: this.facts.payloadByteLength,
-			data: this.facts.metaData,
+			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
+			data: preparedRawMetaData(this.facts, this.factsIndex),
 			clock: {
 				timestamp: {
-					wallTime: this.facts.wallTime,
-					logical: this.facts.logical,
+					wallTime: preparedRawWallTime(this.facts, this.factsIndex),
+					logical: preparedRawLogical(this.facts, this.factsIndex),
 				},
 			},
 		};
@@ -611,16 +762,24 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	}
 	const nativePrepareStartedAt = syncProfileStart(profile);
 	let preparedFacts: PreparedRawEntryV0Facts[] | undefined;
-	let nativePrepareSource: "backbone" | "log" | undefined;
+	let preparedColumns: PreparedRawEntryV0FactsColumns | undefined;
+	let nativePrepareSource: "backbone-columns" | "backbone" | "log" | undefined;
 	if (options?.nativeBackbone) {
 		try {
-			preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks);
-			nativePrepareSource = "backbone";
+			preparedColumns =
+				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks);
+			if (preparedColumns) {
+				nativePrepareSource = "backbone-columns";
+			} else {
+				preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks);
+				nativePrepareSource = "backbone";
+			}
 		} catch {
+			preparedColumns = undefined;
 			preparedFacts = undefined;
 		}
 	}
-	if (!preparedFacts) {
+	if (!preparedColumns && !preparedFacts) {
 		preparedFacts = await prepareRawEntryV0Batch(blocks)
 			.then((facts) => {
 				nativePrepareSource = "log";
@@ -628,7 +787,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			})
 			.catch(() => undefined);
 	}
-	if (preparedFacts) {
+	if (preparedColumns || preparedFacts) {
 		emitSyncProfileDuration(profile, nativePrepareStartedAt, {
 			name: "sharedLog.rawReceive.prepareFacts",
 			component: "shared-log",
@@ -640,15 +799,25 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		const wrapStartedAt = syncProfileStart(profile);
 		let materializedHeads: EntryWithRefs<any>[];
 		try {
-			materializedHeads = message.heads.map((head, index) => {
-				const facts = preparedFacts[index]!;
-				if (facts.cid !== head.hash) {
+			if (
+				preparedColumns &&
+				preparedRawFactsCount(preparedColumns) !== message.heads.length
+			) {
+				throw new Error("Raw exchange head prepared column count mismatch");
+			}
+				if (preparedFacts && preparedFacts.length !== message.heads.length) {
+					throw new Error("Raw exchange head prepared fact count mismatch");
+				}
+				const rowFacts = preparedFacts!;
+				materializedHeads = message.heads.map((head, index) => {
+					const facts = preparedColumns ?? rowFacts[index]!;
+				if (preparedRawCid(facts, index) !== head.hash) {
 					throw new Error("Raw exchange head hash did not match bytes");
 				}
-				const entry = new PreparedRawExchangeEntry(head.bytes, facts);
+				const entry = new PreparedRawExchangeEntry(head.bytes, facts, index);
 				Entry.prepareMultihashBytes(entry, head.bytes, head.hash);
 				entry.hash = head.hash;
-				entry.size = facts.byteLength;
+				entry.size = preparedRawByteLength(facts, index);
 				entry.init({
 					keychain: log.keychain,
 					encoding: log.encoding,
@@ -661,7 +830,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		} catch (error) {
 			if (nativePrepareSource === "backbone") {
 				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
-					preparedFacts.map((facts) => facts.cid),
+					preparedRawFactsHashes(preparedFacts!),
+				);
+			}
+			if (nativePrepareSource === "backbone-columns") {
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
+					preparedRawFactsHashes(preparedColumns!),
 				);
 			}
 			throw error;

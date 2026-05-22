@@ -1311,6 +1311,22 @@ export type NativeBackboneRawReceivePreparedFacts = {
 	signatureVerified: boolean;
 };
 
+export type NativeBackboneRawReceivePreparedFactsColumns = [
+	string[],
+	Uint8Array[],
+	Uint32Array,
+	Uint8Array[],
+	BigUint64Array,
+	Uint32Array,
+	string[],
+	string[][],
+	Uint8Array,
+	Uint8Array[],
+	Array<Uint8Array | undefined>,
+	Uint32Array,
+	Uint8Array,
+];
+
 type NativeBackboneRawReceivePreparedFactsRow = [
 	string,
 	Uint8Array,
@@ -1325,22 +1341,6 @@ type NativeBackboneRawReceivePreparedFactsRow = [
 	Uint8Array | undefined,
 	number,
 	boolean,
-];
-
-type NativeBackboneRawReceivePreparedFactsColumns = [
-	string[],
-	Uint8Array[],
-	Uint32Array,
-	Uint8Array[],
-	BigUint64Array,
-	Uint32Array,
-	string[],
-	string[][],
-	Uint8Array,
-	Uint8Array[],
-	Array<Uint8Array | undefined>,
-	Uint32Array,
-	Uint8Array,
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -3310,14 +3310,36 @@ export class NativePeerbitBackbone {
 		if (blocks.length === 0) {
 			return [];
 		}
-		if (this.native.prepare_raw_receive_columns_batch) {
-			return rawReceivePreparedFactsFromColumns(
-				this.native.prepare_raw_receive_columns_batch(blocks),
-			);
+		const columns = this.prepareRawReceiveColumnsBatch(blocks);
+		if (columns) {
+			return rawReceivePreparedFactsFromColumns(columns);
 		}
 		return this.native
 			.prepare_raw_receive_batch(blocks)
 			.map(rawReceivePreparedFactsFromRow);
+	}
+
+	prepareRawReceiveColumnsBatch(
+		blocks: Uint8Array[],
+	): NativeBackboneRawReceivePreparedFactsColumns | undefined {
+		if (blocks.length === 0) {
+			return [
+				[],
+				[],
+				new Uint32Array(0),
+				[],
+				new BigUint64Array(0),
+				new Uint32Array(0),
+				[],
+				[],
+				new Uint8Array(0),
+				[],
+				[],
+				new Uint32Array(0),
+				new Uint8Array(0),
+			];
+		}
+		return this.native.prepare_raw_receive_columns_batch?.(blocks);
 	}
 
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
