@@ -905,6 +905,83 @@ impl NativePeerbitBackbone {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_prepared_raw_receive_join_batch(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: Array,
+        coordinate_batches: Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
+        if hashes
+            .iter()
+            .any(|hash| !self.pending_raw_receive_entries.contains_key(hash))
+        {
+            return Ok(false);
+        }
+
+        let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
+        let mut graph_entries = Vec::with_capacity(hashes.len());
+        for (index, hash) in hashes.iter().enumerate() {
+            let pending = self
+                .pending_raw_receive_entries
+                .get(hash)
+                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+            let mut graph_entry = pending.entry.clone();
+            graph_entry.head = heads.get_index(index as u32) != 0;
+            graph_entries.push(graph_entry);
+        }
+
+        let join_plans = self.log.plan_join_entries_core(&graph_entries, false, true);
+        for plan in join_plans {
+            if plan.skip || plan.covered_by_cut || !plan.cut_checked {
+                return Ok(false);
+            }
+            if plan
+                .missing_parents
+                .iter()
+                .any(|hash| !batch_hashes.contains(hash.as_str()))
+            {
+                return Ok(false);
+            }
+        }
+
+        let mut block_entries = Vec::with_capacity(hashes.len());
+        let mut graph_entries = Vec::with_capacity(hashes.len());
+        for (index, hash) in hashes.iter().enumerate() {
+            let pending = self
+                .pending_raw_receive_entries
+                .remove(hash)
+                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+            block_entries.push((hash.clone(), pending.storage_bytes));
+            let mut graph_entry = pending.entry;
+            graph_entry.head = heads.get_index(index as u32) != 0;
+            graph_entries.push(graph_entry);
+        }
+
+        self.blocks.put_entries_core(block_entries);
+        self.log.put_entries_core(graph_entries);
+        if coordinate_hashes.length() > 0 {
+            self.commit_entry_coordinates_batch(
+                coordinate_hashes,
+                coordinate_gids,
+                coordinate_hash_numbers,
+                coordinate_batches,
+                coordinate_next_hash_batches,
+                coordinate_assigned_to_range_boundaries,
+                coordinate_requested_replicas,
+            )?;
+        }
+        Ok(true)
+    }
+
     pub fn clear_prepared_raw_receive_entries(&mut self, hashes: Array) -> Result<usize, JsValue> {
         let mut removed = 0;
         for hash in strings_from_array(hashes)? {

@@ -927,6 +927,53 @@ impl NativeLogIndex {
         self.inner.put_many(entries);
     }
 
+    pub fn plan_join_entries_core(
+        &self,
+        entries: &[LogIndexEntry],
+        reset: bool,
+        cut_check: bool,
+    ) -> Vec<JoinPlan> {
+        let hashes = entries
+            .iter()
+            .map(|entry| entry.hash.clone())
+            .collect::<Vec<_>>();
+        let nexts = entries
+            .iter()
+            .map(|entry| entry.next.clone())
+            .collect::<Vec<_>>();
+        let entry_types = entries
+            .iter()
+            .map(|entry| entry.entry_type)
+            .collect::<Vec<_>>();
+        let cut_check_values = cut_check.then(|| {
+            (
+                entries
+                    .iter()
+                    .map(|entry| entry.gid.clone())
+                    .collect::<Vec<_>>(),
+                entries
+                    .iter()
+                    .map(|entry| entry.wall_time)
+                    .collect::<Vec<_>>(),
+                entries
+                    .iter()
+                    .map(|entry| entry.logical)
+                    .collect::<Vec<_>>(),
+            )
+        });
+        self.inner.plan_join_batch(
+            &hashes,
+            &nexts,
+            &entry_types,
+            reset,
+            cut_check_values
+                .as_ref()
+                .map(|(gids, wall_times, logicals)| {
+                    (gids.as_slice(), wall_times.as_slice(), logicals.as_slice())
+                }),
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder(
         &mut self,
@@ -3469,12 +3516,12 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids(
     for (index, bytes) in blocks.into_iter().enumerate() {
         let digest = calculate_raw_digest_profiled(&bytes, None);
         let cid = if let Some(expected_cids) = expected_cids.as_ref() {
-            let expected_cid = expected_cids[index].clone();
-            let expected_digest = raw_cid_v1_digest_from_string(&expected_cid)?;
+            let expected_cid = &expected_cids[index];
+            let expected_digest = raw_cid_v1_digest_from_string(expected_cid)?;
             if expected_digest != digest {
                 return Err(JsValue::from_str("Raw entry hash did not match bytes"));
             }
-            expected_cid
+            expected_cid.clone()
         } else {
             raw_cid_v1_string_from_digest(&digest)
         };
@@ -3882,10 +3929,11 @@ fn raw_cid_v1_digest_from_string(cid: &str) -> Result<[u8; 32], JsValue> {
     let encoded = cid
         .strip_prefix('z')
         .ok_or_else(|| JsValue::from_str("Expected base58btc CID"))?;
-    let decoded = bs58::decode(encoded)
-        .into_vec()
+    let mut decoded = [0u8; 36];
+    let decoded_len = bs58::decode(encoded)
+        .onto(&mut decoded)
         .map_err(|_| JsValue::from_str("Invalid base58btc CID"))?;
-    if decoded.len() != 36
+    if decoded_len != 36
         || decoded[0] != 0x01
         || decoded[1] != 0x55
         || decoded[2] != 0x12

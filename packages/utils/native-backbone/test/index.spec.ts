@@ -734,6 +734,56 @@ describe("native peerbit backbone", () => {
 		).to.equal(false);
 	});
 
+	it("validates and commits prepared raw receive joins natively", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const parent = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 1n,
+			gid: "gid-raw-join",
+			payloadData: new Uint8Array([1]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+		const child = source.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTime: 2n,
+			gid: "gid-raw-join",
+			next: [parent.hash],
+			payloadData: new Uint8Array([2]),
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		});
+
+		target.prepareRawReceiveColumnsBatch(
+			[child.bytes, parent.bytes],
+			[child.hash, parent.hash],
+		);
+		expect(
+			target.graph.commitPreparedRawReceiveJoinBatch(
+				[child.hash, parent.hash],
+				[true, false],
+			),
+		).to.equal(true);
+		expect(target.hasBlock(child.hash)).to.equal(true);
+		expect(target.hasBlock(parent.hash)).to.equal(true);
+		expect(target.hasLogEntry(child.hash)).to.equal(true);
+		expect(target.hasLogEntry(parent.hash)).to.equal(true);
+		expect(target.graph.heads("gid-raw-join")).to.deep.equal([child.hash]);
+	});
+
 	it("returns flat unique reference rows for native exchange-head planning", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

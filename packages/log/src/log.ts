@@ -147,6 +147,7 @@ type PreparedJoinNativeCommitInput = {
 	entries: PreparedAppendJoinFacts[];
 	headFlags: boolean[];
 	trustedMissing: boolean;
+	validatePlan?: boolean;
 };
 
 export type PreparedAppendJoinFacts = PreparedAppendIndexFacts & {
@@ -2619,6 +2620,7 @@ export class Log<T> {
 			__peerbitNativePreparedJoinCommit?: (
 				input: PreparedJoinNativeCommitInput,
 			) => MaybePromise<boolean>;
+			__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
 		},
 	): Promise<boolean> {
 		if (
@@ -2654,40 +2656,64 @@ export class Log<T> {
 			messages: 1,
 		});
 
-		const planStartedAt = internalProfileStart(profile);
-		const joinPlans = await this.entryIndex.planJoinBatch(
-			entries,
-			false,
-			profile,
-		);
-		emitInternalProfileDuration(profile, planStartedAt, {
-			name: "log.joinPreparedFacts.plan",
-			component: "log",
-			entries: entries.length,
-			messages: 1,
-		});
-		const validatePlanStartedAt = internalProfileStart(profile);
+		const nativeCommitValidatesPlan =
+			resolvedOptions.__peerbitNativePreparedJoinCommitValidatesPlan === true &&
+			!!resolvedOptions.__peerbitNativePreparedJoinCommit;
 		const headFlags: boolean[] = [];
-		for (let i = 0; i < entries.length; i++) {
-			const entry = entries[i]!;
-			const joinPlan = joinPlans[i]!;
-			if (
-				joinPlan.skip ||
-				joinPlan.coveredByCut ||
-				!joinPlan.cutChecked ||
-				joinPlan.missingParents.some((hash) => !batchHashes.has(hash))
-			) {
-				return false;
+		if (nativeCommitValidatesPlan) {
+			for (const entry of entries) {
+				headFlags.push(heads.get(entry.hash) ?? true);
 			}
-			headFlags.push(heads.get(entry.hash) ?? true);
+			emitInternalProfileDuration(profile, internalProfileStart(profile), {
+				name: "log.joinPreparedFacts.plan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { nativeCommitValidatesPlan: true },
+			});
+			emitInternalProfileDuration(profile, internalProfileStart(profile), {
+				name: "log.joinPreparedFacts.validatePlan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { nativeCommitValidatesPlan: true },
+			});
+		} else {
+			const planStartedAt = internalProfileStart(profile);
+			const joinPlans = await this.entryIndex.planJoinBatch(
+				entries,
+				false,
+				profile,
+			);
+			emitInternalProfileDuration(profile, planStartedAt, {
+				name: "log.joinPreparedFacts.plan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+			const validatePlanStartedAt = internalProfileStart(profile);
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i]!;
+				const joinPlan = joinPlans[i]!;
+				if (
+					joinPlan.skip ||
+					joinPlan.coveredByCut ||
+					!joinPlan.cutChecked ||
+					joinPlan.missingParents.some((hash) => !batchHashes.has(hash))
+				) {
+					return false;
+				}
+				headFlags.push(heads.get(entry.hash) ?? true);
+			}
+			emitInternalProfileDuration(profile, validatePlanStartedAt, {
+				name: "log.joinPreparedFacts.validatePlan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
 		}
-		emitInternalProfileDuration(profile, validatePlanStartedAt, {
-			name: "log.joinPreparedFacts.validatePlan",
-			component: "log",
-			entries: entries.length,
-			messages: 1,
-		});
 
+		let nativeValidatedCommitRejected = false;
 		const batchPromise = (async () => {
 			const clockStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
@@ -2709,7 +2735,12 @@ export class Log<T> {
 					entries,
 					headFlags,
 					trustedMissing,
+					validatePlan: nativeCommitValidatesPlan,
 				})) === true;
+			if (nativeCommitValidatesPlan && !nativePreparedCommitted) {
+				nativeValidatedCommitRejected = true;
+				return;
+			}
 			if (!nativePreparedCommitted) {
 				await this.putKnownEntryBytesBatch(
 					entries.map((entry) => ({
@@ -2784,6 +2815,9 @@ export class Log<T> {
 			this._joining.set(entry.hash, batchPromise);
 		}
 		await batchPromise;
+		if (nativeValidatedCommitRejected) {
+			return false;
+		}
 		return true;
 	}
 

@@ -9462,6 +9462,10 @@ export class SharedLog<
 									__peerbitProfile: syncProfile,
 									__peerbitNativePreparedJoinCommit:
 										nativePreparedJoinCommit,
+									__peerbitNativePreparedJoinCommitValidatesPlan:
+										!!nativePreparedJoinCommit &&
+										!!this._nativeBackbone?.graph
+											.commitPreparedRawReceiveJoinBatch,
 								},
 							));
 						if (!joinedPreparedFacts) {
@@ -11145,6 +11149,7 @@ export class SharedLog<
 				entries: PreparedAppendJoinFacts[];
 				headFlags: boolean[];
 				trustedMissing: boolean;
+				validatePlan?: boolean;
 		  }) => boolean)
 		| undefined {
 		const backbone = this._nativeBackbone;
@@ -11155,19 +11160,37 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
-		return ({ entries, headFlags, trustedMissing }) => {
+		return ({ entries, headFlags, trustedMissing, validatePlan }) => {
 			if (!trustedMissing || entries.length === 0) {
 				return false;
 			}
+			const hashes = entries.map((entry) => entry.hash);
 			const coordinateColumns =
 				coordinateBatch && coordinateBatch.rows.length > 0
 					? this.nativeBackboneReceiveCoordinateRowsToColumns(
 							coordinateBatch.rows,
 						)
 					: undefined;
+			if (validatePlan) {
+				const committed = backbone.graph.commitPreparedRawReceiveJoinBatch?.(
+					hashes,
+					headFlags,
+					coordinateColumns,
+				);
+				if (committed === true) {
+					if (coordinateBatch) {
+						onCoordinatesCommitted?.(coordinateBatch);
+					}
+					return true;
+				}
+				if (committed === false) {
+					backbone.graph.clearPreparedRawReceiveEntries?.(hashes);
+					return false;
+				}
+			}
 			if (
 				backbone.graph.commitPreparedRawReceiveBatch(
-					entries.map((entry) => entry.hash),
+					hashes,
 					headFlags,
 					coordinateColumns,
 				)

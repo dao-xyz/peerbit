@@ -218,6 +218,17 @@ type NativePeerbitBackboneHandle = {
 		coordinateAssignedToRangeBoundaries: Uint8Array,
 		coordinateRequestedReplicas: number[],
 	) => boolean;
+	commit_prepared_raw_receive_join_batch?: (
+		hashes: string[],
+		heads: Uint8Array,
+		coordinateHashes: string[],
+		coordinateGids: string[],
+		coordinateHashNumbers: string[],
+		coordinateBatches: string[][],
+		coordinateNextHashBatches: string[][],
+		coordinateAssignedToRangeBoundaries: Uint8Array,
+		coordinateRequestedReplicas: number[],
+	) => boolean;
 	clear_prepared_raw_receive_entries: (hashes: string[]) => number;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
@@ -2544,6 +2555,40 @@ export class NativeBackboneLogGraph {
 			coordinateColumns.assignedToRangeBoundaries,
 			coordinateColumns.requestedReplicas,
 		);
+	}
+
+	commitPreparedRawReceiveJoinBatch(
+		hashes: string[],
+		headFlags: boolean[],
+		coordinates?: NativeBackboneCoordinateCommitColumns,
+	): boolean | undefined {
+		if (hashes.length === 0) {
+			return true;
+		}
+		if (hashes.length !== headFlags.length) {
+			throw new Error("Expected equal raw receive hash and head lengths");
+		}
+		if (!this.native.commit_prepared_raw_receive_join_batch) {
+			return undefined;
+		}
+		const coordinateColumns =
+			coordinates ?? emptyNativeBackboneCoordinateCommitColumns();
+		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
+		return this.native.commit_prepared_raw_receive_join_batch(
+			hashes,
+			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			coordinateColumns.hashes,
+			coordinateColumns.gids,
+			coordinateColumns.hashNumbers,
+			coordinateColumns.coordinateBatches,
+			coordinateColumns.nextHashBatches,
+			coordinateColumns.assignedToRangeBoundaries,
+			coordinateColumns.requestedReplicas,
+		);
+	}
+
+	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
+		return this.native.clear_prepared_raw_receive_entries(iterableToArray(hashes));
 	}
 
 	prepareEntryV0PlainEntryCommit(
