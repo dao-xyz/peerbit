@@ -4705,10 +4705,9 @@ export class NativePeerbitBackbone {
 	preparePlainCommittedStorageAppendTransaction(
 		input: NativeBackboneStorageAppendInput,
 	): NativeBackboneAppendResult {
-		const baseArgs = nativeStorageAppendArgs(input);
-		const documentIndexArgs = nativeDocumentIndexArgs(input.documentIndex);
-		if (input.documentIndex?.useLatestContext && documentIndexArgs) {
-			const projection = input.documentIndex.projection;
+		const documentIndex = input.documentIndex;
+		if (documentIndex?.useLatestContext) {
+			const projection = documentIndex.projection;
 			if (projection) {
 				const row =
 					this.native.prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction(
@@ -4724,9 +4723,9 @@ export class NativePeerbitBackbone {
 						input.selfHash ?? "",
 						input.selfReplicating ?? true,
 						input.resolveTrimmedEntries !== false,
-						input.documentIndex.key,
-						input.documentIndex.byteElementIndexLimit ?? 0,
-						input.documentIndex.deleteTrimmedHeads === true,
+						documentIndex.key,
+						documentIndex.byteElementIndexLimit ?? 0,
+						documentIndex.deleteTrimmedHeads === true,
 						this.documentProjectionPlanId(projection.plan),
 						projection.encodedDocument,
 						projection.signer,
@@ -4748,17 +4747,19 @@ export class NativePeerbitBackbone {
 					input.selfHash ?? "",
 					input.selfReplicating ?? true,
 					input.resolveTrimmedEntries !== false,
-					input.documentIndex.key,
-					input.documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
-					input.documentIndex.byteElementIndexLimit ?? 0,
-					input.documentIndex.deleteTrimmedHeads === true,
-					input.documentIndex.projection?.plan,
-					input.documentIndex.projection?.encodedDocument,
-					input.documentIndex.projection?.signer,
+					documentIndex.key,
+					documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					documentIndex.projection?.plan,
+					documentIndex.projection?.encodedDocument,
+					documentIndex.projection?.signer,
 					input.trimLengthTo,
 				);
 			return committedStorageAppendResultFromRow(this.resolution, row);
 		}
+		const baseArgs = nativeStorageAppendArgs(input);
+		const documentIndexArgs = nativeDocumentIndexArgs(documentIndex);
 		const row =
 			input.trimLengthTo == null
 				? documentIndexArgs
