@@ -2469,18 +2469,8 @@ impl NativeSharedLogState {
     }
 
     pub fn remove_gid_peers(&mut self, peer: &str, gids: Array) -> Result<(), JsValue> {
-        if self.inner.gid_peers.is_empty() {
-            return Ok(());
-        }
         let gids = strings_from_array(gids)?;
-        for gid in gids {
-            if let Some(peers) = self.inner.gid_peers.get_mut(&gid) {
-                peers.shift_remove(peer);
-                if peers.is_empty() {
-                    self.inner.gid_peers.remove(&gid);
-                }
-            }
-        }
+        self.remove_gid_peers_core(peer, &gids);
         Ok(())
     }
 
@@ -3474,6 +3464,102 @@ impl NativeSharedLogState {
             .entry_coordinates
             .get(hash)
             .map(|entry| entry.requested_replicas)
+    }
+
+    pub fn remove_gid_peers_core(&mut self, peer: &str, gids: &[String]) {
+        if self.inner.gid_peers.is_empty() {
+            return;
+        }
+        for gid in gids {
+            if let Some(peers) = self.inner.gid_peers.get_mut(gid) {
+                peers.shift_remove(peer);
+                if peers.is_empty() {
+                    self.inner.gid_peers.remove(gid);
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn all_local_leaders_for_gids_batch(
+        &self,
+        gids: &[String],
+        replica_counts: &[usize],
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<bool, JsValue> {
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        if gids.is_empty() {
+            return Ok(true);
+        }
+        let options = find_leader_options(role_age_ms, now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_self_leader_by_replicas = HashMap::new();
+
+        let first_replicas = replica_counts[0];
+        if replica_counts
+            .iter()
+            .all(|replicas| *replicas == first_replicas)
+        {
+            if let Some(is_local_leader) = full_replica_self_leader_with_batch_caches(
+                &self.inner.range_planner,
+                first_replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            ) {
+                return Ok(is_local_leader);
+            }
+        }
+
+        for (gid, replicas) in gids.iter().zip(replica_counts.iter().copied()) {
+            if let Some(is_local_leader) = full_replica_self_leader_with_batch_caches(
+                &self.inner.range_planner,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            ) {
+                if !is_local_leader {
+                    return Ok(false);
+                }
+                continue;
+            }
+            let coordinates = self.inner.range_planner.get_gid_coordinates(gid, replicas);
+            if !contains_leader_with_batch_caches(
+                &self.inner.range_planner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            ) {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
     }
 
     #[allow(clippy::too_many_arguments)]

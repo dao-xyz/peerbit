@@ -2339,16 +2339,15 @@ impl NativePeerbitBackbone {
             return Ok(empty());
         }
 
-        let metadata = self.log.entry_prune_confirm_metadata_values(&hashes);
         let mut candidate_gids = Vec::with_capacity(hashes.len());
         let mut candidate_replicas = Vec::with_capacity(hashes.len());
 
-        for (hash, metadata) in hashes.iter().zip(metadata) {
+        for hash in hashes.iter() {
             if !self.blocks.has(hash) {
                 return Ok(empty());
             }
 
-            let Some((gid, replicas)) = metadata else {
+            let Some((gid, replicas)) = self.log.entry_prune_confirm_metadata_ref(hash) else {
                 return Ok(empty());
             };
             let Some(requested_replicas) = replicas
@@ -2358,11 +2357,11 @@ impl NativePeerbitBackbone {
                 return Ok(empty());
             };
 
-            candidate_gids.push(gid);
+            candidate_gids.push(gid.to_string());
             candidate_replicas.push(requested_replicas);
         }
 
-        let local_flags = self.shared_log.local_leader_flags_for_gids_batch(
+        let all_local_leaders = self.shared_log.all_local_leaders_for_gids_batch(
             &candidate_gids,
             &candidate_replicas,
             role_age_ms,
@@ -2374,15 +2373,15 @@ impl NativePeerbitBackbone {
             full_replica_fallback,
             include_strict_full_replica,
         )?;
-        if local_flags.iter().any(|is_local| !is_local) {
+        if !all_local_leaders {
             return Ok(empty());
         }
 
         let out = Array::new();
         out.push(&JsValue::TRUE);
-        let peer_history_gids = strings_to_array(candidate_gids);
         self.shared_log
-            .remove_gid_peers(&prune_peer, peer_history_gids.clone())?;
+            .remove_gid_peers_core(&prune_peer, &candidate_gids);
+        let peer_history_gids = strings_to_array(candidate_gids);
         out.push(&peer_history_gids);
         Ok(out)
     }

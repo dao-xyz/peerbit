@@ -4690,8 +4690,8 @@ export class NativePeerbitBackbone {
 			peerHistoryGids,
 			peerHistoryRemovedFlags,
 		] = this.native.plan_request_prune_leader_hint_columns(
-			[...hashes],
-			[...skipHashes],
+			iterableToArray(hashes),
+			iterableToArray(skipHashes),
 			...findLeaderArguments(options),
 		) as [
 			Array<string | undefined>,
@@ -4723,7 +4723,7 @@ export class NativePeerbitBackbone {
 		}
 		const [allConfirmed, peerHistoryGids] =
 			this.native.plan_request_prune_all_confirmed(
-				[...hashes],
+				iterableToArray(hashes),
 				prunePeer,
 				...findLeaderArguments(options),
 			) as [boolean, string[]];

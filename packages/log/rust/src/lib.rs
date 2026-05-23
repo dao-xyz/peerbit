@@ -594,6 +594,15 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn entry_prune_confirm_metadata_ref(&self, hash: &str) -> Option<(&str, Option<u32>)> {
+        self.entries.get(hash).map(|entry| {
+            (
+                entry.gid.as_str(),
+                decode_absolute_replica_data_u32(entry.data.as_deref()),
+            )
+        })
+    }
+
     pub fn unique_reference_gid_rows(&self, hash: &str) -> Option<Vec<(String, String)>> {
         let entry = self.entries.get(hash)?;
         if entry.entry_type == ENTRY_TYPE_CUT {
@@ -1141,6 +1150,10 @@ impl NativeLogIndex {
         hashes: &[String],
     ) -> Vec<Option<LogEntryPruneConfirmMetadata>> {
         self.inner.entry_prune_confirm_metadata_batch(hashes)
+    }
+
+    pub fn entry_prune_confirm_metadata_ref(&self, hash: &str) -> Option<(&str, Option<u32>)> {
+        self.inner.entry_prune_confirm_metadata_ref(hash)
     }
 
     pub fn put_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
@@ -5714,6 +5727,10 @@ mod tests {
             index.entry_prune_confirm_metadata_batch(&["a".to_string(), "b".to_string()]);
         assert_eq!(confirm_metadata[0], Some(("g".to_string(), Some(2))));
         assert_eq!(confirm_metadata[1], Some(("g".to_string(), None)));
+        assert_eq!(
+            index.entry_prune_confirm_metadata_ref("a"),
+            Some(("g", Some(2)))
+        );
     }
 
     #[test]
