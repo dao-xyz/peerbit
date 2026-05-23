@@ -1054,13 +1054,14 @@ export class Log<T> {
 			options.trim,
 			properties.resolveTrimmedEntries,
 		);
-		if (nativeTrimLengthTo == null && !options.meta?.gidSeed) {
+		if (!options.meta?.gidSeed) {
 			const directResult =
-				this.appendLocallyPreparedNativeKnownNoNextNoTrimCommitOnly(
+				this.appendLocallyPreparedNativeKnownNoNextDirectCommitOnly(
 					data,
 					options,
 					properties,
 					prepare,
+					nativeTrimLengthTo,
 				);
 			if (directResult !== undefined) {
 				return directResult;
@@ -1075,7 +1076,7 @@ export class Log<T> {
 		);
 	}
 
-	private appendLocallyPreparedNativeKnownNoNextNoTrimCommitOnly(
+	private appendLocallyPreparedNativeKnownNoNextDirectCommitOnly(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties: {
@@ -1085,6 +1086,7 @@ export class Log<T> {
 		prepare: (
 			input: NativeNoNextCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+		nativeTrimLengthTo?: number,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
 		if (
 			options.canAppend ||
@@ -1130,6 +1132,7 @@ export class Log<T> {
 			metaData: options.meta?.data,
 			payloadData,
 			resolveTrimmedEntries: properties.resolveTrimmedEntries,
+			trimLengthTo: nativeTrimLengthTo,
 		});
 		return mapMaybePromise(preparedValue, (prepared) => {
 			if (!prepared) {
@@ -1201,17 +1204,100 @@ export class Log<T> {
 				documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
 				documentPreviousContext: prepared.documentPreviousContext,
 			});
+			const finishTrim = ():
+				| PreparedCommitOnlyAppendResult<T>
+				| Promise<PreparedCommitOnlyAppendResult<T>> => {
+				if (prepared.trimmedEntryHashes) {
+					if (prepared.trimmedEntryHashes.length === 0) {
+						return finish();
+					}
+					if (prepared.documentTrimmedHeadsProcessed === true) {
+						const trimmedEntryHashes = [
+							...new Set(prepared.trimmedEntryHashes),
+						];
+						const consumedNoReturn =
+							this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+								trimmedEntryHashes,
+								{
+									skipNextHeadUpdates: true,
+									deleteBlocks: false,
+								},
+							);
+						if (consumedNoReturn !== undefined) {
+							return mapMaybePromise(consumedNoReturn, () => ({
+								get entry() {
+									return materializeEntry();
+								},
+								materializeEntry,
+								removed: [],
+								removedHashes: trimmedEntryHashes,
+								appendFacts,
+								shallowEntry,
+								documentTrimmedHeadsProcessed:
+									prepared.documentTrimmedHeadsProcessed,
+								documentPreviousContext: prepared.documentPreviousContext,
+							}));
+						}
+					}
+					const consumedResult =
+						this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
+							prepared.trimmedEntryHashes,
+							{
+								skipNextHeadUpdates: true,
+								deleteBlocks: false,
+							},
+						);
+					return mapMaybePromise(consumedResult, (removed) => ({
+						get entry() {
+							return materializeEntry();
+						},
+						materializeEntry,
+						removed,
+						removedHashes: prepared.trimmedEntryHashes,
+						appendFacts,
+						shallowEntry,
+						documentTrimmedHeadsProcessed:
+							prepared.documentTrimmedHeadsProcessed,
+						documentPreviousContext: prepared.documentPreviousContext,
+					}));
+				}
+				if (!prepared.trimmedEntries) {
+					return finish();
+				}
+				const trimmedEntries = this.entryIndex.nativeLogEntriesToShallowEntries(
+					prepared.trimmedEntries,
+				);
+				const consumedResult = this.entryIndex.consumeNativeTrimmedEntriesMaybe(
+					trimmedEntries,
+					{
+						skipNextHeadUpdates: true,
+						deleteBlocks: false,
+					},
+				);
+				return mapMaybePromise(consumedResult, (removed) => ({
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					appendFacts,
+					shallowEntry,
+					documentTrimmedHeadsProcessed:
+						prepared.documentTrimmedHeadsProcessed,
+					documentPreviousContext: prepared.documentPreviousContext,
+				}));
+			};
 			const finishBlocks = ():
 				| PreparedCommitOnlyAppendResult<T>
 				| Promise<PreparedCommitOnlyAppendResult<T>> => {
 				if (!prepared.bytes) {
-					return finish();
+					return finishTrim();
 				}
 				return mapMaybePromise(
 					this.putPreparedAppendBlocks([
 						Entry.preparedBlockFromBytes(prepared.bytes, hash),
 					]),
-					finish,
+					finishTrim,
 				);
 			};
 			const rollback = (error: unknown): never | Promise<never> => {
