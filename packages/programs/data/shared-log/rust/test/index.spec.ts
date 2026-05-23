@@ -274,6 +274,40 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("plans local hash gid leaders without returning leader maps", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
+		planner.put(range({ id: "b", hash: "peer-b", start1: 20, end1: 30 }));
+		planner.put(range({ id: "c", hash: "peer-c", start1: 80, end1: 90 }));
+
+		const items = [
+			{ hash: "entry-a", gid: "entry-gid-a", replicas: 1 },
+			{ hash: "entry-b", gid: "entry-gid-b", replicas: 2 },
+		];
+
+		const expected = new Set<string>();
+		const fullPlans = planner.planLeadersForGidsBatch(items, {
+			now: 1_000,
+			fullReplicaFallback: true,
+			selfHash: "peer-a",
+			selfReplicating: true,
+		});
+		for (let i = 0; i < fullPlans.length; i++) {
+			if (fullPlans[i]!.leaders.has("peer-a")) {
+				expected.add(items[i]!.hash);
+			}
+		}
+
+		expect(
+			planner.planLocalLeaderHashesForGidsBatch(items, {
+				now: 1_000,
+				fullReplicaFallback: true,
+				selfHash: "peer-a",
+				selfReplicating: true,
+			}),
+		).to.deep.equal(expected);
+	});
+
 	it("plans hash gid leaders from resident shared-log state", async () => {
 		const planner = await createRangePlanner("u32");
 		const state = await createSharedLogState("u32");

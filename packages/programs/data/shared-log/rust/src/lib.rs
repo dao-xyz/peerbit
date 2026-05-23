@@ -1497,6 +1497,58 @@ impl NativeRangePlanner {
         Ok(out)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_local_leaders_for_gids_batch(
+        &self,
+        hashes: Array,
+        gids: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let gids = strings_from_array(gids)?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(hashes.len(), gids.len(), "local leader hash batch")?;
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut local_hashes = Vec::new();
+
+        for ((hash, gid), replicas) in hashes
+            .into_iter()
+            .zip(gids.into_iter())
+            .zip(replica_counts.into_iter())
+        {
+            let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            if leaders.iter().any(|leader| leader.hash == self_hash) {
+                local_hashes.push(hash);
+            }
+        }
+
+        Ok(strings_to_array(local_hashes))
+    }
+
     pub fn plan_repair_dispatch(
         &self,
         entry_hashes: Array,
@@ -3218,6 +3270,56 @@ impl Default for NativeRangePlanner {
 impl Default for NativeSharedLogState {
     fn default() -> Self {
         Self::new("u32".to_string())
+    }
+}
+
+impl NativeSharedLogState {
+    pub fn entry_requested_replicas(&self, hash: &str) -> Option<usize> {
+        self.inner
+            .entry_coordinates
+            .get(hash)
+            .map(|entry| entry.requested_replicas)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn local_leader_flags_for_gids_batch(
+        &self,
+        gids: &[String],
+        replica_counts: &[usize],
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Vec<bool>, JsValue> {
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        let options = find_leader_options(role_age_ms, now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut out = Vec::with_capacity(gids.len());
+
+        for (gid, replicas) in gids.iter().zip(replica_counts.iter().copied()) {
+            let coordinates = self.inner.range_planner.get_gid_coordinates(gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            out.push(leaders.iter().any(|leader| leader.hash == self_hash));
+        }
+
+        Ok(out)
     }
 }
 

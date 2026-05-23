@@ -540,10 +540,7 @@ impl LogGraphIndex {
             .collect()
     }
 
-    pub fn entry_metadata_batch(
-        &self,
-        hashes: &[String],
-    ) -> Vec<Option<(String, String, Option<Vec<u8>>, Option<u32>)>> {
+    pub fn entry_metadata_batch(&self, hashes: &[String]) -> Vec<Option<LogEntryMetadata>> {
         hashes
             .iter()
             .map(|hash| {
@@ -934,6 +931,8 @@ pub struct NativeCommittedEntryFacts {
     pub hash_digest_bytes: Vec<u8>,
 }
 
+pub type LogEntryMetadata = (String, String, Option<Vec<u8>>, Option<u32>);
+
 #[derive(Clone, Default)]
 pub struct NativeLogAppendProfile {
     pub next_clone_ms: f64,
@@ -1087,6 +1086,10 @@ impl NativeLogBlockStore {
 }
 
 impl NativeLogIndex {
+    pub fn entry_metadata_values(&self, hashes: &[String]) -> Vec<Option<LogEntryMetadata>> {
+        self.inner.entry_metadata_batch(hashes)
+    }
+
     pub fn put_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
         self.inner.put_many(entries);
     }
@@ -5113,9 +5116,7 @@ fn log_trim_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
     out
 }
 
-fn log_optional_entry_metadata_to_rows(
-    values: Vec<Option<(String, String, Option<Vec<u8>>, Option<u32>)>>,
-) -> Array {
+fn log_optional_entry_metadata_to_rows(values: Vec<Option<LogEntryMetadata>>) -> Array {
     let out = Array::new();
     for value in values {
         let Some((hash, gid, data, replicas)) = value else {

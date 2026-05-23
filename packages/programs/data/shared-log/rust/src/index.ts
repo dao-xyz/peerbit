@@ -111,6 +111,10 @@ export type LeaderGidBatchInput = {
 	replicas: number;
 };
 
+export type LeaderGidHashBatchInput = LeaderGidBatchInput & {
+	hash: string;
+};
+
 export type RepairDispatchBatchEntry = {
 	hash: string;
 	gid: string;
@@ -238,6 +242,19 @@ type NativeRangePlannerHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	plan_local_leaders_for_gids_batch?: (
+		hashes: string[],
+		gids: string[],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => string[];
 	plan_repair_dispatch: (
 		entryHashes: string[],
 		entryGids: string[],
@@ -869,6 +886,31 @@ export class SharedLogRangePlanner {
 				leaders: rowsToSamples(leaderRows),
 			};
 		});
+	}
+
+	planLocalLeaderHashesForGidsBatch(
+		items: Iterable<LeaderGidHashBatchInput>,
+		options?: FindLeaderOptions,
+	): Set<string> | undefined {
+		if (!this.native.plan_local_leaders_for_gids_batch) {
+			return undefined;
+		}
+		const hashes: string[] = [];
+		const gids: string[] = [];
+		const replicaCounts: number[] = [];
+		for (const item of items) {
+			hashes.push(item.hash);
+			gids.push(item.gid);
+			replicaCounts.push(item.replicas);
+		}
+		return new Set(
+			this.native.plan_local_leaders_for_gids_batch(
+				hashes,
+				gids,
+				replicaCounts,
+				...findLeaderArguments(options),
+			),
+		);
 	}
 
 	planRepairDispatchBatch(input: RepairDispatchPlanInput): RepairDispatchPlan {

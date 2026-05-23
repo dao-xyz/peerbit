@@ -403,6 +403,18 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => Array<[unknown[], unknown[]]>;
+	plan_request_prune_leader_hints?: (
+		hashes: string[],
+		skipHashes: string[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	plan_entry_assignment_for_gid: (
 		gid: string,
 		replicas: number,
@@ -1312,6 +1324,18 @@ export type NativeBackboneLeaderPlan = {
 export type NativeBackboneLeaderGidBatchInput = {
 	gid: string;
 	replicas: number;
+};
+
+export type NativeBackboneRequestPruneHints = {
+	entries: Map<
+		string,
+		{ hash: string; gid: string; data?: Uint8Array; replicas?: number }
+	>;
+	presentBlockHashes: Set<string>;
+	localLeaderHashes: Set<string>;
+	replicaCounts: Map<string, number>;
+	peerHistoryGids: string[];
+	peerHistoryRemovedHashes: Set<string>;
 };
 
 export type NativeBackboneLeaderCursorBatchInput = {
@@ -2235,6 +2259,26 @@ const metadataEntryFromRow = (row: unknown) => {
 		{ hash, gid, data };
 	if (replicas != null) {
 		entry.replicas = replicas;
+	}
+	return entry;
+};
+
+const requestPruneEntryFromRow = (
+	row: unknown,
+): { hash: string; gid: string; data?: Uint8Array; replicas?: number } => {
+	const [hash, gid, replicas, data] = row as [
+		string,
+		string,
+		number | undefined,
+		Uint8Array | undefined,
+	];
+	const entry: { hash: string; gid: string; data?: Uint8Array; replicas?: number } =
+		{ hash, gid };
+	if (replicas != null) {
+		entry.replicas = replicas;
+	}
+	if (data != null) {
+		entry.data = data;
 	}
 	return entry;
 };
@@ -4337,6 +4381,47 @@ export class NativePeerbitBackbone {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows) ?? new Map(),
 		}));
+	}
+
+	planRequestPruneLeaderHints(
+		hashes: Iterable<string>,
+		skipHashes: Iterable<string>,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneRequestPruneHints | undefined {
+		if (!this.native.plan_request_prune_leader_hints) {
+			return undefined;
+		}
+		const [
+			entryRows,
+			presentBlockHashes,
+			localLeaderHashes,
+			peerHistoryGids,
+			peerHistoryRemovedHashes,
+		] = this.native.plan_request_prune_leader_hints(
+			[...hashes],
+			[...skipHashes],
+			...findLeaderArguments(options),
+		) as [unknown[], string[], string[], string[], string[]];
+		const entries = new Map<
+			string,
+			{ hash: string; gid: string; data?: Uint8Array; replicas?: number }
+		>();
+		const replicaCounts = new Map<string, number>();
+		for (const row of entryRows) {
+			const entry = requestPruneEntryFromRow(row);
+			entries.set(entry.hash, entry);
+			if (entry.replicas != null) {
+				replicaCounts.set(entry.hash, entry.replicas);
+			}
+		}
+		return {
+			entries,
+			presentBlockHashes: new Set(presentBlockHashes),
+			localLeaderHashes: new Set(localLeaderHashes),
+			replicaCounts,
+			peerHistoryGids,
+			peerHistoryRemovedHashes: new Set(peerHistoryRemovedHashes),
+		};
 	}
 
 	planEntryAssignmentForGid(

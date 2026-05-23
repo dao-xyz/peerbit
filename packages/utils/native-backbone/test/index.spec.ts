@@ -1309,6 +1309,26 @@ describe("native peerbit backbone", () => {
 		);
 		expect(batchLeaderPlan?.coordinates).to.deep.equal(leaderPlan.coordinates);
 		expect(batchLeaderPlan?.leaders).to.deep.equal(leaderPlan.leaders);
+		const requestPruneHints = backbone.planRequestPruneLeaderHints(
+			[second.entry.hash, "missing"],
+			[],
+			{
+				selfHash: "peer-a",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		)!;
+		expect(requestPruneHints.entries.get(second.entry.hash)?.gid).equal(
+			"gid-storage-committed-no-next",
+		);
+		expect(requestPruneHints.presentBlockHashes.has(second.entry.hash)).equal(
+			true,
+		);
+		expect(requestPruneHints.replicaCounts.get(second.entry.hash)).equal(1);
+		expect(requestPruneHints.localLeaderHashes.has(second.entry.hash)).equal(
+			leaderPlan.leaders.has("peer-a"),
+		);
+		expect(requestPruneHints.entries.has("missing")).equal(false);
 		expect(
 			backbone.getGidCoordinates("gid-storage-committed-no-next", 1),
 		).to.deep.equal(leaderPlan.coordinates);

@@ -358,6 +358,11 @@ type NativeRequestPruneLeaderHints = {
 	replicaCounts: Map<string, number>;
 	peerHistoryGids: string[];
 	peerHistoryRemovedHashes: Set<string>;
+	nativeEntries?: Map<
+		string,
+		{ gid: string; data?: Uint8Array; replicas?: number }
+	>;
+	presentBlockHashes?: Set<string>;
 };
 
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
@@ -10144,62 +10149,96 @@ export class SharedLog<
 						details: { hashes: msg.hashes.length },
 					});
 				}
-				const metadataStartedAt = syncProfileStart(syncProfile);
-				const nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
-					msg.hashes,
-				);
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, metadataStartedAt, {
-						name: "sharedLog.receive.requestPrune.nativeMetadata",
-						component: "shared-log",
-						entries: msg.hashes.length,
-						messages: 1,
-						details: {
-							nativeEntries:
-								nativeEntryMetadata?.reduce(
-									(sum, entry) => sum + (entry ? 1 : 0),
-									0,
-								) ?? 0,
-						},
-					});
-				}
-				const blockHasManyStartedAt = syncProfileStart(syncProfile);
-				const presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, blockHasManyStartedAt, {
-						name: "sharedLog.receive.requestPrune.blockHasMany",
-						component: "shared-log",
-						entries: msg.hashes.length,
-						messages: 1,
-						details: {
-							batched: presentBlocks != null,
-							presentBlocks:
-								presentBlocks?.reduce(
-									(sum, present) => sum + (present ? 1 : 0),
-									0,
-								) ?? 0,
-						},
-					});
-				}
-				const nativeLeaderPlanStartedAt = syncProfileStart(syncProfile);
-				const nativeLeaderHints =
-					await this.planCurrentNativeRequestPruneLeaderHints({
-						hashes: msg.hashes,
-						nativeEntryMetadata,
-						presentBlocks,
-					});
-				if (syncProfile) {
-					emitSyncProfileDuration(syncProfile, nativeLeaderPlanStartedAt, {
-						name: "sharedLog.receive.requestPrune.nativeLeaderPlan",
-						component: "shared-log",
-						entries: msg.hashes.length,
-						messages: 1,
-						details: {
-							localLeaders: nativeLeaderHints.localLeaderHashes.size,
-							plannedEntries: nativeLeaderHints.replicaCounts.size,
-							peerHistoryGids: nativeLeaderHints.peerHistoryGids.length,
-						},
-					});
+				let nativeEntryMetadata:
+					| Array<
+							| { gid: string; data?: Uint8Array; replicas?: number }
+							| undefined
+							| null
+					  >
+					| undefined;
+				let presentBlocks: boolean[] | undefined;
+				const nativeBackbonePlanStartedAt = syncProfileStart(syncProfile);
+				let nativeLeaderHints =
+					await this.planCurrentNativeBackboneRequestPruneLeaderHints(
+						msg.hashes,
+					);
+				if (nativeLeaderHints) {
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, nativeBackbonePlanStartedAt, {
+							name: "sharedLog.receive.requestPrune.nativeBackbonePlan",
+							component: "shared-log",
+							entries: msg.hashes.length,
+							messages: 1,
+							details: {
+								nativeEntries: nativeLeaderHints.nativeEntries?.size ?? 0,
+								presentBlocks:
+									nativeLeaderHints.presentBlockHashes?.size ?? 0,
+								localLeaders: nativeLeaderHints.localLeaderHashes.size,
+								plannedEntries: nativeLeaderHints.replicaCounts.size,
+								peerHistoryGids:
+									nativeLeaderHints.peerHistoryGids.length,
+							},
+						});
+					}
+				} else {
+					const metadataStartedAt = syncProfileStart(syncProfile);
+					nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
+						msg.hashes,
+					);
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, metadataStartedAt, {
+							name: "sharedLog.receive.requestPrune.nativeMetadata",
+							component: "shared-log",
+							entries: msg.hashes.length,
+							messages: 1,
+							details: {
+								nativeEntries:
+									nativeEntryMetadata?.reduce(
+										(sum, entry) => sum + (entry ? 1 : 0),
+										0,
+									) ?? 0,
+							},
+						});
+					}
+					const blockHasManyStartedAt = syncProfileStart(syncProfile);
+					presentBlocks = await this.log.blocks.hasMany?.(msg.hashes);
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, blockHasManyStartedAt, {
+							name: "sharedLog.receive.requestPrune.blockHasMany",
+							component: "shared-log",
+							entries: msg.hashes.length,
+							messages: 1,
+							details: {
+								batched: presentBlocks != null,
+								presentBlocks:
+									presentBlocks?.reduce(
+										(sum, present) => sum + (present ? 1 : 0),
+										0,
+									) ?? 0,
+							},
+						});
+					}
+					const nativeLeaderPlanStartedAt = syncProfileStart(syncProfile);
+					nativeLeaderHints =
+						await this.planCurrentNativeRequestPruneLeaderHints({
+							hashes: msg.hashes,
+							nativeEntryMetadata,
+							presentBlocks,
+						});
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, nativeLeaderPlanStartedAt, {
+							name: "sharedLog.receive.requestPrune.nativeLeaderPlan",
+							component: "shared-log",
+							entries: msg.hashes.length,
+							messages: 1,
+							details: {
+								localLeaders: nativeLeaderHints.localLeaderHashes.size,
+								plannedEntries: nativeLeaderHints.replicaCounts.size,
+								peerHistoryGids:
+									nativeLeaderHints.peerHistoryGids.length,
+							},
+						});
+					}
 				}
 				const gidCleanupStartedAt = syncProfileStart(syncProfile);
 				this.removePeerFromGidPeerHistoryBatch(
@@ -10228,16 +10267,20 @@ export class SharedLog<
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
 
-					const nativeEntry = nativeEntryMetadata?.[i];
+					const nativeEntry =
+						nativeLeaderHints.nativeEntries?.get(hash) ??
+						nativeEntryMetadata?.[i];
 					let indexedEntry:
 						| Awaited<ReturnType<typeof this.log.entryIndex.getShallow>>
 						| undefined;
 					let isLeader = false;
 
-					const hasPresentBlock = presentBlocks
-						? presentBlocks[i] === true
-						: await this.log.blocks.has(hash);
-					if (!presentBlocks) {
+					const hasPresentBlock = nativeLeaderHints.presentBlockHashes
+						? nativeLeaderHints.presentBlockHashes.has(hash)
+						: presentBlocks
+							? presentBlocks[i] === true
+							: await this.log.blocks.has(hash);
+					if (!presentBlocks && !nativeLeaderHints.presentBlockHashes) {
 						fallbackBlockChecks += 1;
 					}
 					if (!nativeEntry && hasPresentBlock) {
@@ -11447,14 +11490,31 @@ export class SharedLog<
 		}
 
 		const context = await this.createLeaderSelectionContext();
-		const nativePlans = planner.planLeadersForGidsBatch(
-			entries,
-			this.createNativeLeaderOptions(context),
+		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
+		let localLeaderHashes = (
+			planner as {
+				planLocalLeaderHashesForGidsBatch?: (
+					items: Iterable<{ hash: string; gid: string; replicas: number }>,
+					options: typeof nativeLeaderOptions,
+				) => Set<string> | undefined;
+			}
+		).planLocalLeaderHashesForGidsBatch?.(
+			entries.map((entry, index) => ({
+				hash: hashes[index]!,
+				...entry,
+			})),
+			nativeLeaderOptions,
 		);
-		const localLeaderHashes = new Set<string>();
-		for (let i = 0; i < nativePlans.length; i++) {
-			if (nativePlans[i]?.leaders.has(context.selfHash)) {
-				localLeaderHashes.add(hashes[i]!);
+		if (!localLeaderHashes) {
+			const nativePlans = planner.planLeadersForGidsBatch(
+				entries,
+				nativeLeaderOptions,
+			);
+			localLeaderHashes = new Set<string>();
+			for (let i = 0; i < nativePlans.length; i++) {
+				if (nativePlans[i]?.leaders.has(context.selfHash)) {
+					localLeaderHashes.add(hashes[i]!);
+				}
 			}
 		}
 		return {
@@ -11462,6 +11522,35 @@ export class SharedLog<
 			replicaCounts,
 			peerHistoryGids,
 			peerHistoryRemovedHashes,
+		};
+	}
+
+	private async planCurrentNativeBackboneRequestPruneLeaderHints(
+		hashes: string[],
+	): Promise<NativeRequestPruneLeaderHints | undefined> {
+		if (!this._nativeBackbone) {
+			return undefined;
+		}
+		const context = await this.createLeaderSelectionContext();
+		const skipHashes =
+			this._checkedPrune.pendingDeletes.size > 0
+				? this._checkedPrune.pendingDeletes.keys()
+				: [];
+		const hints = this._nativeBackbone.planRequestPruneLeaderHints(
+			hashes,
+			skipHashes,
+			this.createNativeLeaderOptions(context),
+		);
+		if (!hints) {
+			return undefined;
+		}
+		return {
+			localLeaderHashes: hints.localLeaderHashes,
+			replicaCounts: hints.replicaCounts,
+			peerHistoryGids: hints.peerHistoryGids,
+			peerHistoryRemovedHashes: hints.peerHistoryRemovedHashes,
+			nativeEntries: hints.entries,
+			presentBlockHashes: hints.presentBlockHashes,
 		};
 	}
 
