@@ -1968,6 +1968,200 @@ type ParentUpgradeSkipReason =
 	| "quiet"
 	| "budget";
 
+type ParentUpgradeMode = NonNullable<FanoutTreeJoinOptions["parentUpgradeMode"]>;
+
+type ParentUpgradePolicy = {
+	intervalMs: number;
+	leafOnly: boolean;
+	minLevelGain: number;
+	rootMinLevelGain: number;
+	rootMinSubtreeGain: number;
+	nonRootMinLevelGain: number;
+	minFreeSlots: number;
+	rootMinFreeSlots: number;
+	maxChildLoadRatio: number;
+	rootMaxChildLoadRatio: number;
+	staleRootProbeProbability: number;
+	cooldownMs: number;
+	quietMs: number;
+	repairQuietMs: number;
+	maxPerPeer: number;
+	repairGuard: boolean;
+	dataGuard: boolean;
+	mode: ParentUpgradeMode;
+	verifyStaleRootCapacity: boolean;
+	failedBackoff: {
+		minMs: number;
+		maxMs: number;
+	};
+	probe: {
+		timeoutMs: number;
+		maxPerRound: number;
+		maxLagMessages: number;
+		rejectCooldownMs: number;
+		rejectCooldownMaxMs: number;
+	};
+	shadow: {
+		observeMs: number;
+		minObservations: number;
+		dualPathMs: number;
+		dualPathMinMessages: number;
+	};
+};
+
+const normalizeParentUpgradePolicy = (
+	options: FanoutTreeJoinOptions,
+): ParentUpgradePolicy => {
+	const intervalMs = Math.max(
+		0,
+		Math.floor(options.parentUpgradeIntervalMs ?? 0),
+	);
+	const minLevelGain = Math.max(
+		1,
+		Math.floor(options.parentUpgradeMinLevelGain ?? 1),
+	);
+	const rootMinLevelGain = Math.max(
+		minLevelGain,
+		Math.floor(options.parentUpgradeRootMinLevelGain ?? 3),
+	);
+	const rootMinSubtreeGain = Math.max(
+		minLevelGain,
+		Math.floor(options.parentUpgradeRootMinSubtreeGain ?? rootMinLevelGain),
+	);
+	const minFreeSlots = Math.max(
+		0,
+		Math.floor(options.parentUpgradeMinFreeSlots ?? 8),
+	);
+	const maxChildLoadRatioRaw = Number(
+		options.parentUpgradeMaxChildLoadRatio ?? 0.5,
+	);
+	const maxChildLoadRatio = Number.isFinite(maxChildLoadRatioRaw)
+		? Math.max(0, maxChildLoadRatioRaw)
+		: 0.5;
+	const rootMaxChildLoadRatioRaw = Number(
+		options.parentUpgradeRootMaxChildLoadRatio ??
+			Math.min(maxChildLoadRatio, 0.4),
+	);
+	const rootMaxChildLoadRatio = Number.isFinite(rootMaxChildLoadRatioRaw)
+		? Math.max(0, rootMaxChildLoadRatioRaw)
+		: Math.min(maxChildLoadRatio, 0.4);
+	const staleRootProbeProbabilityRaw = Number(
+		options.parentUpgradeStaleRootProbeProbability ?? 0.015625,
+	);
+	const staleRootProbeProbability = Number.isFinite(
+		staleRootProbeProbabilityRaw,
+	)
+		? Math.max(0, Math.min(1, staleRootProbeProbabilityRaw))
+		: 0.015625;
+	const cooldownMs = Math.max(
+		0,
+		Math.floor(options.parentUpgradeCooldownMs ?? 5_000),
+	);
+	const failedBackoffMinMs = Math.max(
+		0,
+		Math.floor(options.parentUpgradeFailedBackoffMinMs ?? cooldownMs),
+	);
+	const probeRejectCooldownMs = Math.max(
+		0,
+		Math.floor(options.parentProbeRejectCooldownMs ?? 10_000),
+	);
+	const quietMs = Math.max(
+		0,
+		Math.floor(options.parentUpgradeQuietMs ?? 5_000),
+	);
+	const mode: ParentUpgradeMode =
+		options.parentUpgradeMode === "probe" ||
+		options.parentUpgradeMode === "shadow"
+			? options.parentUpgradeMode
+			: options.parentUpgradeMode === "direct"
+				? "direct"
+				: "shadow";
+
+	return {
+		intervalMs,
+		leafOnly: options.parentUpgradeLeafOnly !== false,
+		minLevelGain,
+		rootMinLevelGain,
+		rootMinSubtreeGain,
+		nonRootMinLevelGain: Math.max(
+			minLevelGain,
+			Math.floor(options.parentUpgradeNonRootMinLevelGain ?? 2),
+		),
+		minFreeSlots,
+		rootMinFreeSlots: Math.max(
+			0,
+			Math.floor(options.parentUpgradeRootMinFreeSlots ?? minFreeSlots),
+		),
+		maxChildLoadRatio,
+		rootMaxChildLoadRatio,
+		staleRootProbeProbability,
+		cooldownMs,
+		quietMs,
+		repairQuietMs: Math.max(
+			0,
+			Math.floor(options.parentUpgradeRepairQuietMs ?? quietMs),
+		),
+		maxPerPeer: Math.max(
+			0,
+			Math.floor(options.parentUpgradeMaxPerPeer ?? 2),
+		),
+		repairGuard: options.parentUpgradeRepairGuard !== false,
+		dataGuard: options.parentUpgradeDataGuard !== false,
+		mode,
+		verifyStaleRootCapacity:
+			options.parentUpgradeVerifyStaleRootCapacity ?? (mode === "shadow"),
+		failedBackoff: {
+			minMs: failedBackoffMinMs,
+			maxMs: Math.max(
+				failedBackoffMinMs,
+				Math.floor(options.parentUpgradeFailedBackoffMaxMs ?? 60_000),
+			),
+		},
+		probe: {
+			timeoutMs: Math.max(
+				1,
+				Math.floor(options.parentProbeTimeoutMs ?? 500),
+			),
+			maxPerRound: Math.max(
+				1,
+				Math.floor(options.parentProbeMaxPerRound ?? 2),
+			),
+			maxLagMessages: Math.max(
+				0,
+				Math.floor(options.parentProbeMaxLagMessages ?? 0),
+			),
+			rejectCooldownMs: probeRejectCooldownMs,
+			rejectCooldownMaxMs: Math.max(
+				probeRejectCooldownMs,
+				Math.floor(options.parentProbeRejectCooldownMaxMs ?? 60_000),
+			),
+		},
+		shadow: {
+			observeMs: Math.max(
+				0,
+				Math.floor(options.parentShadowObserveMs ?? 2_000),
+			),
+			minObservations: Math.max(
+				1,
+				Math.floor(options.parentShadowMinObservations ?? 2),
+			),
+			dualPathMs: Math.max(
+				0,
+				Math.floor(
+					options.parentShadowDualPathMs ?? (mode === "shadow" ? 5_000 : 0),
+				),
+			),
+			dualPathMinMessages: Math.max(
+				1,
+				Math.floor(
+					options.parentShadowDualPathMinMessages ??
+						(mode === "shadow" ? 32 : 1),
+				),
+			),
+		},
+	};
+};
+
 const createDeferred = (): {
 	resolve(): void;
 	reject(err: unknown): void;
@@ -6303,146 +6497,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(joinOpts.candidateCooldownMs ?? 2_000),
 		);
-		const parentUpgradeIntervalMs = Math.max(
-			0,
-			Math.floor(joinOpts.parentUpgradeIntervalMs ?? 0),
-		);
-		const parentUpgradeLeafOnly = joinOpts.parentUpgradeLeafOnly !== false;
-		const parentUpgradeMinLevelGain = Math.max(
-			1,
-			Math.floor(joinOpts.parentUpgradeMinLevelGain ?? 1),
-		);
-		const parentUpgradeRootMinLevelGain = Math.max(
-			parentUpgradeMinLevelGain,
-			Math.floor(joinOpts.parentUpgradeRootMinLevelGain ?? 3),
-		);
-		const parentUpgradeRootMinSubtreeGain = Math.max(
-			parentUpgradeMinLevelGain,
-			Math.floor(
-				joinOpts.parentUpgradeRootMinSubtreeGain ??
-					parentUpgradeRootMinLevelGain,
-			),
-		);
-		const parentUpgradeNonRootMinLevelGain = Math.max(
-			parentUpgradeMinLevelGain,
-			Math.floor(joinOpts.parentUpgradeNonRootMinLevelGain ?? 2),
-		);
-		const parentUpgradeMinFreeSlots = Math.max(
-			0,
-			Math.floor(joinOpts.parentUpgradeMinFreeSlots ?? 8),
-		);
-		const parentUpgradeRootMinFreeSlots = Math.max(
-			0,
-			Math.floor(
-				joinOpts.parentUpgradeRootMinFreeSlots ?? parentUpgradeMinFreeSlots,
-			),
-		);
-		const parentUpgradeMaxChildLoadRatioRaw = Number(
-			joinOpts.parentUpgradeMaxChildLoadRatio ?? 0.5,
-		);
-		const parentUpgradeMaxChildLoadRatio = Number.isFinite(
-			parentUpgradeMaxChildLoadRatioRaw,
-		)
-			? Math.max(0, parentUpgradeMaxChildLoadRatioRaw)
-			: 0.5;
-		const parentUpgradeRootMaxChildLoadRatioRaw = Number(
-			joinOpts.parentUpgradeRootMaxChildLoadRatio ??
-				Math.min(parentUpgradeMaxChildLoadRatio, 0.4),
-		);
-		const parentUpgradeRootMaxChildLoadRatio = Number.isFinite(
-			parentUpgradeRootMaxChildLoadRatioRaw,
-		)
-			? Math.max(0, parentUpgradeRootMaxChildLoadRatioRaw)
-			: Math.min(parentUpgradeMaxChildLoadRatio, 0.4);
-		const parentUpgradeStaleRootProbeProbabilityRaw = Number(
-			joinOpts.parentUpgradeStaleRootProbeProbability ?? 0.015625,
-		);
-		const parentUpgradeStaleRootProbeProbability = Number.isFinite(
-			parentUpgradeStaleRootProbeProbabilityRaw,
-		)
-			? Math.max(0, Math.min(1, parentUpgradeStaleRootProbeProbabilityRaw))
-			: 0.015625;
-		const parentUpgradeCooldownMs = Math.max(
-			0,
-			Math.floor(joinOpts.parentUpgradeCooldownMs ?? 5_000),
-		);
-		const parentUpgradeFailedBackoffMinMs = Math.max(
-			0,
-			Math.floor(
-				joinOpts.parentUpgradeFailedBackoffMinMs ?? parentUpgradeCooldownMs,
-			),
-		);
-		const parentUpgradeFailedBackoffMaxMs = Math.max(
-			parentUpgradeFailedBackoffMinMs,
-			Math.floor(joinOpts.parentUpgradeFailedBackoffMaxMs ?? 60_000),
-		);
-		const parentUpgradeQuietMs = Math.max(
-			0,
-			Math.floor(joinOpts.parentUpgradeQuietMs ?? 5_000),
-		);
-		const parentUpgradeRepairQuietMs = Math.max(
-			0,
-			Math.floor(joinOpts.parentUpgradeRepairQuietMs ?? parentUpgradeQuietMs),
-		);
-		const parentUpgradeMaxPerPeer = Math.max(
-			0,
-			Math.floor(joinOpts.parentUpgradeMaxPerPeer ?? 2),
-		);
-		const parentUpgradeRepairGuard =
-			joinOpts.parentUpgradeRepairGuard !== false;
-		const parentUpgradeDataGuard = joinOpts.parentUpgradeDataGuard !== false;
-		const parentUpgradeMode =
-			joinOpts.parentUpgradeMode === "probe" ||
-			joinOpts.parentUpgradeMode === "shadow"
-				? joinOpts.parentUpgradeMode
-				: joinOpts.parentUpgradeMode === "direct"
-					? "direct"
-					: "shadow";
-		const parentUpgradeVerifyStaleRootCapacity =
-			joinOpts.parentUpgradeVerifyStaleRootCapacity ??
-			(parentUpgradeMode === "shadow");
-		const parentProbeTimeoutMs = Math.max(
-			1,
-			Math.floor(joinOpts.parentProbeTimeoutMs ?? 500),
-		);
-		const parentProbeMaxPerRound = Math.max(
-			1,
-			Math.floor(joinOpts.parentProbeMaxPerRound ?? 2),
-		);
-		const parentProbeMaxLagMessages = Math.max(
-			0,
-			Math.floor(joinOpts.parentProbeMaxLagMessages ?? 0),
-		);
-		const parentProbeRejectCooldownMs = Math.max(
-			0,
-			Math.floor(joinOpts.parentProbeRejectCooldownMs ?? 10_000),
-		);
-		const parentProbeRejectCooldownMaxMs = Math.max(
-			parentProbeRejectCooldownMs,
-			Math.floor(joinOpts.parentProbeRejectCooldownMaxMs ?? 60_000),
-		);
-		const parentShadowObserveMs = Math.max(
-			0,
-			Math.floor(joinOpts.parentShadowObserveMs ?? 2_000),
-		);
-		const parentShadowMinObservations = Math.max(
-			1,
-			Math.floor(joinOpts.parentShadowMinObservations ?? 2),
-		);
-		const parentShadowDualPathMs = Math.max(
-			0,
-			Math.floor(
-				joinOpts.parentShadowDualPathMs ??
-					(parentUpgradeMode === "shadow" ? 5_000 : 0),
-			),
-		);
-		const parentShadowDualPathMinMessages = Math.max(
-			1,
-			Math.floor(
-				joinOpts.parentShadowDualPathMinMessages ??
-					(parentUpgradeMode === "shadow" ? 32 : 1),
-			),
-		);
+		const parentUpgrade = normalizeParentUpgradePolicy(joinOpts);
 		const candidateScoringModeRaw =
 			joinOpts.candidateScoringMode ?? "ranked-shuffle";
 		const candidateScoringMode:
@@ -6473,9 +6528,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const scheduleNextParentUpgradeCheck = (
 			now: number,
 			first = false,
-			minDelayMs = parentUpgradeIntervalMs,
+			minDelayMs = parentUpgrade.intervalMs,
 		) => {
-			if (parentUpgradeIntervalMs <= 0) {
+			if (parentUpgrade.intervalMs <= 0) {
 				nextParentUpgradeCheckAt = 0;
 				return;
 			}
@@ -6492,7 +6547,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				now +
 				Math.max(
 					1,
-					Math.floor(parentUpgradeIntervalMs * factor),
+					Math.floor(parentUpgrade.intervalMs * factor),
 					Math.floor(minDelayMs),
 				);
 		};
@@ -6506,23 +6561,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const baseDelayMs = (() => {
 				switch (reason) {
 					case "data":
-						return Math.max(parentUpgradeQuietMs, parentUpgradeRepairQuietMs);
+						return Math.max(parentUpgrade.quietMs, parentUpgrade.repairQuietMs);
 					case "repair":
-						return parentUpgradeRepairQuietMs;
+						return parentUpgrade.repairQuietMs;
 					case "quiet":
 						return ch.lastParentDataAt > 0
-							? Math.max(0, parentUpgradeQuietMs - (now - ch.lastParentDataAt))
-							: parentUpgradeQuietMs;
+							? Math.max(
+									0,
+									parentUpgrade.quietMs - (now - ch.lastParentDataAt),
+								)
+							: parentUpgrade.quietMs;
 					case "cooldown":
 						return Math.max(
 							0,
 							ch.parentUpgradeBackoffUntil - now,
 							ch.parentUpgradeLastAt > 0
-								? parentUpgradeCooldownMs - (now - ch.parentUpgradeLastAt)
+								? parentUpgrade.cooldownMs - (now - ch.parentUpgradeLastAt)
 								: 0,
 						);
 					default:
-						return parentUpgradeIntervalMs;
+						return parentUpgrade.intervalMs;
 				}
 			})();
 
@@ -6534,7 +6592,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parentUpgradeActiveGuardBackoffMs =
 				parentUpgradeActiveGuardBackoffMs > 0
 					? Math.min(
-							Math.max(parentUpgradeFailedBackoffMaxMs, baseDelayMs),
+							Math.max(parentUpgrade.failedBackoff.maxMs, baseDelayMs),
 							Math.max(baseDelayMs, parentUpgradeActiveGuardBackoffMs * 2),
 						)
 					: baseDelayMs;
@@ -6655,28 +6713,31 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						continue;
 					}
 
-					if (parentUpgradeIntervalMs > 0 && ch.level > 1) {
+					if (parentUpgrade.intervalMs > 0 && ch.level > 1) {
 						const now = Date.now();
 						if (nextParentUpgradeCheckAt === 0) {
 							scheduleNextParentUpgradeCheck(
 								now,
 								true,
-								parentUpgradeDataGuard || parentUpgradeRepairGuard
-									? Math.max(parentUpgradeQuietMs, parentUpgradeRepairQuietMs)
-									: parentUpgradeIntervalMs,
+								parentUpgrade.dataGuard || parentUpgrade.repairGuard
+									? Math.max(
+											parentUpgrade.quietMs,
+											parentUpgrade.repairQuietMs,
+										)
+									: parentUpgrade.intervalMs,
 							);
 						}
 						const due = now >= nextParentUpgradeCheckAt;
 						if (due) {
 							const gate = this.evaluateParentUpgradeGate(ch, {
-								leafOnly: parentUpgradeLeafOnly,
-								repairGuard: parentUpgradeRepairGuard,
-								dataGuard: parentUpgradeDataGuard,
+								leafOnly: parentUpgrade.leafOnly,
+								repairGuard: parentUpgrade.repairGuard,
+								dataGuard: parentUpgrade.dataGuard,
 								endedAndComplete,
-								maxPerPeer: parentUpgradeMaxPerPeer,
-								cooldownMs: parentUpgradeCooldownMs,
-								quietMs: parentUpgradeQuietMs,
-								repairQuietMs: parentUpgradeRepairQuietMs,
+								maxPerPeer: parentUpgrade.maxPerPeer,
+								cooldownMs: parentUpgrade.cooldownMs,
+								quietMs: parentUpgrade.quietMs,
+								repairQuietMs: parentUpgrade.repairQuietMs,
 								now,
 							});
 							if ("reason" in gate) {
@@ -6695,33 +6756,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									candidateScoringWeights,
 									joinAttemptsPerRound,
 									joinReqTimeoutMs,
-									minLevelGain: parentUpgradeMinLevelGain,
-									rootMinLevelGain: parentUpgradeRootMinLevelGain,
-									rootMinSubtreeGain: parentUpgradeRootMinSubtreeGain,
-									nonRootMinLevelGain: parentUpgradeNonRootMinLevelGain,
-									minFreeSlots: parentUpgradeMinFreeSlots,
-									rootMinFreeSlots: parentUpgradeRootMinFreeSlots,
-									maxChildLoadRatio: parentUpgradeMaxChildLoadRatio,
-									rootMaxChildLoadRatio: parentUpgradeRootMaxChildLoadRatio,
-									mode: parentUpgradeMode,
-									leafOnly: parentUpgradeLeafOnly,
+									parentUpgrade,
 									trackerPeers: ch.cachedBootstrapPeers.filter((h) =>
 										Boolean(this.peers.get(h)),
 									),
-									verifyStaleRootCapacity: parentUpgradeVerifyStaleRootCapacity,
-									staleRootProbeProbability:
-										parentUpgradeStaleRootProbeProbability,
-									probeTimeoutMs: parentProbeTimeoutMs,
-									probeMaxPerRound: parentProbeMaxPerRound,
-									probeMaxLagMessages: parentProbeMaxLagMessages,
-									probeRejectCooldownMs: parentProbeRejectCooldownMs,
-									probeRejectCooldownMaxMs: parentProbeRejectCooldownMaxMs,
-									shadowObserveMs: parentShadowObserveMs,
-									shadowMinObservations: parentShadowMinObservations,
-									shadowDualPathMs: parentShadowDualPathMs,
-									shadowDualPathMinMessages: parentShadowDualPathMinMessages,
-									failedBackoffMinMs: parentUpgradeFailedBackoffMinMs,
-									failedBackoffMaxMs: parentUpgradeFailedBackoffMaxMs,
 								});
 								scheduleNextParentUpgradeCheck(Date.now());
 								if (improved) {
@@ -7229,38 +7267,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				bidPerByte: number;
 				source: number;
 			};
-			leafOnly: boolean;
 			joinAttemptsPerRound: number;
 			joinReqTimeoutMs: number;
-			minLevelGain: number;
-			rootMinLevelGain?: number;
-			rootMinSubtreeGain?: number;
-			nonRootMinLevelGain?: number;
-			minFreeSlots: number;
-			rootMinFreeSlots?: number;
-			maxChildLoadRatio?: number;
-			rootMaxChildLoadRatio?: number;
-			mode?: "direct" | "probe" | "shadow";
+			parentUpgrade: ParentUpgradePolicy;
 			trackerPeers?: string[];
-			verifyStaleRootCapacity?: boolean;
-			staleRootProbeProbability?: number;
-			probeTimeoutMs?: number;
-			probeMaxPerRound?: number;
-			probeMaxLagMessages?: number;
-			probeRejectCooldownMs?: number;
-			probeRejectCooldownMaxMs?: number;
-			shadowObserveMs?: number;
-			shadowMinObservations?: number;
-			shadowDualPathMs?: number;
-			shadowDualPathMinMessages?: number;
-			failedBackoffMinMs?: number;
-			failedBackoffMaxMs?: number;
 		},
 	): Promise<boolean> {
+		const parentUpgrade = options.parentUpgrade;
 		const currentParent = ch.parent;
 		if (!currentParent || ch.closed || ch.isRoot || ch.level <= 1) return false;
 		if (
-			options.mode === "shadow" &&
+			parentUpgrade.mode === "shadow" &&
 			this.parentUpgradeShadowInFlightSuffixKey != null &&
 			this.parentUpgradeShadowInFlightSuffixKey !== ch.id.suffixKey
 		) {
@@ -7297,7 +7314,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const deferParentUpgradeRetryUntilFreshData = (multiplier = 1) => {
 			const minFreshMessages = Math.max(
 				1,
-				Math.floor(options.shadowDualPathMinMessages ?? 1) *
+				parentUpgrade.shadow.dualPathMinMessages *
 					Math.max(1, Math.floor(multiplier)),
 			);
 			ch.parentUpgradeRetryAfterSeq = Math.max(
@@ -7306,11 +7323,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			);
 		};
 		const applyFailedBackoff = () => {
-			const minMs = Math.max(0, Math.floor(options.failedBackoffMinMs ?? 0));
-			const maxMs = Math.max(
-				minMs,
-				Math.floor(options.failedBackoffMaxMs ?? minMs),
-			);
+			const minMs = parentUpgrade.failedBackoff.minMs;
+			const maxMs = parentUpgrade.failedBackoff.maxMs;
 			if (minMs <= 0 || maxMs <= 0) {
 				ch.parentUpgradeBackoffMs = 0;
 				ch.parentUpgradeBackoffUntil = 0;
@@ -7370,16 +7384,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			prev.source = Math.min(prev.source, c.source);
 		};
 		const nonRootMinLevelGain = Math.max(
-			options.minLevelGain,
-			Math.floor(options.nonRootMinLevelGain ?? 2),
+			parentUpgrade.minLevelGain,
+			parentUpgrade.nonRootMinLevelGain,
 		);
 		const rootMinLevelGain = Math.max(
-			options.minLevelGain,
-			Math.floor(options.rootMinLevelGain ?? 3),
+			parentUpgrade.minLevelGain,
+			parentUpgrade.rootMinLevelGain,
 		);
 		const rootMinSubtreeGain = Math.max(
-			options.minLevelGain,
-			Math.floor(options.rootMinSubtreeGain ?? rootMinLevelGain),
+			parentUpgrade.minLevelGain,
+			parentUpgrade.rootMinSubtreeGain,
 		);
 		const levelGainFor = (parentLevel: number) => ch.level - (parentLevel + 1);
 		const impactedPeersForRoot = () => Math.max(1, 1 + ch.children.size);
@@ -7413,7 +7427,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const knownChannelPeerCount = Math.max(1, ch.channelPeers?.size ?? 1);
 		const defaultStaleRootProbeProbability = 0.015625;
 		const configuredStaleRootProbeProbabilityRaw = Number(
-			options.staleRootProbeProbability ?? defaultStaleRootProbeProbability,
+			parentUpgrade.staleRootProbeProbability,
 		);
 		const staleRootProbeBaseProbability = Number.isFinite(
 			configuredStaleRootProbeProbabilityRaw,
@@ -7421,7 +7435,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			? Math.max(0, Math.min(1, configuredStaleRootProbeProbabilityRaw))
 			: defaultStaleRootProbeProbability;
 		const defaultMultiChannelSettledLeafRootCandidate =
-			options.leafOnly &&
+			parentUpgrade.leafOnly &&
 			multiChannelSettledLeaf &&
 			staleRootProbeBaseProbability <= defaultStaleRootProbeProbability;
 		const hasDefaultMultiChannelLeafRootSignal = () => {
@@ -7451,10 +7465,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			isDirectNeighbor(ch.id.root) &&
 			(options.trackerPeers?.length ?? 0) > 0
 		) {
-			const rootMinFreeSlots = Math.max(
-				0,
-				Math.floor(options.rootMinFreeSlots ?? options.minFreeSlots),
-			);
+			const rootMinFreeSlots = parentUpgrade.rootMinFreeSlots;
 			const cachedRoot = ch.cachedTrackerCandidates.find(
 				(c) => c.hash === ch.id.root,
 			);
@@ -7463,7 +7474,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch,
 					options.trackerPeers ?? [],
 					Math.max(16, ch.cachedTrackerCandidates.length),
-					Math.max(1, Math.floor(options.probeTimeoutMs ?? 500)),
+					parentUpgrade.probe.timeoutMs,
 					options.signal,
 				).catch((): TrackerCandidate[] => []);
 				if (refreshed.length > 0) {
@@ -7473,7 +7484,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		const configuredRejectCooldownMs = Math.max(
 			0,
-			Math.floor(options.probeRejectCooldownMs ?? 10_000),
+			parentUpgrade.probe.rejectCooldownMs,
 		);
 		const rejectCooldownMs =
 			localChannelCount > 1
@@ -7481,7 +7492,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				: configuredRejectCooldownMs;
 		const rejectCooldownMaxMs = Math.max(
 			rejectCooldownMs,
-			Math.floor(options.probeRejectCooldownMaxMs ?? 60_000),
+			parentUpgrade.probe.rejectCooldownMaxMs,
 		);
 		const clearProbeRejectBackoff = (candidateHash: string) => {
 			ch.parentProbeRejectUntilByHash.delete(candidateHash);
@@ -7531,11 +7542,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		};
 		const minFreeSlotsFor = (hash: string) =>
 			hash === ch.id.root
-				? Math.max(
-						0,
-						Math.floor(options.rootMinFreeSlots ?? options.minFreeSlots),
-					)
-				: options.minFreeSlots;
+				? parentUpgrade.rootMinFreeSlots
+				: parentUpgrade.minFreeSlots;
 		const refreshCachedTrackerCandidate = (
 			hash: string,
 			level: number,
@@ -7621,8 +7629,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		for (const c of candidatesByHash.values()) {
 			if (c.hash === this.publicKeyHash || c.hash === currentParent) continue;
 			const canVerifyRootCapacityLive =
-				options.verifyStaleRootCapacity === true &&
-				options.mode === "shadow" &&
+				parentUpgrade.verifyStaleRootCapacity === true &&
+				parentUpgrade.mode === "shadow" &&
 				c.hash === ch.id.root;
 			const requiredMinFreeSlots = minFreeSlotsFor(c.hash);
 			if (
@@ -7634,38 +7642,41 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				continue;
 			}
 			if (canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
-				const staleRootProbeProbability =
-					singleChannelBranch && staleRootProbeBaseProbability > 0
-						? (() => {
-								const highValueBranch =
-									rootSubtreeGainFor(c.level) >=
-									Math.max(rootMinSubtreeGain + 1, 4);
-								const branchCap = highValueBranch ? 0.25 : 0.2;
-								return Math.max(
-									staleRootProbeBaseProbability,
-									Math.min(branchCap, staleRootProbeBaseProbability * 8),
-								);
-							})()
-						: multiChannelBranch && staleRootProbeBaseProbability > 0
+				const staleRootProbeProbability = (() => {
+					if (singleChannelBranch && staleRootProbeBaseProbability > 0) {
+						const highValueBranch =
+							rootSubtreeGainFor(c.level) >=
+							Math.max(rootMinSubtreeGain + 1, 4);
+						const branchCap = highValueBranch ? 0.25 : 0.2;
+						return Math.max(
+							staleRootProbeBaseProbability,
+							Math.min(branchCap, staleRootProbeBaseProbability * 8),
+						);
+					}
+					if (multiChannelBranch && staleRootProbeBaseProbability > 0) {
+						return Math.max(
+							staleRootProbeBaseProbability,
+							Math.min(0.03125, staleRootProbeBaseProbability * 2),
+						);
+					}
+					if (singleChannelSettledLeaf && staleRootProbeBaseProbability > 0) {
+						return 0.5;
+					}
+					if (multiChannelSettledLeaf && parentUpgrade.leafOnly) {
+						return staleRootProbeBaseProbability >
+							defaultStaleRootProbeProbability
 							? Math.max(
 									staleRootProbeBaseProbability,
-									Math.min(0.03125, staleRootProbeBaseProbability * 2),
+									Math.min(0.125, 3 / knownChannelPeerCount),
 								)
-							: singleChannelSettledLeaf && staleRootProbeBaseProbability > 0
-								? 0.5
-								: multiChannelSettledLeaf && options.leafOnly
-									? staleRootProbeBaseProbability >
-									  defaultStaleRootProbeProbability
-										? Math.max(
-												staleRootProbeBaseProbability,
-												Math.min(0.125, 3 / knownChannelPeerCount),
-											)
-										: 0
-									: Math.min(
-											1,
-											staleRootProbeBaseProbability *
-												Math.max(1, Math.min(4, staleRootProbeRound + 1)),
-										);
+							: 0;
+					}
+					return Math.min(
+						1,
+						staleRootProbeBaseProbability *
+							Math.max(1, Math.min(4, staleRootProbeRound + 1)),
+					);
+				})();
 				const staleRootProbeScore = stableUnitInterval(
 					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe:${staleRootProbeRound}`,
 				);
@@ -7694,7 +7705,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		});
 
 		if (ordered.length === 0) {
-			if (options.mode === "probe" || options.mode === "shadow") {
+			if (parentUpgrade.mode === "probe" || parentUpgrade.mode === "shadow") {
 				applyFailedBackoff();
 			}
 			return false;
@@ -7794,30 +7805,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 		}
 
-		if ((options.mode ?? "direct") === "probe" || options.mode === "shadow") {
-			const mode = options.mode ?? "direct";
+		if (parentUpgrade.mode === "probe" || parentUpgrade.mode === "shadow") {
+			const mode = parentUpgrade.mode;
 			const probeLimit =
-				options.mode === "shadow"
+				parentUpgrade.mode === "shadow"
 					? 1
-					: Math.max(
-							1,
-							Math.floor(
-								options.probeMaxPerRound ?? options.joinAttemptsPerRound,
-							),
-						);
-			const shadowObserveMsForGate = Math.max(
-				0,
-				Math.floor(options.shadowObserveMs ?? 2_000),
-			);
-			const shadowMinObservationsForGate = Math.max(
-				1,
-				Math.floor(options.shadowMinObservations ?? 2),
-			);
-			const probeTimeoutMs = Math.max(
-				1,
-				Math.floor(options.probeTimeoutMs ?? 500),
-			);
-			const maxLag = Math.max(0, Math.floor(options.probeMaxLagMessages ?? 0));
+					: parentUpgrade.probe.maxPerRound;
+			const shadowObserveMsForGate = parentUpgrade.shadow.observeMs;
+			const shadowMinObservationsForGate =
+				parentUpgrade.shadow.minObservations;
+			const probeTimeoutMs = parentUpgrade.probe.timeoutMs;
+			const maxLag = parentUpgrade.probe.maxLagMessages;
 			const now = Date.now();
 			const candidatesToProbe: typeof ordered = [];
 			const shadowCandidate =
@@ -7968,10 +7966,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}
 				const configuredMaxChildLoadRatioRaw =
 					candidate.hash === ch.id.root
-						? (options.rootMaxChildLoadRatio ??
-							options.maxChildLoadRatio ??
-							0.5)
-						: (options.maxChildLoadRatio ?? 0.5);
+						? parentUpgrade.rootMaxChildLoadRatio
+						: parentUpgrade.maxChildLoadRatio;
 				const configuredMaxChildLoadRatio =
 					candidate.hash === ch.id.root &&
 					localChannelCount > 1 &&
@@ -8050,13 +8046,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (mode === "shadow") {
 				const nowAfterProbe = Date.now();
-				const observeMs = Math.max(
-					0,
-					Math.floor(options.shadowObserveMs ?? 2_000),
-				);
+				const observeMs = parentUpgrade.shadow.observeMs;
 				const minObservations = shadowMinObservationsForGate;
 				const requireDataForShadowPromotion =
-					Math.max(0, Math.floor(options.shadowDualPathMs ?? 0)) > 0;
+					parentUpgrade.shadow.dualPathMs > 0;
 				const selected =
 					ch.parentShadow != null
 						? (ordered.find(
@@ -8176,14 +8169,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				: undefined;
 			const previousLastParentDataAt = ch.lastParentDataAt;
 			const previousReceivedAnyParentData = ch.receivedAnyParentData;
-			const shadowDualPathMs = Math.max(
-				0,
-				Math.floor(options.shadowDualPathMs ?? 0),
-			);
-			const shadowDualPathMinMessages = Math.max(
-				1,
-				Math.floor(options.shadowDualPathMinMessages ?? 1),
-			);
+			const shadowDualPathMs = parentUpgrade.shadow.dualPathMs;
+			const shadowDualPathMinMessages =
+				parentUpgrade.shadow.dualPathMinMessages;
 			const shadowDualPathMinAdvantageMessages = Math.max(
 				1,
 				Math.min(16, Math.ceil(shadowDualPathMinMessages / 2)),
@@ -8199,7 +8187,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const shadowDualPathMinLeadMsAvg =
 				shadowDualPathMinMessages <= 1 ? 0 : 128;
 			const useShadowDualPath =
-				options.mode === "shadow" &&
+				parentUpgrade.mode === "shadow" &&
 				shadowDualPathMs > 0 &&
 				previousParent != null &&
 				previousParent !== candidate.hash;
@@ -8355,7 +8343,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					void this._sendControl(previousParent, encodeLeave(ch.id.key)).catch(
 						() => {},
 					);
-					if (options.mode === "shadow") {
+					if (parentUpgrade.mode === "shadow") {
 						ch.metrics.parentShadowPromote += 1;
 						ch.parentShadow = undefined;
 						clearShadowInFlight();

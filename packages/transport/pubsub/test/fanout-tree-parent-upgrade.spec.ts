@@ -81,28 +81,8 @@ type ImproveOptions = {
 	};
 	joinAttemptsPerRound: number;
 	joinReqTimeoutMs: number;
-	leafOnly: boolean;
-	minLevelGain: number;
-	rootMinLevelGain?: number;
-	rootMinSubtreeGain?: number;
-	nonRootMinLevelGain?: number;
-	minFreeSlots: number;
-	rootMinFreeSlots?: number;
-	maxChildLoadRatio?: number;
-	rootMaxChildLoadRatio?: number;
-	mode?: "direct" | "probe" | "shadow";
+	parentUpgrade: ImproveParentUpgradePolicy;
 	trackerPeers?: string[];
-	verifyStaleRootCapacity?: boolean;
-	staleRootProbeProbability?: number;
-	probeTimeoutMs?: number;
-	probeMaxPerRound?: number;
-	probeMaxLagMessages?: number;
-	probeRejectCooldownMs?: number;
-	probeRejectCooldownMaxMs?: number;
-	shadowObserveMs?: number;
-	shadowMinObservations?: number;
-	failedBackoffMinMs?: number;
-	failedBackoffMaxMs?: number;
 };
 
 type ImproveContext = {
@@ -182,6 +162,61 @@ type ImproveTrackerFeedback = {
 type ImproveProbeReply = NonNullable<
 	Awaited<ReturnType<ImproveContext["probeParentCandidate"]>>
 >;
+
+type ImproveParentUpgradePolicy = {
+	intervalMs: number;
+	leafOnly: boolean;
+	minLevelGain: number;
+	rootMinLevelGain: number;
+	rootMinSubtreeGain: number;
+	nonRootMinLevelGain: number;
+	minFreeSlots: number;
+	rootMinFreeSlots: number;
+	maxChildLoadRatio: number;
+	rootMaxChildLoadRatio: number;
+	staleRootProbeProbability: number;
+	cooldownMs: number;
+	quietMs: number;
+	repairQuietMs: number;
+	maxPerPeer: number;
+	repairGuard: boolean;
+	dataGuard: boolean;
+	mode: "direct" | "probe" | "shadow";
+	verifyStaleRootCapacity: boolean;
+	failedBackoff: {
+		minMs: number;
+		maxMs: number;
+	};
+	probe: {
+		timeoutMs: number;
+		maxPerRound: number;
+		maxLagMessages: number;
+		rejectCooldownMs: number;
+		rejectCooldownMaxMs: number;
+	};
+	shadow: {
+		observeMs: number;
+		minObservations: number;
+		dualPathMs: number;
+		dualPathMinMessages: number;
+	};
+};
+
+type ImproveOptionOverrides = Partial<Omit<ImproveOptions, "parentUpgrade">> &
+	Partial<Omit<ImproveParentUpgradePolicy, "failedBackoff" | "probe" | "shadow">> & {
+		parentUpgrade?: Partial<ImproveParentUpgradePolicy>;
+		failedBackoffMinMs?: number;
+		failedBackoffMaxMs?: number;
+		probeTimeoutMs?: number;
+		probeMaxPerRound?: number;
+		probeMaxLagMessages?: number;
+		probeRejectCooldownMs?: number;
+		probeRejectCooldownMaxMs?: number;
+		shadowObserveMs?: number;
+		shadowMinObservations?: number;
+		shadowDualPathMs?: number;
+		shadowDualPathMinMessages?: number;
+	};
 
 const createProbeReply = (
 	hash: string,
@@ -431,6 +466,72 @@ const runParentUpgradeGate = (
 		},
 	);
 
+const createImproveParentUpgradePolicy = (
+	options: ImproveOptionOverrides = {},
+): ImproveParentUpgradePolicy => {
+	const mode = options.mode ?? "direct";
+	const minLevelGain = options.minLevelGain ?? 1;
+	const rootMinLevelGain = options.rootMinLevelGain ?? 3;
+	const minFreeSlots = options.minFreeSlots ?? 1;
+	const maxChildLoadRatio = options.maxChildLoadRatio ?? 0.5;
+	const failedBackoffMinMs = options.failedBackoffMinMs ?? 5_000;
+	const probeRejectCooldownMs = options.probeRejectCooldownMs ?? 10_000;
+	const base: ImproveParentUpgradePolicy = {
+		intervalMs: options.intervalMs ?? 1_000,
+		leafOnly: options.leafOnly ?? false,
+		minLevelGain,
+		rootMinLevelGain,
+		rootMinSubtreeGain: options.rootMinSubtreeGain ?? rootMinLevelGain,
+		nonRootMinLevelGain: options.nonRootMinLevelGain ?? 2,
+		minFreeSlots,
+		rootMinFreeSlots: options.rootMinFreeSlots ?? minFreeSlots,
+		maxChildLoadRatio,
+		rootMaxChildLoadRatio: options.rootMaxChildLoadRatio ?? maxChildLoadRatio,
+		staleRootProbeProbability: options.staleRootProbeProbability ?? 0.015625,
+		cooldownMs: options.cooldownMs ?? 5_000,
+		quietMs: options.quietMs ?? 5_000,
+		repairQuietMs: options.repairQuietMs ?? 5_000,
+		maxPerPeer: options.maxPerPeer ?? 2,
+		repairGuard: options.repairGuard ?? true,
+		dataGuard: options.dataGuard ?? true,
+		mode,
+		verifyStaleRootCapacity: options.verifyStaleRootCapacity ?? false,
+		failedBackoff: {
+			minMs: failedBackoffMinMs,
+			maxMs: options.failedBackoffMaxMs ?? 60_000,
+		},
+		probe: {
+			timeoutMs: options.probeTimeoutMs ?? 500,
+			maxPerRound: options.probeMaxPerRound ?? 2,
+			maxLagMessages: options.probeMaxLagMessages ?? 0,
+			rejectCooldownMs: probeRejectCooldownMs,
+			rejectCooldownMaxMs: options.probeRejectCooldownMaxMs ?? 60_000,
+		},
+		shadow: {
+			observeMs: options.shadowObserveMs ?? 2_000,
+			minObservations: options.shadowMinObservations ?? 2,
+			dualPathMs: options.shadowDualPathMs ?? 0,
+			dualPathMinMessages: options.shadowDualPathMinMessages ?? 1,
+		},
+	};
+	return {
+		...base,
+		...options.parentUpgrade,
+		failedBackoff: {
+			...base.failedBackoff,
+			...options.parentUpgrade?.failedBackoff,
+		},
+		probe: {
+			...base.probe,
+			...options.parentUpgrade?.probe,
+		},
+		shadow: {
+			...base.shadow,
+			...options.parentUpgrade?.shadow,
+		},
+	};
+};
+
 const runMaybeImproveParent = async (args: {
 	peerHashes: string[];
 	cachedTrackerCandidates?: ImproveCandidate[];
@@ -439,7 +540,7 @@ const runMaybeImproveParent = async (args: {
 	getConnections?: (peerId: string) => unknown[];
 	random?: () => number;
 	channelsBySuffixKey?: Map<string, ImproveChannel>;
-	options?: Partial<ImproveOptions>;
+	options?: ImproveOptionOverrides;
 	tryJoinOnce?: ImproveContext["tryJoinOnce"];
 	probeParentCandidate?: ImproveContext["probeParentCandidate"];
 	queryTrackers?: ImproveContext["queryTrackers"];
@@ -518,26 +619,24 @@ const runMaybeImproveParent = async (args: {
 		},
 		_sendControl: async () => {},
 	};
+	const optionOverrides = args.options ?? {};
 
 	const result = await maybeImproveParent.call(ctx, ch, {
 		signal: new AbortController().signal,
-		candidateShuffleTopK: 0,
-		candidateScoringMode: "ranked-strict",
-		candidateScoringWeights: {
+		candidateShuffleTopK: optionOverrides.candidateShuffleTopK ?? 0,
+		candidateScoringMode:
+			optionOverrides.candidateScoringMode ?? "ranked-strict",
+		candidateScoringWeights: optionOverrides.candidateScoringWeights ?? {
 			level: 1,
 			freeSlots: 1,
 			connected: 1,
 			bidPerByte: 1,
 			source: 1,
 		},
-		joinAttemptsPerRound: 8,
-		joinReqTimeoutMs: 1_000,
-		leafOnly: false,
-		minLevelGain: 1,
-		minFreeSlots: 1,
-		failedBackoffMinMs: 5_000,
-		failedBackoffMaxMs: 60_000,
-		...args.options,
+		joinAttemptsPerRound: optionOverrides.joinAttemptsPerRound ?? 8,
+		joinReqTimeoutMs: optionOverrides.joinReqTimeoutMs ?? 1_000,
+		parentUpgrade: createImproveParentUpgradePolicy(optionOverrides),
+		trackerPeers: optionOverrides.trackerPeers,
 	});
 
 	return { attempts, result, ch, feedback };
@@ -1555,7 +1654,7 @@ describe("fanout-tree parent upgrades", () => {
 				},
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "probe",
 			probeRejectCooldownMs: 100,
 			probeRejectCooldownMaxMs: 250,
@@ -1608,7 +1707,7 @@ describe("fanout-tree parent upgrades", () => {
 				},
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			shadowObserveMs: 0,
 			shadowMinObservations: 2,
@@ -1675,7 +1774,7 @@ describe("fanout-tree parent upgrades", () => {
 				{ hash: "root", addrs: [], level: 0, freeSlots: 0, bidPerByte: 0 },
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			minFreeSlots: 2,
 			verifyStaleRootCapacity: true,
@@ -1719,7 +1818,7 @@ describe("fanout-tree parent upgrades", () => {
 			],
 		});
 		const reserveRequests: boolean[] = [];
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			minFreeSlots: 2,
 			verifyStaleRootCapacity: true,
@@ -2194,7 +2293,7 @@ describe("fanout-tree parent upgrades", () => {
 				},
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			shadowObserveMs: 0,
 			shadowMinObservations: 2,
@@ -2245,7 +2344,7 @@ describe("fanout-tree parent upgrades", () => {
 				},
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			minFreeSlots: 2,
 			probeRejectCooldownMs: 0,
@@ -2297,7 +2396,7 @@ describe("fanout-tree parent upgrades", () => {
 				},
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "probe",
 			minFreeSlots: 2,
 			probeRejectCooldownMs: 0,
@@ -2341,7 +2440,7 @@ describe("fanout-tree parent upgrades", () => {
 			],
 			maxSeqSeen: 9,
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			shadowObserveMs: 0,
 			shadowMinObservations: 2,
@@ -2415,7 +2514,7 @@ describe("fanout-tree parent upgrades", () => {
 				{ hash: "shadow-a", addrs: [], level: 0, freeSlots: 2, bidPerByte: 0 },
 			],
 		});
-		const options: Partial<ImproveOptions> = {
+		const options: ImproveOptionOverrides = {
 			mode: "shadow",
 			shadowObserveMs: 0,
 			shadowMinObservations: 2,
