@@ -577,6 +577,23 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn entry_prune_confirm_metadata_batch(
+        &self,
+        hashes: &[String],
+    ) -> Vec<Option<LogEntryPruneConfirmMetadata>> {
+        hashes
+            .iter()
+            .map(|hash| {
+                self.entries.get(hash).map(|entry| {
+                    (
+                        entry.gid.clone(),
+                        decode_absolute_replica_data_u32(entry.data.as_deref()),
+                    )
+                })
+            })
+            .collect()
+    }
+
     pub fn unique_reference_gid_rows(&self, hash: &str) -> Option<Vec<(String, String)>> {
         let entry = self.entries.get(hash)?;
         if entry.entry_type == ENTRY_TYPE_CUT {
@@ -953,6 +970,7 @@ pub struct NativeCommittedEntryFacts {
 
 pub type LogEntryMetadata = (String, String, Option<Vec<u8>>, Option<u32>);
 pub type LogEntryPruneMetadata = (String, Option<Vec<u8>>, Option<u32>);
+pub type LogEntryPruneConfirmMetadata = (String, Option<u32>);
 
 #[derive(Clone, Default)]
 pub struct NativeLogAppendProfile {
@@ -1116,6 +1134,13 @@ impl NativeLogIndex {
         hashes: &[String],
     ) -> Vec<Option<LogEntryPruneMetadata>> {
         self.inner.entry_prune_metadata_batch(hashes)
+    }
+
+    pub fn entry_prune_confirm_metadata_values(
+        &self,
+        hashes: &[String],
+    ) -> Vec<Option<LogEntryPruneConfirmMetadata>> {
+        self.inner.entry_prune_confirm_metadata_batch(hashes)
     }
 
     pub fn put_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
@@ -5684,6 +5709,11 @@ mod tests {
             Some(("g".to_string(), Some(vec![9, 1, 2]), None))
         );
         assert_eq!(metadata[2], None);
+
+        let confirm_metadata =
+            index.entry_prune_confirm_metadata_batch(&["a".to_string(), "b".to_string()]);
+        assert_eq!(confirm_metadata[0], Some(("g".to_string(), Some(2))));
+        assert_eq!(confirm_metadata[1], Some(("g".to_string(), None)));
     }
 
     #[test]

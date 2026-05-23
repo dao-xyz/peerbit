@@ -2315,6 +2315,75 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_request_prune_all_confirmed(
+        &self,
+        hashes: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let empty = || {
+            let out = Array::new();
+            out.push(&JsValue::FALSE);
+            out.push(&Array::new());
+            out
+        };
+        if hashes.is_empty() {
+            return Ok(empty());
+        }
+
+        let metadata = self.log.entry_prune_confirm_metadata_values(&hashes);
+        let mut candidate_gids = Vec::with_capacity(hashes.len());
+        let mut candidate_replicas = Vec::with_capacity(hashes.len());
+
+        for (hash, metadata) in hashes.iter().zip(metadata) {
+            if !self.blocks.has(hash) {
+                return Ok(empty());
+            }
+
+            let Some((gid, replicas)) = metadata else {
+                return Ok(empty());
+            };
+            let Some(requested_replicas) = replicas
+                .map(|replicas| replicas as usize)
+                .or_else(|| self.shared_log.entry_requested_replicas(hash))
+            else {
+                return Ok(empty());
+            };
+
+            candidate_gids.push(gid);
+            candidate_replicas.push(requested_replicas);
+        }
+
+        let local_flags = self.shared_log.local_leader_flags_for_gids_batch(
+            &candidate_gids,
+            &candidate_replicas,
+            role_age_ms,
+            &now,
+            peer_filter,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
+        if local_flags.iter().any(|is_local| !is_local) {
+            return Ok(empty());
+        }
+
+        let out = Array::new();
+        out.push(&JsValue::TRUE);
+        out.push(&strings_to_array(candidate_gids));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_entry_assignment_for_gid(
         &self,
         gid: String,

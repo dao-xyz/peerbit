@@ -372,6 +372,7 @@ type NativeRequestPruneLeaderHints = {
 	presentBlockHashes?: Set<string>;
 	presentBlocks?: ArrayLike<boolean | number>;
 	localLeaderFlags?: ArrayLike<boolean | number>;
+	nativeAllConfirmed?: boolean;
 };
 
 type NativeBackboneRequestPruneHintColumns = {
@@ -427,6 +428,9 @@ const canConfirmNativeRequestPruneBatch = (
 	hints: NativeRequestPruneLeaderHints,
 	hashCount: number,
 ) => {
+	if (hashCount > 0 && hints.nativeAllConfirmed === true) {
+		return true;
+	}
 	if (
 		hashCount === 0 ||
 		!hints.nativeEntryGids ||
@@ -10310,6 +10314,9 @@ export class SharedLog<
 							messages: 1,
 							details: {
 								nativeEntries:
+									(nativeLeaderHints.nativeAllConfirmed
+										? msg.hashes.length
+										: undefined) ??
 									nativeLeaderHints.nativeEntries?.size ??
 									countPresentValues(
 										nativeLeaderHints.nativeEntryGids ??
@@ -10317,17 +10324,26 @@ export class SharedLog<
 									) ??
 									0,
 								presentBlocks:
+									(nativeLeaderHints.nativeAllConfirmed
+										? msg.hashes.length
+										: undefined) ??
 									nativeLeaderHints.presentBlockHashes?.size ??
 									countTruthyValues(nativeLeaderHints.presentBlocks) ??
 									0,
 								localLeaders:
-									nativeLeaderHints.localLeaderHashes.size ||
-									countTruthyValues(nativeLeaderHints.localLeaderFlags) ||
-									0,
+									nativeLeaderHints.nativeAllConfirmed
+										? msg.hashes.length
+										: nativeLeaderHints.localLeaderHashes.size ||
+											countTruthyValues(nativeLeaderHints.localLeaderFlags) ||
+											0,
 								plannedEntries:
-									nativeLeaderHints.replicaCounts.size ||
-									countPositiveValues(nativeLeaderHints.replicaCountsByIndex) ||
-									0,
+									nativeLeaderHints.nativeAllConfirmed
+										? msg.hashes.length
+										: nativeLeaderHints.replicaCounts.size ||
+											countPositiveValues(
+												nativeLeaderHints.replicaCountsByIndex,
+											) ||
+											0,
 								peerHistoryGids:
 									nativeLeaderHints.peerHistoryGids.length,
 							},
@@ -11755,12 +11771,32 @@ export class SharedLog<
 				? [...this._checkedPrune.pendingDeletes.keys()]
 				: [];
 		const nativeBackboneHintArrays = this._nativeBackbone as NativePeerbitBackbone & {
+			planRequestPruneAllConfirmed?: (
+				hashes: Iterable<string>,
+				options?: unknown,
+			) => { allConfirmed: boolean; peerHistoryGids: string[] } | undefined;
 			planRequestPruneLeaderHintColumns?: (
 				hashes: Iterable<string>,
 				skipHashes: Iterable<string>,
 				options?: unknown,
 			) => NativeBackboneRequestPruneHintColumns | undefined;
 		};
+		if (skipHashes.length === 0) {
+			const allConfirmed =
+				nativeBackboneHintArrays.planRequestPruneAllConfirmed?.(
+					hashes,
+					this.createNativeLeaderOptions(context),
+				);
+			if (allConfirmed?.allConfirmed) {
+				return {
+					localLeaderHashes: new Set(),
+					replicaCounts: new Map(),
+					peerHistoryGids: allConfirmed.peerHistoryGids,
+					peerHistoryRemovedHashes: new Set(),
+					nativeAllConfirmed: true,
+				};
+			}
+		}
 		const hintColumns =
 			nativeBackboneHintArrays.planRequestPruneLeaderHintColumns?.(
 				hashes,

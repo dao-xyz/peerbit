@@ -428,6 +428,17 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	plan_request_prune_all_confirmed?: (
+		hashes: string[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	plan_entry_assignment_for_gid: (
 		gid: string,
 		replicas: number,
@@ -1421,6 +1432,11 @@ export type NativeBackboneRequestPruneHintColumns = {
 	replicaCounts: Uint32Array;
 	peerHistoryGids: string[];
 	peerHistoryRemovedFlags: Uint8Array;
+};
+
+export type NativeBackboneRequestPruneAllConfirmed = {
+	allConfirmed: boolean;
+	peerHistoryGids: string[];
 };
 
 export type NativeBackboneLeaderCursorBatchInput = {
@@ -4693,6 +4709,24 @@ export class NativePeerbitBackbone {
 			replicaCounts,
 			peerHistoryGids,
 			peerHistoryRemovedFlags,
+		};
+	}
+
+	planRequestPruneAllConfirmed(
+		hashes: Iterable<string>,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneRequestPruneAllConfirmed | undefined {
+		if (!this.native.plan_request_prune_all_confirmed) {
+			return undefined;
+		}
+		const [allConfirmed, peerHistoryGids] =
+			this.native.plan_request_prune_all_confirmed(
+				[...hashes],
+				...findLeaderArguments(options),
+			) as [boolean, string[]];
+		return {
+			allConfirmed,
+			peerHistoryGids,
 		};
 	}
 
