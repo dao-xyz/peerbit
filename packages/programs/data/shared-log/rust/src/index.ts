@@ -1302,7 +1302,7 @@ export class SharedLogNativeState {
 	}
 
 	removeGidPeers(peer: string, gids: Iterable<string>): void {
-		const gidArray = [...gids];
+		const gidArray = iterableToArray(gids);
 		if (this.native.remove_gid_peers) {
 			this.native.remove_gid_peers(peer, gidArray);
 			return;

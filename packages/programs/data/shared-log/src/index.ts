@@ -423,6 +423,41 @@ const countPositiveValues = (values?: ArrayLike<number | undefined>) => {
 	return count;
 };
 
+const canConfirmNativeRequestPruneBatch = (
+	hints: NativeRequestPruneLeaderHints,
+	hashCount: number,
+) => {
+	if (
+		hashCount === 0 ||
+		!hints.nativeEntryGids ||
+		!hints.presentBlocks ||
+		!hints.localLeaderFlags ||
+		!hints.replicaCountsByIndex ||
+		!hints.peerHistoryRemovedFlags ||
+		hints.nativeEntryGids.length < hashCount ||
+		hints.presentBlocks.length < hashCount ||
+		hints.localLeaderFlags.length < hashCount ||
+		hints.replicaCountsByIndex.length < hashCount ||
+		hints.peerHistoryRemovedFlags.length < hashCount
+	) {
+		return false;
+	}
+
+	for (let i = 0; i < hashCount; i++) {
+		if (
+			hints.nativeEntryGids[i] == null ||
+			!hints.presentBlocks[i] ||
+			!hints.localLeaderFlags[i] ||
+			(hints.replicaCountsByIndex[i] ?? 0) <= 0 ||
+			!hints.peerHistoryRemovedFlags[i]
+		) {
+			return false;
+		}
+	}
+
+	return true;
+};
+
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
 	hash: string;
 	hashNumber: NumberFromType<R>;
@@ -3490,7 +3525,7 @@ export class SharedLog<
 		publicKeyHash: string,
 		gids: Iterable<string>,
 	) {
-		const gidArray = [...new Set(gids)];
+		const gidArray = Array.isArray(gids) ? gids : [...gids];
 		if (gidArray.length === 0) {
 			return;
 		}
@@ -10373,6 +10408,44 @@ export class SharedLog<
 				}
 
 				const requestPruneLoopStartedAt = syncProfileStart(syncProfile);
+				if (
+					canConfirmNativeRequestPruneBatch(
+						nativeLeaderHints,
+						msg.hashes.length,
+					)
+				) {
+					this.responseToPruneDebouncedFn.add({
+						hashes: msg.hashes,
+						peers: [from],
+					});
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, requestPruneLoopStartedAt, {
+							name: "sharedLog.receive.requestPrune.loop",
+							component: "shared-log",
+							entries: msg.hashes.length,
+							messages: 1,
+							details: {
+								presentEntries: msg.hashes.length,
+								indexedFallbackLookups: 0,
+								fallbackBlockChecks: 0,
+								pendingDeleteEntries: 0,
+								leaderResponses: msg.hashes.length,
+								leaderResponseBatches: 1,
+								pendingIHaveCreated: 0,
+								pendingIHaveExtended: 0,
+								skippedIndexedLookupsForMissingBlocks: 0,
+								nativeBatchConfirmed: true,
+							},
+						});
+						emitSyncProfileDuration(syncProfile, requestPruneStartedAt, {
+							name: "sharedLog.receive.requestPrune.total",
+							component: "shared-log",
+							entries: msg.hashes.length,
+							messages: 1,
+						});
+					}
+					return;
+				}
 				let presentEntries = 0;
 				let indexedFallbackLookups = 0;
 				let fallbackBlockChecks = 0;
