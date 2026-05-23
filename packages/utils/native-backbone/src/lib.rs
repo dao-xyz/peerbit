@@ -2301,6 +2301,98 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_request_prune_leader_hint_columns(
+        &self,
+        hashes: Array,
+        skip_hashes: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let skip_hashes: HashSet<String> = strings_from_array(skip_hashes)?.into_iter().collect();
+        let metadata = self.log.entry_metadata_values(&hashes);
+        let gids = Array::new();
+        let data_rows = Array::new();
+        let mut replica_counts = Vec::with_capacity(hashes.len());
+        let mut present_block_flags = Vec::with_capacity(hashes.len());
+        let mut candidate_indexes = Vec::new();
+        let mut candidate_gids = Vec::new();
+        let mut candidate_replicas = Vec::new();
+
+        for (index, (hash, metadata)) in hashes.iter().zip(metadata).enumerate() {
+            let has_block = self.blocks.has(hash);
+            present_block_flags.push(u8::from(has_block));
+
+            let Some((_metadata_hash, gid, data, replicas)) = metadata else {
+                gids.push(&JsValue::UNDEFINED);
+                data_rows.push(&JsValue::UNDEFINED);
+                replica_counts.push(0);
+                continue;
+            };
+            let requested_replicas = replicas
+                .map(|replicas| replicas as usize)
+                .or_else(|| self.shared_log.entry_requested_replicas(hash));
+
+            gids.push(&JsValue::from_str(&gid));
+            replica_counts.push(requested_replicas.unwrap_or(0) as u32);
+            match data.as_ref().filter(|_| requested_replicas.is_none()) {
+                Some(data) => data_rows.push(&Uint8Array::from(data.as_slice())),
+                None => data_rows.push(&JsValue::UNDEFINED),
+            };
+
+            if has_block && !skip_hashes.contains(hash) {
+                if let Some(replicas) = requested_replicas {
+                    candidate_indexes.push(index);
+                    candidate_gids.push(gid);
+                    candidate_replicas.push(replicas);
+                }
+            }
+        }
+
+        let local_flags = if candidate_gids.is_empty() {
+            Vec::new()
+        } else {
+            self.shared_log.local_leader_flags_for_gids_batch(
+                &candidate_gids,
+                &candidate_replicas,
+                role_age_ms,
+                &now,
+                peer_filter,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            )?
+        };
+        let mut local_leader_flags = vec![0u8; hashes.len()];
+        for (index, is_local) in candidate_indexes.iter().zip(local_flags) {
+            local_leader_flags[*index] = u8::from(is_local);
+        }
+
+        let mut peer_history_removed_flags = vec![0u8; hashes.len()];
+        for index in candidate_indexes {
+            peer_history_removed_flags[index] = 1;
+        }
+
+        let out = Array::new();
+        out.push(&gids);
+        out.push(&data_rows);
+        out.push(&Uint8Array::from(present_block_flags.as_slice()));
+        out.push(&Uint8Array::from(local_leader_flags.as_slice()));
+        out.push(&Uint32Array::from(replica_counts.as_slice()));
+        out.push(&strings_to_array(candidate_gids));
+        out.push(&Uint8Array::from(peer_history_removed_flags.as_slice()));
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_entry_assignment_for_gid(
         &self,
         gid: String,

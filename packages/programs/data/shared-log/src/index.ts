@@ -356,10 +356,10 @@ type DecodedReplicaCountMap = ReadonlyMap<string, number>;
 type NativeRequestPruneLeaderHints = {
 	localLeaderHashes: Set<string>;
 	replicaCounts: Map<string, number>;
-	replicaCountsByIndex?: Array<number | undefined>;
+	replicaCountsByIndex?: ArrayLike<number | undefined>;
 	peerHistoryGids: string[];
 	peerHistoryRemovedHashes: Set<string>;
-	peerHistoryRemovedFlags?: boolean[];
+	peerHistoryRemovedFlags?: ArrayLike<boolean | number>;
 	nativeEntries?: Map<
 		string,
 		{ gid: string; data?: Uint8Array; replicas?: number }
@@ -367,9 +367,11 @@ type NativeRequestPruneLeaderHints = {
 	nativeEntryMetadata?: Array<
 		{ gid: string; data?: Uint8Array; replicas?: number } | undefined | null
 	>;
+	nativeEntryGids?: ArrayLike<string | undefined | null>;
+	nativeEntryDataByIndex?: ArrayLike<Uint8Array | undefined | null>;
 	presentBlockHashes?: Set<string>;
-	presentBlocks?: boolean[];
-	localLeaderFlags?: boolean[];
+	presentBlocks?: ArrayLike<boolean | number>;
+	localLeaderFlags?: ArrayLike<boolean | number>;
 };
 
 type NativeBackboneRequestPruneHintArrays = {
@@ -381,6 +383,55 @@ type NativeBackboneRequestPruneHintArrays = {
 	replicaCounts: Array<number | undefined>;
 	peerHistoryGids: string[];
 	peerHistoryRemovedFlags: boolean[];
+};
+
+type NativeBackboneRequestPruneHintColumns = {
+	gids: ArrayLike<string | undefined | null>;
+	data: ArrayLike<Uint8Array | undefined | null>;
+	presentBlockFlags: ArrayLike<number>;
+	localLeaderFlags: ArrayLike<number>;
+	replicaCounts: ArrayLike<number>;
+	peerHistoryGids: string[];
+	peerHistoryRemovedFlags: ArrayLike<number>;
+};
+
+const countTruthyValues = (values?: ArrayLike<boolean | number>) => {
+	if (!values) {
+		return 0;
+	}
+	let count = 0;
+	for (let i = 0; i < values.length; i++) {
+		if (values[i]) {
+			count += 1;
+		}
+	}
+	return count;
+};
+
+const countPresentValues = (values?: ArrayLike<unknown>) => {
+	if (!values) {
+		return 0;
+	}
+	let count = 0;
+	for (let i = 0; i < values.length; i++) {
+		if (values[i] != null) {
+			count += 1;
+		}
+	}
+	return count;
+};
+
+const countPositiveValues = (values?: ArrayLike<number | undefined>) => {
+	if (!values) {
+		return 0;
+	}
+	let count = 0;
+	for (let i = 0; i < values.length; i++) {
+		if ((values[i] ?? 0) > 0) {
+			count += 1;
+		}
+	}
+	return count;
 };
 
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
@@ -10192,28 +10243,22 @@ export class SharedLog<
 							details: {
 								nativeEntries:
 									nativeLeaderHints.nativeEntries?.size ??
-									nativeLeaderHints.nativeEntryMetadata?.reduce(
-										(sum, entry) => sum + (entry ? 1 : 0),
-										0,
+									countPresentValues(
+										nativeLeaderHints.nativeEntryGids ??
+											nativeLeaderHints.nativeEntryMetadata,
 									) ??
 									0,
 								presentBlocks:
 									nativeLeaderHints.presentBlockHashes?.size ??
-									nativeLeaderHints.presentBlocks?.reduce(
-										(sum, present) => sum + (present ? 1 : 0),
-										0,
-									) ??
+									countTruthyValues(nativeLeaderHints.presentBlocks) ??
 									0,
 								localLeaders:
 									nativeLeaderHints.localLeaderHashes.size ||
-									nativeLeaderHints.localLeaderFlags?.filter(Boolean)
-										.length ||
+									countTruthyValues(nativeLeaderHints.localLeaderFlags) ||
 									0,
 								plannedEntries:
 									nativeLeaderHints.replicaCounts.size ||
-									nativeLeaderHints.replicaCountsByIndex?.filter(
-										(replicas) => replicas != null,
-									).length ||
+									countPositiveValues(nativeLeaderHints.replicaCountsByIndex) ||
 									0,
 								peerHistoryGids:
 									nativeLeaderHints.peerHistoryGids.length,
@@ -10307,10 +10352,13 @@ export class SharedLog<
 				for (let i = 0; i < msg.hashes.length; i++) {
 					const hash = msg.hashes[i]!;
 
+					const nativeEntryGid = nativeLeaderHints.nativeEntryGids?.[i];
+					const nativeEntryData = nativeLeaderHints.nativeEntryDataByIndex?.[i];
 					const nativeEntry =
 						nativeLeaderHints.nativeEntryMetadata?.[i] ??
 						nativeLeaderHints.nativeEntries?.get(hash) ??
 						nativeEntryMetadata?.[i];
+					const hasNativeEntry = nativeEntryGid != null || nativeEntry != null;
 					let indexedEntry:
 						| Awaited<ReturnType<typeof this.log.entryIndex.getShallow>>
 						| undefined;
@@ -10319,7 +10367,7 @@ export class SharedLog<
 					const hasPresentBlock = nativeLeaderHints.presentBlockHashes
 						? nativeLeaderHints.presentBlockHashes.has(hash)
 						: nativeLeaderHints.presentBlocks
-							? nativeLeaderHints.presentBlocks[i] === true
+							? !!nativeLeaderHints.presentBlocks[i]
 							: presentBlocks
 							? presentBlocks[i] === true
 							: await this.log.blocks.has(hash);
@@ -10330,13 +10378,13 @@ export class SharedLog<
 					) {
 						fallbackBlockChecks += 1;
 					}
-					if (!nativeEntry && hasPresentBlock) {
+					if (!hasNativeEntry && hasPresentBlock) {
 						indexedEntry = await this.log.entryIndex.getShallow(hash);
 						indexedFallbackLookups += 1;
-					} else if (!nativeEntry) {
+					} else if (!hasNativeEntry) {
 						skippedIndexedLookupsForMissingBlocks += 1;
 					}
-					if ((nativeEntry || indexedEntry) && hasPresentBlock) {
+					if ((hasNativeEntry || indexedEntry) && hasPresentBlock) {
 						presentEntries += 1;
 						const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 						if (pendingDelete) {
@@ -10356,18 +10404,25 @@ export class SharedLog<
 								}
 							}
 						} else {
-							const gid = nativeEntry?.gid ?? indexedEntry!.value.meta.gid;
+							const gid =
+								nativeEntryGid ?? nativeEntry?.gid ?? indexedEntry!.value.meta.gid;
+							const replicaCountByIndex =
+								nativeLeaderHints.replicaCountsByIndex?.[i];
 							const replicas =
-								nativeLeaderHints.replicaCountsByIndex?.[i] ??
-								nativeLeaderHints.replicaCounts.get(hash) ??
-								decodeReplicas({
-									meta: {
-										data: nativeEntry?.data ?? indexedEntry!.value.meta.data,
-									},
-								}).getValue(this);
+								replicaCountByIndex != null && replicaCountByIndex > 0
+									? replicaCountByIndex
+									: nativeLeaderHints.replicaCounts.get(hash) ??
+										decodeReplicas({
+											meta: {
+												data:
+													nativeEntryData ??
+													nativeEntry?.data ??
+													indexedEntry!.value.meta.data,
+											},
+										}).getValue(this);
 
 							if (
-								nativeLeaderHints.peerHistoryRemovedFlags?.[i] !== true &&
+								!nativeLeaderHints.peerHistoryRemovedFlags?.[i] &&
 								!nativeLeaderHints.peerHistoryRemovedHashes.has(hash)
 							) {
 								this.removePeerFromGidPeerHistory(from, gid);
@@ -10387,11 +10442,11 @@ export class SharedLog<
 							};
 
 							if (
-								nativeLeaderHints.localLeaderFlags?.[i] === true ||
+								!!nativeLeaderHints.localLeaderFlags?.[i] ||
 								nativeLeaderHints.localLeaderHashes.has(hash)
 							) {
 								isLeader = true;
-							} else if (nativeEntry) {
+							} else if (hasNativeEntry) {
 								await this._waitForGidReplicators(
 									gid,
 									replicas,
@@ -11593,12 +11648,37 @@ export class SharedLog<
 				? [...this._checkedPrune.pendingDeletes.keys()]
 				: [];
 		const nativeBackboneHintArrays = this._nativeBackbone as NativePeerbitBackbone & {
+			planRequestPruneLeaderHintColumns?: (
+				hashes: Iterable<string>,
+				skipHashes: Iterable<string>,
+				options?: unknown,
+			) => NativeBackboneRequestPruneHintColumns | undefined;
 			planRequestPruneLeaderHintArrays?: (
 				hashes: Iterable<string>,
 				skipHashes: Iterable<string>,
 				options?: unknown,
 			) => NativeBackboneRequestPruneHintArrays | undefined;
 		};
+		const hintColumns =
+			nativeBackboneHintArrays.planRequestPruneLeaderHintColumns?.(
+				hashes,
+				skipHashes,
+				this.createNativeLeaderOptions(context),
+			);
+		if (hintColumns) {
+			return {
+				localLeaderHashes: new Set(),
+				replicaCounts: new Map(),
+				replicaCountsByIndex: hintColumns.replicaCounts,
+				peerHistoryGids: hintColumns.peerHistoryGids,
+				peerHistoryRemovedHashes: new Set(),
+				peerHistoryRemovedFlags: hintColumns.peerHistoryRemovedFlags,
+				nativeEntryGids: hintColumns.gids,
+				nativeEntryDataByIndex: hintColumns.data,
+				presentBlocks: hintColumns.presentBlockFlags,
+				localLeaderFlags: hintColumns.localLeaderFlags,
+			};
+		}
 		const hintArrays =
 			nativeBackboneHintArrays.planRequestPruneLeaderHintArrays?.(
 				hashes,

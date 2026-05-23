@@ -428,6 +428,18 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
+	plan_request_prune_leader_hint_columns?: (
+		hashes: string[],
+		skipHashes: string[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	plan_entry_assignment_for_gid: (
 		gid: string,
 		replicas: number,
@@ -1360,6 +1372,16 @@ export type NativeBackboneRequestPruneHintArrays = {
 	replicaCounts: Array<number | undefined>;
 	peerHistoryGids: string[];
 	peerHistoryRemovedFlags: boolean[];
+};
+
+export type NativeBackboneRequestPruneHintColumns = {
+	gids: Array<string | undefined>;
+	data: Array<Uint8Array | undefined>;
+	presentBlockFlags: Uint8Array;
+	localLeaderFlags: Uint8Array;
+	replicaCounts: Uint32Array;
+	peerHistoryGids: string[];
+	peerHistoryRemovedFlags: Uint8Array;
 };
 
 export type NativeBackboneLeaderCursorBatchInput = {
@@ -4487,6 +4509,46 @@ export class NativePeerbitBackbone {
 			presentBlocks,
 			localLeaderFlags,
 			replicaCounts: entries.map((entry) => entry?.replicas),
+			peerHistoryGids,
+			peerHistoryRemovedFlags,
+		};
+	}
+
+	planRequestPruneLeaderHintColumns(
+		hashes: Iterable<string>,
+		skipHashes: Iterable<string>,
+		options?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneRequestPruneHintColumns | undefined {
+		if (!this.native.plan_request_prune_leader_hint_columns) {
+			return undefined;
+		}
+		const [
+			gids,
+			data,
+			presentBlockFlags,
+			localLeaderFlags,
+			replicaCounts,
+			peerHistoryGids,
+			peerHistoryRemovedFlags,
+		] = this.native.plan_request_prune_leader_hint_columns(
+			[...hashes],
+			[...skipHashes],
+			...findLeaderArguments(options),
+		) as [
+			Array<string | undefined>,
+			Array<Uint8Array | undefined>,
+			Uint8Array,
+			Uint8Array,
+			Uint32Array,
+			string[],
+			Uint8Array,
+		];
+		return {
+			gids,
+			data,
+			presentBlockFlags,
+			localLeaderFlags,
+			replicaCounts,
 			peerHistoryGids,
 			peerHistoryRemovedFlags,
 		};

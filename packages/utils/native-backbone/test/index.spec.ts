@@ -1348,13 +1348,39 @@ describe("native peerbit backbone", () => {
 			leaderPlan.leaders.has("peer-a"),
 			false,
 		]);
-		expect(requestPruneHintArrays.peerHistoryRemovedFlags).to.deep.equal([
-			true,
-			false,
-		]);
-		expect(
-			backbone.getGidCoordinates("gid-storage-committed-no-next", 1),
-		).to.deep.equal(leaderPlan.coordinates);
+			expect(requestPruneHintArrays.peerHistoryRemovedFlags).to.deep.equal([
+				true,
+				false,
+			]);
+			const requestPruneHintColumns =
+				backbone.planRequestPruneLeaderHintColumns(
+					[second.entry.hash, "missing"],
+					[],
+					{
+						selfHash: "peer-a",
+						selfReplicating: true,
+						fullReplicaFallback: true,
+					},
+				)!;
+			expect(requestPruneHintColumns.gids[0]).equal(
+				"gid-storage-committed-no-next",
+			);
+			expect(requestPruneHintColumns.gids[1]).equal(undefined);
+			expect([...requestPruneHintColumns.presentBlockFlags]).to.deep.equal([
+				1,
+				0,
+			]);
+			expect([...requestPruneHintColumns.replicaCounts]).to.deep.equal([1, 0]);
+			expect([...requestPruneHintColumns.localLeaderFlags]).to.deep.equal([
+				leaderPlan.leaders.has("peer-a") ? 1 : 0,
+				0,
+			]);
+			expect([...requestPruneHintColumns.peerHistoryRemovedFlags]).to.deep.equal(
+				[1, 0],
+			);
+			expect(
+				backbone.getGidCoordinates("gid-storage-committed-no-next", 1),
+			).to.deep.equal(leaderPlan.coordinates);
 		expect(backbone.getGrid(leaderPlan.coordinates[0]!, 1)).to.deep.equal(
 			leaderPlan.coordinates,
 		);
