@@ -863,6 +863,30 @@ fn find_leaders_with_prepared_options(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn prepared_options_for_replicas<'a>(
+    planner: &RangePlanner,
+    replicas: usize,
+    base_options: &SampleOptions,
+    prepared_options_by_replicas: &'a mut HashMap<usize, SampleOptions>,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+) -> &'a SampleOptions {
+    prepared_options_by_replicas
+        .entry(replicas)
+        .or_insert_with(|| {
+            prepare_find_leader_options(
+                planner,
+                base_options,
+                replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+            )
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn find_leaders_with_batch_caches(
     planner: &RangePlanner,
     cursors: &[u64],
@@ -876,18 +900,15 @@ fn find_leaders_with_batch_caches(
     full_replica_fallback: bool,
     include_strict_full_replica: bool,
 ) -> Vec<LeaderSample> {
-    let prepared_options = prepared_options_by_replicas
-        .entry(replicas)
-        .or_insert_with(|| {
-            prepare_find_leader_options(
-                planner,
-                base_options,
-                replicas,
-                expand_peer_filter,
-                self_hash,
-                include_self,
-            )
-        });
+    let prepared_options = prepared_options_for_replicas(
+        planner,
+        replicas,
+        base_options,
+        prepared_options_by_replicas,
+        expand_peer_filter,
+        self_hash,
+        include_self,
+    );
 
     if full_replica_fallback {
         if let Some(leaders) = full_replica_leaders_by_replicas
@@ -909,6 +930,42 @@ fn find_leaders_with_batch_caches(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn full_replica_self_leader_with_batch_caches(
+    planner: &RangePlanner,
+    replicas: usize,
+    base_options: &SampleOptions,
+    prepared_options_by_replicas: &mut HashMap<usize, SampleOptions>,
+    full_replica_self_leader_by_replicas: &mut HashMap<usize, Option<bool>>,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Option<bool> {
+    if !full_replica_fallback {
+        return None;
+    }
+    let prepared_options = prepared_options_for_replicas(
+        planner,
+        replicas,
+        base_options,
+        prepared_options_by_replicas,
+        expand_peer_filter,
+        self_hash,
+        include_self,
+    );
+    full_replica_self_leader_by_replicas
+        .entry(replicas)
+        .or_insert_with(|| {
+            planner
+                .get_full_replica_leaders(replicas, prepared_options, include_strict_full_replica)
+                .map(|leaders| leaders.iter().any(|leader| leader.hash == self_hash))
+        })
+        .as_ref()
+        .copied()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn contains_leader_with_batch_caches(
     planner: &RangePlanner,
     cursors: &[u64],
@@ -922,37 +979,30 @@ fn contains_leader_with_batch_caches(
     full_replica_fallback: bool,
     include_strict_full_replica: bool,
 ) -> bool {
-    let prepared_options = prepared_options_by_replicas
-        .entry(replicas)
-        .or_insert_with(|| {
-            prepare_find_leader_options(
-                planner,
-                base_options,
-                replicas,
-                expand_peer_filter,
-                self_hash,
-                include_self,
-            )
-        });
-
-    if full_replica_fallback {
-        if let Some(is_self_leader) = full_replica_self_leader_by_replicas
-            .entry(replicas)
-            .or_insert_with(|| {
-                planner
-                    .get_full_replica_leaders(
-                        replicas,
-                        prepared_options,
-                        include_strict_full_replica,
-                    )
-                    .map(|leaders| leaders.iter().any(|leader| leader.hash == self_hash))
-            })
-            .as_ref()
-        {
-            return *is_self_leader;
-        }
+    if let Some(is_self_leader) = full_replica_self_leader_with_batch_caches(
+        planner,
+        replicas,
+        base_options,
+        prepared_options_by_replicas,
+        full_replica_self_leader_by_replicas,
+        expand_peer_filter,
+        self_hash,
+        include_self,
+        full_replica_fallback,
+        include_strict_full_replica,
+    ) {
+        return is_self_leader;
     }
 
+    let prepared_options = prepared_options_for_replicas(
+        planner,
+        replicas,
+        base_options,
+        prepared_options_by_replicas,
+        expand_peer_filter,
+        self_hash,
+        include_self,
+    );
     let mut options = prepared_options.clone();
     options.unique_replicators = options
         .peer_filter
@@ -1649,6 +1699,23 @@ impl NativeRangePlanner {
             .zip(gids.into_iter())
             .zip(replica_counts.into_iter())
         {
+            if let Some(is_local_leader) = full_replica_self_leader_with_batch_caches(
+                &self.inner,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            ) {
+                if is_local_leader {
+                    local_hashes.push(hash);
+                }
+                continue;
+            }
             let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
             let is_local_leader = contains_leader_with_batch_caches(
                 &self.inner,
@@ -3430,6 +3497,21 @@ impl NativeSharedLogState {
         let mut out = Vec::with_capacity(gids.len());
 
         for (gid, replicas) in gids.iter().zip(replica_counts.iter().copied()) {
+            if let Some(is_local_leader) = full_replica_self_leader_with_batch_caches(
+                &self.inner.range_planner,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            ) {
+                out.push(is_local_leader);
+                continue;
+            }
             let coordinates = self.inner.range_planner.get_gid_coordinates(gid, replicas);
             out.push(contains_leader_with_batch_caches(
                 &self.inner.range_planner,
