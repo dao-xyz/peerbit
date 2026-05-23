@@ -543,13 +543,19 @@ impl LogGraphIndex {
     pub fn entry_metadata_batch(
         &self,
         hashes: &[String],
-    ) -> Vec<Option<(String, String, Option<Vec<u8>>)>> {
+    ) -> Vec<Option<(String, String, Option<Vec<u8>>, Option<u32>)>> {
         hashes
             .iter()
             .map(|hash| {
-                self.entries
-                    .get(hash)
-                    .map(|entry| (entry.hash.clone(), entry.gid.clone(), entry.data.clone()))
+                self.entries.get(hash).map(|entry| {
+                    let replicas = decode_absolute_replica_data_u32(entry.data.as_deref());
+                    (
+                        entry.hash.clone(),
+                        entry.gid.clone(),
+                        entry.data.clone(),
+                        replicas,
+                    )
+                })
             })
             .collect()
     }
@@ -5108,11 +5114,11 @@ fn log_trim_entries_to_rows(values: Vec<LogIndexEntry>) -> Array {
 }
 
 fn log_optional_entry_metadata_to_rows(
-    values: Vec<Option<(String, String, Option<Vec<u8>>)>>,
+    values: Vec<Option<(String, String, Option<Vec<u8>>, Option<u32>)>>,
 ) -> Array {
     let out = Array::new();
     for value in values {
-        let Some((hash, gid, data)) = value else {
+        let Some((hash, gid, data, replicas)) = value else {
             out.push(&JsValue::UNDEFINED);
             continue;
         };
@@ -5121,6 +5127,10 @@ fn log_optional_entry_metadata_to_rows(
         row.push(&JsValue::from_str(&gid));
         match data {
             Some(data) => row.push(&Uint8Array::from(data.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        match replicas {
+            Some(replicas) => row.push(&JsValue::from_f64(replicas as f64)),
             None => row.push(&JsValue::UNDEFINED),
         };
         out.push(&row);

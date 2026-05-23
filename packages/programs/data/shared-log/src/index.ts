@@ -8514,11 +8514,10 @@ export class SharedLog<
 		if (change.removed.length === 0) {
 			return undefined;
 		}
-		const deferredCoordinateDeleteHashes: string[] = [];
-		for (const removed of change.removed) {
-			deferredCoordinateDeleteHashes.push(removed.hash);
-			this.onEntryRemoved(removed.hash);
-		}
+		const deferredCoordinateDeleteHashes = change.removed.map(
+			(removed) => removed.hash,
+		);
+		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
 		if (options?.forgetNativeCoordinates === false) {
 			this.forgetResidentCoordinateStateForHashes(
 				deferredCoordinateDeleteHashes,
@@ -8554,18 +8553,10 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
-		const deferredCoordinateDeleteHashes: string[] = [];
-		if (removedHashes) {
-			for (const hash of removedHashes) {
-				deferredCoordinateDeleteHashes.push(hash);
-				this.onEntryRemoved(hash);
-			}
-		} else {
-			for (const entry of removed) {
-				deferredCoordinateDeleteHashes.push(entry.hash);
-				this.onEntryRemoved(entry.hash);
-			}
-		}
+		const deferredCoordinateDeleteHashes = removedHashes
+			? [...removedHashes]
+			: removed.map((entry) => entry.hash);
+		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
 		if (options?.forgetNativeCoordinates === false) {
 			this.forgetResidentCoordinateStateForHashes(
 				deferredCoordinateDeleteHashes,
@@ -11396,7 +11387,7 @@ export class SharedLog<
 	private async planCurrentNativeRequestPruneLeaderHints(properties: {
 		hashes: string[];
 		nativeEntryMetadata?: Array<
-			{ gid: string; data?: Uint8Array } | undefined | null
+			{ gid: string; data?: Uint8Array; replicas?: number } | undefined | null
 		>;
 		presentBlocks?: boolean[] | undefined;
 	}): Promise<NativeRequestPruneLeaderHints> {
@@ -11430,11 +11421,13 @@ export class SharedLog<
 			) {
 				continue;
 			}
-			const replicas = decodeReplicas({
-				meta: {
-					data: nativeEntry.data,
-				},
-			}).getValue(this);
+			const replicas =
+				nativeEntry.replicas ??
+				decodeReplicas({
+					meta: {
+						data: nativeEntry.data,
+					},
+				}).getValue(this);
 			hashes.push(hash);
 			replicaCounts.set(hash, replicas);
 			peerHistoryGids.push(nativeEntry.gid);
@@ -14993,5 +14986,18 @@ export class SharedLog<
 
 	onEntryRemoved(hash: string) {
 		this.syncronizer.onEntryRemoved(hash);
+	}
+
+	private onEntryRemovedHashes(hashes: string[]) {
+		if (hashes.length === 0) {
+			return;
+		}
+		if (this.syncronizer.onEntryRemovedHashes) {
+			this.syncronizer.onEntryRemovedHashes(hashes);
+			return;
+		}
+		for (const hash of hashes) {
+			this.syncronizer.onEntryRemoved(hash);
+		}
 	}
 }

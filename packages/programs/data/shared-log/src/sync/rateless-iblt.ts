@@ -1718,6 +1718,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.onEntryRemoved(hash);
 	}
 
+	onEntryRemovedHashes(hashes: string[]): void {
+		this.invalidateLocalRangeEncoderCache();
+		return this.simple.onEntryRemovedHashes(hashes);
+	}
+
 	onPeerDisconnected(key: PublicSignKey | string) {
 		return this.simple.onPeerDisconnected(key);
 	}

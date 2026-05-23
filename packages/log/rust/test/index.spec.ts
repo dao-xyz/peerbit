@@ -266,15 +266,21 @@ describe("native log graph index", () => {
 	it("batches membership checks", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("a", "g", [], 1n));
-		index.put(entry("c", "g", [], 3n));
+		index.put({ ...entry("c", "g", [], 3n), data: absoluteReplicaData(4) });
 
 		expect([...index.hasMany(["missing", "a", "c"])]).to.deep.equal(["a", "c"]);
-		expect(index.entryMetadataBatch(["missing", "a"])).to.deep.equal([
+		expect(index.entryMetadataBatch(["missing", "a", "c"])).to.deep.equal([
 			undefined,
 			{
 				hash: "a",
 				gid: "g",
 				data: undefined,
+			},
+			{
+				hash: "c",
+				gid: "g",
+				data: absoluteReplicaData(4),
+				replicas: 4,
 			},
 		]);
 	});

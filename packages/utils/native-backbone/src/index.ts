@@ -2225,8 +2225,18 @@ const metadataEntryFromRow = (row: unknown) => {
 	if (row == null) {
 		return undefined;
 	}
-	const [hash, gid, data] = row as [string, string, Uint8Array | undefined];
-	return { hash, gid, data };
+	const [hash, gid, data, replicas] = row as [
+		string,
+		string,
+		Uint8Array | undefined,
+		number | undefined,
+	];
+	const entry: { hash: string; gid: string; data?: Uint8Array; replicas?: number } =
+		{ hash, gid, data };
+	if (replicas != null) {
+		entry.replicas = replicas;
+	}
+	return entry;
 };
 
 const storageAppendResultFromRow = (

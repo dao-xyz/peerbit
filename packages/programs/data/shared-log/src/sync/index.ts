@@ -173,6 +173,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 	onEntryAddedHashes?(hashes: string[]): void;
 	onEntryAddedHash?(hash: string): void;
 	onEntryAdded(entry: Entry<any>): void;
+	onEntryRemovedHashes?(hashes: string[]): void;
 	onEntryRemoved(hash: string): void;
 	onPeerDisconnected(key: PublicSignKey | string): void;
 

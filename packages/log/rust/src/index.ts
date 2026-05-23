@@ -45,6 +45,7 @@ export type NativeLogEntryMetadata = {
 	hash: string;
 	gid: string;
 	data?: Uint8Array;
+	replicas?: number;
 };
 
 export type NativeJoinPlan = {
@@ -1245,12 +1246,21 @@ export class LogGraphIndex {
 			if (!row) {
 				return undefined;
 			}
-			const [hash, gid, data] = row as [string, string, Uint8Array | undefined];
-			return {
+			const [hash, gid, data, replicas] = row as [
+				string,
+				string,
+				Uint8Array | undefined,
+				number | undefined,
+			];
+			const entry: NativeLogEntryMetadata = {
 				hash,
 				gid,
 				data,
 			};
+			if (replicas != null) {
+				entry.replicas = replicas;
+			}
+			return entry;
 		});
 	}
 

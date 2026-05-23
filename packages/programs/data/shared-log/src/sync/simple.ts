@@ -1268,6 +1268,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		return this.clearSyncProcess(hash);
 	}
 
+	onEntryRemovedHashes(hashes: string[]): void {
+		return this.clearSyncProcesses(hashes);
+	}
+
 	private clearSyncProcessKey(key: SyncableKey) {
 		const inflight = this.syncInFlightQueue.get(key);
 		if (inflight) {

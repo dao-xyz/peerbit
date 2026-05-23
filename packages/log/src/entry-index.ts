@@ -374,6 +374,7 @@ export type NativeLogEntryMetadata = {
 	hash: string;
 	gid: string;
 	data?: Uint8Array;
+	replicas?: number;
 };
 
 type ResolveFullyOptions =
