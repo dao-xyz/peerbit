@@ -1215,9 +1215,10 @@ export class Log<T> {
 						properties.resolveTrimmedEntries === false ||
 						prepared.documentTrimmedHeadsProcessed === true
 					) {
-						const trimmedEntryHashes = [
-							...new Set(prepared.trimmedEntryHashes),
-						];
+						const trimmedEntryHashes =
+							prepared.trimmedEntryHashes.length === 1
+								? prepared.trimmedEntryHashes
+								: [...new Set(prepared.trimmedEntryHashes)];
 						const consumedNoReturn =
 							this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
 								trimmedEntryHashes,
@@ -1524,9 +1525,10 @@ export class Log<T> {
 								properties.resolveTrimmedEntries === false ||
 								prepared.documentTrimmedHeadsProcessed === true
 							) {
-								const trimmedEntryHashes = [
-									...new Set(prepared.trimmedEntryHashes),
-								];
+								const trimmedEntryHashes =
+									prepared.trimmedEntryHashes.length === 1
+										? prepared.trimmedEntryHashes
+										: [...new Set(prepared.trimmedEntryHashes)];
 								const consumedNoReturn =
 									this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
 										trimmedEntryHashes,
