@@ -427,10 +427,10 @@ const nativeBackboneProfileKeys = new Set<keyof Profile>([
 
 const shouldIncludeProfileKey = (key: string): boolean => {
 	const profileKey = key as keyof Profile;
-	return (
-		(profileDeep || !deepProfileKeys.has(profileKey)) &&
-		(profileNativeBackbone || !nativeBackboneProfileKeys.has(profileKey))
-	);
+	if (nativeBackboneProfileKeys.has(profileKey)) {
+		return profileNativeBackbone;
+	}
+	return profileDeep || !deepProfileKeys.has(profileKey);
 };
 
 const emptyProfile = (): Profile => ({
