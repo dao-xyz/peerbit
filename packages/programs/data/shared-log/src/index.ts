@@ -844,12 +844,38 @@ type EntryWithMetaBytes = {
 	getHashDigestBytes?: () => Uint8Array | undefined;
 };
 
+const EMPTY_HASHES: string[] = [];
+
+const normalizedHashValues = (hashes: Iterable<string>): string[] => {
+	if (Array.isArray(hashes)) {
+		if (hashes.length === 0) {
+			return EMPTY_HASHES;
+		}
+		if (hashes.length === 1) {
+			return hashes[0] ? hashes : EMPTY_HASHES;
+		}
+	}
+	const values: string[] = [];
+	const seen = new Set<string>();
+	for (const hash of hashes) {
+		if (!hash || seen.has(hash)) {
+			continue;
+		}
+		seen.add(hash);
+		values.push(hash);
+	}
+	return values;
+};
+
 const combineCoordinateDeleteHashes = (
 	nextHashes: string[],
 	deleteHashes?: string[],
 ): string[] => {
 	if (!deleteHashes || deleteHashes.length === 0) {
 		return nextHashes;
+	}
+	if (nextHashes.length === 0) {
+		return deleteHashes;
 	}
 	const combined: string[] = [];
 	const seen = new Set<string>();
@@ -2434,11 +2460,11 @@ export class SharedLog<
 	private deleteCoordinatesForHashes(
 		hashes: Iterable<string>,
 	): MaybePromise<void> {
-		const values = [...new Set([...hashes].filter(Boolean))];
+		const values = normalizedHashValues(hashes);
 		if (values.length === 0) {
 			return;
 		}
-		this.forgetCoordinateStateForHashes(values);
+		this.forgetCoordinateStateForHashValues(values);
 		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 			EntryReplicated<R>
 		>;
@@ -2467,20 +2493,28 @@ export class SharedLog<
 	}
 
 	private forgetCoordinateStateForHashes(hashes: Iterable<string>) {
-		const values = [...new Set([...hashes].filter(Boolean))];
+		const values = normalizedHashValues(hashes);
 		if (values.length === 0) {
 			return;
 		}
+		this.forgetCoordinateStateForHashValues(values);
+	}
+
+	private forgetCoordinateStateForHashValues(values: string[]) {
 		this._nativeSharedLogState?.deleteEntryCoordinatesBatch(values);
 		this._nativeBackbone?.deleteEntryCoordinatesBatch(values);
-		this.forgetResidentCoordinateStateForHashes(values);
+		this.forgetResidentCoordinateStateForHashValues(values);
 	}
 
 	private forgetResidentCoordinateStateForHashes(hashes: Iterable<string>) {
-		const values = [...new Set([...hashes].filter(Boolean))];
+		const values = normalizedHashValues(hashes);
 		if (values.length === 0) {
 			return;
 		}
+		this.forgetResidentCoordinateStateForHashValues(values);
+	}
+
+	private forgetResidentCoordinateStateForHashValues(values: string[]) {
 		if (this._residentEntryCoordinatesByHash) {
 			for (const hash of values) {
 				this._residentEntryCoordinatesByHash.delete(hash);
@@ -8619,7 +8653,7 @@ export class SharedLog<
 			return undefined;
 		}
 		const deferredCoordinateDeleteHashes = removedHashes
-			? [...removedHashes]
+			? normalizedHashValues(removedHashes)
 			: removed.map((entry) => entry.hash);
 		this.onEntryRemovedHashes(deferredCoordinateDeleteHashes);
 		if (options?.forgetNativeCoordinates === false) {
