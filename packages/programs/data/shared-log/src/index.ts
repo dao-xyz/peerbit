@@ -3547,19 +3547,22 @@ export class SharedLog<
 			| undefined;
 		if (nativeSharedLogState?.removeGidPeers) {
 			nativeSharedLogState.removeGidPeers(publicKeyHash, gidArray);
-		} else {
+		} else if (this._nativeSharedLogState) {
 			for (const gid of gidArray) {
-				this._nativeSharedLogState?.removeGidPeer(publicKeyHash, gid);
+				this._nativeSharedLogState.removeGidPeer(publicKeyHash, gid);
 			}
 		}
 		if (options?.skipNativeBackbone !== true) {
 			if (nativeBackbone?.removeGidPeers) {
 				nativeBackbone.removeGidPeers(publicKeyHash, gidArray);
-			} else {
+			} else if (this._nativeBackbone) {
 				for (const gid of gidArray) {
-					this._nativeBackbone?.removeGidPeer(publicKeyHash, gid);
+					this._nativeBackbone.removeGidPeer(publicKeyHash, gid);
 				}
 			}
+		}
+		if (this._gidPeersHistory.size === 0) {
+			return;
 		}
 		for (const gid of gidArray) {
 			const gidMap = this._gidPeersHistory.get(gid);
