@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import {
 	type NativeLogEntry,
+	benchmarkEntryV0StorageVerifyModes,
 	benchmarkPlainEntryV0Crypto,
 	calculateRawCidV1,
 	calculateRawCidV1Batch,
@@ -574,6 +575,28 @@ describe("native EntryV0 encoding", () => {
 		expect(result.cidLenTotal).to.be.greaterThan(0);
 		expect(result.compactSignMs).to.be.greaterThanOrEqual(0);
 		expect(result.compactVerifyMs).to.be.greaterThanOrEqual(0);
+		expect(Number.isFinite(result.checksum)).to.equal(true);
+	});
+
+	it("benchmarks EntryV0 storage verification modes", async () => {
+		const result = await benchmarkEntryV0StorageVerifyModes({
+			clockId: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			privateKey: fromHex(
+				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			),
+			publicKey: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			iterations: 3,
+			payloadData: bytes(32, 7),
+		});
+
+		expect(result.batchOk).to.equal(true);
+		expect(result.serialOk).to.equal(true);
+		expect(result.storageOk).to.equal(true);
+		expect(result.storageBytesTotal).to.be.greaterThan(0);
 		expect(Number.isFinite(result.checksum)).to.equal(true);
 	});
 

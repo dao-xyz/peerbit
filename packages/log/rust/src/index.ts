@@ -483,6 +483,24 @@ type WasmModule = {
 		iterations: number,
 		payloadData: Uint8Array,
 	) => number[];
+	benchmark_entry_v0_storage_verify_modes: (
+		clockId: Uint8Array,
+		privateKey: Uint8Array,
+		publicKey: Uint8Array,
+		iterations: number,
+		payloadData: Uint8Array,
+	) => [
+		parseMs: number,
+		batchVerifyMs: number,
+		serialVerifyMs: number,
+		storageVerifyMs: number,
+		iterations: number,
+		batchOk: boolean,
+		serialOk: boolean,
+		storageOk: boolean,
+		checksum: number,
+		storageBytesTotal: number,
+	];
 	prepare_entry_v0_plain_chain: (
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
@@ -2245,6 +2263,19 @@ export type PlainEntryV0CryptoBenchmark = {
 	compactVerifyMs: number;
 };
 
+export type EntryV0StorageVerifyBenchmark = {
+	parseMs: number;
+	batchVerifyMs: number;
+	serialVerifyMs: number;
+	storageVerifyMs: number;
+	iterations: number;
+	batchOk: boolean;
+	serialOk: boolean;
+	storageOk: boolean;
+	checksum: number;
+	storageBytesTotal: number;
+};
+
 const plainEntryV0CoreBenchmarkFromRow = (
 	row: number[],
 ): PlainEntryV0CoreBenchmark => ({
@@ -2328,6 +2359,35 @@ export const benchmarkPlainEntryV0Crypto = async (input: {
 		cidLenTotal: row[8] ?? 0,
 		compactSignMs: row[9] ?? 0,
 		compactVerifyMs: row[10] ?? 0,
+	};
+};
+
+export const benchmarkEntryV0StorageVerifyModes = async (input: {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	iterations: number;
+	payloadData: Uint8Array;
+}): Promise<EntryV0StorageVerifyBenchmark> => {
+	const wasm = await loadWasm();
+	const row = wasm.benchmark_entry_v0_storage_verify_modes(
+		input.clockId,
+		input.privateKey,
+		input.publicKey,
+		input.iterations,
+		input.payloadData,
+	);
+	return {
+		parseMs: row[0],
+		batchVerifyMs: row[1],
+		serialVerifyMs: row[2],
+		storageVerifyMs: row[3],
+		iterations: row[4],
+		batchOk: row[5],
+		serialOk: row[6],
+		storageOk: row[7],
+		checksum: row[8],
+		storageBytesTotal: row[9],
 	};
 };
 

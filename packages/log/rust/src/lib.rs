@@ -4019,6 +4019,105 @@ pub fn benchmark_plain_entry_v0_crypto(
     Ok(row)
 }
 
+#[wasm_bindgen]
+pub fn benchmark_entry_v0_storage_verify_modes(
+    clock_id: Uint8Array,
+    private_key: Uint8Array,
+    public_key: Uint8Array,
+    iterations: u32,
+    payload_data: Uint8Array,
+) -> Result<Array, JsValue> {
+    let clock_id = clock_id.to_vec();
+    let private_key = private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let signing_key = validate_ed25519_keypair(&private_key, &public_key)?;
+    let payload_data = payload_data.to_vec();
+    let len = iterations as usize;
+    let mut storages = Vec::with_capacity(len);
+    let mut storage_bytes_total = 0usize;
+    for i in 0..iterations {
+        let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
+            &clock_id,
+            &public_key,
+            &signing_key,
+            1_700_000_000_000 + i as u64,
+            i,
+            format!("native-log-verify-{i}"),
+            Vec::new(),
+            0,
+            None,
+            payload_data.clone(),
+            None,
+        )?;
+        storage_bytes_total += core.storage_bytes.len();
+        storages.push(core.storage_bytes);
+    }
+
+    let parse_started = js_sys::Date::now();
+    let mut parsed_signatures = Vec::with_capacity(len);
+    let mut parsed_public_keys = Vec::with_capacity(len);
+    let mut parsed_messages = Vec::with_capacity(len);
+    let mut verifying_key_cache = HashMap::new();
+    for storage in &storages {
+        let parsed = parse_plain_entry_v0_storage_signature(storage)?;
+        validate_signature_lengths(&parsed.signature, &parsed.public_key)?;
+        let signature_bytes: [u8; 64] = parsed
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+        let verifying_key = cached_verifying_key(&mut verifying_key_cache, &parsed.public_key)?;
+        parsed_signatures.push(Signature::from_bytes(&signature_bytes));
+        parsed_public_keys.push(verifying_key);
+        parsed_messages.push(parsed.signable);
+    }
+    let parse_ms = js_sys::Date::now() - parse_started;
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+
+    let mut checksum = 0u32;
+    let batch_started = js_sys::Date::now();
+    let batch_ok = verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok();
+    let batch_ms = js_sys::Date::now() - batch_started;
+    checksum ^= u32::from(batch_ok);
+
+    let serial_started = js_sys::Date::now();
+    let mut serial_ok = true;
+    for i in 0..parsed_signatures.len() {
+        let ok = parsed_public_keys[i]
+            .verify(&parsed_messages[i], &parsed_signatures[i])
+            .is_ok();
+        serial_ok = serial_ok && ok;
+        checksum ^= (u32::from(ok)) << (i & 7);
+    }
+    let serial_ms = js_sys::Date::now() - serial_started;
+
+    let storage_refs = storages
+        .iter()
+        .map(|storage: &Vec<u8>| storage.as_slice())
+        .collect::<Vec<_>>();
+    let storage_verify_started = js_sys::Date::now();
+    let storage_verified = verify_entry_v0_ed25519_storage_slices(&storage_refs)?;
+    let storage_verify_ms = js_sys::Date::now() - storage_verify_started;
+    let storage_ok = storage_verified.iter().all(|flag| *flag != 0);
+    checksum ^= u32::from(storage_ok) << 16;
+
+    let row = Array::new();
+    row.push(&JsValue::from_f64(parse_ms));
+    row.push(&JsValue::from_f64(batch_ms));
+    row.push(&JsValue::from_f64(serial_ms));
+    row.push(&JsValue::from_f64(storage_verify_ms));
+    row.push(&JsValue::from_f64(iterations as f64));
+    row.push(&JsValue::from_bool(batch_ok));
+    row.push(&JsValue::from_bool(serial_ok));
+    row.push(&JsValue::from_bool(storage_ok));
+    row.push(&JsValue::from_f64(checksum as f64));
+    row.push(&JsValue::from_f64(storage_bytes_total as f64));
+    Ok(row)
+}
+
 #[cfg(feature = "crypto-bench-candidates")]
 fn benchmark_compact_ed25519_candidate(
     private_key: &[u8],
