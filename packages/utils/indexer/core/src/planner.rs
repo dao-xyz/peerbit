@@ -350,6 +350,18 @@ impl NativeQueryIndex {
         self.generation += 1;
     }
 
+    pub fn put_existing_unchecked(&mut self, id: &str, fields: DocumentFields) -> bool {
+        let Some(doc_id) = self.external_to_internal.get(id).copied() else {
+            return false;
+        };
+        self.remove_document_fields(doc_id);
+        self.index_document(doc_id, &fields);
+        self.documents.insert(doc_id, fields);
+        self.all_docs.insert(doc_id);
+        self.generation += 1;
+        true
+    }
+
     pub fn put_new_unchecked(&mut self, id: impl Into<String>, fields: DocumentFields) {
         let external_id = id.into();
         debug_assert!(
@@ -2023,6 +2035,54 @@ mod tests {
                 None,
             ),
             vec!["a"]
+        );
+    }
+
+    #[test]
+    fn put_existing_unchecked_replaces_existing_document() {
+        let mut index = NativeQueryIndex::new();
+        index.put_new_unchecked(
+            "a",
+            DocumentFields::new()
+                .with_scalar("status", "draft")
+                .with_scalar("score", 1_u64),
+        );
+
+        assert!(index.put_existing_unchecked(
+            "a",
+            DocumentFields::new()
+                .with_scalar("status", "published")
+                .with_scalar("score", 2_u64),
+        ));
+        assert!(!index.put_existing_unchecked(
+            "missing",
+            DocumentFields::new().with_scalar("status", "ignored"),
+        ));
+
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "status".into(),
+                    value: FieldValue::from("draft"),
+                },
+                &[],
+                None,
+            ),
+            Vec::<String>::new(),
+        );
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "status".into(),
+                    value: FieldValue::from("published"),
+                },
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["a"],
         );
     }
 

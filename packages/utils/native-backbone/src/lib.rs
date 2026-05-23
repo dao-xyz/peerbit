@@ -704,7 +704,13 @@ impl NativePeerbitBackbone {
             self.append_profile.document_value_put_ms += js_sys::Date::now() - started;
         }
         let index_put_started = profile_enabled.then(js_sys::Date::now);
-        if was_existing {
+        if known_existing {
+            if !self.document_index.put_existing_unchecked(&key, fields) {
+                return Err(JsValue::from_str(
+                    "Native document index expected an existing document",
+                ));
+            }
+        } else if was_existing {
             self.document_index.put(key, fields);
         } else {
             self.document_index.put_new_unchecked(key, fields);
