@@ -900,6 +900,109 @@ const writeU16BE = (buf: Uint8Array, offset: number, value: number) => {
 const readU16BE = (buf: Uint8Array, offset: number) =>
 	((buf[offset + 0] << 8) | buf[offset + 1]) >>> 0;
 
+const CONTROL_FRAME_CHANNEL_KEY_BYTES = 32;
+const CONTROL_FRAME_HEADER_BYTES = 1 + CONTROL_FRAME_CHANNEL_KEY_BYTES;
+
+class FrameWriter {
+	private readonly buf: Uint8Array;
+	private offset = 0;
+
+	constructor(kind: number, channelKey: Uint8Array, payloadBytes: number) {
+		this.buf = new Uint8Array(CONTROL_FRAME_HEADER_BYTES + payloadBytes);
+		this.u8(kind);
+		this.bytes(channelKey, CONTROL_FRAME_CHANNEL_KEY_BYTES, "channel key");
+	}
+
+	private ensure(bytes: number) {
+		if (this.offset + bytes > this.buf.length) {
+			throw new Error("control frame write overflow");
+		}
+	}
+
+	u8(value: number) {
+		this.ensure(1);
+		this.buf[this.offset++] = value & 0xff;
+		return this;
+	}
+
+	u16(value: number) {
+		this.ensure(2);
+		writeU16BE(this.buf, this.offset, value);
+		this.offset += 2;
+		return this;
+	}
+
+	u32(value: number) {
+		this.ensure(4);
+		writeU32BE(this.buf, this.offset, value);
+		this.offset += 4;
+		return this;
+	}
+
+	bytes(value: Uint8Array, expectedLength = value.length, label = "bytes") {
+		if (value.length !== expectedLength) {
+			throw new Error(
+				`invalid ${label} length: expected ${expectedLength}, got ${value.length}`,
+			);
+		}
+		this.ensure(value.length);
+		this.buf.set(value, this.offset);
+		this.offset += value.length;
+		return this;
+	}
+
+	done() {
+		if (this.offset !== this.buf.length) {
+			throw new Error("control frame write underflow");
+		}
+		return this.buf;
+	}
+}
+
+class FrameReader {
+	private constructor(
+		private readonly buf: Uint8Array,
+		private offset: number,
+	) {}
+
+	static control(data: Uint8Array, minPayloadBytes: number) {
+		if (data.length < CONTROL_FRAME_HEADER_BYTES + minPayloadBytes) {
+			return undefined;
+		}
+		return new FrameReader(data, CONTROL_FRAME_HEADER_BYTES);
+	}
+
+	remaining() {
+		return this.buf.length - this.offset;
+	}
+
+	has(bytes: number) {
+		return this.remaining() >= bytes;
+	}
+
+	u8() {
+		if (!this.has(1)) return undefined;
+		return this.buf[this.offset++]!;
+	}
+
+	u16() {
+		if (!this.has(2)) return undefined;
+		const value = readU16BE(this.buf, this.offset);
+		this.offset += 2;
+		return value;
+	}
+
+	u32() {
+		if (!this.has(4)) return undefined;
+		const value = readU32BE(this.buf, this.offset);
+		this.offset += 4;
+		return value;
+	}
+}
+
+const JOIN_REQ_PAYLOAD_BYTES = 4 + 4;
+const JOIN_REQ_RESERVATION_BYTES = 4;
+
 const encodeJoinReq = (
 	channelKey: Uint8Array,
 	reqId: number,
@@ -907,15 +1010,32 @@ const encodeJoinReq = (
 	parentUpgradeReservationToken = 0,
 ) => {
 	const hasReservation = parentUpgradeReservationToken > 0;
-	const buf = new Uint8Array(1 + 32 + 4 + 4 + (hasReservation ? 4 : 0));
-	buf[0] = MSG_JOIN_REQ;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	writeU32BE(buf, 37, bidPerByte >>> 0);
+	const frame = new FrameWriter(
+		MSG_JOIN_REQ,
+		channelKey,
+		JOIN_REQ_PAYLOAD_BYTES + (hasReservation ? JOIN_REQ_RESERVATION_BYTES : 0),
+	)
+		.u32(reqId >>> 0)
+		.u32(bidPerByte >>> 0);
 	if (hasReservation) {
-		writeU32BE(buf, 41, parentUpgradeReservationToken >>> 0);
+		frame.u32(parentUpgradeReservationToken >>> 0);
 	}
-	return buf;
+	return frame.done();
+};
+
+const decodeJoinReq = (data: Uint8Array) => {
+	const frame = FrameReader.control(data, JOIN_REQ_PAYLOAD_BYTES);
+	if (!frame) return undefined;
+	const reqId = frame.u32();
+	const bidPerByte = frame.u32();
+	if (reqId == null || bidPerByte == null) return undefined;
+	return {
+		reqId,
+		bidPerByte,
+		parentUpgradeReservationToken: frame.has(JOIN_REQ_RESERVATION_BYTES)
+			? (frame.u32() ?? 0)
+			: 0,
+	};
 };
 
 const MAX_ROUTE_HOPS = 32;
@@ -1479,6 +1599,11 @@ const encodeTrackerFeedback = (
 	return buf;
 };
 
+const PARENT_PROBE_REQ_PAYLOAD_BYTES = 4;
+const PARENT_PROBE_REQ_EXTENSION_BYTES = 2 + 1;
+const PARENT_PROBE_REPLY_PAYLOAD_BYTES = 4 + 1 + 2 + 2 + 2 + 2 + 4 + 2 + 4 + 4;
+const PARENT_PROBE_REPLY_RESERVATION_BYTES = 4;
+
 const encodeParentProbeReq = (
 	channelKey: Uint8Array,
 	reqId: number,
@@ -1487,15 +1612,18 @@ const encodeParentProbeReq = (
 ) => {
 	const encodedMinFreeSlots = Math.max(0, Math.floor(minFreeSlots));
 	const hasExtension = encodedMinFreeSlots > 0 || !reserveRootCapacity;
-	const buf = new Uint8Array(1 + 32 + 4 + (hasExtension ? 3 : 0));
-	buf[0] = MSG_PARENT_PROBE_REQ;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
+	const frame = new FrameWriter(
+		MSG_PARENT_PROBE_REQ,
+		channelKey,
+		PARENT_PROBE_REQ_PAYLOAD_BYTES +
+			(hasExtension ? PARENT_PROBE_REQ_EXTENSION_BYTES : 0),
+	).u32(reqId >>> 0);
 	if (hasExtension) {
-		writeU16BE(buf, 37, clampU16(encodedMinFreeSlots));
-		buf[39] = reserveRootCapacity ? PARENT_PROBE_REQ_FLAG_RESERVE_ROOT : 0;
+		frame
+			.u16(clampU16(encodedMinFreeSlots))
+			.u8(reserveRootCapacity ? PARENT_PROBE_REQ_FLAG_RESERVE_ROOT : 0);
 	}
-	return buf;
+	return frame.done();
 };
 
 const encodeParentProbeReply = (
@@ -1514,27 +1642,93 @@ const encodeParentProbeReply = (
 		reservationToken?: number;
 	},
 ) => {
-	const buf = new Uint8Array(
-		1 + 32 + 4 + 1 + 2 + 2 + 2 + 2 + 4 + 2 + 4 + 4 + 4,
-	);
-	buf[0] = MSG_PARENT_PROBE_REPLY;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = options.flags & 0xff;
-	writeU16BE(buf, 38, clampU16(options.level));
-	writeU16BE(buf, 40, clampU16(options.maxChildren));
-	writeU16BE(buf, 42, clampU16(options.freeSlots));
-	writeU16BE(buf, 44, clampU16(options.children));
-	writeU32BE(buf, 46, Math.max(0, Math.floor(options.haveToExclusive)) >>> 0);
-	writeU16BE(buf, 50, clampU16(options.missingSeqs));
-	writeU32BE(buf, 52, Math.max(0, Math.floor(options.dataWriteDrops)) >>> 0);
-	writeU32BE(buf, 56, Math.max(0, Math.floor(options.droppedForwards)) >>> 0);
-	writeU32BE(
-		buf,
-		60,
-		Math.max(0, Math.floor(options.reservationToken ?? 0)) >>> 0,
-	);
-	return buf;
+	return new FrameWriter(
+		MSG_PARENT_PROBE_REPLY,
+		channelKey,
+		PARENT_PROBE_REPLY_PAYLOAD_BYTES + PARENT_PROBE_REPLY_RESERVATION_BYTES,
+	)
+		.u32(reqId >>> 0)
+		.u8(options.flags & 0xff)
+		.u16(clampU16(options.level))
+		.u16(clampU16(options.maxChildren))
+		.u16(clampU16(options.freeSlots))
+		.u16(clampU16(options.children))
+		.u32(Math.max(0, Math.floor(options.haveToExclusive)) >>> 0)
+		.u16(clampU16(options.missingSeqs))
+		.u32(Math.max(0, Math.floor(options.dataWriteDrops)) >>> 0)
+		.u32(Math.max(0, Math.floor(options.droppedForwards)) >>> 0)
+		.u32(Math.max(0, Math.floor(options.reservationToken ?? 0)) >>> 0)
+		.done();
+};
+
+const decodeParentProbeReq = (data: Uint8Array) => {
+	const frame = FrameReader.control(data, PARENT_PROBE_REQ_PAYLOAD_BYTES);
+	if (!frame) return undefined;
+	const reqId = frame.u32();
+	if (reqId == null) return undefined;
+	let minFreeSlots = 0;
+	let probeFlags = PARENT_PROBE_REQ_FLAG_RESERVE_ROOT;
+	if (frame.has(2)) {
+		minFreeSlots = frame.u16() ?? 0;
+		if (frame.has(1)) {
+			probeFlags = frame.u8() ?? PARENT_PROBE_REQ_FLAG_RESERVE_ROOT;
+		}
+	}
+	return {
+		reqId,
+		minFreeSlots,
+		reserveRootCapacity: Boolean(
+			probeFlags & PARENT_PROBE_REQ_FLAG_RESERVE_ROOT,
+		),
+	};
+};
+
+const decodeParentProbeReply = (data: Uint8Array, hash: string) => {
+	const frame = FrameReader.control(data, PARENT_PROBE_REPLY_PAYLOAD_BYTES);
+	if (!frame) return undefined;
+	const reqId = frame.u32();
+	const flags = frame.u8();
+	const level = frame.u16();
+	const maxChildren = frame.u16();
+	const freeSlots = frame.u16();
+	const children = frame.u16();
+	const haveToExclusive = frame.u32();
+	const missingSeqs = frame.u16();
+	const dataWriteDrops = frame.u32();
+	const droppedForwards = frame.u32();
+	if (
+		reqId == null ||
+		flags == null ||
+		level == null ||
+		maxChildren == null ||
+		freeSlots == null ||
+		children == null ||
+		haveToExclusive == null ||
+		missingSeqs == null ||
+		dataWriteDrops == null ||
+		droppedForwards == null
+	) {
+		return undefined;
+	}
+	return {
+		reqId,
+		hash,
+		rooted: Boolean(flags & PARENT_PROBE_FLAG_ROOTED),
+		accepting: Boolean(flags & PARENT_PROBE_FLAG_ACCEPTING),
+		repairing: Boolean(flags & PARENT_PROBE_FLAG_REPAIRING),
+		overloaded: Boolean(flags & PARENT_PROBE_FLAG_OVERLOADED),
+		reservationToken: frame.has(PARENT_PROBE_REPLY_RESERVATION_BYTES)
+			? (frame.u32() ?? 0)
+			: 0,
+		level,
+		maxChildren,
+		freeSlots,
+		children,
+		haveToExclusive,
+		missingSeqs,
+		dataWriteDrops,
+		droppedForwards,
+	};
 };
 
 type ProviderNamespaceId = {
@@ -8985,26 +9179,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (kind === MSG_PARENT_PROBE_REQ) {
 				if (!ch || ch.closed) return true;
-				if (data.length < 1 + 32 + 4) return false;
-				const reqId = readU32BE(data, 33);
-				const minFreeSlots =
-					data.length >= 1 + 32 + 4 + 2 ? readU16BE(data, 37) : 0;
-				const probeFlags =
-					data.length >= 1 + 32 + 4 + 2 + 1
-						? data[39]! & 0xff
-						: PARENT_PROBE_REQ_FLAG_RESERVE_ROOT;
-				const reserveRootCapacity = Boolean(
-					probeFlags & PARENT_PROBE_REQ_FLAG_RESERVE_ROOT,
-				);
+				const decoded = decodeParentProbeReq(data);
+				if (!decoded) return false;
 				this.touchPeerHint(ch, fromHash);
 				void this._sendControl(
 					fromHash,
 					this.encodeParentProbeReplyForChannel(
 						ch,
-						reqId,
+						decoded.reqId,
 						fromHash,
-						minFreeSlots,
-						reserveRootCapacity,
+						decoded.minFreeSlots,
+						decoded.reserveRootCapacity,
 					),
 				).catch(() => {});
 				return true;
@@ -9012,33 +9197,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (kind === MSG_PARENT_PROBE_REPLY) {
 				if (!ch || ch.closed) return true;
-				if (data.length < 1 + 32 + 4 + 1 + 2 + 2 + 2 + 2 + 4 + 2 + 4 + 4) {
-					return false;
-				}
-				const reqId = readU32BE(data, 33);
+				const decoded = decodeParentProbeReply(data, fromHash);
+				if (!decoded) return false;
+				const { reqId, ...reply } = decoded;
 				const pending = ch.pendingParentProbe.get(reqId);
 				if (!pending) return true;
 				ch.pendingParentProbe.delete(reqId);
-				const flags = data[37]! & 0xff;
-				pending.resolve({
-					hash: fromHash,
-					rooted: Boolean(flags & PARENT_PROBE_FLAG_ROOTED),
-					accepting: Boolean(flags & PARENT_PROBE_FLAG_ACCEPTING),
-					repairing: Boolean(flags & PARENT_PROBE_FLAG_REPAIRING),
-					overloaded: Boolean(flags & PARENT_PROBE_FLAG_OVERLOADED),
-					reservationToken:
-						data.length >= 1 + 32 + 4 + 1 + 2 + 2 + 2 + 2 + 4 + 2 + 4 + 4 + 4
-							? readU32BE(data, 60)
-							: 0,
-					level: readU16BE(data, 38),
-					maxChildren: readU16BE(data, 40),
-					freeSlots: readU16BE(data, 42),
-					children: readU16BE(data, 44),
-					haveToExclusive: readU32BE(data, 46),
-					missingSeqs: readU16BE(data, 50),
-					dataWriteDrops: readU32BE(data, 52),
-					droppedForwards: readU32BE(data, 56),
-				});
+				pending.resolve(reply);
 				this.touchPeerHint(ch, fromHash);
 				return true;
 			}
@@ -9204,11 +9369,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_JOIN_REQ) {
-				if (data.length < 1 + 32 + 4 + 4) return false;
-				const reqId = readU32BE(data, 33);
-				const bidPerByte = readU32BE(data, 37);
-				const parentUpgradeReservationToken =
-					data.length >= 1 + 32 + 4 + 4 + 4 ? readU32BE(data, 41) : 0;
+				const decoded = decodeJoinReq(data);
+				if (!decoded) return false;
+				const { reqId, bidPerByte, parentUpgradeReservationToken } = decoded;
 				this.pruneDisconnectedChildren(ch);
 				const hasParentUpgradeReservation =
 					ch.isRoot && parentUpgradeReservationToken > 0;

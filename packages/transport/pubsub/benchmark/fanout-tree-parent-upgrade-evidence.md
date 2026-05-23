@@ -1,21 +1,21 @@
-# Fanout Tree Parent Upgrade Evidence
+# Fanout Tree Parent Upgrade Readiness Evidence
 
 ## Scope
 
-This PR adds guarded, opt-in parent upgrades for `FanoutTree`. Runtime behavior
-remains default-off: `parentUpgradeIntervalMs` defaults to `0`. If callers opt
-in to upgrades without specifying a mode, the runtime mode resolves to `shadow`,
-not direct reparenting.
+`FanoutTree` supports guarded, opt-in parent upgrades. Runtime behavior remains
+default-off: `parentUpgradeIntervalMs` defaults to `0`. If callers opt in to
+upgrades without specifying a mode, the runtime mode resolves to `shadow`, not
+direct reparenting.
 
-Default-off is a hard contract for this PR: with `parentUpgradeIntervalMs`
-unset or `0`, the node must not schedule proactive upgrade checks, send parent
-probes, start shadow candidates, or replace a healthy parent just because a
-better edge appears. Existing disconnect, stale-parent, and kick-driven repair
-paths remain the only automatic parent changes.
+Default-off is the safety contract: with `parentUpgradeIntervalMs` unset or
+`0`, the node must not schedule proactive upgrade checks, send parent probes,
+start shadow candidates, or replace a healthy parent just because a better edge
+appears. Existing disconnect, stale-parent, and kick-driven repair paths remain
+the only automatic parent changes.
 
 The new runtime options are additive opt-in knobs. The `default-candidate`
-preset is intentionally benchmark/CI-only in this PR; it is not a production
-default and is not imported by runtime code.
+preset is intentionally benchmark/CI-only; it is not a production default and
+is not imported by runtime code.
 
 The goal of this evidence is narrower than "enable by default now":
 
@@ -24,23 +24,6 @@ The goal of this evidence is narrower than "enable by default now":
 - Bound root pressure, probe traffic, duplicate data, and per-peer reparent
   churn.
 - Preserve deterministic repro paths for future seed failures.
-
-## Review Map
-
-The PR is intentionally broad, but the review surface has distinct buckets:
-
-- Runtime mechanism: `src/fanout-tree.ts` and the small option re-export in
-  `src/index.ts`.
-- Deterministic coverage: `test/fanout-tree.spec.ts`,
-  `test/fanout-topics.spec.ts`, and the sim runner/spec wrappers.
-- Evidence harness: `benchmark/fanout-tree-parent-upgrade-*.ts`,
-  `benchmark/fanout-tree-sim*.ts`, and
-  `scripts/fanout-parent-upgrade-default-ready.mjs`.
-- Automation: the PR fanout gate in `.github/workflows/ci.yml`, plus the
-  nightly parent-upgrade matrix in `.github/workflows/nightly-sims.yml`.
-- Small non-fanout stabilization: `packages/programs/data/shared-log/src/index.ts`
-  awaits internal index shutdown during close. This is not part of the fanout
-  mechanism; it is kept because part-7 stability is a gating risk for this PR.
 
 ## Policy Under Test
 
@@ -83,8 +66,8 @@ The guarded mechanism is stronger than the old passive-only behavior when it is
 explicitly enabled. It can promote after learning that a candidate path is
 materially better, and it rejects weak/shallow moves.
 
-It is not default-on ready in this PR. The safe default remains no proactive
-parent upgrades. The evidence supports landing the guarded mechanism and its
+It is not default-on ready. The safe default remains no proactive parent
+upgrades. The evidence supports maintaining the guarded mechanism and its
 test/soak harness, then continuing default-readiness work with more soak data.
 
 Default-on needs more proof across:
@@ -97,10 +80,10 @@ Default-on needs more proof across:
 
 ## Gates
 
-The PR fanout gate runs a bounded default-readiness check plus an explicit
-active dual-path mechanism check. The active mechanism check intentionally opts
-out of the active data guard to prove make-before-break promotion can work; it
-does not imply that active-flow upgrades are enabled by default.
+The fanout gate runs a bounded default-readiness check plus an explicit active
+dual-path mechanism check. The active mechanism check intentionally opts out of
+the active data guard to prove make-before-break promotion can work; it does
+not imply that active-flow upgrades are enabled by default.
 
 The default-ready runner now passes an explicit
 `--maxDataOverheadRatio 1.05` gate to the single- and multi-writer evaluators.
@@ -115,12 +98,12 @@ percentage points of aggregate deadline jitter only when the evaluator has
 already found a useful promotion. Delivery percentage, promoted-branch latency
 regression, data overhead, control/repair cost, root pressure, and reparent
 limits remain hard gates. The hotspot-idle scenarios are recorded as non-strict
-timing evidence in the PR gate because GitHub runners can saturate enough that
+timing evidence in the CI gate because GitHub runners can saturate enough that
 the baseline itself misses delivery/deadline targets; those artifacts are still
 useful for review, but they are not treated as a deterministic merge gate.
 
-The PR fanout gate uploads `sim-results` artifacts. Parent-upgrade evaluators
-can write compact JSON summaries through `--jsonOut`; default-ready records
+The fanout gate uploads `sim-results` artifacts. Parent-upgrade evaluators can
+write compact JSON summaries through `--jsonOut`; default-ready records
 single-live, multi-live, multi-idle, and slow-hotspot timing evidence so a red
 gate can be inspected without scraping the raw Actions log.
 
@@ -138,7 +121,7 @@ The nightly soak matrix covers:
 - Multi-writer churn.
 - Multi-writer idle, sparse-idle, hotspot-idle, and scale cases. Hotspot-idle
   remains non-strict timing evidence for the same baseline-saturation reason as
-  the PR gate.
+  the CI gate.
 
 Nightly artifacts include raw logs plus summary TSVs where available.
 
@@ -207,10 +190,10 @@ Useful outcome signals:
 - Positive idle scenarios show useful promoted trees or latency/tree-depth gain.
 - Active/live scenarios show guard skips without proactive upgrade traffic.
 
-## Review Guidance
+## Maintainer Guidance
 
-Treat this PR as an opt-in foundation, not a default flip. The strongest reasons
-to reject or revise the PR would be:
+Treat parent upgrades as an opt-in foundation, not a default flip. The strongest
+reasons to revise the feature or policy would be:
 
 - Any default-off behavior change.
 - Proactive upgrade traffic when `parentUpgradeIntervalMs` is unset or `0`.
@@ -219,7 +202,6 @@ to reject or revise the PR would be:
 - Evidence that shadow promotion increases root pressure or delivery misses
   beyond the configured gates.
 
-Also treat unrelated changes as suspect. The fanout portion of this PR should
-stand on opt-in behavior, deterministic regression coverage, and bounded
-evidence. Any CI-stability fix outside fanout should be small and explicitly
-justified, not hidden as part of the parent-upgrade mechanism.
+The feature should stand on opt-in behavior, deterministic regression coverage,
+and bounded evidence. Changes outside the fanout mechanism should be justified
+separately from the parent-upgrade readiness evidence.
