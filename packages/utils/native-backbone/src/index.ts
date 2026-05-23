@@ -430,6 +430,7 @@ type NativePeerbitBackboneHandle = {
 	) => unknown[];
 	plan_request_prune_all_confirmed?: (
 		hashes: string[],
+		prunePeer: string,
 		roleAgeMs: number,
 		now: string,
 		peerFilter: string[] | undefined,
@@ -4714,6 +4715,7 @@ export class NativePeerbitBackbone {
 
 	planRequestPruneAllConfirmed(
 		hashes: Iterable<string>,
+		prunePeer: string,
 		options?: NativeBackboneFindLeaderOptions,
 	): NativeBackboneRequestPruneAllConfirmed | undefined {
 		if (!this.native.plan_request_prune_all_confirmed) {
@@ -4722,6 +4724,7 @@ export class NativePeerbitBackbone {
 		const [allConfirmed, peerHistoryGids] =
 			this.native.plan_request_prune_all_confirmed(
 				[...hashes],
+				prunePeer,
 				...findLeaderArguments(options),
 			) as [boolean, string[]];
 		return {

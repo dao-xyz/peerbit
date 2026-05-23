@@ -373,6 +373,7 @@ type NativeRequestPruneLeaderHints = {
 	presentBlocks?: ArrayLike<boolean | number>;
 	localLeaderFlags?: ArrayLike<boolean | number>;
 	nativeAllConfirmed?: boolean;
+	nativeBackbonePeerHistoryCleaned?: boolean;
 };
 
 type NativeBackboneRequestPruneHintColumns = {
@@ -3528,6 +3529,7 @@ export class SharedLog<
 	private removePeerFromGidPeerHistoryBatch(
 		publicKeyHash: string,
 		gids: Iterable<string>,
+		options?: { skipNativeBackbone?: boolean },
 	) {
 		const gidArray = Array.isArray(gids) ? gids : [...gids];
 		if (gidArray.length === 0) {
@@ -3550,11 +3552,13 @@ export class SharedLog<
 				this._nativeSharedLogState?.removeGidPeer(publicKeyHash, gid);
 			}
 		}
-		if (nativeBackbone?.removeGidPeers) {
-			nativeBackbone.removeGidPeers(publicKeyHash, gidArray);
-		} else {
-			for (const gid of gidArray) {
-				this._nativeBackbone?.removeGidPeer(publicKeyHash, gid);
+		if (options?.skipNativeBackbone !== true) {
+			if (nativeBackbone?.removeGidPeers) {
+				nativeBackbone.removeGidPeers(publicKeyHash, gidArray);
+			} else {
+				for (const gid of gidArray) {
+					this._nativeBackbone?.removeGidPeer(publicKeyHash, gid);
+				}
 			}
 		}
 		for (const gid of gidArray) {
@@ -10304,6 +10308,7 @@ export class SharedLog<
 				let nativeLeaderHints =
 					await this.planCurrentNativeBackboneRequestPruneLeaderHints(
 						msg.hashes,
+						from,
 					);
 				if (nativeLeaderHints) {
 					if (syncProfile) {
@@ -10413,6 +10418,10 @@ export class SharedLog<
 				this.removePeerFromGidPeerHistoryBatch(
 					from,
 					nativeLeaderHints.peerHistoryGids,
+					{
+						skipNativeBackbone:
+							nativeLeaderHints.nativeBackbonePeerHistoryCleaned === true,
+					},
 				);
 				if (syncProfile) {
 					emitSyncProfileDuration(syncProfile, gidCleanupStartedAt, {
@@ -11761,6 +11770,7 @@ export class SharedLog<
 
 	private async planCurrentNativeBackboneRequestPruneLeaderHints(
 		hashes: string[],
+		from: string,
 	): Promise<NativeRequestPruneLeaderHints | undefined> {
 		if (!this._nativeBackbone) {
 			return undefined;
@@ -11773,6 +11783,7 @@ export class SharedLog<
 		const nativeBackboneHintArrays = this._nativeBackbone as NativePeerbitBackbone & {
 			planRequestPruneAllConfirmed?: (
 				hashes: Iterable<string>,
+				prunePeer: string,
 				options?: unknown,
 			) => { allConfirmed: boolean; peerHistoryGids: string[] } | undefined;
 			planRequestPruneLeaderHintColumns?: (
@@ -11785,6 +11796,7 @@ export class SharedLog<
 			const allConfirmed =
 				nativeBackboneHintArrays.planRequestPruneAllConfirmed?.(
 					hashes,
+					from,
 					this.createNativeLeaderOptions(context),
 				);
 			if (allConfirmed?.allConfirmed) {
@@ -11794,6 +11806,7 @@ export class SharedLog<
 					peerHistoryGids: allConfirmed.peerHistoryGids,
 					peerHistoryRemovedHashes: new Set(),
 					nativeAllConfirmed: true,
+					nativeBackbonePeerHistoryCleaned: true,
 				};
 			}
 		}

@@ -2316,8 +2316,9 @@ impl NativePeerbitBackbone {
 
     #[allow(clippy::too_many_arguments)]
     pub fn plan_request_prune_all_confirmed(
-        &self,
+        &mut self,
         hashes: Array,
+        prune_peer: String,
         role_age_ms: f64,
         now: String,
         peer_filter: JsValue,
@@ -2379,7 +2380,10 @@ impl NativePeerbitBackbone {
 
         let out = Array::new();
         out.push(&JsValue::TRUE);
-        out.push(&strings_to_array(candidate_gids));
+        let peer_history_gids = strings_to_array(candidate_gids);
+        self.shared_log
+            .remove_gid_peers(&prune_peer, peer_history_gids.clone())?;
+        out.push(&peer_history_gids);
         Ok(out)
     }
 
