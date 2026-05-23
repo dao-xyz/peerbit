@@ -3473,7 +3473,7 @@ export class SharedLog<
 	}
 
 	private markEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
-		const hashArray = [...hashes];
+		const hashArray = Array.isArray(hashes) ? hashes : [...hashes];
 		this._nativeSharedLogState?.markEntriesKnownByPeer(hashArray, peer);
 		this._nativeBackbone?.markEntriesKnownByPeer(hashArray, peer);
 		const now = Date.now();
@@ -3495,17 +3495,19 @@ export class SharedLog<
 	}
 
 	private removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
-		const hashArray = [...hashes];
+		const hashArray = Array.isArray(hashes) ? hashes : [...hashes];
 		this._nativeSharedLogState?.removeEntriesKnownByPeer(hashArray, peer);
 		this._nativeBackbone?.removeEntriesKnownByPeer(hashArray, peer);
-		for (const hash of hashArray) {
-			const peers = this._entryKnownPeers.get(hash);
-			if (!peers) {
-				continue;
-			}
-			peers.delete(peer);
-			if (peers.size === 0) {
-				this._entryKnownPeers.delete(hash);
+		if (this._entryKnownPeers.size > 0) {
+			for (const hash of hashArray) {
+				const peers = this._entryKnownPeers.get(hash);
+				if (!peers) {
+					continue;
+				}
+				peers.delete(peer);
+				if (peers.size === 0) {
+					this._entryKnownPeers.delete(hash);
+				}
 			}
 			const observedAt = this._entryKnownPeerObservedAt.get(hash);
 			if (observedAt) {

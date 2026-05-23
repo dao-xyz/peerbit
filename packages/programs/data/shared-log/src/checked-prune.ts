@@ -214,6 +214,9 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	}
 
 	removeRequestsSent(hashes: Iterable<string>, peer?: string) {
+		if (this.requestIPruneSent.size === 0) {
+			return;
+		}
 		for (const hash of hashes) {
 			this.removeRequestSent(hash, peer);
 		}
@@ -247,6 +250,9 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 	}
 
 	removeConfirmedReplicators(hashes: Iterable<string>, peer: string) {
+		if (this.responseReplicatorSet.size === 0) {
+			return;
+		}
 		for (const hash of hashes) {
 			this.removeConfirmedReplicator(hash, peer);
 		}

@@ -2280,6 +2280,9 @@ impl NativeSharedLogState {
     }
 
     pub fn remove_gid_peers(&mut self, peer: &str, gids: Array) -> Result<(), JsValue> {
+        if self.inner.gid_peers.is_empty() {
+            return Ok(());
+        }
         let gids = strings_from_array(gids)?;
         for gid in gids {
             if let Some(peers) = self.inner.gid_peers.get_mut(&gid) {
@@ -2320,6 +2323,9 @@ impl NativeSharedLogState {
         hashes: Array,
         peer: &str,
     ) -> Result<(), JsValue> {
+        if self.inner.entry_known_peers.is_empty() {
+            return Ok(());
+        }
         for hash in strings_from_array(hashes)? {
             if let Some(peers) = self.inner.entry_known_peers.get_mut(&hash) {
                 peers.shift_remove(peer);
