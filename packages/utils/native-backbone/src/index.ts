@@ -281,6 +281,7 @@ type NativePeerbitBackboneHandle = {
 	graph_join_head_entries: (gid?: string) => unknown[];
 	graph_child_join_entries: (hash: string) => unknown[];
 	graph_entry_metadata_batch: (hashes: string[]) => unknown[];
+	graph_entry_metadata_hints_batch?: (hashes: string[]) => unknown[];
 	graph_unique_reference_gids: (hash: string) => string[] | undefined;
 	graph_unique_reference_gid_rows_batch: (hashes: string[]) => unknown[];
 	graph_unique_reference_gid_rows_flat_batch?: (
@@ -3195,6 +3196,18 @@ export class NativeBackboneLogGraph {
 		return this.native
 			.graph_entry_metadata_batch([...hashes])
 			.map(metadataEntryFromRow);
+	}
+
+	entryMetadataHintsBatch(hashes: Iterable<string>): Array<any | undefined> {
+		return (
+			this.native.graph_entry_metadata_hints_batch ??
+			this.native.graph_entry_metadata_batch
+		)([...hashes]).map((row) => {
+			if (row == null || !this.native.graph_entry_metadata_hints_batch) {
+				return metadataEntryFromRow(row);
+			}
+			return requestPruneEntryFromRow(row);
+		});
 	}
 
 	uniqueReferenceGids(hash: string): string[] | undefined {

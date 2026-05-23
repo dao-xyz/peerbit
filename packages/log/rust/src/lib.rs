@@ -2383,6 +2383,13 @@ impl NativeLogIndex {
         ))
     }
 
+    pub fn entry_metadata_hints_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        Ok(log_optional_entry_metadata_hints_to_rows(
+            self.inner.entry_metadata_batch(&hashes),
+        ))
+    }
+
     pub fn unique_reference_gids(&self, hash: &str) -> JsValue {
         self.inner
             .unique_reference_gids(hash)
@@ -5132,6 +5139,29 @@ fn log_optional_entry_metadata_to_rows(values: Vec<Option<LogEntryMetadata>>) ->
         };
         match replicas {
             Some(replicas) => row.push(&JsValue::from_f64(replicas as f64)),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        out.push(&row);
+    }
+    out
+}
+
+fn log_optional_entry_metadata_hints_to_rows(values: Vec<Option<LogEntryMetadata>>) -> Array {
+    let out = Array::new();
+    for value in values {
+        let Some((hash, gid, data, replicas)) = value else {
+            out.push(&JsValue::UNDEFINED);
+            continue;
+        };
+        let row = Array::new();
+        row.push(&JsValue::from_str(&hash));
+        row.push(&JsValue::from_str(&gid));
+        match replicas {
+            Some(replicas) => row.push(&JsValue::from_f64(replicas as f64)),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        match data.filter(|_| replicas.is_none()) {
+            Some(data) => row.push(&Uint8Array::from(data.as_slice())),
             None => row.push(&JsValue::UNDEFINED),
         };
         out.push(&row);

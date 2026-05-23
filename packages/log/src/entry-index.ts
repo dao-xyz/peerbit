@@ -323,6 +323,9 @@ export type NativeLogGraph = {
 	entryMetadataBatch?: (
 		hashes: Iterable<string>,
 	) => Array<NativeLogEntryMetadata | undefined>;
+	entryMetadataHintsBatch?: (
+		hashes: Iterable<string>,
+	) => Array<NativeLogEntryMetadata | undefined>;
 	uniqueReferenceGids: (hash: string) => string[] | undefined;
 	uniqueReferenceGidRowsBatch?: (
 		hashes: Iterable<string>,
@@ -1283,6 +1286,22 @@ export class EntryIndex<T> {
 			return [];
 		}
 		return this.properties.nativeGraph.graph.entryMetadataBatch?.(normalized);
+	}
+
+	getNativeEntryMetadataHintsBatch(
+		hashes: Iterable<string>,
+	): Array<NativeLogEntryMetadata | undefined> | undefined {
+		if (!this.properties.nativeGraph) {
+			return undefined;
+		}
+		const normalized = [...hashes];
+		if (normalized.length === 0) {
+			return [];
+		}
+		return (
+			this.properties.nativeGraph.graph.entryMetadataHintsBatch?.(normalized) ??
+			this.properties.nativeGraph.graph.entryMetadataBatch?.(normalized)
+		);
 	}
 
 	async has(k: string) {

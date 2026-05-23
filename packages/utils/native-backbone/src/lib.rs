@@ -1682,6 +1682,10 @@ impl NativePeerbitBackbone {
         self.log.entry_metadata_batch(hashes)
     }
 
+    pub fn graph_entry_metadata_hints_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        self.log.entry_metadata_hints_batch(hashes)
+    }
+
     pub fn graph_unique_reference_gids(&self, hash: &str) -> JsValue {
         self.log.unique_reference_gids(hash)
     }

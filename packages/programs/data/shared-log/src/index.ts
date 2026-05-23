@@ -11410,11 +11410,13 @@ export class SharedLog<
 			return [];
 		}
 		const backboneMetadata =
+			this._nativeBackbone?.graph.entryMetadataHintsBatch(normalized) ??
 			this._nativeBackbone?.graph.entryMetadataBatch(normalized);
 		if (backboneMetadata?.every((entry) => entry != null)) {
 			return backboneMetadata;
 		}
 		const indexMetadata =
+			this.log.entryIndex.getNativeEntryMetadataHintsBatch(normalized) ??
 			this.log.entryIndex.getNativeEntryMetadataBatch(normalized);
 		if (!backboneMetadata) {
 			return indexMetadata;

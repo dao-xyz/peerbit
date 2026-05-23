@@ -316,6 +316,7 @@ type NativeLogIndexHandle = {
 	head_join_entries: (gid?: string) => unknown[];
 	child_join_entries: (hash: string) => unknown[];
 	entry_metadata_batch: (hashes: string[]) => unknown[];
+	entry_metadata_hints_batch?: (hashes: string[]) => unknown[];
 	unique_reference_gids: (hash: string) => string[] | undefined;
 	unique_reference_gid_rows_batch: (
 		hashes: string[],
@@ -1251,6 +1252,34 @@ export class LogGraphIndex {
 				string,
 				Uint8Array | undefined,
 				number | undefined,
+			];
+			const entry: NativeLogEntryMetadata = {
+				hash,
+				gid,
+				data,
+			};
+			if (replicas != null) {
+				entry.replicas = replicas;
+			}
+			return entry;
+		});
+	}
+
+	entryMetadataHintsBatch(
+		hashes: Iterable<string>,
+	): Array<NativeLogEntryMetadata | undefined> {
+		if (!this.native.entry_metadata_hints_batch) {
+			return this.entryMetadataBatch(hashes);
+		}
+		return this.native.entry_metadata_hints_batch([...hashes]).map((row) => {
+			if (!row) {
+				return undefined;
+			}
+			const [hash, gid, replicas, data] = row as [
+				string,
+				string,
+				number | undefined,
+				Uint8Array | undefined,
 			];
 			const entry: NativeLogEntryMetadata = {
 				hash,
