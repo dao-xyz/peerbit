@@ -374,17 +374,6 @@ type NativeRequestPruneLeaderHints = {
 	localLeaderFlags?: ArrayLike<boolean | number>;
 };
 
-type NativeBackboneRequestPruneHintArrays = {
-	entries: Array<
-		{ gid: string; data?: Uint8Array; replicas?: number } | undefined | null
-	>;
-	presentBlocks: boolean[];
-	localLeaderFlags: boolean[];
-	replicaCounts: Array<number | undefined>;
-	peerHistoryGids: string[];
-	peerHistoryRemovedFlags: boolean[];
-};
-
 type NativeBackboneRequestPruneHintColumns = {
 	gids: ArrayLike<string | undefined | null>;
 	data: ArrayLike<Uint8Array | undefined | null>;
@@ -11653,11 +11642,6 @@ export class SharedLog<
 				skipHashes: Iterable<string>,
 				options?: unknown,
 			) => NativeBackboneRequestPruneHintColumns | undefined;
-			planRequestPruneLeaderHintArrays?: (
-				hashes: Iterable<string>,
-				skipHashes: Iterable<string>,
-				options?: unknown,
-			) => NativeBackboneRequestPruneHintArrays | undefined;
 		};
 		const hintColumns =
 			nativeBackboneHintArrays.planRequestPruneLeaderHintColumns?.(
@@ -11677,25 +11661,6 @@ export class SharedLog<
 				nativeEntryDataByIndex: hintColumns.data,
 				presentBlocks: hintColumns.presentBlockFlags,
 				localLeaderFlags: hintColumns.localLeaderFlags,
-			};
-		}
-		const hintArrays =
-			nativeBackboneHintArrays.planRequestPruneLeaderHintArrays?.(
-				hashes,
-				skipHashes,
-				this.createNativeLeaderOptions(context),
-			);
-		if (hintArrays) {
-			return {
-				localLeaderHashes: new Set(),
-				replicaCounts: new Map(),
-				replicaCountsByIndex: hintArrays.replicaCounts,
-				peerHistoryGids: hintArrays.peerHistoryGids,
-				peerHistoryRemovedHashes: new Set(),
-				peerHistoryRemovedFlags: hintArrays.peerHistoryRemovedFlags,
-				nativeEntryMetadata: hintArrays.entries,
-				presentBlocks: hintArrays.presentBlocks,
-				localLeaderFlags: hintArrays.localLeaderFlags,
 			};
 		}
 		const hints = this._nativeBackbone.planRequestPruneLeaderHints(

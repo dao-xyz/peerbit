@@ -416,18 +416,6 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => unknown[];
-	plan_request_prune_leader_hint_arrays?: (
-		hashes: string[],
-		skipHashes: string[],
-		roleAgeMs: number,
-		now: string,
-		peerFilter: string[] | undefined,
-		expandPeerFilter: boolean,
-		selfHash: string,
-		includeSelf: boolean,
-		fullReplicaFallback: boolean,
-		includeStrictFullReplica: boolean,
-	) => unknown[];
 	plan_request_prune_leader_hint_columns?: (
 		hashes: string[],
 		skipHashes: string[],
@@ -1361,17 +1349,6 @@ export type NativeBackboneRequestPruneHints = {
 	replicaCounts: Map<string, number>;
 	peerHistoryGids: string[];
 	peerHistoryRemovedHashes: Set<string>;
-};
-
-export type NativeBackboneRequestPruneHintArrays = {
-	entries: Array<
-		{ hash: string; gid: string; data?: Uint8Array; replicas?: number } | undefined
-	>;
-	presentBlocks: boolean[];
-	localLeaderFlags: boolean[];
-	replicaCounts: Array<number | undefined>;
-	peerHistoryGids: string[];
-	peerHistoryRemovedFlags: boolean[];
 };
 
 export type NativeBackboneRequestPruneHintColumns = {
@@ -4479,38 +4456,6 @@ export class NativePeerbitBackbone {
 			replicaCounts,
 			peerHistoryGids,
 			peerHistoryRemovedHashes: new Set(peerHistoryRemovedHashes),
-		};
-	}
-
-	planRequestPruneLeaderHintArrays(
-		hashes: Iterable<string>,
-		skipHashes: Iterable<string>,
-		options?: NativeBackboneFindLeaderOptions,
-	): NativeBackboneRequestPruneHintArrays | undefined {
-		if (!this.native.plan_request_prune_leader_hint_arrays) {
-			return undefined;
-		}
-		const [
-			entryRows,
-			presentBlocks,
-			localLeaderFlags,
-			peerHistoryGids,
-			peerHistoryRemovedFlags,
-		] = this.native.plan_request_prune_leader_hint_arrays(
-			[...hashes],
-			[...skipHashes],
-			...findLeaderArguments(options),
-		) as [unknown[], boolean[], boolean[], string[], boolean[]];
-		const entries = entryRows.map((row) =>
-			row == null ? undefined : requestPruneEntryFromRow(row),
-		);
-		return {
-			entries,
-			presentBlocks,
-			localLeaderFlags,
-			replicaCounts: entries.map((entry) => entry?.replicas),
-			peerHistoryGids,
-			peerHistoryRemovedFlags,
 		};
 	}
 
