@@ -1459,6 +1459,13 @@ fn trim_oldest_log_entries_core(
     if overage == 0 {
         return Vec::new();
     }
+    if overage == 1 {
+        let Some(hash) = index.oldest_hash() else {
+            return Vec::new();
+        };
+        block_store.delete(&hash);
+        return index.delete(&hash).into_iter().collect();
+    }
     let entries = index.oldest_entries(overage);
     for entry in &entries {
         block_store.delete(&entry.hash);
@@ -1479,6 +1486,16 @@ fn trim_oldest_log_entry_hashes_core(
     let overage = index.len().saturating_sub(trim_length_to);
     if overage == 0 {
         return Vec::new();
+    }
+    if overage == 1 {
+        let Some(hash) = index.oldest_hash() else {
+            return Vec::new();
+        };
+        if index.delete(&hash).is_none() {
+            return Vec::new();
+        }
+        block_store.delete(&hash);
+        return vec![hash];
     }
     let hashes = index.oldest_hashes(overage);
     for hash in &hashes {
@@ -5366,6 +5383,35 @@ mod tests {
         assert!(!blocks.has("c"));
         assert!(!blocks.has("a"));
         assert!(blocks.has("b"));
+    }
+
+    #[test]
+    fn trims_single_oldest_hash_without_batch_delete() {
+        let mut index = LogGraphIndex::new();
+        let mut blocks = NativeLogBlockStore::new();
+        for (hash, wall_time) in [("a", 1), ("b", 2), ("c", 3)] {
+            index.put(LogIndexEntry::new(
+                hash,
+                "g",
+                vec![],
+                APPEND,
+                wall_time,
+                0,
+                1,
+                true,
+            ));
+            blocks.put(hash.to_string(), vec![wall_time as u8]);
+        }
+
+        let trimmed = trim_oldest_log_entry_hashes_core(&mut index, &mut blocks, 2);
+
+        assert_eq!(trimmed, vec!["a"]);
+        assert!(!index.has("a"));
+        assert!(index.has("b"));
+        assert!(index.has("c"));
+        assert!(!blocks.has("a"));
+        assert!(blocks.has("b"));
+        assert!(blocks.has("c"));
     }
 
     #[test]

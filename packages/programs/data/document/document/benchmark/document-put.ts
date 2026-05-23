@@ -1685,6 +1685,7 @@ const runNativeBackboneCeilingScenario = async (
 	}
 	const useCommittedStorageTransaction =
 		scenarioBaseName(name) === "native-backbone-storage-ceiling";
+	const trimLengthTo = scenarioDisablesTrim(name) ? undefined : 100;
 	if (scenarioUsesCoordinateWal(name)) {
 		backbone.setCoordinateJournalEnabled(true);
 	}
@@ -1706,7 +1707,7 @@ const runNativeBackboneCeilingScenario = async (
 				payloadData: payload,
 				replicas: 1,
 				selfHash: "native-backbone-ceiling-peer",
-				trimLengthTo: 100,
+				trimLengthTo,
 				documentIndex,
 			};
 			const runAppend = () =>
