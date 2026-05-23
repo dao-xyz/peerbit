@@ -356,13 +356,31 @@ type DecodedReplicaCountMap = ReadonlyMap<string, number>;
 type NativeRequestPruneLeaderHints = {
 	localLeaderHashes: Set<string>;
 	replicaCounts: Map<string, number>;
+	replicaCountsByIndex?: Array<number | undefined>;
 	peerHistoryGids: string[];
 	peerHistoryRemovedHashes: Set<string>;
+	peerHistoryRemovedFlags?: boolean[];
 	nativeEntries?: Map<
 		string,
 		{ gid: string; data?: Uint8Array; replicas?: number }
 	>;
+	nativeEntryMetadata?: Array<
+		{ gid: string; data?: Uint8Array; replicas?: number } | undefined | null
+	>;
 	presentBlockHashes?: Set<string>;
+	presentBlocks?: boolean[];
+	localLeaderFlags?: boolean[];
+};
+
+type NativeBackboneRequestPruneHintArrays = {
+	entries: Array<
+		{ gid: string; data?: Uint8Array; replicas?: number } | undefined | null
+	>;
+	presentBlocks: boolean[];
+	localLeaderFlags: boolean[];
+	replicaCounts: Array<number | undefined>;
+	peerHistoryGids: string[];
+	peerHistoryRemovedFlags: boolean[];
 };
 
 type SharedLogCoordinateNativeFields<R extends "u32" | "u64"> = {
@@ -10172,11 +10190,31 @@ export class SharedLog<
 							entries: msg.hashes.length,
 							messages: 1,
 							details: {
-								nativeEntries: nativeLeaderHints.nativeEntries?.size ?? 0,
+								nativeEntries:
+									nativeLeaderHints.nativeEntries?.size ??
+									nativeLeaderHints.nativeEntryMetadata?.reduce(
+										(sum, entry) => sum + (entry ? 1 : 0),
+										0,
+									) ??
+									0,
 								presentBlocks:
-									nativeLeaderHints.presentBlockHashes?.size ?? 0,
-								localLeaders: nativeLeaderHints.localLeaderHashes.size,
-								plannedEntries: nativeLeaderHints.replicaCounts.size,
+									nativeLeaderHints.presentBlockHashes?.size ??
+									nativeLeaderHints.presentBlocks?.reduce(
+										(sum, present) => sum + (present ? 1 : 0),
+										0,
+									) ??
+									0,
+								localLeaders:
+									nativeLeaderHints.localLeaderHashes.size ||
+									nativeLeaderHints.localLeaderFlags?.filter(Boolean)
+										.length ||
+									0,
+								plannedEntries:
+									nativeLeaderHints.replicaCounts.size ||
+									nativeLeaderHints.replicaCountsByIndex?.filter(
+										(replicas) => replicas != null,
+									).length ||
+									0,
 								peerHistoryGids:
 									nativeLeaderHints.peerHistoryGids.length,
 							},
@@ -10270,6 +10308,7 @@ export class SharedLog<
 					const hash = msg.hashes[i]!;
 
 					const nativeEntry =
+						nativeLeaderHints.nativeEntryMetadata?.[i] ??
 						nativeLeaderHints.nativeEntries?.get(hash) ??
 						nativeEntryMetadata?.[i];
 					let indexedEntry:
@@ -10279,10 +10318,16 @@ export class SharedLog<
 
 					const hasPresentBlock = nativeLeaderHints.presentBlockHashes
 						? nativeLeaderHints.presentBlockHashes.has(hash)
-						: presentBlocks
+						: nativeLeaderHints.presentBlocks
+							? nativeLeaderHints.presentBlocks[i] === true
+							: presentBlocks
 							? presentBlocks[i] === true
 							: await this.log.blocks.has(hash);
-					if (!presentBlocks && !nativeLeaderHints.presentBlockHashes) {
+					if (
+						!presentBlocks &&
+						!nativeLeaderHints.presentBlockHashes &&
+						!nativeLeaderHints.presentBlocks
+					) {
 						fallbackBlockChecks += 1;
 					}
 					if (!nativeEntry && hasPresentBlock) {
@@ -10313,6 +10358,7 @@ export class SharedLog<
 						} else {
 							const gid = nativeEntry?.gid ?? indexedEntry!.value.meta.gid;
 							const replicas =
+								nativeLeaderHints.replicaCountsByIndex?.[i] ??
 								nativeLeaderHints.replicaCounts.get(hash) ??
 								decodeReplicas({
 									meta: {
@@ -10320,7 +10366,10 @@ export class SharedLog<
 									},
 								}).getValue(this);
 
-							if (!nativeLeaderHints.peerHistoryRemovedHashes.has(hash)) {
+							if (
+								nativeLeaderHints.peerHistoryRemovedFlags?.[i] !== true &&
+								!nativeLeaderHints.peerHistoryRemovedHashes.has(hash)
+							) {
 								this.removePeerFromGidPeerHistory(from, gid);
 							}
 
@@ -10337,7 +10386,10 @@ export class SharedLog<
 								},
 							};
 
-							if (nativeLeaderHints.localLeaderHashes.has(hash)) {
+							if (
+								nativeLeaderHints.localLeaderFlags?.[i] === true ||
+								nativeLeaderHints.localLeaderHashes.has(hash)
+							) {
 								isLeader = true;
 							} else if (nativeEntry) {
 								await this._waitForGidReplicators(
@@ -11538,8 +11590,34 @@ export class SharedLog<
 		const context = await this.createLeaderSelectionContext();
 		const skipHashes =
 			this._checkedPrune.pendingDeletes.size > 0
-				? this._checkedPrune.pendingDeletes.keys()
+				? [...this._checkedPrune.pendingDeletes.keys()]
 				: [];
+		const nativeBackboneHintArrays = this._nativeBackbone as NativePeerbitBackbone & {
+			planRequestPruneLeaderHintArrays?: (
+				hashes: Iterable<string>,
+				skipHashes: Iterable<string>,
+				options?: unknown,
+			) => NativeBackboneRequestPruneHintArrays | undefined;
+		};
+		const hintArrays =
+			nativeBackboneHintArrays.planRequestPruneLeaderHintArrays?.(
+				hashes,
+				skipHashes,
+				this.createNativeLeaderOptions(context),
+			);
+		if (hintArrays) {
+			return {
+				localLeaderHashes: new Set(),
+				replicaCounts: new Map(),
+				replicaCountsByIndex: hintArrays.replicaCounts,
+				peerHistoryGids: hintArrays.peerHistoryGids,
+				peerHistoryRemovedHashes: new Set(),
+				peerHistoryRemovedFlags: hintArrays.peerHistoryRemovedFlags,
+				nativeEntryMetadata: hintArrays.entries,
+				presentBlocks: hintArrays.presentBlocks,
+				localLeaderFlags: hintArrays.localLeaderFlags,
+			};
+		}
 		const hints = this._nativeBackbone.planRequestPruneLeaderHints(
 			hashes,
 			skipHashes,

@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-coordinate-wal,request-prune-native-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-coordinate-wal,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -25,6 +25,7 @@ type Scenario =
 	| "raw-receive-native"
 	| "raw-receive-native-coordinate-wal"
 	| "request-prune-native-confirm"
+	| "request-prune-native-backbone-confirm"
 	| "request-prune-pending-ihave";
 
 type ProfileSummary = {
@@ -69,6 +70,7 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 		"raw-receive-native",
 		"raw-receive-native-coordinate-wal",
 		"request-prune-native-confirm",
+		"request-prune-native-backbone-confirm",
 		"request-prune-pending-ihave",
 	].join(","))
 		.split(",")
@@ -79,6 +81,7 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native" &&
 			scenario !== "raw-receive-native-coordinate-wal" &&
 			scenario !== "request-prune-native-confirm" &&
+			scenario !== "request-prune-native-backbone-confirm" &&
 			scenario !== "request-prune-pending-ihave"
 		) {
 			throw new Error(`Unknown receive/prune scenario '${scenario}'`);
@@ -290,6 +293,7 @@ const clearPendingIHaves = (store: EventStore<string, any>) => {
 const runRequestPruneNativeConfirm = async (
 	count: number,
 	run: number,
+	options?: { coordinateWal?: boolean },
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
 		indexer: (directory) => createRustIndexer(directory),
@@ -298,7 +302,7 @@ const runRequestPruneNativeConfirm = async (
 	try {
 		const db = await session.peers[1].open(new EventStore<string, any>(), {
 			args: {
-				...createOpenArgs(profileEvents),
+				...createOpenArgs(profileEvents, options),
 				replicate: { factor: 1 },
 			},
 		});
@@ -313,7 +317,9 @@ const runRequestPruneNativeConfirm = async (
 			const elapsed = performance.now() - started;
 
 			return {
-				scenario: "request-prune-native-confirm",
+				scenario: options?.coordinateWal
+					? "request-prune-native-backbone-confirm"
+					: "request-prune-native-confirm",
 				count,
 				run,
 				elapsedMs: elapsed,
@@ -384,6 +390,11 @@ const runScenario = async (
 	}
 	if (scenario === "request-prune-native-confirm") {
 		return runRequestPruneNativeConfirm(count, run);
+	}
+	if (scenario === "request-prune-native-backbone-confirm") {
+		return runRequestPruneNativeConfirm(count, run, {
+			coordinateWal: true,
+		});
 	}
 	return runRequestPrunePendingIHave(count, run);
 };
