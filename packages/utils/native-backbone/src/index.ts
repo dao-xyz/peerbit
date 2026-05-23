@@ -749,6 +749,39 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_latest_facts_document_index_trim_hashes: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number | undefined,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
+	prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number | undefined,
+		documentKey: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
 	prepare_plain_entry_storage_facts_and_put: (
 		wallTime: bigint,
 		logical: number,
@@ -2440,7 +2473,7 @@ const preparedCommitFactsFromRow = (
 		Array.isArray(row[0]) &&
 		Array.isArray(row[1]);
 	const entryRow = (isTrimRow ? row[0] : row) as unknown[];
-	const prepared = committedEntryFromRow(entryRow);
+	const prepared = committedStorageFactsEntryFromRow(entryRow);
 	if (isTrimRow) {
 		return {
 			...prepared,
@@ -2448,6 +2481,28 @@ const preparedCommitFactsFromRow = (
 		};
 	}
 	return prepared;
+};
+
+const preparedCommitFactsWithLatestDocumentContextFromRow = (
+	row: unknown[],
+): NativeBackboneCommittedEntry & {
+	trimmedEntryHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: NativeBackboneDocumentContextFacts;
+} => {
+	const [entryRow, trimHashRows, documentTrimmedHeadsProcessed, contextRow] =
+		row as [
+			unknown[],
+			string[] | undefined,
+			boolean | undefined,
+			unknown[] | undefined,
+		];
+	return {
+		...committedStorageFactsEntryFromRow(entryRow),
+		trimmedEntryHashes: trimHashRows ?? [],
+		documentTrimmedHeadsProcessed,
+		documentPreviousContext: documentContextFactsFromRow(contextRow),
+	};
 };
 
 const compactPreparedCommitFactsWithTrimHashesFromRow = (
@@ -2945,6 +3000,7 @@ export class NativeBackboneLogGraph {
 				existingCreated?: bigint | number | string;
 				byteElementIndexLimit?: number;
 				deleteTrimmedHeads?: boolean;
+				useLatestContext?: boolean;
 			};
 		},
 		_blockStore: unknown,
@@ -2971,6 +3027,49 @@ export class NativeBackboneLogGraph {
 		const documentIndex = input.documentIndex;
 		const documentIndexArgs = nativeDocumentIndexArgs(documentIndex);
 		const projection = documentIndex?.projection;
+		if (
+			documentIndex?.useLatestContext &&
+			documentIndexArgs &&
+			input.resolveTrimmedEntries === false
+		) {
+			if (projection && this.options?.documentProjectionPlanId) {
+				return preparedCommitFactsWithLatestDocumentContextFromRow(
+					this.native.prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes(
+						wallTime,
+						logical,
+						input.gid,
+						entryType,
+						input.metaData,
+						input.payloadData,
+						input.trimLengthTo,
+						documentIndex.key,
+						documentIndex.byteElementIndexLimit ?? 0,
+						documentIndex.deleteTrimmedHeads === true,
+						this.options.documentProjectionPlanId(projection.plan),
+						projection.encodedDocument,
+						projection.signer,
+					),
+				);
+			}
+			return preparedCommitFactsWithLatestDocumentContextFromRow(
+				this.native.prepare_plain_entry_commit_latest_facts_document_index_trim_hashes(
+					wallTime,
+					logical,
+					input.gid,
+					entryType,
+					input.metaData,
+					input.payloadData,
+					input.trimLengthTo,
+					documentIndex.key,
+					documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					projection?.plan,
+					projection?.encodedDocument,
+					projection?.signer,
+				),
+			);
+		}
 		if (
 			documentIndexArgs &&
 			projection &&

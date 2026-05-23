@@ -3178,6 +3178,155 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_latest_facts_document_index_trim_hashes(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        fallback_gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: JsValue,
+        document_key: String,
+        document_value_prefix_bytes: Vec<u8>,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan: JsValue,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_index_commit = document_index_append_commit(
+            document_key,
+            document_value_prefix_bytes,
+            String::new(),
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_entry_commit_latest_document_index_trim_hashes_inner(
+            wall_time,
+            logical,
+            fallback_gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            trim_length_to,
+            document_index_commit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        fallback_gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: JsValue,
+        document_key: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_encoded_document: JsValue,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_index_commit = document_index_cached_projection_append_commit(
+            document_key,
+            String::new(),
+            document_byte_element_index_limit,
+            document_delete_trimmed_heads,
+            document_projection_plan_id,
+            document_projection_encoded_document,
+            document_projection_signer,
+        )?;
+        self.prepare_plain_entry_commit_latest_document_index_trim_hashes_inner(
+            wall_time,
+            logical,
+            fallback_gid,
+            entry_type,
+            meta_data,
+            payload_data,
+            trim_length_to,
+            document_index_commit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_entry_commit_latest_document_index_trim_hashes_inner(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        fallback_gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: JsValue,
+        mut document_index_commit: DocumentIndexAppendCommit,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let previous_context = self.document_context_facts_by_key(&document_index_commit.key)?;
+        let known_existing = previous_context.is_some();
+        let gid = previous_context
+            .as_ref()
+            .map(|context| context.gid.clone())
+            .unwrap_or(fallback_gid);
+        let next_hashes = previous_context
+            .as_ref()
+            .map(|context| vec![context.head.clone()])
+            .unwrap_or_default();
+        if document_index_commit.existing_created.is_none() {
+            document_index_commit.existing_created =
+                previous_context.as_ref().map(|context| context.created);
+        }
+        document_index_commit.previous_context = previous_context.clone();
+        document_index_commit.known_existing = known_existing;
+        let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
+        let payload_size = payload_data.length();
+        let (entry_facts, trim_hashes) = self
+            .log
+            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                &self.builder,
+                &mut self.blocks,
+                wall_time,
+                logical,
+                gid.clone(),
+                next_hashes,
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                payload_data.to_vec(),
+                trim_length_to,
+                None,
+            )?;
+        self.put_document_index_for_append(
+            Some(document_index_commit),
+            wall_time,
+            &entry_facts.hash,
+            &gid,
+            payload_size,
+        )?;
+        let document_trimmed_heads_processed =
+            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let out = Array::new();
+        out.push(&committed_entry_facts_to_row(
+            &entry_facts,
+            !entry_facts.next.is_empty(),
+        ));
+        out.push(&strings_to_array(trim_hashes));
+        out.push(&JsValue::from_bool(document_trimmed_heads_processed));
+        out.push(
+            &previous_context
+                .as_ref()
+                .map(|context| document_context_facts_to_row(context).into())
+                .unwrap_or(JsValue::UNDEFINED),
+        );
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes(
         &mut self,
         wall_time: u64,

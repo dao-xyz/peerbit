@@ -2699,6 +2699,10 @@ describe("index", () => {
 						store.docs.log as any,
 						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
 					);
+					const graphLatestTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"prepare_plain_entry_commit_latest_facts_document_index_trim_hashes",
+					);
 					let indexGetSpy: { restore(): void; callCount: number } | undefined;
 					try {
 						const id = uuid();
@@ -2710,13 +2714,15 @@ describe("index", () => {
 							new Document({ id, name: "native-update-2" }),
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
-						expect(storageTransactionSpy.callCount).equal(2);
+						expect(graphLatestTransactionSpy.callCount).equal(2);
+						expect(storageTransactionSpy.callCount).equal(0);
 						expect(indexGetSpy?.callCount).equal(0);
 						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(id))?.name).equal("native-update-2");
 					} finally {
 						indexGetSpy?.restore();
+						graphLatestTransactionSpy.restore();
 						storageTransactionSpy.restore();
 						compatPlanSpy.restore();
 						fallbackAppendSpy.restore();
@@ -2780,13 +2786,17 @@ describe("index", () => {
 						native,
 						"register_document_projection_plan",
 					);
-					const latestCachedTransactionSpy = sinon.spy(
+					const latestCachedStorageTransactionSpy = sinon.spy(
 						native,
 						"prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction",
 					);
-					const latestInlineTransactionSpy = sinon.spy(
+					const latestInlineStorageTransactionSpy = sinon.spy(
 						native,
 						"prepare_plain_committed_storage_append_document_index_latest_transaction",
+					);
+					const latestCachedGraphTransactionSpy = sinon.spy(
+						native,
+						"prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes",
 					);
 					const documentIndexTransformSpy = sinon.spy(
 						localStore.docs.index,
@@ -2803,8 +2813,9 @@ describe("index", () => {
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 						expect(registerProjectionPlanSpy.callCount).equal(1);
-						expect(latestCachedTransactionSpy.callCount).equal(2);
-						expect(latestInlineTransactionSpy.callCount).equal(0);
+						expect(latestCachedGraphTransactionSpy.callCount).equal(2);
+						expect(latestCachedStorageTransactionSpy.callCount).equal(0);
+						expect(latestInlineStorageTransactionSpy.callCount).equal(0);
 						expect(documentIndexTransformSpy.callCount).equal(0);
 						const indexed = await localStore.docs.index.get(id, {
 							resolve: false,
@@ -2812,8 +2823,9 @@ describe("index", () => {
 						expect(indexed?.name).equal("native-project-update-2");
 					} finally {
 						documentIndexTransformSpy.restore();
-						latestInlineTransactionSpy.restore();
-						latestCachedTransactionSpy.restore();
+						latestCachedGraphTransactionSpy.restore();
+						latestInlineStorageTransactionSpy.restore();
+						latestCachedStorageTransactionSpy.restore();
 						registerProjectionPlanSpy.restore();
 						await rustSession.stop();
 					}

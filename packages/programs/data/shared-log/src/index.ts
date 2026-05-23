@@ -5347,7 +5347,8 @@ export class SharedLog<
 			options?.replicate === false &&
 			hasDocumentIndexCommit &&
 			((appendOptions.meta?.next?.length ?? 0) > 0 ||
-				properties?.useNativeExistingDocumentContext === true)
+				(properties?.useNativeExistingDocumentContext === true &&
+					properties?.resolveTrimmedEntries !== false))
 		) {
 			return this.appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
 				payloadData,
@@ -5393,6 +5394,8 @@ export class SharedLog<
 					nativeBackboneDocumentIndexCommitted = true;
 					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
 				}
+				const useLatestDocumentContext =
+					properties?.useNativeExistingDocumentContext === true;
 				return backbone.graph.prepareEntryV0PlainEntryCommit(
 					{
 						...input,
@@ -5401,7 +5404,14 @@ export class SharedLog<
 						includeAppendFactsBytes: true,
 						trimLengthTo: input.trimLengthTo,
 						...(nativeBackboneDocumentIndex
-							? { documentIndex: nativeBackboneDocumentIndex }
+							? {
+									documentIndex: {
+										...nativeBackboneDocumentIndex,
+										...(useLatestDocumentContext
+											? { useLatestContext: true }
+											: {}),
+									},
+								}
 							: {}),
 					},
 					backbone.blocks,
