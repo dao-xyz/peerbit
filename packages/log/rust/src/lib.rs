@@ -1317,6 +1317,151 @@ impl NativeLogIndex {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: usize,
+        trim_mode: NativeTrimMode,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, NativeTrimResult), JsValue> {
+        let core_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
+            &builder.clock_id,
+            &builder.public_key,
+            &builder.signing_key,
+            wall_time,
+            logical,
+            gid,
+            Vec::new(),
+            entry_type,
+            meta_data,
+            payload_data,
+            profile.as_deref_mut(),
+        )?;
+        if let Some(started) = core_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.entry_core_ms += js_sys::Date::now() - started;
+            }
+        }
+        let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let entry = core.entry;
+        let hash = core.hash;
+        let facts = NativeCommittedEntryFacts {
+            hash: hash.clone(),
+            next: core.next,
+            meta_bytes: core.meta_bytes,
+            byte_length: core.storage_bytes.len(),
+            hash_digest_bytes: core.hash_digest_bytes,
+        };
+        if let Some(started) = facts_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.facts_ms += js_sys::Date::now() - started;
+            }
+        }
+        let block_put_started = profile.as_ref().map(|_| js_sys::Date::now());
+        block_store.put_entry(hash, core.storage_bytes);
+        if let Some(started) = block_put_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.block_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let graph_put_started = profile.as_ref().map(|_| js_sys::Date::now());
+        self.inner.put_no_next(entry);
+        if let Some(started) = graph_put_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.graph_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let trim_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let trimmed =
+            match trim_mode {
+                NativeTrimMode::Entries => NativeTrimResult::Entries(trim_oldest_log_entries_core(
+                    &mut self.inner,
+                    block_store,
+                    trim_length_to,
+                )),
+                NativeTrimMode::Hashes => NativeTrimResult::Hashes(
+                    trim_oldest_log_entry_hashes_core(&mut self.inner, block_store, trim_length_to),
+                ),
+            };
+        if let Some(started) = trim_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.trim_ms += js_sys::Date::now() - started;
+            }
+        }
+        Ok((facts, trimmed))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: usize,
+        profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Entries,
+                profile,
+            )?;
+        Ok((facts, trimmed.into_entries()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: usize,
+        profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Hashes,
+                profile,
+            )?;
+        Ok((facts, trimmed.into_hashes()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
         &mut self,
         builder: &NativeEntryV0PlainBuilder,
@@ -2266,30 +2411,22 @@ impl NativeLogIndex {
         payload_data: Uint8Array,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        let (row, entry, initial_nexts, block) =
-            prepare_entry_v0_plain_entry_row_with_signer_parts(
-                &builder.clock_id,
-                &builder.public_key,
-                &builder.signing_key,
+        let (facts, trimmed_entries) = self
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim(
+                builder,
+                block_store,
                 wall_time,
                 logical,
                 gid,
-                Vec::new(),
                 entry_type,
                 optional_bytes_from_js(meta_data),
                 payload_data.to_vec(),
-                PreparedPlainEntryRowMode::CommitFactsNoNext,
+                trim_length_to,
+                None,
             )?;
-        block_store.put_entries(vec![block]);
-        self.inner.put_append_entry(entry, &initial_nexts);
-
         let out = Array::new();
-        out.push(&row);
-        out.push(&trim_oldest_log_entries(
-            &mut self.inner,
-            block_store,
-            trim_length_to,
-        ));
+        out.push(&committed_entry_facts_to_row(&facts, false));
+        out.push(&log_trim_entries_to_rows(trimmed_entries));
         Ok(out)
     }
 
@@ -2306,30 +2443,22 @@ impl NativeLogIndex {
         payload_data: Uint8Array,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        let (row, entry, initial_nexts, block) =
-            prepare_entry_v0_plain_entry_row_with_signer_parts(
-                &builder.clock_id,
-                &builder.public_key,
-                &builder.signing_key,
+        let (facts, trim_hashes) = self
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes(
+                builder,
+                block_store,
                 wall_time,
                 logical,
                 gid,
-                Vec::new(),
                 entry_type,
                 optional_bytes_from_js(meta_data),
                 payload_data.to_vec(),
-                PreparedPlainEntryRowMode::CommitFactsNoNext,
+                trim_length_to,
+                None,
             )?;
-        block_store.put_entries(vec![block]);
-        self.inner.put_append_entry(entry, &initial_nexts);
-
         let out = Array::new();
-        out.push(&row);
-        out.push(&strings_to_array(trim_oldest_log_entry_hashes_core(
-            &mut self.inner,
-            block_store,
-            trim_length_to,
-        )));
+        out.push(&committed_entry_facts_to_row(&facts, false));
+        out.push(&strings_to_array(trim_hashes));
         Ok(out)
     }
 
@@ -3598,6 +3727,18 @@ fn prepared_plain_entry_core_to_row(
             row.push(&Uint8Array::from(core.hash_digest_bytes.as_slice()));
         }
     }
+    row
+}
+
+fn committed_entry_facts_to_row(entry: &NativeCommittedEntryFacts, include_next: bool) -> Array {
+    let row = Array::new();
+    row.push(&JsValue::from_str(&entry.hash));
+    if include_next {
+        row.push(&strings_to_array(entry.next.clone()));
+    }
+    row.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
+    row.push(&JsValue::from_f64(entry.byte_length as f64));
+    row.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
     row
 }
 

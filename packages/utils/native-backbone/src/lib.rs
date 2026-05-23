@@ -3004,17 +3004,16 @@ impl NativePeerbitBackbone {
         )?;
         let (entry_facts, trim_hashes) = self
             .log
-            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes(
                 &self.builder,
                 &mut self.blocks,
                 wall_time,
                 logical,
                 gid,
-                Vec::new(),
                 entry_type,
                 optional_bytes_from_js(meta_data),
                 payload_data.to_vec(),
-                Some(trim_length_to),
+                trim_length_to,
                 None,
             )?;
         self.put_document_index_for_append(
@@ -3141,17 +3140,16 @@ impl NativePeerbitBackbone {
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
         let (entry_facts, trim_hashes) = self
             .log
-            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes(
                 &self.builder,
                 &mut self.blocks,
                 wall_time,
                 logical,
                 gid,
-                Vec::new(),
                 entry_type,
                 optional_bytes_from_js(meta_data),
                 payload_data.to_vec(),
-                Some(trim_length_to),
+                trim_length_to,
                 None,
             )?;
         self.put_document_index_for_append(
