@@ -1211,7 +1211,10 @@ export class Log<T> {
 					if (prepared.trimmedEntryHashes.length === 0) {
 						return finish();
 					}
-					if (prepared.documentTrimmedHeadsProcessed === true) {
+					if (
+						properties.resolveTrimmedEntries === false ||
+						prepared.documentTrimmedHeadsProcessed === true
+					) {
 						const trimmedEntryHashes = [
 							...new Set(prepared.trimmedEntryHashes),
 						];
@@ -1517,7 +1520,10 @@ export class Log<T> {
 							if (prepared.trimmedEntryHashes.length === 0) {
 								return finish();
 							}
-							if (prepared.documentTrimmedHeadsProcessed === true) {
+							if (
+								properties.resolveTrimmedEntries === false ||
+								prepared.documentTrimmedHeadsProcessed === true
+							) {
 								const trimmedEntryHashes = [
 									...new Set(prepared.trimmedEntryHashes),
 								];
