@@ -2329,14 +2329,150 @@ impl NativePeerbitBackbone {
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
         let hashes = strings_from_array(hashes)?;
-        let empty = || {
-            let out = Array::new();
-            out.push(&JsValue::FALSE);
-            out.push(&Array::new());
-            out
-        };
+        let peer_history_gids = self.plan_request_prune_all_confirmed_core(
+            hashes,
+            &prune_peer,
+            role_age_ms,
+            &now,
+            peer_filter,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
+        let out = Array::new();
+        match peer_history_gids {
+            Some(peer_history_gids) => {
+                out.push(&JsValue::TRUE);
+                out.push(&strings_to_array(peer_history_gids));
+            }
+            None => {
+                out.push(&JsValue::FALSE);
+                out.push(&Array::new());
+            }
+        }
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_request_prune_all_confirmed_no_gid_return(
+        &mut self,
+        hashes: Array,
+        prune_peer: String,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        if self.shared_log.gid_peer_history_empty_core() {
+            if let Some(all_confirmed) = self.try_plan_request_prune_full_replica_confirm(
+                &hashes,
+                role_age_ms,
+                &now,
+                peer_filter.clone(),
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            )? {
+                return Ok(all_confirmed);
+            }
+        }
+        Ok(self
+            .plan_request_prune_all_confirmed_core(
+                hashes,
+                &prune_peer,
+                role_age_ms,
+                &now,
+                peer_filter,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            )?
+            .is_some())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn try_plan_request_prune_full_replica_confirm(
+        &self,
+        hashes: &[String],
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Option<bool>, JsValue> {
         if hashes.is_empty() {
-            return Ok(empty());
+            return Ok(Some(false));
+        }
+        let mut common_replicas = None;
+        for hash in hashes {
+            if !self.blocks.has(hash) {
+                return Ok(Some(false));
+            }
+            let Some((_, replicas)) = self.log.entry_prune_confirm_metadata_ref(hash) else {
+                return Ok(Some(false));
+            };
+            let Some(requested_replicas) = replicas
+                .map(|replicas| replicas as usize)
+                .or_else(|| self.shared_log.entry_requested_replicas(hash))
+            else {
+                return Ok(Some(false));
+            };
+            match common_replicas {
+                Some(common_replicas) if common_replicas != requested_replicas => {
+                    return Ok(None);
+                }
+                Some(_) => {}
+                None => common_replicas = Some(requested_replicas),
+            }
+        }
+
+        let Some(common_replicas) = common_replicas else {
+            return Ok(Some(false));
+        };
+        self.shared_log.full_replica_self_leader_for_replicas(
+            common_replicas,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn plan_request_prune_all_confirmed_core(
+        &mut self,
+        hashes: Vec<String>,
+        prune_peer: &str,
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Option<Vec<String>>, JsValue> {
+        let empty = || Ok(None);
+        if hashes.is_empty() {
+            return empty();
         }
 
         let mut candidate_gids = Vec::with_capacity(hashes.len());
@@ -2344,17 +2480,17 @@ impl NativePeerbitBackbone {
 
         for hash in hashes.iter() {
             if !self.blocks.has(hash) {
-                return Ok(empty());
+                return empty();
             }
 
             let Some((gid, replicas)) = self.log.entry_prune_confirm_metadata_ref(hash) else {
-                return Ok(empty());
+                return empty();
             };
             let Some(requested_replicas) = replicas
                 .map(|replicas| replicas as usize)
                 .or_else(|| self.shared_log.entry_requested_replicas(hash))
             else {
-                return Ok(empty());
+                return empty();
             };
 
             candidate_gids.push(gid.to_string());
@@ -2365,25 +2501,21 @@ impl NativePeerbitBackbone {
             &candidate_gids,
             &candidate_replicas,
             role_age_ms,
-            &now,
+            now,
             peer_filter,
             expand_peer_filter,
-            &self_hash,
+            self_hash,
             include_self,
             full_replica_fallback,
             include_strict_full_replica,
         )?;
         if !all_local_leaders {
-            return Ok(empty());
+            return empty();
         }
 
-        let out = Array::new();
-        out.push(&JsValue::TRUE);
         self.shared_log
-            .remove_gid_peers_core(&prune_peer, &candidate_gids);
-        let peer_history_gids = strings_to_array(candidate_gids);
-        out.push(&peer_history_gids);
-        Ok(out)
+            .remove_gid_peers_core(prune_peer, &candidate_gids);
+        Ok(Some(candidate_gids))
     }
 
     #[allow(clippy::too_many_arguments)]

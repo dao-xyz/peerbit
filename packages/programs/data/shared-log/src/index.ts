@@ -11787,7 +11787,7 @@ export class SharedLog<
 			planRequestPruneAllConfirmed?: (
 				hashes: Iterable<string>,
 				prunePeer: string,
-				options?: unknown,
+				options?: { omitPeerHistoryGids?: boolean },
 			) => { allConfirmed: boolean; peerHistoryGids: string[] } | undefined;
 			planRequestPruneLeaderHintColumns?: (
 				hashes: Iterable<string>,
@@ -11800,7 +11800,12 @@ export class SharedLog<
 				nativeBackboneHintArrays.planRequestPruneAllConfirmed?.(
 					hashes,
 					from,
-					this.createNativeLeaderOptions(context),
+					{
+						...this.createNativeLeaderOptions(context),
+						omitPeerHistoryGids:
+							this._gidPeersHistory.size === 0 &&
+							this._nativeSharedLogState == null,
+					},
 				);
 			if (allConfirmed?.allConfirmed) {
 				return {

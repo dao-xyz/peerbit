@@ -3466,6 +3466,10 @@ impl NativeSharedLogState {
             .map(|entry| entry.requested_replicas)
     }
 
+    pub fn gid_peer_history_empty_core(&self) -> bool {
+        self.inner.gid_peers.is_empty()
+    }
+
     pub fn remove_gid_peers_core(&mut self, peer: &str, gids: &[String]) {
         if self.inner.gid_peers.is_empty() {
             return;
@@ -3478,6 +3482,34 @@ impl NativeSharedLogState {
                 }
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn full_replica_self_leader_for_replicas(
+        &self,
+        replicas: usize,
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Option<bool>, JsValue> {
+        let options = find_leader_options(role_age_ms, now, peer_filter)?;
+        Ok(full_replica_self_leader_with_batch_caches(
+            &self.inner.range_planner,
+            replicas,
+            &options,
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
