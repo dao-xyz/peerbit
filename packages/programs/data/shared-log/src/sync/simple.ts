@@ -544,6 +544,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
+	private markRepairSessionResolvedHash(hash: string): void {
+		if (this.repairSessions.size === 0) {
+			return;
+		}
+		for (const [sessionId, session] of this.repairSessions) {
+			for (const state of session.targets.values()) {
+				state.unresolved.delete(hash);
+			}
+			if (this.isRepairSessionComplete(session)) {
+				this.finalizeRepairSession(sessionId, true);
+			}
+		}
+	}
+
 	private async runRepairSession(sessionId: string): Promise<void> {
 		const session = this.repairSessions.get(sessionId);
 		if (!session) {
@@ -1261,7 +1275,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 	onEntryAddedHash(hash: string): void {
 		this.clearSyncProcess(hash);
-		this.markRepairSessionResolvedHashes([hash]);
+		this.markRepairSessionResolvedHash(hash);
 	}
 
 	onEntryRemoved(hash: string): void {
@@ -1300,17 +1314,29 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
-	private getKnownAliases(hash: string): SyncableKey[] {
-		const aliases = new Set<SyncableKey>([hash]);
-		for (const key of [
-			...this.syncInFlightQueue.keys(),
-			...[...this.syncInFlight.values()].flatMap((map) => [...map.keys()]),
-		]) {
+	private forEachKnownAlias(
+		hash: string,
+		callback: (key: SyncableKey) => void,
+	): void {
+		callback(hash);
+		if (this.syncInFlightQueue.size === 0 && this.syncInFlight.size === 0) {
+			return;
+		}
+		for (const key of this.syncInFlightQueue.keys()) {
 			if (typeof key === "bigint" && this.coordinateToHash.get(key) === hash) {
-				aliases.add(key);
+				callback(key);
 			}
 		}
-		return [...aliases];
+		for (const map of this.syncInFlight.values()) {
+			for (const key of map.keys()) {
+				if (
+					typeof key === "bigint" &&
+					this.coordinateToHash.get(key) === hash
+				) {
+					callback(key);
+				}
+			}
+		}
 	}
 
 	private clearSyncInFlightForPeer(publicKeyHash: string, hash: string) {
@@ -1318,9 +1344,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (!map) {
 			return;
 		}
-		for (const key of this.getKnownAliases(hash)) {
-			map.delete(key);
-		}
+		this.forEachKnownAlias(hash, (key) => map.delete(key));
 		if (map.size === 0) {
 			this.syncInFlight.delete(publicKeyHash);
 		}
@@ -1354,9 +1378,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	private clearSyncProcess(hash: string) {
-		for (const key of this.getKnownAliases(hash)) {
-			this.clearSyncProcessKey(key);
-		}
+		this.forEachKnownAlias(hash, (key) => this.clearSyncProcessKey(key));
 	}
 
 	private clearSyncProcesses(hashes: string[]) {
