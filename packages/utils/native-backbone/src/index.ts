@@ -2964,16 +2964,10 @@ export class NativeBackboneLogGraph {
 		) {
 			return undefined;
 		}
-		const baseArgs = [
-			BigInt(input.wallTime),
-			input.logical ?? 0,
-			input.gid,
-			input.next ?? [],
-			input.type ?? 0,
-			input.metaData,
-			input.payloadData,
-			input.trimLengthTo,
-		] as const;
+		const wallTime = BigInt(input.wallTime);
+		const logical = input.logical ?? 0;
+		const entryType = input.type ?? 0;
+		const hasNoNext = input.next == null || input.next.length === 0;
 		const documentIndex = input.documentIndex;
 		const documentIndexArgs = nativeDocumentIndexArgs(documentIndex);
 		const projection = documentIndex?.projection;
@@ -2983,14 +2977,14 @@ export class NativeBackboneLogGraph {
 			this.options?.documentProjectionPlanId &&
 			input.resolveTrimmedEntries === false &&
 			input.trimLengthTo != null &&
-			(input.next == null || input.next.length === 0)
+			hasNoNext
 		) {
 			return compactPreparedCommitFactsWithTrimHashesFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes(
-					BigInt(input.wallTime),
-					input.logical ?? 0,
+					wallTime,
+					logical,
 					input.gid,
-					input.type ?? 0,
+					entryType,
 					input.metaData,
 					input.payloadData,
 					input.trimLengthTo,
@@ -3011,14 +3005,14 @@ export class NativeBackboneLogGraph {
 			projection &&
 			this.options?.documentProjectionPlanId &&
 			input.trimLengthTo == null &&
-			(input.next == null || input.next.length === 0)
+			hasNoNext
 		) {
 			return preparedCommitFactsFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact(
-					BigInt(input.wallTime),
-					input.logical ?? 0,
+					wallTime,
+					logical,
 					input.gid,
-					input.type ?? 0,
+					entryType,
 					input.metaData,
 					input.payloadData,
 					documentIndex.key,
@@ -3038,6 +3032,16 @@ export class NativeBackboneLogGraph {
 			projection &&
 			this.options?.documentProjectionPlanId
 		) {
+			const baseArgs = [
+				wallTime,
+				logical,
+				input.gid,
+				input.next ?? [],
+				entryType,
+				input.metaData,
+				input.payloadData,
+				input.trimLengthTo,
+			] as const;
 			return preparedCommitFactsFromRow(
 				this.native.prepare_plain_entry_commit_facts_document_index_cached_plan(
 					...baseArgs,
@@ -3056,14 +3060,14 @@ export class NativeBackboneLogGraph {
 		if (
 			documentIndexArgs &&
 			input.trimLengthTo == null &&
-			(input.next == null || input.next.length === 0)
+			hasNoNext
 		) {
 			return preparedCommitFactsFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_compact(
-					BigInt(input.wallTime),
-					input.logical ?? 0,
+					wallTime,
+					logical,
 					input.gid,
-					input.type ?? 0,
+					entryType,
 					input.metaData,
 					input.payloadData,
 					...documentIndexArgs,
@@ -3074,14 +3078,14 @@ export class NativeBackboneLogGraph {
 			documentIndexArgs &&
 			input.resolveTrimmedEntries === false &&
 			input.trimLengthTo != null &&
-			(input.next == null || input.next.length === 0)
+			hasNoNext
 		) {
 			return compactPreparedCommitFactsWithTrimHashesFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_compact_trim_hashes(
-					BigInt(input.wallTime),
-					input.logical ?? 0,
+					wallTime,
+					logical,
 					input.gid,
-					input.type ?? 0,
+					entryType,
 					input.metaData,
 					input.payloadData,
 					input.trimLengthTo,
@@ -3089,6 +3093,16 @@ export class NativeBackboneLogGraph {
 				),
 			);
 		}
+		const baseArgs = [
+			wallTime,
+			logical,
+			input.gid,
+			input.next ?? [],
+			entryType,
+			input.metaData,
+			input.payloadData,
+			input.trimLengthTo,
+		] as const;
 		return preparedCommitFactsFromRow(
 			documentIndexArgs
 				? this.native.prepare_plain_entry_commit_facts_document_index(
