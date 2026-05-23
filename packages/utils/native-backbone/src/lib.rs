@@ -2130,8 +2130,13 @@ impl NativePeerbitBackbone {
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
         let hashes = strings_from_array(hashes)?;
-        let skip_hashes: HashSet<String> = strings_from_array(skip_hashes)?.into_iter().collect();
-        let metadata = self.log.entry_metadata_values(&hashes);
+        let skip_hashes = strings_from_array(skip_hashes)?;
+        let skip_hashes = if skip_hashes.is_empty() {
+            None
+        } else {
+            Some(skip_hashes.into_iter().collect::<HashSet<String>>())
+        };
+        let metadata = self.log.entry_prune_metadata_values(&hashes);
         let entry_rows = Array::new();
         let mut present_block_hashes = Vec::new();
         let mut candidate_hashes = Vec::new();
@@ -2144,7 +2149,7 @@ impl NativePeerbitBackbone {
                 present_block_hashes.push(hash.clone());
             }
 
-            let Some((metadata_hash, gid, data, replicas)) = metadata else {
+            let Some((gid, data, replicas)) = metadata else {
                 continue;
             };
             let requested_replicas = replicas
@@ -2152,7 +2157,7 @@ impl NativePeerbitBackbone {
                 .or_else(|| self.shared_log.entry_requested_replicas(hash));
 
             let row = Array::new();
-            row.push(&JsValue::from_str(&metadata_hash));
+            row.push(&JsValue::from_str(hash));
             row.push(&JsValue::from_str(&gid));
             match requested_replicas {
                 Some(replicas) => row.push(&JsValue::from_f64(replicas as f64)),
@@ -2164,9 +2169,13 @@ impl NativePeerbitBackbone {
             };
             entry_rows.push(&row);
 
-            if has_block && !skip_hashes.contains(hash) {
+            if has_block
+                && skip_hashes
+                    .as_ref()
+                    .map_or(true, |skip_hashes| !skip_hashes.contains(hash))
+            {
                 if let Some(replicas) = requested_replicas {
-                    candidate_hashes.push(metadata_hash);
+                    candidate_hashes.push(hash.clone());
                     candidate_gids.push(gid);
                     candidate_replicas.push(replicas);
                 }
@@ -2219,8 +2228,13 @@ impl NativePeerbitBackbone {
         include_strict_full_replica: bool,
     ) -> Result<Array, JsValue> {
         let hashes = strings_from_array(hashes)?;
-        let skip_hashes: HashSet<String> = strings_from_array(skip_hashes)?.into_iter().collect();
-        let metadata = self.log.entry_metadata_values(&hashes);
+        let skip_hashes = strings_from_array(skip_hashes)?;
+        let skip_hashes = if skip_hashes.is_empty() {
+            None
+        } else {
+            Some(skip_hashes.into_iter().collect::<HashSet<String>>())
+        };
+        let metadata = self.log.entry_prune_metadata_values(&hashes);
         let gids = Array::new();
         let data_rows = Array::new();
         let mut replica_counts = Vec::with_capacity(hashes.len());
@@ -2233,7 +2247,7 @@ impl NativePeerbitBackbone {
             let has_block = self.blocks.has(hash);
             present_block_flags.push(u8::from(has_block));
 
-            let Some((_metadata_hash, gid, data, replicas)) = metadata else {
+            let Some((gid, data, replicas)) = metadata else {
                 gids.push(&JsValue::UNDEFINED);
                 data_rows.push(&JsValue::UNDEFINED);
                 replica_counts.push(0);
@@ -2250,7 +2264,11 @@ impl NativePeerbitBackbone {
                 None => data_rows.push(&JsValue::UNDEFINED),
             };
 
-            if has_block && !skip_hashes.contains(hash) {
+            if has_block
+                && skip_hashes
+                    .as_ref()
+                    .map_or(true, |skip_hashes| !skip_hashes.contains(hash))
+            {
                 if let Some(replicas) = requested_replicas {
                     candidate_indexes.push(index);
                     candidate_gids.push(gid);

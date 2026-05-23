@@ -557,6 +557,26 @@ impl LogGraphIndex {
             .collect()
     }
 
+    pub fn entry_prune_metadata_batch(
+        &self,
+        hashes: &[String],
+    ) -> Vec<Option<LogEntryPruneMetadata>> {
+        hashes
+            .iter()
+            .map(|hash| {
+                self.entries.get(hash).map(|entry| {
+                    let replicas = decode_absolute_replica_data_u32(entry.data.as_deref());
+                    let data = if replicas.is_none() {
+                        entry.data.clone()
+                    } else {
+                        None
+                    };
+                    (entry.gid.clone(), data, replicas)
+                })
+            })
+            .collect()
+    }
+
     pub fn unique_reference_gid_rows(&self, hash: &str) -> Option<Vec<(String, String)>> {
         let entry = self.entries.get(hash)?;
         if entry.entry_type == ENTRY_TYPE_CUT {
@@ -932,6 +952,7 @@ pub struct NativeCommittedEntryFacts {
 }
 
 pub type LogEntryMetadata = (String, String, Option<Vec<u8>>, Option<u32>);
+pub type LogEntryPruneMetadata = (String, Option<Vec<u8>>, Option<u32>);
 
 #[derive(Clone, Default)]
 pub struct NativeLogAppendProfile {
@@ -1088,6 +1109,13 @@ impl NativeLogBlockStore {
 impl NativeLogIndex {
     pub fn entry_metadata_values(&self, hashes: &[String]) -> Vec<Option<LogEntryMetadata>> {
         self.inner.entry_metadata_batch(hashes)
+    }
+
+    pub fn entry_prune_metadata_values(
+        &self,
+        hashes: &[String],
+    ) -> Vec<Option<LogEntryPruneMetadata>> {
+        self.inner.entry_prune_metadata_batch(hashes)
     }
 
     pub fn put_entries_core(&mut self, entries: Vec<LogIndexEntry>) {
@@ -5619,6 +5647,43 @@ mod tests {
 
         assert_eq!(cut_index.heads(None), vec!["root", "cut"]);
         assert_eq!(cut_index.children("root"), vec!["cut"]);
+    }
+
+    #[test]
+    fn prune_metadata_omits_data_when_replicas_decode() {
+        let mut index = LogGraphIndex::new();
+        index.put(LogIndexEntry::new_with_data(
+            "a",
+            "g",
+            vec![],
+            APPEND,
+            1,
+            0,
+            1,
+            true,
+            Some(vec![0, 2, 0, 0, 0]),
+        ));
+        index.put(LogIndexEntry::new_with_data(
+            "b",
+            "g",
+            vec![],
+            APPEND,
+            2,
+            0,
+            1,
+            true,
+            Some(vec![9, 1, 2]),
+        ));
+
+        let metadata =
+            index.entry_prune_metadata_batch(&["a".to_string(), "b".to_string(), "c".to_string()]);
+
+        assert_eq!(metadata[0], Some(("g".to_string(), None, Some(2))));
+        assert_eq!(
+            metadata[1],
+            Some(("g".to_string(), Some(vec![9, 1, 2]), None))
+        );
+        assert_eq!(metadata[2], None);
     }
 
     #[test]

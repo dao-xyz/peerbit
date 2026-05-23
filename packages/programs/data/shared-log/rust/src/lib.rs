@@ -385,6 +385,74 @@ impl RangePlanner {
             .collect()
     }
 
+    pub fn contains_sample_hash(
+        &self,
+        cursors: &[u64],
+        options: &SampleOptions,
+        target_hash: &str,
+    ) -> bool {
+        let mut leaders: HashSet<String> = HashSet::new();
+        let mut matured = 0usize;
+        let mut unique_visited: HashSet<String> = HashSet::new();
+
+        for (i, point) in cursors.iter().copied().enumerate() {
+            for id in self.containment_buckets[self.resolution.containment_bucket(point)].iter() {
+                let Some(range) = self.ranges.get(id) else {
+                    continue;
+                };
+                if !self.include_range(range, options.peer_filter.as_ref())
+                    || !range.contains(point)
+                {
+                    continue;
+                }
+                if range.hash == target_hash {
+                    return true;
+                }
+                unique_visited.insert(range.hash.clone());
+                if leaders.insert(range.hash.clone())
+                    && range.is_matured(options.now, options.role_age_ms)
+                {
+                    matured += 1;
+                }
+            }
+
+            if let Some(unique_replicators) = &options.unique_replicators {
+                if !unique_replicators.is_empty()
+                    && (unique_replicators.len() == leaders.len()
+                        || unique_replicators.len() == unique_visited.len())
+                {
+                    break;
+                }
+            }
+
+            if options.only_intersecting || matured > i {
+                continue;
+            }
+
+            let mut seen_closest_ids = HashSet::new();
+            while let Some(range) =
+                self.closest_non_strict(point, options.peer_filter.as_ref(), &seen_closest_ids)
+            {
+                seen_closest_ids.insert(range.id.clone());
+                if range.hash == target_hash && range.is_matured(options.now, options.role_age_ms) {
+                    return true;
+                }
+                unique_visited.insert(range.hash.clone());
+                if !range.is_matured(options.now, options.role_age_ms) {
+                    continue;
+                }
+                if leaders.insert(range.hash.clone()) {
+                    matured += 1;
+                }
+                if matured > i {
+                    break;
+                }
+            }
+        }
+
+        false
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn find_leaders(
         &self,
@@ -838,6 +906,60 @@ fn find_leaders_with_batch_caches(
     }
 
     find_leaders_with_prepared_options(planner, cursors, replicas, prepared_options, false, true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn contains_leader_with_batch_caches(
+    planner: &RangePlanner,
+    cursors: &[u64],
+    replicas: usize,
+    base_options: &SampleOptions,
+    prepared_options_by_replicas: &mut HashMap<usize, SampleOptions>,
+    full_replica_self_leader_by_replicas: &mut HashMap<usize, Option<bool>>,
+    expand_peer_filter: bool,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> bool {
+    let prepared_options = prepared_options_by_replicas
+        .entry(replicas)
+        .or_insert_with(|| {
+            prepare_find_leader_options(
+                planner,
+                base_options,
+                replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+            )
+        });
+
+    if full_replica_fallback {
+        if let Some(is_self_leader) = full_replica_self_leader_by_replicas
+            .entry(replicas)
+            .or_insert_with(|| {
+                planner
+                    .get_full_replica_leaders(
+                        replicas,
+                        prepared_options,
+                        include_strict_full_replica,
+                    )
+                    .map(|leaders| leaders.iter().any(|leader| leader.hash == self_hash))
+            })
+            .as_ref()
+        {
+            return *is_self_leader;
+        }
+    }
+
+    let mut options = prepared_options.clone();
+    options.unique_replicators = options
+        .peer_filter
+        .as_ref()
+        .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
+
+    planner.contains_sample_hash(cursors, &options, self_hash)
 }
 
 struct RepairDispatchBatch {
@@ -1519,7 +1641,7 @@ impl NativeRangePlanner {
         ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
         let options = find_leader_options(role_age_ms, &now, peer_filter)?;
         let mut prepared_options_by_replicas = HashMap::new();
-        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut full_replica_self_leader_by_replicas = HashMap::new();
         let mut local_hashes = Vec::new();
 
         for ((hash, gid), replicas) in hashes
@@ -1528,20 +1650,20 @@ impl NativeRangePlanner {
             .zip(replica_counts.into_iter())
         {
             let coordinates = self.inner.get_gid_coordinates(&gid, replicas);
-            let leaders = find_leaders_with_batch_caches(
+            let is_local_leader = contains_leader_with_batch_caches(
                 &self.inner,
                 &coordinates,
                 replicas,
                 &options,
                 &mut prepared_options_by_replicas,
-                &mut full_replica_leaders_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
                 expand_peer_filter,
                 &self_hash,
                 include_self,
                 full_replica_fallback,
                 include_strict_full_replica,
             );
-            if leaders.iter().any(|leader| leader.hash == self_hash) {
+            if is_local_leader {
                 local_hashes.push(hash);
             }
         }
@@ -3304,25 +3426,24 @@ impl NativeSharedLogState {
         ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
         let options = find_leader_options(role_age_ms, now, peer_filter)?;
         let mut prepared_options_by_replicas = HashMap::new();
-        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut full_replica_self_leader_by_replicas = HashMap::new();
         let mut out = Vec::with_capacity(gids.len());
 
         for (gid, replicas) in gids.iter().zip(replica_counts.iter().copied()) {
             let coordinates = self.inner.range_planner.get_gid_coordinates(gid, replicas);
-            let leaders = find_leaders_with_batch_caches(
+            out.push(contains_leader_with_batch_caches(
                 &self.inner.range_planner,
                 &coordinates,
                 replicas,
                 &options,
                 &mut prepared_options_by_replicas,
-                &mut full_replica_leaders_by_replicas,
+                &mut full_replica_self_leader_by_replicas,
                 expand_peer_filter,
                 self_hash,
                 include_self,
                 full_replica_fallback,
                 include_strict_full_replica,
-            );
-            out.push(leaders.iter().any(|leader| leader.hash == self_hash));
+            ));
         }
 
         Ok(out)
@@ -3539,7 +3660,9 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 
 #[cfg(test)]
 mod tests {
-    use super::{RangePlanner, ReplicationRange, SampleOptions};
+    use super::{
+        find_leaders_with_prepared_options, RangePlanner, ReplicationRange, SampleOptions,
+    };
     use indexmap::IndexSet;
 
     #[test]
@@ -3933,5 +4056,47 @@ mod tests {
         assert_eq!(leaders.len(), 1);
         assert_eq!(leaders[0].hash, "peer-a");
         assert!(!leaders[0].intersecting);
+    }
+
+    #[test]
+    fn contains_sample_hash_matches_find_leaders_membership() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 0, 10, 70, 10, 70, 60, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "b", "peer-b", 0, 100, 110, 100, 110, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "c", "peer-c", 990, 120, 130, 120, 130, 10, 0,
+        ));
+
+        let base_options = SampleOptions {
+            now: 1_000,
+            role_age_ms: 100,
+            peer_filter: Some(
+                ["peer-a".to_string(), "peer-b".to_string()]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Default::default()
+        };
+        let mut prepared_options = base_options.clone();
+        prepared_options.unique_replicators = prepared_options
+            .peer_filter
+            .as_ref()
+            .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
+
+        let cursors = [50, 90];
+        let leaders =
+            find_leaders_with_prepared_options(&planner, &cursors, 2, &base_options, false, true);
+
+        for target in ["peer-a", "peer-b", "peer-c", "peer-missing"] {
+            assert_eq!(
+                planner.contains_sample_hash(&cursors, &prepared_options, target),
+                leaders.iter().any(|leader| leader.hash == target),
+                "target {target}"
+            );
+        }
     }
 }
