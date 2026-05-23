@@ -1285,9 +1285,10 @@ impl NativeLogIndex {
             }
         }
         let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
-        let entry = core.entry.clone();
+        let entry = core.entry;
+        let hash = core.hash;
         let facts = NativeCommittedEntryFacts {
-            hash: core.hash.clone(),
+            hash: hash.clone(),
             next: core.next,
             meta_bytes: core.meta_bytes,
             byte_length: core.storage_bytes.len(),
@@ -1299,7 +1300,7 @@ impl NativeLogIndex {
             }
         }
         let block_put_started = profile.as_ref().map(|_| js_sys::Date::now());
-        block_store.put_entry(core.hash, core.storage_bytes);
+        block_store.put_entry(hash, core.storage_bytes);
         if let Some(started) = block_put_started {
             if let Some(profile) = profile.as_deref_mut() {
                 profile.block_put_ms += js_sys::Date::now() - started;
@@ -1358,9 +1359,10 @@ impl NativeLogIndex {
             }
         }
         let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
-        let entry = core.entry.clone();
+        let entry = core.entry;
+        let hash = core.hash;
         let facts = NativeCommittedEntryFacts {
-            hash: core.hash.clone(),
+            hash: hash.clone(),
             next: core.next,
             meta_bytes: core.meta_bytes,
             byte_length: core.storage_bytes.len(),
@@ -1372,7 +1374,7 @@ impl NativeLogIndex {
             }
         }
         let block_put_started = profile.as_ref().map(|_| js_sys::Date::now());
-        block_store.put_entry(core.hash, core.storage_bytes);
+        block_store.put_entry(hash, core.storage_bytes);
         if let Some(started) = block_put_started {
             if let Some(profile) = profile.as_deref_mut() {
                 profile.block_put_ms += js_sys::Date::now() - started;
