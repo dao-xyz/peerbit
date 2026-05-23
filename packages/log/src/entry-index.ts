@@ -42,12 +42,7 @@ export type ResultsIterator<T> = {
 const ENTRY_CACHE_MAX_SIZE = 10; // TODO as param for log
 const DEFERRED_INDEX_FLUSH_IDLE_MS = 250;
 const NATIVE_GRAPH_REBUILD_BATCH_SIZE = 512;
-const TIMESTAMP_WALL_TIME_KEY = [
-	"meta",
-	"clock",
-	"timestamp",
-	"wallTime",
-];
+const TIMESTAMP_WALL_TIME_KEY = ["meta", "clock", "timestamp", "wallTime"];
 const TIMESTAMP_LOGICAL_KEY = ["meta", "clock", "timestamp", "logical"];
 
 type EntryIndexProfileValue = string | number | boolean | undefined;
@@ -62,7 +57,8 @@ type EntryIndexProfileEvent = {
 };
 type EntryIndexProfileSink = (event: EntryIndexProfileEvent) => void;
 
-const entryIndexProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
+const entryIndexProfileNow = () =>
+	globalThis.performance?.now?.() ?? Date.now();
 const entryIndexProfileStart = (sink: EntryIndexProfileSink | undefined) =>
 	sink ? entryIndexProfileNow() : 0;
 const emitEntryIndexProfileDuration = (
@@ -155,6 +151,7 @@ type NativeJoinPlanInput = {
 };
 
 type MaybePromise<T> = T | Promise<T>;
+type PendingIndexWrite = ShallowEntry | (() => ShallowEntry);
 
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
 	!!value && typeof (value as { then?: unknown }).then === "function";
@@ -349,7 +346,10 @@ export type NativeLogGraph = {
 		reset?: boolean,
 		cutCheck?: NativeJoinCutCheck,
 	) => JoinPlan;
-	planJoinBatch?: (entries: NativeJoinPlanInput[], reset?: boolean) => JoinPlan[];
+	planJoinBatch?: (
+		entries: NativeJoinPlanInput[],
+		reset?: boolean,
+	) => JoinPlan[];
 };
 
 export type JoinPlan = {
@@ -484,7 +484,7 @@ export class EntryIndex<T> {
 	private initialied = false;
 	private _length: number;
 	private insertionPromises: Map<string, Promise<void>>;
-	private pendingIndexWrites: Map<string, ShallowEntry>;
+	private pendingIndexWrites: Map<string, PendingIndexWrite>;
 	private pendingIndexFlushTimer?: ReturnType<typeof setTimeout>;
 	private pendingIndexFlushLastWriteMs = 0;
 	constructor(
@@ -522,6 +522,25 @@ export class EntryIndex<T> {
 		this.pendingIndexWrites = new Map();
 	}
 
+	private materializePendingIndexWrite(
+		hash: string,
+		pending: PendingIndexWrite,
+	): ShallowEntry {
+		if (typeof pending !== "function") {
+			return pending;
+		}
+		const shallowEntry = pending();
+		this.pendingIndexWrites.set(hash, shallowEntry);
+		return shallowEntry;
+	}
+
+	private getPendingIndexWrite(hash: string): ShallowEntry | undefined {
+		const pending = this.pendingIndexWrites.get(hash);
+		return pending
+			? this.materializePendingIndexWrite(hash, pending)
+			: undefined;
+	}
+
 	private schedulePendingIndexWriteFlush() {
 		this.pendingIndexFlushLastWriteMs = Date.now();
 		if (this.pendingIndexFlushTimer) {
@@ -532,10 +551,7 @@ export class EntryIndex<T> {
 				DEFERRED_INDEX_FLUSH_IDLE_MS -
 				(Date.now() - this.pendingIndexFlushLastWriteMs);
 			if (remainingMs > 0) {
-				this.pendingIndexFlushTimer = setTimeout(
-					flushAfterIdle,
-					remainingMs,
-				);
+				this.pendingIndexFlushTimer = setTimeout(flushAfterIdle, remainingMs);
 				this.pendingIndexFlushTimer.unref?.();
 				return;
 			}
@@ -573,7 +589,7 @@ export class EntryIndex<T> {
 			if (!pending) {
 				continue;
 			}
-			writes.push(pending);
+			writes.push(this.materializePendingIndexWrite(hash, pending));
 		}
 		if (writes.length === 0) {
 			return;
@@ -1268,7 +1284,7 @@ export class EntryIndex<T> {
 	}
 
 	async getShallow(k: string) {
-		const pending = this.pendingIndexWrites.get(k);
+		const pending = this.getPendingIndexWrite(k);
 		if (pending) {
 			return { id: toId(k), value: pending };
 		}
@@ -1516,7 +1532,8 @@ export class EntryIndex<T> {
 			const putBatch =
 				!this.properties.onGidRemoved && this.properties.index.putBatch;
 			const shallowEntries: ShallowEntry[] = [];
-			const nativeGraphUpdated = properties.prepared?.nativeGraphUpdated === true;
+			const nativeGraphUpdated =
+				properties.prepared?.nativeGraphUpdated === true;
 			const nativeCommitOwnsHotIndex =
 				nativeGraphUpdated &&
 				properties.prepared?.nativeBlocksCommitted === true &&
@@ -1532,7 +1549,8 @@ export class EntryIndex<T> {
 					: undefined;
 			const nativeGraphPutBatch =
 				!nativeGraphUpdated &&
-				!this.properties.onGidRemoved && this.properties.nativeGraph?.graph.putBatch
+				!this.properties.onGidRemoved &&
+				this.properties.nativeGraph?.graph.putBatch
 					? this.properties.nativeGraph.graph.putBatch.bind(
 							this.properties.nativeGraph.graph,
 						)
@@ -1728,7 +1746,9 @@ export class EntryIndex<T> {
 			return;
 		}
 		if (this.properties.onGidRemoved) {
-			throw new Error("Prepared append facts batch requires no onGidRemoved hook");
+			throw new Error(
+				"Prepared append facts batch requires no onGidRemoved hook",
+			);
 		}
 
 		for (const entry of entries) {
@@ -1961,7 +1981,8 @@ export class EntryIndex<T> {
 		hash: string;
 		unique: boolean;
 		externalNextHashes: string[];
-		shallowEntry: ShallowEntry;
+		shallowEntry?: ShallowEntry;
+		getShallowEntry?: () => ShallowEntry;
 		isHead?: boolean;
 	}): Promise<void> | void {
 		if (!properties.hash) {
@@ -1975,8 +1996,20 @@ export class EntryIndex<T> {
 		) {
 			const isHead = properties.isHead ?? true;
 			this._length++;
-			properties.shallowEntry.head = isHead;
-			this.pendingIndexWrites.set(properties.hash, properties.shallowEntry);
+			if (!properties.shallowEntry && !properties.getShallowEntry) {
+				throw new Error("Missing shallow entry");
+			}
+			const pending =
+				properties.shallowEntry ??
+				(() => {
+					const shallowEntry = properties.getShallowEntry!();
+					shallowEntry.head = isHead;
+					return shallowEntry;
+				});
+			if (properties.shallowEntry) {
+				properties.shallowEntry.head = isHead;
+			}
+			this.pendingIndexWrites.set(properties.hash, pending);
 			this.schedulePendingIndexWriteFlush();
 			return;
 		}
@@ -1989,7 +2022,8 @@ export class EntryIndex<T> {
 			hash: string;
 			unique: boolean;
 			externalNextHashes: string[];
-			shallowEntry: ShallowEntry;
+			shallowEntry?: ShallowEntry;
+			getShallowEntry?: () => ShallowEntry;
 			isHead?: boolean;
 		},
 		existingPromise?: Promise<void>,
@@ -2003,8 +2037,20 @@ export class EntryIndex<T> {
 				this._length++;
 			}
 
-			properties.shallowEntry.head = isHead;
-			this.pendingIndexWrites.set(properties.hash, properties.shallowEntry);
+			if (!properties.shallowEntry && !properties.getShallowEntry) {
+				throw new Error("Missing shallow entry");
+			}
+			const pending =
+				properties.shallowEntry ??
+				(() => {
+					const shallowEntry = properties.getShallowEntry!();
+					shallowEntry.head = isHead;
+					return shallowEntry;
+				});
+			if (properties.shallowEntry) {
+				properties.shallowEntry.head = isHead;
+			}
+			this.pendingIndexWrites.set(properties.hash, pending);
 			this.schedulePendingIndexWriteFlush();
 
 			if (properties.externalNextHashes.length > 0) {
@@ -2028,7 +2074,7 @@ export class EntryIndex<T> {
 			throw new Error("Shallow hash doesn't match the key");
 		}
 
-		const pending = this.pendingIndexWrites.get(k);
+		const pending = this.getPendingIndexWrite(k);
 		from = from || pending || (await this.getShallow(k))?.value;
 		if (!from) {
 			return; // already deleted
@@ -2096,7 +2142,7 @@ export class EntryIndex<T> {
 
 		for (const node of nodes) {
 			this.cache.del(node.hash);
-			const pending = this.pendingIndexWrites.get(node.hash);
+			const pending = this.getPendingIndexWrite(node.hash);
 			if (pending) {
 				this.pendingIndexWrites.delete(node.hash);
 				deletedByHash.set(node.hash, pending);
@@ -2112,18 +2158,26 @@ export class EntryIndex<T> {
 			? (this.properties.index as IndexWithExactDelete)
 			: undefined;
 		if (indexedHashes.length > 0 && exactDeleteIndex) {
-			return mapMaybePromise(exactDeleteIndex.delIds(indexedHashes), (deleted) => {
-				for (const id of deleted) {
-					const hash = String(id.primitive);
-					const node = indexedByHash.get(hash);
-					if (!node || deletedByHash.has(hash)) {
-						continue;
+			return mapMaybePromise(
+				exactDeleteIndex.delIds(indexedHashes),
+				(deleted) => {
+					for (const id of deleted) {
+						const hash = String(id.primitive);
+						const node = indexedByHash.get(hash);
+						if (!node || deletedByHash.has(hash)) {
+							continue;
+						}
+						deletedByHash.set(hash, node);
+						storeHashes.push(hash);
 					}
-					deletedByHash.set(hash, node);
-					storeHashes.push(hash);
-				}
-				return this.finishDeleteMany(deletedByHash, nodes, storeHashes, options);
-			});
+					return this.finishDeleteMany(
+						deletedByHash,
+						nodes,
+						storeHashes,
+						options,
+					);
+				},
+			);
 		}
 		if (indexedHashes.length > 0) {
 			return this.deleteManyByQuery(
@@ -2228,8 +2282,9 @@ export class EntryIndex<T> {
 			? this.properties.index
 			: undefined;
 		if (exactDeleteIndex) {
-			return mapMaybePromise(exactDeleteIndex.delIds(indexedHashes), (deleted) =>
-				finish(deleted.length),
+			return mapMaybePromise(
+				exactDeleteIndex.delIds(indexedHashes),
+				(deleted) => finish(deleted.length),
 			);
 		}
 		return this.consumeNativeTrimmedEntryHashesNoReturnByQuery(
@@ -2263,7 +2318,7 @@ export class EntryIndex<T> {
 		const indexedHashes: string[] = [];
 		for (const node of nodes) {
 			this.cache.del(node.hash);
-			const pending = this.pendingIndexWrites.get(node.hash);
+			const pending = this.getPendingIndexWrite(node.hash);
 			if (pending) {
 				this.pendingIndexWrites.delete(node.hash);
 				deletedByHash.set(node.hash, pending);
@@ -2281,17 +2336,20 @@ export class EntryIndex<T> {
 			? (this.properties.index as IndexWithExactDelete)
 			: undefined;
 		if (indexedHashes.length > 0 && exactDeleteIndex) {
-			return mapMaybePromise(exactDeleteIndex.delIds(indexedHashes), (deleted) => {
-				for (const id of deleted) {
-					const hash = String(id.primitive);
-					const node = indexedByHash.get(hash);
-					if (!node || deletedByHash.has(hash)) {
-						continue;
+			return mapMaybePromise(
+				exactDeleteIndex.delIds(indexedHashes),
+				(deleted) => {
+					for (const id of deleted) {
+						const hash = String(id.primitive);
+						const node = indexedByHash.get(hash);
+						if (!node || deletedByHash.has(hash)) {
+							continue;
+						}
+						deletedByHash.set(hash, node);
 					}
-					deletedByHash.set(hash, node);
-				}
-				return finish();
-			});
+					return finish();
+				},
+			);
 		}
 		if (indexedHashes.length > 0) {
 			return this.consumeNativeTrimmedEntriesByQuery(
@@ -2310,7 +2368,7 @@ export class EntryIndex<T> {
 		options?: { skipNextHeadUpdates?: boolean },
 	): MaybePromise<ShallowEntry[]> {
 		this.cache.del(node.hash);
-		const pending = this.pendingIndexWrites.get(node.hash);
+		const pending = this.getPendingIndexWrite(node.hash);
 		if (pending) {
 			this.pendingIndexWrites.delete(node.hash);
 			return this.finishDeleteSingle(pending, options);
@@ -2352,7 +2410,10 @@ export class EntryIndex<T> {
 			}
 			return [node];
 		};
-		return mapMaybePromise(this.properties.store.rm(node.hash), afterStoreDelete);
+		return mapMaybePromise(
+			this.properties.store.rm(node.hash),
+			afterStoreDelete,
+		);
 	}
 
 	private async deleteManyByQuery(
@@ -2404,7 +2465,11 @@ export class EntryIndex<T> {
 				deletedByHash.set(hash, node);
 			}
 		}
-		return this.finishConsumeNativeTrimmedEntries(deletedByHash, nodes, options);
+		return this.finishConsumeNativeTrimmedEntries(
+			deletedByHash,
+			nodes,
+			options,
+		);
 	}
 
 	private finishConsumeNativeTrimmedEntries(
@@ -2545,10 +2610,11 @@ export class EntryIndex<T> {
 		}
 		const indexed =
 			(await this.properties.index.sum({ key: "payloadSize" })) || 0;
-		const pending = [...this.pendingIndexWrites.values()].reduce(
-			(sum, entry) => sum + (entry.payloadSize || 0),
-			0,
-		);
+		let pending = 0;
+		for (const [hash, write] of this.pendingIndexWrites) {
+			pending +=
+				this.materializePendingIndexWrite(hash, write).payloadSize || 0;
+		}
 		return typeof indexed === "bigint"
 			? indexed + BigInt(pending)
 			: indexed + pending;
@@ -2576,7 +2642,7 @@ export class EntryIndex<T> {
 				? this.properties.nativeGraph.graph.hasMany(hashes)
 				: undefined;
 		for (const next of hashes) {
-			const pending = this.pendingIndexWrites.get(next);
+			const pending = this.getPendingIndexWrite(next);
 			if (!pending && existingNexts && !existingNexts.has(next)) {
 				continue;
 			}

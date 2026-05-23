@@ -1116,17 +1116,14 @@ export class Log<T> {
 		}
 
 		const resolvedGid = EntryV0.createGid() as string;
-		const clock = new Clock({
-			id: identity.publicKey.bytes,
-			timestamp: this._hlc.now(),
-		});
+		const timestamp = this._hlc.now();
 		const entryType = options.meta?.type ?? EntryType.APPEND;
 		const preparedValue = prepare({
 			clockId: identity.publicKey.bytes,
 			privateKey: identity.privateKey.privateKey,
 			publicKey: identity.publicKey.publicKey,
-			wallTime: clock.timestamp.wallTime,
-			logical: clock.timestamp.logical,
+			wallTime: timestamp.wallTime,
+			logical: timestamp.logical,
 			gid: resolvedGid,
 			type: entryType,
 			metaData: options.meta?.data,
@@ -1144,25 +1141,33 @@ export class Log<T> {
 			}
 			const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
 			const effectiveGid = prepared.gid ?? resolvedGid;
-			const shallowEntry = new ShallowEntry({
-				hash,
-				payloadSize: payloadData.byteLength,
-				head: true,
-				meta: new ShallowMeta({
-					gid: effectiveGid,
-					data: options.meta?.data,
-					clock,
-					next: effectiveNextHashes,
-					type: entryType,
-				}),
-			});
+			let clock: Clock | undefined;
+			const getClock = () =>
+				(clock ??= new Clock({
+					id: identity.publicKey.bytes,
+					timestamp,
+				}));
+			let shallowEntry: ShallowEntry | undefined;
+			const getShallowEntry = () =>
+				(shallowEntry ??= new ShallowEntry({
+					hash,
+					payloadSize: payloadData.byteLength,
+					head: true,
+					meta: new ShallowMeta({
+						gid: effectiveGid,
+						data: options.meta?.data,
+						clock: getClock(),
+						next: effectiveNextHashes,
+						type: entryType,
+					}),
+				}));
 			const appendFacts: PreparedAppendFacts = {
 				hash,
 				gid: effectiveGid,
 				next: effectiveNextHashes,
-				wallTime: clock.timestamp.wallTime,
-				logical: clock.timestamp.logical,
-				clockId: clock.id,
+				wallTime: timestamp.wallTime,
+				logical: timestamp.logical,
+				clockId: identity.publicKey.bytes,
 				type: entryType,
 				metaData: options.meta?.data,
 				payloadSize: payloadData.byteLength,
@@ -1188,7 +1193,7 @@ export class Log<T> {
 				entry.hash = hash;
 				entry.size = prepared.byteLength;
 				entry.createdLocally = true;
-				Entry.prepareShallowEntry(entry, shallowEntry);
+				Entry.prepareShallowEntry(entry, getShallowEntry());
 				entry.init({ encoding: this._encoding, keychain: this._keychain });
 				materializedEntry = entry;
 				return entry;
@@ -1200,7 +1205,9 @@ export class Log<T> {
 				materializeEntry,
 				removed: [],
 				appendFacts,
-				shallowEntry,
+				get shallowEntry() {
+					return getShallowEntry();
+				},
 				documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
 				documentPreviousContext: prepared.documentPreviousContext,
 			});
@@ -1236,7 +1243,9 @@ export class Log<T> {
 								removed: [],
 								removedHashes: trimmedEntryHashes,
 								appendFacts,
-								shallowEntry,
+								get shallowEntry() {
+									return getShallowEntry();
+								},
 								documentTrimmedHeadsProcessed:
 									prepared.documentTrimmedHeadsProcessed,
 								documentPreviousContext: prepared.documentPreviousContext,
@@ -1259,7 +1268,9 @@ export class Log<T> {
 						removed,
 						removedHashes: prepared.trimmedEntryHashes,
 						appendFacts,
-						shallowEntry,
+						get shallowEntry() {
+							return getShallowEntry();
+						},
 						documentTrimmedHeadsProcessed:
 							prepared.documentTrimmedHeadsProcessed,
 						documentPreviousContext: prepared.documentPreviousContext,
@@ -1285,9 +1296,10 @@ export class Log<T> {
 					materializeEntry,
 					removed,
 					appendFacts,
-					shallowEntry,
-					documentTrimmedHeadsProcessed:
-						prepared.documentTrimmedHeadsProcessed,
+					get shallowEntry() {
+						return getShallowEntry();
+					},
+					documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
 					documentPreviousContext: prepared.documentPreviousContext,
 				}));
 			};
@@ -1315,7 +1327,7 @@ export class Log<T> {
 					hash,
 					unique: true,
 					externalNextHashes: effectiveNextHashes,
-					shallowEntry,
+					getShallowEntry,
 					isHead: true,
 				});
 				const result = mapMaybePromise(putResult, finishBlocks);

@@ -10461,38 +10461,39 @@ export class SharedLog<
 								this.removePeerFromGidPeerHistory(from, gid);
 							}
 
-							const waitFor: WaitForReplicator[] = [
-								{
-									key: this.node.identity.publicKey.hashcode(),
-									replicator: true,
-								},
-							];
-							const waitOptions: WaitForReplicatorsOptions<R> = {
-								onLeader: (key) => {
-									isLeader =
-										isLeader || key === this.node.identity.publicKey.hashcode();
-								},
-							};
-
 							if (
 								!!nativeLeaderHints.localLeaderFlags?.[i] ||
 								nativeLeaderHints.localLeaderHashes.has(hash)
 							) {
 								isLeader = true;
-							} else if (hasNativeEntry) {
-								await this._waitForGidReplicators(
-									gid,
-									replicas,
-									waitFor,
-									waitOptions,
-								);
 							} else {
-								await this._waitForEntryReplicators(
-									indexedEntry!.value,
-									replicas,
-									waitFor,
-									waitOptions,
-								);
+								const selfHash = this.node.identity.publicKey.hashcode();
+								const waitFor: WaitForReplicator[] = [
+									{
+										key: selfHash,
+										replicator: true,
+									},
+								];
+								const waitOptions: WaitForReplicatorsOptions<R> = {
+									onLeader: (key) => {
+										isLeader = isLeader || key === selfHash;
+									},
+								};
+								if (hasNativeEntry) {
+									await this._waitForGidReplicators(
+										gid,
+										replicas,
+										waitFor,
+										waitOptions,
+									);
+								} else {
+									await this._waitForEntryReplicators(
+										indexedEntry!.value,
+										replicas,
+										waitFor,
+										waitOptions,
+									);
+								}
 							}
 						}
 					}
