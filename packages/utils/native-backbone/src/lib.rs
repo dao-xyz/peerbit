@@ -2001,7 +2001,7 @@ impl NativePeerbitBackbone {
                 Vec::new(),
                 true,
             );
-            self.delete_coordinate_core_strings(next_hash_batches[index].clone());
+            self.delete_coordinate_core_strings(&next_hash_batches[index]);
         }
         Ok(())
     }
@@ -3591,8 +3591,8 @@ impl NativePeerbitBackbone {
                 entry_facts.hash.clone(),
                 gid.clone(),
                 hash_number,
-                Vec::new(),
-                trim_hashes.clone(),
+                &[],
+                &trim_hashes,
                 replicas,
                 0.0,
                 &now,
@@ -3608,8 +3608,8 @@ impl NativePeerbitBackbone {
             let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
             self.commit_coordinate_core_from_compact_facts(
                 &coordinate_facts,
-                Vec::new(),
-                trim_hashes,
+                &[],
+                &trim_hashes,
                 wall_time,
                 entry_facts.meta_bytes.clone(),
             );
@@ -4023,8 +4023,8 @@ impl NativePeerbitBackbone {
             entry_facts.hash.clone(),
             gid.clone(),
             hash_number,
-            Vec::new(),
-            trim_hashes.clone(),
+            &[],
+            &trim_hashes,
             replicas,
             role_age_ms,
             &now,
@@ -4040,8 +4040,8 @@ impl NativePeerbitBackbone {
         let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
         self.commit_coordinate_core_from_compact_facts(
             &coordinate_facts,
-            Vec::new(),
-            trim_hashes.clone(),
+            &[],
+            &trim_hashes,
             wall_time,
             entry_facts.meta_bytes.clone(),
         );
@@ -4690,8 +4690,8 @@ impl NativePeerbitBackbone {
     fn commit_coordinate_core_from_compact_facts(
         &mut self,
         facts: &NativeLocalAppendCompactFacts,
-        next_hashes: Vec<String>,
-        delete_hashes: Vec<String>,
+        next_hashes: &[String],
+        delete_hashes: &[String],
         wall_time: u64,
         meta_bytes: Vec<u8>,
     ) {
@@ -4816,9 +4816,9 @@ impl NativePeerbitBackbone {
         Ok(())
     }
 
-    fn delete_coordinate_core_strings(&mut self, hashes: Vec<String>) {
+    fn delete_coordinate_core_strings(&mut self, hashes: &[String]) {
         for hash in hashes {
-            self.delete_coordinate_core(&hash);
+            self.delete_coordinate_core(hash);
         }
     }
 
@@ -4974,9 +4974,6 @@ impl NativePeerbitBackbone {
         if let Some(started) = hash_number_started {
             self.append_profile.hash_number_ms += js_sys::Date::now() - started;
         }
-        let next_hashes_for_core = next_hashes.clone();
-        let trim_hashes_for_core = trim_hashes.clone();
-        let trim_hashes_for_result = trim_hashes.clone();
         let document_hash = hash.clone();
         let document_gid = gid.clone();
         let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
@@ -4985,8 +4982,8 @@ impl NativePeerbitBackbone {
             hash,
             gid,
             hash_number,
-            next_hashes,
-            trim_hashes,
+            &next_hashes,
+            &trim_hashes,
             replicas,
             role_age_ms,
             &now,
@@ -5001,8 +4998,8 @@ impl NativePeerbitBackbone {
         let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
         self.commit_coordinate_core_from_compact_facts(
             &coordinate_facts,
-            next_hashes_for_core,
-            trim_hashes_for_core,
+            &next_hashes,
+            &trim_hashes,
             wall_time,
             meta_bytes,
         );
@@ -5017,8 +5014,8 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
-        let document_trimmed_heads_processed = delete_trimmed_document_heads
-            && self.delete_documents_by_context_heads(&trim_hashes_for_result);
+        let document_trimmed_heads_processed =
+            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
         if let Some(started) = document_index_started {
             self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
         }
@@ -5033,7 +5030,7 @@ impl NativePeerbitBackbone {
         ));
         out.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
         out.push(&trim_rows);
-        out.push(&strings_to_array(trim_hashes_for_result));
+        out.push(&strings_to_array(trim_hashes));
         out.push(&JsValue::from_bool(document_trimmed_heads_processed));
         out.push(
             &previous_document_context

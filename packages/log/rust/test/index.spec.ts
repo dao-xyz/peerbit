@@ -979,6 +979,62 @@ describe("native EntryV0 encoding", () => {
 		expect(blockStore.has(third!.cid)).equal(true);
 	});
 
+	it("commits facts-only prepared plain entries and trim hashes natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+			resolveTrimmedEntries: false,
+		};
+
+		const first = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 11n,
+				gid: "gid-a",
+				payloadData: new Uint8Array([1]),
+			},
+			blockStore,
+		);
+		await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 12n,
+				gid: "gid-b",
+				payloadData: new Uint8Array([2]),
+			},
+			blockStore,
+		);
+
+		const third = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 13n,
+				gid: "gid-c",
+				payloadData: new Uint8Array([3]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+
+		expect(third?.trimmedEntries).equal(undefined);
+		expect(third?.trimmedEntryHashes).to.deep.equal([first!.cid]);
+		expect(index.has(first!.cid)).equal(false);
+		expect(blockStore.has(first!.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(blockStore.has(third!.cid)).equal(true);
+	});
+
 	it("commits storage-only prepared plain entries and trim facts natively", async () => {
 		const privateKey = fromHex(
 			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",

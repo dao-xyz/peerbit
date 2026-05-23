@@ -90,6 +90,7 @@ type NativePlainEntryInput = {
 	includeMaterializationBytes?: boolean;
 	includeAppendFactsBytes?: boolean;
 	trimLengthTo?: number;
+	resolveTrimmedEntries?: boolean;
 };
 
 type NativePlainEntriesInput = {
@@ -116,6 +117,7 @@ type NativePreparedPlainEntry = {
 	signatureBytes?: Uint8Array;
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
+	trimmedEntryHashes?: string[];
 };
 
 export type PreparedRawEntryV0Facts = {
@@ -1244,6 +1246,8 @@ export class EntryV0<T>
 			includeMaterializationBytes: properties.includeMaterializationBytes,
 			includeAppendFactsBytes: properties.includeAppendFactsBytes,
 			trimLengthTo: properties.nativeTrimLengthTo,
+			resolveTrimmedEntries:
+				properties.nativeTrimLengthTo == null ? undefined : false,
 		};
 		let nativeBlocksCommitted = false;
 		let nativeGraphUpdated = false;
@@ -1369,6 +1373,7 @@ export class EntryV0<T>
 				shallowEntries: [shallowEntry],
 				appendFacts: [appendFacts],
 				trimmedNativeEntries: preparedEntry.trimmedEntries,
+				trimmedNativeEntryHashes: preparedEntry.trimmedEntryHashes,
 				trimmedNativeBlocksDeleted: nativeBlocksCommitted,
 				nativeGraphUpdated,
 				nativeBlocksCommitted,

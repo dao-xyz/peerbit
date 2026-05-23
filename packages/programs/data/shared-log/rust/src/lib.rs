@@ -1743,8 +1743,8 @@ pub fn commit_local_append_for_gid_compact_core(
     entry_hash: String,
     gid: String,
     entry_hash_number: u64,
-    next_hashes: Vec<String>,
-    delete_hashes: Vec<String>,
+    next_hashes: &[String],
+    delete_hashes: &[String],
     replicas: usize,
     role_age_ms: f64,
     now: &str,
@@ -1787,10 +1787,10 @@ pub fn commit_local_append_for_gid_compact_core(
     );
     let mut deleted = IndexSet::new();
     for hash in next_hashes {
-        deleted.insert(hash);
+        deleted.insert(hash.clone());
     }
     for hash in delete_hashes {
-        deleted.insert(hash);
+        deleted.insert(hash.clone());
     }
     for hash in deleted {
         state.inner.delete_entry_coordinate_state(&hash);

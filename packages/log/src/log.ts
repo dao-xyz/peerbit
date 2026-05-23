@@ -1588,6 +1588,55 @@ export class Log<T> {
 			return entry;
 		};
 		const finishTrim = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+			if (nativeAppendChain.trimmedNativeEntryHashes) {
+				const trimmedEntryHashes = [
+					...new Set(nativeAppendChain.trimmedNativeEntryHashes),
+				];
+				if (
+					properties?.resolveTrimmedEntries === false &&
+					nativeAppendChain.trimmedNativeBlocksDeleted === true
+				) {
+					const consumedNoReturn =
+						this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+							trimmedEntryHashes,
+							{
+								skipNextHeadUpdates: true,
+								deleteBlocks: false,
+							},
+						);
+					if (consumedNoReturn !== undefined) {
+						return mapMaybePromise(consumedNoReturn, () => ({
+							get entry() {
+								return materializeEntry();
+							},
+							materializeEntry,
+							removed: [],
+							removedHashes: trimmedEntryHashes,
+							appendFacts,
+							shallowEntry,
+						}));
+					}
+				}
+				const consumedResult =
+					this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
+						trimmedEntryHashes,
+						{
+							skipNextHeadUpdates: true,
+							deleteBlocks:
+								nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+						},
+					);
+				return mapMaybePromise(consumedResult, (removed) => ({
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					removedHashes: trimmedEntryHashes,
+					appendFacts,
+					shallowEntry,
+				}));
+			}
 			if (nativeAppendChain.trimmedNativeEntries) {
 				const trimmedEntries = this.entryIndex.nativeLogEntriesToShallowEntries(
 					nativeAppendChain.trimmedNativeEntries,
