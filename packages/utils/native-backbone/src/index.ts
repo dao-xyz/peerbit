@@ -679,6 +679,20 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_plain_put_payload?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
 	prepare_plain_entry_commit_no_next_facts_document_index_trim_hashes: (
 		wallTime: bigint,
 		logical: number,
@@ -747,6 +761,21 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlanId: number,
 		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+	) => unknown[];
+	prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		trimLengthTo: number,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
 	prepare_plain_entry_commit_latest_facts_document_index_trim_hashes: (
@@ -3078,6 +3107,34 @@ export class NativeBackboneLogGraph {
 			input.trimLengthTo != null &&
 			hasNoNext
 		) {
+			const projectionPlanId = this.options.documentProjectionPlanId(
+				projection.plan,
+			);
+			const plainPutPayloadCommit =
+				this.native
+					.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload;
+			if (plainPutPayloadCommit) {
+				return compactPreparedCommitFactsWithTrimHashesFromRow(
+					plainPutPayloadCommit.call(
+						this.native,
+						wallTime,
+						logical,
+						input.gid,
+						entryType,
+						input.metaData,
+						input.payloadData,
+						input.trimLengthTo,
+						documentIndex.key,
+						documentIndex.existingCreated == null
+							? ""
+							: integerString(documentIndex.existingCreated),
+						documentIndex.byteElementIndexLimit ?? 0,
+						documentIndex.deleteTrimmedHeads === true,
+						projectionPlanId,
+						projection.signer,
+					),
+				);
+			}
 			return compactPreparedCommitFactsWithTrimHashesFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes(
 					wallTime,
@@ -3093,7 +3150,7 @@ export class NativeBackboneLogGraph {
 						: integerString(documentIndex.existingCreated),
 					documentIndex.byteElementIndexLimit ?? 0,
 					documentIndex.deleteTrimmedHeads === true,
-					this.options.documentProjectionPlanId(projection.plan),
+					projectionPlanId,
 					projection.encodedDocument,
 					projection.signer,
 				),
@@ -3106,6 +3163,33 @@ export class NativeBackboneLogGraph {
 			input.trimLengthTo == null &&
 			hasNoNext
 		) {
+			const projectionPlanId = this.options.documentProjectionPlanId(
+				projection.plan,
+			);
+			const plainPutPayloadCommit =
+				this.native
+					.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_plain_put_payload;
+			if (plainPutPayloadCommit) {
+				return preparedCommitFactsFromRow(
+					plainPutPayloadCommit.call(
+						this.native,
+						wallTime,
+						logical,
+						input.gid,
+						entryType,
+						input.metaData,
+						input.payloadData,
+						documentIndex.key,
+						documentIndex.existingCreated == null
+							? ""
+							: integerString(documentIndex.existingCreated),
+						documentIndex.byteElementIndexLimit ?? 0,
+						documentIndex.deleteTrimmedHeads === true,
+						projectionPlanId,
+						projection.signer,
+					),
+				);
+			}
 			return preparedCommitFactsFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact(
 					wallTime,
@@ -3120,7 +3204,7 @@ export class NativeBackboneLogGraph {
 						: integerString(documentIndex.existingCreated),
 					documentIndex.byteElementIndexLimit ?? 0,
 					documentIndex.deleteTrimmedHeads === true,
-					this.options.documentProjectionPlanId(projection.plan),
+					projectionPlanId,
 					projection.encodedDocument,
 					projection.signer,
 				),

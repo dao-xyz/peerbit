@@ -1265,6 +1265,32 @@ impl NativeLogIndex {
         payload_data: Vec<u8>,
         mut profile: Option<&mut NativeLogAppendProfile>,
     ) -> Result<NativeCommittedEntryFacts, JsValue> {
+        self.prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            &payload_data,
+            profile.as_deref_mut(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<NativeCommittedEntryFacts, JsValue> {
         let core_started = profile.as_ref().map(|_| js_sys::Date::now());
         let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
             &builder.clock_id,
@@ -1327,6 +1353,67 @@ impl NativeLogIndex {
         entry_type: u8,
         meta_data: Option<Vec<u8>>,
         payload_data: Vec<u8>,
+        trim_length_to: usize,
+        trim_mode: NativeTrimMode,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, NativeTrimResult), JsValue> {
+        self.prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            entry_type,
+            meta_data,
+            &payload_data,
+            trim_length_to,
+            trim_mode,
+            profile.as_deref_mut(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
+        trim_length_to: usize,
+        profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+        let (facts, trimmed) = self
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner_borrowed(
+                builder,
+                block_store,
+                wall_time,
+                logical,
+                gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                NativeTrimMode::Hashes,
+                profile,
+            )?;
+        Ok((facts, trimmed.into_hashes()))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_inner_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
         trim_length_to: usize,
         trim_mode: NativeTrimMode,
         mut profile: Option<&mut NativeLogAppendProfile>,
@@ -1495,7 +1582,7 @@ impl NativeLogIndex {
             next,
             entry_type,
             meta_data,
-            payload_data,
+            &payload_data,
             profile.as_deref_mut(),
         )?;
         if let Some(started) = core_started {
@@ -3536,7 +3623,7 @@ fn prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
     next: Vec<String>,
     entry_type: u8,
     meta_data: Option<Vec<u8>>,
-    payload_data: Vec<u8>,
+    payload_data: &[u8],
     mut profile: Option<&mut NativeLogAppendProfile>,
 ) -> Result<PreparedPlainEntryCommitCore, JsValue> {
     let payload_size = payload_data.len() as u32;
@@ -4096,7 +4183,7 @@ pub fn benchmark_plain_entry_v0_core(
             Vec::new(),
             0,
             None,
-            payload_data,
+            &payload_data,
             Some(&mut profile),
         )?;
         profile.entry_core_ms += js_sys::Date::now() - core_started;
@@ -4293,6 +4380,7 @@ pub fn benchmark_entry_v0_storage_verify_modes(
     let mut storages = Vec::with_capacity(len);
     let mut storage_bytes_total = 0usize;
     for i in 0..iterations {
+        let payload_data = payload_data.clone();
         let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
             &clock_id,
             &public_key,
@@ -4303,7 +4391,7 @@ pub fn benchmark_entry_v0_storage_verify_modes(
             Vec::new(),
             0,
             None,
-            payload_data.clone(),
+            &payload_data,
             None,
         )?;
         storage_bytes_total += core.storage_bytes.len();

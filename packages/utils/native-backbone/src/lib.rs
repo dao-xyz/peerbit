@@ -118,6 +118,10 @@ enum DocumentIndexValuePrefix {
         plan: DocumentIndexProjectionPlan,
         signer: Option<Vec<u8>>,
     },
+    PlainPutPayloadProjection {
+        plan: DocumentIndexProjectionPlan,
+        signer: Option<Vec<u8>>,
+    },
 }
 
 enum DocumentIndexProjectionPlan {
@@ -2936,6 +2940,58 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_plain_put_payload(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let payload_data = payload_data.to_vec();
+        let document_index_commit =
+            document_index_cached_projection_plain_put_payload_append_commit(
+                document_key,
+                document_existing_created,
+                document_byte_element_index_limit,
+                document_delete_trimmed_heads,
+                document_projection_plan_id,
+                document_projection_signer,
+            )?;
+        let entry_facts = self
+            .log
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_borrowed(
+                &self.builder,
+                &mut self.blocks,
+                wall_time,
+                logical,
+                gid,
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                &payload_data,
+                None,
+            )?;
+        self.put_document_index_for_append_with_plain_put_payload(
+            Some(document_index_commit),
+            wall_time,
+            &entry_facts.hash,
+            &document_gid,
+            payload_size,
+            Some(&payload_data),
+        )?;
+        Ok(committed_entry_facts_to_row(&entry_facts, false))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn prepare_plain_entry_commit_no_next_document_index_compact(
         &mut self,
         wall_time: u64,
@@ -3366,6 +3422,67 @@ impl NativePeerbitBackbone {
             document_index_commit,
             true,
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_entry_commit_no_next_facts_document_index_cached_plan_compact_trim_hashes_plain_put_payload(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        trim_length_to: usize,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_signer: JsValue,
+    ) -> Result<Array, JsValue> {
+        let document_gid = gid.clone();
+        let payload_size = payload_data.length();
+        let payload_data = payload_data.to_vec();
+        let document_index_commit =
+            document_index_cached_projection_plain_put_payload_append_commit(
+                document_key,
+                document_existing_created,
+                document_byte_element_index_limit,
+                document_delete_trimmed_heads,
+                document_projection_plan_id,
+                document_projection_signer,
+            )?;
+        let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
+        let (entry_facts, trim_hashes) = self
+            .log
+            .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+                &self.builder,
+                &mut self.blocks,
+                wall_time,
+                logical,
+                gid,
+                entry_type,
+                optional_bytes_from_js(meta_data),
+                &payload_data,
+                trim_length_to,
+                None,
+            )?;
+        self.put_document_index_for_append_with_plain_put_payload(
+            Some(document_index_commit),
+            wall_time,
+            &entry_facts.hash,
+            &document_gid,
+            payload_size,
+            Some(&payload_data),
+        )?;
+        let document_trimmed_heads_processed =
+            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        Ok(compact_committed_entry_facts_trim_hashes_to_row(
+            &entry_facts,
+            trim_hashes,
+            document_trimmed_heads_processed,
+        ))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5202,6 +5319,25 @@ impl NativePeerbitBackbone {
         gid: &str,
         payload_size: u32,
     ) -> Result<(), JsValue> {
+        self.put_document_index_for_append_with_plain_put_payload(
+            document_index_commit,
+            wall_time,
+            hash,
+            gid,
+            payload_size,
+            None,
+        )
+    }
+
+    fn put_document_index_for_append_with_plain_put_payload(
+        &mut self,
+        document_index_commit: Option<DocumentIndexAppendCommit>,
+        wall_time: u64,
+        hash: &str,
+        gid: &str,
+        payload_size: u32,
+        plain_put_payload_data: Option<&[u8]>,
+    ) -> Result<(), JsValue> {
         let Some(document_index_commit) = document_index_commit else {
             return Ok(());
         };
@@ -5250,6 +5386,41 @@ impl NativePeerbitBackbone {
                     )?
                 }
             },
+            DocumentIndexValuePrefix::PlainPutPayloadProjection { plan, signer } => {
+                let encoded_document = plain_put_payload_data
+                    .map(plain_put_document_bytes_from_payload)
+                    .transpose()?
+                    .ok_or_else(|| {
+                        JsValue::from_str("Missing plain put payload for document projection")
+                    })?;
+                match plan {
+                    DocumentIndexProjectionPlan::Inline(plan) => {
+                        project_document_index_simple_bytes_with_plan(
+                            encoded_document,
+                            &plan,
+                            document_index_commit.existing_created.unwrap_or(wall_time),
+                            wall_time,
+                            gid,
+                            payload_size,
+                            signer.as_deref(),
+                        )?
+                    }
+                    DocumentIndexProjectionPlan::Cached(index) => {
+                        let plan = self.document_projection_plans.get(index).ok_or_else(|| {
+                            JsValue::from_str("Missing cached document projection plan")
+                        })?;
+                        project_document_index_simple_bytes_with_plan(
+                            encoded_document,
+                            plan,
+                            document_index_commit.existing_created.unwrap_or(wall_time),
+                            wall_time,
+                            gid,
+                            payload_size,
+                            signer.as_deref(),
+                        )?
+                    }
+                }
+            }
         };
         self.put_document_encoded_parts_stored_inner(
             document_index_commit.key,
@@ -5658,6 +5829,56 @@ fn document_index_cached_projection_append_commit(
         previous_context: None,
         known_existing: false,
     })
+}
+
+fn document_index_cached_projection_plain_put_payload_append_commit(
+    key: String,
+    existing_created: String,
+    byte_element_index_limit: usize,
+    delete_trimmed_heads: bool,
+    projection_plan_id: u32,
+    projection_signer: JsValue,
+) -> Result<DocumentIndexAppendCommit, JsValue> {
+    Ok(DocumentIndexAppendCommit {
+        key,
+        value_prefix: DocumentIndexValuePrefix::PlainPutPayloadProjection {
+            plan: DocumentIndexProjectionPlan::Cached(projection_plan_id as usize),
+            signer: if projection_signer.is_null() || projection_signer.is_undefined() {
+                None
+            } else {
+                Some(Uint8Array::new(&projection_signer).to_vec())
+            },
+        },
+        existing_created: parse_optional_u64_string(
+            &existing_created,
+            "document existing created",
+        )?,
+        byte_element_index_limit,
+        delete_trimmed_heads,
+        previous_context: None,
+        known_existing: false,
+    })
+}
+
+fn plain_put_document_bytes_from_payload(payload_data: &[u8]) -> Result<&[u8], JsValue> {
+    const PLAIN_PUT_OPERATION_PREFIX_LENGTH: usize = 6;
+    if payload_data.len() < PLAIN_PUT_OPERATION_PREFIX_LENGTH {
+        return Err(JsValue::from_str("Plain put payload is too short"));
+    }
+    if payload_data[0] != 0 || payload_data[1] != 3 {
+        return Err(JsValue::from_str("Expected native plain put payload"));
+    }
+    let declared_len = u32::from_le_bytes([
+        payload_data[2],
+        payload_data[3],
+        payload_data[4],
+        payload_data[5],
+    ]) as usize;
+    let document_bytes = &payload_data[PLAIN_PUT_OPERATION_PREFIX_LENGTH..];
+    if document_bytes.len() != declared_len {
+        return Err(JsValue::from_str("Plain put payload length mismatch"));
+    }
+    Ok(document_bytes)
 }
 
 struct CoordinateCoreValue {
