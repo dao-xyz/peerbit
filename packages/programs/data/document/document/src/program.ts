@@ -194,17 +194,6 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 		options: DocumentPutOptions | undefined,
 	): DocumentPutOptions | undefined;
 	preparePlainPut(doc: T): PreparedPlainPut<T>;
-	getLocalIndexedContext(
-		key: indexerTypes.IdKey,
-	): Promise<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>;
-	nextFromIndexedContext(
-		existingHead: string,
-		existing:
-			| indexerTypes.IndexedResult<IndexedContextOnly<I>>
-			| null
-			| undefined,
-	): ShallowEntry | undefined;
-	resolveEntry(history: string): Promise<Entry<Operation> | undefined>;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
@@ -234,32 +223,39 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 {
 	constructor(private readonly context: NativeDocumentBackendContext<T, I>) {}
 
-	async put(doc: T, options?: DocumentPutOptions): Promise<DocumentPutResult> {
+	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult> {
 		this.context.assertPlainPutSupported(doc, options);
 		const putOptions = this.context.normalizePutOptions(options);
 		const prepared = this.context.preparePlainPut(doc);
 		const useNativeExistingDocumentContext = !putOptions?.unique;
 
-		const documentAppendCommit = await this.context.commitNativeDocumentAppend({
-			document: prepared.document,
-			key: prepared.key,
-			documentBytes: prepared.encodedDocument,
-			operationPayloadBytes: prepared.operationPayloadBytes,
-			next: [],
-			skipMissingNextJoin: true,
-			resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
-			options: putOptions,
-			unique: putOptions?.unique,
-			useNativeExistingDocumentContext,
-		});
-		await this.context.handlePreparedPlainPutCommit(documentAppendCommit);
-		this.context.keepEntry(documentAppendCommit.append.hash);
-		return {
-			get entry() {
-				return documentAppendCommit.entry;
-			},
-			removed: documentAppendCommit.removed,
-		};
+		return mapMaybePromise(
+			this.context.commitNativeDocumentAppend({
+				document: prepared.document,
+				key: prepared.key,
+				documentBytes: prepared.encodedDocument,
+				operationPayloadBytes: prepared.operationPayloadBytes,
+				next: [],
+				skipMissingNextJoin: true,
+				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
+				options: putOptions,
+				unique: putOptions?.unique,
+				useNativeExistingDocumentContext,
+			}),
+			(documentAppendCommit) =>
+				mapMaybePromise(
+					this.context.handlePreparedPlainPutCommit(documentAppendCommit),
+					() => {
+						this.context.keepEntry(documentAppendCommit.append.hash);
+						return {
+							get entry() {
+								return documentAppendCommit.entry;
+							},
+							removed: documentAppendCommit.removed,
+						};
+					},
+				),
+		);
 	}
 }
 
@@ -593,10 +589,6 @@ export class Documents<
 			normalizePutOptions: (options) =>
 				this.normalizeNativeModePutOptions(options),
 			preparePlainPut: (doc) => this.preparePlainPut(doc),
-			getLocalIndexedContext: (key) => this.getLocalIndexedContext(key),
-			nextFromIndexedContext: (existingHead, existing) =>
-				this.nextFromIndexedContext(existingHead, existing),
-			resolveEntry: (history) => this._resolveEntry(history),
 			shouldResolveTrimmedEntries: () => {
 				const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
 					? this._index.canGetIdentityIndexedByHead()

@@ -5215,7 +5215,17 @@ export class NativePeerbitBackbone {
 		if (projection) {
 			const row =
 				this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction(
-					...nativeNoNextAppendArgs(input),
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					input.replicas,
+					input.roleAgeMs ?? 0,
+					integerString(input.now ?? Date.now()),
+					input.selfHash ?? "",
+					input.selfReplicating ?? true,
 					documentIndex.key,
 					documentIndex.existingCreated == null
 						? ""
@@ -5234,7 +5244,17 @@ export class NativePeerbitBackbone {
 		}
 		const row =
 			this.native.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction(
-				...nativeNoNextAppendArgs(input),
+				BigInt(input.wallTime),
+				input.logical ?? 0,
+				input.gid,
+				input.type ?? 0,
+				input.metaData,
+				input.payloadData,
+				input.replicas,
+				input.roleAgeMs ?? 0,
+				integerString(input.now ?? Date.now()),
+				input.selfHash ?? "",
+				input.selfReplicating ?? true,
 				documentIndex.key,
 				documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
 				documentIndex.existingCreated == null
