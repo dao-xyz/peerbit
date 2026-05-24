@@ -1209,6 +1209,10 @@ describe("raw exchange-head sync", () => {
 							row.name,
 						).to.equal(true);
 						expect(
+							receivePlanProfile?.details.nativeReceiveGroupLeaderPlans,
+							row.name,
+						).to.equal(true);
+						expect(
 							(nativePreparedJoinCommitSpy?.callCount ?? 0) +
 								(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0),
 							row.name,

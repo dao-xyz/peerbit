@@ -9796,8 +9796,49 @@ export class SharedLog<
 							});
 						}
 					}
+					let usedNativeReceiveGroupLeaderPlans = false;
 					if (!isReplicating) {
-						const leaderPlans = await this.planEntryLeaderBatch(
+						let leaderPlans: EntryLeaderPlan<R>[] | undefined;
+						if (
+							usedNativeRawGroups &&
+							this._nativeBackbone &&
+							receiveGroups.length > 0
+						) {
+							try {
+								const leaderContext =
+									await this.createLeaderSelectionContext();
+								const nativeLeaderPlans =
+									this._nativeBackbone.planLeadersForGidsBatch(
+										receiveGroups.map((group) => ({
+											gid: group.gid,
+											replicas: group.maxMaxReplicas,
+										})),
+										this.createNativeLeaderOptions(leaderContext),
+									);
+								if (nativeLeaderPlans.length === receiveGroups.length) {
+									leaderPlans = nativeLeaderPlans.map((nativePlan) => {
+										const leaders = nativePlan.leaders;
+										return {
+											coordinates: Array.from(
+												nativePlan.coordinates as Iterable<
+													NumberFromType<R>
+												>,
+											),
+											leaders,
+											isLeader: leaders.has(leaderContext.selfHash),
+											assignedToRangeBoundary:
+												"assignedToRangeBoundary" in nativePlan
+													? (nativePlan.assignedToRangeBoundary as boolean)
+													: undefined,
+										};
+									});
+									usedNativeReceiveGroupLeaderPlans = true;
+								}
+							} catch {
+								leaderPlans = undefined;
+							}
+						}
+						leaderPlans ??= await this.planEntryLeaderBatch(
 							receiveGroups.map((group) => ({
 								entry: group.latestEntry,
 								replicas: group.maxMaxReplicas,
@@ -9826,6 +9867,8 @@ export class SharedLog<
 								replicating: isReplicating,
 								predecodedReplicaHits: receivePredecodedReplicaHits,
 								nativeRawGroups: usedNativeRawGroups,
+								nativeReceiveGroupLeaderPlans:
+									usedNativeReceiveGroupLeaderPlans,
 							},
 						});
 					}
