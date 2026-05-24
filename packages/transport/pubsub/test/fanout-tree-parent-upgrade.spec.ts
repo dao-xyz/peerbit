@@ -3,7 +3,23 @@ import { FanoutTree } from "../src/index.js";
 
 const JOIN_REJECT_NO_CAPACITY = 2;
 const TRACKER_FEEDBACK_JOIN_REJECT = 4;
+const TEST_MSG_PARENT_PROBE_REPLY = 41;
+const TEST_PARENT_PROBE_REPLY_BYTES = 64;
+const TEST_PARENT_PROBE_REPLY_REQ_ID_OFFSET = 33;
+const TEST_PARENT_PROBE_REPLY_FLAGS_OFFSET = 37;
+const TEST_PARENT_PROBE_REPLY_LEVEL_OFFSET = 38;
+const TEST_PARENT_PROBE_REPLY_MAX_CHILDREN_OFFSET = 40;
+const TEST_PARENT_PROBE_REPLY_FREE_SLOTS_OFFSET = 42;
+const TEST_PARENT_PROBE_REPLY_CHILDREN_OFFSET = 44;
+const TEST_PARENT_PROBE_REPLY_HAVE_TO_EXCLUSIVE_OFFSET = 46;
+const TEST_PARENT_PROBE_REPLY_MISSING_SEQS_OFFSET = 50;
+const TEST_PARENT_PROBE_REPLY_DATA_WRITE_DROPS_OFFSET = 52;
+const TEST_PARENT_PROBE_REPLY_DROPPED_FORWARDS_OFFSET = 56;
+const TEST_PARENT_PROBE_REPLY_RESERVATION_TOKEN_OFFSET = 60;
+const PARENT_PROBE_FLAG_ROOTED = 1 << 0;
 const PARENT_PROBE_FLAG_ACCEPTING = 1 << 1;
+const PARENT_PROBE_FLAG_REPAIRING = 1 << 2;
+const PARENT_PROBE_FLAG_OVERLOADED = 1 << 3;
 
 type ImproveCandidate = {
 	hash: string;
@@ -320,6 +336,61 @@ const readTestU32BE = (buf: Uint8Array, offset: number) =>
 		(buf[offset + 2]! << 8) |
 		buf[offset + 3]!) >>>
 	0;
+
+const expectParentProbeReplyWireLayout = (
+	reply: Uint8Array,
+	expected: {
+		channelKey: Uint8Array;
+		reqId: number;
+		flags: number;
+		level: number;
+		maxChildren: number;
+		freeSlots: number;
+		children: number;
+		haveToExclusive: number;
+		missingSeqs: number;
+		dataWriteDrops: number;
+		droppedForwards: number;
+		reservationToken: number;
+	},
+) => {
+	expect(reply.length).to.equal(TEST_PARENT_PROBE_REPLY_BYTES);
+	expect(reply[0]).to.equal(TEST_MSG_PARENT_PROBE_REPLY);
+	expect(Array.from(reply.subarray(1, 33))).to.deep.equal(
+		Array.from(expected.channelKey),
+	);
+	expect(readTestU32BE(reply, TEST_PARENT_PROBE_REPLY_REQ_ID_OFFSET)).to.equal(
+		expected.reqId,
+	);
+	expect(reply[TEST_PARENT_PROBE_REPLY_FLAGS_OFFSET]).to.equal(expected.flags);
+	expect(readTestU16BE(reply, TEST_PARENT_PROBE_REPLY_LEVEL_OFFSET)).to.equal(
+		expected.level,
+	);
+	expect(
+		readTestU16BE(reply, TEST_PARENT_PROBE_REPLY_MAX_CHILDREN_OFFSET),
+	).to.equal(expected.maxChildren);
+	expect(
+		readTestU16BE(reply, TEST_PARENT_PROBE_REPLY_FREE_SLOTS_OFFSET),
+	).to.equal(expected.freeSlots);
+	expect(
+		readTestU16BE(reply, TEST_PARENT_PROBE_REPLY_CHILDREN_OFFSET),
+	).to.equal(expected.children);
+	expect(
+		readTestU32BE(reply, TEST_PARENT_PROBE_REPLY_HAVE_TO_EXCLUSIVE_OFFSET),
+	).to.equal(expected.haveToExclusive);
+	expect(
+		readTestU16BE(reply, TEST_PARENT_PROBE_REPLY_MISSING_SEQS_OFFSET),
+	).to.equal(expected.missingSeqs);
+	expect(
+		readTestU32BE(reply, TEST_PARENT_PROBE_REPLY_DATA_WRITE_DROPS_OFFSET),
+	).to.equal(expected.dataWriteDrops);
+	expect(
+		readTestU32BE(reply, TEST_PARENT_PROBE_REPLY_DROPPED_FORWARDS_OFFSET),
+	).to.equal(expected.droppedForwards);
+	expect(
+		readTestU32BE(reply, TEST_PARENT_PROBE_REPLY_RESERVATION_TOKEN_OFFSET),
+	).to.equal(expected.reservationToken);
+};
 
 const createRootReservationMetrics = () => ({
 	dataWriteDrops: 0,
@@ -1077,6 +1148,58 @@ describe("fanout-tree parent upgrades", () => {
 		expect(attempts).to.deep.equal(["root"]);
 		expect(ch.parent).to.equal("root");
 		expect(joinReservationToken).to.equal(0x12345678);
+	});
+
+	it("keeps parent probe reply wire layout stable", async () => {
+		const channelKey = Uint8Array.from(
+			Array.from({ length: 32 }, (_value, index) => index),
+		);
+		const ch = createRootReservationChannel({
+			id: { key: channelKey, root: "root" },
+			level: 3,
+			children: new Map([
+				["child-a", {}],
+				["child-b", {}],
+			]),
+			effectiveMaxChildren: 12,
+			missingSeqs: new Set([4, 9]),
+			overloadStreak: 1,
+			maxSeqSeen: 22,
+			droppedForwards: 11,
+			metrics: {
+				...createRootReservationMetrics(),
+				dataWriteDrops: 7,
+			},
+		});
+		const ctx = createParentUpgradeReservationContext(() => 0.25);
+
+		const reply = encodeParentProbeReplyForChannel.call(
+			ctx,
+			ch,
+			0xaabbccdd,
+			"leaf-a",
+			1,
+			false,
+		);
+
+		expectParentProbeReplyWireLayout(reply, {
+			channelKey,
+			reqId: 0xaabbccdd,
+			flags:
+				PARENT_PROBE_FLAG_ROOTED |
+				PARENT_PROBE_FLAG_ACCEPTING |
+				PARENT_PROBE_FLAG_REPAIRING |
+				PARENT_PROBE_FLAG_OVERLOADED,
+			level: 3,
+			maxChildren: 12,
+			freeSlots: 10,
+			children: 2,
+			haveToExclusive: 23,
+			missingSeqs: 2,
+			dataWriteDrops: 7,
+			droppedForwards: 11,
+			reservationToken: 0,
+		});
 	});
 
 	it("reserves scarce root capacity while replying to parent probes", async () => {
