@@ -4151,7 +4151,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			storeKey?: string;
 			encodedValueParts: NativeEncodedValueParts;
 		}>,
-	): void {
+	): boolean {
 		const backbone = this.nativeBackboneDocumentIndex;
 		if (backbone?.putDocumentEncodedPartsStoredBatch && values.length > 0) {
 			try {
@@ -4163,17 +4163,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					})),
 					this.nativeByteElementIndexLimit,
 				);
-				return;
+				return true;
 			} catch {
 				// Fall back to single puts so older native-backbone objects remain usable.
 			}
 		}
 		for (const entry of values) {
-			this.putNativeBackboneDocumentEncodedPartsStored(
+			if (!this.putNativeBackboneDocumentEncodedPartsStored(
 				entry.storeKey ?? keyToStoreKey(entry.id),
 				entry.encodedValueParts,
-			);
+			)) {
+				return false;
+			}
 		}
+		return true;
 	}
 
 	private populateNativeBackboneDocumentIndex(
@@ -4454,12 +4457,8 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		if (!this.snapshotFile) {
 			if (this.nativeBackboneDocumentIndexPrimary) {
-				for (const entry of values) {
-					this.putNativeBackboneDocumentPreparedValueStoredOrThrow(
-						keyToStoreKey(entry.id),
-						undefined,
-						entry.encodedValueParts,
-					);
+				if (!this.putNativeBackboneDocumentEncodedPartsStoredBatch(values)) {
+					throw new Error("Native backbone contextual document batch put failed");
 				}
 				return true;
 			}
@@ -4481,17 +4480,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.properties.schema,
 			);
 			if (this.nativeBackboneDocumentIndexPrimary) {
-				for (const entry of values) {
-					if (
-						!this.putNativeBackboneDocumentEncodedPartsStored(
-							keyToStoreKey(entry.id),
-							entry.encodedValueParts,
-						)
-					) {
-						throw new Error(
-							"Native backbone contextual document batch put failed",
-						);
-					}
+				if (!this.putNativeBackboneDocumentEncodedPartsStoredBatch(values)) {
+					throw new Error(
+						"Native backbone contextual document batch put failed",
+					);
 				}
 				await this.compactIfNeeded();
 				return;
