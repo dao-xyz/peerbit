@@ -3124,7 +3124,72 @@ describe("index", () => {
 					}
 				});
 
-				it("rejects putMany before compatibility fallback in strict native mode", async () => {
+				it("uses native backend putMany in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const documentBatchIndexSpy = sinon.spy(
+						store.docs.index,
+						"_putManyIdentityWithContext",
+					);
+					const documentGenericBatchIndexSpy = sinon.spy(
+						store.docs.index,
+						"putManyWithContext",
+					);
+					try {
+						const docs = [
+							new Document({ id: uuid(), name: "batch-1" }),
+							new Document({ id: uuid(), name: "batch-2" }),
+						];
+						const appended = await store.docs.putMany(docs, {
+							unique: true,
+							target: "none",
+						});
+
+						expect(appended.entries).to.have.length(docs.length);
+						expect(appended.removed).to.have.length(0);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(documentBatchIndexSpy.callCount).equal(1);
+						expect(documentGenericBatchIndexSpy.callCount).equal(0);
+						for (const doc of docs) {
+							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
+						}
+					} finally {
+						documentGenericBatchIndexSpy.restore();
+						documentBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects unsupported putMany options in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,
 						createRustPeerbitOptions(),
@@ -3156,16 +3221,12 @@ describe("index", () => {
 					try {
 						await expect(
 							store.docs.putMany(
-								[
-									new Document({ id: uuid(), name: "batch-1" }),
-									new Document({ id: uuid(), name: "batch-2" }),
-								],
+								[new Document({ id: uuid(), name: "non-unique" })],
 								{
-									unique: true,
 									target: "none",
 								},
 							),
-						).to.be.rejectedWith(NativeDocumentModeError, "putMany");
+						).to.be.rejectedWith(NativeDocumentModeError, "non-unique putMany");
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(0);
 					} finally {

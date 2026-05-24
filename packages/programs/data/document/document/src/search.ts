@@ -1615,6 +1615,16 @@ export class DocumentIndex<
 		);
 	}
 
+	public canUseNativeBackboneIdentityContextualBatch(): boolean {
+		return (
+			this.transformerIsIdentity &&
+			this.indexedTypeIsDocumentType &&
+			!this.isProgramValued &&
+			typeof (this.index as ContextualIndexPut<I>).putWithContextBatch ===
+				"function"
+		);
+	}
+
 	public prepareNativeBackboneDocumentIndexCommit(
 		value: T,
 		encodedDocument: Uint8Array,

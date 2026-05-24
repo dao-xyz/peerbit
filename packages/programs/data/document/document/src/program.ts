@@ -184,22 +184,41 @@ type DocumentPutResult = {
 	removed: ShallowOrFullEntry<Operation>[];
 };
 
+type DocumentPutManyResult = {
+	entries: Entry<Operation>[];
+	removed: ShallowOrFullEntry<Operation>[];
+};
+
 interface DocumentBackend<T> {
 	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult>;
+	putMany(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentPutManyResult>;
 }
 
 type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	assertPlainPutSupported(doc: T, options?: DocumentPutOptions): void;
+	assertPlainPutManySupported(docs: T[], options?: DocumentPutOptions): void;
 	normalizePutOptions(
 		options: DocumentPutOptions | undefined,
 	): DocumentPutOptions | undefined;
 	preparePlainPut(doc: T): PreparedPlainPut<T>;
+	hasDuplicatePreparedPutKeys(
+		prepared: Array<{ key: indexerTypes.IdKey }>,
+	): boolean;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
 	): MaybePromise<NativeDocumentAppendTransaction<T, I>>;
+	commitNativeDocumentAppendMany(
+		input: NativeDocumentAppendManyCommitInput<T, I>,
+	): MaybePromise<DocumentAppendManyCommitFacts<T, I> | undefined>;
 	handlePreparedPlainPutCommit(
 		commit: NativeDocumentAppendTransaction<T, I>,
+	): MaybePromise<void>;
+	handlePreparedPlainPutManyCommit(
+		commit: DocumentAppendManyCommitFacts<T, I>,
 	): MaybePromise<void>;
 	keepEntry(hash: string): void;
 	nativeModeError(message: string): NativeDocumentModeError;
@@ -210,11 +229,26 @@ type DocumentBackendPut<T> = (
 	options?: DocumentPutOptions,
 ) => MaybePromise<DocumentPutResult>;
 
+type DocumentBackendPutMany<T> = (
+	docs: T[],
+	options?: DocumentPutOptions,
+) => MaybePromise<DocumentPutManyResult>;
+
 class CompatDocumentBackend<T> implements DocumentBackend<T> {
-	constructor(private readonly putImpl: DocumentBackendPut<T>) {}
+	constructor(
+		private readonly putImpl: DocumentBackendPut<T>,
+		private readonly putManyImpl: DocumentBackendPutMany<T>,
+	) {}
 
 	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult> {
 		return this.putImpl(doc, options);
+	}
+
+	putMany(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentPutManyResult> {
+		return this.putManyImpl(docs, options);
 	}
 }
 
@@ -255,6 +289,56 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 						};
 					},
 				),
+		);
+	}
+
+	putMany(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentPutManyResult> {
+		if (docs.length === 0) {
+			return { entries: [], removed: [] };
+		}
+		const putOptions = this.context.normalizePutOptions(options);
+		this.context.assertPlainPutManySupported(docs, putOptions);
+		const prepared = docs.map((doc) => this.context.preparePlainPut(doc));
+		if (this.context.hasDuplicatePreparedPutKeys(prepared)) {
+			throw this.context.nativeModeError(
+				"does not support duplicate document ids in putMany",
+			);
+		}
+		return mapMaybePromise(
+			this.context.commitNativeDocumentAppendMany({
+				puts: prepared.map((item) => ({
+					document: item.document,
+					key: item.key,
+					documentBytes: item.encodedDocument,
+					operationPayloadBytes: item.operationPayloadBytes,
+					unique: putOptions?.unique,
+					existing: null,
+				})),
+				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
+				options: putOptions,
+			}),
+			(documentAppendCommit) => {
+				if (!documentAppendCommit) {
+					throw this.context.nativeModeError(
+						"requires native batched payload append support",
+					);
+				}
+				return mapMaybePromise(
+					this.context.handlePreparedPlainPutManyCommit(documentAppendCommit),
+					() => {
+						for (const entry of documentAppendCommit.entries) {
+							this.context.keepEntry(entry.hash);
+						}
+						return {
+							entries: documentAppendCommit.entries,
+							removed: documentAppendCommit.removed,
+						};
+					},
+				);
+			},
 		);
 	}
 }
@@ -575,7 +659,10 @@ export class Documents<
 	private createDocumentBackend(): DocumentBackend<T> {
 		return this.isNativeMode()
 			? new NativeDocumentBackend(this.createNativeDocumentBackendContext())
-			: new CompatDocumentBackend(this.putCompatDocumentBackend.bind(this));
+			: new CompatDocumentBackend(
+					this.putCompatDocumentBackend.bind(this),
+					this.putManyCompatDocumentBackend.bind(this),
+				);
 	}
 
 	private createNativeDocumentBackendContext(): NativeDocumentBackendContext<
@@ -586,9 +673,14 @@ export class Documents<
 			assertPlainPutSupported: (doc, options) => {
 				this.assertNativeModePlainPutSupported(doc, options);
 			},
+			assertPlainPutManySupported: (docs, options) => {
+				this.assertNativeModePlainPutManySupported(docs, options);
+			},
 			normalizePutOptions: (options) =>
 				this.normalizeNativeModePutOptions(options),
 			preparePlainPut: (doc) => this.preparePlainPut(doc),
+			hasDuplicatePreparedPutKeys: (prepared) =>
+				this.hasDuplicatePreparedPutKeys(prepared),
 			shouldResolveTrimmedEntries: () => {
 				const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
 					? this._index.canGetIdentityIndexedByHead()
@@ -597,8 +689,12 @@ export class Documents<
 			},
 			commitNativeDocumentAppend: (input) =>
 				this.commitNativeDocumentAppend(input),
+			commitNativeDocumentAppendMany: (input) =>
+				this.commitNativeDocumentAppendMany(input),
 			handlePreparedPlainPutCommit: (commit) =>
 				this.handlePreparedPlainPutCommit(commit),
+			handlePreparedPlainPutManyCommit: (commit) =>
+				this.handlePreparedPlainPutManyCommit(commit),
 			keepEntry: (hash) => {
 				this.keepCache?.add(hash);
 			},
@@ -778,13 +874,40 @@ export class Documents<
 		return true;
 	}
 
-	private assertNativeModePutManySupported(): void {
+	private assertNativeModePlainPutManySupported(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): void {
 		if (!this.isNativeMode()) {
 			return;
 		}
-		throw this.nativeModeError(
-			"does not support putMany until native batch document-index commit is available",
-		);
+		const unsupported = this.unsupportedNativePutOptions(options);
+		if (options?.unique !== true) {
+			unsupported.push("non-unique putMany");
+		}
+		if (this.immutable) {
+			unsupported.push("immutable documents");
+		}
+		if (this.strictHistory) {
+			unsupported.push("strict history");
+		}
+		if (this.compatibility === 6) {
+			unsupported.push("legacy compatibility");
+		}
+		if (Program.isPrototypeOf(this._clazz)) {
+			unsupported.push("program-valued document type");
+		}
+		if (!this._index.canUseNativeBackboneIdentityContextualBatch()) {
+			unsupported.push("native identity batch document index");
+		}
+		if (unsupported.length > 0) {
+			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
+		}
+		for (const doc of docs) {
+			if (!this.canPerformAllowsPlainPutFastPath(doc)) {
+				throw this.nativeModeError("canPerform policy rejected this document");
+			}
+		}
 	}
 
 	private normalizeNativeModePutOptions(
@@ -1529,14 +1652,17 @@ export class Documents<
 	public async putMany(
 		docs: T[],
 		options?: DocumentPutOptions,
-	): Promise<{
-		entries: Entry<Operation>[];
-		removed: ShallowOrFullEntry<Operation>[];
-	}> {
+	): Promise<DocumentPutManyResult> {
+		return this._documentBackend.putMany(docs, options);
+	}
+
+	private async putManyCompatDocumentBackend(
+		docs: T[],
+		options?: DocumentPutOptions,
+	): Promise<DocumentPutManyResult> {
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
 		}
-		this.assertNativeModePutManySupported();
 		if (!this.canUsePlainPutManyFastPath(docs, options)) {
 			return this.putManySequential(docs, options);
 		}
@@ -2022,11 +2148,6 @@ export class Documents<
 		}));
 		const commits =
 			await this.createDocumentAppendCommitFactsBatch(appendInputs);
-		if (this.isNativeMode()) {
-			for (const commit of commits) {
-				this.assertNativeModeDocumentAppendCommit(commit);
-			}
-		}
 		return {
 			entries: appended.entries,
 			removed: appended.removed,
@@ -2745,6 +2866,11 @@ export class Documents<
 		if (indexedDocuments) {
 			documentsChanged.added.push(...indexedDocuments);
 		} else {
+			if (this.isNativeMode()) {
+				throw this.nativeModeError(
+					"requires native batch document-index commit",
+				);
+			}
 			const indexed = await this._index.putManyWithContext(
 				putsToIndex.map((put) => ({
 					value: put.document,
