@@ -9697,28 +9697,14 @@ export class SharedLog<
 						| NativeBackboneRawReceiveGroupPlan[]
 						| undefined;
 					if (rawMaterializedKnownMissing && this._nativeBackbone) {
-						const seenGids = new Set<string>();
-						let hasDuplicateGid = false;
-						for (const head of filteredHeads) {
-							const gid =
-								getPreparedRawExchangeHeadGid(head) ??
-								this.getEntryGid(head.entry);
-							if (seenGids.has(gid)) {
-								hasDuplicateGid = true;
-								break;
-							}
-							seenGids.add(gid);
-						}
-						if (hasDuplicateGid) {
-							nativeRawGroupPlans =
-								this._nativeBackbone.planPreparedRawReceiveGroups(
-									filteredHeads.map(getExchangeHeadHash),
-									{
-										minReplicas: this.replicas.min?.getValue(this) || 1,
-										maxReplicas: this.replicas.max?.getValue(this),
-									},
-								);
-						}
+						nativeRawGroupPlans =
+							this._nativeBackbone.planPreparedRawReceiveGroups(
+								filteredHeads.map(getExchangeHeadHash),
+								{
+									minReplicas: this.replicas.min?.getValue(this) || 1,
+									maxReplicas: this.replicas.max?.getValue(this),
+								},
+							);
 					}
 					let usedNativeRawGroups = false;
 					if (nativeRawGroupPlans) {

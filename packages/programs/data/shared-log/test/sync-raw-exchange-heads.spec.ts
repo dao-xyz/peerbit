@@ -1190,6 +1190,9 @@ describe("raw exchange-head sync", () => {
 						"sharedLog.rawReceive.materialize",
 						"sharedLog.receive.lowerLogJoin",
 					]);
+					const receivePlanProfile = profileEvents.find(
+						(event) => event.name === "sharedLog.receive.plan",
+					);
 					const coordinateProfile = profileEvents.find(
 						(event) => event.name === "sharedLog.receive.coordinatePersist",
 					);
@@ -1201,6 +1204,10 @@ describe("raw exchange-head sync", () => {
 							checkedPrunePlanProfile?.details.reusableLeaderPlanHits,
 							row.name,
 						).to.equal(hashes.length);
+						expect(
+							receivePlanProfile?.details.nativeRawGroups,
+							row.name,
+						).to.equal(true);
 						expect(
 							(nativePreparedJoinCommitSpy?.callCount ?? 0) +
 								(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0),
