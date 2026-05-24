@@ -2875,6 +2875,70 @@ describe("index", () => {
 					}
 				});
 
+				it("uses the native backbone storage transaction for strict native local puts with coordinate persistence", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+						{ flushOnAppend: false },
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence,
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sharedLog = store.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const storageTransactionSpy = sinon.spy(
+						sharedLog,
+						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+					);
+					const compactStorageTransactionSpy = sinon.spy(
+						backbone,
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+					);
+					const graphFactsSpy = sinon.spy(
+						backbone.graph,
+						"prepareEntryV0PlainEntryCommit",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-coordinate-persisted",
+						});
+						await store.docs.put(doc, { unique: true });
+						expect(storageTransactionSpy.callCount).equal(1);
+						expect(compactStorageTransactionSpy.callCount).equal(1);
+						expect(graphFactsSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-coordinate-persisted",
+						);
+					} finally {
+						graphFactsSpy.restore();
+						compactStorageTransactionSpy.restore();
+						storageTransactionSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("allows strict native mode to use open-level replication", async () => {
 					const rustSession = await TestSession.connected(
 						1,

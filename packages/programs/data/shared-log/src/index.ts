@@ -5430,6 +5430,19 @@ export class SharedLog<
 		if (
 			options?.replicate === false &&
 			hasDocumentIndexCommit &&
+			this.canUseBackboneOnlyCoordinatePersistence()
+		) {
+			return this.appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
+				payloadData,
+				appendOptions,
+				properties,
+				minReplicasValue,
+				true,
+			);
+		}
+		if (
+			options?.replicate === false &&
+			hasDocumentIndexCommit &&
 			((appendOptions.meta?.next?.length ?? 0) > 0 ||
 				(properties?.useNativeExistingDocumentContext === true &&
 					properties?.resolveTrimmedEntries !== false))
