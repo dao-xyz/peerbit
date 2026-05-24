@@ -2116,6 +2116,34 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_leader_samples_for_gids_batch(
+        &self,
+        gids: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        self.shared_log.plan_leader_samples_for_gids_batch(
+            gids,
+            replica_counts,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_request_prune_leader_hints(
         &self,
         hashes: Array,

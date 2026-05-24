@@ -2624,6 +2624,77 @@ impl NativeSharedLogState {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_leader_samples_for_gids_batch(
+        &self,
+        gids: Array,
+        replica_counts: Array,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Array, JsValue> {
+        let gids = strings_from_array(gids)?;
+        let replica_counts = usize_from_array(replica_counts)?;
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let out = Array::new();
+
+        for (gid, replicas) in gids.into_iter().zip(replica_counts) {
+            let leaders = if full_replica_fallback {
+                let prepared_options = prepared_options_for_replicas(
+                    &self.inner.range_planner,
+                    replicas,
+                    &options,
+                    &mut prepared_options_by_replicas,
+                    expand_peer_filter,
+                    &self_hash,
+                    include_self,
+                );
+                full_replica_leaders_by_replicas
+                    .entry(replicas)
+                    .or_insert_with(|| {
+                        self.inner.range_planner.get_full_replica_leaders(
+                            replicas,
+                            prepared_options,
+                            include_strict_full_replica,
+                        )
+                    })
+                    .clone()
+            } else {
+                None
+            };
+            let leaders = match leaders {
+                Some(leaders) => leaders,
+                None => {
+                    let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
+                    find_leaders_with_batch_caches(
+                        &self.inner.range_planner,
+                        &coordinates,
+                        replicas,
+                        &options,
+                        &mut prepared_options_by_replicas,
+                        &mut full_replica_leaders_by_replicas,
+                        expand_peer_filter,
+                        &self_hash,
+                        include_self,
+                        full_replica_fallback,
+                        include_strict_full_replica,
+                    )
+                }
+            };
+            out.push(&samples_to_rows(leaders));
+        }
+
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_entry_assignment_for_gid(
         &self,
         gid: String,

@@ -4693,13 +4693,51 @@ export class SharedLog<
 		}));
 		const nativeBatch = this.canPlanNativeEntryLeaderBatch(leaderItems);
 		const planStartedAt = syncProfileStart(options?.profile);
-		const plans = await this.planEntryLeaderBatch(leaderItems);
+		let leaderMapsOnly = false;
+		let plans: EntryLeaderPlan<R>[];
+		let nativeLeaderMaps:
+			| Array<Map<string, { intersecting: boolean }>>
+			| undefined;
+		const nativeBackboneLeaderMaps = this._nativeBackbone as
+			| (NativePeerbitBackbone & {
+					planLeaderSamplesForGidsBatch?: (
+						items: Iterable<{ gid: string; replicas: number }>,
+						options?: unknown,
+					) => Array<Map<string, { intersecting: boolean }>> | undefined;
+			  })
+			| undefined;
+		if (
+			nativeBatch &&
+			nativeBackboneLeaderMaps?.planLeaderSamplesForGidsBatch
+		) {
+			const firstOptions = leaderItems[0]?.options;
+			const context = await this.createLeaderSelectionContext({
+				roleAge: firstOptions?.roleAge,
+			});
+			nativeLeaderMaps = nativeBackboneLeaderMaps.planLeaderSamplesForGidsBatch(
+				leaderItems.map((item) => ({
+					gid: this.getEntryGid(item.entry),
+					replicas: item.replicas,
+				})),
+				this.createNativeLeaderOptions(context),
+			);
+		}
+		if (nativeLeaderMaps && nativeLeaderMaps.length === leaderItems.length) {
+			leaderMapsOnly = true;
+			plans = nativeLeaderMaps.map((leaders) => ({
+				coordinates: [],
+				leaders,
+				isLeader: leaders.has(selfHash),
+			}));
+		} else {
+			plans = await this.planEntryLeaderBatch(leaderItems);
+		}
 		emitSyncProfileDuration(options?.profile, planStartedAt, {
 			name: "sharedLog.receive.checkedPrune.plan",
 			component: "shared-log",
 			entries: entries.length,
 			messages: 1,
-			details: { nativeBatch },
+			details: { nativeBatch, leaderMapsOnly },
 		});
 
 		const loopStartedAt = syncProfileStart(options?.profile);

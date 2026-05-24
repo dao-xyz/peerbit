@@ -404,6 +404,18 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => Array<[unknown[], unknown[]]>;
+	plan_leader_samples_for_gids_batch?: (
+		gids: string[],
+		replicaCounts: number[],
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => unknown[];
 	plan_request_prune_leader_hints?: (
 		hashes: string[],
 		skipHashes: string[],
@@ -4642,6 +4654,24 @@ export class NativePeerbitBackbone {
 			coordinates: rowsToNumbers(this.resolution, coordinateRows),
 			leaders: rowsToSamples(leaderRows) ?? new Map(),
 		}));
+	}
+
+	planLeaderSamplesForGidsBatch(
+		items: Iterable<NativeBackboneLeaderGidBatchInput>,
+		options?: NativeBackboneFindLeaderOptions,
+	): Array<Map<string, NativeBackboneLeaderSample>> | undefined {
+		if (!this.native.plan_leader_samples_for_gids_batch) {
+			return undefined;
+		}
+		const entries = iterableToArray(items);
+		const rows = this.native.plan_leader_samples_for_gids_batch(
+			entries.map((entry) => entry.gid),
+			entries.map((entry) => entry.replicas),
+			...findLeaderArguments(options),
+		);
+		return rows.map(
+			(leaderRows) => rowsToSamples(leaderRows as unknown[]) ?? new Map(),
+		);
 	}
 
 	planRequestPruneLeaderHints(
