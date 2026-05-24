@@ -1193,7 +1193,14 @@ describe("raw exchange-head sync", () => {
 					const coordinateProfile = profileEvents.find(
 						(event) => event.name === "sharedLog.receive.coordinatePersist",
 					);
+					const checkedPrunePlanProfile = profileEvents.find(
+						(event) => event.name === "sharedLog.receive.checkedPrune.plan",
+					);
 					if (row.nativeBackbone) {
+						expect(
+							checkedPrunePlanProfile?.details.reusableLeaderPlanHits,
+							row.name,
+						).to.equal(hashes.length);
 						expect(
 							(nativePreparedJoinCommitSpy?.callCount ?? 0) +
 								(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0),

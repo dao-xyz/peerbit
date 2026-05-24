@@ -4683,6 +4683,10 @@ export class SharedLog<
 		entries: Entry<T>[],
 		options?: {
 			decodedReplicaCounts?: DecodedReplicaCountMap;
+			reusableLeaderPlans?: ReadonlyMap<
+				string,
+				Pick<ReusableReceiveCoordinatePlan<R>, "plan" | "replicas">
+			>;
 			profile?: SyncProfileFn;
 		},
 	) {
@@ -4690,17 +4694,35 @@ export class SharedLog<
 			return;
 		}
 		const selfHash = this.node.identity.publicKey.hashcode();
-		const leaderItems = entries.map((entry) => ({
-			entry,
-			replicas:
+		const plans = new Array<EntryLeaderPlan<R> | undefined>(entries.length);
+		const leaderItems: Array<{
+			entry: Entry<T>;
+			replicas: number;
+			options: { roleAge: number; persist: false };
+		}> = [];
+		const leaderItemIndexes: number[] = [];
+		let reusableLeaderPlanHits = 0;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			const replicas =
 				options?.decodedReplicaCounts?.get(entry.hash) ??
-				decodeReplicas(entry).getValue(this),
-			options: { roleAge: 0, persist: false as const },
-		}));
+				decodeReplicas(entry).getValue(this);
+			const reusablePlan = options?.reusableLeaderPlans?.get(entry.hash);
+			if (reusablePlan && reusablePlan.replicas === replicas) {
+				plans[i] = reusablePlan.plan;
+				reusableLeaderPlanHits++;
+				continue;
+			}
+			leaderItems.push({
+				entry,
+				replicas,
+				options: { roleAge: 0, persist: false },
+			});
+			leaderItemIndexes.push(i);
+		}
 		const nativeBatch = this.canPlanNativeEntryLeaderBatch(leaderItems);
 		const planStartedAt = syncProfileStart(options?.profile);
 		let leaderMapsOnly = false;
-		let plans: EntryLeaderPlan<R>[];
 		let nativeLeaderMaps:
 			| Array<Map<string, { intersecting: boolean }>>
 			| undefined;
@@ -4730,20 +4752,27 @@ export class SharedLog<
 		}
 		if (nativeLeaderMaps && nativeLeaderMaps.length === leaderItems.length) {
 			leaderMapsOnly = true;
-			plans = nativeLeaderMaps.map((leaders) => ({
-				coordinates: [],
-				leaders,
-				isLeader: leaders.has(selfHash),
-			}));
-		} else {
-			plans = await this.planEntryLeaderBatch(leaderItems);
+			for (let i = 0; i < nativeLeaderMaps.length; i++) {
+				const leaders = nativeLeaderMaps[i]!;
+				plans[leaderItemIndexes[i]!] = {
+					coordinates: [],
+					leaders,
+					isLeader: leaders.has(selfHash),
+				};
+			}
+		} else if (leaderItems.length > 0) {
+			const missingPlans = await this.planEntryLeaderBatch(leaderItems);
+			for (let i = 0; i < missingPlans.length; i++) {
+				plans[leaderItemIndexes[i]!] = missingPlans[i];
+			}
 		}
 		emitSyncProfileDuration(options?.profile, planStartedAt, {
 			name: "sharedLog.receive.checkedPrune.plan",
 			component: "shared-log",
 			entries: entries.length,
+			count: leaderItems.length,
 			messages: 1,
-			details: { nativeBatch, leaderMapsOnly },
+			details: { nativeBatch, leaderMapsOnly, reusableLeaderPlanHits },
 		});
 
 		const loopStartedAt = syncProfileStart(options?.profile);
@@ -10300,6 +10329,7 @@ export class SharedLog<
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
 						await this.pruneJoinedEntriesNoLongerLed(allToMerge, {
 							decodedReplicaCounts: receiveReplicaCounts,
+							reusableLeaderPlans: reusableCoordinatePlans,
 							profile: syncProfile,
 						});
 						if (syncProfile) {
