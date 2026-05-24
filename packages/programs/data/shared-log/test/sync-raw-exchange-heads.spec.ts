@@ -1377,6 +1377,87 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("plans replicating raw receive leaders from native groups", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const baseArgs: any = {
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: {
+					rawExchangeHeads: true,
+				},
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					...baseArgs,
+					replicate: false,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					...baseArgs,
+					replicate: { factor: 1 },
+					sync: {
+						...baseArgs.sync,
+						profile: (event: any) => profileEvents.push(event),
+					},
+				},
+			});
+
+			const hashes: string[] = [];
+			for (let i = 0; i < 3; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			await target.log.onMessage(message!, {
+				from: source.node.identity.publicKey,
+			} as any);
+
+			expect(target.log.log.length).to.equal(hashes.length);
+			const receivePlanProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.plan",
+			);
+			expect(receivePlanProfile.details.nativeRawGroups).to.equal(true);
+			const immediatePlanProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.immediateLeaderPlan",
+			);
+			expect(
+				immediatePlanProfile.details.nativeReceiveGroupLeaderPlans,
+			).to.equal(true);
+			expect(immediatePlanProfile.count).to.equal(hashes.length);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("batches request-prune bookkeeping while queuing only newly confirmed hashes", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),

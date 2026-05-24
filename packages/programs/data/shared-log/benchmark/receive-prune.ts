@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-verify-prepare,raw-receive-native-coordinate-wal-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -27,6 +27,8 @@ type Scenario =
 	| "raw-receive-native-coordinate-wal"
 	| "raw-receive-native-backbone-verify-prepare"
 	| "raw-receive-native-coordinate-wal-verify-prepare"
+	| "raw-receive-native-backbone-replicating"
+	| "raw-receive-native-coordinate-wal-replicating"
 	| "request-prune-native-confirm"
 	| "request-prune-native-backbone-confirm"
 	| "request-prune-native-backbone-coordinate-wal-confirm"
@@ -90,6 +92,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 		"raw-receive-native-coordinate-wal",
 		"raw-receive-native-backbone-verify-prepare",
 		"raw-receive-native-coordinate-wal-verify-prepare",
+		"raw-receive-native-backbone-replicating",
+		"raw-receive-native-coordinate-wal-replicating",
 		"request-prune-native-confirm",
 		"request-prune-native-backbone-confirm",
 		"request-prune-native-backbone-coordinate-wal-confirm",
@@ -105,6 +109,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-coordinate-wal" &&
 			scenario !== "raw-receive-native-backbone-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-verify-prepare" &&
+			scenario !== "raw-receive-native-backbone-replicating" &&
+			scenario !== "raw-receive-native-coordinate-wal-replicating" &&
 			scenario !== "request-prune-native-confirm" &&
 			scenario !== "request-prune-native-backbone-confirm" &&
 			scenario !== "request-prune-native-backbone-coordinate-wal-confirm" &&
@@ -169,6 +175,7 @@ const createOpenArgs = (
 		nativeBackbone?: boolean;
 		coordinateWal?: boolean;
 		verifySignaturesDuringPrepare?: boolean;
+		replicating?: boolean;
 	},
 ) => {
 	const nativeBackbone =
@@ -186,7 +193,7 @@ const createOpenArgs = (
 				}
 			: undefined;
 	return {
-		replicate: false,
+		replicate: options?.replicating ? { factor: 1 } : false,
 		setup,
 		nativeGraph: true,
 		nativeBackbone,
@@ -246,6 +253,7 @@ const runRawReceive = async (
 		nativeBackbone?: boolean;
 		coordinateWal?: boolean;
 		verifySignaturesDuringPrepare?: boolean;
+		replicating?: boolean;
 	},
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
@@ -278,8 +286,12 @@ const runRawReceive = async (
 
 		return {
 			scenario:
-				options?.coordinateWal &&
-				options.verifySignaturesDuringPrepare === true
+				options?.coordinateWal && options.replicating
+					? "raw-receive-native-coordinate-wal-replicating"
+				: options?.nativeBackbone && options.replicating
+					? "raw-receive-native-backbone-replicating"
+				: options?.coordinateWal &&
+					  options.verifySignaturesDuringPrepare === true
 					? "raw-receive-native-coordinate-wal-verify-prepare"
 				: options?.nativeBackbone &&
 					  options.verifySignaturesDuringPrepare === true
@@ -462,6 +474,18 @@ const runScenario = async (
 		return runRawReceive(count, run, {
 			coordinateWal: true,
 			verifySignaturesDuringPrepare: true,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-replicating") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			replicating: true,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-replicating") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			replicating: true,
 		});
 	}
 	if (scenario === "request-prune-native-confirm") {

@@ -9798,46 +9798,13 @@ export class SharedLog<
 					}
 					let usedNativeReceiveGroupLeaderPlans = false;
 					if (!isReplicating) {
-						let leaderPlans: EntryLeaderPlan<R>[] | undefined;
-						if (
-							usedNativeRawGroups &&
-							this._nativeBackbone &&
-							receiveGroups.length > 0
-						) {
-							try {
-								const leaderContext =
-									await this.createLeaderSelectionContext();
-								const nativeLeaderPlans =
-									this._nativeBackbone.planLeadersForGidsBatch(
-										receiveGroups.map((group) => ({
-											gid: group.gid,
-											replicas: group.maxMaxReplicas,
-										})),
-										this.createNativeLeaderOptions(leaderContext),
-									);
-								if (nativeLeaderPlans.length === receiveGroups.length) {
-									leaderPlans = nativeLeaderPlans.map((nativePlan) => {
-										const leaders = nativePlan.leaders;
-										return {
-											coordinates: Array.from(
-												nativePlan.coordinates as Iterable<
-													NumberFromType<R>
-												>,
-											),
-											leaders,
-											isLeader: leaders.has(leaderContext.selfHash),
-											assignedToRangeBoundary:
-												"assignedToRangeBoundary" in nativePlan
-													? (nativePlan.assignedToRangeBoundary as boolean)
-													: undefined,
-										};
-									});
-									usedNativeReceiveGroupLeaderPlans = true;
-								}
-							} catch {
-								leaderPlans = undefined;
-							}
-						}
+						let leaderPlans =
+							usedNativeRawGroups && this._nativeBackbone
+								? await this.planNativeBackboneReceiveGroupLeaders(
+										receiveGroups,
+									)
+								: undefined;
+						usedNativeReceiveGroupLeaderPlans = leaderPlans !== undefined;
 						leaderPlans ??= await this.planEntryLeaderBatch(
 							receiveGroups.map((group) => ({
 								entry: group.latestEntry,
@@ -9874,6 +9841,7 @@ export class SharedLog<
 					}
 					let immediateReplicatingLeaderPlans: EntryLeaderPlan<R>[] | undefined;
 					let immediateReplicatingLeaderPlanHits = 0;
+					let usedNativeImmediateReceiveGroupLeaderPlans = false;
 					if (isReplicating && receiveGroups.length > 0) {
 						const immediateLeaderStartedAt = syncProfileStart(syncProfile);
 						const immediateLeaderItems = receiveGroups.map((group) => ({
@@ -9881,9 +9849,23 @@ export class SharedLog<
 							replicas: group.maxMaxReplicas,
 							options: { roleAge: 0, persist: false as const },
 						}));
-						if (this.canPlanNativeEntryLeaderBatch(immediateLeaderItems)) {
+						if (usedNativeRawGroups && this._nativeBackbone) {
+							immediateReplicatingLeaderPlans =
+								await this.planNativeBackboneReceiveGroupLeaders(
+									receiveGroups,
+									{ roleAge: 0 },
+								);
+							usedNativeImmediateReceiveGroupLeaderPlans =
+								immediateReplicatingLeaderPlans !== undefined;
+						}
+						if (
+							!immediateReplicatingLeaderPlans &&
+							this.canPlanNativeEntryLeaderBatch(immediateLeaderItems)
+						) {
 							immediateReplicatingLeaderPlans =
 								await this.planEntryLeaderBatch(immediateLeaderItems);
+						}
+						if (immediateReplicatingLeaderPlans) {
 							for (let i = 0; i < immediateReplicatingLeaderPlans.length; i++) {
 								const plan = immediateReplicatingLeaderPlans[i];
 								if (!plan?.isLeader) {
@@ -9905,6 +9887,8 @@ export class SharedLog<
 								messages: 1,
 								details: {
 									nativeBatch: immediateReplicatingLeaderPlans !== undefined,
+									nativeReceiveGroupLeaderPlans:
+										usedNativeImmediateReceiveGroupLeaderPlans,
 								},
 							});
 						}
@@ -13684,6 +13668,49 @@ export class SharedLog<
 			);
 		}
 		return plans;
+	}
+
+	private async planNativeBackboneReceiveGroupLeaders(
+		groups: Iterable<{ gid: string; maxMaxReplicas: number }>,
+		options?: { roleAge?: number; candidates?: Iterable<string> },
+	): Promise<EntryLeaderPlan<R>[] | undefined> {
+		const backbone = this._nativeBackbone;
+		if (!backbone) {
+			return undefined;
+		}
+		const groupArray = [...groups];
+		if (groupArray.length === 0) {
+			return [];
+		}
+		try {
+			const context = await this.createLeaderSelectionContext(options);
+			const nativePlans = backbone.planLeadersForGidsBatch(
+				groupArray.map((group) => ({
+					gid: group.gid,
+					replicas: group.maxMaxReplicas,
+				})),
+				this.createNativeLeaderOptions(context, options),
+			);
+			if (nativePlans.length !== groupArray.length) {
+				return undefined;
+			}
+			return nativePlans.map((nativePlan) => {
+				const leaders = nativePlan.leaders;
+				return {
+					coordinates: Array.from(
+						nativePlan.coordinates as Iterable<NumberFromType<R>>,
+					),
+					leaders,
+					isLeader: leaders.has(context.selfHash),
+					assignedToRangeBoundary:
+						"assignedToRangeBoundary" in nativePlan
+							? (nativePlan.assignedToRangeBoundary as boolean)
+							: undefined,
+				};
+			});
+		} catch {
+			return undefined;
+		}
 	}
 
 	async isLeader(
