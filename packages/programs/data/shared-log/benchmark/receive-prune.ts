@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-coordinate-wal,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -23,9 +23,11 @@ import { EventStore } from "../test/utils/stores/event-store.js";
 
 type Scenario =
 	| "raw-receive-native"
+	| "raw-receive-native-backbone"
 	| "raw-receive-native-coordinate-wal"
 	| "request-prune-native-confirm"
 	| "request-prune-native-backbone-confirm"
+	| "request-prune-native-backbone-coordinate-wal-confirm"
 	| "request-prune-pending-ihave";
 
 type ProfileSummary = {
@@ -68,9 +70,11 @@ const parseCounts = (value: string | undefined) =>
 const parseScenarios = (value: string | undefined): Scenario[] => {
 	const scenarios = (value ?? [
 		"raw-receive-native",
+		"raw-receive-native-backbone",
 		"raw-receive-native-coordinate-wal",
 		"request-prune-native-confirm",
 		"request-prune-native-backbone-confirm",
+		"request-prune-native-backbone-coordinate-wal-confirm",
 		"request-prune-pending-ihave",
 	].join(","))
 		.split(",")
@@ -79,9 +83,11 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 	for (const scenario of scenarios) {
 		if (
 			scenario !== "raw-receive-native" &&
+			scenario !== "raw-receive-native-backbone" &&
 			scenario !== "raw-receive-native-coordinate-wal" &&
 			scenario !== "request-prune-native-confirm" &&
 			scenario !== "request-prune-native-backbone-confirm" &&
+			scenario !== "request-prune-native-backbone-coordinate-wal-confirm" &&
 			scenario !== "request-prune-pending-ihave"
 		) {
 			throw new Error(`Unknown receive/prune scenario '${scenario}'`);
@@ -135,16 +141,22 @@ const summarizeProfileEvents = (
 
 const createOpenArgs = (
 	profileEvents: SyncProfileEvent[],
-	options?: { coordinateWal?: boolean },
+	options?: { nativeBackbone?: boolean; coordinateWal?: boolean },
 ) => {
-	const nativeBackbone = options?.coordinateWal
-		? {
-				optional: false,
-				coordinatePersistence: new NativeBackboneCoordinatePersistence(
-					new NativeBackboneMemoryCoordinatePersistenceStore(),
-				),
-			}
-		: undefined;
+	const nativeBackbone =
+		options?.nativeBackbone || options?.coordinateWal
+			? {
+					optional: false,
+					...(options?.coordinateWal
+						? {
+								coordinatePersistence:
+									new NativeBackboneCoordinatePersistence(
+										new NativeBackboneMemoryCoordinatePersistenceStore(),
+									),
+							}
+						: {}),
+				}
+			: undefined;
 	return {
 		replicate: false,
 		setup,
@@ -196,7 +208,7 @@ const createRawMessages = async (
 const runRawReceive = async (
 	count: number,
 	run: number,
-	options?: { coordinateWal?: boolean },
+	options?: { nativeBackbone?: boolean; coordinateWal?: boolean },
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
 		indexer: (directory) => createRustIndexer(directory),
@@ -229,6 +241,8 @@ const runRawReceive = async (
 		return {
 			scenario: options?.coordinateWal
 				? "raw-receive-native-coordinate-wal"
+				: options?.nativeBackbone
+					? "raw-receive-native-backbone"
 				: "raw-receive-native",
 			count,
 			run,
@@ -293,7 +307,7 @@ const clearPendingIHaves = (store: EventStore<string, any>) => {
 const runRequestPruneNativeConfirm = async (
 	count: number,
 	run: number,
-	options?: { coordinateWal?: boolean },
+	options?: { nativeBackbone?: boolean; coordinateWal?: boolean },
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
 		indexer: (directory) => createRustIndexer(directory),
@@ -318,7 +332,9 @@ const runRequestPruneNativeConfirm = async (
 
 			return {
 				scenario: options?.coordinateWal
-					? "request-prune-native-backbone-confirm"
+					? "request-prune-native-backbone-coordinate-wal-confirm"
+					: options?.nativeBackbone
+						? "request-prune-native-backbone-confirm"
 					: "request-prune-native-confirm",
 				count,
 				run,
@@ -385,6 +401,9 @@ const runScenario = async (
 	if (scenario === "raw-receive-native") {
 		return runRawReceive(count, run);
 	}
+	if (scenario === "raw-receive-native-backbone") {
+		return runRawReceive(count, run, { nativeBackbone: true });
+	}
 	if (scenario === "raw-receive-native-coordinate-wal") {
 		return runRawReceive(count, run, { coordinateWal: true });
 	}
@@ -392,6 +411,11 @@ const runScenario = async (
 		return runRequestPruneNativeConfirm(count, run);
 	}
 	if (scenario === "request-prune-native-backbone-confirm") {
+		return runRequestPruneNativeConfirm(count, run, {
+			nativeBackbone: true,
+		});
+	}
+	if (scenario === "request-prune-native-backbone-coordinate-wal-confirm") {
 		return runRequestPruneNativeConfirm(count, run, {
 			coordinateWal: true,
 		});
