@@ -3418,6 +3418,131 @@ describe("index", () => {
 					}
 				});
 
+				it("uses native backend putMany with descriptor transforms for non-unique updates in strict native mode", async () => {
+					@variant("strict_native_batch_update_pick_indexable")
+					class StrictNativeBatchUpdatePickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeBatchUpdatePickIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore =
+						new TestStore<StrictNativeBatchUpdatePickIndexable>({
+							docs: new Documents<
+								Document,
+								StrictNativeBatchUpdatePickIndexable
+							>(),
+						});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeBatchUpdatePickIndexable,
+								transform: transform.pick<
+									Document,
+									StrictNativeBatchUpdatePickIndexable
+								>(["id", "name"]),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						localStore.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						localStore.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const preparedBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const genericBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"putManyWithContext",
+					);
+					const contextBatchSpy = sinon.spy(
+						localStore.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
+					try {
+						const first = await localStore.docs.put(
+							new Document({ id: "pick-update-1", name: "before-1" }),
+							{ target: "none" },
+						);
+						const second = await localStore.docs.put(
+							new Document({ id: "pick-update-2", name: "before-2" }),
+							{ target: "none" },
+						);
+						nativeBatchSpy.resetHistory();
+						preparedBatchIndexSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						transformSpy.resetHistory();
+
+						const appended = await localStore.docs.putMany(
+							[
+								new Document({ id: "pick-update-1", name: "after-1" }),
+								new Document({ id: "pick-update-2", name: "after-2" }),
+							],
+							{ target: "none" },
+						);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[0].meta.next).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect(appended.entries[1].meta.next).to.deep.equal([
+							second.entry.hash,
+						]);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(preparedBatchIndexSpy.callCount).equal(1);
+						expect(genericBatchIndexSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(1);
+						expect(transformSpy.callCount).equal(0);
+						const firstIndexed = await localStore.docs.index.get(
+							"pick-update-1",
+							{ resolve: false },
+						);
+						const secondIndexed = await localStore.docs.index.get(
+							"pick-update-2",
+							{ resolve: false },
+						);
+						expect(firstIndexed?.name).equal("after-1");
+						expect(secondIndexed?.name).equal("after-2");
+						expect((firstIndexed as any)?.data).equal(undefined);
+					} finally {
+						transformSpy.restore();
+						contextBatchSpy.restore();
+						genericBatchIndexSpy.restore();
+						preparedBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects unsupported putMany options in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,
