@@ -1615,13 +1615,13 @@ export class DocumentIndex<
 		);
 	}
 
-	public canUseNativeBackboneIdentityContextualBatch(): boolean {
+	public canUseNativeBackboneContextualBatch(): boolean {
 		return (
-			this.transformerIsIdentity &&
-			this.indexedTypeIsDocumentType &&
 			!this.isProgramValued &&
 			typeof (this.index as ContextualIndexPut<I>).putWithContextBatch ===
-				"function"
+				"function" &&
+			((this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
+				this.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts())
 		);
 	}
 
@@ -1663,12 +1663,11 @@ export class DocumentIndex<
 		context: types.Context,
 		transformFacts?: DocumentTransformFacts,
 	): NativeBackboneDocumentIndexCommit<I> | undefined {
-		if (
-			!canPrepareNativeDocumentTransformWithAppendFacts(
-				this.nativeTransformDescriptor,
-			)
-		) {
-			return;
+		if (this.transformerIsIdentity && this.indexedTypeIsDocumentType) {
+			return {
+				valuePrefixBytes: encodedDocument,
+				indexable: value as any as I,
+			};
 		}
 		if (this.nativeTransformProjectionPlan) {
 			const projectionContext = {
@@ -1705,6 +1704,16 @@ export class DocumentIndex<
 				},
 			};
 		}
+		if (
+			!canPrepareNativeDocumentTransformWithAppendFacts(
+				this.nativeTransformDescriptor,
+			) &&
+			!canPrepareNativeDocumentTransformBeforeAppend(
+				this.nativeTransformDescriptor,
+			)
+		) {
+			return;
+		}
 		const transformed = this.transformer(value, context, transformFacts);
 		if (isPromiseLike(transformed)) {
 			return;
@@ -1714,6 +1723,39 @@ export class DocumentIndex<
 			valuePrefixBytes: serialize(this.asIndexedTypeValue(indexable)),
 			indexable,
 		};
+	}
+
+	private nativeBackboneDocumentIndexValuePrefixBytes(
+		nativeDocumentIndex: NativeBackboneDocumentIndexCommit<I>,
+		context: types.Context,
+	): Uint8Array | undefined {
+		return (
+			nativeDocumentIndex.valuePrefixBytes ??
+			(nativeDocumentIndex.projection
+				? (this.nativeBackboneDocumentProjection?.projectDocumentIndexSimple?.(
+						nativeDocumentIndex.projection.encodedDocument,
+						nativeDocumentIndex.projection.plan,
+						{
+							created: context.created,
+							modified: context.modified,
+							gid: context.gid,
+							size: context.size,
+							signer: nativeDocumentIndex.projection.signer,
+						},
+					) ??
+					tryProjectDocumentIndexSimple(
+						nativeDocumentIndex.projection.encodedDocument,
+						nativeDocumentIndex.projection.plan,
+						{
+							created: context.created,
+							modified: context.modified,
+							gid: context.gid,
+							size: context.size,
+							signer: nativeDocumentIndex.projection.signer,
+						},
+					))
+				: undefined)
+		);
 	}
 
 	private asIndexedTypeValue(value: I): I {
@@ -2331,32 +2373,10 @@ export class DocumentIndex<
 			return;
 		}
 		this.cacheResolvedValue(id.primitive, value);
-		const valuePrefixBytes =
-			nativeDocumentIndex.valuePrefixBytes ??
-			(nativeDocumentIndex.projection
-				? (this.nativeBackboneDocumentProjection?.projectDocumentIndexSimple?.(
-						nativeDocumentIndex.projection.encodedDocument,
-						nativeDocumentIndex.projection.plan,
-						{
-							created: context.created,
-							modified: context.modified,
-							gid: context.gid,
-							size: context.size,
-							signer: nativeDocumentIndex.projection.signer,
-						},
-					) ??
-					tryProjectDocumentIndexSimple(
-						nativeDocumentIndex.projection.encodedDocument,
-						nativeDocumentIndex.projection.plan,
-						{
-							created: context.created,
-							modified: context.modified,
-							gid: context.gid,
-							size: context.size,
-							signer: nativeDocumentIndex.projection.signer,
-						},
-					))
-				: undefined);
+		const valuePrefixBytes = this.nativeBackboneDocumentIndexValuePrefixBytes(
+			nativeDocumentIndex,
+			context,
+		);
 		if (!valuePrefixBytes) {
 			return;
 		}
@@ -2383,6 +2403,90 @@ export class DocumentIndex<
 			return isPromiseLike(putResult)
 				? putResult.then(() => indexedValue, handleError)
 				: indexedValue;
+		} catch (error) {
+			return handleError(error);
+		}
+	}
+
+	public async _putManyPreparedNativeBackboneDocumentIndexWithContext(
+		values: Array<{
+			value: T;
+			id: indexerTypes.IdKey;
+			context: types.Context;
+			nativeDocumentIndex?: NativeBackboneDocumentIndexCommit<I>;
+			options?: { replace?: boolean };
+		}>,
+	): Promise<WithIndexedContext<T, I>[] | undefined> {
+		if (values.length === 0) {
+			return [];
+		}
+		const contextualBatchPut = (this.index as ContextualIndexPut<I>)
+			.putWithContextBatch;
+		if (!contextualBatchPut || this.isProgramValued) {
+			return;
+		}
+		const indexedValues: WithIndexedContext<T, I>[] = [];
+		const batchValues: Array<{
+			value: I;
+			id: indexerTypes.IdKey;
+			context: types.Context;
+			options: ContextualPutOptions;
+		}> = [];
+		for (const item of values) {
+			if (!item.nativeDocumentIndex) {
+				return;
+			}
+			const valueWithContext = coerceWithContext(item.value, item.context);
+			const indexedValue = item.nativeDocumentIndex.indexable
+				? coerceWithIndexed(
+						valueWithContext,
+						item.nativeDocumentIndex.indexable,
+					)
+				: item.nativeDocumentIndex.getIndexable
+					? coerceWithLazyIndexed(
+							valueWithContext,
+							item.nativeDocumentIndex.getIndexable,
+						)
+					: undefined;
+			if (!indexedValue) {
+				return;
+			}
+			const valuePrefixBytes = this.nativeBackboneDocumentIndexValuePrefixBytes(
+				item.nativeDocumentIndex,
+				item.context,
+			);
+			if (!valuePrefixBytes) {
+				return;
+			}
+			this.cacheResolvedValue(item.id.primitive, item.value);
+			indexedValues.push(indexedValue);
+			batchValues.push({
+				// Encoded native batches store from encodedValueParts; descriptor
+				// projections keep the JS indexable lazy for event consumers.
+				value:
+					item.nativeDocumentIndex.indexable ?? (undefined as unknown as I),
+				id: item.id,
+				context: item.context,
+				options: {
+					replace: item.options?.replace,
+					encodedValueParts: {
+						prefix: valuePrefixBytes,
+						suffix: encodeContextSuffix(item.context),
+					},
+				},
+			});
+		}
+		const handleError = (error: unknown) => {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return indexedValues;
+			}
+			throw error;
+		};
+		try {
+			const putResult = contextualBatchPut.call(this.index, batchValues);
+			return isPromiseLike(putResult)
+				? putResult.then(() => indexedValues, handleError)
+				: indexedValues;
 		} catch (error) {
 			return handleError(error);
 		}

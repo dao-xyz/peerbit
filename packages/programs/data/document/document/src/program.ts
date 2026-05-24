@@ -897,8 +897,8 @@ export class Documents<
 		if (Program.isPrototypeOf(this._clazz)) {
 			unsupported.push("program-valued document type");
 		}
-		if (!this._index.canUseNativeBackboneIdentityContextualBatch()) {
-			unsupported.push("native identity batch document index");
+		if (!this._index.canUseNativeBackboneContextualBatch()) {
+			unsupported.push("native batch document index");
 		}
 		if (unsupported.length > 0) {
 			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
@@ -2838,6 +2838,10 @@ export class Documents<
 			key: indexerTypes.IdKey;
 			context: Context;
 			contextualEncodedValueParts?: ContextualEncodedValueParts;
+			nativeBackboneDocumentIndex?: NativeDocumentAppendTransaction<
+				T,
+				I
+			>["nativeBackboneDocumentIndex"];
 		}> = [];
 		for (const put of commit.commits) {
 			if (modified.has(put.key.primitive)) {
@@ -2849,10 +2853,11 @@ export class Documents<
 				key: put.key,
 				context: put.context,
 				contextualEncodedValueParts: put.contextualEncodedValueParts,
+				nativeBackboneDocumentIndex: put.nativeBackboneDocumentIndex,
 			});
 			modified.add(put.key.primitive);
 		}
-		const indexedDocuments = await this._index._putManyIdentityWithContext(
+		let indexedDocuments = await this._index._putManyIdentityWithContext(
 			putsToIndex.map((put) => ({
 				value: put.document,
 				id: put.key,
@@ -2863,6 +2868,18 @@ export class Documents<
 				},
 			})),
 		);
+		indexedDocuments ??=
+			await this._index._putManyPreparedNativeBackboneDocumentIndexWithContext(
+				putsToIndex.map((put) => ({
+					value: put.document,
+					id: put.key,
+					context: put.context,
+					nativeDocumentIndex: put.nativeBackboneDocumentIndex,
+					options: {
+						replace: false,
+					},
+				})),
+			);
 		if (indexedDocuments) {
 			documentsChanged.added.push(...indexedDocuments);
 		} else {

@@ -3189,6 +3189,98 @@ describe("index", () => {
 					}
 				});
 
+				it("uses native backend putMany with descriptor transforms in strict native mode", async () => {
+					@variant("strict_native_batch_pick_indexable")
+					class StrictNativeBatchPickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(properties?: Partial<StrictNativeBatchPickIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<StrictNativeBatchPickIndexable>({
+						docs: new Documents<Document, StrictNativeBatchPickIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeBatchPickIndexable,
+								transform: transform.pick<
+									Document,
+									StrictNativeBatchPickIndexable
+								>(["id", "name"]),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						localStore.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						localStore.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const preparedBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const genericBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"putManyWithContext",
+					);
+					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
+					try {
+						const docs = [
+							new Document({ id: uuid(), name: "batch-pick-1" }),
+							new Document({ id: uuid(), name: "batch-pick-2" }),
+						];
+						const appended = await localStore.docs.putMany(docs, {
+							unique: true,
+							target: "none",
+						});
+
+						expect(appended.entries).to.have.length(docs.length);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(preparedBatchIndexSpy.callCount).equal(1);
+						expect(genericBatchIndexSpy.callCount).equal(0);
+						expect(transformSpy.callCount).equal(0);
+						for (const doc of docs) {
+							const indexed = await localStore.docs.index.get(doc.id, {
+								resolve: false,
+							});
+							expect(indexed?.id).equal(doc.id);
+							expect(indexed?.name).equal(doc.name);
+							expect((indexed as any)?.data).equal(undefined);
+						}
+					} finally {
+						transformSpy.restore();
+						genericBatchIndexSpy.restore();
+						preparedBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects unsupported putMany options in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,
