@@ -207,6 +207,11 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	hasDuplicatePreparedPutKeys(
 		prepared: Array<{ key: indexerTypes.IdKey }>,
 	): boolean;
+	getLocalIndexedContexts(
+		keys: indexerTypes.IdKey[],
+	): Promise<
+		Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
+	>;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
@@ -292,10 +297,10 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		);
 	}
 
-	putMany(
+	async putMany(
 		docs: T[],
 		options?: DocumentPutOptions,
-	): MaybePromise<DocumentPutManyResult> {
+	): Promise<DocumentPutManyResult> {
 		if (docs.length === 0) {
 			return { entries: [], removed: [] };
 		}
@@ -307,15 +312,28 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				"does not support duplicate document ids in putMany",
 			);
 		}
+		let existingContexts:
+			| Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
+			| undefined;
+		if (putOptions?.unique !== true) {
+			existingContexts = await this.context.getLocalIndexedContexts(
+				prepared.map((item) => item.key),
+			);
+			if (existingContexts.some(Boolean)) {
+				throw this.context.nativeModeError(
+					"does not support existing documents in non-unique putMany",
+				);
+			}
+		}
 		return mapMaybePromise(
 			this.context.commitNativeDocumentAppendMany({
-				puts: prepared.map((item) => ({
+				puts: prepared.map((item, index) => ({
 					document: item.document,
 					key: item.key,
 					documentBytes: item.encodedDocument,
 					operationPayloadBytes: item.operationPayloadBytes,
 					unique: putOptions?.unique,
-					existing: null,
+					existing: existingContexts ? (existingContexts[index] ?? null) : null,
 				})),
 				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
 				options: putOptions,
@@ -681,6 +699,7 @@ export class Documents<
 			preparePlainPut: (doc) => this.preparePlainPut(doc),
 			hasDuplicatePreparedPutKeys: (prepared) =>
 				this.hasDuplicatePreparedPutKeys(prepared),
+			getLocalIndexedContexts: (keys) => this.getLocalIndexedContexts(keys),
 			shouldResolveTrimmedEntries: () => {
 				const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
 					? this._index.canGetIdentityIndexedByHead()
@@ -882,9 +901,6 @@ export class Documents<
 			return;
 		}
 		const unsupported = this.unsupportedNativePutOptions(options);
-		if (options?.unique !== true) {
-			unsupported.push("non-unique putMany");
-		}
 		if (this.immutable) {
 			unsupported.push("immutable documents");
 		}
@@ -1009,6 +1025,49 @@ export class Documents<
 		}) as Promise<
 			indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined
 		>;
+	}
+
+	private getLocalIndexedContexts(
+		keys: indexerTypes.IdKey[],
+	): Promise<
+		Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
+	> {
+		if (keys.length === 0) {
+			return Promise.resolve([]);
+		}
+		const index = this._index.index as {
+			getContextByIdBatch?: (
+				keys: indexerTypes.IdKey[],
+			) => Array<Context | undefined>;
+			getContextById?: (key: indexerTypes.IdKey) => Context | undefined;
+		};
+		const contextBatch = index.getContextByIdBatch?.call(index, keys);
+		if (contextBatch) {
+			return Promise.resolve(
+				contextBatch.map((context, index) =>
+					context
+						? {
+								id: keys[index]!,
+								value: { __context: context } as IndexedContextOnly<I>,
+							}
+						: undefined,
+				),
+			);
+		}
+		if (index.getContextById) {
+			return Promise.resolve(
+				keys.map((key) => {
+					const context = index.getContextById!.call(index, key);
+					return context
+						? {
+								id: key,
+								value: { __context: context } as IndexedContextOnly<I>,
+							}
+						: undefined;
+				}),
+			);
+		}
+		return Promise.all(keys.map((key) => this.getLocalIndexedContext(key)));
 	}
 
 	private getExistingContext(

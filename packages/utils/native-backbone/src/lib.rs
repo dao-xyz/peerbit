@@ -577,6 +577,18 @@ impl NativePeerbitBackbone {
             .unwrap_or(JsValue::UNDEFINED))
     }
 
+    pub fn document_context_batch(&self, keys: Vec<String>) -> Result<Array, JsValue> {
+        let rows = Array::new_with_length(keys.len() as u32);
+        for (index, key) in keys.iter().enumerate() {
+            let value = self
+                .document_context_facts_by_key(key)?
+                .map(|context| document_context_facts_to_row(&context).into())
+                .unwrap_or(JsValue::UNDEFINED);
+            rows.set(index as u32, value);
+        }
+        Ok(rows)
+    }
+
     fn document_context_facts_by_key(
         &self,
         key: &str,

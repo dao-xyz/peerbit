@@ -107,6 +107,9 @@ type NativePeerbitBackboneHandle = {
 	document_context: (
 		key: string,
 	) => [string, string, string, string, number] | undefined;
+	document_context_batch?: (
+		keys: string[],
+	) => Array<[string, string, string, string, number] | undefined>;
 	document_query: (
 		queryBytes: Uint8Array,
 		sortBytes: Uint8Array,
@@ -4251,6 +4254,15 @@ export class NativePeerbitBackbone {
 		key: string,
 	): [string, string, string, string, number] | undefined {
 		return this.native.document_context(key);
+	}
+
+	documentContextBatch(
+		keys: string[],
+	): Array<[string, string, string, string, number] | undefined> {
+		const batch = this.native.document_context_batch;
+		return batch
+			? batch.call(this.native, keys)
+			: keys.map((key) => this.documentContext(key));
 	}
 
 	documentQuery(

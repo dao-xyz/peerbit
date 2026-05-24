@@ -3189,6 +3189,63 @@ describe("index", () => {
 					}
 				});
 
+				it("uses native backend putMany for fresh non-unique ids in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					try {
+						const docs = [
+							new Document({ id: uuid(), name: "fresh-1" }),
+							new Document({ id: uuid(), name: "fresh-2" }),
+						];
+						const appended = await store.docs.putMany(docs, {
+							target: "none",
+						});
+
+						expect(appended.entries).to.have.length(docs.length);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(contextBatchSpy.callCount).equal(1);
+						for (const doc of docs) {
+							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
+						}
+					} finally {
+						contextBatchSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("uses native backend putMany with descriptor transforms in strict native mode", async () => {
 					@variant("strict_native_batch_pick_indexable")
 					class StrictNativeBatchPickIndexable {
@@ -3311,14 +3368,19 @@ describe("index", () => {
 						"commitNativeDocumentAppendMany",
 					);
 					try {
+						const id = uuid();
+						await store.docs.put(new Document({ id, name: "existing" }), {
+							target: "none",
+						});
+						nativeBatchSpy.resetHistory();
 						await expect(
-							store.docs.putMany(
-								[new Document({ id: uuid(), name: "non-unique" })],
-								{
-									target: "none",
-								},
-							),
-						).to.be.rejectedWith(NativeDocumentModeError, "non-unique putMany");
+							store.docs.putMany([new Document({ id, name: "updated" })], {
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"existing documents in non-unique putMany",
+						);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(0);
 					} finally {

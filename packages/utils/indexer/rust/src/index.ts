@@ -246,6 +246,9 @@ type NativeBackboneDocumentIndexTarget = {
 	documentContext?: (
 		key: string,
 	) => [string, string, string, string, number] | undefined;
+	documentContextBatch?: (
+		keys: string[],
+	) => Array<[string, string, string, string, number] | undefined>;
 	documentValueBytes?: (key: string) => Uint8Array | undefined;
 	documentEntry?: (key: string) => [string, Uint8Array] | undefined;
 	documentQuery?: (
@@ -2093,6 +2096,45 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			gid: row[3],
 			size: row[4],
 		};
+	}
+
+	getContextByIdBatch(ids: types.IdKey[]): Array<
+		| {
+				created: bigint;
+				modified: bigint;
+				head: string;
+				gid: string;
+				size: number;
+		  }
+		| undefined
+	> {
+		if (ids.length === 0) {
+			return [];
+		}
+		if (this.isClosing()) {
+			return ids.map(() => undefined);
+		}
+		this.assertOpen();
+		if (!this.nativeBackboneDocumentIndexPrimary) {
+			return ids.map(() => undefined);
+		}
+		const keys = ids.map((id) => keyToStoreKey(id));
+		const rows =
+			this.nativeBackboneDocumentIndex?.documentContextBatch?.(keys) ??
+			keys.map((key) =>
+				this.nativeBackboneDocumentIndex?.documentContext?.(key),
+			);
+		return rows.map((row) =>
+			row
+				? {
+						created: BigInt(row[0]),
+						modified: BigInt(row[1]),
+						head: row[2],
+						gid: row[3],
+						size: row[4],
+					}
+				: undefined,
+		);
 	}
 
 	getByContextHead(head: string): types.IndexedResult<T> | undefined {
