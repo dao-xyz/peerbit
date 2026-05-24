@@ -152,7 +152,9 @@ type PreparedIndependentAppendBatch = {
 
 type PreparedJoinNativeCommitInput = {
 	entries: PreparedAppendJoinFacts[];
+	hashes: string[];
 	headFlags: boolean[];
+	headFlagsBytes: Uint8Array;
 	trustedMissing: boolean;
 	validatePlan?: boolean;
 };
@@ -3008,25 +3010,37 @@ export class Log<T> {
 		const resolvedOptions = options!;
 		const profile = resolvedOptions.__peerbitProfile;
 		const prepareStartedAt = internalProfileStart(profile);
-		const batchHashes = new Set(entries.map((entry) => entry.hash));
-		const heads: Map<string, boolean> = new Map();
-		for (const entry of entries) {
+		const entryHashes = new Array<string>(entries.length);
+		let hasAnyNext = false;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
 			if (!entry.hash || !entry.bytes || entry.meta.type !== EntryType.APPEND) {
 				return false;
 			}
-			if (heads.has(entry.hash)) {
-				continue;
+			entryHashes[i] = entry.hash;
+			if (entry.meta.next.length > 0) {
+				hasAnyNext = true;
 			}
-			heads.set(entry.hash, true);
-			for (const next of entry.meta.next) {
-				heads.set(next, false);
+		}
+		const batchHashes = new Set(entryHashes);
+		let heads: Map<string, boolean> | undefined;
+		if (hasAnyNext) {
+			heads = new Map();
+			for (const entry of entries) {
+				if (heads.has(entry.hash)) {
+					continue;
+				}
+				heads.set(entry.hash, true);
+				for (const next of entry.meta.next) {
+					heads.set(next, false);
+				}
 			}
 		}
 		emitInternalProfileDuration(profile, prepareStartedAt, {
 			name: "log.joinPreparedFacts.prepare",
 			component: "log",
 			entries: entries.length,
-			count: heads.size,
+			count: heads?.size ?? entries.length,
 			messages: 1,
 		});
 
@@ -3034,9 +3048,15 @@ export class Log<T> {
 			resolvedOptions.__peerbitNativePreparedJoinCommitValidatesPlan === true &&
 			!!resolvedOptions.__peerbitNativePreparedJoinCommit;
 		const headFlags: boolean[] = [];
+		const headFlagsBytes = new Uint8Array(entries.length);
+		const pushHeadFlag = (index: number, isHead: boolean) => {
+			headFlags.push(isHead);
+			headFlagsBytes[index] = isHead ? 1 : 0;
+		};
 		if (nativeCommitValidatesPlan) {
-			for (const entry of entries) {
-				headFlags.push(heads.get(entry.hash) ?? true);
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i]!;
+				pushHeadFlag(i, heads?.get(entry.hash) ?? true);
 			}
 			emitInternalProfileDuration(profile, internalProfileStart(profile), {
 				name: "log.joinPreparedFacts.plan",
@@ -3077,7 +3097,7 @@ export class Log<T> {
 				) {
 					return false;
 				}
-				headFlags.push(heads.get(entry.hash) ?? true);
+				pushHeadFlag(i, heads?.get(entry.hash) ?? true);
 			}
 			emitInternalProfileDuration(profile, validatePlanStartedAt, {
 				name: "log.joinPreparedFacts.validatePlan",
@@ -3107,7 +3127,9 @@ export class Log<T> {
 			const nativePreparedCommitted =
 				(await resolvedOptions.__peerbitNativePreparedJoinCommit?.({
 					entries,
+					hashes: entryHashes,
 					headFlags,
+					headFlagsBytes,
 					trustedMissing,
 					validatePlan: nativeCommitValidatesPlan,
 				})) === true;

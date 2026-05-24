@@ -12247,7 +12247,9 @@ export class SharedLog<
 	):
 		| ((input: {
 				entries: PreparedAppendJoinFacts[];
+				hashes: string[];
 				headFlags: boolean[];
+				headFlagsBytes: Uint8Array;
 				trustedMissing: boolean;
 				validatePlan?: boolean;
 		  }) => boolean)
@@ -12262,11 +12264,17 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
-		return ({ entries, headFlags, trustedMissing, validatePlan }) => {
+		return ({
+			entries,
+			hashes,
+			headFlags,
+			headFlagsBytes,
+			trustedMissing,
+			validatePlan,
+		}) => {
 			if (!trustedMissing || entries.length === 0) {
 				return false;
 			}
-			const hashes = entries.map((entry) => entry.hash);
 			const coordinateColumns =
 				coordinateBatch && coordinateBatch.rows.length > 0
 					? this.nativeBackboneReceiveCoordinateRowsToColumns(
@@ -12290,13 +12298,13 @@ export class SharedLog<
 						verifyHashes && verifyHashes.length > 0
 							? backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch?.(
 									hashes,
-									headFlags,
+									headFlagsBytes,
 									verifyHashes,
 									coordinateColumns,
 								)
 							: backbone.graph.commitPreparedRawReceiveJoinBatch?.(
 									hashes,
-									headFlags,
+									headFlagsBytes,
 									coordinateColumns,
 								);
 				} finally {
@@ -12333,7 +12341,7 @@ export class SharedLog<
 			if (
 				backbone.graph.commitPreparedRawReceiveBatch(
 					hashes,
-					headFlags,
+					headFlagsBytes,
 					coordinateColumns,
 				)
 			) {

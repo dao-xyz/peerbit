@@ -1355,6 +1355,15 @@ type NativePeerbitBackboneHandle = {
 	) => unknown[];
 };
 
+type NativeBackboneHeadFlags = boolean[] | Uint8Array;
+
+const nativeBackboneHeadFlagsToBytes = (
+	headFlags: NativeBackboneHeadFlags,
+): Uint8Array =>
+	headFlags instanceof Uint8Array
+		? headFlags
+		: new Uint8Array(headFlags.map((head) => (head ? 1 : 0)));
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
@@ -3042,7 +3051,7 @@ export class NativeBackboneLogGraph {
 
 	commitPreparedRawReceiveBatch(
 		hashes: string[],
-		headFlags: boolean[],
+		headFlags: NativeBackboneHeadFlags,
 		coordinates?: NativeBackboneCoordinateCommitColumns,
 	): boolean {
 		if (hashes.length === 0) {
@@ -3056,7 +3065,7 @@ export class NativeBackboneLogGraph {
 		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
 		return this.native.commit_prepared_raw_receive_batch(
 			hashes,
-			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			nativeBackboneHeadFlagsToBytes(headFlags),
 			coordinateColumns.hashes,
 			coordinateColumns.gids,
 			coordinateColumns.hashNumbers,
@@ -3069,7 +3078,7 @@ export class NativeBackboneLogGraph {
 
 	commitPreparedRawReceiveJoinBatch(
 		hashes: string[],
-		headFlags: boolean[],
+		headFlags: NativeBackboneHeadFlags,
 		coordinates?: NativeBackboneCoordinateCommitColumns,
 	): boolean | undefined {
 		if (hashes.length === 0) {
@@ -3086,7 +3095,7 @@ export class NativeBackboneLogGraph {
 		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
 		return this.native.commit_prepared_raw_receive_join_batch(
 			hashes,
-			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			nativeBackboneHeadFlagsToBytes(headFlags),
 			coordinateColumns.hashes,
 			coordinateColumns.gids,
 			coordinateColumns.hashNumbers,
@@ -3099,7 +3108,7 @@ export class NativeBackboneLogGraph {
 
 	commitVerifiedPreparedRawReceiveJoinBatch(
 		hashes: string[],
-		headFlags: boolean[],
+		headFlags: NativeBackboneHeadFlags,
 		verifyHashes: string[],
 		coordinates?: NativeBackboneCoordinateCommitColumns,
 	): boolean | undefined {
@@ -3117,7 +3126,7 @@ export class NativeBackboneLogGraph {
 		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
 		return this.native.commit_verified_prepared_raw_receive_join_batch(
 			hashes,
-			new Uint8Array(headFlags.map((head) => (head ? 1 : 0))),
+			nativeBackboneHeadFlagsToBytes(headFlags),
 			verifyHashes,
 			coordinateColumns.hashes,
 			coordinateColumns.gids,
