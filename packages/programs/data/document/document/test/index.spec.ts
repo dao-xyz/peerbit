@@ -3030,6 +3030,157 @@ describe("index", () => {
 					}
 				});
 
+				it("covers strict native single-put runtime matrix without compatibility fallback", async function () {
+					this.timeout(120_000);
+
+					@variant("strict_native_matrix_indexable")
+					class StrictNativeMatrixIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(properties?: Partial<StrictNativeMatrixIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const cases = [
+						{
+							name: "runtime identity",
+							coordinateWal: false,
+							project: false,
+						},
+						{
+							name: "runtime projection",
+							coordinateWal: false,
+							project: true,
+						},
+						{
+							name: "coordinate WAL identity",
+							coordinateWal: true,
+							project: false,
+						},
+						{
+							name: "coordinate WAL projection",
+							coordinateWal: true,
+							project: true,
+						},
+					];
+					try {
+						for (const testCase of cases) {
+							const coordinatePersistence = testCase.coordinateWal
+								? new NativeBackboneCoordinatePersistence(
+										new MemoryCoordinatePersistenceStore(),
+										{ flushOnAppend: false },
+									)
+								: undefined;
+							const localStore = new TestStore<any>({
+								docs: new Documents<Document, any>(),
+							});
+							store = localStore as any;
+							await rustSession.peers[0].open(localStore, {
+								args: {
+									mode: "native",
+									replicate: false,
+									nativeGraph: true,
+									nativeBackbone: {
+										optional: false,
+										documentIndex: true,
+										...(coordinatePersistence ? { coordinatePersistence } : {}),
+									},
+									canPerform: policy.allowAll<Document>(),
+									index: testCase.project
+										? {
+												type: StrictNativeMatrixIndexable,
+												transform: transform.project<
+													Document,
+													StrictNativeMatrixIndexable
+												>({
+													id: transform.field("id"),
+													name: transform.field("name"),
+												}),
+											}
+										: {
+												type: Document,
+												transform: transform.identity<Document>(),
+											},
+								},
+							});
+							const sharedLog = localStore.docs.log as any;
+							const fallbackAppendSpy = sinon.spy(
+								localStore.docs.log,
+								"append",
+							);
+							const compatPlanSpy = sinon.spy(
+								localStore.docs as any,
+								"createPlainPutCommitPlan",
+							);
+							const storageTransactionSpy = sinon.spy(
+								sharedLog,
+								"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+							);
+							const transformSpy = sinon.spy(
+								localStore.docs.index,
+								"transformer",
+							);
+							try {
+								const id = uuid();
+								const first = await localStore.docs.put(
+									new Document({
+										id,
+										name: `${testCase.name} first`,
+									}),
+									{ unique: true },
+								);
+								const second = await localStore.docs.put(
+									new Document({
+										id,
+										name: `${testCase.name} second`,
+									}),
+									{ target: "none" },
+								);
+
+								expect(second.entry.meta.next).to.deep.equal([
+									first.entry.hash,
+								]);
+								expect(fallbackAppendSpy.callCount).equal(0);
+								expect(compatPlanSpy.callCount).equal(0);
+								expect(storageTransactionSpy.callCount > 0).equal(
+									testCase.coordinateWal,
+								);
+								expect((await localStore.docs.get(id))?.name).equal(
+									`${testCase.name} second`,
+								);
+								if (testCase.project) {
+									expect(transformSpy.callCount).equal(0);
+									const indexed = await localStore.docs.index.get(id, {
+										resolve: false,
+									});
+									expect(indexed?.id).equal(id);
+									expect(indexed?.name).equal(`${testCase.name} second`);
+									expect((indexed as any)?.data).equal(undefined);
+								}
+							} finally {
+								transformSpy.restore();
+								storageTransactionSpy.restore();
+								compatPlanSpy.restore();
+								fallbackAppendSpy.restore();
+								await localStore.close();
+								store = undefined;
+							}
+						}
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
 				it("allows strict native mode to use open-level replication", async () => {
 					const rustSession = await TestSession.connected(
 						1,
