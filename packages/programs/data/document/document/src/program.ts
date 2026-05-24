@@ -319,11 +319,6 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 			existingContexts = await this.context.getLocalIndexedContexts(
 				prepared.map((item) => item.key),
 			);
-			if (existingContexts.some(Boolean)) {
-				throw this.context.nativeModeError(
-					"does not support existing documents in non-unique putMany",
-				);
-			}
 		}
 		return mapMaybePromise(
 			this.context.commitNativeDocumentAppendMany({
@@ -2178,6 +2173,21 @@ export class Documents<
 	private async commitNativeDocumentAppendMany(
 		input: NativeDocumentAppendManyCommitInput<T, I>,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
+		const nexts = input.puts.map((put) => {
+			const existing =
+				put.unique || put.existing === null ? null : put.existing;
+			if (!existing) {
+				return [];
+			}
+			const context = existing.value.__context;
+			const next = this.nextFromIndexedContext(context.head, existing);
+			if (!next) {
+				throw this.nativeModeError(
+					"requires indexed document context for non-unique putMany",
+				);
+			}
+			return [next];
+		});
 		const appended =
 			await this.log.appendLocallyPreparedPayloadsManyIndependent(
 				input.puts.map((put) => put.operationPayloadBytes),
@@ -2187,6 +2197,7 @@ export class Documents<
 				},
 				{
 					resolveTrimmedEntries: input.resolveTrimmedEntries,
+					nexts,
 				},
 			);
 		if (!appended) {
@@ -2901,11 +2912,14 @@ export class Documents<
 				T,
 				I
 			>["nativeBackboneDocumentIndex"];
+			replace: boolean;
 		}> = [];
 		for (const put of commit.commits) {
 			if (modified.has(put.key.primitive)) {
 				continue;
 			}
+			const existing =
+				put.unique || put.existing === null ? null : put.existing;
 			putsToIndex.push({
 				document: put.document,
 				encodedDocument: put.encodedDocument,
@@ -2913,6 +2927,7 @@ export class Documents<
 				context: put.context,
 				contextualEncodedValueParts: put.contextualEncodedValueParts,
 				nativeBackboneDocumentIndex: put.nativeBackboneDocumentIndex,
+				replace: existing != null,
 			});
 			modified.add(put.key.primitive);
 		}
@@ -2922,7 +2937,7 @@ export class Documents<
 				id: put.key,
 				context: put.context,
 				options: {
-					replace: false,
+					replace: put.replace,
 					encodedValueParts: put.contextualEncodedValueParts,
 				},
 			})),
@@ -2935,7 +2950,7 @@ export class Documents<
 					context: put.context,
 					nativeDocumentIndex: put.nativeBackboneDocumentIndex,
 					options: {
-						replace: false,
+						replace: put.replace,
 					},
 				})),
 			);
@@ -2953,7 +2968,7 @@ export class Documents<
 					id: put.key,
 					context: put.context,
 					options: {
-						replace: false,
+						replace: put.replace,
 						encodedValueParts: put.contextualEncodedValueParts,
 					},
 				})),

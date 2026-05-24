@@ -1836,6 +1836,7 @@ export class Log<T> {
 		properties?: {
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
+			nexts?: Sorting.SortableEntry[][];
 		},
 	): Promise<
 		| {
@@ -1874,12 +1875,16 @@ export class Log<T> {
 			appendOptions,
 			deferBlockStore,
 			properties?.payloadDatas,
+			properties?.nexts,
 		);
 		if (!nativeAppendBatch) {
 			return undefined;
 		}
 
 		const entries = nativeAppendBatch.entries;
+		const externalNextHashes =
+			properties?.nexts?.flatMap((nexts) => nexts.map((next) => next.hash)) ??
+			[];
 		try {
 			if (deferBlockStore && !nativeAppendBatch.nativeBlocksCommitted) {
 				await this.putAppendEntryBlocks(entries, nativeAppendBatch.blocks);
@@ -1887,7 +1892,7 @@ export class Log<T> {
 			await this.putAppendEntries(
 				entries,
 				appendOptions,
-				[],
+				externalNextHashes,
 				nativeAppendBatch,
 				entries.map(() => true),
 			);
@@ -2172,6 +2177,7 @@ export class Log<T> {
 		options: AppendOptions<T>,
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
+		nexts?: Sorting.SortableEntry[][],
 	): Promise<PreparedAppendChain<T> | undefined> {
 		const canAppendAlreadyValidated =
 			options.__peerbitCanAppendAlreadyValidated === true;
@@ -2186,6 +2192,7 @@ export class Log<T> {
 			options.meta?.type === EntryType.CUT ||
 			options.meta?.gidSeed ||
 			options.meta?.next ||
+			(nexts && nexts.length !== data.length) ||
 			(payloadDatas && payloadDatas.length !== data.length)
 		) {
 			return undefined;
@@ -2197,7 +2204,21 @@ export class Log<T> {
 				? this.entryIndex.properties.nativeGraph.graph
 				: undefined;
 
-		const gids = EntryV0.createGids(data.length);
+		const generatedGids = EntryV0.createGids(data.length);
+		const gids = generatedGids.map((generatedGid, index) => {
+			const entryNexts = nexts?.[index];
+			if (!entryNexts || entryNexts.length === 0) {
+				return generatedGid;
+			}
+			let gid = entryNexts[0]!.meta.gid;
+			for (let i = 1; i < entryNexts.length; i++) {
+				const nextGid = entryNexts[i]!.meta.gid;
+				if (nextGid < gid) {
+					gid = nextGid;
+				}
+			}
+			return gid;
+		});
 		const clockId = this._identity.publicKey.bytes;
 		const clocks = this._hlc.nowBatch(data.length).map(
 			(timestamp) =>
@@ -2214,6 +2235,7 @@ export class Log<T> {
 					meta: {
 						clocks: () => clocks,
 						gids,
+						nexts,
 						type: options.meta?.type,
 						datas: metaDatas,
 					},
@@ -2237,15 +2259,16 @@ export class Log<T> {
 		let nativeGraphUpdated = false;
 		let nativeBlocksCommitted = true;
 		for (let i = 0; i < data.length; i++) {
+			const entryNexts = nexts?.[i] ?? [];
 			const prepared = await EntryV0.createPlainAppendChainBatch<T>({
 				data: [data[i]!],
 				payloadDatas: payloadDatas ? [payloadDatas[i]!] : undefined,
 				meta: {
 					clocks: () => [clocks[i]!],
-					gid: gids[i]!,
+					gid: entryNexts.length === 0 ? gids[i]! : undefined,
 					type: options.meta?.type,
 					data: metaDatas[i],
-					next: [],
+					next: entryNexts,
 				},
 				encoding: this._encoding,
 				identity: options.identity || this._identity,

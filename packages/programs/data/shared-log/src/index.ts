@@ -6223,6 +6223,7 @@ export class SharedLog<
 		properties?: {
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
+			nexts?: ShallowOrFullEntry<T>[][];
 		},
 	): Promise<
 		| {
@@ -6253,6 +6254,7 @@ export class SharedLog<
 			{
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				payloadDatas: properties?.payloadDatas,
+				nexts: properties?.nexts,
 			},
 		);
 		if (!result) {
@@ -6344,6 +6346,7 @@ export class SharedLog<
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: {
 			resolveTrimmedEntries?: boolean;
+			nexts?: ShallowOrFullEntry<T>[][];
 		},
 	) {
 		return this.appendLocallyPreparedManyIndependent(
@@ -6352,6 +6355,7 @@ export class SharedLog<
 			{
 				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 				payloadDatas,
+				nexts: properties?.nexts,
 			},
 		);
 	}

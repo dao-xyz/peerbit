@@ -2260,10 +2260,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		if (
-			values.every(
-				(entry) =>
-					entry.options?.encodedValueParts && entry.options.replace !== true,
-			) &&
+			values.every((entry) => entry.options?.encodedValueParts) &&
 			(await this.putWithEncodedValuePartsStoredBatch(
 				values.map((entry) => ({
 					id: entry.id,

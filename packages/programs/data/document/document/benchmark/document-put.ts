@@ -38,7 +38,7 @@ import {
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
 //   Add "-no-trim" to any rust-peerbit scenario to disable length trim.
-//   Add "-putmany" to any unique scenario name to use one putMany call per measured batch.
+//   Add "-putmany" to any scenario name to use one putMany call per measured batch.
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
 //   Add "-mode-native" to a rust-peerbit-backbone scenario to open Documents in strict native mode.
 //   Add "-mode-native-replicated" to keep open-level replication in strict native mode.
@@ -859,6 +859,36 @@ const runPuts = async (
 		...(scenarioBaseName(scenario) === "compat-path" ? { canAppend } : {}),
 	};
 	if (scenarioUsesPutMany(scenario)) {
+		if (scenarioUsesUpdatePuts(scenario)) {
+			const docs = Array.from({ length: count }, (_, index) =>
+				new Document({
+					id: `update-many-${idCounter++}-${index}`,
+					name: "before",
+					number: 1n,
+					bytes: payload,
+					signer: currentSignerFieldBytes,
+				}),
+			);
+			await store.docs.putMany(docs, { ...appendOptions, unique: true });
+			const updated = docs.map(
+				(doc, index) =>
+					new Document({
+						id: doc.id,
+						name: `updated-${index}`,
+						number: BigInt(index),
+						bytes: payload,
+						signer: currentSignerFieldBytes,
+					}),
+			);
+			if (profile) {
+				await time(profile, "totalPutMs", () =>
+					store.docs.putMany(updated, appendOptions),
+				);
+			} else {
+				await store.docs.putMany(updated, appendOptions);
+			}
+			return;
+		}
 		const docs = Array.from({ length: count }, () => createDocument());
 		if (profile) {
 			await time(profile, "totalPutMs", () =>
