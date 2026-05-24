@@ -52,6 +52,13 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	rawExchangeHeads?: boolean;
 
 	/**
+	 * Experimental receive-side raw-head parsing mode for native backbone. When
+	 * enabled, signature verification happens while raw entries are decoded
+	 * instead of during the later native commit step.
+	 */
+	rawExchangeHeadsVerifySignaturesDuringPrepare?: boolean;
+
+	/**
 	 * Maximum number of hashes tracked per convergent repair session target.
 	 * Large sessions still dispatch all entries, but only this many are tracked
 	 * for deterministic completion metadata.

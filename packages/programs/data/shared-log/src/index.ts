@@ -9524,7 +9524,12 @@ export class SharedLog<
 					}),
 					this.log,
 					syncProfile,
-					{ nativeBackbone: this._nativeBackbone },
+					{
+						nativeBackbone: this._nativeBackbone,
+						verifyNativeBackboneSignaturesDuringPrepare:
+							this._logProperties?.sync
+								?.rawExchangeHeadsVerifySignaturesDuringPrepare === true,
+					},
 				);
 				rawMaterializedKnownMissing = true;
 				if (syncProfile) {

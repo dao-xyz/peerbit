@@ -1031,7 +1031,10 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	message: RawExchangeHeadsMessage,
 	log: Log<any>,
 	profile?: SyncProfileFn,
-	options?: { nativeBackbone?: RawReceiveNativeBackbone },
+	options?: {
+		nativeBackbone?: RawReceiveNativeBackbone;
+		verifyNativeBackboneSignaturesDuringPrepare?: boolean;
+	},
 ): Promise<ExchangeHeadsMessage<any>> => {
 	const blocks = new Array<Uint8Array>(message.heads.length);
 	const hashes = new Array<string>(message.heads.length);
@@ -1062,7 +1065,10 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
 					blocks,
 					hashes,
-					{ verifySignatures: false },
+					{
+						verifySignatures:
+							options.verifyNativeBackboneSignaturesDuringPrepare === true,
+					},
 				);
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";

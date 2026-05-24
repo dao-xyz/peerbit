@@ -1,8 +1,8 @@
 // Focused receive/prune hot-path benchmark.
 //
 // Run from packages/programs/data/shared-log:
-//   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-verify-prepare,raw-receive-native-coordinate-wal-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -25,6 +25,8 @@ type Scenario =
 	| "raw-receive-native"
 	| "raw-receive-native-backbone"
 	| "raw-receive-native-coordinate-wal"
+	| "raw-receive-native-backbone-verify-prepare"
+	| "raw-receive-native-coordinate-wal-verify-prepare"
 	| "request-prune-native-confirm"
 	| "request-prune-native-backbone-confirm"
 	| "request-prune-native-backbone-coordinate-wal-confirm"
@@ -60,6 +62,20 @@ const parsePositiveInteger = (value: string | undefined, fallback: number) => {
 	return parsed;
 };
 
+const parseNonNegativeInteger = (
+	value: string | undefined,
+	fallback: number,
+) => {
+	if (!value) {
+		return fallback;
+	}
+	const parsed = Number.parseInt(value, 10);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		throw new Error(`Expected a non-negative integer, got '${value}'`);
+	}
+	return parsed;
+};
+
 const parseCounts = (value: string | undefined) =>
 	(value ?? "100,1000,5000")
 		.split(",")
@@ -72,6 +88,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 		"raw-receive-native",
 		"raw-receive-native-backbone",
 		"raw-receive-native-coordinate-wal",
+		"raw-receive-native-backbone-verify-prepare",
+		"raw-receive-native-coordinate-wal-verify-prepare",
 		"request-prune-native-confirm",
 		"request-prune-native-backbone-confirm",
 		"request-prune-native-backbone-coordinate-wal-confirm",
@@ -85,6 +103,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native" &&
 			scenario !== "raw-receive-native-backbone" &&
 			scenario !== "raw-receive-native-coordinate-wal" &&
+			scenario !== "raw-receive-native-backbone-verify-prepare" &&
+			scenario !== "raw-receive-native-coordinate-wal-verify-prepare" &&
 			scenario !== "request-prune-native-confirm" &&
 			scenario !== "request-prune-native-backbone-confirm" &&
 			scenario !== "request-prune-native-backbone-coordinate-wal-confirm" &&
@@ -98,6 +118,10 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 
 const counts = parseCounts(process.env.RECEIVE_PRUNE_COUNTS);
 const runs = parsePositiveInteger(process.env.RECEIVE_PRUNE_RUNS, 1);
+const warmupRuns = parseNonNegativeInteger(
+	process.env.RECEIVE_PRUNE_WARMUP_RUNS,
+	0,
+);
 const scenarios = parseScenarios(process.env.RECEIVE_PRUNE_SCENARIOS);
 
 const setup = {
@@ -141,7 +165,11 @@ const summarizeProfileEvents = (
 
 const createOpenArgs = (
 	profileEvents: SyncProfileEvent[],
-	options?: { nativeBackbone?: boolean; coordinateWal?: boolean },
+	options?: {
+		nativeBackbone?: boolean;
+		coordinateWal?: boolean;
+		verifySignaturesDuringPrepare?: boolean;
+	},
 ) => {
 	const nativeBackbone =
 		options?.nativeBackbone || options?.coordinateWal
@@ -167,6 +195,12 @@ const createOpenArgs = (
 		respondToIHaveTimeout: 1,
 		sync: {
 			rawExchangeHeads: true,
+			...(options?.verifySignaturesDuringPrepare === undefined
+				? {}
+				: {
+						rawExchangeHeadsVerifySignaturesDuringPrepare:
+							options.verifySignaturesDuringPrepare,
+					}),
 			profile: (event: SyncProfileEvent) => profileEvents.push(event),
 		},
 	};
@@ -208,7 +242,11 @@ const createRawMessages = async (
 const runRawReceive = async (
 	count: number,
 	run: number,
-	options?: { nativeBackbone?: boolean; coordinateWal?: boolean },
+	options?: {
+		nativeBackbone?: boolean;
+		coordinateWal?: boolean;
+		verifySignaturesDuringPrepare?: boolean;
+	},
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
 		indexer: (directory) => createRustIndexer(directory),
@@ -239,8 +277,15 @@ const runRawReceive = async (
 		}
 
 		return {
-			scenario: options?.coordinateWal
-				? "raw-receive-native-coordinate-wal"
+			scenario:
+				options?.coordinateWal &&
+				options.verifySignaturesDuringPrepare === true
+					? "raw-receive-native-coordinate-wal-verify-prepare"
+				: options?.nativeBackbone &&
+					  options.verifySignaturesDuringPrepare === true
+					? "raw-receive-native-backbone-verify-prepare"
+				: options?.coordinateWal
+					? "raw-receive-native-coordinate-wal"
 				: options?.nativeBackbone
 					? "raw-receive-native-backbone"
 				: "raw-receive-native",
@@ -407,6 +452,18 @@ const runScenario = async (
 	if (scenario === "raw-receive-native-coordinate-wal") {
 		return runRawReceive(count, run, { coordinateWal: true });
 	}
+	if (scenario === "raw-receive-native-backbone-verify-prepare") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			verifySignaturesDuringPrepare: true,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-verify-prepare") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			verifySignaturesDuringPrepare: true,
+		});
+	}
 	if (scenario === "request-prune-native-confirm") {
 		return runRequestPruneNativeConfirm(count, run);
 	}
@@ -426,6 +483,9 @@ const runScenario = async (
 const rows: BenchRow[] = [];
 for (const scenario of scenarios) {
 	for (const count of counts) {
+		for (let warmup = 0; warmup < warmupRuns; warmup++) {
+			await runScenario(scenario, count, -1 - warmup);
+		}
 		for (let run = 0; run < runs; run++) {
 			rows.push(await runScenario(scenario, count, run));
 		}
@@ -459,6 +519,7 @@ if (process.env.BENCH_JSON === "1") {
 		JSON.stringify(
 			{
 				name: "shared-log-receive-prune",
+				warmupRuns,
 				rows,
 				aggregateRows,
 			},
