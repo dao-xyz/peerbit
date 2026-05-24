@@ -2133,6 +2133,34 @@ const appendCoordinatePlanFromRow = (
 	};
 };
 
+const appendCoordinatePlanFromCompactNoNextRow = (
+	resolution: RangeResolution,
+	hash: string,
+	row: unknown[],
+): NativeBackboneCoordinatePlan => {
+	const [
+		hashNumber,
+		gid,
+		coordinateRows,
+		assignedToRangeBoundary,
+		requestedReplicas,
+	] = row as [unknown, string, unknown[], boolean, number];
+	const coordinateStrings = coordinateRows.map((coordinate) =>
+		String(coordinate),
+	);
+	return {
+		hash,
+		hashNumber: rowsToNumbers(resolution, [hashNumber])[0]!,
+		hashNumberString:
+			typeof hashNumber === "string" ? hashNumber : String(hashNumber),
+		gid,
+		coordinates: rowsToNumbers(resolution, coordinateStrings),
+		coordinateStrings,
+		assignedToRangeBoundary,
+		requestedReplicas,
+	};
+};
+
 const documentContextFactsFromRow = (
 	row: unknown[] | undefined,
 ): NativeBackboneDocumentContextFacts | undefined => {
@@ -2525,24 +2553,70 @@ const compactCommittedNoNextStorageAppendResultFromRow = (
 		string,
 		number,
 		Uint8Array | undefined,
-		Uint8Array | unknown[],
+		Uint8Array | unknown[] | string | number,
 	];
 	const hasDigestRow = fourth instanceof Uint8Array;
-	const hashDigestBytes = hasDigestRow ? fourth : undefined;
-	const [
-		coordinateRow,
-		leaderRows,
-		isLeader,
-		trimHashRows,
-		documentTrimmedHeadsProcessed,
-	] = row.slice(hasDigestRow ? 4 : 3) as [
-		unknown[],
-		unknown[] | undefined,
-		boolean,
-		string[] | undefined,
-		boolean | undefined,
-	];
-	const coordinate = appendCoordinatePlanFromRow(resolution, coordinateRow);
+	const hashDigestBytes = hasDigestRow ? (fourth as Uint8Array) : undefined;
+	const rest = row.slice(hasDigestRow ? 4 : 3);
+	const usesNestedCoordinateRow = Array.isArray(rest[0]);
+	let coordinate: NativeBackboneCoordinatePlan;
+	let leaderRows: unknown[] | undefined;
+	let isLeader: boolean;
+	let trimHashRows: string[] | undefined;
+	let documentTrimmedHeadsProcessed: boolean | undefined;
+	if (usesNestedCoordinateRow) {
+		const [
+			coordinateRow,
+			nestedLeaderRows,
+			nestedIsLeader,
+			nestedTrimHashRows,
+			nestedDocumentTrimmedHeadsProcessed,
+		] = rest as [
+			unknown[],
+			unknown[] | undefined,
+			boolean,
+			string[] | undefined,
+			boolean | undefined,
+		];
+		coordinate = appendCoordinatePlanFromRow(resolution, coordinateRow);
+		leaderRows = nestedLeaderRows;
+		isLeader = nestedIsLeader;
+		trimHashRows = nestedTrimHashRows;
+		documentTrimmedHeadsProcessed = nestedDocumentTrimmedHeadsProcessed;
+	} else {
+		const [
+			hashNumber,
+			gid,
+			coordinateRows,
+			assignedToRangeBoundary,
+			requestedReplicas,
+			flatLeaderRows,
+			flatIsLeader,
+			flatTrimHashRows,
+			flatDocumentTrimmedHeadsProcessed,
+		] = rest as [
+			unknown,
+			string,
+			unknown[],
+			boolean,
+			number,
+			unknown[] | undefined,
+			boolean,
+			string[] | undefined,
+			boolean | undefined,
+		];
+		coordinate = appendCoordinatePlanFromCompactNoNextRow(resolution, hash, [
+			hashNumber,
+			gid,
+			coordinateRows,
+			assignedToRangeBoundary,
+			requestedReplicas,
+		]);
+		leaderRows = flatLeaderRows;
+		isLeader = flatIsLeader;
+		trimHashRows = flatTrimHashRows;
+		documentTrimmedHeadsProcessed = flatDocumentTrimmedHeadsProcessed;
+	}
 	return {
 		entry: {
 			cid: hash,

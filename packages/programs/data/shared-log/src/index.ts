@@ -1305,6 +1305,11 @@ export class SharedLog<
 	private _nativeBackbone?: NativePeerbitBackbone;
 	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
+	private _defaultAppendReplicaMetadataCache?: {
+		source: MinReplicas;
+		value: number;
+		bytes: Uint8Array;
+	};
 
 	get nativeBackbone(): NativePeerbitBackbone | undefined {
 		return this._nativeBackbone;
@@ -6539,16 +6544,8 @@ export class SharedLog<
 		minReplicasValue: number;
 	} {
 		const appendOptions: AppendOptions<T> = { ...options };
-		const minReplicas = this.getClampedReplicas(
-			options?.replicas
-				? typeof options.replicas === "number"
-					? new AbsoluteReplicas(options.replicas)
-					: options.replicas
-				: undefined,
-		);
-		const minReplicasData = encodeReplicas(minReplicas);
-		const minReplicasValue = minReplicas.getValue(this);
-		checkMinReplicasLimit(minReplicasValue);
+		const { minReplicasData, minReplicasValue } =
+			this.createAppendReplicaMetadata(options?.replicas);
 
 		if (!appendOptions.meta) {
 			appendOptions.meta = {
@@ -6574,6 +6571,39 @@ export class SharedLog<
 		}
 
 		return { appendOptions, minReplicasValue };
+	}
+
+	private createAppendReplicaMetadata(
+		replicas: SharedAppendOptions<T>["replicas"] | undefined,
+	): { minReplicasData: Uint8Array; minReplicasValue: number } {
+		const customValue = replicas
+			? typeof replicas === "number"
+				? new AbsoluteReplicas(replicas)
+				: replicas
+			: undefined;
+		const minReplicas = this.getClampedReplicas(customValue);
+		const minReplicasValue = minReplicas.getValue(this);
+		checkMinReplicasLimit(minReplicasValue);
+		if (!customValue) {
+			const cache = this._defaultAppendReplicaMetadataCache;
+			if (cache?.source === minReplicas && cache.value === minReplicasValue) {
+				return {
+					minReplicasData: cache.bytes,
+					minReplicasValue,
+				};
+			}
+			const minReplicasData = encodeReplicas(minReplicas);
+			this._defaultAppendReplicaMetadataCache = {
+				source: minReplicas,
+				value: minReplicasValue,
+				bytes: minReplicasData,
+			};
+			return { minReplicasData, minReplicasValue };
+		}
+		return {
+			minReplicasData: encodeReplicas(minReplicas),
+			minReplicasValue,
+		};
 	}
 
 	private canPlanNativeAppendFacts(appendFacts: PreparedAppendFacts): boolean {
