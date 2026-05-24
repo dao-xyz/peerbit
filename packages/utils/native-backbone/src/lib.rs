@@ -663,6 +663,44 @@ impl NativePeerbitBackbone {
         )
     }
 
+    pub fn put_document_encoded_parts_stored_batch(
+        &mut self,
+        keys: Array,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let keys = strings_from_array(keys)?;
+        let value_prefix_bytes = bytes_vec_from_array(value_prefix_bytes)?;
+        let value_suffix_bytes = bytes_vec_from_array(value_suffix_bytes)?;
+        ensure_same_len(
+            keys.len(),
+            value_prefix_bytes.len(),
+            "document value prefix",
+        )?;
+        ensure_same_len(
+            keys.len(),
+            value_suffix_bytes.len(),
+            "document value suffix",
+        )?;
+
+        for ((key, prefix), suffix) in keys
+            .into_iter()
+            .zip(value_prefix_bytes.into_iter())
+            .zip(value_suffix_bytes.into_iter())
+        {
+            self.put_document_encoded_parts_stored_inner(
+                key,
+                prefix,
+                suffix,
+                byte_element_index_limit,
+                false,
+            )?;
+        }
+
+        Ok(())
+    }
+
     fn put_document_encoded_parts_stored_inner(
         &mut self,
         key: String,

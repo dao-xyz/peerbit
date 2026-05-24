@@ -128,6 +128,12 @@ type NativePeerbitBackboneHandle = {
 		valueSuffixBytes: Uint8Array,
 		byteElementIndexLimit: number,
 	) => void;
+	put_document_encoded_parts_stored_batch: (
+		keys: string[],
+		valuePrefixBytes: Uint8Array[],
+		valueSuffixBytes: Uint8Array[],
+		byteElementIndexLimit: number,
+	) => void;
 	delete_document: (key: string) => boolean;
 	clear_document_index: () => void;
 	coordinate_journal_header: () => Uint8Array;
@@ -4309,6 +4315,34 @@ export class NativePeerbitBackbone {
 			key,
 			valuePrefixBytes,
 			valueSuffixBytes,
+			byteElementIndexLimit,
+		);
+	}
+
+	putDocumentEncodedPartsStoredBatch(
+		values: Array<{
+			key: string;
+			valuePrefixBytes: Uint8Array;
+			valueSuffixBytes: Uint8Array;
+		}>,
+		byteElementIndexLimit = 0,
+	): void {
+		if (values.length === 0) {
+			return;
+		}
+		const keys = new Array<string>(values.length);
+		const prefixes = new Array<Uint8Array>(values.length);
+		const suffixes = new Array<Uint8Array>(values.length);
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i]!;
+			keys[i] = value.key;
+			prefixes[i] = value.valuePrefixBytes;
+			suffixes[i] = value.valueSuffixBytes;
+		}
+		this.native.put_document_encoded_parts_stored_batch(
+			keys,
+			prefixes,
+			suffixes,
 			byteElementIndexLimit,
 		);
 	}

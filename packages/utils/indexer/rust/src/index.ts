@@ -269,6 +269,14 @@ type NativeBackboneDocumentIndexTarget = {
 		valueSuffixBytes: Uint8Array,
 		byteElementIndexLimit?: number,
 	) => void;
+	putDocumentEncodedPartsStoredBatch?: (
+		values: Array<{
+			key: string;
+			valuePrefixBytes: Uint8Array;
+			valueSuffixBytes: Uint8Array;
+		}>,
+		byteElementIndexLimit?: number,
+	) => void;
 	deleteDocument?: (key: string) => boolean;
 	clearDocumentIndex?: () => void;
 };
@@ -4144,6 +4152,22 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			encodedValueParts: NativeEncodedValueParts;
 		}>,
 	): void {
+		const backbone = this.nativeBackboneDocumentIndex;
+		if (backbone?.putDocumentEncodedPartsStoredBatch && values.length > 0) {
+			try {
+				backbone.putDocumentEncodedPartsStoredBatch(
+					values.map((entry) => ({
+						key: entry.storeKey ?? keyToStoreKey(entry.id),
+						valuePrefixBytes: entry.encodedValueParts.prefix,
+						valueSuffixBytes: entry.encodedValueParts.suffix,
+					})),
+					this.nativeByteElementIndexLimit,
+				);
+				return;
+			} catch {
+				// Fall back to single puts so older native-backbone objects remain usable.
+			}
+		}
 		for (const entry of values) {
 			this.putNativeBackboneDocumentEncodedPartsStored(
 				entry.storeKey ?? keyToStoreKey(entry.id),

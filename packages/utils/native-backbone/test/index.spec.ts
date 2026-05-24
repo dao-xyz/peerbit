@@ -424,6 +424,27 @@ describe("native peerbit backbone", () => {
 		expect(backbone.deleteDocument("doc-1")).to.equal(true);
 		expect(backbone.documentIndexLength).to.equal(0);
 		expect(backbone.documentValueLength).to.equal(0);
+
+		backbone.putDocumentEncodedPartsStoredBatch(
+			[
+				{
+					key: "doc-1",
+					valuePrefixBytes: encoded.slice(0, 6),
+					valueSuffixBytes: encoded.slice(6),
+				},
+				{
+					key: "doc-2",
+					valuePrefixBytes: encoded.slice(0, 6),
+					valueSuffixBytes: encoded.slice(6),
+				},
+			],
+			8,
+		);
+		expect(backbone.documentIndexLength).to.equal(2);
+		expect(backbone.documentValueLength).to.equal(2);
+		expect(
+			Array.from(backbone.documentValueBytes("doc-2") ?? []),
+		).to.deep.equal(Array.from(encoded));
 	});
 
 	it("coalesces no-next appends with document index commits", async () => {
