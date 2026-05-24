@@ -558,6 +558,13 @@ describe("raw exchange-head sync", () => {
 				backbone.graph,
 				"commitPreparedRawReceiveJoinBatch",
 			);
+			const nativeVerifiedPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
 			const nativeCommitSpy = sinon.spy(
 				backbone.graph,
 				"commitBlocksAndGraphBatch",
@@ -583,8 +590,14 @@ describe("raw exchange-head sync", () => {
 				} as any);
 
 				expect(target.log.log.length).to.equal(hashes.length);
-				expect(nativePreparedJoinCommitSpy.callCount).to.equal(1);
-				expect(nativePreparedJoinCommitSpy.firstCall.args[0]).to.have.length(
+				expect(
+					nativePreparedJoinCommitSpy.callCount +
+						(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0),
+				).to.equal(1);
+				const preparedJoinCall =
+					nativeVerifiedPreparedJoinCommitSpy?.firstCall ??
+					nativePreparedJoinCommitSpy.firstCall;
+				expect(preparedJoinCall.args[0]).to.have.length(
 					hashes.length,
 				);
 				expect(nativePreparedCommitSpy.callCount).to.equal(0);
@@ -602,6 +615,7 @@ describe("raw exchange-head sync", () => {
 				graphPutBatchSpy.restore();
 				blockPutColumnsSpy.restore();
 				nativeCommitSpy.restore();
+				nativeVerifiedPreparedJoinCommitSpy?.restore();
 				nativePreparedJoinCommitSpy.restore();
 				nativePreparedCommitSpy.restore();
 			}
@@ -820,6 +834,13 @@ describe("raw exchange-head sync", () => {
 				backbone.graph,
 				"commitPreparedRawReceiveJoinBatch",
 			);
+			const nativeVerifiedPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
 			const combinedCommitSpy = sinon.spy(
 				backbone.graph,
 				"commitBlocksGraphAndCoordinatesBatch",
@@ -846,12 +867,24 @@ describe("raw exchange-head sync", () => {
 				} as any);
 
 				expect(target.log.log.length).to.equal(hashes.length);
-				expect(nativePreparedJoinCommitSpy.callCount).to.equal(1);
-				expect(nativePreparedJoinCommitSpy.firstCall.args[0]).to.have.length(
+				expect(
+					nativePreparedJoinCommitSpy.callCount +
+						(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0),
+				).to.equal(1);
+				const preparedJoinCall =
+					nativeVerifiedPreparedJoinCommitSpy?.firstCall ??
+					nativePreparedJoinCommitSpy.firstCall;
+				expect(preparedJoinCall.args[0]).to.have.length(
 					hashes.length,
 				);
-				expect(nativePreparedJoinCommitSpy.firstCall.args[2].hashes).to
-					.have.length(hashes.length);
+				const coordinateColumns = preparedJoinCall.args.find(
+					(arg: any) =>
+						arg &&
+						Array.isArray(arg.hashes) &&
+						Array.isArray(arg.gids) &&
+						Array.isArray(arg.coordinateBatches),
+				);
+				expect(coordinateColumns.hashes).to.have.length(hashes.length);
 				expect(nativePreparedCommitSpy.callCount).to.equal(0);
 				expect(combinedCommitSpy.callCount).to.equal(0);
 				expect(blockGraphCommitSpy.callCount).to.equal(0);
@@ -870,11 +903,277 @@ describe("raw exchange-head sync", () => {
 				coordinateCommitSpy.restore();
 				blockGraphCommitSpy.restore();
 				combinedCommitSpy.restore();
+				nativeVerifiedPreparedJoinCommitSpy?.restore();
 				nativePreparedJoinCommitSpy.restore();
 				nativePreparedCommitSpy.restore();
 			}
 		} finally {
 			await session.stop();
+		}
+	});
+
+	it("covers native raw receive runtime matrix without generic commit fallback", async function () {
+		this.timeout(90_000);
+
+		const rows: Array<{
+			name: string;
+			nativeBackbone: boolean;
+			coordinateWal: boolean;
+		}> = [
+			{
+				name: "native graph",
+				nativeBackbone: false,
+				coordinateWal: false,
+			},
+			{
+				name: "native backbone",
+				nativeBackbone: true,
+				coordinateWal: false,
+			},
+			{
+				name: "native backbone coordinate WAL",
+				nativeBackbone: true,
+				coordinateWal: true,
+			},
+		];
+
+		for (const row of rows) {
+			const session = await TestSession.disconnected(2, {
+				indexer: (directory) => createRustIndexer(directory),
+			});
+			try {
+				const setup = {
+					domain: createReplicationDomainHash("u32"),
+					type: "u32" as const,
+					syncronizer: SimpleSyncronizer,
+					name: `u32-simple-raw-${row.name}`,
+				};
+				const store = new EventStore<string, any>();
+				const profileEvents: any[] = [];
+				const coordinateStore = row.coordinateWal
+					? new NativeBackboneMemoryCoordinatePersistenceStore()
+					: undefined;
+				const coordinatePersistence = coordinateStore
+					? new NativeBackboneCoordinatePersistence(coordinateStore)
+					: undefined;
+				const baseArgs: any = {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					sync: {
+						rawExchangeHeads: true,
+						profile: (event: any) => profileEvents.push(event),
+					},
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+				};
+				const source = await session.peers[0].open(store.clone(), {
+					args: {
+						...baseArgs,
+						...(row.nativeBackbone
+							? { nativeBackbone: { optional: false } }
+							: {}),
+					},
+				});
+				const target = await session.peers[1].open(store.clone(), {
+					args: {
+						...baseArgs,
+						...(row.nativeBackbone
+							? {
+									nativeBackbone: {
+										optional: false,
+										...(coordinatePersistence
+											? { coordinatePersistence }
+											: {}),
+									},
+								}
+							: {}),
+					},
+				});
+
+				const hashes: string[] = [];
+				for (let i = 0; i < 2; i++) {
+					const { entry } = await source.add(uuid(), { meta: { next: [] } });
+					hashes.push(entry.hash);
+				}
+
+				let message:
+					| RawExchangeHeadsMessage
+					| ExchangeHeadsMessage<any>
+					| undefined;
+				for await (const generated of createRawExchangeHeadsMessages(
+					source.log.log,
+					hashes,
+				)) {
+					message = generated;
+					break;
+				}
+				expect(message, row.name).to.be.instanceOf(RawExchangeHeadsMessage);
+
+				const sharedLog = target.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				expect(!!backbone, row.name).to.equal(row.nativeBackbone);
+				const blockPutKnownSpy = sinon.spy(
+					target.log.log.blocks as any,
+					"putKnown",
+				);
+				const blockPutKnownManySpy = sinon.spy(
+					target.log.log.blocks as any,
+					"putKnownMany",
+				);
+				const blockPutKnownManyColumnsSpy =
+					"putKnownManyColumns" in target.log.log.blocks &&
+					typeof (target.log.log.blocks as any).putKnownManyColumns ===
+						"function"
+						? sinon.spy(target.log.log.blocks as any, "putKnownManyColumns")
+						: undefined;
+				const lowerPutAppendBatchSpy = sinon.spy(
+					target.log.log.entryIndex,
+					"putAppendBatch",
+				);
+				const lowerPutAppendFactsBatchSpy = sinon.spy(
+					target.log.log.entryIndex,
+					"putAppendFactsBatch",
+				);
+				const persistCoordinatesBatchSpy = sinon.spy(
+					sharedLog,
+					"persistCoordinatesBatch",
+				);
+				const finishBackboneOnlyCoordinateSpy = sinon.spy(
+					sharedLog,
+					"finishBackboneOnlyReceiveCoordinateBatch",
+				);
+				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+				const coordinateIndexBatchPutSpy =
+					coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn
+						? sinon.spy(
+								coordinateIndex,
+								"putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn",
+							)
+						: undefined;
+				const coordinateIndexPutSpy =
+					coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn
+						? sinon.spy(
+								coordinateIndex,
+								"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+							)
+						: undefined;
+				const nativePreparedJoinCommitSpy = backbone
+					? sinon.spy(backbone.graph, "commitPreparedRawReceiveJoinBatch")
+					: undefined;
+				const nativeVerifiedPreparedJoinCommitSpy =
+					backbone?.graph.commitVerifiedPreparedRawReceiveJoinBatch
+						? sinon.spy(
+								backbone.graph,
+								"commitVerifiedPreparedRawReceiveJoinBatch",
+							)
+						: undefined;
+				const nativeBlocksGraphCommitSpy = backbone
+					? sinon.spy(backbone.graph, "commitBlocksAndGraphBatch")
+					: undefined;
+				try {
+					await target.log.onMessage(message!, {
+						from: source.node.identity.publicKey,
+					} as any);
+
+					expect(target.log.log.length, row.name).to.equal(hashes.length);
+					expect(lowerPutAppendBatchSpy.callCount, row.name).to.equal(0);
+					expect(lowerPutAppendFactsBatchSpy.callCount, row.name).to.equal(1);
+					expect(
+						lowerPutAppendFactsBatchSpy.firstCall.args[0],
+						row.name,
+					).to.have.length(hashes.length);
+					const profileNames = profileEvents.map((event) => event.name);
+					expect(profileNames, row.name).to.include.members([
+						"sharedLog.rawReceive.materialize",
+						"sharedLog.receive.lowerLogJoin",
+					]);
+					const coordinateProfile = profileEvents.find(
+						(event) => event.name === "sharedLog.receive.coordinatePersist",
+					);
+					if (row.nativeBackbone) {
+						expect(
+							(nativePreparedJoinCommitSpy?.callCount ?? 0) +
+								(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0),
+							row.name,
+						).to.equal(1);
+						expect(nativeBlocksGraphCommitSpy?.callCount ?? 0, row.name).to.equal(
+							0,
+						);
+						expect(blockPutKnownSpy.callCount, row.name).to.equal(0);
+						expect(blockPutKnownManySpy.callCount, row.name).to.equal(0);
+						expect(
+							blockPutKnownManyColumnsSpy?.callCount ?? 0,
+							row.name,
+						).to.equal(0);
+						const joinCall =
+							nativeVerifiedPreparedJoinCommitSpy?.firstCall ??
+							nativePreparedJoinCommitSpy?.firstCall;
+						const coordinateColumns = joinCall?.args.find(
+							(arg: any) =>
+								arg &&
+								Array.isArray(arg.hashes) &&
+								Array.isArray(arg.gids) &&
+								Array.isArray(arg.coordinateBatches),
+						);
+						if (row.coordinateWal) {
+							expect(coordinateColumns?.hashes, row.name).to.have.length(
+								hashes.length,
+							);
+							expect(finishBackboneOnlyCoordinateSpy.callCount, row.name).to.equal(
+								1,
+							);
+							expect(persistCoordinatesBatchSpy.callCount, row.name).to.equal(
+								0,
+							);
+							expect(coordinateIndexBatchPutSpy?.callCount ?? 0, row.name).to.equal(
+								0,
+							);
+							expect(coordinateIndexPutSpy?.callCount ?? 0, row.name).to.equal(
+								0,
+							);
+							expect(
+								coordinateStore!.files.get("coordinates.wal")?.byteLength,
+								row.name,
+							).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+							expect(
+								coordinateProfile?.details.nativeBackboneOnly,
+								row.name,
+							).to.equal(hashes.length);
+						} else {
+							expect(coordinateColumns, row.name).to.equal(undefined);
+							expect(finishBackboneOnlyCoordinateSpy.callCount, row.name).to.equal(
+								0,
+							);
+						}
+					} else {
+						expect(finishBackboneOnlyCoordinateSpy.callCount, row.name).to.equal(
+							0,
+						);
+						expect(
+							coordinateProfile?.details.nativeBackboneOnly ?? 0,
+							row.name,
+						).to.equal(
+							0,
+						);
+					}
+				} finally {
+					nativeBlocksGraphCommitSpy?.restore();
+					nativeVerifiedPreparedJoinCommitSpy?.restore();
+					nativePreparedJoinCommitSpy?.restore();
+					coordinateIndexPutSpy?.restore();
+					coordinateIndexBatchPutSpy?.restore();
+					finishBackboneOnlyCoordinateSpy.restore();
+					persistCoordinatesBatchSpy.restore();
+					lowerPutAppendFactsBatchSpy.restore();
+					lowerPutAppendBatchSpy.restore();
+					blockPutKnownManyColumnsSpy?.restore();
+					blockPutKnownManySpy.restore();
+					blockPutKnownSpy.restore();
+				}
+			} finally {
+				await session.stop();
+			}
 		}
 	});
 
@@ -1026,6 +1325,19 @@ describe("raw exchange-head sync", () => {
 			const nativePlanner =
 				(db.log as any)._nativeBackbone ?? (db.log as any)._nativeRangePlanner;
 			expect(nativePlanner).to.exist;
+			const nativeLocalLeaderHashesStub =
+				"planLocalLeaderHashesForGidsBatch" in nativePlanner &&
+				typeof nativePlanner.planLocalLeaderHashesForGidsBatch === "function"
+					? sinon
+							.stub(nativePlanner, "planLocalLeaderHashesForGidsBatch")
+							.callsFake((items: unknown) => {
+								return new Set(
+									[...(items as Iterable<{ hash: string }>)].map(
+										(item) => item.hash,
+									),
+								);
+							})
+					: undefined;
 			const nativeBatchPlanStub = sinon
 				.stub(nativePlanner, "planLeadersForGidsBatch")
 				.callsFake((...args: unknown[]) =>
@@ -1067,8 +1379,18 @@ describe("raw exchange-head sync", () => {
 					[...removeConfirmedReplicatorsSpy.firstCall.args[0]],
 				).to.deep.equal(hashes);
 				const queuedHashes: string[] = [];
-				expect(nativeBatchPlanStub.callCount).to.equal(1);
-				const plannedItems = [...nativeBatchPlanStub.firstCall.args[0]];
+				expect(
+					(nativeLocalLeaderHashesStub?.callCount ?? 0) +
+						nativeBatchPlanStub.callCount,
+				).to.equal(1);
+				const plannedItems = nativeLocalLeaderHashesStub?.called
+					? [...nativeLocalLeaderHashesStub.firstCall.args[0]]
+					: [...nativeBatchPlanStub.firstCall.args[0]].map(
+							(item: { gid: string; replicas: number }, index) => ({
+								hash: hashes[index]!,
+								...item,
+							}),
+						);
 				expect(plannedItems.length).to.be.greaterThan(0);
 				expect(removeGidBatchSpy.callCount).to.equal(1);
 				expect(removeGidBatchSpy.firstCall.args[0]).to.equal(
@@ -1125,6 +1447,7 @@ describe("raw exchange-head sync", () => {
 				waitForEntryStub.restore();
 				waitForGidStub.restore();
 				nativeBatchPlanStub.restore();
+				nativeLocalLeaderHashesStub?.restore();
 				nativeMetadataStub.restore();
 				hasManyStub.restore();
 				responseAddStub.restore();
@@ -1204,6 +1527,107 @@ describe("raw exchange-head sync", () => {
 			} finally {
 				hasManyStub.restore();
 				getShallowSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("uses native-backbone request-prune all-confirmed path without per-hash waits", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+					sync: {
+						profile: (event: any) => profileEvents.push(event),
+					},
+				},
+			});
+
+			const hashes: string[] = [];
+			for (let i = 0; i < 3; i++) {
+				const { entry } = await target.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			expect(backbone).to.exist;
+			const allConfirmedStub = sinon
+				.stub(backbone, "planRequestPruneAllConfirmed")
+				.returns({ allConfirmed: true, peerHistoryGids: [] });
+			const hintColumnsSpy = sinon.spy(
+				backbone,
+				"planRequestPruneLeaderHintColumns",
+			);
+			const responseAddStub = sinon
+				.stub(sharedLog.responseToPruneDebouncedFn, "add")
+				.resolves();
+			const waitForGidSpy = sinon.spy(sharedLog, "_waitForGidReplicators");
+			const waitForEntrySpy = sinon.spy(sharedLog, "_waitForEntryReplicators");
+			const blockHasManySpy = sinon.spy(target.log.log.blocks as any, "hasMany");
+			const getShallowSpy = sinon.spy(target.log.log.entryIndex, "getShallow");
+			try {
+				await target.log.onMessage(new RequestIPrune({ hashes }), {
+					from: session.peers[0].identity.publicKey,
+				} as any);
+
+				expect(allConfirmedStub.callCount).to.equal(1);
+				expect(hintColumnsSpy.callCount).to.equal(0);
+				expect(blockHasManySpy.callCount).to.equal(0);
+				expect(getShallowSpy.callCount).to.equal(0);
+				expect(waitForGidSpy.callCount).to.equal(0);
+				expect(waitForEntrySpy.callCount).to.equal(0);
+				expect(responseAddStub.callCount).to.equal(1);
+				expect(responseAddStub.firstCall.args[0].hashes).to.deep.equal(hashes);
+				expect(responseAddStub.firstCall.args[0].peers).to.deep.equal([
+					session.peers[0].identity.publicKey.hashcode(),
+				]);
+				const backboneProfile = profileEvents.find(
+					(event) =>
+						event.name === "sharedLog.receive.requestPrune.nativeBackbonePlan",
+				);
+				expect(backboneProfile.details.nativeEntries).to.equal(hashes.length);
+				expect(backboneProfile.details.presentBlocks).to.equal(hashes.length);
+				expect(backboneProfile.details.localLeaders).to.equal(hashes.length);
+				const loopProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.requestPrune.loop",
+				);
+				expect(loopProfile.details.nativeBatchConfirmed).to.equal(true);
+				expect(loopProfile.details.leaderResponses).to.equal(hashes.length);
+			} finally {
+				const pending = sharedLog._pendingIHave as Map<
+					string,
+					{ clear?: () => void }
+				>;
+				for (const value of pending.values()) {
+					value.clear?.();
+				}
+				pending.clear();
+				getShallowSpy.restore();
+				blockHasManySpy.restore();
+				waitForEntrySpy.restore();
+				waitForGidSpy.restore();
+				responseAddStub.restore();
+				hintColumnsSpy.restore();
+				allConfirmedStub.restore();
 			}
 		} finally {
 			await session.stop();
