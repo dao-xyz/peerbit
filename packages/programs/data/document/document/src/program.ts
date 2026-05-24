@@ -554,6 +554,7 @@ type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 type NativeBackboneDocumentIndexCommitInput = {
 	key: string;
 	valuePrefixBytes?: Uint8Array;
+	usePlainPutPayload?: boolean;
 	projection?: {
 		encodedDocument: Uint8Array;
 		plan: SimpleDocumentProjectionPlan;
@@ -2015,18 +2016,24 @@ export class Documents<
 			},
 			replicate: input.options?.replicate,
 		};
+		const prepareNativeDocumentIndexWithAppendFacts =
+			this.createNativeBackboneDocumentIndexAppendFactsPreparer(input);
+		const preferAppendFactsDocumentIndex =
+			this.isNativeMode() && !!prepareNativeDocumentIndexWithAppendFacts;
 		return mapMaybePromise(
-			this.prepareNativeBackboneDocumentIndexCommit(input),
+			preferAppendFactsDocumentIndex
+				? undefined
+				: this.prepareNativeBackboneDocumentIndexCommit(input),
 			(nativeDocumentIndexCommit) => {
 				let committedNativeDocumentIndex = nativeDocumentIndexCommit;
-				const prepareNativeDocumentIndexWithAppendFacts =
+				const prepareNativeDocumentIndexWithAppendFactsForCommit =
 					nativeDocumentIndexCommit
 						? undefined
-						: this.createNativeBackboneDocumentIndexAppendFactsPreparer(input);
+						: prepareNativeDocumentIndexWithAppendFacts;
 				if (
 					this.isNativeMode() &&
 					!nativeDocumentIndexCommit &&
-					!prepareNativeDocumentIndexWithAppendFacts
+					!prepareNativeDocumentIndexWithAppendFactsForCommit
 				) {
 					throw this.nativeModeError("requires native document-index commit");
 				}
@@ -2045,13 +2052,13 @@ export class Documents<
 									),
 							}
 						: {}),
-					...(prepareNativeDocumentIndexWithAppendFacts
+					...(prepareNativeDocumentIndexWithAppendFactsForCommit
 						? {
 								prepareNativeBackboneDocumentIndex: (
 									facts: NativeBackboneDocumentIndexAppendFactsInput,
 								) => {
 									committedNativeDocumentIndex =
-										prepareNativeDocumentIndexWithAppendFacts(facts);
+										prepareNativeDocumentIndexWithAppendFactsForCommit(facts);
 									return committedNativeDocumentIndex
 										? this.toNativeBackboneDocumentIndexCommitInput(
 												input,
@@ -2146,9 +2153,12 @@ export class Documents<
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		commit: PreparedNativeBackboneDocumentIndexCommit<I>,
 	): NativeBackboneDocumentIndexCommitInput {
+		const canUsePlainPutPayload =
+			!!input.operationPayloadBytes && !!commit.projection;
 		return {
 			key: documentIndexStoreKey(input.key),
 			valuePrefixBytes: commit.valuePrefixBytes,
+			usePlainPutPayload: canUsePlainPutPayload,
 			projection: commit.projection,
 			existingCreated:
 				input.unique || input.existing === null

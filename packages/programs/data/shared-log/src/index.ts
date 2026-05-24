@@ -537,6 +537,7 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 type NativeBackboneDocumentIndexCommitInput = {
 	key: string;
 	valuePrefixBytes?: Uint8Array;
+	usePlainPutPayload?: boolean;
 	projection?: {
 		encodedDocument: Uint8Array;
 		plan: NativeBackboneSimpleDocumentProjectionPlan;

@@ -4523,8 +4523,8 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             document_index_commit,
-            trim_length_to,
-        )
+			trim_length_to,
+		)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4573,8 +4573,57 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             document_index_commit,
-            trim_length_to,
-        )
+			trim_length_to,
+		)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_transaction(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        entry_type: u8,
+        meta_data: JsValue,
+        payload_data: Uint8Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_key: String,
+        document_existing_created: String,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_id: u32,
+        document_projection_signer: JsValue,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let document_index_commit =
+            document_index_cached_projection_plain_put_payload_append_commit(
+                document_key,
+                document_existing_created,
+                document_byte_element_index_limit,
+                document_delete_trimmed_heads,
+                document_projection_plan_id,
+                document_projection_signer,
+            )?;
+        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+			wall_time,
+			logical,
+			gid,
+			entry_type,
+			meta_data,
+			payload_data,
+			replicas,
+			role_age_ms,
+			now,
+			self_hash,
+			self_replicating,
+			document_index_commit,
+			trim_length_to,
+		)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4608,21 +4657,37 @@ impl NativePeerbitBackbone {
 
         let log_started = profile_enabled.then(js_sys::Date::now);
         let mut log_profile = NativeLogAppendProfile::default();
-        let (entry_facts, trim_hashes) = self
-            .log
-            .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
-                &self.builder,
-                &mut self.blocks,
-                wall_time,
-                logical,
-                gid.clone(),
-                Vec::new(),
-                entry_type,
-                meta_data,
-                payload_data,
-                trim_length_to,
-                profile_enabled.then_some(&mut log_profile),
-            )?;
+        let (entry_facts, trim_hashes) = if let Some(trim_length_to) = trim_length_to {
+            self.log
+				.prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+					&self.builder,
+					&mut self.blocks,
+					wall_time,
+					logical,
+					gid.clone(),
+					entry_type,
+					meta_data,
+					&payload_data,
+					trim_length_to,
+					profile_enabled.then_some(&mut log_profile),
+				)?
+        } else {
+            (
+				self.log
+					.prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_borrowed(
+						&self.builder,
+						&mut self.blocks,
+						wall_time,
+						logical,
+						gid.clone(),
+						entry_type,
+						meta_data,
+						&payload_data,
+						profile_enabled.then_some(&mut log_profile),
+					)?,
+				Vec::new(),
+			)
+        };
         if let Some(started) = log_started {
             self.append_profile.log_total_ms += js_sys::Date::now() - started;
             self.append_profile.add_log_profile(&log_profile);
@@ -4667,12 +4732,13 @@ impl NativePeerbitBackbone {
         }
 
         let document_index_started = profile_enabled.then(js_sys::Date::now);
-        self.put_document_index_for_append(
+        self.put_document_index_for_append_with_plain_put_payload(
             Some(document_index_commit),
             wall_time,
             &entry_facts.hash,
             &gid,
             payload_size,
+            Some(&payload_data),
         )?;
         let document_trimmed_heads_processed =
             delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);

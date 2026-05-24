@@ -1052,6 +1052,26 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
 	prepare_plain_committed_no_next_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -1665,6 +1685,7 @@ export type NativeBackboneAppendInput = {
 	documentIndex?: {
 		key: string;
 		valuePrefixBytes?: Uint8Array;
+		usePlainPutPayload?: boolean;
 		projection?: {
 			encodedDocument: Uint8Array;
 			plan: NativeBackboneSimpleDocumentProjectionPlan;
@@ -5353,30 +5374,59 @@ export class NativePeerbitBackbone {
 		}
 		const projection = documentIndex.projection;
 		if (projection) {
-			const row =
-				this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction(
-					BigInt(input.wallTime),
-					input.logical ?? 0,
-					input.gid,
-					input.type ?? 0,
-					input.metaData,
-					input.payloadData,
-					input.replicas,
-					input.roleAgeMs ?? 0,
-					integerString(input.now ?? Date.now()),
-					input.selfHash ?? "",
-					input.selfReplicating ?? true,
-					documentIndex.key,
-					documentIndex.existingCreated == null
-						? ""
-						: integerString(documentIndex.existingCreated),
-					documentIndex.byteElementIndexLimit ?? 0,
-					documentIndex.deleteTrimmedHeads === true,
-					this.documentProjectionPlanId(projection.plan),
-					projection.encodedDocument,
-					projection.signer,
-					input.trimLengthTo,
-				);
+			const projectionPlanId = this.documentProjectionPlanId(projection.plan);
+			const plainPutPayload =
+				documentIndex.usePlainPutPayload === true
+					? this.native
+							.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_transaction
+					: undefined;
+			const row = plainPutPayload
+				? plainPutPayload.call(
+						this.native,
+						BigInt(input.wallTime),
+						input.logical ?? 0,
+						input.gid,
+						input.type ?? 0,
+						input.metaData,
+						input.payloadData,
+						input.replicas,
+						input.roleAgeMs ?? 0,
+						integerString(input.now ?? Date.now()),
+						input.selfHash ?? "",
+						input.selfReplicating ?? true,
+						documentIndex.key,
+						documentIndex.existingCreated == null
+							? ""
+							: integerString(documentIndex.existingCreated),
+						documentIndex.byteElementIndexLimit ?? 0,
+						documentIndex.deleteTrimmedHeads === true,
+						projectionPlanId,
+						projection.signer,
+						input.trimLengthTo,
+					)
+				: this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction(
+						BigInt(input.wallTime),
+						input.logical ?? 0,
+						input.gid,
+						input.type ?? 0,
+						input.metaData,
+						input.payloadData,
+						input.replicas,
+						input.roleAgeMs ?? 0,
+						integerString(input.now ?? Date.now()),
+						input.selfHash ?? "",
+						input.selfReplicating ?? true,
+						documentIndex.key,
+						documentIndex.existingCreated == null
+							? ""
+							: integerString(documentIndex.existingCreated),
+						documentIndex.byteElementIndexLimit ?? 0,
+						documentIndex.deleteTrimmedHeads === true,
+						projectionPlanId,
+						projection.encodedDocument,
+						projection.signer,
+						input.trimLengthTo,
+					);
 			return compactCommittedNoNextStorageAppendResultFromRow(
 				this.resolution,
 				row,

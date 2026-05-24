@@ -2927,6 +2927,10 @@ describe("index", () => {
 						await store.docs.put(doc, { unique: true });
 						expect(storageTransactionSpy.callCount).equal(1);
 						expect(compactStorageTransactionSpy.callCount).equal(1);
+						expect(
+							compactStorageTransactionSpy.firstCall.args[0].documentIndex
+								.usePlainPutPayload,
+						).equal(false);
 						expect(graphFactsSpy.callCount).equal(0);
 						expect((await store.docs.get(doc.id))?.name).equal(
 							"native-coordinate-persisted",
@@ -2935,6 +2939,93 @@ describe("index", () => {
 						graphFactsSpy.restore();
 						compactStorageTransactionSpy.restore();
 						storageTransactionSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses plain put payload bytes for strict native projection storage transactions", async () => {
+					@variant("strict_native_coordinate_pick_indexable")
+					class StrictNativeCoordinatePickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeCoordinatePickIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+						{ flushOnAppend: false },
+					);
+					const localStore = new TestStore<StrictNativeCoordinatePickIndexable>(
+						{
+							docs: new Documents<
+								Document,
+								StrictNativeCoordinatePickIndexable
+							>(),
+						},
+					);
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence,
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeCoordinatePickIndexable,
+								transform: transform.project<
+									Document,
+									StrictNativeCoordinatePickIndexable
+								>({
+									id: transform.field("id"),
+									name: transform.field("name"),
+								}),
+							},
+						},
+					});
+					const sharedLog = localStore.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const plainPutPayloadTransactionSpy = sinon.spy(
+						(backbone as any).native,
+						"prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_transaction",
+					);
+					const encodedDocumentTransactionSpy = sinon.spy(
+						(backbone as any).native,
+						"prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-coordinate-projection",
+						});
+						await localStore.docs.put(doc, { unique: true });
+						expect(plainPutPayloadTransactionSpy.callCount).equal(1);
+						expect(encodedDocumentTransactionSpy.callCount).equal(0);
+						const indexed = await localStore.docs.index.get(doc.id, {
+							resolve: false,
+						});
+						expect(indexed?.name).equal("native-coordinate-projection");
+					} finally {
+						encodedDocumentTransactionSpy.restore();
+						plainPutPayloadTransactionSpy.restore();
 						await rustSession.stop();
 					}
 				});
