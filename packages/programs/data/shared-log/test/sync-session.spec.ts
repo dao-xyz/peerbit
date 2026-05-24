@@ -3,6 +3,11 @@ import { expect } from "chai";
 import sinon from "sinon";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 
+const emptyLog = {
+	has: async () => false,
+	hasMany: async () => new Set<string>(),
+};
+
 describe("sync-repair-session", () => {
 	it("deduplicates known hash aliases without changing coordinate requests", async () => {
 		const send = sinon.stub().resolves();
@@ -13,9 +18,7 @@ describe("sync-repair-session", () => {
 			entryIndex: {
 				count: async () => 0,
 			} as any,
-			log: {
-				has: async () => false,
-			} as any,
+			log: emptyLog as any,
 			coordinateToHash,
 		});
 		const from = {
@@ -41,9 +44,7 @@ describe("sync-repair-session", () => {
 			entryIndex: {
 				count: async () => 0,
 			} as any,
-			log: {
-				has: async () => false,
-			} as any,
+			log: emptyLog as any,
 			coordinateToHash,
 		});
 		const p1 = {
@@ -78,9 +79,7 @@ describe("sync-repair-session", () => {
 			entryIndex: {
 				count: async () => 0,
 			} as any,
-			log: {
-				has: async () => false,
-			} as any,
+			log: emptyLog as any,
 			coordinateToHash,
 		});
 		const from = {
@@ -110,9 +109,7 @@ describe("sync-repair-session", () => {
 			entryIndex: {
 				count: async () => 0,
 			} as any,
-			log: {
-				has: async () => false,
-			} as any,
+			log: emptyLog as any,
 			coordinateToHash,
 		});
 		const from = {
@@ -146,6 +143,8 @@ describe("sync-repair-session", () => {
 			} as any,
 			log: {
 				has: async (hash: string) => known.has(hash),
+				hasMany: async (hashes: Iterable<string>) =>
+					new Set([...hashes].filter((hash) => known.has(hash))),
 			} as any,
 			coordinateToHash: new Cache<string>({ max: 10 }),
 		});
@@ -189,9 +188,7 @@ describe("sync-repair-session", () => {
 			entryIndex: {
 				count: async () => 0,
 			} as any,
-			log: {
-				has: async () => false,
-			} as any,
+			log: emptyLog as any,
 			coordinateToHash: new Cache<string>({ max: 10 }),
 		});
 
@@ -223,9 +220,7 @@ describe("sync-repair-session", () => {
 			entryIndex: {
 				count: async () => 0,
 			} as any,
-			log: {
-				has: async () => false,
-			} as any,
+			log: emptyLog as any,
 			coordinateToHash: new Cache<string>({ max: 10 }),
 			sync: {
 				maxConvergentTrackedHashes: 1,

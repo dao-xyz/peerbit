@@ -1269,21 +1269,45 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	onEntryAddedHashes(hashes: string[]): void {
+		if (hashes.length === 0 || !this.hasEntryAddedState()) {
+			return;
+		}
 		this.clearSyncProcesses(hashes);
 		this.markRepairSessionResolvedHashes(hashes);
 	}
 
 	onEntryAddedHash(hash: string): void {
+		if (!this.hasEntryAddedState()) {
+			return;
+		}
 		this.clearSyncProcess(hash);
 		this.markRepairSessionResolvedHash(hash);
 	}
 
 	onEntryRemoved(hash: string): void {
+		if (!this.hasSyncProcessState()) {
+			return;
+		}
 		return this.clearSyncProcess(hash);
 	}
 
 	onEntryRemovedHashes(hashes: string[]): void {
+		if (hashes.length === 0 || !this.hasSyncProcessState()) {
+			return;
+		}
 		return this.clearSyncProcesses(hashes);
+	}
+
+	private hasEntryAddedState(): boolean {
+		return this.hasSyncProcessState() || this.repairSessions.size > 0;
+	}
+
+	private hasSyncProcessState(): boolean {
+		return (
+			this.syncInFlightQueue.size > 0 ||
+			this.syncInFlightQueueInverted.size > 0 ||
+			this.syncInFlight.size > 0
+		);
 	}
 
 	private clearSyncProcessKey(key: SyncableKey) {
