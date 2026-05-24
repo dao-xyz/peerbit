@@ -15,9 +15,9 @@ use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
     prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids,
     prepare_raw_entry_v0_blocks_with_expected_cids_and_verify,
-    verify_entry_v0_ed25519_storage_slices, LogIndexEntry, NativeCommittedEntryFacts,
-    NativeEntryV0PlainBuilder, NativeLogAppendProfile, NativeLogBlockStore, NativeLogIndex,
-    PreparedRawEntryV0,
+    verify_entry_v0_ed25519_storage_slices, verify_entry_v0_ed25519_storage_slices_all,
+    LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
+    NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
@@ -1233,6 +1233,47 @@ impl NativePeerbitBackbone {
         Ok(Some(out))
     }
 
+    fn verify_pending_raw_receive_entries_all(
+        &mut self,
+        hashes: &[String],
+    ) -> Result<Option<bool>, JsValue> {
+        if hashes.is_empty() {
+            return Ok(Some(true));
+        }
+
+        let mut verify_positions = Vec::new();
+        let verified = {
+            let mut storage_refs = Vec::new();
+            for (index, hash) in hashes.iter().enumerate() {
+                let Some(pending) = self.pending_raw_receive_entries.get(hash) else {
+                    return Ok(None);
+                };
+                if !pending.signature_verified {
+                    verify_positions.push(index);
+                    storage_refs.push(pending.storage_bytes.as_slice());
+                }
+            }
+            if storage_refs.is_empty() {
+                Some(true)
+            } else {
+                verify_entry_v0_ed25519_storage_slices_all(&storage_refs).ok()
+            }
+        };
+
+        let Some(verified) = verified else {
+            return Ok(None);
+        };
+        if verified {
+            for index in verify_positions {
+                if let Some(pending) = self.pending_raw_receive_entries.get_mut(&hashes[index]) {
+                    pending.signature_verified = true;
+                }
+            }
+        }
+
+        Ok(Some(verified))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn commit_prepared_raw_receive_batch(
         &mut self,
@@ -1445,28 +1486,40 @@ impl NativePeerbitBackbone {
                 .zip(hashes.iter())
                 .all(|(verified_hash, hash)| verified_hash == hash);
         let verify_started = profile_enabled.then(js_sys::Date::now);
-        let Some(verified) = self.verify_pending_raw_receive_entries(&verify_hashes)? else {
-            return Ok(false);
-        };
-        if let Some(started) = verify_started {
-            self.append_profile.raw_receive_verify_ms += js_sys::Date::now() - started;
-        }
-        if verified.iter().any(|flag| *flag == 0) {
-            return Ok(false);
-        }
-        let verify_status_started = profile_enabled.then(js_sys::Date::now);
-        let missing_verified = !verify_hashes_cover_commit
-            && hashes.iter().any(|hash| {
+        if verify_hashes_cover_commit {
+            let Some(verified) = self.verify_pending_raw_receive_entries_all(&verify_hashes)?
+            else {
+                return Ok(false);
+            };
+            if let Some(started) = verify_started {
+                self.append_profile.raw_receive_verify_ms += js_sys::Date::now() - started;
+            }
+            if !verified {
+                return Ok(false);
+            }
+        } else {
+            let Some(verified) = self.verify_pending_raw_receive_entries(&verify_hashes)? else {
+                return Ok(false);
+            };
+            if let Some(started) = verify_started {
+                self.append_profile.raw_receive_verify_ms += js_sys::Date::now() - started;
+            }
+            if verified.iter().any(|flag| *flag == 0) {
+                return Ok(false);
+            }
+            let verify_status_started = profile_enabled.then(js_sys::Date::now);
+            let missing_verified = hashes.iter().any(|hash| {
                 self.pending_raw_receive_entries
                     .get(hash)
                     .map(|pending| !pending.signature_verified)
                     .unwrap_or(true)
             });
-        if let Some(started) = verify_status_started {
-            self.append_profile.raw_receive_verify_status_ms += js_sys::Date::now() - started;
-        }
-        if missing_verified {
-            return Ok(false);
+            if let Some(started) = verify_status_started {
+                self.append_profile.raw_receive_verify_status_ms += js_sys::Date::now() - started;
+            }
+            if missing_verified {
+                return Ok(false);
+            }
         }
 
         {

@@ -3009,11 +3009,14 @@ pub fn verify_ed25519_batch(
     Ok(Uint8Array::from(out.as_slice()))
 }
 
-pub fn verify_entry_v0_ed25519_storage_slices(blocks: &[&[u8]]) -> Result<Vec<u8>, JsValue> {
+fn parse_entry_v0_ed25519_storage_slices(
+    blocks: &[&[u8]],
+) -> Result<(Vec<Signature>, Vec<VerifyingKey>, Vec<Vec<u8>>), JsValue> {
     let mut parsed_signatures = Vec::with_capacity(blocks.len());
     let mut parsed_public_keys = Vec::with_capacity(blocks.len());
     let mut parsed_messages = Vec::with_capacity(blocks.len());
     let mut verifying_key_cache = HashMap::new();
+
     for bytes in blocks {
         let parsed = parse_plain_entry_v0_storage_signature(bytes)?;
         validate_signature_lengths(&parsed.signature, &parsed.public_key)?;
@@ -3029,6 +3032,16 @@ pub fn verify_entry_v0_ed25519_storage_slices(blocks: &[&[u8]]) -> Result<Vec<u8
         parsed_messages.push(parsed.signable);
     }
 
+    Ok((parsed_signatures, parsed_public_keys, parsed_messages))
+}
+
+pub fn verify_entry_v0_ed25519_storage_slices(blocks: &[&[u8]]) -> Result<Vec<u8>, JsValue> {
+    if blocks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (parsed_signatures, parsed_public_keys, parsed_messages) =
+        parse_entry_v0_ed25519_storage_slices(blocks)?;
     let message_refs = parsed_messages
         .iter()
         .map(|message| message.as_slice())
@@ -3052,6 +3065,33 @@ pub fn verify_entry_v0_ed25519_storage_slices(blocks: &[&[u8]]) -> Result<Vec<u8
     }
 
     Ok(out)
+}
+
+pub fn verify_entry_v0_ed25519_storage_slices_all(blocks: &[&[u8]]) -> Result<bool, JsValue> {
+    if blocks.is_empty() {
+        return Ok(true);
+    }
+
+    let (parsed_signatures, parsed_public_keys, parsed_messages) =
+        parse_entry_v0_ed25519_storage_slices(blocks)?;
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        return Ok(true);
+    }
+
+    for i in 0..parsed_signatures.len() {
+        if parsed_public_keys[i]
+            .verify(&parsed_messages[i], &parsed_signatures[i])
+            .is_err()
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
 }
 
 #[wasm_bindgen]
