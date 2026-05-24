@@ -58,6 +58,7 @@ import {
 	type NativeCanPerformPolicyDescriptor,
 	type NativeFastPathCanPerformPolicyEvaluator,
 	createNativeFastPathCanPerformPolicyEvaluator,
+	createNativeFastPathDeletePolicyEvaluator,
 	getNativeCanPerformPolicyDescriptor,
 	nativeCanPerformPolicyNeedsDeleteValue,
 	nativeCanPerformPolicyNeedsPreviousEntries,
@@ -188,6 +189,7 @@ type DocumentPutManyResult = {
 	entries: Entry<Operation>[];
 	removed: ShallowOrFullEntry<Operation>[];
 };
+type DocumentDeleteResult = DocumentPutResult;
 
 interface DocumentBackend<T> {
 	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult>;
@@ -195,6 +197,10 @@ interface DocumentBackend<T> {
 		docs: T[],
 		options?: DocumentPutOptions,
 	): MaybePromise<DocumentPutManyResult>;
+	del(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentDeleteResult>;
 }
 
 type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
@@ -225,6 +231,10 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	handlePreparedPlainPutManyCommit(
 		commit: DocumentAppendManyCommitFacts<T, I>,
 	): MaybePromise<void>;
+	deleteDocument(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentDeleteResult>;
 	keepEntry(hash: string): void;
 	nativeModeError(message: string): NativeDocumentModeError;
 };
@@ -238,11 +248,16 @@ type DocumentBackendPutMany<T> = (
 	docs: T[],
 	options?: DocumentPutOptions,
 ) => MaybePromise<DocumentPutManyResult>;
+type DocumentBackendDelete = (
+	id: indexerTypes.Ideable | indexerTypes.IdKey,
+	options?: DocumentPutOptions,
+) => MaybePromise<DocumentDeleteResult>;
 
 class CompatDocumentBackend<T> implements DocumentBackend<T> {
 	constructor(
 		private readonly putImpl: DocumentBackendPut<T>,
 		private readonly putManyImpl: DocumentBackendPutMany<T>,
+		private readonly deleteImpl: DocumentBackendDelete,
 	) {}
 
 	put(doc: T, options?: DocumentPutOptions): MaybePromise<DocumentPutResult> {
@@ -254,6 +269,13 @@ class CompatDocumentBackend<T> implements DocumentBackend<T> {
 		options?: DocumentPutOptions,
 	): MaybePromise<DocumentPutManyResult> {
 		return this.putManyImpl(docs, options);
+	}
+
+	del(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentDeleteResult> {
+		return this.deleteImpl(id, options);
 	}
 }
 
@@ -353,6 +375,14 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				);
 			},
 		);
+	}
+
+	del(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: DocumentPutOptions,
+	): MaybePromise<DocumentDeleteResult> {
+		const deleteOptions = this.context.normalizePutOptions(options);
+		return this.context.deleteDocument(id, deleteOptions);
 	}
 }
 
@@ -675,6 +705,7 @@ export class Documents<
 			: new CompatDocumentBackend(
 					this.putCompatDocumentBackend.bind(this),
 					this.putManyCompatDocumentBackend.bind(this),
+					this.delCompatDocumentBackend.bind(this),
 				);
 	}
 
@@ -709,6 +740,8 @@ export class Documents<
 				this.handlePreparedPlainPutCommit(commit),
 			handlePreparedPlainPutManyCommit: (commit) =>
 				this.handlePreparedPlainPutManyCommit(commit),
+			deleteDocument: (id, options) =>
+				this.delNativeDocumentBackend(id, options),
 			keepEntry: (hash) => {
 				this.keepCache?.add(hash);
 			},
@@ -919,6 +952,57 @@ export class Documents<
 				throw this.nativeModeError("canPerform policy rejected this document");
 			}
 		}
+	}
+
+	private assertNativeModeDeleteSupported(options?: DocumentPutOptions): void {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		const unsupported = this.unsupportedNativePutOptions(options);
+		if (options?.unique !== undefined) {
+			unsupported.push("unique delete");
+		}
+		if (this.immutable) {
+			unsupported.push("immutable documents");
+		}
+		if (this.strictHistory) {
+			unsupported.push("strict history");
+		}
+		if (this.compatibility === 6) {
+			unsupported.push("legacy compatibility");
+		}
+		if (Program.isPrototypeOf(this._clazz)) {
+			unsupported.push("program-valued document type");
+		}
+		if (unsupported.length > 0) {
+			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
+		}
+	}
+
+	private async canPerformAllowsNativeDelete(
+		existingEntry: Entry<Operation>,
+	): Promise<boolean> {
+		if (!this._optionCanPerform) {
+			return true;
+		}
+		if (!this._optionCanPerformNativePolicy) {
+			return false;
+		}
+		let deleteValue: T | undefined;
+		if (
+			nativeCanPerformPolicyNeedsDeleteValue(
+				this._optionCanPerformNativePolicy,
+			)
+		) {
+			const existingOperation = await existingEntry.getPayloadValue();
+			if (isPutOperation(existingOperation)) {
+				deleteValue = this._index.valueEncoding.decoder(existingOperation.data);
+			}
+		}
+		return createNativeFastPathDeletePolicyEvaluator(
+			this._optionCanPerformNativePolicy,
+			this.log.log.identity.publicKey,
+		)(deleteValue);
 	}
 
 	private normalizeNativeModePutOptions(
@@ -3224,9 +3308,13 @@ export class Documents<
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: SharedAppendOptions<Operation>,
 	) {
-		if (this.isNativeMode()) {
-			throw this.nativeModeError("does not support deletes");
-		}
+		return this._documentBackend.del(id, options);
+	}
+
+	private async delCompatDocumentBackend(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: SharedAppendOptions<Operation>,
+	) {
 		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
 		const existing = (
 			await this._index.getDetailed(key, {
@@ -3260,6 +3348,63 @@ export class Documents<
 				},
 			}, //
 		);
+	}
+
+	private async delNativeDocumentBackend(
+		id: indexerTypes.Ideable | indexerTypes.IdKey,
+		options?: SharedAppendOptions<Operation>,
+	): Promise<DocumentDeleteResult> {
+		const deleteOptions = this.normalizeNativeModePutOptions(options);
+		this.assertNativeModeDeleteSupported(deleteOptions);
+		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
+		const existing = await this.getLocalIndexedContext(key);
+		const existingContext = this.getExistingContext(existing);
+		if (!existingContext?.head) {
+			throw new NotFoundError(
+				`No entry with key '${key.primitive}' in the database`,
+			);
+		}
+		const previousEntry = await this._resolveEntry(existingContext.head, {
+			remote: true,
+		});
+		if (!previousEntry) {
+			throw new NotFoundError(
+				`No entry with key '${key.primitive}' in the database`,
+			);
+		}
+		const operation = new DeleteOperation({ key });
+		if (!(await this.canPerformAllowsNativeDelete(previousEntry))) {
+			throw this.nativeModeError("canPerform policy rejected this delete");
+		}
+
+		const documentsChanged: DocumentsChange<T, I> | undefined =
+			this.hasDocumentChangeConsumers()
+				? {
+					added: [],
+					removed: [],
+				}
+				: undefined;
+		const removedDocument = documentsChanged
+			? await this._index.get(key, {
+					local: true,
+					remote: false,
+				})
+			: undefined;
+		this.keepCache?.delete(existingContext.head);
+		const appended = await this.log.appendLocallyValidated(operation, {
+			...deleteOptions,
+			meta: {
+				next: [previousEntry],
+				type: EntryType.CUT,
+				...deleteOptions?.meta,
+			},
+		});
+		await this._index.del(key);
+		if (documentsChanged && removedDocument) {
+			documentsChanged.removed.push(removedDocument);
+			this.dispatchDocumentChangeIfObserved(documentsChanged);
+		}
+		return appended;
 	}
 
 	async handleChanges(

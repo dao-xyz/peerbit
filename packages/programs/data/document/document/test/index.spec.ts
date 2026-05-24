@@ -42,7 +42,7 @@ import {
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
-import { Entry, EntryV0, Log, createEntry } from "@peerbit/log";
+import { Entry, EntryType, EntryV0, Log, createEntry } from "@peerbit/log";
 import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
@@ -3539,6 +3539,128 @@ describe("index", () => {
 						sequentialSpy.restore();
 						await localStore.close();
 						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native deletes through the native backend boundary", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sharedAppendSpy = sinon.spy(store.docs.log, "append");
+					const trustedAppendSpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyValidated",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "native-delete" });
+						const put = await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const putHash = put.entry.hash;
+						sharedAppendSpy.resetHistory();
+
+						const deleted = await store.docs.del(doc.id, {
+							replicate: false,
+							target: "none",
+						});
+
+						expect(deleted.entry.meta.type).equal(EntryType.CUT);
+						expect(deleted.entry.meta.next).to.deep.equal([putHash]);
+						expect(await store.docs.get(doc.id)).equal(undefined);
+						expect(trustedAppendSpy.callCount).equal(1);
+						expect(sharedAppendSpy.callCount).equal(0);
+					} finally {
+						trustedAppendSpy.restore();
+						sharedAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native delete ownership descriptor policies", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.or(
+								policy.put(policy.allowAll<Document>()),
+								policy.deleteSignedByExistingField<Document>("data"),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					try {
+						const owned = new Document({
+							id: uuid(),
+							name: "owned-native-delete",
+							data: rustSession.peers[0].identity.publicKey.bytes,
+						});
+						const foreign = new Document({
+							id: uuid(),
+							name: "foreign-native-delete",
+							data: randomBytes(32),
+						});
+						await store.docs.put(owned, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						await store.docs.put(foreign, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+
+						await store.docs.del(owned.id, {
+							replicate: false,
+							target: "none",
+						});
+						await expect(
+							store.docs.del(foreign.id, {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"canPerform policy rejected this delete",
+						);
+
+						expect(await store.docs.get(owned.id)).equal(undefined);
+						expect((await store.docs.get(foreign.id))?.name).equal(
+							"foreign-native-delete",
+						);
+					} finally {
 						await rustSession.stop();
 					}
 				});

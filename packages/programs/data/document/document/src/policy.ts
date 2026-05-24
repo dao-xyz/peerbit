@@ -195,6 +195,9 @@ export const getNativeCanPerformPolicyDescriptor = <T>(
 export type NativeFastPathCanPerformPolicyEvaluator = (
 	document: unknown,
 ) => boolean;
+export type NativeFastPathDeletePolicyEvaluator = (
+	existingDocument: unknown,
+) => boolean;
 
 const allowFastPath = (): boolean => true;
 const denyFastPath = (): boolean => false;
@@ -256,6 +259,59 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 				createPublicKeyValueMatcher(localPublicKey);
 			return (document) => matchesLocalPublicKey(getFieldValue(document));
 		}
+	}
+};
+
+export const createNativeFastPathDeletePolicyEvaluator = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+	localPublicKey: PublicSignKey | undefined,
+): NativeFastPathDeletePolicyEvaluator => {
+	switch (descriptor.kind) {
+		case "allowAll":
+			return allowFastPath;
+		case "signedByPublicKey":
+			return localPublicKey &&
+				bytesEqual(descriptor.publicKey, localPublicKey.bytes)
+				? allowFastPath
+				: denyFastPath;
+		case "signedByField":
+		case "sameSignersAsPrevious":
+		case "put":
+			return denyFastPath;
+		case "delete":
+			return createNativeFastPathDeletePolicyEvaluator(
+				descriptor.policy,
+				localPublicKey,
+			);
+		case "deleteSignedByExistingField": {
+			if (!localPublicKey) {
+				return denyFastPath;
+			}
+			const getFieldValue = createFieldValueAccessor(descriptor.path);
+			const matchesLocalPublicKey =
+				createPublicKeyValueMatcher(localPublicKey);
+			return (document) => matchesLocalPublicKey(getFieldValue(document));
+		}
+		case "and":
+			return descriptor.policies
+				.map((policy) =>
+					createNativeFastPathDeletePolicyEvaluator(policy, localPublicKey),
+				)
+				.reduce<NativeFastPathDeletePolicyEvaluator>(
+					(previous, next) => (document) =>
+						previous(document) && next(document),
+					allowFastPath,
+				);
+		case "or":
+			return descriptor.policies
+				.map((policy) =>
+					createNativeFastPathDeletePolicyEvaluator(policy, localPublicKey),
+				)
+				.reduce<NativeFastPathDeletePolicyEvaluator>(
+					(previous, next) => (document) =>
+						previous(document) || next(document),
+					denyFastPath,
+				);
 	}
 };
 
