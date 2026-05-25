@@ -1317,15 +1317,15 @@ impl NativePeerbitBackbone {
             }
         }
 
+        let gids: Vec<String> = groups.iter().map(|group| group.gid.clone()).collect();
+        let max_heads = self.log.max_head_data_u32_values(&gids);
+
         Ok(Some(
             groups
                 .into_iter()
-                .map(|group| {
-                    let max_head = self
-                        .log
-                        .max_head_data_u32(Some(group.gid.clone()))
-                        .as_f64()
-                        .map(|value| value.max(0.0).min(u32::MAX as f64) as u32)
+                .zip(max_heads)
+                .map(|(group, max_head)| {
+                    let max_head = max_head
                         .map(|value| clamp_replicas_u32(value, lower, higher))
                         .unwrap_or(lower);
                     let max_new = clamp_replicas_u32(group.max_requested_replicas, lower, higher);

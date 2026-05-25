@@ -1134,6 +1134,10 @@ impl NativeLogBlockStore {
 }
 
 impl NativeLogIndex {
+    pub fn max_head_data_u32_values(&self, gids: &[String]) -> Vec<Option<u32>> {
+        self.inner.max_head_data_u32_batch(gids)
+    }
+
     pub fn entry_metadata_values(&self, hashes: &[String]) -> Vec<Option<LogEntryMetadata>> {
         self.inner.entry_metadata_batch(hashes)
     }
