@@ -28,7 +28,9 @@ type Scenario =
 	| "raw-receive-native-backbone-verify-prepare"
 	| "raw-receive-native-coordinate-wal-verify-prepare"
 	| "raw-receive-native-backbone-replicating"
+	| "raw-receive-native-backbone-replicating-verify-prepare"
 	| "raw-receive-native-coordinate-wal-replicating"
+	| "raw-receive-native-coordinate-wal-replicating-verify-prepare"
 	| "raw-receive-native-backbone-drop"
 	| "raw-receive-native-backbone-drop-verify-prepare"
 	| "raw-receive-native-coordinate-wal-drop"
@@ -97,7 +99,9 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 		"raw-receive-native-backbone-verify-prepare",
 		"raw-receive-native-coordinate-wal-verify-prepare",
 		"raw-receive-native-backbone-replicating",
+		"raw-receive-native-backbone-replicating-verify-prepare",
 		"raw-receive-native-coordinate-wal-replicating",
+		"raw-receive-native-coordinate-wal-replicating-verify-prepare",
 		"raw-receive-native-backbone-drop",
 		"raw-receive-native-backbone-drop-verify-prepare",
 		"raw-receive-native-coordinate-wal-drop",
@@ -118,7 +122,11 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-backbone-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-verify-prepare" &&
 			scenario !== "raw-receive-native-backbone-replicating" &&
+			scenario !==
+				"raw-receive-native-backbone-replicating-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-replicating" &&
+			scenario !==
+				"raw-receive-native-coordinate-wal-replicating-verify-prepare" &&
 			scenario !== "raw-receive-native-backbone-drop" &&
 			scenario !== "raw-receive-native-backbone-drop-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-drop" &&
@@ -313,6 +321,14 @@ const runRawReceive = async (
 					? "raw-receive-native-coordinate-wal-drop"
 				: options?.nativeBackbone && options.drop
 					? "raw-receive-native-backbone-drop"
+				: options?.coordinateWal &&
+					  options.replicating &&
+					  options.verifySignaturesDuringPrepare === true
+					? "raw-receive-native-coordinate-wal-replicating-verify-prepare"
+				: options?.nativeBackbone &&
+					  options.replicating &&
+					  options.verifySignaturesDuringPrepare === true
+					? "raw-receive-native-backbone-replicating-verify-prepare"
 				: options?.coordinateWal && options.replicating
 					? "raw-receive-native-coordinate-wal-replicating"
 				: options?.nativeBackbone && options.replicating
@@ -509,10 +525,26 @@ const runScenario = async (
 			replicating: true,
 		});
 	}
+	if (scenario === "raw-receive-native-backbone-replicating-verify-prepare") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			replicating: true,
+			verifySignaturesDuringPrepare: true,
+		});
+	}
 	if (scenario === "raw-receive-native-coordinate-wal-replicating") {
 		return runRawReceive(count, run, {
 			coordinateWal: true,
 			replicating: true,
+		});
+	}
+	if (
+		scenario === "raw-receive-native-coordinate-wal-replicating-verify-prepare"
+	) {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			replicating: true,
+			verifySignaturesDuringPrepare: true,
 		});
 	}
 	if (scenario === "raw-receive-native-backbone-drop") {

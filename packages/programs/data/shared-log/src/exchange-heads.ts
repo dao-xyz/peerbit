@@ -1110,7 +1110,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			entries: message.heads.length,
 			bytes: rawBytes,
 			messages: 1,
-			details: { native: true, source: nativePrepareSource },
+			details: {
+				native: true,
+				source: nativePrepareSource,
+				verifySignatures:
+					options?.verifyNativeBackboneSignaturesDuringPrepare === true,
+			},
 		});
 		try {
 			if (

@@ -9549,6 +9549,14 @@ export class SharedLog<
 				}
 				const rawIsRepairHint =
 					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
+				const rawPrepareVerifySetting =
+					this._logProperties?.sync
+						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+				const verifyNativeBackboneSignaturesDuringPrepare =
+					rawPrepareVerifySetting === true ||
+					(rawPrepareVerifySetting !== false &&
+						this._isReplicating &&
+						!rawIsRepairHint);
 				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
 				const materializedRawMessage =
 					await materializeVerifiedRawExchangeHeadsMessage(
@@ -9561,8 +9569,7 @@ export class SharedLog<
 						{
 							nativeBackbone: this._nativeBackbone,
 							verifyNativeBackboneSignaturesDuringPrepare:
-								this._logProperties?.sync
-									?.rawExchangeHeadsVerifySignaturesDuringPrepare === true,
+								verifyNativeBackboneSignaturesDuringPrepare,
 							tryPreparedRawReceiveFastDrop: rawIsRepairHint
 								? undefined
 								: ({ heads, hashes }) =>

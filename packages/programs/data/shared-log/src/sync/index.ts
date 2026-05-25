@@ -54,7 +54,9 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	/**
 	 * Experimental receive-side raw-head parsing mode for native backbone. When
 	 * enabled, signature verification happens while raw entries are decoded
-	 * instead of during the later native commit step.
+	 * instead of during the later native commit step. When unset, shared-log may
+	 * enable this automatically for retained native receive paths where planning
+	 * already indicates that the local peer is replicating.
 	 */
 	rawExchangeHeadsVerifySignaturesDuringPrepare?: boolean;
 
