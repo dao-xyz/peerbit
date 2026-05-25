@@ -1986,6 +1986,16 @@ export type NativeBackboneAppendProfile = {
 	nativeBackboneResultRowMs: number;
 	nativeBackboneRawReceiveInputCopyMs: number;
 	nativeBackboneRawReceivePrepareMs: number;
+	nativeBackboneRawReceiveDigestMs: number;
+	nativeBackboneRawReceiveCidStringMs: number;
+	nativeBackboneRawReceiveExpectedCidMs: number;
+	nativeBackboneRawReceiveStorageParseMs: number;
+	nativeBackboneRawReceiveMetaParseMs: number;
+	nativeBackboneRawReceivePayloadParseMs: number;
+	nativeBackboneRawReceiveSignatureParseMs: number;
+	nativeBackboneRawReceiveSignableMs: number;
+	nativeBackboneRawReceiveVerifyBatchMs: number;
+	nativeBackboneRawReceiveVerifyFallbackMs: number;
 	nativeBackboneRawReceivePrepareColumnsMs: number;
 	nativeBackboneRawReceivePendingCheckMs: number;
 	nativeBackboneRawReceiveVerifyMs: number;
@@ -2037,6 +2047,16 @@ const nativeBackboneAppendProfileKeys = [
 	"nativeBackboneResultRowMs",
 	"nativeBackboneRawReceiveInputCopyMs",
 	"nativeBackboneRawReceivePrepareMs",
+	"nativeBackboneRawReceiveDigestMs",
+	"nativeBackboneRawReceiveCidStringMs",
+	"nativeBackboneRawReceiveExpectedCidMs",
+	"nativeBackboneRawReceiveStorageParseMs",
+	"nativeBackboneRawReceiveMetaParseMs",
+	"nativeBackboneRawReceivePayloadParseMs",
+	"nativeBackboneRawReceiveSignatureParseMs",
+	"nativeBackboneRawReceiveSignableMs",
+	"nativeBackboneRawReceiveVerifyBatchMs",
+	"nativeBackboneRawReceiveVerifyFallbackMs",
 	"nativeBackboneRawReceivePrepareColumnsMs",
 	"nativeBackboneRawReceivePendingCheckMs",
 	"nativeBackboneRawReceiveVerifyMs",

@@ -101,6 +101,20 @@ pub struct PreparedRawEntryV0 {
     pub requested_replicas: Option<u32>,
 }
 
+#[derive(Default, Clone, Copy, Debug)]
+pub struct RawEntryV0PrepareProfile {
+    pub digest_ms: f64,
+    pub cid_string_ms: f64,
+    pub expected_cid_ms: f64,
+    pub storage_parse_ms: f64,
+    pub meta_parse_ms: f64,
+    pub payload_parse_ms: f64,
+    pub signature_parse_ms: f64,
+    pub signable_ms: f64,
+    pub verify_batch_ms: f64,
+    pub verify_fallback_ms: f64,
+}
+
 impl PreparedRawEntryV0 {
     pub fn log_index_entry(&self, head: bool) -> Result<LogIndexEntry, JsValue> {
         Ok(LogIndexEntry::new_with_data(
@@ -4137,6 +4151,20 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
     expected_cids: Option<Vec<String>>,
     verify_signatures: bool,
 ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
+        blocks,
+        expected_cids,
+        verify_signatures,
+        None,
+    )
+}
+
+pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
+    blocks: Vec<Vec<u8>>,
+    expected_cids: Option<Vec<String>>,
+    verify_signatures: bool,
+    mut profile: Option<&mut RawEntryV0PrepareProfile>,
+) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
     if let Some(expected_cids) = expected_cids.as_ref() {
         if expected_cids.len() != blocks.len() {
             return Err(JsValue::from_str(
@@ -4150,22 +4178,60 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
     let mut parsed_messages = Vec::with_capacity(blocks.len());
     let mut verifying_key_cache = HashMap::new();
     for (index, bytes) in blocks.into_iter().enumerate() {
+        let digest_started = profile.as_ref().map(|_| js_sys::Date::now());
         let digest = calculate_raw_digest_profiled(&bytes, None);
+        if let Some(started) = digest_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.digest_ms += js_sys::Date::now() - started;
+            }
+        }
         let cid = if let Some(expected_cids) = expected_cids.as_ref() {
+            let expected_started = profile.as_ref().map(|_| js_sys::Date::now());
             let expected_cid = &expected_cids[index];
             let expected_digest = raw_cid_v1_digest_from_string(expected_cid)?;
             if expected_digest != digest {
                 return Err(JsValue::from_str("Raw entry hash did not match bytes"));
             }
+            if let Some(started) = expected_started {
+                if let Some(profile) = profile.as_deref_mut() {
+                    profile.expected_cid_ms += js_sys::Date::now() - started;
+                }
+            }
             expected_cid.clone()
         } else {
-            raw_cid_v1_string_from_digest(&digest)
+            let cid_started = profile.as_ref().map(|_| js_sys::Date::now());
+            let cid = raw_cid_v1_string_from_digest(&digest);
+            if let Some(started) = cid_started {
+                if let Some(profile) = profile.as_deref_mut() {
+                    profile.cid_string_ms += js_sys::Date::now() - started;
+                }
+            }
+            cid
         };
+        let storage_started = profile.as_ref().map(|_| js_sys::Date::now());
         let storage = parse_plain_entry_v0_storage(&bytes)?;
+        if let Some(started) = storage_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.storage_parse_ms += js_sys::Date::now() - started;
+            }
+        }
+        let meta_started = profile.as_ref().map(|_| js_sys::Date::now());
         let meta = parse_raw_entry_v0_meta(storage.meta)?;
+        if let Some(started) = meta_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.meta_parse_ms += js_sys::Date::now() - started;
+            }
+        }
+        let payload_started = profile.as_ref().map(|_| js_sys::Date::now());
         let payload = parse_raw_entry_v0_payload(storage.payload)?;
+        if let Some(started) = payload_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.payload_parse_ms += js_sys::Date::now() - started;
+            }
+        }
         let requested_replicas = decode_absolute_replica_data_u32(meta.meta_data.as_deref());
         if verify_signatures {
+            let signature_started = profile.as_ref().map(|_| js_sys::Date::now());
             let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
             validate_signature_lengths(&parsed_signature.signature, &parsed_signature.public_key)?;
             let signature_bytes: [u8; 64] = parsed_signature
@@ -4177,10 +4243,21 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
                 cached_verifying_key(&mut verifying_key_cache, &parsed_signature.public_key)?;
             parsed_signatures.push(Signature::from_bytes(&signature_bytes));
             parsed_public_keys.push(verifying_key);
+            if let Some(started) = signature_started {
+                if let Some(profile) = profile.as_deref_mut() {
+                    profile.signature_parse_ms += js_sys::Date::now() - started;
+                }
+            }
+            let signable_started = profile.as_ref().map(|_| js_sys::Date::now());
             parsed_messages.push(unsigned_entry_v0_storage_for_signing(
                 &bytes,
                 storage.signable_prefix_len,
             )?);
+            if let Some(started) = signable_started {
+                if let Some(profile) = profile.as_deref_mut() {
+                    profile.signable_ms += js_sys::Date::now() - started;
+                }
+            }
         }
 
         entries.push(PreparedRawEntryV0 {
@@ -4208,9 +4285,17 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
         .iter()
         .map(|message| message.as_slice())
         .collect::<Vec<_>>();
-    let verified = if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+    let verify_batch_started = profile.as_ref().map(|_| js_sys::Date::now());
+    let batch_verified = verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys);
+    if let Some(started) = verify_batch_started {
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.verify_batch_ms += js_sys::Date::now() - started;
+        }
+    }
+    let verified = if batch_verified.is_ok() {
         vec![true; entries.len()]
     } else {
+        let verify_fallback_started = profile.as_ref().map(|_| js_sys::Date::now());
         let mut out = Vec::with_capacity(entries.len());
         for i in 0..entries.len() {
             out.push(
@@ -4218,6 +4303,11 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
                     .verify(&parsed_messages[i], &parsed_signatures[i])
                     .is_ok(),
             );
+        }
+        if let Some(started) = verify_fallback_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.verify_fallback_ms += js_sys::Date::now() - started;
+            }
         }
         out
     };

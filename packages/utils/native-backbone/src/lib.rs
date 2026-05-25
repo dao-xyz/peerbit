@@ -13,11 +13,10 @@ use peerbit_indexer_core::schema::{
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
-    prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids,
-    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify,
+    prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled,
     verify_entry_v0_ed25519_storage_slices, verify_entry_v0_ed25519_storage_slices_all,
     LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
-    NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0,
+    NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0, RawEntryV0PrepareProfile,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, EntryCoordinateCommit, NativeLocalAppendCompactFacts,
@@ -185,6 +184,16 @@ struct NativeBackboneAppendProfile {
     result_row_ms: f64,
     raw_receive_input_copy_ms: f64,
     raw_receive_prepare_ms: f64,
+    raw_receive_digest_ms: f64,
+    raw_receive_cid_string_ms: f64,
+    raw_receive_expected_cid_ms: f64,
+    raw_receive_storage_parse_ms: f64,
+    raw_receive_meta_parse_ms: f64,
+    raw_receive_payload_parse_ms: f64,
+    raw_receive_signature_parse_ms: f64,
+    raw_receive_signable_ms: f64,
+    raw_receive_verify_batch_ms: f64,
+    raw_receive_verify_fallback_ms: f64,
     raw_receive_prepare_columns_ms: f64,
     raw_receive_pending_check_ms: f64,
     raw_receive_verify_ms: f64,
@@ -214,6 +223,19 @@ impl NativeBackboneAppendProfile {
         self.log_block_put_ms += profile.block_put_ms;
         self.log_graph_put_ms += profile.graph_put_ms;
         self.log_trim_ms += profile.trim_ms;
+    }
+
+    fn add_raw_prepare_profile(&mut self, profile: &RawEntryV0PrepareProfile) {
+        self.raw_receive_digest_ms += profile.digest_ms;
+        self.raw_receive_cid_string_ms += profile.cid_string_ms;
+        self.raw_receive_expected_cid_ms += profile.expected_cid_ms;
+        self.raw_receive_storage_parse_ms += profile.storage_parse_ms;
+        self.raw_receive_meta_parse_ms += profile.meta_parse_ms;
+        self.raw_receive_payload_parse_ms += profile.payload_parse_ms;
+        self.raw_receive_signature_parse_ms += profile.signature_parse_ms;
+        self.raw_receive_signable_ms += profile.signable_ms;
+        self.raw_receive_verify_batch_ms += profile.verify_batch_ms;
+        self.raw_receive_verify_fallback_ms += profile.verify_fallback_ms;
     }
 
     fn to_row(&self) -> Array {
@@ -257,6 +279,16 @@ impl NativeBackboneAppendProfile {
         row.push(&JsValue::from_f64(self.result_row_ms));
         row.push(&JsValue::from_f64(self.raw_receive_input_copy_ms));
         row.push(&JsValue::from_f64(self.raw_receive_prepare_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_digest_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_cid_string_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_expected_cid_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_storage_parse_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_meta_parse_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_payload_parse_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_signature_parse_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_signable_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_verify_batch_ms));
+        row.push(&JsValue::from_f64(self.raw_receive_verify_fallback_ms));
         row.push(&JsValue::from_f64(self.raw_receive_prepare_columns_ms));
         row.push(&JsValue::from_f64(self.raw_receive_pending_check_ms));
         row.push(&JsValue::from_f64(self.raw_receive_verify_ms));
@@ -967,6 +999,30 @@ impl NativePeerbitBackbone {
         )
     }
 
+    fn prepare_raw_receive_entries(
+        &mut self,
+        blocks: Vec<Vec<u8>>,
+        expected_cids: Option<Vec<String>>,
+        verify_signatures: bool,
+    ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let prepare_started = profile_enabled.then(js_sys::Date::now);
+        let mut raw_profile = profile_enabled.then(RawEntryV0PrepareProfile::default);
+        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
+            blocks,
+            expected_cids,
+            verify_signatures,
+            raw_profile.as_mut(),
+        )?;
+        if let Some(started) = prepare_started {
+            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
+        }
+        if let Some(raw_profile) = raw_profile {
+            self.append_profile.add_raw_prepare_profile(&raw_profile);
+        }
+        Ok(prepared)
+    }
+
     pub fn prepare_raw_receive_batch(&mut self, blocks: Array) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let input_started = profile_enabled.then(js_sys::Date::now);
@@ -974,11 +1030,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared = prepare_raw_entry_v0_blocks(blocks)?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, None, true)?;
         let out = Array::new();
         for entry in prepared {
             let hash_number = hash_number_u64(&self.resolution, &entry.hash_digest_bytes)?;
@@ -1005,11 +1057,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared = prepare_raw_entry_v0_blocks(blocks)?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, None, true)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
@@ -1023,12 +1071,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared =
-            prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(blocks, None, false)?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, None, false)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
@@ -1044,11 +1087,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids(blocks, Some(hashes))?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
@@ -1064,12 +1103,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared =
-            prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(blocks, Some(hashes), false)?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
@@ -1085,11 +1119,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids(blocks, Some(hashes))?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
         self.prepare_raw_receive_columns_from_entries(prepared, false)
     }
 
@@ -1105,12 +1135,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = input_started {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
-        let prepared =
-            prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(blocks, Some(hashes), false)?;
-        if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
-        }
+        let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
         self.prepare_raw_receive_columns_from_entries(prepared, false)
     }
 

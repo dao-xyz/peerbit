@@ -66,6 +66,46 @@ const emitNativeBackboneRawPrepareProfile = (
 			nativeProfile.nativeBackboneRawReceivePrepareMs,
 		],
 		[
+			"sharedLog.rawReceive.nativePrepare.digest",
+			nativeProfile.nativeBackboneRawReceiveDigestMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.cidString",
+			nativeProfile.nativeBackboneRawReceiveCidStringMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.expectedCid",
+			nativeProfile.nativeBackboneRawReceiveExpectedCidMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.storageParse",
+			nativeProfile.nativeBackboneRawReceiveStorageParseMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.metaParse",
+			nativeProfile.nativeBackboneRawReceiveMetaParseMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.payloadParse",
+			nativeProfile.nativeBackboneRawReceivePayloadParseMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.signatureParse",
+			nativeProfile.nativeBackboneRawReceiveSignatureParseMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.signable",
+			nativeProfile.nativeBackboneRawReceiveSignableMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.verifyBatch",
+			nativeProfile.nativeBackboneRawReceiveVerifyBatchMs,
+		],
+		[
+			"sharedLog.rawReceive.nativePrepare.verifyFallback",
+			nativeProfile.nativeBackboneRawReceiveVerifyFallbackMs,
+		],
+		[
 			"sharedLog.rawReceive.nativePrepare.columns",
 			nativeProfile.nativeBackboneRawReceivePrepareColumnsMs,
 		],
