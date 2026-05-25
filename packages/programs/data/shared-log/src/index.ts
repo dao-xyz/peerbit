@@ -10354,6 +10354,7 @@ export class SharedLog<
 						let canAppendAlreadyValidated = false;
 						let fallbackCanAppendAlreadyValidated = false;
 						let nativeCommitVerifyHashes: string[] | undefined;
+						let nativeCommitVerifyAllHashes = false;
 						let nativeCommitCanValidateAppend = false;
 						if (nativeBackboneCommitValidation === false) {
 							canAppendAlreadyValidated = false;
@@ -10361,6 +10362,8 @@ export class SharedLog<
 							nativeCommitCanValidateAppend = true;
 							nativeCommitVerifyHashes =
 								nativeBackboneCommitValidation.signatureHashes;
+							nativeCommitVerifyAllHashes =
+								nativeCommitVerifyHashes.length === allToMerge.length;
 						} else {
 							canAppendAlreadyValidated =
 								await this.canSkipLowerLogCanAppendForNetworkJoin(
@@ -10382,6 +10385,7 @@ export class SharedLog<
 									nativeCommitCanValidateAppend,
 									nativeCommitVerifyHashes:
 										nativeCommitVerifyHashes?.length ?? 0,
+									nativeCommitVerifyAllHashes,
 								},
 							});
 						}
@@ -10471,6 +10475,7 @@ export class SharedLog<
 										nativePreparedCoordinateBatch = batch;
 									},
 									nativeCommitVerifyHashes,
+									nativeCommitVerifyAllHashes,
 									syncProfile,
 									(committedHashes) => {
 										nativePreparedCommittedHashes = new Set(
@@ -10485,6 +10490,18 @@ export class SharedLog<
 						if (!preparedAppendCanValidateAppend) {
 							canUsePreparedAppendFacts = false;
 						}
+						const nativePreparedJoinCommitValidatesPlan =
+							!!nativePreparedJoinCommit &&
+							(nativeCommitVerifyHashes && nativeCommitVerifyHashes.length > 0
+								? nativeCommitVerifyAllHashes
+									? !!this._nativeBackbone?.graph
+											.commitVerifiedAllPreparedRawReceiveJoinBatch ||
+										!!this._nativeBackbone?.graph
+											.commitVerifiedPreparedRawReceiveJoinBatch
+									: !!this._nativeBackbone?.graph
+											.commitVerifiedPreparedRawReceiveJoinBatch
+								: !!this._nativeBackbone?.graph
+										.commitPreparedRawReceiveJoinBatch);
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
 							(await this.log.joinPreparedAppendFactsBatch(
@@ -10497,13 +10514,7 @@ export class SharedLog<
 									__peerbitProfile: syncProfile,
 									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
-										!!nativePreparedJoinCommit &&
-										(nativeCommitVerifyHashes &&
-										nativeCommitVerifyHashes.length > 0
-											? !!this._nativeBackbone?.graph
-													.commitVerifiedPreparedRawReceiveJoinBatch
-											: !!this._nativeBackbone?.graph
-													.commitPreparedRawReceiveJoinBatch),
+										nativePreparedJoinCommitValidatesPlan,
 								},
 							));
 						if (!joinedPreparedFacts) {
@@ -12531,6 +12542,7 @@ export class SharedLog<
 			batch: NativeBackboneReceiveCoordinateBatch<R>,
 		) => void,
 		verifyHashes?: string[],
+		verifyAllHashes = false,
 		profile?: SyncProfileFn,
 		onPreparedEntriesCommitted?: (hashes: string[]) => void,
 	):
@@ -12583,19 +12595,29 @@ export class SharedLog<
 				}
 				let committed: boolean | undefined;
 				try {
-					committed =
-						verifyHashes && verifyHashes.length > 0
-							? backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch?.(
-									hashes,
-									headFlagsBytes,
-									verifyHashes,
-									coordinateColumns,
-								)
-							: backbone.graph.commitPreparedRawReceiveJoinBatch?.(
+					if (verifyHashes && verifyHashes.length > 0) {
+						if (verifyAllHashes) {
+							committed =
+								backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch?.(
 									hashes,
 									headFlagsBytes,
 									coordinateColumns,
 								);
+						}
+						committed ??=
+							backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch?.(
+								hashes,
+								headFlagsBytes,
+								verifyHashes,
+								coordinateColumns,
+							);
+					} else {
+						committed = backbone.graph.commitPreparedRawReceiveJoinBatch?.(
+							hashes,
+							headFlagsBytes,
+							coordinateColumns,
+						);
+					}
 				} finally {
 					if (profileNativeBackbone) {
 						backbone.setAppendProfileEnabled(false);

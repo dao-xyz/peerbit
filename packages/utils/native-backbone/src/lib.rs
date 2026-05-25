@@ -1904,7 +1904,7 @@ impl NativePeerbitBackbone {
         self.commit_verified_prepared_raw_receive_join_batch_core(
             hashes,
             &heads,
-            verify_hashes,
+            Some(verify_hashes),
             coordinate_commits,
         )
     }
@@ -1939,7 +1939,71 @@ impl NativePeerbitBackbone {
         self.commit_verified_prepared_raw_receive_join_batch_core(
             hashes,
             &heads,
-            verify_hashes,
+            Some(verify_hashes),
+            coordinate_commits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_verified_all_prepared_raw_receive_join_batch(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: Array,
+        coordinate_batches: Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let coordinate_commits = coordinate_commits_from_string_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_batches,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_verified_prepared_raw_receive_join_batch_core(
+            hashes,
+            &heads,
+            None,
+            coordinate_commits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_verified_all_prepared_raw_receive_join_batch_u64(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: BigUint64Array,
+        coordinate_counts: Uint32Array,
+        coordinates: BigUint64Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Uint32Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let coordinate_commits = coordinate_commits_from_u64_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_counts,
+            coordinates,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_verified_prepared_raw_receive_join_batch_core(
+            hashes,
+            &heads,
+            None,
             coordinate_commits,
         )
     }
@@ -1948,7 +2012,7 @@ impl NativePeerbitBackbone {
         &mut self,
         hashes: Vec<String>,
         heads: &Uint8Array,
-        verify_hashes: Vec<String>,
+        verify_hashes: Option<Vec<String>>,
         coordinate_commits: Vec<EntryCoordinateCommit>,
     ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
@@ -1964,15 +2028,20 @@ impl NativePeerbitBackbone {
             return Ok(false);
         }
 
-        let verify_hashes_cover_commit = verify_hashes.len() == hashes.len()
-            && verify_hashes
-                .iter()
-                .zip(hashes.iter())
-                .all(|(verified_hash, hash)| verified_hash == hash);
+        let verify_hashes_cover_commit = match verify_hashes.as_ref() {
+            None => true,
+            Some(verify_hashes) => {
+                verify_hashes.len() == hashes.len()
+                    && verify_hashes
+                        .iter()
+                        .zip(hashes.iter())
+                        .all(|(verified_hash, hash)| verified_hash == hash)
+            }
+        };
         let verify_started = profile_enabled.then(js_sys::Date::now);
         if verify_hashes_cover_commit {
-            let Some(verified) = self.verify_pending_raw_receive_entries_all(&verify_hashes)?
-            else {
+            let verify_hashes = verify_hashes.as_ref().unwrap_or(&hashes);
+            let Some(verified) = self.verify_pending_raw_receive_entries_all(verify_hashes)? else {
                 return Ok(false);
             };
             if let Some(started) = verify_started {
@@ -1982,6 +2051,7 @@ impl NativePeerbitBackbone {
                 return Ok(false);
             }
         } else {
+            let verify_hashes = verify_hashes.expect("partial verify hashes");
             let Some(verified) = self.verify_pending_raw_receive_entries(&verify_hashes)? else {
                 return Ok(false);
             };

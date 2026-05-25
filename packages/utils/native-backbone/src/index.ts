@@ -352,6 +352,29 @@ type NativePeerbitBackboneHandle = {
 		coordinateAssignedToRangeBoundaries: Uint8Array,
 		coordinateRequestedReplicas: Uint32Array,
 	) => boolean;
+	commit_verified_all_prepared_raw_receive_join_batch?: (
+		hashes: string[],
+		heads: Uint8Array,
+		coordinateHashes: string[],
+		coordinateGids: string[],
+		coordinateHashNumbers: string[],
+		coordinateBatches: string[][],
+		coordinateNextHashBatches: string[][],
+		coordinateAssignedToRangeBoundaries: Uint8Array,
+		coordinateRequestedReplicas: number[],
+	) => boolean;
+	commit_verified_all_prepared_raw_receive_join_batch_u64?: (
+		hashes: string[],
+		heads: Uint8Array,
+		coordinateHashes: string[],
+		coordinateGids: string[],
+		coordinateHashNumbers: BigUint64Array,
+		coordinateCounts: Uint32Array,
+		coordinates: BigUint64Array,
+		coordinateNextHashBatches: string[][],
+		coordinateAssignedToRangeBoundaries: Uint8Array,
+		coordinateRequestedReplicas: Uint32Array,
+	) => boolean;
 	clear_prepared_raw_receive_entries: (hashes: string[]) => number;
 	graph_delete: (hash: string) => boolean;
 	graph_delete_many: (hashes: string[]) => number;
@@ -3481,6 +3504,55 @@ export class NativeBackboneLogGraph {
 			hashes,
 			nativeBackboneHeadFlagsToBytes(headFlags),
 			verifyHashes,
+			coordinateColumns.hashes,
+			coordinateColumns.gids,
+			coordinateStringColumns.hashNumbers,
+			coordinateStringColumns.coordinateBatches,
+			coordinateColumns.nextHashBatches,
+			coordinateColumns.assignedToRangeBoundaries,
+			coordinateStringColumns.requestedReplicas,
+		);
+	}
+
+	commitVerifiedAllPreparedRawReceiveJoinBatch(
+		hashes: string[],
+		headFlags: NativeBackboneHeadFlags,
+		coordinates?: NativeBackboneCoordinateCommitColumns,
+	): boolean | undefined {
+		if (hashes.length === 0) {
+			return true;
+		}
+		if (hashes.length !== headFlags.length) {
+			throw new Error("Expected equal raw receive hash and head lengths");
+		}
+		if (!this.native.commit_verified_all_prepared_raw_receive_join_batch) {
+			return undefined;
+		}
+		const coordinateColumns =
+			coordinates ?? emptyNativeBackboneCoordinateCommitColumns();
+		validateNativeBackboneCoordinateCommitColumns(coordinateColumns);
+		if (
+			this.native.commit_verified_all_prepared_raw_receive_join_batch_u64 &&
+			hasNativeBackboneNumericCoordinateCommitColumns(coordinateColumns)
+		) {
+			return this.native.commit_verified_all_prepared_raw_receive_join_batch_u64(
+				hashes,
+				nativeBackboneHeadFlagsToBytes(headFlags),
+				coordinateColumns.hashes,
+				coordinateColumns.gids,
+				coordinateColumns.hashNumberValues,
+				coordinateColumns.coordinateCounts,
+				coordinateColumns.coordinateValues,
+				coordinateColumns.nextHashBatches,
+				coordinateColumns.assignedToRangeBoundaries,
+				coordinateColumns.requestedReplicaValues,
+			);
+		}
+		const coordinateStringColumns =
+			nativeBackboneCoordinateCommitStringColumns(coordinateColumns);
+		return this.native.commit_verified_all_prepared_raw_receive_join_batch(
+			hashes,
+			nativeBackboneHeadFlagsToBytes(headFlags),
 			coordinateColumns.hashes,
 			coordinateColumns.gids,
 			coordinateStringColumns.hashNumbers,
