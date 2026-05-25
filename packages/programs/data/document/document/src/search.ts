@@ -34,6 +34,7 @@ import {
 } from "@peerbit/shared-log";
 import {
 	DataMessage,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
 	type PeerRefs,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
@@ -217,6 +218,13 @@ export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	/** WHEN are we allowed to proceed? Quorum semantics over a chosen group. */
 	wait?: WaitPolicy;
 };
+
+const getRemoteQueryPriority = (
+	remote?: boolean | { priority?: number },
+): number =>
+	typeof remote === "object" && remote.priority != null
+		? remote.priority
+		: FOREGROUND_READ_MESSAGE_PRIORITY;
 
 export type QueryOptions<T, I, D, Resolve extends boolean | undefined> = {
 	remote?:
@@ -2438,7 +2446,7 @@ export class DocumentIndex<
 			// give queries higher priority than other "normal" data activities
 			// without this, we might have a scenario that a peer joina  network with large amount of data to be synced, but can not query anything before that is done
 			// this will lead to bad UX as you usually want to list/expore whats going on before doing any replication work
-			remote.priority = 2;
+			remote.priority = getRemoteQueryPriority(options?.remote);
 		}
 		if (remote && remote.timeout == null && options?.remote) {
 			const waitPolicy =
@@ -3622,7 +3630,7 @@ export class DocumentIndex<
 												ensureController().signal,
 											])
 										: ensureController().signal,
-									priority: 1,
+									priority: getRemoteQueryPriority(options?.remote),
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 								})
 								.then((response) =>
@@ -3921,6 +3929,7 @@ export class DocumentIndex<
 				remotePeers.map((peer) =>
 					this._query.send(closeRequest, {
 						...options,
+						priority: getRemoteQueryPriority(options?.remote),
 						mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 					}),
 				),

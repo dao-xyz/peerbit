@@ -51,7 +51,10 @@ import {
 	SharedLog,
 	decodeReplicas,
 } from "@peerbit/shared-log";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import {
+	FOREGROUND_READ_MESSAGE_PRIORITY,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { waitFor as _waitForFn, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -1079,6 +1082,99 @@ describe("index", () => {
 						} finally {
 							await iterator?.close();
 							requestSpy.restore();
+						}
+					});
+
+					it("keeps remote iteration follow-up reads in the foreground lane", async () => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						const docCount = 12;
+						for (let i = 0; i < docCount; i++) {
+							await stores[0].docs.put(new Document({ id: String(i) }));
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const requestSpy = sinon.spy(
+							stores[1].docs.index._query,
+							"request",
+						);
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+
+						let iterator: any;
+						try {
+							iterator = stores[1].docs.index.iterate(
+								{},
+								{
+									closePolicy: "manual",
+									remote: { replicate: true },
+								},
+							);
+
+							expect(await iterator.next(10)).to.have.length(10);
+							expect(await iterator.next(1)).to.have.length(1);
+							await iterator.close();
+							iterator = undefined;
+
+							const initialRequest = requestSpy
+								.getCalls()
+								.find((call) => call.args[0] instanceof IterationRequest);
+							const collectRequest = requestSpy
+								.getCalls()
+								.find((call) => call.args[0] instanceof CollectNextRequest);
+							const closeRequest = sendSpy
+								.getCalls()
+								.find((call) => call.args[0] instanceof CloseIteratorRequest);
+
+							if (!initialRequest) {
+								throw new Error("Missing initial remote iteration request");
+							}
+							if (!collectRequest) {
+								throw new Error("Missing remote collect request");
+							}
+							if (!closeRequest) {
+								throw new Error("Missing remote close request");
+							}
+							const initialOptions = initialRequest.args[1] as {
+								priority?: number;
+							};
+							const collectOptions = collectRequest.args[1] as {
+								priority?: number;
+							};
+							const closeOptions = closeRequest.args[1] as {
+								priority?: number;
+							};
+							expect(initialOptions.priority).equal(
+								FOREGROUND_READ_MESSAGE_PRIORITY,
+							);
+							expect(collectOptions.priority).equal(
+								FOREGROUND_READ_MESSAGE_PRIORITY,
+							);
+							expect(closeOptions.priority).equal(
+								FOREGROUND_READ_MESSAGE_PRIORITY,
+							);
+						} finally {
+							await iterator?.close();
+							requestSpy.restore();
+							sendSpy.restore();
 						}
 					});
 
