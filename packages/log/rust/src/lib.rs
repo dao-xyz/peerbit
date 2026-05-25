@@ -4177,10 +4177,10 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(
                 cached_verifying_key(&mut verifying_key_cache, &parsed_signature.public_key)?;
             parsed_signatures.push(Signature::from_bytes(&signature_bytes));
             parsed_public_keys.push(verifying_key);
-            parsed_messages.push(encode_entry_v0_parts_unsigned_for_signing(
-                storage.meta,
-                storage.payload,
-            ));
+            parsed_messages.push(unsigned_entry_v0_storage_for_signing(
+                &bytes,
+                storage.signable_prefix_len,
+            )?);
         }
 
         entries.push(PreparedRawEntryV0 {
@@ -4786,6 +4786,7 @@ struct ParsedSignatureWithKey {
 }
 
 struct ParsedPlainEntryV0Storage<'a> {
+    signable_prefix_len: usize,
     meta: &'a [u8],
     payload: &'a [u8],
     signature_with_key: &'a [u8],
@@ -4893,6 +4894,7 @@ fn parse_plain_entry_v0_storage(bytes: &[u8]) -> Result<ParsedPlainEntryV0Storag
     let meta = read_plain_decrypted_thing_bytes(&mut reader, "entry meta")?;
     let payload = read_plain_decrypted_thing_bytes(&mut reader, "entry payload")?;
     reader.read_exact(4, "entry reserved bytes")?;
+    let signable_prefix_len = reader.offset;
     if reader.read_u8("entry signatures option")? != 1 {
         return Err(JsValue::from_str("Expected EntryV0 signatures"));
     }
@@ -4918,10 +4920,25 @@ fn parse_plain_entry_v0_storage(bytes: &[u8]) -> Result<ParsedPlainEntryV0Storag
     }
 
     Ok(ParsedPlainEntryV0Storage {
+        signable_prefix_len,
         meta,
         payload,
         signature_with_key,
     })
+}
+
+fn unsigned_entry_v0_storage_for_signing(
+    bytes: &[u8],
+    signable_prefix_len: usize,
+) -> Result<Vec<u8>, JsValue> {
+    if signable_prefix_len > bytes.len() {
+        return Err(JsValue::from_str("Invalid EntryV0 signable prefix length"));
+    }
+    let mut out = Vec::with_capacity(signable_prefix_len + 2);
+    out.extend_from_slice(&bytes[..signable_prefix_len]);
+    write_u8(&mut out, 0); // signatures option
+    write_u8(&mut out, 0); // hash option
+    Ok(out)
 }
 
 fn parse_plain_entry_v0_storage_signature(
@@ -4931,7 +4948,7 @@ fn parse_plain_entry_v0_storage_signature(
     let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
 
     Ok(ParsedEntryV0StorageSignature {
-        signable: encode_entry_v0_parts_unsigned_for_signing(storage.meta, storage.payload),
+        signable: unsigned_entry_v0_storage_for_signing(bytes, storage.signable_prefix_len)?,
         signature: parsed_signature.signature,
         public_key: parsed_signature.public_key,
     })
@@ -5605,7 +5622,8 @@ mod tests {
     use super::{
         encode_entry_v0_parts_unsigned_for_signing, encode_entry_v0_parts_with_signature_bytes,
         encode_entry_v0_payload_data_unsigned_for_signing, encode_payload,
-        signable_entry_to_signed_storage, trim_oldest_log_entry_hashes_core, JoinPlan,
+        parse_plain_entry_v0_storage, signable_entry_to_signed_storage,
+        trim_oldest_log_entry_hashes_core, unsigned_entry_v0_storage_for_signing, JoinPlan,
         LogGraphIndex, LogIndexEntry, NativeLogBlockStore,
     };
 
@@ -5624,6 +5642,21 @@ mod tests {
             encode_entry_v0_parts_with_signature_bytes(&meta, &payload, Some(&signature_with_key));
 
         assert_eq!(optimized, expected);
+    }
+
+    #[test]
+    fn unsigned_storage_prefix_reuses_signed_storage_prefix() {
+        let meta = b"encoded-meta".to_vec();
+        let payload = b"encoded-payload".to_vec();
+        let signature_with_key = (0..96).map(|value| value as u8).collect::<Vec<_>>();
+        let signable = encode_entry_v0_parts_unsigned_for_signing(&meta, &payload);
+        let storage = signable_entry_to_signed_storage(signable.clone(), &signature_with_key);
+        let parsed = parse_plain_entry_v0_storage(&storage).unwrap();
+
+        assert_eq!(
+            unsigned_entry_v0_storage_for_signing(&storage, parsed.signable_prefix_len).unwrap(),
+            encode_entry_v0_parts_unsigned_for_signing(&meta, &payload)
+        );
     }
 
     #[test]
