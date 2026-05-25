@@ -1423,7 +1423,8 @@ describe("raw exchange-head sync", () => {
 								arg &&
 								Array.isArray(arg.hashes) &&
 								Array.isArray(arg.gids) &&
-								Array.isArray(arg.coordinateBatches),
+								(Array.isArray(arg.coordinateBatches) ||
+									arg.coordinateValues instanceof BigUint64Array),
 						);
 						if (row.coordinateWal) {
 							expect(coordinateColumns?.hashes, row.name).to.have.length(

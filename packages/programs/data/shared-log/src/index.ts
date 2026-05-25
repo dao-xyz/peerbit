@@ -342,6 +342,7 @@ type WaitForReplicator = { key: string; replicator: boolean };
 
 type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	coordinates: NumberFromType<R>[];
+	coordinateStrings?: string[];
 	leaders: LeaderMap;
 	isLeader: boolean;
 	assignedToRangeBoundary?: boolean;
@@ -12169,32 +12170,42 @@ export class SharedLog<
 	): NativeBackboneCoordinateCommitColumns {
 		const hashes = new Array<string>(rows.length);
 		const gids = new Array<string>(rows.length);
-		const hashNumbers = new Array<string>(rows.length);
-		const coordinateBatches = new Array<string[]>(rows.length);
+		const hashNumberValues = new BigUint64Array(rows.length);
+		const coordinateCounts = new Uint32Array(rows.length);
+		const coordinateValues = new BigUint64Array(
+			rows.reduce((sum, row) => sum + row.fields.coordinates.length, 0),
+		);
 		const nextHashBatches = new Array<string[]>(rows.length);
 		const assignedToRangeBoundaries = new Uint8Array(rows.length);
-		const requestedReplicas = new Array<number>(rows.length);
+		const requestedReplicaValues = new Uint32Array(rows.length);
+		let coordinateOffset = 0;
 		for (let i = 0; i < rows.length; i++) {
 			const { item, prepared, fields, deleteHashes } = rows[i]!;
 			hashes[i] = item.entry.hash;
 			gids[i] = fields.gid;
-			hashNumbers[i] = fields.hashNumberString ?? fields.hashNumber.toString();
-			coordinateBatches[i] =
-				fields.coordinateStrings ??
-				fields.coordinates.map((coordinate) => coordinate.toString());
+			hashNumberValues[i] =
+				typeof fields.hashNumber === "bigint"
+					? fields.hashNumber
+					: BigInt(fields.hashNumberString ?? fields.hashNumber);
+			coordinateCounts[i] = fields.coordinates.length;
+			for (const coordinate of fields.coordinates) {
+				coordinateValues[coordinateOffset++] =
+					typeof coordinate === "bigint" ? coordinate : BigInt(coordinate);
+			}
 			nextHashBatches[i] = deleteHashes;
 			assignedToRangeBoundaries[i] =
 				prepared.assignedToRangeBoundary === true ? 1 : 0;
-			requestedReplicas[i] = item.replicas;
+			requestedReplicaValues[i] = item.replicas;
 		}
 		return {
 			hashes,
 			gids,
-			hashNumbers,
-			coordinateBatches,
+			hashNumberValues,
+			coordinateCounts,
+			coordinateValues,
 			nextHashBatches,
 			assignedToRangeBoundaries,
-			requestedReplicas,
+			requestedReplicaValues,
 		};
 	}
 
@@ -12502,9 +12513,11 @@ export class SharedLog<
 					hashNumberString: hashNumber.toString(),
 					gid: this.getEntryGid(properties.entry),
 					coordinates: properties.plan.coordinates,
-					coordinateStrings: properties.plan.coordinates.map((coordinate) =>
-						coordinate.toString(),
-					),
+					coordinateStrings:
+						properties.plan.coordinateStrings ??
+						properties.plan.coordinates.map((coordinate) =>
+							coordinate.toString(),
+						),
 					wallTime,
 					wallTimeString: wallTime.toString(),
 					assignedToRangeBoundary,
@@ -13746,7 +13759,20 @@ export class SharedLog<
 						? (nativePlan.assignedToRangeBoundary as boolean)
 						: undefined;
 				const isLeader = leaders.has(selfHash);
-				plans.push({ coordinates, leaders, isLeader, assignedToRangeBoundary });
+				const coordinateStrings =
+					"coordinateStrings" in nativePlan
+						? (nativePlan.coordinateStrings as string[])
+						: undefined;
+				const plan: EntryLeaderPlan<R> = {
+					coordinates,
+					leaders,
+					isLeader,
+					assignedToRangeBoundary,
+				};
+				if (coordinateStrings) {
+					plan.coordinateStrings = coordinateStrings;
+				}
+				plans.push(plan);
 				if (!this.closed && item.options?.persist) {
 					persistItems.push({
 						coordinates,
@@ -13803,6 +13829,7 @@ export class SharedLog<
 					coordinates: Array.from(
 						nativePlan.coordinates as Iterable<NumberFromType<R>>,
 					),
+					coordinateStrings: nativePlan.coordinateStrings,
 					leaders,
 					isLeader: leaders.has(context.selfHash),
 					assignedToRangeBoundary:
@@ -13909,6 +13936,7 @@ export class SharedLog<
 						coordinates: Array.from(
 							nativePlan.coordinates as Iterable<NumberFromType<R>>,
 						),
+						coordinateStrings: nativePlan.coordinateStrings,
 						leaders: nativePlan.leaders,
 						isLeader: nativePlan.leaders.has(
 							leaderSelectionContext!.selfHash,

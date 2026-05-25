@@ -1504,6 +1504,52 @@ impl NativePeerbitBackbone {
         coordinate_requested_replicas: Array,
     ) -> Result<bool, JsValue> {
         let hashes = strings_from_array(hashes)?;
+        let coordinate_commits = coordinate_commits_from_string_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_batches,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_prepared_raw_receive_batch_core(hashes, &heads, coordinate_commits)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_prepared_raw_receive_batch_u64(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: BigUint64Array,
+        coordinate_counts: Uint32Array,
+        coordinates: BigUint64Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Uint32Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let coordinate_commits = coordinate_commits_from_u64_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_counts,
+            coordinates,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_prepared_raw_receive_batch_core(hashes, &heads, coordinate_commits)
+    }
+
+    fn commit_prepared_raw_receive_batch_core(
+        &mut self,
+        hashes: Vec<String>,
+        heads: &Uint8Array,
+        coordinate_commits: Vec<EntryCoordinateCommit>,
+    ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
         let pending_check_started = profile_enabled.then(js_sys::Date::now);
@@ -1544,17 +1590,9 @@ impl NativePeerbitBackbone {
         if let Some(started) = graph_put_started {
             self.append_profile.raw_receive_graph_put_ms += js_sys::Date::now() - started;
         }
-        if coordinate_hashes.length() > 0 {
+        if !coordinate_commits.is_empty() {
             let coordinate_started = profile_enabled.then(js_sys::Date::now);
-            self.commit_entry_coordinates_batch(
-                coordinate_hashes,
-                coordinate_gids,
-                coordinate_hash_numbers,
-                coordinate_batches,
-                coordinate_next_hash_batches,
-                coordinate_assigned_to_range_boundaries,
-                coordinate_requested_replicas,
-            )?;
+            self.commit_entry_coordinate_commits(coordinate_commits);
             if let Some(started) = coordinate_started {
                 self.append_profile.raw_receive_coordinate_commit_ms +=
                     js_sys::Date::now() - started;
@@ -1577,6 +1615,52 @@ impl NativePeerbitBackbone {
         coordinate_requested_replicas: Array,
     ) -> Result<bool, JsValue> {
         let hashes = strings_from_array(hashes)?;
+        let coordinate_commits = coordinate_commits_from_string_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_batches,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_prepared_raw_receive_join_batch_core(hashes, &heads, coordinate_commits)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_prepared_raw_receive_join_batch_u64(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: BigUint64Array,
+        coordinate_counts: Uint32Array,
+        coordinates: BigUint64Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Uint32Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let coordinate_commits = coordinate_commits_from_u64_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_counts,
+            coordinates,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_prepared_raw_receive_join_batch_core(hashes, &heads, coordinate_commits)
+    }
+
+    fn commit_prepared_raw_receive_join_batch_core(
+        &mut self,
+        hashes: Vec<String>,
+        heads: &Uint8Array,
+        coordinate_commits: Vec<EntryCoordinateCommit>,
+    ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
         let pending_check_started = profile_enabled.then(js_sys::Date::now);
@@ -1648,17 +1732,9 @@ impl NativePeerbitBackbone {
         if let Some(started) = graph_put_started {
             self.append_profile.raw_receive_graph_put_ms += js_sys::Date::now() - started;
         }
-        if coordinate_hashes.length() > 0 {
+        if !coordinate_commits.is_empty() {
             let coordinate_started = profile_enabled.then(js_sys::Date::now);
-            self.commit_entry_coordinates_batch(
-                coordinate_hashes,
-                coordinate_gids,
-                coordinate_hash_numbers,
-                coordinate_batches,
-                coordinate_next_hash_batches,
-                coordinate_assigned_to_range_boundaries,
-                coordinate_requested_replicas,
-            )?;
+            self.commit_entry_coordinate_commits(coordinate_commits);
             if let Some(started) = coordinate_started {
                 self.append_profile.raw_receive_coordinate_commit_ms +=
                     js_sys::Date::now() - started;
@@ -1682,6 +1758,66 @@ impl NativePeerbitBackbone {
         coordinate_requested_replicas: Array,
     ) -> Result<bool, JsValue> {
         let hashes = strings_from_array(hashes)?;
+        let verify_hashes = strings_from_array(verify_hashes)?;
+        let coordinate_commits = coordinate_commits_from_string_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_batches,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_verified_prepared_raw_receive_join_batch_core(
+            hashes,
+            &heads,
+            verify_hashes,
+            coordinate_commits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn commit_verified_prepared_raw_receive_join_batch_u64(
+        &mut self,
+        hashes: Array,
+        heads: Uint8Array,
+        verify_hashes: Array,
+        coordinate_hashes: Array,
+        coordinate_gids: Array,
+        coordinate_hash_numbers: BigUint64Array,
+        coordinate_counts: Uint32Array,
+        coordinates: BigUint64Array,
+        coordinate_next_hash_batches: Array,
+        coordinate_assigned_to_range_boundaries: Uint8Array,
+        coordinate_requested_replicas: Uint32Array,
+    ) -> Result<bool, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let verify_hashes = strings_from_array(verify_hashes)?;
+        let coordinate_commits = coordinate_commits_from_u64_columns(
+            coordinate_hashes,
+            coordinate_gids,
+            coordinate_hash_numbers,
+            coordinate_counts,
+            coordinates,
+            coordinate_next_hash_batches,
+            coordinate_assigned_to_range_boundaries,
+            coordinate_requested_replicas,
+        )?;
+        self.commit_verified_prepared_raw_receive_join_batch_core(
+            hashes,
+            &heads,
+            verify_hashes,
+            coordinate_commits,
+        )
+    }
+
+    fn commit_verified_prepared_raw_receive_join_batch_core(
+        &mut self,
+        hashes: Vec<String>,
+        heads: &Uint8Array,
+        verify_hashes: Vec<String>,
+        coordinate_commits: Vec<EntryCoordinateCommit>,
+    ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
         let pending_check_started = profile_enabled.then(js_sys::Date::now);
@@ -1695,7 +1831,6 @@ impl NativePeerbitBackbone {
             return Ok(false);
         }
 
-        let verify_hashes = strings_from_array(verify_hashes)?;
         let verify_hashes_cover_commit = verify_hashes.len() == hashes.len()
             && verify_hashes
                 .iter()
@@ -1796,17 +1931,9 @@ impl NativePeerbitBackbone {
         if let Some(started) = graph_put_started {
             self.append_profile.raw_receive_graph_put_ms += js_sys::Date::now() - started;
         }
-        if coordinate_hashes.length() > 0 {
+        if !coordinate_commits.is_empty() {
             let coordinate_started = profile_enabled.then(js_sys::Date::now);
-            self.commit_entry_coordinates_batch(
-                coordinate_hashes,
-                coordinate_gids,
-                coordinate_hash_numbers,
-                coordinate_batches,
-                coordinate_next_hash_batches,
-                coordinate_assigned_to_range_boundaries,
-                coordinate_requested_replicas,
-            )?;
+            self.commit_entry_coordinate_commits(coordinate_commits);
             if let Some(started) = coordinate_started {
                 self.append_profile.raw_receive_coordinate_commit_ms +=
                     js_sys::Date::now() - started;
@@ -2211,54 +2338,45 @@ impl NativePeerbitBackbone {
         assigned_to_range_boundaries: Uint8Array,
         requested_replicas: Array,
     ) -> Result<(), JsValue> {
-        let hashes = strings_from_array(hashes)?;
-        let gids = strings_from_array(gids)?;
-        let hash_numbers = strings_from_array(hash_numbers)?;
-        let coordinate_batches = coordinate_batches_from_array(coordinate_batches)?;
-        let next_hash_batches =
-            string_batches_from_array(next_hash_batches, "coordinate commit next hashes")?;
-        let requested_replicas = usize_values_from_array(requested_replicas)?;
-        ensure_same_len(hashes.len(), gids.len(), "coordinate commit gid")?;
-        ensure_same_len(
-            hashes.len(),
-            hash_numbers.len(),
-            "coordinate commit hash number",
+        let commits = coordinate_commits_from_string_columns(
+            hashes,
+            gids,
+            hash_numbers,
+            coordinate_batches,
+            next_hash_batches,
+            assigned_to_range_boundaries,
+            requested_replicas,
         )?;
-        ensure_same_len(
-            hashes.len(),
-            coordinate_batches.len(),
-            "coordinate commit coordinates",
-        )?;
-        ensure_same_len(
-            hashes.len(),
-            next_hash_batches.len(),
-            "coordinate commit next hashes",
-        )?;
-        ensure_same_len(
-            hashes.len(),
-            assigned_to_range_boundaries.length() as usize,
-            "coordinate commit assigned flags",
-        )?;
-        ensure_same_len(
-            hashes.len(),
-            requested_replicas.len(),
-            "coordinate commit replicas",
-        )?;
+        self.commit_entry_coordinate_commits(commits);
+        Ok(())
+    }
 
-        let mut commits = Vec::with_capacity(hashes.len());
-        for index in 0..hashes.len() {
-            commits.push(EntryCoordinateCommit {
-                hash: hashes[index].clone(),
-                gid: gids[index].clone(),
-                hash_number: parse_u64_string(&hash_numbers[index], "coordinate hash number")?,
-                coordinates: coordinate_batches[index].clone(),
-                next_hashes: next_hash_batches[index].clone(),
-                assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index as u32)
-                    != 0,
-                requested_replicas: requested_replicas[index],
-            });
-        }
+    pub fn commit_entry_coordinates_batch_u64(
+        &mut self,
+        hashes: Array,
+        gids: Array,
+        hash_numbers: BigUint64Array,
+        coordinate_counts: Uint32Array,
+        coordinates: BigUint64Array,
+        next_hash_batches: Array,
+        assigned_to_range_boundaries: Uint8Array,
+        requested_replicas: Uint32Array,
+    ) -> Result<(), JsValue> {
+        let commits = coordinate_commits_from_u64_columns(
+            hashes,
+            gids,
+            hash_numbers,
+            coordinate_counts,
+            coordinates,
+            next_hash_batches,
+            assigned_to_range_boundaries,
+            requested_replicas,
+        )?;
+        self.commit_entry_coordinate_commits(commits);
+        Ok(())
+    }
 
+    fn commit_entry_coordinate_commits(&mut self, commits: Vec<EntryCoordinateCommit>) {
         self.shared_log
             .commit_entry_coordinates_batch_core(commits.iter().cloned());
 
@@ -2277,7 +2395,6 @@ impl NativePeerbitBackbone {
             );
             self.delete_coordinate_core_strings(&next_hashes);
         }
-        Ok(())
     }
 
     pub fn add_gid_peers(
@@ -6270,6 +6387,144 @@ fn string_batches_from_array(values: Array, label: &str) -> Result<Vec<Vec<Strin
         out.push(strings_from_array(Array::from(&value))?);
     }
     Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coordinate_commits_from_string_columns(
+    hashes: Array,
+    gids: Array,
+    hash_numbers: Array,
+    coordinate_batches: Array,
+    next_hash_batches: Array,
+    assigned_to_range_boundaries: Uint8Array,
+    requested_replicas: Array,
+) -> Result<Vec<EntryCoordinateCommit>, JsValue> {
+    let hashes = strings_from_array(hashes)?;
+    let gids = strings_from_array(gids)?;
+    let hash_numbers = strings_from_array(hash_numbers)?;
+    let coordinate_batches = coordinate_batches_from_array(coordinate_batches)?;
+    let next_hash_batches =
+        string_batches_from_array(next_hash_batches, "coordinate commit next hashes")?;
+    let requested_replicas = usize_values_from_array(requested_replicas)?;
+    coordinate_commits_from_parts(
+        hashes,
+        gids,
+        hash_numbers
+            .iter()
+            .map(|value| parse_u64_string(value, "coordinate hash number"))
+            .collect::<Result<Vec<_>, _>>()?,
+        coordinate_batches,
+        next_hash_batches,
+        assigned_to_range_boundaries,
+        requested_replicas,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coordinate_commits_from_u64_columns(
+    hashes: Array,
+    gids: Array,
+    hash_numbers: BigUint64Array,
+    coordinate_counts: Uint32Array,
+    coordinates: BigUint64Array,
+    next_hash_batches: Array,
+    assigned_to_range_boundaries: Uint8Array,
+    requested_replicas: Uint32Array,
+) -> Result<Vec<EntryCoordinateCommit>, JsValue> {
+    let hashes = strings_from_array(hashes)?;
+    let gids = strings_from_array(gids)?;
+    let hash_numbers = hash_numbers.to_vec();
+    let coordinate_counts = coordinate_counts.to_vec();
+    let coordinates = coordinates.to_vec();
+    let next_hash_batches =
+        string_batches_from_array(next_hash_batches, "coordinate commit next hashes")?;
+    let requested_replicas = requested_replicas
+        .to_vec()
+        .into_iter()
+        .map(|value| value as usize)
+        .collect::<Vec<_>>();
+    ensure_same_len(
+        hashes.len(),
+        coordinate_counts.len(),
+        "coordinate commit coordinate counts",
+    )?;
+    let coordinate_total = coordinate_counts
+        .iter()
+        .try_fold(0usize, |sum, count| sum.checked_add(*count as usize))
+        .ok_or_else(|| JsValue::from_str("Coordinate count overflow"))?;
+    ensure_same_len(
+        coordinate_total,
+        coordinates.len(),
+        "coordinate commit flattened coordinates",
+    )?;
+    let mut coordinate_batches = Vec::with_capacity(coordinate_counts.len());
+    let mut offset = 0usize;
+    for count in coordinate_counts {
+        let end = offset + count as usize;
+        coordinate_batches.push(coordinates[offset..end].to_vec());
+        offset = end;
+    }
+    coordinate_commits_from_parts(
+        hashes,
+        gids,
+        hash_numbers,
+        coordinate_batches,
+        next_hash_batches,
+        assigned_to_range_boundaries,
+        requested_replicas,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn coordinate_commits_from_parts(
+    hashes: Vec<String>,
+    gids: Vec<String>,
+    hash_numbers: Vec<u64>,
+    coordinate_batches: Vec<Vec<u64>>,
+    next_hash_batches: Vec<Vec<String>>,
+    assigned_to_range_boundaries: Uint8Array,
+    requested_replicas: Vec<usize>,
+) -> Result<Vec<EntryCoordinateCommit>, JsValue> {
+    ensure_same_len(hashes.len(), gids.len(), "coordinate commit gid")?;
+    ensure_same_len(
+        hashes.len(),
+        hash_numbers.len(),
+        "coordinate commit hash number",
+    )?;
+    ensure_same_len(
+        hashes.len(),
+        coordinate_batches.len(),
+        "coordinate commit coordinates",
+    )?;
+    ensure_same_len(
+        hashes.len(),
+        next_hash_batches.len(),
+        "coordinate commit next hashes",
+    )?;
+    ensure_same_len(
+        hashes.len(),
+        assigned_to_range_boundaries.length() as usize,
+        "coordinate commit assigned flags",
+    )?;
+    ensure_same_len(
+        hashes.len(),
+        requested_replicas.len(),
+        "coordinate commit replicas",
+    )?;
+
+    let mut commits = Vec::with_capacity(hashes.len());
+    for index in 0..hashes.len() {
+        commits.push(EntryCoordinateCommit {
+            hash: hashes[index].clone(),
+            gid: gids[index].clone(),
+            hash_number: hash_numbers[index],
+            coordinates: coordinate_batches[index].clone(),
+            next_hashes: next_hash_batches[index].clone(),
+            assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index as u32) != 0,
+            requested_replicas: requested_replicas[index],
+        });
+    }
+    Ok(commits)
 }
 
 fn coordinate_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
