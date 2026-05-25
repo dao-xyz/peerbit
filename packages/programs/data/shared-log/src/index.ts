@@ -13818,7 +13818,10 @@ export class SharedLog<
 
 		const receivePlanStartedAt = syncProfileStart(properties.syncProfile);
 		let nativeGroups: NativeBackboneRawReceiveGroupPlan[] | undefined;
+		let leaderSamples: Array<Map<string, unknown>> | undefined;
 		let leaderPlans: EntryLeaderPlan<R>[] | undefined;
+		let usedLeaderSamplePlans = false;
+		let leaderSelectionContext: LeaderSelectionContext | undefined;
 		try {
 			nativeGroups = backbone.planPreparedRawReceiveGroups(
 				properties.hashes,
@@ -13840,24 +13843,65 @@ export class SharedLog<
 			if (plannedHashCount !== properties.hashes.length) {
 				return false;
 			}
-			leaderPlans =
-				await this.planNativeBackboneReceiveGroupLeaders(nativeGroups);
-			if (!leaderPlans || leaderPlans.length !== nativeGroups.length) {
-				return false;
+			leaderSelectionContext = await this.createLeaderSelectionContext();
+			leaderSamples = backbone.planLeaderSamplesForGidsBatch?.(
+				nativeGroups.map((group) => ({
+					gid: group.gid,
+					replicas: group.maxMaxReplicas,
+				})),
+				this.createNativeLeaderOptions(leaderSelectionContext),
+			);
+			if (leaderSamples?.length === nativeGroups.length) {
+				usedLeaderSamplePlans = true;
+			} else {
+				leaderSamples = undefined;
+				leaderPlans = backbone.planLeadersForGidsBatch(
+					nativeGroups.map((group) => ({
+						gid: group.gid,
+						replicas: group.maxMaxReplicas,
+					})),
+					this.createNativeLeaderOptions(leaderSelectionContext),
+				).map((nativePlan) => ({
+					coordinates: Array.from(
+						nativePlan.coordinates as Iterable<NumberFromType<R>>,
+					),
+					leaders: nativePlan.leaders,
+					isLeader: nativePlan.leaders.has(
+						leaderSelectionContext!.selfHash,
+					),
+					assignedToRangeBoundary:
+						"assignedToRangeBoundary" in nativePlan
+							? (nativePlan.assignedToRangeBoundary as boolean)
+							: undefined,
+				}));
+				if (leaderPlans.length !== nativeGroups.length) {
+					return false;
+				}
 			}
 		} catch {
 			return false;
 		}
 
 		const fromHash = properties.from.hashcode();
-		for (let i = 0; i < nativeGroups.length; i++) {
-			const leaderPlan = leaderPlans[i];
-			if (
-				!leaderPlan ||
-				leaderPlan.isLeader ||
-				leaderPlan.leaders.has(fromHash)
-			) {
-				return false;
+		if (leaderSamples) {
+			for (const leaders of leaderSamples) {
+				if (
+					leaders.has(leaderSelectionContext!.selfHash) ||
+					leaders.has(fromHash)
+				) {
+					return false;
+				}
+			}
+		} else {
+			for (let i = 0; i < nativeGroups.length; i++) {
+				const leaderPlan = leaderPlans?.[i];
+				if (
+					!leaderPlan ||
+					leaderPlan.isLeader ||
+					leaderPlan.leaders.has(fromHash)
+				) {
+					return false;
+				}
 			}
 		}
 
@@ -13873,6 +13917,7 @@ export class SharedLog<
 					predecodedReplicaHits: properties.hashes.length,
 					nativeRawGroups: true,
 					nativeReceiveGroupLeaderPlans: true,
+					nativeReceiveGroupLeaderSamples: usedLeaderSamplePlans,
 					nativeFastDropEarly: true,
 				},
 			});
