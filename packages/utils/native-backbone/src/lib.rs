@@ -20,7 +20,8 @@ use peerbit_log_rust::{
     NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0,
 };
 use peerbit_shared_log_rust::{
-    commit_local_append_for_gid_compact_core, NativeLocalAppendCompactFacts, NativeSharedLogState,
+    commit_local_append_for_gid_compact_core, EntryCoordinateCommit, NativeLocalAppendCompactFacts,
+    NativeSharedLogState,
 };
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
@@ -2164,30 +2165,13 @@ impl NativePeerbitBackbone {
         assigned_to_range_boundaries: Uint8Array,
         requested_replicas: Array,
     ) -> Result<(), JsValue> {
-        let hashes_for_core = hashes.clone();
-        let gids_for_core = gids.clone();
-        let hash_numbers_for_core = hash_numbers.clone();
-        let coordinate_batches_for_core = coordinate_batches.clone();
-        let next_hash_batches_for_core = next_hash_batches.clone();
-        let assigned_to_range_boundaries_for_core = assigned_to_range_boundaries.clone();
-        let requested_replicas_for_core = requested_replicas.clone();
-        self.shared_log.commit_entry_coordinates_batch(
-            hashes,
-            gids,
-            hash_numbers,
-            coordinate_batches,
-            next_hash_batches,
-            assigned_to_range_boundaries,
-            requested_replicas,
-        )?;
-
-        let hashes = strings_from_array(hashes_for_core)?;
-        let gids = strings_from_array(gids_for_core)?;
-        let hash_numbers = strings_from_array(hash_numbers_for_core)?;
-        let coordinate_batches = coordinate_batches_from_array(coordinate_batches_for_core)?;
+        let hashes = strings_from_array(hashes)?;
+        let gids = strings_from_array(gids)?;
+        let hash_numbers = strings_from_array(hash_numbers)?;
+        let coordinate_batches = coordinate_batches_from_array(coordinate_batches)?;
         let next_hash_batches =
-            string_batches_from_array(next_hash_batches_for_core, "coordinate commit next hashes")?;
-        let requested_replicas = usize_values_from_array(requested_replicas_for_core)?;
+            string_batches_from_array(next_hash_batches, "coordinate commit next hashes")?;
+        let requested_replicas = usize_values_from_array(requested_replicas)?;
         ensure_same_len(hashes.len(), gids.len(), "coordinate commit gid")?;
         ensure_same_len(
             hashes.len(),
@@ -2206,7 +2190,7 @@ impl NativePeerbitBackbone {
         )?;
         ensure_same_len(
             hashes.len(),
-            assigned_to_range_boundaries_for_core.length() as usize,
+            assigned_to_range_boundaries.length() as usize,
             "coordinate commit assigned flags",
         )?;
         ensure_same_len(
@@ -2215,19 +2199,37 @@ impl NativePeerbitBackbone {
             "coordinate commit replicas",
         )?;
 
+        let mut commits = Vec::with_capacity(hashes.len());
         for index in 0..hashes.len() {
+            commits.push(EntryCoordinateCommit {
+                hash: hashes[index].clone(),
+                gid: gids[index].clone(),
+                hash_number: parse_u64_string(&hash_numbers[index], "coordinate hash number")?,
+                coordinates: coordinate_batches[index].clone(),
+                next_hashes: next_hash_batches[index].clone(),
+                assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index as u32)
+                    != 0,
+                requested_replicas: requested_replicas[index],
+            });
+        }
+
+        self.shared_log
+            .commit_entry_coordinates_batch_core(commits.iter().cloned());
+
+        for commit in commits {
+            let next_hashes = commit.next_hashes;
             self.put_coordinate_core(
-                hashes[index].clone(),
-                gids[index].clone(),
-                parse_u64_string(&hash_numbers[index], "coordinate hash number")?,
-                coordinate_batches[index].clone(),
-                assigned_to_range_boundaries_for_core.get_index(index as u32) != 0,
-                requested_replicas[index],
+                commit.hash,
+                commit.gid,
+                commit.hash_number,
+                commit.coordinates,
+                commit.assigned_to_range_boundary,
+                commit.requested_replicas,
                 0,
                 Vec::new(),
                 true,
             );
-            self.delete_coordinate_core_strings(&next_hash_batches[index]);
+            self.delete_coordinate_core_strings(&next_hashes);
         }
         Ok(())
     }

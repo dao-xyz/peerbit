@@ -133,7 +133,8 @@ export type PreparedAppendIndexFacts = {
 		data?: Uint8Array;
 	};
 	size?: number;
-	shallowEntry: ShallowEntry;
+	shallowEntry?: ShallowEntry;
+	getShallowEntry?: (isHead?: boolean) => ShallowEntry;
 	nativeEntry?: NativeLogEntry;
 };
 
@@ -160,6 +161,20 @@ const mapMaybePromise = <T, R>(
 	value: MaybePromise<T>,
 	fn: (value: T) => MaybePromise<R>,
 ): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
+
+const materializePreparedAppendShallowEntry = (
+	entry: PreparedAppendIndexFacts,
+	isHead: boolean,
+): ShallowEntry => {
+	const shallowEntry =
+		entry.shallowEntry ?? entry.getShallowEntry?.(isHead);
+	if (!shallowEntry) {
+		throw new Error("Missing prepared append shallow entry");
+	}
+	shallowEntry.head = isHead;
+	entry.shallowEntry = shallowEntry;
+	return shallowEntry;
+};
 
 export type NativeLogGraph = {
 	readonly length: number;
@@ -1793,6 +1808,8 @@ export class EntryIndex<T> {
 				properties.deferIndexWrite === true &&
 				!!this.properties.nativeGraph &&
 				entries.every((entry) => entry.meta.type !== EntryType.CUT);
+			const lazyNativeGraphUpdatedDeferredIndexWrite =
+				nativeGraphUpdated && deferBatchIndexWrite;
 
 			for (let i = 0; i < entries.length; i++) {
 				const entry = entries[i]!;
@@ -1801,20 +1818,33 @@ export class EntryIndex<T> {
 					this._length++;
 				}
 
-				const shallowEntry = entry.shallowEntry;
-				shallowEntry.head = isHead;
+				let shallowEntry: ShallowEntry | undefined;
+				if (lazyNativeGraphUpdatedDeferredIndexWrite) {
+					this.pendingIndexWrites.set(entry.hash, () =>
+						materializePreparedAppendShallowEntry(entry, isHead),
+					);
+				} else {
+					shallowEntry = materializePreparedAppendShallowEntry(entry, isHead);
+				}
 				const nativeEntry =
 					!nativeGraphUpdated &&
 					this.properties.nativeGraph &&
-					(entry.nativeEntry ?? toNativeLogEntry(shallowEntry));
+					(entry.nativeEntry ??
+						toNativeLogEntry(
+							shallowEntry ??
+								materializePreparedAppendShallowEntry(entry, isHead),
+						));
 				if (nativeEntry) {
 					nativeEntry.head = isHead;
 				}
-				if (deferBatchIndexWrite || putBatch) {
-					shallowEntries.push(shallowEntry);
+				if (lazyNativeGraphUpdatedDeferredIndexWrite) {
+					// The native commit already updated blocks/graph; keep the JS
+					// compatibility index write lazy for later flushes.
+				} else if (deferBatchIndexWrite || putBatch) {
+					shallowEntries.push(shallowEntry!);
 					nativeEntry && nativeEntries.push(nativeEntry);
 				} else {
-					await this.properties.index.put(shallowEntry);
+					await this.properties.index.put(shallowEntry!);
 					nativeEntry && nativeEntries.push(nativeEntry);
 				}
 
@@ -1880,16 +1910,23 @@ export class EntryIndex<T> {
 
 			if (deferBatchIndexWrite) {
 				const indexPutStartedAt = entryIndexProfileStart(profile);
-				for (const shallowEntry of shallowEntries) {
-					this.pendingIndexWrites.set(shallowEntry.hash, shallowEntry);
+				if (!lazyNativeGraphUpdatedDeferredIndexWrite) {
+					for (const shallowEntry of shallowEntries) {
+						this.pendingIndexWrites.set(shallowEntry.hash, shallowEntry);
+					}
 				}
 				this.schedulePendingIndexWriteFlush();
 				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
 					name: "log.entryIndex.putAppendFactsBatch.indexPut",
 					component: "log",
-					entries: shallowEntries.length,
+					entries: lazyNativeGraphUpdatedDeferredIndexWrite
+						? entries.length
+						: shallowEntries.length,
 					messages: 1,
-					details: { deferred: true },
+					details: {
+						deferred: true,
+						lazy: lazyNativeGraphUpdatedDeferredIndexWrite,
+					},
 				});
 				putNativeEntries(true);
 			} else if (putBatch) {

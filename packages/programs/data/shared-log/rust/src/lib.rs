@@ -1363,6 +1363,17 @@ struct EntryCoordinateState {
     requested_replicas: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EntryCoordinateCommit {
+    pub hash: String,
+    pub gid: String,
+    pub hash_number: u64,
+    pub coordinates: Vec<u64>,
+    pub next_hashes: Vec<String>,
+    pub assigned_to_range_boundary: bool,
+    pub requested_replicas: usize,
+}
+
 impl SharedLogStateInner {
     fn new(resolution: String) -> Self {
         Self {
@@ -1416,6 +1427,30 @@ impl SharedLogStateInner {
 #[wasm_bindgen]
 pub struct NativeSharedLogState {
     inner: SharedLogStateInner,
+}
+
+impl NativeSharedLogState {
+    pub fn commit_entry_coordinates_batch_core<I>(&mut self, entries: I)
+    where
+        I: IntoIterator<Item = EntryCoordinateCommit>,
+    {
+        for entry in entries {
+            let next_hashes = entry.next_hashes;
+            self.inner.put_entry_coordinate_state(
+                entry.hash,
+                EntryCoordinateState {
+                    gid: entry.gid,
+                    hash_number: entry.hash_number,
+                    coordinates: entry.coordinates,
+                    assigned_to_range_boundary: entry.assigned_to_range_boundary,
+                    requested_replicas: entry.requested_replicas,
+                },
+            );
+            for next_hash in next_hashes {
+                self.inner.delete_entry_coordinate_state(&next_hash);
+            }
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -2350,21 +2385,20 @@ impl NativeSharedLogState {
             "coordinate commit replica counts",
         )?;
 
+        let mut entries = Vec::with_capacity(hashes.len());
         for index in 0..hashes.len() {
-            let entry = EntryCoordinateState {
+            entries.push(EntryCoordinateCommit {
+                hash: hashes[index].clone(),
                 gid: gids[index].clone(),
                 hash_number: parse_u64(&hash_numbers[index])?,
                 coordinates: coordinate_batches[index].clone(),
+                next_hashes: next_hash_batches[index].clone(),
                 assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index as u32)
                     != 0,
                 requested_replicas: requested_replicas[index],
-            };
-            self.inner
-                .put_entry_coordinate_state(hashes[index].clone(), entry);
-            for next_hash in &next_hash_batches[index] {
-                self.inner.delete_entry_coordinate_state(next_hash);
-            }
+            });
         }
+        self.commit_entry_coordinates_batch_core(entries);
         Ok(())
     }
 

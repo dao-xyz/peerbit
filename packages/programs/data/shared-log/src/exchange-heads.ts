@@ -485,13 +485,12 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
-		const shallowEntry = this.toShallow(true);
 		return {
 			hash: this.hash,
 			bytes: this.bytes,
 			byteLength: this.size,
 			meta: this.meta,
-			shallowEntry,
+			getShallowEntry: (isHead = true) => this.toShallow(isHead),
 			materializeEntry: () => this,
 		};
 	}
@@ -616,18 +615,25 @@ class PreparedRawEntryWithRefs<T> {
 				logical: preparedRawLogical(this.facts, this.factsIndex),
 			}),
 		});
-		const shallowEntry = new ShallowEntry({
-			hash: this.head.hash,
-			payloadSize,
-			head: true,
-			meta: new ShallowMeta({
-				gid,
-				data,
-				clock,
-				next,
-				type,
-			}),
-		});
+		let shallowEntry: ShallowEntry | undefined;
+		const getShallowEntry = (isHead = true) => {
+			if (!shallowEntry) {
+				shallowEntry = new ShallowEntry({
+					hash: this.head.hash,
+					payloadSize,
+					head: isHead,
+					meta: new ShallowMeta({
+						gid,
+						data,
+						clock,
+						next,
+						type,
+					}),
+				});
+			}
+			shallowEntry.head = isHead;
+			return shallowEntry;
+		};
 		return {
 			hash: this.head.hash,
 			bytes: this.head.bytes,
@@ -639,7 +645,7 @@ class PreparedRawEntryWithRefs<T> {
 				type,
 				data,
 			},
-			shallowEntry,
+			getShallowEntry,
 			materializeEntry: () => this.entry,
 		};
 	}
