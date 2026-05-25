@@ -1034,8 +1034,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	options?: {
 		nativeBackbone?: RawReceiveNativeBackbone;
 		verifyNativeBackboneSignaturesDuringPrepare?: boolean;
+		tryPreparedRawReceiveFastDrop?: (properties: {
+			heads: RawEntryWithRefs[];
+			hashes: string[];
+		}) => boolean | Promise<boolean>;
 	},
-): Promise<ExchangeHeadsMessage<any>> => {
+): Promise<ExchangeHeadsMessage<any> | undefined> => {
 	const blocks = new Array<Uint8Array>(message.heads.length);
 	const hashes = new Array<string>(message.heads.length);
 	let rawBytes = 0;
@@ -1108,8 +1112,6 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			messages: 1,
 			details: { native: true, source: nativePrepareSource },
 		});
-		const wrapStartedAt = syncProfileStart(profile);
-		let materializedHeads: EntryWithRefs<any>[];
 		try {
 			if (
 				preparedColumns &&
@@ -1121,11 +1123,41 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				throw new Error("Raw exchange head prepared fact count mismatch");
 			}
 			const rowFacts = preparedFacts!;
-			materializedHeads = message.heads.map((head, index) => {
-				const facts = preparedColumns ?? rowFacts[index]!;
-				if (preparedRawCid(facts, index) !== head.hash) {
+			for (let i = 0; i < message.heads.length; i++) {
+				const head = message.heads[i]!;
+				const facts = preparedColumns ?? rowFacts[i]!;
+				if (preparedRawCid(facts, i) !== head.hash) {
 					throw new Error("Raw exchange head hash did not match bytes");
 				}
+			}
+			if (
+				options?.tryPreparedRawReceiveFastDrop &&
+				(await options.tryPreparedRawReceiveFastDrop({
+					heads: message.heads,
+					hashes,
+				}))
+			) {
+				return undefined;
+			}
+		} catch (error) {
+			if (nativePrepareSource === "backbone") {
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
+					preparedRawFactsHashes(preparedFacts!),
+				);
+			}
+			if (nativePrepareSource === "backbone-columns") {
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
+					preparedRawFactsHashes(preparedColumns!),
+				);
+			}
+			throw error;
+		}
+		const wrapStartedAt = syncProfileStart(profile);
+		let materializedHeads: EntryWithRefs<any>[];
+		try {
+			const rowFacts = preparedFacts!;
+			materializedHeads = message.heads.map((head, index) => {
+				const facts = preparedColumns ?? rowFacts[index]!;
 				const preparedHead = new PreparedRawEntryWithRefs(
 					head,
 					facts,

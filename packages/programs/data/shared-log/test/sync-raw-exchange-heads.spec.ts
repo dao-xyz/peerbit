@@ -1526,11 +1526,22 @@ describe("raw exchange-head sync", () => {
 				(event) => event.name === "sharedLog.receive.plan",
 			);
 			expect(receivePlanProfile.details.nativeRawGroups).to.equal(true);
+			expect(receivePlanProfile.details.nativeFastDropEarly).to.equal(true);
 			const joinPlanProfile = profileEvents.find(
 				(event) => event.name === "sharedLog.receive.joinPlan",
 			);
 			expect(joinPlanProfile.details.nativeFastDrop).to.equal(true);
+			expect(joinPlanProfile.details.nativeFastDropEarly).to.equal(true);
 			expect(joinPlanProfile.count).to.equal(0);
+			expect(
+				profileEvents.some(
+					(event) => event.name === "sharedLog.rawReceive.wrapPrepared",
+				),
+			).to.equal(false);
+			const materializeProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.rawReceive.materialize",
+			);
+			expect(materializeProfile.details.nativeFastDropEarly).to.equal(true);
 		} finally {
 			await session.stop();
 		}

@@ -126,6 +126,7 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
+	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
 	RequestIPrune,
 	ResponseIPrune,
@@ -9502,7 +9503,8 @@ export class SharedLog<
 			const syncProfile = this._logProperties?.sync?.profile;
 			let rawMaterializedKnownMissing = false;
 			if (msg instanceof RawExchangeHeadsMessage) {
-				const fromIsSelf = context.from.equals(this.node.identity.publicKey);
+				const rawFrom = context.from!;
+				const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
 				const rawExistingStartedAt = syncProfileStart(syncProfile);
 				const rawExistingHashes = await this.log.hasMany(
 					msg.heads.map((head) => head.hash),
@@ -9530,9 +9532,9 @@ export class SharedLog<
 					const rawConfirmStartedAt = syncProfileStart(syncProfile);
 					this.markEntriesKnownByPeer(
 						rawConfirmedHashes,
-						context.from.hashcode(),
+						rawFrom.hashcode(),
 					);
-					await this.sendRepairConfirmation(context.from, rawConfirmedHashes);
+					await this.sendRepairConfirmation(rawFrom, rawConfirmedHashes);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, rawConfirmStartedAt, {
 							name: "sharedLog.rawReceive.confirmExisting",
@@ -9545,21 +9547,48 @@ export class SharedLog<
 				if (rawMissingHeads.length === 0) {
 					return;
 				}
+				const rawIsRepairHint =
+					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
 				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
-				msg = await materializeVerifiedRawExchangeHeadsMessage(
-					new RawExchangeHeadsMessage({
-						heads: rawMissingHeads,
-						reserved: msg.reserved,
-					}),
-					this.log,
-					syncProfile,
-					{
-						nativeBackbone: this._nativeBackbone,
-						verifyNativeBackboneSignaturesDuringPrepare:
-							this._logProperties?.sync
-								?.rawExchangeHeadsVerifySignaturesDuringPrepare === true,
-					},
-				);
+				const materializedRawMessage =
+					await materializeVerifiedRawExchangeHeadsMessage(
+						new RawExchangeHeadsMessage({
+							heads: rawMissingHeads,
+							reserved: msg.reserved,
+						}),
+						this.log,
+						syncProfile,
+						{
+							nativeBackbone: this._nativeBackbone,
+							verifyNativeBackboneSignaturesDuringPrepare:
+								this._logProperties?.sync
+									?.rawExchangeHeadsVerifySignaturesDuringPrepare === true,
+							tryPreparedRawReceiveFastDrop: rawIsRepairHint
+								? undefined
+								: ({ heads, hashes }) =>
+										this.tryFastDropPreparedRawReceive({
+											heads,
+											hashes,
+											from: rawFrom,
+											fromIsSelf,
+											syncProfile,
+										}),
+						},
+					);
+				if (materializedRawMessage === undefined) {
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
+							name: "sharedLog.rawReceive.materialize",
+							component: "shared-log",
+							entries: rawMissingHeads.length,
+							bytes: rawMissingBytes,
+							messages: 1,
+							details: { nativeFastDropEarly: true },
+						});
+					}
+					return;
+				}
+				msg = materializedRawMessage;
 				rawMaterializedKnownMissing = true;
 				if (syncProfile) {
 					emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
@@ -13766,6 +13795,127 @@ export class SharedLog<
 		} catch {
 			return undefined;
 		}
+	}
+
+	private async tryFastDropPreparedRawReceive(properties: {
+		heads: RawEntryWithRefs[];
+		hashes: string[];
+		from: PublicSignKey;
+		fromIsSelf: boolean;
+		syncProfile?: SyncProfileFn;
+	}): Promise<boolean> {
+		const backbone = this._nativeBackbone;
+		if (
+			!backbone ||
+			this._isReplicating ||
+			this.keep ||
+			!this.syncronizer.onReceivedEntryHashes ||
+			properties.heads.length === 0 ||
+			properties.heads.some((head) => head.gidRefrences.length > 0)
+		) {
+			return false;
+		}
+
+		const receivePlanStartedAt = syncProfileStart(properties.syncProfile);
+		let nativeGroups: NativeBackboneRawReceiveGroupPlan[] | undefined;
+		let leaderPlans: EntryLeaderPlan<R>[] | undefined;
+		try {
+			nativeGroups = backbone.planPreparedRawReceiveGroups(
+				properties.hashes,
+				{
+					minReplicas: this.replicas.min?.getValue(this) || 1,
+					maxReplicas: this.replicas.max?.getValue(this),
+				},
+			);
+			if (!nativeGroups || nativeGroups.length === 0) {
+				return false;
+			}
+			let plannedHashCount = 0;
+			for (const group of nativeGroups) {
+				if (group.hashes.length !== group.requestedReplicas.length) {
+					return false;
+				}
+				plannedHashCount += group.hashes.length;
+			}
+			if (plannedHashCount !== properties.hashes.length) {
+				return false;
+			}
+			leaderPlans =
+				await this.planNativeBackboneReceiveGroupLeaders(nativeGroups);
+			if (!leaderPlans || leaderPlans.length !== nativeGroups.length) {
+				return false;
+			}
+		} catch {
+			return false;
+		}
+
+		const fromHash = properties.from.hashcode();
+		for (let i = 0; i < nativeGroups.length; i++) {
+			const leaderPlan = leaderPlans[i];
+			if (
+				!leaderPlan ||
+				leaderPlan.isLeader ||
+				leaderPlan.leaders.has(fromHash)
+			) {
+				return false;
+			}
+		}
+
+		if (properties.syncProfile) {
+			emitSyncProfileDuration(properties.syncProfile, receivePlanStartedAt, {
+				name: "sharedLog.receive.plan",
+				component: "shared-log",
+				entries: properties.hashes.length,
+				count: nativeGroups.length,
+				messages: 1,
+				details: {
+					replicating: false,
+					predecodedReplicaHits: properties.hashes.length,
+					nativeRawGroups: true,
+					nativeReceiveGroupLeaderPlans: true,
+					nativeFastDropEarly: true,
+				},
+			});
+		}
+
+		if (!properties.fromIsSelf) {
+			this.markEntriesKnownByPeer(properties.hashes, fromHash);
+		}
+
+		const notifyStartedAt = syncProfileStart(properties.syncProfile);
+		await this.syncronizer.onReceivedEntryHashes({
+			hashes: properties.hashes,
+			from: properties.from,
+		});
+		if (properties.syncProfile) {
+			emitSyncProfileDuration(properties.syncProfile, notifyStartedAt, {
+				name: "sharedLog.receive.notifySynchronizer",
+				component: "shared-log",
+				entries: properties.hashes.length,
+				messages: 1,
+				details: {
+					hashOnly: true,
+					nativeFastDropEarly: true,
+				},
+			});
+		}
+
+		const joinPlanStartedAt = syncProfileStart(properties.syncProfile);
+		if (properties.syncProfile) {
+			emitSyncProfileDuration(properties.syncProfile, joinPlanStartedAt, {
+				name: "sharedLog.receive.joinPlan",
+				component: "shared-log",
+				entries: properties.hashes.length,
+				count: 0,
+				messages: 1,
+				details: {
+					nativeFastDrop: true,
+					nativeFastDropEarly: true,
+				},
+			});
+		}
+		backbone.clearPreparedRawReceiveEntries?.(properties.hashes);
+		return true;
 	}
 
 	async isLeader(
