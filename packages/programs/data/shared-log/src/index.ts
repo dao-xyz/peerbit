@@ -9615,24 +9615,29 @@ export class SharedLog<
 				 */
 
 				const { heads } = msg;
+				const headHashes =
+					msg.preparedHashes && msg.preparedHashes.length === heads.length
+						? msg.preparedHashes
+						: heads.map(getExchangeHeadHash);
 				const isRepairHint =
 					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
 
 				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
 						heads.length === 1
-							? getExchangeHeadHash(heads[0]!)
+							? headHashes[0]
 							: "#" + heads.length
 					}, logId: ${this.log.idString}`,
 				);
 
 				if (heads) {
 					const filteredHeads: EntryWithRefs<any>[] = [];
+					const filteredHeadHashes: string[] = [];
 					const confirmedHashes = new Set<string>();
 					const existingStartedAt = syncProfileStart(syncProfile);
 					const existingHashes = rawMaterializedKnownMissing
 						? new Set<string>()
-						: await this.log.hasMany(heads.map(getExchangeHeadHash));
+						: await this.log.hasMany(headHashes);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, existingStartedAt, {
 							name: "sharedLog.receive.existingHeads",
@@ -9642,15 +9647,19 @@ export class SharedLog<
 							details: { rawMaterializedKnownMissing },
 						});
 					}
-					for (const head of heads) {
-						const headHash = getExchangeHeadHash(head);
+					for (let headIndex = 0; headIndex < heads.length; headIndex++) {
+						const head = heads[headIndex]!;
+						const headHash = headHashes[headIndex]!;
 						if (!existingHashes.has(headHash)) {
-							initExchangeHeadEntry(head, {
-								// we need to init because we perhaps need to decrypt gid
-								keychain: this.log.keychain,
-								encoding: this.log.encoding,
-							});
+							if (!rawMaterializedKnownMissing) {
+								initExchangeHeadEntry(head, {
+									// we need to init because we perhaps need to decrypt gid
+									keychain: this.log.keychain,
+									encoding: this.log.encoding,
+								});
+							}
 							filteredHeads.push(head);
+							filteredHeadHashes.push(headHash);
 						} else {
 							confirmedHashes.add(headHash);
 						}
@@ -9659,7 +9668,7 @@ export class SharedLog<
 					const contextFromHash = context.from.hashcode();
 					if (!fromIsSelf) {
 						this.markEntriesKnownByPeer(
-							heads.map(getExchangeHeadHash),
+							headHashes,
 							contextFromHash,
 						);
 					}
@@ -9735,7 +9744,7 @@ export class SharedLog<
 					if (rawMaterializedKnownMissing && this._nativeBackbone) {
 						nativeRawGroupPlans =
 							this._nativeBackbone.planPreparedRawReceiveGroups(
-								filteredHeads.map(getExchangeHeadHash),
+								filteredHeadHashes,
 								{
 									minReplicas: this.replicas.min?.getValue(this) || 1,
 									maxReplicas: this.replicas.max?.getValue(this),
@@ -9745,7 +9754,10 @@ export class SharedLog<
 					let usedNativeRawGroups = false;
 					if (nativeRawGroupPlans) {
 						const headByHash = new Map(
-							filteredHeads.map((head) => [getExchangeHeadHash(head), head]),
+							filteredHeads.map((head, index) => [
+								filteredHeadHashes[index]!,
+								head,
+							]),
 						);
 						let canUseNativeRawGroups = true;
 						for (const plan of nativeRawGroupPlans) {
@@ -9933,7 +9945,7 @@ export class SharedLog<
 					const notifyStartedAt = syncProfileStart(syncProfile);
 					if (this.syncronizer.onReceivedEntryHashes) {
 						await this.syncronizer.onReceivedEntryHashes({
-							hashes: filteredHeads.map(getExchangeHeadHash),
+							hashes: filteredHeadHashes,
 							from: context.from!,
 						});
 					} else {
@@ -9988,7 +10000,7 @@ export class SharedLog<
 							});
 						}
 						this._nativeBackbone?.clearPreparedRawReceiveEntries(
-							filteredHeads.map(getExchangeHeadHash),
+							filteredHeadHashes,
 						);
 						if (
 							confirmedHashes.size > 0 &&
@@ -10482,7 +10494,7 @@ export class SharedLog<
 						}
 					}
 					this._nativeBackbone?.clearPreparedRawReceiveEntries(
-						filteredHeads.map(getExchangeHeadHash),
+						filteredHeadHashes,
 					);
 					if (
 						confirmedHashes.size > 0 &&

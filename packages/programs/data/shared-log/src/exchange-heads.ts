@@ -30,6 +30,11 @@ const warn = logger.newScope("warn");
 
 type RawReceiveNativeBackbone = {
 	prepareRawReceiveBatch(blocks: Uint8Array[]): PreparedRawEntryV0Facts[];
+	prepareRawReceiveExpectedColumnsBatch?(
+		blocks: Uint8Array[],
+		hashes: string[],
+		options?: { verifySignatures?: boolean },
+	): PreparedRawEntryV0FactsColumns | undefined;
 	prepareRawReceiveColumnsBatch?(
 		blocks: Uint8Array[],
 		hashes?: string[],
@@ -297,9 +302,12 @@ export class ExchangeHeadsMessage<T> extends TransportMessage {
 	@field({ type: fixedArray("u8", 4) })
 	reserved: Uint8Array = new Uint8Array(4);
 
-	constructor(props: { heads: EntryWithRefs<T>[] }) {
+	preparedHashes?: string[];
+
+	constructor(props: { heads: EntryWithRefs<T>[]; preparedHashes?: string[] }) {
 		super();
 		this.heads = props.heads;
+		this.preparedHashes = props.preparedHashes;
 	}
 }
 
@@ -1060,6 +1068,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	let preparedFacts: PreparedRawEntryV0Facts[] | undefined;
 	let preparedColumns: PreparedRawEntryV0FactsColumns | undefined;
 	let nativePrepareSource: "backbone-columns" | "backbone" | "log" | undefined;
+	let hashesVerifiedByNative = false;
 	if (options?.nativeBackbone) {
 		const profileNativeBackbone =
 			!!profile &&
@@ -1071,7 +1080,16 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			options.nativeBackbone.setAppendProfileEnabled?.(true);
 		}
 		try {
-			preparedColumns =
+			preparedColumns = options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
+				blocks,
+				hashes,
+				{
+					verifySignatures:
+						options.verifyNativeBackboneSignaturesDuringPrepare === true,
+				},
+			);
+			hashesVerifiedByNative = !!preparedColumns;
+			preparedColumns ??=
 				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
 					blocks,
 					hashes,
@@ -1133,12 +1151,14 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			if (preparedFacts && preparedFacts.length !== message.heads.length) {
 				throw new Error("Raw exchange head prepared fact count mismatch");
 			}
-			const rowFacts = preparedFacts!;
-			for (let i = 0; i < message.heads.length; i++) {
-				const head = message.heads[i]!;
-				const facts = preparedColumns ?? rowFacts[i]!;
-				if (preparedRawCid(facts, i) !== head.hash) {
-					throw new Error("Raw exchange head hash did not match bytes");
+			if (!hashesVerifiedByNative) {
+				const rowFacts = preparedFacts!;
+				for (let i = 0; i < message.heads.length; i++) {
+					const head = message.heads[i]!;
+					const facts = preparedColumns ?? rowFacts[i]!;
+					if (preparedRawCid(facts, i) !== head.hash) {
+						throw new Error("Raw exchange head hash did not match bytes");
+					}
 				}
 			}
 			if (
@@ -1195,6 +1215,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		}
 		const materialized = new ExchangeHeadsMessage({
 			heads: materializedHeads,
+			preparedHashes: hashes,
 		});
 		materialized.reserved = message.reserved;
 		emitSyncProfileDuration(profile, wrapStartedAt, {

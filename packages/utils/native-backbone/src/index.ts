@@ -4131,6 +4131,35 @@ export class NativePeerbitBackbone {
 		return this.native.prepare_raw_receive_columns_batch?.(blocks);
 	}
 
+	prepareRawReceiveExpectedColumnsBatch(
+		blocks: Uint8Array[],
+		hashes: string[],
+		options?: { verifySignatures?: boolean },
+	): NativeBackboneRawReceivePreparedFactsColumns | undefined {
+		if (blocks.length !== hashes.length) {
+			throw new Error("Expected equal raw receive block and hash lengths");
+		}
+		if (blocks.length === 0) {
+			return this.prepareRawReceiveColumnsBatch(blocks, hashes, options);
+		}
+		if (
+			options?.verifySignatures === false &&
+			this.native.prepare_raw_receive_unverified_expected_columns_batch
+		) {
+			return this.native.prepare_raw_receive_unverified_expected_columns_batch(
+				blocks,
+				hashes,
+			);
+		}
+		if (this.native.prepare_raw_receive_expected_columns_batch) {
+			return this.native.prepare_raw_receive_expected_columns_batch(
+				blocks,
+				hashes,
+			);
+		}
+		return undefined;
+	}
+
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {
 		return this.native.clear_prepared_raw_receive_entries(
 			iterableToArray(hashes),
