@@ -832,6 +832,12 @@ describe("raw exchange-head sync", () => {
 							event.name === "sharedLog.receive.nativeVerifiedCommit",
 					),
 				).to.equal(true);
+				const joinPlanProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.joinPlan",
+				);
+				expect(
+					joinPlanProfile.details.nativeSynchronousJoinPlan,
+				).to.equal(true);
 			} finally {
 				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
 				nativeVerifiedPreparedJoinCommitSpy?.restore();

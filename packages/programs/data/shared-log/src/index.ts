@@ -10264,159 +10264,218 @@ export class SharedLog<
 						}
 						return;
 					}
-					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
-
-					for (
-						let groupIndex = 0;
-						groupIndex < receiveGroups.length;
-						groupIndex++
-					) {
-						const {
-							gid,
-							entries,
-							latestEntry,
-							maxReplicasFromHead,
-							maxReplicasFromNewEntries,
-							maxMaxReplicas,
-							leaderPlan,
-							isLeader: plannedIsLeader,
-							fromIsLeader: plannedFromIsLeader,
-							leaders: plannedLeaders,
-						} = receiveGroups[groupIndex]!;
-						const fn = async () => {
-							let isLeader = false;
-							let fromIsLeader = false;
-							let leaders: LeaderMap | false;
-							if (isReplicating) {
-								const immediatePlan =
-									immediateReplicatingLeaderPlans?.[groupIndex];
-								if (immediatePlan?.isLeader) {
-									immediateReplicatingLeaderPlanHits++;
-									leaders = immediatePlan.leaders;
-									isLeader = true;
-									fromIsLeader = leaders.has(contextFromHash);
-								} else {
-									leaders = await this._waitForEntryReplicators(
-										latestEntry,
-										maxMaxReplicas,
-										[
-											{
-												key: this.node.identity.publicKey.hashcode(),
-												replicator: true,
-											},
-										],
-										{
-											// we do this here so that we quickly assume leader role (and also so that 'from' is also assumed to be leader)
-											// TODO potential side effects?
-											roleAge: 0,
-											timeout: 2e4,
-											onLeader: (key) => {
-												isLeader =
-													isLeader ||
-													this.node.identity.publicKey.hashcode() === key;
-												fromIsLeader = fromIsLeader || contextFromHash === key;
-											},
-										},
-									);
-								}
-							} else {
-								if (plannedLeaders) {
-									leaders = plannedLeaders;
-									isLeader = plannedIsLeader ?? false;
-									fromIsLeader = plannedFromIsLeader ?? false;
-								} else {
-									const plan =
-										leaderPlan ??
-										(await this.planEntryLeaders(latestEntry, maxMaxReplicas));
-									leaders = plan.leaders;
-									isLeader = plan.isLeader;
-									fromIsLeader = leaders.has(contextFromHash);
-								}
-							}
-
-							if (this.closed) {
-								return;
-							}
-
+					const joinPlanStartedAt = syncProfileStart(syncProfile);
+					let usedNativeSynchronousJoinPlan = false;
+					let joinPlans: ReceivedGidJoinPlan[];
+					const canUseNativeSynchronousJoinPlan =
+						usedNativeRawGroupLeaderPlans &&
+						!this.keep &&
+						!traceLogger.enabled &&
+						!this.closed &&
+						(!isReplicating ||
+							receiveGroups.every((group) => group.isLeader === true)) &&
+						receiveGroups.every(
+							(group) =>
+								group.leaders !== undefined &&
+								group.entries.every(
+									(entry) => entry.gidRefrences.length === 0,
+								),
+						);
+					if (canUseNativeSynchronousJoinPlan) {
+						usedNativeSynchronousJoinPlan = true;
+						joinPlans = [];
+						for (const group of receiveGroups) {
+							const leaders = group.leaders!;
+							const fromIsLeader = group.fromIsLeader ?? false;
+							const keepAsLeader =
+								group.isLeader === true || (isRepairHint && fromIsLeader);
 							let maybeDelete: EntryWithRefs<any>[][] | undefined;
-							let toMerge: EntryWithRefs<any>[] = [];
-							let toPersist: ShallowOrFullEntry<any>[] = [];
-							let toDelete: ShallowOrFullEntry<any>[] | undefined;
-							// Targeted repair is sent only to peers the sender currently believes
-							// should store the entry. Accept it while local membership catches up;
-							// the normal checked-prune path below can still remove it if this peer
-							// truly no longer owns the entry.
-							const acceptsTargetedRepair = isRepairHint && fromIsLeader;
-							const keepAsLeader = isLeader || acceptsTargetedRepair;
-							let gidReferenceHeads: boolean[] | undefined;
-							const getGidReferenceHeads = async () => {
-								gidReferenceHeads ??= await this.hasAnyHeadForGidSets(
-									entries.map((entry) => entry.gidRefrences),
-								);
-								return gidReferenceHeads;
-							};
+							const toMerge: EntryWithRefs<any>[] = [];
+							const toPersist: ShallowOrFullEntry<any>[] = [];
+							if (isReplicating && group.isLeader === true) {
+								immediateReplicatingLeaderPlanHits++;
+							}
 							if (keepAsLeader) {
-								for (const entry of entries) {
+								for (const entry of group.entries) {
 									const hash = getExchangeHeadHash(entry);
 									this.pruneDebouncedFn.delete(hash);
 									this.removePruneRequestSent(hash);
-									this._checkedPrune.clearConfirmedReplicators(
-										hash,
-									);
-
-									if (fromIsLeader) {
-										this.addPeersToGidPeerHistory(gid, [contextFromHash]);
-									}
-								}
-
-								if (maxReplicasFromNewEntries < maxReplicasFromHead) {
-									(maybeDelete || (maybeDelete = [])).push(entries);
-								}
-							}
-
-							outer: for (let i = 0; i < entries.length; i++) {
-								const entry = entries[i]!;
-								const shouldKeep =
-									keepAsLeader ||
-									(this.keep
-										? await this.keep(getReceiveHeadShallowOrEntry(entry))
-										: false);
-								if (shouldKeep) {
+									this._checkedPrune.clearConfirmedReplicators(hash);
 									toMerge.push(entry);
 									toPersist.push(getReceiveHeadShallowOrEntry(entry));
-								} else if (entry.gidRefrences.length > 0) {
-									const referenceHeads = await getGidReferenceHeads();
-									if (referenceHeads[i]) {
-										toMerge.push(entry);
-										(toDelete || (toDelete = [])).push(
-											getReceiveHeadShallowOrEntry(entry),
+								}
+								if (fromIsLeader) {
+									this.addPeersToGidPeerHistory(group.gid, [contextFromHash]);
+								}
+								if (
+									group.maxReplicasFromNewEntries <
+									group.maxReplicasFromHead
+								) {
+									(maybeDelete || (maybeDelete = [])).push(group.entries);
+								}
+							}
+							joinPlans.push({
+								toMerge,
+								toPersist,
+								maybeDelete,
+								leaders,
+							});
+						}
+					} else {
+						const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
+
+						for (
+							let groupIndex = 0;
+							groupIndex < receiveGroups.length;
+							groupIndex++
+						) {
+							const {
+								gid,
+								entries,
+								latestEntry,
+								maxReplicasFromHead,
+								maxReplicasFromNewEntries,
+								maxMaxReplicas,
+								leaderPlan,
+								isLeader: plannedIsLeader,
+								fromIsLeader: plannedFromIsLeader,
+								leaders: plannedLeaders,
+							} = receiveGroups[groupIndex]!;
+							const fn = async () => {
+								let isLeader = false;
+								let fromIsLeader = false;
+								let leaders: LeaderMap | false;
+								if (isReplicating) {
+									const immediatePlan =
+										immediateReplicatingLeaderPlans?.[groupIndex];
+									if (immediatePlan?.isLeader) {
+										immediateReplicatingLeaderPlanHits++;
+										leaders = immediatePlan.leaders;
+										isLeader = true;
+										fromIsLeader = leaders.has(contextFromHash);
+									} else {
+										leaders = await this._waitForEntryReplicators(
+											latestEntry,
+											maxMaxReplicas,
+											[
+												{
+													key: this.node.identity.publicKey.hashcode(),
+													replicator: true,
+												},
+											],
+											{
+												// we do this here so that we quickly assume leader role (and also so that 'from' is also assumed to be leader)
+												// TODO potential side effects?
+												roleAge: 0,
+												timeout: 2e4,
+												onLeader: (key) => {
+													isLeader =
+														isLeader ||
+														this.node.identity.publicKey.hashcode() === key;
+													fromIsLeader = fromIsLeader || contextFromHash === key;
+												},
+											},
 										);
-										continue outer;
+									}
+								} else {
+									if (plannedLeaders) {
+										leaders = plannedLeaders;
+										isLeader = plannedIsLeader ?? false;
+										fromIsLeader = plannedFromIsLeader ?? false;
+									} else {
+										const plan =
+											leaderPlan ??
+											(await this.planEntryLeaders(
+												latestEntry,
+												maxMaxReplicas,
+											));
+										leaders = plan.leaders;
+										isLeader = plan.isLeader;
+										fromIsLeader = leaders.has(contextFromHash);
 									}
 								}
 
-								if (traceLogger.enabled) {
-									const droppedGid =
-										getPreparedRawExchangeHeadGid(entry) ??
-										this.getEntryGid(entry.entry);
-									traceLogger(
-										`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${droppedGid}. Because not leader`,
-									);
+								if (this.closed) {
+									return;
 								}
-							}
 
-							if (this.closed) {
-								return;
-							}
+								let maybeDelete: EntryWithRefs<any>[][] | undefined;
+								let toMerge: EntryWithRefs<any>[] = [];
+								let toPersist: ShallowOrFullEntry<any>[] = [];
+								let toDelete: ShallowOrFullEntry<any>[] | undefined;
+								// Targeted repair is sent only to peers the sender currently believes
+								// should store the entry. Accept it while local membership catches up;
+								// the normal checked-prune path below can still remove it if this peer
+								// truly no longer owns the entry.
+								const acceptsTargetedRepair = isRepairHint && fromIsLeader;
+								const keepAsLeader = isLeader || acceptsTargetedRepair;
+								let gidReferenceHeads: boolean[] | undefined;
+								const getGidReferenceHeads = async () => {
+									gidReferenceHeads ??= await this.hasAnyHeadForGidSets(
+										entries.map((entry) => entry.gidRefrences),
+									);
+									return gidReferenceHeads;
+								};
+								if (keepAsLeader) {
+									for (const entry of entries) {
+										const hash = getExchangeHeadHash(entry);
+										this.pruneDebouncedFn.delete(hash);
+										this.removePruneRequestSent(hash);
+										this._checkedPrune.clearConfirmedReplicators(hash);
 
-							return { toMerge, toPersist, toDelete, maybeDelete, leaders };
-						};
-						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
+										if (fromIsLeader) {
+											this.addPeersToGidPeerHistory(gid, [contextFromHash]);
+										}
+									}
+
+									if (maxReplicasFromNewEntries < maxReplicasFromHead) {
+										(maybeDelete || (maybeDelete = [])).push(entries);
+									}
+								}
+
+								outer: for (let i = 0; i < entries.length; i++) {
+									const entry = entries[i]!;
+									const shouldKeep =
+										keepAsLeader ||
+										(this.keep
+											? await this.keep(getReceiveHeadShallowOrEntry(entry))
+											: false);
+									if (shouldKeep) {
+										toMerge.push(entry);
+										toPersist.push(getReceiveHeadShallowOrEntry(entry));
+									} else if (entry.gidRefrences.length > 0) {
+										const referenceHeads = await getGidReferenceHeads();
+										if (referenceHeads[i]) {
+											toMerge.push(entry);
+											(toDelete || (toDelete = [])).push(
+												getReceiveHeadShallowOrEntry(entry),
+											);
+											continue outer;
+										}
+									}
+
+									if (traceLogger.enabled) {
+										const droppedGid =
+											getPreparedRawExchangeHeadGid(entry) ??
+											this.getEntryGid(entry.entry);
+										traceLogger(
+											`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${droppedGid}. Because not leader`,
+										);
+									}
+								}
+
+								if (this.closed) {
+									return;
+								}
+
+								return { toMerge, toPersist, toDelete, maybeDelete, leaders };
+							};
+							promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
+						}
+						joinPlans = (await Promise.all(promises)).filter(
+							(plan): plan is ReceivedGidJoinPlan => !!plan,
+						);
 					}
-					const joinPlanStartedAt = syncProfileStart(syncProfile);
-					const joinPlans = (await Promise.all(promises)).filter(
-						(plan): plan is ReceivedGidJoinPlan => !!plan,
-					);
 					const reusableCoordinatePlans =
 						this.createReusableReceiveCoordinatePlans(receiveGroups, {
 							decodedReplicaCounts: receiveReplicaCounts,
@@ -10434,6 +10493,8 @@ export class SharedLog<
 								immediateReplicatingLeaderPlanHits,
 								immediateReplicatingLeaderPlans:
 									immediateReplicatingLeaderPlans?.length ?? 0,
+								nativeSynchronousJoinPlan:
+									usedNativeSynchronousJoinPlan,
 							},
 						});
 					}
