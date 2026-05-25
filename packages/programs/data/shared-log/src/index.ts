@@ -9924,6 +9924,53 @@ export class SharedLog<
 							},
 						});
 					}
+					const canFastDropNativeRawReceive =
+						rawMaterializedKnownMissing &&
+						usedNativeRawGroups &&
+						!isReplicating &&
+						!this.keep &&
+						!isRepairHint &&
+						receiveGroups.length > 0 &&
+						receiveGroups.every(
+							(group) =>
+								group.isLeader === false &&
+								group.fromIsLeader === false &&
+								group.entries.every(
+									(entry) => entry.gidRefrences.length === 0,
+								),
+						);
+					if (canFastDropNativeRawReceive) {
+						const joinPlanStartedAt = syncProfileStart(syncProfile);
+						if (syncProfile) {
+							emitSyncProfileDuration(syncProfile, joinPlanStartedAt, {
+								name: "sharedLog.receive.joinPlan",
+								component: "shared-log",
+								entries: filteredHeads.length,
+								count: 0,
+								messages: 1,
+								details: { nativeFastDrop: true },
+							});
+						}
+						this._nativeBackbone?.clearPreparedRawReceiveEntries(
+							filteredHeads.map(getExchangeHeadHash),
+						);
+						if (
+							confirmedHashes.size > 0 &&
+							!context.from.equals(this.node.identity.publicKey)
+						) {
+							const confirmStartedAt = syncProfileStart(syncProfile);
+							await this.sendRepairConfirmation(context.from!, confirmedHashes);
+							if (syncProfile) {
+								emitSyncProfileDuration(syncProfile, confirmStartedAt, {
+									name: "sharedLog.receive.confirmJoined",
+									component: "shared-log",
+									entries: confirmedHashes.size,
+									messages: 1,
+								});
+							}
+						}
+						return;
+					}
 					const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
 
 					for (
