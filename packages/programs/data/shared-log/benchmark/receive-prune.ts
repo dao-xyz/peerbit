@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -29,6 +29,10 @@ type Scenario =
 	| "raw-receive-native-coordinate-wal-verify-prepare"
 	| "raw-receive-native-backbone-replicating"
 	| "raw-receive-native-coordinate-wal-replicating"
+	| "raw-receive-native-backbone-drop"
+	| "raw-receive-native-backbone-drop-verify-prepare"
+	| "raw-receive-native-coordinate-wal-drop"
+	| "raw-receive-native-coordinate-wal-drop-verify-prepare"
 	| "request-prune-native-confirm"
 	| "request-prune-native-backbone-confirm"
 	| "request-prune-native-backbone-coordinate-wal-confirm"
@@ -94,6 +98,10 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 		"raw-receive-native-coordinate-wal-verify-prepare",
 		"raw-receive-native-backbone-replicating",
 		"raw-receive-native-coordinate-wal-replicating",
+		"raw-receive-native-backbone-drop",
+		"raw-receive-native-backbone-drop-verify-prepare",
+		"raw-receive-native-coordinate-wal-drop",
+		"raw-receive-native-coordinate-wal-drop-verify-prepare",
 		"request-prune-native-confirm",
 		"request-prune-native-backbone-confirm",
 		"request-prune-native-backbone-coordinate-wal-confirm",
@@ -111,6 +119,10 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-coordinate-wal-verify-prepare" &&
 			scenario !== "raw-receive-native-backbone-replicating" &&
 			scenario !== "raw-receive-native-coordinate-wal-replicating" &&
+			scenario !== "raw-receive-native-backbone-drop" &&
+			scenario !== "raw-receive-native-backbone-drop-verify-prepare" &&
+			scenario !== "raw-receive-native-coordinate-wal-drop" &&
+			scenario !== "raw-receive-native-coordinate-wal-drop-verify-prepare" &&
 			scenario !== "request-prune-native-confirm" &&
 			scenario !== "request-prune-native-backbone-confirm" &&
 			scenario !== "request-prune-native-backbone-coordinate-wal-confirm" &&
@@ -176,6 +188,7 @@ const createOpenArgs = (
 		coordinateWal?: boolean;
 		verifySignaturesDuringPrepare?: boolean;
 		replicating?: boolean;
+		drop?: boolean;
 	},
 ) => {
 	const nativeBackbone =
@@ -197,7 +210,7 @@ const createOpenArgs = (
 		setup,
 		nativeGraph: true,
 		nativeBackbone,
-		keep: () => true,
+		keep: options?.drop ? undefined : () => true,
 		timeUntilRoleMaturity: 0,
 		respondToIHaveTimeout: 1,
 		sync: {
@@ -254,6 +267,7 @@ const runRawReceive = async (
 		coordinateWal?: boolean;
 		verifySignaturesDuringPrepare?: boolean;
 		replicating?: boolean;
+		drop?: boolean;
 	},
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
@@ -278,15 +292,28 @@ const runRawReceive = async (
 		}
 		const elapsed = performance.now() - started;
 
-		if (db2.log.log.length !== count) {
+		const expectedReceived = options?.drop ? 0 : count;
+		if (db2.log.log.length !== expectedReceived) {
 			throw new Error(
-				`Expected ${count} raw received entries, got ${db2.log.log.length}`,
+				`Expected ${expectedReceived} raw received entries, got ${db2.log.log.length}`,
 			);
 		}
 
 		return {
 			scenario:
-				options?.coordinateWal && options.replicating
+				options?.coordinateWal &&
+				options.drop &&
+				options.verifySignaturesDuringPrepare === true
+					? "raw-receive-native-coordinate-wal-drop-verify-prepare"
+				: options?.nativeBackbone &&
+					  options.drop &&
+					  options.verifySignaturesDuringPrepare === true
+					? "raw-receive-native-backbone-drop-verify-prepare"
+				: options?.coordinateWal && options.drop
+					? "raw-receive-native-coordinate-wal-drop"
+				: options?.nativeBackbone && options.drop
+					? "raw-receive-native-backbone-drop"
+				: options?.coordinateWal && options.replicating
 					? "raw-receive-native-coordinate-wal-replicating"
 				: options?.nativeBackbone && options.replicating
 					? "raw-receive-native-backbone-replicating"
@@ -486,6 +513,32 @@ const runScenario = async (
 		return runRawReceive(count, run, {
 			coordinateWal: true,
 			replicating: true,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-drop") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			drop: true,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-drop-verify-prepare") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			drop: true,
+			verifySignaturesDuringPrepare: true,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-drop") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			drop: true,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-drop-verify-prepare") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			drop: true,
+			verifySignaturesDuringPrepare: true,
 		});
 	}
 	if (scenario === "request-prune-native-confirm") {
