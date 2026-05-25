@@ -580,6 +580,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 class PreparedRawEntryWithRefs<T> {
 	readonly gidRefrences: string[];
 	private entryValue?: PreparedRawExchangeEntry<T>;
+	private shallowHeadValue?: ShallowEntry;
 	private keychain?: unknown;
 	private encodingValue?: Log<T>["encoding"];
 
@@ -636,7 +637,15 @@ class PreparedRawEntryWithRefs<T> {
 		return preparedRawRequestedReplicas(this.facts, this.factsIndex);
 	}
 
+	get preparedSignatureVerified(): boolean {
+		return preparedRawSignatureVerified(this.facts, this.factsIndex);
+	}
+
 	toShallow(isHead = true): ShallowEntry {
+		if (isHead && this.shallowHeadValue) {
+			this.shallowHeadValue.head = true;
+			return this.shallowHeadValue;
+		}
 		const clock = new Clock({
 			id: preparedRawClockId(this.facts, this.factsIndex),
 			timestamp: new Timestamp({
@@ -644,7 +653,7 @@ class PreparedRawEntryWithRefs<T> {
 				logical: preparedRawLogical(this.facts, this.factsIndex),
 			}),
 		});
-		return new ShallowEntry({
+		const shallow = new ShallowEntry({
 			hash: this.head.hash,
 			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
 			head: isHead,
@@ -656,6 +665,10 @@ class PreparedRawEntryWithRefs<T> {
 				type: preparedRawType(this.facts, this.factsIndex) as EntryType,
 			}),
 		});
+		if (isHead) {
+			this.shallowHeadValue = shallow;
+		}
+		return shallow;
 	}
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
@@ -738,6 +751,11 @@ export const getPreparedRawExchangeHeadRequestedReplicas = (
 	head: EntryWithRefs<any>,
 ): number | undefined =>
 	isPreparedRawEntryWithRefs(head) ? head.preparedRequestedReplicas : undefined;
+
+export const getPreparedRawExchangeHeadSignatureVerified = (
+	head: EntryWithRefs<any>,
+): boolean | undefined =>
+	isPreparedRawEntryWithRefs(head) ? head.preparedSignatureVerified : undefined;
 
 export const getPreparedRawExchangeHeadShallowEntry = (
 	head: EntryWithRefs<any>,

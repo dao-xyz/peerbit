@@ -134,11 +134,12 @@ import {
 	ResponseIPrune,
 	createExchangeHeadsMessages,
 	getExchangeHeadHash,
-	getPreparedRawExchangeAppendFacts,
 	getPreparedRawExchangeGid,
 	getPreparedRawExchangeHashNumber,
+	getPreparedRawExchangeHeadAppendFacts,
 	getPreparedRawExchangeHeadGid,
 	getPreparedRawExchangeHeadRequestedReplicas,
+	getPreparedRawExchangeHeadSignatureVerified,
 	getPreparedRawExchangeHeadShallowEntry,
 	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
@@ -4685,7 +4686,7 @@ export class SharedLog<
 	}
 
 	private async pruneJoinedEntriesNoLongerLed(
-		entries: Entry<T>[],
+		entries: ShallowOrFullEntry<T>[],
 		options?: {
 			decodedReplicaCounts?: DecodedReplicaCountMap;
 			reusableLeaderPlans?: ReadonlyMap<
@@ -4701,7 +4702,7 @@ export class SharedLog<
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const plans = new Array<EntryLeaderPlan<R> | undefined>(entries.length);
 		const leaderItems: Array<{
-			entry: Entry<T>;
+			entry: ShallowOrFullEntry<T>;
 			replicas: number;
 			options: { roleAge: number; persist: false };
 		}> = [];
@@ -9083,6 +9084,84 @@ export class SharedLog<
 		}
 	}
 
+	private validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
+		heads: EntryWithRefs<T>[],
+		profile?: SyncProfileFn,
+		options?: { decodedReplicaCounts?: DecodedReplicaCountMap },
+	): { signatureHashes: string[] } | false | undefined {
+		if (!this._nativeBackbone?.graph.verifyPreparedRawReceiveEntries) {
+			return undefined;
+		}
+		try {
+			const signatureHashes: string[] = [];
+			const checkStartedAt = syncProfileStart(profile);
+			let replicaCacheHits = 0;
+			let predecodedReplicaHits = 0;
+			for (const head of heads) {
+				const hash = getExchangeHeadHash(head);
+				const shallow = getPreparedRawExchangeHeadShallowEntry(head);
+				const metaData = shallow?.meta.data ?? head.entry.meta.data;
+				if (!metaData) {
+					warn("Received entry without meta data, skipping");
+					return false;
+				}
+				let replicas: number;
+				if (options?.decodedReplicaCounts?.has(hash)) {
+					replicas = options.decodedReplicaCounts.get(hash)!;
+					replicaCacheHits++;
+				} else {
+					const predecodedReplicas =
+						getPreparedRawExchangeHeadRequestedReplicas(head);
+					if (predecodedReplicas != null) {
+						replicas = predecodedReplicas;
+						predecodedReplicaHits++;
+					} else {
+						replicas = decodeReplicas({ meta: { data: metaData } }).getValue(
+							this,
+						);
+					}
+				}
+				if (Number.isFinite(replicas) === false) {
+					return false;
+				}
+
+				checkMinReplicasLimit(replicas);
+
+				const preparedSignatureVerified =
+					getPreparedRawExchangeHeadSignatureVerified(head);
+				if (preparedSignatureVerified === true) {
+					continue;
+				}
+				if (preparedSignatureVerified === false) {
+					signatureHashes.push(hash);
+					continue;
+				}
+				const entry = head.entry;
+				if (!entry.createdLocally && !hasPreverifiedSignature(entry)) {
+					signatureHashes.push(hash);
+				}
+			}
+
+			if (profile) {
+				emitSyncProfileDuration(profile, checkStartedAt, {
+					name: "sharedLog.canAppendBatch.metadata",
+					component: "shared-log",
+					entries: heads.length,
+					count: signatureHashes.length,
+					messages: 1,
+					details: { replicaCacheHits, predecodedReplicaHits },
+				});
+			}
+			return { signatureHashes };
+		} catch (error) {
+			if (error instanceof BorshError || error instanceof ReplicationError) {
+				warn("Received payload that could not be decoded, skipping");
+				return false;
+			}
+			return undefined;
+		}
+	}
+
 	private canAppendPreparedRawReceiveBatchWithNativeBackbone(
 		entries: Entry<T>[],
 		profile?: SyncProfileFn,
@@ -9723,12 +9802,20 @@ export class SharedLog<
 							receiveReplicaCounts.set(hash, predecodedReplicas);
 							return predecodedReplicas;
 						}
+						const shallow = getPreparedRawExchangeHeadShallowEntry(head);
+						if (shallow) {
+							return decodeReceiveReplicaCount(shallow);
+						}
 						return decodeReceiveReplicaCount(head.entry);
 					};
+					const getReceiveHeadShallowOrEntry = (
+						head: EntryWithRefs<any>,
+					): ShallowOrFullEntry<any> =>
+						getPreparedRawExchangeHeadShallowEntry(head) ?? head.entry;
 					type ReceivedGidJoinPlan = {
-						toMerge: Entry<any>[];
-						toPersist: Entry<any>[];
-						toDelete?: Entry<any>[];
+						toMerge: EntryWithRefs<any>[];
+						toPersist: ShallowOrFullEntry<any>[];
+						toDelete?: ShallowOrFullEntry<any>[];
 						maybeDelete?: EntryWithRefs<any>[][];
 						leaders: LeaderMap | false;
 					};
@@ -9825,7 +9912,7 @@ export class SharedLog<
 							receiveGroups.push({
 								gid: plan.gid,
 								entries,
-								latestEntry: latestHead.entry,
+								latestEntry: getReceiveHeadShallowOrEntry(latestHead),
 								maxReplicasFromHead: plan.maxReplicasFromHead,
 								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
 								maxMaxReplicas: plan.maxMaxReplicas,
@@ -9886,7 +9973,7 @@ export class SharedLog<
 							receiveGroups.push({
 								gid: plan.gid,
 								entries,
-								latestEntry: latestHead.entry,
+								latestEntry: getReceiveHeadShallowOrEntry(latestHead),
 								maxReplicasFromHead: plan.maxReplicasFromHead,
 								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
 								maxMaxReplicas: plan.maxMaxReplicas,
@@ -9940,7 +10027,7 @@ export class SharedLog<
 							receiveGroups.push({
 								gid: plan.gid,
 								entries,
-								latestEntry: latestHead.entry,
+								latestEntry: getReceiveHeadShallowOrEntry(latestHead),
 								maxReplicasFromHead: plan.maxReplicasFromHead,
 								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
 								maxMaxReplicas: plan.maxMaxReplicas,
@@ -10252,9 +10339,9 @@ export class SharedLog<
 							}
 
 							let maybeDelete: EntryWithRefs<any>[][] | undefined;
-							let toMerge: Entry<any>[] = [];
-							let toPersist: Entry<any>[] = [];
-							let toDelete: Entry<any>[] | undefined;
+							let toMerge: EntryWithRefs<any>[] = [];
+							let toPersist: ShallowOrFullEntry<any>[] = [];
+							let toDelete: ShallowOrFullEntry<any>[] | undefined;
 							// Targeted repair is sent only to peers the sender currently believes
 							// should store the entry. Accept it while local membership catches up;
 							// the normal checked-prune path below can still remove it if this peer
@@ -10270,10 +10357,11 @@ export class SharedLog<
 							};
 							if (keepAsLeader) {
 								for (const entry of entries) {
-									this.pruneDebouncedFn.delete(entry.entry.hash);
-									this.removePruneRequestSent(entry.entry.hash);
+									const hash = getExchangeHeadHash(entry);
+									this.pruneDebouncedFn.delete(hash);
+									this.removePruneRequestSent(hash);
 									this._checkedPrune.clearConfirmedReplicators(
-										entry.entry.hash,
+										hash,
 									);
 
 									if (fromIsLeader) {
@@ -10290,15 +10378,19 @@ export class SharedLog<
 								const entry = entries[i]!;
 								const shouldKeep =
 									keepAsLeader ||
-									(this.keep ? await this.keep(entry.entry) : false);
+									(this.keep
+										? await this.keep(getReceiveHeadShallowOrEntry(entry))
+										: false);
 								if (shouldKeep) {
-									toMerge.push(entry.entry);
-									toPersist.push(entry.entry);
+									toMerge.push(entry);
+									toPersist.push(getReceiveHeadShallowOrEntry(entry));
 								} else if (entry.gidRefrences.length > 0) {
 									const referenceHeads = await getGidReferenceHeads();
 									if (referenceHeads[i]) {
-										toMerge.push(entry.entry);
-										(toDelete || (toDelete = [])).push(entry.entry);
+										toMerge.push(entry);
+										(toDelete || (toDelete = [])).push(
+											getReceiveHeadShallowOrEntry(entry),
+										);
 										continue outer;
 									}
 								}
@@ -10346,11 +10438,24 @@ export class SharedLog<
 						});
 					}
 					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
+					const allToMergeHashes = allToMerge.map((entry) =>
+						getExchangeHeadHash(entry),
+					);
+					const allToMergeShallowEntries = allToMerge.map(
+						(entry) => getReceiveHeadShallowOrEntry(entry),
+					);
+					let allToMergeMaterializedEntries: Entry<any>[] | undefined;
+					const materializeAllToMergeEntries = () => {
+						allToMergeMaterializedEntries ??= allToMerge.map(
+							(entry) => entry.entry,
+						);
+						return allToMergeMaterializedEntries;
+					};
 					let nativePreparedCommittedHashes: Set<string> | undefined;
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
 						const nativeBackboneCommitValidation =
-							this.validatePreparedRawReceiveMetadataWithNativeBackbone(
+							this.validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
 								allToMerge,
 								syncProfile,
 								{ decodedReplicaCounts: receiveReplicaCounts },
@@ -10371,7 +10476,7 @@ export class SharedLog<
 						} else {
 							canAppendAlreadyValidated =
 								await this.canSkipLowerLogCanAppendForNetworkJoin(
-									allToMerge,
+									materializeAllToMergeEntries(),
 									syncProfile,
 									{ decodedReplicaCounts: receiveReplicaCounts },
 								);
@@ -10403,7 +10508,10 @@ export class SharedLog<
 						let mergeEntryByHash: Map<string, Entry<any>> | undefined;
 						const materializeMergedEntry = (hash: string) => {
 							mergeEntryByHash ??= new Map(
-								allToMerge.map((entry) => [entry.hash, entry]),
+								allToMerge.map((entry) => [
+									getExchangeHeadHash(entry),
+									entry.entry,
+								]),
 							);
 							const entry = mergeEntryByHash.get(hash);
 							if (!entry) {
@@ -10429,7 +10537,7 @@ export class SharedLog<
 							canAppendAlreadyValidated || nativeCommitCanValidateAppend;
 						if (canUsePreparedAppendFacts) {
 							for (const entry of allToMerge) {
-								const prepared = getPreparedRawExchangeAppendFacts(entry);
+								const prepared = getPreparedRawExchangeHeadAppendFacts(entry);
 								if (!prepared) {
 									canUsePreparedAppendFacts = false;
 									preparedAppendFacts.length = 0;
@@ -10443,7 +10551,8 @@ export class SharedLog<
 						const entriesToPersist = joinPlans.flatMap(
 							(plan) => plan.toPersist,
 						);
-						const coordinatePersistFallbackEntries: Entry<any>[] = [];
+						const coordinatePersistFallbackEntries: ShallowOrFullEntry<any>[] =
+							[];
 						const reusableCoordinatePersistItems: CoordinatePersistBatchItem<R>[] =
 							[];
 						for (const entry of entriesToPersist) {
@@ -10522,7 +10631,7 @@ export class SharedLog<
 								},
 							));
 						if (!joinedPreparedFacts) {
-							await this.log.join(allToMerge, {
+							await this.log.join(materializeAllToMergeEntries(), {
 								__peerbitBatchIndependent: true,
 								__peerbitEntriesAlreadyMissing: true,
 								__peerbitCanAppendAlreadyValidated:
@@ -10609,15 +10718,18 @@ export class SharedLog<
 								},
 							});
 						}
-						for (const merged of allToMerge) {
-							confirmedHashes.add(merged.hash);
+						for (const hash of allToMergeHashes) {
+							confirmedHashes.add(hash);
 						}
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
-						await this.pruneJoinedEntriesNoLongerLed(allToMerge, {
-							decodedReplicaCounts: receiveReplicaCounts,
-							reusableLeaderPlans: reusableCoordinatePlans,
-							profile: syncProfile,
-						});
+						await this.pruneJoinedEntriesNoLongerLed(
+							allToMergeShallowEntries,
+							{
+								decodedReplicaCounts: receiveReplicaCounts,
+								reusableLeaderPlans: reusableCoordinatePlans,
+								profile: syncProfile,
+							},
+						);
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
 								name: "sharedLog.receive.checkedPrune",
