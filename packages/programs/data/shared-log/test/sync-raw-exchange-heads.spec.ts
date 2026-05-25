@@ -726,7 +726,7 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
-	it("auto-preverifies replicating raw receive signatures during native prepare", async () => {
+	it("auto-defers replicating raw receive signature verification to native commit", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),
 		});
@@ -798,18 +798,20 @@ describe("raw exchange-head sync", () => {
 				} as any);
 
 				expect(target.log.log.length).to.equal(1);
-				expect(nativePreparedJoinCommitSpy.callCount).to.equal(1);
-				expect(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0).to.equal(0);
+				expect(nativePreparedJoinCommitSpy.callCount).to.equal(0);
+				expect(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0).to.equal(
+					1,
+				);
 				const prepareProfile = profileEvents.find(
 					(event) => event.name === "sharedLog.rawReceive.prepareFacts",
 				);
-				expect(prepareProfile.details.verifySignatures).to.equal(true);
+				expect(prepareProfile.details.verifySignatures).to.equal(false);
 				expect(
 					profileEvents.some(
 						(event) =>
 							event.name === "sharedLog.receive.nativeVerifiedCommit",
 					),
-				).to.equal(false);
+				).to.equal(true);
 			} finally {
 				nativeVerifiedPreparedJoinCommitSpy?.restore();
 				nativePreparedJoinCommitSpy.restore();

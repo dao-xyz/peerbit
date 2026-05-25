@@ -9555,11 +9555,15 @@ export class SharedLog<
 				const rawPrepareVerifySetting =
 					this._logProperties?.sync
 						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+				const canVerifyPreparedRawReceiveOnCommit =
+					!!this._nativeBackbone?.graph
+						.commitVerifiedPreparedRawReceiveJoinBatch;
 				const verifyNativeBackboneSignaturesDuringPrepare =
 					rawPrepareVerifySetting === true ||
 					(rawPrepareVerifySetting !== false &&
 						this._isReplicating &&
-						!rawIsRepairHint);
+						!rawIsRepairHint &&
+						!canVerifyPreparedRawReceiveOnCommit);
 				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
 				const materializedRawMessage =
 					await materializeVerifiedRawExchangeHeadsMessage(
