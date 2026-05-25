@@ -1402,6 +1402,10 @@ describe("raw exchange-head sync", () => {
 							row.name,
 						).to.equal(true);
 						expect(
+							receivePlanProfile?.details.nativeRawGroupLeaderPlans,
+							row.name,
+						).to.equal(true);
+						expect(
 							receivePlanProfile?.details.nativeReceiveGroupLeaderPlans,
 							row.name,
 						).to.equal(true);

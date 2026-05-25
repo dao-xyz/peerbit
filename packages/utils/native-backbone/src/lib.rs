@@ -1260,6 +1260,73 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_prepared_raw_receive_group_leaders(
+        &self,
+        hashes: Array,
+        min_replicas: u32,
+        max_replicas: JsValue,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let Some(groups) =
+            self.prepared_raw_receive_group_plans(hashes, min_replicas, max_replicas)?
+        else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        let gids = Array::new();
+        let replica_counts = Array::new();
+        for group in &groups {
+            gids.push(&JsValue::from_str(&group.gid));
+            replica_counts.push(&JsValue::from_f64(group.max_max_replicas as f64));
+        }
+        let leader_plans = self.shared_log.plan_leaders_for_gids_batch(
+            gids,
+            replica_counts,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
+        if leader_plans.length() as usize != groups.len() {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let out = Array::new();
+        for (index, group) in groups.into_iter().enumerate() {
+            let leader_plan = Array::from(&leader_plans.get(index as u32));
+            if leader_plan.length() < 2 {
+                return Ok(JsValue::UNDEFINED);
+            }
+            let row = Array::new();
+            row.push(&JsValue::from_str(&group.gid));
+            row.push(&Uint32Array::from(group.indexes.as_slice()));
+            row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
+            row.push(&JsValue::from_f64(group.latest_index as f64));
+            row.push(&JsValue::from_f64(group.max_replicas_from_head as f64));
+            row.push(&JsValue::from_f64(
+                group.max_replicas_from_new_entries as f64,
+            ));
+            row.push(&JsValue::from_f64(group.max_max_replicas as f64));
+            row.push(&leader_plan.get(0));
+            row.push(&leader_plan.get(1));
+            out.push(&row);
+        }
+
+        Ok(out.into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_prepared_raw_receive_fast_drop(
         &self,
         hashes: Array,

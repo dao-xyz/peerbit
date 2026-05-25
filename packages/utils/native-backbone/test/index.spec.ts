@@ -940,6 +940,30 @@ describe("native peerbit backbone", () => {
 			maxReplicasFromNewEntries: 1,
 			maxMaxReplicas: 1,
 		});
+		const leaderPlans = target.planPreparedRawReceiveGroupLeaders(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
+			{
+				selfHash: "peer-a",
+				selfReplicating: false,
+				fullReplicaFallback: true,
+			},
+		);
+		expect(leaderPlans).to.have.length(2);
+		expect(leaderPlans?.[0]).to.deep.include({
+			gid: "gid-raw-group-a",
+			latestIndex: 1,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 3,
+			maxMaxReplicas: 3,
+		});
+		expect(Array.from(leaderPlans?.[0].indexes ?? [])).to.deep.equal([
+			0,
+			1,
+		]);
+		expect(leaderPlans?.[0].coordinates).to.have.length(3);
+		expect(leaderPlans?.[0].coordinateStrings).to.have.length(3);
+		expect(leaderPlans?.[0].leaders).to.be.instanceOf(Map);
 		expect(
 			target.planPreparedRawReceiveFastDrop(
 				[first.hash, second.hash, third.hash],

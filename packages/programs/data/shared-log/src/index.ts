@@ -58,6 +58,7 @@ import type {
 	NativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
 	NativeBackboneRawReceiveGroupIndexPlan,
+	NativeBackboneRawReceiveGroupLeaderPlan,
 	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
@@ -9746,30 +9747,110 @@ export class SharedLog<
 					let nativeRawGroupIndexPlans:
 						| NativeBackboneRawReceiveGroupIndexPlan[]
 						| undefined;
+					let nativeRawGroupLeaderPlans:
+						| NativeBackboneRawReceiveGroupLeaderPlan[]
+						| undefined;
 					if (rawMaterializedKnownMissing && this._nativeBackbone) {
-						nativeRawGroupIndexPlans =
-							this._nativeBackbone.planPreparedRawReceiveGroupIndexes?.(
-								filteredHeadHashes,
-								{
-									minReplicas: this.replicas.min?.getValue(this) || 1,
-									maxReplicas: this.replicas.max?.getValue(this),
-								},
-							);
+						const replicaOptions = {
+							minReplicas: this.replicas.min?.getValue(this) || 1,
+							maxReplicas: this.replicas.max?.getValue(this),
+						};
+						try {
+							const leaderOptions = isReplicating
+								? ({ roleAge: 0 } as const)
+								: undefined;
+							const leaderContext =
+								await this.createLeaderSelectionContext(leaderOptions);
+							nativeRawGroupLeaderPlans =
+								this._nativeBackbone.planPreparedRawReceiveGroupLeaders?.(
+									filteredHeadHashes,
+									replicaOptions,
+									this.createNativeLeaderOptions(leaderContext),
+								);
+						} catch {
+							nativeRawGroupLeaderPlans = undefined;
+						}
+						if (nativeRawGroupLeaderPlans === undefined) {
+							nativeRawGroupIndexPlans =
+								this._nativeBackbone.planPreparedRawReceiveGroupIndexes?.(
+									filteredHeadHashes,
+									replicaOptions,
+								);
+						}
 						nativeRawGroupPlans =
+							nativeRawGroupLeaderPlans === undefined &&
 							nativeRawGroupIndexPlans === undefined
 								? this._nativeBackbone.planPreparedRawReceiveGroups(
 										filteredHeadHashes,
-										{
-											minReplicas:
-												this.replicas.min?.getValue(this) || 1,
-											maxReplicas: this.replicas.max?.getValue(this),
-										},
+										replicaOptions,
 									)
 								: undefined;
 					}
 					let usedNativeRawGroups = false;
 					let usedNativeRawGroupIndexes = false;
-					if (nativeRawGroupIndexPlans) {
+					let usedNativeRawGroupLeaderPlans = false;
+					if (nativeRawGroupLeaderPlans) {
+						let canUseNativeRawGroups = true;
+						for (const plan of nativeRawGroupLeaderPlans) {
+							if (plan.indexes.length !== plan.requestedReplicas.length) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							const entries: EntryWithRefs<any>[] = [];
+							for (let i = 0; i < plan.indexes.length; i++) {
+								const entryIndex = plan.indexes[i]!;
+								const entry = filteredHeads[entryIndex];
+								const hash = filteredHeadHashes[entryIndex];
+								if (!entry || !hash) {
+									canUseNativeRawGroups = false;
+									break;
+								}
+								entries.push(entry);
+								receiveReplicaCounts.set(hash, plan.requestedReplicas[i]!);
+							}
+							if (!canUseNativeRawGroups) {
+								break;
+							}
+							const latestHead = filteredHeads[plan.latestIndex];
+							if (!latestHead) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							receivePredecodedReplicaHits += plan.indexes.length;
+							receiveGroups.push({
+								gid: plan.gid,
+								entries,
+								latestEntry: latestHead.entry,
+								maxReplicasFromHead: plan.maxReplicasFromHead,
+								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
+								maxMaxReplicas: plan.maxMaxReplicas,
+								leaderPlan: {
+									coordinates: Array.from(
+										plan.coordinates as Iterable<NumberFromType<R>>,
+									),
+									coordinateStrings: plan.coordinateStrings,
+									leaders: plan.leaders,
+									isLeader: plan.leaders.has(
+										this.node.identity.publicKey.hashcode(),
+									),
+								},
+								leaders: plan.leaders,
+								isLeader: plan.leaders.has(
+									this.node.identity.publicKey.hashcode(),
+								),
+								fromIsLeader: plan.leaders.has(contextFromHash),
+							});
+						}
+						if (canUseNativeRawGroups) {
+							usedNativeRawGroups = true;
+							usedNativeRawGroupIndexes = true;
+							usedNativeRawGroupLeaderPlans = true;
+						} else {
+							receiveGroups.length = 0;
+							receiveReplicaCounts.clear();
+							receivePredecodedReplicaHits = 0;
+						}
+					} else if (nativeRawGroupIndexPlans) {
 						let canUseNativeRawGroups = true;
 						for (const plan of nativeRawGroupIndexPlans) {
 							if (plan.indexes.length !== plan.requestedReplicas.length) {
@@ -9909,7 +9990,9 @@ export class SharedLog<
 					let usedNativeReceiveGroupLeaderPlans = false;
 					if (!isReplicating) {
 						let leaderPlans =
-							usedNativeRawGroups && this._nativeBackbone
+							usedNativeRawGroupLeaderPlans
+								? receiveGroups.map((group) => group.leaderPlan!)
+								: usedNativeRawGroups && this._nativeBackbone
 								? await this.planNativeBackboneReceiveGroupLeaders(
 										receiveGroups,
 									)
@@ -9945,6 +10028,8 @@ export class SharedLog<
 								predecodedReplicaHits: receivePredecodedReplicaHits,
 								nativeRawGroups: usedNativeRawGroups,
 								nativeRawGroupIndexes: usedNativeRawGroupIndexes,
+								nativeRawGroupLeaderPlans:
+									usedNativeRawGroupLeaderPlans,
 								nativeReceiveGroupLeaderPlans:
 									usedNativeReceiveGroupLeaderPlans,
 							},
@@ -9960,7 +10045,12 @@ export class SharedLog<
 							replicas: group.maxMaxReplicas,
 							options: { roleAge: 0, persist: false as const },
 						}));
-						if (usedNativeRawGroups && this._nativeBackbone) {
+						if (usedNativeRawGroupLeaderPlans) {
+							immediateReplicatingLeaderPlans = receiveGroups.map(
+								(group) => group.leaderPlan!,
+							);
+							usedNativeImmediateReceiveGroupLeaderPlans = true;
+						} else if (usedNativeRawGroups && this._nativeBackbone) {
 							immediateReplicatingLeaderPlans =
 								await this.planNativeBackboneReceiveGroupLeaders(
 									receiveGroups,

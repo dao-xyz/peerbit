@@ -251,6 +251,19 @@ type NativePeerbitBackboneHandle = {
 		minReplicas: number,
 		maxReplicas?: number,
 	) => NativeBackboneRawReceiveGroupIndexPlanRow[] | undefined;
+	plan_prepared_raw_receive_group_leaders?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas: number | undefined,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+	) => NativeBackboneRawReceiveGroupLeaderPlanRow[] | undefined;
 	plan_prepared_raw_receive_fast_drop?: (
 		hashes: string[],
 		minReplicas: number,
@@ -1705,6 +1718,9 @@ export type NativeBackboneRawReceiveGroupIndexPlan = {
 	maxMaxReplicas: number;
 };
 
+export type NativeBackboneRawReceiveGroupLeaderPlan =
+	NativeBackboneRawReceiveGroupIndexPlan & NativeBackboneLeaderPlan;
+
 export type NativeBackboneRawReceiveFastDropPlan = {
 	canDrop: boolean;
 	groupCount: number;
@@ -1765,6 +1781,18 @@ type NativeBackboneRawReceiveGroupIndexPlanRow = [
 	number,
 	number,
 	number,
+];
+
+type NativeBackboneRawReceiveGroupLeaderPlanRow = [
+	string,
+	Uint32Array,
+	Uint32Array,
+	number,
+	number,
+	number,
+	number,
+	unknown[],
+	unknown[],
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -3113,6 +3141,37 @@ const rawReceiveGroupIndexPlanFromRow = ([
 	maxReplicasFromNewEntries,
 	maxMaxReplicas,
 });
+
+const rawReceiveGroupLeaderPlanFromRow = (
+	resolution: "u32" | "u64",
+	[
+		gid,
+		indexes,
+		requestedReplicas,
+		latestIndex,
+		maxReplicasFromHead,
+		maxReplicasFromNewEntries,
+		maxMaxReplicas,
+		coordinateRows,
+		leaderRows,
+	]: NativeBackboneRawReceiveGroupLeaderPlanRow,
+): NativeBackboneRawReceiveGroupLeaderPlan => {
+	const coordinateStrings = coordinateRows.map((coordinate) =>
+		String(coordinate),
+	);
+	return {
+		gid,
+		indexes,
+		requestedReplicas: Array.from(requestedReplicas),
+		latestIndex,
+		maxReplicasFromHead,
+		maxReplicasFromNewEntries,
+		maxMaxReplicas,
+		coordinates: rowsToNumbers(resolution, coordinateStrings),
+		coordinateStrings,
+		leaders: rowsToSamples(leaderRows) ?? new Map(),
+	};
+};
 
 export class NativeBackboneLogGraph {
 	constructor(
@@ -4463,6 +4522,25 @@ export class NativePeerbitBackbone {
 			options.maxReplicas,
 		);
 		return rows?.map(rawReceiveGroupIndexPlanFromRow);
+	}
+
+	planPreparedRawReceiveGroupLeaders(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+		leaderOptions?: NativeBackboneFindLeaderOptions,
+	): NativeBackboneRawReceiveGroupLeaderPlan[] | undefined {
+		if (!this.native.plan_prepared_raw_receive_group_leaders) {
+			return undefined;
+		}
+		const rows = this.native.plan_prepared_raw_receive_group_leaders(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+			...findLeaderArguments(leaderOptions),
+		);
+		return rows?.map((row) =>
+			rawReceiveGroupLeaderPlanFromRow(this.resolution, row),
+		);
 	}
 
 	planPreparedRawReceiveFastDrop(
