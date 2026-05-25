@@ -916,6 +916,30 @@ describe("native peerbit backbone", () => {
 			maxReplicasFromNewEntries: 1,
 			maxMaxReplicas: 1,
 		});
+		const indexPlans = target.planPreparedRawReceiveGroupIndexes(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
+		);
+		expect(indexPlans).to.have.length(2);
+		expect(indexPlans?.[0]).to.deep.include({
+			gid: "gid-raw-group-a",
+			latestIndex: 1,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 3,
+			maxMaxReplicas: 3,
+		});
+		expect(Array.from(indexPlans?.[0].indexes ?? [])).to.deep.equal([
+			0,
+			1,
+		]);
+		expect(indexPlans?.[0].requestedReplicas).to.deep.equal([2, 4]);
+		expect(indexPlans?.[1]).to.deep.include({
+			gid: "gid-raw-group-b",
+			latestIndex: 2,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 1,
+			maxMaxReplicas: 1,
+		});
 		expect(
 			target.planPreparedRawReceiveFastDrop(
 				[first.hash, second.hash, third.hash],

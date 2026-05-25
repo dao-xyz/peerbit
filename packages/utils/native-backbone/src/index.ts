@@ -246,6 +246,11 @@ type NativePeerbitBackboneHandle = {
 		minReplicas: number,
 		maxReplicas?: number,
 	) => NativeBackboneRawReceiveGroupPlanRow[] | undefined;
+	plan_prepared_raw_receive_group_indexes?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas?: number,
+	) => NativeBackboneRawReceiveGroupIndexPlanRow[] | undefined;
 	plan_prepared_raw_receive_fast_drop?: (
 		hashes: string[],
 		minReplicas: number,
@@ -1690,6 +1695,16 @@ export type NativeBackboneRawReceiveGroupPlan = {
 	maxMaxReplicas: number;
 };
 
+export type NativeBackboneRawReceiveGroupIndexPlan = {
+	gid: string;
+	indexes: Uint32Array;
+	requestedReplicas: number[];
+	latestIndex: number;
+	maxReplicasFromHead: number;
+	maxReplicasFromNewEntries: number;
+	maxMaxReplicas: number;
+};
+
 export type NativeBackboneRawReceiveFastDropPlan = {
 	canDrop: boolean;
 	groupCount: number;
@@ -1737,6 +1752,16 @@ type NativeBackboneRawReceiveGroupPlanRow = [
 	string[],
 	Uint32Array,
 	string,
+	number,
+	number,
+	number,
+];
+
+type NativeBackboneRawReceiveGroupIndexPlanRow = [
+	string,
+	Uint32Array,
+	Uint32Array,
+	number,
 	number,
 	number,
 	number,
@@ -3066,6 +3091,24 @@ const rawReceiveGroupPlanFromRow = ([
 	hashes,
 	requestedReplicas: Array.from(requestedReplicas),
 	latestHash,
+	maxReplicasFromHead,
+	maxReplicasFromNewEntries,
+	maxMaxReplicas,
+});
+
+const rawReceiveGroupIndexPlanFromRow = ([
+	gid,
+	indexes,
+	requestedReplicas,
+	latestIndex,
+	maxReplicasFromHead,
+	maxReplicasFromNewEntries,
+	maxMaxReplicas,
+]: NativeBackboneRawReceiveGroupIndexPlanRow): NativeBackboneRawReceiveGroupIndexPlan => ({
+	gid,
+	indexes,
+	requestedReplicas: Array.from(requestedReplicas),
+	latestIndex,
 	maxReplicasFromHead,
 	maxReplicasFromNewEntries,
 	maxMaxReplicas,
@@ -4405,6 +4448,21 @@ export class NativePeerbitBackbone {
 			options.maxReplicas,
 		);
 		return rows?.map(rawReceiveGroupPlanFromRow);
+	}
+
+	planPreparedRawReceiveGroupIndexes(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+	): NativeBackboneRawReceiveGroupIndexPlan[] | undefined {
+		if (!this.native.plan_prepared_raw_receive_group_indexes) {
+			return undefined;
+		}
+		const rows = this.native.plan_prepared_raw_receive_group_indexes(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+		);
+		return rows?.map(rawReceiveGroupIndexPlanFromRow);
 	}
 
 	planPreparedRawReceiveFastDrop(

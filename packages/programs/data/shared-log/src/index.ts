@@ -57,6 +57,7 @@ import type {
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
+	NativeBackboneRawReceiveGroupIndexPlan,
 	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
@@ -9742,18 +9743,78 @@ export class SharedLog<
 					let nativeRawGroupPlans:
 						| NativeBackboneRawReceiveGroupPlan[]
 						| undefined;
+					let nativeRawGroupIndexPlans:
+						| NativeBackboneRawReceiveGroupIndexPlan[]
+						| undefined;
 					if (rawMaterializedKnownMissing && this._nativeBackbone) {
-						nativeRawGroupPlans =
-							this._nativeBackbone.planPreparedRawReceiveGroups(
+						nativeRawGroupIndexPlans =
+							this._nativeBackbone.planPreparedRawReceiveGroupIndexes?.(
 								filteredHeadHashes,
 								{
 									minReplicas: this.replicas.min?.getValue(this) || 1,
 									maxReplicas: this.replicas.max?.getValue(this),
 								},
 							);
+						nativeRawGroupPlans =
+							nativeRawGroupIndexPlans === undefined
+								? this._nativeBackbone.planPreparedRawReceiveGroups(
+										filteredHeadHashes,
+										{
+											minReplicas:
+												this.replicas.min?.getValue(this) || 1,
+											maxReplicas: this.replicas.max?.getValue(this),
+										},
+									)
+								: undefined;
 					}
 					let usedNativeRawGroups = false;
-					if (nativeRawGroupPlans) {
+					let usedNativeRawGroupIndexes = false;
+					if (nativeRawGroupIndexPlans) {
+						let canUseNativeRawGroups = true;
+						for (const plan of nativeRawGroupIndexPlans) {
+							if (plan.indexes.length !== plan.requestedReplicas.length) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							const entries: EntryWithRefs<any>[] = [];
+							for (let i = 0; i < plan.indexes.length; i++) {
+								const entryIndex = plan.indexes[i]!;
+								const entry = filteredHeads[entryIndex];
+								const hash = filteredHeadHashes[entryIndex];
+								if (!entry || !hash) {
+									canUseNativeRawGroups = false;
+									break;
+								}
+								entries.push(entry);
+								receiveReplicaCounts.set(hash, plan.requestedReplicas[i]!);
+							}
+							if (!canUseNativeRawGroups) {
+								break;
+							}
+							const latestHead = filteredHeads[plan.latestIndex];
+							if (!latestHead) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							receivePredecodedReplicaHits += plan.indexes.length;
+							receiveGroups.push({
+								gid: plan.gid,
+								entries,
+								latestEntry: latestHead.entry,
+								maxReplicasFromHead: plan.maxReplicasFromHead,
+								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
+								maxMaxReplicas: plan.maxMaxReplicas,
+							});
+						}
+						if (canUseNativeRawGroups) {
+							usedNativeRawGroups = true;
+							usedNativeRawGroupIndexes = true;
+						} else {
+							receiveGroups.length = 0;
+							receiveReplicaCounts.clear();
+							receivePredecodedReplicaHits = 0;
+						}
+					} else if (nativeRawGroupPlans) {
 						const headByHash = new Map(
 							filteredHeads.map((head, index) => [
 								filteredHeadHashes[index]!,
@@ -9883,6 +9944,7 @@ export class SharedLog<
 								replicating: isReplicating,
 								predecodedReplicaHits: receivePredecodedReplicaHits,
 								nativeRawGroups: usedNativeRawGroups,
+								nativeRawGroupIndexes: usedNativeRawGroupIndexes,
 								nativeReceiveGroupLeaderPlans:
 									usedNativeReceiveGroupLeaderPlans,
 							},

@@ -65,8 +65,10 @@ struct PendingRawReceiveEntry {
 struct PendingRawReceiveGroupPlan {
     gid: String,
     hashes: Vec<String>,
+    indexes: Vec<u32>,
     requested_replicas: Vec<u32>,
     latest_hash: String,
+    latest_index: u32,
     latest_wall_time: u64,
     latest_logical: u32,
     max_requested_replicas: u32,
@@ -75,8 +77,10 @@ struct PendingRawReceiveGroupPlan {
 struct ResolvedPendingRawReceiveGroupPlan {
     gid: String,
     hashes: Vec<String>,
+    indexes: Vec<u32>,
     requested_replicas: Vec<u32>,
     latest_hash: String,
+    latest_index: u32,
     max_replicas_from_head: u32,
     max_replicas_from_new_entries: u32,
     max_max_replicas: u32,
@@ -1224,6 +1228,37 @@ impl NativePeerbitBackbone {
         Ok(out.into())
     }
 
+    pub fn plan_prepared_raw_receive_group_indexes(
+        &self,
+        hashes: Array,
+        min_replicas: u32,
+        max_replicas: JsValue,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let Some(groups) =
+            self.prepared_raw_receive_group_plans(hashes, min_replicas, max_replicas)?
+        else {
+            return Ok(JsValue::UNDEFINED);
+        };
+
+        let out = Array::new();
+        for group in groups {
+            let row = Array::new();
+            row.push(&JsValue::from_str(&group.gid));
+            row.push(&Uint32Array::from(group.indexes.as_slice()));
+            row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
+            row.push(&JsValue::from_f64(group.latest_index as f64));
+            row.push(&JsValue::from_f64(group.max_replicas_from_head as f64));
+            row.push(&JsValue::from_f64(
+                group.max_replicas_from_new_entries as f64,
+            ));
+            row.push(&JsValue::from_f64(group.max_max_replicas as f64));
+            out.push(&row);
+        }
+
+        Ok(out.into())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn plan_prepared_raw_receive_fast_drop(
         &self,
@@ -1325,13 +1360,15 @@ impl NativePeerbitBackbone {
         let mut group_indexes: HashMap<String, usize> = HashMap::new();
         let mut groups: Vec<PendingRawReceiveGroupPlan> = Vec::new();
 
-        for hash in hashes {
+        for (input_index, hash) in hashes.into_iter().enumerate() {
             let Some(pending) = self.pending_raw_receive_entries.get(&hash) else {
                 return Ok(None);
             };
             let Some(requested_replicas) = pending.requested_replicas else {
                 return Ok(None);
             };
+            let input_index = u32::try_from(input_index)
+                .map_err(|_| JsValue::from_str("Raw receive group index overflow"))?;
 
             let group_index = if let Some(index) = group_indexes.get(&pending.entry.gid) {
                 *index
@@ -1341,8 +1378,10 @@ impl NativePeerbitBackbone {
                 groups.push(PendingRawReceiveGroupPlan {
                     gid: pending.entry.gid.clone(),
                     hashes: Vec::new(),
+                    indexes: Vec::new(),
                     requested_replicas: Vec::new(),
                     latest_hash: hash.clone(),
+                    latest_index: input_index,
                     latest_wall_time: pending.entry.wall_time,
                     latest_logical: pending.entry.logical,
                     max_requested_replicas: requested_replicas,
@@ -1352,6 +1391,7 @@ impl NativePeerbitBackbone {
 
             let group = &mut groups[group_index];
             group.hashes.push(hash.clone());
+            group.indexes.push(input_index);
             group.requested_replicas.push(requested_replicas);
             group.max_requested_replicas = group.max_requested_replicas.max(requested_replicas);
             if pending.entry.wall_time > group.latest_wall_time
@@ -1359,6 +1399,7 @@ impl NativePeerbitBackbone {
                     && pending.entry.logical > group.latest_logical)
             {
                 group.latest_hash = hash;
+                group.latest_index = input_index;
                 group.latest_wall_time = pending.entry.wall_time;
                 group.latest_logical = pending.entry.logical;
             }
@@ -1379,8 +1420,10 @@ impl NativePeerbitBackbone {
                     ResolvedPendingRawReceiveGroupPlan {
                         gid: group.gid,
                         hashes: group.hashes,
+                        indexes: group.indexes,
                         requested_replicas: group.requested_replicas,
                         latest_hash: group.latest_hash,
+                        latest_index: group.latest_index,
                         max_replicas_from_head: max_head,
                         max_replicas_from_new_entries: max_new,
                         max_max_replicas: max_head.max(max_new),
