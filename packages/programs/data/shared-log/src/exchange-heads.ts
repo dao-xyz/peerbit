@@ -170,14 +170,20 @@ const preparedRawCid = (facts: PreparedRawEntryV0FactsSource, index: number) =>
 const preparedRawHashDigestBytes = (
 	facts: PreparedRawEntryV0FactsSource,
 	index: number,
+	fallbackCid?: string,
 ) => {
 	if (!isPreparedRawEntryV0FactsColumns(facts)) {
 		return facts.hashDigestBytes;
 	}
-	return (
-		facts[1][index] ??
-		cidifyString(preparedRawCid(facts, index)).multihash.digest
-	);
+	const digest = facts[1][index];
+	if (digest) {
+		return digest;
+	}
+	const cid = facts[0][index] ?? fallbackCid;
+	if (!cid) {
+		throw new Error("Missing prepared raw receive cid");
+	}
+	return cidifyString(cid).multihash.digest;
 };
 
 const preparedRawByteLength = (
@@ -282,7 +288,7 @@ const preparedRawHashNumber = (
 		: facts.hashNumber;
 
 const preparedRawFactsCount = (facts: PreparedRawEntryV0FactsColumns) =>
-	facts[0].length;
+	facts[0].length || facts[2].length;
 
 const preparedRawFactsHashes = (
 	facts: PreparedRawEntryV0FactsColumns | PreparedRawEntryV0Facts[],
@@ -471,7 +477,11 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	getHashDigestBytes(): Uint8Array {
-		return preparedRawHashDigestBytes(this.facts, this.factsIndex);
+		return preparedRawHashDigestBytes(
+			this.facts,
+			this.factsIndex,
+			this.hash,
+		);
 	}
 
 	getClock(): Clock {
@@ -1168,6 +1178,17 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			.catch(() => undefined);
 	}
 	if (preparedColumns || preparedFacts) {
+		const clearPreparedRaw = () => {
+			if (nativePrepareSource === "backbone") {
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
+					preparedRawFactsHashes(preparedFacts!),
+				);
+				return;
+			}
+			if (nativePrepareSource === "backbone-columns") {
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(hashes);
+			}
+		};
 		emitSyncProfileDuration(profile, nativePrepareStartedAt, {
 			name: "sharedLog.rawReceive.prepareFacts",
 			component: "shared-log",
@@ -1211,16 +1232,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				return undefined;
 			}
 		} catch (error) {
-			if (nativePrepareSource === "backbone") {
-				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
-					preparedRawFactsHashes(preparedFacts!),
-				);
-			}
-			if (nativePrepareSource === "backbone-columns") {
-				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
-					preparedRawFactsHashes(preparedColumns!),
-				);
-			}
+			clearPreparedRaw();
 			throw error;
 		}
 		const wrapStartedAt = syncProfileStart(profile);
@@ -1237,16 +1249,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				return preparedHead as EntryWithRefs<any>;
 			});
 		} catch (error) {
-			if (nativePrepareSource === "backbone") {
-				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
-					preparedRawFactsHashes(preparedFacts!),
-				);
-			}
-			if (nativePrepareSource === "backbone-columns") {
-				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
-					preparedRawFactsHashes(preparedColumns!),
-				);
-			}
+			clearPreparedRaw();
 			throw error;
 		}
 		const materialized = new ExchangeHeadsMessage({

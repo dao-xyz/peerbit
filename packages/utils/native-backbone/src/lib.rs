@@ -1058,7 +1058,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, true)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true)
+        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
     }
 
     pub fn prepare_raw_receive_unverified_columns_batch(
@@ -1072,7 +1072,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, false)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true)
+        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
     }
 
     pub fn prepare_raw_receive_expected_columns_batch(
@@ -1088,7 +1088,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true)
+        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
     }
 
     pub fn prepare_raw_receive_unverified_expected_columns_batch(
@@ -1104,7 +1104,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true)
+        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
     }
 
     pub fn prepare_raw_receive_expected_compact_columns_batch(
@@ -1120,7 +1120,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, false)
+        self.prepare_raw_receive_columns_from_entries(prepared, false, false)
     }
 
     pub fn prepare_raw_receive_unverified_expected_compact_columns_batch(
@@ -1136,13 +1136,14 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, false)
+        self.prepare_raw_receive_columns_from_entries(prepared, false, false)
     }
 
     fn prepare_raw_receive_columns_from_entries(
         &mut self,
         prepared: Vec<PreparedRawEntryV0>,
         include_hash_digest_bytes: bool,
+        include_cids: bool,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let columns_started = profile_enabled.then(js_sys::Date::now);
@@ -1165,7 +1166,9 @@ impl NativePeerbitBackbone {
 
         for entry in prepared {
             let hash_number = hash_number_u64(&self.resolution, &entry.hash_digest_bytes)?;
-            cids.push(&JsValue::from_str(&entry.cid));
+            if include_cids {
+                cids.push(&JsValue::from_str(&entry.cid));
+            }
             if include_hash_digest_bytes {
                 hash_digest_bytes.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
             }

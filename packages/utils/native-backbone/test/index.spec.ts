@@ -773,7 +773,7 @@ describe("native peerbit backbone", () => {
 				[prepared.bytes],
 				[prepared.hash],
 			);
-		expect(compactExpectedColumns?.[0]).to.deep.equal([prepared.hash]);
+		expect(compactExpectedColumns?.[0]).to.deep.equal([]);
 		expect(compactExpectedColumns?.[1][0]).to.equal(undefined);
 		expect(Array.from(compactExpectedColumns?.[12] ?? [])).to.deep.equal([
 			1,
@@ -798,6 +798,7 @@ describe("native peerbit backbone", () => {
 				[prepared.hash],
 				{ verifySignatures: false },
 			);
+		expect(compactUnverifiedColumns?.[0]).to.deep.equal([]);
 		expect(compactUnverifiedColumns?.[1][0]).to.equal(undefined);
 		expect(Array.from(compactUnverifiedColumns?.[12] ?? [])).to.deep.equal([
 			0,
