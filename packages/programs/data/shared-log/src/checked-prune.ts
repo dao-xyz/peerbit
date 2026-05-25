@@ -265,6 +265,15 @@ export class CheckedPruneCoordinator<T, R extends "u32" | "u64"> {
 		this.deleteSessionIfIdle(hash);
 	}
 
+	clearConfirmedReplicatorsBatch(hashes: Iterable<string>) {
+		if (this.responseReplicatorSet.size === 0) {
+			return;
+		}
+		for (const hash of hashes) {
+			this.clearConfirmedReplicators(hash);
+		}
+	}
+
 	getConfirmedReplicators(hash: string) {
 		return this.responseReplicatorSet.get(hash);
 	}

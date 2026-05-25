@@ -10266,6 +10266,8 @@ export class SharedLog<
 					}
 					const joinPlanStartedAt = syncProfileStart(syncProfile);
 					let usedNativeSynchronousJoinPlan = false;
+					let usedNativeAllKeptJoinPlan = false;
+					let nativeAllKeptJoinHashes: string[] | undefined;
 					let joinPlans: ReceivedGidJoinPlan[];
 					const canUseNativeSynchronousJoinPlan =
 						usedNativeRawGroupLeaderPlans &&
@@ -10283,43 +10285,95 @@ export class SharedLog<
 						);
 					if (canUseNativeSynchronousJoinPlan) {
 						usedNativeSynchronousJoinPlan = true;
-						joinPlans = [];
+						const contextFromHashes = [contextFromHash];
+						let canUseAllKeptNativeJoinPlan = true;
 						for (const group of receiveGroups) {
-							const leaders = group.leaders!;
 							const fromIsLeader = group.fromIsLeader ?? false;
 							const keepAsLeader =
 								group.isLeader === true || (isRepairHint && fromIsLeader);
-							let maybeDelete: EntryWithRefs<any>[][] | undefined;
+							if (
+								!keepAsLeader ||
+								group.maxReplicasFromNewEntries <
+									group.maxReplicasFromHead
+							) {
+								canUseAllKeptNativeJoinPlan = false;
+								break;
+							}
+						}
+						if (canUseAllKeptNativeJoinPlan) {
+							usedNativeAllKeptJoinPlan = true;
 							const toMerge: EntryWithRefs<any>[] = [];
 							const toPersist: ShallowOrFullEntry<any>[] = [];
-							if (isReplicating && group.isLeader === true) {
-								immediateReplicatingLeaderPlanHits++;
-							}
-							if (keepAsLeader) {
+							const cleanupHashes: string[] = [];
+							for (const group of receiveGroups) {
+								if (isReplicating && group.isLeader === true) {
+									immediateReplicatingLeaderPlanHits++;
+								}
+								if (group.fromIsLeader) {
+									this.addPeersToGidPeerHistory(
+										group.gid,
+										contextFromHashes,
+									);
+								}
 								for (const entry of group.entries) {
 									const hash = getExchangeHeadHash(entry);
+									cleanupHashes.push(hash);
 									this.pruneDebouncedFn.delete(hash);
-									this.removePruneRequestSent(hash);
-									this._checkedPrune.clearConfirmedReplicators(hash);
 									toMerge.push(entry);
 									toPersist.push(getReceiveHeadShallowOrEntry(entry));
 								}
-								if (fromIsLeader) {
-									this.addPeersToGidPeerHistory(group.gid, [contextFromHash]);
-								}
-								if (
-									group.maxReplicasFromNewEntries <
-									group.maxReplicasFromHead
-								) {
-									(maybeDelete || (maybeDelete = [])).push(group.entries);
-								}
 							}
-							joinPlans.push({
-								toMerge,
-								toPersist,
-								maybeDelete,
-								leaders,
-							});
+							this.removePruneRequestsSent(cleanupHashes);
+							this._checkedPrune.clearConfirmedReplicatorsBatch(
+								cleanupHashes,
+							);
+							nativeAllKeptJoinHashes = cleanupHashes;
+							joinPlans = [
+								{
+									toMerge,
+									toPersist,
+									leaders: false,
+								},
+							];
+						} else {
+							joinPlans = [];
+							for (const group of receiveGroups) {
+								const leaders = group.leaders!;
+								const fromIsLeader = group.fromIsLeader ?? false;
+								const keepAsLeader =
+									group.isLeader === true || (isRepairHint && fromIsLeader);
+								let maybeDelete: EntryWithRefs<any>[][] | undefined;
+								const toMerge: EntryWithRefs<any>[] = [];
+								const toPersist: ShallowOrFullEntry<any>[] = [];
+								if (isReplicating && group.isLeader === true) {
+									immediateReplicatingLeaderPlanHits++;
+								}
+								if (keepAsLeader) {
+									for (const entry of group.entries) {
+										const hash = getExchangeHeadHash(entry);
+										this.pruneDebouncedFn.delete(hash);
+										this.removePruneRequestSent(hash);
+										this._checkedPrune.clearConfirmedReplicators(hash);
+										toMerge.push(entry);
+										toPersist.push(getReceiveHeadShallowOrEntry(entry));
+									}
+									if (fromIsLeader) {
+										this.addPeersToGidPeerHistory(group.gid, [contextFromHash]);
+									}
+									if (
+										group.maxReplicasFromNewEntries <
+										group.maxReplicasFromHead
+									) {
+										(maybeDelete || (maybeDelete = [])).push(group.entries);
+									}
+								}
+								joinPlans.push({
+									toMerge,
+									toPersist,
+									maybeDelete,
+									leaders,
+								});
+							}
 						}
 					} else {
 						const promises: Promise<ReceivedGidJoinPlan | undefined>[] = [];
@@ -10422,10 +10476,9 @@ export class SharedLog<
 										this.pruneDebouncedFn.delete(hash);
 										this.removePruneRequestSent(hash);
 										this._checkedPrune.clearConfirmedReplicators(hash);
-
-										if (fromIsLeader) {
-											this.addPeersToGidPeerHistory(gid, [contextFromHash]);
-										}
+									}
+									if (fromIsLeader) {
+										this.addPeersToGidPeerHistory(gid, [contextFromHash]);
 									}
 
 									if (maxReplicasFromNewEntries < maxReplicasFromHead) {
@@ -10495,16 +10548,19 @@ export class SharedLog<
 									immediateReplicatingLeaderPlans?.length ?? 0,
 								nativeSynchronousJoinPlan:
 									usedNativeSynchronousJoinPlan,
+								nativeAllKeptJoinPlan: usedNativeAllKeptJoinPlan,
 							},
 						});
 					}
-					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
-					const allToMergeHashes = allToMerge.map((entry) =>
-						getExchangeHeadHash(entry),
-					);
-					const allToMergeShallowEntries = allToMerge.map(
-						(entry) => getReceiveHeadShallowOrEntry(entry),
-					);
+					const allToMerge = usedNativeAllKeptJoinPlan
+						? joinPlans[0]!.toMerge
+						: joinPlans.flatMap((plan) => plan.toMerge);
+					const allToMergeHashes =
+						nativeAllKeptJoinHashes ??
+						allToMerge.map((entry) => getExchangeHeadHash(entry));
+					const allToMergeShallowEntries = usedNativeAllKeptJoinPlan
+						? joinPlans[0]!.toPersist
+						: allToMerge.map((entry) => getReceiveHeadShallowOrEntry(entry));
 					let allToMergeMaterializedEntries: Entry<any>[] | undefined;
 					const materializeAllToMergeEntries = () => {
 						allToMergeMaterializedEntries ??= allToMerge.map(
@@ -10609,9 +10665,9 @@ export class SharedLog<
 						}
 						// Network joins bypass SharedLog.join(), but churn repair scans
 						// the coordinate index to redistribute entries after membership changes.
-						const entriesToPersist = joinPlans.flatMap(
-							(plan) => plan.toPersist,
-						);
+						const entriesToPersist = usedNativeAllKeptJoinPlan
+							? allToMergeShallowEntries
+							: joinPlans.flatMap((plan) => plan.toPersist);
 						const coordinatePersistFallbackEntries: ShallowOrFullEntry<any>[] =
 							[];
 						const reusableCoordinatePersistItems: CoordinatePersistBatchItem<R>[] =
