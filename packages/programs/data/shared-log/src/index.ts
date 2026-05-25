@@ -10338,6 +10338,7 @@ export class SharedLog<
 						});
 					}
 					const allToMerge = joinPlans.flatMap((plan) => plan.toMerge);
+					let nativePreparedCommittedHashes: Set<string> | undefined;
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
 						const nativeBackboneCommitValidation =
@@ -10467,6 +10468,11 @@ export class SharedLog<
 									},
 									nativeCommitVerifyHashes,
 									syncProfile,
+									(committedHashes) => {
+										nativePreparedCommittedHashes = new Set(
+											committedHashes,
+										);
+									},
 								)
 							: undefined;
 						const preparedAppendCanValidateAppend =
@@ -10646,9 +10652,29 @@ export class SharedLog<
 							}
 						}
 					}
-					this._nativeBackbone?.clearPreparedRawReceiveEntries(
-						filteredHeadHashes,
-					);
+					const clearPreparedStartedAt = syncProfileStart(syncProfile);
+					const hashesToClear = nativePreparedCommittedHashes
+						? filteredHeadHashes.filter(
+								(hash) => !nativePreparedCommittedHashes!.has(hash),
+							)
+						: filteredHeadHashes;
+					if (hashesToClear.length > 0) {
+						this._nativeBackbone?.clearPreparedRawReceiveEntries(
+							hashesToClear,
+						);
+					}
+					if (syncProfile) {
+						emitSyncProfileDuration(syncProfile, clearPreparedStartedAt, {
+							name: "sharedLog.receive.clearPreparedRaw",
+							component: "shared-log",
+							entries: hashesToClear.length,
+							messages: 1,
+							details: {
+								nativeCommitted:
+									nativePreparedCommittedHashes?.size ?? 0,
+							},
+						});
+					}
 					if (
 						confirmedHashes.size > 0 &&
 						!context.from.equals(this.node.identity.publicKey)
@@ -12502,6 +12528,7 @@ export class SharedLog<
 		) => void,
 		verifyHashes?: string[],
 		profile?: SyncProfileFn,
+		onPreparedEntriesCommitted?: (hashes: string[]) => void,
 	):
 		| ((input: {
 				entries: PreparedAppendJoinFacts[];
@@ -12586,6 +12613,7 @@ export class SharedLog<
 					});
 				}
 				if (committed === true) {
+					onPreparedEntriesCommitted?.(hashes);
 					if (coordinateBatch) {
 						onCoordinatesCommitted?.(coordinateBatch);
 					}
@@ -12603,6 +12631,7 @@ export class SharedLog<
 					coordinateColumns,
 				)
 			) {
+				onPreparedEntriesCommitted?.(hashes);
 				if (coordinateBatch) {
 					onCoordinatesCommitted?.(coordinateBatch);
 				}
