@@ -358,6 +358,33 @@ describe("native peerbit backbone", () => {
 		expect(thresholdStore.files.has("coordinates.wal")).equal(true);
 	});
 
+	it("writes the initial generic coordinate WAL flush as one append", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		class CountingStore extends NativeBackboneMemoryCoordinatePersistenceStore {
+			appendCount = 0;
+			async append(name: string, bytes: Uint8Array): Promise<void> {
+				this.appendCount++;
+				await super.append(name, bytes);
+			}
+		}
+		const store = new CountingStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		await persistence.hydrate(backbone);
+		backbone.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		const recordBytes = await persistence.flushJournal(backbone);
+
+		expect(recordBytes).to.be.greaterThan(0);
+		expect(store.appendCount).equal(1);
+		expect(store.files.get("coordinates.wal")?.byteLength).equal(
+			backbone.coordinateJournalHeader().byteLength + recordBytes,
+		);
+	});
+
 	it("commits lower-log blocks and shared-log coordinates in one native call", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

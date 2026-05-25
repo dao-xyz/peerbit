@@ -8,6 +8,7 @@ import {
 	benchmarkPlainEntryV0DigestKeyCore,
 } from "@peerbit/log-rust";
 import {
+	NativeBackboneNodeCoordinatePersistence,
 	NativeBackboneNodeCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
@@ -40,6 +41,7 @@ import {
 //   Add "-no-trim" to any rust-peerbit scenario to disable length trim.
 //   Add "-putmany" to any scenario name to use one putMany call per measured batch.
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
+//   Add "-direct" to a coordinate-WAL rust-peerbit-backbone scenario to use the direct Node coordinate persistence adapter.
 //   Add "-mode-native" to a rust-peerbit-backbone scenario to open Documents in strict native mode.
 //   Add "-mode-native-replicated" to keep open-level replication in strict native mode.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
@@ -90,7 +92,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
+		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|direct|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -106,6 +108,8 @@ const scenarioUsesCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal");
 const scenarioUsesBufferedCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal-buffered");
+const scenarioUsesDirectCoordinateWal = (name: string) =>
+	scenarioUsesCoordinateWal(name) && name.includes("-direct");
 const scenarioUsesNativeBackboneDocumentIndex = (name: string) =>
 	name.includes("-document-index");
 const scenarioUsesNativeMode = (name: string) => name.includes("-mode-native");
@@ -679,7 +683,10 @@ const patchSyncMethod = (
 	};
 };
 
-const createNodeCoordinatePersistence = async (buffered: boolean) => {
+const createNodeCoordinatePersistence = async (
+	buffered: boolean,
+	direct: boolean,
+) => {
 	const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
 		import("node:fs/promises"),
 		import("node:os"),
@@ -688,22 +695,41 @@ const createNodeCoordinatePersistence = async (buffered: boolean) => {
 	const directory = await mkdtemp(
 		join(tmpdir(), "peerbit-doc-coordinate-wal-"),
 	);
-	const store = new NativeBackboneNodeCoordinatePersistenceStore(directory);
-	const persistence = {
-		store,
-		flushOnAppend: !buffered,
-		...(buffered ? { flushMaxPendingBytes: coordinateWalFlushBytes } : {}),
-		...(buffered
-			? { buffered: { maxBufferedBytes: coordinateWalFlushBytes } }
-			: {}),
-		...(buffered && coordinateWalFlushIntervalMs != null
-			? { flushIntervalMs: coordinateWalFlushIntervalMs }
-			: {}),
-	};
+	const directPersistence = direct
+		? new NativeBackboneNodeCoordinatePersistence(directory, {
+				flushOnAppend: !buffered,
+				...(buffered
+					? {
+							flushMaxPendingBytes: coordinateWalFlushBytes,
+							writeBufferMaxBytes: coordinateWalFlushBytes,
+						}
+					: {}),
+				...(buffered && coordinateWalFlushIntervalMs != null
+					? { flushIntervalMs: coordinateWalFlushIntervalMs }
+					: {}),
+			})
+		: undefined;
+	const store = direct
+		? undefined
+		: new NativeBackboneNodeCoordinatePersistenceStore(directory);
+	const persistence =
+		directPersistence ??
+		({
+			store: store!,
+			flushOnAppend: !buffered,
+			...(buffered ? { flushMaxPendingBytes: coordinateWalFlushBytes } : {}),
+			...(buffered
+				? { buffered: { maxBufferedBytes: coordinateWalFlushBytes } }
+				: {}),
+			...(buffered && coordinateWalFlushIntervalMs != null
+				? { flushIntervalMs: coordinateWalFlushIntervalMs }
+				: {}),
+		} as const);
 	return {
 		persistence,
 		cleanup: async () => {
-			await store.close();
+			await directPersistence?.close();
+			await store?.close();
 			await rm(directory, { recursive: true, force: true });
 		},
 	};
@@ -738,6 +764,7 @@ const openScenario = async (name: string) => {
 		baseName === "rust-peerbit-backbone" && scenarioUsesCoordinateWal(name)
 			? await createNodeCoordinatePersistence(
 					scenarioUsesBufferedCoordinateWal(name),
+					scenarioUsesDirectCoordinateWal(name),
 				)
 			: undefined;
 	const store = new TestStore({

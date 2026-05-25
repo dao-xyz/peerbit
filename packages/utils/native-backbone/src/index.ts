@@ -6753,14 +6753,13 @@ export class NativeBackboneCoordinatePersistence {
 			const existing = await this.store.read(this.journalFile);
 			this.journalInitialized = !!existing && existing.byteLength > 0;
 		}
-		if (!this.journalInitialized) {
-			await this.store.append(
-				this.journalFile,
-				backbone.coordinateJournalHeader(),
-			);
-			this.journalInitialized = true;
-		}
-		await this.store.append(this.journalFile, records);
+		await this.store.append(
+			this.journalFile,
+			this.journalInitialized
+				? records
+				: concatBytes([backbone.coordinateJournalHeader(), records]),
+		);
+		this.journalInitialized = true;
 		backbone.clearCoordinateJournal();
 		this.lastFlushMs = Date.now();
 		return records.byteLength;
