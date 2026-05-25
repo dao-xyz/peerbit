@@ -297,6 +297,25 @@ const preparedRawFactsHashes = (
 		? [...(facts as PreparedRawEntryV0FactsColumns)[0]]
 		: (facts as PreparedRawEntryV0Facts[]).map((entry) => entry.cid);
 
+const attachPreparedRawShallowFacts = (
+	shallow: ShallowEntry,
+	facts: PreparedRawEntryV0FactsSource,
+	index: number,
+	fallbackCid: string,
+): ShallowEntry => {
+	Object.defineProperties(shallow, {
+		getMetaBytes: {
+			value: () => preparedRawMetaBytes(facts, index),
+			configurable: true,
+		},
+		getHashDigestBytes: {
+			value: () => preparedRawHashDigestBytes(facts, index, fallbackCid),
+			configurable: true,
+		},
+	});
+	return shallow;
+};
+
 // Stored in the reserved bytes so older peers ignore the hint.
 export const EXCHANGE_HEADS_REPAIR_HINT = 1;
 
@@ -382,6 +401,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 
 	private materialized?: Entry<T>;
 	private metaValue?: Meta;
+	private shallowHeadValue?: ShallowEntry;
 	private keychain?: unknown;
 	private encodingValue?: Log<T>["encoding"];
 
@@ -528,27 +548,44 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	}
 
 	toShallow(isHead: boolean): ShallowEntry {
+		if (isHead && this.shallowHeadValue) {
+			this.shallowHeadValue.head = true;
+			return this.shallowHeadValue;
+		}
 		const clock = this.getClock();
-		return new ShallowEntry({
-			hash: this.hash,
-			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
-			head: isHead,
-			meta: new ShallowMeta({
-				gid: preparedRawGid(this.facts, this.factsIndex),
-				data: preparedRawMetaData(this.facts, this.factsIndex),
-				clock,
-				next: preparedRawNext(this.facts, this.factsIndex),
-				type: preparedRawType(this.facts, this.factsIndex) as EntryType,
+		const shallow = attachPreparedRawShallowFacts(
+			new ShallowEntry({
+				hash: this.hash,
+				payloadSize: preparedRawPayloadByteLength(
+					this.facts,
+					this.factsIndex,
+				),
+				head: isHead,
+				meta: new ShallowMeta({
+					gid: preparedRawGid(this.facts, this.factsIndex),
+					data: preparedRawMetaData(this.facts, this.factsIndex),
+					clock,
+					next: preparedRawNext(this.facts, this.factsIndex),
+					type: preparedRawType(this.facts, this.factsIndex) as EntryType,
+				}),
 			}),
-		});
+			this.facts,
+			this.factsIndex,
+			this.hash,
+		);
+		if (isHead) {
+			this.shallowHeadValue = shallow;
+		}
+		return shallow;
 	}
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
+		const shallow = this.toShallow(true);
 		return {
 			hash: this.hash,
 			bytes: this.bytes,
 			byteLength: this.size,
-			meta: this.meta,
+			meta: shallow.meta,
 			getShallowEntry: (isHead = true) => this.toShallow(isHead),
 			materializeEntry: () => this,
 		};
@@ -653,18 +690,26 @@ class PreparedRawEntryWithRefs<T> {
 				logical: preparedRawLogical(this.facts, this.factsIndex),
 			}),
 		});
-		const shallow = new ShallowEntry({
-			hash: this.head.hash,
-			payloadSize: preparedRawPayloadByteLength(this.facts, this.factsIndex),
-			head: isHead,
-			meta: new ShallowMeta({
-				gid: preparedRawGid(this.facts, this.factsIndex),
-				data: preparedRawMetaData(this.facts, this.factsIndex),
-				clock,
-				next: preparedRawNext(this.facts, this.factsIndex),
-				type: preparedRawType(this.facts, this.factsIndex) as EntryType,
+		const shallow = attachPreparedRawShallowFacts(
+			new ShallowEntry({
+				hash: this.head.hash,
+				payloadSize: preparedRawPayloadByteLength(
+					this.facts,
+					this.factsIndex,
+				),
+				head: isHead,
+				meta: new ShallowMeta({
+					gid: preparedRawGid(this.facts, this.factsIndex),
+					data: preparedRawMetaData(this.facts, this.factsIndex),
+					clock,
+					next: preparedRawNext(this.facts, this.factsIndex),
+					type: preparedRawType(this.facts, this.factsIndex) as EntryType,
+				}),
 			}),
-		});
+			this.facts,
+			this.factsIndex,
+			this.head.hash,
+		);
 		if (isHead) {
 			this.shallowHeadValue = shallow;
 		}
@@ -672,52 +717,13 @@ class PreparedRawEntryWithRefs<T> {
 	}
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
-		const gid = preparedRawGid(this.facts, this.factsIndex);
-		const next = preparedRawNext(this.facts, this.factsIndex);
-		const type = preparedRawType(this.facts, this.factsIndex) as EntryType;
-		const data = preparedRawMetaData(this.facts, this.factsIndex);
-		const payloadSize = preparedRawPayloadByteLength(
-			this.facts,
-			this.factsIndex,
-		);
-		const clock = new Clock({
-			id: preparedRawClockId(this.facts, this.factsIndex),
-			timestamp: new Timestamp({
-				wallTime: preparedRawWallTime(this.facts, this.factsIndex),
-				logical: preparedRawLogical(this.facts, this.factsIndex),
-			}),
-		});
-		let shallowEntry: ShallowEntry | undefined;
-		const getShallowEntry = (isHead = true) => {
-			if (!shallowEntry) {
-				shallowEntry = new ShallowEntry({
-					hash: this.head.hash,
-					payloadSize,
-					head: isHead,
-					meta: new ShallowMeta({
-						gid,
-						data,
-						clock,
-						next,
-						type,
-					}),
-				});
-			}
-			shallowEntry.head = isHead;
-			return shallowEntry;
-		};
+		const shallow = this.toShallow(true);
 		return {
 			hash: this.head.hash,
 			bytes: this.head.bytes,
 			byteLength: preparedRawByteLength(this.facts, this.factsIndex),
-			meta: {
-				gid,
-				clock,
-				next,
-				type,
-				data,
-			},
-			getShallowEntry,
+			meta: shallow.meta,
+			getShallowEntry: (isHead = true) => this.toShallow(isHead),
 			materializeEntry: () => this.entry,
 		};
 	}
