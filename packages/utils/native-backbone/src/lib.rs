@@ -1143,8 +1143,6 @@ impl NativePeerbitBackbone {
             cids.push(&JsValue::from_str(&entry.cid));
             if include_hash_digest_bytes {
                 hash_digest_bytes.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
-            } else {
-                hash_digest_bytes.push(&JsValue::UNDEFINED);
             }
             byte_lengths.push(entry.byte_length as u32);
             clock_ids.push(&Uint8Array::from(entry.clock_id.as_slice()));
