@@ -10293,7 +10293,7 @@ export class SharedLog<
 								if (shouldKeep) {
 									toMerge.push(entry.entry);
 									toPersist.push(entry.entry);
-								} else {
+								} else if (entry.gidRefrences.length > 0) {
 									const referenceHeads = await getGidReferenceHeads();
 									if (referenceHeads[i]) {
 										toMerge.push(entry.entry);
