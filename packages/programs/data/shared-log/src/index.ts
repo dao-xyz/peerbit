@@ -321,6 +321,7 @@ export {
 export { MAX_U32, MAX_U64, type NumberFromType };
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
+const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
 
 type LeaderMap = Map<string, { intersecting: boolean }>;
 
@@ -10302,11 +10303,14 @@ export class SharedLog<
 									}
 								}
 
-								logger.trace(
-									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${this.getEntryGid(
-										entry.entry,
-									)}. Because not leader`,
-								);
+								if (traceLogger.enabled) {
+									const droppedGid =
+										getPreparedRawExchangeHeadGid(entry) ??
+										this.getEntryGid(entry.entry);
+									traceLogger(
+										`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${droppedGid}. Because not leader`,
+									);
+								}
 							}
 
 							if (this.closed) {
