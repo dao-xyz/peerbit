@@ -13545,6 +13545,13 @@ export class SharedLog<
 		if (entry instanceof Entry) {
 			const rawHashNumber = getPreparedRawExchangeHashNumber(entry);
 			if (rawHashNumber != null) {
+				if (typeof rawHashNumber === "bigint") {
+					return (
+						this.domain.resolution === "u32"
+							? Number(rawHashNumber)
+							: rawHashNumber
+					) as NumberFromType<R>;
+				}
 				return (
 					this.domain.resolution === "u32"
 						? Number(rawHashNumber)

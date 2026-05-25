@@ -99,7 +99,7 @@ type PreparedRawEntryV0FactsColumns = [
 	payloadByteLengths: Uint32Array,
 	signatureVerified: Uint8Array,
 	requestedReplicas: Uint32Array,
-	hashNumbers: string[],
+	hashNumbers: string[] | BigUint64Array,
 ];
 
 type PreparedRawEntryV0FactsSource =
@@ -717,7 +717,7 @@ export const getPreparedRawExchangeRequestedReplicas = (
 
 export const getPreparedRawExchangeHashNumber = (
 	entry: Entry<any>,
-): string | undefined =>
+): string | bigint | undefined =>
 	entry instanceof PreparedRawExchangeEntry
 		? entry.__peerbitHashNumber
 		: undefined;

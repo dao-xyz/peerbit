@@ -1132,7 +1132,7 @@ impl NativePeerbitBackbone {
         let mut payload_byte_lengths = Vec::with_capacity(len);
         let mut signature_verified = Vec::with_capacity(len);
         let mut requested_replicas = Vec::with_capacity(len);
-        let hash_numbers = Array::new();
+        let mut hash_numbers = Vec::with_capacity(len);
 
         for entry in prepared {
             let hash_number = hash_number_u64(&self.resolution, &entry.hash_digest_bytes)?;
@@ -1157,7 +1157,7 @@ impl NativePeerbitBackbone {
             payload_byte_lengths.push(entry.payload_byte_length as u32);
             signature_verified.push(u8::from(entry.signature_verified));
             requested_replicas.push(entry.requested_replicas.unwrap_or(0));
-            hash_numbers.push(&JsValue::from_str(&hash_number.to_string()));
+            hash_numbers.push(hash_number);
 
             let log_entry = entry.log_index_entry(true)?;
             self.pending_raw_receive_entries.insert(
@@ -1186,7 +1186,7 @@ impl NativePeerbitBackbone {
         out.push(&Uint32Array::from(payload_byte_lengths.as_slice()));
         out.push(&Uint8Array::from(signature_verified.as_slice()));
         out.push(&Uint32Array::from(requested_replicas.as_slice()));
-        out.push(&hash_numbers);
+        out.push(&BigUint64Array::from(hash_numbers.as_slice()));
         if let Some(started) = columns_started {
             self.append_profile.raw_receive_prepare_columns_ms += js_sys::Date::now() - started;
         }

@@ -1711,7 +1711,7 @@ export type NativeBackboneRawReceivePreparedFactsColumns = [
 	Uint32Array,
 	Uint8Array,
 	Uint32Array,
-	string[],
+	string[] | BigUint64Array,
 ];
 
 type NativeBackboneRawReceivePreparedFactsRow = [
@@ -3046,7 +3046,8 @@ const rawReceivePreparedFactsFromColumns = ([
 				requestedReplicas[i] && requestedReplicas[i] > 0
 					? requestedReplicas[i]
 					: undefined,
-			hashNumber: hashNumbers[i],
+			hashNumber:
+				hashNumbers[i] == null ? undefined : String(hashNumbers[i]),
 		};
 	}
 	return out;
@@ -4312,7 +4313,7 @@ export class NativePeerbitBackbone {
 				new Uint32Array(0),
 				new Uint8Array(0),
 				new Uint32Array(0),
-				[],
+				new BigUint64Array(0),
 			];
 		}
 		if (

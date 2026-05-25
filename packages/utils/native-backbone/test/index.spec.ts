@@ -738,7 +738,7 @@ describe("native peerbit backbone", () => {
 		expect(expectedColumns?.[0]).to.deep.equal([prepared.hash]);
 		expect(Array.from(expectedColumns?.[12] ?? [])).to.deep.equal([1]);
 		expect(Array.from(expectedColumns?.[13] ?? [])).to.deep.equal([3]);
-		expect(expectedColumns?.[14]).to.deep.equal([
+		expect(Array.from(expectedColumns?.[14] ?? [], String)).to.deep.equal([
 			String(expectedHashNumber),
 		]);
 		const compactExpectedColumns =
@@ -751,9 +751,9 @@ describe("native peerbit backbone", () => {
 		expect(Array.from(compactExpectedColumns?.[12] ?? [])).to.deep.equal([
 			1,
 		]);
-		expect(compactExpectedColumns?.[14]).to.deep.equal([
-			String(expectedHashNumber),
-		]);
+		expect(
+			Array.from(compactExpectedColumns?.[14] ?? [], String),
+		).to.deep.equal([String(expectedHashNumber)]);
 		const unverifiedColumns = target.prepareRawReceiveColumnsBatch(
 			[prepared.bytes],
 			[prepared.hash],
@@ -762,7 +762,7 @@ describe("native peerbit backbone", () => {
 		expect(unverifiedColumns?.[0]).to.deep.equal([prepared.hash]);
 		expect(Array.from(unverifiedColumns?.[12] ?? [])).to.deep.equal([0]);
 		expect(Array.from(unverifiedColumns?.[13] ?? [])).to.deep.equal([3]);
-		expect(unverifiedColumns?.[14]).to.deep.equal([
+		expect(Array.from(unverifiedColumns?.[14] ?? [], String)).to.deep.equal([
 			String(expectedHashNumber),
 		]);
 		const compactUnverifiedColumns =
