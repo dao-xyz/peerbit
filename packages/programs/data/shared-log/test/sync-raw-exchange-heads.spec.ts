@@ -838,6 +838,12 @@ describe("raw exchange-head sync", () => {
 				expect(
 					joinPlanProfile.details.nativeSynchronousJoinPlan,
 				).to.equal(true);
+				const committedProfile = profileEvents.find(
+					(event) => event.name === "log.joinPreparedFacts.committed",
+				);
+				expect(
+					committedProfile.details.nativePreparedCommitted,
+				).to.equal(true);
 			} finally {
 				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
 				nativeVerifiedPreparedJoinCommitSpy?.restore();
@@ -1222,7 +1228,8 @@ describe("raw exchange-head sync", () => {
 						arg &&
 						Array.isArray(arg.hashes) &&
 						Array.isArray(arg.gids) &&
-						Array.isArray(arg.coordinateBatches),
+						(Array.isArray(arg.coordinateBatches) ||
+							arg.coordinateValues instanceof BigUint64Array),
 				);
 				expect(coordinateColumns.hashes).to.have.length(hashes.length);
 				expect(nativePreparedCommitSpy.callCount).to.equal(0);
@@ -1442,6 +1449,12 @@ describe("raw exchange-head sync", () => {
 					const coordinateProfile = profileEvents.find(
 						(event) => event.name === "sharedLog.receive.coordinatePersist",
 					);
+					const lowerLogJoinProfile = profileEvents.find(
+						(event) => event.name === "sharedLog.receive.lowerLogJoin",
+					);
+					const committedProfile = profileEvents.find(
+						(event) => event.name === "log.joinPreparedFacts.committed",
+					);
 					const checkedPrunePlanProfile = profileEvents.find(
 						(event) => event.name === "sharedLog.receive.checkedPrune.plan",
 					);
@@ -1500,6 +1513,15 @@ describe("raw exchange-head sync", () => {
 							expect(finishBackboneOnlyCoordinateSpy.callCount, row.name).to.equal(
 								1,
 							);
+							expect(
+								committedProfile?.details.nativePreparedCommitted,
+								row.name,
+							).to.equal(true);
+							expect(
+								lowerLogJoinProfile?.details
+									.nativePreparedCoordinatesFinished,
+								row.name,
+							).to.equal(true);
 							expect(persistCoordinatesBatchSpy.callCount, row.name).to.equal(
 								0,
 							);

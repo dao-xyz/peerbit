@@ -159,6 +159,13 @@ type PreparedJoinNativeCommitInput = {
 	validatePlan?: boolean;
 };
 
+type PreparedJoinCommittedInput = {
+	entries: PreparedAppendJoinFacts[];
+	hashes: string[];
+	headFlags: boolean[];
+	nativePreparedCommitted: boolean;
+};
+
 export type PreparedAppendJoinFacts = PreparedAppendIndexFacts & {
 	bytes: Uint8Array;
 	byteLength: number;
@@ -2997,6 +3004,9 @@ export class Log<T> {
 				input: PreparedJoinNativeCommitInput,
 			) => MaybePromise<boolean>;
 			__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
+			__peerbitOnPreparedJoinCommitted?: (
+				input: PreparedJoinCommittedInput,
+			) => MaybePromise<void>;
 		},
 	): Promise<boolean> {
 		if (
@@ -3172,6 +3182,23 @@ export class Log<T> {
 				messages: 1,
 				details: { trustedMissing },
 			});
+
+			if (resolvedOptions.__peerbitOnPreparedJoinCommitted) {
+				const committedStartedAt = internalProfileStart(profile);
+				await resolvedOptions.__peerbitOnPreparedJoinCommitted({
+					entries,
+					hashes: entryHashes,
+					headFlags,
+					nativePreparedCommitted,
+				});
+				emitInternalProfileDuration(profile, committedStartedAt, {
+					name: "log.joinPreparedFacts.committed",
+					component: "log",
+					entries: entries.length,
+					messages: 1,
+					details: { nativePreparedCommitted },
+				});
+			}
 
 			const changeStartedAt = internalProfileStart(profile);
 			if (resolvedOptions.__peerbitOnAppendHashes) {

@@ -10637,6 +10637,8 @@ export class SharedLog<
 						let nativePreparedCoordinateBatch:
 							| NativeBackboneReceiveCoordinateBatch<R>
 							| undefined;
+						let nativePreparedCoordinatesFinished = false;
+						let nativeBackboneOnlyPersistedHashes: Set<string> | undefined;
 						const nativeReceiveCoordinateBatch = canUsePreparedAppendFacts
 							? this.createBackboneOnlyReceiveCoordinateBatch(
 									reusableCoordinatePersistItems,
@@ -10658,6 +10660,29 @@ export class SharedLog<
 									},
 								)
 							: undefined;
+						const finishNativePreparedCoordinates = async (properties: {
+							nativePreparedCommitted: boolean;
+						}) => {
+							if (
+								!properties.nativePreparedCommitted ||
+								!nativePreparedCoordinateBatch
+							) {
+								return;
+							}
+							try {
+								nativeBackboneOnlyPersistedHashes =
+									await this.finishBackboneOnlyReceiveCoordinateBatch(
+										nativePreparedCoordinateBatch,
+										syncProfile,
+									);
+								nativePreparedCoordinatesFinished = true;
+							} catch (error) {
+								this.rollbackBackboneOnlyReceiveCoordinateBatch(
+									nativePreparedCoordinateBatch,
+								);
+								throw error;
+							}
+						};
 						const preparedAppendCanValidateAppend =
 							canAppendAlreadyValidated ||
 							(nativeCommitCanValidateAppend && !!nativePreparedJoinCommit);
@@ -10689,6 +10714,10 @@ export class SharedLog<
 									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
 										nativePreparedJoinCommitValidatesPlan,
+									__peerbitOnPreparedJoinCommitted:
+										nativePreparedJoinCommit
+											? finishNativePreparedCoordinates
+											: undefined,
 								},
 							));
 						if (!joinedPreparedFacts) {
@@ -10708,12 +10737,18 @@ export class SharedLog<
 								component: "shared-log",
 								entries: allToMerge.length,
 								messages: 1,
-								details: { hashOnlyEntryAdded, joinedPreparedFacts },
+								details: {
+									hashOnlyEntryAdded,
+									joinedPreparedFacts,
+									nativePreparedCoordinatesFinished,
+								},
 							});
 						}
 						const coordinatePersistStartedAt = syncProfileStart(syncProfile);
-						let nativeBackboneOnlyPersistedHashes: Set<string> | undefined;
-						if (nativePreparedCoordinateBatch) {
+						if (nativePreparedCoordinatesFinished) {
+							// The lower-log prepared receive transaction already finished
+							// the native coordinate mirror/journal after entry-index commit.
+						} else if (nativePreparedCoordinateBatch) {
 							try {
 								nativeBackboneOnlyPersistedHashes =
 									await this.finishBackboneOnlyReceiveCoordinateBatch(
