@@ -1,17 +1,18 @@
 import { deserialize, field, fixedArray, variant, vec } from "@dao-xyz/borsh";
+import { cidifyString } from "@peerbit/blocks-interface";
 import {
+	LamportClock as Clock,
 	Entry,
 	EntryType,
-	LamportClock as Clock,
 	Meta,
 	type PreparedAppendJoinFacts,
 	type PreparedNativeLogEntry,
+	type PreparedRawEntryV0Facts,
 	ShallowEntry,
 	ShallowMeta,
 	Timestamp,
 	calculateRawCidV1Batch,
 	prepareRawEntryV0Batch,
-	type PreparedRawEntryV0Facts,
 	verifyEntryV0Ed25519StorageBatch,
 } from "@peerbit/log";
 import { Log } from "@peerbit/log";
@@ -85,7 +86,7 @@ const emitNativeBackboneRawPrepareProfile = (
 
 type PreparedRawEntryV0FactsColumns = [
 	cids: string[],
-	hashDigestBytes: Uint8Array[],
+	hashDigestBytes: Array<Uint8Array | undefined>,
 	byteLengths: Uint32Array,
 	clockIds: Uint8Array[],
 	wallTimes: BigUint64Array,
@@ -121,10 +122,7 @@ const preparedRawColumnValue = <T>(
 	return value;
 };
 
-const preparedRawCid = (
-	facts: PreparedRawEntryV0FactsSource,
-	index: number,
-) =>
+const preparedRawCid = (facts: PreparedRawEntryV0FactsSource, index: number) =>
 	isPreparedRawEntryV0FactsColumns(facts)
 		? preparedRawColumnValue(facts[0], index, "cid")
 		: facts.cid;
@@ -132,10 +130,15 @@ const preparedRawCid = (
 const preparedRawHashDigestBytes = (
 	facts: PreparedRawEntryV0FactsSource,
 	index: number,
-) =>
-	isPreparedRawEntryV0FactsColumns(facts)
-		? preparedRawColumnValue(facts[1], index, "hash digest")
-		: facts.hashDigestBytes;
+) => {
+	if (!isPreparedRawEntryV0FactsColumns(facts)) {
+		return facts.hashDigestBytes;
+	}
+	return (
+		facts[1][index] ??
+		cidifyString(preparedRawCid(facts, index)).multihash.digest
+	);
+};
 
 const preparedRawByteLength = (
 	facts: PreparedRawEntryV0FactsSource,
@@ -169,10 +172,7 @@ const preparedRawLogical = (
 		? preparedRawColumnValue(facts[5], index, "logical time")
 		: facts.logical;
 
-const preparedRawGid = (
-	facts: PreparedRawEntryV0FactsSource,
-	index: number,
-) =>
+const preparedRawGid = (facts: PreparedRawEntryV0FactsSource, index: number) =>
 	isPreparedRawEntryV0FactsColumns(facts)
 		? preparedRawColumnValue(facts[6], index, "gid")
 		: facts.gid;
@@ -204,7 +204,8 @@ const preparedRawMetaBytes = (
 const preparedRawMetaData = (
 	facts: PreparedRawEntryV0FactsSource,
 	index: number,
-) => (isPreparedRawEntryV0FactsColumns(facts) ? facts[10][index] : facts.metaData);
+) =>
+	isPreparedRawEntryV0FactsColumns(facts) ? facts[10][index] : facts.metaData;
 
 const preparedRawPayloadByteLength = (
 	facts: PreparedRawEntryV0FactsSource,
@@ -717,7 +718,9 @@ export const getPreparedRawExchangeRequestedReplicas = (
 export const getPreparedRawExchangeHashNumber = (
 	entry: Entry<any>,
 ): string | undefined =>
-	entry instanceof PreparedRawExchangeEntry ? entry.__peerbitHashNumber : undefined;
+	entry instanceof PreparedRawExchangeEntry
+		? entry.__peerbitHashNumber
+		: undefined;
 
 export const getPreparedRawExchangeGid = (
 	entry: Entry<any>,
@@ -1080,17 +1083,8 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			options.nativeBackbone.setAppendProfileEnabled?.(true);
 		}
 		try {
-			preparedColumns = options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
-				blocks,
-				hashes,
-				{
-					verifySignatures:
-						options.verifyNativeBackboneSignaturesDuringPrepare === true,
-				},
-			);
-			hashesVerifiedByNative = !!preparedColumns;
-			preparedColumns ??=
-				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
+			preparedColumns =
+				options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
 					blocks,
 					hashes,
 					{
@@ -1098,6 +1092,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 							options.verifyNativeBackboneSignaturesDuringPrepare === true,
 					},
 				);
+			hashesVerifiedByNative = !!preparedColumns;
+			preparedColumns ??=
+				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks, hashes, {
+					verifySignatures:
+						options.verifyNativeBackboneSignaturesDuringPrepare === true,
+				});
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";
 			} else {
@@ -1189,11 +1189,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			const rowFacts = preparedFacts!;
 			materializedHeads = message.heads.map((head, index) => {
 				const facts = preparedColumns ?? rowFacts[index]!;
-				const preparedHead = new PreparedRawEntryWithRefs(
-					head,
-					facts,
-					index,
-				);
+				const preparedHead = new PreparedRawEntryWithRefs(head, facts, index);
 				preparedHead.initEntry({
 					keychain: log.keychain,
 					encoding: log.encoding,

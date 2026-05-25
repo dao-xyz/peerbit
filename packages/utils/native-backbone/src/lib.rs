@@ -1006,7 +1006,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = prepare_started {
             self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
         }
-        self.prepare_raw_receive_columns_from_entries(prepared)
+        self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
     pub fn prepare_raw_receive_unverified_columns_batch(
@@ -1025,7 +1025,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = prepare_started {
             self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
         }
-        self.prepare_raw_receive_columns_from_entries(prepared)
+        self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
     pub fn prepare_raw_receive_expected_columns_batch(
@@ -1045,7 +1045,7 @@ impl NativePeerbitBackbone {
         if let Some(started) = prepare_started {
             self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
         }
-        self.prepare_raw_receive_columns_from_entries(prepared)
+        self.prepare_raw_receive_columns_from_entries(prepared, true)
     }
 
     pub fn prepare_raw_receive_unverified_expected_columns_batch(
@@ -1066,12 +1066,54 @@ impl NativePeerbitBackbone {
         if let Some(started) = prepare_started {
             self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
         }
-        self.prepare_raw_receive_columns_from_entries(prepared)
+        self.prepare_raw_receive_columns_from_entries(prepared, true)
+    }
+
+    pub fn prepare_raw_receive_expected_compact_columns_batch(
+        &mut self,
+        blocks: Array,
+        hashes: Array,
+    ) -> Result<Array, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let input_started = profile_enabled.then(js_sys::Date::now);
+        let blocks = bytes_vec_from_array(blocks)?;
+        let hashes = strings_from_array(hashes)?;
+        if let Some(started) = input_started {
+            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+        }
+        let prepare_started = profile_enabled.then(js_sys::Date::now);
+        let prepared = prepare_raw_entry_v0_blocks_with_expected_cids(blocks, Some(hashes))?;
+        if let Some(started) = prepare_started {
+            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
+        }
+        self.prepare_raw_receive_columns_from_entries(prepared, false)
+    }
+
+    pub fn prepare_raw_receive_unverified_expected_compact_columns_batch(
+        &mut self,
+        blocks: Array,
+        hashes: Array,
+    ) -> Result<Array, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let input_started = profile_enabled.then(js_sys::Date::now);
+        let blocks = bytes_vec_from_array(blocks)?;
+        let hashes = strings_from_array(hashes)?;
+        if let Some(started) = input_started {
+            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+        }
+        let prepare_started = profile_enabled.then(js_sys::Date::now);
+        let prepared =
+            prepare_raw_entry_v0_blocks_with_expected_cids_and_verify(blocks, Some(hashes), false)?;
+        if let Some(started) = prepare_started {
+            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
+        }
+        self.prepare_raw_receive_columns_from_entries(prepared, false)
     }
 
     fn prepare_raw_receive_columns_from_entries(
         &mut self,
         prepared: Vec<PreparedRawEntryV0>,
+        include_hash_digest_bytes: bool,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let columns_started = profile_enabled.then(js_sys::Date::now);
@@ -1095,7 +1137,11 @@ impl NativePeerbitBackbone {
         for entry in prepared {
             let hash_number = hash_number_u64(&self.resolution, &entry.hash_digest_bytes)?;
             cids.push(&JsValue::from_str(&entry.cid));
-            hash_digest_bytes.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
+            if include_hash_digest_bytes {
+                hash_digest_bytes.push(&Uint8Array::from(entry.hash_digest_bytes.as_slice()));
+            } else {
+                hash_digest_bytes.push(&JsValue::UNDEFINED);
+            }
             byte_lengths.push(entry.byte_length as u32);
             clock_ids.push(&Uint8Array::from(entry.clock_id.as_slice()));
             wall_times.push(entry.wall_time);

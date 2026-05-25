@@ -1,4 +1,4 @@
-import { calculateRawCid } from "@peerbit/blocks-interface";
+import { calculateRawCid, cidifyString } from "@peerbit/blocks-interface";
 
 export type RangeResolution = "u32" | "u64";
 
@@ -229,7 +229,15 @@ type NativePeerbitBackboneHandle = {
 		blocks: Uint8Array[],
 		hashes: string[],
 	) => NativeBackboneRawReceivePreparedFactsColumns;
+	prepare_raw_receive_expected_compact_columns_batch?: (
+		blocks: Uint8Array[],
+		hashes: string[],
+	) => NativeBackboneRawReceivePreparedFactsColumns;
 	prepare_raw_receive_unverified_expected_columns_batch?: (
+		blocks: Uint8Array[],
+		hashes: string[],
+	) => NativeBackboneRawReceivePreparedFactsColumns;
+	prepare_raw_receive_unverified_expected_compact_columns_batch?: (
 		blocks: Uint8Array[],
 		hashes: string[],
 	) => NativeBackboneRawReceivePreparedFactsColumns;
@@ -1638,7 +1646,7 @@ export type NativeBackboneRawReceiveFastDropPlan = {
 
 export type NativeBackboneRawReceivePreparedFactsColumns = [
 	string[],
-	Uint8Array[],
+	Array<Uint8Array | undefined>,
 	Uint32Array,
 	Uint8Array[],
 	BigUint64Array,
@@ -2880,7 +2888,8 @@ const rawReceivePreparedFactsFromColumns = ([
 	for (let i = 0; i < length; i++) {
 		out[i] = {
 			cid: cids[i]!,
-			hashDigestBytes: hashDigestBytes[i]!,
+			hashDigestBytes:
+				hashDigestBytes[i] ?? cidifyString(cids[i]!).multihash.digest,
 			byteLength: byteLengths[i]!,
 			clockId: clockIds[i]!,
 			wallTime: wallTimes[i]!,
@@ -4141,6 +4150,21 @@ export class NativePeerbitBackbone {
 		}
 		if (blocks.length === 0) {
 			return this.prepareRawReceiveColumnsBatch(blocks, hashes, options);
+		}
+		if (
+			options?.verifySignatures === false &&
+			this.native.prepare_raw_receive_unverified_expected_compact_columns_batch
+		) {
+			return this.native.prepare_raw_receive_unverified_expected_compact_columns_batch(
+				blocks,
+				hashes,
+			);
+		}
+		if (this.native.prepare_raw_receive_expected_compact_columns_batch) {
+			return this.native.prepare_raw_receive_expected_compact_columns_batch(
+				blocks,
+				hashes,
+			);
 		}
 		if (
 			options?.verifySignatures === false &&

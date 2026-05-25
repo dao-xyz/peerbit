@@ -741,6 +741,19 @@ describe("native peerbit backbone", () => {
 		expect(expectedColumns?.[14]).to.deep.equal([
 			String(expectedHashNumber),
 		]);
+		const compactExpectedColumns =
+			target.prepareRawReceiveExpectedColumnsBatch(
+				[prepared.bytes],
+				[prepared.hash],
+			);
+		expect(compactExpectedColumns?.[0]).to.deep.equal([prepared.hash]);
+		expect(compactExpectedColumns?.[1][0]).to.equal(undefined);
+		expect(Array.from(compactExpectedColumns?.[12] ?? [])).to.deep.equal([
+			1,
+		]);
+		expect(compactExpectedColumns?.[14]).to.deep.equal([
+			String(expectedHashNumber),
+		]);
 		const unverifiedColumns = target.prepareRawReceiveColumnsBatch(
 			[prepared.bytes],
 			[prepared.hash],
@@ -751,6 +764,16 @@ describe("native peerbit backbone", () => {
 		expect(Array.from(unverifiedColumns?.[13] ?? [])).to.deep.equal([3]);
 		expect(unverifiedColumns?.[14]).to.deep.equal([
 			String(expectedHashNumber),
+		]);
+		const compactUnverifiedColumns =
+			target.prepareRawReceiveExpectedColumnsBatch(
+				[prepared.bytes],
+				[prepared.hash],
+				{ verifySignatures: false },
+			);
+		expect(compactUnverifiedColumns?.[1][0]).to.equal(undefined);
+		expect(Array.from(compactUnverifiedColumns?.[12] ?? [])).to.deep.equal([
+			0,
 		]);
 		expect(
 			target.graph.verifyPreparedRawReceiveEntries([prepared.hash]),
