@@ -1812,7 +1812,6 @@ impl NativePeerbitBackbone {
 
         {
             let join_plan_started = profile_enabled.then(js_sys::Date::now);
-            let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
             let mut graph_entries = Vec::with_capacity(hashes.len());
             for hash in &hashes {
                 let pending = self
@@ -1827,16 +1826,21 @@ impl NativePeerbitBackbone {
             if let Some(started) = join_plan_started {
                 self.append_profile.raw_receive_join_plan_ms += js_sys::Date::now() - started;
             }
+            let mut batch_hashes: Option<HashSet<&str>> = None;
             for plan in join_plans {
                 if plan.skip || plan.covered_by_cut || !plan.cut_checked {
                     return Ok(false);
                 }
-                if plan
-                    .missing_parents
-                    .iter()
-                    .any(|hash| !batch_hashes.contains(hash.as_str()))
-                {
-                    return Ok(false);
+                if !plan.missing_parents.is_empty() {
+                    let batch_hashes = batch_hashes
+                        .get_or_insert_with(|| hashes.iter().map(String::as_str).collect());
+                    if plan
+                        .missing_parents
+                        .iter()
+                        .any(|hash| !batch_hashes.contains(hash.as_str()))
+                    {
+                        return Ok(false);
+                    }
                 }
             }
         }
@@ -2020,17 +2024,6 @@ impl NativePeerbitBackbone {
     ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
-        let pending_check_started = profile_enabled.then(js_sys::Date::now);
-        let missing_pending = hashes
-            .iter()
-            .any(|hash| !self.pending_raw_receive_entries.contains_key(hash));
-        if let Some(started) = pending_check_started {
-            self.append_profile.raw_receive_pending_check_ms += js_sys::Date::now() - started;
-        }
-        if missing_pending {
-            return Ok(false);
-        }
-
         let verify_hashes_cover_commit = match verify_hashes.as_ref() {
             None => true,
             Some(verify_hashes) => {
@@ -2041,6 +2034,18 @@ impl NativePeerbitBackbone {
                         .all(|(verified_hash, hash)| verified_hash == hash)
             }
         };
+        if !verify_hashes_cover_commit {
+            let pending_check_started = profile_enabled.then(js_sys::Date::now);
+            let missing_pending = hashes
+                .iter()
+                .any(|hash| !self.pending_raw_receive_entries.contains_key(hash));
+            if let Some(started) = pending_check_started {
+                self.append_profile.raw_receive_pending_check_ms += js_sys::Date::now() - started;
+            }
+            if missing_pending {
+                return Ok(false);
+            }
+        }
         let verify_started = profile_enabled.then(js_sys::Date::now);
         if verify_hashes_cover_commit {
             let verify_hashes = verify_hashes.as_ref().unwrap_or(&hashes);
@@ -2081,7 +2086,6 @@ impl NativePeerbitBackbone {
 
         {
             let join_plan_started = profile_enabled.then(js_sys::Date::now);
-            let batch_hashes: HashSet<&str> = hashes.iter().map(String::as_str).collect();
             let mut graph_entries = Vec::with_capacity(hashes.len());
             for hash in &hashes {
                 let pending = self
@@ -2096,16 +2100,21 @@ impl NativePeerbitBackbone {
             if let Some(started) = join_plan_started {
                 self.append_profile.raw_receive_join_plan_ms += js_sys::Date::now() - started;
             }
+            let mut batch_hashes: Option<HashSet<&str>> = None;
             for plan in join_plans {
                 if plan.skip || plan.covered_by_cut || !plan.cut_checked {
                     return Ok(false);
                 }
-                if plan
-                    .missing_parents
-                    .iter()
-                    .any(|hash| !batch_hashes.contains(hash.as_str()))
-                {
-                    return Ok(false);
+                if !plan.missing_parents.is_empty() {
+                    let batch_hashes = batch_hashes
+                        .get_or_insert_with(|| hashes.iter().map(String::as_str).collect());
+                    if plan
+                        .missing_parents
+                        .iter()
+                        .any(|hash| !batch_hashes.contains(hash.as_str()))
+                    {
+                        return Ok(false);
+                    }
                 }
             }
         }
