@@ -71,6 +71,16 @@ struct PendingRawReceiveGroupPlan {
     max_requested_replicas: u32,
 }
 
+struct ResolvedPendingRawReceiveGroupPlan {
+    gid: String,
+    hashes: Vec<String>,
+    requested_replicas: Vec<u32>,
+    latest_hash: String,
+    max_replicas_from_head: u32,
+    max_replicas_from_new_entries: u32,
+    max_max_replicas: u32,
+}
+
 struct DocumentIndexAppendCommit {
     key: String,
     value_prefix: DocumentIndexValuePrefix,
@@ -1143,8 +1153,115 @@ impl NativePeerbitBackbone {
         max_replicas: JsValue,
     ) -> Result<JsValue, JsValue> {
         let hashes = strings_from_array(hashes)?;
+        let Some(groups) =
+            self.prepared_raw_receive_group_plans(hashes, min_replicas, max_replicas)?
+        else {
+            return Ok(JsValue::UNDEFINED);
+        };
+
+        let out = Array::new();
+        for group in groups {
+            let row = Array::new();
+            row.push(&JsValue::from_str(&group.gid));
+            row.push(&strings_to_array(group.hashes));
+            row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
+            row.push(&JsValue::from_str(&group.latest_hash));
+            row.push(&JsValue::from_f64(group.max_replicas_from_head as f64));
+            row.push(&JsValue::from_f64(
+                group.max_replicas_from_new_entries as f64,
+            ));
+            row.push(&JsValue::from_f64(group.max_max_replicas as f64));
+            out.push(&row);
+        }
+
+        Ok(out.into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_prepared_raw_receive_fast_drop(
+        &self,
+        hashes: Array,
+        min_replicas: u32,
+        max_replicas: JsValue,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+        from_hash: String,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let expected_hash_count = hashes.len();
+        if expected_hash_count == 0 {
+            return Ok(JsValue::UNDEFINED);
+        }
+        let Some(groups) =
+            self.prepared_raw_receive_group_plans(hashes, min_replicas, max_replicas)?
+        else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        let mut planned_hash_count = 0usize;
+        let gids = Array::new();
+        let replica_counts = Array::new();
+        for group in &groups {
+            planned_hash_count += group.hashes.len();
+            gids.push(&JsValue::from_str(&group.gid));
+            replica_counts.push(&JsValue::from_f64(group.max_max_replicas as f64));
+        }
+        if planned_hash_count != expected_hash_count {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let leader_rows = self.shared_log.plan_leader_samples_for_gids_batch(
+            gids,
+            replica_counts,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash.clone(),
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
+        if leader_rows.length() as usize != groups.len() {
+            return Ok(JsValue::UNDEFINED);
+        }
+        for group_leaders in leader_rows.iter() {
+            let rows = Array::from(&group_leaders);
+            for row_value in rows.iter() {
+                let row = Array::from(&row_value);
+                let Some(leader_hash) = row.get(0).as_string() else {
+                    return Ok(JsValue::UNDEFINED);
+                };
+                if leader_hash == self_hash || leader_hash == from_hash {
+                    let out = Array::new();
+                    out.push(&JsValue::FALSE);
+                    out.push(&JsValue::from_f64(groups.len() as f64));
+                    out.push(&JsValue::from_f64(planned_hash_count as f64));
+                    return Ok(out.into());
+                }
+            }
+        }
+
+        let out = Array::new();
+        out.push(&JsValue::TRUE);
+        out.push(&JsValue::from_f64(groups.len() as f64));
+        out.push(&JsValue::from_f64(planned_hash_count as f64));
+        Ok(out.into())
+    }
+
+    fn prepared_raw_receive_group_plans(
+        &self,
+        hashes: Vec<String>,
+        min_replicas: u32,
+        max_replicas: JsValue,
+    ) -> Result<Option<Vec<ResolvedPendingRawReceiveGroupPlan>>, JsValue> {
         if hashes.is_empty() {
-            return Ok(Array::new().into());
+            return Ok(Some(Vec::new()));
         }
 
         let lower = min_replicas.max(1);
@@ -1163,10 +1280,10 @@ impl NativePeerbitBackbone {
 
         for hash in hashes {
             let Some(pending) = self.pending_raw_receive_entries.get(&hash) else {
-                return Ok(JsValue::UNDEFINED);
+                return Ok(None);
             };
             let Some(requested_replicas) = pending.requested_replicas else {
-                return Ok(JsValue::UNDEFINED);
+                return Ok(None);
             };
 
             let group_index = if let Some(index) = group_indexes.get(&pending.entry.gid) {
@@ -1200,28 +1317,30 @@ impl NativePeerbitBackbone {
             }
         }
 
-        let out = Array::new();
-        for group in groups {
-            let max_head = self
-                .log
-                .max_head_data_u32(Some(group.gid.clone()))
-                .as_f64()
-                .map(|value| value.max(0.0).min(u32::MAX as f64) as u32)
-                .map(|value| clamp_replicas_u32(value, lower, higher))
-                .unwrap_or(lower);
-            let max_new = clamp_replicas_u32(group.max_requested_replicas, lower, higher);
-            let row = Array::new();
-            row.push(&JsValue::from_str(&group.gid));
-            row.push(&strings_to_array(group.hashes));
-            row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
-            row.push(&JsValue::from_str(&group.latest_hash));
-            row.push(&JsValue::from_f64(max_head as f64));
-            row.push(&JsValue::from_f64(max_new as f64));
-            row.push(&JsValue::from_f64(max_head.max(max_new) as f64));
-            out.push(&row);
-        }
-
-        Ok(out.into())
+        Ok(Some(
+            groups
+                .into_iter()
+                .map(|group| {
+                    let max_head = self
+                        .log
+                        .max_head_data_u32(Some(group.gid.clone()))
+                        .as_f64()
+                        .map(|value| value.max(0.0).min(u32::MAX as f64) as u32)
+                        .map(|value| clamp_replicas_u32(value, lower, higher))
+                        .unwrap_or(lower);
+                    let max_new = clamp_replicas_u32(group.max_requested_replicas, lower, higher);
+                    ResolvedPendingRawReceiveGroupPlan {
+                        gid: group.gid,
+                        hashes: group.hashes,
+                        requested_replicas: group.requested_replicas,
+                        latest_hash: group.latest_hash,
+                        max_replicas_from_head: max_head,
+                        max_replicas_from_new_entries: max_new,
+                        max_max_replicas: max_head.max(max_new),
+                    }
+                })
+                .collect(),
+        ))
     }
 
     pub fn verify_prepared_raw_receive_entries(

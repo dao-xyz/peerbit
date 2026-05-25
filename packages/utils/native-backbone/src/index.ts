@@ -238,6 +238,20 @@ type NativePeerbitBackboneHandle = {
 		minReplicas: number,
 		maxReplicas?: number,
 	) => NativeBackboneRawReceiveGroupPlanRow[] | undefined;
+	plan_prepared_raw_receive_fast_drop?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas: number | undefined,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+		fromHash: string,
+	) => [boolean, number, number] | undefined;
 	verify_prepared_raw_receive_entries?: (
 		hashes: string[],
 	) => Uint8Array | undefined;
@@ -1614,6 +1628,12 @@ export type NativeBackboneRawReceiveGroupPlan = {
 	maxReplicasFromHead: number;
 	maxReplicasFromNewEntries: number;
 	maxMaxReplicas: number;
+};
+
+export type NativeBackboneRawReceiveFastDropPlan = {
+	canDrop: boolean;
+	groupCount: number;
+	plannedHashCount: number;
 };
 
 export type NativeBackboneRawReceivePreparedFactsColumns = [
@@ -4130,6 +4150,29 @@ export class NativePeerbitBackbone {
 			options.maxReplicas,
 		);
 		return rows?.map(rawReceiveGroupPlanFromRow);
+	}
+
+	planPreparedRawReceiveFastDrop(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+		leaderOptions: NativeBackboneFindLeaderOptions,
+		fromHash: string,
+	): NativeBackboneRawReceiveFastDropPlan | undefined {
+		if (!this.native.plan_prepared_raw_receive_fast_drop) {
+			return undefined;
+		}
+		const row = this.native.plan_prepared_raw_receive_fast_drop(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+			...findLeaderArguments(leaderOptions),
+			fromHash,
+		);
+		if (!row) {
+			return undefined;
+		}
+		const [canDrop, groupCount, plannedHashCount] = row;
+		return { canDrop, groupCount, plannedHashCount };
 	}
 
 	getEntryCoordinateHashes(): string[] {

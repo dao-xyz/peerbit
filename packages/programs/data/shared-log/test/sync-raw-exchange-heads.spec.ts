@@ -1529,6 +1529,9 @@ describe("raw exchange-head sync", () => {
 			expect(
 				receivePlanProfile.details.nativeReceiveGroupLeaderSamples,
 			).to.equal(true);
+			expect(receivePlanProfile.details.nativePreparedFastDropPlan).to.equal(
+				true,
+			);
 			expect(receivePlanProfile.details.nativeFastDropEarly).to.equal(true);
 			const joinPlanProfile = profileEvents.find(
 				(event) => event.name === "sharedLog.receive.joinPlan",

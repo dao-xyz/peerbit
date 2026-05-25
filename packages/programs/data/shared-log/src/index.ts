@@ -13817,90 +13817,120 @@ export class SharedLog<
 		}
 
 		const receivePlanStartedAt = syncProfileStart(properties.syncProfile);
-		let nativeGroups: NativeBackboneRawReceiveGroupPlan[] | undefined;
+		const fromHash = properties.from.hashcode();
+		let groupCount: number | undefined;
+		let plannedHashCount: number | undefined;
+		let usedNativeFastDropPlan = false;
 		let leaderSamples: Array<Map<string, unknown>> | undefined;
+		let nativeGroups: NativeBackboneRawReceiveGroupPlan[] | undefined;
 		let leaderPlans: EntryLeaderPlan<R>[] | undefined;
 		let usedLeaderSamplePlans = false;
 		let leaderSelectionContext: LeaderSelectionContext | undefined;
 		try {
-			nativeGroups = backbone.planPreparedRawReceiveGroups(
+			const replicaOptions = {
+				minReplicas: this.replicas.min?.getValue(this) || 1,
+				maxReplicas: this.replicas.max?.getValue(this),
+			};
+			leaderSelectionContext = await this.createLeaderSelectionContext();
+			const nativeFastDropPlan = backbone.planPreparedRawReceiveFastDrop?.(
 				properties.hashes,
-				{
-					minReplicas: this.replicas.min?.getValue(this) || 1,
-					maxReplicas: this.replicas.max?.getValue(this),
-				},
+				replicaOptions,
+				this.createNativeLeaderOptions(leaderSelectionContext),
+				fromHash,
 			);
-			if (!nativeGroups || nativeGroups.length === 0) {
-				return false;
-			}
-			let plannedHashCount = 0;
-			for (const group of nativeGroups) {
-				if (group.hashes.length !== group.requestedReplicas.length) {
+			if (nativeFastDropPlan) {
+				if (
+					nativeFastDropPlan.plannedHashCount !== properties.hashes.length ||
+					nativeFastDropPlan.groupCount === 0 ||
+					!nativeFastDropPlan.canDrop
+				) {
 					return false;
 				}
-				plannedHashCount += group.hashes.length;
-			}
-			if (plannedHashCount !== properties.hashes.length) {
-				return false;
-			}
-			leaderSelectionContext = await this.createLeaderSelectionContext();
-			leaderSamples = backbone.planLeaderSamplesForGidsBatch?.(
-				nativeGroups.map((group) => ({
-					gid: group.gid,
-					replicas: group.maxMaxReplicas,
-				})),
-				this.createNativeLeaderOptions(leaderSelectionContext),
-			);
-			if (leaderSamples?.length === nativeGroups.length) {
+				groupCount = nativeFastDropPlan.groupCount;
+				plannedHashCount = nativeFastDropPlan.plannedHashCount;
+				usedNativeFastDropPlan = true;
 				usedLeaderSamplePlans = true;
 			} else {
-				leaderSamples = undefined;
-				leaderPlans = backbone.planLeadersForGidsBatch(
+				nativeGroups = backbone.planPreparedRawReceiveGroups(
+					properties.hashes,
+					replicaOptions,
+				);
+				if (!nativeGroups || nativeGroups.length === 0) {
+					return false;
+				}
+				plannedHashCount = 0;
+				for (const group of nativeGroups) {
+					if (group.hashes.length !== group.requestedReplicas.length) {
+						return false;
+					}
+					plannedHashCount += group.hashes.length;
+				}
+				if (plannedHashCount !== properties.hashes.length) {
+					return false;
+				}
+				groupCount = nativeGroups.length;
+				leaderSamples = backbone.planLeaderSamplesForGidsBatch?.(
 					nativeGroups.map((group) => ({
 						gid: group.gid,
 						replicas: group.maxMaxReplicas,
 					})),
 					this.createNativeLeaderOptions(leaderSelectionContext),
-				).map((nativePlan) => ({
-					coordinates: Array.from(
-						nativePlan.coordinates as Iterable<NumberFromType<R>>,
-					),
-					leaders: nativePlan.leaders,
-					isLeader: nativePlan.leaders.has(
-						leaderSelectionContext!.selfHash,
-					),
-					assignedToRangeBoundary:
-						"assignedToRangeBoundary" in nativePlan
-							? (nativePlan.assignedToRangeBoundary as boolean)
-							: undefined,
-				}));
-				if (leaderPlans.length !== nativeGroups.length) {
-					return false;
+				);
+				if (leaderSamples?.length === nativeGroups.length) {
+					usedLeaderSamplePlans = true;
+				} else {
+					leaderSamples = undefined;
+					leaderPlans = backbone.planLeadersForGidsBatch(
+						nativeGroups.map((group) => ({
+							gid: group.gid,
+							replicas: group.maxMaxReplicas,
+						})),
+						this.createNativeLeaderOptions(leaderSelectionContext),
+					).map((nativePlan) => ({
+						coordinates: Array.from(
+							nativePlan.coordinates as Iterable<NumberFromType<R>>,
+						),
+						leaders: nativePlan.leaders,
+						isLeader: nativePlan.leaders.has(
+							leaderSelectionContext!.selfHash,
+						),
+						assignedToRangeBoundary:
+							"assignedToRangeBoundary" in nativePlan
+								? (nativePlan.assignedToRangeBoundary as boolean)
+								: undefined,
+					}));
+					if (leaderPlans.length !== nativeGroups.length) {
+						return false;
+					}
 				}
 			}
 		} catch {
 			return false;
 		}
 
-		const fromHash = properties.from.hashcode();
-		if (leaderSamples) {
-			for (const leaders of leaderSamples) {
-				if (
-					leaders.has(leaderSelectionContext!.selfHash) ||
-					leaders.has(fromHash)
-				) {
+		if (!usedNativeFastDropPlan) {
+			if (leaderSamples) {
+				for (const leaders of leaderSamples) {
+					if (
+						leaders.has(leaderSelectionContext!.selfHash) ||
+						leaders.has(fromHash)
+					) {
+						return false;
+					}
+				}
+			} else {
+				if (!nativeGroups) {
 					return false;
 				}
-			}
-		} else {
-			for (let i = 0; i < nativeGroups.length; i++) {
-				const leaderPlan = leaderPlans?.[i];
-				if (
-					!leaderPlan ||
-					leaderPlan.isLeader ||
-					leaderPlan.leaders.has(fromHash)
-				) {
-					return false;
+				for (let i = 0; i < nativeGroups.length; i++) {
+					const leaderPlan = leaderPlans?.[i];
+					if (
+						!leaderPlan ||
+						leaderPlan.isLeader ||
+						leaderPlan.leaders.has(fromHash)
+					) {
+						return false;
+					}
 				}
 			}
 		}
@@ -13910,14 +13940,15 @@ export class SharedLog<
 				name: "sharedLog.receive.plan",
 				component: "shared-log",
 				entries: properties.hashes.length,
-				count: nativeGroups.length,
+				count: groupCount,
 				messages: 1,
 				details: {
 					replicating: false,
-					predecodedReplicaHits: properties.hashes.length,
+					predecodedReplicaHits: plannedHashCount,
 					nativeRawGroups: true,
 					nativeReceiveGroupLeaderPlans: true,
 					nativeReceiveGroupLeaderSamples: usedLeaderSamplePlans,
+					nativePreparedFastDropPlan: usedNativeFastDropPlan,
 					nativeFastDropEarly: true,
 				},
 			});

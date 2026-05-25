@@ -893,6 +893,22 @@ describe("native peerbit backbone", () => {
 			maxReplicasFromNewEntries: 1,
 			maxMaxReplicas: 1,
 		});
+		expect(
+			target.planPreparedRawReceiveFastDrop(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-b",
+			),
+		).to.deep.equal({
+			canDrop: true,
+			groupCount: 2,
+			plannedHashCount: 3,
+		});
 
 		target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
 			clockId: publicKey,
@@ -938,6 +954,18 @@ describe("native peerbit backbone", () => {
 				minReplicas: 1,
 				maxReplicas: 3,
 			}),
+		).to.equal(undefined);
+		expect(
+			target.planPreparedRawReceiveFastDrop(
+				["missing"],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-b",
+			),
 		).to.equal(undefined);
 	});
 
