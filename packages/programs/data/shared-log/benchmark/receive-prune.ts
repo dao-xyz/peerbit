@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -28,8 +28,10 @@ type Scenario =
 	| "raw-receive-native-backbone-verify-prepare"
 	| "raw-receive-native-coordinate-wal-verify-prepare"
 	| "raw-receive-native-backbone-replicating"
+	| "raw-receive-native-backbone-replicating-defer-verify"
 	| "raw-receive-native-backbone-replicating-verify-prepare"
 	| "raw-receive-native-coordinate-wal-replicating"
+	| "raw-receive-native-coordinate-wal-replicating-defer-verify"
 	| "raw-receive-native-coordinate-wal-replicating-verify-prepare"
 	| "raw-receive-native-backbone-drop"
 	| "raw-receive-native-backbone-drop-verify-prepare"
@@ -123,8 +125,12 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-coordinate-wal-verify-prepare" &&
 			scenario !== "raw-receive-native-backbone-replicating" &&
 			scenario !==
+				"raw-receive-native-backbone-replicating-defer-verify" &&
+			scenario !==
 				"raw-receive-native-backbone-replicating-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-replicating" &&
+			scenario !==
+				"raw-receive-native-coordinate-wal-replicating-defer-verify" &&
 			scenario !==
 				"raw-receive-native-coordinate-wal-replicating-verify-prepare" &&
 			scenario !== "raw-receive-native-backbone-drop" &&
@@ -321,6 +327,14 @@ const runRawReceive = async (
 					? "raw-receive-native-coordinate-wal-drop"
 				: options?.nativeBackbone && options.drop
 					? "raw-receive-native-backbone-drop"
+				: options?.coordinateWal &&
+					  options.replicating &&
+					  options.verifySignaturesDuringPrepare === false
+					? "raw-receive-native-coordinate-wal-replicating-defer-verify"
+				: options?.nativeBackbone &&
+					  options.replicating &&
+					  options.verifySignaturesDuringPrepare === false
+					? "raw-receive-native-backbone-replicating-defer-verify"
 				: options?.coordinateWal &&
 					  options.replicating &&
 					  options.verifySignaturesDuringPrepare === true
@@ -525,6 +539,13 @@ const runScenario = async (
 			replicating: true,
 		});
 	}
+	if (scenario === "raw-receive-native-backbone-replicating-defer-verify") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			replicating: true,
+			verifySignaturesDuringPrepare: false,
+		});
+	}
 	if (scenario === "raw-receive-native-backbone-replicating-verify-prepare") {
 		return runRawReceive(count, run, {
 			nativeBackbone: true,
@@ -536,6 +557,13 @@ const runScenario = async (
 		return runRawReceive(count, run, {
 			coordinateWal: true,
 			replicating: true,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-replicating-defer-verify") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			replicating: true,
+			verifySignaturesDuringPrepare: false,
 		});
 	}
 	if (
