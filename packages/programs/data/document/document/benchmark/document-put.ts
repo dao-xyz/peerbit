@@ -10,6 +10,8 @@ import {
 import {
 	NativeBackboneNodeCoordinatePersistence,
 	NativeBackboneNodeCoordinatePersistenceStore,
+	createBufferedNativeBackboneCoordinatePersistence,
+	createBufferedNativeBackboneNodeCoordinatePersistence,
 	createNativePeerbitBackbone,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "@peerbit/native-backbone";
@@ -703,39 +705,37 @@ const createNodeCoordinatePersistence = async (
 		join(tmpdir(), "peerbit-doc-coordinate-wal-"),
 	);
 	const directPersistence = direct
-		? new NativeBackboneNodeCoordinatePersistence(directory, {
-				flushOnAppend: !buffered,
-				...(buffered
-					? {
-							flushMaxPendingBytes: coordinateWalFlushBytes,
-							writeBufferMaxBytes: coordinateWalFlushBytes,
-						}
-					: {}),
-				...(buffered && coordinateWalFlushIntervalMs != null
-					? { flushIntervalMs: coordinateWalFlushIntervalMs }
-					: {}),
-			})
+		? buffered
+			? createBufferedNativeBackboneNodeCoordinatePersistence(directory, {
+					flushMaxPendingBytes: coordinateWalFlushBytes,
+					writeBufferMaxBytes: coordinateWalFlushBytes,
+					...(coordinateWalFlushIntervalMs != null
+						? { flushIntervalMs: coordinateWalFlushIntervalMs }
+						: {}),
+				})
+			: new NativeBackboneNodeCoordinatePersistence(directory)
 		: undefined;
 	const store = direct
 		? undefined
 		: new NativeBackboneNodeCoordinatePersistenceStore(directory);
 	const persistence =
 		directPersistence ??
-		({
-			store: store!,
-			flushOnAppend: !buffered,
-			...(buffered ? { flushMaxPendingBytes: coordinateWalFlushBytes } : {}),
-			...(buffered
-				? { buffered: { maxBufferedBytes: coordinateWalFlushBytes } }
-				: {}),
-			...(buffered && coordinateWalFlushIntervalMs != null
-				? { flushIntervalMs: coordinateWalFlushIntervalMs }
-				: {}),
-		} as const);
+		(buffered
+			? createBufferedNativeBackboneCoordinatePersistence(store!, {
+					flushMaxPendingBytes: coordinateWalFlushBytes,
+					maxBufferedBytes: coordinateWalFlushBytes,
+					...(coordinateWalFlushIntervalMs != null
+						? { flushIntervalMs: coordinateWalFlushIntervalMs }
+						: {}),
+				})
+			: ({
+					store: store!,
+					flushOnAppend: true,
+				} as const));
 	return {
 		persistence,
 		cleanup: async () => {
-			await directPersistence?.close();
+			await directPersistence?.close?.();
 			await store?.close();
 			await rm(directory, { recursive: true, force: true });
 		},

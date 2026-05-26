@@ -2403,6 +2403,13 @@ export type NativeBackboneCoordinatePersistenceConfig =
 			buffered?: boolean | { maxBufferedBytes?: number };
 	  });
 
+export type NativeBackboneBufferedCoordinatePersistenceOptions =
+	NativeBackboneCoordinatePersistenceFiles & {
+		flushMaxPendingBytes?: number;
+		flushIntervalMs?: number;
+		maxBufferedBytes?: number;
+	};
+
 export type NativeBackboneNodeCoordinatePersistenceOptions =
 	NativeBackboneCoordinatePersistenceOptions & {
 		fs?: NativeBackboneNodeFs;
@@ -7534,6 +7541,45 @@ export const createNativeBackboneCoordinatePersistence = (
 				? new NativeBackboneBufferedCoordinatePersistenceStore(store, buffered)
 				: store;
 	return new NativeBackboneCoordinatePersistence(resolvedStore, options);
+};
+
+export const createBufferedNativeBackboneCoordinatePersistence = (
+	store: NativeBackboneCoordinatePersistenceStore,
+	options: NativeBackboneBufferedCoordinatePersistenceOptions = {},
+): NativeBackboneCoordinatePersistenceAdapter => {
+	const maxBufferedBytes =
+		options.maxBufferedBytes ??
+		options.flushMaxPendingBytes ??
+		defaultNativeBackboneCoordinateFlushMaxPendingBytes;
+	const flushMaxPendingBytes =
+		options.flushMaxPendingBytes ?? maxBufferedBytes;
+	return new NativeBackboneCoordinatePersistence(
+		new NativeBackboneBufferedCoordinatePersistenceStore(store, {
+			maxBufferedBytes,
+		}),
+		{
+			snapshot: options.snapshot,
+			journal: options.journal,
+			flushOnAppend: false,
+			flushMaxPendingBytes,
+			flushIntervalMs: options.flushIntervalMs,
+		},
+	);
+};
+
+export const createBufferedNativeBackboneNodeCoordinatePersistence = (
+	directory: string,
+	options: NativeBackboneNodeCoordinatePersistenceOptions = {},
+): NativeBackboneCoordinatePersistenceAdapter => {
+	const flushMaxPendingBytes =
+		options.flushMaxPendingBytes ??
+		defaultNativeBackboneCoordinateFlushMaxPendingBytes;
+	return new NativeBackboneNodeCoordinatePersistence(directory, {
+		...options,
+		flushOnAppend: false,
+		flushMaxPendingBytes,
+		writeBufferMaxBytes: options.writeBufferMaxBytes ?? flushMaxPendingBytes,
+	});
 };
 
 export const createNativePeerbitBackbone = NativePeerbitBackbone.create;
