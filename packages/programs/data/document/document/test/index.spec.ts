@@ -2730,6 +2730,61 @@ describe("index", () => {
 					}
 				});
 
+				it("supports strict native same-signer update policies", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.put(
+								policy.sameSignersAsPrevious<Document>(),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					const graphLatestTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"prepare_plain_entry_commit_latest_facts_document_index_trim_hashes",
+					);
+					try {
+						const id = uuid();
+						const first = await store.docs.put(
+							new Document({ id, name: "native-same-signer-1" }),
+						);
+						const second = await store.docs.put(
+							new Document({ id, name: "native-same-signer-2" }),
+						);
+						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(nativeCommitSpy.callCount).equal(2);
+						expect(graphLatestTransactionSpy.callCount).equal(2);
+						expect(fallbackAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal(
+							"native-same-signer-2",
+						);
+					} finally {
+						graphLatestTransactionSpy.restore();
+						nativeCommitSpy.restore();
+						fallbackAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("reuses cached native projection plans for strict native update puts", async () => {
 					@variant("strict_native_project_update_indexable")
 					class StrictNativeProjectUpdateIndexable {

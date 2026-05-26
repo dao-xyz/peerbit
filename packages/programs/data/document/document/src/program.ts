@@ -205,6 +205,10 @@ interface DocumentBackend<T> {
 
 type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	assertPlainPutSupported(doc: T, options?: DocumentPutOptions): void;
+	assertPlainPutPolicySupported(
+		doc: T,
+		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): MaybePromise<void>;
 	assertPlainPutManySupported(docs: T[], options?: DocumentPutOptions): void;
 	normalizePutOptions(
 		options: DocumentPutOptions | undefined,
@@ -218,6 +222,7 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	): Promise<
 		Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
 	>;
+	plainPutPolicyNeedsExistingContext(): boolean;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
@@ -289,34 +294,59 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		const putOptions = this.context.normalizePutOptions(options);
 		const prepared = this.context.preparePlainPut(doc);
 		const useNativeExistingDocumentContext = !putOptions?.unique;
-
-		return mapMaybePromise(
-			this.context.commitNativeDocumentAppend({
-				document: prepared.document,
-				key: prepared.key,
-				documentBytes: prepared.encodedDocument,
-				operationPayloadBytes: prepared.operationPayloadBytes,
-				next: [],
-				skipMissingNextJoin: true,
-				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
-				options: putOptions,
-				unique: putOptions?.unique,
-				useNativeExistingDocumentContext,
-			}),
-			(documentAppendCommit) =>
-				mapMaybePromise(
-					this.context.handlePreparedPlainPutCommit(documentAppendCommit),
-					() => {
-						this.context.keepEntry(documentAppendCommit.append.hash);
-						return {
-							get entry() {
-								return documentAppendCommit.entry;
-							},
-							removed: documentAppendCommit.removed,
-						};
-					},
+		const commit = () =>
+			mapMaybePromise(
+				this.context.commitNativeDocumentAppend({
+					document: prepared.document,
+					key: prepared.key,
+					documentBytes: prepared.encodedDocument,
+					operationPayloadBytes: prepared.operationPayloadBytes,
+					next: [],
+					skipMissingNextJoin: true,
+					resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
+					options: putOptions,
+					unique: putOptions?.unique,
+					useNativeExistingDocumentContext,
+				}),
+				(documentAppendCommit) =>
+					mapMaybePromise(
+						this.context.handlePreparedPlainPutCommit(documentAppendCommit),
+						() => {
+							this.context.keepEntry(documentAppendCommit.append.hash);
+							return {
+								get entry() {
+									return documentAppendCommit.entry;
+								},
+								removed: documentAppendCommit.removed,
+							};
+						},
+					),
+			);
+		const assertPolicyAndCommit = (
+			existingContext?:
+				| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+				| null,
+		) =>
+			mapMaybePromise(
+				this.context.assertPlainPutPolicySupported(
+					prepared.document,
+					existingContext,
 				),
-		);
+				commit,
+			);
+
+		if (
+			useNativeExistingDocumentContext &&
+			this.context.plainPutPolicyNeedsExistingContext()
+		) {
+			return this.context
+				.getLocalIndexedContexts([prepared.key])
+				.then((existingContexts) =>
+					assertPolicyAndCommit(existingContexts[0] ?? null),
+				);
+		}
+
+		return assertPolicyAndCommit();
 	}
 
 	async putMany(
@@ -718,6 +748,8 @@ export class Documents<
 			assertPlainPutSupported: (doc, options) => {
 				this.assertNativeModePlainPutSupported(doc, options);
 			},
+			assertPlainPutPolicySupported: (doc, existing) =>
+				this.assertNativeModePlainPutPolicySupported(doc, existing),
 			assertPlainPutManySupported: (docs, options) => {
 				this.assertNativeModePlainPutManySupported(docs, options);
 			},
@@ -727,6 +759,8 @@ export class Documents<
 			hasDuplicatePreparedPutKeys: (prepared) =>
 				this.hasDuplicatePreparedPutKeys(prepared),
 			getLocalIndexedContexts: (keys) => this.getLocalIndexedContexts(keys),
+			plainPutPolicyNeedsExistingContext: () =>
+				this.nativePlainPutPolicyNeedsPreviousEntries(),
 			shouldResolveTrimmedEntries: () => {
 				const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
 					? this._index.canGetIdentityIndexedByHead()
@@ -841,6 +875,15 @@ export class Documents<
 		);
 	}
 
+	private nativePlainPutPolicyNeedsPreviousEntries(): boolean {
+		return (
+			!!this._optionCanPerformNativePolicy &&
+			nativeCanPerformPolicyNeedsPreviousEntries(
+				this._optionCanPerformNativePolicy,
+			)
+		);
+	}
+
 	private unsupportedNativePutOptions(
 		options: DocumentPutOptions | undefined,
 	): string[] {
@@ -916,10 +959,115 @@ export class Documents<
 		if (unsupported.length > 0) {
 			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
 		}
-		if (!this.canPerformAllowsPlainPutFastPath(doc)) {
-			throw this.nativeModeError("canPerform policy rejected this document");
-		}
 		return true;
+	}
+
+	private assertNativeModePlainPutPolicySupported(
+		doc: T,
+		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): MaybePromise<void> {
+		return mapMaybePromise(
+			this.canPerformAllowsNativePlainPut(doc, existing),
+			(allowed) => {
+				if (!allowed) {
+					throw this.nativeModeError("canPerform policy rejected this document");
+				}
+			},
+		);
+	}
+
+	private canPerformAllowsNativePlainPut(
+		doc: T,
+		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): MaybePromise<boolean> {
+		if (!this._optionCanPerform) {
+			return true;
+		}
+		if (!this._optionCanPerformNativePolicy) {
+			return false;
+		}
+		if (!this.nativePlainPutPolicyNeedsPreviousEntries()) {
+			return this.canPerformAllowsPlainPutFastPath(doc);
+		}
+		const previousEntries: Entry<Operation>[] = [];
+		const existingHead = this.getExistingContext(existing)?.head;
+		if (existingHead) {
+			return mapMaybePromise(
+				this._resolveEntry(existingHead, {
+					remote: true,
+				}),
+				(previousEntry) => {
+					if (previousEntry) {
+						previousEntries.push(previousEntry);
+					}
+					return this.nativePutPolicyAllows(
+						this._optionCanPerformNativePolicy!,
+						doc,
+						previousEntries,
+					);
+				},
+			);
+		}
+		return this.nativePutPolicyAllows(
+			this._optionCanPerformNativePolicy,
+			doc,
+			previousEntries,
+		);
+	}
+
+	private async nativePutPolicyAllows(
+		descriptor: NativeCanPerformPolicyDescriptor,
+		doc: T,
+		previousEntries: Entry<Operation>[],
+	): Promise<boolean> {
+		switch (descriptor.kind) {
+			case "allowAll":
+			case "signedByPublicKey":
+			case "signedByField":
+				return createNativeFastPathCanPerformPolicyEvaluator(
+					descriptor,
+					this.log.log.identity.publicKey,
+				)(doc);
+			case "put":
+				return this.nativePutPolicyAllows(
+					descriptor.policy,
+					doc,
+					previousEntries,
+				);
+			case "delete":
+			case "deleteSignedByExistingField":
+				return false;
+			case "sameSignersAsPrevious": {
+				if (previousEntries.length === 0) {
+					return true;
+				}
+				const localPublicKey = this.log.log.identity.publicKey;
+				for (const previousEntry of previousEntries) {
+					const publicKeys = await previousEntry.getPublicKeys();
+					if (
+						publicKeys.length !== 1 ||
+						!publicKeys[0]!.equals(localPublicKey)
+					) {
+						return false;
+					}
+				}
+				return true;
+			}
+			case "and":
+				for (const policy of descriptor.policies) {
+					if (!(await this.nativePutPolicyAllows(policy, doc, previousEntries))) {
+						return false;
+					}
+				}
+				return true;
+			case "or":
+				for (const policy of descriptor.policies) {
+					if (await this.nativePutPolicyAllows(policy, doc, previousEntries)) {
+						return true;
+					}
+				}
+				return false;
+		}
 	}
 
 	private assertNativeModePlainPutManySupported(
