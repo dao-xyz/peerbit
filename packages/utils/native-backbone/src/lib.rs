@@ -6808,18 +6808,15 @@ impl NativePeerbitBackbone {
         if heads.is_empty() {
             return false;
         }
-        let field = self.document_context_head_field;
-        let mut deleted = false;
+        let Some(field) = self.document_context_head_field else {
+            return false;
+        };
         for head in heads {
             if let Some(key) = self.document_key_by_head.remove(head) {
                 self.document_index.delete_id_lazy(&key);
                 self.document_values.delete(&key);
-                deleted = true;
                 continue;
             }
-            let Some(field) = field else {
-                continue;
-            };
             if let Some(key) = self
                 .document_index
                 .exact_first(&FieldPath::Id(field), &FieldValue::from(head.clone()))
@@ -6827,10 +6824,9 @@ impl NativePeerbitBackbone {
                 self.document_key_by_head.remove(head);
                 self.document_index.delete_id_lazy(&key);
                 self.document_values.delete(&key);
-                deleted = true;
             }
         }
-        deleted
+        true
     }
 }
 

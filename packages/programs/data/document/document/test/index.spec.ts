@@ -2730,6 +2730,52 @@ describe("index", () => {
 					}
 				});
 
+				it("skips JS trim fallback for strict native update trims", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					const removedHashesSpy = sinon.spy(
+						store.docs as any,
+						"tryHandlePreparedPlainPutCommitRemovedHashesFromHeads",
+					);
+					const removedEntriesSpy = sinon.spy(
+						store.docs as any,
+						"tryHandlePreparedPlainPutCommitRemovedFromHeads",
+					);
+					try {
+						const id = uuid();
+						await store.docs.put(new Document({ id, name: "native-trim-1" }));
+						await store.docs.put(new Document({ id, name: "native-trim-2" }));
+						expect(removedHashesSpy.callCount).equal(0);
+						expect(removedEntriesSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal("native-trim-2");
+					} finally {
+						removedEntriesSpy.restore();
+						removedHashesSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("supports strict native same-signer update policies", async () => {
 					const rustSession = await TestSession.connected(
 						1,
