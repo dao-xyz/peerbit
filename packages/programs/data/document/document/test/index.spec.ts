@@ -3593,7 +3593,7 @@ describe("index", () => {
 					);
 					const storedIdentityBatchSpy = sinon.spy(
 						store.docs.index,
-						"_putManyStoredIdentityWithContext",
+						"_putManyStoredIdentityEncodedParts",
 					);
 					try {
 						const docs = [

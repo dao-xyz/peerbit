@@ -1221,6 +1221,79 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("coalesces stored contextual encoded batches through the native backbone hook", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			attachNativeBackboneDocumentIndex: (backbone: unknown) => boolean;
+			putStoredContextualEncodedValueBatch: (
+				values: Array<{
+					id: ReturnType<typeof toId>;
+					encodedValueParts: { prefix: Uint8Array; suffix: Uint8Array };
+				}>,
+			) => Promise<boolean>;
+		};
+		let batchCalls = 0;
+		let singleCalls = 0;
+		let batchKeys: string[] = [];
+		const backbone = {
+			documentIndexLength: 0,
+			configureDocumentSchemaIr: () => ({
+				rootFields: 0,
+				nodeCount: 0,
+				genericNodes: 0,
+			}),
+			setDocumentContextHeadField: () => {},
+			setDocumentContextFields: () => {},
+			clearDocumentIndex: () => {},
+			putDocumentEncodedPartsStored: () => {
+				singleCalls++;
+			},
+			putDocumentEncodedPartsStoredBatch: (
+				values: Array<{ key: string }>,
+			) => {
+				batchCalls++;
+				batchKeys = values.map((value) => value.key);
+			},
+			documentEntry: () => undefined,
+			documentQuery: () => [],
+			documentQueryPage: () => [],
+			documentCount: () => 0,
+			documentSum: () => ["none", "0"] as const,
+			deleteDocument: () => false,
+		};
+		expect(contextualIndex.attachNativeBackboneDocumentIndex(backbone)).equal(
+			true,
+		);
+
+		const first = new BridgeDocument("a", "peerbit", "first");
+		const second = new BridgeDocument("b", "peerbit", "second");
+		const stored = await contextualIndex.putStoredContextualEncodedValueBatch([
+			{
+				id: toId("a"),
+				encodedValueParts: {
+					prefix: serialize(first),
+					suffix: serialize(new BridgeContext("head-a")),
+				},
+			},
+			{
+				id: toId("b"),
+				encodedValueParts: {
+					prefix: serialize(second),
+					suffix: serialize(new BridgeContext("head-b")),
+				},
+			},
+		]);
+
+		expect(stored).equal(true);
+		expect(batchCalls).equal(1);
+		expect(singleCalls).equal(0);
+		expect(batchKeys).to.deep.equal(["string:a", "string:b"]);
+
+		await indices.drop();
+	});
+
 	it("keeps exact byte matching for large byte arrays without indexing every byte by default", async () => {
 		const indices = create();
 		await indices.start();

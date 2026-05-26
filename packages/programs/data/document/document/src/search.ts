@@ -906,6 +906,16 @@ type ContextualIndexPut<I> = {
 		},
 		options?: { replace?: boolean },
 	) => Promise<void> | void | false;
+	putStoredContextualEncodedValueBatch?: (
+		values: Array<{
+			id: indexerTypes.IdKey;
+			encodedValueParts: {
+				prefix: Uint8Array;
+				suffix: Uint8Array;
+			};
+			options?: { replace?: boolean };
+		}>,
+	) => Promise<boolean> | boolean;
 	putWithContextBatch?: (
 		values: Array<{
 			value: I;
@@ -2495,11 +2505,10 @@ export class DocumentIndex<
 		}
 	}
 
-	public async _putManyStoredIdentityWithContext(
+	public async _putManyStoredIdentityEncodedParts(
 		values: Array<{
 			value: T;
 			id: indexerTypes.IdKey;
-			context: types.Context;
 			encodedValueParts: NonNullable<ContextualPutOptions["encodedValueParts"]>;
 			options?: { replace?: boolean };
 		}>,
@@ -2507,11 +2516,8 @@ export class DocumentIndex<
 		if (values.length === 0) {
 			return true;
 		}
-		const contextualBatchPut = this.transformerIsIdentity
-			? (this.index as ContextualIndexPut<I>).putWithContextBatch
-			: undefined;
 		if (
-			!contextualBatchPut ||
+			!this.transformerIsIdentity ||
 			this.isProgramValued ||
 			!this.indexedTypeIsDocumentType
 		) {
@@ -2526,22 +2532,13 @@ export class DocumentIndex<
 			}
 			throw error;
 		};
+		const storedBatchPut = (this.index as ContextualIndexPut<I>)
+			.putStoredContextualEncodedValueBatch;
+		if (!storedBatchPut) {
+			return;
+		}
 		try {
-			const putResult = contextualBatchPut.call(
-				this.index,
-				values.map((item) => ({
-					value: item.value as any as I,
-					id: item.id,
-					context: item.context,
-					options: {
-						replace: item.options?.replace,
-						encodedValueParts: item.encodedValueParts,
-					},
-				})),
-			);
-			return isPromiseLike(putResult)
-				? putResult.then(() => true, handleError)
-				: true;
+			return await storedBatchPut.call(this.index, values);
 		} catch (error) {
 			return handleError(error);
 		}

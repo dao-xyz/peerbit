@@ -4518,6 +4518,19 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.putWithEncodedValuePartsStored(id, encodedValueParts);
 	}
 
+	putStoredContextualEncodedValueBatch(
+		values: Array<{
+			id: types.IdKey;
+			encodedValueParts: NativeEncodedValueParts;
+		}>,
+	): Promise<boolean> {
+		if (this.isClosing()) {
+			return Promise.resolve(true);
+		}
+		this.assertOpen();
+		return this.putWithEncodedValuePartsStoredBatch(values);
+	}
+
 	private async putWithEncodedValuePartsStoredBatch(
 		values: Array<{
 			id: types.IdKey;

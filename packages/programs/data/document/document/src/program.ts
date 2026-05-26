@@ -3433,14 +3433,13 @@ export class Documents<
 			!this.hasDocumentChangeConsumers() &&
 			commit.removed.length === 0
 		) {
-			const stored = await this._index._putManyStoredIdentityWithContext(
+			const stored = await this._index._putManyStoredIdentityEncodedParts(
 				commit.commits.map((put) => {
 					const existing =
 						put.unique || put.existing === null ? null : put.existing;
 					return {
 						value: put.document,
 						id: put.key,
-						context: put.context,
 						encodedValueParts: put.contextualEncodedValueParts,
 						options: {
 							replace: existing != null,
