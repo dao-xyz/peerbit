@@ -4229,39 +4229,41 @@ testSetups.forEach((setup) => {
 					});
 					const expectedAmountOfEntriesToPrune = entryCount * newFactor;
 
-					await waitForResolved(
-						async () => {
-							expect(db2.log.log.length).to.be.closeTo(
-								entryCount - expectedAmountOfEntriesToPrune,
-								30,
-							);
+					await waitForResolved(async () => {
+						expect(db2.log.log.length).to.be.closeTo(
+							entryCount - expectedAmountOfEntriesToPrune,
+							30,
+						);
 
-							// TODO reenable expect(onMessage1.callCount).equal(2); // two messages (the updated range) and request for pruning
+						// TODO reenable expect(onMessage1.callCount).equal(2); // two messages (the updated range) and request for pruning
 							// Rebalance now includes additional safety passes for repair seeding, so
 							// this budget is intentionally conservative while still catching runaway loops.
 							expect(findLeaders1.callCount).to.be.lessThan(entryCount * 6);
 							expect(findLeaders2.callCount).to.be.lessThan(entryCount * 6);
-						},
-						{ timeout: 60_000, delayInterval: 250 },
-					);
+						/* 
+						TODO stricter boundes like below
+						expect(findLeaders1.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + prune about 50% of the entries
+						expect(findLeaders2.callCount).to.closeTo(prunedEntries * 2, 30); // redistribute + handle prune requests 
+						*/
+					});
 
-					// we do below separetly because this will interefere with the callCounts above
-					await waitForResolved(async () =>
-						expect(await db2.log.getPrunable()).to.length(0),
-					);
+						// we do below separetly because this will interefere with the callCounts above
+						await waitForResolved(async () =>
+							expect(await db2.log.getPrunable()).to.length(0),
+						);
 
-					// Other background control traffic (e.g. replication-info snapshots) can arrive
-					// during this test. Assert that we saw both a replication-range update and a
-					// prune request, without depending on call order.
-					const received = onMessage1.getCalls().map((c) => c.args[0]);
-					expect(
-						received.some(
-							(m) =>
-								m instanceof AddedReplicationSegmentMessage ||
-								m instanceof AllReplicatingSegmentsMessage,
-						),
-					).to.equal(true);
-					expect(received.some((m) => m instanceof RequestIPrune)).to.equal(true);
+						// Other background control traffic (e.g. replication-info snapshots) can arrive
+						// during this test. Assert that we saw both a replication-range update and a
+						// prune request, without depending on call order.
+						const received = onMessage1.getCalls().map((c) => c.args[0]);
+						expect(
+							received.some(
+								(m) =>
+									m instanceof AddedReplicationSegmentMessage ||
+									m instanceof AllReplicatingSegmentsMessage,
+							),
+						).to.equal(true);
+						expect(received.some((m) => m instanceof RequestIPrune)).to.equal(true);
 					/* const entryRefs1 = await db1.log.entryCoordinatesIndex.iterate().all();
 					const entryRefs2 = await db2.log.entryCoordinatesIndex.iterate().all();
 		
