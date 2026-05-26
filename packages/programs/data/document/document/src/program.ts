@@ -2182,13 +2182,20 @@ export class Documents<
 			return false;
 		};
 
+		let initialized = false;
+		const ensureInitialized = () => {
+			if (!initialized) {
+				entry.init({
+					encoding: this.log.log.encoding,
+					keychain: this.node.services.keychain,
+				});
+				initialized = true;
+			}
+		};
 		try {
-			entry.init({
-				encoding: this.log.log.encoding,
-				keychain: this.node.services.keychain,
-			});
 			const operation =
-				reference?.operation || (await this.getAppendOperation(entry));
+				reference?.operation ||
+				(await this.getAppendOperation(entry, ensureInitialized));
 			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
@@ -2304,13 +2311,17 @@ export class Documents<
 		}
 	}
 
-	private async getAppendOperation(entry: Entry<Operation>): Promise<Operation> {
+	private async getAppendOperation(
+		entry: Entry<Operation>,
+		ensureInitialized?: () => void,
+	): Promise<Operation> {
 		if (this.isNativeMode()) {
 			const operation = await this.getPlainEntryOperationFromStorage(entry);
 			if (operation) {
 				return operation;
 			}
 		}
+		ensureInitialized?.();
 		return entry.getPayloadValue();
 	}
 
@@ -2319,7 +2330,8 @@ export class Documents<
 	): Promise<Operation | undefined> {
 		let storageBytes: Uint8Array;
 		try {
-			storageBytes = entry.getStorageBytes();
+			storageBytes =
+				Entry.getPreparedStorageBytes(entry) ?? entry.getStorageBytes();
 		} catch {
 			return;
 		}

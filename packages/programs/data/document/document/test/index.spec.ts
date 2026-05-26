@@ -3141,24 +3141,22 @@ describe("index", () => {
 						const second = await store.docs.put(
 							new Document({ id, name: "native-same-signer-replay-2" }),
 						);
-						const rawStorage = await store.docs.log.log.blocks.get(
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							store.docs.log.log.blocks,
 							second.entry.hash,
 						);
-						expect(rawStorage).to.be.instanceOf(Uint8Array);
-						const getPayloadValueSpy = sinon.spy(async () => {
-							throw new Error("Unexpected payload materialization");
-						});
-						const rawEntry = {
-							hash: second.entry.hash,
-							meta: second.entry.meta,
-							init: () => rawEntry,
-							getStorageBytes: () => rawStorage as Uint8Array,
-							getPayloadValue: getPayloadValueSpy,
-						};
+						expect(Entry.getPreparedStorageBytes(replayEntry)).to.be.instanceOf(
+							Uint8Array,
+						);
+						const getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
 						resolveEntrySpy.resetHistory();
 						nativeSignerBatchSpy.resetHistory();
 
-						expect(await (store.docs as any).canAppend(rawEntry)).equal(true);
+						expect(await (store.docs as any).canAppend(replayEntry)).equal(true);
 						expect(nativeSignerBatchSpy.callCount).equal(1);
 						expect(resolveEntrySpy.callCount).equal(0);
 						expect(getPayloadValueSpy.callCount).equal(0);
@@ -3169,12 +3167,15 @@ describe("index", () => {
 							.stub(store.docs as any, "getNativeEntrySignerPublicKeys")
 							.returns([undefined]);
 						try {
-							expect(await (store.docs as any).canAppend(rawEntry)).equal(false);
+							expect(await (store.docs as any).canAppend(replayEntry)).equal(
+								false,
+							);
 							expect(resolveEntrySpy.callCount).equal(0);
 							expect(getPayloadValueSpy.callCount).equal(0);
 						} finally {
 							missingNativeSignerStub.restore();
 						}
+						getPayloadValueSpy.restore();
 					} finally {
 						if (!nativeSignerBatchRestored) {
 							nativeSignerBatchSpy.restore();
