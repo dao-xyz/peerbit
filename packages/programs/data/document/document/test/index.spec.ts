@@ -4167,6 +4167,9 @@ describe("index", () => {
 						store.docs as any,
 						"commitNativeDocumentAppendMany",
 					);
+					const batchSupportStub = sinon
+						.stub(store.docs.index, "canUseNativeBackboneContextualBatch")
+						.returns(false);
 					const strictAppendSpy = sinon.spy(
 						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
@@ -4187,6 +4190,7 @@ describe("index", () => {
 							appended.entries[0]!.hash,
 						]);
 						expect(sequentialSpy.callCount).equal(0);
+						expect(batchSupportStub.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(0);
 						expect(strictAppendSpy.callCount).equal(2);
 						expect(genericAppendSpy.callCount).equal(0);
@@ -4194,6 +4198,7 @@ describe("index", () => {
 					} finally {
 						genericAppendSpy.restore();
 						strictAppendSpy.restore();
+						batchSupportStub.restore();
 						nativeBatchSpy.restore();
 						sequentialSpy.restore();
 						await rustSession.stop();

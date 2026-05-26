@@ -441,7 +441,9 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 			return { entries: [], removed: [] };
 		}
 		const putOptions = this.context.normalizePutOptions(options);
-		this.context.assertPlainPutManySupported(docs, putOptions);
+		for (const doc of docs) {
+			this.context.assertPlainPutSupported(doc, putOptions);
+		}
 		const prepared = docs.map((doc) => this.context.preparePlainPut(doc));
 		if (this.context.hasDuplicatePreparedPutKeys(prepared)) {
 			const results: DocumentPutResult[] = [];
@@ -456,6 +458,7 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				removed: results.flatMap((result) => result.removed),
 			};
 		}
+		this.context.assertPlainPutManySupported(docs, putOptions);
 		let existingContexts:
 			| Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
 			| undefined;
