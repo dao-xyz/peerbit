@@ -41,6 +41,7 @@ import {
 //   Add "-local" to a rust-peerbit scenario to disable replication and default trim.
 //   Add "-trim" to a local rust-peerbit scenario to keep length trim enabled.
 //   Add "-no-trim" to any rust-peerbit scenario to disable length trim.
+//   Add "-trim-from-200" to any trimmed rust-peerbit scenario to trim to 100 only after length reaches 200.
 //   Add "-putmany" to any scenario name to use one putMany call per measured batch.
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
 //   Add "-direct" to a coordinate-WAL rust-peerbit-backbone scenario to use the direct Node coordinate persistence adapter.
@@ -96,7 +97,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|direct|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|policy-put-same-signer|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
+		/(?:-(?:putmany|nonunique|update|local|no-trim|trim-from-200|trim|buffered|direct|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|policy-put-same-signer|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -108,6 +109,12 @@ const scenarioUsesLocalStore = (name: string) =>
 const scenarioDisablesTrim = (name: string) => name.includes("-no-trim");
 const scenarioUsesTrim = (name: string) =>
 	name.includes("-trim") && !scenarioDisablesTrim(name);
+const scenarioUsesTrimHysteresis = (name: string) =>
+	name.includes("-trim-from-200");
+const scenarioTrimOptions = (name: string) =>
+	scenarioUsesTrimHysteresis(name)
+		? ({ type: "length", to: 100, from: 200 } as const)
+		: ({ type: "length", to: 100 } as const);
 const scenarioUsesCoordinateWal = (name: string) =>
 	name.includes("-coordinate-wal");
 const scenarioUsesBufferedCoordinateWal = (name: string) =>
@@ -874,7 +881,7 @@ const openScenario = async (name: string) => {
 					? {}
 					: {
 							log: {
-								trim: { type: "length" as const, to: 100 },
+								trim: scenarioTrimOptions(name),
 							},
 						}),
 			},
