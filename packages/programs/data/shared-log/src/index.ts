@@ -5563,9 +5563,12 @@ export class SharedLog<
 			payloadData: Uint8Array;
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
 		};
 		nativeCommitProperties.skipMissingNextJoin =
 			properties?.skipMissingNextJoin;
+		nativeCommitProperties.retainMaterializationBytes =
+			this._logProperties?.trim != null;
 		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
 			undefined as T,
 			appendOptions,
@@ -5595,7 +5598,7 @@ export class SharedLog<
 				}
 				const useLatestDocumentContext =
 					properties?.useNativeExistingDocumentContext === true;
-				return backbone.graph.prepareEntryV0PlainEntryCommit(
+				const prepared = backbone.graph.prepareEntryV0PlainEntryCommit(
 					{
 						...input,
 						next,
@@ -5615,6 +5618,17 @@ export class SharedLog<
 					},
 					backbone.blocks,
 				);
+				if (
+					prepared &&
+					!prepared.bytes &&
+					this.remoteBlocks?.localStore === backbone.blocks
+				) {
+					return {
+						...prepared,
+						getBytes: (hash: string) => backbone.blocks.get(hash),
+					};
+				}
+				return prepared;
 			},
 		);
 		if (!result) {
@@ -5842,6 +5856,8 @@ export class SharedLog<
 						payloadData,
 						resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 						skipMissingNextJoin: properties?.skipMissingNextJoin,
+						retainMaterializationBytes:
+							this._logProperties?.trim != null,
 					},
 					prepareBackboneAppend,
 				);
@@ -5852,6 +5868,8 @@ export class SharedLog<
 						{
 							payloadData,
 							resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+							retainMaterializationBytes:
+								this._logProperties?.trim != null,
 						},
 						prepareBackboneAppend,
 					)

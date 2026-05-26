@@ -285,6 +285,7 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 		| undefined;
 	plainPutPolicyNeedsExistingContext(): boolean;
 	shouldResolveTrimmedEntries(): boolean;
+	shouldMaterializePutResultEntry(): boolean;
 	commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
 	): MaybePromise<NativeDocumentAppendTransaction<T, I>>;
@@ -373,10 +374,14 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 					mapMaybePromise(
 						this.context.handlePreparedPlainPutCommit(documentAppendCommit),
 						() => {
+							const retainedEntry =
+								this.context.shouldMaterializePutResultEntry()
+									? documentAppendCommit.entry
+									: undefined;
 							this.context.keepEntry(documentAppendCommit.append.hash);
 							return {
 								get entry() {
-									return documentAppendCommit.entry;
+									return retainedEntry ?? documentAppendCommit.entry;
 								},
 								removed: documentAppendCommit.removed,
 							};
@@ -857,6 +862,7 @@ export class Documents<
 	private _documentInternalChangeListenerCount = 0;
 	private _documentChangeListenerTrackingInitialized = false;
 	private _documentBackend!: DocumentBackend<T>;
+	private _hasLogTrim = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
@@ -930,11 +936,9 @@ export class Documents<
 			plainPutPolicyNeedsExistingContext: () =>
 				this.nativePlainPutPolicyNeedsPreviousEntries(),
 			shouldResolveTrimmedEntries: () => {
-				const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
-					? this._index.canGetIdentityIndexedByHead()
-					: this._index.canGetIndexedKeyByHead();
-				return !canCleanupTrimmedHeads;
+				return !this._index.canGetIndexedKeyByHead();
 			},
+			shouldMaterializePutResultEntry: () => this._hasLogTrim,
 			commitNativeDocumentAppend: (input) =>
 				this.commitNativeDocumentAppend(input),
 			commitNativeDocumentAppendMany: (input) =>
@@ -1767,6 +1771,7 @@ export class Documents<
 		this.idResolver = idResolver;
 		this.compatibility = options.compatibility;
 		this.strictHistory = options.strictHistory ?? false;
+		this._hasLogTrim = options.log?.trim != null;
 
 		const changeListenersBeforeIndexOpen = this._documentChangeListenerCount;
 		await this._index.open({
@@ -2491,9 +2496,7 @@ export class Documents<
 				? [indexedContextNext]
 				: [await this._resolveEntry(existingHead)]
 			: [];
-		const canCleanupTrimmedHeads = this.hasDocumentChangeConsumers()
-			? this._index.canGetIdentityIndexedByHead()
-			: this._index.canGetIndexedKeyByHead();
+		const canCleanupTrimmedHeads = this._index.canGetIndexedKeyByHead();
 		return {
 			document: prepared.document,
 			encodedDocument: prepared.encodedDocument,

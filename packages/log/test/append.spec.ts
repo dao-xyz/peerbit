@@ -682,6 +682,7 @@ describe("append", function () {
 			expect(second.removed.map((entry: any) => entry.hash)).to.deep.equal([
 				first.appendFacts.hash,
 			]);
+			expect(first.entry.hash).equal(first.appendFacts.hash);
 			expect(getNextsForAppendSpy.callCount).equal(0);
 			expect(nativePrepareAndPutSpy.callCount).equal(2);
 			expect(nativePrepareAndPutSpy.secondCall.args[0].trimLengthTo).equal(1);

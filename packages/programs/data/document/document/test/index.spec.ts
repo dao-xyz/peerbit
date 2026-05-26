@@ -3861,7 +3861,7 @@ describe("index", () => {
 					}
 				});
 
-				it("uses native head keys for descriptor trim change cleanup", async () => {
+				it("uses native head keys for strict native descriptor trim change cleanup", async () => {
 					@variant("strict_native_trim_pick_indexable")
 					class StrictNativeTrimPickIndexable {
 						@field({ type: "string" })
@@ -3886,6 +3886,7 @@ describe("index", () => {
 					store = localStore as any;
 					await rustSession.peers[0].open(localStore, {
 						args: {
+							mode: "native",
 							replicate: false,
 							nativeGraph: true,
 							nativeBackbone: nativeBackboneDocumentIndexOptions(),

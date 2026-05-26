@@ -1024,6 +1024,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
@@ -1053,6 +1054,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
@@ -1102,6 +1104,7 @@ export class Log<T> {
 		properties: {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
+			retainMaterializationBytes?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
@@ -1159,6 +1162,28 @@ export class Log<T> {
 			if (!hash) {
 				return undefined;
 			}
+			const shouldRetainMaterializationBytes =
+				properties.retainMaterializationBytes === true ||
+				!!(options.trim ?? this._trim.options);
+			let retainedMaterializationBytes: Uint8Array | undefined;
+			const retainMaterializationBytes = () => {
+				if (
+					retainedMaterializationBytes ||
+					!shouldRetainMaterializationBytes ||
+					prepared.bytes
+				) {
+					return;
+				}
+				const bytes =
+					prepared.getBytes?.(hash) ??
+					(this._storage.get(hash) as Uint8Array | undefined);
+				if (
+					bytes &&
+					typeof (bytes as { then?: unknown }).then !== "function"
+				) {
+					retainedMaterializationBytes = bytes;
+				}
+			};
 			const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
 			const effectiveGid = prepared.gid ?? resolvedGid;
 			let clock: Clock | undefined;
@@ -1201,6 +1226,7 @@ export class Log<T> {
 				}
 				const bytes =
 					prepared.bytes ??
+					retainedMaterializationBytes ??
 					prepared.getBytes?.(hash) ??
 					(this._storage.get(hash) as Uint8Array | undefined);
 				if (
@@ -1218,22 +1244,26 @@ export class Log<T> {
 				materializedEntry = entry;
 				return entry;
 			};
-			const finish = (): PreparedCommitOnlyAppendResult<T> => ({
-				get entry() {
-					return materializeEntry();
-				},
-				materializeEntry,
-				removed: [],
-				appendFacts,
-				get shallowEntry() {
-					return getShallowEntry();
-				},
-				documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
-				documentPreviousContext: prepared.documentPreviousContext,
-			});
+			const finish = (): PreparedCommitOnlyAppendResult<T> => {
+				retainMaterializationBytes();
+				return {
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed: [],
+					appendFacts,
+					get shallowEntry() {
+						return getShallowEntry();
+					},
+					documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
+					documentPreviousContext: prepared.documentPreviousContext,
+				};
+			};
 			const finishTrim = ():
 				| PreparedCommitOnlyAppendResult<T>
 				| Promise<PreparedCommitOnlyAppendResult<T>> => {
+				retainMaterializationBytes();
 				if (prepared.trimmedEntryHashes) {
 					if (prepared.trimmedEntryHashes.length === 0) {
 						return finish();
@@ -1366,6 +1396,7 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 			knownNoNext?: boolean;
+			retainMaterializationBytes?: boolean;
 		},
 		prepare: (
 			input: NativeCommitInput,
@@ -1469,6 +1500,27 @@ export class Log<T> {
 					if (!hash) {
 						return undefined;
 					}
+					const shouldRetainMaterializationBytes =
+						properties.retainMaterializationBytes === true || !!resolvedTrim;
+					let retainedMaterializationBytes: Uint8Array | undefined;
+					const retainMaterializationBytes = () => {
+						if (
+							retainedMaterializationBytes ||
+							!shouldRetainMaterializationBytes ||
+							prepared.bytes
+						) {
+							return;
+						}
+						const bytes =
+							prepared.getBytes?.(hash) ??
+							(this._storage.get(hash) as Uint8Array | undefined);
+						if (
+							bytes &&
+							typeof (bytes as { then?: unknown }).then !== "function"
+						) {
+							retainedMaterializationBytes = bytes;
+						}
+					};
 					const effectiveNextHashes = prepared.next ?? nextHashes;
 					const effectiveGid = prepared.gid ?? resolvedGid;
 					const shallowEntry = new ShallowEntry({
@@ -1503,6 +1555,7 @@ export class Log<T> {
 						}
 						const bytes =
 							prepared.bytes ??
+							retainedMaterializationBytes ??
 							prepared.getBytes?.(hash) ??
 							(this._storage.get(hash) as Uint8Array | undefined);
 						if (
@@ -1520,18 +1573,21 @@ export class Log<T> {
 						materializedEntry = entry;
 						return entry;
 					};
-					const finish = (): PreparedCommitOnlyAppendResult<T> => ({
-						get entry() {
-							return materializeEntry();
-						},
-						materializeEntry,
-						removed: [],
-						appendFacts,
-						shallowEntry,
-						documentTrimmedHeadsProcessed:
-							prepared.documentTrimmedHeadsProcessed,
-						documentPreviousContext: prepared.documentPreviousContext,
-					});
+					const finish = (): PreparedCommitOnlyAppendResult<T> => {
+						retainMaterializationBytes();
+						return {
+							get entry() {
+								return materializeEntry();
+							},
+							materializeEntry,
+							removed: [],
+							appendFacts,
+							shallowEntry,
+							documentTrimmedHeadsProcessed:
+								prepared.documentTrimmedHeadsProcessed,
+							documentPreviousContext: prepared.documentPreviousContext,
+						};
+					};
 					const finishBlocks = ():
 						| PreparedCommitOnlyAppendResult<T>
 						| Promise<PreparedCommitOnlyAppendResult<T>> => {
@@ -1548,6 +1604,7 @@ export class Log<T> {
 					const finishTrim = ():
 						| PreparedCommitOnlyAppendResult<T>
 						| Promise<PreparedCommitOnlyAppendResult<T>> => {
+						retainMaterializationBytes();
 						if (prepared.trimmedEntryHashes) {
 							if (prepared.trimmedEntryHashes.length === 0) {
 								return finish();
