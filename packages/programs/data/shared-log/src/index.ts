@@ -5577,6 +5577,15 @@ export class SharedLog<
 						gid: input.gid,
 						payloadSize: input.payloadData.byteLength,
 					});
+				const nativeBackboneDocumentIndexForAppend =
+					nativeBackboneDocumentIndex &&
+					input.trimLengthTo == null &&
+					nativeBackboneDocumentIndex.deleteTrimmedHeads === true
+						? {
+								...nativeBackboneDocumentIndex,
+								deleteTrimmedHeads: false,
+							}
+						: nativeBackboneDocumentIndex;
 				if (nativeBackboneDocumentIndex) {
 					nativeBackboneDocumentIndexCommitted = true;
 					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
@@ -5590,10 +5599,10 @@ export class SharedLog<
 						includeMaterializationBytes: false,
 						includeAppendFactsBytes: true,
 						trimLengthTo: input.trimLengthTo,
-						...(nativeBackboneDocumentIndex
+						...(nativeBackboneDocumentIndexForAppend
 							? {
 									documentIndex: {
-										...nativeBackboneDocumentIndex,
+										...nativeBackboneDocumentIndexForAppend,
 										...(useLatestDocumentContext
 											? { useLatestContext: true }
 											: {}),
@@ -5737,11 +5746,20 @@ export class SharedLog<
 						gid: input.gid,
 						payloadSize: input.payloadData.byteLength,
 					});
-				const appendInputWithDocumentIndex = nativeBackboneDocumentIndex
+				const nativeBackboneDocumentIndexForAppend =
+					nativeBackboneDocumentIndex &&
+					input.trimLengthTo == null &&
+					nativeBackboneDocumentIndex.deleteTrimmedHeads === true
+						? {
+								...nativeBackboneDocumentIndex,
+								deleteTrimmedHeads: false,
+							}
+						: nativeBackboneDocumentIndex;
+				const appendInputWithDocumentIndex = nativeBackboneDocumentIndexForAppend
 					? {
 							...appendInput,
 							documentIndex: {
-								...nativeBackboneDocumentIndex,
+								...nativeBackboneDocumentIndexForAppend,
 								useLatestContext:
 									properties?.useNativeExistingDocumentContext === true,
 							},
@@ -5765,7 +5783,7 @@ export class SharedLog<
 								backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
 									{
 										...appendInput,
-										documentIndex: nativeBackboneDocumentIndex,
+										documentIndex: nativeBackboneDocumentIndexForAppend,
 									},
 								);
 						} else {
@@ -6404,6 +6422,8 @@ export class SharedLog<
 					allowPreparedNexts: usesLatestDocumentContext,
 				},
 				(inputs) => {
+					const documentDeleteTrimmedHeadsForAppend =
+						deleteTrimmedHeads && inputs[0]?.trimLengthTo != null;
 					backboneAppends =
 						usesLatestDocumentContext
 							? backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
@@ -6426,7 +6446,8 @@ export class SharedLog<
 											properties?.resolveTrimmedEntries,
 										documentByteElementIndexLimit:
 											byteElementIndexLimit,
-										documentDeleteTrimmedHeads: deleteTrimmedHeads,
+										documentDeleteTrimmedHeads:
+											documentDeleteTrimmedHeadsForAppend,
 										trimLengthTo: inputs[0]?.trimLengthTo,
 									},
 								)
@@ -6448,7 +6469,8 @@ export class SharedLog<
 										selfReplicating: nativeLeaderOptions.selfReplicating,
 										documentByteElementIndexLimit:
 											byteElementIndexLimit,
-										documentDeleteTrimmedHeads: deleteTrimmedHeads,
+										documentDeleteTrimmedHeads:
+											documentDeleteTrimmedHeadsForAppend,
 										trimLengthTo: inputs[0]?.trimLengthTo,
 									},
 								);
