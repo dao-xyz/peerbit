@@ -2737,6 +2737,48 @@ describe("native peerbit backbone", () => {
 		expect(directory.asyncWritableCount).to.equal(0);
 	});
 
+	it("uses buffered coordinate persistence with OPFS stores", async () => {
+		const directory = new FakeOPFSDirectoryHandle(true);
+		const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+			directory,
+		);
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			opfsStore,
+			{ flushMaxPendingBytes: 1024 },
+		);
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const beforeClose = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const afterClose = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		await persistence.hydrate(source);
+		source.putEntryCoordinates("hash-opfs", "gid-opfs", [1n], false, 1, 1n);
+		expect(await persistence.flushJournalOnAppend?.(source)).equal(0);
+		expect(await opfsStore.read("coordinates.wal")).equal(undefined);
+		await persistence.flushJournal(source);
+		expect(await opfsStore.read("coordinates.wal")).equal(undefined);
+		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(
+			beforeClose,
+		);
+		expect(beforeClose.getEntryCoordinateHashes()).to.deep.equal([]);
+
+		await persistence.close?.();
+		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(afterClose);
+		expect(afterClose.getEntryCoordinateHashes()).to.deep.equal(["hash-opfs"]);
+		expect(directory.syncAccessCount).to.be.greaterThan(0);
+	});
+
 	it("appends coordinate WAL bytes through OPFS writable fallback", async () => {
 		const directory = new FakeOPFSDirectoryHandle(false);
 		const store = new NativeBackboneOPFSCoordinatePersistenceStore(directory);
