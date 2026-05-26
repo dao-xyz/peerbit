@@ -389,6 +389,48 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.17](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.16...shared-log-v13.1.17) (2026-05-26)
+
+
+### Bug Fixes
+
+* **shared-log:** dedupe sync coordinate aliases ([61a4b8d](https://github.com/dao-xyz/peerbit/commit/61a4b8d232cfb05b6a884062c80518dafe2afb46))
+* **shared-log:** dedupe sync coordinate aliases ([359ccc3](https://github.com/dao-xyz/peerbit/commit/359ccc3366cbe5d1e34657bac605c8e1eb6ffdaa))
+* **shared-log:** keep checked prune live through slow handoff ([fac9bb5](https://github.com/dao-xyz/peerbit/commit/fac9bb55f4b5b45c9c8d1249d90e32c59846b36d))
+* **shared-log:** keep checked prune live through slow handoff ([524e7ae](https://github.com/dao-xyz/peerbit/commit/524e7aee067d1b55fdb839db21707b46c44c77c1))
+* **shared-log:** prioritize foreground traffic over sync ([3521b8c](https://github.com/dao-xyz/peerbit/commit/3521b8c0ee7f7fe89afe16d4025360f0afa45bad))
+* **shared-log:** prioritize foreground traffic over sync ([f0ecd02](https://github.com/dao-xyz/peerbit/commit/f0ecd028ef0db60cc2101f73823beed3d92b62c6))
+* **shared-log:** stabilize part 7 replication churn ([6339e80](https://github.com/dao-xyz/peerbit/commit/6339e8039231e5fa87f3a57c59b631face8926ae))
+* **shared-log:** stabilize part 7 replication churn ([64f4691](https://github.com/dao-xyz/peerbit/commit/64f4691cf98f7e6576273cd3736a5b5f12dd9f1e))
+
+
+### Refactors
+
+* **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
+* **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
+* **shared-log:** coordinate checked prune sessions ([583107a](https://github.com/dao-xyz/peerbit/commit/583107aa616138958258e088514e1644624a5756))
+* **shared-log:** coordinate checked prune sessions ([2194576](https://github.com/dao-xyz/peerbit/commit/21945768db8d637e17bb84367981cf001e3425e2))
+* **shared-log:** extract checked prune coordinator ([5569f12](https://github.com/dao-xyz/peerbit/commit/5569f120356b9ea76f147243ab81e0117ed06092))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.9
+    * @peerbit/blocks-interface bumped to 2.0.12
+    * @peerbit/indexer-interface bumped to 3.0.4
+    * @peerbit/indexer-sqlite3 bumped to 3.0.7
+    * @peerbit/log bumped to 6.1.0
+    * @peerbit/program bumped to 6.0.30
+    * @peerbit/pubsub bumped to 5.2.11
+    * @peerbit/pubsub-interface bumped to 5.1.4
+    * @peerbit/rpc bumped to 6.0.34
+    * @peerbit/stream-interface bumped to 6.0.10
+  * devDependencies
+    * @peerbit/indexer-rust bumped to 1.0.0
+    * @peerbit/test-utils bumped to 3.0.34
+
 ## [13.1.16](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.15...shared-log-v13.1.16) (2026-05-05)
 
 

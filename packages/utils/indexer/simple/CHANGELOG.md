@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.7](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.2.6...indexer-simple-v1.2.7) (2026-05-26)
+
+
+### Bug Fixes
+
+* **indexer-sqlite3:** prevent crashes during and after shutdown ([00a3185](https://github.com/dao-xyz/peerbit/commit/00a318585e7ec5441859c874f55e46f6b2d2d959))
+* **indexer:** distinguish closing from closed APIs ([c59300f](https://github.com/dao-xyz/peerbit/commit/c59300f3e47c5c390ff63b14d1a4d8edbba1bf68))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 3.0.4
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 3.0.4
+
 ## [1.2.6](https://github.com/dao-xyz/peerbit/compare/indexer-simple-v1.2.5...indexer-simple-v1.2.6) (2026-03-30)
 
 
