@@ -1177,7 +1177,7 @@ impl NativePeerbitBackbone {
             wall_times.push(entry.wall_time);
             logicals.push(entry.logical);
             gids.push(&JsValue::from_str(&entry.gid));
-            nexts.push(&strings_to_array(entry.next.clone()));
+            nexts.push(&strings_slice_to_array(&entry.next));
             entry_types.push(entry.entry_type);
             meta_bytes.push(&Uint8Array::from(entry.meta_bytes.as_slice()));
             match &entry.meta_data {
@@ -6559,6 +6559,14 @@ fn strings_to_array(values: Vec<String>) -> Array {
     let out = Array::new();
     for value in values {
         out.push(&JsValue::from_str(&value));
+    }
+    out
+}
+
+fn strings_slice_to_array(values: &[String]) -> Array {
+    let out = Array::new();
+    for value in values {
+        out.push(&JsValue::from_str(value));
     }
     out
 }
