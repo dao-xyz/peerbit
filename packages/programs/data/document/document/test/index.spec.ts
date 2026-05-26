@@ -5488,6 +5488,59 @@ describe("index", () => {
 					}
 				});
 
+				it("rejects strict native delete ownership policies when the native transform omits the field", async () => {
+					@variant("strict_native_delete_owner_name_indexable")
+					class DeleteOwnerNameIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: "string" })
+						name: string;
+
+						constructor(properties?: Partial<DeleteOwnerNameIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name || "";
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<DeleteOwnerNameIndexable>({
+						docs: new Documents<Document, DeleteOwnerNameIndexable>(),
+					});
+					store = localStore as any;
+					try {
+						await expect(
+							rustSession.peers[0].open(localStore, {
+								args: {
+									mode: "native",
+									replicate: false,
+									nativeGraph: true,
+									nativeBackbone: nativeBackboneDocumentIndexOptions(),
+									canPerform: policy.or(
+										policy.put(policy.allowAll<Document>()),
+										policy.deleteSignedByExistingField<Document>("data"),
+									),
+									index: {
+										type: DeleteOwnerNameIndexable,
+										transform: transform.pick<
+											Document,
+											DeleteOwnerNameIndexable
+										>(["id", "name"]),
+									},
+								},
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"retain delete policy field: data",
+						);
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects unsupported putMany options in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,

@@ -1100,6 +1100,22 @@ export class Documents<
 				"requires a native-compatible document index transform",
 			);
 		}
+		if (this._optionCanPerformNativePolicy) {
+			const deleteFieldPaths = nativeCanPerformPolicyDeleteFieldPaths(
+				this._optionCanPerformNativePolicy,
+			);
+			if (
+				deleteFieldPaths.length > 0 &&
+				!this._index.canReadOriginalFieldPathsFromIndexedValue(deleteFieldPaths)
+			) {
+				const labels = deleteFieldPaths.map((path) =>
+					Array.isArray(path) ? path.join(".") : path,
+				);
+				throw this.nativeModeError(
+					`requires native index to retain delete policy field${labels.length > 1 ? "s" : ""}: ${labels.join(", ")}`,
+				);
+			}
+		}
 	}
 
 	private canPerformAllowsPlainPutFastPath(doc: T): boolean {
