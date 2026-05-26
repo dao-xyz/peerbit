@@ -5502,15 +5502,11 @@ impl NativePeerbitBackbone {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let document_keys = strings_from_array(document_keys)?;
         let document_existing_created = strings_from_array(document_existing_created)?;
-        let out = Array::new();
-        for index in 0..len {
+        let mut document_index_commits = Vec::with_capacity(len);
+        for (index, document_key) in document_keys.iter().enumerate() {
             let index_u32 = index as u32;
-            let gid = gids
-                .get(index_u32)
-                .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected batch gid string"))?;
-            let document_index_commit = document_index_append_commit(
-                document_keys[index].clone(),
+            document_index_commits.push(document_index_append_commit(
+                document_key.clone(),
                 required_bytes_from_array(
                     &document_value_prefix_bytes,
                     index_u32,
@@ -5523,26 +5519,23 @@ impl NativePeerbitBackbone {
                 JsValue::UNDEFINED,
                 JsValue::UNDEFINED,
                 JsValue::UNDEFINED,
-            )?;
-            let row = self
-                .prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
-                    wall_times.get_index(index_u32),
-                    logicals.get_index(index_u32),
-                    gid,
-                    entry_type,
-                    meta_datas.get(index_u32),
-                    required_bytes_from_array(&payload_datas, index_u32, "payload")?,
-                    replicas,
-                    role_age_ms,
-                    now.clone(),
-                    self_hash.clone(),
-                    self_replicating,
-                    document_index_commit,
-                    trim_length_to,
-                )?;
-            out.push(&row);
+            )?);
         }
-        Ok(out)
+        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+            wall_times,
+            logicals,
+            gids,
+            entry_type,
+            meta_datas,
+            payload_datas,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            trim_length_to,
+            document_index_commits,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5597,47 +5590,40 @@ impl NativePeerbitBackbone {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let document_keys = strings_from_array(document_keys)?;
         let document_existing_created = strings_from_array(document_existing_created)?;
-        let out = Array::new();
-        for index in 0..len {
+        let mut document_index_commits = Vec::with_capacity(len);
+        for (index, document_key) in document_keys.iter().enumerate() {
             let index_u32 = index as u32;
-            let gid = gids
-                .get(index_u32)
-                .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected batch gid string"))?;
             let encoded_document = document_projection_encoded_documents.get(index_u32);
             if encoded_document.is_undefined() || encoded_document.is_null() {
                 return Err(JsValue::from_str(
                     "Expected batch document projection encoded document",
                 ));
             }
-            let document_index_commit = document_index_cached_projection_append_commit(
-                document_keys[index].clone(),
+            document_index_commits.push(document_index_cached_projection_append_commit(
+                document_key.clone(),
                 document_existing_created[index].clone(),
                 document_byte_element_index_limit,
                 document_delete_trimmed_heads,
                 document_projection_plan_ids.get_index(index_u32),
                 encoded_document,
                 document_projection_signers.get(index_u32),
-            )?;
-            let row = self
-                .prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
-                    wall_times.get_index(index_u32),
-                    logicals.get_index(index_u32),
-                    gid,
-                    entry_type,
-                    meta_datas.get(index_u32),
-                    required_bytes_from_array(&payload_datas, index_u32, "payload")?,
-                    replicas,
-                    role_age_ms,
-                    now.clone(),
-                    self_hash.clone(),
-                    self_replicating,
-                    document_index_commit,
-                    trim_length_to,
-                )?;
-            out.push(&row);
+            )?);
         }
-        Ok(out)
+        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+            wall_times,
+            logicals,
+            gids,
+            entry_type,
+            meta_datas,
+            payload_datas,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            trim_length_to,
+            document_index_commits,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5736,7 +5722,196 @@ impl NativePeerbitBackbone {
 			self_replicating,
 			document_index_commit,
 			trim_length_to,
-		)
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+        &mut self,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        gids: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        trim_length_to: Option<usize>,
+        document_index_commits: Vec<DocumentIndexAppendCommit>,
+    ) -> Result<Array, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let mut pending_appends = Vec::with_capacity(document_index_commits.len());
+        let mut coordinate_inputs = Vec::with_capacity(document_index_commits.len());
+
+        for (index, document_index_commit) in document_index_commits.into_iter().enumerate() {
+            let index_u32 = index as u32;
+            let gid = gids
+                .get(index_u32)
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("Expected batch gid string"))?;
+            let payload_bytes = required_bytes_from_array(&payload_datas, index_u32, "payload")?;
+            let payload_size = payload_bytes.length();
+            let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
+
+            let input_copy_started = profile_enabled.then(js_sys::Date::now);
+            let meta_data = optional_bytes_from_js(meta_datas.get(index_u32));
+            let payload_data = payload_bytes.to_vec();
+            if let Some(started) = input_copy_started {
+                self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+            }
+
+            let log_started = profile_enabled.then(js_sys::Date::now);
+            let mut log_profile = NativeLogAppendProfile::default();
+            let (entry_facts, trim_hashes) = if let Some(trim_length_to) = trim_length_to {
+                self.log
+                    .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+                        &self.builder,
+                        &mut self.blocks,
+                        wall_times.get_index(index_u32),
+                        logicals.get_index(index_u32),
+                        gid.clone(),
+                        entry_type,
+                        meta_data,
+                        &payload_data,
+                        trim_length_to,
+                        profile_enabled.then_some(&mut log_profile),
+                    )?
+            } else {
+                (
+                    self.log
+                        .prepare_entry_v0_plain_entry_commit_no_next_facts_core_profiled_and_put_with_builder_borrowed(
+                            &self.builder,
+                            &mut self.blocks,
+                            wall_times.get_index(index_u32),
+                            logicals.get_index(index_u32),
+                            gid.clone(),
+                            entry_type,
+                            meta_data,
+                            &payload_data,
+                            profile_enabled.then_some(&mut log_profile),
+                        )?,
+                    Vec::new(),
+                )
+            };
+            if let Some(started) = log_started {
+                self.append_profile.log_total_ms += js_sys::Date::now() - started;
+                self.append_profile.add_log_profile(&log_profile);
+            }
+
+            let hash_number_started = profile_enabled.then(js_sys::Date::now);
+            let hash_number = hash_number_u64(&self.resolution, &entry_facts.hash_digest_bytes)?;
+            if let Some(started) = hash_number_started {
+                self.append_profile.hash_number_ms += js_sys::Date::now() - started;
+            }
+
+            coordinate_inputs.push(NativeLocalAppendCompactInput {
+                entry_hash: entry_facts.hash.clone(),
+                gid: gid.clone(),
+                entry_hash_number: hash_number,
+                next_hashes: Vec::new(),
+                delete_hashes: trim_hashes.clone(),
+            });
+            pending_appends.push(LatestCompactBatchPendingAppend {
+                wall_time: wall_times.get_index(index_u32),
+                payload_size,
+                gid,
+                next_hashes: Vec::new(),
+                entry_facts,
+                trim_hashes,
+                document_index_commit,
+                previous_document_context: None,
+                delete_trimmed_document_heads,
+            });
+        }
+
+        let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_facts = commit_local_appends_for_gids_compact_core(
+            &mut self.shared_log,
+            coordinate_inputs,
+            replicas,
+            role_age_ms,
+            &now,
+            &self_hash,
+            self_replicating,
+            true,
+            true,
+        )?;
+        if let Some(started) = coordinate_plan_started {
+            self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+        }
+        if coordinate_facts.len() != pending_appends.len() {
+            return Err(JsValue::from_str(
+                "Native no-next compact batch returned mismatched coordinate facts",
+            ));
+        }
+
+        let out = Array::new();
+        for (pending, coordinate_facts) in pending_appends.into_iter().zip(coordinate_facts) {
+            let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+            self.commit_coordinate_core_from_compact_facts(
+                &coordinate_facts,
+                &[],
+                &pending.trim_hashes,
+                pending.wall_time,
+                pending.entry_facts.meta_bytes.clone(),
+            );
+            if let Some(started) = coordinate_core_started {
+                self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+            }
+
+            let document_index_started = profile_enabled.then(js_sys::Date::now);
+            self.put_document_index_for_append_with_plain_put_payload(
+                Some(pending.document_index_commit),
+                pending.wall_time,
+                &pending.entry_facts.hash,
+                &pending.gid,
+                pending.payload_size,
+                None,
+            )?;
+            let document_trimmed_heads_processed = pending.delete_trimmed_document_heads
+                && self.delete_documents_by_context_heads_profiled(&pending.trim_hashes);
+            if let Some(started) = document_index_started {
+                self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
+            }
+
+            let result_row_started = profile_enabled.then(js_sys::Date::now);
+            let row = Array::new();
+            row.push(&JsValue::from_str(&pending.entry_facts.hash));
+            row.push(&JsValue::from_f64(pending.entry_facts.byte_length as f64));
+            row.push(&Uint8Array::from(pending.entry_facts.meta_bytes.as_slice()));
+            row.push(&number_to_row(
+                &self.resolution,
+                coordinate_facts.coordinate.hash_number,
+            ));
+            row.push(&JsValue::from_str(&coordinate_facts.coordinate.gid));
+            row.push(&numbers_to_rows(
+                &self.resolution,
+                &coordinate_facts.coordinate.coordinates,
+            ));
+            row.push(&JsValue::from_bool(
+                coordinate_facts.coordinate.assigned_to_range_boundary,
+            ));
+            row.push(&JsValue::from_f64(
+                coordinate_facts.coordinate.requested_replicas as f64,
+            ));
+            row.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
+            row.push(&JsValue::from_bool(coordinate_facts.is_leader));
+            row.push(&strings_to_array(pending.trim_hashes));
+            row.push(&JsValue::from_bool(document_trimmed_heads_processed));
+            out.push(&row);
+            if let Some(started) = result_row_started {
+                self.append_profile.result_row_ms += js_sys::Date::now() - started;
+            }
+        }
+
+        if let Some(started) = storage_append_started {
+            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+        }
+        Ok(out)
     }
 
     #[allow(clippy::too_many_arguments)]
