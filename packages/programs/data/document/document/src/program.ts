@@ -2760,15 +2760,45 @@ export class Documents<
 		};
 	}
 
-	private async prepareNativeBackboneDocumentIndexCommitBatch(
+	private prepareNativeBackboneDocumentIndexCommitBatch(
 		inputs: NativeDocumentAppendCommitFactsInput<T, I>[],
-	): Promise<PreparedNativeBackboneDocumentIndexCommit<I>[] | undefined> {
+	):
+		| PreparedNativeBackboneDocumentIndexCommit<I>[]
+		| Promise<PreparedNativeBackboneDocumentIndexCommit<I>[] | undefined>
+		| undefined {
 		if (!this._nativeBackboneDocumentIndexEnabled || inputs.length === 0) {
 			return;
 		}
 		const commits: PreparedNativeBackboneDocumentIndexCommit<I>[] = [];
-		for (const input of inputs) {
-			const commit = await this.prepareNativeBackboneDocumentIndexCommit(input);
+		const finishAsync = (
+			firstAsyncIndex: number,
+			firstAsyncCommit: Promise<
+				PreparedNativeBackboneDocumentIndexCommit<I> | undefined
+			>,
+		) =>
+			Promise.all([
+				firstAsyncCommit,
+				...inputs
+					.slice(firstAsyncIndex + 1)
+					.map((input) =>
+						this.prepareNativeBackboneDocumentIndexCommit(input),
+					),
+			]).then((resolvedCommits) => {
+				for (const commit of resolvedCommits) {
+					if (!commit) {
+						return;
+					}
+					commits.push(commit);
+				}
+				return commits;
+			});
+		for (let i = 0; i < inputs.length; i++) {
+			const commit = this.prepareNativeBackboneDocumentIndexCommit(
+				inputs[i]!,
+			);
+			if (isPromiseLike(commit)) {
+				return finishAsync(i, commit);
+			}
 			if (!commit) {
 				return;
 			}
