@@ -2631,6 +2631,18 @@ describe("index", () => {
 								name: "metadata",
 								options: { meta: { data: new Uint8Array([1]) } },
 							},
+							{
+								name: "gid-seed",
+								options: { meta: { gidSeed: new Uint8Array([1]) } },
+							},
+							{
+								name: "check-remote",
+								options: { checkRemote: true },
+							},
+							{
+								name: "replicas",
+								options: { replicas: 1 },
+							},
 						];
 						for (const testCase of cases) {
 							const doc = new Document({
@@ -4588,6 +4600,10 @@ describe("index", () => {
 					);
 					const nativeDeleteAppendSpy = sinon.spy(
 						store.docs.log,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericPayloadAppendSpy = sinon.spy(
+						store.docs.log,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
@@ -4622,6 +4638,7 @@ describe("index", () => {
 						expect(deleted.entry.meta.next).to.deep.equal([putHash]);
 						expect(await store.docs.get(doc.id)).equal(undefined);
 						expect(nativeDeleteAppendSpy.callCount).equal(1);
+						expect(genericPayloadAppendSpy.callCount).equal(0);
 						expect(trustedAppendSpy.callCount).equal(0);
 						expect(sharedAppendSpy.callCount).equal(0);
 						expect(resolveEntrySpy.callCount).equal(0);
@@ -4631,9 +4648,68 @@ describe("index", () => {
 						delIdsSpy.restore();
 						delIdsNoReturnSpy.restore();
 						resolveEntrySpy.restore();
+						genericPayloadAppendSpy.restore();
 						nativeDeleteAppendSpy.restore();
 						trustedAppendSpy.restore();
 						sharedAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native delete append fallback", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					try {
+						const doc = new Document({ id: uuid(), name: "delete-no-native" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const strictCommitOnlyStub = sinon
+							.stub(
+								store.docs.log,
+								"appendStrictNativeDocumentPayloadCommitOnly",
+							)
+							.returns(undefined as any);
+						const genericPayloadAppendSpy = sinon.spy(
+							store.docs.log,
+							"appendLocallyPreparedPayloadCommitOnly",
+						);
+						try {
+							await expect(
+								store.docs.del(doc.id, {
+									replicate: false,
+									target: "none",
+								}),
+							).to.be.rejectedWith(
+								NativeDocumentModeError,
+								"native delete append support",
+							);
+							expect(genericPayloadAppendSpy.callCount).equal(0);
+						} finally {
+							genericPayloadAppendSpy.restore();
+							strictCommitOnlyStub.restore();
+						}
+					} finally {
 						await rustSession.stop();
 					}
 				});

@@ -2431,7 +2431,13 @@ export class Documents<
 			!options?.meta?.type &&
 			!(options?.meta && "data" in options.meta) &&
 			!options?.meta?.next &&
-			!options?.meta?.timestamp
+			!options?.meta?.timestamp &&
+			!options?.meta?.gidSeed &&
+			options?.replicate !== true &&
+			(!options?.target || options.target === "none") &&
+			(options?.delivery === undefined || options.delivery === false) &&
+			!options?.checkRemote &&
+			options?.replicas === undefined
 		);
 	}
 
@@ -4151,7 +4157,7 @@ export class Documents<
 		const previousForAppend =
 			this.nextFromIndexedContext(existingContext.head, existing) ??
 			(await getPreviousEntry());
-		const appended = await this.log.appendLocallyPreparedPayloadCommitOnly(
+		const appended = await this.log.appendStrictNativeDocumentPayloadCommitOnly(
 			operationPayloadBytes,
 			{
 				...deleteOptions,
