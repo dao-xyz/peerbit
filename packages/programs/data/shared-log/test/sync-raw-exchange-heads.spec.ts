@@ -634,6 +634,155 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("reports committed hashes from the generic native raw receive fallback", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const openArgs: any = {
+				replicate: false,
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: { rawExchangeHeads: true },
+				keep: () => true,
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: openArgs,
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: openArgs,
+			});
+
+			const hashes: string[] = [];
+			const entries: any[] = [];
+			for (let i = 0; i < 3; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+				entries.push(entry);
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const committedHashBatches: string[][] = [];
+			const nativePreparedJoinCommitStub = sinon
+				.stub(backbone.graph, "commitPreparedRawReceiveJoinBatch")
+				.returns(undefined as any);
+			const nativeVerifiedPreparedJoinCommitStub =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon
+							.stub(
+								backbone.graph,
+								"commitVerifiedPreparedRawReceiveJoinBatch",
+							)
+							.returns(undefined as any)
+					: undefined;
+			const nativeVerifiedAllPreparedJoinCommitStub =
+				backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch
+					? sinon
+							.stub(
+								backbone.graph,
+								"commitVerifiedAllPreparedRawReceiveJoinBatch",
+							)
+							.returns(undefined as any)
+					: undefined;
+			const nativePreparedCommitStub = sinon
+				.stub(backbone.graph, "commitPreparedRawReceiveBatch")
+				.returns(false);
+			const nativeCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitBlocksAndGraphBatch",
+			);
+			const nativeCombinedCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitBlocksGraphAndCoordinatesBatch",
+			);
+			try {
+				const preparedCommit = sharedLog.createNativeBackbonePreparedJoinCommit(
+					undefined,
+					undefined,
+					undefined,
+					false,
+					undefined,
+					(committedHashes: string[]) => {
+						committedHashBatches.push([...committedHashes]);
+					},
+				);
+				expect(preparedCommit).to.be.a("function");
+				const rawHeads = (message as RawExchangeHeadsMessage).heads;
+				const preparedEntries = rawHeads.map((head, index) => {
+					const entry = entries[index]!;
+					return {
+						hash: head.hash,
+						bytes: head.bytes,
+						byteLength: head.bytes.byteLength,
+						meta: entry.meta,
+						nativeEntry: {
+							hash: head.hash,
+							gid: entry.meta.gid,
+							next: entry.meta.next,
+							type: entry.meta.type,
+							clock: entry.meta.clock,
+							payloadSize: entry.payloadSize ?? entry.size,
+							data: entry.meta.data,
+						},
+					};
+				});
+				const committed = preparedCommit!({
+					entries: preparedEntries,
+					hashes,
+					headFlags: hashes.map(() => true),
+					headFlagsBytes: new Uint8Array(hashes.map(() => 1)),
+					trustedMissing: true,
+					validatePlan: true,
+				});
+
+				expect(committed).to.equal(true);
+				expect(
+					nativePreparedJoinCommitStub.callCount +
+						(nativeVerifiedPreparedJoinCommitStub?.callCount ?? 0) +
+						(nativeVerifiedAllPreparedJoinCommitStub?.callCount ?? 0),
+				).to.be.greaterThan(0);
+				expect(nativePreparedCommitStub.callCount).to.equal(1);
+				expect(
+					nativeCommitSpy.callCount + nativeCombinedCommitSpy.callCount,
+				).to.equal(1);
+				expect(committedHashBatches).to.deep.equal([hashes]);
+			} finally {
+				nativeCombinedCommitSpy.restore();
+				nativeCommitSpy.restore();
+				nativePreparedCommitStub.restore();
+				nativeVerifiedAllPreparedJoinCommitStub?.restore();
+				nativeVerifiedPreparedJoinCommitStub?.restore();
+				nativePreparedJoinCommitStub.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("can preverify raw receive signatures during native prepare", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),

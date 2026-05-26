@@ -13019,6 +13019,7 @@ export class SharedLog<
 			} else {
 				backbone.graph.commitBlocksAndGraphBatch(commitEntries);
 			}
+			onPreparedEntriesCommitted?.(hashes);
 			return true;
 		};
 	}
