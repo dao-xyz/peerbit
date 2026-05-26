@@ -289,6 +289,20 @@ type NativePeerbitBackboneHandle = {
 		includeStrictFullReplica: boolean,
 		fromHash: string,
 	) => [boolean, number, number] | undefined;
+	plan_prepared_raw_receive_selection?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas: number | undefined,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+		fromHash: string,
+	) => NativeBackboneRawReceiveSelectionRow | undefined;
 	select_prepared_raw_receive_hashes?: (
 		hashes: string[],
 		minReplicas: number,
@@ -4742,6 +4756,25 @@ export class NativePeerbitBackbone {
 		}
 		const [canDrop, groupCount, plannedHashCount] = row;
 		return { canDrop, groupCount, plannedHashCount };
+	}
+
+	planPreparedRawReceiveSelection(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+		leaderOptions: NativeBackboneFindLeaderOptions,
+		fromHash: string,
+	): NativeBackboneRawReceiveSelectionPlan | undefined {
+		if (!this.native.plan_prepared_raw_receive_selection) {
+			return undefined;
+		}
+		const row = this.native.plan_prepared_raw_receive_selection(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+			...findLeaderArguments(leaderOptions),
+			fromHash,
+		);
+		return row ? rawReceiveSelectionFromRow(this.resolution, row) : undefined;
 	}
 
 	selectPreparedRawReceiveHashes(

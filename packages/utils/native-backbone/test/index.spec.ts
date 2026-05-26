@@ -1077,6 +1077,25 @@ describe("native peerbit backbone", () => {
 				usedNativeFastDropPlan: true,
 				usedLeaderSamplePlans: false,
 			});
+			expect(
+				target.planPreparedRawReceiveSelection(
+					[first.hash, second.hash, third.hash],
+					{ minReplicas: 1, maxReplicas: 3 },
+					{
+						selfHash: "peer-a",
+						selfReplicating: false,
+						fullReplicaFallback: true,
+					},
+					"peer-b",
+				),
+			).to.deep.equal({
+				retainedHashes: [],
+				droppedHashes: [first.hash, second.hash, third.hash],
+				groupCount: 2,
+				plannedHashCount: 3,
+				usedNativeFastDropPlan: true,
+				usedLeaderSamplePlans: true,
+			});
 			const groupBCoordinate = Number(
 				target.getGidCoordinates("gid-raw-group-b", 1)[0],
 			);
@@ -1132,6 +1151,30 @@ describe("native peerbit backbone", () => {
 					"peer-keep",
 				),
 			).to.equal(true);
+			const mixedFusedSelection = target.planPreparedRawReceiveSelection(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-keep",
+					selfReplicating: false,
+					fullReplicaFallback: false,
+				},
+				"peer-b",
+			);
+			expect(mixedFusedSelection?.retainedHashes).to.deep.equal([
+				first.hash,
+				second.hash,
+			]);
+			expect(mixedFusedSelection?.droppedHashes).to.deep.equal([third.hash]);
+			expect(mixedFusedSelection).to.deep.include({
+				groupCount: 2,
+				plannedHashCount: 3,
+				usedNativeFastDropPlan: false,
+				usedLeaderSamplePlans: false,
+			});
+			expect(mixedFusedSelection?.retainedGroupLeaderPlans).to.have.length(
+				1,
+			);
 
 			target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
 				clockId: publicKey,

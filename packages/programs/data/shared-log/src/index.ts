@@ -14411,6 +14411,15 @@ export class SharedLog<
 				maxReplicas: this.replicas.max?.getValue(this),
 			};
 			const leaderSelectionContext = await this.createLeaderSelectionContext();
+			if (backbone.planPreparedRawReceiveSelection) {
+				const nativeSelection = backbone.planPreparedRawReceiveSelection(
+					properties.hashes,
+					replicaOptions,
+					this.createNativeLeaderOptions(leaderSelectionContext),
+					fromHash,
+				);
+				return nativeSelection;
+			}
 			const nativeFastDropPlan = backbone.planPreparedRawReceiveFastDrop?.(
 				properties.hashes,
 				replicaOptions,
