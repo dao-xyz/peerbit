@@ -1739,13 +1739,6 @@ impl NativeLogIndex {
         trim_mode: NativeTrimMode,
         mut profile: Option<&mut NativeLogAppendProfile>,
     ) -> Result<(NativeCommittedEntryFacts, NativeTrimResult), JsValue> {
-        let next_clone_started = profile.as_ref().map(|_| js_sys::Date::now());
-        let initial_nexts = next.clone();
-        if let Some(started) = next_clone_started {
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.next_clone_ms += js_sys::Date::now() - started;
-            }
-        }
         let core_started = profile.as_ref().map(|_| js_sys::Date::now());
         let core = prepare_entry_v0_plain_entry_commit_core_with_signer_parts_profiled(
             &builder.clock_id,
@@ -1765,33 +1758,37 @@ impl NativeLogIndex {
                 profile.entry_core_ms += js_sys::Date::now() - started;
             }
         }
-        let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
         let entry = core.entry;
         let hash = core.hash;
-        let facts = NativeCommittedEntryFacts {
-            hash: hash.clone(),
-            next: core.next,
-            meta_bytes: core.meta_bytes,
-            byte_length: core.storage_bytes.len(),
-            hash_digest_bytes: core.hash_digest_bytes,
-        };
-        if let Some(started) = facts_started {
-            if let Some(profile) = profile.as_deref_mut() {
-                profile.facts_ms += js_sys::Date::now() - started;
-            }
-        }
+        let next = core.next;
+        let meta_bytes = core.meta_bytes;
+        let byte_length = core.storage_bytes.len();
+        let hash_digest_bytes = core.hash_digest_bytes;
         let block_put_started = profile.as_ref().map(|_| js_sys::Date::now());
-        block_store.put_entry(hash, core.storage_bytes);
+        block_store.put_entry(hash.clone(), core.storage_bytes);
         if let Some(started) = block_put_started {
             if let Some(profile) = profile.as_deref_mut() {
                 profile.block_put_ms += js_sys::Date::now() - started;
             }
         }
         let graph_put_started = profile.as_ref().map(|_| js_sys::Date::now());
-        self.inner.put_append_entry(entry, &initial_nexts);
+        self.inner.put_append_entry(entry, &next);
         if let Some(started) = graph_put_started {
             if let Some(profile) = profile.as_deref_mut() {
                 profile.graph_put_ms += js_sys::Date::now() - started;
+            }
+        }
+        let facts_started = profile.as_ref().map(|_| js_sys::Date::now());
+        let facts = NativeCommittedEntryFacts {
+            hash,
+            next,
+            meta_bytes,
+            byte_length,
+            hash_digest_bytes,
+        };
+        if let Some(started) = facts_started {
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.facts_ms += js_sys::Date::now() - started;
             }
         }
         let trim_started = profile.as_ref().map(|_| js_sys::Date::now());
