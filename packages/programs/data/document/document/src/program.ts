@@ -2277,6 +2277,9 @@ export class Documents<
 					// already deleted
 					return coerceDeleteOperation(operation); // assume ok
 				}
+				if (entry.meta.next[0] === existingHead) {
+					return coerceDeleteOperation(operation);
+				}
 				let doc = await this.log.log.get(existingHead);
 				if (!doc) {
 					logger.error("Failed to find Document from head");

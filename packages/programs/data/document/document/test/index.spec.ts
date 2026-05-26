@@ -80,9 +80,11 @@ import type { DocumentsChange } from "../src/events.js";
 import { policy, transform } from "../src/index.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
+	DeleteOperation,
 	Operation,
 	PutOperation,
 	PutWithKeyOperation,
+	isDeleteOperation,
 } from "../src/operation.js";
 import { getNativeCanPerformPolicyDescriptor } from "../src/policy.js";
 import {
@@ -6234,6 +6236,47 @@ describe("index", () => {
 				});
 
 				expect(await store.docs.get(doc.id)).equal(undefined);
+			});
+
+			it("validates direct-head delete canAppend without loading the previous entry", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+
+				const doc = new Document({
+					id: uuid(),
+					name: "direct-delete-can-append",
+				});
+				const put = await store.docs.put(doc, {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+				const logGetSpy = sinon.spy(store.docs.log.log, "get");
+				try {
+					const operation = new DeleteOperation({
+						key: toId(doc.id),
+					});
+					const fakeDeleteEntry = {
+						hash: "direct-delete-can-append-entry",
+						meta: {
+							next: [put.entry.hash],
+						},
+						init: () => undefined,
+						getPayloadValue: async () => operation,
+					};
+
+					const result = await (store.docs as any)._canAppend(fakeDeleteEntry);
+					expect(isDeleteOperation(result)).equal(true);
+					expect(logGetSpy.callCount).equal(0);
+				} finally {
+					logGetSpy.restore();
+				}
 			});
 
 			it("rejects delete ownership when policy.deleteSignedByExistingField does not match", async () => {
