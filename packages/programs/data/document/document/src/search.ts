@@ -927,6 +927,9 @@ type ContextHeadIndex<I> = {
 };
 
 type ExactDeleteIndex = {
+	delIdsNoReturn?: (
+		deleteIds: Array<indexerTypes.IdKey | indexerTypes.Ideable>,
+	) => Promise<void> | void;
 	delIds?: (
 		deleteIds: Array<indexerTypes.IdKey | indexerTypes.Ideable>,
 	) => Promise<indexerTypes.IdKey[]> | indexerTypes.IdKey[];
@@ -2819,6 +2822,11 @@ export class DocumentIndex<
 		for (const key of keys) {
 			this.deleteResolvedCacheForKey(key);
 		}
+		const delIdsNoReturn = (this.index as ExactDeleteIndex).delIdsNoReturn;
+		if (delIdsNoReturn) {
+			await delIdsNoReturn.call(this.index, keys);
+			return;
+		}
 		const delIds = (this.index as ExactDeleteIndex).delIds;
 		if (delIds) {
 			await delIds.call(this.index, keys);
@@ -2833,6 +2841,11 @@ export class DocumentIndex<
 		}
 		for (const key of keys) {
 			this.deleteResolvedCacheForKey(key);
+		}
+		const delIdsNoReturn = (this.index as ExactDeleteIndex).delIdsNoReturn;
+		if (delIdsNoReturn) {
+			const result = delIdsNoReturn.call(this.index, keys);
+			return isPromiseLike(result) ? result.then(() => undefined) : undefined;
 		}
 		const delIds = (this.index as ExactDeleteIndex).delIds;
 		if (delIds) {

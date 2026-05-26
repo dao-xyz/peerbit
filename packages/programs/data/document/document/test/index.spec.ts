@@ -3880,6 +3880,16 @@ describe("index", () => {
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const nativeIndex = (store.docs.index as any).index as {
+						delIds?: (...args: any[]) => any;
+						delIdsNoReturn?: (...args: any[]) => any;
+					};
+					expect(nativeIndex.delIdsNoReturn).to.be.a("function");
+					const delIdsNoReturnSpy = sinon.spy(
+						nativeIndex,
+						"delIdsNoReturn",
+					);
+					const delIdsSpy = sinon.spy(nativeIndex, "delIds");
 					try {
 						const doc = new Document({ id: uuid(), name: "native-delete" });
 						const put = await store.docs.put(doc, {
@@ -3904,7 +3914,11 @@ describe("index", () => {
 						expect(trustedAppendSpy.callCount).equal(0);
 						expect(sharedAppendSpy.callCount).equal(0);
 						expect(resolveEntrySpy.callCount).equal(0);
+						expect(delIdsNoReturnSpy.callCount).equal(1);
+						expect(delIdsSpy.callCount).equal(0);
 					} finally {
+						delIdsSpy.restore();
+						delIdsNoReturnSpy.restore();
 						resolveEntrySpy.restore();
 						nativeDeleteAppendSpy.restore();
 						trustedAppendSpy.restore();

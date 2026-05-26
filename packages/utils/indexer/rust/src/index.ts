@@ -2907,8 +2907,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		if (this.nativeBackboneDocumentIndexPrimary) {
-			const result = this.delIds(deleteIds);
-			return isPromiseLike(result) ? result.then(() => undefined) : undefined;
+			if (!this.snapshotFile) {
+				this.deleteNativeBackboneDocumentKeysNoReturn(deleteKeys);
+				return;
+			}
+			if (!this.hasNativeBackboneDocumentKeys(deleteKeys)) {
+				return;
+			}
+			return this.enqueueMutation(async () => {
+				await this.appendDeletes(deleteKeys);
+				this.deleteNativeBackboneDocumentKeysNoReturn(deleteKeys);
+				await this.compactIfNeeded();
+			});
 		}
 		const native = this.getNative();
 		if (!this.snapshotFile && native.delete_keys_void) {
@@ -4267,6 +4277,29 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			}
 		}
 		return deletedIds;
+	}
+
+	private deleteNativeBackboneDocumentKeysNoReturn(storeKeys: string[]): void {
+		const deleteDocument = this.nativeBackboneDocumentIndex?.deleteDocument;
+		if (!deleteDocument || storeKeys.length === 0) {
+			return;
+		}
+		for (const key of storeKeys) {
+			deleteDocument.call(this.nativeBackboneDocumentIndex, key);
+		}
+	}
+
+	private hasNativeBackboneDocumentKeys(storeKeys: string[]): boolean {
+		const documentEntry = this.nativeBackboneDocumentIndex?.documentEntry;
+		if (!documentEntry || storeKeys.length === 0) {
+			return false;
+		}
+		for (const key of storeKeys) {
+			if (documentEntry.call(this.nativeBackboneDocumentIndex, key)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private getNativeBackboneExistingIds(storeKeys: string[]): types.IdKey[] {
