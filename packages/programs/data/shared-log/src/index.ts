@@ -9962,6 +9962,15 @@ export class SharedLog<
 						this._isReplicating &&
 						!rawIsRepairHint &&
 						!canVerifyPreparedRawReceiveOnCommit);
+				const deferNativeBackboneSignatureVerificationUntilSelection =
+					verifyNativeBackboneSignaturesDuringPrepare &&
+					!rawIsRepairHint &&
+					!!this._nativeBackbone?.verifyPreparedRawReceiveEntries &&
+					!this._isReplicating &&
+					!this.keep &&
+					!this.closed &&
+					!!this.syncronizer.onReceivedEntryHashes &&
+					rawMissingHeads.every((head) => head.gidRefrences.length === 0);
 				let rawPreparedReceiveSelection:
 					| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
 					| undefined;
@@ -9979,45 +9988,47 @@ export class SharedLog<
 						await rawPreparedReceiveSelection;
 					return rawPreparedReceiveSelectionValue;
 				};
-					const rawMaterializeStartedAt = syncProfileStart(syncProfile);
-					const materializedRawMessage =
-						await materializeVerifiedRawExchangeHeadsMessage(
-							new RawExchangeHeadsMessage({
-								heads: rawMissingHeads,
-								reserved: msg.reserved,
+				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
+				const materializedRawMessage =
+					await materializeVerifiedRawExchangeHeadsMessage(
+						new RawExchangeHeadsMessage({
+							heads: rawMissingHeads,
+							reserved: msg.reserved,
 						}),
 						this.log,
 						syncProfile,
-							{
-								nativeBackbone: this._nativeBackbone,
-								verifyNativeBackboneSignaturesDuringPrepare:
-									verifyNativeBackboneSignaturesDuringPrepare,
-								tryPreparedRawReceiveFastDrop: rawIsRepairHint
-									? undefined
-									: async ({ heads, hashes }) =>
-											this.tryFastDropPreparedRawReceive({
-												heads,
-												hashes,
-												from: rawFrom,
-												fromIsSelf,
-												syncProfile,
-												selection:
-													await getRawPreparedReceiveSelection(heads, hashes),
-											}),
-								selectPreparedRawReceiveHashes: rawIsRepairHint
-									? undefined
-									: async ({ heads, hashes }) =>
-											this.selectNativePreparedRawReceiveHashes({
-												heads,
-												hashes,
-												from: rawFrom,
-												fromIsSelf,
-												syncProfile,
-												selection:
-													await getRawPreparedReceiveSelection(heads, hashes),
-											}),
-							},
-						);
+						{
+							nativeBackbone: this._nativeBackbone,
+							verifyNativeBackboneSignaturesDuringPrepare:
+								verifyNativeBackboneSignaturesDuringPrepare,
+							deferNativeBackboneSignatureVerificationUntilSelection:
+								deferNativeBackboneSignatureVerificationUntilSelection,
+							tryPreparedRawReceiveFastDrop: rawIsRepairHint
+								? undefined
+								: async ({ heads, hashes }) =>
+										this.tryFastDropPreparedRawReceive({
+											heads,
+											hashes,
+											from: rawFrom,
+											fromIsSelf,
+											syncProfile,
+											selection:
+												await getRawPreparedReceiveSelection(heads, hashes),
+										}),
+							selectPreparedRawReceiveHashes: rawIsRepairHint
+								? undefined
+								: async ({ heads, hashes }) =>
+										this.selectNativePreparedRawReceiveHashes({
+											heads,
+											hashes,
+											from: rawFrom,
+											fromIsSelf,
+											syncProfile,
+											selection:
+												await getRawPreparedReceiveSelection(heads, hashes),
+										}),
+						},
+					);
 				if (materializedRawMessage === undefined) {
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {

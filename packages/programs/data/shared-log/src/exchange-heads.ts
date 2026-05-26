@@ -41,6 +41,9 @@ type RawReceiveNativeBackbone = {
 		hashes?: string[],
 		options?: { verifySignatures?: boolean },
 	): PreparedRawEntryV0FactsColumns | undefined;
+	verifyPreparedRawReceiveEntries?(
+		hashes: Iterable<string>,
+	): boolean[] | undefined;
 	clearPreparedRawReceiveEntries?(hashes: Iterable<string>): number;
 	setAppendProfileEnabled?(enabled: boolean): void;
 	resetAppendProfile?(): void;
@@ -1128,6 +1131,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	options?: {
 		nativeBackbone?: RawReceiveNativeBackbone;
 		verifyNativeBackboneSignaturesDuringPrepare?: boolean;
+		deferNativeBackboneSignatureVerificationUntilSelection?: boolean;
 		tryPreparedRawReceiveFastDrop?: (properties: {
 			heads: RawEntryWithRefs[];
 			hashes: string[];
@@ -1156,6 +1160,16 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 	let preparedColumns: PreparedRawEntryV0FactsColumns | undefined;
 	let nativePrepareSource: "backbone-columns" | "backbone" | "log" | undefined;
 	let hashesVerifiedByNative = false;
+	const requestedVerifyDuringPrepare =
+		options?.verifyNativeBackboneSignaturesDuringPrepare === true;
+	const canDeferPreparedSelectionVerification =
+		requestedVerifyDuringPrepare &&
+		options?.deferNativeBackboneSignatureVerificationUntilSelection === true &&
+		!!options?.nativeBackbone?.verifyPreparedRawReceiveEntries &&
+		(!!options?.tryPreparedRawReceiveFastDrop ||
+			!!options?.selectPreparedRawReceiveHashes);
+	const verifySignaturesInPrepare =
+		requestedVerifyDuringPrepare && !canDeferPreparedSelectionVerification;
 	if (options?.nativeBackbone) {
 		const profileNativeBackbone =
 			!!profile &&
@@ -1171,16 +1185,12 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
 					blocks,
 					hashes,
-					{
-						verifySignatures:
-							options.verifyNativeBackboneSignaturesDuringPrepare === true,
-					},
+					{ verifySignatures: verifySignaturesInPrepare },
 				);
 			hashesVerifiedByNative = !!preparedColumns;
 			preparedColumns ??=
 				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks, hashes, {
-					verifySignatures:
-						options.verifyNativeBackboneSignaturesDuringPrepare === true,
+					verifySignatures: verifySignaturesInPrepare,
 				});
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";
@@ -1241,8 +1251,8 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			details: {
 				native: true,
 				source: nativePrepareSource,
-				verifySignatures:
-					options?.verifyNativeBackboneSignaturesDuringPrepare === true,
+				verifySignatures: verifySignaturesInPrepare,
+				deferredVerifySignatures: canDeferPreparedSelectionVerification,
 			},
 		});
 		try {
@@ -1310,6 +1320,48 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				if (selectedHashes.length === 0) {
 					return undefined;
 				}
+			}
+			if (canDeferPreparedSelectionVerification) {
+				const verifyStartedAt = syncProfileStart(profile);
+				const verified =
+					options?.nativeBackbone?.verifyPreparedRawReceiveEntries?.(
+						selectedHashes,
+					);
+				if (
+					!verified ||
+					verified.length !== selectedHashes.length ||
+					verified.some((ok) => !ok)
+				) {
+					throw new Error("Raw exchange head signature verification failed");
+				}
+				if (preparedColumns) {
+					for (
+						let selectedIndex = 0;
+						selectedIndex < selectedHashes.length;
+						selectedIndex++
+					) {
+						preparedColumns[12][
+							selectedIndexes?.[selectedIndex] ?? selectedIndex
+						] = 1;
+					}
+				} else if (preparedFacts) {
+					for (
+						let selectedIndex = 0;
+						selectedIndex < selectedHashes.length;
+						selectedIndex++
+					) {
+						preparedFacts[
+							selectedIndexes?.[selectedIndex] ?? selectedIndex
+						]!.signatureVerified = true;
+					}
+				}
+				emitSyncProfileDuration(profile, verifyStartedAt, {
+					name: "sharedLog.rawReceive.verifySelected",
+					component: "shared-log",
+					entries: selectedHashes.length,
+					count: message.heads.length - selectedHashes.length,
+					messages: 1,
+				});
 			}
 			const headsToWrap = selectedHeads;
 			const hashesToWrap = selectedHashes;

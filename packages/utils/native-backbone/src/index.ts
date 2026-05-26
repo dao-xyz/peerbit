@@ -4966,6 +4966,12 @@ export class NativePeerbitBackbone {
 		);
 	}
 
+	verifyPreparedRawReceiveEntries(
+		hashes: Iterable<string>,
+	): boolean[] | undefined {
+		return this.graph.verifyPreparedRawReceiveEntries(hashes);
+	}
+
 	planPreparedRawReceiveGroups(
 		hashes: Iterable<string>,
 		options: { minReplicas: number; maxReplicas?: number },

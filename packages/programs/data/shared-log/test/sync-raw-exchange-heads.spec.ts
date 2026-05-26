@@ -1922,6 +1922,7 @@ describe("raw exchange-head sync", () => {
 					...baseArgs,
 					sync: {
 						...baseArgs.sync,
+						rawExchangeHeadsVerifySignaturesDuringPrepare: true,
 						profile: (event: any) => profileEvents.push(event),
 					},
 				},
@@ -1946,37 +1947,57 @@ describe("raw exchange-head sync", () => {
 			}
 			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
 
-			await target.log.onMessage(message!, {
-				from: source.node.identity.publicKey,
-			} as any);
+			const verifyPreparedSpy = sinon.spy(
+				(target.log as any)._nativeBackbone,
+				"verifyPreparedRawReceiveEntries",
+			);
+			try {
+				await target.log.onMessage(message!, {
+					from: source.node.identity.publicKey,
+				} as any);
 
-			expect(target.log.log.length).to.equal(0);
-			const receivePlanProfile = profileEvents.find(
-				(event) => event.name === "sharedLog.receive.plan",
-			);
-			expect(receivePlanProfile.details.nativeRawGroups).to.equal(true);
-			expect(
-				receivePlanProfile.details.nativeReceiveGroupLeaderSamples,
-			).to.equal(true);
-			expect(receivePlanProfile.details.nativePreparedFastDropPlan).to.equal(
-				true,
-			);
-			expect(receivePlanProfile.details.nativeFastDropEarly).to.equal(true);
-			const joinPlanProfile = profileEvents.find(
-				(event) => event.name === "sharedLog.receive.joinPlan",
-			);
-			expect(joinPlanProfile.details.nativeFastDrop).to.equal(true);
-			expect(joinPlanProfile.details.nativeFastDropEarly).to.equal(true);
-			expect(joinPlanProfile.count).to.equal(0);
-			expect(
-				profileEvents.some(
-					(event) => event.name === "sharedLog.rawReceive.wrapPrepared",
-				),
-			).to.equal(false);
-			const materializeProfile = profileEvents.find(
-				(event) => event.name === "sharedLog.rawReceive.materialize",
-			);
-			expect(materializeProfile.details.nativeFastDropEarly).to.equal(true);
+				expect(target.log.log.length).to.equal(0);
+				const prepareProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.rawReceive.prepareFacts",
+				);
+				expect(prepareProfile.details.verifySignatures).to.equal(false);
+				expect(prepareProfile.details.deferredVerifySignatures).to.equal(true);
+				expect(verifyPreparedSpy.callCount).to.equal(0);
+				expect(
+					profileEvents.some(
+						(event) =>
+							event.name === "sharedLog.rawReceive.nativePrepare.verifyBatch",
+					),
+				).to.equal(false);
+				const receivePlanProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.plan",
+				);
+				expect(receivePlanProfile.details.nativeRawGroups).to.equal(true);
+				expect(
+					receivePlanProfile.details.nativeReceiveGroupLeaderSamples,
+				).to.equal(true);
+				expect(receivePlanProfile.details.nativePreparedFastDropPlan).to.equal(
+					true,
+				);
+				expect(receivePlanProfile.details.nativeFastDropEarly).to.equal(true);
+				const joinPlanProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.joinPlan",
+				);
+				expect(joinPlanProfile.details.nativeFastDrop).to.equal(true);
+				expect(joinPlanProfile.details.nativeFastDropEarly).to.equal(true);
+				expect(joinPlanProfile.count).to.equal(0);
+				expect(
+					profileEvents.some(
+						(event) => event.name === "sharedLog.rawReceive.wrapPrepared",
+					),
+				).to.equal(false);
+				const materializeProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.rawReceive.materialize",
+				);
+				expect(materializeProfile.details.nativeFastDropEarly).to.equal(true);
+			} finally {
+				verifyPreparedSpy.restore();
+			}
 		} finally {
 			await session.stop();
 		}
