@@ -3523,6 +3523,57 @@ describe("index", () => {
 					).to.be.rejectedWith(NativeDocumentModeError, "arbitrary canPerform");
 				});
 
+				it("rejects open-level JS hooks in strict native mode", async () => {
+					for (const testCase of [
+						{
+							name: "canReplicate",
+							options: { canReplicate: () => true },
+							message: "custom canReplicate",
+						},
+						{
+							name: "keep",
+							options: { keep: "self" as const },
+							message: "custom keep",
+						},
+						{
+							name: "trim filter",
+							options: {
+								log: {
+									trim: {
+										type: "length" as const,
+										to: 1,
+										filter: { canTrim: () => true },
+									},
+								},
+							},
+							message: "unsupported log trim",
+						},
+						{
+							name: "byte trim",
+							options: {
+								log: { trim: { type: "bytelength" as const, to: 1024 } },
+							},
+							message: "unsupported log trim",
+						},
+					]) {
+						const docs = new Documents<Document>();
+						await expect(
+							docs.open({
+								type: Document,
+								mode: "native",
+								replicate: false,
+								nativeBackbone: {
+									optional: false,
+									documentIndex: true,
+								},
+								canPerform: policy.allowAll<Document>(),
+								...testCase.options,
+							}),
+							testCase.name,
+						).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
+					}
+				});
+
 				it("rejects unsupported per-put options in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,

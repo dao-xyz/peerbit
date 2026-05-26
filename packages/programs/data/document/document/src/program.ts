@@ -960,6 +960,18 @@ export class Documents<
 		if (options.index?.canSearch) {
 			unsupported.push("custom canSearch");
 		}
+		if (options.canReplicate) {
+			unsupported.push("custom canReplicate");
+		}
+		if (options.keep) {
+			unsupported.push("custom keep");
+		}
+		if (
+			options.log?.trim &&
+			(options.log.trim.type !== "length" || options.log.trim.filter?.canTrim)
+		) {
+			unsupported.push("unsupported log trim");
+		}
 		if (
 			indexTransform?.transform &&
 			!getNativeDocumentTransformDescriptor(indexTransform.transform as any)
