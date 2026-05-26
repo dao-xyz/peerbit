@@ -3591,6 +3591,10 @@ describe("index", () => {
 						store.docs.index,
 						"putManyWithContext",
 					);
+					const storedIdentityBatchSpy = sinon.spy(
+						store.docs.index,
+						"_putManyStoredIdentityWithContext",
+					);
 					try {
 						const docs = [
 							new Document({ id: uuid(), name: "batch-1" }),
@@ -3605,12 +3609,14 @@ describe("index", () => {
 						expect(appended.removed).to.have.length(0);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
-						expect(documentBatchIndexSpy.callCount).equal(1);
+						expect(documentBatchIndexSpy.callCount).equal(0);
 						expect(documentGenericBatchIndexSpy.callCount).equal(0);
+						expect(storedIdentityBatchSpy.callCount).equal(1);
 						for (const doc of docs) {
 							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
 						}
 					} finally {
+						storedIdentityBatchSpy.restore();
 						documentGenericBatchIndexSpy.restore();
 						documentBatchIndexSpy.restore();
 						nativeBatchSpy.restore();
@@ -3664,7 +3670,7 @@ describe("index", () => {
 						expect(appended.entries).to.have.length(docs.length);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
-						expect(contextBatchSpy.callCount).equal(1);
+						expect(contextBatchSpy.callCount).equal(0);
 						for (const doc of docs) {
 							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
 						}
@@ -3743,8 +3749,8 @@ describe("index", () => {
 						]);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
-						expect(documentBatchIndexSpy.callCount).equal(1);
-						expect(contextBatchSpy.callCount).equal(1);
+						expect(documentBatchIndexSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(0);
 						expect((await store.docs.get("update-1"))?.name).equal("after-1");
 						expect((await store.docs.get("update-2"))?.name).equal("after-2");
 					} finally {

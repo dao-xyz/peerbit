@@ -1124,6 +1124,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 				profile,
 				"documentIndexPutMs",
 			),
+			patchAsyncMethod(
+				store.docs.index,
+				"_putManyStoredIdentityWithContext",
+				profile,
+				"documentIndexPutMs",
+			),
 		];
 		if (profileDeep) {
 			restores.push(

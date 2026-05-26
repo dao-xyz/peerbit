@@ -3429,6 +3429,30 @@ export class Documents<
 	private async handlePreparedPlainPutManyCommit(
 		commit: DocumentAppendManyCommitFacts<T, I>,
 	): Promise<void> {
+		if (
+			!this.hasDocumentChangeConsumers() &&
+			commit.removed.length === 0
+		) {
+			const stored = await this._index._putManyStoredIdentityWithContext(
+				commit.commits.map((put) => {
+					const existing =
+						put.unique || put.existing === null ? null : put.existing;
+					return {
+						value: put.document,
+						id: put.key,
+						context: put.context,
+						encodedValueParts: put.contextualEncodedValueParts,
+						options: {
+							replace: existing != null,
+						},
+					};
+				}),
+			);
+			if (stored === true) {
+				return;
+			}
+		}
+
 		const documentsChanged: DocumentsChange<T, I> = {
 			added: [],
 			removed: [],

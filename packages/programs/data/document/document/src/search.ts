@@ -2495,6 +2495,58 @@ export class DocumentIndex<
 		}
 	}
 
+	public async _putManyStoredIdentityWithContext(
+		values: Array<{
+			value: T;
+			id: indexerTypes.IdKey;
+			context: types.Context;
+			encodedValueParts: NonNullable<ContextualPutOptions["encodedValueParts"]>;
+			options?: { replace?: boolean };
+		}>,
+	): Promise<boolean | undefined> {
+		if (values.length === 0) {
+			return true;
+		}
+		const contextualBatchPut = this.transformerIsIdentity
+			? (this.index as ContextualIndexPut<I>).putWithContextBatch
+			: undefined;
+		if (
+			!contextualBatchPut ||
+			this.isProgramValued ||
+			!this.indexedTypeIsDocumentType
+		) {
+			return;
+		}
+		for (const item of values) {
+			this.cacheResolvedValue(item.id.primitive, item.value);
+		}
+		const handleError = (error: unknown) => {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return true;
+			}
+			throw error;
+		};
+		try {
+			const putResult = contextualBatchPut.call(
+				this.index,
+				values.map((item) => ({
+					value: item.value as any as I,
+					id: item.id,
+					context: item.context,
+					options: {
+						replace: item.options?.replace,
+						encodedValueParts: item.encodedValueParts,
+					},
+				})),
+			);
+			return isPromiseLike(putResult)
+				? putResult.then(() => true, handleError)
+				: true;
+		} catch (error) {
+			return handleError(error);
+		}
+	}
+
 	public async _putManyIdentityWithContext(
 		values: Array<{
 			value: T;
