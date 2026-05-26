@@ -1202,6 +1202,27 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		trimLengthTo: number | undefined,
 	) => unknown[][];
+	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentExistingCreated: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanIds: Uint32Array,
+		documentProjectionEncodedDocuments: Uint8Array[],
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction: (
 		wallTime: bigint,
 		logical: number,
@@ -1951,11 +1972,7 @@ export type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
 		gid: string;
 		metaData?: Uint8Array;
 		payloadData: Uint8Array;
-		documentIndex: {
-			key: string;
-			valuePrefixBytes: Uint8Array;
-			existingCreated?: bigint | number | string;
-		};
+		documentIndex: NonNullable<NativeBackboneAppendInput["documentIndex"]>;
 	}>;
 	type?: number;
 	replicas: number;
@@ -6292,11 +6309,79 @@ export class NativePeerbitBackbone {
 	preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
 		input: NativeBackboneCommittedNoNextDocumentIndexBatchInput,
 	): NativeBackboneAppendResult[] | undefined {
+		if (input.entries.length === 0) {
+			return [];
+		}
+		const projected = input.entries.every(
+			(entry) => entry.documentIndex.projection,
+		);
+		if (projected) {
+			const nativeCachedBatch =
+				this.native
+					.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction;
+			if (!nativeCachedBatch) {
+				return undefined;
+			}
+			const rows = nativeCachedBatch.call(
+				this.native,
+				new BigUint64Array(
+					input.entries.map((entry) => BigInt(entry.wallTime)),
+				),
+				new Uint32Array(
+					input.entries.map((entry) => entry.logical ?? 0),
+				),
+				input.entries.map((entry) => entry.gid),
+				input.type ?? 0,
+				input.entries.map((entry) => entry.metaData),
+				input.entries.map((entry) => entry.payloadData),
+				input.replicas,
+				input.roleAgeMs ?? 0,
+				integerString(input.now ?? Date.now()),
+				input.selfHash ?? "",
+				input.selfReplicating ?? true,
+				input.entries.map((entry) => entry.documentIndex.key),
+				input.entries.map((entry) =>
+					entry.documentIndex.existingCreated == null
+						? ""
+						: integerString(entry.documentIndex.existingCreated),
+				),
+				input.documentByteElementIndexLimit ?? 0,
+				input.documentDeleteTrimmedHeads === true,
+				new Uint32Array(
+					input.entries.map((entry) =>
+						this.documentProjectionPlanId(
+							entry.documentIndex.projection!.plan,
+						),
+					),
+				),
+				input.entries.map(
+					(entry) => entry.documentIndex.projection!.encodedDocument,
+				),
+				input.entries.map(
+					(entry) => entry.documentIndex.projection!.signer,
+				),
+				input.trimLengthTo,
+			);
+			return rows.map((row) =>
+				compactCommittedNoNextStorageAppendResultFromRow(
+					this.resolution,
+					row,
+				),
+			);
+		}
+		if (
+			input.entries.some((entry) => entry.documentIndex.projection) ||
+			input.entries.some(
+				(entry) => !entry.documentIndex.valuePrefixBytes,
+			)
+		) {
+			return undefined;
+		}
 		const nativeBatch =
 			this.native
 				.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction;
-		if (!nativeBatch || input.entries.length === 0) {
-			return input.entries.length === 0 ? [] : undefined;
+		if (!nativeBatch) {
+			return undefined;
 		}
 		const rows = nativeBatch.call(
 			this.native,
@@ -6317,7 +6402,7 @@ export class NativePeerbitBackbone {
 			input.selfReplicating ?? true,
 			input.entries.map((entry) => entry.documentIndex.key),
 			input.entries.map(
-				(entry) => entry.documentIndex.valuePrefixBytes,
+				(entry) => entry.documentIndex.valuePrefixBytes!,
 			),
 			input.entries.map((entry) =>
 				entry.documentIndex.existingCreated == null

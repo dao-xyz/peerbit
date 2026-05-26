@@ -69,12 +69,16 @@ const schemaWithIdScoreAndBytes = () => {
 	return Uint8Array.from(out);
 };
 
-const encodedDocumentWithIdScoreAndBytes = () => {
+const encodedDocumentWithIdScoreAndBytes = (
+	id = "abc",
+	score = 7,
+	bytes = new Uint8Array([9, 10]),
+) => {
 	const out: number[] = [];
-	writeString(out, "abc");
-	writeU32(out, 7);
-	writeU32(out, 2);
-	out.push(9, 10);
+	writeString(out, id);
+	writeU32(out, score);
+	writeU32(out, bytes.byteLength);
+	out.push(...bytes);
 	return Uint8Array.from(out);
 };
 
@@ -626,6 +630,74 @@ describe("native peerbit backbone", () => {
 		expect(
 			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
 		).to.equal("doc-batch-2");
+	});
+
+	it("batches compact committed no-next cached-plan document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+
+		const projection = {
+			documentFieldNames: ["id", "score", "bytes"],
+			documentFieldTypes: ["string", "u32", "bytes"],
+			outputFieldTypes: [],
+			sourceKinds: [],
+			sourceValues: [],
+		};
+		const results =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 30n,
+							logical: 1,
+							gid: "gid-doc-index-projected-batch",
+							payloadData: new Uint8Array([1, 2, 3]),
+							documentIndex: {
+								key: "doc-projected-batch-1",
+								projection: {
+									encodedDocument:
+										encodedDocumentWithIdScoreAndBytes("abc", 7),
+									plan: projection,
+								},
+							},
+						},
+						{
+							wallTime: 31n,
+							logical: 2,
+							gid: "gid-doc-index-projected-batch",
+							payloadData: new Uint8Array([4, 5, 6]),
+							documentIndex: {
+								key: "doc-projected-batch-2",
+								projection: {
+									encodedDocument:
+										encodedDocumentWithIdScoreAndBytes("def", 8),
+									plan: projection,
+								},
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+				},
+			);
+
+		expect(results).to.have.length(2);
+		expect(results?.map((result) => result.entry.bytes)).to.deep.equal([
+			undefined,
+			undefined,
+		]);
+		expect(backbone.documentValueLength).to.equal(2);
+		expect(
+			backbone.documentExactStringFirstKey(3, results![0]!.entry.hash),
+		).to.equal("doc-projected-batch-1");
+		expect(
+			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
+		).to.equal("doc-projected-batch-2");
 	});
 
 	it("coalesces trim deletes with shared-log coordinate state", async () => {
