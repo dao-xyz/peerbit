@@ -415,10 +415,6 @@ fn prepared_raw_receive_selection_from_leader_plans(
         }
     }
 
-    if dropped_hashes.is_empty() {
-        return Ok(JsValue::UNDEFINED);
-    }
-
     let used_native_fast_drop_plan = retained_hashes.is_empty();
     let retained_group_leader_plans = Array::new();
     if !used_native_fast_drop_plan {

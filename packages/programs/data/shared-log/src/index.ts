@@ -14886,6 +14886,9 @@ export class SharedLog<
 		if (!selection) {
 			return undefined;
 		}
+		if (selection.droppedHashes.length === 0) {
+			return undefined;
+		}
 
 		if (!properties.fromIsSelf) {
 			this.markEntriesKnownByPeer(

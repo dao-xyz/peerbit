@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-coordinate-wal-half,raw-receive-native-coordinate-wal-verify-prepare,raw-receive-native-backbone-select-half,raw-receive-native-coordinate-wal-select-half,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-coordinate-wal-half,raw-receive-native-coordinate-wal-verify-prepare,raw-receive-native-backbone-select-all,raw-receive-native-coordinate-wal-select-all,raw-receive-native-backbone-select-half,raw-receive-native-coordinate-wal-select-half,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -37,6 +37,8 @@ type Scenario =
 	| "raw-receive-native-backbone-half-verify-prepare"
 	| "raw-receive-native-coordinate-wal-half"
 	| "raw-receive-native-coordinate-wal-half-verify-prepare"
+	| "raw-receive-native-backbone-select-all"
+	| "raw-receive-native-coordinate-wal-select-all"
 	| "raw-receive-native-backbone-select-half"
 	| "raw-receive-native-coordinate-wal-select-half"
 	| "raw-receive-native-backbone-drop"
@@ -143,6 +145,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-backbone-half-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-half" &&
 			scenario !== "raw-receive-native-coordinate-wal-half-verify-prepare" &&
+			scenario !== "raw-receive-native-backbone-select-all" &&
+			scenario !== "raw-receive-native-coordinate-wal-select-all" &&
 			scenario !== "raw-receive-native-backbone-select-half" &&
 			scenario !== "raw-receive-native-coordinate-wal-select-half" &&
 			scenario !== "raw-receive-native-backbone-drop" &&
@@ -413,13 +417,13 @@ const runRawReceive = async (
 			);
 		}
 		if (options?.nativeSelectEvery) {
+			const expectedDropped = count - expectedReceived;
 			const nativeSelectEvents = profileEvents.filter(
 				(event) => event.name === "sharedLog.rawReceive.nativeSelect",
 			);
-			if (nativeSelectEvents.length === 0) {
+			if (nativeSelectEvents.length === 0 && expectedDropped > 0) {
 				throw new Error("Expected native raw receive selection profile event");
 			}
-			const expectedDropped = count - expectedReceived;
 			const retainedByNativeSelect = nativeSelectEvents.reduce(
 				(sum, event) => sum + (event.count ?? 0),
 				0,
@@ -432,7 +436,10 @@ const runRawReceive = async (
 						: 0),
 				0,
 			);
-			if (retainedByNativeSelect !== expectedReceived) {
+			if (
+				expectedDropped > 0 &&
+				retainedByNativeSelect !== expectedReceived
+			) {
 				throw new Error(
 					`Expected native raw receive selection to retain ${expectedReceived} entries, retained ${retainedByNativeSelect}`,
 				);
@@ -470,6 +477,10 @@ const runRawReceive = async (
 					? "raw-receive-native-coordinate-wal-half"
 				: options?.nativeBackbone && options.keepEvery === 2
 					? "raw-receive-native-backbone-half"
+				: options?.coordinateWal && options.nativeSelectEvery === 1
+					? "raw-receive-native-coordinate-wal-select-all"
+				: options?.nativeBackbone && options.nativeSelectEvery === 1
+					? "raw-receive-native-backbone-select-all"
 				: options?.coordinateWal && options.nativeSelectEvery === 2
 					? "raw-receive-native-coordinate-wal-select-half"
 				: options?.nativeBackbone && options.nativeSelectEvery === 2
@@ -758,6 +769,18 @@ const runScenario = async (
 		return runRawReceive(count, run, {
 			coordinateWal: true,
 			nativeSelectEvery: 2,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-select-all") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			nativeSelectEvery: 1,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-select-all") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			nativeSelectEvery: 1,
 		});
 	}
 	if (scenario === "raw-receive-native-backbone-drop") {
