@@ -2372,6 +2372,8 @@ export type NativeBackboneCoordinatePersistenceOptions =
 		flushOnAppend?: boolean;
 		flushMaxPendingBytes?: number;
 		flushIntervalMs?: number;
+		compactMaxJournalBytes?: number;
+		compactMaxJournalRecords?: number;
 	};
 
 export type NativeBackboneCoordinatePersistenceStore = {
@@ -2387,6 +2389,8 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	flushOnAppend?: boolean;
 	flushMaxPendingBytes?: number;
 	flushIntervalMs?: number;
+	compactMaxJournalBytes?: number;
+	compactMaxJournalRecords?: number;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournalOnAppend?(
@@ -2408,6 +2412,8 @@ export type NativeBackboneBufferedCoordinatePersistenceOptions =
 		flushMaxPendingBytes?: number;
 		flushIntervalMs?: number;
 		maxBufferedBytes?: number;
+		compactMaxJournalBytes?: number;
+		compactMaxJournalRecords?: number;
 	};
 
 export type NativeBackboneNodeCoordinatePersistenceOptions =
@@ -2422,6 +2428,8 @@ export const nativeBackboneCoordinatePersistenceFiles = {
 } as const;
 
 export const defaultNativeBackboneCoordinateFlushMaxPendingBytes = 1024 * 1024;
+export const defaultNativeBackboneCoordinateCompactMaxJournalBytes =
+	64 * 1024 * 1024;
 
 type NativeBackboneNodeFs = {
 	mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
@@ -6987,6 +6995,8 @@ export class NativeBackboneNodeCoordinatePersistence
 	readonly flushOnAppend: boolean;
 	readonly flushMaxPendingBytes?: number;
 	readonly flushIntervalMs?: number;
+	readonly compactMaxJournalBytes?: number;
+	readonly compactMaxJournalRecords?: number;
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
 	private readonly fs?: NativeBackboneNodeFs;
@@ -6998,6 +7008,8 @@ export class NativeBackboneNodeCoordinatePersistence
 	private readonly journalWriteBuffer: Uint8Array[] = [];
 	private journalWriteBufferBytes = 0;
 	private journalInitialized: boolean | undefined;
+	private journalByteLength = 0;
+	private journalRecordCount = 0;
 	private lastFlushMs = Date.now();
 
 	constructor(
@@ -7017,6 +7029,18 @@ export class NativeBackboneNodeCoordinatePersistence
 		}
 		if (options.flushIntervalMs != null) {
 			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
+		}
+		if (options.compactMaxJournalBytes != null) {
+			this.compactMaxJournalBytes = Math.max(
+				0,
+				options.compactMaxJournalBytes,
+			);
+		}
+		if (options.compactMaxJournalRecords != null) {
+			this.compactMaxJournalRecords = Math.max(
+				0,
+				options.compactMaxJournalRecords,
+			);
 		}
 		this.fs = options.fs;
 		if (options.writeBufferMaxBytes != null) {
@@ -7148,6 +7172,8 @@ export class NativeBackboneNodeCoordinatePersistence
 			journal,
 		);
 		this.journalInitialized = !!journal && journal.byteLength > 0;
+		this.journalByteLength = journal?.byteLength ?? 0;
+		this.journalRecordCount = operations;
 		backbone.setCoordinateJournalEnabled(true);
 		this.lastFlushMs = Date.now();
 		return operations;
@@ -7186,6 +7212,7 @@ export class NativeBackboneNodeCoordinatePersistence
 
 	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
 		const records = backbone.coordinateJournal();
+		const recordCount = backbone.coordinatePendingJournalLength;
 		if (records.byteLength === 0) {
 			this.lastFlushMs = Date.now();
 			return 0;
@@ -7199,17 +7226,33 @@ export class NativeBackboneNodeCoordinatePersistence
 			: concatBytes([backbone.coordinateJournalHeader(), records]);
 		await this.appendJournalBytes(bytes);
 		this.journalInitialized = true;
+		this.journalByteLength += bytes.byteLength;
+		this.journalRecordCount += recordCount;
 		backbone.clearCoordinateJournal();
 		this.lastFlushMs = Date.now();
+		if (this.shouldCompactJournal()) {
+			await this.compact(backbone);
+		}
 		return records.byteLength;
 	}
 
+	private shouldCompactJournal(): boolean {
+		return (
+			(this.compactMaxJournalBytes != null &&
+				this.journalByteLength >= this.compactMaxJournalBytes) ||
+			(this.compactMaxJournalRecords != null &&
+				this.journalRecordCount >= this.compactMaxJournalRecords)
+		);
+	}
+
 	async compact(backbone: NativePeerbitBackbone): Promise<void> {
+		await this.writeFile(this.snapshotFile, backbone.coordinateSnapshot());
 		this.journalWriteBuffer.length = 0;
 		this.journalWriteBufferBytes = 0;
-		await this.writeFile(this.snapshotFile, backbone.coordinateSnapshot());
 		await this.removeFile(this.journalFile);
 		this.journalInitialized = false;
+		this.journalByteLength = 0;
+		this.journalRecordCount = 0;
 		backbone.clearCoordinateJournal();
 		this.lastFlushMs = Date.now();
 	}
@@ -7413,9 +7456,13 @@ export class NativeBackboneCoordinatePersistence {
 	readonly flushOnAppend: boolean;
 	readonly flushMaxPendingBytes?: number;
 	readonly flushIntervalMs?: number;
+	readonly compactMaxJournalBytes?: number;
+	readonly compactMaxJournalRecords?: number;
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
 	private journalInitialized: boolean | undefined;
+	private journalByteLength = 0;
+	private journalRecordCount = 0;
 	private lastFlushMs = Date.now();
 
 	constructor(
@@ -7436,6 +7483,18 @@ export class NativeBackboneCoordinatePersistence {
 		if (options.flushIntervalMs != null) {
 			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
 		}
+		if (options.compactMaxJournalBytes != null) {
+			this.compactMaxJournalBytes = Math.max(
+				0,
+				options.compactMaxJournalBytes,
+			);
+		}
+		if (options.compactMaxJournalRecords != null) {
+			this.compactMaxJournalRecords = Math.max(
+				0,
+				options.compactMaxJournalRecords,
+			);
+		}
 	}
 
 	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
@@ -7448,6 +7507,8 @@ export class NativeBackboneCoordinatePersistence {
 			journal,
 		);
 		this.journalInitialized = !!journal && journal.byteLength > 0;
+		this.journalByteLength = journal?.byteLength ?? 0;
+		this.journalRecordCount = operations;
 		backbone.setCoordinateJournalEnabled(true);
 		this.lastFlushMs = Date.now();
 		return operations;
@@ -7486,6 +7547,7 @@ export class NativeBackboneCoordinatePersistence {
 
 	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
 		const records = backbone.coordinateJournal();
+		const recordCount = backbone.coordinatePendingJournalLength;
 		if (records.byteLength === 0) {
 			this.lastFlushMs = Date.now();
 			return 0;
@@ -7494,22 +7556,36 @@ export class NativeBackboneCoordinatePersistence {
 			const existing = await this.store.read(this.journalFile);
 			this.journalInitialized = !!existing && existing.byteLength > 0;
 		}
-		await this.store.append(
-			this.journalFile,
-			this.journalInitialized
-				? records
-				: concatBytes([backbone.coordinateJournalHeader(), records]),
-		);
+		const bytes = this.journalInitialized
+			? records
+			: concatBytes([backbone.coordinateJournalHeader(), records]);
+		await this.store.append(this.journalFile, bytes);
 		this.journalInitialized = true;
+		this.journalByteLength += bytes.byteLength;
+		this.journalRecordCount += recordCount;
 		backbone.clearCoordinateJournal();
 		this.lastFlushMs = Date.now();
+		if (this.shouldCompactJournal()) {
+			await this.compact(backbone);
+		}
 		return records.byteLength;
+	}
+
+	private shouldCompactJournal(): boolean {
+		return (
+			(this.compactMaxJournalBytes != null &&
+				this.journalByteLength >= this.compactMaxJournalBytes) ||
+			(this.compactMaxJournalRecords != null &&
+				this.journalRecordCount >= this.compactMaxJournalRecords)
+		);
 	}
 
 	async compact(backbone: NativePeerbitBackbone): Promise<void> {
 		await this.store.write(this.snapshotFile, backbone.coordinateSnapshot());
 		await this.store.remove?.(this.journalFile);
 		this.journalInitialized = false;
+		this.journalByteLength = 0;
+		this.journalRecordCount = 0;
 		backbone.clearCoordinateJournal();
 	}
 
@@ -7563,6 +7639,10 @@ export const createBufferedNativeBackboneCoordinatePersistence = (
 			flushOnAppend: false,
 			flushMaxPendingBytes,
 			flushIntervalMs: options.flushIntervalMs,
+			compactMaxJournalBytes:
+				options.compactMaxJournalBytes ??
+				defaultNativeBackboneCoordinateCompactMaxJournalBytes,
+			compactMaxJournalRecords: options.compactMaxJournalRecords,
 		},
 	);
 };
@@ -7579,6 +7659,9 @@ export const createBufferedNativeBackboneNodeCoordinatePersistence = (
 		flushOnAppend: false,
 		flushMaxPendingBytes,
 		writeBufferMaxBytes: options.writeBufferMaxBytes ?? flushMaxPendingBytes,
+		compactMaxJournalBytes:
+			options.compactMaxJournalBytes ??
+			defaultNativeBackboneCoordinateCompactMaxJournalBytes,
 	});
 };
 

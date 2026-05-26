@@ -18,3 +18,8 @@ document writes.
 Use `createBufferedNativeBackboneCoordinatePersistence(store)` with OPFS, memory,
 or custom stores, and `createBufferedNativeBackboneNodeCoordinatePersistence(dir)`
 for the Node adapter.
+
+Buffered helpers also install a bounded checkpoint policy by default. When the
+coordinate journal reaches the checkpoint threshold, the adapter writes a compact
+snapshot and removes the replay WAL. This keeps high-throughput strict-native
+document writes from trading append speed for unbounded restart replay cost.

@@ -11,6 +11,7 @@ import {
 	createBufferedNativeBackboneNodeCoordinatePersistence,
 	createNativeBackboneCoordinatePersistence,
 	createNativePeerbitBackbone,
+	defaultNativeBackboneCoordinateCompactMaxJournalBytes,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "../src/index.js";
 
@@ -331,6 +332,9 @@ describe("native peerbit backbone", () => {
 
 		expect(persistence.flushOnAppend).equal(false);
 		expect(persistence.flushMaxPendingBytes).equal(1024);
+		expect(persistence.compactMaxJournalBytes).equal(
+			defaultNativeBackboneCoordinateCompactMaxJournalBytes,
+		);
 		await persistence.hydrate(backbone);
 		backbone.putEntryCoordinates(
 			"hash-buffered",
@@ -349,6 +353,79 @@ describe("native peerbit backbone", () => {
 		expect(store.files.get("coordinates.wal")?.byteLength).to.be.greaterThan(
 			backbone.coordinateJournalHeader().byteLength,
 		);
+	});
+
+	it("checkpoints generic coordinate WAL after compact thresholds", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store, {
+			compactMaxJournalRecords: 1,
+		});
+
+		await persistence.hydrate(backbone);
+		backbone.putEntryCoordinates(
+			"hash-compact",
+			"gid-compact",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+
+		expect(await persistence.flushJournal(backbone)).to.be.greaterThan(0);
+		expect(store.files.has("coordinates.bin")).equal(true);
+		expect(store.files.has("coordinates.wal")).equal(false);
+		expect(backbone.coordinatePendingJournalLength).equal(0);
+		await new NativeBackboneCoordinatePersistence(store).hydrate(restored);
+		expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-compact"]);
+	});
+
+	it("checkpoints buffered coordinate WAL after compact thresholds", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			store,
+			{ compactMaxJournalRecords: 1, flushMaxPendingBytes: 1 },
+		);
+
+		await persistence.hydrate(backbone);
+		backbone.putEntryCoordinates(
+			"hash-buffered-compact",
+			"gid-buffered-compact",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+
+		expect(await persistence.flushJournalOnAppend?.(backbone)).to.be.greaterThan(
+			0,
+		);
+		expect(store.files.has("coordinates.bin")).equal(true);
+		expect(store.files.has("coordinates.wal")).equal(false);
+		expect(backbone.coordinatePendingJournalLength).equal(0);
+		await new NativeBackboneCoordinatePersistence(store).hydrate(restored);
+		expect(restored.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-buffered-compact",
+		]);
 	});
 
 	it("owns coordinate WAL append flush decisions", async () => {
@@ -2642,6 +2719,9 @@ describe("native peerbit backbone", () => {
 
 			expect(persistence.flushOnAppend).equal(false);
 			expect(persistence.flushMaxPendingBytes).equal(1024);
+			expect(persistence.compactMaxJournalBytes).equal(
+				defaultNativeBackboneCoordinateCompactMaxJournalBytes,
+			);
 			await persistence.hydrate(source);
 			source.putEntryCoordinates(
 				"hash-node-buffered",
@@ -2664,6 +2744,56 @@ describe("native peerbit backbone", () => {
 				"hash-node-buffered",
 			]);
 			await writeThrough.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("checkpoints node coordinate WAL after compact thresholds", async () => {
+		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-node-coordinate-compact-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+				{ compactMaxJournalRecords: 1 },
+			);
+
+			await persistence.hydrate(source);
+			source.putEntryCoordinates(
+				"hash-node-compact",
+				"gid-node-compact",
+				[1n],
+				false,
+				1,
+				1n,
+			);
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+			await persistence.close();
+
+			const restoredPersistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			expect(await restoredPersistence.hydrate(restored)).equal(0);
+			expect(restored.getEntryCoordinateHashes()).to.deep.equal([
+				"hash-node-compact",
+			]);
+			await restoredPersistence.close();
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
