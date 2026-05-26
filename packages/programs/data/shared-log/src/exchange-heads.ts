@@ -111,7 +111,10 @@ const emitNativeBackboneRawPrepareProfile = (
 		],
 	];
 	for (const [name, durationMs] of events) {
-		if (durationMs > 0) {
+		if (
+			durationMs > 0 ||
+			name === "sharedLog.rawReceive.nativePrepare.prepare"
+		) {
 			emitSyncProfileEvent(profile, {
 				name,
 				component: "shared-log",

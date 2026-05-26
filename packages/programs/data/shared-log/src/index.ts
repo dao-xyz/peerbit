@@ -4607,8 +4607,11 @@ export class SharedLog<
 		if (this.closed || !this.pruneDebouncedFn) {
 			return false;
 		}
-		if (this.keep && (await this.keep(args.value.entry))) {
-			return false;
+		if (this.keep) {
+			const keepResult = this.keep(args.value.entry);
+			if (isPromiseLike(keepResult) ? await keepResult : keepResult) {
+				return false;
+			}
 		}
 		this._checkedPrune.trackCandidate(
 			args.key,
@@ -10488,11 +10491,15 @@ export class SharedLog<
 
 								outer: for (let i = 0; i < entries.length; i++) {
 									const entry = entries[i]!;
-									const shouldKeep =
-										keepAsLeader ||
-										(this.keep
-											? await this.keep(getReceiveHeadShallowOrEntry(entry))
-											: false);
+									let shouldKeep = keepAsLeader;
+									if (!shouldKeep && this.keep) {
+										const keepResult = this.keep(
+											getReceiveHeadShallowOrEntry(entry),
+										);
+										shouldKeep = isPromiseLike(keepResult)
+											? await keepResult
+											: keepResult;
+									}
 									if (shouldKeep) {
 										toMerge.push(entry);
 										toPersist.push(getReceiveHeadShallowOrEntry(entry));
