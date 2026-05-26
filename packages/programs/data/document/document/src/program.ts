@@ -982,6 +982,7 @@ export class Documents<
 
 	private async canPerformAllowsNativeDelete(properties: {
 		getExistingEntry: () => Promise<Entry<Operation>>;
+		getExistingDocument?: () => MaybePromise<T | undefined>;
 	}): Promise<boolean> {
 		if (!this._optionCanPerform) {
 			return true;
@@ -995,10 +996,13 @@ export class Documents<
 				this._optionCanPerformNativePolicy,
 			)
 		) {
-			const existingEntry = await properties.getExistingEntry();
-			const existingOperation = await existingEntry.getPayloadValue();
-			if (isPutOperation(existingOperation)) {
-				deleteValue = this._index.valueEncoding.decoder(existingOperation.data);
+			deleteValue = await properties.getExistingDocument?.();
+			if (deleteValue === undefined) {
+				const existingEntry = await properties.getExistingEntry();
+				const existingOperation = await existingEntry.getPayloadValue();
+				if (isPutOperation(existingOperation)) {
+					deleteValue = this._index.valueEncoding.decoder(existingOperation.data);
+				}
 			}
 		}
 		return createNativeFastPathDeletePolicyEvaluator(
@@ -1167,6 +1171,32 @@ export class Documents<
 		return isResultIndexedValue(existing)
 			? existing.context
 			: existing?.value.__context;
+	}
+
+	private documentFromIdentityIndexedValue(
+		indexed: indexerTypes.IndexedResult<WithContext<I>> | undefined,
+	): T | undefined {
+		const value = indexed?.value as unknown as WithContext<T> | undefined;
+		if (!value) {
+			return;
+		}
+		if (typeof value !== "object") {
+			return value as unknown as T;
+		}
+		const document = Object.assign(
+			Object.create(this._clazz.prototype),
+			value,
+		) as WithContext<T>;
+		delete (document as Partial<WithContext<T>>).__context;
+		return document as unknown as T;
+	}
+
+	private async getLocalIdentityDocumentByHead(
+		head: string,
+	): Promise<T | undefined> {
+		return this.documentFromIdentityIndexedValue(
+			await this._index.getIdentityIndexedByHead(head),
+		);
 	}
 
 	get changes() {
@@ -1484,6 +1514,11 @@ export class Documents<
 		const existingHead = this.getExistingContext(existing)?.head;
 		if (!existingHead) {
 			return;
+		}
+		const indexedDocument =
+			await this.getLocalIdentityDocumentByHead(existingHead);
+		if (indexedDocument) {
+			return indexedDocument;
 		}
 		const existingEntry = await this._resolveEntry(existingHead, {
 			remote: true,
@@ -3376,6 +3411,8 @@ export class Documents<
 			);
 		}
 		let previousEntry: Entry<Operation> | undefined;
+		let existingDocumentChecked = false;
+		let existingDocument: T | undefined;
 		const getPreviousEntry = async () => {
 			if (previousEntry) {
 				return previousEntry;
@@ -3390,10 +3427,20 @@ export class Documents<
 			}
 			return previousEntry;
 		};
+		const getExistingDocument = async () => {
+			if (!existingDocumentChecked) {
+				existingDocumentChecked = true;
+				existingDocument = await this.getLocalIdentityDocumentByHead(
+					existingContext.head,
+				);
+			}
+			return existingDocument;
+		};
 		const operation = new DeleteOperation({ key });
 		if (
 			!(await this.canPerformAllowsNativeDelete({
 				getExistingEntry: getPreviousEntry,
+				getExistingDocument,
 			}))
 		) {
 			throw this.nativeModeError("canPerform policy rejected this delete");

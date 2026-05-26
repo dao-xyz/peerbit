@@ -3951,6 +3951,7 @@ describe("index", () => {
 							},
 						},
 					});
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
 					try {
 						const owned = new Document({
 							id: uuid(),
@@ -3972,6 +3973,7 @@ describe("index", () => {
 							replicate: false,
 							target: "none",
 						});
+						resolveEntrySpy.resetHistory();
 
 						await store.docs.del(owned.id, {
 							replicate: false,
@@ -3991,7 +3993,9 @@ describe("index", () => {
 						expect((await store.docs.get(foreign.id))?.name).equal(
 							"foreign-native-delete",
 						);
+						expect(resolveEntrySpy.callCount).equal(0);
 					} finally {
+						resolveEntrySpy.restore();
 						await rustSession.stop();
 					}
 				});
