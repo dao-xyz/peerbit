@@ -4138,6 +4138,68 @@ describe("index", () => {
 					}
 				});
 
+				it("handles duplicate strict native putMany ids through native single puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const strictAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericAppendSpy = sinon.spy(store.docs.log as any, "append");
+					try {
+						const id = uuid();
+						const appended = await store.docs.putMany(
+							[
+								new Document({ id, name: "duplicate-1" }),
+								new Document({ id, name: "duplicate-2" }),
+							],
+							{ target: "none" },
+						);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[1]!.meta.next).to.deep.equal([
+							appended.entries[0]!.hash,
+						]);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(0);
+						expect(strictAppendSpy.callCount).equal(2);
+						expect(genericAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal("duplicate-2");
+					} finally {
+						genericAppendSpy.restore();
+						strictAppendSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("uses native backend putMany for fresh non-unique ids in strict native mode", async () => {
 					const rustSession = await TestSession.connected(
 						1,

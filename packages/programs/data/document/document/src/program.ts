@@ -444,9 +444,17 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		this.context.assertPlainPutManySupported(docs, putOptions);
 		const prepared = docs.map((doc) => this.context.preparePlainPut(doc));
 		if (this.context.hasDuplicatePreparedPutKeys(prepared)) {
-			throw this.context.nativeModeError(
-				"does not support duplicate document ids in putMany",
-			);
+			const results: DocumentPutResult[] = [];
+			for (const doc of docs) {
+				results.push(await this.put(doc, putOptions));
+			}
+			let entries: Entry<Operation>[] | undefined;
+			return {
+				get entries() {
+					return (entries ??= results.map((result) => result.entry));
+				},
+				removed: results.flatMap((result) => result.removed),
+			};
 		}
 		let existingContexts:
 			| Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
