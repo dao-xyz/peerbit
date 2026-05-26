@@ -1656,6 +1656,34 @@ export class DocumentIndex<
 		) {
 			return;
 		}
+		if (this.nativeTransformProjectionPlan) {
+			let cached: I | undefined;
+			let hasCached = false;
+			return {
+				projection: {
+					encodedDocument,
+					plan: this.nativeTransformProjectionPlan,
+					signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
+				},
+				getIndexable: () => {
+					if (!hasCached) {
+						const transformed = this.transformer(
+							value,
+							undefined as unknown as types.Context,
+							transformFacts,
+						);
+						if (isPromiseLike(transformed)) {
+							throw new Error(
+								"Native descriptor transform unexpectedly returned a promise",
+							);
+						}
+						cached = transformed;
+						hasCached = true;
+					}
+					return cached!;
+				},
+			};
+		}
 		const transformed = this.transformer(
 			value,
 			undefined as unknown as types.Context,
@@ -2547,6 +2575,7 @@ export class DocumentIndex<
 				encodedValueParts = item.encodedValueParts;
 			} else if (item.nativeDocumentIndex) {
 				const valuePrefixBytes =
+					item.nativeDocumentIndex.valuePrefixBytes ??
 					this.nativeBackboneDocumentIndexValuePrefixBytes(
 						item.nativeDocumentIndex,
 						item.context,

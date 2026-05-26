@@ -2700,6 +2700,8 @@ export class Documents<
 	private async commitNativeDocumentAppendMany(
 		input: NativeDocumentAppendManyCommitInput<T, I>,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
+		const nativeBackboneDocumentIndexes =
+			await this.prepareNativeBackboneDocumentIndexCommitBatch(input.puts);
 		const nexts = input.puts.map((put) => {
 			const existing =
 				put.unique || put.existing === null ? null : put.existing;
@@ -2736,7 +2738,13 @@ export class Documents<
 			return undefined;
 		}
 		const appendInputs = input.puts.map((put, index) => ({
-			input: put,
+			input: nativeBackboneDocumentIndexes?.[index]
+				? {
+						...put,
+						nativeBackboneDocumentIndex:
+							nativeBackboneDocumentIndexes[index],
+					}
+				: put,
 			appended: {
 				entry: appended.entries[index]!,
 				removed: [],
@@ -2750,6 +2758,23 @@ export class Documents<
 			removed: appended.removed,
 			commits,
 		};
+	}
+
+	private async prepareNativeBackboneDocumentIndexCommitBatch(
+		inputs: NativeDocumentAppendCommitFactsInput<T, I>[],
+	): Promise<PreparedNativeBackboneDocumentIndexCommit<I>[] | undefined> {
+		if (!this._nativeBackboneDocumentIndexEnabled || inputs.length === 0) {
+			return;
+		}
+		const commits: PreparedNativeBackboneDocumentIndexCommit<I>[] = [];
+		for (const input of inputs) {
+			const commit = await this.prepareNativeBackboneDocumentIndexCommit(input);
+			if (!commit) {
+				return;
+			}
+			commits.push(commit);
+		}
+		return commits;
 	}
 
 	private createDocumentAppendCommitFacts(
@@ -2943,13 +2968,26 @@ export class Documents<
 		const contextPlans =
 			tryPlanDocumentContextBatch(contextInputs) ??
 			(await planDocumentContextBatch(contextInputs));
-		return rows.map((row, index) =>
-			this.createDocumentAppendCommitFactsWithContext(
+		return rows.map((row, index) => {
+			const contextPlan = contextPlans[index]!;
+			if (row.input.nativeBackboneDocumentIndex) {
+				let context: Context | undefined;
+				return this.createNativeDocumentAppendTransaction(
+					row.input,
+					row.appended,
+					{
+						getContext: () => (context ??= new Context(contextPlan)),
+						getContextBytes: () => contextPlan.contextBytes,
+					},
+					row.input.nativeBackboneDocumentIndex,
+				);
+			}
+			return this.createDocumentAppendCommitFactsWithContext(
 				row.input,
 				row.appended,
-				contextPlans[index]!,
-			),
-		);
+				contextPlan,
+			);
+		});
 	}
 
 	private createDocumentAppendCommitFactsWithContext(
