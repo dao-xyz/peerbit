@@ -2592,6 +2592,68 @@ describe("index", () => {
 					}
 				});
 
+				it("keeps auto mode on compatibility path for explicit append options", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "auto",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const cases = [
+							{
+								name: "durability",
+								options: { durability: "strict" as const },
+							},
+							{
+								name: "defer-index-write",
+								options: { deferIndexWrite: false },
+							},
+							{
+								name: "metadata",
+								options: { meta: { data: new Uint8Array([1]) } },
+							},
+						];
+						for (const testCase of cases) {
+							const doc = new Document({
+								id: uuid(),
+								name: `auto-${testCase.name}`,
+							});
+							await store.docs.put(doc, {
+								unique: true,
+								replicate: false,
+								target: "none",
+								...testCase.options,
+							});
+							expect((await store.docs.get(doc.id))?.name).equal(
+								`auto-${testCase.name}`,
+							);
+						}
+						expect(nativeCommitSpy.callCount).equal(0);
+					} finally {
+						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("supports strict native mode for descriptor-backed plain local puts", async () => {
 					const rustSession = await TestSession.connected(
 						1,
@@ -3666,6 +3728,11 @@ describe("index", () => {
 							message: "strict history",
 						},
 						{
+							name: "appendDurability",
+							options: { appendDurability: "strict" as const },
+							message: "custom append durability",
+						},
+						{
 							name: "custom domain",
 							options: { domain: (() => undefined) as any },
 							message: "custom domain",
@@ -3842,9 +3909,24 @@ describe("index", () => {
 								message: "per-call trim",
 							},
 							{
+								name: "durability",
+								options: { durability: "strict" as const },
+								message: "per-call durability",
+							},
+							{
+								name: "deferIndexWrite",
+								options: { deferIndexWrite: false },
+								message: "per-call index write deferral",
+							},
+							{
 								name: "entry type",
 								options: { meta: { type: EntryType.CUT } },
 								message: "custom entry type",
+							},
+							{
+								name: "metadata",
+								options: { meta: { data: new Uint8Array([1]) } },
+								message: "custom metadata",
 							},
 							{
 								name: "next",

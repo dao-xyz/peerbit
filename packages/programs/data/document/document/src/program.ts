@@ -991,6 +991,9 @@ export class Documents<
 		if (this.immutable) {
 			unsupported.push("immutable documents");
 		}
+		if (options.appendDurability) {
+			unsupported.push("custom append durability");
+		}
 		if (Program.isPrototypeOf(options.type)) {
 			unsupported.push("program-valued document type");
 		}
@@ -1116,8 +1119,17 @@ export class Documents<
 		if (options?.trim) {
 			unsupported.push("per-call trim");
 		}
+		if (options?.durability) {
+			unsupported.push("per-call durability");
+		}
+		if (options?.deferIndexWrite !== undefined) {
+			unsupported.push("per-call index write deferral");
+		}
 		if (options?.meta?.type) {
 			unsupported.push("custom entry type");
+		}
+		if (options?.meta && "data" in options.meta) {
+			unsupported.push("custom metadata");
 		}
 		if (options?.meta?.next) {
 			unsupported.push("custom next");
@@ -2414,7 +2426,10 @@ export class Documents<
 			!options?.identity &&
 			!options?.encryption &&
 			!options?.trim &&
+			!options?.durability &&
+			options?.deferIndexWrite === undefined &&
 			!options?.meta?.type &&
+			!(options?.meta && "data" in options.meta) &&
 			!options?.meta?.next &&
 			!options?.meta?.timestamp
 		);
