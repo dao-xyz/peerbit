@@ -487,6 +487,9 @@ type WasmModule = {
 		signaturePublicKeys: Uint8Array[],
 		prehashes: Uint8Array,
 	) => Array<[Uint8Array, string]>;
+	entry_v0_plain_payload_data_from_storage: (
+		bytes: Uint8Array,
+	) => Uint8Array;
 	benchmark_plain_entry_v0_core: (
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
@@ -2595,6 +2598,13 @@ export const prepareRawEntryV0Batch = async (
 	}
 	const wasm = await loadWasm();
 	return wasm.prepare_raw_entry_v0_batch(blocks).map(rawEntryV0PreparedFactsFromRow);
+};
+
+export const entryV0PlainPayloadDataFromStorage = async (
+	bytes: Uint8Array,
+): Promise<Uint8Array> => {
+	const wasm = await loadWasm();
+	return wasm.entry_v0_plain_payload_data_from_storage(bytes);
 };
 
 export const createLogGraphIndex = () => LogGraphIndex.create();

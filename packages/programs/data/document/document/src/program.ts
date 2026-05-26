@@ -31,6 +31,7 @@ import {
 	type ShallowOrFullEntry,
 	Timestamp,
 	type TrimOptions,
+	entryV0PlainPayloadDataFromStorage,
 } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { Program, type ProgramEvents } from "@peerbit/program";
@@ -2187,10 +2188,7 @@ export class Documents<
 				keychain: this.node.services.keychain,
 			});
 			const operation =
-				reference?.operation ||
-				/* entry._payload instanceof DecryptedThing
-					? entry.payload.getValue(entry.encoding)
-					:  */ (await entry.getPayloadValue()); // TODO implement sync api for resolving entries that does not deep decryption
+				reference?.operation || (await this.getAppendOperation(entry));
 			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
@@ -2303,6 +2301,36 @@ export class Documents<
 				return false;
 			}
 			throw error;
+		}
+	}
+
+	private async getAppendOperation(entry: Entry<Operation>): Promise<Operation> {
+		if (this.isNativeMode()) {
+			const operation = await this.getPlainEntryOperationFromStorage(entry);
+			if (operation) {
+				return operation;
+			}
+		}
+		return entry.getPayloadValue();
+	}
+
+	private async getPlainEntryOperationFromStorage(
+		entry: Entry<Operation>,
+	): Promise<Operation | undefined> {
+		let storageBytes: Uint8Array;
+		try {
+			storageBytes = entry.getStorageBytes();
+		} catch {
+			return;
+		}
+		try {
+			const payloadData =
+				await entryV0PlainPayloadDataFromStorage(storageBytes);
+			return payloadData
+				? BORSH_ENCODING_OPERATION.decoder(payloadData)
+				: undefined;
+		} catch {
+			return;
 		}
 	}
 

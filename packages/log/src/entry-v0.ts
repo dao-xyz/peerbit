@@ -227,6 +227,9 @@ type NativeEntryV0Encoder = {
 	): Promise<NativePreparedPlainEntry>;
 	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
 	calculateRawCidV1Batch?(blocks: Uint8Array[]): Promise<string[]>;
+	entryV0PlainPayloadDataFromStorage?(
+		bytes: Uint8Array,
+	): Promise<Uint8Array>;
 	prepareRawEntryV0Batch?(
 		blocks: Uint8Array[],
 	): Promise<PreparedRawEntryV0Facts[]>;
@@ -268,6 +271,9 @@ const nativeEntryV0EncoderFromModule = (mod: {
 	prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
 	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
 	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
+	entryV0PlainPayloadDataFromStorage?: NativeEntryV0Encoder[
+		"entryV0PlainPayloadDataFromStorage"
+	];
 	prepareRawEntryV0Batch?: NativeEntryV0Encoder["prepareRawEntryV0Batch"];
 	verifyEd25519Batch?: NativeEntryV0Encoder["verifyEd25519Batch"];
 	verifyEntryV0Ed25519Batch?: NativeEntryV0Encoder["verifyEntryV0Ed25519Batch"];
@@ -288,6 +294,8 @@ const nativeEntryV0EncoderFromModule = (mod: {
 		prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
 		calculateRawCidV1: mod.calculateRawCidV1,
 		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
+		entryV0PlainPayloadDataFromStorage:
+			mod.entryV0PlainPayloadDataFromStorage,
 		prepareRawEntryV0Batch: mod.prepareRawEntryV0Batch,
 		verifyEd25519Batch: mod.verifyEd25519Batch,
 		verifyEntryV0Ed25519Batch: mod.verifyEntryV0Ed25519Batch,
@@ -361,6 +369,16 @@ export const prepareRawEntryV0Batch = async (
 		? await nativeEncoder
 		: nativeEncoder;
 	return resolvedNativeEncoder?.prepareRawEntryV0Batch?.(blocks);
+};
+
+export const entryV0PlainPayloadDataFromStorage = async (
+	bytes: Uint8Array,
+): Promise<Uint8Array | undefined> => {
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.entryV0PlainPayloadDataFromStorage?.(bytes);
 };
 
 export type Ed25519VerifyBatchInput = {

@@ -4477,7 +4477,7 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
             entry_type: meta.entry_type,
             meta_bytes,
             meta_data: meta.meta_data,
-            payload_byte_length: payload.data_len,
+            payload_byte_length: payload.data.len(),
             signature_verified: false,
             storage_bytes: bytes,
             requested_replicas,
@@ -5107,8 +5107,8 @@ struct ParsedRawEntryV0Meta {
     meta_data: Option<Vec<u8>>,
 }
 
-struct ParsedRawEntryV0Payload {
-    data_len: usize,
+struct ParsedRawEntryV0Payload<'a> {
+    data: &'a [u8],
 }
 
 struct BorshReader<'a> {
@@ -5268,6 +5268,14 @@ pub fn entry_v0_signature_public_key_from_storage_bytes(bytes: &[u8]) -> Result<
     Ok(parse_plain_signature_with_key(storage.signature_with_key)?.public_key)
 }
 
+#[wasm_bindgen]
+pub fn entry_v0_plain_payload_data_from_storage(bytes: Uint8Array) -> Result<Uint8Array, JsValue> {
+    let bytes = bytes.to_vec();
+    let storage = parse_plain_entry_v0_storage(&bytes)?;
+    let payload = parse_raw_entry_v0_payload(storage.payload)?;
+    Ok(Uint8Array::from(payload.data))
+}
+
 fn parse_plain_signature_with_key_ref(
     bytes: &[u8],
 ) -> Result<ParsedSignatureWithKeyRef<'_>, JsValue> {
@@ -5361,18 +5369,18 @@ fn parse_raw_entry_v0_meta(bytes: &[u8]) -> Result<ParsedRawEntryV0Meta, JsValue
     })
 }
 
-fn parse_raw_entry_v0_payload(bytes: &[u8]) -> Result<ParsedRawEntryV0Payload, JsValue> {
+fn parse_raw_entry_v0_payload(bytes: &[u8]) -> Result<ParsedRawEntryV0Payload<'_>, JsValue> {
     let mut reader = BorshReader::new(bytes);
     if reader.read_u8("payload variant")? != 0 {
         return Err(JsValue::from_str("Expected EntryV0 payload variant"));
     }
-    let data_len = reader.read_bytes("payload data")?.len();
+    let data = reader.read_bytes("payload data")?;
     if !reader.is_done() {
         return Err(JsValue::from_str(
             "Unexpected trailing EntryV0 payload bytes",
         ));
     }
-    Ok(ParsedRawEntryV0Payload { data_len })
+    Ok(ParsedRawEntryV0Payload { data })
 }
 
 fn encode_entry_v0(input: EntryV0EncodeInput, signature: Option<SignatureInput>) -> Vec<u8> {

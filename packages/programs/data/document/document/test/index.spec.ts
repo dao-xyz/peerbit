@@ -3141,12 +3141,27 @@ describe("index", () => {
 						const second = await store.docs.put(
 							new Document({ id, name: "native-same-signer-replay-2" }),
 						);
+						const rawStorage = await store.docs.log.log.blocks.get(
+							second.entry.hash,
+						);
+						expect(rawStorage).to.be.instanceOf(Uint8Array);
+						const getPayloadValueSpy = sinon.spy(async () => {
+							throw new Error("Unexpected payload materialization");
+						});
+						const rawEntry = {
+							hash: second.entry.hash,
+							meta: second.entry.meta,
+							init: () => rawEntry,
+							getStorageBytes: () => rawStorage as Uint8Array,
+							getPayloadValue: getPayloadValueSpy,
+						};
 						resolveEntrySpy.resetHistory();
 						nativeSignerBatchSpy.resetHistory();
 
-						expect(await (store.docs as any).canAppend(second.entry)).equal(true);
+						expect(await (store.docs as any).canAppend(rawEntry)).equal(true);
 						expect(nativeSignerBatchSpy.callCount).equal(1);
 						expect(resolveEntrySpy.callCount).equal(0);
+						expect(getPayloadValueSpy.callCount).equal(0);
 
 						nativeSignerBatchSpy.restore();
 						nativeSignerBatchRestored = true;
@@ -3154,10 +3169,9 @@ describe("index", () => {
 							.stub(store.docs as any, "getNativeEntrySignerPublicKeys")
 							.returns([undefined]);
 						try {
-							expect(await (store.docs as any).canAppend(second.entry)).equal(
-								false,
-							);
+							expect(await (store.docs as any).canAppend(rawEntry)).equal(false);
 							expect(resolveEntrySpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
 						} finally {
 							missingNativeSignerStub.restore();
 						}
