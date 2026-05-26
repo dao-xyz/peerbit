@@ -256,6 +256,14 @@ const mapMaybePromise = <T, R>(
 	fn: (value: T) => MaybePromise<R>,
 ): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
 
+type PendingIHave<T> = {
+	resetTimeout: () => void;
+	requesting: Set<string>;
+	clear: () => void;
+	callback: (entry: Entry<T>) => void;
+	expiresAt?: number;
+};
+
 const toLocalPublicSignKey = (
 	key: PublicSignKey | string,
 ): PublicSignKey | undefined => {
@@ -1355,20 +1363,14 @@ export class SharedLog<
 	private _closeController!: AbortController;
 	private _respondToIHaveTimeout!: any;
 	private _checkedPrune!: CheckedPruneCoordinator<T, R>;
+	private _pendingIHaveExpiryTimer?: ReturnType<typeof setTimeout>;
+	private _pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
 
 	private get _pendingDeletes() {
 		return this._checkedPrune.pendingDeletes;
 	}
 
-	private _pendingIHave!: Map<
-		string,
-		{
-			resetTimeout: () => void;
-			requesting: Set<string>;
-			clear: () => void;
-			callback: (entry: Entry<T>) => void;
-		}
-	>;
+	private _pendingIHave!: Map<string, PendingIHave<T>>;
 
 	// public key hash to range id to range
 	pendingMaturity!: Map<
@@ -9736,6 +9738,11 @@ export class SharedLog<
 		for (const [_k, v] of this._pendingIHave) {
 			v.clear();
 		}
+		if (this._pendingIHaveExpiryTimer) {
+			clearTimeout(this._pendingIHaveExpiryTimer);
+			this._pendingIHaveExpiryTimer = undefined;
+			this._pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
+		}
 		this._checkedPrune.close();
 
 		await this.remoteBlocks.stop();
@@ -11669,22 +11676,12 @@ export class SharedLog<
 						} else {
 							pendingIHaveCreated += 1;
 							const requesting = new Set([from]);
-
-							let timeout = setTimeout(() => {
-								this._pendingIHave.delete(hash);
-							}, this._respondToIHaveTimeout);
-
-							const pendingIHave = {
+							let pendingIHave!: PendingIHave<T>;
+							pendingIHave = {
 								requesting,
-								resetTimeout: () => {
-									clearTimeout(timeout);
-									timeout = setTimeout(() => {
-										this._pendingIHave.delete(hash);
-									}, this._respondToIHaveTimeout);
-								},
-								clear: () => {
-									clearTimeout(timeout);
-								},
+								resetTimeout: () =>
+									this.resetPendingIHaveTimeout(pendingIHave),
+								clear: () => this.clearPendingIHaveTimeout(pendingIHave),
 								callback: async (entry: Entry<T>) => {
 									this.removePeerFromGidPeerHistory(from, entry.meta.gid);
 									this.removePruneRequestSent(entry.hash, from);
@@ -11717,6 +11714,7 @@ export class SharedLog<
 							};
 
 							this._pendingIHave.set(hash, pendingIHave);
+							this.resetPendingIHaveTimeout(pendingIHave);
 						}
 					}
 				}
@@ -16831,6 +16829,58 @@ export class SharedLog<
 			throw new Error("Missing entry materializer for synchronizer update");
 		}
 		this.syncronizer.onEntryAdded(materializeEntry());
+	}
+
+	private resetPendingIHaveTimeout(pending: PendingIHave<T>): void {
+		pending.expiresAt =
+			Date.now() + Math.max(0, Number(this._respondToIHaveTimeout ?? 0));
+		this.schedulePendingIHaveExpiry(pending.expiresAt);
+	}
+
+	private clearPendingIHaveTimeout(pending: PendingIHave<T>): void {
+		pending.expiresAt = undefined;
+	}
+
+	private schedulePendingIHaveExpiry(deadline: number): void {
+		if (deadline >= this._pendingIHaveExpiryDeadline) {
+			return;
+		}
+		if (this._pendingIHaveExpiryTimer) {
+			clearTimeout(this._pendingIHaveExpiryTimer);
+		}
+		this._pendingIHaveExpiryDeadline = deadline;
+		this._pendingIHaveExpiryTimer = setTimeout(
+			() => this.expirePendingIHaves(),
+			Math.max(0, deadline - Date.now()),
+		);
+		this._pendingIHaveExpiryTimer.unref?.();
+	}
+
+	private expirePendingIHaves(): void {
+		this._pendingIHaveExpiryTimer = undefined;
+		this._pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
+		if (this.closed) {
+			return;
+		}
+		const now = Date.now();
+		let nextDeadline = Number.POSITIVE_INFINITY;
+		for (const [hash, pending] of this._pendingIHave) {
+			const expiresAt = pending.expiresAt;
+			if (expiresAt == null) {
+				continue;
+			}
+			if (expiresAt <= now) {
+				pending.expiresAt = undefined;
+				this._pendingIHave.delete(hash);
+				continue;
+			}
+			if (expiresAt < nextDeadline) {
+				nextDeadline = expiresAt;
+			}
+		}
+		if (nextDeadline !== Number.POSITIVE_INFINITY) {
+			this.schedulePendingIHaveExpiry(nextDeadline);
+		}
 	}
 
 	onEntryRemoved(hash: string) {
