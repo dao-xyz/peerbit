@@ -564,6 +564,18 @@ type NativeDocumentCoordinateFacts = {
 	metaBytes: Uint8Array;
 };
 
+type NativeDocumentContextFacts = {
+	created: bigint;
+	modified: bigint;
+	head: string;
+	gid: string;
+	size: number;
+};
+
+const nativeDocumentContextFactsAsContext = (
+	facts: NativeDocumentContextFacts,
+): Context => facts as unknown as Context;
+
 type LocalAppendCommitFacts = {
 	hash: string;
 	gid: string;
@@ -573,13 +585,7 @@ type LocalAppendCommitFacts = {
 	coordinateFields?: NativeDocumentCoordinateFacts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
-	documentPreviousContext?: {
-		created: bigint;
-		modified: bigint;
-		head: string;
-		gid: string;
-		size: number;
-	};
+	documentPreviousContext?: NativeDocumentContextFacts;
 };
 
 type NativeDocumentAppendResult = {
@@ -1534,7 +1540,11 @@ export class Documents<
 				row.context
 					? {
 							id: keys[index]!,
-							value: { __context: new Context(row.context) } as IndexedContextOnly<I>,
+							value: {
+								__context: nativeDocumentContextFactsAsContext(
+									row.context,
+								),
+							} as IndexedContextOnly<I>,
 						}
 					: undefined,
 			),
@@ -2627,7 +2637,7 @@ export class Documents<
 				gid: facts.gid,
 				payloadSize: facts.payloadSize,
 			};
-			const context = new Context({
+			const context = nativeDocumentContextFactsAsContext({
 				created: existing?.value.__context.created || appendFacts.wallTime,
 				modified: appendFacts.wallTime,
 				head: "",
@@ -2751,7 +2761,7 @@ export class Documents<
 		const nativePreviousContext =
 			append.documentPreviousContext == null
 				? undefined
-				: new Context(append.documentPreviousContext);
+				: nativeDocumentContextFactsAsContext(append.documentPreviousContext);
 		const nativePreviousIndexedContext = nativePreviousContext
 			? ({
 					id: input.key,

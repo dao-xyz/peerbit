@@ -4042,7 +4042,7 @@ describe("index", () => {
 						expect(nativeBatchSpy.callCount).equal(1);
 						expect(preparedBatchIndexSpy.callCount).equal(1);
 						expect(genericBatchIndexSpy.callCount).equal(0);
-						expect(contextBatchSpy.callCount).equal(1);
+						expect(contextBatchSpy.callCount).equal(0);
 						expect(transformSpy.callCount).equal(0);
 						const firstIndexed = await localStore.docs.index.get(
 							"pick-update-1",
