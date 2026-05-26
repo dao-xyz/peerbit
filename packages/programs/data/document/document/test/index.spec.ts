@@ -165,6 +165,50 @@ const nativeBackboneDocumentIndexOptions = () => ({
 	},
 });
 
+@variant("strict_native_alias_document")
+class StrictNativeAliasDocument {
+	@field({ type: "string" })
+	slug: string;
+
+	@field({ type: option("string") })
+	name?: string;
+
+	constructor(properties?: Partial<StrictNativeAliasDocument>) {
+		this.slug = properties?.slug || "";
+		this.name = properties?.name;
+	}
+}
+
+@variant("strict_native_alias_store")
+class StrictNativeAliasStore extends Program<
+	Partial<SetupOptions<StrictNativeAliasDocument>>
+> {
+	@field({ type: Uint8Array })
+	id: Uint8Array;
+
+	@field({ type: Documents })
+	docs: Documents<StrictNativeAliasDocument>;
+
+	constructor() {
+		super();
+		this.id = randomBytes(32);
+		this.docs = new Documents<StrictNativeAliasDocument>();
+	}
+
+	async open(
+		options?: Partial<SetupOptions<StrictNativeAliasDocument>>,
+	): Promise<void> {
+		await this.docs.open({
+			...options,
+			type: StrictNativeAliasDocument,
+			index: {
+				...options?.index,
+				idProperty: "slug",
+			},
+		});
+	}
+}
+
 describe("index", () => {
 	let session: TestSession;
 
@@ -2702,6 +2746,58 @@ describe("index", () => {
 						expect((await store.docs.get(doc.id))?.name).equal("native");
 					} finally {
 						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports declarative idProperty in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const aliasStore = new StrictNativeAliasStore();
+					await rustSession.peers[0].open(aliasStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform:
+								policy.allowAll<StrictNativeAliasDocument>(),
+							index: {
+								type: StrictNativeAliasDocument,
+								transform:
+									transform.identity<StrictNativeAliasDocument>(),
+							},
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						aliasStore.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					const genericAppendSpy = sinon.spy(aliasStore.docs.log, "append");
+					try {
+						await aliasStore.docs.put(
+							new StrictNativeAliasDocument({
+								slug: "native-slug",
+								name: "native-id-property",
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+
+						expect(nativeCommitSpy.callCount).equal(1);
+						expect(genericAppendSpy.callCount).equal(0);
+						expect(
+							(await aliasStore.docs.get("native-slug"))?.name,
+						).equal("native-id-property");
+					} finally {
+						genericAppendSpy.restore();
+						nativeCommitSpy.restore();
+						await aliasStore.close();
 						await rustSession.stop();
 					}
 				});
