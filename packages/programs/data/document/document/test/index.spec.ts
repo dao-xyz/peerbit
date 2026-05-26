@@ -3595,6 +3595,43 @@ describe("index", () => {
 							message: "custom id",
 						},
 						{
+							name: "canRead",
+							options: {
+								index: {
+									canRead: () => true,
+								},
+							},
+							message: "custom canRead",
+						},
+						{
+							name: "canSearch",
+							options: {
+								index: {
+									canSearch: () => true,
+								},
+							},
+							message: "custom canSearch",
+						},
+						{
+							name: "arbitrary transform",
+							options: {
+								index: {
+									transform: (doc: Document) => ({ id: doc.id }),
+								},
+							},
+							message: "arbitrary index transform",
+						},
+						{
+							name: "legacy compatibility",
+							options: { compatibility: 7 as const },
+							message: "legacy compatibility",
+						},
+						{
+							name: "custom domain",
+							options: { domain: (() => undefined) as any },
+							message: "custom domain",
+						},
+						{
 							name: "keep",
 							options: { keep: "self" as const },
 							message: "custom keep",
