@@ -60,6 +60,7 @@ import type {
 	NativeBackboneRawReceiveGroupIndexPlan,
 	NativeBackboneRawReceiveGroupLeaderPlan,
 	NativeBackboneRawReceiveGroupPlan,
+	NativeBackboneRawReceiveSelectionPlan,
 	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
 } from "@peerbit/native-backbone";
@@ -350,15 +351,6 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	leaders: LeaderMap;
 	isLeader: boolean;
 	assignedToRangeBoundary?: boolean;
-};
-
-type NativePreparedRawReceiveSelection = {
-	retainedHashes: string[];
-	droppedHashes: string[];
-	groupCount: number;
-	plannedHashCount: number;
-	usedNativeFastDropPlan: boolean;
-	usedLeaderSamplePlans: boolean;
 };
 
 type ReusableReceiveCoordinatePlan<R extends "u32" | "u64"> = {
@@ -9657,7 +9649,7 @@ export class SharedLog<
 							!rawIsRepairHint &&
 							!canVerifyPreparedRawReceiveOnCommit);
 					let rawPreparedReceiveSelection:
-						| Promise<NativePreparedRawReceiveSelection | undefined>
+						| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
 						| undefined;
 					const getRawPreparedReceiveSelection = (
 						heads: RawEntryWithRefs[],
@@ -14374,7 +14366,7 @@ export class SharedLog<
 		heads: RawEntryWithRefs[];
 		hashes: string[];
 		from: PublicSignKey;
-	}): Promise<NativePreparedRawReceiveSelection | undefined> {
+	}): Promise<NativeBackboneRawReceiveSelectionPlan | undefined> {
 		const backbone = this._nativeBackbone;
 		if (
 			!backbone ||
@@ -14395,6 +14387,15 @@ export class SharedLog<
 				maxReplicas: this.replicas.max?.getValue(this),
 			};
 			const leaderSelectionContext = await this.createLeaderSelectionContext();
+			const nativeSelection = backbone.selectPreparedRawReceiveHashes?.(
+				properties.hashes,
+				replicaOptions,
+				this.createNativeLeaderOptions(leaderSelectionContext),
+				fromHash,
+			);
+			if (nativeSelection) {
+				return nativeSelection;
+			}
 			const nativeFastDropPlan = backbone.planPreparedRawReceiveFastDrop?.(
 				properties.hashes,
 				replicaOptions,
@@ -14519,7 +14520,7 @@ export class SharedLog<
 		from: PublicSignKey;
 		fromIsSelf: boolean;
 		syncProfile?: SyncProfileFn;
-		selection?: NativePreparedRawReceiveSelection;
+		selection?: NativeBackboneRawReceiveSelectionPlan;
 	}): Promise<boolean> {
 		const backbone = this._nativeBackbone;
 		if (!backbone || !this.syncronizer.onReceivedEntryHashes) {
@@ -14602,7 +14603,7 @@ export class SharedLog<
 		from: PublicSignKey;
 		fromIsSelf: boolean;
 		syncProfile?: SyncProfileFn;
-		selection?: NativePreparedRawReceiveSelection;
+		selection?: NativeBackboneRawReceiveSelectionPlan;
 	}): Promise<string[] | undefined> {
 		if (!this.syncronizer.onReceivedEntryHashes) {
 			return undefined;

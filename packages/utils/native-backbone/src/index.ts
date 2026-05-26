@@ -289,6 +289,20 @@ type NativePeerbitBackboneHandle = {
 		includeStrictFullReplica: boolean,
 		fromHash: string,
 	) => [boolean, number, number] | undefined;
+	select_prepared_raw_receive_hashes?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas: number | undefined,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+		fromHash: string,
+	) => NativeBackboneRawReceiveSelectionRow | undefined;
 	verify_prepared_raw_receive_entries?: (
 		hashes: string[],
 	) => Uint8Array | undefined;
@@ -1764,6 +1778,15 @@ export type NativeBackboneRawReceiveFastDropPlan = {
 	plannedHashCount: number;
 };
 
+export type NativeBackboneRawReceiveSelectionPlan = {
+	retainedHashes: string[];
+	droppedHashes: string[];
+	groupCount: number;
+	plannedHashCount: number;
+	usedNativeFastDropPlan: boolean;
+	usedLeaderSamplePlans: boolean;
+};
+
 export type NativeBackboneRawReceivePreparedFactsColumns = [
 	string[],
 	Array<Uint8Array | undefined>,
@@ -1830,6 +1853,15 @@ type NativeBackboneRawReceiveGroupLeaderPlanRow = [
 	number,
 	unknown[],
 	unknown[],
+];
+
+type NativeBackboneRawReceiveSelectionRow = [
+	string[],
+	string[],
+	number,
+	number,
+	boolean,
+	boolean,
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -3229,6 +3261,22 @@ const rawReceiveGroupLeaderPlanFromRow = (
 		leaders: rowsToSamples(leaderRows) ?? new Map(),
 	};
 };
+
+const rawReceiveSelectionFromRow = ([
+	retainedHashes,
+	droppedHashes,
+	groupCount,
+	plannedHashCount,
+	usedNativeFastDropPlan,
+	usedLeaderSamplePlans,
+]: NativeBackboneRawReceiveSelectionRow): NativeBackboneRawReceiveSelectionPlan => ({
+	retainedHashes,
+	droppedHashes,
+	groupCount,
+	plannedHashCount,
+	usedNativeFastDropPlan,
+	usedLeaderSamplePlans,
+});
 
 export class NativeBackboneLogGraph {
 	constructor(
@@ -4680,6 +4728,25 @@ export class NativePeerbitBackbone {
 		}
 		const [canDrop, groupCount, plannedHashCount] = row;
 		return { canDrop, groupCount, plannedHashCount };
+	}
+
+	selectPreparedRawReceiveHashes(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+		leaderOptions: NativeBackboneFindLeaderOptions,
+		fromHash: string,
+	): NativeBackboneRawReceiveSelectionPlan | undefined {
+		if (!this.native.select_prepared_raw_receive_hashes) {
+			return undefined;
+		}
+		const row = this.native.select_prepared_raw_receive_hashes(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+			...findLeaderArguments(leaderOptions),
+			fromHash,
+		);
+		return row ? rawReceiveSelectionFromRow(row) : undefined;
 	}
 
 	getEntryCoordinateHashes(): string[] {

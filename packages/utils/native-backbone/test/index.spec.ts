@@ -961,16 +961,30 @@ describe("native peerbit backbone", () => {
 			1,
 		]);
 		expect(indexPlans?.[0].requestedReplicas).to.deep.equal([2, 4]);
-		expect(indexPlans?.[1]).to.deep.include({
-			gid: "gid-raw-group-b",
-			latestIndex: 2,
-			maxReplicasFromHead: 1,
-			maxReplicasFromNewEntries: 1,
-			maxMaxReplicas: 1,
-		});
-		const leaderPlans = target.planPreparedRawReceiveGroupLeaders(
-			[first.hash, second.hash, third.hash],
-			{ minReplicas: 1, maxReplicas: 3 },
+			expect(indexPlans?.[1]).to.deep.include({
+				gid: "gid-raw-group-b",
+				latestIndex: 2,
+				maxReplicasFromHead: 1,
+				maxReplicasFromNewEntries: 1,
+				maxMaxReplicas: 1,
+			});
+			const groupACoordinate = Number(
+				target.getGidCoordinates("gid-raw-group-a", 3)[0],
+			);
+			target.putRange({
+				id: "peer-keep-range",
+				hash: "peer-keep",
+				timestamp: 0,
+				start1: groupACoordinate,
+				end1: groupACoordinate + 1,
+				start2: groupACoordinate,
+				end2: groupACoordinate + 1,
+				width: 1,
+				mode: 0,
+			});
+			const leaderPlans = target.planPreparedRawReceiveGroupLeaders(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
 			{
 				selfHash: "peer-a",
 				selfReplicating: false,
@@ -989,13 +1003,14 @@ describe("native peerbit backbone", () => {
 			0,
 			1,
 		]);
-		expect(leaderPlans?.[0].coordinates).to.have.length(3);
-		expect(leaderPlans?.[0].coordinateStrings).to.have.length(3);
-		expect(leaderPlans?.[0].leaders).to.be.instanceOf(Map);
-		expect(
-			target.planPreparedRawReceiveFastDrop(
-				[first.hash, second.hash, third.hash],
-				{ minReplicas: 1, maxReplicas: 3 },
+			expect(leaderPlans?.[0].coordinates).to.have.length(3);
+			expect(leaderPlans?.[0].coordinateStrings).to.have.length(3);
+			expect(leaderPlans?.[0].leaders).to.be.instanceOf(Map);
+			expect(leaderPlans?.[0].leaders.has("peer-keep")).to.equal(true);
+			expect(
+				target.planPreparedRawReceiveFastDrop(
+					[first.hash, second.hash, third.hash],
+					{ minReplicas: 1, maxReplicas: 3 },
 				{
 					selfHash: "peer-a",
 					selfReplicating: false,
@@ -1005,14 +1020,33 @@ describe("native peerbit backbone", () => {
 			),
 		).to.deep.equal({
 			canDrop: true,
-			groupCount: 2,
-			plannedHashCount: 3,
-		});
+				groupCount: 2,
+				plannedHashCount: 3,
+			});
+			expect(
+				target.selectPreparedRawReceiveHashes(
+					[first.hash, second.hash, third.hash],
+					{ minReplicas: 1, maxReplicas: 3 },
+					{
+						selfHash: "peer-a",
+						selfReplicating: false,
+						fullReplicaFallback: true,
+					},
+					"peer-b",
+				),
+			).to.deep.equal({
+				retainedHashes: [],
+				droppedHashes: [first.hash, second.hash, third.hash],
+				groupCount: 2,
+				plannedHashCount: 3,
+				usedNativeFastDropPlan: true,
+				usedLeaderSamplePlans: true,
+			});
 
-		target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
+			target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
 			wallTime: 1n,
 			gid: "gid-raw-existing-head",
 			metaData: replicaData(5),
@@ -1063,10 +1097,22 @@ describe("native peerbit backbone", () => {
 					selfReplicating: false,
 					fullReplicaFallback: true,
 				},
-				"peer-b",
-			),
-		).to.equal(undefined);
-	});
+					"peer-b",
+				),
+			).to.equal(undefined);
+			expect(
+				target.selectPreparedRawReceiveHashes(
+					["missing"],
+					{ minReplicas: 1, maxReplicas: 3 },
+					{
+						selfHash: "peer-a",
+						selfReplicating: false,
+						fullReplicaFallback: true,
+					},
+					"peer-b",
+				),
+			).to.equal(undefined);
+		});
 
 	it("validates and commits prepared raw receive joins natively", async () => {
 		const source = await createNativePeerbitBackbone({

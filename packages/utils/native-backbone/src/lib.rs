@@ -1496,6 +1496,97 @@ impl NativePeerbitBackbone {
         Ok(out.into())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn select_prepared_raw_receive_hashes(
+        &self,
+        hashes: Array,
+        min_replicas: u32,
+        max_replicas: JsValue,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+        from_hash: String,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let expected_hash_count = hashes.len();
+        if expected_hash_count == 0 {
+            return Ok(JsValue::UNDEFINED);
+        }
+        let Some(groups) =
+            self.prepared_raw_receive_group_plans(hashes, min_replicas, max_replicas)?
+        else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        let mut planned_hash_count = 0usize;
+        let gids = Array::new();
+        let replica_counts = Array::new();
+        for group in &groups {
+            planned_hash_count += group.hashes.len();
+            gids.push(&JsValue::from_str(&group.gid));
+            replica_counts.push(&JsValue::from_f64(group.max_max_replicas as f64));
+        }
+        if planned_hash_count != expected_hash_count {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let leader_rows = self.shared_log.plan_leader_samples_for_gids_batch(
+            gids,
+            replica_counts,
+            role_age_ms,
+            now,
+            peer_filter,
+            expand_peer_filter,
+            self_hash.clone(),
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
+        if leader_rows.length() as usize != groups.len() {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let mut retained_hashes = Vec::new();
+        let mut dropped_hashes = Vec::new();
+        for (group, group_leaders) in groups.iter().zip(leader_rows.iter()) {
+            let rows = Array::from(&group_leaders);
+            let mut should_retain = false;
+            for row_value in rows.iter() {
+                let row = Array::from(&row_value);
+                let Some(leader_hash) = row.get(0).as_string() else {
+                    return Ok(JsValue::UNDEFINED);
+                };
+                if leader_hash == self_hash || leader_hash == from_hash {
+                    should_retain = true;
+                    break;
+                }
+            }
+            if should_retain {
+                retained_hashes.extend(group.hashes.iter().cloned());
+            } else {
+                dropped_hashes.extend(group.hashes.iter().cloned());
+            }
+        }
+
+        if dropped_hashes.is_empty() {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let used_native_fast_drop_plan = retained_hashes.is_empty();
+        let out = Array::new();
+        out.push(&strings_to_array(retained_hashes));
+        out.push(&strings_to_array(dropped_hashes));
+        out.push(&JsValue::from_f64(groups.len() as f64));
+        out.push(&JsValue::from_f64(planned_hash_count as f64));
+        out.push(&JsValue::from_bool(used_native_fast_drop_plan));
+        out.push(&JsValue::TRUE);
+        Ok(out.into())
+    }
+
     fn prepared_raw_receive_group_plans(
         &self,
         hashes: Vec<String>,
