@@ -545,12 +545,16 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				return mapMaybePromise(
 					this.context.handlePreparedPlainPutManyCommit(documentAppendCommit),
 					() => {
+						const retainedEntries =
+							this.context.shouldMaterializePutResultEntry()
+								? documentAppendCommit.entries
+								: undefined;
 						for (const commit of documentAppendCommit.commits) {
 							this.context.keepEntry(commit.append.hash);
 						}
 						return {
 							get entries() {
-								return documentAppendCommit.entries;
+								return retainedEntries ?? documentAppendCommit.entries;
 							},
 							removed: documentAppendCommit.removed,
 						};
@@ -2881,6 +2885,7 @@ export class Documents<
 				nexts,
 				nativeBackboneDocumentIndexes:
 					nativeBackboneDocumentIndexInputs,
+				retainMaterializationBytes: this._hasLogTrim,
 			},
 		);
 		if (!appended) {

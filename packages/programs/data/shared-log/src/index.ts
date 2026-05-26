@@ -6369,6 +6369,7 @@ export class SharedLog<
 					payloadDatas?: Uint8Array[];
 					nexts?: ShallowOrFullEntry<T>[][];
 					nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+					retainMaterializationBytes?: boolean;
 			  }
 			| undefined,
 		minReplicasValue: number,
@@ -6441,6 +6442,9 @@ export class SharedLog<
 					payloadDatas,
 					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 					allowPreparedNexts: usesLatestDocumentContext,
+					retainMaterializationBytes:
+						properties?.retainMaterializationBytes === true ||
+						this._logProperties?.trim != null,
 				},
 				(inputs) => {
 					const documentDeleteTrimmedHeadsForAppend =
@@ -6592,6 +6596,7 @@ export class SharedLog<
 			payloadDatas?: Uint8Array[];
 			nexts?: ShallowOrFullEntry<T>[][];
 			nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+			retainMaterializationBytes?: boolean;
 		},
 	): Promise<
 		| {
@@ -6724,23 +6729,25 @@ export class SharedLog<
 	async appendLocallyPreparedPayloadsManyIndependent(
 		payloadDatas: Uint8Array[],
 		options?: SharedAppendOptions<T> | undefined,
-			properties?: {
-				resolveTrimmedEntries?: boolean;
-				nexts?: ShallowOrFullEntry<T>[][];
-				nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
-			},
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+			nexts?: ShallowOrFullEntry<T>[][];
+			nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+			retainMaterializationBytes?: boolean;
+		},
 	) {
 		return this.appendLocallyPreparedManyIndependent(
 			new Array(payloadDatas.length) as T[],
 			options,
 			{
-					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-					payloadDatas,
-					nexts: properties?.nexts,
-					nativeBackboneDocumentIndexes:
-						properties?.nativeBackboneDocumentIndexes,
-				},
-			);
+				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+				payloadDatas,
+				nexts: properties?.nexts,
+				nativeBackboneDocumentIndexes:
+					properties?.nativeBackboneDocumentIndexes,
+				retainMaterializationBytes: properties?.retainMaterializationBytes,
+			},
+		);
 	}
 
 	async appendMany(

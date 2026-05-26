@@ -4488,6 +4488,58 @@ describe("index", () => {
 					}
 				});
 
+				it("keeps strict native putMany entries materializable after trim", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					try {
+						const firstDoc = new Document({
+							id: uuid(),
+							name: "trim-batch-1",
+						});
+						const secondDoc = new Document({
+							id: uuid(),
+							name: "trim-batch-2",
+						});
+						const first = await store.docs.putMany(
+							[firstDoc],
+							{ unique: true },
+						);
+						const second = await store.docs.putMany(
+							[secondDoc],
+							{ unique: true },
+						);
+						expect(await store.docs.get(firstDoc.id)).equal(undefined);
+						expect((await store.docs.get(secondDoc.id))?.name).equal(
+							"trim-batch-2",
+						);
+						expect(first.entries[0].hash).to.be.a("string");
+						expect(second.entries[0].hash).to.be.a("string");
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
 				it("handles duplicate strict native putMany ids through native single puts", async () => {
 					const rustSession = await TestSession.connected(
 						1,

@@ -2009,6 +2009,7 @@ export class Log<T> {
 			payloadDatas: Uint8Array[];
 			resolveTrimmedEntries?: boolean;
 			allowPreparedNexts?: boolean;
+			retainMaterializationBytes?: boolean;
 		},
 		prepare: (
 			inputs: NativeNoNextCommitInput[],
@@ -2085,6 +2086,7 @@ export class Log<T> {
 			}
 			const appendFacts: PreparedAppendFacts[] = [];
 			const materializeEntries: Array<() => Entry<T>> = [];
+			const retainMaterializationBytesFns: Array<() => void> = [];
 			const indexRows: Parameters<
 				EntryIndex<T>["putNativeCommittedAppendFactsBatch"]
 			>[0] = [];
@@ -2100,6 +2102,27 @@ export class Log<T> {
 				if (!hash) {
 					return undefined;
 				}
+				const shouldRetainMaterializationBytes =
+					properties.retainMaterializationBytes === true || !!resolvedTrim;
+				let retainedMaterializationBytes: Uint8Array | undefined;
+				const retainMaterializationBytes = () => {
+					if (
+						retainedMaterializationBytes ||
+						!shouldRetainMaterializationBytes ||
+						prepared.bytes
+					) {
+						return;
+					}
+					const bytes =
+						prepared.getBytes?.(hash) ??
+						(this._storage.get(hash) as Uint8Array | undefined);
+					if (
+						bytes &&
+						typeof (bytes as { then?: unknown }).then !== "function"
+					) {
+						retainedMaterializationBytes = bytes;
+					}
+				};
 				const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
 				if (
 					effectiveNextHashes.length !== 0 &&
@@ -2148,6 +2171,7 @@ export class Log<T> {
 					}
 					const bytes =
 						prepared.bytes ??
+						retainedMaterializationBytes ??
 						prepared.getBytes?.(hash) ??
 						(this._storage.get(hash) as Uint8Array | undefined);
 					if (
@@ -2167,6 +2191,7 @@ export class Log<T> {
 				};
 				appendFacts.push(facts);
 				materializeEntries.push(materializeEntry);
+				retainMaterializationBytesFns.push(retainMaterializationBytes);
 				indexRows.push({
 					hash,
 					unique: true,
@@ -2192,6 +2217,9 @@ export class Log<T> {
 				});
 			};
 			const finish = (): PreparedCommitOnlyAppendBatchResult<T> => {
+				for (const retainMaterializationBytes of retainMaterializationBytesFns) {
+					retainMaterializationBytes();
+				}
 				let entries: Entry<T>[] | undefined;
 				return {
 					get entries() {

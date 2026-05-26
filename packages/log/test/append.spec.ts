@@ -697,6 +697,57 @@ describe("append", function () {
 		}
 	});
 
+	it("keeps batched native append results materializable after length trim", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			trim: { type: "length", to: 1 },
+		});
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const prepare = (inputs: any[]) =>
+			inputs.map((input) =>
+				nativeGraph.prepareEntryV0PlainEntryAndPut!({
+					...input,
+					next: [],
+					includeMaterializationBytes: false,
+				}),
+			);
+
+		try {
+			const first = await (
+				log as any
+			).appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+				[new Uint8Array([1])],
+				{ meta: { next: [] } },
+				{
+					payloadDatas: [new Uint8Array([1])],
+					resolveTrimmedEntries: false,
+				},
+				prepare,
+			);
+			const second = await (
+				log as any
+			).appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+				[new Uint8Array([2])],
+				{ meta: { next: [] } },
+				{
+					payloadDatas: [new Uint8Array([2])],
+					resolveTrimmedEntries: false,
+				},
+				prepare,
+			);
+
+			expect(await blockExists(first.appendFacts[0].hash)).to.be.false;
+			expect(first.entries[0].hash).equal(first.appendFacts[0].hash);
+			expect(second.entries[0].hash).equal(second.appendFacts[0].hash);
+		} finally {
+			await log.close();
+		}
+	});
+
 	it("uses storage-only native block-store commits for commit-only prepared append", async () => {
 		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
 		const nativeStore = await createNativeLogBlockStore();
