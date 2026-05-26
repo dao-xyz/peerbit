@@ -111,6 +111,18 @@ const mapMaybePromise = <T, R>(
 	fn: (value: T) => MaybePromise<R>,
 ): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
 
+const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
+	if (left.byteLength !== right.byteLength) {
+		return false;
+	}
+	for (let i = 0; i < left.byteLength; i++) {
+		if (left[i] !== right[i]) {
+			return false;
+		}
+	}
+	return true;
+};
+
 export type CountEstimate = {
 	estimate: number;
 	/**
@@ -208,6 +220,7 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	assertPlainPutPolicySupported(
 		doc: T,
 		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+		previousSignerPublicKey?: Uint8Array,
 	): MaybePromise<void>;
 	assertPlainPutManySupported(docs: T[], options?: DocumentPutOptions): void;
 	normalizePutOptions(
@@ -222,6 +235,12 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	): Promise<
 		Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
 	>;
+	getIndexedContextHead(
+		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): string | undefined;
+	getNativeEntrySignerPublicKeys(
+		hashes: string[],
+	): Array<Uint8Array | undefined> | undefined;
 	plainPutPolicyNeedsExistingContext(): boolean;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
@@ -323,17 +342,23 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 					),
 			);
 		const assertPolicyAndCommit = (
-			existingContext?:
-				| indexerTypes.IndexedResult<IndexedContextOnly<I>>
-				| null,
-		) =>
-			mapMaybePromise(
+			existingContext?: indexerTypes.IndexedResult<
+				IndexedContextOnly<I>
+			> | null,
+		) => {
+			const existingHead = this.context.getIndexedContextHead(existingContext);
+			const previousSignerPublicKey = existingHead
+				? this.context.getNativeEntrySignerPublicKeys([existingHead])?.[0]
+				: undefined;
+			return mapMaybePromise(
 				this.context.assertPlainPutPolicySupported(
 					prepared.document,
 					existingContext,
+					previousSignerPublicKey,
 				),
 				commit,
 			);
+		};
 
 		if (
 			useNativeExistingDocumentContext &&
@@ -372,11 +397,37 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				prepared.map((item) => item.key),
 			);
 		}
+		let previousSignerPublicKeys: Array<Uint8Array | undefined> | undefined;
+		if (existingContexts && this.context.plainPutPolicyNeedsExistingContext()) {
+			const previousHeads = existingContexts.map((existing) =>
+				this.context.getIndexedContextHead(existing ?? null),
+			);
+			if (previousHeads.some((head) => head != null)) {
+				previousSignerPublicKeys = new Array(prepared.length);
+				const lookupIndexes: number[] = [];
+				const lookupHashes: string[] = [];
+				for (let i = 0; i < previousHeads.length; i++) {
+					const head = previousHeads[i];
+					if (head) {
+						lookupIndexes.push(i);
+						lookupHashes.push(head);
+					}
+				}
+				const lookup =
+					this.context.getNativeEntrySignerPublicKeys(lookupHashes);
+				if (lookup) {
+					for (let i = 0; i < lookup.length; i++) {
+						previousSignerPublicKeys[lookupIndexes[i]!] = lookup[i];
+					}
+				}
+			}
+		}
 		await Promise.all(
 			prepared.map((item, index) =>
 				this.context.assertPlainPutPolicySupported(
 					item.document,
 					existingContexts ? (existingContexts[index] ?? null) : undefined,
+					previousSignerPublicKeys?.[index],
 				),
 			),
 		);
@@ -756,8 +807,12 @@ export class Documents<
 			assertPlainPutSupported: (doc, options) => {
 				this.assertNativeModePlainPutSupported(doc, options);
 			},
-			assertPlainPutPolicySupported: (doc, existing) =>
-				this.assertNativeModePlainPutPolicySupported(doc, existing),
+			assertPlainPutPolicySupported: (doc, existing, previousSignerPublicKey) =>
+				this.assertNativeModePlainPutPolicySupported(
+					doc,
+					existing,
+					previousSignerPublicKey,
+				),
 			assertPlainPutManySupported: (docs, options) => {
 				this.assertNativeModePlainPutManySupported(docs, options);
 			},
@@ -767,6 +822,10 @@ export class Documents<
 			hasDuplicatePreparedPutKeys: (prepared) =>
 				this.hasDuplicatePreparedPutKeys(prepared),
 			getLocalIndexedContexts: (keys) => this.getLocalIndexedContexts(keys),
+			getIndexedContextHead: (existing) =>
+				this.getExistingContext(existing)?.head,
+			getNativeEntrySignerPublicKeys: (hashes) =>
+				this.getNativeEntrySignerPublicKeys(hashes),
 			plainPutPolicyNeedsExistingContext: () =>
 				this.nativePlainPutPolicyNeedsPreviousEntries(),
 			shouldResolveTrimmedEntries: () => {
@@ -973,12 +1032,19 @@ export class Documents<
 	private assertNativeModePlainPutPolicySupported(
 		doc: T,
 		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+		previousSignerPublicKey?: Uint8Array,
 	): MaybePromise<void> {
 		return mapMaybePromise(
-			this.canPerformAllowsNativePlainPut(doc, existing),
+			this.canPerformAllowsNativePlainPut(
+				doc,
+				existing,
+				previousSignerPublicKey,
+			),
 			(allowed) => {
 				if (!allowed) {
-					throw this.nativeModeError("canPerform policy rejected this document");
+					throw this.nativeModeError(
+						"canPerform policy rejected this document",
+					);
 				}
 			},
 		);
@@ -987,6 +1053,7 @@ export class Documents<
 	private canPerformAllowsNativePlainPut(
 		doc: T,
 		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+		previousSignerPublicKey?: Uint8Array,
 	): MaybePromise<boolean> {
 		if (!this._optionCanPerform) {
 			return true;
@@ -1000,6 +1067,14 @@ export class Documents<
 		const previousEntries: Entry<Operation>[] = [];
 		const existingHead = this.getExistingContext(existing)?.head;
 		if (existingHead) {
+			if (previousSignerPublicKey) {
+				return this.nativePutPolicyAllows(
+					this._optionCanPerformNativePolicy!,
+					doc,
+					previousEntries,
+					[previousSignerPublicKey],
+				);
+			}
 			return mapMaybePromise(
 				this._resolveEntry(existingHead, {
 					remote: true,
@@ -1027,6 +1102,7 @@ export class Documents<
 		descriptor: NativeCanPerformPolicyDescriptor,
 		doc: T,
 		previousEntries: Entry<Operation>[],
+		previousSignerPublicKeys: Uint8Array[] = [],
 	): Promise<boolean> {
 		switch (descriptor.kind) {
 			case "allowAll":
@@ -1041,11 +1117,26 @@ export class Documents<
 					descriptor.policy,
 					doc,
 					previousEntries,
+					previousSignerPublicKeys,
 				);
 			case "delete":
 			case "deleteSignedByExistingField":
 				return false;
 			case "sameSignersAsPrevious": {
+				if (previousSignerPublicKeys.length > 0) {
+					const localRawPublicKey = (
+						this.log.log.identity.publicKey as { publicKey?: Uint8Array }
+					).publicKey;
+					if (!localRawPublicKey) {
+						return false;
+					}
+					for (const previousSignerPublicKey of previousSignerPublicKeys) {
+						if (!bytesEqual(previousSignerPublicKey, localRawPublicKey)) {
+							return false;
+						}
+					}
+					return true;
+				}
 				if (previousEntries.length === 0) {
 					return true;
 				}
@@ -1063,14 +1154,28 @@ export class Documents<
 			}
 			case "and":
 				for (const policy of descriptor.policies) {
-					if (!(await this.nativePutPolicyAllows(policy, doc, previousEntries))) {
+					if (
+						!(await this.nativePutPolicyAllows(
+							policy,
+							doc,
+							previousEntries,
+							previousSignerPublicKeys,
+						))
+					) {
 						return false;
 					}
 				}
 				return true;
 			case "or":
 				for (const policy of descriptor.policies) {
-					if (await this.nativePutPolicyAllows(policy, doc, previousEntries)) {
+					if (
+						await this.nativePutPolicyAllows(
+							policy,
+							doc,
+							previousEntries,
+							previousSignerPublicKeys,
+						)
+					) {
 						return true;
 					}
 				}
@@ -1304,6 +1409,22 @@ export class Documents<
 			);
 		}
 		return Promise.all(keys.map((key) => this.getLocalIndexedContext(key)));
+	}
+
+	private getNativeEntrySignerPublicKeys(
+		hashes: string[],
+	): Array<Uint8Array | undefined> | undefined {
+		if (hashes.length === 0) {
+			return [];
+		}
+		const nativeGraph = this.log.log.entryIndex.properties.nativeGraph?.graph as
+			| {
+					entrySignaturePublicKeysBatch?: (
+						hashes: Iterable<string>,
+					) => Array<Uint8Array | undefined>;
+			  }
+			| undefined;
+		return nativeGraph?.entrySignaturePublicKeysBatch?.(hashes);
 	}
 
 	private getExistingContext(

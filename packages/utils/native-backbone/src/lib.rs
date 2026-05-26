@@ -13,6 +13,7 @@ use peerbit_indexer_core::schema::{
 };
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
+    entry_v0_signature_public_key_from_storage_bytes,
     prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled,
     verify_prepared_entry_v0_ed25519_storage_slices,
     verify_prepared_entry_v0_ed25519_storage_slices_all, LogIndexEntry, NativeCommittedEntryFacts,
@@ -2320,6 +2321,22 @@ impl NativePeerbitBackbone {
 
     pub fn graph_entry_metadata_hints_batch(&self, hashes: Array) -> Result<Array, JsValue> {
         self.log.entry_metadata_hints_batch(hashes)
+    }
+
+    pub fn graph_entry_signature_public_key_batch(&self, hashes: Array) -> Result<Array, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let out = Array::new();
+        for hash in hashes {
+            match self
+                .blocks
+                .get(&hash)
+                .and_then(|bytes| entry_v0_signature_public_key_from_storage_bytes(&bytes).ok())
+            {
+                Some(public_key) => out.push(&Uint8Array::from(public_key.as_slice())),
+                None => out.push(&JsValue::UNDEFINED),
+            };
+        }
+        Ok(out)
     }
 
     pub fn graph_unique_reference_gids(&self, hash: &str) -> JsValue {

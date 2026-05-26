@@ -176,6 +176,9 @@ const attachNativeCanPerformPolicy = <T>(
 	fn: CanPerform<T>,
 	descriptor: NativeCanPerformPolicyDescriptor,
 ): NativeCanPerformPolicyFunction<T> => {
+	if ((fn as NativeCanPerformPolicyFunction<T>)[NATIVE_CAN_PERFORM_POLICY]) {
+		return fn as NativeCanPerformPolicyFunction<T>;
+	}
 	Object.defineProperty(fn, NATIVE_CAN_PERFORM_POLICY, {
 		value: Object.freeze(descriptor),
 		enumerable: false,

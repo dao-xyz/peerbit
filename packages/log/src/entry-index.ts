@@ -338,6 +338,9 @@ export type NativeLogGraph = {
 	entryMetadataHintsBatch?: (
 		hashes: Iterable<string>,
 	) => Array<NativeLogEntryMetadata | undefined>;
+	entrySignaturePublicKeysBatch?: (
+		hashes: Iterable<string>,
+	) => Array<Uint8Array | undefined>;
 	uniqueReferenceGids: (hash: string) => string[] | undefined;
 	uniqueReferenceGidRowsBatch?: (
 		hashes: Iterable<string>,

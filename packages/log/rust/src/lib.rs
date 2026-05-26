@@ -5174,6 +5174,11 @@ fn parse_plain_entry_v0_storage_signature(
     })
 }
 
+pub fn entry_v0_signature_public_key_from_storage_bytes(bytes: &[u8]) -> Result<Vec<u8>, JsValue> {
+    let storage = parse_plain_entry_v0_storage(bytes)?;
+    Ok(parse_plain_signature_with_key(storage.signature_with_key)?.public_key)
+}
+
 fn parse_plain_signature_with_key(bytes: &[u8]) -> Result<ParsedSignatureWithKey, JsValue> {
     let mut signature_reader = BorshReader::new(bytes);
     if signature_reader.read_u8("signature variant")? != 0 {

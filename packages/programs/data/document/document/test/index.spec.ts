@@ -2744,9 +2744,7 @@ describe("index", () => {
 							replicate: false,
 							nativeGraph: true,
 							nativeBackbone: { optional: false, documentIndex: true },
-							canPerform: policy.put(
-								policy.sameSignersAsPrevious<Document>(),
-							),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
 							index: {
 								type: Document,
 								transform: transform.identity<Document>(),
@@ -2762,6 +2760,11 @@ describe("index", () => {
 						((store.docs.log as any)._nativeBackbone as any).native,
 						"prepare_plain_entry_commit_latest_facts_document_index_trim_hashes",
 					);
+					const signerBatchSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"graph_entry_signature_public_key_batch",
+					);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
 					try {
 						const id = uuid();
 						const first = await store.docs.put(
@@ -2773,11 +2776,15 @@ describe("index", () => {
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 						expect(nativeCommitSpy.callCount).equal(2);
 						expect(graphLatestTransactionSpy.callCount).equal(2);
+						expect(signerBatchSpy.callCount).equal(1);
+						expect(resolveEntrySpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(id))?.name).equal(
 							"native-same-signer-2",
 						);
 					} finally {
+						resolveEntrySpy.restore();
+						signerBatchSpy.restore();
 						graphLatestTransactionSpy.restore();
 						nativeCommitSpy.restore();
 						fallbackAppendSpy.restore();
@@ -3701,9 +3708,7 @@ describe("index", () => {
 							replicate: false,
 							nativeGraph: true,
 							nativeBackbone: { optional: false, documentIndex: true },
-							canPerform: policy.put(
-								policy.sameSignersAsPrevious<Document>(),
-							),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
 							index: {
 								type: Document,
 								transform: transform.identity<Document>(),
@@ -3722,6 +3727,11 @@ describe("index", () => {
 						store.docs.index.index as any,
 						"getContextByIdBatch",
 					);
+					const signerBatchSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"graph_entry_signature_public_key_batch",
+					);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
 					try {
 						const first = await store.docs.put(
 							new Document({ id: "same-batch-1", name: "before-1" }),
@@ -3733,6 +3743,8 @@ describe("index", () => {
 						);
 						nativeBatchSpy.resetHistory();
 						contextBatchSpy.resetHistory();
+						signerBatchSpy.resetHistory();
+						resolveEntrySpy.resetHistory();
 
 						const appended = await store.docs.putMany(
 							[
@@ -3752,6 +3764,8 @@ describe("index", () => {
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
 						expect(contextBatchSpy.callCount).equal(1);
+						expect(signerBatchSpy.callCount).equal(1);
+						expect(resolveEntrySpy.callCount).equal(0);
 						expect((await store.docs.get("same-batch-1"))?.name).equal(
 							"after-1",
 						);
@@ -3759,6 +3773,8 @@ describe("index", () => {
 							"after-2",
 						);
 					} finally {
+						resolveEntrySpy.restore();
+						signerBatchSpy.restore();
 						contextBatchSpy.restore();
 						nativeBatchSpy.restore();
 						sequentialSpy.restore();
