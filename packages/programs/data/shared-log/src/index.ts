@@ -10078,12 +10078,12 @@ export class SharedLog<
 				);
 
 				if (heads) {
-					const filteredHeads: EntryWithRefs<any>[] = [];
-					const filteredHeadHashes: string[] = [];
+					let filteredHeads: EntryWithRefs<any>[];
+					let filteredHeadHashes: string[];
 					const confirmedHashes = new Set<string>();
 					const existingStartedAt = syncProfileStart(syncProfile);
 					const existingHashes = rawMaterializedKnownMissing
-						? new Set<string>()
+						? undefined
 						: await this.log.hasMany(headHashes);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, existingStartedAt, {
@@ -10094,21 +10094,26 @@ export class SharedLog<
 							details: { rawMaterializedKnownMissing },
 						});
 					}
-					for (let headIndex = 0; headIndex < heads.length; headIndex++) {
-						const head = heads[headIndex]!;
-						const headHash = headHashes[headIndex]!;
-						if (!existingHashes.has(headHash)) {
-							if (!rawMaterializedKnownMissing) {
+					if (rawMaterializedKnownMissing) {
+						filteredHeads = heads;
+						filteredHeadHashes = headHashes;
+					} else {
+						filteredHeads = [];
+						filteredHeadHashes = [];
+						for (let headIndex = 0; headIndex < heads.length; headIndex++) {
+							const head = heads[headIndex]!;
+							const headHash = headHashes[headIndex]!;
+							if (!existingHashes!.has(headHash)) {
 								initExchangeHeadEntry(head, {
 									// we need to init because we perhaps need to decrypt gid
 									keychain: this.log.keychain,
 									encoding: this.log.encoding,
 								});
+								filteredHeads.push(head);
+								filteredHeadHashes.push(headHash);
+							} else {
+								confirmedHashes.add(headHash);
 							}
-							filteredHeads.push(head);
-							filteredHeadHashes.push(headHash);
-						} else {
-							confirmedHashes.add(headHash);
 						}
 					}
 					const fromIsSelf = context.from.equals(this.node.identity.publicKey);
