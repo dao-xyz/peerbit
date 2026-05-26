@@ -955,6 +955,7 @@ export class Documents<
 					documentIndex?: boolean;
 					optional?: boolean;
 					coordinatePersistence?: unknown;
+					heads?: boolean;
 			  }
 			| boolean
 			| undefined;
@@ -975,6 +976,8 @@ export class Documents<
 			unsupported.push("optional nativeBackbone");
 		} else if (!nativeBackbone.coordinatePersistence) {
 			unsupported.push("missing nativeBackbone.coordinatePersistence");
+		} else if (nativeBackbone.heads === false) {
+			unsupported.push("disabled native heads");
 		}
 		if (options.domain) {
 			unsupported.push("custom domain");

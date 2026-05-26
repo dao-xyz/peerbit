@@ -3585,6 +3585,16 @@ describe("index", () => {
 							message: "missing nativeBackbone.coordinatePersistence",
 						},
 						{
+							name: "disabled native heads",
+							options: {
+								nativeBackbone: {
+									...nativeBackboneDocumentIndexOptions(),
+									heads: false,
+								},
+							},
+							message: "disabled native heads",
+						},
+						{
 							name: "canOpen",
 							options: { canOpen: () => true },
 							message: "custom canOpen",
