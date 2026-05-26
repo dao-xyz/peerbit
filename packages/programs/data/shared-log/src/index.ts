@@ -9589,6 +9589,9 @@ export class SharedLog<
 
 			const syncProfile = this._logProperties?.sync?.profile;
 			let rawMaterializedKnownMissing = false;
+			let rawPreparedReceiveSelectionValue:
+				| NativeBackboneRawReceiveSelectionPlan
+				| undefined;
 			if (msg instanceof RawExchangeHeadsMessage) {
 				const rawFrom = context.from!;
 				const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
@@ -9636,33 +9639,35 @@ export class SharedLog<
 				}
 				const rawIsRepairHint =
 					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
-					const rawPrepareVerifySetting =
-						this._logProperties?.sync
-							?.rawExchangeHeadsVerifySignaturesDuringPrepare;
-					const canVerifyPreparedRawReceiveOnCommit =
-						!!this._nativeBackbone?.graph
-							.commitVerifiedPreparedRawReceiveJoinBatch;
-					const verifyNativeBackboneSignaturesDuringPrepare =
-						rawPrepareVerifySetting === true ||
-						(rawPrepareVerifySetting !== false &&
-							this._isReplicating &&
-							!rawIsRepairHint &&
-							!canVerifyPreparedRawReceiveOnCommit);
-					let rawPreparedReceiveSelection:
-						| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
-						| undefined;
-					const getRawPreparedReceiveSelection = (
-						heads: RawEntryWithRefs[],
-						hashes: string[],
-					) => {
-						rawPreparedReceiveSelection ??=
-							this.planNativePreparedRawReceiveSelection({
-								heads,
-								hashes,
-								from: rawFrom,
-							});
-						return rawPreparedReceiveSelection;
-					};
+				const rawPrepareVerifySetting =
+					this._logProperties?.sync
+						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+				const canVerifyPreparedRawReceiveOnCommit =
+					!!this._nativeBackbone?.graph
+						.commitVerifiedPreparedRawReceiveJoinBatch;
+				const verifyNativeBackboneSignaturesDuringPrepare =
+					rawPrepareVerifySetting === true ||
+					(rawPrepareVerifySetting !== false &&
+						this._isReplicating &&
+						!rawIsRepairHint &&
+						!canVerifyPreparedRawReceiveOnCommit);
+				let rawPreparedReceiveSelection:
+					| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
+					| undefined;
+				const getRawPreparedReceiveSelection = async (
+					heads: RawEntryWithRefs[],
+					hashes: string[],
+				) => {
+					rawPreparedReceiveSelection ??=
+						this.planNativePreparedRawReceiveSelection({
+							heads,
+							hashes,
+							from: rawFrom,
+						});
+					rawPreparedReceiveSelectionValue =
+						await rawPreparedReceiveSelection;
+					return rawPreparedReceiveSelectionValue;
+				};
 					const rawMaterializeStartedAt = syncProfileStart(syncProfile);
 					const materializedRawMessage =
 						await materializeVerifiedRawExchangeHeadsMessage(
@@ -9875,25 +9880,42 @@ export class SharedLog<
 					let nativeRawGroupLeaderPlans:
 						| NativeBackboneRawReceiveGroupLeaderPlan[]
 						| undefined;
+					let usedNativeRawGroupLeaderPlansFromSelection = false;
 					if (rawMaterializedKnownMissing && this._nativeBackbone) {
 						const replicaOptions = {
 							minReplicas: this.replicas.min?.getValue(this) || 1,
 							maxReplicas: this.replicas.max?.getValue(this),
 						};
-						try {
-							const leaderOptions = isReplicating
-								? ({ roleAge: 0 } as const)
-								: undefined;
-							const leaderContext =
-								await this.createLeaderSelectionContext(leaderOptions);
+						if (
+							!isReplicating &&
+							rawPreparedReceiveSelectionValue
+								?.retainedGroupLeaderPlans &&
+							rawPreparedReceiveSelectionValue.retainedHashes.length ===
+								filteredHeadHashes.length &&
+							rawPreparedReceiveSelectionValue.retainedHashes.every(
+								(hash, index) => hash === filteredHeadHashes[index],
+							)
+						) {
 							nativeRawGroupLeaderPlans =
-								this._nativeBackbone.planPreparedRawReceiveGroupLeaders?.(
-									filteredHeadHashes,
-									replicaOptions,
-									this.createNativeLeaderOptions(leaderContext),
-								);
-						} catch {
-							nativeRawGroupLeaderPlans = undefined;
+								rawPreparedReceiveSelectionValue.retainedGroupLeaderPlans;
+							usedNativeRawGroupLeaderPlansFromSelection = true;
+						}
+						if (nativeRawGroupLeaderPlans === undefined) {
+							try {
+								const leaderOptions = isReplicating
+									? ({ roleAge: 0 } as const)
+									: undefined;
+								const leaderContext =
+									await this.createLeaderSelectionContext(leaderOptions);
+								nativeRawGroupLeaderPlans =
+									this._nativeBackbone.planPreparedRawReceiveGroupLeaders?.(
+										filteredHeadHashes,
+										replicaOptions,
+										this.createNativeLeaderOptions(leaderContext),
+									);
+							} catch {
+								nativeRawGroupLeaderPlans = undefined;
+							}
 						}
 						if (nativeRawGroupLeaderPlans === undefined) {
 							nativeRawGroupIndexPlans =
@@ -10155,6 +10177,8 @@ export class SharedLog<
 								nativeRawGroupIndexes: usedNativeRawGroupIndexes,
 								nativeRawGroupLeaderPlans:
 									usedNativeRawGroupLeaderPlans,
+								nativeRawGroupLeaderPlansFromSelection:
+									usedNativeRawGroupLeaderPlansFromSelection,
 								nativeReceiveGroupLeaderPlans:
 									usedNativeReceiveGroupLeaderPlans,
 							},
@@ -14387,15 +14411,6 @@ export class SharedLog<
 				maxReplicas: this.replicas.max?.getValue(this),
 			};
 			const leaderSelectionContext = await this.createLeaderSelectionContext();
-			const nativeSelection = backbone.selectPreparedRawReceiveHashes?.(
-				properties.hashes,
-				replicaOptions,
-				this.createNativeLeaderOptions(leaderSelectionContext),
-				fromHash,
-			);
-			if (nativeSelection) {
-				return nativeSelection;
-			}
 			const nativeFastDropPlan = backbone.planPreparedRawReceiveFastDrop?.(
 				properties.hashes,
 				replicaOptions,
@@ -14416,6 +14431,15 @@ export class SharedLog<
 					usedNativeFastDropPlan: true,
 					usedLeaderSamplePlans: true,
 				};
+			}
+			const nativeSelection = backbone.selectPreparedRawReceiveHashes?.(
+				properties.hashes,
+				replicaOptions,
+				this.createNativeLeaderOptions(leaderSelectionContext),
+				fromHash,
+			);
+			if (nativeSelection) {
+				return nativeSelection;
 			}
 
 			const nativeGroups = backbone.planPreparedRawReceiveGroups(

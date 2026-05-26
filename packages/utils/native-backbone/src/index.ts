@@ -1785,6 +1785,7 @@ export type NativeBackboneRawReceiveSelectionPlan = {
 	plannedHashCount: number;
 	usedNativeFastDropPlan: boolean;
 	usedLeaderSamplePlans: boolean;
+	retainedGroupLeaderPlans?: NativeBackboneRawReceiveGroupLeaderPlan[];
 };
 
 export type NativeBackboneRawReceivePreparedFactsColumns = [
@@ -1862,6 +1863,7 @@ type NativeBackboneRawReceiveSelectionRow = [
 	number,
 	boolean,
 	boolean,
+	NativeBackboneRawReceiveGroupLeaderPlanRow[]?,
 ];
 
 export type NativeBackboneTrimmedEntry = {
@@ -3262,21 +3264,33 @@ const rawReceiveGroupLeaderPlanFromRow = (
 	};
 };
 
-const rawReceiveSelectionFromRow = ([
-	retainedHashes,
-	droppedHashes,
-	groupCount,
-	plannedHashCount,
-	usedNativeFastDropPlan,
-	usedLeaderSamplePlans,
-]: NativeBackboneRawReceiveSelectionRow): NativeBackboneRawReceiveSelectionPlan => ({
-	retainedHashes,
-	droppedHashes,
-	groupCount,
-	plannedHashCount,
-	usedNativeFastDropPlan,
-	usedLeaderSamplePlans,
-});
+const rawReceiveSelectionFromRow = (
+	resolution: "u32" | "u64",
+	[
+		retainedHashes,
+		droppedHashes,
+		groupCount,
+		plannedHashCount,
+		usedNativeFastDropPlan,
+		usedLeaderSamplePlans,
+		retainedGroupLeaderPlanRows,
+	]: NativeBackboneRawReceiveSelectionRow,
+): NativeBackboneRawReceiveSelectionPlan => {
+	const plan: NativeBackboneRawReceiveSelectionPlan = {
+		retainedHashes,
+		droppedHashes,
+		groupCount,
+		plannedHashCount,
+		usedNativeFastDropPlan,
+		usedLeaderSamplePlans,
+	};
+	if (retainedGroupLeaderPlanRows) {
+		plan.retainedGroupLeaderPlans = retainedGroupLeaderPlanRows.map((row) =>
+			rawReceiveGroupLeaderPlanFromRow(resolution, row),
+		);
+	}
+	return plan;
+};
 
 export class NativeBackboneLogGraph {
 	constructor(
@@ -4746,7 +4760,7 @@ export class NativePeerbitBackbone {
 			...findLeaderArguments(leaderOptions),
 			fromHash,
 		);
-		return row ? rawReceiveSelectionFromRow(row) : undefined;
+		return row ? rawReceiveSelectionFromRow(this.resolution, row) : undefined;
 	}
 
 	getEntryCoordinateHashes(): string[] {

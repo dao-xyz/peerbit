@@ -1040,7 +1040,7 @@ describe("native peerbit backbone", () => {
 				groupCount: 2,
 				plannedHashCount: 3,
 				usedNativeFastDropPlan: true,
-				usedLeaderSamplePlans: true,
+				usedLeaderSamplePlans: false,
 			});
 			expect(
 				target.planPreparedRawReceiveFastDrop(
@@ -1075,8 +1075,63 @@ describe("native peerbit backbone", () => {
 				groupCount: 2,
 				plannedHashCount: 3,
 				usedNativeFastDropPlan: true,
-				usedLeaderSamplePlans: true,
+				usedLeaderSamplePlans: false,
 			});
+			const groupBCoordinate = Number(
+				target.getGidCoordinates("gid-raw-group-b", 1)[0],
+			);
+			target.putRange({
+				id: "peer-drop-range",
+				hash: "peer-drop",
+				timestamp: 0,
+				start1: groupBCoordinate,
+				end1: groupBCoordinate + 1,
+				start2: groupBCoordinate,
+				end2: groupBCoordinate + 1,
+				width: 1,
+				mode: 0,
+			});
+			const mixedSelection = target.selectPreparedRawReceiveHashes(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-keep",
+					selfReplicating: false,
+					fullReplicaFallback: false,
+				},
+				"peer-b",
+			);
+			expect(mixedSelection?.retainedHashes).to.deep.equal([
+				first.hash,
+				second.hash,
+			]);
+			expect(mixedSelection?.droppedHashes).to.deep.equal([third.hash]);
+			expect(mixedSelection).to.deep.include({
+				groupCount: 2,
+				plannedHashCount: 3,
+				usedNativeFastDropPlan: false,
+				usedLeaderSamplePlans: false,
+			});
+			expect(mixedSelection?.retainedGroupLeaderPlans).to.have.length(1);
+			expect(mixedSelection?.retainedGroupLeaderPlans?.[0]).to.deep.include(
+				{
+					gid: "gid-raw-group-a",
+					latestIndex: 1,
+					maxReplicasFromHead: 1,
+					maxReplicasFromNewEntries: 3,
+					maxMaxReplicas: 3,
+				},
+			);
+			expect(
+				Array.from(
+					mixedSelection?.retainedGroupLeaderPlans?.[0]?.indexes ?? [],
+				),
+			).to.deep.equal([0, 1]);
+			expect(
+				mixedSelection?.retainedGroupLeaderPlans?.[0]?.leaders.has(
+					"peer-keep",
+				),
+			).to.equal(true);
 
 			target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
 				clockId: publicKey,

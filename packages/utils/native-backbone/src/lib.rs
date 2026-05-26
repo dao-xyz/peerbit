@@ -1534,7 +1534,7 @@ impl NativePeerbitBackbone {
             return Ok(JsValue::UNDEFINED);
         }
 
-        let leader_rows = self.shared_log.plan_leader_samples_for_gids_batch(
+        let leader_plans = self.shared_log.plan_leaders_for_gids_batch(
             gids,
             replica_counts,
             role_age_ms,
@@ -1546,14 +1546,20 @@ impl NativePeerbitBackbone {
             full_replica_fallback,
             include_strict_full_replica,
         )?;
-        if leader_rows.length() as usize != groups.len() {
+        if leader_plans.length() as usize != groups.len() {
             return Ok(JsValue::UNDEFINED);
         }
 
         let mut retained_hashes = Vec::new();
         let mut dropped_hashes = Vec::new();
-        for (group, group_leaders) in groups.iter().zip(leader_rows.iter()) {
-            let rows = Array::from(&group_leaders);
+        let mut retained_groups = vec![false; groups.len()];
+        let mut retained_original_indexes = vec![false; expected_hash_count];
+        for (index, group) in groups.iter().enumerate() {
+            let leader_plan = Array::from(&leader_plans.get(index as u32));
+            if leader_plan.length() < 2 {
+                return Ok(JsValue::UNDEFINED);
+            }
+            let rows = Array::from(&leader_plan.get(1));
             let mut should_retain = false;
             for row_value in rows.iter() {
                 let row = Array::from(&row_value);
@@ -1566,7 +1572,15 @@ impl NativePeerbitBackbone {
                 }
             }
             if should_retain {
+                retained_groups[index] = true;
                 retained_hashes.extend(group.hashes.iter().cloned());
+                for original_index in &group.indexes {
+                    let original_index = *original_index as usize;
+                    if original_index >= retained_original_indexes.len() {
+                        return Ok(JsValue::UNDEFINED);
+                    }
+                    retained_original_indexes[original_index] = true;
+                }
             } else {
                 dropped_hashes.extend(group.hashes.iter().cloned());
             }
@@ -1577,13 +1591,67 @@ impl NativePeerbitBackbone {
         }
 
         let used_native_fast_drop_plan = retained_hashes.is_empty();
+        let retained_group_leader_plans = Array::new();
+        if !used_native_fast_drop_plan {
+            let mut selected_index_by_original = vec![None; expected_hash_count];
+            let mut selected_index = 0u32;
+            for (original_index, retained) in retained_original_indexes.iter().enumerate() {
+                if *retained {
+                    selected_index_by_original[original_index] = Some(selected_index);
+                    selected_index = selected_index
+                        .checked_add(1)
+                        .ok_or_else(|| JsValue::from_str("Raw receive selected index overflow"))?;
+                }
+            }
+            for (index, group) in groups.iter().enumerate() {
+                if !retained_groups[index] {
+                    continue;
+                }
+                let leader_plan = Array::from(&leader_plans.get(index as u32));
+                if leader_plan.length() < 2 {
+                    return Ok(JsValue::UNDEFINED);
+                }
+                let mut selected_indexes = Vec::with_capacity(group.indexes.len());
+                for original_index in &group.indexes {
+                    let Some(selected_index) = selected_index_by_original
+                        .get(*original_index as usize)
+                        .and_then(|value| *value)
+                    else {
+                        return Ok(JsValue::UNDEFINED);
+                    };
+                    selected_indexes.push(selected_index);
+                }
+                let Some(selected_latest_index) = selected_index_by_original
+                    .get(group.latest_index as usize)
+                    .and_then(|value| *value)
+                else {
+                    return Ok(JsValue::UNDEFINED);
+                };
+                let row = Array::new();
+                row.push(&JsValue::from_str(&group.gid));
+                row.push(&Uint32Array::from(selected_indexes.as_slice()));
+                row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
+                row.push(&JsValue::from_f64(selected_latest_index as f64));
+                row.push(&JsValue::from_f64(group.max_replicas_from_head as f64));
+                row.push(&JsValue::from_f64(
+                    group.max_replicas_from_new_entries as f64,
+                ));
+                row.push(&JsValue::from_f64(group.max_max_replicas as f64));
+                row.push(&leader_plan.get(0));
+                row.push(&leader_plan.get(1));
+                retained_group_leader_plans.push(&row);
+            }
+        }
         let out = Array::new();
         out.push(&strings_to_array(retained_hashes));
         out.push(&strings_to_array(dropped_hashes));
         out.push(&JsValue::from_f64(groups.len() as f64));
         out.push(&JsValue::from_f64(planned_hash_count as f64));
         out.push(&JsValue::from_bool(used_native_fast_drop_plan));
-        out.push(&JsValue::TRUE);
+        out.push(&JsValue::FALSE);
+        if retained_group_leader_plans.length() > 0 {
+            out.push(&retained_group_leader_plans);
+        }
         Ok(out.into())
     }
 
