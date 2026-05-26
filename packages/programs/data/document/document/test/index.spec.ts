@@ -3593,7 +3593,7 @@ describe("index", () => {
 					);
 					const storedIdentityBatchSpy = sinon.spy(
 						store.docs.index,
-						"_putManyStoredIdentityEncodedParts",
+						"_putManyPreparedNativeBackboneDocumentIndexStored",
 					);
 					try {
 						const docs = [
@@ -3908,6 +3908,10 @@ describe("index", () => {
 						localStore.docs.index,
 						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
 					);
+					const storedBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"_putManyPreparedNativeBackboneDocumentIndexStored",
+					);
 					const genericBatchIndexSpy = sinon.spy(
 						localStore.docs.index,
 						"putManyWithContext",
@@ -3926,7 +3930,8 @@ describe("index", () => {
 						expect(appended.entries).to.have.length(docs.length);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
-						expect(preparedBatchIndexSpy.callCount).equal(1);
+						expect(storedBatchIndexSpy.callCount).equal(1);
+						expect(preparedBatchIndexSpy.callCount).equal(0);
 						expect(genericBatchIndexSpy.callCount).equal(0);
 						expect(transformSpy.callCount).equal(0);
 						for (const doc of docs) {
@@ -3940,6 +3945,7 @@ describe("index", () => {
 					} finally {
 						transformSpy.restore();
 						genericBatchIndexSpy.restore();
+						storedBatchIndexSpy.restore();
 						preparedBatchIndexSpy.restore();
 						nativeBatchSpy.restore();
 						sequentialSpy.restore();
@@ -4006,6 +4012,10 @@ describe("index", () => {
 						localStore.docs.index,
 						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
 					);
+					const storedBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"_putManyPreparedNativeBackboneDocumentIndexStored",
+					);
 					const genericBatchIndexSpy = sinon.spy(
 						localStore.docs.index,
 						"putManyWithContext",
@@ -4026,6 +4036,7 @@ describe("index", () => {
 						);
 						nativeBatchSpy.resetHistory();
 						preparedBatchIndexSpy.resetHistory();
+						storedBatchIndexSpy.resetHistory();
 						contextBatchSpy.resetHistory();
 						transformSpy.resetHistory();
 
@@ -4046,7 +4057,8 @@ describe("index", () => {
 						]);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
-						expect(preparedBatchIndexSpy.callCount).equal(1);
+						expect(storedBatchIndexSpy.callCount).equal(1);
+						expect(preparedBatchIndexSpy.callCount).equal(0);
 						expect(genericBatchIndexSpy.callCount).equal(0);
 						expect(contextBatchSpy.callCount).equal(0);
 						expect(transformSpy.callCount).equal(0);
@@ -4065,6 +4077,7 @@ describe("index", () => {
 						transformSpy.restore();
 						contextBatchSpy.restore();
 						genericBatchIndexSpy.restore();
+						storedBatchIndexSpy.restore();
 						preparedBatchIndexSpy.restore();
 						nativeBatchSpy.restore();
 						sequentialSpy.restore();

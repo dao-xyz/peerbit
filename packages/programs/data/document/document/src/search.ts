@@ -2505,26 +2505,68 @@ export class DocumentIndex<
 		}
 	}
 
-	public async _putManyStoredIdentityEncodedParts(
+	public async _putManyPreparedNativeBackboneDocumentIndexStored(
 		values: Array<{
 			value: T;
 			id: indexerTypes.IdKey;
-			encodedValueParts: NonNullable<ContextualPutOptions["encodedValueParts"]>;
+			context: types.Context;
+			encodedValueParts?: NonNullable<
+				ContextualPutOptions["encodedValueParts"]
+			>;
+			nativeDocumentIndex?: NativeBackboneDocumentIndexCommit<I>;
 			options?: { replace?: boolean };
 		}>,
 	): Promise<boolean | undefined> {
 		if (values.length === 0) {
 			return true;
 		}
-		if (
-			!this.transformerIsIdentity ||
-			this.isProgramValued ||
-			!this.indexedTypeIsDocumentType
-		) {
+		if (this.isProgramValued) {
 			return;
 		}
+		const storedBatchPut = (this.index as ContextualIndexPut<I>)
+			.putStoredContextualEncodedValueBatch;
+		if (!storedBatchPut) {
+			return;
+		}
+		const batchValues: Array<{
+			id: indexerTypes.IdKey;
+			encodedValueParts: NonNullable<
+				ContextualPutOptions["encodedValueParts"]
+			>;
+			options?: { replace?: boolean };
+		}> = [];
 		for (const item of values) {
+			let encodedValueParts:
+				| NonNullable<ContextualPutOptions["encodedValueParts"]>
+				| undefined;
+			if (
+				this.transformerIsIdentity &&
+				this.indexedTypeIsDocumentType &&
+				item.encodedValueParts
+			) {
+				encodedValueParts = item.encodedValueParts;
+			} else if (item.nativeDocumentIndex) {
+				const valuePrefixBytes =
+					this.nativeBackboneDocumentIndexValuePrefixBytes(
+						item.nativeDocumentIndex,
+						item.context,
+					);
+				if (!valuePrefixBytes) {
+					return;
+				}
+				encodedValueParts = {
+					prefix: valuePrefixBytes,
+					suffix: encodeContextSuffix(item.context),
+				};
+			} else {
+				return;
+			}
 			this.cacheResolvedValue(item.id.primitive, item.value);
+			batchValues.push({
+				id: item.id,
+				encodedValueParts,
+				options: item.options,
+			});
 		}
 		const handleError = (error: unknown) => {
 			if (error instanceof indexerTypes.NotStartedError && this.closed) {
@@ -2532,13 +2574,8 @@ export class DocumentIndex<
 			}
 			throw error;
 		};
-		const storedBatchPut = (this.index as ContextualIndexPut<I>)
-			.putStoredContextualEncodedValueBatch;
-		if (!storedBatchPut) {
-			return;
-		}
 		try {
-			return await storedBatchPut.call(this.index, values);
+			return await storedBatchPut.call(this.index, batchValues);
 		} catch (error) {
 			return handleError(error);
 		}

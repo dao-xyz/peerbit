@@ -1126,7 +1126,7 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 			patchAsyncMethod(
 				store.docs.index,
-				"_putManyStoredIdentityEncodedParts",
+				"_putManyPreparedNativeBackboneDocumentIndexStored",
 				profile,
 				"documentIndexPutMs",
 			),
