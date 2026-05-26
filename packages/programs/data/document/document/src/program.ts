@@ -1009,6 +1009,9 @@ export class Documents<
 		if (options.index?.canSearch) {
 			unsupported.push("custom canSearch");
 		}
+		if (options.index?.prefetch) {
+			unsupported.push("index prefetch");
+		}
 		if (options.canReplicate) {
 			unsupported.push("custom canReplicate");
 		}

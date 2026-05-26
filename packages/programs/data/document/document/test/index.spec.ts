@@ -3613,6 +3613,15 @@ describe("index", () => {
 							message: "custom canSearch",
 						},
 						{
+							name: "prefetch",
+							options: {
+								index: {
+									prefetch: true,
+								},
+							},
+							message: "index prefetch",
+						},
+						{
 							name: "arbitrary transform",
 							options: {
 								index: {
