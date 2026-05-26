@@ -2072,17 +2072,14 @@ export class EntryIndex<T> {
 			return;
 		}
 		const asyncRows: typeof rows = [];
+		const externalNextHashes: string[] = [];
 		let scheduledPendingFlush = false;
 		for (const row of rows) {
 			if (!row.hash) {
 				throw new Error("Missing hash");
 			}
 			const existingPromise = this.insertionPromises.get(row.hash);
-			if (
-				!existingPromise &&
-				row.unique === true &&
-				row.externalNextHashes.length === 0
-			) {
+			if (!existingPromise && row.unique === true) {
 				const isHead = row.isHead ?? true;
 				this._length++;
 				if (!row.shallowEntry && !row.getShallowEntry) {
@@ -2099,6 +2096,9 @@ export class EntryIndex<T> {
 					row.shallowEntry.head = isHead;
 				}
 				this.pendingIndexWrites.set(row.hash, pending);
+				if (row.externalNextHashes.length > 0) {
+					externalNextHashes.push(...row.externalNextHashes);
+				}
 				scheduledPendingFlush = true;
 			} else {
 				asyncRows.push(row);
@@ -2107,10 +2107,15 @@ export class EntryIndex<T> {
 		if (scheduledPendingFlush) {
 			this.schedulePendingIndexWriteFlush();
 		}
-		if (asyncRows.length > 0) {
-			return Promise.all(
-				asyncRows.map((row) => this.putNativeCommittedAppendFacts(row)),
-			).then(() => undefined);
+		const batchedNextUpdate =
+			externalNextHashes.length > 0
+				? this.privateUpdateNextHeadHashes(externalNextHashes, false)
+				: undefined;
+		if (asyncRows.length > 0 || batchedNextUpdate) {
+			return Promise.all([
+				batchedNextUpdate,
+				...asyncRows.map((row) => this.putNativeCommittedAppendFacts(row)),
+			]).then(() => undefined);
 		}
 	}
 

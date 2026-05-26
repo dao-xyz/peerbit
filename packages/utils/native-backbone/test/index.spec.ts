@@ -517,6 +517,13 @@ describe("native peerbit backbone", () => {
 		});
 		backbone.configureDocumentSchemaIr(contextOnlySchema());
 		backbone.setDocumentContextHeadField(3);
+		backbone.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
 
 		const first =
 			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
@@ -698,6 +705,74 @@ describe("native peerbit backbone", () => {
 		expect(
 			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
 		).to.equal("doc-projected-batch-2");
+	});
+
+	it("batches committed latest-context document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+		backbone.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+
+		const first =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 40n,
+							logical: 1,
+							gid: "gid-doc-latest-batch",
+							payloadData: new Uint8Array([1, 2, 3]),
+							documentIndex: {
+								key: "doc-latest-batch-1",
+								valuePrefixBytes: new Uint8Array(0),
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+				},
+			)!;
+
+		const updated =
+			backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 41n,
+							logical: 2,
+							gid: "fallback-doc-latest-batch",
+							payloadData: new Uint8Array([4, 5, 6]),
+							documentIndex: {
+								key: "doc-latest-batch-1",
+								valuePrefixBytes: new Uint8Array(0),
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+				},
+			)!;
+
+		expect(updated).to.have.length(1);
+		expect(updated[0]!.entry.next).to.deep.equal([first[0]!.entry.hash]);
+		expect(updated[0]!.coordinate.gid).to.equal("gid-doc-latest-batch");
+		expect(updated[0]!.documentPreviousContext?.head).to.equal(
+			first[0]!.entry.hash,
+		);
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(
+			backbone.documentExactStringFirstKey(3, updated[0]!.entry.hash),
+		).to.equal("doc-latest-batch-1");
 	});
 
 	it("coalesces trim deletes with shared-log coordinate state", async () => {

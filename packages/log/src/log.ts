@@ -1951,6 +1951,7 @@ export class Log<T> {
 		properties: {
 			payloadDatas: Uint8Array[];
 			resolveTrimmedEntries?: boolean;
+			allowPreparedNexts?: boolean;
 		},
 		prepare: (
 			inputs: NativeNoNextCommitInput[],
@@ -2043,7 +2044,10 @@ export class Log<T> {
 					return undefined;
 				}
 				const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
-				if (effectiveNextHashes.length !== 0) {
+				if (
+					effectiveNextHashes.length !== 0 &&
+					properties.allowPreparedNexts !== true
+				) {
 					return undefined;
 				}
 				const effectiveGid = prepared.gid ?? row.gid;

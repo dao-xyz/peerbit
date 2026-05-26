@@ -6315,11 +6315,18 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
+		const usesLatestDocumentContext = documentIndexes.every(
+			(index) => index.useLatestContext === true,
+		);
+		if (
+			!usesLatestDocumentContext &&
+			documentIndexes.some((index) => index.useLatestContext === true)
+		) {
+			return undefined;
+		}
 		if (
 			documentIndexes.some(
-				(index) =>
-					index.useLatestContext === true ||
-					(!index.valuePrefixBytes && !index.projection),
+				(index) => !index.valuePrefixBytes && !index.projection,
 			)
 		) {
 			return undefined;
@@ -6349,33 +6356,61 @@ export class SharedLog<
 				{
 					payloadDatas,
 					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+					allowPreparedNexts: usesLatestDocumentContext,
 				},
 				(inputs) => {
 					backboneAppends =
-						backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
-							{
-								entries: inputs.map((input, index) => ({
-									wallTime: input.wallTime,
-									logical: input.logical,
-									gid: input.gid,
-									type: input.type,
-									metaData: input.metaData,
-									payloadData: input.payloadData,
-									documentIndex: documentIndexes[index]!,
-								})),
-								replicas: minReplicasValue,
-								roleAgeMs: nativeLeaderOptions.roleAge,
-								now: nativeLeaderOptions.now,
-								selfHash: nativeLeaderOptions.selfHash,
-								selfReplicating: nativeLeaderOptions.selfReplicating,
-								documentByteElementIndexLimit: byteElementIndexLimit,
-								documentDeleteTrimmedHeads: deleteTrimmedHeads,
-								trimLengthTo: inputs[0]?.trimLengthTo,
-							},
-						);
+						usesLatestDocumentContext
+							? backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
+									{
+										entries: inputs.map((input, index) => ({
+											wallTime: input.wallTime,
+											logical: input.logical,
+											gid: input.gid,
+											type: input.type,
+											metaData: input.metaData,
+											payloadData: input.payloadData,
+											documentIndex: documentIndexes[index]!,
+										})),
+										replicas: minReplicasValue,
+										roleAgeMs: nativeLeaderOptions.roleAge,
+										now: nativeLeaderOptions.now,
+										selfHash: nativeLeaderOptions.selfHash,
+										selfReplicating: nativeLeaderOptions.selfReplicating,
+										resolveTrimmedEntries:
+											properties?.resolveTrimmedEntries,
+										documentByteElementIndexLimit:
+											byteElementIndexLimit,
+										documentDeleteTrimmedHeads: deleteTrimmedHeads,
+										trimLengthTo: inputs[0]?.trimLengthTo,
+									},
+								)
+							: backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+									{
+										entries: inputs.map((input, index) => ({
+											wallTime: input.wallTime,
+											logical: input.logical,
+											gid: input.gid,
+											type: input.type,
+											metaData: input.metaData,
+											payloadData: input.payloadData,
+											documentIndex: documentIndexes[index]!,
+										})),
+										replicas: minReplicasValue,
+										roleAgeMs: nativeLeaderOptions.roleAge,
+										now: nativeLeaderOptions.now,
+										selfHash: nativeLeaderOptions.selfHash,
+										selfReplicating: nativeLeaderOptions.selfReplicating,
+										documentByteElementIndexLimit:
+											byteElementIndexLimit,
+										documentDeleteTrimmedHeads: deleteTrimmedHeads,
+										trimLengthTo: inputs[0]?.trimLengthTo,
+									},
+								);
 					return backboneAppends?.map((append) => ({
 						cid: append.entry.hash,
 						hash: append.entry.hash,
+						gid: append.coordinate.gid,
 						next: append.entry.next,
 						byteLength: append.entry.byteLength,
 						metaBytes: append.entry.metaBytes,

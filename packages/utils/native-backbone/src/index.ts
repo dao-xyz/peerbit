@@ -1503,6 +1503,46 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKeys: string[],
+		documentValuePrefixBytes: Uint8Array[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKeys: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanIds: Uint32Array,
+		documentProjectionEncodedDocuments: Uint8Array[],
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_storage_append_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -1980,6 +2020,27 @@ export type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
 	now?: bigint | number | string;
 	selfHash?: string;
 	selfReplicating?: boolean;
+	trimLengthTo?: number;
+	documentByteElementIndexLimit?: number;
+	documentDeleteTrimmedHeads?: boolean;
+};
+
+export type NativeBackboneCommittedLatestDocumentIndexBatchInput = {
+	entries: Array<{
+		wallTime: bigint | number | string;
+		logical?: number;
+		gid: string;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		documentIndex: NonNullable<NativeBackboneAppendInput["documentIndex"]>;
+	}>;
+	type?: number;
+	replicas: number;
+	roleAgeMs?: number;
+	now?: bigint | number | string;
+	selfHash?: string;
+	selfReplicating?: boolean;
+	resolveTrimmedEntries?: boolean;
 	trimLengthTo?: number;
 	documentByteElementIndexLimit?: number;
 	documentDeleteTrimmedHeads?: boolean;
@@ -6155,6 +6216,103 @@ export class NativePeerbitBackbone {
 							input.trimLengthTo,
 						);
 		return committedStorageAppendResultFromRow(this.resolution, row);
+	}
+
+	preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
+		input: NativeBackboneCommittedLatestDocumentIndexBatchInput,
+	): NativeBackboneAppendResult[] | undefined {
+		if (input.entries.length === 0) {
+			return [];
+		}
+		const projected = input.entries.every(
+			(entry) => entry.documentIndex.projection,
+		);
+		if (projected) {
+			const nativeCachedBatch =
+				this.native
+					.prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction;
+			if (!nativeCachedBatch) {
+				return undefined;
+			}
+			const rows = nativeCachedBatch.call(
+				this.native,
+				new BigUint64Array(
+					input.entries.map((entry) => BigInt(entry.wallTime)),
+				),
+				new Uint32Array(
+					input.entries.map((entry) => entry.logical ?? 0),
+				),
+				input.entries.map((entry) => entry.gid),
+				input.type ?? 0,
+				input.entries.map((entry) => entry.metaData),
+				input.entries.map((entry) => entry.payloadData),
+				input.replicas,
+				input.roleAgeMs ?? 0,
+				integerString(input.now ?? Date.now()),
+				input.selfHash ?? "",
+				input.selfReplicating ?? true,
+				input.resolveTrimmedEntries !== false,
+				input.entries.map((entry) => entry.documentIndex.key),
+				input.documentByteElementIndexLimit ?? 0,
+				input.documentDeleteTrimmedHeads === true,
+				new Uint32Array(
+					input.entries.map((entry) =>
+						this.documentProjectionPlanId(
+							entry.documentIndex.projection!.plan,
+						),
+					),
+				),
+				input.entries.map(
+					(entry) => entry.documentIndex.projection!.encodedDocument,
+				),
+				input.entries.map(
+					(entry) => entry.documentIndex.projection!.signer,
+				),
+				input.trimLengthTo,
+			);
+			return rows.map((row) =>
+				committedStorageAppendResultFromRow(this.resolution, row),
+			);
+		}
+		if (
+			input.entries.some((entry) => entry.documentIndex.projection) ||
+			input.entries.some(
+				(entry) => !entry.documentIndex.valuePrefixBytes,
+			)
+		) {
+			return undefined;
+		}
+		const nativeBatch =
+			this.native
+				.prepare_plain_committed_storage_append_document_index_latest_batch_transaction;
+		if (!nativeBatch) {
+			return undefined;
+		}
+		const rows = nativeBatch.call(
+			this.native,
+			new BigUint64Array(
+				input.entries.map((entry) => BigInt(entry.wallTime)),
+			),
+			new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
+			input.entries.map((entry) => entry.gid),
+			input.type ?? 0,
+			input.entries.map((entry) => entry.metaData),
+			input.entries.map((entry) => entry.payloadData),
+			input.replicas,
+			input.roleAgeMs ?? 0,
+			integerString(input.now ?? Date.now()),
+			input.selfHash ?? "",
+			input.selfReplicating ?? true,
+			input.resolveTrimmedEntries !== false,
+			input.entries.map((entry) => entry.documentIndex.key),
+			input.entries.map((entry) => entry.documentIndex.valuePrefixBytes!),
+			input.documentByteElementIndexLimit ?? 0,
+			input.documentDeleteTrimmedHeads === true,
+			input.trimLengthTo,
+		);
+		return rows.map((row) =>
+			committedStorageAppendResultFromRow(this.resolution, row),
+		);
 	}
 
 	preparePlainCommittedNoNextStorageAppendTransaction(

@@ -3728,6 +3728,10 @@ describe("index", () => {
 						store.docs.index.index as any,
 						"getContextByIdBatch",
 					);
+					const latestBatchTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any),
+						"preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction",
+					);
 					try {
 						const first = await store.docs.put(
 							new Document({ id: "update-1", name: "before-1" }),
@@ -3740,6 +3744,7 @@ describe("index", () => {
 						nativeBatchSpy.resetHistory();
 						documentBatchIndexSpy.resetHistory();
 						contextBatchSpy.resetHistory();
+						latestBatchTransactionSpy.resetHistory();
 
 						const appended = await store.docs.putMany(
 							[
@@ -3760,9 +3765,11 @@ describe("index", () => {
 						expect(nativeBatchSpy.callCount).equal(1);
 						expect(documentBatchIndexSpy.callCount).equal(0);
 						expect(contextBatchSpy.callCount).equal(0);
+						expect(latestBatchTransactionSpy.callCount).equal(1);
 						expect((await store.docs.get("update-1"))?.name).equal("after-1");
 						expect((await store.docs.get("update-2"))?.name).equal("after-2");
 					} finally {
+						latestBatchTransactionSpy.restore();
 						contextBatchSpy.restore();
 						documentBatchIndexSpy.restore();
 						nativeBatchSpy.restore();
@@ -4045,6 +4052,10 @@ describe("index", () => {
 						"getContextByIdBatch",
 					);
 					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
+					const latestBatchTransactionSpy = sinon.spy(
+						((localStore.docs.log as any)._nativeBackbone as any),
+						"preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction",
+					);
 					try {
 						const first = await localStore.docs.put(
 							new Document({ id: "pick-update-1", name: "before-1" }),
@@ -4059,6 +4070,7 @@ describe("index", () => {
 						storedBatchIndexSpy.resetHistory();
 						contextBatchSpy.resetHistory();
 						transformSpy.resetHistory();
+						latestBatchTransactionSpy.resetHistory();
 
 						const appended = await localStore.docs.putMany(
 							[
@@ -4082,6 +4094,7 @@ describe("index", () => {
 						expect(genericBatchIndexSpy.callCount).equal(0);
 						expect(contextBatchSpy.callCount).equal(0);
 						expect(transformSpy.callCount).equal(0);
+						expect(latestBatchTransactionSpy.callCount).equal(1);
 						const firstIndexed = await localStore.docs.index.get(
 							"pick-update-1",
 							{ resolve: false },
@@ -4094,6 +4107,7 @@ describe("index", () => {
 						expect(secondIndexed?.name).equal("after-2");
 						expect((firstIndexed as any)?.data).equal(undefined);
 					} finally {
+						latestBatchTransactionSpy.restore();
 						transformSpy.restore();
 						contextBatchSpy.restore();
 						genericBatchIndexSpy.restore();

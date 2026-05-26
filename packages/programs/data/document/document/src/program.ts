@@ -423,13 +423,17 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 			| Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
 			| undefined;
 		let previousSignerPublicKeys: Array<Uint8Array | undefined> | undefined;
-		if (putOptions?.unique !== true) {
+		const policyNeedsExistingContext =
+			this.context.plainPutPolicyNeedsExistingContext();
+		const useNativeExistingDocumentContext =
+			putOptions?.unique !== true && !policyNeedsExistingContext;
+		if (putOptions?.unique !== true && !useNativeExistingDocumentContext) {
 			const keys = prepared.map((item) => item.key);
 			const nativeContexts =
 				this.context.getNativeIndexedContextsAndPreviousSignerPublicKeys(keys);
 			if (nativeContexts) {
 				existingContexts = nativeContexts.contexts;
-				if (this.context.plainPutPolicyNeedsExistingContext()) {
+				if (policyNeedsExistingContext) {
 					previousSignerPublicKeys = nativeContexts.publicKeys;
 				}
 			} else {
@@ -439,7 +443,7 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		if (
 			existingContexts &&
 			!previousSignerPublicKeys &&
-			this.context.plainPutPolicyNeedsExistingContext()
+			policyNeedsExistingContext
 		) {
 			const previousHeads = existingContexts.map((existing) =>
 				this.context.getIndexedContextHead(existing ?? null),
@@ -485,6 +489,7 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				})),
 				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
 				options: putOptions,
+				useNativeExistingDocumentContext,
 			}),
 			(documentAppendCommit) => {
 				if (!documentAppendCommit) {
@@ -699,6 +704,7 @@ type NativeBackboneDocumentIndexCommitInput = {
 	};
 	existingCreated?: bigint;
 	deleteTrimmedHeads?: boolean;
+	useLatestContext?: boolean;
 };
 
 type PreparedNativeBackboneDocumentIndexCommit<I> = {
@@ -727,6 +733,7 @@ type NativeDocumentAppendManyCommitInput<T, I extends Record<string, any>> = {
 	puts: NativeDocumentAppendCommitFactsInput<T, I>[];
 	resolveTrimmedEntries: boolean;
 	options?: DocumentPutOptions;
+	useNativeExistingDocumentContext?: boolean;
 };
 
 type DocumentAppendManyCommitFacts<T, I extends Record<string, any>> = {
@@ -2585,6 +2592,7 @@ export class Documents<
 	private toNativeBackboneDocumentIndexCommitInput(
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		commit: PreparedNativeBackboneDocumentIndexCommit<I>,
+		useLatestContext = false,
 	): NativeBackboneDocumentIndexCommitInput {
 		const canUsePlainPutPayload =
 			!!input.operationPayloadBytes && !!commit.projection;
@@ -2600,6 +2608,7 @@ export class Documents<
 			deleteTrimmedHeads:
 				!this.hasDocumentChangeConsumers() &&
 				this._index.canGetIndexedKeyByHead(),
+			useLatestContext,
 		};
 	}
 
@@ -2707,9 +2716,13 @@ export class Documents<
 				this.toNativeBackboneDocumentIndexCommitInput(
 					input.puts[index]!,
 					commit,
+					input.useNativeExistingDocumentContext === true,
 				),
 			);
 		const nexts = input.puts.map((put) => {
+			if (input.useNativeExistingDocumentContext === true) {
+				return [];
+			}
 			const existing =
 				put.unique || put.existing === null ? null : put.existing;
 			if (!existing) {
@@ -2994,8 +3007,31 @@ export class Documents<
 	): Promise<NativeDocumentAppendTransaction<T, I>[]> {
 		const contextInputs = rows.map(({ input, appended }) => {
 			const append = appended.appendCommit;
+			const nativePreviousContext =
+				append.documentPreviousContext == null
+					? undefined
+					: nativeDocumentContextFactsAsContext(
+							append.documentPreviousContext,
+						);
+			const nativePreviousIndexedContext = nativePreviousContext
+				? ({
+						id: input.key,
+						value: {
+							__context: nativePreviousContext,
+						} as IndexedContextOnly<I>,
+					} satisfies indexerTypes.IndexedResult<IndexedContextOnly<I>>)
+				: undefined;
+			const inputWithExisting =
+				input.existing === undefined && nativePreviousIndexedContext
+					? {
+							...input,
+							existing: nativePreviousIndexedContext,
+						}
+					: input;
 			const existing =
-				input.unique || input.existing === null ? null : input.existing;
+				inputWithExisting.unique || inputWithExisting.existing === null
+					? null
+					: inputWithExisting.existing;
 			return {
 				existingCreated: existing?.value.__context.created,
 				modified: append.wallTime,
@@ -3009,20 +3045,42 @@ export class Documents<
 			(await planDocumentContextBatch(contextInputs));
 		return rows.map((row, index) => {
 			const contextPlan = contextPlans[index]!;
-			if (row.input.nativeBackboneDocumentIndex) {
+			const append = row.appended.appendCommit;
+			const nativePreviousContext =
+				append.documentPreviousContext == null
+					? undefined
+					: nativeDocumentContextFactsAsContext(
+							append.documentPreviousContext,
+						);
+			const nativePreviousIndexedContext = nativePreviousContext
+				? ({
+						id: row.input.key,
+						value: {
+							__context: nativePreviousContext,
+						} as IndexedContextOnly<I>,
+					} satisfies indexerTypes.IndexedResult<IndexedContextOnly<I>>)
+				: undefined;
+			const input =
+				row.input.existing === undefined && nativePreviousIndexedContext
+					? {
+							...row.input,
+							existing: nativePreviousIndexedContext,
+						}
+					: row.input;
+			if (input.nativeBackboneDocumentIndex) {
 				let context: Context | undefined;
 				return this.createNativeDocumentAppendTransaction(
-					row.input,
+					input,
 					row.appended,
 					{
 						getContext: () => (context ??= new Context(contextPlan)),
 						getContextBytes: () => contextPlan.contextBytes,
 					},
-					row.input.nativeBackboneDocumentIndex,
+					input.nativeBackboneDocumentIndex,
 				);
 			}
 			return this.createDocumentAppendCommitFactsWithContext(
-				row.input,
+				input,
 				row.appended,
 				contextPlan,
 			);
