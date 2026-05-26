@@ -3441,7 +3441,7 @@ export class Documents<
 			},
 			removed: appended.removed,
 		};
-		await this._index.del(key);
+		await this._index.delManyMaybe([key]);
 		if (documentsChanged && removedDocument) {
 			documentsChanged.removed.push(removedDocument);
 			this.dispatchDocumentChangeIfObserved(documentsChanged);
