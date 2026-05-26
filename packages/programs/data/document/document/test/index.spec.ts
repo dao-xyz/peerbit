@@ -3104,6 +3104,70 @@ describe("index", () => {
 					}
 				});
 
+				it("validates strict native same-signer replay without resolving previous entries", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const nativeSignerBatchSpy = sinon.spy(
+						store.docs as any,
+						"getNativeEntrySignerPublicKeys",
+					);
+					let nativeSignerBatchRestored = false;
+					try {
+						const id = uuid();
+						await store.docs.put(
+							new Document({ id, name: "native-same-signer-replay-1" }),
+						);
+						const second = await store.docs.put(
+							new Document({ id, name: "native-same-signer-replay-2" }),
+						);
+						resolveEntrySpy.resetHistory();
+						nativeSignerBatchSpy.resetHistory();
+
+						expect(await (store.docs as any).canAppend(second.entry)).equal(true);
+						expect(nativeSignerBatchSpy.callCount).equal(1);
+						expect(resolveEntrySpy.callCount).equal(0);
+
+						nativeSignerBatchSpy.restore();
+						nativeSignerBatchRestored = true;
+						const missingNativeSignerStub = sinon
+							.stub(store.docs as any, "getNativeEntrySignerPublicKeys")
+							.returns([undefined]);
+						try {
+							expect(await (store.docs as any).canAppend(second.entry)).equal(
+								false,
+							);
+							expect(resolveEntrySpy.callCount).equal(0);
+						} finally {
+							missingNativeSignerStub.restore();
+						}
+					} finally {
+						if (!nativeSignerBatchRestored) {
+							nativeSignerBatchSpy.restore();
+						}
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("reuses cached native projection plans for strict native update puts", async () => {
 					@variant("strict_native_project_update_indexable")
 					class StrictNativeProjectUpdateIndexable {

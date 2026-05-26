@@ -2008,6 +2008,14 @@ export class Documents<
 			}
 
 			if (this._optionCanPerform) {
+				if (this._optionCanPerformNativePolicy && this.isNativeMode()) {
+					return this.nativeCanPerformAllowsAppend(
+						this._optionCanPerformNativePolicy,
+						operation,
+						entry,
+						document,
+					);
+				}
 				const previousEntries =
 					this._optionCanPerformNativePolicy &&
 					isPutOperation(operation) &&
@@ -2056,6 +2064,46 @@ export class Documents<
 		return true;
 	}
 
+	private async nativeCanPerformAllowsAppend(
+		descriptor: NativeCanPerformPolicyDescriptor,
+		operation: PutOperation | DeleteOperation,
+		entry: Entry<Operation>,
+		document: T | undefined,
+	): Promise<boolean> {
+		if (isPutOperation(operation)) {
+			if (!document) {
+				return false;
+			}
+			let previousSignerPublicKeys: Uint8Array[] = [];
+			let previousEntries: Entry<Operation>[] = [];
+			if (nativeCanPerformPolicyNeedsPreviousEntries(descriptor)) {
+				const lookup = this.getNativeEntrySignerPublicKeys(entry.meta.next);
+				if (lookup && lookup.every((key) => key != null)) {
+					previousSignerPublicKeys = lookup as Uint8Array[];
+				} else if (this.isNativeMode()) {
+					return false;
+				} else {
+					previousEntries = await this.resolveCanPerformPreviousEntries(entry);
+				}
+			}
+			return this.nativePutPolicyAllows(
+				descriptor,
+				document,
+				previousEntries,
+				previousSignerPublicKeys,
+			);
+		}
+		const deleteValue = nativeCanPerformPolicyNeedsDeleteValue(descriptor)
+			? await this.resolveCanPerformDeleteValue(operation, {
+					allowEntryFallback: !this.isNativeMode(),
+				})
+			: undefined;
+		return createNativeFastPathDeletePolicyEvaluator(
+			descriptor,
+			this.log.log.identity.publicKey,
+		)(deleteValue);
+	}
+
 	private async resolveCanPerformPreviousEntries(
 		entry: Entry<Operation>,
 	): Promise<Entry<Operation>[]> {
@@ -2071,6 +2119,7 @@ export class Documents<
 
 	private async resolveCanPerformDeleteValue(
 		operation: DeleteOperation,
+		options?: { allowEntryFallback?: boolean },
 	): Promise<T | undefined> {
 		const key =
 			operation.key instanceof indexerTypes.IdKey
@@ -2085,6 +2134,14 @@ export class Documents<
 			await this.getLocalIdentityDocumentByHead(existingHead);
 		if (indexedDocument) {
 			return indexedDocument;
+		}
+		const indexedPolicyDocument =
+			await this.getLocalIndexedDocumentForNativeDeletePolicy(key);
+		if (indexedPolicyDocument) {
+			return indexedPolicyDocument;
+		}
+		if (options?.allowEntryFallback === false) {
+			return;
 		}
 		const existingEntry = await this._resolveEntry(existingHead, {
 			remote: true,
