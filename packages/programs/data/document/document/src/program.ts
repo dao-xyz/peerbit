@@ -60,6 +60,7 @@ import {
 	createNativeFastPathCanPerformPolicyEvaluator,
 	createNativeFastPathDeletePolicyEvaluator,
 	getNativeCanPerformPolicyDescriptor,
+	nativeCanPerformPolicyDeleteFieldPaths,
 	nativeCanPerformPolicyNeedsDeleteValue,
 	nativeCanPerformPolicyNeedsPreviousEntries,
 } from "./policy.js";
@@ -1720,6 +1721,28 @@ export class Documents<
 		return this.documentFromIdentityIndexedValue(
 			await this._index.getIdentityIndexedByHead(head),
 		);
+	}
+
+	private async getLocalIndexedDocumentForNativeDeletePolicy(
+		key: indexerTypes.IdKey,
+	): Promise<T | undefined> {
+		if (!this._optionCanPerformNativePolicy) {
+			return;
+		}
+		const fieldPaths = nativeCanPerformPolicyDeleteFieldPaths(
+			this._optionCanPerformNativePolicy,
+		);
+		if (
+			fieldPaths.length === 0 ||
+			!this._index.canReadOriginalFieldPathsFromIndexedValue(fieldPaths)
+		) {
+			return;
+		}
+		return (await this._index.get(key, {
+			local: true,
+			remote: false,
+			resolve: false,
+		} as GetOptions<T, I, D, false>)) as unknown as T | undefined;
 	}
 
 	get changes() {
@@ -4250,6 +4273,8 @@ export class Documents<
 				existingDocument = await this.getLocalIdentityDocumentByHead(
 					existingContext.head,
 				);
+				existingDocument ??=
+					await this.getLocalIndexedDocumentForNativeDeletePolicy(key);
 			}
 			return existingDocument;
 		};

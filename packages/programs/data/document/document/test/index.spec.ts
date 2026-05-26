@@ -5338,7 +5338,10 @@ describe("index", () => {
 							},
 						},
 					});
-					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const resolveEntrySpy = sinon.spy(
+						store.docs as any,
+						"_resolveEntry",
+					);
 					try {
 						const owned = new Document({
 							id: uuid(),
@@ -5382,6 +5385,104 @@ describe("index", () => {
 						);
 						expect(resolveEntrySpy.callCount).equal(0);
 					} finally {
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses descriptor indexed values for strict native delete ownership policies", async () => {
+					@variant("strict_native_delete_owner_indexable")
+					class DeleteOwnerIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option(Uint8Array) })
+						data?: Uint8Array;
+
+						constructor(properties?: Partial<DeleteOwnerIndexable>) {
+							this.id = properties?.id || "";
+							this.data = properties?.data;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<DeleteOwnerIndexable>({
+						docs: new Documents<Document, DeleteOwnerIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.or(
+								policy.put(policy.allowAll<Document>()),
+								policy.deleteSignedByExistingField<Document>("data"),
+							),
+							index: {
+								type: DeleteOwnerIndexable,
+								transform: transform.pick<Document, DeleteOwnerIndexable>([
+									"id",
+									"data",
+								]),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(
+						localStore.docs as any,
+						"_resolveEntry",
+					);
+					const indexedGetSpy = sinon.spy(localStore.docs.index, "get");
+					try {
+						const owned = new Document({
+							id: uuid(),
+							name: "owned-indexed-native-delete",
+							data: rustSession.peers[0].identity.publicKey.bytes,
+						});
+						const foreign = new Document({
+							id: uuid(),
+							name: "foreign-indexed-native-delete",
+							data: randomBytes(32),
+						});
+						await localStore.docs.put(owned, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						await localStore.docs.put(foreign, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						resolveEntrySpy.resetHistory();
+						indexedGetSpy.resetHistory();
+
+						await localStore.docs.del(owned.id, {
+							replicate: false,
+							target: "none",
+						});
+						await expect(
+							localStore.docs.del(foreign.id, {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"canPerform policy rejected this delete",
+						);
+
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect(
+							indexedGetSpy
+								.getCalls()
+								.filter((call) => call.args[1]?.resolve === false).length,
+						).equal(2);
+					} finally {
+						indexedGetSpy.restore();
 						resolveEntrySpy.restore();
 						await rustSession.stop();
 					}

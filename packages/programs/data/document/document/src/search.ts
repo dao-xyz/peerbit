@@ -71,6 +71,7 @@ import {
 	canPrepareNativeDocumentTransformWithAppendFacts,
 	canUseNativeBackboneDocumentTransform,
 	getNativeDocumentTransformDescriptor,
+	nativeDocumentTransformPreservesFieldPath,
 } from "./transform.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
@@ -2315,6 +2316,22 @@ export class DocumentIndex<
 			!this.isProgramValued &&
 			typeof (this.index as ContextHeadIndex<I>).getIdByContextHead ===
 				"function"
+		);
+	}
+
+	public canReadOriginalFieldPathsFromIndexedValue(
+		paths: readonly (string | readonly string[])[],
+	): boolean {
+		return (
+			!this.isProgramValued &&
+			paths.every((path) =>
+				this.transformerIsIdentity && this.indexedTypeIsDocumentType
+					? true
+					: nativeDocumentTransformPreservesFieldPath(
+							this.nativeTransformDescriptor,
+							path,
+						),
+			)
 		);
 	}
 

@@ -61,6 +61,18 @@ const freezePath = (
 const asPath = (path: string | readonly string[]): readonly string[] =>
 	typeof path === "string" ? [path] : path;
 
+const pathsEqual = (
+	left: string | readonly string[],
+	right: string | readonly string[],
+): boolean => {
+	const leftPath = asPath(left);
+	const rightPath = asPath(right);
+	return (
+		leftPath.length === rightPath.length &&
+		leftPath.every((segment, index) => segment === rightPath[index])
+	);
+};
+
 const getFieldValue = (value: unknown, path: string | readonly string[]) => {
 	let current = value as Record<string, unknown> | undefined;
 	for (const segment of asPath(path)) {
@@ -176,6 +188,28 @@ export const canPrepareNativeDocumentTransformWithAppendFacts = (
 export const canUseNativeBackboneDocumentTransform = (
 	descriptor: NativeDocumentTransformDescriptor | undefined,
 ): boolean => descriptor != null;
+
+export const nativeDocumentTransformPreservesFieldPath = (
+	descriptor: NativeDocumentTransformDescriptor | undefined,
+	path: string | readonly string[],
+): boolean => {
+	if (!descriptor) {
+		return false;
+	}
+	switch (descriptor.kind) {
+		case "identity":
+			return true;
+		case "pick":
+			return descriptor.fields.some((field) => pathsEqual(field, path));
+		case "project":
+			return descriptor.fields.some(
+				(field) =>
+					pathsEqual(field.target, path) &&
+					field.source.kind === "field" &&
+					pathsEqual(field.source.path, path),
+			);
+	}
+};
 
 export const transform = {
 	identity: <T = unknown>(): NativeDocumentTransformer<T, T> =>
