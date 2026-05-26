@@ -14,9 +14,10 @@ use peerbit_indexer_core::schema::{
 use peerbit_indexer_core::storage::{ByteStorage, MemoryByteStorage};
 use peerbit_log_rust::{
     prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled,
-    verify_entry_v0_ed25519_storage_slices, verify_entry_v0_ed25519_storage_slices_all,
-    LogIndexEntry, NativeCommittedEntryFacts, NativeEntryV0PlainBuilder, NativeLogAppendProfile,
-    NativeLogBlockStore, NativeLogIndex, PreparedRawEntryV0, RawEntryV0PrepareProfile,
+    verify_prepared_entry_v0_ed25519_storage_slices,
+    verify_prepared_entry_v0_ed25519_storage_slices_all, LogIndexEntry, NativeCommittedEntryFacts,
+    NativeEntryV0PlainBuilder, NativeLogAppendProfile, NativeLogBlockStore, NativeLogIndex,
+    PreparedEntryV0SignatureInput, PreparedRawEntryV0, RawEntryV0PrepareProfile,
 };
 use peerbit_shared_log_rust::{
     commit_local_append_for_gid_compact_core, EntryCoordinateCommit, NativeLocalAppendCompactFacts,
@@ -59,6 +60,20 @@ struct PendingRawReceiveEntry {
     entry: LogIndexEntry,
     requested_replicas: Option<u32>,
     signature_verified: bool,
+    signable_prefix_len: usize,
+    signature_with_key_start: usize,
+    signature_with_key_len: usize,
+}
+
+impl PendingRawReceiveEntry {
+    fn signature_input(&self) -> PreparedEntryV0SignatureInput<'_> {
+        PreparedEntryV0SignatureInput {
+            storage_bytes: &self.storage_bytes,
+            signable_prefix_len: self.signable_prefix_len,
+            signature_with_key_start: self.signature_with_key_start,
+            signature_with_key_len: self.signature_with_key_len,
+        }
+    }
 }
 
 struct PendingRawReceiveGroupPlan {
@@ -1043,6 +1058,9 @@ impl NativePeerbitBackbone {
                     entry: log_entry,
                     requested_replicas: entry.requested_replicas,
                     signature_verified: entry.signature_verified,
+                    signable_prefix_len: entry.signable_prefix_len,
+                    signature_with_key_start: entry.signature_with_key_start,
+                    signature_with_key_len: entry.signature_with_key_len,
                 },
             );
             out.push(&row);
@@ -1197,6 +1215,9 @@ impl NativePeerbitBackbone {
                     entry: log_entry,
                     requested_replicas: entry.requested_replicas,
                     signature_verified: entry.signature_verified,
+                    signable_prefix_len: entry.signable_prefix_len,
+                    signature_with_key_start: entry.signature_with_key_start,
+                    signature_with_key_len: entry.signature_with_key_len,
                 },
             );
         }
@@ -1548,20 +1569,20 @@ impl NativePeerbitBackbone {
         let mut out = vec![1u8; hashes.len()];
         let mut verify_positions = Vec::new();
         let verified = {
-            let mut storage_refs = Vec::new();
+            let mut entries = Vec::new();
             for (index, hash) in hashes.iter().enumerate() {
                 let Some(pending) = self.pending_raw_receive_entries.get(hash) else {
                     return Ok(None);
                 };
                 if !pending.signature_verified {
                     verify_positions.push(index);
-                    storage_refs.push(pending.storage_bytes.as_slice());
+                    entries.push(pending.signature_input());
                 }
             }
-            if storage_refs.is_empty() {
+            if entries.is_empty() {
                 Some(Vec::new())
             } else {
-                verify_entry_v0_ed25519_storage_slices(&storage_refs).ok()
+                verify_prepared_entry_v0_ed25519_storage_slices(&entries).ok()
             }
         };
 
@@ -1595,20 +1616,20 @@ impl NativePeerbitBackbone {
 
         let mut verify_positions = Vec::new();
         let verified = {
-            let mut storage_refs = Vec::new();
+            let mut entries = Vec::new();
             for (index, hash) in hashes.iter().enumerate() {
                 let Some(pending) = self.pending_raw_receive_entries.get(hash) else {
                     return Ok(None);
                 };
                 if !pending.signature_verified {
                     verify_positions.push(index);
-                    storage_refs.push(pending.storage_bytes.as_slice());
+                    entries.push(pending.signature_input());
                 }
             }
-            if storage_refs.is_empty() {
+            if entries.is_empty() {
                 Some(true)
             } else {
-                verify_entry_v0_ed25519_storage_slices_all(&storage_refs).ok()
+                verify_prepared_entry_v0_ed25519_storage_slices_all(&entries).ok()
             }
         };
 

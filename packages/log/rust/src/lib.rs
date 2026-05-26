@@ -99,6 +99,9 @@ pub struct PreparedRawEntryV0 {
     pub signature_verified: bool,
     pub storage_bytes: Vec<u8>,
     pub requested_replicas: Option<u32>,
+    pub signable_prefix_len: usize,
+    pub signature_with_key_start: usize,
+    pub signature_with_key_len: usize,
 }
 
 #[derive(Default, Clone, Copy, Debug)]
@@ -3053,6 +3056,120 @@ fn parse_entry_v0_ed25519_storage_slices(
     Ok((parsed_signatures, parsed_public_keys, parsed_messages))
 }
 
+pub struct PreparedEntryV0SignatureInput<'a> {
+    pub storage_bytes: &'a [u8],
+    pub signable_prefix_len: usize,
+    pub signature_with_key_start: usize,
+    pub signature_with_key_len: usize,
+}
+
+fn prepared_entry_v0_signature_with_key<'a>(
+    input: &PreparedEntryV0SignatureInput<'a>,
+) -> Result<&'a [u8], JsValue> {
+    let end = input
+        .signature_with_key_start
+        .checked_add(input.signature_with_key_len)
+        .ok_or_else(|| JsValue::from_str("EntryV0 signature offset overflow"))?;
+    if end > input.storage_bytes.len() {
+        return Err(JsValue::from_str(
+            "Invalid prepared EntryV0 signature offset",
+        ));
+    }
+    Ok(&input.storage_bytes[input.signature_with_key_start..end])
+}
+
+fn parse_prepared_entry_v0_ed25519_storage_slices(
+    entries: &[PreparedEntryV0SignatureInput<'_>],
+) -> Result<(Vec<Signature>, Vec<VerifyingKey>, Vec<Vec<u8>>), JsValue> {
+    let mut parsed_signatures = Vec::with_capacity(entries.len());
+    let mut parsed_public_keys = Vec::with_capacity(entries.len());
+    let mut parsed_messages = Vec::with_capacity(entries.len());
+    let mut verifying_key_cache = HashMap::new();
+
+    for entry in entries {
+        let parsed = parse_plain_signature_with_key(prepared_entry_v0_signature_with_key(entry)?)?;
+        validate_signature_lengths(&parsed.signature, &parsed.public_key)?;
+
+        let signature_bytes: [u8; 64] = parsed
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
+        let verifying_key = cached_verifying_key(&mut verifying_key_cache, &parsed.public_key)?;
+        parsed_signatures.push(Signature::from_bytes(&signature_bytes));
+        parsed_public_keys.push(verifying_key);
+        parsed_messages.push(unsigned_entry_v0_storage_for_signing(
+            entry.storage_bytes,
+            entry.signable_prefix_len,
+        )?);
+    }
+
+    Ok((parsed_signatures, parsed_public_keys, parsed_messages))
+}
+
+pub fn verify_prepared_entry_v0_ed25519_storage_slices(
+    entries: &[PreparedEntryV0SignatureInput<'_>],
+) -> Result<Vec<u8>, JsValue> {
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let (parsed_signatures, parsed_public_keys, parsed_messages) =
+        parse_prepared_entry_v0_ed25519_storage_slices(entries)?;
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        return Ok(vec![1u8; entries.len()]);
+    }
+
+    let mut out = Vec::with_capacity(entries.len());
+    for i in 0..parsed_signatures.len() {
+        out.push(
+            if parsed_public_keys[i]
+                .verify(&parsed_messages[i], &parsed_signatures[i])
+                .is_ok()
+            {
+                1
+            } else {
+                0
+            },
+        );
+    }
+
+    Ok(out)
+}
+
+pub fn verify_prepared_entry_v0_ed25519_storage_slices_all(
+    entries: &[PreparedEntryV0SignatureInput<'_>],
+) -> Result<bool, JsValue> {
+    if entries.is_empty() {
+        return Ok(true);
+    }
+
+    let (parsed_signatures, parsed_public_keys, parsed_messages) =
+        parse_prepared_entry_v0_ed25519_storage_slices(entries)?;
+    let message_refs = parsed_messages
+        .iter()
+        .map(|message| message.as_slice())
+        .collect::<Vec<_>>();
+    if verify_batch(&message_refs, &parsed_signatures, &parsed_public_keys).is_ok() {
+        return Ok(true);
+    }
+
+    for i in 0..parsed_signatures.len() {
+        if parsed_public_keys[i]
+            .verify(&parsed_messages[i], &parsed_signatures[i])
+            .is_err()
+        {
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 pub fn verify_entry_v0_ed25519_storage_slices(blocks: &[&[u8]]) -> Result<Vec<u8>, JsValue> {
     if blocks.is_empty() {
         return Ok(Vec::new());
@@ -4230,6 +4347,10 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
             }
         }
         let requested_replicas = decode_absolute_replica_data_u32(meta.meta_data.as_deref());
+        let meta_bytes = storage.meta.to_vec();
+        let signable_prefix_len = storage.signable_prefix_len;
+        let signature_with_key_start = storage.signature_with_key_start;
+        let signature_with_key_len = storage.signature_with_key_len;
         if verify_signatures {
             let signature_started = profile.as_ref().map(|_| js_sys::Date::now());
             let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
@@ -4270,12 +4391,15 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
             gid: meta.gid,
             next: meta.next,
             entry_type: meta.entry_type,
-            meta_bytes: storage.meta.to_vec(),
+            meta_bytes,
             meta_data: meta.meta_data,
             payload_byte_length: payload.data_len,
             signature_verified: false,
             storage_bytes: bytes,
             requested_replicas,
+            signable_prefix_len,
+            signature_with_key_start,
+            signature_with_key_len,
         });
     }
     if !verify_signatures {
@@ -4880,6 +5004,8 @@ struct ParsedPlainEntryV0Storage<'a> {
     meta: &'a [u8],
     payload: &'a [u8],
     signature_with_key: &'a [u8],
+    signature_with_key_start: usize,
+    signature_with_key_len: usize,
 }
 
 struct ParsedRawEntryV0Meta {
@@ -4998,6 +5124,8 @@ fn parse_plain_entry_v0_storage(bytes: &[u8]) -> Result<ParsedPlainEntryV0Storag
     }
     let signature_with_key =
         read_plain_decrypted_thing_bytes(&mut reader, "entry signature with key")?;
+    let signature_with_key_start = signature_with_key.as_ptr() as usize - bytes.as_ptr() as usize;
+    let signature_with_key_len = signature_with_key.len();
     if reader.read_u8("entry hash option")? != 0 {
         return Err(JsValue::from_str(
             "Expected EntryV0 hash option to be empty",
@@ -5014,6 +5142,8 @@ fn parse_plain_entry_v0_storage(bytes: &[u8]) -> Result<ParsedPlainEntryV0Storag
         meta,
         payload,
         signature_with_key,
+        signature_with_key_start,
+        signature_with_key_len,
     })
 }
 
@@ -5712,10 +5842,13 @@ mod tests {
     use super::{
         encode_entry_v0_parts_unsigned_for_signing, encode_entry_v0_parts_with_signature_bytes,
         encode_entry_v0_payload_data_unsigned_for_signing, encode_payload,
-        parse_plain_entry_v0_storage, signable_entry_to_signed_storage,
-        trim_oldest_log_entry_hashes_core, unsigned_entry_v0_storage_for_signing, JoinPlan,
-        LogGraphIndex, LogIndexEntry, NativeLogBlockStore,
+        encode_signature_with_key_parts, parse_plain_entry_v0_storage,
+        prepared_entry_v0_signature_with_key, sign_ed25519_with_key,
+        signable_entry_to_signed_storage, trim_oldest_log_entry_hashes_core,
+        unsigned_entry_v0_storage_for_signing, verify_prepared_entry_v0_ed25519_storage_slices_all,
+        JoinPlan, LogGraphIndex, LogIndexEntry, NativeLogBlockStore, PreparedEntryV0SignatureInput,
     };
+    use ed25519_dalek::SigningKey;
 
     const APPEND: u8 = 0;
     const CUT: u8 = 1;
@@ -5747,6 +5880,31 @@ mod tests {
             unsigned_entry_v0_storage_for_signing(&storage, parsed.signable_prefix_len).unwrap(),
             encode_entry_v0_parts_unsigned_for_signing(&meta, &payload)
         );
+    }
+
+    #[test]
+    fn prepared_signature_offsets_verify_signed_storage() {
+        let meta = b"encoded-meta".to_vec();
+        let payload = b"encoded-payload".to_vec();
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let public_key = signing_key.verifying_key().to_bytes();
+        let signable = encode_entry_v0_parts_unsigned_for_signing(&meta, &payload);
+        let signature = sign_ed25519_with_key(&signing_key, &signable);
+        let signature_with_key = encode_signature_with_key_parts(&signature, &public_key, 0);
+        let storage = signable_entry_to_signed_storage(signable, &signature_with_key);
+        let parsed = parse_plain_entry_v0_storage(&storage).unwrap();
+        let input = PreparedEntryV0SignatureInput {
+            storage_bytes: &storage,
+            signable_prefix_len: parsed.signable_prefix_len,
+            signature_with_key_start: parsed.signature_with_key_start,
+            signature_with_key_len: parsed.signature_with_key_len,
+        };
+
+        assert_eq!(
+            prepared_entry_v0_signature_with_key(&input).unwrap(),
+            signature_with_key.as_slice()
+        );
+        assert!(verify_prepared_entry_v0_ed25519_storage_slices_all(&[input]).unwrap());
     }
 
     #[test]
