@@ -7610,13 +7610,20 @@ export const createNativeBackboneCoordinatePersistence = (
 		return config;
 	}
 	const { store, buffered, ...options } = config;
+	const isBuffered = buffered === true || !!buffered;
 	const resolvedStore =
 		buffered === true
 			? new NativeBackboneBufferedCoordinatePersistenceStore(store)
 			: buffered
 				? new NativeBackboneBufferedCoordinatePersistenceStore(store, buffered)
 				: store;
-	return new NativeBackboneCoordinatePersistence(resolvedStore, options);
+	return new NativeBackboneCoordinatePersistence(resolvedStore, {
+		...options,
+		compactMaxJournalBytes:
+			isBuffered && options.compactMaxJournalBytes == null
+				? defaultNativeBackboneCoordinateCompactMaxJournalBytes
+				: options.compactMaxJournalBytes,
+	});
 };
 
 export const createBufferedNativeBackboneCoordinatePersistence = (

@@ -17,7 +17,9 @@ document writes.
 
 Use `createBufferedNativeBackboneCoordinatePersistence(store)` with OPFS, memory,
 or custom stores, and `createBufferedNativeBackboneNodeCoordinatePersistence(dir)`
-for the Node adapter.
+for the Node adapter. The lower-level
+`createNativeBackboneCoordinatePersistence({ store, buffered: true })` config
+uses the same bounded checkpoint default.
 
 Buffered helpers also install a bounded checkpoint policy by default. When the
 coordinate journal reaches the checkpoint threshold, the adapter writes a compact

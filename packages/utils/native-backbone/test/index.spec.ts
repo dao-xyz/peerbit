@@ -299,6 +299,9 @@ describe("native peerbit backbone", () => {
 			flushOnAppend: false,
 		});
 
+		expect(persistence.compactMaxJournalBytes).equal(
+			defaultNativeBackboneCoordinateCompactMaxJournalBytes,
+		);
 		await persistence.hydrate(backbone);
 		backbone.putEntryCoordinates(
 			"hash-config",
@@ -316,6 +319,47 @@ describe("native peerbit backbone", () => {
 		expect(store.files.get("coordinates.wal")?.byteLength).to.be.greaterThan(
 			backbone.coordinateJournalHeader().byteLength,
 		);
+	});
+
+	it("honors buffered store config coordinate WAL checkpoint thresholds", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = createNativeBackboneCoordinatePersistence({
+			store,
+			buffered: true,
+			flushOnAppend: false,
+			flushMaxPendingBytes: 1,
+			compactMaxJournalRecords: 1,
+		});
+
+		await persistence.hydrate(backbone);
+		backbone.putEntryCoordinates(
+			"hash-buffered-config-compact",
+			"gid-buffered-config-compact",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+
+		expect(await persistence.flushJournalOnAppend?.(backbone)).to.be.greaterThan(
+			0,
+		);
+		expect(store.files.has("coordinates.bin")).equal(true);
+		expect(store.files.has("coordinates.wal")).equal(false);
+		await new NativeBackboneCoordinatePersistence(store).hydrate(restored);
+		expect(restored.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-buffered-config-compact",
+		]);
 	});
 
 	it("creates high-throughput buffered coordinate persistence with bounded flush policy", async () => {
