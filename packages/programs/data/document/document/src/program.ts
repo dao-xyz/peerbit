@@ -986,6 +986,9 @@ export class Documents<
 		if (options.canOpen) {
 			unsupported.push("custom canOpen");
 		}
+		if (options.id) {
+			unsupported.push("custom id");
+		}
 		if (options.index?.canRead) {
 			unsupported.push("custom canRead");
 		}

@@ -3566,6 +3566,11 @@ describe("index", () => {
 							message: "custom canOpen",
 						},
 						{
+							name: "id",
+							options: { id: (doc: Document) => doc.id },
+							message: "custom id",
+						},
+						{
 							name: "keep",
 							options: { keep: "self" as const },
 							message: "custom keep",
