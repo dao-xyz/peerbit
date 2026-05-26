@@ -968,6 +968,8 @@ impl NativePeerbitBackbone {
             value_suffix_bytes.len(),
             "document value suffix",
         )?;
+        self.document_values.reserve(keys.len());
+        self.document_index.reserve_documents(keys.len());
 
         for ((key, prefix), suffix) in keys
             .into_iter()
@@ -3093,6 +3095,10 @@ impl NativePeerbitBackbone {
     }
 
     fn commit_entry_coordinate_commits(&mut self, commits: Vec<EntryCoordinateCommit>) {
+        if !commits.is_empty() {
+            self.coordinate_index.reserve(commits.len());
+            self.coordinate_values.reserve(commits.len());
+        }
         self.shared_log
             .commit_entry_coordinates_batch_core(commits.iter().cloned());
 
@@ -5886,8 +5892,12 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(js_sys::Date::now);
-        let mut pending_appends = Vec::with_capacity(document_index_commits.len());
-        let mut coordinate_inputs = Vec::with_capacity(document_index_commits.len());
+        let batch_len = document_index_commits.len();
+        self.document_values.reserve(batch_len);
+        self.document_index.reserve_documents(batch_len);
+        self.document_key_by_head.reserve(batch_len);
+        let mut pending_appends = Vec::with_capacity(batch_len);
+        let mut coordinate_inputs = Vec::with_capacity(batch_len);
 
         for (index, document_index_commit) in document_index_commits.into_iter().enumerate() {
             let index_u32 = index as u32;
@@ -7136,8 +7146,12 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(js_sys::Date::now);
-        let mut pending_appends = Vec::with_capacity(document_index_commits.len());
-        let mut coordinate_inputs = Vec::with_capacity(document_index_commits.len());
+        let batch_len = document_index_commits.len();
+        self.document_values.reserve(batch_len);
+        self.document_index.reserve_documents(batch_len);
+        self.document_key_by_head.reserve(batch_len);
+        let mut pending_appends = Vec::with_capacity(batch_len);
+        let mut coordinate_inputs = Vec::with_capacity(batch_len);
 
         for (index, mut document_index_commit) in document_index_commits.into_iter().enumerate() {
             let index_u32 = index as u32;

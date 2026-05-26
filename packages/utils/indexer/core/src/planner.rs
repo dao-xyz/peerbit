@@ -340,6 +340,12 @@ impl NativeQueryIndex {
         *self = Self::default();
     }
 
+    pub fn reserve_documents(&mut self, additional: usize) {
+        self.external_to_internal.reserve(additional);
+        self.internal_to_external.reserve(additional);
+        self.documents.reserve(additional);
+    }
+
     pub fn put(&mut self, id: impl Into<String>, fields: DocumentFields) {
         let external_id = id.into();
         let doc_id = match self.external_to_internal.get(&external_id).copied() {
