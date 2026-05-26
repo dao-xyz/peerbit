@@ -12,7 +12,9 @@ import {
 	type ResultIndexedValue,
 } from "@peerbit/document-interface";
 import {
+	type SimpleDocumentFieldExtractionPlan,
 	type SimpleDocumentProjectionPlan,
+	extractDocumentFieldSimple,
 	initializeDocumentRust,
 	planDocumentContext,
 	planDocumentContextBatch,
@@ -869,6 +871,7 @@ export class Documents<
 	private _documentChangeListenerTrackingInitialized = false;
 	private _documentBackend!: DocumentBackend<T>;
 	private readonly _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
+	private _nativeDocumentIdExtractionPlan?: SimpleDocumentFieldExtractionPlan;
 	private _hasLogTrim = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
@@ -1101,6 +1104,9 @@ export class Documents<
 			throw this.nativeModeError(
 				"requires a native-compatible document index transform",
 			);
+		}
+		if (!this._nativeDocumentIdExtractionPlan) {
+			throw this.nativeModeError("requires a native-compatible document id field");
 		}
 		if (this._optionCanPerformNativePolicy) {
 			const deleteFieldPaths = nativeCanPerformPolicyDeleteFieldPaths(
@@ -1856,6 +1862,8 @@ export class Documents<
 			0,
 			this._documentChangeListenerCount - changeListenersBeforeIndexOpen,
 		);
+		this._nativeDocumentIdExtractionPlan =
+			this._index.getNativeDocumentFieldExtractionPlan(idProperty);
 
 		// document v6 and below need log compatibility of v8 or below
 		// document v7 needs log compatibility of v9
@@ -2201,11 +2209,17 @@ export class Documents<
 			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
-				let value =
-					reference?.document ??
-					this.index.valueEncoding.decoder(putOperation.data);
-				this._canAppendDecodedDocuments.set(putOperation, value);
-				const keyValue = this.idResolver(value);
+				let keyValue: indexerTypes.IdPrimitive | undefined;
+				if (reference?.document) {
+					keyValue = this.idResolver(reference.document);
+				} else {
+					keyValue = await this.getNativeDocumentIdFromPutOperation(putOperation);
+					if (keyValue == null) {
+						const value = this.index.valueEncoding.decoder(putOperation.data);
+						this._canAppendDecodedDocuments.set(putOperation, value);
+						keyValue = this.idResolver(value);
+					}
+				}
 
 				const key = indexerTypes.toId(keyValue);
 
@@ -2344,6 +2358,23 @@ export class Documents<
 			return payloadData
 				? BORSH_ENCODING_OPERATION.decoder(payloadData)
 				: undefined;
+		} catch {
+			return;
+		}
+	}
+
+	private async getNativeDocumentIdFromPutOperation(
+		operation: PutOperation,
+	): Promise<indexerTypes.IdPrimitive | undefined> {
+		if (!this.isNativeMode() || !this._nativeDocumentIdExtractionPlan) {
+			return;
+		}
+		try {
+			const id = await extractDocumentFieldSimple(
+				operation.data,
+				this._nativeDocumentIdExtractionPlan,
+			);
+			return id instanceof Uint8Array ? undefined : id;
 		} catch {
 			return;
 		}

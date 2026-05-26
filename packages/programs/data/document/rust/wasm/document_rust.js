@@ -41,6 +41,19 @@ export function encode_context_suffix_batch(createds, modifieds, heads, gids, si
 }
 
 /**
+ * @param {Uint8Array} encoded_document
+ * @param {any} plan
+ * @returns {any}
+ */
+export function extract_document_field_simple(encoded_document, plan) {
+    const ret = wasm.extract_document_field_simple(encoded_document, plan);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * @param {any} existing_created
  * @param {string} modified
  * @param {string} head
@@ -173,7 +186,12 @@ function __wbg_get_imports() {
         __wbg_set_78ea6a19f4818587: function(arg0, arg1, arg2) {
             arg0[arg1 >>> 0] = arg2;
         },
-        __wbindgen_cast_0000000000000001: function(arg0, arg1) {
+        __wbindgen_cast_0000000000000001: function(arg0) {
+            // Cast intrinsic for `F64 -> Externref`.
+            const ret = arg0;
+            return ret;
+        },
+        __wbindgen_cast_0000000000000002: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
             const ret = getStringFromWasm0(arg0, arg1);
             return ret;

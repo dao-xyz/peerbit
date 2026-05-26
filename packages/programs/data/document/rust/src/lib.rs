@@ -123,6 +123,8 @@ fn optional_string(value: JsValue) -> Option<String> {
 #[derive(Clone, Debug)]
 enum ProjectionValue {
     String(String),
+    U8(u8),
+    U32(u32),
     U64(u64),
     Bool(bool),
     Bytes(Vec<u8>),
@@ -178,6 +180,8 @@ fn skip_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<(), JsValu
 fn read_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<ProjectionValue, JsValue> {
     match kind {
         "string" => Ok(ProjectionValue::String(read_string(bytes, offset)?)),
+        "u8" => Ok(ProjectionValue::U8(read_u8(bytes, offset)?)),
+        "u32" => Ok(ProjectionValue::U32(read_u32_le(bytes, offset)?)),
         "u64" => Ok(ProjectionValue::U64(read_u64_le(bytes, offset)?)),
         "bool" => Ok(ProjectionValue::Bool(read_bool(bytes, offset)?)),
         "bytes" => Ok(ProjectionValue::Bytes(read_bytes(bytes, offset)?.to_vec())),
@@ -197,6 +201,26 @@ fn read_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<Projection
                 Ok(ProjectionValue::None)
             } else if has_value == 1 {
                 Ok(ProjectionValue::U64(read_u64_le(bytes, offset)?))
+            } else {
+                Err(JsValue::from_str("Invalid option marker"))
+            }
+        }
+        "option:u32" => {
+            let has_value = read_u8(bytes, offset)?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::U32(read_u32_le(bytes, offset)?))
+            } else {
+                Err(JsValue::from_str("Invalid option marker"))
+            }
+        }
+        "option:u8" => {
+            let has_value = read_u8(bytes, offset)?;
+            if has_value == 0 {
+                Ok(ProjectionValue::None)
+            } else if has_value == 1 {
+                Ok(ProjectionValue::U8(read_u8(bytes, offset)?))
             } else {
                 Err(JsValue::from_str("Invalid option marker"))
             }
@@ -234,6 +258,8 @@ fn write_projection_value(
 ) -> Result<(), JsValue> {
     match (kind, value) {
         ("string", ProjectionValue::String(value)) => write_string(out, value),
+        ("u8", ProjectionValue::U8(value)) => write_u8(out, *value),
+        ("u32", ProjectionValue::U32(value)) => write_u32_le(out, *value),
         ("u64", ProjectionValue::U64(value)) => write_u64_le(out, *value),
         ("u32", ProjectionValue::U64(value)) => write_u32_le(out, *value as u32),
         ("bool", ProjectionValue::Bool(value)) => write_bool(out, *value),
@@ -246,6 +272,14 @@ fn write_projection_value(
         ("option:string", ProjectionValue::String(value)) => {
             write_u8(out, 1);
             write_string(out, value);
+        }
+        ("option:u8", ProjectionValue::U8(value)) => {
+            write_u8(out, 1);
+            write_u8(out, *value);
+        }
+        ("option:u32", ProjectionValue::U32(value)) => {
+            write_u8(out, 1);
+            write_u32_le(out, *value);
         }
         ("option:u64", ProjectionValue::U64(value)) => {
             write_u8(out, 1);
@@ -581,6 +615,73 @@ pub fn project_document_index_simple(
     }
 
     Ok(Uint8Array::from(out.as_slice()))
+}
+
+fn projection_value_as_js(value: ProjectionValue) -> Result<JsValue, JsValue> {
+    match value {
+        ProjectionValue::None => Ok(JsValue::UNDEFINED),
+        ProjectionValue::String(value) => {
+            let row = Array::new_with_length(2);
+            row.set(0, JsValue::from_str("string"));
+            row.set(1, JsValue::from_str(&value));
+            Ok(row.into())
+        }
+        ProjectionValue::U8(value) => {
+            let row = Array::new_with_length(2);
+            row.set(0, JsValue::from_str("number"));
+            row.set(1, JsValue::from_f64(value as f64));
+            Ok(row.into())
+        }
+        ProjectionValue::U32(value) => {
+            let row = Array::new_with_length(2);
+            row.set(0, JsValue::from_str("number"));
+            row.set(1, JsValue::from_f64(value as f64));
+            Ok(row.into())
+        }
+        ProjectionValue::U64(value) => {
+            let row = Array::new_with_length(2);
+            row.set(0, JsValue::from_str("u64"));
+            row.set(1, JsValue::from_str(&value.to_string()));
+            Ok(row.into())
+        }
+        ProjectionValue::Bool(_) => Err(JsValue::from_str(
+            "Boolean document fields cannot be used as document ids",
+        )),
+        ProjectionValue::Bytes(value) => {
+            let row = Array::new_with_length(2);
+            row.set(0, JsValue::from_str("bytes"));
+            row.set(1, Uint8Array::from(value.as_slice()).into());
+            Ok(row.into())
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn extract_document_field_simple(
+    encoded_document: Uint8Array,
+    plan: JsValue,
+) -> Result<JsValue, JsValue> {
+    let document_variant_type = optional_string(js_get(&plan, "documentVariantType"));
+    let document_variant_value = optional_string(js_get(&plan, "documentVariantValue"));
+    let document_field_names =
+        array_strings(js_get(&plan, "documentFieldNames"), "documentFieldNames")?;
+    let document_field_types =
+        array_strings(js_get(&plan, "documentFieldTypes"), "documentFieldTypes")?;
+    let field_name = js_string(js_get(&plan, "fieldName"), "fieldName")?;
+    let encoded_document = encoded_document.to_vec();
+    let document_values = read_document_fields(
+        &encoded_document,
+        document_variant_type.as_deref(),
+        document_variant_value.as_deref(),
+        &document_field_names,
+        &document_field_types,
+    )?;
+    projection_value_as_js(
+        document_values
+            .get(&field_name)
+            .cloned()
+            .unwrap_or(ProjectionValue::None),
+    )
 }
 
 #[cfg(test)]

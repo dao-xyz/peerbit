@@ -2764,12 +2764,10 @@ describe("index", () => {
 							replicate: false,
 							nativeGraph: true,
 							nativeBackbone: nativeBackboneDocumentIndexOptions(),
-							canPerform:
-								policy.allowAll<StrictNativeAliasDocument>(),
+							canPerform: policy.allowAll<StrictNativeAliasDocument>(),
 							index: {
 								type: StrictNativeAliasDocument,
-								transform:
-									transform.identity<StrictNativeAliasDocument>(),
+								transform: transform.identity<StrictNativeAliasDocument>(),
 							},
 						},
 					});
@@ -2793,9 +2791,9 @@ describe("index", () => {
 
 						expect(nativeCommitSpy.callCount).equal(1);
 						expect(genericAppendSpy.callCount).equal(0);
-						expect(
-							(await aliasStore.docs.get("native-slug"))?.name,
-						).equal("native-id-property");
+						expect((await aliasStore.docs.get("native-slug"))?.name).equal(
+							"native-id-property",
+						);
 					} finally {
 						genericAppendSpy.restore();
 						nativeCommitSpy.restore();
@@ -3160,7 +3158,9 @@ describe("index", () => {
 						resolveEntrySpy.resetHistory();
 						nativeSignerBatchSpy.resetHistory();
 
-						expect(await (store.docs as any).canAppend(replayEntry)).equal(true);
+						expect(await (store.docs as any).canAppend(replayEntry)).equal(
+							true,
+						);
 						expect(decoderSpy.callCount).equal(1);
 						expect(nativeSignerBatchSpy.callCount).equal(1);
 						expect(resolveEntrySpy.callCount).equal(0);
@@ -3188,6 +3188,59 @@ describe("index", () => {
 							nativeSignerBatchSpy.restore();
 						}
 						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native replay ids without decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					try {
+						const put = await store.docs.put(
+							new Document({ id: uuid(), name: "native-replay-id" }),
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							store.docs.log.log.blocks,
+							put.entry.hash,
+						);
+						const getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						try {
+							decoderSpy.resetHistory();
+							expect(await (store.docs as any).canAppend(replayEntry)).equal(
+								true,
+							);
+							expect(decoderSpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
+						} finally {
+							getPayloadValueSpy.restore();
+						}
+					} finally {
+						decoderSpy.restore();
 						await rustSession.stop();
 					}
 				});
@@ -3272,13 +3325,13 @@ describe("index", () => {
 						);
 						const second = await localStore.docs.put(
 							new Document({ id, name: "native-project-update-2" }),
-							);
-							expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
-							expect(registerProjectionPlanSpy.callCount).equal(1);
-							expect(latestCachedGraphTransactionSpy.callCount).equal(0);
-							expect(latestCachedStorageTransactionSpy.callCount).equal(2);
-							expect(latestInlineStorageTransactionSpy.callCount).equal(0);
-							expect(documentIndexTransformSpy.callCount).equal(0);
+						);
+						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(registerProjectionPlanSpy.callCount).equal(1);
+						expect(latestCachedGraphTransactionSpy.callCount).equal(0);
+						expect(latestCachedStorageTransactionSpy.callCount).equal(2);
+						expect(latestInlineStorageTransactionSpy.callCount).equal(0);
+						expect(documentIndexTransformSpy.callCount).equal(0);
 						const indexed = await localStore.docs.index.get(id, {
 							resolve: false,
 						});
@@ -3674,8 +3727,7 @@ describe("index", () => {
 						await store.docs.put(doc, { unique: true });
 						expect(strictPayloadCommitOnlySpy.callCount).equal(1);
 						expect(genericPayloadCommitOnlySpy.callCount).equal(0);
-						const appendOptions =
-							strictPayloadCommitOnlySpy.firstCall.args[1]!;
+						const appendOptions = strictPayloadCommitOnlySpy.firstCall.args[1]!;
 						expect(appendOptions).to.include({
 							target: "none",
 						});
@@ -3778,7 +3830,10 @@ describe("index", () => {
 						createRustPeerbitOptions(),
 					);
 					const source = new TestStore<StrictNativeReplicatedPickIndexable>({
-						docs: new Documents<Document, StrictNativeReplicatedPickIndexable>(),
+						docs: new Documents<
+							Document,
+							StrictNativeReplicatedPickIndexable
+						>(),
 					});
 					const target = source.clone();
 					const openArgs = () => ({
@@ -4056,10 +4111,7 @@ describe("index", () => {
 					const documentDelSpy = sinon.spy(localStore.docs.index, "del");
 					const backendIndex = localStore.docs.index.index as any;
 					const getIdByHeadSpy = sinon.spy(backendIndex, "getIdByContextHead");
-					const delIdsNoReturnSpy = sinon.spy(
-						backendIndex,
-						"delIdsNoReturn",
-					);
+					const delIdsNoReturnSpy = sinon.spy(backendIndex, "delIdsNoReturn");
 					try {
 						const firstDoc = new Document({
 							id: uuid(),
@@ -4081,9 +4133,9 @@ describe("index", () => {
 						expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
 							0,
 						);
-						expect(getIdByHeadSpy.withArgs(first.entry.hash).callCount).greaterThan(
-							0,
-						);
+						expect(
+							getIdByHeadSpy.withArgs(first.entry.hash).callCount,
+						).greaterThan(0);
 						expect(documentDelSpy.callCount).equal(0);
 						expect(delIdsNoReturnSpy.callCount).greaterThan(0);
 						expect(await localStore.docs.get(firstDoc.id)).equal(undefined);
@@ -4145,9 +4197,7 @@ describe("index", () => {
 						expect(store.docs.log.log.length).equal(1);
 						expect(await store.docs.get(first.id)).equal(undefined);
 						expect(await store.docs.get(second.id)).equal(undefined);
-						expect((await store.docs.get(third.id))?.name).equal(
-							"trim-from-3",
-						);
+						expect((await store.docs.get(third.id))?.name).equal("trim-from-3");
 					} finally {
 						jsTrimSpy.restore();
 						hashTrimNoReturnSpy.restore();
@@ -4589,7 +4639,7 @@ describe("index", () => {
 						"_putManyPreparedNativeBackboneDocumentIndexStored",
 					);
 					const nativeBackboneBatchTransactionSpy = sinon.spy(
-						((store.docs.log as any)._nativeBackbone as any),
+						(store.docs.log as any)._nativeBackbone as any,
 						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
 					);
 					try {
@@ -4660,14 +4710,12 @@ describe("index", () => {
 							id: uuid(),
 							name: "trim-batch-2",
 						});
-						const first = await store.docs.putMany(
-							[firstDoc],
-							{ unique: true },
-						);
-						const second = await store.docs.putMany(
-							[secondDoc],
-							{ unique: true },
-						);
+						const first = await store.docs.putMany([firstDoc], {
+							unique: true,
+						});
+						const second = await store.docs.putMany([secondDoc], {
+							unique: true,
+						});
 						expect(await store.docs.get(firstDoc.id)).equal(undefined);
 						expect((await store.docs.get(secondDoc.id))?.name).equal(
 							"trim-batch-2",
@@ -4841,7 +4889,7 @@ describe("index", () => {
 						"getContextByIdBatch",
 					);
 					const latestBatchTransactionSpy = sinon.spy(
-						((store.docs.log as any)._nativeBackbone as any),
+						(store.docs.log as any)._nativeBackbone as any,
 						"preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction",
 					);
 					try {
@@ -5046,7 +5094,7 @@ describe("index", () => {
 					);
 					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
 					const nativeBackboneBatchTransactionSpy = sinon.spy(
-						((localStore.docs.log as any)._nativeBackbone as any),
+						(localStore.docs.log as any)._nativeBackbone as any,
 						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
 					);
 					try {
@@ -5165,7 +5213,7 @@ describe("index", () => {
 					);
 					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
 					const latestBatchTransactionSpy = sinon.spy(
-						((localStore.docs.log as any)._nativeBackbone as any),
+						(localStore.docs.log as any)._nativeBackbone as any,
 						"preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction",
 					);
 					try {
@@ -5274,10 +5322,7 @@ describe("index", () => {
 						getContextById?: (...args: any[]) => any;
 					};
 					expect(nativeIndex.delIdsNoReturn).to.be.a("function");
-					const delIdsNoReturnSpy = sinon.spy(
-						nativeIndex,
-						"delIdsNoReturn",
-					);
+					const delIdsNoReturnSpy = sinon.spy(nativeIndex, "delIdsNoReturn");
 					const delIdsSpy = sinon.spy(nativeIndex, "delIds");
 					const contextLookupSpy = nativeIndex.getContextById
 						? sinon.spy(nativeIndex, "getContextById")
@@ -5365,10 +5410,7 @@ describe("index", () => {
 
 						const documentDelSpy = sinon.spy(target.docs.index, "del");
 						const backendIndex = target.docs.index.index as any;
-						const delIdsNoReturnSpy = sinon.spy(
-							backendIndex,
-							"delIdsNoReturn",
-						);
+						const delIdsNoReturnSpy = sinon.spy(backendIndex, "delIdsNoReturn");
 						const delIdsSpy = sinon.spy(backendIndex, "delIds");
 						try {
 							await source.docs.del(doc.id);
@@ -5477,10 +5519,7 @@ describe("index", () => {
 							},
 						},
 					});
-					const resolveEntrySpy = sinon.spy(
-						store.docs as any,
-						"_resolveEntry",
-					);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
 					try {
 						const owned = new Document({
 							id: uuid(),

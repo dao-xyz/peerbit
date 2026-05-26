@@ -15,6 +15,7 @@ import {
 } from "@peerbit/crypto";
 import * as types from "@peerbit/document-interface";
 import {
+	type SimpleDocumentFieldExtractionPlan,
 	type SimpleDocumentProjectionContext,
 	type SimpleDocumentProjectionPlan,
 	tryProjectDocumentIndexSimple,
@@ -239,6 +240,31 @@ const createSimpleProjectionPlan = (
 		outputFieldTypes: outputFields.types,
 		sourceKinds,
 		sourceValues,
+	};
+};
+
+const createSimpleFieldExtractionPlan = (
+	documentSchema: ReturnType<typeof getSchema>,
+	path: string | readonly string[],
+): SimpleDocumentFieldExtractionPlan | undefined => {
+	const fieldName = asSingleFieldPath(path);
+	if (!fieldName) {
+		return;
+	}
+	const documentVariant = schemaVariant(documentSchema);
+	const documentFields = schemaFieldPlan(documentSchema);
+	if (!documentVariant || !documentFields) {
+		return;
+	}
+	if (!documentFields.names.includes(fieldName)) {
+		return;
+	}
+	return {
+		documentVariantType: documentVariant.type,
+		documentVariantValue: documentVariant.value,
+		documentFieldNames: documentFields.names,
+		documentFieldTypes: documentFields.types,
+		fieldName,
 	};
 };
 
@@ -1609,6 +1635,12 @@ export class DocumentIndex<
 			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
 			canUseNativeBackboneDocumentTransform(this.nativeTransformDescriptor)
 		);
+	}
+
+	public getNativeDocumentFieldExtractionPlan(
+		path: string | readonly string[],
+	): SimpleDocumentFieldExtractionPlan | undefined {
+		return createSimpleFieldExtractionPlan(getSchema(this.documentType), path);
 	}
 
 	public canPrepareNativeBackboneDocumentIndexCommit(): boolean {

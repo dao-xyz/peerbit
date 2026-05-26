@@ -37,6 +37,14 @@ export type SimpleDocumentProjectionPlan = {
 	sourceValues: string[];
 };
 
+export type SimpleDocumentFieldExtractionPlan = {
+	documentVariantType?: "u8" | "string";
+	documentVariantValue?: string;
+	documentFieldNames: string[];
+	documentFieldTypes: string[];
+	fieldName: string;
+};
+
 export type SimpleDocumentProjectionContext = {
 	created: bigint | number | string;
 	modified: bigint | number | string;
@@ -85,6 +93,10 @@ type WasmModule = {
 		size: number,
 		signer?: Uint8Array,
 	) => Uint8Array;
+	extract_document_field_simple: (
+		encodedDocument: Uint8Array,
+		plan: SimpleDocumentFieldExtractionPlan,
+	) => [string, unknown] | undefined;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -303,4 +315,28 @@ export const projectDocumentIndexSimple = async (
 		plan,
 		context,
 	);
+};
+
+export const extractDocumentFieldSimple = async (
+	encodedDocument: Uint8Array,
+	plan: SimpleDocumentFieldExtractionPlan,
+): Promise<string | number | bigint | Uint8Array | undefined> => {
+	const wasm = await loadWasm();
+	const row = wasm.extract_document_field_simple(encodedDocument, plan);
+	if (!row) {
+		return;
+	}
+	const [kind, value] = row;
+	switch (kind) {
+		case "string":
+			return typeof value === "string" ? value : undefined;
+		case "number":
+			return typeof value === "number" ? value : undefined;
+		case "u64":
+			return typeof value === "string" ? BigInt(value) : undefined;
+		case "bytes":
+			return value instanceof Uint8Array ? copyBytes(value) : undefined;
+		default:
+			return;
+	}
 };
