@@ -3873,34 +3873,67 @@ export class Documents<
 		modified: Set<string | number | bigint>,
 		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<boolean> {
-		if (!documentsChanged) {
-			const key = await this._index.getIdentityIndexedKeyByHead(head);
-			if (!key) {
-				return false;
-			}
-			if (modified.has(key.primitive)) {
+		const key = await this._index.getIdentityIndexedKeyByHead(head);
+		if (key) {
+			if (await this.collectRemovedDocumentChangeFromIndexedKey(
+				key,
+				modified,
+				documentsChanged,
+			)) {
 				return true;
 			}
-			await this._index.delMany([key]);
-			modified.add(key.primitive);
-			return true;
+		}
+		if (!documentsChanged) {
+			return false;
 		}
 		const indexed = await this._index.getIdentityIndexedByHead(head);
 		if (!indexed) {
 			return false;
 		}
 
-		const key = indexed.id;
+		return this.collectRemovedDocumentChangeFromIndexedKey(
+			indexed.id,
+			modified,
+			documentsChanged,
+			() =>
+				coerceWithIndexed(
+					indexed.value as unknown as WithIndexedContext<T, I>,
+					indexed.value as unknown as I,
+				),
+		);
+	}
+
+	private async collectRemovedDocumentChangeFromIndexedKey(
+		key: indexerTypes.IdKey,
+		modified: Set<string | number | bigint>,
+		documentsChanged?: DocumentsChange<T, I>,
+		valueProvider?: () => WithIndexedContext<T, I>,
+	): Promise<boolean> {
 		if (modified.has(key.primitive)) {
 			return true;
 		}
 
+		let value: WithIndexedContext<T, I> | undefined;
+
 		if (documentsChanged) {
-			const value = coerceWithIndexed(
-				indexed.value as unknown as WithIndexedContext<T, I>,
-				indexed.value as unknown as I,
-			);
+			value =
+				valueProvider?.() ??
+				(await this._index.get(key, {
+					local: true,
+					remote: false,
+				}));
+			if (!value) {
+				return false;
+			}
 			documentsChanged.removed.push(value);
+		}
+
+		if (
+			value instanceof Program &&
+			value.closed !== true &&
+			value.parents.includes(this)
+		) {
+			await value.drop(this);
 		}
 
 		await this._index.delMany([key]);
@@ -3913,11 +3946,8 @@ export class Documents<
 		modified: Set<string | number | bigint>,
 		documentsChanged?: DocumentsChange<T, I>,
 	): Promise<Set<string>> {
-		const shallowRemovedHashes = removed
-			.filter((entry): entry is ShallowEntry => !(entry instanceof Entry))
-			.map((entry) => entry.hash);
 		return this.collectRemovedDocumentChangesFromIndexedHeadHashes(
-			shallowRemovedHashes,
+			removed.map((entry) => entry.hash),
 			modified,
 			documentsChanged,
 		);
@@ -3943,6 +3973,34 @@ export class Documents<
 				if (modified.has(key.primitive)) {
 					continue;
 				}
+				deleteKeys.push(key);
+				modified.add(key.primitive);
+			}
+			await this._index.delMany(deleteKeys);
+			return handled;
+		}
+		const keyByHead = this._index.getIndexedKeysByHeads(removedHashes);
+		if (keyByHead) {
+			const handled = new Set<string>();
+			const deleteKeys: indexerTypes.IdKey[] = [];
+			for (let i = 0; i < removedHashes.length; i++) {
+				const key = keyByHead[i];
+				if (!key) {
+					continue;
+				}
+				handled.add(removedHashes[i]!);
+				if (modified.has(key.primitive)) {
+					continue;
+				}
+				const value = await this._index.get(key, {
+					local: true,
+					remote: false,
+				});
+				if (!value) {
+					handled.delete(removedHashes[i]!);
+					continue;
+				}
+				documentsChanged.removed.push(value);
 				deleteKeys.push(key);
 				modified.add(key.primitive);
 			}

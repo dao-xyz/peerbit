@@ -2244,15 +2244,31 @@ export class DocumentIndex<
 	public async getIdentityIndexedKeyByHead(
 		head: string,
 	): Promise<indexerTypes.IdKey | undefined> {
-		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
-		if (typeof getIdByHead === "function") {
-			const key = getIdByHead.call(this.index, head);
-			if (key) {
-				return key;
-			}
+		const key = this.getIndexedKeyByHead(head);
+		if (key) {
+			return key;
 		}
 		const indexed = await this.getIdentityIndexedByHead(head);
 		return indexed?.id;
+	}
+
+	public getIndexedKeyByHead(
+		head: string,
+	): indexerTypes.IdKey | undefined {
+		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
+		return typeof getIdByHead === "function"
+			? getIdByHead.call(this.index, head)
+			: undefined;
+	}
+
+	public getIndexedKeysByHeads(
+		heads: string[],
+	): Array<indexerTypes.IdKey | undefined> | undefined {
+		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
+		if (typeof getIdByHead !== "function") {
+			return;
+		}
+		return heads.map((head) => getIdByHead.call(this.index, head));
 	}
 
 	public tryGetIdentityIndexedKeyByHead(

@@ -3861,6 +3861,107 @@ describe("index", () => {
 					}
 				});
 
+				it("uses native head keys for descriptor trim change cleanup", async () => {
+					@variant("strict_native_trim_pick_indexable")
+					class StrictNativeTrimPickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(properties?: Partial<StrictNativeTrimPickIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<StrictNativeTrimPickIndexable>({
+						docs: new Documents<Document, StrictNativeTrimPickIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeTrimPickIndexable,
+								transform: transform.pick<
+									Document,
+									StrictNativeTrimPickIndexable
+								>(["id", "name"]),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					const changes: DocumentsChange<
+						Document,
+						StrictNativeTrimPickIndexable
+					>[] = [];
+					localStore.docs.events.addEventListener("change", (event) => {
+						changes.push(event.detail);
+					});
+					const entryIndexGetSpy = sinon.spy(
+						localStore.docs.log.log.entryIndex,
+						"get",
+					);
+					const documentDelSpy = sinon.spy(localStore.docs.index, "del");
+					const backendIndex = localStore.docs.index.index as any;
+					const getIdByHeadSpy = sinon.spy(backendIndex, "getIdByContextHead");
+					const delIdsNoReturnSpy = sinon.spy(
+						backendIndex,
+						"delIdsNoReturn",
+					);
+					try {
+						const firstDoc = new Document({
+							id: uuid(),
+							name: "trim-pick-1",
+						});
+						const first = await localStore.docs.put(firstDoc, {
+							unique: true,
+						});
+						getIdByHeadSpy.resetHistory();
+						delIdsNoReturnSpy.resetHistory();
+						entryIndexGetSpy.resetHistory();
+
+						const second = new Document({
+							id: uuid(),
+							name: "trim-pick-2",
+						});
+						await localStore.docs.put(second, { unique: true });
+
+						expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
+							0,
+						);
+						expect(getIdByHeadSpy.withArgs(first.entry.hash).callCount).greaterThan(
+							0,
+						);
+						expect(documentDelSpy.callCount).equal(0);
+						expect(delIdsNoReturnSpy.callCount).greaterThan(0);
+						expect(await localStore.docs.get(firstDoc.id)).equal(undefined);
+						expect(changes).to.have.length(2);
+						expect(changes[1]?.removed.map((doc) => doc.id)).to.deep.equal([
+							firstDoc.id,
+						]);
+					} finally {
+						delIdsNoReturnSpy.restore();
+						getIdByHeadSpy.restore();
+						documentDelSpy.restore();
+						entryIndexGetSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
 				it("honors strict native length trim hysteresis", async () => {
 					const rustSession = await TestSession.connected(
 						1,
