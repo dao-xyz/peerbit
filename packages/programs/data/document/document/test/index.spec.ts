@@ -3642,6 +3642,11 @@ describe("index", () => {
 							message: "custom keep",
 						},
 						{
+							name: "fanout",
+							options: { fanout: { root: "root" } },
+							message: "fanout",
+						},
+						{
 							name: "syncronizer",
 							options: { syncronizer: class CustomSyncronizer {} as any },
 							message: "custom syncronizer",

@@ -1015,6 +1015,9 @@ export class Documents<
 		if (options.keep) {
 			unsupported.push("custom keep");
 		}
+		if (options.fanout) {
+			unsupported.push("fanout");
+		}
 		if (options.syncronizer) {
 			unsupported.push("custom syncronizer");
 		}
