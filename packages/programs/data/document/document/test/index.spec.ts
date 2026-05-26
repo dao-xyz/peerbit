@@ -3053,6 +3053,57 @@ describe("index", () => {
 					}
 				});
 
+				it("rejects strict native same-signer update policies when previous signer facts are unavailable", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const nativePreviousSignerStub = sinon
+						.stub(store.docs as any, "getNativePreviousEntrySignerPublicKey")
+						.returns(undefined);
+					const nativeSignerBatchStub = sinon
+						.stub(store.docs as any, "getNativeEntrySignerPublicKeys")
+						.returns([undefined]);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					try {
+						const id = uuid();
+						await store.docs.put(
+							new Document({ id, name: "native-same-signer-facts-1" }),
+						);
+						resolveEntrySpy.resetHistory();
+						await expect(
+							store.docs.put(
+								new Document({ id, name: "native-same-signer-facts-2" }),
+							),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"native previous signer facts",
+						);
+						expect(resolveEntrySpy.callCount).equal(0);
+					} finally {
+						resolveEntrySpy.restore();
+						nativeSignerBatchStub.restore();
+						nativePreviousSignerStub.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("reuses cached native projection plans for strict native update puts", async () => {
 					@variant("strict_native_project_update_indexable")
 					class StrictNativeProjectUpdateIndexable {

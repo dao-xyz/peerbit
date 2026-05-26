@@ -1266,6 +1266,9 @@ export class Documents<
 					[previousSignerPublicKey],
 				);
 			}
+			if (this.isNativeMode()) {
+				throw this.nativeModeError("requires native previous signer facts");
+			}
 			return mapMaybePromise(
 				this._resolveEntry(existingHead, {
 					remote: true,
