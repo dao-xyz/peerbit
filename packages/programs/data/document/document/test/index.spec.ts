@@ -3642,6 +3642,21 @@ describe("index", () => {
 							message: "custom keep",
 						},
 						{
+							name: "syncronizer",
+							options: { syncronizer: class CustomSyncronizer {} as any },
+							message: "custom syncronizer",
+						},
+						{
+							name: "sync priority",
+							options: { sync: { priority: () => 0 } },
+							message: "custom sync priority",
+						},
+						{
+							name: "sync profile",
+							options: { sync: { profile: () => undefined } },
+							message: "custom sync profile",
+						},
+						{
 							name: "trim filter",
 							options: {
 								log: {
@@ -3688,6 +3703,50 @@ describe("index", () => {
 							canPerform: policy.allowAll<Document>(),
 						}),
 					).to.be.rejectedWith(NativeDocumentModeError, "immutable documents");
+				});
+
+				it("allows data-only sync config in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							sync: {
+								maxConvergentTrackedHashes: 16,
+								maxSimpleCoordinatesPerMessage: 16,
+								maxSimpleEntries: 16,
+								maxSimpleHashesPerMessage: 16,
+								rawExchangeHeads: true,
+								rawExchangeHeadsVerifySignaturesDuringPrepare: true,
+								repairSweepTargetBufferSize: 16,
+							},
+						},
+					});
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-sync-config",
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-sync-config",
+						);
+					} finally {
+						await rustSession.stop();
+					}
 				});
 
 				it("rejects unsupported per-put options in strict native mode", async () => {

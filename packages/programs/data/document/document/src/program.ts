@@ -1015,6 +1015,15 @@ export class Documents<
 		if (options.keep) {
 			unsupported.push("custom keep");
 		}
+		if (options.syncronizer) {
+			unsupported.push("custom syncronizer");
+		}
+		if (options.sync?.priority) {
+			unsupported.push("custom sync priority");
+		}
+		if (options.sync?.profile) {
+			unsupported.push("custom sync profile");
+		}
 		if (
 			options.log?.trim &&
 			(options.log.trim.type !== "length" || options.log.trim.filter?.canTrim)
