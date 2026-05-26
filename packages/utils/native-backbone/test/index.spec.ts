@@ -82,6 +82,19 @@ const encodedDocumentWithIdScoreAndBytes = (
 	return Uint8Array.from(out);
 };
 
+const plainPutPayload = (document: Uint8Array) => {
+	const out = new Uint8Array(6 + document.byteLength);
+	out[0] = 0;
+	out[1] = 3;
+	new DataView(out.buffer, out.byteOffset, out.byteLength).setUint32(
+		2,
+		document.byteLength,
+		true,
+	);
+	out.set(document, 6);
+	return out;
+};
+
 const contextOnlySchema = () => {
 	const out: number[] = [1, 14];
 	writeU32(out, 1);
@@ -705,6 +718,76 @@ describe("native peerbit backbone", () => {
 		expect(
 			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
 		).to.equal("doc-projected-batch-2");
+	});
+
+	it("batches compact committed no-next cached-plan plain-put-payload document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+
+		const projection = {
+			documentFieldNames: ["id", "score", "bytes"],
+			documentFieldTypes: ["string", "u32", "bytes"],
+			outputFieldTypes: [],
+			sourceKinds: [],
+			sourceValues: [],
+		};
+		const documentA = encodedDocumentWithIdScoreAndBytes("payload-a", 11);
+		const documentB = encodedDocumentWithIdScoreAndBytes("payload-b", 12);
+		const results =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 32n,
+							logical: 1,
+							gid: "gid-doc-index-projected-payload-batch",
+							payloadData: plainPutPayload(documentA),
+							documentIndex: {
+								key: "doc-projected-payload-batch-1",
+								usePlainPutPayload: true,
+								projection: {
+									encodedDocument: new Uint8Array(0),
+									plan: projection,
+								},
+							},
+						},
+						{
+							wallTime: 33n,
+							logical: 2,
+							gid: "gid-doc-index-projected-payload-batch",
+							payloadData: plainPutPayload(documentB),
+							documentIndex: {
+								key: "doc-projected-payload-batch-2",
+								usePlainPutPayload: true,
+								projection: {
+									encodedDocument: new Uint8Array(0),
+									plan: projection,
+								},
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+				},
+			);
+
+		expect(results).to.have.length(2);
+		expect(results?.map((result) => result.entry.bytes)).to.deep.equal([
+			undefined,
+			undefined,
+		]);
+		expect(backbone.documentValueLength).to.equal(2);
+		expect(
+			backbone.documentExactStringFirstKey(3, results![0]!.entry.hash),
+		).to.equal("doc-projected-payload-batch-1");
+		expect(
+			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
+		).to.equal("doc-projected-payload-batch-2");
 	});
 
 	it("batches committed latest-context document index transactions", async () => {

@@ -1223,6 +1223,26 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigners: Array<Uint8Array | undefined>,
 		trimLengthTo: number | undefined,
 	) => unknown[][];
+	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentExistingCreated: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanIds: Uint32Array,
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction: (
 		wallTime: bigint,
 		logical: number,
@@ -6622,14 +6642,10 @@ export class NativePeerbitBackbone {
 			(entry) => entry.documentIndex.projection,
 		);
 		if (projected) {
-			const nativeCachedBatch =
-				this.native
-					.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction;
-			if (!nativeCachedBatch) {
-				return undefined;
-			}
-			const rows = nativeCachedBatch.call(
-				this.native,
+			const usePlainPutPayload = input.entries.every(
+				(entry) => entry.documentIndex.usePlainPutPayload === true,
+			);
+			const baseArgs = [
 				new BigUint64Array(
 					input.entries.map((entry) => BigInt(entry.wallTime)),
 				),
@@ -6660,14 +6676,36 @@ export class NativePeerbitBackbone {
 						),
 					),
 				),
-				input.entries.map(
-					(entry) => entry.documentIndex.projection!.encodedDocument,
-				),
-				input.entries.map(
-					(entry) => entry.documentIndex.projection!.signer,
-				),
-				input.trimLengthTo,
-			);
+			] as const;
+			const rows = usePlainPutPayload
+				? this.native
+						.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_batch_transaction?.call(
+							this.native,
+							...baseArgs,
+							input.entries.map(
+								(entry) =>
+									entry.documentIndex.projection!.signer,
+							),
+							input.trimLengthTo,
+						)
+				: this.native
+						.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction?.call(
+							this.native,
+							...baseArgs,
+							input.entries.map(
+								(entry) =>
+									entry.documentIndex.projection!
+										.encodedDocument,
+							),
+							input.entries.map(
+								(entry) =>
+									entry.documentIndex.projection!.signer,
+							),
+							input.trimLengthTo,
+						);
+			if (!rows) {
+				return undefined;
+			}
 			return rows.map((row) =>
 				compactCommittedNoNextStorageAppendResultFromRow(
 					this.resolution,
@@ -6694,9 +6732,7 @@ export class NativePeerbitBackbone {
 			new BigUint64Array(
 				input.entries.map((entry) => BigInt(entry.wallTime)),
 			),
-			new Uint32Array(
-				input.entries.map((entry) => entry.logical ?? 0),
-			),
+			new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
 			input.entries.map((entry) => entry.gid),
 			input.type ?? 0,
 			input.entries.map((entry) => entry.metaData),
@@ -6708,7 +6744,8 @@ export class NativePeerbitBackbone {
 			input.selfReplicating ?? true,
 			input.entries.map((entry) => entry.documentIndex.key),
 			input.entries.map(
-				(entry) => entry.documentIndex.valuePrefixBytes!,
+				(entry) =>
+					entry.documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
 			),
 			input.entries.map((entry) =>
 				entry.documentIndex.existingCreated == null

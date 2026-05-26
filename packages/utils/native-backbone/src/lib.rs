@@ -141,6 +141,7 @@ struct LatestCompactBatchPendingAppend {
     document_index_commit: DocumentIndexAppendCommit,
     previous_document_context: Option<DocumentContextFacts>,
     delete_trimmed_document_heads: bool,
+    plain_put_payload_data: Option<Vec<u8>>,
 }
 
 struct ParsedProjectionPlan {
@@ -5627,6 +5628,83 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_batch_transaction(
+        &mut self,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        gids: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_keys: Array,
+        document_existing_created: Array,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        document_projection_plan_ids: Uint32Array,
+        document_projection_signers: Array,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let len = payload_datas.length() as usize;
+        ensure_same_len(len, wall_times.length() as usize, "batch wall times")?;
+        ensure_same_len(len, logicals.length() as usize, "batch logicals")?;
+        ensure_same_len(len, gids.length() as usize, "batch gids")?;
+        ensure_same_len(len, meta_datas.length() as usize, "batch meta data")?;
+        ensure_same_len(len, document_keys.length() as usize, "batch document keys")?;
+        ensure_same_len(
+            len,
+            document_existing_created.length() as usize,
+            "batch document existing-created values",
+        )?;
+        ensure_same_len(
+            len,
+            document_projection_plan_ids.length() as usize,
+            "batch document projection plan ids",
+        )?;
+        ensure_same_len(
+            len,
+            document_projection_signers.length() as usize,
+            "batch document projection signers",
+        )?;
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let document_keys = strings_from_array(document_keys)?;
+        let document_existing_created = strings_from_array(document_existing_created)?;
+        let mut document_index_commits = Vec::with_capacity(len);
+        for (index, document_key) in document_keys.iter().enumerate() {
+            let index_u32 = index as u32;
+            document_index_commits.push(
+                document_index_cached_projection_plain_put_payload_append_commit(
+                    document_key.clone(),
+                    document_existing_created[index].clone(),
+                    document_byte_element_index_limit,
+                    document_delete_trimmed_heads,
+                    document_projection_plan_ids.get_index(index_u32),
+                    document_projection_signers.get(index_u32),
+                )?,
+            );
+        }
+        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+            wall_times,
+            logicals,
+            gids,
+            entry_type,
+            meta_datas,
+            payload_datas,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            trim_length_to,
+            document_index_commits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction(
         &mut self,
         wall_time: u64,
@@ -5815,6 +5893,11 @@ impl NativePeerbitBackbone {
                 next_hashes: Vec::new(),
                 delete_hashes: trim_hashes.clone(),
             });
+            let plain_put_payload_data = matches!(
+                &document_index_commit.value_prefix,
+                DocumentIndexValuePrefix::PlainPutPayloadProjection { .. }
+            )
+            .then_some(payload_data);
             pending_appends.push(LatestCompactBatchPendingAppend {
                 wall_time: wall_times.get_index(index_u32),
                 payload_size,
@@ -5825,6 +5908,7 @@ impl NativePeerbitBackbone {
                 document_index_commit,
                 previous_document_context: None,
                 delete_trimmed_document_heads,
+                plain_put_payload_data,
             });
         }
 
@@ -5870,7 +5954,7 @@ impl NativePeerbitBackbone {
                 &pending.entry_facts.hash,
                 &pending.gid,
                 pending.payload_size,
-                None,
+                pending.plain_put_payload_data.as_deref(),
             )?;
             let document_trimmed_heads_processed = pending.delete_trimmed_document_heads
                 && self.delete_documents_by_context_heads_profiled(&pending.trim_hashes);
@@ -6973,6 +7057,7 @@ impl NativePeerbitBackbone {
                 document_index_commit,
                 previous_document_context,
                 delete_trimmed_document_heads,
+                plain_put_payload_data: None,
             });
         }
 
