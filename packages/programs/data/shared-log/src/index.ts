@@ -6290,11 +6290,12 @@ export class SharedLog<
 			| undefined,
 		minReplicasValue: number,
 	): Promise<
-		| {
-				entries: Entry<T>[];
-				removed: ShallowOrFullEntry<T>[];
-				appendCommits: PreparedLocalAppendCommit<R>[];
-		  }
+			| {
+					entries: Entry<T>[];
+					materializeEntries?: Array<() => Entry<T>>;
+					removed: ShallowOrFullEntry<T>[];
+					appendCommits: PreparedLocalAppendCommit<R>[];
+			  }
 		| undefined
 	> {
 		const backbone = this._nativeBackbone;
@@ -6487,7 +6488,10 @@ export class SharedLog<
 			this.rebalanceParticipationDebounced?.call();
 		}
 		return {
-			entries: appended.entries,
+			get entries() {
+				return appended.entries;
+			},
+			materializeEntries: appended.materializeEntries,
 			removed: appended.removed,
 			appendCommits,
 		};
@@ -6505,6 +6509,7 @@ export class SharedLog<
 	): Promise<
 		| {
 				entries: Entry<T>[];
+				materializeEntries?: Array<() => Entry<T>>;
 				removed: ShallowOrFullEntry<T>[];
 				appendCommits: PreparedLocalAppendCommit<R>[];
 		  }

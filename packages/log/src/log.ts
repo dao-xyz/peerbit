@@ -2134,17 +2134,24 @@ export class Log<T> {
 					throw error;
 				});
 			};
-			const finish = (): PreparedCommitOnlyAppendBatchResult<T> => ({
-				entries: materializeEntries.map((materializeEntry) => materializeEntry()),
-				materializeEntries,
-				removed: [],
-				removedHashes:
-					trimmedEntryHashes.length > 0
-						? normalizedUniqueStrings(trimmedEntryHashes)
-						: undefined,
-				appendFacts,
-				documentTrimmedHeadsProcessed,
-			});
+			const finish = (): PreparedCommitOnlyAppendBatchResult<T> => {
+				let entries: Entry<T>[] | undefined;
+				return {
+					get entries() {
+						return (entries ??= materializeEntries.map((materializeEntry) =>
+							materializeEntry(),
+						));
+					},
+					materializeEntries,
+					removed: [],
+					removedHashes:
+						trimmedEntryHashes.length > 0
+							? normalizedUniqueStrings(trimmedEntryHashes)
+							: undefined,
+					appendFacts,
+					documentTrimmedHeadsProcessed,
+				};
+			};
 			const finishTrim = ():
 				| PreparedCommitOnlyAppendBatchResult<T>
 				| Promise<PreparedCommitOnlyAppendBatchResult<T>>

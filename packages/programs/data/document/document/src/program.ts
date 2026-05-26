@@ -500,11 +500,13 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				return mapMaybePromise(
 					this.context.handlePreparedPlainPutManyCommit(documentAppendCommit),
 					() => {
-						for (const entry of documentAppendCommit.entries) {
-							this.context.keepEntry(entry.hash);
+						for (const commit of documentAppendCommit.commits) {
+							this.context.keepEntry(commit.append.hash);
 						}
 						return {
-							entries: documentAppendCommit.entries,
+							get entries() {
+								return documentAppendCommit.entries;
+							},
 							removed: documentAppendCommit.removed,
 						};
 					},
@@ -2268,11 +2270,13 @@ export class Documents<
 		}
 
 		await this.handlePreparedPlainPutManyCommit(documentAppendCommit);
-		for (const entry of documentAppendCommit.entries) {
-			this.keepCache?.add(entry.hash);
+		for (const commit of documentAppendCommit.commits) {
+			this.keepCache?.add(commit.append.hash);
 		}
 		return {
-			entries: documentAppendCommit.entries,
+			get entries() {
+				return documentAppendCommit.entries;
+			},
 			removed: documentAppendCommit.removed,
 		};
 	}
@@ -2767,16 +2771,27 @@ export class Documents<
 							nativeBackboneDocumentIndexes[index],
 					}
 				: put,
-			appended: {
-				entry: appended.entries[index]!,
-				removed: [],
-				appendCommit: appended.appendCommits[index]!,
-			},
+			appended: (() => {
+				const materializeEntry = appended.materializeEntries?.[index];
+				let entry: Entry<Operation> | undefined;
+				return {
+					get entry() {
+						return (entry ??= materializeEntry
+							? materializeEntry()
+							: appended.entries[index]!);
+					},
+					removed: [],
+					appendCommit: appended.appendCommits[index]!,
+				};
+			})(),
 		}));
 		const commits =
 			await this.createDocumentAppendCommitFactsBatch(appendInputs);
+		let entries: Entry<Operation>[] | undefined;
 		return {
-			entries: appended.entries,
+			get entries() {
+				return (entries ??= commits.map((commit) => commit.entry));
+			},
 			removed: appended.removed,
 			commits,
 		};
