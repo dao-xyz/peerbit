@@ -352,6 +352,15 @@ type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	assignedToRangeBoundary?: boolean;
 };
 
+type NativePreparedRawReceiveSelection = {
+	retainedHashes: string[];
+	droppedHashes: string[];
+	groupCount: number;
+	plannedHashCount: number;
+	usedNativeFastDropPlan: boolean;
+	usedLeaderSamplePlans: boolean;
+};
+
 type ReusableReceiveCoordinatePlan<R extends "u32" | "u64"> = {
 	plan: EntryLeaderPlan<R>;
 	replicas: number;
@@ -9635,43 +9644,72 @@ export class SharedLog<
 				}
 				const rawIsRepairHint =
 					(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
-				const rawPrepareVerifySetting =
-					this._logProperties?.sync
-						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
-				const canVerifyPreparedRawReceiveOnCommit =
-					!!this._nativeBackbone?.graph
-						.commitVerifiedPreparedRawReceiveJoinBatch;
-				const verifyNativeBackboneSignaturesDuringPrepare =
-					rawPrepareVerifySetting === true ||
-					(rawPrepareVerifySetting !== false &&
-						this._isReplicating &&
-						!rawIsRepairHint &&
-						!canVerifyPreparedRawReceiveOnCommit);
-				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
-				const materializedRawMessage =
-					await materializeVerifiedRawExchangeHeadsMessage(
-						new RawExchangeHeadsMessage({
-							heads: rawMissingHeads,
-							reserved: msg.reserved,
+					const rawPrepareVerifySetting =
+						this._logProperties?.sync
+							?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+					const canVerifyPreparedRawReceiveOnCommit =
+						!!this._nativeBackbone?.graph
+							.commitVerifiedPreparedRawReceiveJoinBatch;
+					const verifyNativeBackboneSignaturesDuringPrepare =
+						rawPrepareVerifySetting === true ||
+						(rawPrepareVerifySetting !== false &&
+							this._isReplicating &&
+							!rawIsRepairHint &&
+							!canVerifyPreparedRawReceiveOnCommit);
+					let rawPreparedReceiveSelection:
+						| Promise<NativePreparedRawReceiveSelection | undefined>
+						| undefined;
+					const getRawPreparedReceiveSelection = (
+						heads: RawEntryWithRefs[],
+						hashes: string[],
+					) => {
+						rawPreparedReceiveSelection ??=
+							this.planNativePreparedRawReceiveSelection({
+								heads,
+								hashes,
+								from: rawFrom,
+							});
+						return rawPreparedReceiveSelection;
+					};
+					const rawMaterializeStartedAt = syncProfileStart(syncProfile);
+					const materializedRawMessage =
+						await materializeVerifiedRawExchangeHeadsMessage(
+							new RawExchangeHeadsMessage({
+								heads: rawMissingHeads,
+								reserved: msg.reserved,
 						}),
 						this.log,
 						syncProfile,
-						{
-							nativeBackbone: this._nativeBackbone,
-							verifyNativeBackboneSignaturesDuringPrepare:
-								verifyNativeBackboneSignaturesDuringPrepare,
-							tryPreparedRawReceiveFastDrop: rawIsRepairHint
-								? undefined
-								: ({ heads, hashes }) =>
-										this.tryFastDropPreparedRawReceive({
-											heads,
-											hashes,
-											from: rawFrom,
-											fromIsSelf,
-											syncProfile,
-										}),
-						},
-					);
+							{
+								nativeBackbone: this._nativeBackbone,
+								verifyNativeBackboneSignaturesDuringPrepare:
+									verifyNativeBackboneSignaturesDuringPrepare,
+								tryPreparedRawReceiveFastDrop: rawIsRepairHint
+									? undefined
+									: async ({ heads, hashes }) =>
+											this.tryFastDropPreparedRawReceive({
+												heads,
+												hashes,
+												from: rawFrom,
+												fromIsSelf,
+												syncProfile,
+												selection:
+													await getRawPreparedReceiveSelection(heads, hashes),
+											}),
+								selectPreparedRawReceiveHashes: rawIsRepairHint
+									? undefined
+									: async ({ heads, hashes }) =>
+											this.selectNativePreparedRawReceiveHashes({
+												heads,
+												hashes,
+												from: rawFrom,
+												fromIsSelf,
+												syncProfile,
+												selection:
+													await getRawPreparedReceiveSelection(heads, hashes),
+											}),
+							},
+						);
 				if (materializedRawMessage === undefined) {
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, rawMaterializeStartedAt, {
@@ -14332,143 +14370,167 @@ export class SharedLog<
 		}
 	}
 
-	private async tryFastDropPreparedRawReceive(properties: {
+	private async planNativePreparedRawReceiveSelection(properties: {
 		heads: RawEntryWithRefs[];
 		hashes: string[];
 		from: PublicSignKey;
-		fromIsSelf: boolean;
-		syncProfile?: SyncProfileFn;
-	}): Promise<boolean> {
+	}): Promise<NativePreparedRawReceiveSelection | undefined> {
 		const backbone = this._nativeBackbone;
 		if (
 			!backbone ||
 			this._isReplicating ||
 			this.keep ||
+			this.closed ||
 			!this.syncronizer.onReceivedEntryHashes ||
 			properties.heads.length === 0 ||
 			properties.heads.some((head) => head.gidRefrences.length > 0)
 		) {
-			return false;
+			return undefined;
 		}
 
-		const receivePlanStartedAt = syncProfileStart(properties.syncProfile);
 		const fromHash = properties.from.hashcode();
-		let groupCount: number | undefined;
-		let plannedHashCount: number | undefined;
-		let usedNativeFastDropPlan = false;
-		let leaderSamples: Array<Map<string, unknown>> | undefined;
-		let nativeGroups: NativeBackboneRawReceiveGroupPlan[] | undefined;
-		let leaderPlans: EntryLeaderPlan<R>[] | undefined;
-		let usedLeaderSamplePlans = false;
-		let leaderSelectionContext: LeaderSelectionContext | undefined;
 		try {
 			const replicaOptions = {
 				minReplicas: this.replicas.min?.getValue(this) || 1,
 				maxReplicas: this.replicas.max?.getValue(this),
 			};
-			leaderSelectionContext = await this.createLeaderSelectionContext();
+			const leaderSelectionContext = await this.createLeaderSelectionContext();
 			const nativeFastDropPlan = backbone.planPreparedRawReceiveFastDrop?.(
 				properties.hashes,
 				replicaOptions,
 				this.createNativeLeaderOptions(leaderSelectionContext),
 				fromHash,
 			);
-			if (nativeFastDropPlan) {
-				if (
-					nativeFastDropPlan.plannedHashCount !== properties.hashes.length ||
-					nativeFastDropPlan.groupCount === 0 ||
-					!nativeFastDropPlan.canDrop
-				) {
-					return false;
+			if (
+				nativeFastDropPlan &&
+				nativeFastDropPlan.plannedHashCount === properties.hashes.length &&
+				nativeFastDropPlan.groupCount > 0 &&
+				nativeFastDropPlan.canDrop
+			) {
+				return {
+					retainedHashes: [],
+					droppedHashes: properties.hashes,
+					groupCount: nativeFastDropPlan.groupCount,
+					plannedHashCount: nativeFastDropPlan.plannedHashCount,
+					usedNativeFastDropPlan: true,
+					usedLeaderSamplePlans: true,
+				};
+			}
+
+			const nativeGroups = backbone.planPreparedRawReceiveGroups(
+				properties.hashes,
+				replicaOptions,
+			);
+			if (!nativeGroups || nativeGroups.length === 0) {
+				return undefined;
+			}
+			let plannedHashCount = 0;
+			for (const group of nativeGroups) {
+				if (group.hashes.length !== group.requestedReplicas.length) {
+					return undefined;
 				}
-				groupCount = nativeFastDropPlan.groupCount;
-				plannedHashCount = nativeFastDropPlan.plannedHashCount;
-				usedNativeFastDropPlan = true;
+				plannedHashCount += group.hashes.length;
+			}
+			if (plannedHashCount !== properties.hashes.length) {
+				return undefined;
+			}
+			const leaderInputs = nativeGroups.map((group) => ({
+				gid: group.gid,
+				replicas: group.maxMaxReplicas,
+			}));
+			let usedLeaderSamplePlans = false;
+			let leaderSamples = backbone.planLeaderSamplesForGidsBatch?.(
+				leaderInputs,
+				this.createNativeLeaderOptions(leaderSelectionContext),
+			);
+			let leaderPlans: EntryLeaderPlan<R>[] | undefined;
+			if (leaderSamples?.length === nativeGroups.length) {
 				usedLeaderSamplePlans = true;
 			} else {
-				nativeGroups = backbone.planPreparedRawReceiveGroups(
-					properties.hashes,
-					replicaOptions,
-				);
-				if (!nativeGroups || nativeGroups.length === 0) {
-					return false;
-				}
-				plannedHashCount = 0;
-				for (const group of nativeGroups) {
-					if (group.hashes.length !== group.requestedReplicas.length) {
-						return false;
-					}
-					plannedHashCount += group.hashes.length;
-				}
-				if (plannedHashCount !== properties.hashes.length) {
-					return false;
-				}
-				groupCount = nativeGroups.length;
-				leaderSamples = backbone.planLeaderSamplesForGidsBatch?.(
-					nativeGroups.map((group) => ({
-						gid: group.gid,
-						replicas: group.maxMaxReplicas,
-					})),
-					this.createNativeLeaderOptions(leaderSelectionContext),
-				);
-				if (leaderSamples?.length === nativeGroups.length) {
-					usedLeaderSamplePlans = true;
-				} else {
-					leaderSamples = undefined;
-					leaderPlans = backbone.planLeadersForGidsBatch(
-						nativeGroups.map((group) => ({
-							gid: group.gid,
-							replicas: group.maxMaxReplicas,
-						})),
+				leaderSamples = undefined;
+				leaderPlans = backbone
+					.planLeadersForGidsBatch(
+						leaderInputs,
 						this.createNativeLeaderOptions(leaderSelectionContext),
-					).map((nativePlan) => ({
+					)
+					.map((nativePlan) => ({
 						coordinates: Array.from(
 							nativePlan.coordinates as Iterable<NumberFromType<R>>,
 						),
 						coordinateStrings: nativePlan.coordinateStrings,
 						leaders: nativePlan.leaders,
-						isLeader: nativePlan.leaders.has(
-							leaderSelectionContext!.selfHash,
-						),
+						isLeader: nativePlan.leaders.has(leaderSelectionContext.selfHash),
 						assignedToRangeBoundary:
 							"assignedToRangeBoundary" in nativePlan
 								? (nativePlan.assignedToRangeBoundary as boolean)
 								: undefined,
 					}));
-					if (leaderPlans.length !== nativeGroups.length) {
-						return false;
-					}
+				if (leaderPlans.length !== nativeGroups.length) {
+					return undefined;
 				}
 			}
-		} catch {
-			return false;
-		}
 
-		if (!usedNativeFastDropPlan) {
+			const retainedHashes: string[] = [];
+			const droppedHashes: string[] = [];
 			if (leaderSamples) {
-				for (const leaders of leaderSamples) {
-					if (
+				for (let i = 0; i < nativeGroups.length; i++) {
+					const group = nativeGroups[i]!;
+					const leaders = leaderSamples[i]!;
+					const shouldRetain =
 						leaders.has(leaderSelectionContext!.selfHash) ||
-						leaders.has(fromHash)
-					) {
-						return false;
-					}
+						leaders.has(fromHash);
+					(shouldRetain ? retainedHashes : droppedHashes).push(
+						...group.hashes,
+					);
 				}
 			} else {
-				if (!nativeGroups) {
-					return false;
-				}
 				for (let i = 0; i < nativeGroups.length; i++) {
+					const group = nativeGroups[i]!;
 					const leaderPlan = leaderPlans?.[i];
-					if (
-						!leaderPlan ||
-						leaderPlan.isLeader ||
-						leaderPlan.leaders.has(fromHash)
-					) {
-						return false;
+					if (!leaderPlan) {
+						return undefined;
 					}
+					const shouldRetain =
+						leaderPlan.isLeader || leaderPlan.leaders.has(fromHash);
+					(shouldRetain ? retainedHashes : droppedHashes).push(
+						...group.hashes,
+					);
 				}
 			}
+			if (droppedHashes.length === 0) {
+				return undefined;
+			}
+			return {
+				retainedHashes,
+				droppedHashes,
+				groupCount: nativeGroups.length,
+				plannedHashCount,
+				usedNativeFastDropPlan: false,
+				usedLeaderSamplePlans,
+			};
+		} catch {
+			return undefined;
+		}
+	}
+
+	private async tryFastDropPreparedRawReceive(properties: {
+		heads: RawEntryWithRefs[];
+		hashes: string[];
+		from: PublicSignKey;
+		fromIsSelf: boolean;
+		syncProfile?: SyncProfileFn;
+		selection?: NativePreparedRawReceiveSelection;
+	}): Promise<boolean> {
+		const backbone = this._nativeBackbone;
+		if (!backbone || !this.syncronizer.onReceivedEntryHashes) {
+			return false;
+		}
+		const receivePlanStartedAt = syncProfileStart(properties.syncProfile);
+		const selection =
+			properties.selection ??
+			(await this.planNativePreparedRawReceiveSelection(properties));
+		if (!selection || selection.retainedHashes.length > 0) {
+			return false;
 		}
 
 		if (properties.syncProfile) {
@@ -14476,34 +14538,38 @@ export class SharedLog<
 				name: "sharedLog.receive.plan",
 				component: "shared-log",
 				entries: properties.hashes.length,
-				count: groupCount,
+				count: selection.groupCount,
 				messages: 1,
 				details: {
 					replicating: false,
-					predecodedReplicaHits: plannedHashCount,
+					predecodedReplicaHits: selection.plannedHashCount,
 					nativeRawGroups: true,
 					nativeReceiveGroupLeaderPlans: true,
-					nativeReceiveGroupLeaderSamples: usedLeaderSamplePlans,
-					nativePreparedFastDropPlan: usedNativeFastDropPlan,
+					nativeReceiveGroupLeaderSamples:
+						selection.usedLeaderSamplePlans,
+					nativePreparedFastDropPlan: selection.usedNativeFastDropPlan,
 					nativeFastDropEarly: true,
 				},
 			});
 		}
 
 		if (!properties.fromIsSelf) {
-			this.markEntriesKnownByPeer(properties.hashes, fromHash);
+			this.markEntriesKnownByPeer(
+				selection.droppedHashes,
+				properties.from.hashcode(),
+			);
 		}
 
 		const notifyStartedAt = syncProfileStart(properties.syncProfile);
 		await this.syncronizer.onReceivedEntryHashes({
-			hashes: properties.hashes,
+			hashes: selection.droppedHashes,
 			from: properties.from,
 		});
 		if (properties.syncProfile) {
 			emitSyncProfileDuration(properties.syncProfile, notifyStartedAt, {
 				name: "sharedLog.receive.notifySynchronizer",
 				component: "shared-log",
-				entries: properties.hashes.length,
+				entries: selection.droppedHashes.length,
 				messages: 1,
 				details: {
 					hashOnly: true,
@@ -14524,10 +14590,65 @@ export class SharedLog<
 					nativeFastDrop: true,
 					nativeFastDropEarly: true,
 				},
-			});
+				});
+			}
+			backbone.clearPreparedRawReceiveEntries?.(selection.droppedHashes);
+			return true;
 		}
-		backbone.clearPreparedRawReceiveEntries?.(properties.hashes);
-		return true;
+
+	private async selectNativePreparedRawReceiveHashes(properties: {
+		heads: RawEntryWithRefs[];
+		hashes: string[];
+		from: PublicSignKey;
+		fromIsSelf: boolean;
+		syncProfile?: SyncProfileFn;
+		selection?: NativePreparedRawReceiveSelection;
+	}): Promise<string[] | undefined> {
+		if (!this.syncronizer.onReceivedEntryHashes) {
+			return undefined;
+		}
+		const receivePlanStartedAt = syncProfileStart(properties.syncProfile);
+		const selection =
+			properties.selection ??
+			(await this.planNativePreparedRawReceiveSelection(properties));
+		if (!selection) {
+			return undefined;
+		}
+
+		if (!properties.fromIsSelf) {
+			this.markEntriesKnownByPeer(
+				selection.droppedHashes,
+				properties.from.hashcode(),
+			);
+		}
+		const notifyStartedAt = syncProfileStart(properties.syncProfile);
+		await this.syncronizer.onReceivedEntryHashes({
+			hashes: selection.droppedHashes,
+			from: properties.from,
+		});
+		emitSyncProfileDuration(properties.syncProfile, notifyStartedAt, {
+			name: "sharedLog.receive.notifySynchronizer",
+			component: "shared-log",
+			entries: selection.droppedHashes.length,
+			messages: 1,
+			details: {
+				hashOnly: true,
+				nativeSelectDropped: true,
+			},
+		});
+		emitSyncProfileDuration(properties.syncProfile, receivePlanStartedAt, {
+			name: "sharedLog.rawReceive.nativeSelect",
+			component: "shared-log",
+			entries: properties.hashes.length,
+			count: selection.retainedHashes.length,
+			messages: 1,
+			details: {
+				dropped: selection.droppedHashes.length,
+				groups: selection.groupCount,
+				predecodedReplicaHits: selection.plannedHashCount,
+			},
+		});
+		return selection.retainedHashes;
 	}
 
 	async isLeader(

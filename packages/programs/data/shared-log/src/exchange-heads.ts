@@ -1132,6 +1132,13 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			heads: RawEntryWithRefs[];
 			hashes: string[];
 		}) => boolean | Promise<boolean>;
+		selectPreparedRawReceiveHashes?: (properties: {
+			heads: RawEntryWithRefs[];
+			hashes: string[];
+		}) =>
+			| Iterable<string>
+			| undefined
+			| Promise<Iterable<string> | undefined>;
 	},
 ): Promise<ExchangeHeadsMessage<any> | undefined> => {
 	const blocks = new Array<Uint8Array>(message.heads.length);
@@ -1205,16 +1212,25 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			.catch(() => undefined);
 	}
 	if (preparedColumns || preparedFacts) {
-		const clearPreparedRaw = () => {
+		const clearPreparedRawHashes = (hashesToClear: Iterable<string>) => {
 			if (nativePrepareSource === "backbone") {
 				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
-					preparedRawFactsHashes(preparedFacts!),
+					hashesToClear,
 				);
 				return;
 			}
 			if (nativePrepareSource === "backbone-columns") {
-				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(hashes);
+				options?.nativeBackbone?.clearPreparedRawReceiveEntries?.(
+					hashesToClear,
+				);
 			}
+		};
+		const clearPreparedRaw = () => {
+			clearPreparedRawHashes(
+				nativePrepareSource === "backbone"
+					? preparedRawFactsHashes(preparedFacts!)
+					: hashes,
+			);
 		};
 		emitSyncProfileDuration(profile, nativePrepareStartedAt, {
 			name: "sharedLog.rawReceive.prepareFacts",
@@ -1258,39 +1274,85 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			) {
 				return undefined;
 			}
-		} catch (error) {
-			clearPreparedRaw();
-			throw error;
-		}
-		const wrapStartedAt = syncProfileStart(profile);
-		let materializedHeads: EntryWithRefs<any>[];
-		try {
-			const rowFacts = preparedFacts!;
-			materializedHeads = message.heads.map((head, index) => {
-				const facts = preparedColumns ?? rowFacts[index]!;
-				const preparedHead = new PreparedRawEntryWithRefs(head, facts, index);
-				preparedHead.initEntry({
-					keychain: log.keychain,
-					encoding: log.encoding,
+			let selectedHeads = message.heads;
+			let selectedHashes = hashes;
+			let selectedIndexes: number[] | undefined;
+			const selectedHashIterable =
+				await options?.selectPreparedRawReceiveHashes?.({
+					heads: message.heads,
+					hashes,
 				});
-				return preparedHead as EntryWithRefs<any>;
+			if (selectedHashIterable) {
+				const selectedHashSet = new Set(selectedHashIterable);
+				const knownHashes = new Set(hashes);
+				for (const hash of selectedHashSet) {
+					if (!knownHashes.has(hash)) {
+						throw new Error("Selected unknown raw receive hash");
+					}
+				}
+				selectedHeads = [];
+				selectedHashes = [];
+				selectedIndexes = [];
+				const droppedHashes: string[] = [];
+				for (let i = 0; i < hashes.length; i++) {
+					const hash = hashes[i]!;
+					if (selectedHashSet.has(hash)) {
+						selectedHeads.push(message.heads[i]!);
+						selectedHashes.push(hash);
+						selectedIndexes.push(i);
+					} else {
+						droppedHashes.push(hash);
+					}
+				}
+				if (droppedHashes.length > 0) {
+					clearPreparedRawHashes(droppedHashes);
+				}
+				if (selectedHashes.length === 0) {
+					return undefined;
+				}
+			}
+			const headsToWrap = selectedHeads;
+			const hashesToWrap = selectedHashes;
+			const indexesToWrap = selectedIndexes;
+			const wrapStartedAt = syncProfileStart(profile);
+			let materializedHeads: EntryWithRefs<any>[];
+			try {
+				const rowFacts = preparedFacts!;
+				materializedHeads = headsToWrap.map((head, selectedIndex) => {
+					const factsIndex = indexesToWrap?.[selectedIndex] ?? selectedIndex;
+					const facts = preparedColumns ?? rowFacts[factsIndex]!;
+					const preparedHead = new PreparedRawEntryWithRefs(
+						head,
+						facts,
+						factsIndex,
+					);
+					preparedHead.initEntry({
+						keychain: log.keychain,
+						encoding: log.encoding,
+					});
+					return preparedHead as EntryWithRefs<any>;
+				});
+			} catch (error) {
+				clearPreparedRaw();
+				throw error;
+			}
+			const materialized = new ExchangeHeadsMessage({
+				heads: materializedHeads,
+				preparedHashes: hashesToWrap,
 			});
+			materialized.reserved = message.reserved;
+			emitSyncProfileDuration(profile, wrapStartedAt, {
+				name: "sharedLog.rawReceive.wrapPrepared",
+				component: "shared-log",
+				entries: headsToWrap.length,
+				count: message.heads.length - headsToWrap.length,
+				messages: 1,
+			});
+			return materialized;
 		} catch (error) {
 			clearPreparedRaw();
 			throw error;
 		}
-		const materialized = new ExchangeHeadsMessage({
-			heads: materializedHeads,
-			preparedHashes: hashes,
-		});
-		materialized.reserved = message.reserved;
-		emitSyncProfileDuration(profile, wrapStartedAt, {
-			name: "sharedLog.rawReceive.wrapPrepared",
-			component: "shared-log",
-			entries: message.heads.length,
-			messages: 1,
-		});
-		return materialized;
 	}
 	emitSyncProfileDuration(profile, nativePrepareStartedAt, {
 		name: "sharedLog.rawReceive.prepareFacts",
