@@ -859,6 +859,89 @@ describe("native peerbit backbone", () => {
 		).to.equal("doc-latest-batch-1");
 	});
 
+	it("batches committed latest-context cached-plan plain-put-payload document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+		backbone.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+
+		const first =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 42n,
+							logical: 1,
+							gid: "gid-doc-latest-payload-batch",
+							payloadData: new Uint8Array([1, 2, 3]),
+							documentIndex: {
+								key: "doc-latest-payload-batch-1",
+								valuePrefixBytes: new Uint8Array(0),
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+				},
+			)!;
+
+		const projection = {
+			documentFieldNames: ["id", "score", "bytes"],
+			documentFieldTypes: ["string", "u32", "bytes"],
+			outputFieldTypes: [],
+			sourceKinds: [],
+			sourceValues: [],
+		};
+		const document = encodedDocumentWithIdScoreAndBytes("latest-payload", 13);
+		const updated =
+			backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 43n,
+							logical: 2,
+							gid: "fallback-doc-latest-payload-batch",
+							payloadData: plainPutPayload(document),
+							documentIndex: {
+								key: "doc-latest-payload-batch-1",
+								usePlainPutPayload: true,
+								projection: {
+									encodedDocument: new Uint8Array(0),
+									plan: projection,
+								},
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+					resolveTrimmedEntries: false,
+				},
+			)!;
+
+		expect(updated).to.have.length(1);
+		expect(updated[0]!.entry.next).to.deep.equal([first[0]!.entry.hash]);
+		expect(updated[0]!.coordinate.gid).to.equal(
+			"gid-doc-latest-payload-batch",
+		);
+		expect(updated[0]!.documentPreviousContext?.head).to.equal(
+			first[0]!.entry.hash,
+		);
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(
+			backbone.documentExactStringFirstKey(3, updated[0]!.entry.hash),
+		).to.equal("doc-latest-payload-batch-1");
+	});
+
 	it("coalesces trim deletes with shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,

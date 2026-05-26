@@ -1255,6 +1255,34 @@ impl NativeLogIndex {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
     ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
+        self.prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            &payload_data,
+            trim_length_to,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_and_put_with_builder_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
+        trim_length_to: Option<usize>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
         let (facts, trimmed) = self
             .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
                 builder,
@@ -1288,6 +1316,36 @@ impl NativeLogIndex {
         trim_length_to: Option<usize>,
         mut profile: Option<&mut NativeLogAppendProfile>,
     ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
+        self.prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            &payload_data,
+            trim_length_to,
+            profile.as_deref_mut(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
+        trim_length_to: Option<usize>,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>), JsValue> {
         let (facts, trimmed) = self
             .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_inner(
                 builder,
@@ -1318,6 +1376,36 @@ impl NativeLogIndex {
         entry_type: u8,
         meta_data: Option<Vec<u8>>,
         payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        mut profile: Option<&mut NativeLogAppendProfile>,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+        self.prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+            builder,
+            block_store,
+            wall_time,
+            logical,
+            gid,
+            next,
+            entry_type,
+            meta_data,
+            &payload_data,
+            trim_length_to,
+            profile.as_deref_mut(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes_borrowed(
+        &mut self,
+        builder: &NativeEntryV0PlainBuilder,
+        block_store: &mut NativeLogBlockStore,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: &[u8],
         trim_length_to: Option<usize>,
         mut profile: Option<&mut NativeLogAppendProfile>,
     ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
@@ -1646,7 +1734,7 @@ impl NativeLogIndex {
         next: Vec<String>,
         entry_type: u8,
         meta_data: Option<Vec<u8>>,
-        payload_data: Vec<u8>,
+        payload_data: &[u8],
         trim_length_to: Option<usize>,
         trim_mode: NativeTrimMode,
         mut profile: Option<&mut NativeLogAppendProfile>,
