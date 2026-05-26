@@ -2,7 +2,7 @@
 //
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
-//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-coordinate-wal-half,raw-receive-native-coordinate-wal-half-verify-prepare,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+//   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-coordinate-wal-half,raw-receive-native-coordinate-wal-verify-prepare,raw-receive-native-backbone-select-half,raw-receive-native-coordinate-wal-select-half,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -37,6 +37,8 @@ type Scenario =
 	| "raw-receive-native-backbone-half-verify-prepare"
 	| "raw-receive-native-coordinate-wal-half"
 	| "raw-receive-native-coordinate-wal-half-verify-prepare"
+	| "raw-receive-native-backbone-select-half"
+	| "raw-receive-native-coordinate-wal-select-half"
 	| "raw-receive-native-backbone-drop"
 	| "raw-receive-native-backbone-drop-verify-prepare"
 	| "raw-receive-native-coordinate-wal-drop"
@@ -141,6 +143,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-backbone-half-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-half" &&
 			scenario !== "raw-receive-native-coordinate-wal-half-verify-prepare" &&
+			scenario !== "raw-receive-native-backbone-select-half" &&
+			scenario !== "raw-receive-native-coordinate-wal-select-half" &&
 			scenario !== "raw-receive-native-backbone-drop" &&
 			scenario !== "raw-receive-native-backbone-drop-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-drop" &&
@@ -212,6 +216,7 @@ const createOpenArgs = (
 		replicating?: boolean;
 		drop?: boolean;
 		keepEvery?: number;
+		nativeSelectEvery?: number;
 		keepHashes?: Set<string>;
 	},
 ) => {
@@ -236,7 +241,7 @@ const createOpenArgs = (
 		nativeBackbone,
 		keep: options?.keepHashes
 			? (entry: { hash: string }) => options.keepHashes!.has(entry.hash)
-			: options?.drop
+			: options?.drop || options?.nativeSelectEvery
 				? undefined
 				: () => true,
 		timeUntilRoleMaturity: 0,
@@ -254,11 +259,13 @@ const createOpenArgs = (
 	};
 };
 
-const appendIndependentEntries = async (
+type RawReceiveBenchEntry = { hash: string; gid: string };
+
+const appendIndependentEntryInfos = async (
 	store: EventStore<string, any>,
 	count: number,
 ) => {
-	const hashes: string[] = [];
+	const entries: RawReceiveBenchEntry[] = [];
 	for (let i = 0; i < count; i++) {
 		const { entry } = await store.add(uuid(), {
 			meta: {
@@ -268,10 +275,15 @@ const appendIndependentEntries = async (
 			replicate: false,
 			target: "none",
 		});
-		hashes.push(entry.hash);
+		entries.push({ hash: entry.hash, gid: entry.meta.gid });
 	}
-	return hashes;
+	return entries;
 };
+
+const appendIndependentEntries = async (
+	store: EventStore<string, any>,
+	count: number,
+) => (await appendIndependentEntryInfos(store, count)).map((entry) => entry.hash);
 
 const createRawMessages = async (
 	store: EventStore<string, any>,
@@ -287,6 +299,51 @@ const createRawMessages = async (
 	return messages;
 };
 
+const integerBigInt = (value: bigint | number | string) =>
+	typeof value === "bigint" ? value : BigInt(String(value));
+
+const seedNativeSelectionRanges = (
+	store: EventStore<string, any>,
+	entries: RawReceiveBenchEntry[],
+	retainedPeerHash: string,
+	keepEvery: number,
+) => {
+	const backbone = (store.log as any)._nativeBackbone;
+	if (!backbone) {
+		throw new Error("Expected native backbone for native selection bench");
+	}
+	const retainedHashes = new Set<string>();
+	for (let i = 0; i < entries.length; i++) {
+		const entry = entries[i]!;
+		const retained = i % keepEvery === 0;
+		if (retained) {
+			retainedHashes.add(entry.hash);
+		}
+		// Raw entries in this benchmark currently request two replicas; seed both
+		// coordinates so dropped entries do not retain through fallback leaders.
+		for (const [coordinateIndex, coordinate] of backbone
+			.getGidCoordinates(entry.gid, 2)
+			.entries()) {
+			const start = integerBigInt(coordinate);
+			const end = start + 1n;
+			backbone.putRange({
+				id: `native-select-${i}-${coordinateIndex}`,
+				hash: retained
+					? retainedPeerHash
+					: `native-select-other-${i}-${coordinateIndex}`,
+				timestamp: 0,
+				start1: start,
+				end1: end,
+				start2: start,
+				end2: end,
+				width: 1,
+				mode: 0,
+			});
+		}
+	}
+	return retainedHashes;
+};
+
 const runRawReceive = async (
 	count: number,
 	run: number,
@@ -297,6 +354,7 @@ const runRawReceive = async (
 		replicating?: boolean;
 		drop?: boolean;
 		keepEvery?: number;
+		nativeSelectEvery?: number;
 	},
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
@@ -314,13 +372,23 @@ const runRawReceive = async (
 				keepHashes,
 			}),
 		});
-		const hashes = await appendIndependentEntries(db1, count);
+		const entryInfos = await appendIndependentEntryInfos(db1, count);
+		const hashes = entryInfos.map((entry) => entry.hash);
+		let nativeSelectedHashes: Set<string> | undefined;
 		if (keepHashes) {
 			for (let i = 0; i < hashes.length; i++) {
 				if (i % options!.keepEvery! === 0) {
 					keepHashes.add(hashes[i]!);
 				}
 			}
+		}
+		if (options?.nativeSelectEvery) {
+			nativeSelectedHashes = seedNativeSelectionRanges(
+				db2,
+				entryInfos,
+				db2.node.identity.publicKey.hashcode(),
+				options.nativeSelectEvery,
+			);
 		}
 		const messages = await createRawMessages(db1, hashes);
 
@@ -334,6 +402,8 @@ const runRawReceive = async (
 
 		const expectedReceived = options?.drop
 			? 0
+			: nativeSelectedHashes
+				? nativeSelectedHashes.size
 			: keepHashes
 				? keepHashes.size
 				: count;
@@ -341,6 +411,37 @@ const runRawReceive = async (
 			throw new Error(
 				`Expected ${expectedReceived} raw received entries, got ${db2.log.log.length}`,
 			);
+		}
+		if (options?.nativeSelectEvery) {
+			const nativeSelectEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawReceive.nativeSelect",
+			);
+			if (nativeSelectEvents.length === 0) {
+				throw new Error("Expected native raw receive selection profile event");
+			}
+			const expectedDropped = count - expectedReceived;
+			const retainedByNativeSelect = nativeSelectEvents.reduce(
+				(sum, event) => sum + (event.count ?? 0),
+				0,
+			);
+			const droppedByNativeSelect = nativeSelectEvents.reduce(
+				(sum, event) =>
+					sum +
+					(typeof event.details?.dropped === "number"
+						? event.details.dropped
+						: 0),
+				0,
+			);
+			if (retainedByNativeSelect !== expectedReceived) {
+				throw new Error(
+					`Expected native raw receive selection to retain ${expectedReceived} entries, retained ${retainedByNativeSelect}`,
+				);
+			}
+			if (droppedByNativeSelect !== expectedDropped) {
+				throw new Error(
+					`Expected native raw receive selection to drop ${expectedDropped} entries, dropped ${droppedByNativeSelect}`,
+				);
+			}
 		}
 
 		return {
@@ -369,6 +470,10 @@ const runRawReceive = async (
 					? "raw-receive-native-coordinate-wal-half"
 				: options?.nativeBackbone && options.keepEvery === 2
 					? "raw-receive-native-backbone-half"
+				: options?.coordinateWal && options.nativeSelectEvery === 2
+					? "raw-receive-native-coordinate-wal-select-half"
+				: options?.nativeBackbone && options.nativeSelectEvery === 2
+					? "raw-receive-native-backbone-select-half"
 				: options?.coordinateWal &&
 					  options.replicating &&
 					  options.verifySignaturesDuringPrepare === false
@@ -641,6 +746,18 @@ const runScenario = async (
 			coordinateWal: true,
 			keepEvery: 2,
 			verifySignaturesDuringPrepare: true,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-select-half") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			nativeSelectEvery: 2,
+		});
+	}
+	if (scenario === "raw-receive-native-coordinate-wal-select-half") {
+		return runRawReceive(count, run, {
+			coordinateWal: true,
+			nativeSelectEvery: 2,
 		});
 	}
 	if (scenario === "raw-receive-native-backbone-drop") {
