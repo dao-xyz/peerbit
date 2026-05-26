@@ -10250,12 +10250,7 @@ export class SharedLog<
 									await this.createLeaderSelectionContext(leaderOptions);
 								const nativeLeaderOptions =
 									this.createNativeLeaderOptions(leaderContext);
-								if (
-									!isReplicating &&
-									!this.keep &&
-									!traceLogger.enabled &&
-									!this.closed
-								) {
+								if (!this.keep && !traceLogger.enabled && !this.closed) {
 									nativeRawGroupAssignmentPlans =
 										this._nativeBackbone.planPreparedRawReceiveGroupAssignments?.(
 											filteredHeadHashes,
@@ -10269,8 +10264,11 @@ export class SharedLog<
 											const keepAsLeader =
 												plan.isLeader ||
 												(isRepairHint && plan.fromIsLeader);
+											const canKeepWithoutWait = isReplicating
+												? plan.isLeader
+												: keepAsLeader;
 											return (
-												keepAsLeader &&
+												canKeepWithoutWait &&
 												plan.maxReplicasFromNewEntries >=
 													plan.maxReplicasFromHead
 											);
@@ -10635,7 +10633,10 @@ export class SharedLog<
 							replicas: group.maxMaxReplicas,
 							options: { roleAge: 0, persist: false as const },
 						}));
-						if (usedNativeRawGroupLeaderPlans) {
+						if (
+							usedNativeRawGroupLeaderPlans ||
+							usedNativeRawGroupAssignmentPlans
+						) {
 							immediateReplicatingLeaderPlans = receiveGroups.map(
 								(group) => group.leaderPlan!,
 							);

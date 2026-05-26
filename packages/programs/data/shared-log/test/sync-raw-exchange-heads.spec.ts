@@ -967,12 +967,22 @@ describe("raw exchange-head sync", () => {
 							"commitVerifiedAllPreparedRawReceiveJoinBatch",
 						)
 					: undefined;
+			const nativeGroupAssignmentSpy = sinon.spy(
+				backbone,
+				"planPreparedRawReceiveGroupAssignments",
+			);
+			const nativeGroupLeaderSpy = sinon.spy(
+				backbone,
+				"planPreparedRawReceiveGroupLeaders",
+			);
 			try {
 				await target.log.onMessage(message!, {
 					from: source.node.identity.publicKey,
 				} as any);
 
 				expect(target.log.log.length).to.equal(1);
+				expect(nativeGroupAssignmentSpy.callCount).to.be.greaterThan(0);
+				expect(nativeGroupLeaderSpy.callCount).to.equal(0);
 				expect(nativePreparedJoinCommitSpy.callCount).to.equal(0);
 				expect(
 					nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0,
@@ -996,6 +1006,15 @@ describe("raw exchange-head sync", () => {
 				expect(
 					joinPlanProfile.details.nativeSynchronousJoinPlan,
 				).to.equal(true);
+				const receivePlanProfile = profileEvents.find(
+					(event) => event.name === "sharedLog.receive.plan",
+				);
+				expect(
+					receivePlanProfile.details.nativeRawGroupAssignmentPlans,
+				).to.equal(true);
+				expect(
+					receivePlanProfile.details.nativeRawGroupLeaderPlans,
+				).to.equal(false);
 				const committedProfile = profileEvents.find(
 					(event) => event.name === "log.joinPreparedFacts.committed",
 				);
@@ -1003,6 +1022,8 @@ describe("raw exchange-head sync", () => {
 					committedProfile.details.nativePreparedCommitted,
 				).to.equal(true);
 			} finally {
+				nativeGroupLeaderSpy.restore();
+				nativeGroupAssignmentSpy.restore();
 				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
 				nativeVerifiedPreparedJoinCommitSpy?.restore();
 				nativePreparedJoinCommitSpy.restore();
