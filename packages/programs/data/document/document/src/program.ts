@@ -1105,7 +1105,7 @@ export class Documents<
 		if (options?.checkRemote) {
 			unsupported.push("remote existing-head check");
 		}
-		if (options?.replicas) {
+		if (options?.replicas !== undefined) {
 			unsupported.push("per-call replicas");
 		}
 		return unsupported;

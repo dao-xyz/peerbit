@@ -42,7 +42,14 @@ import {
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
-import { Entry, EntryType, EntryV0, Log, createEntry } from "@peerbit/log";
+import {
+	Entry,
+	EntryType,
+	EntryV0,
+	Log,
+	Timestamp,
+	createEntry,
+} from "@peerbit/log";
 import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
@@ -2988,17 +2995,17 @@ describe("index", () => {
 							},
 						},
 					});
-					const payloadCommitOnlySpy = sinon.spy(
+					const strictPayloadCommitOnlySpy = sinon.spy(
 						store.docs.log,
-						"appendLocallyPreparedPayloadCommitOnly",
+						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					try {
 						const doc = new Document({ id: uuid(), name: "native-defaults" });
 						await store.docs.put(doc, {
 							unique: true,
 						});
-						expect(payloadCommitOnlySpy.callCount).equal(1);
-						expect(payloadCommitOnlySpy.firstCall.args[1]).to.include({
+						expect(strictPayloadCommitOnlySpy.callCount).equal(1);
+						expect(strictPayloadCommitOnlySpy.firstCall.args[1]).to.include({
 							replicate: false,
 							target: "none",
 						});
@@ -3006,7 +3013,7 @@ describe("index", () => {
 							"native-defaults",
 						);
 					} finally {
-						payloadCommitOnlySpy.restore();
+						strictPayloadCommitOnlySpy.restore();
 						await rustSession.stop();
 					}
 				});
@@ -3631,16 +3638,108 @@ describe("index", () => {
 							canPerform: policy.allowAll<Document>(),
 						},
 					});
+					const strictPayloadCommitOnlySpy = sinon.spy(
+						store.docs.log,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
 					try {
-						await expect(
-							store.docs.put(new Document({ id: uuid(), name: "bad" }), {
-								unique: true,
-								replicate: false,
-								target: "none",
-								canAppend: () => true,
-							}),
-						).to.be.rejectedWith(NativeDocumentModeError, "per-call canAppend");
+						for (const testCase of [
+							{
+								name: "canAppend",
+								options: { canAppend: () => true },
+								message: "per-call canAppend",
+							},
+							{
+								name: "onChange",
+								options: { onChange: () => undefined },
+								message: "per-call onChange",
+							},
+							{
+								name: "signers",
+								options: { signers: [() => undefined] },
+								message: "custom signers",
+							},
+							{
+								name: "identity",
+								options: { identity: {} },
+								message: "custom identity",
+							},
+							{
+								name: "encryption",
+								options: { encryption: {} },
+								message: "encryption",
+							},
+							{
+								name: "trim",
+								options: { trim: { type: "length" as const, to: 1 } },
+								message: "per-call trim",
+							},
+							{
+								name: "entry type",
+								options: { meta: { type: EntryType.CUT } },
+								message: "custom entry type",
+							},
+							{
+								name: "next",
+								options: { meta: { next: [] } },
+								message: "custom next",
+							},
+							{
+								name: "timestamp",
+								options: {
+									meta: {
+										timestamp: new Timestamp({ wallTime: 1n }),
+									},
+								},
+								message: "custom timestamp",
+							},
+							{
+								name: "gid seed",
+								options: { meta: { gidSeed: new Uint8Array(32) } },
+								message: "custom gid seed",
+							},
+							{
+								name: "replicated put",
+								options: { replicate: true },
+								message: "replicated put",
+							},
+							{
+								name: "target",
+								options: { target: "replicators" as const },
+								message: "non-local target",
+							},
+							{
+								name: "delivery",
+								options: { delivery: true },
+								message: "delivery",
+							},
+							{
+								name: "checkRemote",
+								options: { checkRemote: true },
+								message: "remote existing-head check",
+							},
+							{
+								name: "replicas",
+								options: { replicas: 0 },
+								message: "per-call replicas",
+							},
+						]) {
+							await expect(
+								store.docs.put(
+									new Document({ id: uuid(), name: `bad-${testCase.name}` }),
+									{
+										unique: true,
+										replicate: false,
+										target: "none",
+										...(testCase.options as any),
+									},
+								),
+								testCase.name,
+							).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
+						}
+						expect(strictPayloadCommitOnlySpy.callCount).equal(0);
 					} finally {
+						strictPayloadCommitOnlySpy.restore();
 						await rustSession.stop();
 					}
 				});
@@ -4393,15 +4492,44 @@ describe("index", () => {
 						"commitNativeDocumentAppendMany",
 					);
 					try {
-						await expect(
-							store.docs.putMany(
-								[new Document({ id: uuid(), name: "custom-hook" })],
-								{
-									target: "none",
-									canAppend: async () => true,
-								},
-							),
-						).to.be.rejectedWith(NativeDocumentModeError, "per-call canAppend");
+						for (const testCase of [
+							{
+								name: "canAppend",
+								options: { canAppend: async () => true },
+								message: "per-call canAppend",
+							},
+							{
+								name: "onChange",
+								options: { onChange: () => undefined },
+								message: "per-call onChange",
+							},
+							{
+								name: "replicas",
+								options: { replicas: 0 },
+								message: "per-call replicas",
+							},
+							{
+								name: "delivery",
+								options: { delivery: true },
+								message: "delivery",
+							},
+						]) {
+							await expect(
+								store.docs.putMany(
+									[
+										new Document({
+											id: uuid(),
+											name: `custom-${testCase.name}`,
+										}),
+									],
+									{
+										target: "none",
+										...(testCase.options as any),
+									},
+								),
+								testCase.name,
+							).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
+						}
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(0);
 					} finally {
@@ -4494,7 +4622,11 @@ describe("index", () => {
 							"createNativeBackboneDocumentIndexAppendFactsPreparer",
 						)
 						.returns(undefined);
-					const commitOnlySpy = sinon.spy(
+					const strictCommitOnlySpy = sinon.spy(
+						store.docs.log,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericCommitOnlySpy = sinon.spy(
 						store.docs.log,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
@@ -4512,9 +4644,11 @@ describe("index", () => {
 							NativeDocumentModeError,
 							"native document-index commit",
 						);
-						expect(commitOnlySpy.callCount).equal(0);
+						expect(strictCommitOnlySpy.callCount).equal(0);
+						expect(genericCommitOnlySpy.callCount).equal(0);
 					} finally {
-						commitOnlySpy.restore();
+						genericCommitOnlySpy.restore();
+						strictCommitOnlySpy.restore();
 						prepareWithAppendFactsStub.restore();
 						prepareImmediateStub.restore();
 						await rustSession.stop();
