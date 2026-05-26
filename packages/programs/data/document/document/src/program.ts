@@ -4043,7 +4043,7 @@ export class Documents<
 		modified.add(key.primitive);
 	}
 
-	private putStrictNativeReceivedStoredIdentityWithContext(
+	private putStrictNativeReceivedDocumentIndexWithContext(
 		value: T,
 		key: indexerTypes.IdKey,
 		entry: Entry<Operation>,
@@ -4065,14 +4065,21 @@ export class Documents<
 			gid: entry.meta.gid,
 			size: encodePutOperationPayload(payload.data).byteLength,
 		});
-		return this._index._putStoredIdentityWithContext(
+		const nativeDocumentIndex =
+			this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+				value,
+				payload.data,
+				context,
+				{ entryPublicKeys: entry.publicKeys },
+			);
+		if (!nativeDocumentIndex) {
+			return;
+		}
+		return this._index._putPreparedNativeBackboneDocumentIndexWithContext(
 			value,
 			key,
 			context,
-			{
-				prefix: payload.data,
-				suffix: encodeDocumentContextSuffix(context),
-			},
+			nativeDocumentIndex,
 			{
 				replace: existing != null,
 			},
@@ -4332,7 +4339,7 @@ export class Documents<
 					}
 					const nativeStoredIndexed =
 						payload instanceof PutOperation
-							? await this.putStrictNativeReceivedStoredIdentityWithContext(
+							? await this.putStrictNativeReceivedDocumentIndexWithContext(
 									value,
 									key,
 									item,

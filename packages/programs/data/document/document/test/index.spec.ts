@@ -3577,9 +3577,9 @@ describe("index", () => {
 					await rustSession.peers[0].open(source, { args: openArgs() });
 					await rustSession.peers[1].open(target, { args: openArgs() });
 					const documentPutSpy = sinon.spy(target.docs.index, "put");
-					const documentStoredIdentityPutSpy = sinon.spy(
+					const documentPreparedNativePutSpy = sinon.spy(
 						target.docs.index,
-						"_putStoredIdentityWithContext",
+						"_putPreparedNativeBackboneDocumentIndexWithContext",
 					);
 					const backendIndex = target.docs.index.index as any;
 					const backendStoredContextPutSpy = sinon.spy(
@@ -3605,11 +3605,100 @@ describe("index", () => {
 							)?.name,
 						).equal("native-replicated-stored-context");
 						expect(documentPutSpy.callCount).equal(0);
-						expect(documentStoredIdentityPutSpy.callCount).greaterThan(0);
+						expect(documentPreparedNativePutSpy.callCount).greaterThan(0);
 						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
 					} finally {
 						backendStoredContextPutSpy.restore();
-						documentStoredIdentityPutSpy.restore();
+						documentPreparedNativePutSpy.restore();
+						documentPutSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
+				it("indexes strict native replicated descriptor transforms through native context on receive", async () => {
+					@variant("strict_native_replicated_pick_indexable")
+					class StrictNativeReplicatedPickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedPickIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore<StrictNativeReplicatedPickIndexable>({
+						docs: new Documents<Document, StrictNativeReplicatedPickIndexable>(),
+					});
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: StrictNativeReplicatedPickIndexable,
+							transform: transform.pick<
+								Document,
+								StrictNativeReplicatedPickIndexable
+							>(["id", "name"]),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const documentPutSpy = sinon.spy(target.docs.index, "put");
+					const documentPreparedNativePutSpy = sinon.spy(
+						target.docs.index,
+						"_putPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const documentTransformSpy = sinon.spy(
+						target.docs.index,
+						"transformer",
+					);
+					const backendIndex = target.docs.index.index as any;
+					const backendStoredContextPutSpy = sinon.spy(
+						backendIndex,
+						"putStoredContextualEncodedValue",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-pick",
+							data: new Uint8Array([1, 2, 3]),
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						const indexed = await target.docs.index.get(doc.id, {
+							local: true,
+							remote: false,
+							resolve: false,
+						});
+						expect(indexed?.id).equal(doc.id);
+						expect(indexed?.name).equal("native-replicated-pick");
+						expect((indexed as any)?.data).equal(undefined);
+						expect(documentPutSpy.callCount).equal(0);
+						expect(documentPreparedNativePutSpy.callCount).greaterThan(0);
+						expect(documentTransformSpy.callCount).equal(0);
+						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
+					} finally {
+						backendStoredContextPutSpy.restore();
+						documentTransformSpy.restore();
+						documentPreparedNativePutSpy.restore();
 						documentPutSpy.restore();
 						await target.close();
 						await source.close();
