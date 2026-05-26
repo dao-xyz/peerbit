@@ -1031,6 +1031,12 @@ const runScenario = async (name: string): Promise<BenchRow> => {
 			),
 			patchAsyncMethod(
 				store.docs.log as any,
+				"appendStrictNativeDocumentPayloadCommitOnly",
+				profile,
+				"sharedAppendMs",
+			),
+			patchAsyncMethod(
+				store.docs.log as any,
 				"appendLocallyPreparedManyIndependent",
 				profile,
 				"sharedAppendMs",

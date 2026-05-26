@@ -2578,12 +2578,19 @@ export class Documents<
 							),
 					);
 				}
+				const commitOnlyAppend = this.isNativeMode()
+					? this.log.appendStrictNativeDocumentPayloadCommitOnly(
+							input.operationPayloadBytes,
+							appendOptions,
+							appendProperties,
+						)
+					: this.log.appendLocallyPreparedPayloadCommitOnly(
+							input.operationPayloadBytes,
+							appendOptions,
+							appendProperties,
+						);
 				return mapMaybePromise(
-					this.log.appendLocallyPreparedPayloadCommitOnly(
-						input.operationPayloadBytes,
-						appendOptions,
-						appendProperties,
-					),
+					commitOnlyAppend,
 					(commitOnly) => {
 						if (commitOnly) {
 							return this.createNativeCheckedDocumentAppendCommitFacts(

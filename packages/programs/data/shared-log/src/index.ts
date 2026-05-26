@@ -5400,6 +5400,50 @@ export class SharedLog<
 		);
 	}
 
+	/** Strict native document path. Never falls back to compatibility append. */
+	appendStrictNativeDocumentPayloadCommitOnly(
+		payloadData: Uint8Array,
+		options?: SharedAppendOptions<T> | undefined,
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+			useNativeExistingDocumentContext?: boolean;
+		},
+	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		if (options?.canAppend || options?.onChange) {
+			throw new Error(
+				"appendStrictNativeDocumentPayloadCommitOnly does not accept canAppend or onChange hooks",
+			);
+		}
+		if (
+			options?.target !== "none" ||
+			options?.replicate === true ||
+			(!this.shouldDeferHeadCoordinatePersistence(options) &&
+				!this._nativeSharedLogState &&
+				!this.canUseNativeBackboneResidentCoordinateState())
+		) {
+			return undefined;
+		}
+		if (this._isAdaptiveReplicating) {
+			this.markLocalAppendActivity();
+		}
+
+		const { appendOptions, minReplicasValue } =
+			this.createLogAppendOptions(options);
+		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		const result = this.appendLocallyPreparedPayloadNativeBackboneCommitOnly(
+			payloadData,
+			appendOptions,
+			options,
+			properties,
+			minReplicasValue,
+			this.shouldDeferHeadCoordinatePersistence(options),
+		);
+		return mapMaybePromise(result, (commitOnly) => commitOnly ?? undefined);
+	}
+
 	private appendLocallyPreparedPayloadCommitOnlyFallback(
 		payloadData: Uint8Array,
 		appendOptions: AppendOptions<T>,

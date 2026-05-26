@@ -2645,6 +2645,14 @@ describe("index", () => {
 						store.docs as any,
 						"commitNativeDocumentAppend",
 					);
+					const strictNativeAppendSpy = sinon.spy(
+						store.docs.log,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericPayloadAppendSpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
 					try {
 						const doc = new Document({
 							id: uuid(),
@@ -2656,12 +2664,16 @@ describe("index", () => {
 							target: "none",
 						});
 						expect(nativeCommitSpy.callCount).equal(1);
+						expect(strictNativeAppendSpy.callCount).equal(1);
+						expect(genericPayloadAppendSpy.callCount).equal(0);
 						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(doc.id))?.name).equal(
 							"native-backend",
 						);
 					} finally {
+						genericPayloadAppendSpy.restore();
+						strictNativeAppendSpy.restore();
 						nativeCommitSpy.restore();
 						compatPlanSpy.restore();
 						fallbackAppendSpy.restore();
@@ -4404,8 +4416,12 @@ describe("index", () => {
 						},
 					});
 					const commitOnlyStub = sinon
-						.stub(store.docs.log, "appendLocallyPreparedPayloadCommitOnly")
+						.stub(store.docs.log, "appendStrictNativeDocumentPayloadCommitOnly")
 						.returns(undefined as any);
+					const genericPayloadAppendSpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
 					const fallbackSpy = sinon.spy(
 						store.docs as any,
 						"commitNativeDocumentAppendPayloadFallback",
@@ -4421,9 +4437,11 @@ describe("index", () => {
 							NativeDocumentModeError,
 							"native payload commit-only append",
 						);
+						expect(genericPayloadAppendSpy.callCount).equal(0);
 						expect(fallbackSpy.callCount).equal(0);
 					} finally {
 						fallbackSpy.restore();
+						genericPayloadAppendSpy.restore();
 						commitOnlyStub.restore();
 						await rustSession.stop();
 					}
