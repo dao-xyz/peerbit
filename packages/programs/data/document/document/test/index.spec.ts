@@ -3875,6 +3875,10 @@ describe("index", () => {
 						store.docs.log,
 						"appendLocallyValidated",
 					);
+					const nativeDeleteAppendSpy = sinon.spy(
+						store.docs.log,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
 					try {
 						const doc = new Document({ id: uuid(), name: "native-delete" });
 						const put = await store.docs.put(doc, {
@@ -3884,6 +3888,7 @@ describe("index", () => {
 						});
 						const putHash = put.entry.hash;
 						sharedAppendSpy.resetHistory();
+						nativeDeleteAppendSpy.resetHistory();
 
 						const deleted = await store.docs.del(doc.id, {
 							replicate: false,
@@ -3893,9 +3898,11 @@ describe("index", () => {
 						expect(deleted.entry.meta.type).equal(EntryType.CUT);
 						expect(deleted.entry.meta.next).to.deep.equal([putHash]);
 						expect(await store.docs.get(doc.id)).equal(undefined);
-						expect(trustedAppendSpy.callCount).equal(1);
+						expect(nativeDeleteAppendSpy.callCount).equal(1);
+						expect(trustedAppendSpy.callCount).equal(0);
 						expect(sharedAppendSpy.callCount).equal(0);
 					} finally {
+						nativeDeleteAppendSpy.restore();
 						trustedAppendSpy.restore();
 						sharedAppendSpy.restore();
 						await rustSession.stop();

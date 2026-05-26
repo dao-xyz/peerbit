@@ -3387,6 +3387,7 @@ export class Documents<
 			throw this.nativeModeError("canPerform policy rejected this delete");
 		}
 
+		const operationPayloadBytes = BORSH_ENCODING_OPERATION.encoder(operation);
 		const documentsChanged: DocumentsChange<T, I> | undefined =
 			this.hasDocumentChangeConsumers()
 				? {
@@ -3401,20 +3402,36 @@ export class Documents<
 				})
 			: undefined;
 		this.keepCache?.delete(existingContext.head);
-		const appended = await this.log.appendLocallyValidated(operation, {
-			...deleteOptions,
-			meta: {
-				next: [previousEntry],
-				type: EntryType.CUT,
-				...deleteOptions?.meta,
+		const appended = await this.log.appendLocallyPreparedPayloadCommitOnly(
+			operationPayloadBytes,
+			{
+				...deleteOptions,
+				meta: {
+					next: [previousEntry],
+					type: EntryType.CUT,
+					...deleteOptions?.meta,
+				},
 			},
-		});
+			{
+				skipMissingNextJoin: true,
+				resolveTrimmedEntries: false,
+			},
+		);
+		if (!appended) {
+			throw this.nativeModeError("requires native delete append support");
+		}
+		const result: DocumentDeleteResult = {
+			get entry() {
+				return appended.entry;
+			},
+			removed: appended.removed,
+		};
 		await this._index.del(key);
 		if (documentsChanged && removedDocument) {
 			documentsChanged.removed.push(removedDocument);
 			this.dispatchDocumentChangeIfObserved(documentsChanged);
 		}
-		return appended;
+		return result;
 	}
 
 	async handleChanges(

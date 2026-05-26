@@ -1378,7 +1378,6 @@ export class Log<T> {
 			options.signers ||
 			options.identity ||
 			options.meta?.timestamp ||
-			options.meta?.type === EntryType.CUT ||
 			!supportsNativeTrim ||
 			(this._hasCustomCanAppend &&
 				options.__peerbitCanAppendAlreadyValidated !== true)
