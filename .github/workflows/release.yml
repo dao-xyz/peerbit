@@ -62,6 +62,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
       - name: Build Packages
