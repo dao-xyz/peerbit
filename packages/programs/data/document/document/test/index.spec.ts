@@ -3613,6 +3613,59 @@ describe("index", () => {
 					}
 				});
 
+				it("honors strict native length trim hysteresis", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1, from: 3 },
+							},
+						},
+					});
+					const hashTrimNoReturnSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntryHashesNoReturnMaybe",
+					);
+					const jsTrimSpy = sinon.spy(store.docs.log.log, "trim");
+					try {
+						const first = new Document({ id: uuid(), name: "trim-from-1" });
+						const second = new Document({ id: uuid(), name: "trim-from-2" });
+						const third = new Document({ id: uuid(), name: "trim-from-3" });
+						await store.docs.put(first, { unique: true });
+						await store.docs.put(second, { unique: true });
+						expect(store.docs.log.log.length).equal(2);
+						expect(hashTrimNoReturnSpy.callCount).equal(0);
+						await store.docs.put(third, { unique: true });
+						expect(jsTrimSpy.callCount).equal(0);
+						expect(hashTrimNoReturnSpy.callCount).greaterThan(0);
+						expect(store.docs.log.log.length).equal(1);
+						expect(await store.docs.get(first.id)).equal(undefined);
+						expect(await store.docs.get(second.id)).equal(undefined);
+						expect((await store.docs.get(third.id))?.name).equal(
+							"trim-from-3",
+						);
+					} finally {
+						jsTrimSpy.restore();
+						hashTrimNoReturnSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects arbitrary canPerform in strict native mode", async () => {
 					const docs = new Documents<Document>();
 					await expect(
