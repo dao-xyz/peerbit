@@ -368,6 +368,40 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [6.1.0](https://github.com/dao-xyz/peerbit/compare/log-v6.0.35...log-v6.1.0) (2026-05-26)
+
+
+### Features
+
+* wire native graph into peerbit log ([e564fab](https://github.com/dao-xyz/peerbit/commit/e564fab367d0a6a3d31a831fd4ec2d6fff48b77e))
+
+
+### Bug Fixes
+
+* stabilize native log graph build path ([c841834](https://github.com/dao-xyz/peerbit/commit/c841834f21e5f8b3dac88ebe7073849e40600e30))
+
+
+### Refactors
+
+* **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
+* **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks bumped to 4.1.9
+    * @peerbit/blocks-interface bumped to 2.0.12
+    * @peerbit/indexer-interface bumped to 3.0.4
+    * @peerbit/indexer-simple bumped to 1.2.7
+    * @peerbit/indexer-sqlite3 bumped to 3.0.7
+    * @peerbit/pubsub-interface bumped to 5.1.4
+    * @peerbit/stream-interface bumped to 6.0.10
+  * devDependencies
+    * @peerbit/log-rust bumped to 1.0.0
+    * @peerbit/test-utils bumped to 3.0.34
+
 ## [6.0.35](https://github.com/dao-xyz/peerbit/compare/log-v6.0.34...log-v6.0.35) (2026-05-05)
 
 

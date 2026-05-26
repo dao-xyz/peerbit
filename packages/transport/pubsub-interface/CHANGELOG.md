@@ -108,6 +108,15 @@
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
     * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
+## [5.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.1.3...pubsub-interface-v5.1.4) (2026-05-26)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/stream-interface bumped to 6.0.10
+
 ## [5.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.1.2...pubsub-interface-v5.1.3) (2026-05-01)
 
 

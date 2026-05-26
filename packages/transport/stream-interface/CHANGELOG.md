@@ -66,6 +66,14 @@
   * dependencies
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [6.0.10](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.9...stream-interface-v6.0.10) (2026-05-26)
+
+
+### Refactors
+
+* **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
+* **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
+
 ## [6.0.9](https://github.com/dao-xyz/peerbit/compare/stream-interface-v6.0.8...stream-interface-v6.0.9) (2026-05-01)
 
 

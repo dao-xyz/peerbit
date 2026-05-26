@@ -456,6 +456,38 @@
   * devDependencies
     * @peerbit/test-utils bumped from 2.0.32 to 2.0.33
 
+## [13.0.43](https://github.com/dao-xyz/peerbit/compare/document-v13.0.42...document-v13.0.43) (2026-05-26)
+
+
+### Bug Fixes
+
+* **document:** catch NotStartedError in putWithContext() during shutdown ([0bc3cee](https://github.com/dao-xyz/peerbit/commit/0bc3ceeb6e418325cf2b5ddd53049a2ab05a0efe))
+* **document:** keep remote iteration reads foreground ([bbcea1f](https://github.com/dao-xyz/peerbit/commit/bbcea1f302d3e73805958e6e245dd6a143ffd02f))
+* **document:** keep remote iteration reads foreground ([637c828](https://github.com/dao-xyz/peerbit/commit/637c828bfe09e2b0d42d7e71b9aa2a87f248f563))
+* **document:** reopen update filter index ([d4265d8](https://github.com/dao-xyz/peerbit/commit/d4265d8922d4a3f425ae1e77dcf9a15ee0019fb7))
+* **document:** start temporary hashmap indexes ([aebbe20](https://github.com/dao-xyz/peerbit/commit/aebbe20284654d82f65f3f28c8969d149ae21cdb))
+* **indexer-sqlite3:** prevent crashes during and after shutdown ([00a3185](https://github.com/dao-xyz/peerbit/commit/00a318585e7ec5441859c874f55e46f6b2d2d959))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/document-interface bumped to 3.2.41
+    * @peerbit/indexer-cache bumped to 0.2.7
+    * @peerbit/indexer-interface bumped to 3.0.4
+    * @peerbit/indexer-simple bumped to 1.2.7
+    * @peerbit/indexer-sqlite3 bumped to 3.0.7
+    * @peerbit/log bumped to 6.1.0
+    * @peerbit/program bumped to 6.0.30
+    * @peerbit/pubsub bumped to 5.2.11
+    * @peerbit/rpc bumped to 6.0.34
+    * @peerbit/shared-log bumped to 13.1.17
+    * @peerbit/stream-interface bumped to 6.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.34
+    * peerbit bumped to 5.2.19
+
 ## [13.0.42](https://github.com/dao-xyz/peerbit/compare/document-v13.0.41...document-v13.0.42) (2026-05-05)
 
 

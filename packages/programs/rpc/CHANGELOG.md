@@ -417,6 +417,26 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
+## [6.0.34](https://github.com/dao-xyz/peerbit/compare/rpc-v6.0.33...rpc-v6.0.34) (2026-05-26)
+
+
+### Refactors
+
+* **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
+* **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/program bumped to 6.0.30
+    * @peerbit/pubsub bumped to 5.2.11
+    * @peerbit/pubsub-interface bumped to 5.1.4
+    * @peerbit/stream-interface bumped to 6.0.10
+  * devDependencies
+    * @peerbit/test-utils bumped to 3.0.34
+
 ## [6.0.33](https://github.com/dao-xyz/peerbit/compare/rpc-v6.0.32...rpc-v6.0.33) (2026-05-05)
 
 

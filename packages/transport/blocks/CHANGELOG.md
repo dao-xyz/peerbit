@@ -279,6 +279,28 @@
     * @peerbit/blocks-interface bumped from 1.2.18 to 1.2.19
     * @peerbit/crypto bumped from 2.1.7 to 2.2.0
 
+## [4.1.9](https://github.com/dao-xyz/peerbit/compare/blocks-v4.1.8...blocks-v4.1.9) (2026-05-26)
+
+
+### Bug Fixes
+
+* **blocks:** catch LEVEL_DATABASE_NOT_OPEN in put() after stop() ([0449821](https://github.com/dao-xyz/peerbit/commit/0449821346d6bdc43c0793b5a95a0280fdcb5e31))
+
+
+### Refactors
+
+* **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
+* **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/blocks-interface bumped to 2.0.12
+    * @peerbit/stream bumped to 5.0.17
+    * @peerbit/stream-interface bumped to 6.0.10
+
 ## [4.1.8](https://github.com/dao-xyz/peerbit/compare/blocks-v4.1.7...blocks-v4.1.8) (2026-05-05)
 
 
