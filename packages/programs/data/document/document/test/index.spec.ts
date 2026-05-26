@@ -3627,6 +3627,11 @@ describe("index", () => {
 							message: "legacy compatibility",
 						},
 						{
+							name: "strictHistory",
+							options: { strictHistory: true },
+							message: "strict history",
+						},
+						{
 							name: "custom domain",
 							options: { domain: (() => undefined) as any },
 							message: "custom domain",
@@ -3670,6 +3675,19 @@ describe("index", () => {
 							testCase.name,
 						).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
 					}
+				});
+
+				it("rejects constructor-level immutable documents in strict native mode", async () => {
+					const docs = new Documents<Document>({ immutable: true });
+					await expect(
+						docs.open({
+							type: Document,
+							mode: "native",
+							replicate: false,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+						}),
+					).to.be.rejectedWith(NativeDocumentModeError, "immutable documents");
 				});
 
 				it("rejects unsupported per-put options in strict native mode", async () => {

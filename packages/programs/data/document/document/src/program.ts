@@ -982,6 +982,12 @@ export class Documents<
 		if (options.compatibility != null) {
 			unsupported.push("legacy compatibility");
 		}
+		if (options.strictHistory) {
+			unsupported.push("strict history");
+		}
+		if (this.immutable) {
+			unsupported.push("immutable documents");
+		}
 		if (Program.isPrototypeOf(options.type)) {
 			unsupported.push("program-valued document type");
 		}
