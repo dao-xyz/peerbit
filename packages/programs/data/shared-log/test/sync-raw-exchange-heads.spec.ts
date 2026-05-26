@@ -1940,6 +1940,111 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("fast-drops native raw receive entries when only the sender is leader", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const baseArgs: any = {
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				replicate: false,
+				sync: {
+					rawExchangeHeads: true,
+				},
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					...baseArgs,
+					keep: () => true,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					...baseArgs,
+					sync: {
+						...baseArgs.sync,
+						profile: (event: any) => profileEvents.push(event),
+					},
+				},
+			});
+
+			const entries: { hash: string; gid: string }[] = [];
+			for (let i = 0; i < 4; i++) {
+				const { entry } = await source.add(uuid(), {
+					meta: {
+						next: [],
+						gidSeed: new Uint8Array([i & 0xff, (i >>> 8) & 0xff]),
+					},
+				});
+				entries.push({ hash: entry.hash, gid: entry.meta.gid });
+			}
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const senderHash = source.node.identity.publicKey.hashcode();
+			for (let i = 0; i < entries.length; i++) {
+				for (const [coordinateIndex, coordinate] of backbone
+					.getGidCoordinates(entries[i]!.gid, 2)
+					.entries()) {
+					const start = BigInt(String(coordinate));
+					backbone.putRange({
+						id: `sender-only-${i}-${coordinateIndex}`,
+						hash: senderHash,
+						timestamp: 0,
+						start1: start,
+						end1: start + 1n,
+						start2: start,
+						end2: start + 1n,
+						width: 1,
+						mode: 0,
+					});
+				}
+			}
+
+			let message:
+				| RawExchangeHeadsMessage
+				| ExchangeHeadsMessage<any>
+				| undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				entries.map((entry) => entry.hash),
+			)) {
+				message = generated;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			await target.log.onMessage(message!, {
+				from: source.node.identity.publicKey,
+			} as any);
+
+			expect(target.log.log.length).to.equal(0);
+			const receivePlanProfile = profileEvents.find(
+				(event) => event.name === "sharedLog.receive.plan",
+			);
+			expect(receivePlanProfile.details.nativeFastDropEarly).to.equal(true);
+			expect(
+				profileEvents.some(
+					(event) => event.name === "sharedLog.rawReceive.wrapPrepared",
+				),
+			).to.equal(false);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("batches request-prune bookkeeping while queuing only newly confirmed hashes", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),

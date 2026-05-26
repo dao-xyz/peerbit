@@ -14477,9 +14477,9 @@ export class SharedLog<
 				for (let i = 0; i < nativeGroups.length; i++) {
 					const group = nativeGroups[i]!;
 					const leaders = leaderSamples[i]!;
-					const shouldRetain =
-						leaders.has(leaderSelectionContext!.selfHash) ||
-						leaders.has(fromHash);
+					const shouldRetain = leaders.has(
+						leaderSelectionContext!.selfHash,
+					);
 					(shouldRetain ? retainedHashes : droppedHashes).push(
 						...group.hashes,
 					);
@@ -14491,8 +14491,7 @@ export class SharedLog<
 					if (!leaderPlan) {
 						return undefined;
 					}
-					const shouldRetain =
-						leaderPlan.isLeader || leaderPlan.leaders.has(fromHash);
+					const shouldRetain = leaderPlan.isLeader;
 					(shouldRetain ? retainedHashes : droppedHashes).push(
 						...group.hashes,
 					);

@@ -1433,7 +1433,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-        from_hash: String,
+        _from_hash: String,
     ) -> Result<JsValue, JsValue> {
         let hashes = strings_from_array(hashes)?;
         let expected_hash_count = hashes.len();
@@ -1479,7 +1479,7 @@ impl NativePeerbitBackbone {
                 let Some(leader_hash) = row.get(0).as_string() else {
                     return Ok(JsValue::UNDEFINED);
                 };
-                if leader_hash == self_hash || leader_hash == from_hash {
+                if leader_hash == self_hash {
                     let out = Array::new();
                     out.push(&JsValue::FALSE);
                     out.push(&JsValue::from_f64(groups.len() as f64));
@@ -1510,7 +1510,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-        from_hash: String,
+        _from_hash: String,
     ) -> Result<JsValue, JsValue> {
         let hashes = strings_from_array(hashes)?;
         let expected_hash_count = hashes.len();
@@ -1560,7 +1560,7 @@ impl NativePeerbitBackbone {
                 let Some(leader_hash) = row.get(0).as_string() else {
                     return Ok(JsValue::UNDEFINED);
                 };
-                if leader_hash == self_hash || leader_hash == from_hash {
+                if leader_hash == self_hash {
                     should_retain = true;
                     break;
                 }

@@ -1042,6 +1042,41 @@ describe("native peerbit backbone", () => {
 				usedNativeFastDropPlan: true,
 				usedLeaderSamplePlans: true,
 			});
+			expect(
+				target.planPreparedRawReceiveFastDrop(
+					[first.hash, second.hash, third.hash],
+					{ minReplicas: 1, maxReplicas: 3 },
+					{
+						selfHash: "peer-a",
+						selfReplicating: false,
+						fullReplicaFallback: true,
+					},
+					"peer-keep",
+				),
+			).to.deep.equal({
+				canDrop: true,
+				groupCount: 2,
+				plannedHashCount: 3,
+			});
+			expect(
+				target.selectPreparedRawReceiveHashes(
+					[first.hash, second.hash, third.hash],
+					{ minReplicas: 1, maxReplicas: 3 },
+					{
+						selfHash: "peer-a",
+						selfReplicating: false,
+						fullReplicaFallback: true,
+					},
+					"peer-keep",
+				),
+			).to.deep.equal({
+				retainedHashes: [],
+				droppedHashes: [first.hash, second.hash, third.hash],
+				groupCount: 2,
+				plannedHashCount: 3,
+				usedNativeFastDropPlan: true,
+				usedLeaderSamplePlans: true,
+			});
 
 			target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
 				clockId: publicKey,
