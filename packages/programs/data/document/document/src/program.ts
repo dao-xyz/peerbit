@@ -241,6 +241,9 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	getNativeEntrySignerPublicKeys(
 		hashes: string[],
 	): Array<Uint8Array | undefined> | undefined;
+	getNativePreviousEntrySignerPublicKey(
+		key: indexerTypes.IdKey,
+	): { exists: boolean; publicKey?: Uint8Array } | undefined;
 	plainPutPolicyNeedsExistingContext(): boolean;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
@@ -364,6 +367,23 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 			useNativeExistingDocumentContext &&
 			this.context.plainPutPolicyNeedsExistingContext()
 		) {
+			const nativePreviousSigner =
+				this.context.getNativePreviousEntrySignerPublicKey(prepared.key);
+			if (nativePreviousSigner) {
+				if (!nativePreviousSigner.exists) {
+					return assertPolicyAndCommit(null);
+				}
+				if (nativePreviousSigner.publicKey) {
+					return mapMaybePromise(
+						this.context.assertPlainPutPolicySupported(
+							prepared.document,
+							undefined,
+							nativePreviousSigner.publicKey,
+						),
+						commit,
+					);
+				}
+			}
 			return this.context
 				.getLocalIndexedContexts([prepared.key])
 				.then((existingContexts) =>
@@ -826,6 +846,8 @@ export class Documents<
 				this.getExistingContext(existing)?.head,
 			getNativeEntrySignerPublicKeys: (hashes) =>
 				this.getNativeEntrySignerPublicKeys(hashes),
+			getNativePreviousEntrySignerPublicKey: (key) =>
+				this.getNativePreviousEntrySignerPublicKey(key),
 			plainPutPolicyNeedsExistingContext: () =>
 				this.nativePlainPutPolicyNeedsPreviousEntries(),
 			shouldResolveTrimmedEntries: () => {
@@ -1417,7 +1439,8 @@ export class Documents<
 		if (hashes.length === 0) {
 			return [];
 		}
-		const nativeGraph = this.log.log.entryIndex.properties.nativeGraph?.graph as
+		const nativeGraph = this.log.log.entryIndex.properties.nativeGraph
+			?.graph as
 			| {
 					entrySignaturePublicKeysBatch?: (
 						hashes: Iterable<string>,
@@ -1425,6 +1448,22 @@ export class Documents<
 			  }
 			| undefined;
 		return nativeGraph?.entrySignaturePublicKeysBatch?.(hashes);
+	}
+
+	private getNativePreviousEntrySignerPublicKey(
+		key: indexerTypes.IdKey,
+	): { exists: boolean; publicKey?: Uint8Array } | undefined {
+		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
+			.nativeBackbone as
+			| {
+					documentPreviousSignaturePublicKey?: (
+						key: string,
+					) => { exists: boolean; publicKey?: Uint8Array } | undefined;
+			  }
+			| undefined;
+		return nativeBackbone?.documentPreviousSignaturePublicKey?.(
+			documentIndexStoreKey(key),
+		);
 	}
 
 	private getExistingContext(

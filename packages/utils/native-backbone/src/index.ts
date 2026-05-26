@@ -110,6 +110,9 @@ type NativePeerbitBackboneHandle = {
 	document_context_batch?: (
 		keys: string[],
 	) => Array<[string, string, string, string, number] | undefined>;
+	document_previous_signature_public_key?: (
+		key: string,
+	) => [boolean, Uint8Array | undefined];
 	document_query: (
 		queryBytes: Uint8Array,
 		sortBytes: Uint8Array,
@@ -4902,6 +4905,17 @@ export class NativePeerbitBackbone {
 		return batch
 			? batch.call(this.native, keys)
 			: keys.map((key) => this.documentContext(key));
+	}
+
+	documentPreviousSignaturePublicKey(
+		key: string,
+	): { exists: boolean; publicKey?: Uint8Array } | undefined {
+		const row = this.native.document_previous_signature_public_key?.(key);
+		if (!row) {
+			return;
+		}
+		const [exists, publicKey] = row;
+		return { exists, publicKey };
 	}
 
 	documentQuery(

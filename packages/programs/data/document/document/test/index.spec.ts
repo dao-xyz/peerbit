@@ -2760,9 +2760,17 @@ describe("index", () => {
 						((store.docs.log as any)._nativeBackbone as any).native,
 						"prepare_plain_entry_commit_latest_facts_document_index_trim_hashes",
 					);
+					const previousSignerSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"document_previous_signature_public_key",
+					);
 					const signerBatchSpy = sinon.spy(
 						((store.docs.log as any)._nativeBackbone as any).native,
 						"graph_entry_signature_public_key_batch",
+					);
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
 					);
 					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
 					try {
@@ -2770,13 +2778,19 @@ describe("index", () => {
 						const first = await store.docs.put(
 							new Document({ id, name: "native-same-signer-1" }),
 						);
+						previousSignerSpy.resetHistory();
+						signerBatchSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						resolveEntrySpy.resetHistory();
 						const second = await store.docs.put(
 							new Document({ id, name: "native-same-signer-2" }),
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 						expect(nativeCommitSpy.callCount).equal(2);
 						expect(graphLatestTransactionSpy.callCount).equal(2);
-						expect(signerBatchSpy.callCount).equal(1);
+						expect(previousSignerSpy.callCount).equal(1);
+						expect(signerBatchSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(0);
 						expect(resolveEntrySpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(id))?.name).equal(
@@ -2784,7 +2798,9 @@ describe("index", () => {
 						);
 					} finally {
 						resolveEntrySpy.restore();
+						contextBatchSpy.restore();
 						signerBatchSpy.restore();
+						previousSignerSpy.restore();
 						graphLatestTransactionSpy.restore();
 						nativeCommitSpy.restore();
 						fallbackAppendSpy.restore();

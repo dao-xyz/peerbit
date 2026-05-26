@@ -652,6 +652,24 @@ impl NativePeerbitBackbone {
         Ok(rows)
     }
 
+    pub fn document_previous_signature_public_key(&self, key: &str) -> Result<Array, JsValue> {
+        let row = Array::new();
+        let Some(context) = self.document_context_facts_by_key(key)? else {
+            row.push(&JsValue::from_bool(false));
+            return Ok(row);
+        };
+        row.push(&JsValue::from_bool(true));
+        match self
+            .blocks
+            .get(&context.head)
+            .and_then(|bytes| entry_v0_signature_public_key_from_storage_bytes(&bytes).ok())
+        {
+            Some(public_key) => row.push(&Uint8Array::from(public_key.as_slice())),
+            None => row.push(&JsValue::UNDEFINED),
+        };
+        Ok(row)
+    }
+
     fn document_context_facts_by_key(
         &self,
         key: &str,
