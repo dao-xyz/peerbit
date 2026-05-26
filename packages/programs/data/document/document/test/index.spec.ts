@@ -3687,6 +3687,85 @@ describe("index", () => {
 					}
 				});
 
+				it("uses native backend putMany for same-signer updates in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: { optional: false, documentIndex: true },
+							canPerform: policy.put(
+								policy.sameSignersAsPrevious<Document>(),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					try {
+						const first = await store.docs.put(
+							new Document({ id: "same-batch-1", name: "before-1" }),
+							{ target: "none" },
+						);
+						const second = await store.docs.put(
+							new Document({ id: "same-batch-2", name: "before-2" }),
+							{ target: "none" },
+						);
+						nativeBatchSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+
+						const appended = await store.docs.putMany(
+							[
+								new Document({ id: "same-batch-1", name: "after-1" }),
+								new Document({ id: "same-batch-2", name: "after-2" }),
+							],
+							{ target: "none" },
+						);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[0].meta.next).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect(appended.entries[1].meta.next).to.deep.equal([
+							second.entry.hash,
+						]);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(contextBatchSpy.callCount).equal(1);
+						expect((await store.docs.get("same-batch-1"))?.name).equal(
+							"after-1",
+						);
+						expect((await store.docs.get("same-batch-2"))?.name).equal(
+							"after-2",
+						);
+					} finally {
+						contextBatchSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
 				it("uses native backend putMany with descriptor transforms in strict native mode", async () => {
 					@variant("strict_native_batch_pick_indexable")
 					class StrictNativeBatchPickIndexable {

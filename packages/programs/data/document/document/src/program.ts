@@ -372,6 +372,14 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				prepared.map((item) => item.key),
 			);
 		}
+		await Promise.all(
+			prepared.map((item, index) =>
+				this.context.assertPlainPutPolicySupported(
+					item.document,
+					existingContexts ? (existingContexts[index] ?? null) : undefined,
+				),
+			),
+		);
 		return mapMaybePromise(
 			this.context.commitNativeDocumentAppendMany({
 				puts: prepared.map((item, index) => ({
@@ -1095,11 +1103,6 @@ export class Documents<
 		}
 		if (unsupported.length > 0) {
 			throw this.nativeModeError(`does not support ${unsupported.join(", ")}`);
-		}
-		for (const doc of docs) {
-			if (!this.canPerformAllowsPlainPutFastPath(doc)) {
-				throw this.nativeModeError("canPerform policy rejected this document");
-			}
 		}
 	}
 
