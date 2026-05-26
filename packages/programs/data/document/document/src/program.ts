@@ -4107,7 +4107,11 @@ export class Documents<
 		const deleteOptions = this.normalizeNativeModePutOptions(options);
 		this.assertNativeModeDeleteSupported(deleteOptions);
 		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
-		const existing = await this.getLocalIndexedContext(key);
+		const nativeExistingContexts =
+			this.getNativeIndexedContextsAndPreviousSignerPublicKeys([key])?.contexts;
+		const existing = nativeExistingContexts
+			? nativeExistingContexts[0]
+			: await this.getLocalIndexedContext(key);
 		const existingContext = this.getExistingContext(existing);
 		if (!existingContext?.head) {
 			throw new NotFoundError(

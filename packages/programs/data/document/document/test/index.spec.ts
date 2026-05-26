@@ -4730,6 +4730,7 @@ describe("index", () => {
 					const nativeIndex = (store.docs.index as any).index as {
 						delIds?: (...args: any[]) => any;
 						delIdsNoReturn?: (...args: any[]) => any;
+						getContextById?: (...args: any[]) => any;
 					};
 					expect(nativeIndex.delIdsNoReturn).to.be.a("function");
 					const delIdsNoReturnSpy = sinon.spy(
@@ -4737,6 +4738,9 @@ describe("index", () => {
 						"delIdsNoReturn",
 					);
 					const delIdsSpy = sinon.spy(nativeIndex, "delIds");
+					const contextLookupSpy = nativeIndex.getContextById
+						? sinon.spy(nativeIndex, "getContextById")
+						: undefined;
 					try {
 						const doc = new Document({ id: uuid(), name: "native-delete" });
 						const put = await store.docs.put(doc, {
@@ -4748,6 +4752,7 @@ describe("index", () => {
 						sharedAppendSpy.resetHistory();
 						nativeDeleteAppendSpy.resetHistory();
 						resolveEntrySpy.resetHistory();
+						contextLookupSpy?.resetHistory();
 
 						const deleted = await store.docs.del(doc.id, {
 							replicate: false,
@@ -4762,9 +4767,11 @@ describe("index", () => {
 						expect(trustedAppendSpy.callCount).equal(0);
 						expect(sharedAppendSpy.callCount).equal(0);
 						expect(resolveEntrySpy.callCount).equal(0);
+						expect(contextLookupSpy?.callCount ?? 0).equal(0);
 						expect(delIdsNoReturnSpy.callCount).equal(1);
 						expect(delIdsSpy.callCount).equal(0);
 					} finally {
+						contextLookupSpy?.restore();
 						delIdsSpy.restore();
 						delIdsNoReturnSpy.restore();
 						resolveEntrySpy.restore();
