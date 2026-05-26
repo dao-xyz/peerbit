@@ -1183,6 +1183,25 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		trimLengthTo: number | undefined,
 	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentValuePrefixBytes: Uint8Array[],
+		documentExistingCreated: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction: (
 		wallTime: bigint,
 		logical: number,
@@ -1923,6 +1942,30 @@ export type NativeBackboneAppendInput = {
 		deleteTrimmedHeads?: boolean;
 		useLatestContext?: boolean;
 	};
+};
+
+export type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
+	entries: Array<{
+		wallTime: bigint | number | string;
+		logical?: number;
+		gid: string;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		documentIndex: {
+			key: string;
+			valuePrefixBytes: Uint8Array;
+			existingCreated?: bigint | number | string;
+		};
+	}>;
+	type?: number;
+	replicas: number;
+	roleAgeMs?: number;
+	now?: bigint | number | string;
+	selfHash?: string;
+	selfReplicating?: boolean;
+	trimLengthTo?: number;
+	documentByteElementIndexLimit?: number;
+	documentDeleteTrimmedHeads?: boolean;
 };
 
 export type NativeBackboneStorageAppendInput = NativeBackboneAppendInput & {
@@ -6243,6 +6286,53 @@ export class NativePeerbitBackbone {
 		return compactCommittedNoNextStorageAppendResultFromRow(
 			this.resolution,
 			row,
+		);
+	}
+
+	preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+		input: NativeBackboneCommittedNoNextDocumentIndexBatchInput,
+	): NativeBackboneAppendResult[] | undefined {
+		const nativeBatch =
+			this.native
+				.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction;
+		if (!nativeBatch || input.entries.length === 0) {
+			return input.entries.length === 0 ? [] : undefined;
+		}
+		const rows = nativeBatch.call(
+			this.native,
+			new BigUint64Array(
+				input.entries.map((entry) => BigInt(entry.wallTime)),
+			),
+			new Uint32Array(
+				input.entries.map((entry) => entry.logical ?? 0),
+			),
+			input.entries.map((entry) => entry.gid),
+			input.type ?? 0,
+			input.entries.map((entry) => entry.metaData),
+			input.entries.map((entry) => entry.payloadData),
+			input.replicas,
+			input.roleAgeMs ?? 0,
+			integerString(input.now ?? Date.now()),
+			input.selfHash ?? "",
+			input.selfReplicating ?? true,
+			input.entries.map((entry) => entry.documentIndex.key),
+			input.entries.map(
+				(entry) => entry.documentIndex.valuePrefixBytes,
+			),
+			input.entries.map((entry) =>
+				entry.documentIndex.existingCreated == null
+					? ""
+					: integerString(entry.documentIndex.existingCreated),
+			),
+			input.documentByteElementIndexLimit ?? 0,
+			input.documentDeleteTrimmedHeads === true,
+			input.trimLengthTo,
+		);
+		return rows.map((row) =>
+			compactCommittedNoNextStorageAppendResultFromRow(
+				this.resolution,
+				row,
+			),
 		);
 	}
 

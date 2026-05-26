@@ -5445,8 +5445,91 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             document_index_commit,
-			trim_length_to,
-		)
+            trim_length_to,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction(
+        &mut self,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        gids: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        document_keys: Array,
+        document_value_prefix_bytes: Array,
+        document_existing_created: Array,
+        document_byte_element_index_limit: usize,
+        document_delete_trimmed_heads: bool,
+        trim_length_to: JsValue,
+    ) -> Result<Array, JsValue> {
+        let len = payload_datas.length() as usize;
+        ensure_same_len(len, wall_times.length() as usize, "batch wall times")?;
+        ensure_same_len(len, logicals.length() as usize, "batch logicals")?;
+        ensure_same_len(len, gids.length() as usize, "batch gids")?;
+        ensure_same_len(len, meta_datas.length() as usize, "batch meta data")?;
+        ensure_same_len(len, document_keys.length() as usize, "batch document keys")?;
+        ensure_same_len(
+            len,
+            document_value_prefix_bytes.length() as usize,
+            "batch document value prefixes",
+        )?;
+        ensure_same_len(
+            len,
+            document_existing_created.length() as usize,
+            "batch document existing-created values",
+        )?;
+        let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
+        let document_keys = strings_from_array(document_keys)?;
+        let document_existing_created = strings_from_array(document_existing_created)?;
+        let out = Array::new();
+        for index in 0..len {
+            let index_u32 = index as u32;
+            let gid = gids
+                .get(index_u32)
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("Expected batch gid string"))?;
+            let document_index_commit = document_index_append_commit(
+                document_keys[index].clone(),
+                required_bytes_from_array(
+                    &document_value_prefix_bytes,
+                    index_u32,
+                    "document value prefix",
+                )?
+                .to_vec(),
+                document_existing_created[index].clone(),
+                document_byte_element_index_limit,
+                document_delete_trimmed_heads,
+                JsValue::UNDEFINED,
+                JsValue::UNDEFINED,
+                JsValue::UNDEFINED,
+            )?;
+            let row = self
+                .prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+                    wall_times.get_index(index_u32),
+                    logicals.get_index(index_u32),
+                    gid,
+                    entry_type,
+                    meta_datas.get(index_u32),
+                    required_bytes_from_array(&payload_datas, index_u32, "payload")?,
+                    replicas,
+                    role_age_ms,
+                    now.clone(),
+                    self_hash.clone(),
+                    self_replicating,
+                    document_index_commit,
+                    trim_length_to,
+                )?;
+            out.push(&row);
+        }
+        Ok(out)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -7041,6 +7124,18 @@ fn bytes_vec_from_array(values: Array) -> Result<Vec<Vec<u8>>, JsValue> {
         out.push(Uint8Array::new(&value).to_vec());
     }
     Ok(out)
+}
+
+fn required_bytes_from_array(
+    values: &Array,
+    index: u32,
+    field: &str,
+) -> Result<Uint8Array, JsValue> {
+    let value = values.get(index);
+    if value.is_undefined() || value.is_null() {
+        return Err(JsValue::from_str(&format!("Expected {field} bytes")));
+    }
+    Ok(Uint8Array::new(&value))
 }
 
 fn clamp_replicas_u32(value: u32, lower: u32, higher: u32) -> u32 {

@@ -568,6 +568,66 @@ describe("native peerbit backbone", () => {
 		).to.equal("doc-compact-2");
 	});
 
+	it("batches compact committed no-next document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+
+		const results =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+				{
+					entries: [
+						{
+							wallTime: 20n,
+							logical: 1,
+							gid: "gid-doc-index-batch",
+							payloadData: new Uint8Array([1, 2, 3]),
+							documentIndex: {
+								key: "doc-batch-1",
+								valuePrefixBytes: new Uint8Array(0),
+							},
+						},
+						{
+							wallTime: 21n,
+							logical: 2,
+							gid: "gid-doc-index-batch",
+							payloadData: new Uint8Array([4, 5, 6]),
+							documentIndex: {
+								key: "doc-batch-2",
+								valuePrefixBytes: new Uint8Array(0),
+							},
+						},
+					],
+					replicas: 1,
+					selfHash: "peer",
+				},
+			);
+
+		expect(results).to.have.length(2);
+		expect(results?.map((result) => result.entry.bytes)).to.deep.equal([
+			undefined,
+			undefined,
+		]);
+		expect(results?.map((result) => result.entry.next)).to.deep.equal([
+			[],
+			[],
+		]);
+		expect(backbone.documentValueLength).to.equal(2);
+		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(
+			results?.map((result) => result.entry.hash),
+		);
+		expect(
+			backbone.documentExactStringFirstKey(3, results![0]!.entry.hash),
+		).to.equal("doc-batch-1");
+		expect(
+			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
+		).to.equal("doc-batch-2");
+	});
+
 	it("coalesces trim deletes with shared-log coordinate state", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
