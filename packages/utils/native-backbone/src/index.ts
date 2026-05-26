@@ -4024,8 +4024,12 @@ export class NativeBackboneLogGraph {
 
 	entrySignaturePublicKeysBatch(
 		hashes: Iterable<string>,
-	): Array<Uint8Array | undefined> | undefined {
-		return this.native.graph_entry_signature_public_key_batch?.([...hashes]);
+	): Array<Uint8Array | undefined> {
+		const hashList = [...hashes];
+		return (
+			this.native.graph_entry_signature_public_key_batch?.(hashList) ??
+			hashList.map(() => undefined)
+		);
 	}
 
 	uniqueReferenceGids(hash: string): string[] | undefined {

@@ -3087,15 +3087,15 @@ fn parse_prepared_entry_v0_ed25519_storage_slices(
     let mut verifying_key_cache = HashMap::new();
 
     for entry in entries {
-        let parsed = parse_plain_signature_with_key(prepared_entry_v0_signature_with_key(entry)?)?;
-        validate_signature_lengths(&parsed.signature, &parsed.public_key)?;
+        let parsed =
+            parse_plain_signature_with_key_ref(prepared_entry_v0_signature_with_key(entry)?)?;
+        validate_signature_lengths(parsed.signature, parsed.public_key)?;
 
         let signature_bytes: [u8; 64] = parsed
             .signature
-            .as_slice()
             .try_into()
             .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
-        let verifying_key = cached_verifying_key(&mut verifying_key_cache, &parsed.public_key)?;
+        let verifying_key = cached_verifying_key(&mut verifying_key_cache, parsed.public_key)?;
         parsed_signatures.push(Signature::from_bytes(&signature_bytes));
         parsed_public_keys.push(verifying_key);
         parsed_messages.push(unsigned_entry_v0_storage_for_signing(
@@ -4353,15 +4353,14 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
         let signature_with_key_len = storage.signature_with_key_len;
         if verify_signatures {
             let signature_started = profile.as_ref().map(|_| js_sys::Date::now());
-            let parsed_signature = parse_plain_signature_with_key(storage.signature_with_key)?;
-            validate_signature_lengths(&parsed_signature.signature, &parsed_signature.public_key)?;
+            let parsed_signature = parse_plain_signature_with_key_ref(storage.signature_with_key)?;
+            validate_signature_lengths(parsed_signature.signature, parsed_signature.public_key)?;
             let signature_bytes: [u8; 64] = parsed_signature
                 .signature
-                .as_slice()
                 .try_into()
                 .map_err(|_| JsValue::from_str("Expected Ed25519 signature length 64"))?;
             let verifying_key =
-                cached_verifying_key(&mut verifying_key_cache, &parsed_signature.public_key)?;
+                cached_verifying_key(&mut verifying_key_cache, parsed_signature.public_key)?;
             parsed_signatures.push(Signature::from_bytes(&signature_bytes));
             parsed_public_keys.push(verifying_key);
             if let Some(started) = signature_started {
@@ -4999,6 +4998,11 @@ struct ParsedSignatureWithKey {
     public_key: Vec<u8>,
 }
 
+struct ParsedSignatureWithKeyRef<'a> {
+    signature: &'a [u8],
+    public_key: &'a [u8],
+}
+
 struct ParsedPlainEntryV0Storage<'a> {
     signable_prefix_len: usize,
     meta: &'a [u8],
@@ -5179,20 +5183,20 @@ pub fn entry_v0_signature_public_key_from_storage_bytes(bytes: &[u8]) -> Result<
     Ok(parse_plain_signature_with_key(storage.signature_with_key)?.public_key)
 }
 
-fn parse_plain_signature_with_key(bytes: &[u8]) -> Result<ParsedSignatureWithKey, JsValue> {
+fn parse_plain_signature_with_key_ref(
+    bytes: &[u8],
+) -> Result<ParsedSignatureWithKeyRef<'_>, JsValue> {
     let mut signature_reader = BorshReader::new(bytes);
     if signature_reader.read_u8("signature variant")? != 0 {
         return Err(JsValue::from_str("Expected SignatureWithKey variant"));
     }
-    let signature = signature_reader.read_bytes("signature bytes")?.to_vec();
+    let signature = signature_reader.read_bytes("signature bytes")?;
     if signature_reader.read_u8("signature public key variant")? != 0 {
         return Err(JsValue::from_str(
             "Only Ed25519 EntryV0 signatures can be verified natively",
         ));
     }
-    let public_key = signature_reader
-        .read_exact(32, "signature public key")?
-        .to_vec();
+    let public_key = signature_reader.read_exact(32, "signature public key")?;
     if signature_reader.read_u8("signature prehash")? != 0 {
         return Err(JsValue::from_str(
             "Only non-prehashed EntryV0 signatures can be verified natively",
@@ -5204,9 +5208,17 @@ fn parse_plain_signature_with_key(bytes: &[u8]) -> Result<ParsedSignatureWithKey
         ));
     }
 
-    Ok(ParsedSignatureWithKey {
+    Ok(ParsedSignatureWithKeyRef {
         signature,
         public_key,
+    })
+}
+
+fn parse_plain_signature_with_key(bytes: &[u8]) -> Result<ParsedSignatureWithKey, JsValue> {
+    let parsed = parse_plain_signature_with_key_ref(bytes)?;
+    Ok(ParsedSignatureWithKey {
+        signature: parsed.signature.to_vec(),
+        public_key: parsed.public_key.to_vec(),
     })
 }
 
