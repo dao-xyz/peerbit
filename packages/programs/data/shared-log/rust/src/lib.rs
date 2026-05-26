@@ -1382,6 +1382,13 @@ pub struct EntryCoordinateCommit {
     pub requested_replicas: usize,
 }
 
+pub struct EntryLeaderAssignment {
+    pub coordinates: Vec<u64>,
+    pub is_self_leader: bool,
+    pub from_is_leader: bool,
+    pub assigned_to_range_boundary: bool,
+}
+
 impl SharedLogStateInner {
     fn new(resolution: String) -> Self {
         Self {
@@ -1458,6 +1465,60 @@ impl NativeSharedLogState {
                 self.inner.delete_entry_coordinate_state(&next_hash);
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_leader_assignments_for_gids_batch_core(
+        &self,
+        gids: &[String],
+        replica_counts: &[usize],
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+        from_hash: &str,
+    ) -> Result<Vec<EntryLeaderAssignment>, JsValue> {
+        ensure_same_len(
+            gids.len(),
+            replica_counts.len(),
+            "gid leader assignment batch",
+        )?;
+        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut out = Vec::with_capacity(gids.len());
+
+        for (gid, replicas) in gids.iter().zip(replica_counts.iter().copied()) {
+            let coordinates = self.inner.range_planner.get_gid_coordinates(gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            let is_self_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+            let from_is_leader = leaders.iter().any(|leader| leader.hash == from_hash);
+            let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+            out.push(EntryLeaderAssignment {
+                coordinates,
+                is_self_leader,
+                from_is_leader,
+                assigned_to_range_boundary,
+            });
+        }
+
+        Ok(out)
     }
 }
 

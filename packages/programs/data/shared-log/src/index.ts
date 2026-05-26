@@ -58,6 +58,7 @@ import type {
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
+	NativeBackboneRawReceiveGroupAssignmentPlan,
 	NativeBackboneRawReceiveGroupIndexPlan,
 	NativeBackboneRawReceiveGroupLeaderPlan,
 	NativeBackboneRawReceiveGroupPlan,
@@ -10201,6 +10202,9 @@ export class SharedLog<
 					let nativeRawGroupPlans:
 						| NativeBackboneRawReceiveGroupPlan[]
 						| undefined;
+					let nativeRawGroupAssignmentPlans:
+						| NativeBackboneRawReceiveGroupAssignmentPlan[]
+						| undefined;
 					let nativeRawGroupIndexPlans:
 						| NativeBackboneRawReceiveGroupIndexPlan[]
 						| undefined;
@@ -10234,17 +10238,54 @@ export class SharedLog<
 									: undefined;
 								const leaderContext =
 									await this.createLeaderSelectionContext(leaderOptions);
-								nativeRawGroupLeaderPlans =
-									this._nativeBackbone.planPreparedRawReceiveGroupLeaders?.(
-										filteredHeadHashes,
-										replicaOptions,
-										this.createNativeLeaderOptions(leaderContext),
-									);
+								const nativeLeaderOptions =
+									this.createNativeLeaderOptions(leaderContext);
+								if (
+									!isReplicating &&
+									!this.keep &&
+									!traceLogger.enabled &&
+									!this.closed
+								) {
+									nativeRawGroupAssignmentPlans =
+										this._nativeBackbone.planPreparedRawReceiveGroupAssignments?.(
+											filteredHeadHashes,
+											replicaOptions,
+											nativeLeaderOptions,
+											contextFromHash,
+										);
+									if (
+										nativeRawGroupAssignmentPlans &&
+										!nativeRawGroupAssignmentPlans.every((plan) => {
+											const keepAsLeader =
+												plan.isLeader ||
+												(isRepairHint && plan.fromIsLeader);
+											return (
+												keepAsLeader &&
+												plan.maxReplicasFromNewEntries >=
+													plan.maxReplicasFromHead
+											);
+										})
+									) {
+										nativeRawGroupAssignmentPlans = undefined;
+									}
+								}
+								if (!nativeRawGroupAssignmentPlans) {
+									nativeRawGroupLeaderPlans =
+										this._nativeBackbone.planPreparedRawReceiveGroupLeaders?.(
+											filteredHeadHashes,
+											replicaOptions,
+											nativeLeaderOptions,
+										);
+								}
 							} catch {
+								nativeRawGroupAssignmentPlans = undefined;
 								nativeRawGroupLeaderPlans = undefined;
 							}
 						}
-						if (nativeRawGroupLeaderPlans === undefined) {
+						if (
+							nativeRawGroupLeaderPlans === undefined &&
+							nativeRawGroupAssignmentPlans === undefined
+						) {
 							nativeRawGroupIndexPlans =
 								this._nativeBackbone.planPreparedRawReceiveGroupIndexes?.(
 									filteredHeadHashes,
@@ -10253,6 +10294,7 @@ export class SharedLog<
 						}
 						nativeRawGroupPlans =
 							nativeRawGroupLeaderPlans === undefined &&
+							nativeRawGroupAssignmentPlans === undefined &&
 							nativeRawGroupIndexPlans === undefined
 								? this._nativeBackbone.planPreparedRawReceiveGroups(
 										filteredHeadHashes,
@@ -10261,9 +10303,68 @@ export class SharedLog<
 								: undefined;
 					}
 					let usedNativeRawGroups = false;
+					let usedNativeRawGroupAssignmentPlans = false;
 					let usedNativeRawGroupIndexes = false;
 					let usedNativeRawGroupLeaderPlans = false;
-					if (nativeRawGroupLeaderPlans) {
+					if (nativeRawGroupAssignmentPlans) {
+						let canUseNativeRawGroups = true;
+						for (const plan of nativeRawGroupAssignmentPlans) {
+							if (plan.indexes.length !== plan.requestedReplicas.length) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							const entries: EntryWithRefs<any>[] = [];
+							for (let i = 0; i < plan.indexes.length; i++) {
+								const entryIndex = plan.indexes[i]!;
+								const entry = filteredHeads[entryIndex];
+								const hash = filteredHeadHashes[entryIndex];
+								if (!entry || !hash) {
+									canUseNativeRawGroups = false;
+									break;
+								}
+								entries.push(entry);
+								receiveReplicaCounts.set(hash, plan.requestedReplicas[i]!);
+							}
+							if (!canUseNativeRawGroups) {
+								break;
+							}
+							const latestHead = filteredHeads[plan.latestIndex];
+							if (!latestHead) {
+								canUseNativeRawGroups = false;
+								break;
+							}
+							receivePredecodedReplicaHits += plan.indexes.length;
+							receiveGroups.push({
+								gid: plan.gid,
+								entries,
+								latestEntry: getReceiveHeadShallowOrEntry(latestHead),
+								maxReplicasFromHead: plan.maxReplicasFromHead,
+								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
+								maxMaxReplicas: plan.maxMaxReplicas,
+								leaderPlan: {
+									coordinates:
+										plan.coordinates as NumberFromType<R>[],
+									coordinateStrings: plan.coordinateStrings,
+									leaders: new Map(),
+									isLeader: plan.isLeader,
+									assignedToRangeBoundary:
+										plan.assignedToRangeBoundary,
+								},
+								leaders: false,
+								isLeader: plan.isLeader,
+								fromIsLeader: plan.fromIsLeader,
+							});
+						}
+						if (canUseNativeRawGroups) {
+							usedNativeRawGroups = true;
+							usedNativeRawGroupIndexes = true;
+							usedNativeRawGroupAssignmentPlans = true;
+						} else {
+							receiveGroups.length = 0;
+							receiveReplicaCounts.clear();
+							receivePredecodedReplicaHits = 0;
+						}
+					} else if (nativeRawGroupLeaderPlans) {
 						let canUseNativeRawGroups = true;
 						for (const plan of nativeRawGroupLeaderPlans) {
 							if (plan.indexes.length !== plan.requestedReplicas.length) {
@@ -10464,7 +10565,8 @@ export class SharedLog<
 					let usedNativeReceiveGroupLeaderPlans = false;
 					if (!isReplicating) {
 						let leaderPlans =
-							usedNativeRawGroupLeaderPlans
+							usedNativeRawGroupLeaderPlans ||
+							usedNativeRawGroupAssignmentPlans
 								? receiveGroups.map((group) => group.leaderPlan!)
 								: usedNativeRawGroups && this._nativeBackbone
 								? await this.planNativeBackboneReceiveGroupLeaders(
@@ -10504,6 +10606,8 @@ export class SharedLog<
 								nativeRawGroupIndexes: usedNativeRawGroupIndexes,
 								nativeRawGroupLeaderPlans:
 									usedNativeRawGroupLeaderPlans,
+								nativeRawGroupAssignmentPlans:
+									usedNativeRawGroupAssignmentPlans,
 								nativeRawGroupLeaderPlansFromSelection:
 									usedNativeRawGroupLeaderPlansFromSelection,
 								nativeReceiveGroupLeaderPlans:
@@ -10654,7 +10758,8 @@ export class SharedLog<
 					let nativeAllKeptJoinHashes: string[] | undefined;
 					let joinPlans: ReceivedGidJoinPlan[];
 					const canUseNativeSynchronousJoinPlan =
-						usedNativeRawGroupLeaderPlans &&
+						(usedNativeRawGroupLeaderPlans ||
+							usedNativeRawGroupAssignmentPlans) &&
 						!this.keep &&
 						!traceLogger.enabled &&
 						!this.closed &&

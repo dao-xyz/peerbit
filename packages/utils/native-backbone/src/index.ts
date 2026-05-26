@@ -275,6 +275,20 @@ type NativePeerbitBackboneHandle = {
 		fullReplicaFallback: boolean,
 		includeStrictFullReplica: boolean,
 	) => NativeBackboneRawReceiveGroupLeaderPlanRow[] | undefined;
+	plan_prepared_raw_receive_group_assignments?: (
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas: number | undefined,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+		fromHash: string,
+	) => NativeBackboneRawReceiveGroupAssignmentPlanRow[] | undefined;
 	plan_prepared_raw_receive_fast_drop?: (
 		hashes: string[],
 		minReplicas: number,
@@ -1943,6 +1957,15 @@ export type NativeBackboneRawReceiveGroupIndexPlan = {
 export type NativeBackboneRawReceiveGroupLeaderPlan =
 	NativeBackboneRawReceiveGroupIndexPlan & NativeBackboneLeaderPlan;
 
+export type NativeBackboneRawReceiveGroupAssignmentPlan =
+	NativeBackboneRawReceiveGroupIndexPlan & {
+		coordinates: Array<number | bigint>;
+		coordinateStrings: string[];
+		isLeader: boolean;
+		fromIsLeader: boolean;
+		assignedToRangeBoundary: boolean;
+	};
+
 export type NativeBackboneRawReceiveFastDropPlan = {
 	canDrop: boolean;
 	groupCount: number;
@@ -2025,6 +2048,20 @@ type NativeBackboneRawReceiveGroupLeaderPlanRow = [
 	number,
 	unknown[],
 	unknown[],
+];
+
+type NativeBackboneRawReceiveGroupAssignmentPlanRow = [
+	string,
+	Uint32Array,
+	Uint32Array,
+	number,
+	number,
+	number,
+	number,
+	unknown[],
+	boolean,
+	boolean,
+	boolean,
 ];
 
 type NativeBackboneRawReceiveSelectionRow = [
@@ -3558,6 +3595,41 @@ const rawReceiveGroupLeaderPlanFromRow = (
 	};
 };
 
+const rawReceiveGroupAssignmentPlanFromRow = (
+	resolution: "u32" | "u64",
+	[
+		gid,
+		indexes,
+		requestedReplicas,
+		latestIndex,
+		maxReplicasFromHead,
+		maxReplicasFromNewEntries,
+		maxMaxReplicas,
+		coordinateRows,
+		isLeader,
+		fromIsLeader,
+		assignedToRangeBoundary,
+	]: NativeBackboneRawReceiveGroupAssignmentPlanRow,
+): NativeBackboneRawReceiveGroupAssignmentPlan => {
+	const coordinateStrings = coordinateRows.map((coordinate) =>
+		String(coordinate),
+	);
+	return {
+		gid,
+		indexes,
+		requestedReplicas: Array.from(requestedReplicas),
+		latestIndex,
+		maxReplicasFromHead,
+		maxReplicasFromNewEntries,
+		maxMaxReplicas,
+		coordinates: rowsToNumbers(resolution, coordinateStrings),
+		coordinateStrings,
+		isLeader,
+		fromIsLeader,
+		assignedToRangeBoundary,
+	};
+};
+
 const rawReceiveSelectionFromRow = (
 	resolution: "u32" | "u64",
 	[
@@ -5018,6 +5090,27 @@ export class NativePeerbitBackbone {
 		);
 		return rows?.map((row) =>
 			rawReceiveGroupLeaderPlanFromRow(this.resolution, row),
+		);
+	}
+
+	planPreparedRawReceiveGroupAssignments(
+		hashes: Iterable<string>,
+		options: { minReplicas: number; maxReplicas?: number },
+		leaderOptions: NativeBackboneFindLeaderOptions,
+		fromHash: string,
+	): NativeBackboneRawReceiveGroupAssignmentPlan[] | undefined {
+		if (!this.native.plan_prepared_raw_receive_group_assignments) {
+			return undefined;
+		}
+		const rows = this.native.plan_prepared_raw_receive_group_assignments(
+			iterableToArray(hashes),
+			options.minReplicas,
+			options.maxReplicas,
+			...findLeaderArguments(leaderOptions),
+			fromHash,
+		);
+		return rows?.map((row) =>
+			rawReceiveGroupAssignmentPlanFromRow(this.resolution, row),
 		);
 	}
 

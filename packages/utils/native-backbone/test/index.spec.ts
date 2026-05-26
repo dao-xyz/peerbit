@@ -1538,6 +1538,35 @@ describe("native peerbit backbone", () => {
 			expect(leaderPlans?.[0].coordinateStrings).to.have.length(3);
 			expect(leaderPlans?.[0].leaders).to.be.instanceOf(Map);
 			expect(leaderPlans?.[0].leaders.has("peer-keep")).to.equal(true);
+			const assignmentPlans =
+				target.planPreparedRawReceiveGroupAssignments(
+					[first.hash, second.hash, third.hash],
+					{ minReplicas: 1, maxReplicas: 3 },
+					{
+						selfHash: "peer-keep",
+						selfReplicating: false,
+						fullReplicaFallback: false,
+					},
+					"peer-b",
+				);
+			expect(assignmentPlans).to.have.length(2);
+			expect(assignmentPlans?.[0]).to.deep.include({
+				gid: "gid-raw-group-a",
+				latestIndex: 1,
+				isLeader: true,
+				fromIsLeader: false,
+			});
+			expect(assignmentPlans?.[0].coordinates).to.have.length(3);
+			expect(assignmentPlans?.[0].coordinateStrings).to.have.length(3);
+			expect(assignmentPlans?.[0].assignedToRangeBoundary).to.be.a(
+				"boolean",
+			);
+			expect(assignmentPlans?.[1]).to.deep.include({
+				gid: "gid-raw-group-b",
+				latestIndex: 2,
+				fromIsLeader: false,
+			});
+			expect(assignmentPlans?.[1].isLeader).to.be.a("boolean");
 			expect(
 				target.planPreparedRawReceiveFastDrop(
 					[first.hash, second.hash, third.hash],

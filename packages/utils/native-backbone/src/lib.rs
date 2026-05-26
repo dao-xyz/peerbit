@@ -1622,6 +1622,74 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn plan_prepared_raw_receive_group_assignments(
+        &self,
+        hashes: Array,
+        min_replicas: u32,
+        max_replicas: JsValue,
+        role_age_ms: f64,
+        now: String,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: String,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+        from_hash: String,
+    ) -> Result<JsValue, JsValue> {
+        let hashes = strings_from_array(hashes)?;
+        let Some(groups) =
+            self.prepared_raw_receive_group_plans(hashes, min_replicas, max_replicas)?
+        else {
+            return Ok(JsValue::UNDEFINED);
+        };
+        let gids: Vec<String> = groups.iter().map(|group| group.gid.clone()).collect();
+        let replica_counts: Vec<usize> = groups
+            .iter()
+            .map(|group| group.max_max_replicas as usize)
+            .collect();
+        let assignments = self
+            .shared_log
+            .plan_leader_assignments_for_gids_batch_core(
+                &gids,
+                &replica_counts,
+                role_age_ms,
+                now,
+                peer_filter,
+                expand_peer_filter,
+                &self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+                &from_hash,
+            )?;
+        if assignments.len() != groups.len() {
+            return Ok(JsValue::UNDEFINED);
+        }
+
+        let out = Array::new();
+        for (group, assignment) in groups.into_iter().zip(assignments.into_iter()) {
+            let row = Array::new();
+            row.push(&JsValue::from_str(&group.gid));
+            row.push(&Uint32Array::from(group.indexes.as_slice()));
+            row.push(&Uint32Array::from(group.requested_replicas.as_slice()));
+            row.push(&JsValue::from_f64(group.latest_index as f64));
+            row.push(&JsValue::from_f64(group.max_replicas_from_head as f64));
+            row.push(&JsValue::from_f64(
+                group.max_replicas_from_new_entries as f64,
+            ));
+            row.push(&JsValue::from_f64(group.max_max_replicas as f64));
+            row.push(&numbers_to_rows(&self.resolution, &assignment.coordinates));
+            row.push(&JsValue::from_bool(assignment.is_self_leader));
+            row.push(&JsValue::from_bool(assignment.from_is_leader));
+            row.push(&JsValue::from_bool(assignment.assigned_to_range_boundary));
+            out.push(&row);
+        }
+
+        Ok(out.into())
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn plan_prepared_raw_receive_selection(
         &self,
         hashes: Array,
