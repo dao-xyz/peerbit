@@ -10178,6 +10178,16 @@ export class SharedLog<
 						head: EntryWithRefs<any>,
 					): ShallowOrFullEntry<any> =>
 						getPreparedRawExchangeHeadShallowEntry(head) ?? head.entry;
+					const receiveKeepDecisions = new Map<string, MaybePromise<boolean>>();
+					const getReceiveKeepDecision = (head: EntryWithRefs<any>) => {
+						const hash = getExchangeHeadHash(head);
+						if (receiveKeepDecisions.has(hash)) {
+							return receiveKeepDecisions.get(hash)!;
+						}
+						const result = this.keep!(getReceiveHeadShallowOrEntry(head));
+						receiveKeepDecisions.set(hash, result);
+						return result;
+					};
 					type ReceivedGidJoinPlan = {
 						toMerge: EntryWithRefs<any>[];
 						toPersist: ShallowOrFullEntry<any>[];
@@ -10757,10 +10767,9 @@ export class SharedLog<
 					let usedNativeAllKeptJoinPlan = false;
 					let nativeAllKeptJoinHashes: string[] | undefined;
 					let joinPlans: ReceivedGidJoinPlan[];
-					const canUseNativeSynchronousJoinPlan =
+					const canUseNativeSynchronousJoinPlanBase =
 						(usedNativeRawGroupLeaderPlans ||
 							usedNativeRawGroupAssignmentPlans) &&
-						!this.keep &&
 						!traceLogger.enabled &&
 						!this.closed &&
 						(!isReplicating ||
@@ -10772,23 +10781,45 @@ export class SharedLog<
 									(entry) => entry.gidRefrences.length === 0,
 								),
 						);
-					if (canUseNativeSynchronousJoinPlan) {
-						usedNativeSynchronousJoinPlan = true;
-						const contextFromHashes = [contextFromHash];
-						let canUseAllKeptNativeJoinPlan = true;
+					let canUseAllKeptNativeJoinPlan =
+						canUseNativeSynchronousJoinPlanBase;
+					if (canUseAllKeptNativeJoinPlan) {
 						for (const group of receiveGroups) {
 							const fromIsLeader = group.fromIsLeader ?? false;
 							const keepAsLeader =
 								group.isLeader === true || (isRepairHint && fromIsLeader);
 							if (
-								!keepAsLeader ||
 								group.maxReplicasFromNewEntries <
-									group.maxReplicasFromHead
+								group.maxReplicasFromHead
 							) {
 								canUseAllKeptNativeJoinPlan = false;
 								break;
 							}
+							if (keepAsLeader) {
+								continue;
+							}
+							if (!this.keep) {
+								canUseAllKeptNativeJoinPlan = false;
+								break;
+							}
+							for (const entry of group.entries) {
+								const keepResult = getReceiveKeepDecision(entry);
+								if (isPromiseLike(keepResult) || !keepResult) {
+									canUseAllKeptNativeJoinPlan = false;
+									break;
+								}
+							}
+							if (!canUseAllKeptNativeJoinPlan) {
+								break;
+							}
 						}
+					}
+					const canUseNativeSynchronousJoinPlan =
+						canUseNativeSynchronousJoinPlanBase &&
+						(!this.keep || canUseAllKeptNativeJoinPlan);
+					if (canUseNativeSynchronousJoinPlan) {
+						usedNativeSynchronousJoinPlan = true;
+						const contextFromHashes = [contextFromHash];
 						if (canUseAllKeptNativeJoinPlan) {
 							usedNativeAllKeptJoinPlan = true;
 							const toMerge: EntryWithRefs<any>[] = [];
@@ -10979,9 +11010,8 @@ export class SharedLog<
 									const entry = entries[i]!;
 									let shouldKeep = keepAsLeader;
 									if (!shouldKeep && this.keep) {
-										const keepResult = this.keep(
-											getReceiveHeadShallowOrEntry(entry),
-										);
+										const keepResult =
+											getReceiveKeepDecision(entry);
 										shouldKeep = isPromiseLike(keepResult)
 											? await keepResult
 											: keepResult;
