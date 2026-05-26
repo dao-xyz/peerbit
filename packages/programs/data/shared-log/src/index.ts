@@ -10987,19 +10987,21 @@ export class SharedLog<
 						const batchHashOnlyEntryAdded =
 							!!this.syncronizer.onEntryAddedHashes &&
 							this._pendingIHave.size === 0;
-						let mergeEntryByHash: Map<string, Entry<any>> | undefined;
+						let mergeEntryByHash:
+							| Map<string, EntryWithRefs<any>>
+							| undefined;
 						const materializeMergedEntry = (hash: string) => {
 							mergeEntryByHash ??= new Map(
 								allToMerge.map((entry) => [
 									getExchangeHeadHash(entry),
-									entry.entry,
+									entry,
 								]),
 							);
-							const entry = mergeEntryByHash.get(hash);
-							if (!entry) {
+							const entryRef = mergeEntryByHash.get(hash);
+							if (!entryRef) {
 								throw new Error("Missing merged entry for appended hash");
 							}
-							return entry;
+							return entryRef.entry;
 						};
 						const onAppendHashes = (hashes: string[]) => {
 							if (batchHashOnlyEntryAdded) {
