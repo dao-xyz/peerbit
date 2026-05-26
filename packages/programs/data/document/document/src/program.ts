@@ -951,7 +951,11 @@ export class Documents<
 		}
 		const unsupported: string[] = [];
 		const nativeBackbone = options.nativeBackbone as
-			| { documentIndex?: boolean; optional?: boolean }
+			| {
+					documentIndex?: boolean;
+					optional?: boolean;
+					coordinatePersistence?: unknown;
+			  }
 			| boolean
 			| undefined;
 		const indexTransform = options.index as
@@ -969,6 +973,8 @@ export class Documents<
 			unsupported.push("missing nativeBackbone.documentIndex");
 		} else if (nativeBackbone.optional !== false) {
 			unsupported.push("optional nativeBackbone");
+		} else if (!nativeBackbone.coordinatePersistence) {
+			unsupported.push("missing nativeBackbone.coordinatePersistence");
 		}
 		if (options.domain) {
 			unsupported.push("custom domain");

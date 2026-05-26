@@ -155,6 +155,16 @@ class MemoryCoordinatePersistenceStore
 	}
 }
 
+const nativeBackboneDocumentIndexOptions = () => ({
+	optional: false,
+	documentIndex: true,
+	coordinatePersistence: {
+		store: new MemoryCoordinatePersistenceStore(),
+		buffered: true,
+		flushOnAppend: false,
+	},
+});
+
 describe("index", () => {
 	let session: TestSession;
 
@@ -928,7 +938,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 					},
 				});
 				const sharedLog = store.docs.log as any;
@@ -1006,7 +1016,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						log: {
 							trim: { type: "length", to: 1 },
 						},
@@ -1173,7 +1183,7 @@ describe("index", () => {
 						args: {
 							replicate: { factor: 1 },
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						},
 					});
 					const notifyDeferred = pDefer<void>();
@@ -1235,7 +1245,7 @@ describe("index", () => {
 						args: {
 							replicate: { factor: 1 },
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						},
 					});
 					const sharedLog = store.docs.log as any;
@@ -1280,7 +1290,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 					},
 				});
 				const sharedLog = store.docs.log as any;
@@ -1388,7 +1398,7 @@ describe("index", () => {
 						replicate: { factor: 1 },
 						nativeGraph: true,
 						nativeRangePlanner: false,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 					},
 				});
 				const sharedLog = store.docs.log as any;
@@ -1452,7 +1462,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						log: {
 							trim: { type: "length", to: 1 },
 						},
@@ -1508,7 +1518,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						index: {
 							type: BackbonePickIndexable,
 							transform: transform.pick<Document, BackbonePickIndexable>([
@@ -1614,7 +1624,7 @@ describe("index", () => {
 					args: {
 						replicate: { factor: 1 },
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						log: { trim: { type: "length", to: 100 } },
 						index: {
 							type: BackboneProjectContextIndexable,
@@ -1740,7 +1750,7 @@ describe("index", () => {
 					args: {
 						replicate: false,
 						nativeGraph: true,
-						nativeBackbone: { optional: false, documentIndex: true },
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						index: {
 							type: BackboneProjectFieldContextIndexable,
 							transform: transform.project<
@@ -2557,7 +2567,7 @@ describe("index", () => {
 							mode: "compat",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 						},
 					});
 					const nativeCommitSpy = sinon.spy(
@@ -2595,7 +2605,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -2635,7 +2645,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -2701,7 +2711,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -2718,9 +2728,9 @@ describe("index", () => {
 						store.docs.log as any,
 						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
 					);
-					const graphLatestTransactionSpy = sinon.spy(
+					const latestStorageTransactionSpy = sinon.spy(
 						((store.docs.log as any)._nativeBackbone as any).native,
-						"prepare_plain_entry_commit_latest_facts_document_index_trim_hashes",
+						"prepare_plain_committed_storage_append_document_index_latest_transaction",
 					);
 					let indexGetSpy: { restore(): void; callCount: number } | undefined;
 					try {
@@ -2733,15 +2743,15 @@ describe("index", () => {
 							new Document({ id, name: "native-update-2" }),
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
-						expect(graphLatestTransactionSpy.callCount).equal(2);
-						expect(storageTransactionSpy.callCount).equal(0);
+						expect(latestStorageTransactionSpy.callCount).equal(2);
+						expect(storageTransactionSpy.callCount).equal(2);
 						expect(indexGetSpy?.callCount).equal(0);
 						expect(compatPlanSpy.callCount).equal(0);
 						expect(fallbackAppendSpy.callCount).equal(0);
 						expect((await store.docs.get(id))?.name).equal("native-update-2");
 					} finally {
 						indexGetSpy?.restore();
-						graphLatestTransactionSpy.restore();
+						latestStorageTransactionSpy.restore();
 						storageTransactionSpy.restore();
 						compatPlanSpy.restore();
 						fallbackAppendSpy.restore();
@@ -2762,7 +2772,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -2808,7 +2818,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
 							index: {
 								type: Document,
@@ -2821,9 +2831,9 @@ describe("index", () => {
 						store.docs as any,
 						"commitNativeDocumentAppend",
 					);
-					const graphLatestTransactionSpy = sinon.spy(
+					const latestStorageTransactionSpy = sinon.spy(
 						((store.docs.log as any)._nativeBackbone as any).native,
-						"prepare_plain_entry_commit_latest_facts_document_index_trim_hashes",
+						"prepare_plain_committed_storage_append_document_index_latest_transaction",
 					);
 					const previousSignerSpy = sinon.spy(
 						((store.docs.log as any)._nativeBackbone as any).native,
@@ -2852,7 +2862,7 @@ describe("index", () => {
 						);
 						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
 						expect(nativeCommitSpy.callCount).equal(2);
-						expect(graphLatestTransactionSpy.callCount).equal(2);
+						expect(latestStorageTransactionSpy.callCount).equal(2);
 						expect(previousSignerSpy.callCount).equal(1);
 						expect(signerBatchSpy.callCount).equal(0);
 						expect(contextBatchSpy.callCount).equal(0);
@@ -2866,7 +2876,7 @@ describe("index", () => {
 						contextBatchSpy.restore();
 						signerBatchSpy.restore();
 						previousSignerSpy.restore();
-						graphLatestTransactionSpy.restore();
+						latestStorageTransactionSpy.restore();
 						nativeCommitSpy.restore();
 						fallbackAppendSpy.restore();
 						await rustSession.stop();
@@ -2907,7 +2917,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: StrictNativeProjectUpdateIndexable,
@@ -2953,13 +2963,13 @@ describe("index", () => {
 						);
 						const second = await localStore.docs.put(
 							new Document({ id, name: "native-project-update-2" }),
-						);
-						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
-						expect(registerProjectionPlanSpy.callCount).equal(1);
-						expect(latestCachedGraphTransactionSpy.callCount).equal(2);
-						expect(latestCachedStorageTransactionSpy.callCount).equal(0);
-						expect(latestInlineStorageTransactionSpy.callCount).equal(0);
-						expect(documentIndexTransformSpy.callCount).equal(0);
+							);
+							expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+							expect(registerProjectionPlanSpy.callCount).equal(1);
+							expect(latestCachedGraphTransactionSpy.callCount).equal(0);
+							expect(latestCachedStorageTransactionSpy.callCount).equal(2);
+							expect(latestInlineStorageTransactionSpy.callCount).equal(0);
+							expect(documentIndexTransformSpy.callCount).equal(0);
 						const indexed = await localStore.docs.index.get(id, {
 							resolve: false,
 						});
@@ -2987,7 +2997,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -3196,34 +3206,21 @@ describe("index", () => {
 					);
 					const cases = [
 						{
-							name: "runtime identity",
-							coordinateWal: false,
-							project: false,
-						},
-						{
-							name: "runtime projection",
-							coordinateWal: false,
-							project: true,
-						},
-						{
 							name: "coordinate WAL identity",
-							coordinateWal: true,
 							project: false,
 						},
 						{
 							name: "coordinate WAL projection",
-							coordinateWal: true,
 							project: true,
 						},
 					];
 					try {
 						for (const testCase of cases) {
-							const coordinatePersistence = testCase.coordinateWal
-								? new NativeBackboneCoordinatePersistence(
-										new MemoryCoordinatePersistenceStore(),
-										{ flushOnAppend: false },
-									)
-								: undefined;
+							const coordinatePersistence =
+								new NativeBackboneCoordinatePersistence(
+									new MemoryCoordinatePersistenceStore(),
+									{ flushOnAppend: false },
+								);
 							const localStore = new TestStore<any>({
 								docs: new Documents<Document, any>(),
 							});
@@ -3295,9 +3292,7 @@ describe("index", () => {
 								]);
 								expect(fallbackAppendSpy.callCount).equal(0);
 								expect(compatPlanSpy.callCount).equal(0);
-								expect(storageTransactionSpy.callCount > 0).equal(
-									testCase.coordinateWal,
-								);
+								expect(storageTransactionSpy.callCount).greaterThan(0);
 								expect((await localStore.docs.get(id))?.name).equal(
 									`${testCase.name} second`,
 								);
@@ -3447,7 +3442,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -3489,7 +3484,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -3551,10 +3546,7 @@ describe("index", () => {
 							type: Document,
 							mode: "native",
 							replicate: false,
-							nativeBackbone: {
-								optional: false,
-								documentIndex: true,
-							},
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: () => true,
 						}),
 					).to.be.rejectedWith(NativeDocumentModeError, "arbitrary canPerform");
@@ -3581,6 +3573,16 @@ describe("index", () => {
 								},
 							},
 							message: "optional nativeBackbone",
+						},
+						{
+							name: "missing coordinatePersistence",
+							options: {
+								nativeBackbone: {
+									optional: false,
+									documentIndex: true,
+								},
+							},
+							message: "missing nativeBackbone.coordinatePersistence",
 						},
 						{
 							name: "canOpen",
@@ -3624,10 +3626,7 @@ describe("index", () => {
 								type: Document,
 								mode: "native",
 								replicate: false,
-								nativeBackbone: {
-									optional: false,
-									documentIndex: true,
-								},
+								nativeBackbone: nativeBackboneDocumentIndexOptions(),
 								canPerform: policy.allowAll<Document>(),
 								...testCase.options,
 							}),
@@ -3649,7 +3648,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 						},
 					});
@@ -3772,7 +3771,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -3852,7 +3851,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -3909,7 +3908,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -3996,7 +3995,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
 							index: {
 								type: Document,
@@ -4106,7 +4105,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: StrictNativeBatchPickIndexable,
@@ -4221,7 +4220,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: StrictNativeBatchUpdatePickIndexable,
@@ -4339,7 +4338,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -4417,7 +4416,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.or(
 								policy.put(policy.allowAll<Document>()),
 								policy.deleteSignedByExistingField<Document>("data"),
@@ -4490,7 +4489,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -4567,7 +4566,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,
@@ -4620,7 +4619,7 @@ describe("index", () => {
 							mode: "native",
 							replicate: false,
 							nativeGraph: true,
-							nativeBackbone: { optional: false, documentIndex: true },
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
 							canPerform: policy.allowAll<Document>(),
 							index: {
 								type: Document,

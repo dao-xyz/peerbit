@@ -45,6 +45,7 @@ import {
 //   Add "-document-index" to a rust-peerbit-backbone scenario to enable nativeBackbone.documentIndex.
 //   Add "-direct" to a coordinate-WAL rust-peerbit-backbone scenario to use the direct Node coordinate persistence adapter.
 //   Add "-mode-native" to a rust-peerbit-backbone scenario to open Documents in strict native mode.
+//   Strict native scenarios use buffered coordinate WAL even without an explicit "-coordinate-wal" suffix.
 //   Add "-mode-native-replicated" to keep open-level replication in strict native mode.
 //   Add "-policy-allow-all" to open with canPerform: policy.allowAll().
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
@@ -768,9 +769,10 @@ const openScenario = async (name: string) => {
 								: undefined,
 	});
 	const coordinateWal =
-		baseName === "rust-peerbit-backbone" && scenarioUsesCoordinateWal(name)
+		baseName === "rust-peerbit-backbone" &&
+		(scenarioUsesCoordinateWal(name) || useNativeMode)
 			? await createNodeCoordinatePersistence(
-					scenarioUsesBufferedCoordinateWal(name),
+					scenarioUsesBufferedCoordinateWal(name) || useNativeMode,
 					scenarioUsesDirectCoordinateWal(name),
 				)
 			: undefined;
