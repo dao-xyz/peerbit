@@ -3568,6 +3568,21 @@ describe("index", () => {
 							message: "custom canReplicate",
 						},
 						{
+							name: "optional nativeBackbone",
+							options: { nativeBackbone: { documentIndex: true } },
+							message: "optional nativeBackbone",
+						},
+						{
+							name: "explicit optional nativeBackbone",
+							options: {
+								nativeBackbone: {
+									optional: true,
+									documentIndex: true,
+								},
+							},
+							message: "optional nativeBackbone",
+						},
+						{
 							name: "canOpen",
 							options: { canOpen: () => true },
 							message: "custom canOpen",

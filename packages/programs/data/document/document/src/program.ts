@@ -951,7 +951,7 @@ export class Documents<
 		}
 		const unsupported: string[] = [];
 		const nativeBackbone = options.nativeBackbone as
-			| { documentIndex?: boolean }
+			| { documentIndex?: boolean; optional?: boolean }
 			| boolean
 			| undefined;
 		const indexTransform = options.index as
@@ -967,6 +967,8 @@ export class Documents<
 			nativeBackbone.documentIndex !== true
 		) {
 			unsupported.push("missing nativeBackbone.documentIndex");
+		} else if (nativeBackbone.optional !== false) {
+			unsupported.push("optional nativeBackbone");
 		}
 		if (options.domain) {
 			unsupported.push("custom domain");
