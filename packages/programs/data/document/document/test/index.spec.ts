@@ -3379,8 +3379,19 @@ describe("index", () => {
 					const normalized =
 						nativeDocs.normalizeNativeModePutOptions(defaultOptions);
 					expect(normalized).not.equal(defaultOptions);
+					expect(
+						nativeDocs.normalizeNativeModePutOptions({ unique: true }),
+					).equal(normalized);
 					expect(normalized).to.include({
 						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const emptyNormalized = nativeDocs.normalizeNativeModePutOptions({});
+					expect(nativeDocs.normalizeNativeModePutOptions(undefined)).equal(
+						emptyNormalized,
+					);
+					expect(emptyNormalized).to.include({
 						replicate: false,
 						target: "none",
 					});

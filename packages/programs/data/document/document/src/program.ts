@@ -192,6 +192,35 @@ type DocumentPutOptions = SharedAppendOptions<Operation> & {
 	checkRemote?: boolean;
 };
 
+const NATIVE_LOCAL_PUT_OPTIONS = Object.freeze({
+	replicate: false,
+	target: "none" as const,
+}) as DocumentPutOptions;
+const NATIVE_LOCAL_UNIQUE_PUT_OPTIONS = Object.freeze({
+	unique: true,
+	replicate: false,
+	target: "none" as const,
+}) as DocumentPutOptions;
+
+const cachedNativeLocalPutOptions = (
+	options: DocumentPutOptions | undefined,
+): DocumentPutOptions | undefined => {
+	if (!options) {
+		return NATIVE_LOCAL_PUT_OPTIONS;
+	}
+	let empty = true;
+	for (const key in options) {
+		empty = false;
+		if (key !== "unique") {
+			return;
+		}
+	}
+	if (empty) {
+		return NATIVE_LOCAL_PUT_OPTIONS;
+	}
+	return options.unique === true ? NATIVE_LOCAL_UNIQUE_PUT_OPTIONS : undefined;
+};
+
 type DocumentPutResult = {
 	readonly entry: Entry<Operation>;
 	removed: ShallowOrFullEntry<Operation>[];
@@ -1356,6 +1385,10 @@ export class Documents<
 						...options,
 						target: "none",
 					};
+		}
+		const cached = cachedNativeLocalPutOptions(options);
+		if (cached) {
+			return cached;
 		}
 		return {
 			...options,
