@@ -983,6 +983,9 @@ export class Documents<
 		) {
 			unsupported.push("arbitrary canPerform");
 		}
+		if (options.canOpen) {
+			unsupported.push("custom canOpen");
+		}
 		if (options.index?.canRead) {
 			unsupported.push("custom canRead");
 		}

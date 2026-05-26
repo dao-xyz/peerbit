@@ -3347,7 +3347,11 @@ describe("index", () => {
 							},
 						},
 					});
-					const payloadCommitOnlySpy = sinon.spy(
+					const strictPayloadCommitOnlySpy = sinon.spy(
+						store.docs.log,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericPayloadCommitOnlySpy = sinon.spy(
 						store.docs.log,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
@@ -3357,8 +3361,10 @@ describe("index", () => {
 							name: "native-replicated-defaults",
 						});
 						await store.docs.put(doc, { unique: true });
-						expect(payloadCommitOnlySpy.callCount).equal(1);
-						const appendOptions = payloadCommitOnlySpy.firstCall.args[1]!;
+						expect(strictPayloadCommitOnlySpy.callCount).equal(1);
+						expect(genericPayloadCommitOnlySpy.callCount).equal(0);
+						const appendOptions =
+							strictPayloadCommitOnlySpy.firstCall.args[1]!;
 						expect(appendOptions).to.include({
 							target: "none",
 						});
@@ -3370,7 +3376,8 @@ describe("index", () => {
 							(store.docs.log as any)._residentEntryCoordinatesByHash.size,
 						).greaterThan(0);
 					} finally {
-						payloadCommitOnlySpy.restore();
+						genericPayloadCommitOnlySpy.restore();
+						strictPayloadCommitOnlySpy.restore();
 						await rustSession.stop();
 					}
 				});
@@ -3552,6 +3559,11 @@ describe("index", () => {
 							name: "canReplicate",
 							options: { canReplicate: () => true },
 							message: "custom canReplicate",
+						},
+						{
+							name: "canOpen",
+							options: { canOpen: () => true },
+							message: "custom canOpen",
 						},
 						{
 							name: "keep",
