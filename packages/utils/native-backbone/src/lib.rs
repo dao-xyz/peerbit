@@ -21,7 +21,8 @@ use peerbit_log_rust::{
     PreparedEntryV0SignatureInput, PreparedRawEntryV0, RawEntryV0PrepareProfile,
 };
 use peerbit_shared_log_rust::{
-    commit_local_append_for_gid_compact_core, EntryCoordinateCommit, NativeLocalAppendCompactFacts,
+    commit_local_append_for_gid_compact_core, commit_local_appends_for_gids_compact_core,
+    EntryCoordinateCommit, NativeLocalAppendCompactFacts, NativeLocalAppendCompactInput,
     NativeSharedLogState,
 };
 use std::collections::{HashMap, HashSet};
@@ -128,6 +129,18 @@ struct DocumentContextFacts {
     head: String,
     gid: String,
     size: u32,
+}
+
+struct LatestCompactBatchPendingAppend {
+    wall_time: u64,
+    payload_size: u32,
+    gid: String,
+    next_hashes: Vec<String>,
+    entry_facts: NativeCommittedEntryFacts,
+    trim_hashes: Vec<String>,
+    document_index_commit: DocumentIndexAppendCommit,
+    previous_document_context: Option<DocumentContextFacts>,
+    delete_trimmed_document_heads: bool,
 }
 
 struct ParsedProjectionPlan {
@@ -6366,15 +6379,11 @@ impl NativePeerbitBackbone {
         )?;
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let document_keys = strings_from_array(document_keys)?;
-        let out = Array::new();
-        for index in 0..len {
+        let mut document_index_commits = Vec::with_capacity(len);
+        for (index, document_key) in document_keys.iter().enumerate() {
             let index_u32 = index as u32;
-            let fallback_gid = fallback_gids
-                .get(index_u32)
-                .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
-            let document_index_commit = document_index_append_commit(
-                document_keys[index].clone(),
+            document_index_commits.push(document_index_append_commit(
+                document_key.clone(),
                 required_bytes_from_array(
                     &document_value_prefix_bytes,
                     index_u32,
@@ -6387,26 +6396,51 @@ impl NativePeerbitBackbone {
                 JsValue::UNDEFINED,
                 JsValue::UNDEFINED,
                 JsValue::UNDEFINED,
-            )?;
-            let row = self
-                .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-                    wall_times.get_index(index_u32),
-                    logicals.get_index(index_u32),
-                    fallback_gid,
-                    entry_type,
-                    meta_datas.get(index_u32),
-                    required_bytes_from_array(&payload_datas, index_u32, "payload")?,
-                    replicas,
-                    role_age_ms,
-                    now.clone(),
-                    self_hash.clone(),
-                    self_replicating,
-                    trim_length_to,
-                    document_index_commit,
-                )?;
-            out.push(&row);
+            )?);
         }
-        Ok(out)
+        if has_duplicate_strings(&document_keys) {
+            let out = Array::new();
+            for (index, document_index_commit) in document_index_commits.into_iter().enumerate() {
+                let index_u32 = index as u32;
+                let fallback_gid = fallback_gids
+                    .get(index_u32)
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
+                let row = self
+                    .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                        wall_times.get_index(index_u32),
+                        logicals.get_index(index_u32),
+                        fallback_gid,
+                        entry_type,
+                        meta_datas.get(index_u32),
+                        required_bytes_from_array(&payload_datas, index_u32, "payload")?,
+                        replicas,
+                        role_age_ms,
+                        now.clone(),
+                        self_hash.clone(),
+                        self_replicating,
+                        trim_length_to,
+                        document_index_commit,
+                    )?;
+                out.push(&row);
+            }
+            return Ok(out);
+        }
+        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_inner(
+            wall_times,
+            logicals,
+            fallback_gids,
+            entry_type,
+            meta_datas,
+            payload_datas,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            trim_length_to,
+            document_index_commits,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6543,47 +6577,68 @@ impl NativePeerbitBackbone {
         )?;
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let document_keys = strings_from_array(document_keys)?;
-        let out = Array::new();
-        for index in 0..len {
+        let mut document_index_commits = Vec::with_capacity(len);
+        for (index, document_key) in document_keys.iter().enumerate() {
             let index_u32 = index as u32;
-            let fallback_gid = fallback_gids
-                .get(index_u32)
-                .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
             let encoded_document = document_projection_encoded_documents.get(index_u32);
             if encoded_document.is_undefined() || encoded_document.is_null() {
                 return Err(JsValue::from_str(
                     "Expected batch document projection encoded document",
                 ));
             }
-            let document_index_commit = document_index_cached_projection_append_commit(
-                document_keys[index].clone(),
+            document_index_commits.push(document_index_cached_projection_append_commit(
+                document_key.clone(),
                 String::new(),
                 document_byte_element_index_limit,
                 document_delete_trimmed_heads,
                 document_projection_plan_ids.get_index(index_u32),
                 encoded_document,
                 document_projection_signers.get(index_u32),
-            )?;
-            let row = self
-                .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-                    wall_times.get_index(index_u32),
-                    logicals.get_index(index_u32),
-                    fallback_gid,
-                    entry_type,
-                    meta_datas.get(index_u32),
-                    required_bytes_from_array(&payload_datas, index_u32, "payload")?,
-                    replicas,
-                    role_age_ms,
-                    now.clone(),
-                    self_hash.clone(),
-                    self_replicating,
-                    trim_length_to,
-                    document_index_commit,
-                )?;
-            out.push(&row);
+            )?);
         }
-        Ok(out)
+        if has_duplicate_strings(&document_keys) {
+            let out = Array::new();
+            for (index, document_index_commit) in document_index_commits.into_iter().enumerate() {
+                let index_u32 = index as u32;
+                let fallback_gid = fallback_gids
+                    .get(index_u32)
+                    .as_string()
+                    .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
+                let row = self
+                    .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                        wall_times.get_index(index_u32),
+                        logicals.get_index(index_u32),
+                        fallback_gid,
+                        entry_type,
+                        meta_datas.get(index_u32),
+                        required_bytes_from_array(&payload_datas, index_u32, "payload")?,
+                        replicas,
+                        role_age_ms,
+                        now.clone(),
+                        self_hash.clone(),
+                        self_replicating,
+                        trim_length_to,
+                        document_index_commit,
+                    )?;
+                out.push(&row);
+            }
+            return Ok(out);
+        }
+        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_inner(
+            wall_times,
+            logicals,
+            fallback_gids,
+            entry_type,
+            meta_datas,
+            payload_datas,
+            replicas,
+            role_age_ms,
+            now,
+            self_hash,
+            self_replicating,
+            trim_length_to,
+            document_index_commits,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -6639,6 +6694,193 @@ impl NativePeerbitBackbone {
             true,
             Some(document_index_commit),
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_inner(
+        &mut self,
+        wall_times: BigUint64Array,
+        logicals: Uint32Array,
+        fallback_gids: Array,
+        entry_type: u8,
+        meta_datas: Array,
+        payload_datas: Array,
+        replicas: usize,
+        role_age_ms: f64,
+        now: String,
+        self_hash: String,
+        self_replicating: bool,
+        trim_length_to: Option<usize>,
+        document_index_commits: Vec<DocumentIndexAppendCommit>,
+    ) -> Result<Array, JsValue> {
+        let profile_enabled = self.append_profile_enabled;
+        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let mut pending_appends = Vec::with_capacity(document_index_commits.len());
+        let mut coordinate_inputs = Vec::with_capacity(document_index_commits.len());
+
+        for (index, mut document_index_commit) in document_index_commits.into_iter().enumerate() {
+            let index_u32 = index as u32;
+            let fallback_gid = fallback_gids
+                .get(index_u32)
+                .as_string()
+                .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
+            let payload_bytes = required_bytes_from_array(&payload_datas, index_u32, "payload")?;
+            let payload_size = payload_bytes.length();
+            let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
+            let previous_context =
+                self.document_context_facts_by_key(&document_index_commit.key)?;
+            let previous_document_context = previous_context.clone();
+            let known_existing = previous_context.is_some();
+            let gid = previous_context
+                .as_ref()
+                .map(|context| context.gid.clone())
+                .unwrap_or(fallback_gid);
+            let next_hashes = previous_context
+                .as_ref()
+                .map(|context| vec![context.head.clone()])
+                .unwrap_or_default();
+            if document_index_commit.existing_created.is_none() {
+                document_index_commit.existing_created =
+                    previous_context.as_ref().map(|context| context.created);
+            }
+            document_index_commit.previous_context = previous_context;
+            document_index_commit.known_existing = known_existing;
+
+            let input_copy_started = profile_enabled.then(js_sys::Date::now);
+            let meta_data = optional_bytes_from_js(meta_datas.get(index_u32));
+            let payload_data = payload_bytes.to_vec();
+            if let Some(started) = input_copy_started {
+                self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+            }
+
+            let log_started = profile_enabled.then(js_sys::Date::now);
+            let mut log_profile = NativeLogAppendProfile::default();
+            let (entry_facts, trim_hashes) = self
+                .log
+                .prepare_entry_v0_plain_entry_commit_facts_core_profiled_and_put_with_builder_trim_hashes(
+                    &self.builder,
+                    &mut self.blocks,
+                    wall_times.get_index(index_u32),
+                    logicals.get_index(index_u32),
+                    gid.clone(),
+                    next_hashes.clone(),
+                    entry_type,
+                    meta_data,
+                    payload_data,
+                    trim_length_to,
+                    profile_enabled.then_some(&mut log_profile),
+                )?;
+            if let Some(started) = log_started {
+                self.append_profile.log_total_ms += js_sys::Date::now() - started;
+                self.append_profile.add_log_profile(&log_profile);
+            }
+
+            let hash_number_started = profile_enabled.then(js_sys::Date::now);
+            let hash_number = hash_number_u64(&self.resolution, &entry_facts.hash_digest_bytes)?;
+            if let Some(started) = hash_number_started {
+                self.append_profile.hash_number_ms += js_sys::Date::now() - started;
+            }
+
+            coordinate_inputs.push(NativeLocalAppendCompactInput {
+                entry_hash: entry_facts.hash.clone(),
+                gid: gid.clone(),
+                entry_hash_number: hash_number,
+                next_hashes: next_hashes.clone(),
+                delete_hashes: trim_hashes.clone(),
+            });
+            pending_appends.push(LatestCompactBatchPendingAppend {
+                wall_time: wall_times.get_index(index_u32),
+                payload_size,
+                gid,
+                next_hashes,
+                entry_facts,
+                trim_hashes,
+                document_index_commit,
+                previous_document_context,
+                delete_trimmed_document_heads,
+            });
+        }
+
+        let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_facts = commit_local_appends_for_gids_compact_core(
+            &mut self.shared_log,
+            coordinate_inputs,
+            replicas,
+            role_age_ms,
+            &now,
+            &self_hash,
+            self_replicating,
+            true,
+            true,
+        )?;
+        if let Some(started) = coordinate_plan_started {
+            self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+        }
+        if coordinate_facts.len() != pending_appends.len() {
+            return Err(JsValue::from_str(
+                "Native compact batch returned mismatched coordinate facts",
+            ));
+        }
+
+        let out = Array::new();
+        for (pending, coordinate_facts) in pending_appends.into_iter().zip(coordinate_facts) {
+            let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+            self.commit_coordinate_core_from_compact_facts(
+                &coordinate_facts,
+                &pending.next_hashes,
+                &pending.trim_hashes,
+                pending.wall_time,
+                pending.entry_facts.meta_bytes.clone(),
+            );
+            if let Some(started) = coordinate_core_started {
+                self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+            }
+
+            let document_index_started = profile_enabled.then(js_sys::Date::now);
+            self.put_document_index_for_append(
+                Some(pending.document_index_commit),
+                pending.wall_time,
+                &pending.entry_facts.hash,
+                &pending.gid,
+                pending.payload_size,
+            )?;
+            let document_trimmed_heads_processed = pending.delete_trimmed_document_heads
+                && self.delete_documents_by_context_heads_profiled(&pending.trim_hashes);
+            if let Some(started) = document_index_started {
+                self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
+            }
+
+            let result_row_started = profile_enabled.then(js_sys::Date::now);
+            let row = Array::new();
+            row.push(&JsValue::from_str(&pending.entry_facts.hash));
+            row.push(&JsValue::from_f64(pending.entry_facts.byte_length as f64));
+            row.push(&Uint8Array::from(pending.entry_facts.meta_bytes.as_slice()));
+            row.push(&Uint8Array::from(
+                pending.entry_facts.hash_digest_bytes.as_slice(),
+            ));
+            row.push(&strings_to_array(pending.entry_facts.next));
+            row.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
+            row.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
+            row.push(&JsValue::from_bool(coordinate_facts.is_leader));
+            row.push(&strings_to_array(pending.trim_hashes));
+            row.push(&JsValue::from_bool(document_trimmed_heads_processed));
+            row.push(
+                &pending
+                    .previous_document_context
+                    .as_ref()
+                    .map(|context| document_context_facts_to_row(context).into())
+                    .unwrap_or(JsValue::UNDEFINED),
+            );
+            out.push(&row);
+            if let Some(started) = result_row_started {
+                self.append_profile.result_row_ms += js_sys::Date::now() - started;
+            }
+        }
+
+        if let Some(started) = storage_append_started {
+            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+        }
+        Ok(out)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -7663,6 +7905,11 @@ fn strings_to_array(values: Vec<String>) -> Array {
         out.push(&JsValue::from_str(&value));
     }
     out
+}
+
+fn has_duplicate_strings(values: &[String]) -> bool {
+    let mut seen = HashSet::with_capacity(values.len());
+    values.iter().any(|value| !seen.insert(value))
 }
 
 fn strings_slice_to_array(values: &[String]) -> Array {

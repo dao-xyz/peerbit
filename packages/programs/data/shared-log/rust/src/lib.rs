@@ -117,6 +117,14 @@ pub struct NativeLocalAppendCompactFacts {
     pub coordinate: NativeAppendCoordinatePlan,
 }
 
+pub struct NativeLocalAppendCompactInput {
+    pub entry_hash: String,
+    pub gid: String,
+    pub entry_hash_number: u64,
+    pub next_hashes: Vec<String>,
+    pub delete_hashes: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct SampleOptions {
     pub role_age_ms: u64,
@@ -1977,62 +1985,107 @@ pub fn commit_local_append_for_gid_compact_core(
     full_replica_fallback: bool,
     include_strict_full_replica: bool,
 ) -> Result<NativeLocalAppendCompactFacts, JsValue> {
-    let coordinates = state
-        .inner
-        .range_planner
-        .get_gid_coordinates(&gid, replicas);
+    let mut facts = commit_local_appends_for_gids_compact_core(
+        state,
+        vec![NativeLocalAppendCompactInput {
+            entry_hash,
+            gid,
+            entry_hash_number,
+            next_hashes: next_hashes.to_vec(),
+            delete_hashes: delete_hashes.to_vec(),
+        }],
+        replicas,
+        role_age_ms,
+        now,
+        self_hash,
+        include_self,
+        full_replica_fallback,
+        include_strict_full_replica,
+    )?;
+    facts
+        .pop()
+        .ok_or_else(|| JsValue::from_str("Missing compact append facts"))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn commit_local_appends_for_gids_compact_core(
+    state: &mut NativeSharedLogState,
+    inputs: Vec<NativeLocalAppendCompactInput>,
+    replicas: usize,
+    role_age_ms: f64,
+    now: &str,
+    self_hash: &str,
+    include_self: bool,
+    full_replica_fallback: bool,
+    include_strict_full_replica: bool,
+) -> Result<Vec<NativeLocalAppendCompactFacts>, JsValue> {
     let options = SampleOptions {
         role_age_ms: role_age_ms_from_f64(role_age_ms),
         now: parse_u64(now)?,
         ..Default::default()
     };
-    let leaders = state.inner.range_planner.find_leaders(
-        &coordinates,
-        replicas,
-        &options,
-        true,
-        self_hash,
-        include_self,
-        full_replica_fallback,
-        include_strict_full_replica,
-    );
-    let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
-    let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+    let mut prepared_options_by_replicas = HashMap::new();
+    let mut full_replica_leaders_by_replicas = HashMap::new();
+    let mut facts = Vec::with_capacity(inputs.len());
 
-    state.inner.put_entry_coordinate_state(
-        entry_hash.clone(),
-        EntryCoordinateState {
-            gid: gid.clone(),
-            hash_number: entry_hash_number,
-            coordinates: coordinates.clone(),
+    for input in inputs {
+        let coordinates = state
+            .inner
+            .range_planner
+            .get_gid_coordinates(&input.gid, replicas);
+        let leaders = find_leaders_with_batch_caches(
+            &state.inner.range_planner,
+            &coordinates,
+            replicas,
+            &options,
+            &mut prepared_options_by_replicas,
+            &mut full_replica_leaders_by_replicas,
+            true,
+            self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        );
+        let is_leader = leaders.iter().any(|leader| leader.hash == self_hash);
+        let assigned_to_range_boundary = should_assign_to_range_boundary(&leaders, replicas);
+
+        state.inner.put_entry_coordinate_state(
+            input.entry_hash.clone(),
+            EntryCoordinateState {
+                gid: input.gid.clone(),
+                hash_number: input.entry_hash_number,
+                coordinates: coordinates.clone(),
+                assigned_to_range_boundary,
+                requested_replicas: replicas,
+            },
+        );
+        let mut deleted = IndexSet::new();
+        for hash in input.next_hashes {
+            deleted.insert(hash);
+        }
+        for hash in input.delete_hashes {
+            deleted.insert(hash);
+        }
+        for hash in deleted {
+            state.inner.delete_entry_coordinate_state(&hash);
+        }
+
+        facts.push(NativeLocalAppendCompactFacts {
+            leaders: if is_leader { None } else { Some(leaders) },
+            is_leader,
             assigned_to_range_boundary,
-            requested_replicas: replicas,
-        },
-    );
-    let mut deleted = IndexSet::new();
-    for hash in next_hashes {
-        deleted.insert(hash.clone());
-    }
-    for hash in delete_hashes {
-        deleted.insert(hash.clone());
-    }
-    for hash in deleted {
-        state.inner.delete_entry_coordinate_state(&hash);
+            coordinate: NativeAppendCoordinatePlan {
+                hash: input.entry_hash,
+                hash_number: input.entry_hash_number,
+                gid: input.gid,
+                coordinates,
+                assigned_to_range_boundary,
+                requested_replicas: replicas,
+            },
+        });
     }
 
-    Ok(NativeLocalAppendCompactFacts {
-        leaders: if is_leader { None } else { Some(leaders) },
-        is_leader,
-        assigned_to_range_boundary,
-        coordinate: NativeAppendCoordinatePlan {
-            hash: entry_hash,
-            hash_number: entry_hash_number,
-            gid,
-            coordinates,
-            assigned_to_range_boundary,
-            requested_replicas: replicas,
-        },
-    })
+    Ok(facts)
 }
 
 #[wasm_bindgen]
