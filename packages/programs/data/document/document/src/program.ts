@@ -2702,6 +2702,13 @@ export class Documents<
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
 		const nativeBackboneDocumentIndexes =
 			await this.prepareNativeBackboneDocumentIndexCommitBatch(input.puts);
+		const nativeBackboneDocumentIndexInputs =
+			nativeBackboneDocumentIndexes?.map((commit, index) =>
+				this.toNativeBackboneDocumentIndexCommitInput(
+					input.puts[index]!,
+					commit,
+				),
+			);
 		const nexts = input.puts.map((put) => {
 			const existing =
 				put.unique || put.existing === null ? null : put.existing;
@@ -2720,15 +2727,17 @@ export class Documents<
 		const appended =
 			await this.log.appendLocallyPreparedPayloadsManyIndependent(
 				input.puts.map((put) => put.operationPayloadBytes),
-				{
-					...input.options,
-					replicate: input.options?.replicate,
-				},
-				{
-					resolveTrimmedEntries: input.resolveTrimmedEntries,
-					nexts,
-				},
-			);
+			{
+				...input.options,
+				replicate: input.options?.replicate,
+			},
+			{
+				resolveTrimmedEntries: input.resolveTrimmedEntries,
+				nexts,
+				nativeBackboneDocumentIndexes:
+					nativeBackboneDocumentIndexInputs,
+			},
+		);
 		if (!appended) {
 			if (this.isNativeMode()) {
 				throw this.nativeModeError(

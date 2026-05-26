@@ -52,6 +52,7 @@ import {
 import { logger as loggerFn } from "@peerbit/logger";
 import type {
 	NativeBackboneAppendProfile,
+	NativeBackboneAppendResult,
 	NativeBackboneCoordinateCommitColumns,
 	NativeBackboneCoordinateFields,
 	NativeBackboneCoordinatePersistenceAdapter,
@@ -6275,6 +6276,188 @@ export class SharedLog<
 		);
 	}
 
+	private async appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch(
+		data: T[],
+		appendOptions: AppendOptions<T>,
+		options: SharedAppendOptions<T> | undefined,
+		properties:
+			| {
+					resolveTrimmedEntries?: boolean;
+					payloadDatas?: Uint8Array[];
+					nexts?: ShallowOrFullEntry<T>[][];
+					nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+			  }
+			| undefined,
+		minReplicasValue: number,
+	): Promise<
+		| {
+				entries: Entry<T>[];
+				removed: ShallowOrFullEntry<T>[];
+				appendCommits: PreparedLocalAppendCommit<R>[];
+		  }
+		| undefined
+	> {
+		const backbone = this._nativeBackbone;
+		const payloadDatas = properties?.payloadDatas;
+		const documentIndexes = properties?.nativeBackboneDocumentIndexes;
+		if (
+			!backbone ||
+			!payloadDatas ||
+			!documentIndexes ||
+			payloadDatas.length !== data.length ||
+			documentIndexes.length !== data.length ||
+			options?.target !== "none" ||
+			options?.replicate === true ||
+			(options?.delivery !== undefined && options.delivery !== false) ||
+			this.remoteBlocks?.localStore !== backbone.blocks ||
+			!this.canUseNativeBackboneResidentCoordinateState() ||
+			properties?.nexts?.some((nexts) => nexts.length > 0)
+		) {
+			return undefined;
+		}
+		if (
+			documentIndexes.some(
+				(index) =>
+					index.useLatestContext === true ||
+					(!index.valuePrefixBytes && !index.projection),
+			)
+		) {
+			return undefined;
+		}
+		const firstIndex = documentIndexes[0];
+		if (!firstIndex) {
+			return undefined;
+		}
+		const byteElementIndexLimit = firstIndex.byteElementIndexLimit ?? 0;
+		const deleteTrimmedHeads = firstIndex.deleteTrimmedHeads === true;
+		if (
+			documentIndexes.some(
+				(index) =>
+					(index.byteElementIndexLimit ?? 0) !== byteElementIndexLimit ||
+					(index.deleteTrimmedHeads === true) !== deleteTrimmedHeads,
+			)
+		) {
+			return undefined;
+		}
+		const context = await this.createLeaderSelectionContext();
+		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
+		let backboneAppends: NativeBackboneAppendResult[] | undefined;
+		const appended =
+			await this.log.appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+				data,
+				appendOptions,
+				{
+					payloadDatas,
+					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+				},
+				(inputs) => {
+					backboneAppends =
+						backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+							{
+								entries: inputs.map((input, index) => ({
+									wallTime: input.wallTime,
+									logical: input.logical,
+									gid: input.gid,
+									type: input.type,
+									metaData: input.metaData,
+									payloadData: input.payloadData,
+									documentIndex: documentIndexes[index]!,
+								})),
+								replicas: minReplicasValue,
+								roleAgeMs: nativeLeaderOptions.roleAge,
+								now: nativeLeaderOptions.now,
+								selfHash: nativeLeaderOptions.selfHash,
+								selfReplicating: nativeLeaderOptions.selfReplicating,
+								documentByteElementIndexLimit: byteElementIndexLimit,
+								documentDeleteTrimmedHeads: deleteTrimmedHeads,
+								trimLengthTo: inputs[0]?.trimLengthTo,
+							},
+						);
+					return backboneAppends?.map((append) => ({
+						cid: append.entry.hash,
+						hash: append.entry.hash,
+						next: append.entry.next,
+						byteLength: append.entry.byteLength,
+						metaBytes: append.entry.metaBytes,
+						hashDigestBytes: append.entry.hashDigestBytes,
+						getBytes: (hash: string) => backbone.blocks.get(hash),
+						trimmedEntryHashes: append.trimmedHashes,
+						documentTrimmedHeadsProcessed:
+							append.documentTrimmedHeadsProcessed,
+						documentPreviousContext: append.documentPreviousContext,
+					}));
+				},
+			);
+		if (!appended || !backboneAppends) {
+			return undefined;
+		}
+		const appendCommits: PreparedLocalAppendCommit<R>[] = [];
+		const runtimeOnlyCoordinates = options?.replicate === false;
+		for (let i = 0; i < appended.appendFacts.length; i++) {
+			const facts = appended.appendFacts[i]!;
+			const backboneAppend = backboneAppends[i]!;
+			const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts({
+				appendFacts: facts,
+				plan: backboneAppend.coordinate,
+			});
+			if (!coordinateFields) {
+				throw new Error(
+					"Native backbone batch append transaction returned mismatched coordinate facts",
+				);
+			}
+			const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
+				facts.next,
+				backboneAppend.trimmedHashes ?? [],
+			);
+			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+				facts,
+				[],
+				appended.materializeEntries[i]!,
+				{
+					forgetNativeCoordinates: false,
+					removedHashes: plannedCoordinateDeleteHashes,
+				},
+			);
+			const persisted = this.persistBackboneCoordinateFieldsNativeTransaction({
+				coordinateIndex: this.entryCoordinatesIndex as PutAndDeleteIndex<
+					EntryReplicated<R>
+				>,
+				fields: coordinateFields,
+				hash: facts.hash,
+				deleteHashes: plannedCoordinateDeleteHashes,
+				coordinates: backboneAppend.coordinate.coordinates as NumberFromType<R>[],
+				skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
+			});
+			if (isPromiseLike(persisted)) {
+				await persisted;
+			}
+			if (!runtimeOnlyCoordinates && this.remoteBlocks.hasNotifyStoredHook()) {
+				this.remoteBlocks.notifyStoredDeferred(facts.hash);
+			}
+			const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
+				facts,
+				{
+					hashNumber: backboneAppend.coordinate
+						.hashNumber as NumberFromType<R>,
+					coordinateFields,
+				},
+			);
+			appendCommit.nativeBackboneDocumentIndexCommitted = true;
+			appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+				appended.documentTrimmedHeadsProcessed?.[i];
+			appendCommits.push(appendCommit);
+		}
+		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+		if (!delayAdaptiveRebalance) {
+			this.rebalanceParticipationDebounced?.call();
+		}
+		return {
+			entries: appended.entries,
+			removed: appended.removed,
+			appendCommits,
+		};
+	}
+
 	async appendLocallyPreparedManyIndependent(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,
@@ -6282,6 +6465,7 @@ export class SharedLog<
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
 			nexts?: ShallowOrFullEntry<T>[][];
+			nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
 		},
 	): Promise<
 		| {
@@ -6306,6 +6490,17 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
+		const nativeBackboneBatch =
+			await this.appendLocallyPreparedPayloadsManyNativeBackboneDocumentIndexBatch(
+				data,
+				appendOptions,
+				options,
+				properties,
+				minReplicasValue,
+			);
+		if (nativeBackboneBatch) {
+			return nativeBackboneBatch;
+		}
 		const result = await this.log.appendLocallyPreparedManyIndependent(
 			data,
 			appendOptions,
@@ -6402,20 +6597,23 @@ export class SharedLog<
 	async appendLocallyPreparedPayloadsManyIndependent(
 		payloadDatas: Uint8Array[],
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: {
-			resolveTrimmedEntries?: boolean;
-			nexts?: ShallowOrFullEntry<T>[][];
-		},
+			properties?: {
+				resolveTrimmedEntries?: boolean;
+				nexts?: ShallowOrFullEntry<T>[][];
+				nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+			},
 	) {
 		return this.appendLocallyPreparedManyIndependent(
 			new Array(payloadDatas.length) as T[],
 			options,
 			{
-				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-				payloadDatas,
-				nexts: properties?.nexts,
-			},
-		);
+					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+					payloadDatas,
+					nexts: properties?.nexts,
+					nativeBackboneDocumentIndexes:
+						properties?.nativeBackboneDocumentIndexes,
+				},
+			);
 	}
 
 	async appendMany(

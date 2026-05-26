@@ -2057,6 +2057,63 @@ export class EntryIndex<T> {
 		return this.putNativeCommittedAppendFactsAsync(properties, existingPromise);
 	}
 
+	/** @internal */
+	putNativeCommittedAppendFactsBatch(
+		rows: Array<{
+			hash: string;
+			unique: boolean;
+			externalNextHashes: string[];
+			shallowEntry?: ShallowEntry;
+			getShallowEntry?: () => ShallowEntry;
+			isHead?: boolean;
+		}>,
+	): Promise<void> | void {
+		if (rows.length === 0) {
+			return;
+		}
+		const asyncRows: typeof rows = [];
+		let scheduledPendingFlush = false;
+		for (const row of rows) {
+			if (!row.hash) {
+				throw new Error("Missing hash");
+			}
+			const existingPromise = this.insertionPromises.get(row.hash);
+			if (
+				!existingPromise &&
+				row.unique === true &&
+				row.externalNextHashes.length === 0
+			) {
+				const isHead = row.isHead ?? true;
+				this._length++;
+				if (!row.shallowEntry && !row.getShallowEntry) {
+					throw new Error("Missing shallow entry");
+				}
+				const pending =
+					row.shallowEntry ??
+					(() => {
+						const shallowEntry = row.getShallowEntry!();
+						shallowEntry.head = isHead;
+						return shallowEntry;
+					});
+				if (row.shallowEntry) {
+					row.shallowEntry.head = isHead;
+				}
+				this.pendingIndexWrites.set(row.hash, pending);
+				scheduledPendingFlush = true;
+			} else {
+				asyncRows.push(row);
+			}
+		}
+		if (scheduledPendingFlush) {
+			this.schedulePendingIndexWriteFlush();
+		}
+		if (asyncRows.length > 0) {
+			return Promise.all(
+				asyncRows.map((row) => this.putNativeCommittedAppendFacts(row)),
+			).then(() => undefined);
+		}
+	}
+
 	private async putNativeCommittedAppendFactsAsync(
 		properties: {
 			hash: string;

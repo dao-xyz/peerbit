@@ -3595,6 +3595,10 @@ describe("index", () => {
 						store.docs.index,
 						"_putManyPreparedNativeBackboneDocumentIndexStored",
 					);
+					const nativeBackboneBatchTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any),
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
+					);
 					try {
 						const docs = [
 							new Document({ id: uuid(), name: "batch-1" }),
@@ -3612,10 +3616,15 @@ describe("index", () => {
 						expect(documentBatchIndexSpy.callCount).equal(0);
 						expect(documentGenericBatchIndexSpy.callCount).equal(0);
 						expect(storedIdentityBatchSpy.callCount).equal(1);
+						expect(nativeBackboneBatchTransactionSpy.callCount).equal(1);
+						expect(
+							nativeBackboneBatchTransactionSpy.firstCall.args[0].entries,
+						).to.have.length(docs.length);
 						for (const doc of docs) {
 							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
 						}
 					} finally {
+						nativeBackboneBatchTransactionSpy.restore();
 						storedIdentityBatchSpy.restore();
 						documentGenericBatchIndexSpy.restore();
 						documentBatchIndexSpy.restore();
@@ -3917,6 +3926,10 @@ describe("index", () => {
 						"putManyWithContext",
 					);
 					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
+					const nativeBackboneBatchTransactionSpy = sinon.spy(
+						((localStore.docs.log as any)._nativeBackbone as any),
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
+					);
 					try {
 						const docs = [
 							new Document({ id: uuid(), name: "batch-pick-1" }),
@@ -3934,6 +3947,12 @@ describe("index", () => {
 						expect(preparedBatchIndexSpy.callCount).equal(0);
 						expect(genericBatchIndexSpy.callCount).equal(0);
 						expect(transformSpy.callCount).equal(0);
+						expect(nativeBackboneBatchTransactionSpy.callCount).equal(1);
+						expect(
+							nativeBackboneBatchTransactionSpy.firstCall.args[0].entries.every(
+								(entry: any) => !!entry.documentIndex.projection,
+							),
+						).equal(true);
 						for (const doc of docs) {
 							const indexed = await localStore.docs.index.get(doc.id, {
 								resolve: false,
@@ -3943,6 +3962,7 @@ describe("index", () => {
 							expect((indexed as any)?.data).equal(undefined);
 						}
 					} finally {
+						nativeBackboneBatchTransactionSpy.restore();
 						transformSpy.restore();
 						genericBatchIndexSpy.restore();
 						storedBatchIndexSpy.restore();

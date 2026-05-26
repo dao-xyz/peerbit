@@ -124,6 +124,8 @@ const emitInternalProfileDuration = (
 };
 const EMPTY_NEXT_HASHES: string[] = [];
 const EMPTY_NEXT_ENTRIES: Sorting.SortableEntry[] = [];
+const normalizedUniqueStrings = (values: string[]): string[] =>
+	values.length <= 1 ? values : [...new Set(values)];
 
 type PreparedCommitOnlyAppendResult<T> = {
 	entry: Entry<T>;
@@ -140,6 +142,15 @@ type PreparedCommitOnlyAppendResult<T> = {
 		gid: string;
 		size: number;
 	};
+};
+
+type PreparedCommitOnlyAppendBatchResult<T> = {
+	entries: Entry<T>[];
+	materializeEntries: Array<() => Entry<T>>;
+	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
+	appendFacts: PreparedAppendFacts[];
+	documentTrimmedHeadsProcessed?: boolean[];
 };
 
 type PreparedIndependentAppendBatch = {
@@ -1932,6 +1943,240 @@ export class Log<T> {
 		);
 
 		return { entries, removed, change, appendFacts };
+	}
+
+	appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+		data: T[],
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadDatas: Uint8Array[];
+			resolveTrimmedEntries?: boolean;
+		},
+		prepare: (
+			inputs: NativeNoNextCommitInput[],
+		) => MaybePromise<Array<NativePreparedNoNextCommit | undefined> | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendBatchResult<T> | undefined> {
+		if (data.length === 0) {
+			return {
+				entries: [],
+				materializeEntries: [],
+				removed: [],
+				appendFacts: [],
+			};
+		}
+		if (data.length !== properties.payloadDatas.length) {
+			throw new Error("Mismatched native batch payload count");
+		}
+		const resolvedTrim = options.trim ?? this._trim.options;
+		const supportsNativeTrim =
+			!resolvedTrim ||
+			(resolvedTrim.type === "length" &&
+				!resolvedTrim.filter?.canTrim &&
+				properties.resolveTrimmedEntries === false);
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.encryption ||
+			options.signers ||
+			options.identity ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			(options.meta?.next != null && options.meta.next.length !== 0) ||
+			options.meta?.gidSeed ||
+			!supportsNativeTrim ||
+			(this._hasCustomCanAppend &&
+				options.__peerbitCanAppendAlreadyValidated !== true)
+		) {
+			return undefined;
+		}
+		const identity = this._identity;
+		if (!(identity instanceof Ed25519Keypair) || !hasPutMany(this._storage)) {
+			return undefined;
+		}
+		const nativeTrimLengthTo = this.getNativeCommitOnlyTrimLengthTo(
+			options.trim,
+			properties.resolveTrimmedEntries,
+		);
+		const entryType = options.meta?.type ?? EntryType.APPEND;
+		const rows = properties.payloadDatas.map((payloadData) => {
+			const gid = EntryV0.createGid() as string;
+			const timestamp = this._hlc.now();
+			return {
+				gid,
+				timestamp,
+				payloadData,
+				input: {
+					clockId: identity.publicKey.bytes,
+					privateKey: identity.privateKey.privateKey,
+					publicKey: identity.publicKey.publicKey,
+					wallTime: timestamp.wallTime,
+					logical: timestamp.logical,
+					gid,
+					type: entryType,
+					metaData: options.meta?.data,
+					payloadData,
+					resolveTrimmedEntries: properties.resolveTrimmedEntries,
+					trimLengthTo: nativeTrimLengthTo,
+				} satisfies NativeNoNextCommitInput,
+			};
+		});
+		const preparedValue = prepare(rows.map((row) => row.input));
+		return mapMaybePromise(preparedValue, (preparedRows) => {
+			if (!preparedRows || preparedRows.length !== rows.length) {
+				return undefined;
+			}
+			const appendFacts: PreparedAppendFacts[] = [];
+			const materializeEntries: Array<() => Entry<T>> = [];
+			const indexRows: Parameters<
+				EntryIndex<T>["putNativeCommittedAppendFactsBatch"]
+			>[0] = [];
+			const trimmedEntryHashes: string[] = [];
+			const documentTrimmedHeadsProcessed: boolean[] = [];
+			for (let index = 0; index < rows.length; index++) {
+				const row = rows[index]!;
+				const prepared = preparedRows[index];
+				if (!prepared) {
+					return undefined;
+				}
+				const hash = prepared.cid ?? prepared.hash;
+				if (!hash) {
+					return undefined;
+				}
+				const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
+				if (effectiveNextHashes.length !== 0) {
+					return undefined;
+				}
+				const effectiveGid = prepared.gid ?? row.gid;
+				let clock: Clock | undefined;
+				const getClock = () =>
+					(clock ??= new Clock({
+						id: identity.publicKey.bytes,
+						timestamp: row.timestamp,
+					}));
+				let shallowEntry: ShallowEntry | undefined;
+				const getShallowEntry = () =>
+					(shallowEntry ??= new ShallowEntry({
+						hash,
+						payloadSize: row.payloadData.byteLength,
+						head: true,
+						meta: new ShallowMeta({
+							gid: effectiveGid,
+							data: options.meta?.data,
+							clock: getClock(),
+							next: effectiveNextHashes,
+							type: entryType,
+						}),
+					}));
+				const facts: PreparedAppendFacts = {
+					hash,
+					gid: effectiveGid,
+					next: effectiveNextHashes,
+					wallTime: row.timestamp.wallTime,
+					logical: row.timestamp.logical,
+					clockId: identity.publicKey.bytes,
+					type: entryType,
+					metaData: options.meta?.data,
+					payloadSize: row.payloadData.byteLength,
+					metaBytes: prepared.metaBytes,
+					hashDigestBytes: prepared.hashDigestBytes,
+				};
+				let materializedEntry: Entry<T> | undefined;
+				const materializeEntry = () => {
+					if (materializedEntry) {
+						return materializedEntry;
+					}
+					const bytes =
+						prepared.bytes ??
+						prepared.getBytes?.(hash) ??
+						(this._storage.get(hash) as Uint8Array | undefined);
+					if (
+						!bytes ||
+						typeof (bytes as { then?: unknown }).then === "function"
+					) {
+						throw new Error("Missing synchronous native append block bytes");
+					}
+					const entry = deserialize(bytes, Entry) as Entry<T>;
+					entry.hash = hash;
+					entry.size = prepared.byteLength;
+					entry.createdLocally = true;
+					Entry.prepareShallowEntry(entry, getShallowEntry());
+					entry.init({ encoding: this._encoding, keychain: this._keychain });
+					materializedEntry = entry;
+					return entry;
+				};
+				appendFacts.push(facts);
+				materializeEntries.push(materializeEntry);
+				indexRows.push({
+					hash,
+					unique: true,
+					externalNextHashes: effectiveNextHashes,
+					getShallowEntry,
+					isHead: true,
+				});
+				if (prepared.trimmedEntryHashes?.length) {
+					trimmedEntryHashes.push(...prepared.trimmedEntryHashes);
+				}
+				documentTrimmedHeadsProcessed.push(
+					prepared.documentTrimmedHeadsProcessed === true,
+				);
+			}
+			const rollback = (error: unknown): never | Promise<never> => {
+				this.rollbackNativeAppendGraphHashes(
+					appendFacts.map((facts) => facts.hash),
+				);
+				return this.rollbackNativeAppendBlocksHashes(
+					appendFacts.map((facts) => facts.hash),
+				).then(() => {
+					throw error;
+				});
+			};
+			const finish = (): PreparedCommitOnlyAppendBatchResult<T> => ({
+				entries: materializeEntries.map((materializeEntry) => materializeEntry()),
+				materializeEntries,
+				removed: [],
+				removedHashes:
+					trimmedEntryHashes.length > 0
+						? normalizedUniqueStrings(trimmedEntryHashes)
+						: undefined,
+				appendFacts,
+				documentTrimmedHeadsProcessed,
+			});
+			const finishTrim = ():
+				| PreparedCommitOnlyAppendBatchResult<T>
+				| Promise<PreparedCommitOnlyAppendBatchResult<T>>
+				| undefined => {
+				if (trimmedEntryHashes.length === 0) {
+					return finish();
+				}
+				if (
+					properties.resolveTrimmedEntries !== false &&
+					!documentTrimmedHeadsProcessed.every(Boolean)
+				) {
+					return undefined;
+				}
+				const uniqueTrimmedHashes = normalizedUniqueStrings(trimmedEntryHashes);
+				const consumedNoReturn =
+					this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+						uniqueTrimmedHashes,
+						{
+							skipNextHeadUpdates: true,
+							deleteBlocks: false,
+						},
+					);
+				if (consumedNoReturn === undefined) {
+					return undefined;
+				}
+				return mapMaybePromise(consumedNoReturn, finish);
+			};
+			try {
+				const putResult =
+					this.entryIndex.putNativeCommittedAppendFactsBatch(indexRows);
+				const result = mapMaybePromise(putResult, finishTrim);
+				return isPromiseLike(result) ? result.catch(rollback) : result;
+			} catch (error) {
+				return rollback(error);
+			}
+		});
 	}
 
 	private createPreparedAppendFacts(
