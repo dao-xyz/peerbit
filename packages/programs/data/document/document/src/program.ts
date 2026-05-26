@@ -3288,6 +3288,9 @@ export class Documents<
 			deleteKeys.push(resolved.key);
 			modified.add(resolved.key.primitive);
 		}
+		if (deleteKeys.length === 0) {
+			return handled;
+		}
 		return mapMaybePromise(this._index.delManyMaybe(deleteKeys), () => handled);
 	}
 
@@ -3311,6 +3314,9 @@ export class Documents<
 			}
 			deleteKeys.push(resolved.key);
 			modified.add(resolved.key.primitive);
+		}
+		if (deleteKeys.length === 0) {
+			return handled;
 		}
 		return mapMaybePromise(this._index.delManyMaybe(deleteKeys), () => handled);
 	}
