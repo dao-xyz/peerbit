@@ -1012,6 +1012,9 @@ export class Documents<
 		if (options.index?.prefetch) {
 			unsupported.push("index prefetch");
 		}
+		if (options.index?.cache?.query) {
+			unsupported.push("index query cache");
+		}
 		if (options.canReplicate) {
 			unsupported.push("custom canReplicate");
 		}

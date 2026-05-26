@@ -3622,6 +3622,21 @@ describe("index", () => {
 							message: "index prefetch",
 						},
 						{
+							name: "query cache",
+							options: {
+								index: {
+									cache: {
+										query: {
+											strategy: "auto" as const,
+											maxSize: 10,
+											maxTotalSize: 10,
+										},
+									},
+								},
+							},
+							message: "index query cache",
+						},
+						{
 							name: "arbitrary transform",
 							options: {
 								index: {
