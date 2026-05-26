@@ -211,6 +211,51 @@ const summarizeProfileEvents = (
 	return [...summaries.values()].sort((a, b) => b.totalMs - a.totalMs);
 };
 
+const roundProfileMetric = (value: number) => Math.round(value * 1000) / 1000;
+
+const summarizeProfileSamples = (samples: BenchRow[]): ProfileSummary[] => {
+	if (samples.length === 0) {
+		return [];
+	}
+	const summaries = new Map<string, ProfileSummary>();
+	for (const sample of samples) {
+		for (const event of sample.profile) {
+			let summary = summaries.get(event.name);
+			if (!summary) {
+				summary = {
+					name: event.name,
+					count: 0,
+					totalMs: 0,
+					maxMs: 0,
+					entries: 0,
+					messages: 0,
+					nativeBackboneOnly: 0,
+				};
+				summaries.set(event.name, summary);
+			}
+			summary.count += event.count;
+			summary.totalMs += event.totalMs;
+			summary.maxMs = Math.max(summary.maxMs, event.maxMs);
+			summary.entries += event.entries;
+			summary.messages += event.messages;
+			summary.nativeBackboneOnly += event.nativeBackboneOnly;
+		}
+	}
+	const divisor = samples.length;
+	return [...summaries.values()]
+		.map((summary) => ({
+			...summary,
+			count: roundProfileMetric(summary.count / divisor),
+			totalMs: roundProfileMetric(summary.totalMs / divisor),
+			entries: roundProfileMetric(summary.entries / divisor),
+			messages: roundProfileMetric(summary.messages / divisor),
+			nativeBackboneOnly: roundProfileMetric(
+				summary.nativeBackboneOnly / divisor,
+			),
+		}))
+		.sort((a, b) => b.totalMs - a.totalMs);
+};
+
 const createOpenArgs = (
 	profileEvents: SyncProfileEvent[],
 	options?: {
@@ -854,7 +899,7 @@ const aggregateRows = [...new Set(rows.map((row) => row.scenario))].flatMap(
 				runs: samples.length,
 				meanMs: Math.round(meanMs * 100) / 100,
 				meanOpsPerSecond: Math.round(meanOps),
-				profile: samples[0]?.profile,
+				profile: summarizeProfileSamples(samples),
 			};
 		}),
 );
