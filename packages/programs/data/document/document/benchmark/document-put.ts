@@ -48,6 +48,7 @@ import {
 //   Add "-policy-signed-public-key" to open with canPerform: policy.signedByPublicKey(local public key).
 //   Add "-policy-put-signed-public-key" to open with canPerform: policy.put(policy.signedByPublicKey(local public key)).
 //   Add "-policy-put-signed-field" to open with canPerform: policy.put(policy.signedByField("signer")).
+//   Add "-policy-put-same-signer" to open with canPerform: policy.put(policy.sameSignersAsPrevious()).
 //   Add "-canperform-allow-all" to open with canPerform: () => true.
 //   Add "-transform-identity", "-transform-pick", "-transform-project-context", or "-transform-arbitrary" to compare index transform paths.
 // - DOC_PROFILE_DEEP=1 reports lower shared-log/log phase timings.
@@ -92,7 +93,7 @@ const scenarioNames = (
 
 const scenarioBaseName = (name: string) =>
 	name.replace(
-		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|direct|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
+		/(?:-(?:putmany|nonunique|update|local|no-trim|trim|buffered|direct|coordinate-wal|document-index|mode-native-replicated|mode-native|policy-allow-all|policy-signed-public-key|policy-put-signed-public-key|policy-put-signed-field|policy-put-same-signer|canperform-allow-all|transform-identity|transform-pick|transform-project-context|transform-arbitrary))*$/,
 		"",
 	);
 const scenarioUsesUpdatePuts = (name: string) => name.includes("-update");
@@ -123,6 +124,8 @@ const scenarioUsesPolicyPutSignedPublicKey = (name: string) =>
 	name.includes("-policy-put-signed-public-key");
 const scenarioUsesPolicyPutSignedField = (name: string) =>
 	name.includes("-policy-put-signed-field");
+const scenarioUsesPolicyPutSameSigner = (name: string) =>
+	name.includes("-policy-put-same-signer");
 const scenarioUsesCanPerformAllowAll = (name: string) =>
 	name.includes("-canperform-allow-all");
 const scenarioUsesTransformIdentity = (name: string) =>
@@ -832,6 +835,12 @@ const openScenario = async (name: string) => {
 											policy.signedByField<Document>("signer"),
 										),
 									}
+								: scenarioUsesPolicyPutSameSigner(name)
+									? {
+											canPerform: policy.put(
+												policy.sameSignersAsPrevious<Document>(),
+											),
+										}
 								: scenarioUsesCanPerformAllowAll(name)
 									? { canPerform: () => true }
 									: {}),
