@@ -6,6 +6,10 @@ use std::sync::Arc;
 
 pub type DocId = u32;
 const MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH: usize = 128;
+// Trim-heavy document stores remove many old rows that are unlikely to be queried
+// again. Keep deletes cheap and rebuild secondary indexes once stale entries grow.
+const STALE_INDEX_DELETE_COMPACT_MIN: u64 = 4096;
+const STALE_INDEX_DELETE_COMPACT_FACTOR: u64 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FieldPath {
@@ -312,6 +316,7 @@ pub struct NativeQueryIndex {
     sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, RoaringBitmap>>,
     large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
+    stale_index_deletes: u64,
 }
 
 impl NativeQueryIndex {
@@ -382,6 +387,12 @@ impl NativeQueryIndex {
 
     pub fn delete_id(&mut self, external_id: &str) {
         if self.remove_external(external_id) {
+            self.generation += 1;
+        }
+    }
+
+    pub fn delete_id_lazy(&mut self, external_id: &str) {
+        if self.remove_external_lazy(external_id) {
             self.generation += 1;
         }
     }
@@ -718,6 +729,52 @@ impl NativeQueryIndex {
         self.remove_document_fields(doc_id);
         self.all_docs.remove(doc_id);
         true
+    }
+
+    fn remove_external_lazy(&mut self, external_id: &str) -> bool {
+        let Some(doc_id) = self.external_to_internal.remove(external_id) else {
+            return false;
+        };
+        self.internal_to_external.remove(&doc_id);
+        self.documents.remove(&doc_id);
+        self.all_docs.remove(doc_id);
+        self.stale_index_deletes = self.stale_index_deletes.saturating_add(1);
+        self.compact_stale_indexes_if_needed();
+        true
+    }
+
+    fn compact_stale_indexes_if_needed(&mut self) {
+        if self.stale_index_deletes < STALE_INDEX_DELETE_COMPACT_MIN {
+            return;
+        }
+        let live = self.documents.len() as u64;
+        if self.stale_index_deletes < live.saturating_mul(STALE_INDEX_DELETE_COMPACT_FACTOR) {
+            return;
+        }
+        self.rebuild_secondary_indexes();
+    }
+
+    fn rebuild_secondary_indexes(&mut self) {
+        self.exact.clear();
+        self.range_i64.clear();
+        self.range_u64.clear();
+        self.sort_bool.clear();
+        self.sort_i64.clear();
+        self.sort_u64.clear();
+        self.sort_string.clear();
+        self.sort_bytes.clear();
+        self.large_exact_bytes.clear();
+        self.vectors.clear();
+
+        let documents = self
+            .documents
+            .iter()
+            .map(|(doc_id, fields)| (*doc_id, fields.clone()))
+            .collect::<Vec<_>>();
+        for (doc_id, fields) in documents {
+            self.index_document(doc_id, &fields);
+        }
+        self.stale_index_deletes = 0;
     }
 
     fn remove_document_fields(&mut self, doc_id: DocId) {
@@ -1983,6 +2040,57 @@ mod tests {
         assert_eq!(index.sum(&query, "value").unwrap(), SumResult::U64(4));
         assert_eq!(index.delete_matching(&query), vec!["a", "c"]);
         assert_eq!(index.search(&Query::All, &[], None), vec!["b"]);
+    }
+
+    #[test]
+    fn lazy_delete_hides_docs_without_eager_secondary_index_cleanup() {
+        let mut index = NativeQueryIndex::new();
+        index.put(
+            "a",
+            DocumentFields::new()
+                .with_scalar("head", "h-a")
+                .with_scalar("group", "left")
+                .with_scalar("score", 1_u64),
+        );
+        index.put(
+            "b",
+            DocumentFields::new()
+                .with_scalar("head", "h-b")
+                .with_scalar("group", "right")
+                .with_scalar("score", 2_u64),
+        );
+
+        index.delete_id_lazy("a");
+
+        assert_eq!(index.generation(), 3);
+        assert_eq!(index.len(), 1);
+        assert_eq!(index.stale_index_deletes, 1);
+        assert_eq!(
+            index.exact_first(&"head".into(), &FieldValue::from("h-a")),
+            None
+        );
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "group".into(),
+                    value: FieldValue::from("left"),
+                },
+                &[],
+                None,
+            ),
+            Vec::<String>::new(),
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["b"],
+        );
     }
 
     #[test]

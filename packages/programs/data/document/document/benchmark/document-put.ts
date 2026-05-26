@@ -276,6 +276,7 @@ type Profile = {
 	nativeBackboneDocumentIndexValueBuildMs: number;
 	nativeBackboneDocumentIndexPutMs: number;
 	nativeBackboneDocumentValuePutMs: number;
+	nativeBackboneDocumentIndexTrimDeleteMs: number;
 	nativeBackboneResultRowMs: number;
 	nativeLogCryptoVerifyMs: number;
 	nativeLogCryptoCompactSignMs: number;
@@ -369,6 +370,7 @@ const deepProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneDocumentIndexValueBuildMs",
 	"nativeBackboneDocumentIndexPutMs",
 	"nativeBackboneDocumentValuePutMs",
+	"nativeBackboneDocumentIndexTrimDeleteMs",
 	"nativeBackboneResultRowMs",
 	"nativeLogCryptoVerifyMs",
 	"nativeLogCryptoCompactSignMs",
@@ -429,6 +431,7 @@ const nativeBackboneProfileKeys = new Set<keyof Profile>([
 	"nativeBackboneDocumentIndexValueBuildMs",
 	"nativeBackboneDocumentIndexPutMs",
 	"nativeBackboneDocumentValuePutMs",
+	"nativeBackboneDocumentIndexTrimDeleteMs",
 	"nativeBackboneResultRowMs",
 ]);
 
@@ -500,6 +503,7 @@ const emptyProfile = (): Profile => ({
 	nativeBackboneDocumentIndexValueBuildMs: 0,
 	nativeBackboneDocumentIndexPutMs: 0,
 	nativeBackboneDocumentValuePutMs: 0,
+	nativeBackboneDocumentIndexTrimDeleteMs: 0,
 	nativeBackboneResultRowMs: 0,
 	nativeLogCryptoVerifyMs: 0,
 	nativeLogCryptoCompactSignMs: 0,

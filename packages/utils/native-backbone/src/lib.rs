@@ -46,6 +46,7 @@ pub struct NativePeerbitBackbone {
     coordinate_journal_enabled: bool,
     document_index: NativeQueryIndex,
     document_values: MemoryByteStorage,
+    document_key_by_head: HashMap<String, String>,
     document_schema_ir: Option<NativeSchemaIr>,
     document_context_head_field: Option<u32>,
     document_context_fields: Option<DocumentContextFields>,
@@ -197,6 +198,7 @@ struct NativeBackboneAppendProfile {
     document_index_value_build_ms: f64,
     document_index_put_ms: f64,
     document_value_put_ms: f64,
+    document_index_trim_delete_ms: f64,
     result_row_ms: f64,
     raw_receive_input_copy_ms: f64,
     raw_receive_prepare_ms: f64,
@@ -292,6 +294,7 @@ impl NativeBackboneAppendProfile {
         row.push(&JsValue::from_f64(self.document_index_value_build_ms));
         row.push(&JsValue::from_f64(self.document_index_put_ms));
         row.push(&JsValue::from_f64(self.document_value_put_ms));
+        row.push(&JsValue::from_f64(self.document_index_trim_delete_ms));
         row.push(&JsValue::from_f64(self.result_row_ms));
         row.push(&JsValue::from_f64(self.raw_receive_input_copy_ms));
         row.push(&JsValue::from_f64(self.raw_receive_prepare_ms));
@@ -491,6 +494,7 @@ impl NativePeerbitBackbone {
             coordinate_journal_enabled: false,
             document_index: NativeQueryIndex::new(),
             document_values: MemoryByteStorage::new(),
+            document_key_by_head: HashMap::new(),
             document_schema_ir: None,
             document_context_head_field: None,
             document_context_fields: None,
@@ -929,6 +933,8 @@ impl NativePeerbitBackbone {
             value_suffix_bytes,
             byte_element_index_limit,
             false,
+            None,
+            None,
         )
     }
 
@@ -964,6 +970,8 @@ impl NativePeerbitBackbone {
                 suffix,
                 byte_element_index_limit,
                 false,
+                None,
+                None,
             )?;
         }
 
@@ -977,6 +985,8 @@ impl NativePeerbitBackbone {
         value_suffix_bytes: Vec<u8>,
         byte_element_index_limit: usize,
         known_existing: bool,
+        new_head: Option<&str>,
+        previous_head: Option<&str>,
     ) -> Result<(), JsValue> {
         let profile_enabled = self.append_profile_enabled;
         let extract_started = profile_enabled.then(js_sys::Date::now);
@@ -1022,17 +1032,49 @@ impl NativePeerbitBackbone {
                 ));
             }
         } else if was_existing {
-            self.document_index.put(key, fields);
+            self.document_index.put(&key, fields);
         } else {
-            self.document_index.put_new_unchecked(key, fields);
+            self.document_index.put_new_unchecked(&key, fields);
         }
         if let Some(started) = index_put_started {
             self.append_profile.document_index_put_ms += js_sys::Date::now() - started;
         }
+        self.update_document_head_key(&key, new_head, previous_head, was_existing);
         Ok(())
     }
 
+    fn update_document_head_key(
+        &mut self,
+        key: &str,
+        new_head: Option<&str>,
+        previous_head: Option<&str>,
+        was_existing: bool,
+    ) {
+        let Some(new_head) = new_head else {
+            return;
+        };
+        if self.document_context_head_field.is_none() {
+            return;
+        }
+        if let Some(previous_head) = previous_head {
+            if previous_head != new_head {
+                self.document_key_by_head.remove(previous_head);
+            }
+        } else if was_existing {
+            self.document_key_by_head
+                .retain(|_, existing_key| existing_key != key);
+        }
+        self.document_key_by_head
+            .insert(new_head.to_string(), key.to_string());
+    }
+
     pub fn delete_document(&mut self, key: &str) -> bool {
+        if let Ok(Some(context)) = self.document_context_facts_by_key(key) {
+            self.document_key_by_head.remove(&context.head);
+        } else {
+            self.document_key_by_head
+                .retain(|_, existing_key| existing_key != key);
+        }
         self.document_index.delete_id(key);
         self.document_values.delete(key)
     }
@@ -1040,6 +1082,7 @@ impl NativePeerbitBackbone {
     pub fn clear_document_index(&mut self) {
         self.document_index.clear();
         self.document_values.clear();
+        self.document_key_by_head.clear();
     }
 
     pub fn coordinate_journal_header(&self) -> Vec<u8> {
@@ -4311,8 +4354,8 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
-        let document_trimmed_heads_processed =
-            document_delete_trimmed_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let document_trimmed_heads_processed = document_delete_trimmed_heads
+            && self.delete_documents_by_context_heads_profiled(&trim_hashes);
         let out = Array::new();
         out.push(&committed_entry_facts_to_row(&entry_facts, false));
         out.push(&strings_to_array(trim_hashes));
@@ -4447,8 +4490,8 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
-        let document_trimmed_heads_processed =
-            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let document_trimmed_heads_processed = delete_trimmed_document_heads
+            && self.delete_documents_by_context_heads_profiled(&trim_hashes);
         if compact_row {
             return Ok(compact_committed_entry_facts_trim_hashes_to_row(
                 &entry_facts,
@@ -4594,8 +4637,8 @@ impl NativePeerbitBackbone {
             &gid,
             payload_size,
         )?;
-        let document_trimmed_heads_processed =
-            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let document_trimmed_heads_processed = delete_trimmed_document_heads
+            && self.delete_documents_by_context_heads_profiled(&trim_hashes);
         let out = Array::new();
         out.push(&committed_entry_facts_to_row(
             &entry_facts,
@@ -4708,8 +4751,8 @@ impl NativePeerbitBackbone {
             payload_size,
             Some(&payload_data),
         )?;
-        let document_trimmed_heads_processed =
-            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let document_trimmed_heads_processed = delete_trimmed_document_heads
+            && self.delete_documents_by_context_heads_profiled(&trim_hashes);
         Ok(compact_committed_entry_facts_trim_hashes_to_row(
             &entry_facts,
             trim_hashes,
@@ -5619,8 +5662,8 @@ impl NativePeerbitBackbone {
             payload_size,
             Some(&payload_data),
         )?;
-        let document_trimmed_heads_processed =
-            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let document_trimmed_heads_processed = delete_trimmed_document_heads
+            && self.delete_documents_by_context_heads_profiled(&trim_hashes);
         if let Some(started) = document_index_started {
             self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
         }
@@ -6590,8 +6633,8 @@ impl NativePeerbitBackbone {
             &document_gid,
             payload_size,
         )?;
-        let document_trimmed_heads_processed =
-            delete_trimmed_document_heads && self.delete_documents_by_context_heads(&trim_hashes);
+        let document_trimmed_heads_processed = delete_trimmed_document_heads
+            && self.delete_documents_by_context_heads_profiled(&trim_hashes);
         if let Some(started) = document_index_started {
             self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
         }
@@ -6653,6 +6696,13 @@ impl NativePeerbitBackbone {
         let Some(document_index_commit) = document_index_commit else {
             return Ok(());
         };
+        let key = document_index_commit.key;
+        let previous_head = document_index_commit
+            .previous_context
+            .as_ref()
+            .map(|context| context.head.clone());
+        let byte_element_index_limit = document_index_commit.byte_element_index_limit;
+        let known_existing = document_index_commit.known_existing;
         let profile_enabled = self.append_profile_enabled;
         let context_started = profile_enabled.then(js_sys::Date::now);
         let context_suffix = encode_document_context_suffix(
@@ -6735,31 +6785,52 @@ impl NativePeerbitBackbone {
             }
         };
         self.put_document_encoded_parts_stored_inner(
-            document_index_commit.key,
+            key,
             value_prefix_bytes,
             context_suffix,
-            document_index_commit.byte_element_index_limit,
-            document_index_commit.known_existing,
+            byte_element_index_limit,
+            known_existing,
+            Some(hash),
+            previous_head.as_deref(),
         )
+    }
+
+    fn delete_documents_by_context_heads_profiled(&mut self, heads: &[String]) -> bool {
+        let started = self.append_profile_enabled.then(js_sys::Date::now);
+        let deleted = self.delete_documents_by_context_heads(heads);
+        if let Some(started) = started {
+            self.append_profile.document_index_trim_delete_ms += js_sys::Date::now() - started;
+        }
+        deleted
     }
 
     fn delete_documents_by_context_heads(&mut self, heads: &[String]) -> bool {
         if heads.is_empty() {
             return false;
         }
-        let Some(field) = self.document_context_head_field else {
-            return false;
-        };
+        let field = self.document_context_head_field;
+        let mut deleted = false;
         for head in heads {
+            if let Some(key) = self.document_key_by_head.remove(head) {
+                self.document_index.delete_id_lazy(&key);
+                self.document_values.delete(&key);
+                deleted = true;
+                continue;
+            }
+            let Some(field) = field else {
+                continue;
+            };
             if let Some(key) = self
                 .document_index
                 .exact_first(&FieldPath::Id(field), &FieldValue::from(head.clone()))
             {
-                self.document_index.delete_id(&key);
+                self.document_key_by_head.remove(head);
+                self.document_index.delete_id_lazy(&key);
                 self.document_values.delete(&key);
+                deleted = true;
             }
         }
-        true
+        deleted
     }
 }
 

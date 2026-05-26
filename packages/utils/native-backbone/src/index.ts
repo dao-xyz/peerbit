@@ -2068,6 +2068,7 @@ export type NativeBackboneAppendProfile = {
 	nativeBackboneDocumentIndexValueBuildMs: number;
 	nativeBackboneDocumentIndexPutMs: number;
 	nativeBackboneDocumentValuePutMs: number;
+	nativeBackboneDocumentIndexTrimDeleteMs: number;
 	nativeBackboneResultRowMs: number;
 	nativeBackboneRawReceiveInputCopyMs: number;
 	nativeBackboneRawReceivePrepareMs: number;
@@ -2129,6 +2130,7 @@ const nativeBackboneAppendProfileKeys = [
 	"nativeBackboneDocumentIndexValueBuildMs",
 	"nativeBackboneDocumentIndexPutMs",
 	"nativeBackboneDocumentValuePutMs",
+	"nativeBackboneDocumentIndexTrimDeleteMs",
 	"nativeBackboneResultRowMs",
 	"nativeBackboneRawReceiveInputCopyMs",
 	"nativeBackboneRawReceivePrepareMs",
