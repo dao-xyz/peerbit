@@ -1522,6 +1522,24 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		trimLengthTo: number | undefined,
 	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentValuePrefixBytes: Uint8Array[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction?: (
 		wallTimes: BigUint64Array,
 		logicals: Uint32Array,
@@ -1535,6 +1553,26 @@ type NativePeerbitBackboneHandle = {
 		selfHash: string,
 		selfReplicating: boolean,
 		resolveTrimmedEntries: boolean,
+		documentKeys: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanIds: Uint32Array,
+		documentProjectionEncodedDocuments: Uint8Array[],
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
 		documentKeys: string[],
 		documentByteElementIndexLimit: number,
 		documentDeleteTrimmedHeads: boolean,
@@ -3003,6 +3041,71 @@ const compactCommittedNoNextStorageAppendResultFromRow = (
 		trimmed: [],
 		trimmedHashes: trimHashRows ?? [],
 		documentTrimmedHeadsProcessed,
+	};
+};
+
+const compactCommittedLatestStorageAppendResultFromRow = (
+	resolution: RangeResolution,
+	row: unknown[],
+): NativeBackboneAppendResult => {
+	const [
+		hash,
+		byteLength,
+		metaBytes,
+		fourth,
+		fifth,
+		sixth,
+		seventh,
+		eighth,
+		ninth,
+		tenth,
+		eleventh,
+	] = row as [
+		string,
+		number,
+		Uint8Array | undefined,
+		Uint8Array | string[],
+		string[] | unknown[],
+		unknown[] | undefined,
+		unknown[] | boolean,
+		boolean | string[] | undefined,
+		string[] | boolean | undefined,
+		boolean | unknown[] | undefined,
+		unknown[] | undefined,
+	];
+	const hasDigestRow = fourth instanceof Uint8Array;
+	const hashDigestBytes = hasDigestRow ? fourth : undefined;
+	const next = (hasDigestRow ? fifth : fourth) as string[];
+	const coordinateRow = (hasDigestRow ? sixth : fifth) as unknown[];
+	const leaderRows = (hasDigestRow ? seventh : sixth) as unknown[] | undefined;
+	const isLeader = (hasDigestRow ? eighth : seventh) as boolean;
+	const trimHashRows = (hasDigestRow ? ninth : eighth) as string[] | undefined;
+	const documentTrimmedHeadsProcessed = (hasDigestRow ? tenth : ninth) as
+		| boolean
+		| undefined;
+	const documentPreviousContextRow = (hasDigestRow ? eleventh : tenth) as
+		| unknown[]
+		| undefined;
+	const coordinate = appendCoordinatePlanFromRow(resolution, coordinateRow);
+	return {
+		entry: {
+			cid: hash,
+			hash,
+			next,
+			metaBytes,
+			byteLength,
+			hashDigestBytes,
+		},
+		leaders: rowsToSamples(leaderRows),
+		isLeader,
+		assignedToRangeBoundary: coordinate.assignedToRangeBoundary,
+		coordinate,
+		trimmed: [],
+		trimmedHashes: trimHashRows ?? [],
+		documentTrimmedHeadsProcessed,
+		documentPreviousContext: documentContextFactsFromRow(
+			documentPreviousContextRow,
+		),
 	};
 };
 
@@ -6224,18 +6327,12 @@ export class NativePeerbitBackbone {
 		if (input.entries.length === 0) {
 			return [];
 		}
+		const useCompact = input.resolveTrimmedEntries === false;
 		const projected = input.entries.every(
 			(entry) => entry.documentIndex.projection,
 		);
 		if (projected) {
-			const nativeCachedBatch =
-				this.native
-					.prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction;
-			if (!nativeCachedBatch) {
-				return undefined;
-			}
-			const rows = nativeCachedBatch.call(
-				this.native,
+			const baseArgs = [
 				new BigUint64Array(
 					input.entries.map((entry) => BigInt(entry.wallTime)),
 				),
@@ -6251,7 +6348,8 @@ export class NativePeerbitBackbone {
 				integerString(input.now ?? Date.now()),
 				input.selfHash ?? "",
 				input.selfReplicating ?? true,
-				input.resolveTrimmedEntries !== false,
+			] as const;
+			const documentArgs = [
 				input.entries.map((entry) => entry.documentIndex.key),
 				input.documentByteElementIndexLimit ?? 0,
 				input.documentDeleteTrimmedHeads === true,
@@ -6269,6 +6367,34 @@ export class NativePeerbitBackbone {
 					(entry) => entry.documentIndex.projection!.signer,
 				),
 				input.trimLengthTo,
+			] as const;
+			const nativeCompactCachedBatch =
+				this.native
+					.prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_batch_transaction;
+			if (useCompact && nativeCompactCachedBatch) {
+				const rows = nativeCompactCachedBatch.call(
+					this.native,
+					...baseArgs,
+					...documentArgs,
+				);
+				return rows.map((row) =>
+					compactCommittedLatestStorageAppendResultFromRow(
+						this.resolution,
+						row,
+					),
+				);
+			}
+			const nativeCachedBatch =
+				this.native
+					.prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction;
+			if (!nativeCachedBatch) {
+				return undefined;
+			}
+			const rows = nativeCachedBatch.call(
+				this.native,
+				...baseArgs,
+				input.resolveTrimmedEntries !== false,
+				...documentArgs,
 			);
 			return rows.map((row) =>
 				committedStorageAppendResultFromRow(this.resolution, row),
@@ -6282,14 +6408,7 @@ export class NativePeerbitBackbone {
 		) {
 			return undefined;
 		}
-		const nativeBatch =
-			this.native
-				.prepare_plain_committed_storage_append_document_index_latest_batch_transaction;
-		if (!nativeBatch) {
-			return undefined;
-		}
-		const rows = nativeBatch.call(
-			this.native,
+		const baseArgs = [
 			new BigUint64Array(
 				input.entries.map((entry) => BigInt(entry.wallTime)),
 			),
@@ -6303,12 +6422,41 @@ export class NativePeerbitBackbone {
 			integerString(input.now ?? Date.now()),
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
-			input.resolveTrimmedEntries !== false,
+		] as const;
+		const documentArgs = [
 			input.entries.map((entry) => entry.documentIndex.key),
 			input.entries.map((entry) => entry.documentIndex.valuePrefixBytes!),
 			input.documentByteElementIndexLimit ?? 0,
 			input.documentDeleteTrimmedHeads === true,
 			input.trimLengthTo,
+		] as const;
+		const nativeCompactBatch =
+			this.native
+				.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction;
+		if (useCompact && nativeCompactBatch) {
+			const rows = nativeCompactBatch.call(
+				this.native,
+				...baseArgs,
+				...documentArgs,
+			);
+			return rows.map((row) =>
+				compactCommittedLatestStorageAppendResultFromRow(
+					this.resolution,
+					row,
+				),
+			);
+		}
+		const nativeBatch =
+			this.native
+				.prepare_plain_committed_storage_append_document_index_latest_batch_transaction;
+		if (!nativeBatch) {
+			return undefined;
+		}
+		const rows = nativeBatch.call(
+			this.native,
+			...baseArgs,
+			input.resolveTrimmedEntries !== false,
+			...documentArgs,
 		);
 		return rows.map((row) =>
 			committedStorageAppendResultFromRow(this.resolution, row),

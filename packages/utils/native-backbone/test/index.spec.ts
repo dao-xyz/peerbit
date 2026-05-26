@@ -760,6 +760,7 @@ describe("native peerbit backbone", () => {
 					],
 					replicas: 1,
 					selfHash: "peer",
+					resolveTrimmedEntries: false,
 				},
 			)!;
 
