@@ -868,6 +868,7 @@ export class Documents<
 	private _documentInternalChangeListenerCount = 0;
 	private _documentChangeListenerTrackingInitialized = false;
 	private _documentBackend!: DocumentBackend<T>;
+	private readonly _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
 	private _hasLogTrim = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
@@ -1992,23 +1993,24 @@ export class Documents<
 
 		try {
 			let operation: PutOperation | DeleteOperation = l0;
-			let document: T | undefined = reference?.document;
-			if (!document) {
-				if (isPutOperation(l0)) {
-					document = this._index.valueEncoding.decoder(l0.data);
-					if (!document) {
-						return false;
-					}
-				} else if (isDeleteOperation(l0)) {
-					// Nothing to do here by default
-					// checking if the document exists is not necessary
-					// since it might already be deleted
-				} else {
-					throw new Error("Unsupported operation");
-				}
-			}
-
 			if (this._optionCanPerform) {
+				let document: T | undefined = reference?.document;
+				if (!document) {
+					if (isPutOperation(l0)) {
+						document =
+							this._canAppendDecodedDocuments.get(l0) ??
+							this._index.valueEncoding.decoder(l0.data);
+						if (!document) {
+							return false;
+						}
+					} else if (isDeleteOperation(l0)) {
+						// Nothing to do here by default.
+						// Checking if the document exists is not necessary since it
+						// might already be deleted.
+					} else {
+						throw new Error("Unsupported operation");
+					}
+				}
 				if (this._optionCanPerformNativePolicy && this.isNativeMode()) {
 					return this.nativeCanPerformAllowsAppend(
 						this._optionCanPerformNativePolicy,
@@ -2202,6 +2204,7 @@ export class Documents<
 				let value =
 					reference?.document ??
 					this.index.valueEncoding.decoder(putOperation.data);
+				this._canAppendDecodedDocuments.set(putOperation, value);
 				const keyValue = this.idResolver(value);
 
 				const key = indexerTypes.toId(keyValue);

@@ -3153,10 +3153,15 @@ describe("index", () => {
 							.callsFake(async () => {
 								throw new Error("Unexpected payload materialization");
 							});
+						const decoderSpy = sinon.spy(
+							store.docs.index.valueEncoding,
+							"decoder",
+						);
 						resolveEntrySpy.resetHistory();
 						nativeSignerBatchSpy.resetHistory();
 
 						expect(await (store.docs as any).canAppend(replayEntry)).equal(true);
+						expect(decoderSpy.callCount).equal(1);
 						expect(nativeSignerBatchSpy.callCount).equal(1);
 						expect(resolveEntrySpy.callCount).equal(0);
 						expect(getPayloadValueSpy.callCount).equal(0);
@@ -3170,11 +3175,13 @@ describe("index", () => {
 							expect(await (store.docs as any).canAppend(replayEntry)).equal(
 								false,
 							);
+							expect(decoderSpy.callCount).equal(2);
 							expect(resolveEntrySpy.callCount).equal(0);
 							expect(getPayloadValueSpy.callCount).equal(0);
 						} finally {
 							missingNativeSignerStub.restore();
 						}
+						decoderSpy.restore();
 						getPayloadValueSpy.restore();
 					} finally {
 						if (!nativeSignerBatchRestored) {
