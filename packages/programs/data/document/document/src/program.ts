@@ -3903,7 +3903,7 @@ export class Documents<
 			documentsChanged.removed.push(value);
 		}
 
-		await this._index.del(key);
+		await this._index.delMany([key]);
 		modified.add(key.primitive);
 		return true;
 	}
@@ -4039,7 +4039,7 @@ export class Documents<
 			await value.drop(this);
 		}
 
-		await this._index.del(key);
+		await this._index.delMany([key]);
 		modified.add(key.primitive);
 	}
 

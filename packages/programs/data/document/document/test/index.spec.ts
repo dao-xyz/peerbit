@@ -5031,6 +5031,77 @@ describe("index", () => {
 					}
 				});
 
+				it("removes strict native replicated deletes through exact native delete on receive", async () => {
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-delete",
+						});
+						await source.docs.put(doc, { unique: true });
+						await waitForResolved(async () =>
+							expect(
+								(
+									await target.docs.get(doc.id, {
+										local: true,
+										remote: false,
+									})
+								)?.name,
+							).equal("native-replicated-delete"),
+						);
+
+						const documentDelSpy = sinon.spy(target.docs.index, "del");
+						const backendIndex = target.docs.index.index as any;
+						const delIdsNoReturnSpy = sinon.spy(
+							backendIndex,
+							"delIdsNoReturn",
+						);
+						const delIdsSpy = sinon.spy(backendIndex, "delIds");
+						try {
+							await source.docs.del(doc.id);
+							await waitForResolved(async () =>
+								expect(
+									await target.docs.get(doc.id, {
+										local: true,
+										remote: false,
+									}),
+								).equal(undefined),
+							);
+							expect(documentDelSpy.callCount).equal(0);
+							expect(delIdsNoReturnSpy.callCount).greaterThan(0);
+							expect(delIdsSpy.callCount).equal(0);
+						} finally {
+							delIdsSpy.restore();
+							delIdsNoReturnSpy.restore();
+							documentDelSpy.restore();
+						}
+					} finally {
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
 				it("rejects strict native delete append fallback", async () => {
 					const rustSession = await TestSession.connected(
 						1,
