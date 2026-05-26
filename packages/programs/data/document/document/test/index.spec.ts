@@ -3743,6 +3743,10 @@ describe("index", () => {
 						store.docs.index.index as any,
 						"getContextByIdBatch",
 					);
+					const nativeContextSignerBatchSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"document_context_previous_signature_public_key_batch",
+					);
 					const signerBatchSpy = sinon.spy(
 						((store.docs.log as any)._nativeBackbone as any).native,
 						"graph_entry_signature_public_key_batch",
@@ -3759,6 +3763,7 @@ describe("index", () => {
 						);
 						nativeBatchSpy.resetHistory();
 						contextBatchSpy.resetHistory();
+						nativeContextSignerBatchSpy.resetHistory();
 						signerBatchSpy.resetHistory();
 						resolveEntrySpy.resetHistory();
 
@@ -3779,8 +3784,9 @@ describe("index", () => {
 						]);
 						expect(sequentialSpy.callCount).equal(0);
 						expect(nativeBatchSpy.callCount).equal(1);
-						expect(contextBatchSpy.callCount).equal(1);
-						expect(signerBatchSpy.callCount).equal(1);
+						expect(nativeContextSignerBatchSpy.callCount).equal(1);
+						expect(contextBatchSpy.callCount).equal(0);
+						expect(signerBatchSpy.callCount).equal(0);
 						expect(resolveEntrySpy.callCount).equal(0);
 						expect((await store.docs.get("same-batch-1"))?.name).equal(
 							"after-1",
@@ -3791,6 +3797,7 @@ describe("index", () => {
 					} finally {
 						resolveEntrySpy.restore();
 						signerBatchSpy.restore();
+						nativeContextSignerBatchSpy.restore();
 						contextBatchSpy.restore();
 						nativeBatchSpy.restore();
 						sequentialSpy.restore();

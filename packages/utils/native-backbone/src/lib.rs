@@ -670,6 +670,33 @@ impl NativePeerbitBackbone {
         Ok(row)
     }
 
+    pub fn document_context_previous_signature_public_key_batch(
+        &self,
+        keys: Vec<String>,
+    ) -> Result<Array, JsValue> {
+        let rows = Array::new_with_length(keys.len() as u32);
+        for (index, key) in keys.iter().enumerate() {
+            let row = Array::new();
+            match self.document_context_facts_by_key(key)? {
+                Some(context) => {
+                    row.push(&document_context_facts_to_row(&context));
+                    match self.blocks.get(&context.head).and_then(|bytes| {
+                        entry_v0_signature_public_key_from_storage_bytes(&bytes).ok()
+                    }) {
+                        Some(public_key) => row.push(&Uint8Array::from(public_key.as_slice())),
+                        None => row.push(&JsValue::UNDEFINED),
+                    };
+                }
+                None => {
+                    row.push(&JsValue::UNDEFINED);
+                    row.push(&JsValue::UNDEFINED);
+                }
+            }
+            rows.set(index as u32, row.into());
+        }
+        Ok(rows)
+    }
+
     fn document_context_facts_by_key(
         &self,
         key: &str,

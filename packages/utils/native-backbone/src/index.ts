@@ -113,6 +113,14 @@ type NativePeerbitBackboneHandle = {
 	document_previous_signature_public_key?: (
 		key: string,
 	) => [boolean, Uint8Array | undefined];
+	document_context_previous_signature_public_key_batch?: (
+		keys: string[],
+	) => Array<
+		[
+			[string, string, string, string, number] | undefined,
+			Uint8Array | undefined,
+		]
+	>;
 	document_query: (
 		queryBytes: Uint8Array,
 		sortBytes: Uint8Array,
@@ -4916,6 +4924,22 @@ export class NativePeerbitBackbone {
 		}
 		const [exists, publicKey] = row;
 		return { exists, publicKey };
+	}
+
+	documentContextsAndPreviousSignaturePublicKeys(
+		keys: string[],
+	):
+		| Array<{
+				context?: NativeBackboneDocumentContextFacts;
+				publicKey?: Uint8Array;
+		  }>
+		| undefined {
+		return this.native
+			.document_context_previous_signature_public_key_batch?.(keys)
+			.map(([contextRow, publicKey]) => ({
+				context: documentContextFactsFromRow(contextRow),
+				publicKey,
+			}));
 	}
 
 	documentQuery(

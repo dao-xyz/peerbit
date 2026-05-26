@@ -244,6 +244,16 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	getNativePreviousEntrySignerPublicKey(
 		key: indexerTypes.IdKey,
 	): { exists: boolean; publicKey?: Uint8Array } | undefined;
+	getNativeIndexedContextsAndPreviousSignerPublicKeys(
+		keys: indexerTypes.IdKey[],
+	):
+		| {
+				contexts: Array<
+					indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined
+				>;
+				publicKeys: Array<Uint8Array | undefined>;
+		  }
+		| undefined;
 	plainPutPolicyNeedsExistingContext(): boolean;
 	shouldResolveTrimmedEntries(): boolean;
 	commitNativeDocumentAppend(
@@ -412,13 +422,25 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		let existingContexts:
 			| Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
 			| undefined;
-		if (putOptions?.unique !== true) {
-			existingContexts = await this.context.getLocalIndexedContexts(
-				prepared.map((item) => item.key),
-			);
-		}
 		let previousSignerPublicKeys: Array<Uint8Array | undefined> | undefined;
-		if (existingContexts && this.context.plainPutPolicyNeedsExistingContext()) {
+		if (putOptions?.unique !== true) {
+			const keys = prepared.map((item) => item.key);
+			const nativeContexts =
+				this.context.getNativeIndexedContextsAndPreviousSignerPublicKeys(keys);
+			if (nativeContexts) {
+				existingContexts = nativeContexts.contexts;
+				if (this.context.plainPutPolicyNeedsExistingContext()) {
+					previousSignerPublicKeys = nativeContexts.publicKeys;
+				}
+			} else {
+				existingContexts = await this.context.getLocalIndexedContexts(keys);
+			}
+		}
+		if (
+			existingContexts &&
+			!previousSignerPublicKeys &&
+			this.context.plainPutPolicyNeedsExistingContext()
+		) {
 			const previousHeads = existingContexts.map((existing) =>
 				this.context.getIndexedContextHead(existing ?? null),
 			);
@@ -848,6 +870,8 @@ export class Documents<
 				this.getNativeEntrySignerPublicKeys(hashes),
 			getNativePreviousEntrySignerPublicKey: (key) =>
 				this.getNativePreviousEntrySignerPublicKey(key),
+			getNativeIndexedContextsAndPreviousSignerPublicKeys: (keys) =>
+				this.getNativeIndexedContextsAndPreviousSignerPublicKeys(keys),
 			plainPutPolicyNeedsExistingContext: () =>
 				this.nativePlainPutPolicyNeedsPreviousEntries(),
 			shouldResolveTrimmedEntries: () => {
@@ -1464,6 +1488,58 @@ export class Documents<
 		return nativeBackbone?.documentPreviousSignaturePublicKey?.(
 			documentIndexStoreKey(key),
 		);
+	}
+
+	private getNativeIndexedContextsAndPreviousSignerPublicKeys(
+		keys: indexerTypes.IdKey[],
+	):
+		| {
+				contexts: Array<
+					indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined
+				>;
+				publicKeys: Array<Uint8Array | undefined>;
+		  }
+		| undefined {
+		if (keys.length === 0) {
+			return { contexts: [], publicKeys: [] };
+		}
+		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
+			.nativeBackbone as
+			| {
+					documentContextsAndPreviousSignaturePublicKeys?: (
+						keys: string[],
+					) =>
+						| Array<{
+								context?: {
+									created: bigint;
+									modified: bigint;
+									head: string;
+									gid: string;
+									size: number;
+								};
+								publicKey?: Uint8Array;
+						  }>
+						| undefined;
+			  }
+			| undefined;
+		const rows =
+			nativeBackbone?.documentContextsAndPreviousSignaturePublicKeys?.(
+				keys.map(documentIndexStoreKey),
+			);
+		if (!rows) {
+			return;
+		}
+		return {
+			contexts: rows.map((row, index) =>
+				row.context
+					? {
+							id: keys[index]!,
+							value: { __context: new Context(row.context) } as IndexedContextOnly<I>,
+						}
+					: undefined,
+			),
+			publicKeys: rows.map((row) => row.publicKey),
+		};
 	}
 
 	private getExistingContext(
