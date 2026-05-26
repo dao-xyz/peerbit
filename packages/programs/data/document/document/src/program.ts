@@ -980,9 +980,9 @@ export class Documents<
 		}
 	}
 
-	private async canPerformAllowsNativeDelete(
-		existingEntry: Entry<Operation>,
-	): Promise<boolean> {
+	private async canPerformAllowsNativeDelete(properties: {
+		getExistingEntry: () => Promise<Entry<Operation>>;
+	}): Promise<boolean> {
 		if (!this._optionCanPerform) {
 			return true;
 		}
@@ -995,6 +995,7 @@ export class Documents<
 				this._optionCanPerformNativePolicy,
 			)
 		) {
+			const existingEntry = await properties.getExistingEntry();
 			const existingOperation = await existingEntry.getPayloadValue();
 			if (isPutOperation(existingOperation)) {
 				deleteValue = this._index.valueEncoding.decoder(existingOperation.data);
@@ -3374,16 +3375,27 @@ export class Documents<
 				`No entry with key '${key.primitive}' in the database`,
 			);
 		}
-		const previousEntry = await this._resolveEntry(existingContext.head, {
-			remote: true,
-		});
-		if (!previousEntry) {
-			throw new NotFoundError(
-				`No entry with key '${key.primitive}' in the database`,
-			);
-		}
+		let previousEntry: Entry<Operation> | undefined;
+		const getPreviousEntry = async () => {
+			if (previousEntry) {
+				return previousEntry;
+			}
+			previousEntry = await this._resolveEntry(existingContext.head, {
+				remote: true,
+			});
+			if (!previousEntry) {
+				throw new NotFoundError(
+					`No entry with key '${key.primitive}' in the database`,
+				);
+			}
+			return previousEntry;
+		};
 		const operation = new DeleteOperation({ key });
-		if (!(await this.canPerformAllowsNativeDelete(previousEntry))) {
+		if (
+			!(await this.canPerformAllowsNativeDelete({
+				getExistingEntry: getPreviousEntry,
+			}))
+		) {
 			throw this.nativeModeError("canPerform policy rejected this delete");
 		}
 
@@ -3402,12 +3414,15 @@ export class Documents<
 				})
 			: undefined;
 		this.keepCache?.delete(existingContext.head);
+		const previousForAppend =
+			this.nextFromIndexedContext(existingContext.head, existing) ??
+			(await getPreviousEntry());
 		const appended = await this.log.appendLocallyPreparedPayloadCommitOnly(
 			operationPayloadBytes,
 			{
 				...deleteOptions,
 				meta: {
-					next: [previousEntry],
+					next: [previousForAppend as Entry<Operation>],
 					type: EntryType.CUT,
 					...deleteOptions?.meta,
 				},

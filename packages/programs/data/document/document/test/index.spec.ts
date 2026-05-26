@@ -3879,6 +3879,7 @@ describe("index", () => {
 						store.docs.log,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
 					try {
 						const doc = new Document({ id: uuid(), name: "native-delete" });
 						const put = await store.docs.put(doc, {
@@ -3889,6 +3890,7 @@ describe("index", () => {
 						const putHash = put.entry.hash;
 						sharedAppendSpy.resetHistory();
 						nativeDeleteAppendSpy.resetHistory();
+						resolveEntrySpy.resetHistory();
 
 						const deleted = await store.docs.del(doc.id, {
 							replicate: false,
@@ -3901,7 +3903,9 @@ describe("index", () => {
 						expect(nativeDeleteAppendSpy.callCount).equal(1);
 						expect(trustedAppendSpy.callCount).equal(0);
 						expect(sharedAppendSpy.callCount).equal(0);
+						expect(resolveEntrySpy.callCount).equal(0);
 					} finally {
+						resolveEntrySpy.restore();
 						nativeDeleteAppendSpy.restore();
 						trustedAppendSpy.restore();
 						sharedAppendSpy.restore();
