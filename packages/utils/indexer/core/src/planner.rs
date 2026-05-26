@@ -343,14 +343,10 @@ impl NativeQueryIndex {
     pub fn put(&mut self, id: impl Into<String>, fields: DocumentFields) {
         let external_id = id.into();
         let doc_id = match self.external_to_internal.get(&external_id).copied() {
-            Some(doc_id) => {
-                self.remove_document_fields(doc_id);
-                doc_id
-            }
+            Some(doc_id) => doc_id,
             None => self.allocate_doc_id(external_id),
         };
-        self.index_document(doc_id, &fields);
-        self.documents.insert(doc_id, fields);
+        self.replace_document_fields(doc_id, fields);
         self.all_docs.insert(doc_id);
         self.generation += 1;
     }
@@ -359,9 +355,7 @@ impl NativeQueryIndex {
         let Some(doc_id) = self.external_to_internal.get(id).copied() else {
             return false;
         };
-        self.remove_document_fields(doc_id);
-        self.index_document(doc_id, &fields);
-        self.documents.insert(doc_id, fields);
+        self.replace_document_fields(doc_id, fields);
         self.all_docs.insert(doc_id);
         self.generation += 1;
         true
@@ -411,14 +405,10 @@ impl NativeQueryIndex {
         for (external_id, fields) in batch.puts {
             changed = true;
             let doc_id = match self.external_to_internal.get(&external_id).copied() {
-                Some(doc_id) => {
-                    self.remove_document_fields(doc_id);
-                    doc_id
-                }
+                Some(doc_id) => doc_id,
                 None => self.allocate_doc_id(external_id),
             };
-            self.index_document(doc_id, &fields);
-            self.documents.insert(doc_id, fields);
+            self.replace_document_fields(doc_id, fields);
             self.all_docs.insert(doc_id);
         }
 
@@ -782,21 +772,7 @@ impl NativeQueryIndex {
             return;
         };
         for (path, values) in fields.scalars {
-            if let Some(value) = values.first() {
-                self.remove_sort_value(&path, value, doc_id);
-            }
-            for value in values {
-                if is_large_byte_value(&value) {
-                    remove_from_bitmap_map(&mut self.large_exact_bytes, &path, doc_id);
-                } else {
-                    remove_from_exact(&mut self.exact, &path, &value, doc_id);
-                }
-                if let Some(value) = value.as_i64() {
-                    remove_from_range_i64(&mut self.range_i64, &path, value, doc_id);
-                } else if let Some(value) = value.as_u64() {
-                    remove_from_range_u64(&mut self.range_u64, &path, value, doc_id);
-                }
-            }
+            self.remove_scalar_values(&path, values, doc_id);
         }
         for (path, _) in fields.vectors {
             if let Some(values) = self.vectors.get_mut(&path) {
@@ -805,47 +781,122 @@ impl NativeQueryIndex {
         }
     }
 
+    fn replace_document_fields(&mut self, doc_id: DocId, fields: DocumentFields) {
+        let Some(existing) = self.documents.get(&doc_id) else {
+            self.index_document(doc_id, &fields);
+            self.documents.insert(doc_id, fields);
+            return;
+        };
+        if existing.scalars == fields.scalars && existing.vectors == fields.vectors {
+            self.documents.insert(doc_id, fields);
+            return;
+        }
+
+        let removed_scalars = existing
+            .scalars
+            .iter()
+            .filter(|(path, values)| fields.scalars.get(*path) != Some(*values))
+            .map(|(path, values)| (path.clone(), values.clone()))
+            .collect::<Vec<_>>();
+        let inserted_scalars = fields
+            .scalars
+            .iter()
+            .filter(|(path, values)| existing.scalars.get(*path) != Some(*values))
+            .map(|(path, values)| (path.clone(), values.clone()))
+            .collect::<Vec<_>>();
+        let removed_vectors = existing
+            .vectors
+            .iter()
+            .filter(|(path, value)| fields.vectors.get(*path) != Some(*value))
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let inserted_vectors = fields
+            .vectors
+            .iter()
+            .filter(|(path, value)| existing.vectors.get(*path) != Some(*value))
+            .map(|(path, value)| (path.clone(), value.clone()))
+            .collect::<Vec<_>>();
+
+        for (path, values) in removed_scalars {
+            self.remove_scalar_values(&path, values, doc_id);
+        }
+        for path in removed_vectors {
+            if let Some(values) = self.vectors.get_mut(&path) {
+                values.remove(&doc_id);
+            }
+        }
+        for (path, values) in inserted_scalars {
+            self.index_scalar_values(&path, &values, doc_id);
+        }
+        for (path, vector) in inserted_vectors {
+            self.vectors.entry(path).or_default().insert(doc_id, vector);
+        }
+        self.documents.insert(doc_id, fields);
+    }
+
     fn index_document(&mut self, doc_id: DocId, fields: &DocumentFields) {
         for (path, values) in &fields.scalars {
-            if let Some(value) = values.first() {
-                self.insert_sort_value(path, value, doc_id);
-            }
-            for value in values {
-                if is_large_byte_value(value) {
-                    self.large_exact_bytes
-                        .entry(path.clone())
-                        .or_default()
-                        .insert(doc_id);
-                } else {
-                    self.exact
-                        .entry(path.clone())
-                        .or_default()
-                        .entry(value.clone())
-                        .or_default()
-                        .insert(doc_id);
-                }
-                if let Some(value) = value.as_i64() {
-                    self.range_i64
-                        .entry(path.clone())
-                        .or_default()
-                        .entry(value)
-                        .or_default()
-                        .insert(doc_id);
-                } else if let Some(value) = value.as_u64() {
-                    self.range_u64
-                        .entry(path.clone())
-                        .or_default()
-                        .entry(value)
-                        .or_default()
-                        .insert(doc_id);
-                }
-            }
+            self.index_scalar_values(path, values, doc_id);
         }
         for (path, vector) in &fields.vectors {
             self.vectors
                 .entry(path.clone())
                 .or_default()
                 .insert(doc_id, vector.clone());
+        }
+    }
+
+    fn index_scalar_values(&mut self, path: &FieldPath, values: &[FieldValue], doc_id: DocId) {
+        if let Some(value) = values.first() {
+            self.insert_sort_value(path, value, doc_id);
+        }
+        for value in values {
+            if is_large_byte_value(value) {
+                self.large_exact_bytes
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(doc_id);
+            } else {
+                self.exact
+                    .entry(path.clone())
+                    .or_default()
+                    .entry(value.clone())
+                    .or_default()
+                    .insert(doc_id);
+            }
+            if let Some(value) = value.as_i64() {
+                self.range_i64
+                    .entry(path.clone())
+                    .or_default()
+                    .entry(value)
+                    .or_default()
+                    .insert(doc_id);
+            } else if let Some(value) = value.as_u64() {
+                self.range_u64
+                    .entry(path.clone())
+                    .or_default()
+                    .entry(value)
+                    .or_default()
+                    .insert(doc_id);
+            }
+        }
+    }
+
+    fn remove_scalar_values(&mut self, path: &FieldPath, values: Vec<FieldValue>, doc_id: DocId) {
+        if let Some(value) = values.first() {
+            self.remove_sort_value(path, value, doc_id);
+        }
+        for value in values {
+            if is_large_byte_value(&value) {
+                remove_from_bitmap_map(&mut self.large_exact_bytes, path, doc_id);
+            } else {
+                remove_from_exact(&mut self.exact, path, &value, doc_id);
+            }
+            if let Some(value) = value.as_i64() {
+                remove_from_range_i64(&mut self.range_i64, path, value, doc_id);
+            } else if let Some(value) = value.as_u64() {
+                remove_from_range_u64(&mut self.range_u64, path, value, doc_id);
+            }
         }
     }
 
@@ -2152,6 +2203,7 @@ mod tests {
         index.put_new_unchecked(
             "a",
             DocumentFields::new()
+                .with_scalar("category", "post")
                 .with_scalar("status", "draft")
                 .with_scalar("score", 1_u64),
         );
@@ -2159,6 +2211,7 @@ mod tests {
         assert!(index.put_existing_unchecked(
             "a",
             DocumentFields::new()
+                .with_scalar("category", "post")
                 .with_scalar("status", "published")
                 .with_scalar("score", 2_u64),
         ));
@@ -2183,6 +2236,20 @@ mod tests {
                 &Query::Exact {
                     field: "status".into(),
                     value: FieldValue::from("published"),
+                },
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["a"],
+        );
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "category".into(),
+                    value: FieldValue::from("post"),
                 },
                 &[SortField {
                     field: "score".into(),
