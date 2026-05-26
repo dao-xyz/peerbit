@@ -3554,6 +3554,69 @@ describe("index", () => {
 					}
 				});
 
+				it("indexes strict native replicated puts through stored native context on receive", async () => {
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const documentPutSpy = sinon.spy(target.docs.index, "put");
+					const documentStoredIdentityPutSpy = sinon.spy(
+						target.docs.index,
+						"_putStoredIdentityWithContext",
+					);
+					const backendIndex = target.docs.index.index as any;
+					const backendStoredContextPutSpy = sinon.spy(
+						backendIndex,
+						"putStoredContextualEncodedValue",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-stored-context",
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(
+							(
+								await target.docs.get(doc.id, {
+									local: true,
+									remote: false,
+								})
+							)?.name,
+						).equal("native-replicated-stored-context");
+						expect(documentPutSpy.callCount).equal(0);
+						expect(documentStoredIdentityPutSpy.callCount).greaterThan(0);
+						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
+					} finally {
+						backendStoredContextPutSpy.restore();
+						documentStoredIdentityPutSpy.restore();
+						documentPutSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
 				it("keeps already-local strict native put options by reference", () => {
 					const docs = new Documents<Document>();
 					const nativeDocs = docs as any;

@@ -4043,6 +4043,42 @@ export class Documents<
 		modified.add(key.primitive);
 	}
 
+	private putStrictNativeReceivedStoredIdentityWithContext(
+		value: T,
+		key: indexerTypes.IdKey,
+		entry: Entry<Operation>,
+		payload: PutOperation,
+		existing: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): MaybePromise<WithIndexedContext<T, I> | undefined> {
+		if (!this.isNativeMode() || !this._nativeBackboneDocumentIndexEnabled) {
+			return;
+		}
+		if (value instanceof Program) {
+			return;
+		}
+		const existingContext = this.getExistingContext(existing);
+		const modified = entry.meta.clock.timestamp.wallTime;
+		const context = new Context({
+			created: existingContext?.created || modified,
+			modified,
+			head: entry.hash,
+			gid: entry.meta.gid,
+			size: encodePutOperationPayload(payload.data).byteLength,
+		});
+		return this._index._putStoredIdentityWithContext(
+			value,
+			key,
+			context,
+			{
+				prefix: payload.data,
+				suffix: encodeDocumentContextSuffix(context),
+			},
+			{
+				replace: existing != null,
+			},
+		);
+	}
+
 	public async get(
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Omit<GetOptions<T, I, D, true | undefined>, "resolve">,
@@ -4293,6 +4329,21 @@ export class Documents<
 					if (value instanceof Program) {
 						// if replicator, then open
 						value = await this.maybeSubprogramOpen(value);
+					}
+					const nativeStoredIndexed =
+						payload instanceof PutOperation
+							? await this.putStrictNativeReceivedStoredIdentityWithContext(
+									value,
+									key,
+									item,
+									payload,
+									existing,
+								)
+							: undefined;
+					if (nativeStoredIndexed) {
+						documentsChanged.added.push(nativeStoredIndexed);
+						modified.add(key.primitive);
+						continue;
 					}
 					const { context, indexable } = await this._index.put(
 						value,
