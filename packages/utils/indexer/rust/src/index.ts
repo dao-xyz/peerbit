@@ -251,6 +251,10 @@ type NativeBackboneDocumentIndexTarget = {
 	) => Array<[string, string, string, string, number] | undefined>;
 	documentValueBytes?: (key: string) => Uint8Array | undefined;
 	documentEntry?: (key: string) => [string, Uint8Array] | undefined;
+	documentFieldValue?: (
+		key: string,
+		field: number,
+	) => NativeFieldValueRow | undefined;
 	documentQuery?: (
 		queryBytes: Uint8Array,
 		sortBytes: Uint8Array,
@@ -339,6 +343,12 @@ type NativeSortField = {
 };
 
 type NativeSumKind = "none" | "i64" | "u64";
+type NativeFieldValueRow =
+	| ["bool", boolean]
+	| ["i64", string]
+	| ["u64", string]
+	| ["string", string]
+	| ["bytes", Uint8Array];
 
 type NativeCandidatePage = {
 	compiled: NativeQueryCompileResult;
@@ -750,6 +760,26 @@ const nativeSortFields = (
 		field: nativeFieldId(dictionary, field.key),
 		direction: field.direction === types.SortDirection.ASC ? "asc" : "desc",
 	}));
+
+const nativeFieldValueRowToJsValue = (
+	row: NativeFieldValueRow | undefined,
+): unknown => {
+	if (!row) {
+		return undefined;
+	}
+	const [kind, value] = row;
+	switch (kind) {
+		case "bool":
+			return typeof value === "boolean" ? value : undefined;
+		case "i64":
+		case "u64":
+			return typeof value === "string" ? BigInt(value) : undefined;
+		case "string":
+			return typeof value === "string" ? value : undefined;
+		case "bytes":
+			return value instanceof Uint8Array ? new Uint8Array(value) : undefined;
+	}
+};
 
 const encodeNativeSort = (sort: NativeSortField[] = []): Uint8Array => {
 	const writer = new BinaryWriter();
@@ -2096,6 +2126,23 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			gid: row[3],
 			size: row[4],
 		};
+	}
+
+	getNativeIndexedFieldValue(
+		id: types.IdKey,
+		path: readonly string[],
+	): unknown {
+		if (this.isClosing()) {
+			return;
+		}
+		this.assertOpen();
+		const field = nativeFieldId(this.fieldDictionary, [...path]);
+		return nativeFieldValueRowToJsValue(
+			this.nativeBackboneDocumentIndex?.documentFieldValue?.(
+				keyToStoreKey(id),
+				field,
+			),
+		);
 	}
 
 	getContextByIdBatch(ids: types.IdKey[]): Array<

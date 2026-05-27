@@ -104,6 +104,10 @@ type NativePeerbitBackboneHandle = {
 	) => boolean;
 	document_value_bytes: (key: string) => Uint8Array | undefined;
 	document_entry: (key: string) => [string, Uint8Array] | undefined;
+	document_field_value: (
+		key: string,
+		field: number,
+	) => NativeBackboneDocumentFieldValue | undefined;
 	document_context: (
 		key: string,
 	) => [string, string, string, string, number] | undefined;
@@ -2391,6 +2395,12 @@ const nativeBackboneAppendProfileKeys = [
 ] as const satisfies readonly (keyof NativeBackboneAppendProfile)[];
 
 export type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];
+export type NativeBackboneDocumentFieldValue =
+	| ["bool", boolean]
+	| ["i64", string]
+	| ["u64", string]
+	| ["string", string]
+	| ["bytes", Uint8Array];
 
 export type NativeBackboneOptions = {
 	resolution?: RangeResolution;
@@ -5395,6 +5405,13 @@ export class NativePeerbitBackbone {
 
 	documentEntry(key: string): NativeBackboneDocumentEntry | undefined {
 		return this.native.document_entry(key);
+	}
+
+	documentFieldValue(
+		key: string,
+		field: number,
+	): NativeBackboneDocumentFieldValue | undefined {
+		return this.native.document_field_value(key, field);
 	}
 
 	documentContext(

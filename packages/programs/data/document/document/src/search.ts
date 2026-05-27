@@ -2367,6 +2367,40 @@ export class DocumentIndex<
 		);
 	}
 
+	public canReadNativeIndexedFieldValues(
+		paths: readonly (string | readonly string[])[],
+	): boolean {
+		return (
+			this.canReadOriginalFieldPathsFromIndexedValue(paths) &&
+			typeof (
+				this.index as {
+					getNativeIndexedFieldValue?: (
+						id: indexerTypes.IdKey,
+						path: readonly string[],
+					) => unknown;
+				}
+			).getNativeIndexedFieldValue === "function"
+		);
+	}
+
+	public getNativeIndexedFieldValue(
+		id: indexerTypes.IdKey,
+		path: string | readonly string[],
+	): unknown {
+		const read = (
+			this.index as {
+				getNativeIndexedFieldValue?: (
+					id: indexerTypes.IdKey,
+					path: readonly string[],
+				) => unknown;
+			}
+		).getNativeIndexedFieldValue;
+		if (typeof read !== "function") {
+			return undefined;
+		}
+		return read.call(this.index, id, typeof path === "string" ? [path] : path);
+	}
+
 	public _putIdentityWithContext(
 		value: T,
 		id: indexerTypes.IdKey,

@@ -796,6 +796,15 @@ impl NativePeerbitBackbone {
             .unwrap_or(JsValue::UNDEFINED)
     }
 
+    pub fn document_field_value(&self, key: &str, field: u32) -> JsValue {
+        self.document_index
+            .document_fields_by_id(key)
+            .and_then(|fields| fields.scalar_values(&FieldPath::Id(field)))
+            .and_then(|values| values.first())
+            .map(field_value_to_row)
+            .unwrap_or(JsValue::UNDEFINED)
+    }
+
     pub fn document_context(&self, key: &str) -> Result<JsValue, JsValue> {
         Ok(self
             .document_context_facts_by_key(key)?
@@ -8843,6 +8852,33 @@ fn document_string_field(fields: &DocumentFields, field: u32) -> Option<String> 
         FieldValue::String(value) => Some(value.to_string()),
         _ => None,
     }
+}
+
+fn field_value_to_row(value: &FieldValue) -> JsValue {
+    let row = Array::new_with_length(2);
+    match value {
+        FieldValue::Bool(value) => {
+            row.set(0, JsValue::from_str("bool"));
+            row.set(1, JsValue::from_bool(*value));
+        }
+        FieldValue::I64(value) => {
+            row.set(0, JsValue::from_str("i64"));
+            row.set(1, JsValue::from_str(&value.to_string()));
+        }
+        FieldValue::U64(value) => {
+            row.set(0, JsValue::from_str("u64"));
+            row.set(1, JsValue::from_str(&value.to_string()));
+        }
+        FieldValue::String(value) => {
+            row.set(0, JsValue::from_str("string"));
+            row.set(1, JsValue::from_str(value));
+        }
+        FieldValue::Bytes(value) => {
+            row.set(0, JsValue::from_str("bytes"));
+            row.set(1, Uint8Array::from(value.as_ref()).into());
+        }
+    }
+    row.into()
 }
 
 fn sum_to_js(sum: SumResult) -> Array {

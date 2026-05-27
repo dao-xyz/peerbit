@@ -5626,7 +5626,7 @@ describe("index", () => {
 					}
 				});
 
-				it("uses descriptor indexed values for strict native delete ownership policies", async () => {
+				it("uses native indexed field values for strict native delete ownership policies", async () => {
 					@variant("strict_native_delete_owner_indexable")
 					class DeleteOwnerIndexable {
 						@field({ type: "string" })
@@ -5672,7 +5672,14 @@ describe("index", () => {
 						localStore.docs as any,
 						"_resolveEntry",
 					);
-					const indexedGetSpy = sinon.spy(localStore.docs.index, "get");
+					const indexedPolicyDocumentSpy = sinon.spy(
+						localStore.docs as any,
+						"getLocalIndexedDocumentForNativeDeletePolicy",
+					);
+					const nativeFieldValueSpy = sinon.spy(
+						localStore.docs.index.index as any,
+						"getNativeIndexedFieldValue",
+					);
 					try {
 						const owned = new Document({
 							id: uuid(),
@@ -5695,7 +5702,8 @@ describe("index", () => {
 							target: "none",
 						});
 						resolveEntrySpy.resetHistory();
-						indexedGetSpy.resetHistory();
+						indexedPolicyDocumentSpy.resetHistory();
+						nativeFieldValueSpy.resetHistory();
 
 						await localStore.docs.del(owned.id, {
 							replicate: false,
@@ -5712,13 +5720,11 @@ describe("index", () => {
 						);
 
 						expect(resolveEntrySpy.callCount).equal(0);
-						expect(
-							indexedGetSpy
-								.getCalls()
-								.filter((call) => call.args[1]?.resolve === false).length,
-						).equal(2);
+						expect(indexedPolicyDocumentSpy.callCount).equal(0);
+						expect(nativeFieldValueSpy.callCount).equal(2);
 					} finally {
-						indexedGetSpy.restore();
+						nativeFieldValueSpy.restore();
+						indexedPolicyDocumentSpy.restore();
 						resolveEntrySpy.restore();
 						await rustSession.stop();
 					}
@@ -5770,7 +5776,7 @@ describe("index", () => {
 							}),
 						).to.be.rejectedWith(
 							NativeDocumentModeError,
-							"retain delete policy field: data",
+							"read delete policy field: data",
 						);
 					} finally {
 						await rustSession.stop();

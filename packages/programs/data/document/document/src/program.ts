@@ -1132,13 +1132,13 @@ export class Documents<
 			);
 			if (
 				deleteFieldPaths.length > 0 &&
-				!this._index.canReadOriginalFieldPathsFromIndexedValue(deleteFieldPaths)
+				!this._index.canReadNativeIndexedFieldValues(deleteFieldPaths)
 			) {
 				const labels = deleteFieldPaths.map((path) =>
 					Array.isArray(path) ? path.join(".") : path,
 				);
 				throw this.nativeModeError(
-					`requires native index to retain delete policy field${labels.length > 1 ? "s" : ""}: ${labels.join(", ")}`,
+					`requires native index to read delete policy field${labels.length > 1 ? "s" : ""}: ${labels.join(", ")}`,
 				);
 			}
 		}
@@ -1449,6 +1449,52 @@ export class Documents<
 		}
 	}
 
+	private async nativeDeleteOperationPolicyAllows(
+		descriptor: NativeCanPerformPolicyDescriptor,
+		operation: DeleteOperation,
+	): Promise<boolean> {
+		switch (descriptor.kind) {
+			case "allowAll":
+				return true;
+			case "signedByPublicKey":
+				return this.nativeFieldValueMatchesLocalPublicKey(
+					descriptor.publicKey,
+				);
+			case "delete":
+				return this.nativeDeleteOperationPolicyAllows(
+					descriptor.policy,
+					operation,
+				);
+			case "deleteSignedByExistingField": {
+				const value = this.getNativeDeletePolicyFieldValue(
+					operation,
+					descriptor.path,
+				);
+				return this.nativeFieldValueMatchesLocalPublicKey(value);
+			}
+			case "and":
+				for (const policy of descriptor.policies) {
+					if (
+						!(await this.nativeDeleteOperationPolicyAllows(policy, operation))
+					) {
+						return false;
+					}
+				}
+				return true;
+			case "or":
+				for (const policy of descriptor.policies) {
+					if (await this.nativeDeleteOperationPolicyAllows(policy, operation)) {
+						return true;
+					}
+				}
+				return false;
+			case "put":
+			case "signedByField":
+			case "sameSignersAsPrevious":
+				return false;
+		}
+	}
+
 	private assertNativeModePlainPutManySupported(
 		docs: T[],
 		options?: DocumentPutOptions,
@@ -1503,6 +1549,7 @@ export class Documents<
 	}
 
 	private async canPerformAllowsNativeDelete(properties: {
+		operation: DeleteOperation;
 		getExistingEntry: () => Promise<Entry<Operation>>;
 		getExistingDocument?: () => MaybePromise<T | undefined>;
 	}): Promise<boolean> {
@@ -1511,6 +1558,12 @@ export class Documents<
 		}
 		if (!this._optionCanPerformNativePolicy) {
 			return false;
+		}
+		if (this.isNativeMode()) {
+			return this.nativeDeleteOperationPolicyAllows(
+				this._optionCanPerformNativePolicy,
+				properties.operation,
+			);
 		}
 		let deleteValue: T | undefined;
 		if (
@@ -1834,6 +1887,17 @@ export class Documents<
 			remote: false,
 			resolve: false,
 		} as GetOptions<T, I, D, false>)) as unknown as T | undefined;
+	}
+
+	private getNativeDeletePolicyFieldValue(
+		operation: DeleteOperation,
+		path: string | readonly string[],
+	): unknown {
+		const key =
+			operation.key instanceof indexerTypes.IdKey
+				? operation.key
+				: indexerTypes.toId(operation.key);
+		return this._index.getNativeIndexedFieldValue(key, path);
 	}
 
 	get changes() {
@@ -2167,15 +2231,7 @@ export class Documents<
 				previousSignerPublicKeys,
 			);
 		}
-		const deleteValue = nativeCanPerformPolicyNeedsDeleteValue(descriptor)
-			? await this.resolveCanPerformDeleteValue(operation, {
-					allowEntryFallback: !this.isNativeMode(),
-				})
-			: undefined;
-		return createNativeFastPathDeletePolicyEvaluator(
-			descriptor,
-			this.log.log.identity.publicKey,
-		)(deleteValue);
+		return this.nativeDeleteOperationPolicyAllows(descriptor, operation);
 	}
 
 	private async resolveCanPerformPreviousEntries(
@@ -4527,6 +4583,7 @@ export class Documents<
 		const operation = new DeleteOperation({ key });
 		if (
 			!(await this.canPerformAllowsNativeDelete({
+				operation,
 				getExistingEntry: getPreviousEntry,
 				getExistingDocument,
 			}))
