@@ -4436,6 +4436,26 @@ export class Documents<
 		modified.add(key.primitive);
 	}
 
+	private async collectRemovedPutChangeFromNativeId(
+		payload: Operation,
+		modified: Set<string | number | bigint>,
+	): Promise<boolean> {
+		if (!this.isNativeMode() || !isPutOperation(payload)) {
+			return false;
+		}
+		const keyValue = await this.getNativeDocumentIdFromPutOperation(payload);
+		if (keyValue == null) {
+			return false;
+		}
+		const key = indexerTypes.toId(keyValue);
+		if (modified.has(key.primitive)) {
+			return true;
+		}
+		await this._index.delMany([key]);
+		modified.add(key.primitive);
+		return true;
+	}
+
 	private putStrictNativeReceivedDocumentIndexWithContext(
 		value: T,
 		key: indexerTypes.IdKey,
@@ -4841,6 +4861,12 @@ export class Documents<
 					isPutOperation(payload) ||
 					removedSet.has(item.hash)
 				) {
+					if (
+						!documentsChanged &&
+						(await this.collectRemovedPutChangeFromNativeId(payload, modified))
+					) {
+						continue;
+					}
 					await this.collectRemovedDocumentChange(
 						payload,
 						modified,

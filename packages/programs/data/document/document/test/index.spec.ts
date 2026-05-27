@@ -3857,6 +3857,21 @@ describe("index", () => {
 						expect(documentPreparedNativePutSpy.callCount).equal(0);
 						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
 						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
+						const storedContextCalls =
+							documentPreparedNativeStoredPutSpy.callCount;
+						await source.docs.put(
+							new Document({
+								id: doc.id,
+								name: "native-replicated-stored-context-updated",
+							}),
+							{ unique: true },
+						);
+						await waitForResolved(() =>
+							expect(
+								documentPreparedNativeStoredPutSpy.callCount,
+							).greaterThan(storedContextCalls),
+						);
+						expect(decoderSpy.callCount).equal(0);
 						expect(
 							(
 								await target.docs.get(doc.id, {
@@ -3864,7 +3879,7 @@ describe("index", () => {
 									remote: false,
 								})
 							)?.name,
-						).equal("native-replicated-stored-context");
+						).equal("native-replicated-stored-context-updated");
 						expect(documentPutSpy.callCount).equal(0);
 					} finally {
 						backendStoredContextPutSpy.restore();
