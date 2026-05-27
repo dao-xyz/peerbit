@@ -744,6 +744,7 @@ pub fn project_document_index_simple(
     plan: JsValue,
     created: &str,
     modified: &str,
+    head: &str,
     gid: &str,
     size: u32,
     signer: JsValue,
@@ -795,6 +796,7 @@ pub fn project_document_index_simple(
             "context" => match source_values[index].as_str() {
                 "created" => ProjectionValue::U64(created),
                 "modified" => ProjectionValue::U64(modified),
+                "head" => ProjectionValue::String(head.to_string()),
                 "gid" => ProjectionValue::String(gid.to_string()),
                 "size" => ProjectionValue::U64(size as u64),
                 _ => return Err(JsValue::from_str("Unsupported context projection source")),

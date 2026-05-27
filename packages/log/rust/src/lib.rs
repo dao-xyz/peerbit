@@ -4956,13 +4956,18 @@ fn calculate_raw_digest_profiled(
 }
 
 fn raw_cid_v1_string_from_digest(digest_bytes: &[u8; 32]) -> String {
-    let mut cid = Vec::with_capacity(36);
-    cid.push(0x01); // CIDv1
-    cid.push(0x55); // raw codec
-    cid.push(0x12); // sha2-256 multihash code
-    cid.push(0x20); // 32 byte digest
-    cid.extend_from_slice(digest_bytes.as_slice());
-    format!("z{}", bs58::encode(cid).into_string())
+    let mut cid = [0u8; 36];
+    cid[0] = 0x01; // CIDv1
+    cid[1] = 0x55; // raw codec
+    cid[2] = 0x12; // sha2-256 multihash code
+    cid[3] = 0x20; // 32 byte digest
+    cid[4..].copy_from_slice(digest_bytes.as_slice());
+    let mut encoded = String::with_capacity(51);
+    encoded.push('z');
+    bs58::encode(cid)
+        .onto(&mut encoded)
+        .expect("base58 encoding into String should not fail");
+    encoded
 }
 
 fn raw_cid_v1_digest_from_string(cid: &str) -> Result<[u8; 32], JsValue> {

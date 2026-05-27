@@ -48,6 +48,7 @@ export type SimpleDocumentFieldExtractionPlan = {
 export type SimpleDocumentProjectionContext = {
 	created: bigint | number | string;
 	modified: bigint | number | string;
+	head?: string;
 	gid: string;
 	size: number;
 	signer?: Uint8Array;
@@ -89,6 +90,7 @@ type WasmModule = {
 		plan: SimpleDocumentProjectionPlan,
 		created: string,
 		modified: string,
+		head: string,
 		gid: string,
 		size: number,
 		signer?: Uint8Array,
@@ -279,6 +281,7 @@ const projectDocumentIndexSimpleWithWasm = (
 				plan,
 				asU64String(context.created),
 				asU64String(context.modified),
+				context.head ?? "",
 				context.gid,
 				context.size,
 				context.signer,

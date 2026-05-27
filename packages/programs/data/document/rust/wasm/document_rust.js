@@ -96,19 +96,22 @@ export function plan_document_context_batch(existing_createds, modifieds, heads,
  * @param {any} plan
  * @param {string} created
  * @param {string} modified
+ * @param {string} head
  * @param {string} gid
  * @param {number} size
  * @param {any} signer
  * @returns {Uint8Array}
  */
-export function project_document_index_simple(encoded_document, plan, created, modified, gid, size, signer) {
+export function project_document_index_simple(encoded_document, plan, created, modified, head, gid, size, signer) {
     const ptr0 = passStringToWasm0(created, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(modified, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(gid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const ptr2 = passStringToWasm0(head, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.project_document_index_simple(encoded_document, plan, ptr0, len0, ptr1, len1, ptr2, len2, size, signer);
+    const ptr3 = passStringToWasm0(gid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.project_document_index_simple(encoded_document, plan, ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, size, signer);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }

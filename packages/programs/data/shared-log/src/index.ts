@@ -133,6 +133,7 @@ import {
 	ExchangeHeadsMessage,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
+	type RawReceiveHashSelection,
 	RequestIPrune,
 	ResponseIPrune,
 	createExchangeHeadsMessages,
@@ -542,6 +543,7 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	coordinateFields?: SharedLogCoordinateNativeFields<R>;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
+	nativeBackboneDocumentDeleteCommitted?: boolean;
 	documentPreviousContext?: {
 		created: bigint;
 		modified: bigint;
@@ -564,6 +566,7 @@ type NativeBackboneDocumentIndexCommitInput = {
 	byteElementIndexLimit?: number;
 	deleteTrimmedHeads?: boolean;
 	useLatestContext?: boolean;
+	requiredPreviousSignerPublicKey?: Uint8Array;
 };
 
 type NativeBackboneDocumentIndexAppendFacts = {
@@ -1513,6 +1516,42 @@ export class SharedLog<
 		super();
 		this.log = new Log(properties);
 		this.rpc = new RPC();
+		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
+		this._pendingIHave = new Map();
+		this.latestReplicationInfoMessage = new Map();
+		this._replicationInfoBlockedPeers = new Set();
+		this._replicationInfoRequestByPeer = new Map();
+		this._replicationInfoApplyQueueByPeer = new Map();
+		this._gidPeersHistory = new Map();
+		this._repairRetryTimers = new Set();
+		this._recentRepairDispatch = new Map();
+		this._repairSweepRunning = false;
+		this._repairSweepPendingModes = new Set();
+		this._repairSweepPendingPeersByMode = createRepairPendingPeersByMode();
+		this._repairFrontierByMode = createRepairFrontierByMode() as Map<
+			RepairDispatchMode,
+			Map<string, Map<string, RepairDispatchEntry<R>>>
+		>;
+		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
+		this._repairSweepOptimisticGidPeersPending = new Map();
+		this._entryKnownPeers = new Map();
+		this._joinAuthoritativeRepairTimersByDelay = new Map();
+		this._joinAuthoritativeRepairPeersByDelay = new Map();
+		this._appendBackfillPendingByTarget = new Map();
+		this._topicSubscribersCache = new Map();
+		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
+		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
+		this.uniqueReplicators = new Set();
+		this._replicatorJoinEmitted = new Set();
+		this._replicatorsReconciled = false;
+		this._replicatorLivenessSweepRunning = false;
+		this._replicatorLivenessTargets = [];
+		this._replicatorLivenessTargetsSize = 0;
+		this._replicatorLivenessCursor = 0;
+		this._replicatorLivenessFailures = new Map();
+		this._replicatorLastActivityAt = new Map();
+		this.pendingMaturity = new Map();
+		this._closeController = new AbortController();
 	}
 
 	get compatibility(): number | undefined {
@@ -5325,6 +5364,7 @@ export class SharedLog<
 			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
 			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
 			useNativeExistingDocumentContext?: boolean;
+			nativeBackboneDocumentDeleteKey?: string;
 		},
 	) {
 		return this.appendLocallyPrepared(undefined as T, options, {
@@ -5341,10 +5381,11 @@ export class SharedLog<
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
-			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-			useNativeExistingDocumentContext?: boolean;
-		},
+				nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+				prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+				useNativeExistingDocumentContext?: boolean;
+				nativeBackboneDocumentDeleteKey?: string;
+			},
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
@@ -5410,10 +5451,11 @@ export class SharedLog<
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
-			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-			useNativeExistingDocumentContext?: boolean;
-		},
+				nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+				prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+				useNativeExistingDocumentContext?: boolean;
+				nativeBackboneDocumentDeleteKey?: string;
+			},
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
@@ -5455,10 +5497,11 @@ export class SharedLog<
 			| {
 					skipMissingNextJoin?: boolean;
 					resolveTrimmedEntries?: boolean;
-					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-					useNativeExistingDocumentContext?: boolean;
-			  }
+						nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+						prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+						useNativeExistingDocumentContext?: boolean;
+						nativeBackboneDocumentDeleteKey?: string;
+				  }
 			| undefined,
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
@@ -5491,10 +5534,11 @@ export class SharedLog<
 			| {
 					skipMissingNextJoin?: boolean;
 					resolveTrimmedEntries?: boolean;
-					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-					useNativeExistingDocumentContext?: boolean;
-			  }
+						nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+						prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+						useNativeExistingDocumentContext?: boolean;
+						nativeBackboneDocumentDeleteKey?: string;
+				  }
 			| undefined,
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
@@ -5518,8 +5562,9 @@ export class SharedLog<
 			);
 		}
 		const hasDocumentIndexCommit =
-			!!properties?.nativeBackboneDocumentIndex ||
-			!!properties?.prepareNativeBackboneDocumentIndex;
+				!!properties?.nativeBackboneDocumentIndex ||
+				!!properties?.prepareNativeBackboneDocumentIndex ||
+				!!properties?.nativeBackboneDocumentDeleteKey;
 		if (
 			options?.replicate === false &&
 			hasDocumentIndexCommit &&
@@ -5548,14 +5593,14 @@ export class SharedLog<
 				true,
 			);
 		}
-		if (options?.replicate !== false) {
-			return undefined;
-		}
-		const backbone = this._nativeBackbone;
-		let nativeBackboneDocumentIndexCommitted = false;
-		let committedNativeBackboneDocumentIndex:
-			| NativeBackboneDocumentIndexCommitInput
-			| undefined;
+			if (options?.replicate !== false) {
+				return undefined;
+			}
+			const backbone = this._nativeBackbone;
+			let nativeBackboneDocumentIndexCommitted = false;
+			let committedNativeBackboneDocumentIndex:
+				| NativeBackboneDocumentIndexCommitInput
+				| undefined;
 		const nativeCommitProperties = {
 			payloadData,
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
@@ -5691,25 +5736,32 @@ export class SharedLog<
 		});
 	}
 
-	private appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
+		private appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
 		payloadData: Uint8Array,
 		appendOptions: AppendOptions<T>,
 		properties:
 			| {
 					skipMissingNextJoin?: boolean;
 					resolveTrimmedEntries?: boolean;
-					nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-					prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-					useNativeExistingDocumentContext?: boolean;
-			  }
+						nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+						prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+						useNativeExistingDocumentContext?: boolean;
+						nativeBackboneDocumentDeleteKey?: string;
+				  }
 			| undefined,
 		minReplicasValue: number,
 		runtimeOnlyCoordinates: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const backbone = this._nativeBackbone;
-		if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
-			return undefined;
-		}
+			if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
+				return undefined;
+			}
+			if (
+				properties?.nativeBackboneDocumentDeleteKey &&
+				!this.canUseBackboneOnlyCoordinatePersistence()
+			) {
+				return undefined;
+			}
 		return mapMaybePromise(this.createLeaderSelectionContext(), (context) => {
 			const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 			let backboneAppend:
@@ -5726,6 +5778,7 @@ export class SharedLog<
 			const commitBlocksInBackbone =
 				this.remoteBlocks?.localStore === backbone.blocks;
 			let nativeBackboneDocumentIndexCommitted = false;
+			let nativeBackboneDocumentDeleteCommitted = false;
 			let committedNativeBackboneDocumentIndex:
 				| NativeBackboneDocumentIndexCommitInput
 				| undefined;
@@ -5772,16 +5825,31 @@ export class SharedLog<
 								deleteTrimmedHeads: false,
 							}
 						: nativeBackboneDocumentIndex;
-				const appendInputWithDocumentIndex = nativeBackboneDocumentIndexForAppend
-					? {
-							...appendInput,
-							documentIndex: {
-								...nativeBackboneDocumentIndexForAppend,
-								useLatestContext:
-									properties?.useNativeExistingDocumentContext === true,
-							},
-						}
-					: appendInput;
+					const nativeBackboneDocumentDeleteKey =
+						properties?.nativeBackboneDocumentDeleteKey;
+					if (
+						nativeBackboneDocumentDeleteKey &&
+						nativeBackboneDocumentIndexForAppend
+					) {
+						throw new Error(
+							"Native backbone append cannot both put and delete a document index row",
+						);
+					}
+					const appendInputWithDocumentIndex = nativeBackboneDocumentIndexForAppend
+						? {
+								...appendInput,
+								documentIndex: {
+									...nativeBackboneDocumentIndexForAppend,
+									useLatestContext:
+										properties?.useNativeExistingDocumentContext === true,
+								},
+							}
+						: nativeBackboneDocumentDeleteKey
+							? {
+									...appendInput,
+									documentDeleteKey: nativeBackboneDocumentDeleteKey,
+								}
+							: appendInput;
 				if (next.length === 0) {
 					if (commitBlocksInBackbone) {
 						if (
@@ -5824,10 +5892,12 @@ export class SharedLog<
 								appendInputWithDocumentIndex,
 							);
 				}
-				if (nativeBackboneDocumentIndex) {
-					nativeBackboneDocumentIndexCommitted = true;
-					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
-				}
+					if (nativeBackboneDocumentIndex) {
+						nativeBackboneDocumentIndexCommitted = true;
+						committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
+					}
+					nativeBackboneDocumentDeleteCommitted =
+						!!nativeBackboneDocumentDeleteKey;
 				const useTrimmedHashesOnly =
 					properties?.resolveTrimmedEntries === false;
 				return {
@@ -5924,12 +5994,16 @@ export class SharedLog<
 							coordinateFields,
 						},
 					);
-					if (nativeBackboneDocumentIndexCommitted) {
-						appendCommit.nativeBackboneDocumentIndexCommitted = true;
-						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-							backboneAppend!.documentTrimmedHeadsProcessed;
-					}
-					appendCommit.documentPreviousContext =
+						if (nativeBackboneDocumentIndexCommitted) {
+							appendCommit.nativeBackboneDocumentIndexCommitted = true;
+							appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+								backboneAppend!.documentTrimmedHeadsProcessed;
+						}
+						if (nativeBackboneDocumentDeleteCommitted) {
+							appendCommit.nativeBackboneDocumentDeleteCommitted = true;
+							appendCommit.nativeBackboneDocumentIndexCommitted = true;
+						}
+						appendCommit.documentPreviousContext =
 						prepared.documentPreviousContext;
 					return {
 						get entry() {
@@ -6504,6 +6578,7 @@ export class SharedLog<
 						hash: append.entry.hash,
 						gid: append.coordinate.gid,
 						next: append.entry.next,
+						bytes: append.entry.bytes,
 						byteLength: append.entry.byteLength,
 						metaBytes: append.entry.metaBytes,
 						hashDigestBytes: append.entry.hashDigestBytes,
@@ -6569,11 +6644,13 @@ export class SharedLog<
 					coordinateFields,
 				},
 			);
-			appendCommit.nativeBackboneDocumentIndexCommitted = true;
-			appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-				appended.documentTrimmedHeadsProcessed?.[i];
-			appendCommits.push(appendCommit);
-		}
+				appendCommit.nativeBackboneDocumentIndexCommitted = true;
+				appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+					appended.documentTrimmedHeadsProcessed?.[i];
+				appendCommit.documentPreviousContext =
+					backboneAppend.documentPreviousContext;
+				appendCommits.push(appendCommit);
+			}
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
@@ -9689,16 +9766,19 @@ export class SharedLog<
 	}
 
 	private async _close() {
+		if (!this._entryCoordinatesIndex && !this._replicationRangeIndex) {
+			return;
+		}
 		await this.closeNativeBackboneCoordinatePersistence();
-		await this.syncronizer.close();
+		await this.syncronizer?.close();
 
-		for (const [_key, peerMap] of this.pendingMaturity) {
+		for (const [_key, peerMap] of this.pendingMaturity ?? []) {
 			for (const [_key2, info] of peerMap) {
 				clearTimeout(info.timeout);
 			}
 		}
 
-		this.pendingMaturity.clear();
+		this.pendingMaturity?.clear();
 
 		this.distributeQueue?.clear();
 		this._closeFanoutChannel();
@@ -9708,10 +9788,10 @@ export class SharedLog<
 			// ignore
 		}
 		this._providerHandle = undefined;
-		this.coordinateToHash.clear();
-		this.recentlyRebalanced.clear();
-		this.uniqueReplicators.clear();
-		this._topicSubscribersCache.clear();
+		this.coordinateToHash?.clear();
+		this.recentlyRebalanced?.clear();
+		this.uniqueReplicators?.clear();
+		this._topicSubscribersCache?.clear();
 		this._closeController.abort();
 
 		clearInterval(this.interval);
@@ -9726,42 +9806,45 @@ export class SharedLog<
 			"unsubscribe",
 			this._onUnsubscriptionFn,
 		);
-		for (const timer of this._repairRetryTimers) {
+		for (const timer of this._repairRetryTimers ?? []) {
 			clearTimeout(timer);
 		}
-		this._repairRetryTimers.clear();
-		this._recentRepairDispatch.clear();
+		this._repairRetryTimers?.clear();
+		this._recentRepairDispatch?.clear();
 		this._repairSweepRunning = false;
-		this._repairSweepPendingModes.clear();
-		for (const peers of this._repairSweepPendingPeersByMode.values()) {
+		this._repairSweepPendingModes?.clear();
+		for (const peers of this._repairSweepPendingPeersByMode?.values() ?? []) {
 			peers.clear();
 		}
-		this._repairSweepOptimisticGidPeersPending.clear();
-		this._entryKnownPeers.clear();
-		this._entryKnownPeerObservedAt.clear();
+		this._repairSweepOptimisticGidPeersPending?.clear();
+		this._entryKnownPeers?.clear();
+		this._entryKnownPeerObservedAt?.clear();
 		this._nativeSharedLogState?.clearEntryKnownPeers();
 		this._nativeBackbone?.clearEntryKnownPeers();
-		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
+		for (const timer of this._joinAuthoritativeRepairTimersByDelay?.values() ??
+			[]) {
 			clearTimeout(timer);
 		}
-		this._joinAuthoritativeRepairTimersByDelay.clear();
-		this._joinAuthoritativeRepairPeersByDelay.clear();
-		for (const targets of this._repairFrontierByMode.values()) {
+		this._joinAuthoritativeRepairTimersByDelay?.clear();
+		this._joinAuthoritativeRepairPeersByDelay?.clear();
+		for (const targets of this._repairFrontierByMode?.values() ?? []) {
 			targets.clear();
 		}
-		for (const targets of this._repairFrontierActiveTargetsByMode.values()) {
+		for (const targets of this._repairFrontierActiveTargetsByMode?.values() ??
+			[]) {
 			targets.clear();
 		}
-		for (const targets of this._repairFrontierBypassKnownPeersByMode.values()) {
+		for (const targets of this._repairFrontierBypassKnownPeersByMode?.values() ??
+			[]) {
 			targets.clear();
 		}
 		if (this._appendBackfillTimer) {
 			clearTimeout(this._appendBackfillTimer);
 			this._appendBackfillTimer = undefined;
 		}
-		this._appendBackfillPendingByTarget.clear();
+		this._appendBackfillPendingByTarget?.clear();
 
-		for (const [_k, v] of this._pendingIHave) {
+		for (const [_k, v] of this._pendingIHave ?? []) {
 			v.clear();
 		}
 		if (this._pendingIHaveExpiryTimer) {
@@ -9771,10 +9854,10 @@ export class SharedLog<
 		}
 		this._checkedPrune.close();
 
-		await this.remoteBlocks.stop();
-		this._pendingIHave.clear();
-		this.latestReplicationInfoMessage.clear();
-		this._gidPeersHistory.clear();
+		await this.remoteBlocks?.stop?.();
+		this._pendingIHave?.clear();
+		this.latestReplicationInfoMessage?.clear();
+		this._gidPeersHistory?.clear();
 		this._nativeSharedLogState?.clearGidPeers();
 		this._nativeBackbone?.clearGidPeers();
 		// Cancel any pending debounced timers so they can't fire after we've torn down
@@ -9786,8 +9869,8 @@ export class SharedLog<
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
 		await Promise.all([
-			this._replicationRangeIndex.stop(),
-			this._entryCoordinatesIndex.stop(),
+			this._replicationRangeIndex?.stop?.(),
+			this._entryCoordinatesIndex?.stop?.(),
 		]);
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
@@ -9982,14 +10065,7 @@ export class SharedLog<
 				const canVerifyPreparedRawReceiveOnCommit =
 					!!this._nativeBackbone?.graph
 						.commitVerifiedPreparedRawReceiveJoinBatch;
-				const verifyNativeBackboneSignaturesDuringPrepare =
-					rawPrepareVerifySetting === true ||
-					(rawPrepareVerifySetting !== false &&
-						this._isReplicating &&
-						!rawIsRepairHint &&
-						!canVerifyPreparedRawReceiveOnCommit);
-				const deferNativeBackboneSignatureVerificationUntilSelection =
-					verifyNativeBackboneSignaturesDuringPrepare &&
+				const canDeferRawReceiveVerificationUntilNativeSelection =
 					!rawIsRepairHint &&
 					!!this._nativeBackbone?.verifyPreparedRawReceiveEntries &&
 					!this._isReplicating &&
@@ -9997,6 +10073,20 @@ export class SharedLog<
 					!this.closed &&
 					!!this.syncronizer.onReceivedEntryHashes &&
 					rawMissingHeads.every((head) => head.gidRefrences.length === 0);
+				const verifyNativeBackboneSignaturesDuringPrepare =
+					rawPrepareVerifySetting === true ||
+					(rawPrepareVerifySetting !== false &&
+						(canDeferRawReceiveVerificationUntilNativeSelection ||
+							(this._isReplicating &&
+								!rawIsRepairHint &&
+								!canVerifyPreparedRawReceiveOnCommit)));
+				const deferNativeBackboneSignatureVerificationUntilSelection =
+					verifyNativeBackboneSignaturesDuringPrepare &&
+					canDeferRawReceiveVerificationUntilNativeSelection;
+				const deferNativeBackboneSignatureVerificationUntilCommit =
+					deferNativeBackboneSignatureVerificationUntilSelection &&
+					!!this._nativeBackbone?.graph
+						.commitVerifiedPreparedRawReceiveJoinBatch;
 				let rawPreparedReceiveSelection:
 					| Promise<NativeBackboneRawReceiveSelectionPlan | undefined>
 					| undefined;
@@ -10004,6 +10094,9 @@ export class SharedLog<
 					heads: RawEntryWithRefs[],
 					hashes: string[],
 				) => {
+					if (rawPreparedReceiveSelectionValue) {
+						return rawPreparedReceiveSelectionValue;
+					}
 					rawPreparedReceiveSelection ??=
 						this.planNativePreparedRawReceiveSelection({
 							heads,
@@ -10014,6 +10107,61 @@ export class SharedLog<
 						await rawPreparedReceiveSelection;
 					return rawPreparedReceiveSelectionValue;
 				};
+				const prepareNativeBackboneExpectedColumnsAndSelection =
+					rawIsRepairHint
+						? undefined
+						: async ({
+								blocks,
+								hashes,
+								verifySignatures,
+							}: {
+								blocks: Uint8Array[];
+								hashes: string[];
+								verifySignatures: boolean;
+							}) => {
+								if (
+									verifySignatures ||
+									!canDeferRawReceiveVerificationUntilNativeSelection ||
+									!this._nativeBackbone
+										?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+								) {
+									return undefined;
+								}
+								try {
+									const replicaOptions = {
+										minReplicas:
+											this.replicas.min?.getValue(this) || 1,
+										maxReplicas: this.replicas.max?.getValue(this),
+									};
+									const leaderSelectionContext =
+										await this.createLeaderSelectionContext();
+									const prepared =
+										this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+											blocks,
+											hashes,
+											{
+												verifySignatures: false,
+												...replicaOptions,
+												leaderOptions:
+													this.createNativeLeaderOptions(
+														leaderSelectionContext,
+													),
+												fromHash: rawFrom.hashcode(),
+											},
+										);
+									if (!prepared) {
+										return undefined;
+									}
+									rawPreparedReceiveSelectionValue =
+										prepared.selection;
+									rawPreparedReceiveSelection = Promise.resolve(
+										rawPreparedReceiveSelectionValue,
+									);
+									return { columns: prepared.columns };
+								} catch {
+									return undefined;
+								}
+							};
 				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
 				const materializedRawMessage =
 					await materializeVerifiedRawExchangeHeadsMessage(
@@ -10029,6 +10177,10 @@ export class SharedLog<
 								verifyNativeBackboneSignaturesDuringPrepare,
 							deferNativeBackboneSignatureVerificationUntilSelection:
 								deferNativeBackboneSignatureVerificationUntilSelection,
+							deferNativeBackboneSignatureVerificationUntilCommit:
+								deferNativeBackboneSignatureVerificationUntilCommit,
+							prepareNativeBackboneExpectedColumnsAndSelection:
+								prepareNativeBackboneExpectedColumnsAndSelection,
 							tryPreparedRawReceiveFastDrop: rawIsRepairHint
 								? undefined
 								: async ({ heads, hashes }) =>
@@ -11346,6 +11498,7 @@ export class SharedLog<
 								messages: 1,
 								details: {
 									hashOnlyEntryAdded,
+									batchHashOnlyEntryAdded,
 									joinedPreparedFacts,
 									nativePreparedCoordinatesFinished,
 								},
@@ -15118,7 +15271,7 @@ export class SharedLog<
 		fromIsSelf: boolean;
 		syncProfile?: SyncProfileFn;
 		selection?: NativeBackboneRawReceiveSelectionPlan;
-	}): Promise<string[] | undefined> {
+	}): Promise<RawReceiveHashSelection | undefined> {
 		if (!this.syncronizer.onReceivedEntryHashes) {
 			return undefined;
 		}
@@ -15166,7 +15319,13 @@ export class SharedLog<
 				predecodedReplicaHits: selection.plannedHashCount,
 			},
 		});
-		return selection.retainedHashes;
+		return selection.retainedIndexes
+			? {
+					hashes: selection.retainedHashes,
+					indexes: selection.retainedIndexes,
+					droppedIndexes: selection.droppedIndexes,
+				}
+			: selection.retainedHashes;
 	}
 
 	async isLeader(

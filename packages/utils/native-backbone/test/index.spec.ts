@@ -399,6 +399,160 @@ describe("native peerbit backbone", () => {
 		);
 	});
 
+	it("honors custom buffered document WAL file names", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		source.configureDocumentSchemaIr(contextOnlySchema());
+		source.setDocumentContextHeadField(3);
+		source.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			store,
+			{
+				flushMaxPendingBytes: 1024,
+				documentSnapshot: "custom-document-values.bin",
+				documentJournal: "custom-document-values.wal",
+			},
+		);
+
+		await persistence.hydrate(source);
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
+			wallTime: 11n,
+			logical: 1,
+			gid: "gid-buffered-document-custom",
+			payloadData: new Uint8Array([1, 2, 3]),
+			replicas: 1,
+			selfHash: "peer",
+			documentIndex: {
+				key: "doc-buffered-custom",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		expect(source.documentPendingJournalLength).equal(1);
+
+		expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+		expect(store.files.has("custom-document-values.wal")).equal(false);
+		expect(store.files.has("document-values.wal")).equal(false);
+		await persistence.close?.();
+		expect(store.files.has("custom-document-values.wal")).equal(true);
+		expect(store.files.has("document-values.wal")).equal(false);
+
+		await new NativeBackboneCoordinatePersistence(store, {
+			documentSnapshot: "custom-document-values.bin",
+			documentJournal: "custom-document-values.wal",
+		}).hydrate(restored);
+		expect(restored.documentValueLength).equal(1);
+		restored.configureDocumentSchemaIr(contextOnlySchema());
+		restored.setDocumentContextHeadField(3);
+		restored.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+		expect(restored.documentIndexLength).equal(1);
+		expect(
+			Array.from(restored.documentKeysExist(["doc-buffered-custom"])),
+		).to.deep.equal([1]);
+	});
+
+	it("honors custom buffered document signer WAL file names", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		for (const backbone of [source, restored]) {
+			backbone.configureDocumentSchemaIr(contextOnlySchema());
+			backbone.setDocumentContextHeadField(3);
+			backbone.setDocumentContextFields({
+				created: 1,
+				modified: 2,
+				head: 3,
+				gid: 4,
+				size: 5,
+			});
+		}
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			store,
+			{
+				flushMaxPendingBytes: 1024,
+				documentSignerSnapshot: "custom-document-signers.bin",
+				documentSignerJournal: "custom-document-signers.wal",
+			},
+		);
+
+		await persistence.hydrate(source);
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
+			wallTime: 11n,
+			logical: 1,
+			gid: "gid-buffered-document-signer-custom",
+			payloadData: new Uint8Array([1, 2, 3]),
+			replicas: 1,
+			selfHash: "peer",
+			documentIndex: {
+				key: "doc-buffered-signer-custom",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const documentValue = source.documentValueBytes(
+			"doc-buffered-signer-custom",
+		);
+		expect(documentValue).to.exist;
+		source.putDocumentEncodedPartsStored(
+			"doc-buffered-signer-custom",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(source.documentSignerPendingJournalLength).equal(1);
+
+		expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+		expect(store.files.has("custom-document-signers.wal")).equal(false);
+		expect(store.files.has("document-signers.wal")).equal(false);
+		await persistence.close?.();
+		expect(store.files.has("custom-document-signers.wal")).equal(true);
+		expect(store.files.has("document-signers.wal")).equal(false);
+
+		await new NativeBackboneCoordinatePersistence(store, {
+			documentSignerSnapshot: "custom-document-signers.bin",
+			documentSignerJournal: "custom-document-signers.wal",
+		}).hydrate(restored);
+		restored.clearDocumentIndex();
+		restored.putDocumentEncodedPartsStored(
+			"doc-buffered-signer-custom",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(
+			Array.from(
+				restored.documentPreviousSignaturePublicKey(
+					"doc-buffered-signer-custom",
+				)?.publicKey ?? [],
+			),
+		).to.deep.equal(Array.from(publicKey));
+	});
+
 	it("checkpoints generic coordinate WAL after compact thresholds", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
@@ -646,6 +800,33 @@ describe("native peerbit backbone", () => {
 		expect(
 			Array.from(backbone.documentValueBytes("doc-2") ?? []),
 		).to.deep.equal(Array.from(encoded));
+		expect(backbone.deleteDocuments(["doc-1", "doc-2", "missing"])).to.equal(2);
+		expect(backbone.documentIndexLength).to.equal(0);
+		expect(backbone.documentValueLength).to.equal(0);
+
+		backbone.putDocumentEncodedPartsStoredBatch(
+			[
+				{
+					key: "doc-1",
+					valuePrefixBytes: encoded.slice(0, 6),
+					valueSuffixBytes: encoded.slice(6),
+				},
+				{
+					key: "doc-2",
+					valuePrefixBytes: encoded.slice(0, 6),
+					valueSuffixBytes: encoded.slice(6),
+				},
+			],
+			8,
+		);
+		expect(
+			Array.from(backbone.documentKeysExist(["doc-2", "missing", "doc-1"])),
+		).to.deep.equal([1, 0, 1]);
+		expect(
+			Array.from(backbone.deleteDocumentsResult(["doc-2", "missing", "doc-1"])),
+		).to.deep.equal([1, 0, 1]);
+		expect(backbone.documentIndexLength).to.equal(0);
+		expect(backbone.documentValueLength).to.equal(0);
 	});
 
 	it("coalesces no-next appends with document index commits", async () => {
@@ -877,11 +1058,11 @@ describe("native peerbit backbone", () => {
 		).to.equal("doc-projected-batch-2");
 	});
 
-	it("batches compact committed no-next cached-plan plain-put-payload document index transactions", async () => {
-		const backbone = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
+		it("batches compact committed no-next cached-plan plain-put-payload document index transactions", async () => {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
 		});
 		backbone.configureDocumentSchemaIr(contextOnlySchema());
 		backbone.setDocumentContextHeadField(3);
@@ -943,15 +1124,55 @@ describe("native peerbit backbone", () => {
 			backbone.documentExactStringFirstKey(3, results![0]!.entry.hash),
 		).to.equal("doc-projected-payload-batch-1");
 		expect(
-			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
-		).to.equal("doc-projected-payload-batch-2");
-	});
+				backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
+			).to.equal("doc-projected-payload-batch-2");
+		});
 
-	it("batches committed latest-context document index transactions", async () => {
-		const backbone = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
+		it("commits compact no-next identity document indexes from plain put payloads", async () => {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			backbone.configureDocumentSchemaIr(contextOnlySchema());
+			backbone.setDocumentContextHeadField(3);
+			backbone.setDocumentContextFields({
+				created: 1,
+				modified: 2,
+				head: 3,
+				gid: 4,
+				size: 5,
+			});
+
+			const result =
+				backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+					{
+						wallTime: 34n,
+						logical: 1,
+						gid: "gid-doc-index-identity-payload",
+						payloadData: plainPutPayload(new Uint8Array(0)),
+						documentIndex: {
+							key: "doc-identity-payload",
+							valuePrefixBytes: new Uint8Array(0),
+							usePlainPutPayload: true,
+						},
+						replicas: 1,
+						selfHash: "peer",
+					},
+				);
+
+			expect(result.entry.bytes).equal(undefined);
+			expect(backbone.documentValueLength).to.equal(1);
+			expect(
+				backbone.documentExactStringFirstKey(3, result.entry.hash),
+			).to.equal("doc-identity-payload");
+		});
+
+		it("batches committed latest-context document index transactions", async () => {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
 		});
 		backbone.configureDocumentSchemaIr(contextOnlySchema());
 		backbone.setDocumentContextHeadField(3);
@@ -1011,14 +1232,71 @@ describe("native peerbit backbone", () => {
 			first[0]!.entry.hash,
 		);
 		expect(backbone.documentValueLength).to.equal(1);
-		expect(
-			backbone.documentExactStringFirstKey(3, updated[0]!.entry.hash),
-		).to.equal("doc-latest-batch-1");
-	});
+			expect(
+				backbone.documentExactStringFirstKey(3, updated[0]!.entry.hash),
+			).to.equal("doc-latest-batch-1");
+		});
 
-	it("batches committed latest-context cached-plan plain-put-payload document index transactions", async () => {
-		const backbone = await createNativePeerbitBackbone({
-			clockId: publicKey,
+		it("commits latest-context identity document indexes from plain put payloads", async () => {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			backbone.configureDocumentSchemaIr(contextOnlySchema());
+			backbone.setDocumentContextHeadField(3);
+			backbone.setDocumentContextFields({
+				created: 1,
+				modified: 2,
+				head: 3,
+				gid: 4,
+				size: 5,
+			});
+
+			const first =
+				backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+					{
+						wallTime: 44n,
+						logical: 1,
+						gid: "gid-doc-latest-identity",
+						payloadData: plainPutPayload(new Uint8Array(0)),
+						documentIndex: {
+							key: "doc-latest-identity",
+							valuePrefixBytes: new Uint8Array(0),
+							usePlainPutPayload: true,
+						},
+						replicas: 1,
+						selfHash: "peer",
+					},
+				);
+
+			const updated = backbone.preparePlainCommittedStorageAppendTransaction({
+				wallTime: 45n,
+				logical: 2,
+				gid: "fallback-doc-latest-identity",
+				payloadData: plainPutPayload(new Uint8Array(0)),
+				documentIndex: {
+					key: "doc-latest-identity",
+					valuePrefixBytes: new Uint8Array(0),
+					useLatestContext: true,
+					usePlainPutPayload: true,
+				},
+				replicas: 1,
+				selfHash: "peer",
+				resolveTrimmedEntries: false,
+			});
+
+			expect(updated.entry.next).to.deep.equal([first.entry.hash]);
+			expect(updated.coordinate.gid).to.equal("gid-doc-latest-identity");
+			expect(backbone.documentValueLength).to.equal(1);
+			expect(
+				backbone.documentExactStringFirstKey(3, updated.entry.hash),
+			).to.equal("doc-latest-identity");
+		});
+
+		it("batches committed latest-context cached-plan plain-put-payload document index transactions", async () => {
+			const backbone = await createNativePeerbitBackbone({
+				clockId: publicKey,
 			privateKey,
 			publicKey,
 		});
@@ -1571,15 +1849,15 @@ describe("native peerbit backbone", () => {
 				target.planPreparedRawReceiveFastDrop(
 					[first.hash, second.hash, third.hash],
 					{ minReplicas: 1, maxReplicas: 3 },
-				{
-					selfHash: "peer-a",
-					selfReplicating: false,
-					fullReplicaFallback: true,
-				},
-				"peer-b",
-			),
-		).to.deep.equal({
-			canDrop: true,
+					{
+						selfHash: "peer-a",
+						selfReplicating: false,
+						fullReplicaFallback: true,
+					},
+					"peer-b",
+				),
+			).to.deep.include({
+				canDrop: true,
 				groupCount: 2,
 				plannedHashCount: 3,
 			});
@@ -1594,7 +1872,7 @@ describe("native peerbit backbone", () => {
 					},
 					"peer-b",
 				),
-			).to.deep.equal({
+			).to.deep.include({
 				retainedHashes: [],
 				droppedHashes: [first.hash, second.hash, third.hash],
 				groupCount: 2,
@@ -1613,7 +1891,7 @@ describe("native peerbit backbone", () => {
 					},
 					"peer-keep",
 				),
-			).to.deep.equal({
+			).to.deep.include({
 				canDrop: true,
 				groupCount: 2,
 				plannedHashCount: 3,
@@ -1629,7 +1907,7 @@ describe("native peerbit backbone", () => {
 					},
 					"peer-keep",
 				),
-			).to.deep.equal({
+				).to.deep.include({
 				retainedHashes: [],
 				droppedHashes: [first.hash, second.hash, third.hash],
 				groupCount: 2,
@@ -1648,7 +1926,7 @@ describe("native peerbit backbone", () => {
 					},
 					"peer-b",
 				),
-			).to.deep.equal({
+				).to.deep.include({
 				retainedHashes: [],
 				droppedHashes: [first.hash, second.hash, third.hash],
 				groupCount: 2,
@@ -1685,6 +1963,12 @@ describe("native peerbit backbone", () => {
 				second.hash,
 			]);
 			expect(mixedSelection?.droppedHashes).to.deep.equal([third.hash]);
+			expect(Array.from(mixedSelection?.retainedIndexes ?? [])).to.deep.equal([
+				0, 1,
+			]);
+			expect(Array.from(mixedSelection?.droppedIndexes ?? [])).to.deep.equal([
+				2,
+			]);
 			expect(mixedSelection).to.deep.include({
 				groupCount: 2,
 				plannedHashCount: 3,
@@ -1726,6 +2010,12 @@ describe("native peerbit backbone", () => {
 				second.hash,
 			]);
 			expect(mixedFusedSelection?.droppedHashes).to.deep.equal([third.hash]);
+			expect(
+				Array.from(mixedFusedSelection?.retainedIndexes ?? []),
+			).to.deep.equal([0, 1]);
+			expect(
+				Array.from(mixedFusedSelection?.droppedIndexes ?? []),
+			).to.deep.equal([2]);
 			expect(mixedFusedSelection).to.deep.include({
 				groupCount: 2,
 				plannedHashCount: 3,
@@ -1735,6 +2025,39 @@ describe("native peerbit backbone", () => {
 			expect(mixedFusedSelection?.retainedGroupLeaderPlans).to.have.length(
 				1,
 			);
+			const mixedPreparedSelection =
+				target.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+					[first.bytes, second.bytes, third.bytes],
+					[first.hash, second.hash, third.hash],
+					{
+						verifySignatures: false,
+						minReplicas: 1,
+						maxReplicas: 3,
+						leaderOptions: {
+							selfHash: "peer-keep",
+							selfReplicating: false,
+							fullReplicaFallback: false,
+						},
+						fromHash: "peer-b",
+					},
+				);
+			expect(mixedPreparedSelection?.columns[0]).to.deep.equal([]);
+			expect(
+				Array.from(mixedPreparedSelection?.columns[12] ?? []),
+			).to.deep.equal([0, 0, 0]);
+			expect(mixedPreparedSelection?.selection?.retainedHashes).to.deep.equal([
+				first.hash,
+				second.hash,
+			]);
+			expect(mixedPreparedSelection?.selection?.droppedHashes).to.deep.equal([
+				third.hash,
+			]);
+			expect(
+				Array.from(mixedPreparedSelection?.selection?.retainedIndexes ?? []),
+			).to.deep.equal([0, 1]);
+			expect(
+				Array.from(mixedPreparedSelection?.selection?.droppedIndexes ?? []),
+			).to.deep.equal([2]);
 
 			target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
 				clockId: publicKey,
@@ -2627,6 +2950,184 @@ describe("native peerbit backbone", () => {
 		expect(compacted.coordinateIndexLength).to.equal(2);
 	});
 
+	it("persists native document index values through the native persistence adapter", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restoredFromWal = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restoredFromSnapshot = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		source.configureDocumentSchemaIr(contextOnlySchema());
+		source.setDocumentContextHeadField(3);
+		source.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		await persistence.hydrate(source);
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
+			wallTime: 11n,
+			logical: 1,
+			gid: "gid-document-persist",
+			payloadData: new Uint8Array([1, 2, 3]),
+			replicas: 1,
+			selfHash: "peer",
+			documentIndex: {
+				key: "doc-value",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		expect(source.documentPendingJournalLength).to.equal(1);
+		await persistence.flushJournal(source);
+		expect(store.files.has("document-values.wal")).equal(true);
+		expect(store.files.get("document-values.wal")?.byteLength).to.be.greaterThan(
+			source.documentJournalHeader().byteLength,
+		);
+
+		await persistence.hydrate(restoredFromWal);
+		expect(restoredFromWal.documentValueLength).to.equal(1);
+		expect(restoredFromWal.documentIndexLength).to.equal(0);
+		restoredFromWal.configureDocumentSchemaIr(contextOnlySchema());
+		restoredFromWal.setDocumentContextHeadField(3);
+		restoredFromWal.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+		expect(restoredFromWal.documentIndexLength).to.equal(1);
+		expect(
+			Array.from(restoredFromWal.documentKeysExist(["doc-value"])),
+		).to.deep.equal([1]);
+
+		await persistence.compact(source);
+		expect(store.files.has("document-values.wal")).equal(false);
+		expect(store.files.has("document-values.bin")).equal(true);
+		await persistence.hydrate(restoredFromSnapshot);
+		restoredFromSnapshot.configureDocumentSchemaIr(contextOnlySchema());
+		restoredFromSnapshot.setDocumentContextHeadField(3);
+		restoredFromSnapshot.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
+		});
+		expect(restoredFromSnapshot.documentIndexLength).to.equal(1);
+		expect(
+			Array.from(restoredFromSnapshot.documentKeysExist(["doc-value"])),
+		).to.deep.equal([1]);
+	});
+
+	it("persists document previous signer facts through the native persistence adapter", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restoredFromWal = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restoredFromSnapshot = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		for (const backbone of [source, restoredFromWal, restoredFromSnapshot]) {
+			backbone.configureDocumentSchemaIr(contextOnlySchema());
+			backbone.setDocumentContextHeadField(3);
+			backbone.setDocumentContextFields({
+				created: 1,
+				modified: 2,
+				head: 3,
+				gid: 4,
+				size: 5,
+			});
+		}
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		await persistence.hydrate(source);
+		const append =
+			source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+				{
+					wallTime: 11n,
+					logical: 1,
+					gid: "gid-signer-persist",
+					payloadData: new Uint8Array([1, 2, 3]),
+					replicas: 1,
+					selfHash: "peer",
+					documentIndex: {
+						key: "doc-signer",
+						valuePrefixBytes: new Uint8Array(0),
+					},
+				},
+			);
+		const documentValue = source.documentValueBytes("doc-signer");
+		expect(documentValue).to.exist;
+		source.putDocumentEncodedPartsStored(
+			"doc-signer",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(source.documentSignerPendingJournalLength).to.equal(1);
+		await persistence.flushJournal(source);
+		expect(store.files.has("document-signers.wal")).equal(true);
+		expect(store.files.get("document-signers.wal")?.byteLength).to.be.greaterThan(
+			source.documentSignerJournalHeader().byteLength,
+		);
+
+		await persistence.hydrate(restoredFromWal);
+		restoredFromWal.clearDocumentIndex();
+		restoredFromWal.putDocumentEncodedPartsStored(
+			"doc-signer",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(restoredFromWal.hasBlock(append.entry.hash)).equal(false);
+		expect(
+			Array.from(
+				restoredFromWal.documentPreviousSignaturePublicKey("doc-signer")
+					?.publicKey ?? [],
+			),
+		).to.deep.equal(Array.from(publicKey));
+
+		await persistence.compact(source);
+		expect(store.files.has("document-signers.wal")).equal(false);
+		expect(store.files.has("document-signers.bin")).equal(true);
+		await persistence.hydrate(restoredFromSnapshot);
+		restoredFromSnapshot.clearDocumentIndex();
+		restoredFromSnapshot.putDocumentEncodedPartsStored(
+			"doc-signer",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(restoredFromSnapshot.hasBlock(append.entry.hash)).equal(false);
+		expect(
+			Array.from(
+				restoredFromSnapshot.documentPreviousSignaturePublicKey("doc-signer")
+					?.publicKey ?? [],
+			),
+		).to.deep.equal(Array.from(publicKey));
+	});
+
 	it("persists native coordinate WAL through the node filesystem store", async () => {
 		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
 			import("node:fs/promises"),
@@ -2979,6 +3480,91 @@ describe("native peerbit backbone", () => {
 		await persistence.close?.();
 		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(afterClose);
 		expect(afterClose.getEntryCoordinateHashes()).to.deep.equal(["hash-opfs"]);
+		expect(directory.syncAccessCount).to.be.greaterThan(0);
+	});
+
+	it("persists buffered native document WAL and signer facts through OPFS stores", async () => {
+		const directory = new FakeOPFSDirectoryHandle(true);
+		const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+			directory,
+		);
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			opfsStore,
+			{ flushMaxPendingBytes: 1024 },
+		);
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		for (const backbone of [source, restored]) {
+			backbone.configureDocumentSchemaIr(contextOnlySchema());
+			backbone.setDocumentContextHeadField(3);
+			backbone.setDocumentContextFields({
+				created: 1,
+				modified: 2,
+				head: 3,
+				gid: 4,
+				size: 5,
+			});
+		}
+
+		await persistence.hydrate(source);
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
+			wallTime: 11n,
+			logical: 1,
+			gid: "gid-opfs-document",
+			payloadData: new Uint8Array([1, 2, 3]),
+			replicas: 1,
+			selfHash: "peer",
+			documentIndex: {
+				key: "doc-opfs",
+				valuePrefixBytes: new Uint8Array(0),
+			},
+		});
+		const documentValue = source.documentValueBytes("doc-opfs");
+		expect(documentValue).to.exist;
+		source.putDocumentEncodedPartsStored(
+			"doc-opfs",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(source.documentPendingJournalLength).equal(2);
+		expect(source.documentSignerPendingJournalLength).equal(1);
+
+		expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+		expect(await opfsStore.read("document-values.wal")).equal(undefined);
+		expect(await opfsStore.read("document-signers.wal")).equal(undefined);
+		await persistence.close?.();
+		expect(
+			(await opfsStore.read("document-values.wal"))?.byteLength,
+		).to.be.greaterThan(source.documentJournalHeader().byteLength);
+		expect(
+			(await opfsStore.read("document-signers.wal"))?.byteLength,
+		).to.be.greaterThan(source.documentSignerJournalHeader().byteLength);
+
+		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(restored);
+		expect(restored.documentIndexLength).equal(1);
+		expect(Array.from(restored.documentKeysExist(["doc-opfs"]))).to.deep.equal([
+			1,
+		]);
+		restored.clearDocumentIndex();
+		restored.putDocumentEncodedPartsStored(
+			"doc-opfs",
+			documentValue!,
+			new Uint8Array(0),
+		);
+		expect(
+			Array.from(
+				restored.documentPreviousSignaturePublicKey("doc-opfs")?.publicKey ??
+					[],
+			),
+		).to.deep.equal(Array.from(publicKey));
 		expect(directory.syncAccessCount).to.be.greaterThan(0);
 	});
 

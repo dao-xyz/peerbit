@@ -400,6 +400,19 @@ export class RawExchangeHeadsMessage extends TransportMessage {
 	}
 }
 
+export type RawReceiveHashSelection =
+	| Iterable<string>
+	| {
+			hashes?: Iterable<string>;
+			indexes?: Iterable<number>;
+			droppedIndexes?: Iterable<number>;
+	  };
+
+const isIterableRawReceiveHashSelection = (
+	selection: RawReceiveHashSelection,
+): selection is Iterable<string> =>
+	typeof (selection as Iterable<string>)[Symbol.iterator] === "function";
+
 class PreparedRawExchangeEntry<T> extends Entry<T> {
 	hash!: string;
 	size: number;
@@ -1132,6 +1145,15 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		nativeBackbone?: RawReceiveNativeBackbone;
 		verifyNativeBackboneSignaturesDuringPrepare?: boolean;
 		deferNativeBackboneSignatureVerificationUntilSelection?: boolean;
+		deferNativeBackboneSignatureVerificationUntilCommit?: boolean;
+		prepareNativeBackboneExpectedColumnsAndSelection?: (properties: {
+			blocks: Uint8Array[];
+			hashes: string[];
+			verifySignatures: boolean;
+		}) =>
+			| { columns: PreparedRawEntryV0FactsColumns }
+			| undefined
+			| Promise<{ columns: PreparedRawEntryV0FactsColumns } | undefined>;
 		tryPreparedRawReceiveFastDrop?: (properties: {
 			heads: RawEntryWithRefs[];
 			hashes: string[];
@@ -1140,9 +1162,9 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			heads: RawEntryWithRefs[];
 			hashes: string[];
 		}) =>
-			| Iterable<string>
+			| RawReceiveHashSelection
 			| undefined
-			| Promise<Iterable<string> | undefined>;
+			| Promise<RawReceiveHashSelection | undefined>;
 	},
 ): Promise<ExchangeHeadsMessage<any> | undefined> => {
 	const blocks = new Array<Uint8Array>(message.heads.length);
@@ -1181,7 +1203,14 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			options.nativeBackbone.setAppendProfileEnabled?.(true);
 		}
 		try {
-			preparedColumns =
+			const preparedColumnsAndSelection =
+				await options.prepareNativeBackboneExpectedColumnsAndSelection?.({
+					blocks,
+					hashes,
+					verifySignatures: verifySignaturesInPrepare,
+				});
+			preparedColumns = preparedColumnsAndSelection?.columns;
+			preparedColumns ??=
 				options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
 					blocks,
 					hashes,
@@ -1253,6 +1282,10 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 				source: nativePrepareSource,
 				verifySignatures: verifySignaturesInPrepare,
 				deferredVerifySignatures: canDeferPreparedSelectionVerification,
+				deferredVerifySignaturesUntilCommit:
+					canDeferPreparedSelectionVerification &&
+					options?.deferNativeBackboneSignatureVerificationUntilCommit ===
+						true,
 			},
 		});
 		try {
@@ -1287,81 +1320,181 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			let selectedHeads = message.heads;
 			let selectedHashes = hashes;
 			let selectedIndexes: number[] | undefined;
-			const selectedHashIterable =
+			const selectedHashSelection =
 				await options?.selectPreparedRawReceiveHashes?.({
 					heads: message.heads,
 					hashes,
 				});
-			if (selectedHashIterable) {
-				const selectedHashSet = new Set(selectedHashIterable);
-				const knownHashes = new Set(hashes);
-				for (const hash of selectedHashSet) {
-					if (!knownHashes.has(hash)) {
-						throw new Error("Selected unknown raw receive hash");
+			if (selectedHashSelection) {
+				const selectedHashSelectionObject =
+					!isIterableRawReceiveHashSelection(selectedHashSelection)
+						? selectedHashSelection
+						: undefined;
+				const selectedIndexIterable = selectedHashSelectionObject?.indexes;
+				if (selectedIndexIterable) {
+					const selectedFlags = new Uint8Array(hashes.length);
+					selectedHeads = [];
+					selectedHashes = [];
+					selectedIndexes = [];
+					for (const rawIndex of selectedIndexIterable) {
+						if (
+							!Number.isInteger(rawIndex) ||
+							rawIndex < 0 ||
+							rawIndex >= hashes.length
+						) {
+							throw new Error("Selected unknown raw receive index");
+						}
+						const index = rawIndex;
+						if (selectedFlags[index]) {
+							throw new Error("Selected duplicate raw receive index");
+						}
+						selectedFlags[index] = 1;
+						selectedHeads.push(message.heads[index]!);
+						selectedHashes.push(hashes[index]!);
+						selectedIndexes.push(index);
 					}
-				}
-				selectedHeads = [];
-				selectedHashes = [];
-				selectedIndexes = [];
-				const droppedHashes: string[] = [];
-				for (let i = 0; i < hashes.length; i++) {
-					const hash = hashes[i]!;
-					if (selectedHashSet.has(hash)) {
-						selectedHeads.push(message.heads[i]!);
-						selectedHashes.push(hash);
-						selectedIndexes.push(i);
-					} else {
-						droppedHashes.push(hash);
+					let droppedHashes: string[] | undefined;
+					if (selectedHashSelectionObject.droppedIndexes) {
+						const droppedFlags = new Uint8Array(hashes.length);
+						droppedHashes = [];
+						for (const rawIndex of selectedHashSelectionObject.droppedIndexes) {
+							if (
+								!Number.isInteger(rawIndex) ||
+								rawIndex < 0 ||
+								rawIndex >= hashes.length
+							) {
+								throw new Error("Dropped unknown raw receive index");
+							}
+							const index = rawIndex;
+							if (selectedFlags[index]) {
+								throw new Error("Raw receive index selected and dropped");
+							}
+							if (droppedFlags[index]) {
+								throw new Error("Dropped duplicate raw receive index");
+							}
+							droppedFlags[index] = 1;
+							droppedHashes.push(hashes[index]!);
+						}
+						if (selectedHashes.length + droppedHashes.length !== hashes.length) {
+							throw new Error("Raw receive selection did not cover every index");
+						}
 					}
-				}
-				if (droppedHashes.length > 0) {
-					clearPreparedRawHashes(droppedHashes);
-				}
-				if (selectedHashes.length === 0) {
-					return undefined;
+					const expectedHashes = selectedHashSelectionObject.hashes
+						? Array.from(selectedHashSelectionObject.hashes)
+						: undefined;
+					if (
+						expectedHashes &&
+						(expectedHashes.length !== selectedHashes.length ||
+							expectedHashes.some(
+								(hash, index) => hash !== selectedHashes[index],
+							))
+					) {
+						throw new Error("Selected raw receive hashes did not match indexes");
+					}
+					if (!droppedHashes) {
+						droppedHashes = [];
+						for (let i = 0; i < hashes.length; i++) {
+							if (!selectedFlags[i]) {
+								droppedHashes.push(hashes[i]!);
+							}
+						}
+					}
+					if (droppedHashes.length > 0) {
+						clearPreparedRawHashes(droppedHashes);
+					}
+					if (selectedHashes.length === 0) {
+						return undefined;
+					}
+				} else {
+					const selectedHashIterable =
+						isIterableRawReceiveHashSelection(selectedHashSelection)
+							? selectedHashSelection
+							: selectedHashSelectionObject?.hashes;
+					if (!selectedHashIterable) {
+						throw new Error("Missing selected raw receive hashes");
+					}
+					const selectedHashSet = new Set(selectedHashIterable);
+					const knownHashes = new Set(hashes);
+					for (const hash of selectedHashSet) {
+						if (!knownHashes.has(hash)) {
+							throw new Error("Selected unknown raw receive hash");
+						}
+					}
+					selectedHeads = [];
+					selectedHashes = [];
+					selectedIndexes = [];
+					const droppedHashes: string[] = [];
+					for (let i = 0; i < hashes.length; i++) {
+						const hash = hashes[i]!;
+						if (selectedHashSet.has(hash)) {
+							selectedHeads.push(message.heads[i]!);
+							selectedHashes.push(hash);
+							selectedIndexes.push(i);
+						} else {
+							droppedHashes.push(hash);
+						}
+					}
+					if (droppedHashes.length > 0) {
+						clearPreparedRawHashes(droppedHashes);
+					}
+					if (selectedHashes.length === 0) {
+						return undefined;
+					}
 				}
 			}
 			if (canDeferPreparedSelectionVerification) {
-				const verifyStartedAt = syncProfileStart(profile);
-				const verified =
-					options?.nativeBackbone?.verifyPreparedRawReceiveEntries?.(
-						selectedHashes,
-					);
 				if (
-					!verified ||
-					verified.length !== selectedHashes.length ||
-					verified.some((ok) => !ok)
+					options?.deferNativeBackboneSignatureVerificationUntilCommit === true
 				) {
-					throw new Error("Raw exchange head signature verification failed");
-				}
-				if (preparedColumns) {
-					for (
-						let selectedIndex = 0;
-						selectedIndex < selectedHashes.length;
-						selectedIndex++
+					emitSyncProfileDuration(profile, syncProfileStart(profile), {
+						name: "sharedLog.rawReceive.deferVerifySelected",
+						component: "shared-log",
+						entries: selectedHashes.length,
+						count: message.heads.length - selectedHashes.length,
+						messages: 1,
+					});
+				} else {
+					const verifyStartedAt = syncProfileStart(profile);
+					const verified =
+						options?.nativeBackbone?.verifyPreparedRawReceiveEntries?.(
+							selectedHashes,
+						);
+					if (
+						!verified ||
+						verified.length !== selectedHashes.length ||
+						verified.some((ok) => !ok)
 					) {
-						preparedColumns[12][
-							selectedIndexes?.[selectedIndex] ?? selectedIndex
-						] = 1;
+						throw new Error("Raw exchange head signature verification failed");
 					}
-				} else if (preparedFacts) {
-					for (
-						let selectedIndex = 0;
-						selectedIndex < selectedHashes.length;
-						selectedIndex++
-					) {
-						preparedFacts[
-							selectedIndexes?.[selectedIndex] ?? selectedIndex
-						]!.signatureVerified = true;
+					if (preparedColumns) {
+						for (
+							let selectedIndex = 0;
+							selectedIndex < selectedHashes.length;
+							selectedIndex++
+						) {
+							preparedColumns[12][
+								selectedIndexes?.[selectedIndex] ?? selectedIndex
+							] = 1;
+						}
+					} else if (preparedFacts) {
+						for (
+							let selectedIndex = 0;
+							selectedIndex < selectedHashes.length;
+							selectedIndex++
+						) {
+							preparedFacts[
+								selectedIndexes?.[selectedIndex] ?? selectedIndex
+							]!.signatureVerified = true;
+						}
 					}
+					emitSyncProfileDuration(profile, verifyStartedAt, {
+						name: "sharedLog.rawReceive.verifySelected",
+						component: "shared-log",
+						entries: selectedHashes.length,
+						count: message.heads.length - selectedHashes.length,
+						messages: 1,
+					});
 				}
-				emitSyncProfileDuration(profile, verifyStartedAt, {
-					name: "sharedLog.rawReceive.verifySelected",
-					component: "shared-log",
-					entries: selectedHashes.length,
-					count: message.heads.length - selectedHashes.length,
-					messages: 1,
-				});
 			}
 			const headsToWrap = selectedHeads;
 			const hashesToWrap = selectedHashes;

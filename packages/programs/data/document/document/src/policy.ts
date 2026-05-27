@@ -389,6 +389,26 @@ export const nativeCanPerformPolicySignedByFieldPaths = (
 	}
 };
 
+export const nativeCanPerformPolicyPutNeedsEntryPublicKeys = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+): boolean => {
+	switch (descriptor.kind) {
+		case "signedByPublicKey":
+		case "signedByField":
+		case "sameSignersAsPrevious":
+			return true;
+		case "and":
+		case "or":
+			return descriptor.policies.some(
+				nativeCanPerformPolicyPutNeedsEntryPublicKeys,
+			);
+		case "put":
+			return nativeCanPerformPolicyPutNeedsEntryPublicKeys(descriptor.policy);
+		default:
+			return false;
+	}
+};
+
 export const nativeCanPerformPolicyNeedsPreviousEntries = (
 	descriptor: NativeCanPerformPolicyDescriptor,
 ): boolean => {

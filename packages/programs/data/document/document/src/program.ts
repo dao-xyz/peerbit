@@ -70,6 +70,7 @@ import {
 	nativeCanPerformPolicyDeleteFieldPaths,
 	nativeCanPerformPolicyNeedsDeleteValue,
 	nativeCanPerformPolicyNeedsPreviousEntries,
+	nativeCanPerformPolicyPutNeedsEntryPublicKeys,
 	nativeCanPerformPolicySignedByFieldPaths,
 } from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
@@ -268,14 +269,12 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 	hasDuplicatePreparedPutKeys(
 		prepared: Array<{ key: indexerTypes.IdKey }>,
 	): boolean;
-	getLocalIndexedContexts(
-		keys: indexerTypes.IdKey[],
-	): Promise<
-		Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
-	>;
 	getIndexedContextHead(
 		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
 	): string | undefined;
+	getNextFromIndexedContext(
+		existing?: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): ShallowEntry | undefined;
 	getNativeEntrySignerPublicKeys(
 		hashes: string[],
 	): Array<Uint8Array | undefined> | undefined;
@@ -292,9 +291,9 @@ type NativeDocumentBackendContext<T, I extends Record<string, any>> = {
 				publicKeys: Array<Uint8Array | undefined>;
 		  }
 		| undefined;
+	getNativeAppendRequiredPreviousSignerPublicKey(): Uint8Array | undefined;
 	plainPutPolicyNeedsExistingContext(): boolean;
 	shouldResolveTrimmedEntries(): boolean;
-	shouldMaterializePutResultEntry(): boolean;
 	commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
 	): MaybePromise<NativeDocumentAppendTransaction<T, I>>;
@@ -364,62 +363,95 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		this.context.assertPlainPutSupported(doc, options);
 		const putOptions = this.context.normalizePutOptions(options);
 		const prepared = this.context.preparePlainPut(doc);
-		const useNativeExistingDocumentContext = !putOptions?.unique;
-		const commit = () =>
-			mapMaybePromise(
+		const commit = (
+			existing?:
+				| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+				| null
+				| undefined,
+			useNativeExistingDocumentContext = !putOptions?.unique &&
+				existing === undefined,
+			requiredPreviousSignerPublicKey?: Uint8Array,
+		) => {
+			const nextEntry = existing
+				? this.context.getNextFromIndexedContext(existing)
+				: undefined;
+			if (existing && !nextEntry) {
+				throw this.context.nativeModeError(
+					"requires indexed document context for native put",
+				);
+			}
+			const next = nextEntry ? [nextEntry] : [];
+			return mapMaybePromise(
 				this.context.commitNativeDocumentAppend({
 					document: prepared.document,
 					key: prepared.key,
 					documentBytes: prepared.encodedDocument,
 					operationPayloadBytes: prepared.operationPayloadBytes,
-					next: [],
+					next: next as ShallowEntry[],
 					skipMissingNextJoin: true,
 					resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
 					options: putOptions,
 					unique: putOptions?.unique,
 					useNativeExistingDocumentContext,
+					requiredPreviousSignerPublicKey,
+					existing,
 				}),
 				(documentAppendCommit) =>
 					mapMaybePromise(
 						this.context.handlePreparedPlainPutCommit(documentAppendCommit),
 						() => {
-							const retainedEntry =
-								this.context.shouldMaterializePutResultEntry()
-									? documentAppendCommit.entry
-									: undefined;
 							this.context.keepEntry(documentAppendCommit.append.hash);
 							return {
 								get entry() {
-									return retainedEntry ?? documentAppendCommit.entry;
+									return documentAppendCommit.entry;
 								},
 								removed: documentAppendCommit.removed,
 							};
 						},
 					),
 			);
+		};
 		const assertPolicyAndCommit = (
 			existingContext?: indexerTypes.IndexedResult<
 				IndexedContextOnly<I>
 			> | null,
+			previousSignerPublicKey?: Uint8Array,
 		) => {
 			const existingHead = this.context.getIndexedContextHead(existingContext);
-			const previousSignerPublicKey = existingHead
-				? this.context.getNativeEntrySignerPublicKeys([existingHead])?.[0]
-				: undefined;
+			const nativePreviousSignerPublicKey =
+				previousSignerPublicKey ??
+				(existingHead
+					? this.context.getNativeEntrySignerPublicKeys([existingHead])?.[0]
+					: undefined);
 			return mapMaybePromise(
 				this.context.assertPlainPutPolicySupported(
 					prepared.document,
 					existingContext,
-					previousSignerPublicKey,
+					nativePreviousSignerPublicKey,
 				),
-				commit,
+				() => commit(existingContext),
 			);
 		};
 
 		if (
-			useNativeExistingDocumentContext &&
+			!putOptions?.unique &&
 			this.context.plainPutPolicyNeedsExistingContext()
 		) {
+			const requiredPreviousSignerPublicKey =
+				this.context.getNativeAppendRequiredPreviousSignerPublicKey();
+			if (requiredPreviousSignerPublicKey) {
+				return commit(undefined, true, requiredPreviousSignerPublicKey);
+			}
+			const nativeContexts =
+				this.context.getNativeIndexedContextsAndPreviousSignerPublicKeys([
+					prepared.key,
+				]);
+			if (nativeContexts) {
+				return assertPolicyAndCommit(
+					nativeContexts.contexts[0] ?? null,
+					nativeContexts.publicKeys[0],
+				);
+			}
 			const nativePreviousSigner =
 				this.context.getNativePreviousEntrySignerPublicKey(prepared.key);
 			if (nativePreviousSigner) {
@@ -433,15 +465,13 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 							undefined,
 							nativePreviousSigner.publicKey,
 						),
-						commit,
+						() => commit(),
 					);
 				}
 			}
-			return this.context
-				.getLocalIndexedContexts([prepared.key])
-				.then((existingContexts) =>
-					assertPolicyAndCommit(existingContexts[0] ?? null),
-				);
+			throw this.context.nativeModeError(
+				"requires native document context/signature facts",
+			);
 		}
 
 		return assertPolicyAndCommit();
@@ -479,8 +509,11 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 		let previousSignerPublicKeys: Array<Uint8Array | undefined> | undefined;
 		const policyNeedsExistingContext =
 			this.context.plainPutPolicyNeedsExistingContext();
+		const requiredPreviousSignerPublicKey =
+			this.context.getNativeAppendRequiredPreviousSignerPublicKey();
 		const useNativeExistingDocumentContext =
-			putOptions?.unique !== true && !policyNeedsExistingContext;
+			putOptions?.unique !== true &&
+			(!policyNeedsExistingContext || !!requiredPreviousSignerPublicKey);
 		if (putOptions?.unique !== true && !useNativeExistingDocumentContext) {
 			const keys = prepared.map((item) => item.key);
 			const nativeContexts =
@@ -491,7 +524,9 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 					previousSignerPublicKeys = nativeContexts.publicKeys;
 				}
 			} else {
-				existingContexts = await this.context.getLocalIndexedContexts(keys);
+				throw this.context.nativeModeError(
+					"requires native document context/signature batch facts",
+				);
 			}
 		}
 		if (
@@ -522,30 +557,37 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				}
 			}
 		}
-		await Promise.all(
-			prepared.map((item, index) =>
-				this.context.assertPlainPutPolicySupported(
-					item.document,
-					existingContexts ? (existingContexts[index] ?? null) : undefined,
-					previousSignerPublicKeys?.[index],
+		if (!requiredPreviousSignerPublicKey) {
+			await Promise.all(
+				prepared.map((item, index) =>
+					this.context.assertPlainPutPolicySupported(
+						item.document,
+						existingContexts ? (existingContexts[index] ?? null) : undefined,
+						previousSignerPublicKeys?.[index],
+					),
 				),
-			),
-		);
-		return mapMaybePromise(
-			this.context.commitNativeDocumentAppendMany({
-				puts: prepared.map((item, index) => ({
-					document: item.document,
-					key: item.key,
-					documentBytes: item.encodedDocument,
-					operationPayloadBytes: item.operationPayloadBytes,
-					unique: putOptions?.unique,
-					existing: existingContexts ? (existingContexts[index] ?? null) : null,
-				})),
-				resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
-				options: putOptions,
-				useNativeExistingDocumentContext,
-			}),
-			(documentAppendCommit) => {
+			);
+			}
+			return mapMaybePromise(
+				this.context.commitNativeDocumentAppendMany({
+					puts: prepared.map((item, index) => ({
+						document: item.document,
+						key: item.key,
+						documentBytes: item.encodedDocument,
+						operationPayloadBytes: item.operationPayloadBytes,
+						unique: putOptions?.unique,
+						requiredPreviousSignerPublicKey,
+						existing: existingContexts
+							? (existingContexts[index] ?? null)
+							: useNativeExistingDocumentContext
+								? undefined
+								: null,
+					})),
+					resolveTrimmedEntries: this.context.shouldResolveTrimmedEntries(),
+					options: putOptions,
+					useNativeExistingDocumentContext,
+				}),
+				(documentAppendCommit) => {
 				if (!documentAppendCommit) {
 					throw this.context.nativeModeError(
 						"requires native batched payload append support",
@@ -554,16 +596,12 @@ class NativeDocumentBackend<T, I extends Record<string, any>>
 				return mapMaybePromise(
 					this.context.handlePreparedPlainPutManyCommit(documentAppendCommit),
 					() => {
-						const retainedEntries =
-							this.context.shouldMaterializePutResultEntry()
-								? documentAppendCommit.entries
-								: undefined;
 						for (const commit of documentAppendCommit.commits) {
 							this.context.keepEntry(commit.append.hash);
 						}
 						return {
 							get entries() {
-								return retainedEntries ?? documentAppendCommit.entries;
+								return documentAppendCommit.entries;
 							},
 							removed: documentAppendCommit.removed,
 						};
@@ -650,6 +688,7 @@ type LocalAppendCommitFacts = {
 	coordinateFields?: NativeDocumentCoordinateFacts;
 	nativeBackboneDocumentIndexCommitted?: boolean;
 	nativeBackboneDocumentIndexTrimmedHeadsProcessed?: boolean;
+	nativeBackboneDocumentDeleteCommitted?: boolean;
 	documentPreviousContext?: NativeDocumentContextFacts;
 };
 
@@ -717,6 +756,7 @@ type NativeDocumentAppendTransaction<T, I extends Record<string, any>> = {
 		};
 		indexable?: I;
 		getIndexable?: () => I;
+		setContext?: (context: Context) => void;
 	};
 	unique?: boolean;
 	existing?:
@@ -737,6 +777,7 @@ type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 	operationPayloadBytes: Uint8Array;
 	operation?: PutOperation;
 	unique?: boolean;
+	requiredPreviousSignerPublicKey?: Uint8Array;
 	existing?:
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 		| null
@@ -750,6 +791,7 @@ type NativeDocumentAppendCommitFactsInput<T, I extends Record<string, any>> = {
 		};
 		indexable?: I;
 		getIndexable?: () => I;
+		setContext?: (context: Context) => void;
 	};
 };
 
@@ -765,10 +807,12 @@ type NativeBackboneDocumentIndexCommitInput = {
 	existingCreated?: bigint;
 	deleteTrimmedHeads?: boolean;
 	useLatestContext?: boolean;
+	requiredPreviousSignerPublicKey?: Uint8Array;
 };
 
 type PreparedNativeBackboneDocumentIndexCommit<I> = {
 	valuePrefixBytes?: Uint8Array;
+	usePlainPutPayload?: boolean;
 	projection?: {
 		encodedDocument: Uint8Array;
 		plan: SimpleDocumentProjectionPlan;
@@ -776,6 +820,7 @@ type PreparedNativeBackboneDocumentIndexCommit<I> = {
 	};
 	indexable?: I;
 	getIndexable?: () => I;
+	setContext?: (context: Context) => void;
 };
 
 type NativeDocumentAppendCommitInput<
@@ -943,21 +988,27 @@ export class Documents<
 			preparePlainPut: (doc) => this.preparePlainPut(doc),
 			hasDuplicatePreparedPutKeys: (prepared) =>
 				this.hasDuplicatePreparedPutKeys(prepared),
-			getLocalIndexedContexts: (keys) => this.getLocalIndexedContexts(keys),
 			getIndexedContextHead: (existing) =>
 				this.getExistingContext(existing)?.head,
+			getNextFromIndexedContext: (existing) => {
+				const existingHead = this.getExistingContext(existing)?.head;
+				return existingHead
+					? this.nextFromIndexedContext(existingHead, existing)
+					: undefined;
+			},
 			getNativeEntrySignerPublicKeys: (hashes) =>
 				this.getNativeEntrySignerPublicKeys(hashes),
 			getNativePreviousEntrySignerPublicKey: (key) =>
 				this.getNativePreviousEntrySignerPublicKey(key),
 			getNativeIndexedContextsAndPreviousSignerPublicKeys: (keys) =>
 				this.getNativeIndexedContextsAndPreviousSignerPublicKeys(keys),
+			getNativeAppendRequiredPreviousSignerPublicKey: () =>
+				this.nativePlainPutPolicyRequiredPreviousSignerPublicKey(),
 			plainPutPolicyNeedsExistingContext: () =>
 				this.nativePlainPutPolicyNeedsPreviousEntries(),
 			shouldResolveTrimmedEntries: () => {
 				return !this._index.canGetIndexedKeyByHead();
 			},
-			shouldMaterializePutResultEntry: () => this._hasLogTrim,
 			commitNativeDocumentAppend: (input) =>
 				this.commitNativeDocumentAppend(input),
 			commitNativeDocumentAppendMany: (input) =>
@@ -1161,6 +1212,19 @@ export class Documents<
 				this._optionCanPerformNativePolicy,
 			)
 		);
+	}
+
+	private nativePlainPutPolicyRequiredPreviousSignerPublicKey():
+		| Uint8Array
+		| undefined {
+		const descriptor = this._optionCanPerformNativePolicy;
+		const policyDescriptor =
+			descriptor?.kind === "put" ? descriptor.policy : descriptor;
+		if (policyDescriptor?.kind !== "sameSignersAsPrevious") {
+			return;
+		}
+		return (this.log.log.identity.publicKey as { publicKey?: Uint8Array })
+			.publicKey;
 	}
 
 	private unsupportedNativePutOptions(
@@ -1397,11 +1461,20 @@ export class Documents<
 	): Promise<boolean> {
 		switch (descriptor.kind) {
 			case "allowAll":
-			case "signedByPublicKey":
 				return createNativeFastPathCanPerformPolicyEvaluator(
 					descriptor,
 					this.log.log.identity.publicKey,
 				)(doc as unknown);
+			case "signedByPublicKey":
+				return entryPublicKeys.length > 0
+					? this.nativeFieldValueMatchesPublicKeys(
+							descriptor.publicKey,
+							entryPublicKeys,
+						)
+					: createNativeFastPathCanPerformPolicyEvaluator(
+							descriptor,
+							this.log.log.identity.publicKey,
+						)(doc as unknown);
 			case "signedByField": {
 				if (doc) {
 					return createNativeFastPathCanPerformPolicyEvaluator(
@@ -1432,14 +1505,20 @@ export class Documents<
 				return false;
 			case "sameSignersAsPrevious": {
 				if (previousSignerPublicKeys.length > 0) {
-					const localRawPublicKey = (
-						this.log.log.identity.publicKey as { publicKey?: Uint8Array }
-					).publicKey;
-					if (!localRawPublicKey) {
+					const currentPublicKeys =
+						entryPublicKeys.length > 0
+							? entryPublicKeys
+							: [this.log.log.identity.publicKey];
+					if (currentPublicKeys.length !== previousSignerPublicKeys.length) {
 						return false;
 					}
 					for (const previousSignerPublicKey of previousSignerPublicKeys) {
-						if (!bytesEqual(previousSignerPublicKey, localRawPublicKey)) {
+						if (
+							!this.nativeFieldValueMatchesPublicKeys(
+								previousSignerPublicKey,
+								currentPublicKeys,
+							)
+						) {
 							return false;
 						}
 					}
@@ -1830,6 +1909,67 @@ export class Documents<
 		);
 	}
 
+	private async getNativePreviousEntrySignerPublicKeyForPutOperation(
+		operation: PutOperation,
+	): Promise<{ exists: boolean; publicKey?: Uint8Array } | undefined> {
+		const keyValue = await this.getNativeDocumentIdFromPutOperation(operation);
+		return keyValue == null
+			? undefined
+			: this.getNativePreviousEntrySignerPublicKey(indexerTypes.toId(keyValue));
+	}
+
+	private getNativeIndexedContext(
+		key: indexerTypes.IdKey,
+	):
+		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
+		| undefined {
+		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
+			.nativeBackbone as
+			| {
+					documentContext?: (
+						key: string,
+					) => [string, string, string, string, number] | undefined;
+			  }
+			| undefined;
+		const row = nativeBackbone?.documentContext?.(documentIndexStoreKey(key));
+		const context = row
+			? {
+					created: BigInt(row[0]),
+					modified: BigInt(row[1]),
+					head: row[2],
+					gid: row[3],
+					size: row[4],
+				}
+			: undefined;
+		return context
+			? {
+					id: key,
+					value: {
+						__context: nativeDocumentContextFactsAsContext(context),
+					} as IndexedContextOnly<I>,
+				}
+			: undefined;
+	}
+
+	private getNativeModeIndexedContext(
+		key: indexerTypes.IdKey,
+	): indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined {
+		if (!this.hasNativeDocumentContextLookup()) {
+			throw this.nativeModeError("requires native document context lookup");
+		}
+		return this.getNativeIndexedContext(key);
+	}
+
+	private hasNativeDocumentContextLookup(): boolean {
+		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
+			.nativeBackbone as
+			| {
+					documentContext?: (key: string) => unknown;
+			  }
+			| undefined;
+		return typeof nativeBackbone?.documentContext === "function";
+	}
+
 	private getNativeIndexedContextsAndPreviousSignerPublicKeys(
 		keys: indexerTypes.IdKey[],
 	):
@@ -2142,6 +2282,7 @@ export class Documents<
 			this._nativeBackboneDocumentIndexEnabled =
 				this._index.attachNativeBackboneDocumentIndex(
 					(this.log as { nativeBackbone?: unknown }).nativeBackbone,
+					{ preserveExisting: this._mode === "native" },
 				) === true;
 			if (this._nativeBackboneDocumentIndexEnabled) {
 				await initializeDocumentRust();
@@ -2282,14 +2423,24 @@ export class Documents<
 				if (lookup && lookup.every((key) => key != null)) {
 					previousSignerPublicKeys = lookup as Uint8Array[];
 				} else if (this.isNativeMode()) {
-					return false;
+					if (entry.meta.next.length > 1) {
+						return false;
+					}
+					const previousSigner =
+						await this.getNativePreviousEntrySignerPublicKeyForPutOperation(
+							operation,
+						);
+					if (previousSigner?.publicKey) {
+						previousSignerPublicKeys = [previousSigner.publicKey];
+					} else if (previousSigner?.exists || entry.meta.next.length > 0) {
+						return false;
+					}
 				} else {
 					previousEntries = await this.resolveCanPerformPreviousEntries(entry);
 				}
 			}
 			const entryPublicKeys =
-				!document &&
-				nativeCanPerformPolicySignedByFieldPaths(descriptor).length > 0
+				!document && nativeCanPerformPolicyPutNeedsEntryPublicKeys(descriptor)
 					? entry.publicKeys.length > 0
 						? entry.publicKeys
 						: await entry.getPublicKeys()
@@ -2302,20 +2453,20 @@ export class Documents<
 				previousSignerPublicKeys,
 				entryPublicKeys,
 			);
-			}
-			const entryPublicKeys = this.nativeDeletePolicyNeedsEntryPublicKeys(
-				descriptor,
-			)
-				? entry.publicKeys.length > 0
-					? entry.publicKeys
-					: await entry.getPublicKeys()
-				: undefined;
-			return this.nativeDeleteOperationPolicyAllows(
-				descriptor,
-				operation,
-				entryPublicKeys,
-			);
 		}
+		const entryPublicKeys = this.nativeDeletePolicyNeedsEntryPublicKeys(
+			descriptor,
+		)
+			? entry.publicKeys.length > 0
+				? entry.publicKeys
+				: await entry.getPublicKeys()
+			: undefined;
+		return this.nativeDeleteOperationPolicyAllows(
+			descriptor,
+			operation,
+			entryPublicKeys,
+		);
+	}
 
 	private async resolveCanPerformPreviousEntries(
 		entry: Entry<Operation>,
@@ -2408,6 +2559,9 @@ export class Documents<
 			const operation =
 				reference?.operation ||
 				(await this.getAppendOperation(entry, ensureInitialized));
+			if (!operation) {
+				return false;
+			}
 			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
@@ -2417,6 +2571,9 @@ export class Documents<
 				} else {
 					keyValue = await this.getNativeDocumentIdFromPutOperation(putOperation);
 					if (keyValue == null) {
+						if (this.isNativeMode()) {
+							return false;
+						}
 						const value = this.index.valueEncoding.decoder(putOperation.data);
 						this._canAppendDecodedDocuments.set(putOperation, value);
 						keyValue = this.idResolver(value);
@@ -2425,15 +2582,22 @@ export class Documents<
 
 				const key = indexerTypes.toId(keyValue);
 
-				const existingDocument = this.immutable
-					? (
-							await this.index.getDetailed(key, {
-								resolve: false,
-								local: true,
-								remote: { strategy: "fallback" },
-							})
-						)?.[0]?.results[0]
-					: await this.getLocalIndexedContext(key);
+				const existingDocument = this.isNativeMode()
+					? this.hasNativeDocumentContextLookup()
+						? this.getNativeIndexedContext(key)
+						: undefined
+					: this.immutable
+						? (
+								await this.index.getDetailed(key, {
+									resolve: false,
+									local: true,
+									remote: { strategy: "fallback" },
+								})
+							)?.[0]?.results[0]
+						: await this.getLocalIndexedContext(key);
+				if (this.isNativeMode() && !this.hasNativeDocumentContextLookup()) {
+					return false;
+				}
 				const existingContext = this.getExistingContext(existingDocument);
 				if (existingContext && existingContext.head !== entry.hash) {
 					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
@@ -2485,19 +2649,26 @@ export class Documents<
 				if (entry.meta.next.length !== 1) {
 					return false;
 				}
-				const existingDocument = this.immutable
-					? (
-							await this.index.getDetailed(operation.key, {
-								resolve: false,
-								local: true,
-								remote: true,
-							})
-						)?.[0]?.results[0]
-					: await this.getLocalIndexedContext(
-							operation.key instanceof indexerTypes.IdKey
-								? operation.key
-								: indexerTypes.toId(operation.key),
-						);
+				const deleteKey =
+					operation.key instanceof indexerTypes.IdKey
+						? operation.key
+						: indexerTypes.toId(operation.key);
+				const existingDocument = this.isNativeMode()
+					? this.hasNativeDocumentContextLookup()
+						? this.getNativeIndexedContext(deleteKey)
+						: undefined
+					: this.immutable
+						? (
+								await this.index.getDetailed(operation.key, {
+									resolve: false,
+									local: true,
+									remote: true,
+								})
+							)?.[0]?.results[0]
+						: await this.getLocalIndexedContext(deleteKey);
+				if (this.isNativeMode() && !this.hasNativeDocumentContextLookup()) {
+					return false;
+				}
 				const existingHead = this.getExistingContext(existingDocument)?.head;
 
 				if (!existingHead) {
@@ -2506,6 +2677,9 @@ export class Documents<
 				}
 				if (entry.meta.next[0] === existingHead) {
 					return coerceDeleteOperation(operation);
+				}
+				if (this.isNativeMode()) {
+					return false;
 				}
 				let doc = await this.log.log.get(existingHead);
 				if (!doc) {
@@ -2536,12 +2710,13 @@ export class Documents<
 	private async getAppendOperation(
 		entry: Entry<Operation>,
 		ensureInitialized?: () => void,
-	): Promise<Operation> {
+	): Promise<Operation | undefined> {
 		if (this.isNativeMode()) {
 			const operation = await this.getPlainEntryOperationFromStorage(entry);
 			if (operation) {
 				return operation;
 			}
+			return;
 		}
 		ensureInitialized?.();
 		return entry.getPayloadValue();
@@ -2564,7 +2739,15 @@ export class Documents<
 				? BORSH_ENCODING_OPERATION.decoder(payloadData)
 				: undefined;
 		} catch {
-			return;
+			try {
+				const payloadData = (entry as { payload?: { data?: Uint8Array } })
+					.payload?.data;
+				return payloadData
+					? BORSH_ENCODING_OPERATION.decoder(payloadData)
+					: undefined;
+			} catch {
+				return;
+			}
 		}
 	}
 
@@ -3141,9 +3324,10 @@ export class Documents<
 		input: NativeDocumentAppendCommitFactsInput<T, I>,
 		commit: PreparedNativeBackboneDocumentIndexCommit<I>,
 		useLatestContext = false,
-	): NativeBackboneDocumentIndexCommitInput {
+		): NativeBackboneDocumentIndexCommitInput {
 		const canUsePlainPutPayload =
-			!!input.operationPayloadBytes && !!commit.projection;
+			commit.usePlainPutPayload === true ||
+			(!!input.operationPayloadBytes && !!commit.projection);
 		return {
 			key: documentIndexStoreKey(input.key),
 			valuePrefixBytes: commit.valuePrefixBytes,
@@ -3157,6 +3341,8 @@ export class Documents<
 				!this.hasDocumentChangeConsumers() &&
 				this._index.canGetIndexedKeyByHead(),
 			useLatestContext,
+			requiredPreviousSignerPublicKey:
+				input.requiredPreviousSignerPublicKey,
 		};
 	}
 
@@ -3517,6 +3703,42 @@ export class Documents<
 	): NativeDocumentAppendTransaction<T, I> {
 		const append = appended.appendCommit;
 		let contextualEncodedValueParts: ContextualEncodedValueParts | undefined;
+		let exposedNativeBackboneDocumentIndex:
+			| NativeDocumentAppendTransaction<T, I>["nativeBackboneDocumentIndex"]
+			| undefined;
+		let nativeBackboneDocumentIndexContextSet = false;
+		const ensureNativeBackboneDocumentIndexContext = () => {
+			if (
+				nativeBackboneDocumentIndexContextSet ||
+				!nativeBackboneDocumentIndex?.setContext
+			) {
+				return;
+			}
+			nativeBackboneDocumentIndex.setContext(contextAccessors.getContext());
+			nativeBackboneDocumentIndexContextSet = true;
+		};
+		const getNativeBackboneDocumentIndex = () => {
+			if (!nativeBackboneDocumentIndex) {
+				return;
+			}
+			return (exposedNativeBackboneDocumentIndex ??= {
+				valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
+				projection: nativeBackboneDocumentIndex.projection,
+				indexable: nativeBackboneDocumentIndex.indexable,
+				getIndexable: nativeBackboneDocumentIndex.getIndexable
+					? () => {
+							ensureNativeBackboneDocumentIndexContext();
+							return nativeBackboneDocumentIndex.getIndexable!();
+						}
+					: undefined,
+				setContext: nativeBackboneDocumentIndex.setContext
+					? (context) => {
+							nativeBackboneDocumentIndex.setContext!(context);
+							nativeBackboneDocumentIndexContextSet = true;
+						}
+					: undefined,
+			});
+		};
 		return {
 			document: input.document,
 			key: input.key,
@@ -3542,21 +3764,16 @@ export class Documents<
 					suffix: contextAccessors.getContextBytes(),
 				});
 			},
-			nativeBackboneDocumentIndexCommitted:
-				appended.appendCommit.nativeBackboneDocumentIndexCommitted,
-			nativeBackboneDocumentIndexTrimmedHeadsProcessed:
-				appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
-			nativeBackboneDocumentIndex: nativeBackboneDocumentIndex
-				? {
-						valuePrefixBytes: nativeBackboneDocumentIndex.valuePrefixBytes,
-						projection: nativeBackboneDocumentIndex.projection,
-						indexable: nativeBackboneDocumentIndex.indexable,
-						getIndexable: nativeBackboneDocumentIndex.getIndexable,
-					}
-				: undefined,
-			unique: input.unique,
-			existing: input.existing,
-		};
+				nativeBackboneDocumentIndexCommitted:
+					appended.appendCommit.nativeBackboneDocumentIndexCommitted,
+				nativeBackboneDocumentIndexTrimmedHeadsProcessed:
+					appended.appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed,
+				get nativeBackboneDocumentIndex() {
+					return getNativeBackboneDocumentIndex();
+				},
+				unique: input.unique,
+				existing: input.existing,
+			};
 	}
 
 	private async createDocumentAppendCommitFactsBatch(
@@ -3747,6 +3964,25 @@ export class Documents<
 			commit.removed.length > 0 || removedHashes.length > 0;
 		const existing =
 			commit.unique || commit.existing === null ? null : commit.existing;
+		const persistNativeBackboneDocumentIndexCommit = (): MaybePromise<
+			boolean | undefined
+		> => {
+			if (!commit.nativeBackboneDocumentIndexCommitted) {
+				return;
+			}
+			if (this._mode === "native") {
+				return true;
+			}
+			return this._index._persistPreparedNativeBackboneDocumentIndexStoredWithContext(
+				commit.key,
+				commit.context,
+				commit.nativeBackboneDocumentIndex,
+				commit.contextualEncodedValueParts,
+				{
+					replace: existing != null,
+				},
+			);
+		};
 		if (
 			!shouldPrepareChange &&
 			(!hasRemovedFacts || removedAlreadyHandled) &&
@@ -3760,11 +3996,16 @@ export class Documents<
 					return;
 				}
 			}
-			this._index._cacheResolvedIdentityValue(
-				commit.key.primitive,
-				commit.document,
-			);
-			return;
+			const finishCommitted = () => {
+				this._index._cacheResolvedIdentityValue(
+					commit.key.primitive,
+					commit.document,
+				);
+			};
+			const persisted = persistNativeBackboneDocumentIndexCommit();
+			return persisted === undefined || persisted === false
+				? finishCommitted()
+				: mapMaybePromise(persisted, finishCommitted);
 		}
 
 		const documentsChanged: DocumentsChange<T, I> | undefined =
@@ -3895,34 +4136,40 @@ export class Documents<
 
 		if (!modified.has(commit.key.primitive)) {
 			if (commit.nativeBackboneDocumentIndexCommitted) {
-				this._index._cacheResolvedIdentityValue(
-					commit.key.primitive,
-					commit.document,
-				);
-				if (!shouldPrepareChange) {
-					modified.add(commit.key.primitive);
-					return finishRemoved();
-				}
-				const withContext = coerceWithContext(commit.document, commit.context);
-				if (commit.nativeBackboneDocumentIndex?.indexable) {
-					return finishIndexed(
-						coerceWithIndexed(
-							withContext,
-							commit.nativeBackboneDocumentIndex.indexable,
-						),
+				const finishCommitted = (): MaybePromise<void> => {
+					this._index._cacheResolvedIdentityValue(
+						commit.key.primitive,
+						commit.document,
 					);
-				}
-				if (commit.nativeBackboneDocumentIndex?.getIndexable) {
+					if (!shouldPrepareChange) {
+						modified.add(commit.key.primitive);
+						return finishRemoved();
+					}
+					const withContext = coerceWithContext(commit.document, commit.context);
+					if (commit.nativeBackboneDocumentIndex?.indexable) {
+						return finishIndexed(
+							coerceWithIndexed(
+								withContext,
+								commit.nativeBackboneDocumentIndex.indexable,
+							),
+						);
+					}
+					if (commit.nativeBackboneDocumentIndex?.getIndexable) {
+						return finishIndexed(
+							coerceWithLazyIndexed(
+								withContext,
+								commit.nativeBackboneDocumentIndex.getIndexable,
+							),
+						);
+					}
 					return finishIndexed(
-						coerceWithLazyIndexed(
-							withContext,
-							commit.nativeBackboneDocumentIndex.getIndexable,
-						),
+						coerceWithIndexed(withContext, commit.document as any as I),
 					);
-				}
-				return finishIndexed(
-					coerceWithIndexed(withContext, commit.document as any as I),
-				);
+				};
+				const persisted = persistNativeBackboneDocumentIndexCommit();
+				return persisted === undefined || persisted === false
+					? finishCommitted()
+					: mapMaybePromise(persisted, finishCommitted);
 			}
 			if (commit.nativeBackboneDocumentIndex) {
 				const nativePreparedIndexPut =
@@ -4062,8 +4309,12 @@ export class Documents<
 				continue;
 			}
 			try {
+				const payload = await this.getAppendOperation(entry);
+				if (!payload) {
+					continue;
+				}
 				await this.collectRemovedDocumentChange(
-					await entry.getPayloadValue(),
+					payload,
 					modified,
 					documentsChanged,
 				);
@@ -4103,8 +4354,12 @@ export class Documents<
 				continue;
 			}
 			try {
+				const payload = await this.getAppendOperation(entry);
+				if (!payload) {
+					continue;
+				}
 				await this.collectRemovedDocumentChange(
-					await entry.getPayloadValue(),
+					payload,
 					modified,
 					documentsChanged,
 				);
@@ -4270,8 +4525,12 @@ export class Documents<
 				continue;
 			}
 			try {
+				const payload = await this.getAppendOperation(entry);
+				if (!payload) {
+					continue;
+				}
 				await this.collectRemovedDocumentChange(
-					await entry.getPayloadValue(),
+					payload,
 					modified,
 					documentsChanged,
 				);
@@ -4468,10 +4727,18 @@ export class Documents<
 		let key: indexerTypes.IdKey;
 
 		if (isPutOperation(payload)) {
-			const valueWithoutContext = this.index.valueEncoding.decoder(
-				payload.data,
+			const keyValue = this.isNativeMode()
+				? await this.getNativeDocumentIdFromPutOperation(payload)
+				: undefined;
+			if (this.isNativeMode() && keyValue == null) {
+				throw this.nativeModeError(
+					"requires native document id extraction for removed put",
+				);
+			}
+			key = indexerTypes.toId(
+				keyValue ??
+					this.idResolver(this.index.valueEncoding.decoder(payload.data)),
 			);
-			key = indexerTypes.toId(this.idResolver(valueWithoutContext));
 			if (modified.has(key.primitive)) {
 				return;
 			}
@@ -4530,7 +4797,9 @@ export class Documents<
 		}
 		const keyValue = await this.getNativeDocumentIdFromPutOperation(payload);
 		if (keyValue == null) {
-			return false;
+			throw this.nativeModeError(
+				"requires native document id extraction for removed put",
+			);
 		}
 		const key = indexerTypes.toId(keyValue);
 		if (modified.has(key.primitive)) {
@@ -4685,11 +4954,10 @@ export class Documents<
 		const deleteOptions = this.normalizeNativeModePutOptions(options);
 		this.assertNativeModeDeleteSupported(deleteOptions);
 		const key = id instanceof indexerTypes.IdKey ? id : indexerTypes.toId(id);
-		const nativeExistingContexts =
-			this.getNativeIndexedContextsAndPreviousSignerPublicKeys([key])?.contexts;
-		const existing = nativeExistingContexts
-			? nativeExistingContexts[0]
-			: await this.getLocalIndexedContext(key);
+		if (!this.hasNativeDocumentContextLookup()) {
+			throw this.nativeModeError("requires native document context lookup");
+		}
+		const existing = this.getNativeIndexedContext(key);
 		const existingContext = this.getExistingContext(existing);
 		if (!existingContext?.head) {
 			throw new NotFoundError(
@@ -4739,9 +5007,9 @@ export class Documents<
 		const documentsChanged: DocumentsChange<T, I> | undefined =
 			this.hasDocumentChangeConsumers()
 				? {
-					added: [],
-					removed: [],
-				}
+						added: [],
+						removed: [],
+					}
 				: undefined;
 		const removedDocument = documentsChanged
 			? await this._index.get(key, {
@@ -4763,11 +5031,12 @@ export class Documents<
 					...deleteOptions?.meta,
 				},
 			},
-			{
-				skipMissingNextJoin: true,
-				resolveTrimmedEntries: false,
-			},
-		);
+				{
+					skipMissingNextJoin: true,
+					resolveTrimmedEntries: false,
+					nativeBackboneDocumentDeleteKey: documentIndexStoreKey(key),
+				},
+			);
 		if (!appended) {
 			throw this.nativeModeError("requires native delete append support");
 		}
@@ -4777,7 +5046,11 @@ export class Documents<
 			},
 			removed: appended.removed,
 		};
-		await this._index.delManyMaybe([key]);
+			if (appended.appendCommit.nativeBackboneDocumentDeleteCommitted) {
+				this._index.clearResolvedCacheForKeys([key]);
+			} else {
+				await this._index.delManyMaybe([key]);
+			}
 		if (documentsChanged && removedDocument) {
 			documentsChanged.removed.push(removedDocument);
 			this.dispatchDocumentChangeIfObserved(documentsChanged);
@@ -4841,6 +5114,9 @@ export class Documents<
 				const payload = isReferencedAppendEntry
 					? reference.operation
 					: await this.getAppendOperation(item);
+				if (!payload) {
+					continue;
+				}
 
 				if (isPutOperation(payload) && !removedSet.has(item.hash)) {
 					if (!documentsChanged && this.isNativeMode()) {
@@ -4857,7 +5133,7 @@ export class Documents<
 									: isReferencedAppendEntry &&
 										  reference?.existing !== undefined
 										? reference.existing
-										: (await this.getLocalIndexedContext(key)) || null;
+										: this.getNativeModeIndexedContext(key) || null;
 							if (!this.strictHistory && existing) {
 								const shouldIgnoreChange = this.immutable
 									? existing.value.__context.modified <
@@ -4902,7 +5178,9 @@ export class Documents<
 							? null
 							: isReferencedAppendEntry && reference?.existing !== undefined
 								? reference.existing
-								: (await this.getLocalIndexedContext(key)) || null;
+								: this.isNativeMode()
+									? this.getNativeModeIndexedContext(key) || null
+									: (await this.getLocalIndexedContext(key)) || null;
 					if (!this.strictHistory && existing) {
 						// if immutable use oldest, else use newest
 						let shouldIgnoreChange = this.immutable
@@ -4995,6 +5273,9 @@ export class Documents<
 				}
 				try {
 					const payload = await this.getAppendOperation(entry);
+					if (!payload) {
+						continue;
+					}
 					if (
 						!(await this.collectRemovedPutChangeFromNativeId(payload, modified))
 					) {

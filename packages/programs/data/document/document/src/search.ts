@@ -210,9 +210,6 @@ const createSimpleProjectionPlan = (
 					break;
 				}
 				case "context":
-					if (field.source.field === "head") {
-						return;
-					}
 					sources.set(target, {
 						kind: "context",
 						value: field.source.field,
@@ -940,6 +937,14 @@ type ContextualIndexPut<I> = {
 		},
 		options?: { replace?: boolean },
 	) => Promise<void> | void | false;
+	persistStoredContextualEncodedValue?: (
+		id: indexerTypes.IdKey,
+		encodedValueParts: {
+			prefix: Uint8Array;
+			suffix: Uint8Array;
+		},
+		options?: { replace?: boolean },
+	) => Promise<void> | void | false;
 	putStoredContextualEncodedValueBatch?: (
 		values: Array<{
 			id: indexerTypes.IdKey;
@@ -980,7 +985,10 @@ type ExactDeleteIndex = {
 };
 
 type NativeBackboneDocumentIndex = {
-	attachNativeBackboneDocumentIndex?: (backbone: unknown) => boolean | void;
+	attachNativeBackboneDocumentIndex?: (
+		backbone: unknown,
+		options?: { preserveExisting?: boolean },
+	) => boolean | void;
 };
 
 type NativeBackboneDocumentProjection = {
@@ -993,6 +1001,7 @@ type NativeBackboneDocumentProjection = {
 
 type NativeBackboneDocumentIndexCommit<I> = {
 	valuePrefixBytes?: Uint8Array;
+	usePlainPutPayload?: boolean;
 	projection?: {
 		encodedDocument: Uint8Array;
 		plan: SimpleDocumentProjectionPlan;
@@ -1000,6 +1009,7 @@ type NativeBackboneDocumentIndexCommit<I> = {
 	};
 	indexable?: I;
 	getIndexable?: () => I;
+	setContext?: (context: types.Context) => void;
 };
 
 export const coerceWithContext = <T>(
@@ -1146,6 +1156,7 @@ export class DocumentIndex<
 	}) {
 		super();
 		this._query = properties?.query || new RPC();
+		this._resultQueue = new Map();
 		this.iteratorKeepAliveTimers = new Map();
 	}
 
@@ -1615,7 +1626,10 @@ export class DocumentIndex<
 		}
 	}
 
-	public attachNativeBackboneDocumentIndex(backbone: unknown): boolean {
+	public attachNativeBackboneDocumentIndex(
+		backbone: unknown,
+		options?: { preserveExisting?: boolean },
+	): boolean {
 		this.nativeBackboneDocumentProjection = undefined;
 		if (
 			!backbone ||
@@ -1627,7 +1641,8 @@ export class DocumentIndex<
 		const attach = (this.index as NativeBackboneDocumentIndex)
 			.attachNativeBackboneDocumentIndex;
 		const attached =
-			typeof attach === "function" && attach.call(this.index, backbone) === true;
+			typeof attach === "function" &&
+			attach.call(this.index, backbone, options) === true;
 		if (attached) {
 			const projection = backbone as NativeBackboneDocumentProjection;
 			if (typeof projection.projectDocumentIndexSimple === "function") {
@@ -1662,6 +1677,7 @@ export class DocumentIndex<
 	public canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts(): boolean {
 		return (
 			this.canPrepareNativeBackboneDocumentIndexCommit() ||
+			!!this.nativeTransformProjectionPlan ||
 			canPrepareNativeDocumentTransformWithAppendFacts(
 				this.nativeTransformDescriptor,
 			)
@@ -1686,17 +1702,12 @@ export class DocumentIndex<
 		if (this.transformerIsIdentity && this.indexedTypeIsDocumentType) {
 			return {
 				valuePrefixBytes: encodedDocument,
+				usePlainPutPayload: true,
 				indexable: value as any as I,
 			};
 		}
-		if (
-			!canPrepareNativeDocumentTransformBeforeAppend(
-				this.nativeTransformDescriptor,
-			)
-		) {
-			return;
-		}
 		if (this.nativeTransformProjectionPlan) {
+			let projectionContext: types.Context | undefined;
 			let cached: I | undefined;
 			let hasCached = false;
 			return {
@@ -1709,7 +1720,7 @@ export class DocumentIndex<
 					if (!hasCached) {
 						const transformed = this.transformer(
 							value,
-							undefined as unknown as types.Context,
+							projectionContext as types.Context,
 							transformFacts,
 						);
 						if (isPromiseLike(transformed)) {
@@ -1722,7 +1733,19 @@ export class DocumentIndex<
 					}
 					return cached!;
 				},
+				setContext: (context) => {
+					projectionContext = context;
+					hasCached = false;
+					cached = undefined;
+				},
 			};
+		}
+		if (
+			!canPrepareNativeDocumentTransformBeforeAppend(
+				this.nativeTransformDescriptor,
+			)
+		) {
+			return;
 		}
 		const transformed = this.transformer(
 			value,
@@ -1747,13 +1770,15 @@ export class DocumentIndex<
 		if (this.transformerIsIdentity && this.indexedTypeIsDocumentType) {
 			return {
 				valuePrefixBytes: encodedDocument,
+				usePlainPutPayload: true,
 				indexable: value as any as I,
 			};
 		}
 		if (this.nativeTransformProjectionPlan) {
-			const projectionContext = {
+			let projectionContext = {
 				created: context.created,
 				modified: context.modified,
+				head: context.head,
 				gid: context.gid,
 				size: context.size,
 				signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
@@ -1770,7 +1795,7 @@ export class DocumentIndex<
 					if (!hasCached) {
 						const transformed = this.transformer(
 							value,
-							context,
+							projectionContext as types.Context,
 							transformFacts,
 						);
 						if (isPromiseLike(transformed)) {
@@ -1782,6 +1807,18 @@ export class DocumentIndex<
 						hasCached = true;
 					}
 					return cached!;
+				},
+				setContext: (nextContext) => {
+					projectionContext = {
+						created: nextContext.created,
+						modified: nextContext.modified,
+						head: nextContext.head,
+						gid: nextContext.gid,
+						size: nextContext.size,
+						signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
+					};
+					hasCached = false;
+					cached = undefined;
 				},
 			};
 		}
@@ -1814,6 +1851,7 @@ export class DocumentIndex<
 		if (this.transformerIsIdentity && this.indexedTypeIsDocumentType) {
 			return {
 				valuePrefixBytes: encodedDocument,
+				usePlainPutPayload: true,
 			};
 		}
 		if (this.nativeTransformProjectionPlan) {
@@ -1851,6 +1889,7 @@ export class DocumentIndex<
 						{
 							created: context.created,
 							modified: context.modified,
+							head: context.head,
 							gid: context.gid,
 							size: context.size,
 							signer: nativeDocumentIndex.projection.signer,
@@ -1862,6 +1901,7 @@ export class DocumentIndex<
 						{
 							created: context.created,
 							modified: context.modified,
+							head: context.head,
 							gid: context.gid,
 							size: context.size,
 							signer: nativeDocumentIndex.projection.signer,
@@ -2105,14 +2145,14 @@ export class DocumentIndex<
 			if (this._joinListener) {
 				this._query.events.removeEventListener("join", this._joinListener);
 			}
-			if (this.handleDocumentChange) {
+			if (this.handleDocumentChange && this.documentEvents) {
 				this.documentEvents.removeEventListener(
 					"change",
 					this.handleDocumentChange,
 				);
 			}
 			this.clearAllResultQueues();
-			await this._resumableIterators.clearAll();
+			await this._resumableIterators?.clearAll();
 			if (this.iteratorKeepAliveTimers) {
 				for (const timer of this.iteratorKeepAliveTimers.values()) {
 					clearTimeout(timer);
@@ -2136,12 +2176,12 @@ export class DocumentIndex<
 	async drop(from?: Program): Promise<boolean> {
 		const dropped = await super.drop(from);
 		if (dropped) {
-			this.documentEvents.removeEventListener(
+			this.documentEvents?.removeEventListener(
 				"change",
 				this.handleDocumentChange,
 			);
 			this.clearAllResultQueues();
-			await this._resumableIterators.clearAll();
+			await this._resumableIterators?.clearAll();
 			if (this.iteratorKeepAliveTimers) {
 				for (const timer of this.iteratorKeepAliveTimers.values()) {
 					clearTimeout(timer);
@@ -2539,6 +2579,7 @@ export class DocumentIndex<
 		if (!contextualStoredPut || this.isProgramValued) {
 			return;
 		}
+		nativeDocumentIndex.setContext?.(context);
 		const valueWithContext = coerceWithContext(value, context);
 		const indexedValue = nativeDocumentIndex.indexable
 			? coerceWithIndexed(valueWithContext, nativeDocumentIndex.indexable)
@@ -2598,6 +2639,7 @@ export class DocumentIndex<
 		if (!contextualStoredPut || this.isProgramValued) {
 			return;
 		}
+		nativeDocumentIndex.setContext?.(context);
 		const valuePrefixBytes = this.nativeBackboneDocumentIndexValuePrefixBytes(
 			nativeDocumentIndex,
 			context,
@@ -2633,6 +2675,71 @@ export class DocumentIndex<
 		}
 	}
 
+	public _persistPreparedNativeBackboneDocumentIndexStoredWithContext(
+		id: indexerTypes.IdKey,
+		context: types.Context,
+		nativeDocumentIndex?: NativeBackboneDocumentIndexCommit<I>,
+		encodedValueParts?: NonNullable<ContextualPutOptions["encodedValueParts"]>,
+		options?: { replace?: boolean },
+	): MaybePromise<boolean | undefined> {
+		const persistStoredPut = (this.index as ContextualIndexPut<I>)
+			.persistStoredContextualEncodedValue;
+		if (!persistStoredPut || this.isProgramValued) {
+			return;
+		}
+		let storedParts:
+			| NonNullable<ContextualPutOptions["encodedValueParts"]>
+			| undefined;
+		if (
+			this.transformerIsIdentity &&
+			this.indexedTypeIsDocumentType &&
+			encodedValueParts
+		) {
+			storedParts = encodedValueParts;
+		} else if (nativeDocumentIndex) {
+			nativeDocumentIndex.setContext?.(context);
+			const valuePrefixBytes =
+				nativeDocumentIndex.valuePrefixBytes ??
+				this.nativeBackboneDocumentIndexValuePrefixBytes(
+					nativeDocumentIndex,
+					context,
+				);
+			if (!valuePrefixBytes) {
+				return;
+			}
+			storedParts = {
+				prefix: valuePrefixBytes,
+				suffix: encodeContextSuffix(context),
+			};
+		} else {
+			return;
+		}
+		try {
+			const persistResult = persistStoredPut.call(
+				this.index,
+				id,
+				storedParts,
+				options,
+			);
+			if (persistResult === false) {
+				return false;
+			}
+			return isPromiseLike(persistResult)
+				? persistResult.then(() => true, (error: unknown) => {
+						if (error instanceof indexerTypes.NotStartedError && this.closed) {
+							return true;
+						}
+						throw error;
+					})
+				: true;
+		} catch (error) {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return true;
+			}
+			throw error;
+		}
+	}
+
 	public async _putManyPreparedNativeBackboneDocumentIndexWithContext(
 		values: Array<{
 			value: T;
@@ -2661,6 +2768,7 @@ export class DocumentIndex<
 			if (!item.nativeDocumentIndex) {
 				return;
 			}
+			item.nativeDocumentIndex.setContext?.(item.context);
 			const valueWithContext = coerceWithContext(item.value, item.context);
 			const indexedValue = item.nativeDocumentIndex.indexable
 				? coerceWithIndexed(
@@ -2758,6 +2866,7 @@ export class DocumentIndex<
 			) {
 				encodedValueParts = item.encodedValueParts;
 			} else if (item.nativeDocumentIndex) {
+				item.nativeDocumentIndex.setContext?.(item.context);
 				const valuePrefixBytes =
 					item.nativeDocumentIndex.valuePrefixBytes ??
 					this.nativeBackboneDocumentIndexValuePrefixBytes(
@@ -3132,6 +3241,12 @@ export class DocumentIndex<
 			return;
 		}
 		await Promise.all(keys.map((key) => this.del(key)));
+	}
+
+	public clearResolvedCacheForKeys(keys: indexerTypes.IdKey[]): void {
+		for (const key of keys) {
+			this.deleteResolvedCacheForKey(key);
+		}
 	}
 
 	public delManyMaybe(keys: indexerTypes.IdKey[]): MaybePromise<void> {
@@ -3631,15 +3746,18 @@ export class DocumentIndex<
 	}
 
 	get countIteratorsInProgress() {
-		return this._resumableIterators.queues.size;
+		return this._resumableIterators?.queues.size ?? 0;
 	}
 
 	private clearAllResultQueues() {
+		if (!this._resultQueue) {
+			return;
+		}
 		for (const [key, queue] of this._resultQueue) {
 			clearTimeout(queue.timeout);
 			this._resultQueue.delete(key);
 			this.cancelIteratorKeepAlive(key);
-			this._resumableIterators.close({ idString: key });
+			this._resumableIterators?.close({ idString: key });
 		}
 	}
 
@@ -3934,9 +4052,10 @@ export class DocumentIndex<
 						signal: options?.signal,
 					});
 
-			// Cold start: cover can be temporarily self-only while replication metadata
-			// converges. For explicit remote searches, query bounded connected peers
-			// instead of waiting for replicator metadata to catch up.
+			// Cold start: cover can be temporarily self-only or empty while
+			// replication metadata converges. For explicit bounded remote searches,
+			// query bounded connected peers instead of waiting for replicator
+			// metadata to catch up.
 			if (!options?.remote?.from && isDefaultDomainArgs && remoteWasExplicit) {
 				const selfHash = this.node.identity.publicKey.hashcode();
 				const remoteCount = replicatorGroups.filter(
@@ -3946,25 +4065,43 @@ export class DocumentIndex<
 					const waitEnabled = Boolean(remote.wait);
 					const coverIsSelfOnly =
 						replicatorGroups.length === 1 && replicatorGroups[0] === selfHash;
+					const coverIsColdEmpty =
+						replicatorGroups.length === 0 && remote.timeout != null;
 
-					// If the cover is explicitly empty (no shards), don't override it unless
-					// the caller requested waiting for joins (e.g. get(waitFor)).
-					if (waitEnabled || coverIsSelfOnly) {
+					// If the cover is explicitly empty (no shards), don't override it
+					// unless the caller requested waiting for joins (e.g. get(waitFor))
+					// or bounded the remote query with a timeout.
+					if (waitEnabled || coverIsSelfOnly || coverIsColdEmpty) {
+						const extra: string[] = [];
+						const addExtra = (hash: string | undefined) => {
+							if (!hash || hash === selfHash || extra.includes(hash)) {
+								return;
+							}
+							extra.push(hash);
+						};
+
+						try {
+							for (const hash of await this._log.getReplicators()) {
+								addExtra(hash);
+								if (extra.length >= 8) break;
+							}
+						} catch {
+							// Fall through to connected peers when the local replicator
+							// index is not ready yet.
+						}
+
 						const peerMap: Map<string, unknown> | undefined = (
 							this.node.services.pubsub as any
 						)?.peers;
 						if (peerMap?.keys) {
-							const extra: string[] = [];
 							for (const hash of peerMap.keys()) {
-								if (!hash || hash === selfHash) continue;
-								extra.push(hash);
+								addExtra(hash);
 								if (extra.length >= 8) break;
 							}
-							if (extra.length > 0) {
-								replicatorGroups = [
-									...new Set([...replicatorGroups, ...extra]),
-								];
-							}
+						}
+
+						if (extra.length > 0) {
+							replicatorGroups = [...new Set([...replicatorGroups, ...extra])];
 						}
 					}
 				}

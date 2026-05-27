@@ -11,7 +11,7 @@ export function plan_document_context(existing_created: any, modified: string, h
 
 export function plan_document_context_batch(existing_createds: Array<any>, modifieds: Array<any>, heads: Array<any>, gids: Array<any>, sizes: Uint32Array): Array<any>;
 
-export function project_document_index_simple(encoded_document: Uint8Array, plan: any, created: string, modified: string, gid: string, size: number, signer: any): Uint8Array;
+export function project_document_index_simple(encoded_document: Uint8Array, plan: any, created: string, modified: string, head: string, gid: string, size: number, signer: any): Uint8Array;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -22,7 +22,7 @@ export interface InitOutput {
     readonly extract_document_field_simple: (a: any, b: any) => [number, number, number];
     readonly plan_document_context: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly plan_document_context_batch: (a: any, b: any, c: any, d: any, e: any) => [number, number, number];
-    readonly project_document_index_simple: (a: any, b: any, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: any) => [number, number, number];
+    readonly project_document_index_simple: (a: any, b: any, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: any) => [number, number, number];
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

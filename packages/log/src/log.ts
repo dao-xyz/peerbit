@@ -393,6 +393,7 @@ export class Log<T> {
 
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
+		this._closeController = new AbortController();
 	}
 
 	async open(store: Blocks, identity: Identity, options: LogOptions<T> = {}) {
@@ -3470,23 +3471,34 @@ export class Log<T> {
 				messages: 1,
 			});
 
-			const blocksStartedAt = internalProfileStart(profile);
 			const trustedMissing =
 				resolvedOptions.__peerbitEntriesAlreadyMissing === true &&
 				batchHashes.size === entries.length;
-			const nativePreparedCommitted =
-				(await resolvedOptions.__peerbitNativePreparedJoinCommit?.({
-					entries,
-					hashes: entryHashes,
-					headFlags,
-					headFlagsBytes,
-					trustedMissing,
-					validatePlan: nativeCommitValidatesPlan,
-				})) === true;
+			let nativePreparedCommitted = false;
+			if (resolvedOptions.__peerbitNativePreparedJoinCommit) {
+				const nativeCommitStartedAt = internalProfileStart(profile);
+				nativePreparedCommitted =
+					(await resolvedOptions.__peerbitNativePreparedJoinCommit({
+						entries,
+						hashes: entryHashes,
+						headFlags,
+						headFlagsBytes,
+						trustedMissing,
+						validatePlan: nativeCommitValidatesPlan,
+					})) === true;
+				emitInternalProfileDuration(profile, nativeCommitStartedAt, {
+					name: "log.joinPreparedFacts.nativePreparedCommit",
+					component: "log",
+					entries: entries.length,
+					messages: 1,
+					details: { nativePreparedCommitted },
+				});
+			}
 			if (nativeCommitValidatesPlan && !nativePreparedCommitted) {
 				nativeValidatedCommitRejected = true;
 				return;
 			}
+			const blocksStartedAt = internalProfileStart(profile);
 			if (!nativePreparedCommitted) {
 				await this.putKnownEntryBytesBatch(
 					entries.map((entry) => ({
@@ -3505,22 +3517,54 @@ export class Log<T> {
 			});
 
 			const indexStartedAt = internalProfileStart(profile);
-			const externalNextHashes =
-				entries.length === 1 ? entries[0]!.meta.next : undefined;
-			await this.entryIndex.putAppendFactsBatch(entries, {
-				unique: trustedMissing,
-				externalNextHashes,
-				heads: headFlags,
-				deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
-				nativeGraphUpdated: nativePreparedCommitted,
-				profile,
-			});
+			let nativeCommittedFactsIndexed = false;
+			if (
+				nativePreparedCommitted &&
+				resolvedOptions.__peerbitDeferIndexWrite === true
+			) {
+				const indexBatchHashes = entries.length > 1 ? batchHashes : undefined;
+				const indexRows = entries.map((entry, index) => {
+					const isHead = headFlags[index] ?? true;
+					const externalNextHashes = indexBatchHashes
+						? entry.meta.next.filter((next) => !indexBatchHashes.has(next))
+						: entry.meta.next;
+					return {
+						hash: entry.hash,
+						unique: trustedMissing,
+						externalNextHashes,
+						getShallowEntry: () => {
+							const shallowEntry =
+								entry.shallowEntry ?? entry.getShallowEntry?.(isHead);
+							if (!shallowEntry) {
+								throw new Error("Missing prepared append shallow entry");
+							}
+							shallowEntry.head = isHead;
+							entry.shallowEntry = shallowEntry;
+							return shallowEntry;
+						},
+						isHead,
+					};
+				});
+				await this.entryIndex.putNativeCommittedAppendFactsBatch(indexRows);
+				nativeCommittedFactsIndexed = true;
+			} else {
+				const externalNextHashes =
+					entries.length === 1 ? entries[0]!.meta.next : undefined;
+				await this.entryIndex.putAppendFactsBatch(entries, {
+					unique: trustedMissing,
+					externalNextHashes,
+					heads: headFlags,
+					deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
+					nativeGraphUpdated: nativePreparedCommitted,
+					profile,
+				});
+			}
 			emitInternalProfileDuration(profile, indexStartedAt, {
 				name: "log.joinPreparedFacts.entryIndex",
 				component: "log",
 				entries: entries.length,
 				messages: 1,
-				details: { trustedMissing },
+				details: { trustedMissing, nativeCommittedFactsIndexed },
 			});
 
 			if (resolvedOptions.__peerbitOnPreparedJoinCommitted) {
@@ -4152,8 +4196,8 @@ export class Log<T> {
 	async close() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-		this._closeController.abort();
-		await this._entryIndex.flushPendingWrites();
+		this._closeController?.abort();
+		await this._entryIndex?.flushPendingWrites();
 		await this._indexer?.stop?.();
 		this._indexer = undefined as any;
 		this._loadedOnce = false;
@@ -4163,7 +4207,7 @@ export class Log<T> {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		this._closeController.abort();
-		await this.entryIndex?.clear();
+		await this._entryIndex?.clear();
 		await this._indexer?.drop();
 		await this._indexer?.stop?.();
 	}

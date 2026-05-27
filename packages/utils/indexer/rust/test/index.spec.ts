@@ -1294,6 +1294,83 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("coalesces native-backbone exact deletes with result flags", async () => {
+		const directory = createPersistenceDirectory();
+		const indices = create(directory);
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocumentWithContext });
+			const contextualIndex = index as typeof index & {
+				attachNativeBackboneDocumentIndex: (backbone: unknown) => boolean;
+				delIds: (
+					deleteIds: Array<ReturnType<typeof toId> | string>,
+				) => ReturnType<typeof toId>[] | Promise<ReturnType<typeof toId>[]>;
+			};
+			let existsCalls = 0;
+			let batchCalls = 0;
+			let fallbackCalls = 0;
+			let existsKeys: string[] = [];
+			let batchKeys: string[] = [];
+			const backbone = {
+				documentIndexLength: 0,
+				configureDocumentSchemaIr: () => ({
+					rootFields: 0,
+					nodeCount: 0,
+					genericNodes: 0,
+				}),
+				setDocumentContextHeadField: () => {},
+				setDocumentContextFields: () => {},
+				clearDocumentIndex: () => {},
+				putDocumentEncodedPartsStored: () => {},
+				documentEntry: () => {
+					fallbackCalls++;
+					return undefined;
+				},
+				documentKeysExist: (keys: string[]) => {
+					existsCalls++;
+					existsKeys = [...keys];
+					return Uint8Array.from([1, 0, 1]);
+				},
+				documentQuery: () => [],
+				documentQueryPage: () => [],
+				documentCount: () => 0,
+				documentSum: () => ["none", "0"] as const,
+				deleteDocument: () => {
+					fallbackCalls++;
+					return false;
+				},
+				deleteDocumentsResult: (keys: string[]) => {
+					batchCalls++;
+					batchKeys = [...keys];
+					return Uint8Array.from([1, 0, 1]);
+				},
+			};
+			expect(contextualIndex.attachNativeBackboneDocumentIndex(backbone)).equal(
+				true,
+			);
+
+			const deleted = await contextualIndex.delIds(["a", "missing", "b"]);
+
+			expect(existsCalls).equal(1);
+			expect(batchCalls).equal(1);
+			expect(fallbackCalls).equal(0);
+			expect(existsKeys).to.deep.equal([
+				"string:a",
+				"string:missing",
+				"string:b",
+			]);
+			expect(batchKeys).to.deep.equal([
+				"string:a",
+				"string:missing",
+				"string:b",
+			]);
+			expect(deleted.map((id) => id.primitive)).to.deep.equal(["a", "b"]);
+		} finally {
+			await indices.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("keeps exact byte matching for large byte arrays without indexing every byte by default", async () => {
 		const indices = create();
 		await indices.start();
