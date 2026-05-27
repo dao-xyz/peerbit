@@ -68,7 +68,6 @@
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
-		"@peerbit/libp2p-test-utils": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/pubsub-interface": "workspace:*",
@@ -76,6 +75,9 @@
 		"@peerbit/time": "workspace:*",
 		"multiformats": "^13.4.2",
 		"p-queue": "^8.0.1"
+	},
+	"devDependencies": {
+		"@peerbit/libp2p-test-utils": "workspace:*"
 	},
 	"repository": {
 		"type": "git",

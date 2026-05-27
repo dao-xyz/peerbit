@@ -1858,9 +1858,6 @@ importers:
       '@peerbit/keychain':
         specifier: workspace:*
         version: link:../../../utils/keychain
-      '@peerbit/libp2p-test-utils':
-        specifier: workspace:*
-        version: link:../../../transport/libp2p-test-utils
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../../../utils/logger
@@ -1882,6 +1879,10 @@ importers:
       p-queue:
         specifier: ^8.0.1
         version: 8.1.1
+    devDependencies:
+      '@peerbit/libp2p-test-utils':
+        specifier: workspace:*
+        version: link:../../../transport/libp2p-test-utils
 
   packages/programs/program/react:
     dependencies:
