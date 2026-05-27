@@ -4713,13 +4713,19 @@ export class Documents<
 			removedSet.set(r.hash, r);
 		}
 
+		const shouldPrepareDocumentChanges = this.hasDocumentChangeConsumers();
+		const canRemoveByIndexedHead =
+			!shouldPrepareDocumentChanges && this._index.canGetIndexedKeyByHead();
+		const removedEntries = canRemoveByIndexedHead
+			? []
+			: ((await Promise.all(
+					change.removed.map((x) =>
+						x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash),
+					),
+				)) ?? []);
 		const sortedEntries = [
 			...change.added.map((x) => x.entry),
-			...((await Promise.all(
-				change.removed.map((x) =>
-					x instanceof Entry ? x : this.log.log.entryIndex.get(x.hash),
-				),
-			)) || []),
+			...removedEntries,
 		]; // TODO assert sorting
 		/*  const sortedEntries = [...change.added, ...(removed || [])]
 					.sort(this.log.log.sortFn)
@@ -4728,7 +4734,6 @@ export class Documents<
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
 		// in combinatpion with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
 
-		const shouldPrepareDocumentChanges = this.hasDocumentChangeConsumers();
 		let documentsChanged: DocumentsChange<T, I> | undefined =
 			shouldPrepareDocumentChanges
 				? {
@@ -4881,6 +4886,41 @@ export class Documents<
 					continue;
 				}
 				throw error;
+			}
+		}
+
+		if (canRemoveByIndexedHead && change.removed.length > 0) {
+			const handled = await this.collectRemovedDocumentChangesFromIndexedHeads(
+				change.removed,
+				modified,
+			);
+			const remainingRemoved = change.removed.filter(
+				(entry) => !handled.has(entry.hash),
+			);
+			for (const removed of remainingRemoved) {
+				const entry =
+					removed instanceof Entry
+						? removed
+						: await this.log.log.entryIndex.get(removed.hash, {
+								type: "full",
+								ignoreMissing: true,
+							});
+				if (!entry) {
+					continue;
+				}
+				try {
+					const payload = await this.getAppendOperation(entry);
+					if (
+						!(await this.collectRemovedPutChangeFromNativeId(payload, modified))
+					) {
+						await this.collectRemovedDocumentChange(payload, modified);
+					}
+				} catch (error) {
+					if (error instanceof AccessError) {
+						continue;
+					}
+					throw error;
+				}
 			}
 		}
 
