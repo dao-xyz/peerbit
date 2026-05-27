@@ -6443,6 +6443,52 @@ describe("index", () => {
 				}
 			});
 
+			it("validates direct-head put canAppend without loading the previous entry", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						strictHistory: true,
+					},
+				});
+
+				const id = uuid();
+				const first = await store.docs.put(new Document({ id, name: "v1" }), {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+				const nextDoc = new Document({ id, name: "v2" });
+				const operation = new PutOperation({ data: serialize(nextDoc) });
+				const entryIndexGetSpy = sinon.spy(
+					store.docs.log.log.entryIndex,
+					"get",
+				);
+				try {
+					const fakePutEntry = {
+						hash: "direct-put-can-append-entry",
+						meta: {
+							next: [first.entry.hash],
+							clock: {
+								timestamp: {
+									wallTime: first.entry.meta.clock.timestamp.wallTime + 1n,
+								},
+							},
+						},
+						init: () => undefined,
+						getPayloadValue: async () => operation,
+					};
+
+					const result = await (store.docs as any)._canAppend(fakePutEntry);
+					expect(result).equal(operation);
+					expect(entryIndexGetSpy.callCount).equal(0);
+				} finally {
+					entryIndexGetSpy.restore();
+				}
+			});
+
 			it("rejects delete ownership when policy.deleteSignedByExistingField does not match", async () => {
 				store = new TestStore({
 					docs: new Documents<Document>(),

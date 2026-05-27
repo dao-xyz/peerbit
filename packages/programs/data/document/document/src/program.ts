@@ -2373,6 +2373,9 @@ export class Documents<
 							if (entry.meta.next.length !== 1) {
 								return false;
 							}
+							if (entry.meta.next[0] === existingContext.head) {
+								return putOperation;
+							}
 
 							const prevEntry = await this.log.log.entryIndex.get(
 								existingContext.head,
