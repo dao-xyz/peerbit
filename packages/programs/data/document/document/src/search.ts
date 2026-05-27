@@ -122,6 +122,9 @@ const schemaTypeName = (type: unknown): string | undefined => {
 	if (type === Uint8Array) {
 		return "bytes";
 	}
+	if (type === PublicSignKey) {
+		return "publicsignkey";
+	}
 	if (type instanceof FixedArrayKind && type.elementType === "u8") {
 		return `fixedbytes:${type.length}`;
 	}

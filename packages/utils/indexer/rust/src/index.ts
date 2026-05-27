@@ -422,6 +422,7 @@ const enum NativeSchemaNodeTag {
 	Vec = 16,
 	FixedArray = 17,
 	Generic = 18,
+	PublicSignKey = 19,
 }
 
 const textEncoder = new TextEncoder();
@@ -1437,6 +1438,11 @@ const writeNativeSchemaNode = (
 
 	if (fieldType === Uint8Array) {
 		writer.u8(NativeSchemaNodeTag.Uint8Array);
+		return;
+	}
+
+	if (typeof fieldType === "function" && fieldType.name === "PublicSignKey") {
+		writer.u8(NativeSchemaNodeTag.PublicSignKey);
 		return;
 	}
 

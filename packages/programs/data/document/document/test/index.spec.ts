@@ -11,7 +11,7 @@ import {
 	AccessError,
 	Ed25519Keypair,
 	Ed25519PublicKey,
-	type PublicSignKey,
+	PublicSignKey,
 	equals,
 	randomBytes,
 	toBase64,
@@ -4093,6 +4093,113 @@ describe("index", () => {
 						expect(equals(resolved?.id, id)).equal(true);
 					} finally {
 						documentPreparedNativeStoredPutSpy.restore();
+						decoderSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native replicated PublicSignKey fields without document decode on receive", async () => {
+					@variant("strict_native_replicated_public_key_owner_document")
+					class StrictNativeReplicatedPublicKeyOwnerDocument {
+						@id({ type: "string" })
+						id: string;
+
+						@field({ type: PublicSignKey })
+						owner: PublicSignKey;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedPublicKeyOwnerDocument>,
+						) {
+							this.id = properties?.id || uuid();
+							this.owner =
+								properties?.owner ||
+								new Ed25519PublicKey({ publicKey: new Uint8Array(32) });
+							this.name = properties?.name;
+						}
+					}
+
+					@variant("strict_native_replicated_public_key_owner_store")
+					class StrictNativeReplicatedPublicKeyOwnerStore extends Program<
+						Partial<SetupOptions<StrictNativeReplicatedPublicKeyOwnerDocument>>
+					> {
+						@field({ type: Documents })
+						docs: Documents<StrictNativeReplicatedPublicKeyOwnerDocument>;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedPublicKeyOwnerStore>,
+						) {
+							super();
+							this.docs =
+								properties?.docs ||
+								new Documents<StrictNativeReplicatedPublicKeyOwnerDocument>();
+						}
+
+						async open(
+							options?: Partial<
+								SetupOptions<StrictNativeReplicatedPublicKeyOwnerDocument>
+							>,
+						): Promise<void> {
+							await this.docs.open({
+								...options,
+								type: StrictNativeReplicatedPublicKeyOwnerDocument,
+								index: {
+									...options?.index,
+									type: StrictNativeReplicatedPublicKeyOwnerDocument,
+									transform:
+										transform.identity<StrictNativeReplicatedPublicKeyOwnerDocument>(),
+								},
+							});
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new StrictNativeReplicatedPublicKeyOwnerStore();
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform:
+							policy.signedByField<StrictNativeReplicatedPublicKeyOwnerDocument>(
+								"owner",
+							),
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
+					try {
+						const doc = new StrictNativeReplicatedPublicKeyOwnerDocument({
+							id: uuid(),
+							owner: rustSession.peers[0].identity.publicKey,
+							name: "native-public-key-owner",
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						const resolved = await target.docs.get(doc.id, {
+							local: true,
+							remote: false,
+						});
+						expect(resolved?.name).equal("native-public-key-owner");
+						expect(
+							resolved?.owner.equals(rustSession.peers[0].identity.publicKey),
+						).equal(true);
+					} finally {
 						decoderSpy.restore();
 						await target.close();
 						await source.close();

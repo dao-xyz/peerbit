@@ -35,6 +35,24 @@ fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
+fn write_public_sign_key(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), JsValue> {
+    match bytes.len() {
+        32 => {
+            write_u8(out, 0);
+            out.extend_from_slice(bytes);
+            Ok(())
+        }
+        33 => {
+            write_u8(out, 1);
+            out.extend_from_slice(bytes);
+            Ok(())
+        }
+        _ => Err(JsValue::from_str(
+            "Public sign key projection must be 32 or 33 bytes",
+        )),
+    }
+}
+
 fn read_u32_le(bytes: &[u8], offset: &mut usize) -> Result<u32, JsValue> {
     let end = *offset + 4;
     if end > bytes.len() {
@@ -97,6 +115,15 @@ fn read_fixed_bytes<'a>(
     let value = &bytes[*offset..end];
     *offset = end;
     Ok(value)
+}
+
+fn read_public_sign_key_raw<'a>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a [u8], JsValue> {
+    let variant = read_u8(bytes, offset)?;
+    match variant {
+        0 => read_fixed_bytes(bytes, offset, 32),
+        1 => read_fixed_bytes(bytes, offset, 33),
+        _ => Err(JsValue::from_str("Unsupported public sign key variant")),
+    }
 }
 
 fn read_string(bytes: &[u8], offset: &mut usize) -> Result<String, JsValue> {
@@ -182,6 +209,26 @@ fn skip_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<(), JsValu
         }
         return Ok(());
     }
+    if kind == "publicsignkey" {
+        read_public_sign_key_raw(bytes, offset)?;
+        return Ok(());
+    }
+    if kind == "option:publicsignkey" {
+        let has_value = read_u8(bytes, offset)?;
+        if has_value == 1 {
+            read_public_sign_key_raw(bytes, offset)?;
+        } else if has_value != 0 {
+            return Err(JsValue::from_str("Invalid option marker"));
+        }
+        return Ok(());
+    }
+    if kind == "vec:publicsignkey" {
+        let count = read_u32_le(bytes, offset)? as usize;
+        for _ in 0..count {
+            read_public_sign_key_raw(bytes, offset)?;
+        }
+        return Ok(());
+    }
     match kind {
         "string" => {
             read_string(bytes, offset)?;
@@ -241,6 +288,23 @@ fn read_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<Projection
         if has_value == 1 {
             return Ok(ProjectionValue::Bytes(
                 read_fixed_bytes(bytes, offset, len)?.to_vec(),
+            ));
+        }
+        return Err(JsValue::from_str("Invalid option marker"));
+    }
+    if kind == "publicsignkey" {
+        return Ok(ProjectionValue::Bytes(
+            read_public_sign_key_raw(bytes, offset)?.to_vec(),
+        ));
+    }
+    if kind == "option:publicsignkey" {
+        let has_value = read_u8(bytes, offset)?;
+        if has_value == 0 {
+            return Ok(ProjectionValue::None);
+        }
+        if has_value == 1 {
+            return Ok(ProjectionValue::Bytes(
+                read_public_sign_key_raw(bytes, offset)?.to_vec(),
             ));
         }
         return Err(JsValue::from_str("Invalid option marker"));
@@ -351,6 +415,32 @@ fn write_projection_value(
                 }
                 write_u8(out, 1);
                 out.extend_from_slice(value);
+                return Ok(());
+            }
+            _ => {
+                return Err(JsValue::from_str(
+                    "Projection value does not match output type",
+                ))
+            }
+        }
+    }
+    if kind == "publicsignkey" {
+        if let ProjectionValue::Bytes(value) = value {
+            return write_public_sign_key(out, value);
+        }
+        return Err(JsValue::from_str(
+            "Projection value does not match output type",
+        ));
+    }
+    if kind == "option:publicsignkey" {
+        match value {
+            ProjectionValue::None => {
+                write_u8(out, 0);
+                return Ok(());
+            }
+            ProjectionValue::Bytes(value) => {
+                write_u8(out, 1);
+                write_public_sign_key(out, value)?;
                 return Ok(());
             }
             _ => {
@@ -792,7 +882,8 @@ pub fn extract_document_field_simple(
 mod tests {
     use super::{
         encode_context_suffix_inner, existing_created_or_modified, read_document_fields,
-        write_projection_value, write_string, write_u64_le, write_u8, ProjectionValue,
+        write_projection_value, write_public_sign_key, write_string, write_u64_le, write_u8,
+        ProjectionValue,
     };
 
     #[test]
@@ -880,6 +971,31 @@ mod tests {
     }
 
     #[test]
+    fn reads_public_sign_key_document_fields() {
+        let owner = vec![9u8; 32];
+        let mut bytes = Vec::new();
+        write_u8(&mut bytes, 8);
+        write_public_sign_key(&mut bytes, &owner).unwrap();
+        write_string(&mut bytes, "owned");
+        let fields = read_document_fields(
+            &bytes,
+            Some("u8"),
+            Some("8"),
+            &["owner".to_string(), "name".to_string()],
+            &["publicsignkey".to_string(), "string".to_string()],
+        )
+        .unwrap();
+        assert!(matches!(
+            fields.get("owner"),
+            Some(ProjectionValue::Bytes(value)) if value == &owner
+        ));
+        assert!(matches!(
+            fields.get("name"),
+            Some(ProjectionValue::String(value)) if value == "owned"
+        ));
+    }
+
+    #[test]
     fn writes_projected_values() {
         let mut out = Vec::new();
         write_projection_value(
@@ -920,5 +1036,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, vec![1, 2, 3, 4, 1, 5, 6]);
+    }
+
+    #[test]
+    fn writes_public_sign_key_projected_values() {
+        let owner = vec![7u8; 32];
+        let secp_owner = vec![8u8; 33];
+        let mut out = Vec::new();
+        write_projection_value(
+            &mut out,
+            "publicsignkey",
+            &ProjectionValue::Bytes(owner.clone()),
+        )
+        .unwrap();
+        write_projection_value(
+            &mut out,
+            "option:publicsignkey",
+            &ProjectionValue::Bytes(secp_owner.clone()),
+        )
+        .unwrap();
+        let mut expected = Vec::new();
+        write_public_sign_key(&mut expected, &owner).unwrap();
+        write_u8(&mut expected, 1);
+        write_public_sign_key(&mut expected, &secp_owner).unwrap();
+        assert_eq!(out, expected);
     }
 }

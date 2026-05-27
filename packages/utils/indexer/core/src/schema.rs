@@ -43,6 +43,7 @@ enum NativeSchemaNode {
         element: Box<NativeSchemaNode>,
     },
     Generic,
+    PublicSignKey,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +68,7 @@ pub enum SchemaError {
     TrailingBytes,
     InvalidUtf8,
     InvalidFieldValueTag(u8),
+    UnsupportedPublicSignKeyVariant(u8),
 }
 
 impl fmt::Display for SchemaError {
@@ -99,6 +101,9 @@ impl fmt::Display for SchemaError {
             Self::InvalidUtf8 => write!(formatter, "invalid utf-8 in bridge payload"),
             Self::InvalidFieldValueTag(tag) => {
                 write!(formatter, "unknown bridge field value tag {tag}")
+            }
+            Self::UnsupportedPublicSignKeyVariant(tag) => {
+                write!(formatter, "unsupported public sign key variant {tag}")
             }
         }
     }
@@ -154,6 +159,7 @@ impl NativeSchemaNode {
             | NativeSchemaNode::I64
             | NativeSchemaNode::String
             | NativeSchemaNode::Uint8Array
+            | NativeSchemaNode::PublicSignKey
             | NativeSchemaNode::Generic => 1,
         }
     }
@@ -180,7 +186,8 @@ impl NativeSchemaNode {
             | NativeSchemaNode::I32
             | NativeSchemaNode::I64
             | NativeSchemaNode::String
-            | NativeSchemaNode::Uint8Array => 0,
+            | NativeSchemaNode::Uint8Array
+            | NativeSchemaNode::PublicSignKey => 0,
         }
     }
 
@@ -218,7 +225,8 @@ impl NativeSchemaNode {
             | NativeSchemaNode::I32
             | NativeSchemaNode::I64
             | NativeSchemaNode::String
-            | NativeSchemaNode::Uint8Array => 1,
+            | NativeSchemaNode::Uint8Array
+            | NativeSchemaNode::PublicSignKey => 1,
             NativeSchemaNode::Generic => 0,
         }
     }
@@ -442,6 +450,7 @@ fn read_native_schema_node(reader: &mut BridgeReader) -> Result<NativeSchemaNode
             element: Box::new(read_native_schema_node(reader)?),
         },
         18 => NativeSchemaNode::Generic,
+        19 => NativeSchemaNode::PublicSignKey,
         tag => return Err(SchemaError::UnknownSchemaNode(tag)),
     })
 }
@@ -682,6 +691,16 @@ fn extract_schema_node(
                 extract_schema_node(element, reader, fields, item_scope, state, Some(field))?;
             }
         }
+        NativeSchemaNode::PublicSignKey => {
+            let variant = reader.read_u8()?;
+            let len = match variant {
+                0 => 32,
+                1 => 33,
+                tag => return Err(SchemaError::UnsupportedPublicSignKeyVariant(tag)),
+            };
+            let bytes = reader.read_exact(len)?;
+            insert_bytes_facts(fields, state, scope, required_field(field)?, bytes)?;
+        }
         NativeSchemaNode::Generic => return Err(SchemaError::GenericNode),
     }
     Ok(())
@@ -807,6 +826,24 @@ mod tests {
         out
     }
 
+    fn schema_with_public_sign_key() -> Vec<u8> {
+        let mut out = vec![1, 14];
+        write_u32(&mut out, 0);
+        write_u32(&mut out, 1);
+        write_string(&mut out, "owner");
+        write_u32(&mut out, 4);
+        write_u32(&mut out, 104);
+        out.push(19);
+        out
+    }
+
+    fn encoded_public_sign_key_document() -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(0);
+        out.extend_from_slice(&[7u8; 32]);
+        out
+    }
+
     #[test]
     fn extracts_fields_from_encoded_document() {
         let schema = decode_native_schema_ir(&schema_with_id_score_and_bytes()).unwrap();
@@ -829,6 +866,20 @@ mod tests {
             ]
         );
         assert_eq!(schema.stats().root_fields, 3);
+    }
+
+    #[test]
+    fn extracts_public_sign_key_fields_from_encoded_document() {
+        let schema = decode_native_schema_ir(&schema_with_public_sign_key()).unwrap();
+        let fields =
+            extract_encoded_document_fields(&schema, &encoded_public_sign_key_document(), 0)
+                .unwrap();
+
+        assert_eq!(
+            fields.scalar_values(&FieldPath::Id(4)),
+            Some([FieldValue::from(vec![7u8; 32])].as_slice())
+        );
+        assert_eq!(schema.stats().generic_nodes, 0);
     }
 
     #[test]

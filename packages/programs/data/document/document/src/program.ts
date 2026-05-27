@@ -5,7 +5,11 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import { AccessError, SignatureWithKey } from "@peerbit/crypto";
+import {
+	AccessError,
+	type PublicSignKey,
+	SignatureWithKey,
+} from "@peerbit/crypto";
 import {
 	Context,
 	NotFoundError,
@@ -1335,14 +1339,33 @@ export class Documents<
 
 	private nativeFieldValueMatchesLocalPublicKey(value: unknown): boolean {
 		const localPublicKey = this.log.log.identity.publicKey;
+		return this.nativeFieldValueMatchesPublicKey(value, localPublicKey);
+	}
+
+	private nativeFieldValueMatchesPublicKey(
+		value: unknown,
+		publicKey: PublicSignKey,
+	): boolean {
 		const localRawPublicKey = (
-			localPublicKey as { publicKey?: Uint8Array }
+			publicKey as { publicKey?: Uint8Array }
 		).publicKey;
 		return (
 			value instanceof Uint8Array &&
-			(bytesEqual(value, localPublicKey.bytes) ||
+			(bytesEqual(value, publicKey.bytes) ||
 				(localRawPublicKey ? bytesEqual(value, localRawPublicKey) : false))
 		);
+	}
+
+	private nativeFieldValueMatchesPublicKeys(
+		value: unknown,
+		publicKeys: readonly PublicSignKey[],
+	): boolean {
+		for (const publicKey of publicKeys) {
+			if (this.nativeFieldValueMatchesPublicKey(value, publicKey)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private async nativePutOperationPolicyAllows(
@@ -1351,6 +1374,7 @@ export class Documents<
 		doc: T | undefined,
 		previousEntries: Entry<Operation>[],
 		previousSignerPublicKeys: Uint8Array[] = [],
+		entryPublicKeys: readonly PublicSignKey[] = [],
 	): Promise<boolean> {
 		switch (descriptor.kind) {
 			case "allowAll":
@@ -1373,7 +1397,7 @@ export class Documents<
 					operation,
 					descriptor.path,
 				);
-				return this.nativeFieldValueMatchesLocalPublicKey(value);
+				return this.nativeFieldValueMatchesPublicKeys(value, entryPublicKeys);
 			}
 			case "put":
 				return this.nativePutOperationPolicyAllows(
@@ -1382,6 +1406,7 @@ export class Documents<
 					doc,
 					previousEntries,
 					previousSignerPublicKeys,
+					entryPublicKeys,
 				);
 			case "delete":
 			case "deleteSignedByExistingField":
@@ -1425,6 +1450,7 @@ export class Documents<
 							doc,
 							previousEntries,
 							previousSignerPublicKeys,
+							entryPublicKeys,
 						))
 					) {
 						return false;
@@ -1440,6 +1466,7 @@ export class Documents<
 							doc,
 							previousEntries,
 							previousSignerPublicKeys,
+							entryPublicKeys,
 						)
 					) {
 						return true;
@@ -2224,12 +2251,20 @@ export class Documents<
 					previousEntries = await this.resolveCanPerformPreviousEntries(entry);
 				}
 			}
+			const entryPublicKeys =
+				!document &&
+				nativeCanPerformPolicySignedByFieldPaths(descriptor).length > 0
+					? entry.publicKeys.length > 0
+						? entry.publicKeys
+						: await entry.getPublicKeys()
+					: [];
 			return this.nativePutOperationPolicyAllows(
 				descriptor,
 				operation,
 				document,
 				previousEntries,
 				previousSignerPublicKeys,
+				entryPublicKeys,
 			);
 		}
 		return this.nativeDeleteOperationPolicyAllows(descriptor, operation);
