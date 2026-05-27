@@ -371,6 +371,24 @@ export const nativeCanPerformPolicyDeleteFieldPaths = (
 	}
 };
 
+export const nativeCanPerformPolicySignedByFieldPaths = (
+	descriptor: NativeCanPerformPolicyDescriptor,
+): readonly (string | readonly string[])[] => {
+	switch (descriptor.kind) {
+		case "signedByField":
+			return [descriptor.path];
+		case "and":
+		case "or":
+			return descriptor.policies.flatMap((policy) => [
+				...nativeCanPerformPolicySignedByFieldPaths(policy),
+			]);
+		case "put":
+			return nativeCanPerformPolicySignedByFieldPaths(descriptor.policy);
+		default:
+			return [];
+	}
+};
+
 export const nativeCanPerformPolicyNeedsPreviousEntries = (
 	descriptor: NativeCanPerformPolicyDescriptor,
 ): boolean => {

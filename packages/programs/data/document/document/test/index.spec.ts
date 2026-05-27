@@ -3104,7 +3104,7 @@ describe("index", () => {
 					}
 				});
 
-				it("validates strict native same-signer replay without resolving previous entries", async () => {
+				it("validates strict native same-signer replay without resolving or decoding documents", async () => {
 					const rustSession = await TestSession.connected(
 						1,
 						createRustPeerbitOptions(),
@@ -3161,7 +3161,7 @@ describe("index", () => {
 						expect(await (store.docs as any).canAppend(replayEntry)).equal(
 							true,
 						);
-						expect(decoderSpy.callCount).equal(1);
+						expect(decoderSpy.callCount).equal(0);
 						expect(nativeSignerBatchSpy.callCount).equal(1);
 						expect(resolveEntrySpy.callCount).equal(0);
 						expect(getPayloadValueSpy.callCount).equal(0);
@@ -3175,7 +3175,7 @@ describe("index", () => {
 							expect(await (store.docs as any).canAppend(replayEntry)).equal(
 								false,
 							);
-							expect(decoderSpy.callCount).equal(2);
+							expect(decoderSpy.callCount).equal(0);
 							expect(resolveEntrySpy.callCount).equal(0);
 							expect(getPayloadValueSpy.callCount).equal(0);
 						} finally {
@@ -3219,6 +3219,64 @@ describe("index", () => {
 					try {
 						const put = await store.docs.put(
 							new Document({ id: uuid(), name: "native-replay-id" }),
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							store.docs.log.log.blocks,
+							put.entry.hash,
+						);
+						const getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						try {
+							decoderSpy.resetHistory();
+							expect(await (store.docs as any).canAppend(replayEntry)).equal(
+								true,
+							);
+							expect(decoderSpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
+						} finally {
+							getPayloadValueSpy.restore();
+						}
+					} finally {
+						decoderSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native signedByField replay without decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.signedByField<Document>("data")),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					try {
+						const put = await store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "native-replay-signed-by-field",
+								data: rustSession.peers[0].identity.publicKey.bytes,
+							}),
 						);
 						const replayEntry = await Entry.fromMultihash<Operation>(
 							store.docs.log.log.blocks,

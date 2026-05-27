@@ -66,6 +66,7 @@ import {
 	nativeCanPerformPolicyDeleteFieldPaths,
 	nativeCanPerformPolicyNeedsDeleteValue,
 	nativeCanPerformPolicyNeedsPreviousEntries,
+	nativeCanPerformPolicySignedByFieldPaths,
 } from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
@@ -872,6 +873,10 @@ export class Documents<
 	private _documentBackend!: DocumentBackend<T>;
 	private readonly _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
 	private _nativeDocumentIdExtractionPlan?: SimpleDocumentFieldExtractionPlan;
+	private readonly _nativeDocumentFieldExtractionPlans = new Map<
+		string,
+		SimpleDocumentFieldExtractionPlan | undefined
+	>();
 	private _hasLogTrim = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
@@ -1106,9 +1111,22 @@ export class Documents<
 			);
 		}
 		if (!this._nativeDocumentIdExtractionPlan) {
-			throw this.nativeModeError("requires a native-compatible document id field");
+			throw this.nativeModeError(
+				"requires a native-compatible document id field",
+			);
 		}
 		if (this._optionCanPerformNativePolicy) {
+			const signedByFieldPaths = nativeCanPerformPolicySignedByFieldPaths(
+				this._optionCanPerformNativePolicy,
+			);
+			for (const path of signedByFieldPaths) {
+				if (!this.getNativeDocumentFieldExtractionPlan(path)) {
+					const label = Array.isArray(path) ? path.join(".") : path;
+					throw this.nativeModeError(
+						`requires native-compatible signedByField policy path: ${label}`,
+					);
+				}
+			}
 			const deleteFieldPaths = nativeCanPerformPolicyDeleteFieldPaths(
 				this._optionCanPerformNativePolicy,
 			);
@@ -1306,17 +1324,61 @@ export class Documents<
 		previousEntries: Entry<Operation>[],
 		previousSignerPublicKeys: Uint8Array[] = [],
 	): Promise<boolean> {
+		return this.nativePutOperationPolicyAllows(
+			descriptor,
+			undefined,
+			doc,
+			previousEntries,
+			previousSignerPublicKeys,
+		);
+	}
+
+	private nativeFieldValueMatchesLocalPublicKey(value: unknown): boolean {
+		const localPublicKey = this.log.log.identity.publicKey;
+		const localRawPublicKey = (
+			localPublicKey as { publicKey?: Uint8Array }
+		).publicKey;
+		return (
+			value instanceof Uint8Array &&
+			(bytesEqual(value, localPublicKey.bytes) ||
+				(localRawPublicKey ? bytesEqual(value, localRawPublicKey) : false))
+		);
+	}
+
+	private async nativePutOperationPolicyAllows(
+		descriptor: NativeCanPerformPolicyDescriptor,
+		operation: PutOperation | undefined,
+		doc: T | undefined,
+		previousEntries: Entry<Operation>[],
+		previousSignerPublicKeys: Uint8Array[] = [],
+	): Promise<boolean> {
 		switch (descriptor.kind) {
 			case "allowAll":
 			case "signedByPublicKey":
-			case "signedByField":
 				return createNativeFastPathCanPerformPolicyEvaluator(
 					descriptor,
 					this.log.log.identity.publicKey,
-				)(doc);
+				)(doc as unknown);
+			case "signedByField": {
+				if (doc) {
+					return createNativeFastPathCanPerformPolicyEvaluator(
+						descriptor,
+						this.log.log.identity.publicKey,
+					)(doc);
+				}
+				if (!operation) {
+					return false;
+				}
+				const value = await this.getNativeDocumentFieldFromPutOperation(
+					operation,
+					descriptor.path,
+				);
+				return this.nativeFieldValueMatchesLocalPublicKey(value);
+			}
 			case "put":
-				return this.nativePutPolicyAllows(
+				return this.nativePutOperationPolicyAllows(
 					descriptor.policy,
+					operation,
 					doc,
 					previousEntries,
 					previousSignerPublicKeys,
@@ -1357,8 +1419,9 @@ export class Documents<
 			case "and":
 				for (const policy of descriptor.policies) {
 					if (
-						!(await this.nativePutPolicyAllows(
+						!(await this.nativePutOperationPolicyAllows(
 							policy,
+							operation,
 							doc,
 							previousEntries,
 							previousSignerPublicKeys,
@@ -1371,8 +1434,9 @@ export class Documents<
 			case "or":
 				for (const policy of descriptor.policies) {
 					if (
-						await this.nativePutPolicyAllows(
+						await this.nativePutOperationPolicyAllows(
 							policy,
+							operation,
 							doc,
 							previousEntries,
 							previousSignerPublicKeys,
@@ -1862,6 +1926,7 @@ export class Documents<
 			0,
 			this._documentChangeListenerCount - changeListenersBeforeIndexOpen,
 		);
+		this._nativeDocumentFieldExtractionPlans.clear();
 		this._nativeDocumentIdExtractionPlan =
 			this._index.getNativeDocumentFieldExtractionPlan(idProperty);
 
@@ -2002,6 +2067,14 @@ export class Documents<
 		try {
 			let operation: PutOperation | DeleteOperation = l0;
 			if (this._optionCanPerform) {
+				if (this._optionCanPerformNativePolicy && this.isNativeMode()) {
+					return this.nativeCanPerformAllowsAppend(
+						this._optionCanPerformNativePolicy,
+						operation,
+						entry,
+						reference?.document,
+					);
+				}
 				let document: T | undefined = reference?.document;
 				if (!document) {
 					if (isPutOperation(l0)) {
@@ -2018,14 +2091,6 @@ export class Documents<
 					} else {
 						throw new Error("Unsupported operation");
 					}
-				}
-				if (this._optionCanPerformNativePolicy && this.isNativeMode()) {
-					return this.nativeCanPerformAllowsAppend(
-						this._optionCanPerformNativePolicy,
-						operation,
-						entry,
-						document,
-					);
 				}
 				const previousEntries =
 					this._optionCanPerformNativePolicy &&
@@ -2082,9 +2147,6 @@ export class Documents<
 		document: T | undefined,
 	): Promise<boolean> {
 		if (isPutOperation(operation)) {
-			if (!document) {
-				return false;
-			}
 			let previousSignerPublicKeys: Uint8Array[] = [];
 			let previousEntries: Entry<Operation>[] = [];
 			if (nativeCanPerformPolicyNeedsPreviousEntries(descriptor)) {
@@ -2097,8 +2159,9 @@ export class Documents<
 					previousEntries = await this.resolveCanPerformPreviousEntries(entry);
 				}
 			}
-			return this.nativePutPolicyAllows(
+			return this.nativePutOperationPolicyAllows(
 				descriptor,
+				operation,
 				document,
 				previousEntries,
 				previousSignerPublicKeys,
@@ -2358,6 +2421,36 @@ export class Documents<
 			return payloadData
 				? BORSH_ENCODING_OPERATION.decoder(payloadData)
 				: undefined;
+		} catch {
+			return;
+		}
+	}
+
+	private getNativeDocumentFieldExtractionPlan(
+		path: string | readonly string[],
+	): SimpleDocumentFieldExtractionPlan | undefined {
+		const key = JSON.stringify(typeof path === "string" ? [path] : path);
+		if (this._nativeDocumentFieldExtractionPlans.has(key)) {
+			return this._nativeDocumentFieldExtractionPlans.get(key);
+		}
+		const plan = this._index.getNativeDocumentFieldExtractionPlan(path);
+		this._nativeDocumentFieldExtractionPlans.set(key, plan);
+		return plan;
+	}
+
+	private async getNativeDocumentFieldFromPutOperation(
+		operation: PutOperation,
+		path: string | readonly string[],
+	): Promise<string | number | bigint | Uint8Array | undefined> {
+		if (!this.isNativeMode()) {
+			return;
+		}
+		const plan = this.getNativeDocumentFieldExtractionPlan(path);
+		if (!plan) {
+			return;
+		}
+		try {
+			return await extractDocumentFieldSimple(operation.data, plan);
 		} catch {
 			return;
 		}
