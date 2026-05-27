@@ -3803,7 +3803,7 @@ describe("index", () => {
 					}
 				});
 
-				it("indexes strict native replicated puts through stored native context on receive", async () => {
+				it("indexes strict native replicated puts through encoded-only native context on receive", async () => {
 					const rustSession = await TestSession.connected(
 						2,
 						createRustPeerbitOptions(),
@@ -3830,6 +3830,14 @@ describe("index", () => {
 						target.docs.index,
 						"_putPreparedNativeBackboneDocumentIndexWithContext",
 					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						target.docs.index,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
 					const backendIndex = target.docs.index.index as any;
 					const backendStoredContextPutSpy = sinon.spy(
 						backendIndex,
@@ -3845,6 +3853,10 @@ describe("index", () => {
 						await waitForResolved(async () =>
 							expect(await target.docs.index.getSize()).equal(1),
 						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPreparedNativePutSpy.callCount).equal(0);
+						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
 						expect(
 							(
 								await target.docs.get(doc.id, {
@@ -3854,10 +3866,10 @@ describe("index", () => {
 							)?.name,
 						).equal("native-replicated-stored-context");
 						expect(documentPutSpy.callCount).equal(0);
-						expect(documentPreparedNativePutSpy.callCount).greaterThan(0);
-						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
 					} finally {
 						backendStoredContextPutSpy.restore();
+						decoderSpy.restore();
+						documentPreparedNativeStoredPutSpy.restore();
 						documentPreparedNativePutSpy.restore();
 						documentPutSpy.restore();
 						await target.close();
@@ -3866,7 +3878,7 @@ describe("index", () => {
 					}
 				});
 
-				it("indexes strict native replicated descriptor transforms through native context on receive", async () => {
+				it("indexes strict native replicated descriptor transforms through encoded-only native context on receive", async () => {
 					@variant("strict_native_replicated_pick_indexable")
 					class StrictNativeReplicatedPickIndexable {
 						@field({ type: "string" })
@@ -3915,6 +3927,14 @@ describe("index", () => {
 						target.docs.index,
 						"_putPreparedNativeBackboneDocumentIndexWithContext",
 					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						target.docs.index,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
 					const documentTransformSpy = sinon.spy(
 						target.docs.index,
 						"transformer",
@@ -3935,6 +3955,11 @@ describe("index", () => {
 						await waitForResolved(async () =>
 							expect(await target.docs.index.getSize()).equal(1),
 						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPreparedNativePutSpy.callCount).equal(0);
+						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+						expect(documentTransformSpy.callCount).equal(0);
+						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
 						const indexed = await target.docs.index.get(doc.id, {
 							local: true,
 							remote: false,
@@ -3944,12 +3969,11 @@ describe("index", () => {
 						expect(indexed?.name).equal("native-replicated-pick");
 						expect((indexed as any)?.data).equal(undefined);
 						expect(documentPutSpy.callCount).equal(0);
-						expect(documentPreparedNativePutSpy.callCount).greaterThan(0);
-						expect(documentTransformSpy.callCount).equal(0);
-						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
 					} finally {
 						backendStoredContextPutSpy.restore();
 						documentTransformSpy.restore();
+						decoderSpy.restore();
+						documentPreparedNativeStoredPutSpy.restore();
 						documentPreparedNativePutSpy.restore();
 						documentPutSpy.restore();
 						await target.close();

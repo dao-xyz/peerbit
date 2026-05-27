@@ -873,10 +873,10 @@ export class Documents<
 	private _documentBackend!: DocumentBackend<T>;
 	private readonly _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
 	private _nativeDocumentIdExtractionPlan?: SimpleDocumentFieldExtractionPlan;
-	private readonly _nativeDocumentFieldExtractionPlans = new Map<
+	private _nativeDocumentFieldExtractionPlans?: Map<
 		string,
 		SimpleDocumentFieldExtractionPlan | undefined
-	>();
+	>;
 	private _hasLogTrim = false;
 	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
 	private domain?: CustomDocumentDomain<InferR<D>>;
@@ -1990,6 +1990,7 @@ export class Documents<
 			0,
 			this._documentChangeListenerCount - changeListenersBeforeIndexOpen,
 		);
+		this._nativeDocumentFieldExtractionPlans ??= new Map();
 		this._nativeDocumentFieldExtractionPlans.clear();
 		this._nativeDocumentIdExtractionPlan =
 			this._index.getNativeDocumentFieldExtractionPlan(idProperty);
@@ -2486,11 +2487,12 @@ export class Documents<
 		path: string | readonly string[],
 	): SimpleDocumentFieldExtractionPlan | undefined {
 		const key = JSON.stringify(typeof path === "string" ? [path] : path);
-		if (this._nativeDocumentFieldExtractionPlans.has(key)) {
-			return this._nativeDocumentFieldExtractionPlans.get(key);
+		const plans = (this._nativeDocumentFieldExtractionPlans ??= new Map());
+		if (plans.has(key)) {
+			return plans.get(key);
 		}
 		const plan = this._index.getNativeDocumentFieldExtractionPlan(path);
-		this._nativeDocumentFieldExtractionPlans.set(key, plan);
+		plans.set(key, plan);
 		return plan;
 	}
 
@@ -4477,6 +4479,43 @@ export class Documents<
 		);
 	}
 
+	private putStrictNativeReceivedDocumentIndexStoredWithContext(
+		key: indexerTypes.IdKey,
+		entry: Entry<Operation>,
+		payload: PutOperation,
+		existing: indexerTypes.IndexedResult<IndexedContextOnly<I>> | null,
+	): MaybePromise<boolean | undefined> {
+		if (!this.isNativeMode() || !this._nativeBackboneDocumentIndexEnabled) {
+			return;
+		}
+		const existingContext = this.getExistingContext(existing);
+		const modified = entry.meta.clock.timestamp.wallTime;
+		const context = new Context({
+			created: existingContext?.created || modified,
+			modified,
+			head: entry.hash,
+			gid: entry.meta.gid,
+			size: encodePutOperationPayload(payload.data).byteLength,
+		});
+		const nativeDocumentIndex =
+			this._index.prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
+				payload.data,
+				context,
+				{ entryPublicKeys: entry.publicKeys },
+			);
+		if (!nativeDocumentIndex) {
+			return;
+		}
+		return this._index._putPreparedNativeBackboneDocumentIndexStoredWithContext(
+			key,
+			context,
+			nativeDocumentIndex,
+			{
+				replace: existing != null,
+			},
+		);
+	}
+
 	public async get(
 		id: indexerTypes.Ideable | indexerTypes.IdKey,
 		options?: Omit<GetOptions<T, I, D, true | undefined>, "resolve">,
@@ -4669,10 +4708,14 @@ export class Documents<
 		// There might be a case where change.added and change.removed contains the same document id. Usaully because you use the "trim" option
 		// in combinatpion with inserting the same document. To mitigate this, we loop through the changes and modify the behaviour for this
 
-		let documentsChanged: DocumentsChange<T, I> = {
-			added: [],
-			removed: [],
-		};
+		const shouldPrepareDocumentChanges = this.hasDocumentChangeConsumers();
+		let documentsChanged: DocumentsChange<T, I> | undefined =
+			shouldPrepareDocumentChanges
+				? {
+						added: [],
+						removed: [],
+					}
+				: undefined;
 
 		let modified: Set<string | number | bigint> = new Set();
 		for (const item of sortedEntries) {
@@ -4687,11 +4730,47 @@ export class Documents<
 					change.added[0]?.entry.hash === item.hash;
 				const payload = isReferencedAppendEntry
 					? reference.operation
-					: /* item._payload instanceof DecryptedThing
-							? item.payload.getValue(item.encoding)
-							:  */ await item.getPayloadValue(); // TODO implement sync api for resolving entries that does not deep decryption
+					: await this.getAppendOperation(item);
 
 				if (isPutOperation(payload) && !removedSet.has(item.hash)) {
+					if (!documentsChanged && this.isNativeMode()) {
+						const keyValue =
+							await this.getNativeDocumentIdFromPutOperation(payload);
+						if (keyValue != null) {
+							const key = indexerTypes.toId(keyValue);
+							if (modified.has(key.primitive)) {
+								continue;
+							}
+							const existing =
+								reference?.unique || reference?.existing === null
+									? null
+									: isReferencedAppendEntry &&
+										  reference?.existing !== undefined
+										? reference.existing
+										: (await this.getLocalIndexedContext(key)) || null;
+							if (!this.strictHistory && existing) {
+								const shouldIgnoreChange = this.immutable
+									? existing.value.__context.modified <
+										item.meta.clock.timestamp.wallTime
+									: existing.value.__context.modified >
+										item.meta.clock.timestamp.wallTime;
+								if (shouldIgnoreChange) {
+									continue;
+								}
+							}
+							const stored =
+								await this.putStrictNativeReceivedDocumentIndexStoredWithContext(
+									key,
+									item,
+									payload,
+									existing,
+								);
+							if (stored) {
+								modified.add(key.primitive);
+								continue;
+							}
+						}
+					}
 					let value =
 						(isReferencedAppendEntry && reference?.document) ||
 						this.index.valueEncoding.decoder(payload.data);
@@ -4742,7 +4821,7 @@ export class Documents<
 								)
 							: undefined;
 					if (nativeStoredIndexed) {
-						documentsChanged.added.push(nativeStoredIndexed);
+						documentsChanged?.added.push(nativeStoredIndexed);
 						modified.add(key.primitive);
 						continue;
 					}
@@ -4752,7 +4831,7 @@ export class Documents<
 						item,
 						existing,
 					);
-					documentsChanged.added.push(
+					documentsChanged?.added.push(
 						coerceWithIndexed(coerceWithContext(value, context), indexable),
 					);
 
@@ -4779,9 +4858,9 @@ export class Documents<
 			}
 		}
 
-		this.events.dispatchEvent(
-			new CustomEvent("change", { detail: documentsChanged }),
-		);
+		if (documentsChanged) {
+			this.dispatchDocumentChangeIfObserved(documentsChanged);
+		}
 	}
 
 	/**

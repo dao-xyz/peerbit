@@ -1799,6 +1799,38 @@ export class DocumentIndex<
 		};
 	}
 
+	public prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
+		encodedDocument: Uint8Array,
+		context: types.Context,
+		transformFacts?: DocumentTransformFacts,
+	): NativeBackboneDocumentIndexCommit<I> | undefined {
+		if (this.transformerIsIdentity && this.indexedTypeIsDocumentType) {
+			return {
+				valuePrefixBytes: encodedDocument,
+			};
+		}
+		if (this.nativeTransformProjectionPlan) {
+			return {
+				projection: {
+					encodedDocument,
+					plan: this.nativeTransformProjectionPlan,
+					signer: transformFacts?.entryPublicKeys?.[0]?.bytes,
+				},
+			};
+		}
+		if (
+			!canPrepareNativeDocumentTransformWithAppendFacts(
+				this.nativeTransformDescriptor,
+			) &&
+			!canPrepareNativeDocumentTransformBeforeAppend(
+				this.nativeTransformDescriptor,
+			)
+		) {
+			return;
+		}
+		return;
+	}
+
 	private nativeBackboneDocumentIndexValuePrefixBytes(
 		nativeDocumentIndex: NativeBackboneDocumentIndexCommit<I>,
 		context: types.Context,
@@ -2543,6 +2575,52 @@ export class DocumentIndex<
 			return isPromiseLike(putResult)
 				? putResult.then(() => indexedValue, handleError)
 				: indexedValue;
+		} catch (error) {
+			return handleError(error);
+		}
+	}
+
+	public _putPreparedNativeBackboneDocumentIndexStoredWithContext(
+		id: indexerTypes.IdKey,
+		context: types.Context,
+		nativeDocumentIndex: NativeBackboneDocumentIndexCommit<I>,
+		options?: { replace?: boolean },
+	): MaybePromise<boolean | undefined> {
+		const contextualStoredPut = (this.index as ContextualIndexPut<I>)
+			.putStoredContextualEncodedValue;
+		if (!contextualStoredPut || this.isProgramValued) {
+			return;
+		}
+		const valuePrefixBytes = this.nativeBackboneDocumentIndexValuePrefixBytes(
+			nativeDocumentIndex,
+			context,
+		);
+		if (!valuePrefixBytes) {
+			return;
+		}
+		const encodedValueParts = {
+			prefix: valuePrefixBytes,
+			suffix: encodeContextSuffix(context),
+		};
+		const handleError = (error: unknown) => {
+			if (error instanceof indexerTypes.NotStartedError && this.closed) {
+				return true;
+			}
+			throw error;
+		};
+		try {
+			const putResult = contextualStoredPut.call(
+				this.index,
+				id,
+				encodedValueParts,
+				options,
+			);
+			if (putResult === false) {
+				return false;
+			}
+			return isPromiseLike(putResult)
+				? putResult.then(() => true, handleError)
+				: true;
 		} catch (error) {
 			return handleError(error);
 		}
