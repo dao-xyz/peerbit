@@ -10,6 +10,7 @@ import {
 	serialize,
 } from "@dao-xyz/borsh";
 import * as types from "@peerbit/indexer-interface";
+import { fromString } from "uint8arrays";
 import {
 	type EncodedValue,
 	type PersistenceOptions,
@@ -490,6 +491,13 @@ const storeKeyToIdKey = (key: string): types.IdKey | undefined => {
 	if (type === "bigint") {
 		try {
 			return types.toId(BigInt(value));
+		} catch {
+			return;
+		}
+	}
+	if (type === "bytes") {
+		try {
+			return types.toId(fromString(value, "base64"));
 		} catch {
 			return;
 		}

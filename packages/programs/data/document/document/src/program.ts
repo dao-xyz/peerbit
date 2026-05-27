@@ -582,7 +582,7 @@ type PreparedPut<T> = {
 	document: T;
 	encodedDocument: Uint8Array;
 	encodedOperation?: Uint8Array;
-	keyValue: indexerTypes.IdPrimitive;
+	keyValue: indexerTypes.Ideable;
 	key: indexerTypes.IdKey;
 	operation: PutOperation | PutWithKeyOperation;
 };
@@ -591,7 +591,7 @@ type PreparedPlainPut<T> = {
 	document: T;
 	encodedDocument: Uint8Array;
 	operationPayloadBytes: Uint8Array;
-	keyValue: indexerTypes.IdPrimitive;
+	keyValue: indexerTypes.Ideable;
 	key: indexerTypes.IdKey;
 };
 
@@ -810,7 +810,7 @@ export type SetupOptions<
 	canOpen?: (program: T) => MaybePromise<boolean>;
 	canPerform?: CanPerform<T>;
 	strictHistory?: boolean;
-	id?: (obj: any) => indexerTypes.IdPrimitive;
+	id?: (obj: any) => indexerTypes.Ideable;
 	index?: {
 		canSearch?: CanSearch;
 		canRead?: CanRead<I>;
@@ -878,7 +878,7 @@ export class Documents<
 		SimpleDocumentFieldExtractionPlan | undefined
 	>;
 	private _hasLogTrim = false;
-	private idResolver!: (any: any) => indexerTypes.IdPrimitive;
+	private idResolver!: (any: any) => indexerTypes.Ideable;
 	private domain?: CustomDocumentDomain<InferR<D>>;
 	private strictHistory: boolean;
 	canOpen?: (program: T) => Promise<boolean> | boolean;
@@ -2329,7 +2329,7 @@ export class Documents<
 			if (isPutOperation(operation)) {
 				// check nexts
 				const putOperation = operation as PutOperation;
-				let keyValue: indexerTypes.IdPrimitive | undefined;
+				let keyValue: indexerTypes.Ideable | undefined;
 				if (reference?.document) {
 					keyValue = this.idResolver(reference.document);
 				} else {
@@ -2519,7 +2519,7 @@ export class Documents<
 
 	private async getNativeDocumentIdFromPutOperation(
 		operation: PutOperation,
-	): Promise<indexerTypes.IdPrimitive | undefined> {
+	): Promise<indexerTypes.Ideable | undefined> {
 		if (!this.isNativeMode() || !this._nativeDocumentIdExtractionPlan) {
 			return;
 		}
@@ -2528,7 +2528,7 @@ export class Documents<
 				operation.data,
 				this._nativeDocumentIdExtractionPlan,
 			);
-			return id instanceof Uint8Array ? undefined : id;
+			return id;
 		} catch {
 			return;
 		}
@@ -2624,7 +2624,7 @@ export class Documents<
 		if (!putOptions?.unique) {
 			if (putOptions?.checkRemote) {
 				existingHead = (
-					await this._index.getDetailed(prepared.keyValue, {
+					await this._index.getDetailed(prepared.key, {
 						resolve: false,
 						local: true,
 						remote: { replicate: putOptions?.replicate },

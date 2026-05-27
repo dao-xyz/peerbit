@@ -1,5 +1,6 @@
 import {
 	type AbstractType,
+	FixedArrayKind,
 	field,
 	getSchema,
 	serialize,
@@ -120,6 +121,9 @@ const schemaTypeName = (type: unknown): string | undefined => {
 	}
 	if (type === Uint8Array) {
 		return "bytes";
+	}
+	if (type instanceof FixedArrayKind && type.elementType === "u8") {
+		return `fixedbytes:${type.length}`;
 	}
 	const kind = type as {
 		constructor?: { name?: string };

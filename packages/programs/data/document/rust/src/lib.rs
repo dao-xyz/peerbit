@@ -83,6 +83,22 @@ fn read_bytes<'a>(bytes: &'a [u8], offset: &mut usize) -> Result<&'a [u8], JsVal
     Ok(value)
 }
 
+fn read_fixed_bytes<'a>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    len: usize,
+) -> Result<&'a [u8], JsValue> {
+    let end = *offset + len;
+    if end > bytes.len() {
+        return Err(JsValue::from_str(
+            "Unexpected end while reading fixed bytes",
+        ));
+    }
+    let value = &bytes[*offset..end];
+    *offset = end;
+    Ok(value)
+}
+
 fn read_string(bytes: &[u8], offset: &mut usize) -> Result<String, JsValue> {
     let raw = read_bytes(bytes, offset)?;
     std::str::from_utf8(raw)
@@ -120,6 +136,20 @@ fn optional_string(value: JsValue) -> Option<String> {
     }
 }
 
+fn fixed_bytes_len(kind: &str) -> Option<usize> {
+    kind.strip_prefix("fixedbytes:")?.parse::<usize>().ok()
+}
+
+fn option_fixed_bytes_len(kind: &str) -> Option<usize> {
+    kind.strip_prefix("option:fixedbytes:")?
+        .parse::<usize>()
+        .ok()
+}
+
+fn vec_fixed_bytes_len(kind: &str) -> Option<usize> {
+    kind.strip_prefix("vec:fixedbytes:")?.parse::<usize>().ok()
+}
+
 #[derive(Clone, Debug)]
 enum ProjectionValue {
     String(String),
@@ -132,6 +162,26 @@ enum ProjectionValue {
 }
 
 fn skip_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<(), JsValue> {
+    if let Some(len) = fixed_bytes_len(kind) {
+        read_fixed_bytes(bytes, offset, len)?;
+        return Ok(());
+    }
+    if let Some(len) = option_fixed_bytes_len(kind) {
+        let has_value = read_u8(bytes, offset)?;
+        if has_value == 1 {
+            read_fixed_bytes(bytes, offset, len)?;
+        } else if has_value != 0 {
+            return Err(JsValue::from_str("Invalid option marker"));
+        }
+        return Ok(());
+    }
+    if let Some(len) = vec_fixed_bytes_len(kind) {
+        let count = read_u32_le(bytes, offset)? as usize;
+        for _ in 0..count {
+            read_fixed_bytes(bytes, offset, len)?;
+        }
+        return Ok(());
+    }
     match kind {
         "string" => {
             read_string(bytes, offset)?;
@@ -178,6 +228,23 @@ fn skip_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<(), JsValu
 }
 
 fn read_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<ProjectionValue, JsValue> {
+    if let Some(len) = fixed_bytes_len(kind) {
+        return Ok(ProjectionValue::Bytes(
+            read_fixed_bytes(bytes, offset, len)?.to_vec(),
+        ));
+    }
+    if let Some(len) = option_fixed_bytes_len(kind) {
+        let has_value = read_u8(bytes, offset)?;
+        if has_value == 0 {
+            return Ok(ProjectionValue::None);
+        }
+        if has_value == 1 {
+            return Ok(ProjectionValue::Bytes(
+                read_fixed_bytes(bytes, offset, len)?.to_vec(),
+            ));
+        }
+        return Err(JsValue::from_str("Invalid option marker"));
+    }
     match kind {
         "string" => Ok(ProjectionValue::String(read_string(bytes, offset)?)),
         "u8" => Ok(ProjectionValue::U8(read_u8(bytes, offset)?)),
@@ -256,6 +323,43 @@ fn write_projection_value(
     kind: &str,
     value: &ProjectionValue,
 ) -> Result<(), JsValue> {
+    if let Some(len) = fixed_bytes_len(kind) {
+        if let ProjectionValue::Bytes(value) = value {
+            if value.len() != len {
+                return Err(JsValue::from_str(
+                    "Projection fixed bytes value does not match output length",
+                ));
+            }
+            out.extend_from_slice(value);
+            return Ok(());
+        }
+        return Err(JsValue::from_str(
+            "Projection value does not match output type",
+        ));
+    }
+    if let Some(len) = option_fixed_bytes_len(kind) {
+        match value {
+            ProjectionValue::None => {
+                write_u8(out, 0);
+                return Ok(());
+            }
+            ProjectionValue::Bytes(value) => {
+                if value.len() != len {
+                    return Err(JsValue::from_str(
+                        "Projection fixed bytes value does not match output length",
+                    ));
+                }
+                write_u8(out, 1);
+                out.extend_from_slice(value);
+                return Ok(());
+            }
+            _ => {
+                return Err(JsValue::from_str(
+                    "Projection value does not match output type",
+                ))
+            }
+        }
+    }
     match (kind, value) {
         ("string", ProjectionValue::String(value)) => write_string(out, value),
         ("u8", ProjectionValue::U8(value)) => write_u8(out, *value),
@@ -752,6 +856,30 @@ mod tests {
     }
 
     #[test]
+    fn reads_fixed_byte_document_fields() {
+        let mut bytes = Vec::new();
+        write_u8(&mut bytes, 7);
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+        write_string(&mut bytes, "name");
+        let fields = read_document_fields(
+            &bytes,
+            Some("u8"),
+            Some("7"),
+            &["id".to_string(), "name".to_string()],
+            &["fixedbytes:4".to_string(), "string".to_string()],
+        )
+        .unwrap();
+        assert!(matches!(
+            fields.get("id"),
+            Some(ProjectionValue::Bytes(value)) if value == &vec![1, 2, 3, 4]
+        ));
+        assert!(matches!(
+            fields.get("name"),
+            Some(ProjectionValue::String(value)) if value == "name"
+        ));
+    }
+
+    #[test]
     fn writes_projected_values() {
         let mut out = Vec::new();
         write_projection_value(
@@ -774,5 +902,23 @@ mod tests {
         expected.extend_from_slice(&2u32.to_le_bytes());
         expected.extend_from_slice(&[3, 4]);
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn writes_fixed_byte_projected_values() {
+        let mut out = Vec::new();
+        write_projection_value(
+            &mut out,
+            "fixedbytes:4",
+            &ProjectionValue::Bytes(vec![1, 2, 3, 4]),
+        )
+        .unwrap();
+        write_projection_value(
+            &mut out,
+            "option:fixedbytes:2",
+            &ProjectionValue::Bytes(vec![5, 6]),
+        )
+        .unwrap();
+        assert_eq!(out, vec![1, 2, 3, 4, 1, 5, 6]);
     }
 }

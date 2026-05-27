@@ -3997,6 +3997,109 @@ describe("index", () => {
 					}
 				});
 
+				it("indexes strict native replicated fixed byte ids through encoded-only native context on receive", async () => {
+					@variant("strict_native_replicated_fixed_byte_id_document")
+					class StrictNativeReplicatedFixedByteIdDocument {
+						@id({ type: fixedArray("u8", 32) })
+						id: Uint8Array;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedFixedByteIdDocument>,
+						) {
+							this.id = properties?.id || new Uint8Array(32);
+							this.name = properties?.name;
+						}
+					}
+
+					@variant("strict_native_replicated_fixed_byte_id_store")
+					class StrictNativeReplicatedFixedByteIdStore extends Program<
+						Partial<SetupOptions<StrictNativeReplicatedFixedByteIdDocument>>
+					> {
+						@field({ type: Documents })
+						docs: Documents<StrictNativeReplicatedFixedByteIdDocument>;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedFixedByteIdStore>,
+						) {
+							super();
+							this.docs =
+								properties?.docs ||
+								new Documents<StrictNativeReplicatedFixedByteIdDocument>();
+						}
+
+						async open(
+							options?: Partial<
+								SetupOptions<StrictNativeReplicatedFixedByteIdDocument>
+							>,
+						): Promise<void> {
+							await this.docs.open({
+								...options,
+								type: StrictNativeReplicatedFixedByteIdDocument,
+								index: {
+									...options?.index,
+									type: StrictNativeReplicatedFixedByteIdDocument,
+									transform:
+										transform.identity<StrictNativeReplicatedFixedByteIdDocument>(),
+								},
+							});
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new StrictNativeReplicatedFixedByteIdStore();
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform:
+							policy.allowAll<StrictNativeReplicatedFixedByteIdDocument>(),
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						target.docs.index,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					try {
+						const id = randomBytes(32);
+						const doc = new StrictNativeReplicatedFixedByteIdDocument({
+							id,
+							name: "native-fixed-byte-id",
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+						const resolved = await target.docs.get(id, {
+							local: true,
+							remote: false,
+						});
+						expect(resolved?.name).equal("native-fixed-byte-id");
+						expect(equals(resolved?.id, id)).equal(true);
+					} finally {
+						documentPreparedNativeStoredPutSpy.restore();
+						decoderSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
 				it("keeps already-local strict native put options by reference", () => {
 					const docs = new Documents<Document>();
 					const nativeDocs = docs as any;
