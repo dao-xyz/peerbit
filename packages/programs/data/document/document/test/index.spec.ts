@@ -4100,7 +4100,7 @@ describe("index", () => {
 					}
 				});
 
-				it("validates strict native replicated PublicSignKey fields without document decode on receive", async () => {
+				it("validates strict native replicated PublicSignKey ownership without document decode on receive", async () => {
 					@variant("strict_native_replicated_public_key_owner_document")
 					class StrictNativeReplicatedPublicKeyOwnerDocument {
 						@id({ type: "string" })
@@ -4168,16 +4168,33 @@ describe("index", () => {
 						replicate: { factor: 1 },
 						nativeGraph: true,
 						nativeBackbone: nativeBackboneDocumentIndexOptions(),
-						canPerform:
-							policy.signedByField<StrictNativeReplicatedPublicKeyOwnerDocument>(
-								"owner",
+						canPerform: policy.or(
+							policy.put(
+								policy.signedByField<StrictNativeReplicatedPublicKeyOwnerDocument>(
+									"owner",
+								),
 							),
+							policy.delete(
+								policy.and(
+									policy.signedByPublicKey<StrictNativeReplicatedPublicKeyOwnerDocument>(
+										rustSession.peers[0].identity.publicKey,
+									),
+									policy.deleteSignedByExistingField<StrictNativeReplicatedPublicKeyOwnerDocument>(
+										"owner",
+									),
+								),
+							),
+						),
 					});
 					await rustSession.peers[0].open(source, { args: openArgs() });
 					await rustSession.peers[1].open(target, { args: openArgs() });
 					const decoderSpy = sinon.spy(
 						target.docs.index.valueEncoding,
 						"decoder",
+					);
+					const nativeIndexedFieldSpy = sinon.spy(
+						target.docs.index,
+						"getNativeIndexedFieldValue",
 					);
 					try {
 						const doc = new StrictNativeReplicatedPublicKeyOwnerDocument({
@@ -4191,15 +4208,19 @@ describe("index", () => {
 							expect(await target.docs.index.getSize()).equal(1),
 						);
 						expect(decoderSpy.callCount).equal(0);
+						await source.docs.del(doc.id);
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(0),
+						);
+						expect(nativeIndexedFieldSpy.callCount).greaterThan(0);
+						expect(decoderSpy.callCount).equal(0);
 						const resolved = await target.docs.get(doc.id, {
 							local: true,
 							remote: false,
 						});
-						expect(resolved?.name).equal("native-public-key-owner");
-						expect(
-							resolved?.owner.equals(rustSession.peers[0].identity.publicKey),
-						).equal(true);
+						expect(resolved).to.not.exist;
 					} finally {
+						nativeIndexedFieldSpy.restore();
 						decoderSpy.restore();
 						await target.close();
 						await source.close();

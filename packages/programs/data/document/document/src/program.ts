@@ -1368,6 +1368,25 @@ export class Documents<
 		return false;
 	}
 
+	private nativeDeletePolicyNeedsEntryPublicKeys(
+		descriptor: NativeCanPerformPolicyDescriptor,
+	): boolean {
+		switch (descriptor.kind) {
+			case "signedByPublicKey":
+			case "deleteSignedByExistingField":
+				return true;
+			case "delete":
+				return this.nativeDeletePolicyNeedsEntryPublicKeys(descriptor.policy);
+			case "and":
+			case "or":
+				return descriptor.policies.some((policy) =>
+					this.nativeDeletePolicyNeedsEntryPublicKeys(policy),
+				);
+			default:
+				return false;
+		}
+	}
+
 	private async nativePutOperationPolicyAllows(
 		descriptor: NativeCanPerformPolicyDescriptor,
 		operation: PutOperation | undefined,
@@ -1479,30 +1498,41 @@ export class Documents<
 	private async nativeDeleteOperationPolicyAllows(
 		descriptor: NativeCanPerformPolicyDescriptor,
 		operation: DeleteOperation,
+		entryPublicKeys?: readonly PublicSignKey[],
 	): Promise<boolean> {
 		switch (descriptor.kind) {
 			case "allowAll":
 				return true;
 			case "signedByPublicKey":
-				return this.nativeFieldValueMatchesLocalPublicKey(
-					descriptor.publicKey,
-				);
+				return entryPublicKeys
+					? this.nativeFieldValueMatchesPublicKeys(
+							descriptor.publicKey,
+							entryPublicKeys,
+						)
+					: this.nativeFieldValueMatchesLocalPublicKey(descriptor.publicKey);
 			case "delete":
 				return this.nativeDeleteOperationPolicyAllows(
 					descriptor.policy,
 					operation,
+					entryPublicKeys,
 				);
 			case "deleteSignedByExistingField": {
 				const value = this.getNativeDeletePolicyFieldValue(
 					operation,
 					descriptor.path,
 				);
-				return this.nativeFieldValueMatchesLocalPublicKey(value);
+				return entryPublicKeys
+					? this.nativeFieldValueMatchesPublicKeys(value, entryPublicKeys)
+					: this.nativeFieldValueMatchesLocalPublicKey(value);
 			}
 			case "and":
 				for (const policy of descriptor.policies) {
 					if (
-						!(await this.nativeDeleteOperationPolicyAllows(policy, operation))
+						!(await this.nativeDeleteOperationPolicyAllows(
+							policy,
+							operation,
+							entryPublicKeys,
+						))
 					) {
 						return false;
 					}
@@ -1510,7 +1540,13 @@ export class Documents<
 				return true;
 			case "or":
 				for (const policy of descriptor.policies) {
-					if (await this.nativeDeleteOperationPolicyAllows(policy, operation)) {
+					if (
+						await this.nativeDeleteOperationPolicyAllows(
+							policy,
+							operation,
+							entryPublicKeys,
+						)
+					) {
 						return true;
 					}
 				}
@@ -2266,9 +2302,20 @@ export class Documents<
 				previousSignerPublicKeys,
 				entryPublicKeys,
 			);
+			}
+			const entryPublicKeys = this.nativeDeletePolicyNeedsEntryPublicKeys(
+				descriptor,
+			)
+				? entry.publicKeys.length > 0
+					? entry.publicKeys
+					: await entry.getPublicKeys()
+				: undefined;
+			return this.nativeDeleteOperationPolicyAllows(
+				descriptor,
+				operation,
+				entryPublicKeys,
+			);
 		}
-		return this.nativeDeleteOperationPolicyAllows(descriptor, operation);
-	}
 
 	private async resolveCanPerformPreviousEntries(
 		entry: Entry<Operation>,
