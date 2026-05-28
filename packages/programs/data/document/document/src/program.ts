@@ -24,7 +24,7 @@ import {
 	planDocumentContextBatch,
 	tryPlanDocumentContext,
 	tryPlanDocumentContextBatch,
-} from "@peerbit/document-rust";
+} from "./native-rust.js";
 import type { QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import {

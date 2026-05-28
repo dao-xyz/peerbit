@@ -20,7 +20,7 @@ import {
 	type SimpleDocumentProjectionContext,
 	type SimpleDocumentProjectionPlan,
 	tryProjectDocumentIndexSimple,
-} from "@peerbit/document-rust";
+} from "./native-rust.js";
 import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";

@@ -1180,9 +1180,6 @@ importers:
       '@peerbit/document-interface':
         specifier: workspace:*
         version: link:../interface
-      '@peerbit/document-rust':
-        specifier: workspace:*
-        version: link:../rust
       '@peerbit/indexer-cache':
         specifier: workspace:*
         version: link:../../../../utils/indexer/cached-index
@@ -1253,6 +1250,10 @@ importers:
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
+    optionalDependencies:
+      '@peerbit/document-rust':
+        specifier: workspace:*
+        version: link:../rust
 
   packages/programs/data/document/interface:
     dependencies:

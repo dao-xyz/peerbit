@@ -67,7 +67,6 @@
 		"@peerbit/cache": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/document-interface": "workspace:*",
-		"@peerbit/document-rust": "workspace:*",
 		"@peerbit/indexer-cache": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
@@ -81,6 +80,9 @@
 		"@peerbit/stream-interface": "workspace:*",
 		"p-defer": "^4.0.0",
 		"uint8arrays": "^5.1.0"
+	},
+	"optionalDependencies": {
+		"@peerbit/document-rust": "workspace:*"
 	},
 	"devDependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",
