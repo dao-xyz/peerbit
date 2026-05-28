@@ -1,5 +1,3 @@
-import * as wasmModuleImport from "../wasm/shared_log_rust.js";
-
 export type RangeResolution = "u32" | "u64";
 
 export type NativeReplicationRange = {
@@ -577,9 +575,10 @@ let wasmInitialized = false;
 
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
-		wasmModulePromise = Promise.resolve(
-			wasmModuleImport as unknown as WasmModule,
-		);
+		const wasmModulePath = "../wasm/shared_log_rust.js";
+		wasmModulePromise = import(
+			/* @vite-ignore */ wasmModulePath
+		) as Promise<WasmModule>;
 	}
 
 	const wasm = await wasmModulePromise;

@@ -1,5 +1,3 @@
-import * as wasmModuleImport from "../wasm/document_rust.js";
-
 type DocumentContextInput = {
 	created: bigint | number | string;
 	modified: bigint | number | string;
@@ -107,9 +105,10 @@ let wasmInitialized = false;
 
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
-		wasmModulePromise = Promise.resolve(
-			wasmModuleImport as unknown as WasmModule,
-		);
+		const wasmModulePath = "../wasm/document_rust.js";
+		wasmModulePromise = import(
+			/* @vite-ignore */ wasmModulePath
+		) as Promise<WasmModule>;
 	}
 
 	const wasm = await wasmModulePromise;
