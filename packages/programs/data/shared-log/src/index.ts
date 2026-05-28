@@ -1327,6 +1327,10 @@ type SharedAppendBaseOptions<T> = AppendOptions<T> & {
 	replicate?: boolean;
 };
 
+type TrustedLogAppendOptions<T> = AppendOptions<T> & {
+	__peerbitCanAppendAlreadyValidated?: boolean;
+};
+
 export type SharedAppendOptions<T> =
 	| (SharedAppendBaseOptions<T> & {
 			target?: "replicators" | "none";
@@ -7030,10 +7034,10 @@ export class SharedLog<
 	}
 
 	private createLogAppendOptions(options?: SharedAppendOptions<T>): {
-		appendOptions: AppendOptions<T>;
+		appendOptions: TrustedLogAppendOptions<T>;
 		minReplicasValue: number;
 	} {
-		const appendOptions: AppendOptions<T> = { ...options };
+		const appendOptions: TrustedLogAppendOptions<T> = { ...options };
 		const { minReplicasData, minReplicasValue } =
 			this.createAppendReplicaMetadata(options?.replicas);
 

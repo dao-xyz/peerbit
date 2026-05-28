@@ -302,8 +302,6 @@ export type AppendDurability = "strict" | "buffered";
 export type AppendOptions<T> = {
 	durability?: AppendDurability;
 	deferIndexWrite?: boolean;
-	/** Internal: set only by trusted Peerbit append paths after validation. */
-	__peerbitCanAppendAlreadyValidated?: boolean;
 	meta?: {
 		type?: EntryType;
 		gidSeed?: Uint8Array;
@@ -325,6 +323,24 @@ export type AppendOptions<T> = {
 	onChange?: OnChange<T>;
 	canAppend?: CanAppend<T>;
 };
+
+type TrustedAppendOptions<T> = AppendOptions<T> & {
+	__peerbitCanAppendAlreadyValidated?: boolean;
+};
+
+const canAppendAlreadyValidated = (options?: unknown): boolean =>
+	(options as { __peerbitCanAppendAlreadyValidated?: unknown } | undefined)
+		?.__peerbitCanAppendAlreadyValidated === true;
+
+const withCanAppendAlreadyValidated = <T>(
+	options: AppendOptions<T> = {},
+): TrustedAppendOptions<T> =>
+	canAppendAlreadyValidated(options)
+		? (options as TrustedAppendOptions<T>)
+		: {
+				...options,
+				__peerbitCanAppendAlreadyValidated: true,
+			};
 
 export type { PreparedAppendFacts } from "./entry.js";
 
@@ -936,10 +952,7 @@ export class Log<T> {
 			);
 		}
 
-		const appendOptions: AppendOptions<T> = {
-			...options,
-			__peerbitCanAppendAlreadyValidated: true,
-		};
+		const appendOptions = withCanAppendAlreadyValidated(options);
 		const nextsResult = this.getNextsForAppend(appendOptions);
 		const nexts = isPromiseLike(nextsResult) ? await nextsResult : nextsResult;
 		const deferBlockStore = hasPutMany(this._storage);
@@ -1033,10 +1046,7 @@ export class Log<T> {
 			);
 		}
 
-		const appendOptions: AppendOptions<T> = {
-			...options,
-			__peerbitCanAppendAlreadyValidated: true,
-		};
+		const appendOptions = withCanAppendAlreadyValidated(options);
 		const nextsResult = this.getNextsForAppend(appendOptions);
 		return mapMaybePromise(nextsResult, (nexts) =>
 			this.appendLocallyPreparedCommitOnlyWithNexts(
@@ -1157,8 +1167,7 @@ export class Log<T> {
 			options.meta?.next == null ||
 			options.meta.next.length !== 0 ||
 			options.meta?.gidSeed ||
-			(this._hasCustomCanAppend &&
-				options.__peerbitCanAppendAlreadyValidated !== true)
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated(options))
 		) {
 			return undefined;
 		}
@@ -1456,8 +1465,7 @@ export class Log<T> {
 			options.identity ||
 			options.meta?.timestamp ||
 			!supportsNativeTrim ||
-			(this._hasCustomCanAppend &&
-				options.__peerbitCanAppendAlreadyValidated !== true)
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated(options))
 		) {
 			return undefined;
 		}
@@ -1472,13 +1480,7 @@ export class Log<T> {
 			return undefined;
 		}
 
-		const appendOptions: AppendOptions<T> =
-			options.__peerbitCanAppendAlreadyValidated === true
-				? options
-				: {
-						...options,
-						__peerbitCanAppendAlreadyValidated: true,
-					};
+		const appendOptions = withCanAppendAlreadyValidated(options);
 		const knownNoNextAppend = knownNoNext || properties.knownNoNext === true;
 		const nextsResult = knownNoNextAppend
 			? EMPTY_NEXT_ENTRIES
@@ -1976,10 +1978,7 @@ export class Log<T> {
 			);
 		}
 
-		const appendOptions: AppendOptions<T> = {
-			...options,
-			__peerbitCanAppendAlreadyValidated: true,
-		};
+		const appendOptions = withCanAppendAlreadyValidated(options);
 		const deferBlockStore = hasPutMany(this._storage);
 		const nativeAppendBatch = await this.createNativePlainAppendEntriesBatch(
 			data,
@@ -2078,8 +2077,7 @@ export class Log<T> {
 			(options.meta?.next != null && options.meta.next.length !== 0) ||
 			options.meta?.gidSeed ||
 			!supportsNativeTrim ||
-			(this._hasCustomCanAppend &&
-				options.__peerbitCanAppendAlreadyValidated !== true)
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated(options))
 		) {
 			return undefined;
 		}
@@ -2442,14 +2440,14 @@ export class Log<T> {
 		deferBlockStore: boolean,
 		payloadDatas?: Uint8Array[],
 	): Promise<PreparedAppendChain<T> | undefined> {
-		const canAppendAlreadyValidated =
-			options.__peerbitCanAppendAlreadyValidated === true;
+		const canAppendAlreadyValidatedForOptions =
+			canAppendAlreadyValidated(options);
 		if (
 			!deferBlockStore ||
 			options.encryption ||
 			options.signers ||
 			options.canAppend ||
-			(this._hasCustomCanAppend && !canAppendAlreadyValidated) ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidatedForOptions) ||
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT
 		) {
@@ -2504,15 +2502,15 @@ export class Log<T> {
 		includeAppendFactsBytes?: boolean,
 		nativeTrimLengthTo?: number,
 	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
-		const canAppendAlreadyValidated =
-			options.__peerbitCanAppendAlreadyValidated === true;
+		const canAppendAlreadyValidatedForOptions =
+			canAppendAlreadyValidated(options);
 		if (
 			data.length !== 1 ||
 			!deferBlockStore ||
 			options.encryption ||
 			options.signers ||
 			options.canAppend ||
-			(this._hasCustomCanAppend && !canAppendAlreadyValidated) ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidatedForOptions) ||
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT
 		) {
@@ -2563,15 +2561,15 @@ export class Log<T> {
 		payloadDatas?: Uint8Array[],
 		nexts?: Sorting.SortableEntry[][],
 	): Promise<PreparedAppendChain<T> | undefined> {
-		const canAppendAlreadyValidated =
-			options.__peerbitCanAppendAlreadyValidated === true;
+		const canAppendAlreadyValidatedForOptions =
+			canAppendAlreadyValidated(options);
 		if (
 			!deferBlockStore ||
 			data.length === 0 ||
 			options.encryption ||
 			options.signers ||
 			options.canAppend ||
-			(this._hasCustomCanAppend && !canAppendAlreadyValidated) ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidatedForOptions) ||
 			options.meta?.timestamp ||
 			options.meta?.type === EntryType.CUT ||
 			options.meta?.gidSeed ||
@@ -2779,7 +2777,7 @@ export class Log<T> {
 					}
 				: undefined,
 			canAppend:
-				options.__peerbitCanAppendAlreadyValidated === true
+				canAppendAlreadyValidated(options)
 					? undefined
 					: options.canAppend ||
 						(this._hasCustomCanAppend ? this._canAppend : undefined),
@@ -3361,7 +3359,7 @@ export class Log<T> {
 	): Promise<boolean> {
 		if (
 			entries.length === 0 ||
-			options?.__peerbitCanAppendAlreadyValidated !== true ||
+			!canAppendAlreadyValidated(options) ||
 			entries.some((entry) => this._joining.has(entry.hash))
 		) {
 			return false;
@@ -3705,7 +3703,7 @@ export class Log<T> {
 			messages: 1,
 		});
 
-		if (options.__peerbitCanAppendAlreadyValidated !== true) {
+		if (!canAppendAlreadyValidated(options)) {
 			const canAppendStartedAt = internalProfileStart(profile);
 			for (const entry of entries) {
 				if (this._canAppend && !(await this._canAppend(entry))) {
