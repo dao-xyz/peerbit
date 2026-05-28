@@ -1,3 +1,5 @@
+import { loadWasm } from "./wasm.js";
+
 export type NativeLogEntry = {
 	hash: string;
 	gid: string;
@@ -490,45 +492,6 @@ type WasmModule = {
 	entry_v0_plain_payload_data_from_storage: (
 		bytes: Uint8Array,
 	) => Uint8Array;
-	benchmark_plain_entry_v0_core: (
-		clockId: Uint8Array,
-		privateKey: Uint8Array,
-		publicKey: Uint8Array,
-		iterations: number,
-		payloadData: Uint8Array,
-	) => number[];
-	benchmark_plain_entry_v0_digest_key_core: (
-		clockId: Uint8Array,
-		privateKey: Uint8Array,
-		publicKey: Uint8Array,
-		iterations: number,
-		payloadData: Uint8Array,
-	) => number[];
-	benchmark_plain_entry_v0_crypto: (
-		clockId: Uint8Array,
-		privateKey: Uint8Array,
-		publicKey: Uint8Array,
-		iterations: number,
-		payloadData: Uint8Array,
-	) => number[];
-	benchmark_entry_v0_storage_verify_modes: (
-		clockId: Uint8Array,
-		privateKey: Uint8Array,
-		publicKey: Uint8Array,
-		iterations: number,
-		payloadData: Uint8Array,
-	) => [
-		parseMs: number,
-		batchVerifyMs: number,
-		serialVerifyMs: number,
-		storageVerifyMs: number,
-		iterations: number,
-		batchOk: boolean,
-		serialOk: boolean,
-		storageOk: boolean,
-		checksum: number,
-		storageBytesTotal: number,
-	];
 	prepare_entry_v0_plain_chain: (
 		clockId: Uint8Array,
 		privateKey: Uint8Array,
@@ -560,41 +523,7 @@ type WasmModule = {
 	) => RawEntryV0PreparedFactsRow[];
 };
 
-let wasmModulePromise: Promise<WasmModule> | undefined;
-let wasmInitialized = false;
-
-const loadWasm = async (): Promise<WasmModule> => {
-	if (!wasmModulePromise) {
-		const wasmModulePath = "../wasm/log_rust.js";
-		wasmModulePromise = import(
-			/* @vite-ignore */ wasmModulePath
-		) as Promise<WasmModule>;
-	}
-
-	const wasm = await wasmModulePromise;
-	if (!wasmInitialized) {
-		const processLike = (
-			globalThis as { process?: { versions?: { node?: string } } }
-		).process;
-		if (processLike?.versions?.node) {
-			const fsPromises = "fs/promises";
-			const { readFile } = (await import(
-				/* @vite-ignore */ fsPromises
-			)) as typeof import("fs/promises");
-			const bytes = await readFile(
-				new URL("../wasm/log_rust_bg.wasm", import.meta.url),
-			);
-			wasm.initSync({ module: bytes });
-		} else {
-			await wasm.default({
-				module_or_path: new URL("../wasm/log_rust_bg.wasm", import.meta.url),
-			});
-		}
-		wasmInitialized = true;
-	}
-
-	return wasm;
-};
+const loadLogWasm = () => loadWasm<WasmModule>();
 
 const copyBytes = (bytes: Uint8Array): Uint8Array =>
 	new Uint8Array(
@@ -646,7 +575,7 @@ class LogGraphIndex {
 	) {}
 
 	static async create(): Promise<LogGraphIndex> {
-		const wasm = await loadWasm();
+		const wasm = await loadLogWasm();
 		return new LogGraphIndex(new wasm.NativeLogIndex(), wasm);
 	}
 
@@ -1488,7 +1417,7 @@ export class NativeLogBlockStore {
 	private constructor(private readonly native: NativeLogBlockStoreHandle) {}
 
 	static async create(): Promise<NativeLogBlockStore> {
-		const wasm = await loadWasm();
+		const wasm = await loadLogWasm();
 		return new NativeLogBlockStore(new wasm.NativeLogBlockStore());
 	}
 
@@ -2191,7 +2120,7 @@ export const signEd25519 = async (input: {
 	publicKey: Uint8Array;
 	data: Uint8Array;
 }): Promise<Uint8Array> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.sign_ed25519(input.privateKey, input.publicKey, input.data);
 };
 
@@ -2212,7 +2141,7 @@ export const verifyEd25519Batch = async (
 	if (inputs.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	const result = wasm.verify_ed25519_batch(
 		inputs.map((input) => input.signature),
 		inputs.map((input) => input.publicKey),
@@ -2227,7 +2156,7 @@ export const verifyEntryV0Ed25519Batch = async (
 	if (inputs.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	const columns = entryColumns(inputs);
 	const signatures = new Array<Uint8Array>(inputs.length);
 	const publicKeys = new Array<Uint8Array>(inputs.length);
@@ -2257,7 +2186,7 @@ export const verifyEntryV0Ed25519StorageBatch = async (
 	if (blocks.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	const result = wasm.verify_entry_v0_ed25519_storage_batch(blocks);
 	return Array.from(result, (value) => value === 1);
 };
@@ -2265,7 +2194,7 @@ export const verifyEntryV0Ed25519StorageBatch = async (
 export const encodeEntryV0Signable = async (
 	input: EntryV0EncodeInput,
 ): Promise<Uint8Array> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.encode_entry_v0_signable(
 		input.clockId,
 		BigInt(input.wallTime),
@@ -2284,7 +2213,7 @@ export const encodeEntryV0SignableBatch = async (
 	if (inputs.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	const columns = entryColumns(inputs);
 	return wasm.encode_entry_v0_signable_batch(
 		columns.clockIds,
@@ -2301,7 +2230,7 @@ export const encodeEntryV0SignableBatch = async (
 export const encodeEntryV0Storage = async (
 	input: EntryV0StorageEncodeInput,
 ): Promise<Uint8Array> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.encode_entry_v0_storage(
 		input.clockId,
 		BigInt(input.wallTime),
@@ -2320,7 +2249,7 @@ export const encodeEntryV0Storage = async (
 export const encodeEntryV0StorageWithCid = async (
 	input: EntryV0StorageEncodeInput,
 ): Promise<EntryV0EncodedStorage> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	const [bytes, cid] = wasm.encode_entry_v0_storage_with_cid(
 		input.clockId,
 		BigInt(input.wallTime),
@@ -2343,7 +2272,7 @@ export const encodeEntryV0StorageBatchWithCids = async (
 	if (inputs.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	const columns = entryColumns(inputs);
 	const signatures = new Array<Uint8Array>(inputs.length);
 	const signaturePublicKeys = new Array<Uint8Array>(inputs.length);
@@ -2371,166 +2300,6 @@ export const encodeEntryV0StorageBatchWithCids = async (
 		.map(([bytes, cid]) => ({ bytes, cid }));
 };
 
-type PlainEntryV0CoreBenchmark = {
-	totalMs: number;
-	inputCopyMs: number;
-	entryCoreMs: number;
-	encodeMetaMs: number;
-	encodePayloadMs: number;
-	encodeSignableMs: number;
-	signMs: number;
-	encodeSignatureMs: number;
-	encodeStorageMs: number;
-	cidMs: number;
-	cidHashMs: number;
-	cidStringMs: number;
-	indexEntryMs: number;
-	storageBytesTotal: number;
-	hashBytesTotal: number;
-};
-
-type PlainEntryV0CryptoBenchmark = {
-	totalMs: number;
-	signableBytes: number;
-	storageBytes: number;
-	signMs: number;
-	verifyMs: number;
-	sha256Ms: number;
-	cidStringMs: number;
-	checksum: number;
-	cidLenTotal: number;
-	compactSignMs: number;
-	compactVerifyMs: number;
-};
-
-type EntryV0StorageVerifyBenchmark = {
-	parseMs: number;
-	batchVerifyMs: number;
-	serialVerifyMs: number;
-	storageVerifyMs: number;
-	iterations: number;
-	batchOk: boolean;
-	serialOk: boolean;
-	storageOk: boolean;
-	checksum: number;
-	storageBytesTotal: number;
-};
-
-const plainEntryV0CoreBenchmarkFromRow = (
-	row: number[],
-): PlainEntryV0CoreBenchmark => ({
-	totalMs: row[0] ?? 0,
-	inputCopyMs: row[1] ?? 0,
-	entryCoreMs: row[2] ?? 0,
-	encodeMetaMs: row[3] ?? 0,
-	encodePayloadMs: row[4] ?? 0,
-	encodeSignableMs: row[5] ?? 0,
-	signMs: row[6] ?? 0,
-	encodeSignatureMs: row[7] ?? 0,
-	encodeStorageMs: row[8] ?? 0,
-	cidMs: row[9] ?? 0,
-	cidHashMs: row[10] ?? 0,
-	cidStringMs: row[11] ?? 0,
-	indexEntryMs: row[12] ?? 0,
-	storageBytesTotal: row[13] ?? 0,
-	hashBytesTotal: row[14] ?? 0,
-});
-
-export const benchmarkPlainEntryV0Core = async (input: {
-	clockId: Uint8Array;
-	privateKey: Uint8Array;
-	publicKey: Uint8Array;
-	iterations: number;
-	payloadData: Uint8Array;
-}): Promise<PlainEntryV0CoreBenchmark> => {
-	const wasm = await loadWasm();
-	const row = wasm.benchmark_plain_entry_v0_core(
-		input.clockId,
-		input.privateKey,
-		input.publicKey,
-		input.iterations,
-		input.payloadData,
-	);
-	return plainEntryV0CoreBenchmarkFromRow(row);
-};
-
-export const benchmarkPlainEntryV0DigestKeyCore = async (input: {
-	clockId: Uint8Array;
-	privateKey: Uint8Array;
-	publicKey: Uint8Array;
-	iterations: number;
-	payloadData: Uint8Array;
-}): Promise<PlainEntryV0CoreBenchmark> => {
-	const wasm = await loadWasm();
-	const row = wasm.benchmark_plain_entry_v0_digest_key_core(
-		input.clockId,
-		input.privateKey,
-		input.publicKey,
-		input.iterations,
-		input.payloadData,
-	);
-	return plainEntryV0CoreBenchmarkFromRow(row);
-};
-
-export const benchmarkPlainEntryV0Crypto = async (input: {
-	clockId: Uint8Array;
-	privateKey: Uint8Array;
-	publicKey: Uint8Array;
-	iterations: number;
-	payloadData: Uint8Array;
-}): Promise<PlainEntryV0CryptoBenchmark> => {
-	const wasm = await loadWasm();
-	const row = wasm.benchmark_plain_entry_v0_crypto(
-		input.clockId,
-		input.privateKey,
-		input.publicKey,
-		input.iterations,
-		input.payloadData,
-	);
-	return {
-		totalMs: row[0] ?? 0,
-		signableBytes: row[1] ?? 0,
-		storageBytes: row[2] ?? 0,
-		signMs: row[3] ?? 0,
-		verifyMs: row[4] ?? 0,
-		sha256Ms: row[5] ?? 0,
-		cidStringMs: row[6] ?? 0,
-		checksum: row[7] ?? 0,
-		cidLenTotal: row[8] ?? 0,
-		compactSignMs: row[9] ?? 0,
-		compactVerifyMs: row[10] ?? 0,
-	};
-};
-
-export const benchmarkEntryV0StorageVerifyModes = async (input: {
-	clockId: Uint8Array;
-	privateKey: Uint8Array;
-	publicKey: Uint8Array;
-	iterations: number;
-	payloadData: Uint8Array;
-}): Promise<EntryV0StorageVerifyBenchmark> => {
-	const wasm = await loadWasm();
-	const row = wasm.benchmark_entry_v0_storage_verify_modes(
-		input.clockId,
-		input.privateKey,
-		input.publicKey,
-		input.iterations,
-		input.payloadData,
-	);
-	return {
-		parseMs: row[0],
-		batchVerifyMs: row[1],
-		serialVerifyMs: row[2],
-		storageVerifyMs: row[3],
-		iterations: row[4],
-		batchOk: row[5],
-		serialOk: row[6],
-		storageOk: row[7],
-		checksum: row[8],
-		storageBytesTotal: row[9],
-	};
-};
-
 export const prepareEntryV0PlainChain = async (
 	input: EntryV0PlainChainInput,
 ): Promise<EntryV0PreparedPlainEntry[]> => {
@@ -2538,7 +2307,7 @@ export const prepareEntryV0PlainChain = async (
 	if (!columns) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return preparedPlainEntryRows(
 		wasm.prepare_entry_v0_plain_chain(
 			input.clockId,
@@ -2558,7 +2327,7 @@ export const prepareEntryV0PlainChain = async (
 export const prepareEntryV0PlainEntry = async (
 	input: EntryV0PlainEntryInput,
 ): Promise<EntryV0PreparedPlainEntry> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return preparedPlainEntryRow(
 		wasm.prepare_entry_v0_plain_entry(
 			input.clockId,
@@ -2576,7 +2345,7 @@ export const prepareEntryV0PlainEntry = async (
 };
 
 export const calculateRawCidV1 = async (bytes: Uint8Array): Promise<string> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.calculate_raw_cid_v1(bytes);
 };
 
@@ -2586,7 +2355,7 @@ export const calculateRawCidV1Batch = async (
 	if (blocks.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.calculate_raw_cid_v1_batch(blocks);
 };
 
@@ -2596,14 +2365,14 @@ export const prepareRawEntryV0Batch = async (
 	if (blocks.length === 0) {
 		return [];
 	}
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.prepare_raw_entry_v0_batch(blocks).map(rawEntryV0PreparedFactsFromRow);
 };
 
 export const entryV0PlainPayloadDataFromStorage = async (
 	bytes: Uint8Array,
 ): Promise<Uint8Array> => {
-	const wasm = await loadWasm();
+	const wasm = await loadLogWasm();
 	return wasm.entry_v0_plain_payload_data_from_storage(bytes);
 };
 

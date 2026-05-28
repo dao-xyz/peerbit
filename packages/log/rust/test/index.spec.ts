@@ -1,8 +1,10 @@
 import { expect } from "chai";
 import {
-	type NativeLogEntry,
 	benchmarkEntryV0StorageVerifyModes,
 	benchmarkPlainEntryV0Crypto,
+} from "../src/benchmark.js";
+import {
+	type NativeLogEntry,
 	calculateRawCidV1,
 	calculateRawCidV1Batch,
 	createLogGraphIndex,

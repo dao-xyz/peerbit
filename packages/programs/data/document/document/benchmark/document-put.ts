@@ -6,7 +6,7 @@ import {
 	benchmarkPlainEntryV0Core,
 	benchmarkPlainEntryV0Crypto,
 	benchmarkPlainEntryV0DigestKeyCore,
-} from "@peerbit/log-rust";
+} from "@peerbit/log-rust/benchmark";
 import {
 	NativeBackboneNodeCoordinatePersistence,
 	NativeBackboneNodeCoordinatePersistenceStore,
