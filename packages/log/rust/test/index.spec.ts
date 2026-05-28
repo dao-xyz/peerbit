@@ -4,19 +4,21 @@ import {
 	benchmarkPlainEntryV0Crypto,
 } from "../src/benchmark.js";
 import {
+	encodeEntryV0SignableBatchForTest,
+	encodeEntryV0StorageBatchWithCidsForTest,
+	signEd25519ForTest,
+} from "../src/testing.js";
+import {
 	type NativeLogEntry,
 	calculateRawCidV1,
 	calculateRawCidV1Batch,
 	createLogGraphIndex,
 	createNativeLogBlockStore,
 	encodeEntryV0Signable,
-	encodeEntryV0SignableBatch,
 	encodeEntryV0Storage,
-	encodeEntryV0StorageBatchWithCids,
 	encodeEntryV0StorageWithCid,
 	prepareEntryV0PlainChain,
 	prepareRawEntryV0Batch,
-	signEd25519,
 	verifyEd25519Batch,
 	verifyEntryV0Ed25519Batch,
 	verifyEntryV0Ed25519StorageBatch,
@@ -456,7 +458,7 @@ describe("native log graph index", () => {
 
 describe("native EntryV0 encoding", () => {
 	it("signs Ed25519 bytes with the expected RFC 8032 test vector", async () => {
-		const signature = await signEd25519({
+		const signature = await signEd25519ForTest({
 			privateKey: fromHex(
 				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
 			),
@@ -476,7 +478,7 @@ describe("native EntryV0 encoding", () => {
 		const publicKey = fromHex(
 			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
 		);
-		const signature = await signEd25519({
+		const signature = await signEd25519ForTest({
 			privateKey: fromHex(
 				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
 			),
@@ -517,7 +519,7 @@ describe("native EntryV0 encoding", () => {
 			metaData: new Uint8Array([9, 8, 7]),
 			payloadData: new Uint8Array([1, 2, 3, 4]),
 		};
-		const signature = await signEd25519({
+		const signature = await signEd25519ForTest({
 			privateKey,
 			publicKey,
 			data: await encodeEntryV0Signable(input),
@@ -557,7 +559,7 @@ describe("native EntryV0 encoding", () => {
 			metaData: new Uint8Array([9, 8, 7]),
 			payloadData: new Uint8Array([1, 2, 3, 4]),
 		};
-		const signature = await signEd25519({
+		const signature = await signEd25519ForTest({
 			privateKey,
 			publicKey,
 			data: await encodeEntryV0Signable(input),
@@ -746,13 +748,13 @@ describe("native EntryV0 encoding", () => {
 			payloadData: new Uint8Array([5, 4, 3, 2, 1]),
 		};
 
-		const signables = await encodeEntryV0SignableBatch([withMeta, noMeta]);
+		const signables = await encodeEntryV0SignableBatchForTest([withMeta, noMeta]);
 		expect(signables.map((bytes) => [...bytes])).to.deep.equal([
 			[...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.signable)],
 			[...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.noMeta.signable)],
 		]);
 
-		const storage = await encodeEntryV0StorageBatchWithCids([
+		const storage = await encodeEntryV0StorageBatchWithCidsForTest([
 			{
 				...withMeta,
 				signature: bytes(64, 96),
