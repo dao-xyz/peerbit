@@ -163,5 +163,21 @@ describe("PIDReplicationController", () => {
 
 			expect(f).to.be.within(0.49, 0.51);
 		});
+
+		it("uses storage headroom to fill coverage gaps above an even share", () => {
+			const controller = new PIDReplicationController("", {
+				storage: { max: 100_000 },
+			});
+			const f = controller.step({
+				currentFactor: 0.91,
+				memoryUsage: 69_828,
+				totalFactor: 0.94,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.be.greaterThan(0.91);
+			expect(f).to.be.at.most(1);
+		});
 	});
 });

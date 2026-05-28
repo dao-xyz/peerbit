@@ -72,6 +72,8 @@ export class PIDReplicationController {
 			errorCoverageUnmodified;
 
 		const errorFromEven = 1 / peerCount - currentFactor;
+		const hasMemoryHeadroom =
+			this.maxMemoryLimit != null && this.maxMemoryLimit > 0 && errorMemory > 0;
 		// When the network is under-covered (`totalFactor < 1`) balancing "down" (negative
 		// error) can further reduce coverage and force constrained peers (memory/CPU limited)
 		// to take boundary assignments that exceed their budgets.
@@ -81,11 +83,12 @@ export class PIDReplicationController {
 		const coverageDeficit = Math.max(0, errorCoverageUnmodified); // ~= max(0, 1 - totalFactor)
 		const negativeBalanceScale =
 			coverageDeficit <= 0 ? 1 : 1 - Math.min(1, coverageDeficit / 0.1); // full clamp at 10% deficit
-		const errorFromEvenForBalance =
+		let errorFromEvenForBalance =
 			errorFromEven >= 0 ? errorFromEven : errorFromEven * negativeBalanceScale;
+		if (hasMemoryHeadroom && coverageDeficit > 0 && errorFromEvenForBalance < 0) {
+			errorFromEvenForBalance = 0;
+		}
 
-		const hasMemoryHeadroom =
-			this.maxMemoryLimit != null && this.maxMemoryLimit > 0 && errorMemory > 0;
 		if (hasMemoryHeadroom && errorFromEvenForBalance > 0) {
 			// Coverage surplus often means another peer has not pruned yet. Do not let
 			// that transient surplus cancel a constrained peer that is still below an
