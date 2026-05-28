@@ -38,22 +38,6 @@ describe("@peerbit/any-store-rust", () => {
 		await store.close();
 	});
 
-	it("stores transient values with the redb engine", async () => {
-		const store = createStore(undefined, { engine: "redb" });
-		await store.open();
-		await store.put("a", new Uint8Array([1, 2, 3]));
-		await store.put("b", new Uint8Array([4]));
-
-		expect(await store.get("a")).to.deep.equal(new Uint8Array([1, 2, 3]));
-		expect(await store.size()).to.equal(4);
-		expect(await collectKeys(store)).to.deep.equal(["a", "b"]);
-
-		await store.del("a");
-		expect(await store.get("a")).to.equal(undefined);
-		expect(await store.size()).to.equal(1);
-		await store.close();
-	});
-
 	it("applies batched mutations", async () => {
 		const store = createStore();
 		await store.open();
@@ -97,14 +81,6 @@ describe("@peerbit/any-store-rust", () => {
 			new Uint8Array([5, 6]),
 		]);
 		await store.close();
-	});
-
-	it("rejects persistent redb stores until a byte-range backend lands", async () => {
-		const directory = await tempDirectory();
-		cleanup.push(directory);
-
-		const store = createStore(directory, { engine: "redb" });
-		await expect(store.open()).to.be.rejectedWith(/redb engine is transient/);
 	});
 
 	it("persists values across reopen", async () => {

@@ -12,8 +12,6 @@ type BenchMode =
 	| "level"
 	| "rust-memory"
 	| "rust-memory-batch"
-	| "rust-redb-memory"
-	| "rust-redb-memory-batch"
 	| "rust-persist"
 	| "rust-persist-batch"
 	| "rust-persist-strict"
@@ -23,7 +21,6 @@ type StoreMode =
 	| "memory"
 	| "level"
 	| "rust-memory"
-	| "rust-redb-memory"
 	| "rust-persist"
 	| "rust-persist-strict";
 
@@ -55,12 +52,6 @@ const createModeStore = async (
 	}
 	if (baseMode === "rust-memory") {
 		return { store: createRustStore(), cleanup: async () => undefined };
-	}
-	if (baseMode === "rust-redb-memory") {
-		return {
-			store: createRustStore(undefined, { engine: "redb" }),
-			cleanup: async () => undefined,
-		};
 	}
 	const directory = await mkdtemp(join(tmpdir(), `peerbit-any-store-${baseMode}-`));
 	const store =
@@ -139,8 +130,6 @@ const modes: BenchMode[] = [
 	"memory",
 	"rust-memory",
 	"rust-memory-batch",
-	"rust-redb-memory",
-	"rust-redb-memory-batch",
 	"level",
 	"rust-persist",
 	"rust-persist-batch",

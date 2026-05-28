@@ -33,15 +33,11 @@ type WasmModule = {
 	default(input?: unknown): Promise<unknown>;
 	initSync(input?: unknown): unknown;
 	NativeAnyStore: new () => NativeAnyStore;
-	NativeRedbAnyStore: new () => NativeAnyStore;
 };
-
-type RustAnyStoreEngine = "custom-wal" | "redb";
 
 export type RustAnyStoreOptions = {
 	compactOnClose?: boolean;
 	durability?: "normal" | "strict";
-	engine?: RustAnyStoreEngine;
 };
 
 type StoreStatus = "opening" | "open" | "closing" | "closed";
@@ -380,15 +376,7 @@ export class RustAnyStore implements AnyStore {
 
 	private async openInternal(): Promise<void> {
 		const wasm = await loadWasm();
-		if (this.directory && this.options.engine === "redb") {
-			throw new Error(
-				"@peerbit/any-store-rust redb engine is transient until a byte-range OPFS/Node backend lands",
-			);
-		}
-		this.native =
-			this.options.engine === "redb"
-				? new wasm.NativeRedbAnyStore()
-				: new wasm.NativeAnyStore();
+		this.native = new wasm.NativeAnyStore();
 		if (!this.directory) {
 			return;
 		}
@@ -450,7 +438,7 @@ export class RustAnyStore implements AnyStore {
 
 	private journaledNative(native: NativeAnyStore): JournaledNativeAnyStore {
 		if (!("encode_put_record" in native)) {
-			throw new Error("RustAnyStore engine does not expose journal records");
+			throw new Error("RustAnyStore native store does not expose journal records");
 		}
 		return native as JournaledNativeAnyStore;
 	}

@@ -1,14 +1,9 @@
 use indexmap::IndexMap;
 use js_sys::{Array, Uint8Array};
-use redb::{
-    backends::InMemoryBackend, Database, ReadableDatabase, ReadableTable, ReadableTableMetadata,
-    TableDefinition,
-};
 use wasm_bindgen::prelude::*;
 
 const SNAPSHOT_MAGIC: &[u8; 8] = b"PBAKVS1\0";
 const JOURNAL_MAGIC: &[u8; 8] = b"PBAKVJ1\0";
-const REDB_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("entries");
 
 #[repr(u8)]
 #[derive(Clone, Copy)]
@@ -177,10 +172,6 @@ impl NativeAnyStore {
 
 fn js_error(error: String) -> JsValue {
     JsValue::from_str(&error)
-}
-
-fn external_error(error: impl ToString) -> JsValue {
-    JsValue::from_str(&error.to_string())
 }
 
 fn parse_keys(keys: &Array) -> Result<Vec<String>, String> {
@@ -352,185 +343,9 @@ fn apply_record_payload(store: &mut NativeAnyStore, payload: &[u8]) -> Result<()
     Ok(())
 }
 
-#[wasm_bindgen]
-pub struct NativeRedbAnyStore {
-    db: Database,
-    total_size: usize,
-}
-
-#[wasm_bindgen]
-impl NativeRedbAnyStore {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Result<NativeRedbAnyStore, JsValue> {
-        let db = Database::builder()
-            .create_with_backend(InMemoryBackend::new())
-            .map_err(external_error)?;
-        ensure_redb_table(&db)?;
-        Ok(NativeRedbAnyStore { db, total_size: 0 })
-    }
-
-    pub fn get(&self, key: &str) -> Result<Option<Vec<u8>>, JsValue> {
-        let txn = self.db.begin_read().map_err(external_error)?;
-        let table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-        table
-            .get(key)
-            .map(|value| value.map(|value| value.value().to_vec()))
-            .map_err(external_error)
-    }
-
-    pub fn get_many(&self, keys: Array) -> Result<Array, JsValue> {
-        let keys = parse_keys(&keys).map_err(js_error)?;
-        let txn = self.db.begin_read().map_err(external_error)?;
-        let table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-        let values = Array::new();
-        for key in keys {
-            match table.get(key.as_str()).map_err(external_error)? {
-                Some(value) => values.push(&Uint8Array::from(value.value())),
-                None => values.push(&JsValue::UNDEFINED),
-            };
-        }
-        Ok(values)
-    }
-
-    pub fn has_many(&self, keys: Array) -> Result<Array, JsValue> {
-        let keys = parse_keys(&keys).map_err(js_error)?;
-        let txn = self.db.begin_read().map_err(external_error)?;
-        let table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-        let present = Array::new();
-        for key in keys {
-            present.push(&JsValue::from_bool(
-                table.get(key.as_str()).map_err(external_error)?.is_some(),
-            ));
-        }
-        Ok(present)
-    }
-
-    pub fn put(&mut self, key: String, value: Vec<u8>) -> Result<(), JsValue> {
-        self.put_entries(vec![(key, value)])
-    }
-
-    pub fn put_many(&mut self, keys: Array, values: Array) -> Result<(), JsValue> {
-        let entries = parse_key_values(&keys, &values).map_err(js_error)?;
-        self.put_entries(entries)
-    }
-}
-
-impl NativeRedbAnyStore {
-    fn put_entries(&mut self, entries: Vec<(String, Vec<u8>)>) -> Result<(), JsValue> {
-        let txn = self.db.begin_write().map_err(external_error)?;
-        let mut total_size = self.total_size;
-        {
-            let mut table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-            for (key, value) in entries {
-                let previous_len = table
-                    .insert(key.as_str(), value.as_slice())
-                    .map_err(external_error)?
-                    .map(|previous| previous.value().len());
-                if let Some(previous_len) = previous_len {
-                    total_size = total_size.saturating_sub(previous_len);
-                }
-                total_size += value.len();
-            }
-        }
-        txn.commit().map_err(external_error)?;
-        self.total_size = total_size;
-        Ok(())
-    }
-}
-
-#[wasm_bindgen]
-impl NativeRedbAnyStore {
-    pub fn delete(&mut self, key: &str) -> Result<bool, JsValue> {
-        let txn = self.db.begin_write().map_err(external_error)?;
-        let mut deleted = false;
-        let mut total_size = self.total_size;
-        {
-            let mut table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-            let previous_len = table
-                .remove(key)
-                .map_err(external_error)?
-                .map(|previous| previous.value().len());
-            if let Some(previous_len) = previous_len {
-                total_size = total_size.saturating_sub(previous_len);
-                deleted = true;
-            }
-        }
-        txn.commit().map_err(external_error)?;
-        self.total_size = total_size;
-        Ok(deleted)
-    }
-
-    pub fn delete_many(&mut self, keys: Array) -> Result<usize, JsValue> {
-        let keys = parse_keys(&keys).map_err(js_error)?;
-        let txn = self.db.begin_write().map_err(external_error)?;
-        let mut deleted = 0;
-        let mut total_size = self.total_size;
-        {
-            let mut table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-            for key in keys {
-                let previous_len = table
-                    .remove(key.as_str())
-                    .map_err(external_error)?
-                    .map(|previous| previous.value().len());
-                if let Some(previous_len) = previous_len {
-                    total_size = total_size.saturating_sub(previous_len);
-                    deleted += 1;
-                }
-            }
-        }
-        txn.commit().map_err(external_error)?;
-        self.total_size = total_size;
-        Ok(deleted)
-    }
-
-    pub fn clear(&mut self) -> Result<(), JsValue> {
-        let txn = self.db.begin_write().map_err(external_error)?;
-        {
-            let mut table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-            table.retain(|_, _| false).map_err(external_error)?;
-        }
-        txn.commit().map_err(external_error)?;
-        self.total_size = 0;
-        Ok(())
-    }
-
-    pub fn len(&self) -> Result<usize, JsValue> {
-        let txn = self.db.begin_read().map_err(external_error)?;
-        let table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-        table.len().map(|len| len as usize).map_err(external_error)
-    }
-
-    pub fn size(&self) -> usize {
-        self.total_size
-    }
-
-    pub fn entries(&self) -> Result<Array, JsValue> {
-        let txn = self.db.begin_read().map_err(external_error)?;
-        let table = txn.open_table(REDB_TABLE).map_err(external_error)?;
-        let entries = Array::new();
-        for entry in table.iter().map_err(external_error)? {
-            let (key, value) = entry.map_err(external_error)?;
-            let pair = Array::new();
-            pair.push(&JsValue::from_str(key.value()));
-            pair.push(&Uint8Array::from(value.value()));
-            entries.push(&pair);
-        }
-        Ok(entries)
-    }
-}
-
-fn ensure_redb_table(db: &Database) -> Result<(), JsValue> {
-    let txn = db.begin_write().map_err(external_error)?;
-    {
-        txn.open_table(REDB_TABLE).map_err(external_error)?;
-    }
-    txn.commit().map_err(external_error)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{decode_snapshot, NativeAnyStore, NativeRedbAnyStore};
+    use super::{decode_snapshot, NativeAnyStore};
 
     #[test]
     fn snapshot_roundtrips() {
@@ -556,20 +371,5 @@ mod tests {
         assert_eq!(store.get("a"), None);
         assert_eq!(store.get("b"), Some(vec![2, 3]));
         assert_eq!(store.size(), 2);
-    }
-
-    #[test]
-    fn redb_roundtrips() {
-        let mut store = NativeRedbAnyStore::new().unwrap();
-        store.put("a".to_string(), vec![1, 2, 3]).unwrap();
-        store.put("b".to_string(), vec![4]).unwrap();
-
-        assert_eq!(store.get("a").unwrap(), Some(vec![1, 2, 3]));
-        assert_eq!(store.len().unwrap(), 2);
-        assert_eq!(store.size(), 4);
-
-        assert!(store.delete("a").unwrap());
-        assert_eq!(store.get("a").unwrap(), None);
-        assert_eq!(store.size(), 1);
     }
 }

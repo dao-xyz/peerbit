@@ -7,15 +7,9 @@ key/value map in Rust, persists stores through an append-only operation log plus
 compacted snapshots where the file backend supports safe replacement, and
 preserves the existing `AnyStore` API surface.
 
-## Engines
-
-- `custom-wal` is the default. It keeps the live key/value map in Rust and uses
-  a compact binary WAL over a small persistence backend. Node uses `fs` and
-  browsers use OPFS sync access handles when the store runs in a dedicated
-  worker.
-- `redb` is available for transient benchmarking. It proves that redb compiles
-  into the same WASM package, but persistent redb storage is intentionally gated
-  until a byte-range Node/OPFS backend is implemented.
+The implementation keeps the live key/value map in Rust and uses a compact
+binary WAL over a small persistence backend. Node uses `fs` and browsers use
+OPFS sync access handles when the store runs in a dedicated worker.
 
 The OPFS backend uses two manifest slots with checksums for checkpoints. A new
 snapshot and empty journal are flushed before the inactive manifest slot is
