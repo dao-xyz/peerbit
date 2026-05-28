@@ -14,7 +14,7 @@ export type NativeLogEntry = {
 	};
 };
 
-export type NativeLogHeadEntry = {
+type NativeLogHeadEntry = {
 	hash: string;
 	meta: {
 		gid: string;
@@ -1690,7 +1690,7 @@ export class NativeLogBlockStore {
 export const createNativeLogBlockStore =
 	async (): Promise<NativeLogBlockStore> => NativeLogBlockStore.create();
 
-export type EntryV0EncodeInput = {
+type EntryV0EncodeInput = {
 	clockId: Uint8Array;
 	wallTime: bigint | number | string;
 	logical?: number;
@@ -1701,18 +1701,18 @@ export type EntryV0EncodeInput = {
 	payloadData: Uint8Array;
 };
 
-export type EntryV0StorageEncodeInput = EntryV0EncodeInput & {
+type EntryV0StorageEncodeInput = EntryV0EncodeInput & {
 	signature: Uint8Array;
 	signaturePublicKey: Uint8Array;
 	prehash?: number;
 };
 
-export type EntryV0EncodedStorage = {
+type EntryV0EncodedStorage = {
 	bytes: Uint8Array;
 	cid: string;
 };
 
-export type EntryV0PlainChainInput = {
+type EntryV0PlainChainInput = {
 	clockId: Uint8Array;
 	privateKey: Uint8Array;
 	publicKey: Uint8Array;
@@ -1725,7 +1725,7 @@ export type EntryV0PlainChainInput = {
 	payloadDatas: Uint8Array[];
 };
 
-export type EntryV0PlainEntryInput = {
+type EntryV0PlainEntryInput = {
 	clockId: Uint8Array;
 	privateKey: Uint8Array;
 	publicKey: Uint8Array;
@@ -1742,7 +1742,7 @@ export type EntryV0PlainEntryInput = {
 	resolveTrimmedEntries?: boolean;
 };
 
-export type EntryV0PlainEntriesInput = {
+type EntryV0PlainEntriesInput = {
 	clockId: Uint8Array;
 	privateKey: Uint8Array;
 	publicKey: Uint8Array;
@@ -1755,7 +1755,7 @@ export type EntryV0PlainEntriesInput = {
 	payloadDatas: Uint8Array[];
 };
 
-export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
+type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	byteLength: number;
 	signature?: Uint8Array;
 	next: string[];
@@ -1766,7 +1766,7 @@ export type EntryV0PreparedPlainEntry = EntryV0EncodedStorage & {
 	trimmedEntries?: NativeLogEntry[];
 };
 
-export type EntryV0CommittedPlainEntry = Omit<
+type EntryV0CommittedPlainEntry = Omit<
 	EntryV0PreparedPlainEntry,
 	"bytes"
 > & {
@@ -1775,7 +1775,7 @@ export type EntryV0CommittedPlainEntry = Omit<
 	trimmedEntryHashes?: string[];
 };
 
-export type RawEntryV0PreparedFacts = {
+type RawEntryV0PreparedFacts = {
 	cid: string;
 	hashDigestBytes: Uint8Array;
 	byteLength: number;
@@ -2371,7 +2371,7 @@ export const encodeEntryV0StorageBatchWithCids = async (
 		.map(([bytes, cid]) => ({ bytes, cid }));
 };
 
-export type PlainEntryV0CoreBenchmark = {
+type PlainEntryV0CoreBenchmark = {
 	totalMs: number;
 	inputCopyMs: number;
 	entryCoreMs: number;
@@ -2389,7 +2389,7 @@ export type PlainEntryV0CoreBenchmark = {
 	hashBytesTotal: number;
 };
 
-export type PlainEntryV0CryptoBenchmark = {
+type PlainEntryV0CryptoBenchmark = {
 	totalMs: number;
 	signableBytes: number;
 	storageBytes: number;
@@ -2403,7 +2403,7 @@ export type PlainEntryV0CryptoBenchmark = {
 	compactVerifyMs: number;
 };
 
-export type EntryV0StorageVerifyBenchmark = {
+type EntryV0StorageVerifyBenchmark = {
 	parseMs: number;
 	batchVerifyMs: number;
 	serialVerifyMs: number;
