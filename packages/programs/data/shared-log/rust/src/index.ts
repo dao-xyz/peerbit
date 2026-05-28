@@ -14,7 +14,7 @@ export type NativeReplicationRange = {
 	mode: number;
 };
 
-export type SampleOptions = {
+type SampleOptions = {
 	roleAge?: number;
 	now?: bigint | number | string;
 	onlyIntersecting?: boolean;
@@ -22,14 +22,14 @@ export type SampleOptions = {
 	peerFilter?: Iterable<string>;
 };
 
-export type FullReplicaLeaderOptions = {
+type FullReplicaLeaderOptions = {
 	roleAge?: number;
 	now?: bigint | number | string;
 	includeStrict?: boolean;
 	peerFilter?: Iterable<string>;
 };
 
-export type MaturedPeerOptions = {
+type MaturedPeerOptions = {
 	roleAge?: number;
 	now?: bigint | number | string;
 	selfHash: string;
@@ -101,7 +101,7 @@ export type AppendEntryBatchInput = {
 	replicas: number;
 };
 
-export type LeaderBatchInput = {
+type LeaderBatchInput = {
 	cursors: Iterable<bigint | number | string>;
 	replicas: number;
 };
@@ -111,11 +111,11 @@ export type LeaderGidBatchInput = {
 	replicas: number;
 };
 
-export type LeaderGidHashBatchInput = LeaderGidBatchInput & {
+type LeaderGidHashBatchInput = LeaderGidBatchInput & {
 	hash: string;
 };
 
-export type RepairDispatchBatchEntry = {
+type RepairDispatchBatchEntry = {
 	hash: string;
 	gid: string;
 	requestedReplicas: number;
@@ -124,7 +124,7 @@ export type RepairDispatchBatchEntry = {
 	knownEntryPeers?: Iterable<string>;
 };
 
-export type RepairDispatchEntryPlanBatchEntry = {
+type RepairDispatchEntryPlanBatchEntry = {
 	hash: string;
 	gid: string;
 	requestedReplicas: number;
@@ -133,7 +133,7 @@ export type RepairDispatchEntryPlanBatchEntry = {
 	knownEntryPeers?: Iterable<string>;
 };
 
-export type RepairDispatchPlanInput = {
+type RepairDispatchPlanInput = {
 	entries: Iterable<RepairDispatchBatchEntry>;
 	pendingModes: Iterable<string>;
 	pendingPeersByMode: ReadonlyMap<string, Iterable<string>>;
@@ -146,13 +146,13 @@ export type RepairDispatchPlanInput = {
 	selfHash: string;
 };
 
-export type RepairDispatchEntryPlanInput = Omit<
+type RepairDispatchEntryPlanInput = Omit<
 	RepairDispatchPlanInput,
 	"entries"
 > & {
 	entries: Iterable<RepairDispatchEntryPlanBatchEntry>;
 };
-export type ResidentRepairDispatchPlanInput = Omit<
+type ResidentRepairDispatchPlanInput = Omit<
 	RepairDispatchEntryPlanInput,
 	"entries"
 >;

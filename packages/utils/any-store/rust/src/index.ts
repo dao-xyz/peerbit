@@ -36,7 +36,7 @@ type WasmModule = {
 	NativeRedbAnyStore: new () => NativeAnyStore;
 };
 
-export type RustAnyStoreEngine = "custom-wal" | "redb";
+type RustAnyStoreEngine = "custom-wal" | "redb";
 
 export type RustAnyStoreOptions = {
 	compactOnClose?: boolean;

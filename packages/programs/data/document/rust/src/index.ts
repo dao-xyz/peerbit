@@ -1,6 +1,6 @@
 import * as wasmModuleImport from "../wasm/document_rust.js";
 
-export type DocumentContextInput = {
+type DocumentContextInput = {
 	created: bigint | number | string;
 	modified: bigint | number | string;
 	head: string;
@@ -8,7 +8,7 @@ export type DocumentContextInput = {
 	size: number;
 };
 
-export type DocumentCommitContextInput = {
+type DocumentCommitContextInput = {
 	existingCreated?: bigint | number | string | null;
 	modified: bigint | number | string;
 	head: string;
@@ -16,7 +16,7 @@ export type DocumentCommitContextInput = {
 	size: number;
 };
 
-export type DocumentCommitContextPlan = {
+type DocumentCommitContextPlan = {
 	created: bigint;
 	modified: bigint;
 	head: string;
