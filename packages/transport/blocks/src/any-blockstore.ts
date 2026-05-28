@@ -31,6 +31,12 @@ type NativeLogBlockStoreCarrier = {
 	getNativeLogBlockStoreHandle?: () => unknown;
 };
 
+type BlockGetOptions = GetOptions & {
+	raw?: boolean;
+	links?: string[];
+	hasher?: any;
+};
+
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
@@ -48,7 +54,7 @@ export class AnyBlockStore implements Blocks {
 	private async decodeStoredBytes(
 		cid: string,
 		bytes: Uint8Array,
-		options?: { hasher?: any },
+		options?: BlockGetOptions,
 	): Promise<Uint8Array> {
 		const cidObject = cidifyString(cid);
 		if (
@@ -68,14 +74,7 @@ export class AnyBlockStore implements Blocks {
 
 	async get(
 		cid: string,
-		options?: {
-			raw?: boolean;
-			links?: string[];
-			hasher?: any;
-			remote: {
-				timeout?: number;
-			};
-		},
+		options?: BlockGetOptions,
 	): Promise<Uint8Array | undefined> {
 		try {
 			const bytes = await this._store.get(cid);
@@ -96,7 +95,7 @@ export class AnyBlockStore implements Blocks {
 
 	async getMany(
 		cids: string[],
-		options?: GetOptions & { hasher?: any },
+		options?: BlockGetOptions,
 	): Promise<Array<Uint8Array | undefined>> {
 		const store = this._store as AnyStore & {
 			getMany?: (keys: string[]) => Promise<Array<Uint8Array | undefined>>;
@@ -112,13 +111,13 @@ export class AnyBlockStore implements Blocks {
 					),
 				);
 			}
-			return Promise.all(cids.map((cid) => this.get(cid, options as any)));
+			return Promise.all(cids.map((cid) => this.get(cid, options)));
 		} catch (error: any) {
 			if (
 				typeof error?.code === "string" &&
 				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
 			) {
-				return Promise.all(cids.map((cid) => this.get(cid, options as any)));
+				return Promise.all(cids.map((cid) => this.get(cid, options)));
 			}
 			throw error;
 		}
@@ -214,10 +213,10 @@ export class AnyBlockStore implements Blocks {
 			const result = this.putKnown(cid, bytes);
 			return isPromiseLike(result) ? result.then(() => [cid]) : [cid];
 		}
-		return this.putKnownManySlow(blocks, store);
+		return this.putKnownManyWithStoreBatch(blocks, store);
 	}
 
-	private async putKnownManySlow(
+	private async putKnownManyWithStoreBatch(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 		store: AnyStore & {
 			putMany?: (

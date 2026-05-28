@@ -16,9 +16,10 @@ export interface BlockStore extends IBlockStore {
 	getMany(
 		cids: string[],
 		options?: GetOptions,
-	): Promise<Array<Uint8Array | undefined>>;
-	hasMany(cids: string[]): Promise<boolean[]>;
-	rmMany(cids: string[]): Promise<number | void>;
+	): MaybePromise<Array<Uint8Array | undefined>>;
+	hasMany(cids: string[]): MaybePromise<boolean[]>;
+	rmMany(cids: string[]): MaybePromise<number | void>;
+	getNativeLogBlockStoreHandle?(): unknown;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	status(): StoreStatus;
