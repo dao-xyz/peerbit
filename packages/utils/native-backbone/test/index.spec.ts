@@ -3483,89 +3483,99 @@ describe("native peerbit backbone", () => {
 		expect(directory.syncAccessCount).to.be.greaterThan(0);
 	});
 
-	it("persists buffered native document WAL and signer facts through OPFS stores", async () => {
-		const directory = new FakeOPFSDirectoryHandle(true);
-		const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
-			directory,
-		);
-		const persistence = createBufferedNativeBackboneCoordinatePersistence(
-			opfsStore,
-			{ flushMaxPendingBytes: 1024 },
-		);
-		const source = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
-		const restored = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
-		for (const backbone of [source, restored]) {
-			backbone.configureDocumentSchemaIr(contextOnlySchema());
-			backbone.setDocumentContextHeadField(3);
-			backbone.setDocumentContextFields({
-				created: 1,
-				modified: 2,
-				head: 3,
-				gid: 4,
-				size: 5,
+	it("persists buffered native document WAL and signer facts through OPFS sync and writable stores", async () => {
+		for (const syncAccess of [true, false]) {
+			const directory = new FakeOPFSDirectoryHandle(syncAccess);
+			const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+				directory,
+			);
+			const persistence = createBufferedNativeBackboneCoordinatePersistence(
+				opfsStore,
+				{ flushMaxPendingBytes: 1024 },
+			);
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
 			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			for (const backbone of [source, restored]) {
+				backbone.configureDocumentSchemaIr(contextOnlySchema());
+				backbone.setDocumentContextHeadField(3);
+				backbone.setDocumentContextFields({
+					created: 1,
+					modified: 2,
+					head: 3,
+					gid: 4,
+					size: 5,
+				});
+			}
+
+			await persistence.hydrate(source);
+			source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+				{
+					wallTime: 11n,
+					logical: 1,
+					gid: "gid-opfs-document",
+					payloadData: new Uint8Array([1, 2, 3]),
+					replicas: 1,
+					selfHash: "peer",
+					documentIndex: {
+						key: "doc-opfs",
+						valuePrefixBytes: new Uint8Array(0),
+					},
+				},
+			);
+			const documentValue = source.documentValueBytes("doc-opfs");
+			expect(documentValue).to.exist;
+			source.putDocumentEncodedPartsStored(
+				"doc-opfs",
+				documentValue!,
+				new Uint8Array(0),
+			);
+			expect(source.documentPendingJournalLength).equal(2);
+			expect(source.documentSignerPendingJournalLength).equal(1);
+
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+			expect(await opfsStore.read("document-values.wal")).equal(undefined);
+			expect(await opfsStore.read("document-signers.wal")).equal(undefined);
+			await persistence.close?.();
+			expect(
+				(await opfsStore.read("document-values.wal"))?.byteLength,
+			).to.be.greaterThan(source.documentJournalHeader().byteLength);
+			expect(
+				(await opfsStore.read("document-signers.wal"))?.byteLength,
+			).to.be.greaterThan(source.documentSignerJournalHeader().byteLength);
+
+			await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(restored);
+			expect(restored.documentIndexLength).equal(1);
+			expect(
+				Array.from(restored.documentKeysExist(["doc-opfs"])),
+			).to.deep.equal([1]);
+			restored.clearDocumentIndex();
+			restored.putDocumentEncodedPartsStored(
+				"doc-opfs",
+				documentValue!,
+				new Uint8Array(0),
+			);
+			expect(
+				Array.from(
+					restored.documentPreviousSignaturePublicKey("doc-opfs")?.publicKey ??
+						[],
+				),
+			).to.deep.equal(Array.from(publicKey));
+			if (syncAccess) {
+				expect(directory.syncAccessCount).to.be.greaterThan(0);
+				expect(directory.asyncWritableCount).equal(0);
+			} else {
+				expect(directory.syncAccessCount).equal(0);
+				expect(directory.asyncWritableCount).to.be.greaterThan(0);
+			}
 		}
-
-		await persistence.hydrate(source);
-		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
-			wallTime: 11n,
-			logical: 1,
-			gid: "gid-opfs-document",
-			payloadData: new Uint8Array([1, 2, 3]),
-			replicas: 1,
-			selfHash: "peer",
-			documentIndex: {
-				key: "doc-opfs",
-				valuePrefixBytes: new Uint8Array(0),
-			},
-		});
-		const documentValue = source.documentValueBytes("doc-opfs");
-		expect(documentValue).to.exist;
-		source.putDocumentEncodedPartsStored(
-			"doc-opfs",
-			documentValue!,
-			new Uint8Array(0),
-		);
-		expect(source.documentPendingJournalLength).equal(2);
-		expect(source.documentSignerPendingJournalLength).equal(1);
-
-		expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
-		expect(await opfsStore.read("document-values.wal")).equal(undefined);
-		expect(await opfsStore.read("document-signers.wal")).equal(undefined);
-		await persistence.close?.();
-		expect(
-			(await opfsStore.read("document-values.wal"))?.byteLength,
-		).to.be.greaterThan(source.documentJournalHeader().byteLength);
-		expect(
-			(await opfsStore.read("document-signers.wal"))?.byteLength,
-		).to.be.greaterThan(source.documentSignerJournalHeader().byteLength);
-
-		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(restored);
-		expect(restored.documentIndexLength).equal(1);
-		expect(Array.from(restored.documentKeysExist(["doc-opfs"]))).to.deep.equal([
-			1,
-		]);
-		restored.clearDocumentIndex();
-		restored.putDocumentEncodedPartsStored(
-			"doc-opfs",
-			documentValue!,
-			new Uint8Array(0),
-		);
-		expect(
-			Array.from(
-				restored.documentPreviousSignaturePublicKey("doc-opfs")?.publicKey ??
-					[],
-			),
-		).to.deep.equal(Array.from(publicKey));
-		expect(directory.syncAccessCount).to.be.greaterThan(0);
 	});
 
 	it("appends coordinate WAL bytes through OPFS writable fallback", async () => {
