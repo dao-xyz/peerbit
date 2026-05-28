@@ -273,19 +273,19 @@ describe("index", () => {
 					changes.push(evt.detail);
 				});
 				const validatedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyValidated",
 				);
 				const preparedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPrepared",
 				);
 				const preparedPayloadAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayload",
 				);
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -489,11 +489,11 @@ describe("index", () => {
 					changes.push(evt.detail);
 				});
 				const sharedBatchAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedManyIndependent",
 				);
 				const sharedPayloadBatchAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadsManyIndependent",
 				);
 				const lowerBatchAppendSpy = sinon.spy(
@@ -501,7 +501,7 @@ describe("index", () => {
 					"appendLocallyPreparedManyIndependent",
 				);
 				const preparedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -782,7 +782,7 @@ describe("index", () => {
 					},
 				});
 				const sharedCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const lowerCommitOnlySpy = sinon.spy(
@@ -2340,15 +2340,15 @@ describe("index", () => {
 					},
 				});
 				const validatedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyValidated",
 				);
 				const preparedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPrepared",
 				);
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -2599,7 +2599,7 @@ describe("index", () => {
 						"delNativeDocumentBackend",
 					);
 					const strictNativeDeleteAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					try {
@@ -2988,11 +2988,11 @@ describe("index", () => {
 						"commitNativeDocumentAppend",
 					);
 					const strictNativeAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					const genericPayloadAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					try {
@@ -4606,7 +4606,7 @@ describe("index", () => {
 						},
 					});
 					const strictPayloadCommitOnlySpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					try {
@@ -5041,11 +5041,11 @@ describe("index", () => {
 						},
 					});
 					const strictPayloadCommitOnlySpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					const genericPayloadCommitOnlySpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					try {
@@ -7130,7 +7130,7 @@ describe("index", () => {
 						},
 					});
 					const strictPayloadCommitOnlySpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					try {
@@ -8221,15 +8221,15 @@ describe("index", () => {
 					});
 					const sharedAppendSpy = sinon.spy(store.docs.log, "append");
 					const trustedAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendLocallyValidated",
 					);
 					const nativeDeleteAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					const genericPayloadAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
@@ -8408,7 +8408,7 @@ describe("index", () => {
 					const backbone = (store.docs.log as any)._nativeBackbone as any;
 					const originalContextLookup = backbone.documentContext;
 					const nativeDeleteAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					const nativeIndex = (store.docs.index as any).index as {
@@ -8834,12 +8834,12 @@ describe("index", () => {
 						});
 						const strictCommitOnlyStub = sinon
 							.stub(
-								store.docs.log,
+								store.docs.log as any,
 								"appendStrictNativeDocumentPayloadCommitOnly",
 							)
 							.returns(undefined as any);
 						const genericPayloadAppendSpy = sinon.spy(
-							store.docs.log,
+							store.docs.log as any,
 							"appendLocallyPreparedPayloadCommitOnly",
 						);
 						try {
@@ -9374,10 +9374,13 @@ describe("index", () => {
 						},
 					});
 					const commitOnlyStub = sinon
-						.stub(store.docs.log, "appendStrictNativeDocumentPayloadCommitOnly")
+						.stub(
+							store.docs.log as any,
+							"appendStrictNativeDocumentPayloadCommitOnly",
+						)
 						.returns(undefined as any);
 					const genericPayloadAppendSpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					const fallbackSpy = sinon.spy(
@@ -9436,11 +9439,11 @@ describe("index", () => {
 						)
 						.returns(undefined);
 					const strictCommitOnlySpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendStrictNativeDocumentPayloadCommitOnly",
 					);
 					const genericCommitOnlySpy = sinon.spy(
-						store.docs.log,
+						store.docs.log as any,
 						"appendLocallyPreparedPayloadCommitOnly",
 					);
 					try {
@@ -9498,11 +9501,11 @@ describe("index", () => {
 					changes.push(evt.detail);
 				});
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const preparedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -9563,7 +9566,7 @@ describe("index", () => {
 				).equal(true);
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -9620,7 +9623,7 @@ describe("index", () => {
 				expect(descriptor?.kind).equal("and");
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -9663,7 +9666,7 @@ describe("index", () => {
 				expect(descriptor?.kind).equal("put");
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -9990,7 +9993,7 @@ describe("index", () => {
 				expect(descriptor?.kind).equal("put");
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -10029,7 +10032,7 @@ describe("index", () => {
 					},
 				});
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -10062,7 +10065,7 @@ describe("index", () => {
 					},
 				});
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -10106,7 +10109,7 @@ describe("index", () => {
 					},
 				});
 				const preparedPayloadCommitOnlySpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedPayloadCommitOnly",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -10143,11 +10146,11 @@ describe("index", () => {
 					},
 				});
 				const validatedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyValidated",
 				);
 				const preparedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -10188,7 +10191,7 @@ describe("index", () => {
 					},
 				});
 				const preparedAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPrepared",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");
@@ -10223,7 +10226,7 @@ describe("index", () => {
 					},
 				});
 				const batchAppendSpy = sinon.spy(
-					store.docs.log,
+					store.docs.log as any,
 					"appendLocallyPreparedManyIndependent",
 				);
 				const appendSpy = sinon.spy(store.docs.log, "append");

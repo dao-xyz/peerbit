@@ -702,6 +702,64 @@ type NativeDocumentAppendResult = {
 	appendCommit: LocalAppendCommitFacts;
 };
 
+type TrustedDocumentSharedLogAppendProperties = {
+	skipMissingNextJoin?: boolean;
+	resolveTrimmedEntries?: boolean;
+	payloadData?: Uint8Array;
+	nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+	prepareNativeBackboneDocumentIndex?: (
+		facts: NativeBackboneDocumentIndexAppendFactsInput,
+	) => NativeBackboneDocumentIndexCommitInput | undefined;
+	useNativeExistingDocumentContext?: boolean;
+	nativeBackboneDocumentDeleteKey?: string;
+};
+
+type TrustedDocumentSharedLogAppendManyProperties = {
+	resolveTrimmedEntries?: boolean;
+	nexts?: ShallowOrFullEntry<Operation>[][];
+	nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+	retainMaterializationBytes?: boolean;
+};
+
+type TrustedDocumentSharedLogAppendManyResult = {
+	entries: Entry<Operation>[];
+	materializeEntries?: Array<() => Entry<Operation>>;
+	removed: ShallowOrFullEntry<Operation>[];
+	appendCommits: LocalAppendCommitFacts[];
+};
+
+type TrustedDocumentSharedLog = {
+	appendLocallyPrepared(
+		data: Operation,
+		options?: SharedAppendOptions<Operation>,
+		properties?: TrustedDocumentSharedLogAppendProperties,
+	): Promise<NativeDocumentAppendResult>;
+	appendLocallyPreparedPayload(
+		payloadData: Uint8Array,
+		options?: SharedAppendOptions<Operation>,
+		properties?: TrustedDocumentSharedLogAppendProperties,
+	): Promise<NativeDocumentAppendResult>;
+	appendLocallyPreparedPayloadCommitOnly(
+		payloadData: Uint8Array,
+		options?: SharedAppendOptions<Operation>,
+		properties?: TrustedDocumentSharedLogAppendProperties,
+	): MaybePromise<NativeDocumentAppendResult | undefined>;
+	appendStrictNativeDocumentPayloadCommitOnly(
+		payloadData: Uint8Array,
+		options?: SharedAppendOptions<Operation>,
+		properties?: TrustedDocumentSharedLogAppendProperties,
+	): MaybePromise<NativeDocumentAppendResult | undefined>;
+	appendLocallyPreparedPayloadsManyIndependent(
+		payloadDatas: Uint8Array[],
+		options?: SharedAppendOptions<Operation>,
+		properties?: TrustedDocumentSharedLogAppendManyProperties,
+	): Promise<TrustedDocumentSharedLogAppendManyResult | undefined>;
+};
+
+const asTrustedDocumentSharedLog = (
+	log: SharedLog<Operation, any, any>,
+): TrustedDocumentSharedLog => log as unknown as TrustedDocumentSharedLog;
+
 type ContextualEncodedValueParts = {
 	prefix: Uint8Array;
 	suffix: Uint8Array;
@@ -3141,6 +3199,7 @@ export class Documents<
 	private commitNativeDocumentAppend(
 		input: NativeDocumentAppendCommitInput<T, I>,
 	): MaybePromise<NativeDocumentAppendTransaction<T, I>> {
+		const trustedLog = asTrustedDocumentSharedLog(this.log);
 		const appendOptions = {
 			...input.options,
 			meta: {
@@ -3209,7 +3268,7 @@ export class Documents<
 						);
 					}
 					return mapMaybePromise(
-						this.log.appendLocallyPrepared(
+						trustedLog.appendLocallyPrepared(
 							input.operation,
 							appendOptions,
 							appendProperties,
@@ -3223,12 +3282,12 @@ export class Documents<
 					);
 				}
 				const commitOnlyAppend = this.isNativeMode()
-					? this.log.appendStrictNativeDocumentPayloadCommitOnly(
+					? trustedLog.appendStrictNativeDocumentPayloadCommitOnly(
 							input.operationPayloadBytes,
 							appendOptions,
 							appendProperties,
 						)
-					: this.log.appendLocallyPreparedPayloadCommitOnly(
+					: trustedLog.appendLocallyPreparedPayloadCommitOnly(
 							input.operationPayloadBytes,
 							appendOptions,
 							appendProperties,
@@ -3381,9 +3440,10 @@ export class Documents<
 		if (this.isNativeMode()) {
 			throw this.nativeModeError("requires native payload append support");
 		}
-		let appended: Awaited<ReturnType<typeof this.log.appendLocallyPrepared>>;
+		const trustedLog = asTrustedDocumentSharedLog(this.log);
+		let appended: NativeDocumentAppendResult;
 		try {
-			appended = await this.log.appendLocallyPreparedPayload(
+			appended = await trustedLog.appendLocallyPreparedPayload(
 				input.operationPayloadBytes,
 				appendOptions,
 				appendProperties,
@@ -3396,7 +3456,7 @@ export class Documents<
 			) {
 				throw error;
 			}
-			appended = await this.log.appendLocallyPrepared(
+			appended = await trustedLog.appendLocallyPrepared(
 				new PutOperation({ data: input.documentBytes }),
 				appendOptions,
 				appendProperties,
@@ -3412,6 +3472,7 @@ export class Documents<
 	private async commitNativeDocumentAppendMany(
 		input: NativeDocumentAppendManyCommitInput<T, I>,
 	): Promise<DocumentAppendManyCommitFacts<T, I> | undefined> {
+		const trustedLog = asTrustedDocumentSharedLog(this.log);
 		const nativeBackboneDocumentIndexes =
 			await this.prepareNativeBackboneDocumentIndexCommitBatch(input.puts);
 		const nativeBackboneDocumentIndexInputs =
@@ -3440,9 +3501,8 @@ export class Documents<
 			}
 			return [next];
 		});
-		const appended =
-			await this.log.appendLocallyPreparedPayloadsManyIndependent(
-				input.puts.map((put) => put.operationPayloadBytes),
+		const appended = await trustedLog.appendLocallyPreparedPayloadsManyIndependent(
+			input.puts.map((put) => put.operationPayloadBytes),
 			{
 				...input.options,
 				replicate: input.options?.replicate,
@@ -4990,16 +5050,18 @@ export class Documents<
 		const previousForAppend =
 			this.nextFromIndexedContext(existingContext.head, existing) ??
 			(await getPreviousEntry());
-		const appended = await this.log.appendStrictNativeDocumentPayloadCommitOnly(
-			operationPayloadBytes,
-			{
-				...deleteOptions,
-				meta: {
-					next: [previousForAppend as Entry<Operation>],
-					type: EntryType.CUT,
-					...deleteOptions?.meta,
+		const trustedLog = asTrustedDocumentSharedLog(this.log);
+		const appended =
+			await trustedLog.appendStrictNativeDocumentPayloadCommitOnly(
+				operationPayloadBytes,
+				{
+					...deleteOptions,
+					meta: {
+						next: [previousForAppend as Entry<Operation>],
+						type: EntryType.CUT,
+						...deleteOptions?.meta,
+					},
 				},
-			},
 				{
 					skipMissingNextJoin: true,
 					resolveTrimmedEntries: false,

@@ -5405,8 +5405,8 @@ export class SharedLog<
 		return result;
 	}
 
-	/** Trusted local append path for callers that already validated the entry. */
-	async appendLocallyValidated(
+	// Trusted local append path for callers that already validated the entry.
+	private async appendLocallyValidated(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
 	): Promise<{
@@ -5433,8 +5433,8 @@ export class SharedLog<
 		return result;
 	}
 
-	/** Trusted local append path that lets the shared log own change application. */
-	async appendLocallyPrepared(
+	// Trusted local append path that lets the shared log own change application.
+	private async appendLocallyPrepared(
 		data: T,
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: {
@@ -5627,7 +5627,7 @@ export class SharedLog<
 		);
 	}
 
-	async appendLocallyPreparedPayload(
+	private async appendLocallyPreparedPayload(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: PreparedPayloadCommitOnlyProperties,
@@ -5639,8 +5639,8 @@ export class SharedLog<
 		});
 	}
 
-	/** Trusted local payload append path that keeps the public Entry lazy. */
-	appendLocallyPreparedPayloadCommitOnly(
+	// Trusted local payload append path that keeps the public Entry lazy.
+	private appendLocallyPreparedPayloadCommitOnly(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: PreparedPayloadCommitOnlyProperties,
@@ -5702,8 +5702,8 @@ export class SharedLog<
 		);
 	}
 
-	/** Strict native document path. Never falls back to compatibility append. */
-	appendStrictNativeDocumentPayloadCommitOnly(
+	// Strict native document path. Never falls back to compatibility append.
+	private appendStrictNativeDocumentPayloadCommitOnly(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: PreparedPayloadCommitOnlyProperties,
@@ -6889,7 +6889,7 @@ export class SharedLog<
 		};
 	}
 
-	async appendLocallyPreparedManyIndependent(
+	private async appendLocallyPreparedManyIndependent(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: PreparedPayloadsManyIndependentProperties<T>,
@@ -7023,7 +7023,7 @@ export class SharedLog<
 		};
 	}
 
-	async appendLocallyPreparedPayloadsManyIndependent(
+	private async appendLocallyPreparedPayloadsManyIndependent(
 		payloadDatas: Uint8Array[],
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: Omit<PreparedPayloadsManyIndependentProperties<T>, "payloadDatas">,

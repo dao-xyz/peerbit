@@ -175,7 +175,7 @@ describe("append", () => {
 			"getAppendFactsHashNumber",
 		);
 		try {
-			await store.log.appendLocallyPrepared(
+			await (store.log as any).appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
 				{
 					replicate: false,
@@ -252,7 +252,7 @@ describe("append", () => {
 			"persistPreparedCoordinate",
 		);
 		try {
-			const result = await store.log.appendLocallyPrepared(
+			const result = await (store.log as any).appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
 				{
 					replicate: false,
@@ -344,7 +344,7 @@ describe("append", () => {
 			"deleteEntryCoordinatesBatch",
 		);
 		try {
-			const first = await store.log.appendLocallyPrepared(
+			const first = await (store.log as any).appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
 				{
 					replicate: false,
@@ -355,7 +355,7 @@ describe("append", () => {
 			delIdsSpy.resetHistory();
 			nativeDeleteSpy.resetHistory();
 
-			await store.log.appendLocallyPrepared(
+			await (store.log as any).appendLocallyPrepared(
 				{ op: "ADD", value: "b" },
 				{
 					replicate: false,
@@ -419,7 +419,7 @@ describe("append", () => {
 			"materializePreparedAppendResultEntry",
 		);
 		try {
-			const result = await store.log.appendLocallyPreparedPayloadCommitOnly(
+			const result = await (store.log as any).appendLocallyPreparedPayloadCommitOnly(
 				new Uint8Array([1, 2, 3]),
 				{
 					replicate: false,
@@ -462,7 +462,7 @@ describe("append", () => {
 				timeUntilRoleMaturity: 0,
 			},
 		});
-		const result = await store.log.appendLocallyPrepared(
+		const result = await (store.log as any).appendLocallyPrepared(
 			{ op: "ADD", value: "a" },
 			{
 				replicate: false,
@@ -515,7 +515,7 @@ describe("append", () => {
 			"countReplicationSegments",
 		);
 		try {
-			await store.log.appendLocallyPrepared(
+			await (store.log as any).appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
 				{
 					replicate: false,
@@ -550,7 +550,7 @@ describe("append", () => {
 			.stub(store.log as any, "_getTopicSubscribers")
 			.resolves([]);
 		try {
-			await store.log.appendLocallyPrepared(
+			await (store.log as any).appendLocallyPrepared(
 				{ op: "ADD", value: "a" },
 				{ replicate: false },
 			);
