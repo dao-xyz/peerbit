@@ -2087,11 +2087,11 @@ const loadWasm = async (): Promise<WasmModule> => {
 	return wasm;
 };
 
-export type NativeBackboneLeaderSample = {
+type NativeBackboneLeaderSample = {
 	intersecting: boolean;
 };
 
-export type NativeBackboneFindLeaderOptions = {
+type NativeBackboneFindLeaderOptions = {
 	roleAge?: number;
 	now?: bigint | number | string;
 	peerFilter?: Iterable<string>;
@@ -2102,7 +2102,7 @@ export type NativeBackboneFindLeaderOptions = {
 	includeStrictFullReplica?: boolean;
 };
 
-export type NativeBackboneAppendDeliveryPlan = {
+type NativeBackboneAppendDeliveryPlan = {
 	hasRemoteRecipients: boolean;
 	noPeerError: boolean;
 	defaultSendSilent: boolean;
@@ -2113,7 +2113,7 @@ export type NativeBackboneAppendDeliveryPlan = {
 	authoritativeRecipients: string[];
 };
 
-export type NativeBackboneCoordinatePlan = {
+type NativeBackboneCoordinatePlan = {
 	hash: string;
 	hashNumber: number | bigint;
 	hashNumberString: string;
@@ -2124,7 +2124,7 @@ export type NativeBackboneCoordinatePlan = {
 	requestedReplicas: number;
 };
 
-export type NativeBackboneDocumentContextFacts = {
+type NativeBackboneDocumentContextFacts = {
 	created: bigint;
 	modified: bigint;
 	head: string;
@@ -2138,18 +2138,18 @@ export type NativeBackboneCoordinateFields = NativeBackboneCoordinatePlan & {
 	metaBytes: Uint8Array;
 };
 
-export type NativeBackboneLeaderPlan = {
+type NativeBackboneLeaderPlan = {
 	coordinates: Array<number | bigint>;
 	coordinateStrings?: string[];
 	leaders: Map<string, NativeBackboneLeaderSample>;
 };
 
-export type NativeBackboneLeaderGidBatchInput = {
+type NativeBackboneLeaderGidBatchInput = {
 	gid: string;
 	replicas: number;
 };
 
-export type NativeBackboneRequestPruneHints = {
+type NativeBackboneRequestPruneHints = {
 	entries: Map<
 		string,
 		{ hash: string; gid: string; data?: Uint8Array; replicas?: number }
@@ -2171,28 +2171,28 @@ export type NativeBackboneRequestPruneHintColumns = {
 	peerHistoryRemovedFlags: Uint8Array;
 };
 
-export type NativeBackboneRequestPruneAllConfirmed = {
+type NativeBackboneRequestPruneAllConfirmed = {
 	allConfirmed: boolean;
 	peerHistoryGids: string[];
 };
 
-export type NativeBackboneLeaderCursorBatchInput = {
+type NativeBackboneLeaderCursorBatchInput = {
 	cursors: Iterable<bigint | number | string>;
 	replicas: number;
 };
 
-export type NativeBackboneEntryAssignmentPlan = NativeBackboneLeaderPlan & {
+type NativeBackboneEntryAssignmentPlan = NativeBackboneLeaderPlan & {
 	assignedToRangeBoundary: boolean;
 };
 
-export type NativeBackboneRepairDispatchEntry = {
+type NativeBackboneRepairDispatchEntry = {
 	hash: string;
 	gid: string;
 	requestedReplicas: number;
 	coordinates: Iterable<bigint | number | string>;
 };
 
-export type NativeBackboneRepairDispatchInput = {
+type NativeBackboneRepairDispatchInput = {
 	entries: Iterable<NativeBackboneRepairDispatchEntry>;
 	pendingModes: Iterable<string>;
 	pendingPeersByMode: ReadonlyMap<string, Iterable<string>>;
@@ -2205,17 +2205,17 @@ export type NativeBackboneRepairDispatchInput = {
 	selfHash: string;
 };
 
-export type NativeBackboneResidentRepairDispatchInput = Omit<
+type NativeBackboneResidentRepairDispatchInput = Omit<
 	NativeBackboneRepairDispatchInput,
 	"entries"
 >;
 
-export type NativeBackboneRepairDispatchPlan = Map<
+type NativeBackboneRepairDispatchPlan = Map<
 	string,
 	Map<string, string[]>
 >;
 
-export type NativeBackboneCommittedEntry = {
+type NativeBackboneCommittedEntry = {
 	cid: string;
 	hash: string;
 	next: string[];
@@ -2232,7 +2232,7 @@ type NativeBackboneStorageBackedEntry = NativeBackboneCommittedEntry & {
 	bytes: Uint8Array;
 };
 
-export type NativeBackboneLogEntry = {
+type NativeBackboneLogEntry = {
 	hash: string;
 	gid: string;
 	next: string[];
@@ -2266,7 +2266,7 @@ export type NativeBackboneCoordinateCommitColumns = {
 	requestedReplicaValues?: Uint32Array;
 };
 
-export type NativeBackboneRawReceivePreparedFacts = {
+type NativeBackboneRawReceivePreparedFacts = {
 	cid: string;
 	hashDigestBytes: Uint8Array;
 	byteLength: number;
@@ -2316,7 +2316,7 @@ export type NativeBackboneRawReceiveGroupAssignmentPlan =
 		assignedToRangeBoundary: boolean;
 	};
 
-export type NativeBackboneRawReceiveFastDropPlan = {
+type NativeBackboneRawReceiveFastDropPlan = {
 	canDrop: boolean;
 	groupCount: number;
 	plannedHashCount: number;
@@ -2334,12 +2334,12 @@ export type NativeBackboneRawReceiveSelectionPlan = {
 	retainedGroupLeaderPlans?: NativeBackboneRawReceiveGroupLeaderPlan[];
 };
 
-export type NativeBackbonePreparedRawReceiveColumnsAndSelection = {
+type NativeBackbonePreparedRawReceiveColumnsAndSelection = {
 	columns: NativeBackboneRawReceivePreparedFactsColumns;
 	selection?: NativeBackboneRawReceiveSelectionPlan;
 };
 
-export type NativeBackboneRawReceivePreparedFactsColumns = [
+type NativeBackboneRawReceivePreparedFactsColumns = [
 	string[],
 	Array<Uint8Array | undefined>,
 	Uint32Array,
@@ -2433,7 +2433,7 @@ type NativeBackboneRawReceiveSelectionRow = [
 	Uint32Array?,
 ];
 
-export type NativeBackboneTrimmedEntry = {
+type NativeBackboneTrimmedEntry = {
 	hash: string;
 	gid: string;
 	next: string[];
@@ -2448,7 +2448,7 @@ export type NativeBackboneTrimmedEntry = {
 	};
 };
 
-export type NativeBackboneAppendInput = {
+type NativeBackboneAppendInput = {
 	wallTime: bigint | number | string;
 	logical?: number;
 	gid: string;
@@ -2480,7 +2480,7 @@ export type NativeBackboneAppendInput = {
 		documentDeleteKey?: string;
 	};
 
-export type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
+type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
 	entries: Array<{
 		wallTime: bigint | number | string;
 		logical?: number;
@@ -2500,7 +2500,7 @@ export type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
 	documentDeleteTrimmedHeads?: boolean;
 };
 
-export type NativeBackboneCommittedLatestDocumentIndexBatchInput = {
+type NativeBackboneCommittedLatestDocumentIndexBatchInput = {
 	entries: Array<{
 		wallTime: bigint | number | string;
 		logical?: number;
@@ -2521,7 +2521,7 @@ export type NativeBackboneCommittedLatestDocumentIndexBatchInput = {
 	documentDeleteTrimmedHeads?: boolean;
 };
 
-export type NativeBackboneStorageAppendInput = NativeBackboneAppendInput & {
+type NativeBackboneStorageAppendInput = NativeBackboneAppendInput & {
 	next?: Iterable<string>;
 };
 
@@ -2537,7 +2537,7 @@ export type NativeBackboneAppendResult = {
 	documentPreviousContext?: NativeBackboneDocumentContextFacts;
 };
 
-export type NativeBackboneStorageAppendResult = {
+type NativeBackboneStorageAppendResult = {
 	entry: NativeBackboneStorageBackedEntry;
 	coordinate: NativeBackboneCoordinatePlan;
 	leaders?: Map<string, NativeBackboneLeaderSample>;
@@ -2556,7 +2556,7 @@ type NativeBackboneLogGraphOptions = {
 	) => number;
 };
 
-export type NativeBackboneLoopBenchmark = {
+type NativeBackboneLoopBenchmark = {
 	totalMs: number;
 	logLength: number;
 	blockLength: number;
@@ -2564,7 +2564,7 @@ export type NativeBackboneLoopBenchmark = {
 	documentLength: number;
 };
 
-export type NativeBackboneAppendPlan = {
+type NativeBackboneAppendPlan = {
 	coordinates: Array<number | bigint>;
 	leaders?: Map<string, NativeBackboneLeaderSample>;
 	isLeader: boolean;
@@ -2573,7 +2573,7 @@ export type NativeBackboneAppendPlan = {
 	coordinate: NativeBackboneCoordinatePlan;
 };
 
-export type NativeBackboneReceiveCoordinatePlan = {
+type NativeBackboneReceiveCoordinatePlan = {
 	coordinates: Array<number | bigint>;
 	leaders?: Map<string, NativeBackboneLeaderSample>;
 	isLeader: boolean;
@@ -2581,7 +2581,7 @@ export type NativeBackboneReceiveCoordinatePlan = {
 	coordinate: NativeBackboneCoordinatePlan;
 };
 
-export type NativeBackboneAppendEntryBatchInput = {
+type NativeBackboneAppendEntryBatchInput = {
 	entryHash: string;
 	gid: string;
 	hashNumber?: bigint | number | string;
@@ -2589,7 +2589,7 @@ export type NativeBackboneAppendEntryBatchInput = {
 	replicas: number;
 };
 
-export type NativeBackboneRangeInput = {
+type NativeBackboneRangeInput = {
 	id: string;
 	hash: string;
 	timestamp: bigint | number | string;
@@ -2601,7 +2601,7 @@ export type NativeBackboneRangeInput = {
 	mode: number;
 };
 
-export type NativeBackboneDocumentSchemaStats = {
+type NativeBackboneDocumentSchemaStats = {
 	rootFields: number;
 	nodeCount: number;
 	genericNodes: number;
@@ -2619,7 +2619,7 @@ export type NativeBackboneSimpleDocumentProjectionPlan = {
 	sourceValues: string[];
 };
 
-export type NativeBackboneSimpleDocumentProjectionContext = {
+type NativeBackboneSimpleDocumentProjectionContext = {
 	created: bigint | number | string;
 	modified: bigint | number | string;
 	head?: string;
@@ -2753,7 +2753,7 @@ const nativeBackboneAppendProfileKeys = [
 ] as const satisfies readonly (keyof NativeBackboneAppendProfile)[];
 
 export type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];
-export type NativeBackboneDocumentFieldValue =
+type NativeBackboneDocumentFieldValue =
 	| ["bool", boolean]
 	| ["i64", string]
 	| ["u64", string]
