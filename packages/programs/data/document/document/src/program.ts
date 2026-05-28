@@ -2133,7 +2133,6 @@ export class Documents<
 			options.replicate !== false;
 		this.assertNativeModeOpenOptions(options);
 
-		/* eslint-disable */
 		if (Program.isPrototypeOf(this._clazz)) {
 			if (!this.canOpen) {
 				throw new Error(
