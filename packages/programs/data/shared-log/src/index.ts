@@ -58,6 +58,7 @@ import type {
 	NativeBackboneCoordinatePersistenceAdapter,
 	NativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
+	NativeBackboneRequestPruneHintColumns,
 	NativeBackboneRawReceiveGroupAssignmentPlan,
 	NativeBackboneRawReceiveGroupIndexPlan,
 	NativeBackboneRawReceiveGroupLeaderPlan,
@@ -392,16 +393,6 @@ type NativeRequestPruneLeaderHints = {
 	localLeaderFlags?: ArrayLike<boolean | number>;
 	nativeAllConfirmed?: boolean;
 	nativeBackbonePeerHistoryCleaned?: boolean;
-};
-
-type NativeBackboneRequestPruneHintColumns = {
-	gids: ArrayLike<string | undefined | null>;
-	data: ArrayLike<Uint8Array | undefined | null>;
-	presentBlockFlags: ArrayLike<number>;
-	localLeaderFlags: ArrayLike<number>;
-	replicaCounts: ArrayLike<number>;
-	peerHistoryGids: string[];
-	peerHistoryRemovedFlags: ArrayLike<number>;
 };
 
 const countTruthyValues = (values?: ArrayLike<boolean | number>) => {
