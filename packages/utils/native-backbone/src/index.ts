@@ -4046,7 +4046,7 @@ const rawReceiveSelectionFromRow = (
 	return plan;
 };
 
-export class NativeBackboneLogGraph {
+class NativeBackboneLogGraph {
 	constructor(
 		private readonly native: NativePeerbitBackboneHandle,
 		private readonly options?: NativeBackboneLogGraphOptions,
@@ -4971,7 +4971,7 @@ export class NativeBackboneLogGraph {
 	}
 }
 
-export class NativeBackboneBlockStore {
+class NativeBackboneBlockStore {
 	constructor(private readonly native: NativePeerbitBackboneHandle) {}
 
 	status(): "open" {
