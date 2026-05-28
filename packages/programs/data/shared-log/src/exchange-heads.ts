@@ -413,6 +413,35 @@ const isIterableRawReceiveHashSelection = (
 ): selection is Iterable<string> =>
 	typeof (selection as Iterable<string>)[Symbol.iterator] === "function";
 
+type RawExchangeEntryMaterializeOptions<T> = {
+	bytes: Uint8Array;
+	hash: string;
+	gidRefrences: string[];
+	size: number;
+	keychain: unknown;
+	encoding: Log<T>["encoding"];
+};
+
+const materializeRawExchangeEntry = <T>(
+	options: RawExchangeEntryMaterializeOptions<T>,
+): Entry<T> => {
+	const entry = deserialize(options.bytes, Entry) as Entry<T>;
+	(entry as unknown as { hash: string | undefined }).hash = undefined;
+	Entry.prepareMultihashBytes(entry, options.bytes, options.hash);
+	entry.hash = options.hash;
+	entry.size = options.size;
+	entry.init({
+		keychain: options.keychain as any,
+		encoding: options.encoding,
+	});
+	prepareRawExchangeHeadEntryFacts(entry, {
+		hash: options.hash,
+		bytes: options.bytes,
+		gidRefrences: options.gidRefrences,
+	});
+	return entry;
+};
+
 class PreparedRawExchangeEntry<T> extends Entry<T> {
 	hash!: string;
 	size: number;
@@ -614,18 +643,12 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		if (this.materialized) {
 			return this.materialized;
 		}
-		const entry = deserialize(this.bytes, Entry) as Entry<T>;
-		entry.hash = undefined as any;
-		Entry.prepareMultihashBytes(entry, this.bytes, this.hash);
-		entry.hash = this.hash;
-		entry.size = this.size;
-		entry.init({
-			keychain: this.keychain as any,
-			encoding: this.encoding,
-		});
-		prepareRawExchangeHeadEntryFacts(entry, {
+		const entry = materializeRawExchangeEntry<T>({
 			hash: this.hash,
 			bytes: this.bytes,
+			size: this.size,
+			keychain: this.keychain,
+			encoding: this.encoding,
 			gidRefrences: [],
 		});
 		this.materialized = entry;
@@ -1561,16 +1584,14 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			if (calculatedHashes[index] !== head.hash) {
 				throw new Error("Raw exchange head hash did not match bytes");
 			}
-			const entry = deserialize(head.bytes, Entry) as Entry<any>;
-			entry.hash = undefined as any;
-			Entry.prepareMultihashBytes(entry, head.bytes, head.hash);
-			entry.hash = head.hash;
-			entry.size = head.bytes.byteLength;
-			entry.init({
+			const entry = materializeRawExchangeEntry({
+				hash: head.hash,
+				bytes: head.bytes,
+				size: head.bytes.byteLength,
 				keychain: log.keychain,
 				encoding: log.encoding,
+				gidRefrences: head.gidRefrences,
 			});
-			prepareRawExchangeHeadEntryFacts(entry, head);
 			return new EntryWithRefs({
 				entry,
 				gidRefrences: head.gidRefrences,
