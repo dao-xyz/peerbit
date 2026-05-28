@@ -2752,7 +2752,7 @@ const nativeBackboneAppendProfileKeys = [
 	"nativeBackboneRawReceiveCoordinateCommitMs",
 ] as const satisfies readonly (keyof NativeBackboneAppendProfile)[];
 
-export type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];
+type NativeBackboneDocumentEntry = [key: string, value: Uint8Array];
 type NativeBackboneDocumentFieldValue =
 	| ["bool", boolean]
 	| ["i64", string]
