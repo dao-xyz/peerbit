@@ -17,7 +17,6 @@ import {
 } from "@peerbit/log";
 import { Log } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
-import type { NativeBackboneAppendProfile } from "@peerbit/native-backbone";
 import { TransportMessage } from "./message.js";
 import type { SyncProfileFn } from "./sync/index.js";
 import {
@@ -28,6 +27,22 @@ import {
 
 const logger = loggerFn("peerbit:shared-log:exchange-heads");
 const warn = logger.newScope("warn");
+
+type NativeBackboneAppendProfile = {
+	nativeBackboneRawReceiveInputCopyMs: number;
+	nativeBackboneRawReceivePrepareMs: number;
+	nativeBackboneRawReceiveDigestMs: number;
+	nativeBackboneRawReceiveCidStringMs: number;
+	nativeBackboneRawReceiveExpectedCidMs: number;
+	nativeBackboneRawReceiveStorageParseMs: number;
+	nativeBackboneRawReceiveMetaParseMs: number;
+	nativeBackboneRawReceivePayloadParseMs: number;
+	nativeBackboneRawReceiveSignatureParseMs: number;
+	nativeBackboneRawReceiveSignableMs: number;
+	nativeBackboneRawReceiveVerifyBatchMs: number;
+	nativeBackboneRawReceiveVerifyFallbackMs: number;
+	nativeBackboneRawReceivePrepareColumnsMs: number;
+};
 
 type RawReceiveNativeBackbone = {
 	prepareRawReceiveBatch(blocks: Uint8Array[]): PreparedRawEntryV0Facts[];
