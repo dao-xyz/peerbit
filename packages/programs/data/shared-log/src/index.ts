@@ -8309,9 +8309,6 @@ export class SharedLog<
 					delete: (hash: string) => {
 						accumulator.delete(hash);
 					},
-					finalize: () => {
-						return undefined as any;
-					},
 					size: () => accumulator.size,
 					clear: () => accumulator.clear(),
 					value: accumulator,
