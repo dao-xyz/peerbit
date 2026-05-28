@@ -250,20 +250,6 @@ export const tryProjectDocumentIndexSimple = (
 			)
 		: undefined;
 
-export const projectDocumentIndexSimple = async (
-	encodedDocument: Uint8Array,
-	plan: SimpleDocumentProjectionPlan,
-	context: SimpleDocumentProjectionContext,
-): Promise<Uint8Array | undefined> => {
-	const wasm = await loadWasm();
-	return projectDocumentIndexSimpleWithWasm(
-		wasm,
-		encodedDocument,
-		plan,
-		context,
-	);
-};
-
 export const extractDocumentFieldSimple = async (
 	encodedDocument: Uint8Array,
 	plan: SimpleDocumentFieldExtractionPlan,
