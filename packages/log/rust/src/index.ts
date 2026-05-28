@@ -497,12 +497,7 @@ type WasmModule = {
 
 const loadLogWasm = () => loadWasm<WasmModule>();
 
-const copyBytes = (bytes: Uint8Array): Uint8Array =>
-	new Uint8Array(
-		bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-			? bytes
-			: bytes.slice(),
-	);
+const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
 
 const bytesEqual = (left: Uint8Array, right: Uint8Array): boolean => {
 	if (left === right) {

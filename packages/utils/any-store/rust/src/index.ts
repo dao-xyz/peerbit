@@ -75,10 +75,7 @@ const loadWasm = async (): Promise<WasmModule> => {
 	return wasm;
 };
 
-const copyBytes = (bytes: Uint8Array): Uint8Array =>
-	new Uint8Array(bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
-		? bytes
-		: bytes.slice());
+const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
 
 export class RustAnyStore implements AnyStore {
 	private native?: NativeAnyStore;

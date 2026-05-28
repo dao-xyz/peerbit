@@ -2922,7 +2922,7 @@ const concatBytes = (chunks: Uint8Array[]): Uint8Array => {
 	return out;
 };
 
-const copyBytes = (bytes: Uint8Array): Uint8Array => bytes.slice();
+const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
 
 const rowsToNumbers = (
 	resolution: RangeResolution,
