@@ -2353,14 +2353,14 @@ export class Documents<
 									type: "put",
 									value: document!,
 									operation,
-									entry: entry as any as Entry<PutOperation>,
+									entry: entry as unknown as Entry<PutOperation>,
 									previousEntries,
 								}
 							: {
 									type: "delete",
 									value: deleteValue,
 									operation,
-									entry: entry as any as Entry<DeleteOperation>,
+									entry: entry as unknown as Entry<DeleteOperation>,
 								},
 					))
 				) {
@@ -4132,7 +4132,7 @@ export class Documents<
 						);
 					}
 					return finishIndexed(
-						coerceWithIndexed(withContext, commit.document as any as I),
+						coerceWithIndexed(withContext, commit.document as unknown as I),
 					);
 				};
 				const persisted = persistNativeBackboneDocumentIndexCommit();
