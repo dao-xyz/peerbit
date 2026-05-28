@@ -202,6 +202,13 @@
     * @peerbit/pubsub-interface bumped from ^3.0.2 to ^3.0.3
     * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
+## [6.0.31](https://github.com/dao-xyz/peerbit/compare/program-v6.0.30...program-v6.0.31) (2026-05-28)
+
+
+### Bug Fixes
+
+* **program:** keep libp2p test utils dev-only ([#945](https://github.com/dao-xyz/peerbit/issues/945)) ([bd83a88](https://github.com/dao-xyz/peerbit/commit/bd83a88ef1564f455a4b6cc8e24bc902bd291bdd))
+
 ## [6.0.30](https://github.com/dao-xyz/peerbit/compare/program-v6.0.29...program-v6.0.30) (2026-05-26)
 
 
