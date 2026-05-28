@@ -2767,7 +2767,7 @@ export type NativeBackboneOptions = {
 	publicKey: Uint8Array;
 };
 
-export type NativeBackboneCoordinatePersistenceFiles = {
+type NativeBackboneCoordinatePersistenceFiles = {
 	snapshot?: string;
 	journal?: string;
 	documentSnapshot?: string;
@@ -2831,7 +2831,7 @@ export type NativeBackboneNodeCoordinatePersistenceOptions =
 		writeBufferMaxBytes?: number;
 	};
 
-export const nativeBackboneCoordinatePersistenceFiles = {
+const nativeBackboneCoordinatePersistenceFiles = {
 	snapshot: "coordinates.bin",
 	journal: "coordinates.wal",
 	documentSnapshot: "document-values.bin",
