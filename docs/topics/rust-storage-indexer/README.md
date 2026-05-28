@@ -22,8 +22,9 @@ and root indexer to the Rust-backed implementations:
   package enables the optional native log graph when `@peerbit/log-rust` is
   available.
 
-The helper is exported from `peerbit/rust` so regular `peerbit` imports do not
-load the Rust/WASM packages unless the application opts in.
+The helper is exported from `peerbit/rust`; its Rust/WASM packages are optional
+dependencies, and regular `peerbit` imports do not load them unless the
+application opts in.
 
 ## Options
 

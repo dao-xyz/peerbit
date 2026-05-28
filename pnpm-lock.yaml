@@ -370,9 +370,6 @@ importers:
       '@peerbit/any-store-opfs':
         specifier: workspace:*
         version: link:../../utils/any-store/opfs
-      '@peerbit/any-store-rust':
-        specifier: workspace:*
-        version: link:../../utils/any-store/rust
       '@peerbit/blocks':
         specifier: workspace:*
         version: link:../../transport/blocks
@@ -385,9 +382,6 @@ importers:
       '@peerbit/indexer-interface':
         specifier: workspace:*
         version: link:../../utils/indexer/interface
-      '@peerbit/indexer-rust':
-        specifier: workspace:*
-        version: link:../../utils/indexer/rust
       '@peerbit/indexer-simple':
         specifier: workspace:*
         version: link:../../utils/indexer/simple
@@ -397,9 +391,6 @@ importers:
       '@peerbit/keychain':
         specifier: workspace:*
         version: link:../../utils/keychain
-      '@peerbit/log-rust':
-        specifier: workspace:*
-        version: link:../../log/rust
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../../utils/logger
@@ -455,6 +446,16 @@ importers:
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
+    optionalDependencies:
+      '@peerbit/any-store-rust':
+        specifier: workspace:*
+        version: link:../../utils/any-store/rust
+      '@peerbit/indexer-rust':
+        specifier: workspace:*
+        version: link:../../utils/indexer/rust
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:../../log/rust
 
   packages/clients/peerbit-react:
     dependencies:

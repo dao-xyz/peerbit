@@ -82,16 +82,13 @@
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-opfs": "workspace:*",
-		"@peerbit/any-store-rust": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
 		"@peerbit/build-assets": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/indexer-interface": "workspace:*",
-		"@peerbit/indexer-rust": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/keychain": "workspace:*",
-		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
@@ -105,6 +102,11 @@
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
 		"uint8arrays": "^5.1.0"
+	},
+	"optionalDependencies": {
+		"@peerbit/any-store-rust": "workspace:*",
+		"@peerbit/indexer-rust": "workspace:*",
+		"@peerbit/log-rust": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.14",
