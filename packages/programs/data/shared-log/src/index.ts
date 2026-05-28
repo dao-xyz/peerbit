@@ -579,6 +579,27 @@ type NativeBackboneDocumentIndexPreparer = (
 	facts: NativeBackboneDocumentIndexAppendFacts,
 ) => NativeBackboneDocumentIndexCommitInput | undefined;
 
+type NativeBackboneDocumentCommitOptions = {
+	nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
+	prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
+	useNativeExistingDocumentContext?: boolean;
+	nativeBackboneDocumentDeleteKey?: string;
+};
+
+type PreparedPayloadCommitOnlyProperties =
+	NativeBackboneDocumentCommitOptions & {
+		skipMissingNextJoin?: boolean;
+		resolveTrimmedEntries?: boolean;
+	};
+
+type PreparedPayloadsManyIndependentProperties<T> = {
+	resolveTrimmedEntries?: boolean;
+	payloadDatas?: Uint8Array[];
+	nexts?: ShallowOrFullEntry<T>[][];
+	nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
+	retainMaterializationBytes?: boolean;
+};
+
 type PreparedPayloadCommitOnlyResult<T, R extends "u32" | "u64"> = {
 	entry: Entry<T>;
 	removed: ShallowOrFullEntry<T>[];
@@ -5358,14 +5379,7 @@ export class SharedLog<
 	async appendLocallyPreparedPayload(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: {
-			skipMissingNextJoin?: boolean;
-			resolveTrimmedEntries?: boolean;
-			nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-			prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-			useNativeExistingDocumentContext?: boolean;
-			nativeBackboneDocumentDeleteKey?: string;
-		},
+		properties?: PreparedPayloadCommitOnlyProperties,
 	) {
 		return this.appendLocallyPrepared(undefined as T, options, {
 			skipMissingNextJoin: properties?.skipMissingNextJoin,
@@ -5378,14 +5392,7 @@ export class SharedLog<
 	appendLocallyPreparedPayloadCommitOnly(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: {
-			skipMissingNextJoin?: boolean;
-			resolveTrimmedEntries?: boolean;
-				nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-				prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-				useNativeExistingDocumentContext?: boolean;
-				nativeBackboneDocumentDeleteKey?: string;
-			},
+		properties?: PreparedPayloadCommitOnlyProperties,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
@@ -5448,14 +5455,7 @@ export class SharedLog<
 	appendStrictNativeDocumentPayloadCommitOnly(
 		payloadData: Uint8Array,
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: {
-			skipMissingNextJoin?: boolean;
-			resolveTrimmedEntries?: boolean;
-				nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-				prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-				useNativeExistingDocumentContext?: boolean;
-				nativeBackboneDocumentDeleteKey?: string;
-			},
+		properties?: PreparedPayloadCommitOnlyProperties,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
@@ -5493,16 +5493,7 @@ export class SharedLog<
 		payloadData: Uint8Array,
 		appendOptions: AppendOptions<T>,
 		options: SharedAppendOptions<T> | undefined,
-		properties:
-			| {
-					skipMissingNextJoin?: boolean;
-					resolveTrimmedEntries?: boolean;
-						nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-						prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-						useNativeExistingDocumentContext?: boolean;
-						nativeBackboneDocumentDeleteKey?: string;
-				  }
-			| undefined,
+		properties: PreparedPayloadCommitOnlyProperties | undefined,
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
@@ -5530,16 +5521,7 @@ export class SharedLog<
 		payloadData: Uint8Array,
 		appendOptions: AppendOptions<T>,
 		options: SharedAppendOptions<T> | undefined,
-		properties:
-			| {
-					skipMissingNextJoin?: boolean;
-					resolveTrimmedEntries?: boolean;
-						nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-						prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-						useNativeExistingDocumentContext?: boolean;
-						nativeBackboneDocumentDeleteKey?: string;
-				  }
-			| undefined,
+		properties: PreparedPayloadCommitOnlyProperties | undefined,
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
 	):
@@ -5562,9 +5544,9 @@ export class SharedLog<
 			);
 		}
 		const hasDocumentIndexCommit =
-				!!properties?.nativeBackboneDocumentIndex ||
-				!!properties?.prepareNativeBackboneDocumentIndex ||
-				!!properties?.nativeBackboneDocumentDeleteKey;
+			!!properties?.nativeBackboneDocumentIndex ||
+			!!properties?.prepareNativeBackboneDocumentIndex ||
+			!!properties?.nativeBackboneDocumentDeleteKey;
 		if (
 			options?.replicate === false &&
 			hasDocumentIndexCommit &&
@@ -5593,14 +5575,14 @@ export class SharedLog<
 				true,
 			);
 		}
-			if (options?.replicate !== false) {
-				return undefined;
-			}
-			const backbone = this._nativeBackbone;
-			let nativeBackboneDocumentIndexCommitted = false;
-			let committedNativeBackboneDocumentIndex:
-				| NativeBackboneDocumentIndexCommitInput
-				| undefined;
+		if (options?.replicate !== false) {
+			return undefined;
+		}
+		const backbone = this._nativeBackbone;
+		let nativeBackboneDocumentIndexCommitted = false;
+		let committedNativeBackboneDocumentIndex:
+			| NativeBackboneDocumentIndexCommitInput
+			| undefined;
 		const nativeCommitProperties = {
 			payloadData,
 			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
@@ -5736,32 +5718,23 @@ export class SharedLog<
 		});
 	}
 
-		private appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
+	private appendLocallyPreparedPayloadNativeBackboneStorageTransaction(
 		payloadData: Uint8Array,
 		appendOptions: AppendOptions<T>,
-		properties:
-			| {
-					skipMissingNextJoin?: boolean;
-					resolveTrimmedEntries?: boolean;
-						nativeBackboneDocumentIndex?: NativeBackboneDocumentIndexCommitInput;
-						prepareNativeBackboneDocumentIndex?: NativeBackboneDocumentIndexPreparer;
-						useNativeExistingDocumentContext?: boolean;
-						nativeBackboneDocumentDeleteKey?: string;
-				  }
-			| undefined,
+		properties: PreparedPayloadCommitOnlyProperties | undefined,
 		minReplicasValue: number,
 		runtimeOnlyCoordinates: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const backbone = this._nativeBackbone;
-			if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
-				return undefined;
-			}
-			if (
-				properties?.nativeBackboneDocumentDeleteKey &&
-				!this.canUseBackboneOnlyCoordinatePersistence()
-			) {
-				return undefined;
-			}
+		if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
+			return undefined;
+		}
+		if (
+			properties?.nativeBackboneDocumentDeleteKey &&
+			!this.canUseBackboneOnlyCoordinatePersistence()
+		) {
+			return undefined;
+		}
 		return mapMaybePromise(this.createLeaderSelectionContext(), (context) => {
 			const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 			let backboneAppend:
@@ -5825,31 +5798,31 @@ export class SharedLog<
 								deleteTrimmedHeads: false,
 							}
 						: nativeBackboneDocumentIndex;
-					const nativeBackboneDocumentDeleteKey =
-						properties?.nativeBackboneDocumentDeleteKey;
-					if (
-						nativeBackboneDocumentDeleteKey &&
-						nativeBackboneDocumentIndexForAppend
-					) {
-						throw new Error(
-							"Native backbone append cannot both put and delete a document index row",
-						);
-					}
-					const appendInputWithDocumentIndex = nativeBackboneDocumentIndexForAppend
+				const nativeBackboneDocumentDeleteKey =
+					properties?.nativeBackboneDocumentDeleteKey;
+				if (
+					nativeBackboneDocumentDeleteKey &&
+					nativeBackboneDocumentIndexForAppend
+				) {
+					throw new Error(
+						"Native backbone append cannot both put and delete a document index row",
+					);
+				}
+				const appendInputWithDocumentIndex = nativeBackboneDocumentIndexForAppend
+					? {
+							...appendInput,
+							documentIndex: {
+								...nativeBackboneDocumentIndexForAppend,
+								useLatestContext:
+									properties?.useNativeExistingDocumentContext === true,
+							},
+						}
+					: nativeBackboneDocumentDeleteKey
 						? {
 								...appendInput,
-								documentIndex: {
-									...nativeBackboneDocumentIndexForAppend,
-									useLatestContext:
-										properties?.useNativeExistingDocumentContext === true,
-								},
+								documentDeleteKey: nativeBackboneDocumentDeleteKey,
 							}
-						: nativeBackboneDocumentDeleteKey
-							? {
-									...appendInput,
-									documentDeleteKey: nativeBackboneDocumentDeleteKey,
-								}
-							: appendInput;
+						: appendInput;
 				if (next.length === 0) {
 					if (commitBlocksInBackbone) {
 						if (
@@ -5892,12 +5865,12 @@ export class SharedLog<
 								appendInputWithDocumentIndex,
 							);
 				}
-					if (nativeBackboneDocumentIndex) {
-						nativeBackboneDocumentIndexCommitted = true;
-						committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
-					}
-					nativeBackboneDocumentDeleteCommitted =
-						!!nativeBackboneDocumentDeleteKey;
+				if (nativeBackboneDocumentIndex) {
+					nativeBackboneDocumentIndexCommitted = true;
+					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
+				}
+				nativeBackboneDocumentDeleteCommitted =
+					!!nativeBackboneDocumentDeleteKey;
 				const useTrimmedHashesOnly =
 					properties?.resolveTrimmedEntries === false;
 				return {
@@ -5994,16 +5967,16 @@ export class SharedLog<
 							coordinateFields,
 						},
 					);
-						if (nativeBackboneDocumentIndexCommitted) {
-							appendCommit.nativeBackboneDocumentIndexCommitted = true;
-							appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-								backboneAppend!.documentTrimmedHeadsProcessed;
-						}
-						if (nativeBackboneDocumentDeleteCommitted) {
-							appendCommit.nativeBackboneDocumentDeleteCommitted = true;
-							appendCommit.nativeBackboneDocumentIndexCommitted = true;
-						}
-						appendCommit.documentPreviousContext =
+					if (nativeBackboneDocumentIndexCommitted) {
+						appendCommit.nativeBackboneDocumentIndexCommitted = true;
+						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+							backboneAppend!.documentTrimmedHeadsProcessed;
+					}
+					if (nativeBackboneDocumentDeleteCommitted) {
+						appendCommit.nativeBackboneDocumentDeleteCommitted = true;
+						appendCommit.nativeBackboneDocumentIndexCommitted = true;
+					}
+					appendCommit.documentPreviousContext =
 						prepared.documentPreviousContext;
 					return {
 						get entry() {
@@ -6437,15 +6410,7 @@ export class SharedLog<
 		data: T[],
 		appendOptions: AppendOptions<T>,
 		options: SharedAppendOptions<T> | undefined,
-		properties:
-			| {
-					resolveTrimmedEntries?: boolean;
-					payloadDatas?: Uint8Array[];
-					nexts?: ShallowOrFullEntry<T>[][];
-					nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
-					retainMaterializationBytes?: boolean;
-			  }
-			| undefined,
+		properties: PreparedPayloadsManyIndependentProperties<T> | undefined,
 		minReplicasValue: number,
 	): Promise<
 			| {
@@ -6644,13 +6609,13 @@ export class SharedLog<
 					coordinateFields,
 				},
 			);
-				appendCommit.nativeBackboneDocumentIndexCommitted = true;
-				appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-					appended.documentTrimmedHeadsProcessed?.[i];
-				appendCommit.documentPreviousContext =
-					backboneAppend.documentPreviousContext;
-				appendCommits.push(appendCommit);
-			}
+			appendCommit.nativeBackboneDocumentIndexCommitted = true;
+			appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+				appended.documentTrimmedHeadsProcessed?.[i];
+			appendCommit.documentPreviousContext =
+				backboneAppend.documentPreviousContext;
+			appendCommits.push(appendCommit);
+		}
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
@@ -6668,13 +6633,7 @@ export class SharedLog<
 	async appendLocallyPreparedManyIndependent(
 		data: T[],
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: {
-			resolveTrimmedEntries?: boolean;
-			payloadDatas?: Uint8Array[];
-			nexts?: ShallowOrFullEntry<T>[][];
-			nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
-			retainMaterializationBytes?: boolean;
-		},
+		properties?: PreparedPayloadsManyIndependentProperties<T>,
 	): Promise<
 		| {
 				entries: Entry<T>[];
@@ -6806,12 +6765,7 @@ export class SharedLog<
 	async appendLocallyPreparedPayloadsManyIndependent(
 		payloadDatas: Uint8Array[],
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: {
-			resolveTrimmedEntries?: boolean;
-			nexts?: ShallowOrFullEntry<T>[][];
-			nativeBackboneDocumentIndexes?: NativeBackboneDocumentIndexCommitInput[];
-			retainMaterializationBytes?: boolean;
-		},
+		properties?: Omit<PreparedPayloadsManyIndependentProperties<T>, "payloadDatas">,
 	) {
 		return this.appendLocallyPreparedManyIndependent(
 			new Array(payloadDatas.length) as T[],
