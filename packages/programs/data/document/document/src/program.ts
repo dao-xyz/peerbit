@@ -2073,7 +2073,7 @@ export class Documents<
 			return (await this.node.open(value, {
 				parent: this as Program<any, any>,
 				existing: "reuse",
-			})) as any as T & Program; // TODO types
+			})) as unknown as T & Program;
 		}
 
 		return value;
@@ -2224,9 +2224,9 @@ export class Documents<
 			waitForPruneDelay: options?.waitForPruneDelay,
 			distributionDebounceTime: options?.distributionDebounceTime,
 			strictFullReplicaFallback: false,
-			domain: (options?.domain
-				? (log: any) => options.domain!(this)
-				: undefined) as any, /// TODO types,
+			domain: options?.domain
+				? () => options.domain!(this) as unknown as D
+				: undefined,
 			compatibility: logCompatiblity,
 			eagerBlocks: options?.eagerBlocks,
 			fanout: options?.fanout,
