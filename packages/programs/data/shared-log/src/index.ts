@@ -1972,7 +1972,7 @@ export class SharedLog<
 		entry: Entry<T>,
 		coordinates: NumberFromType<R>[],
 		minReplicasValue: number,
-		leaders: Map<string, any>,
+		leaders: LeaderMap,
 		selfHash: string,
 		isLeader: boolean,
 		deliveryArg: false | true | DeliveryOptions | undefined,
@@ -2252,7 +2252,7 @@ export class SharedLog<
 	private async _mergeLeadersFromGidReferences(
 		message: ExchangeHeadsMessage<any>,
 		minReplicasValue: number,
-		leaders: Map<string, any>,
+		leaders: LeaderMap,
 	) {
 		const gidReferences = message.heads[0]?.gidRefrences;
 		if (!gidReferences || gidReferences.length === 0) {
@@ -2494,7 +2494,6 @@ export class SharedLog<
 		if (segments.length > 0) {
 			const segment = segments[0].toReplicationRange();
 			return new Replicator({
-				// TODO types
 				factor: (segment.factor as number) / MAX_U32,
 				offset: (segment.offset as number) / MAX_U32,
 			});
@@ -7675,12 +7674,11 @@ export class SharedLog<
 		};
 		this._logProperties = options;
 
-		// TODO types
 		this.domain = options?.domain
-			? (options.domain(this) as D)
+			? (options.domain(this) as unknown as D)
 			: (createReplicationDomainHash(
 					options?.compatibility && options?.compatibility < 10 ? "u32" : "u64",
-				)(this) as D);
+				)(this) as unknown as D);
 		this.indexableDomain = createIndexableDomainFromResolution(
 			this.domain.resolution,
 		);
@@ -11538,7 +11536,6 @@ export class SharedLog<
 
 						for (const plan of joinPlans) {
 							plan.toDelete?.map((x) =>
-								// TODO types
 								this.pruneDebouncedFnAddIfNotKeeping({
 									key: x.hash,
 									value: {
@@ -11569,7 +11566,6 @@ export class SharedLog<
 									for (const x of entries) {
 										this.pruneDebouncedFnAddIfNotKeeping({
 											key: x.entry.hash,
-											// TODO types
 											value: {
 												entry: x.entry,
 												leaders: plan.leaders as Map<string, any>,
