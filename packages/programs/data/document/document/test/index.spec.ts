@@ -2706,7 +2706,7 @@ describe("index", () => {
 						expect(
 							(localStore.docs as any)._nativeBackboneDocumentIndexEnabled,
 						).equal(false);
-						expect((localStore.docs.log as any).nativeBackbone).to.exist;
+						expect((localStore.docs.log as any)._nativeBackbone).to.exist;
 
 						const doc = new Document({
 							id: uuid(),

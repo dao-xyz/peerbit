@@ -1351,10 +1351,6 @@ export class SharedLog<
 		value: number;
 		bytes: Uint8Array;
 	};
-
-	get nativeBackbone(): NativePeerbitBackbone | undefined {
-		return this._nativeBackbone;
-	}
 	private _residentEntryCoordinatesByHash?: Map<
 		string,
 		ResidentCoordinateEntry<R>

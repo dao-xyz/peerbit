@@ -1893,17 +1893,21 @@ export class Documents<
 		return nativeGraph?.entrySignaturePublicKeysBatch?.(hashes);
 	}
 
+	private getSharedLogNativeBackbone<T>(): T | undefined {
+		return (this.log as unknown as { _nativeBackbone?: T })._nativeBackbone;
+	}
+
 	private getNativePreviousEntrySignerPublicKey(
 		key: indexerTypes.IdKey,
 	): { exists: boolean; publicKey?: Uint8Array } | undefined {
-		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
-			.nativeBackbone as
+		const nativeBackbone = this.getSharedLogNativeBackbone<
 			| {
 					documentPreviousSignaturePublicKey?: (
 						key: string,
 					) => { exists: boolean; publicKey?: Uint8Array } | undefined;
 			  }
-			| undefined;
+			| undefined
+		>();
 		return nativeBackbone?.documentPreviousSignaturePublicKey?.(
 			documentIndexStoreKey(key),
 		);
@@ -1923,14 +1927,14 @@ export class Documents<
 	):
 		| indexerTypes.IndexedResult<IndexedContextOnly<I>>
 		| undefined {
-		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
-			.nativeBackbone as
+		const nativeBackbone = this.getSharedLogNativeBackbone<
 			| {
 					documentContext?: (
 						key: string,
 					) => [string, string, string, string, number] | undefined;
 			  }
-			| undefined;
+			| undefined
+		>();
 		const row = nativeBackbone?.documentContext?.(documentIndexStoreKey(key));
 		const context = row
 			? {
@@ -1961,12 +1965,12 @@ export class Documents<
 	}
 
 	private hasNativeDocumentContextLookup(): boolean {
-		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
-			.nativeBackbone as
+		const nativeBackbone = this.getSharedLogNativeBackbone<
 			| {
 					documentContext?: (key: string) => unknown;
 			  }
-			| undefined;
+			| undefined
+		>();
 		return typeof nativeBackbone?.documentContext === "function";
 	}
 
@@ -1983,8 +1987,7 @@ export class Documents<
 		if (keys.length === 0) {
 			return { contexts: [], publicKeys: [] };
 		}
-		const nativeBackbone = (this.log as { nativeBackbone?: unknown })
-			.nativeBackbone as
+		const nativeBackbone = this.getSharedLogNativeBackbone<
 			| {
 					documentContextsAndPreviousSignaturePublicKeys?: (
 						keys: string[],
@@ -2001,7 +2004,8 @@ export class Documents<
 						  }>
 						| undefined;
 			  }
-			| undefined;
+			| undefined
+		>();
 		const rows =
 			nativeBackbone?.documentContextsAndPreviousSignaturePublicKeys?.(
 				keys.map(documentIndexStoreKey),
@@ -2281,7 +2285,7 @@ export class Documents<
 		) {
 			this._nativeBackboneDocumentIndexEnabled =
 				this._index.attachNativeBackboneDocumentIndex(
-					(this.log as { nativeBackbone?: unknown }).nativeBackbone,
+					this.getSharedLogNativeBackbone(),
 					{ preserveExisting: this._mode === "native" },
 				) === true;
 			if (this._nativeBackboneDocumentIndexEnabled) {
