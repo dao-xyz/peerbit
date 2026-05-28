@@ -156,8 +156,8 @@ type NativePeerbitBackboneHandle = {
 		byteElementIndexLimit: number,
 	) => void;
 	delete_document: (key: string) => boolean;
-		delete_documents: (keys: string[]) => number;
-		delete_documents_result: (keys: string[]) => Uint8Array;
+	delete_documents: (keys: string[]) => number;
+	delete_documents_result: (keys: string[]) => Uint8Array;
 	clear_document_index: () => void;
 	document_journal_header: () => Uint8Array;
 	document_pending_journal_len: () => number;
@@ -166,7 +166,6 @@ type NativePeerbitBackboneHandle = {
 	set_document_journal_enabled: (enabled: boolean) => void;
 	document_journal: () => Uint8Array;
 	clear_document_journal: () => void;
-	drain_document_journal: () => Uint8Array;
 	document_snapshot: () => Uint8Array;
 	load_document_snapshot_and_journal: (
 		snapshot: Uint8Array,
@@ -179,7 +178,6 @@ type NativePeerbitBackboneHandle = {
 	set_coordinate_journal_enabled: (enabled: boolean) => void;
 	coordinate_journal: () => Uint8Array;
 	clear_coordinate_journal: () => void;
-	drain_coordinate_journal: () => Uint8Array;
 	coordinate_snapshot: () => Uint8Array;
 	load_coordinate_snapshot_and_journal: (
 		snapshot: Uint8Array,
@@ -192,7 +190,6 @@ type NativePeerbitBackboneHandle = {
 	set_document_signer_journal_enabled: (enabled: boolean) => void;
 	document_signer_journal: () => Uint8Array;
 	clear_document_signer_journal: () => void;
-	drain_document_signer_journal: () => Uint8Array;
 	document_signer_snapshot: () => Uint8Array;
 	load_document_signer_snapshot_and_journal: (
 		snapshot: Uint8Array,
@@ -6049,10 +6046,6 @@ export class NativePeerbitBackbone {
 		this.native.clear_document_journal();
 	}
 
-	drainDocumentJournal(): Uint8Array {
-		return this.native.drain_document_journal();
-	}
-
 	documentSnapshot(): Uint8Array {
 		return this.native.document_snapshot();
 	}
@@ -6095,10 +6088,6 @@ export class NativePeerbitBackbone {
 		this.native.clear_coordinate_journal();
 	}
 
-	drainCoordinateJournal(): Uint8Array {
-		return this.native.drain_coordinate_journal();
-	}
-
 	coordinateSnapshot(): Uint8Array {
 		return this.native.coordinate_snapshot();
 	}
@@ -6139,10 +6128,6 @@ export class NativePeerbitBackbone {
 
 	clearDocumentSignerJournal(): void {
 		this.native.clear_document_signer_journal();
-	}
-
-	drainDocumentSignerJournal(): Uint8Array {
-		return this.native.drain_document_signer_journal();
 	}
 
 	documentSignerSnapshot(): Uint8Array {

@@ -2819,10 +2819,9 @@ describe("native peerbit backbone", () => {
 		expect(source.coordinatePendingJournalByteLength).to.equal(
 			source.coordinateJournal().byteLength,
 		);
-		const journal = concatBytes([
-			source.coordinateJournalHeader(),
-			source.drainCoordinateJournal(),
-		]);
+		const records = source.coordinateJournal();
+		source.clearCoordinateJournal();
+		const journal = concatBytes([source.coordinateJournalHeader(), records]);
 
 		expect(source.coordinatePendingJournalLength).to.equal(0);
 		expect(source.coordinatePendingJournalByteLength).to.equal(0);
@@ -2864,10 +2863,9 @@ describe("native peerbit backbone", () => {
 			replicas: 1,
 			selfHash: "peer-a",
 		});
-		const journal = concatBytes([
-			source.coordinateJournalHeader(),
-			source.drainCoordinateJournal(),
-		]);
+		const records = source.coordinateJournal();
+		source.clearCoordinateJournal();
+		const journal = concatBytes([source.coordinateJournalHeader(), records]);
 
 		expect(
 			target.loadCoordinateSnapshotAndJournal(undefined, journal),
@@ -2895,7 +2893,7 @@ describe("native peerbit backbone", () => {
 
 		source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
 		source.putEntryCoordinates("hash-b", "gid-b", [2n, 3n], true, 2, 2n);
-		source.drainCoordinateJournal();
+		source.clearCoordinateJournal();
 		const snapshot = source.coordinateSnapshot();
 
 		expect(target.loadCoordinateSnapshotAndJournal(snapshot)).to.equal(0);

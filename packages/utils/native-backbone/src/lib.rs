@@ -1317,11 +1317,6 @@ impl NativePeerbitBackbone {
         self.coordinate_journal_record_count = 0;
     }
 
-    pub fn drain_coordinate_journal(&mut self) -> Vec<u8> {
-        self.coordinate_journal_record_count = 0;
-        std::mem::take(&mut self.coordinate_journal)
-    }
-
     pub fn coordinate_snapshot(&self) -> Vec<u8> {
         encode_key_value_snapshot(
             self.coordinate_values
@@ -1410,11 +1405,6 @@ impl NativePeerbitBackbone {
         self.document_journal_record_count = 0;
     }
 
-    pub fn drain_document_journal(&mut self) -> Vec<u8> {
-        self.document_journal_record_count = 0;
-        std::mem::take(&mut self.document_journal)
-    }
-
     pub fn document_snapshot(&self) -> Vec<u8> {
         encode_key_value_snapshot(self.document_values.entries())
     }
@@ -1487,11 +1477,6 @@ impl NativePeerbitBackbone {
     pub fn clear_document_signer_journal(&mut self) {
         self.document_signer_journal.clear();
         self.document_signer_journal_record_count = 0;
-    }
-
-    pub fn drain_document_signer_journal(&mut self) -> Vec<u8> {
-        self.document_signer_journal_record_count = 0;
-        std::mem::take(&mut self.document_signer_journal)
     }
 
     pub fn document_signer_snapshot(&self) -> Vec<u8> {
