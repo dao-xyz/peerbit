@@ -7626,10 +7626,10 @@ export class NativePeerbitBackbone {
 			return this.preparePlainCommittedNoNextStorageAppendTransaction(input);
 		}
 		const projection = documentIndex.projection;
-			if (projection) {
-				const projectionPlanId = this.documentProjectionPlanId(projection.plan);
-				const plainPutPayload =
-					documentIndex.usePlainPutPayload === true
+		if (projection) {
+			const projectionPlanId = this.documentProjectionPlanId(projection.plan);
+			const plainPutPayload =
+				documentIndex.usePlainPutPayload === true
 					? this.native
 							.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_transaction
 					: undefined;
@@ -7683,43 +7683,43 @@ export class NativePeerbitBackbone {
 			return compactCommittedNoNextStorageAppendResultFromRow(
 				this.resolution,
 				row,
+			);
+		}
+		if (documentIndex.usePlainPutPayload === true) {
+			const plainPutPayload =
+				this.native
+					.prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_transaction;
+			if (plainPutPayload) {
+				const row = plainPutPayload.call(
+					this.native,
+					BigInt(input.wallTime),
+					input.logical ?? 0,
+					input.gid,
+					input.type ?? 0,
+					input.metaData,
+					input.payloadData,
+					input.replicas,
+					input.roleAgeMs ?? 0,
+					integerString(input.now ?? Date.now()),
+					input.selfHash ?? "",
+					input.selfReplicating ?? true,
+					documentIndex.key,
+					documentIndex.existingCreated == null
+						? ""
+						: integerString(documentIndex.existingCreated),
+					documentIndex.byteElementIndexLimit ?? 0,
+					documentIndex.deleteTrimmedHeads === true,
+					input.trimLengthTo,
+				);
+				return compactCommittedNoNextStorageAppendResultFromRow(
+					this.resolution,
+					row,
 				);
 			}
-			if (documentIndex.usePlainPutPayload === true) {
-				const plainPutPayload =
-					this.native
-						.prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_transaction;
-				if (plainPutPayload) {
-					const row = plainPutPayload.call(
-						this.native,
-						BigInt(input.wallTime),
-						input.logical ?? 0,
-						input.gid,
-						input.type ?? 0,
-						input.metaData,
-						input.payloadData,
-						input.replicas,
-						input.roleAgeMs ?? 0,
-						integerString(input.now ?? Date.now()),
-						input.selfHash ?? "",
-						input.selfReplicating ?? true,
-						documentIndex.key,
-						documentIndex.existingCreated == null
-							? ""
-							: integerString(documentIndex.existingCreated),
-						documentIndex.byteElementIndexLimit ?? 0,
-						documentIndex.deleteTrimmedHeads === true,
-						input.trimLengthTo,
-					);
-					return compactCommittedNoNextStorageAppendResultFromRow(
-						this.resolution,
-						row,
-					);
-				}
-			}
-			const row =
-				this.native.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction(
-					BigInt(input.wallTime),
+		}
+		const row =
+			this.native.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction(
+				BigInt(input.wallTime),
 				input.logical ?? 0,
 				input.gid,
 				input.type ?? 0,
@@ -7826,60 +7826,56 @@ export class NativePeerbitBackbone {
 				),
 			);
 		}
-			if (
-				input.entries.some((entry) => entry.documentIndex.projection) ||
-				input.entries.some(
-					(entry) => !entry.documentIndex.valuePrefixBytes,
-				)
-			) {
-				return undefined;
-			}
-			const usePlainPutPayload = input.entries.every(
-				(entry) => entry.documentIndex.usePlainPutPayload === true,
-			);
-			if (usePlainPutPayload) {
-				const nativeBatch =
-					this.native
-						.prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_batch_transaction;
-				if (nativeBatch) {
-					const rows = nativeBatch.call(
-						this.native,
-						new BigUint64Array(
-							input.entries.map((entry) => BigInt(entry.wallTime)),
-						),
-						new Uint32Array(
-							input.entries.map((entry) => entry.logical ?? 0),
-						),
-						input.entries.map((entry) => entry.gid),
-						input.type ?? 0,
-						input.entries.map((entry) => entry.metaData),
-						input.entries.map((entry) => entry.payloadData),
-						input.replicas,
-						input.roleAgeMs ?? 0,
-						integerString(input.now ?? Date.now()),
-						input.selfHash ?? "",
-						input.selfReplicating ?? true,
-						input.entries.map((entry) => entry.documentIndex.key),
-						input.entries.map((entry) =>
-							entry.documentIndex.existingCreated == null
-								? ""
-								: integerString(entry.documentIndex.existingCreated),
-						),
-						input.documentByteElementIndexLimit ?? 0,
-						input.documentDeleteTrimmedHeads === true,
-						input.trimLengthTo,
-					);
-					return rows.map((row) =>
-						compactCommittedNoNextStorageAppendResultFromRow(
-							this.resolution,
-							row,
-						),
-					);
-				}
-			}
+		if (
+			input.entries.some((entry) => entry.documentIndex.projection) ||
+			input.entries.some((entry) => !entry.documentIndex.valuePrefixBytes)
+		) {
+			return undefined;
+		}
+		const usePlainPutPayload = input.entries.every(
+			(entry) => entry.documentIndex.usePlainPutPayload === true,
+		);
+		if (usePlainPutPayload) {
 			const nativeBatch =
 				this.native
-					.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction;
+					.prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_batch_transaction;
+			if (nativeBatch) {
+				const rows = nativeBatch.call(
+					this.native,
+					new BigUint64Array(
+						input.entries.map((entry) => BigInt(entry.wallTime)),
+					),
+					new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
+					input.entries.map((entry) => entry.gid),
+					input.type ?? 0,
+					input.entries.map((entry) => entry.metaData),
+					input.entries.map((entry) => entry.payloadData),
+					input.replicas,
+					input.roleAgeMs ?? 0,
+					integerString(input.now ?? Date.now()),
+					input.selfHash ?? "",
+					input.selfReplicating ?? true,
+					input.entries.map((entry) => entry.documentIndex.key),
+					input.entries.map((entry) =>
+						entry.documentIndex.existingCreated == null
+							? ""
+							: integerString(entry.documentIndex.existingCreated),
+					),
+					input.documentByteElementIndexLimit ?? 0,
+					input.documentDeleteTrimmedHeads === true,
+					input.trimLengthTo,
+				);
+				return rows.map((row) =>
+					compactCommittedNoNextStorageAppendResultFromRow(
+						this.resolution,
+						row,
+					),
+				);
+			}
+		}
+		const nativeBatch =
+			this.native
+				.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction;
 		if (!nativeBatch) {
 			return undefined;
 		}
