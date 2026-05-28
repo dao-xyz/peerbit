@@ -2600,7 +2600,7 @@ export class Documents<
 				}
 				const existingContext = this.getExistingContext(existingDocument);
 				if (existingContext && existingContext.head !== entry.hash) {
-					//  econd condition can false if we reset the operation log, while not  resetting the index. For example when doing .recover
+					// This can happen if we reset the operation log without resetting the index, for example during recover.
 					if (this.immutable) {
 						// key already exist but pick the oldest entry
 						// this is because we can not overwrite same id if immutable

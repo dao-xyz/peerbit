@@ -2462,8 +2462,8 @@ type NativeBackboneAppendInput = {
 	selfReplicating?: boolean;
 	trimLengthTo?: number;
 	resolveTrimmedEntries?: boolean;
-		documentIndex?: {
-			key: string;
+	documentIndex?: {
+		key: string;
 		valuePrefixBytes?: Uint8Array;
 		usePlainPutPayload?: boolean;
 		projection?: {
@@ -2474,11 +2474,11 @@ type NativeBackboneAppendInput = {
 		existingCreated?: bigint | number | string;
 		byteElementIndexLimit?: number;
 		deleteTrimmedHeads?: boolean;
-			useLatestContext?: boolean;
-			requiredPreviousSignerPublicKey?: Uint8Array;
-		};
-		documentDeleteKey?: string;
+		useLatestContext?: boolean;
+		requiredPreviousSignerPublicKey?: Uint8Array;
 	};
+	documentDeleteKey?: string;
+};
 
 type NativeBackboneCommittedNoNextDocumentIndexBatchInput = {
 	entries: Array<{
