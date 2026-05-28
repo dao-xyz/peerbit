@@ -5,6 +5,12 @@ export type DocumentTransformFacts = {
 	entryPublicKeys?: readonly PublicSignKey[];
 };
 
+export type DocumentTransformer<T, I> = (
+	obj: T,
+	context: Context,
+	facts?: DocumentTransformFacts,
+) => I | Promise<I>;
+
 type NativeDocumentTransformSourceDescriptor =
 	| {
 			readonly kind: "field";
@@ -38,11 +44,7 @@ const NATIVE_DOCUMENT_TRANSFORM = Symbol.for(
 	"@peerbit/document/native-document-transform",
 );
 
-export type NativeDocumentTransformer<T, I> = ((
-	obj: T,
-	context: Context,
-	facts?: DocumentTransformFacts,
-) => I | Promise<I>) & {
+type NativeDocumentTransformer<T, I> = DocumentTransformer<T, I> & {
 	readonly [NATIVE_DOCUMENT_TRANSFORM]?: NativeDocumentTransformDescriptor;
 };
 
@@ -131,7 +133,7 @@ const readSource = (
 };
 
 const attachNativeDocumentTransform = <T, I>(
-	fn: NativeDocumentTransformer<T, I>,
+	fn: DocumentTransformer<T, I>,
 	descriptor: NativeDocumentTransformDescriptor,
 ): NativeDocumentTransformer<T, I> => {
 	Object.defineProperty(fn, NATIVE_DOCUMENT_TRANSFORM, {
@@ -144,7 +146,7 @@ const attachNativeDocumentTransform = <T, I>(
 };
 
 export const getNativeDocumentTransformDescriptor = <T, I>(
-	transformer: ((obj: T, context: Context) => I | Promise<I>) | undefined,
+	transformer: DocumentTransformer<T, I> | undefined,
 ): NativeDocumentTransformDescriptor | undefined =>
 	(transformer as NativeDocumentTransformer<T, I> | undefined)?.[
 		NATIVE_DOCUMENT_TRANSFORM
@@ -212,7 +214,7 @@ export const nativeDocumentTransformPreservesFieldPath = (
 };
 
 export const transform = {
-	identity: <T = unknown>(): NativeDocumentTransformer<T, T> =>
+	identity: <T = unknown>(): DocumentTransformer<T, T> =>
 		attachNativeDocumentTransform((obj) => obj, { kind: "identity" }),
 
 	pick: <
@@ -220,7 +222,7 @@ export const transform = {
 		I extends object = Partial<T>,
 	>(
 		fields: readonly (string | readonly string[])[],
-	): NativeDocumentTransformer<T, I> => {
+	): DocumentTransformer<T, I> => {
 		const frozenFields = Object.freeze(fields.map(freezePath));
 		return attachNativeDocumentTransform(
 			(document) => {
@@ -252,7 +254,7 @@ export const transform = {
 
 	project: <T = unknown, I extends object = Record<string, unknown>>(
 		fields: Record<string, NativeDocumentTransformSource>,
-	): NativeDocumentTransformer<T, I> => {
+	): DocumentTransformer<T, I> => {
 		const entries = Object.freeze(
 			Object.entries(fields).map(([target, source]) =>
 				Object.freeze({

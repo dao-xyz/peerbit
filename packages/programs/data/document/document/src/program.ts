@@ -92,8 +92,8 @@ import {
 	encodeContextSuffix as encodeDocumentContextSuffix,
 } from "./search.js";
 import {
+	type DocumentTransformer,
 	getNativeDocumentTransformDescriptor,
-	type NativeDocumentTransformer,
 } from "./transform.js";
 
 const logger = loggerFn("peerbit:program:document");
@@ -1056,7 +1056,7 @@ export class Documents<
 		const nativeIndexTransformDescriptor =
 			typeof indexTransform?.transform === "function"
 				? getNativeDocumentTransformDescriptor(
-						indexTransform.transform as NativeDocumentTransformer<
+						indexTransform.transform as DocumentTransformer<
 							unknown,
 							unknown
 						>,

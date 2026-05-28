@@ -67,8 +67,8 @@ import {
 import { ResumableIterators } from "./resumable-iterator.js";
 import {
 	type DocumentTransformFacts,
+	type DocumentTransformer,
 	type NativeDocumentTransformDescriptor,
-	type NativeDocumentTransformer,
 	canPrepareNativeDocumentTransformBeforeAppend,
 	canPrepareNativeDocumentTransformWithAppendFacts,
 	canUseNativeBackboneDocumentTransform,
@@ -799,7 +799,7 @@ export type TransformerAsConstructor<T, I> = {
 
 export type TransformerAsFunction<T, I> = {
 	type: AbstractType<I>;
-	transform: NativeDocumentTransformer<T, I>;
+	transform: DocumentTransformer<T, I>;
 };
 export type TransformOptions<T, I> =
 	| TransformerAsConstructor<T, I>
