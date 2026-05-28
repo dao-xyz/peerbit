@@ -46,12 +46,14 @@ import {
 	type ShallowOrFullEntry,
 } from "./entry.js";
 import { findUniques } from "./find-uniques.js";
+import { logger as baseLogger } from "./logger.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import type { Payload } from "./payload.js";
 import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
+const warn = baseLogger.newScope("warn");
 
 type BlocksWithPutMany = Blocks & {
 	putMany?: (blocks: PreparedEntryBlock[]) => Promise<string[]> | string[];
@@ -2775,8 +2777,7 @@ export class Log<T> {
 			} else {
 				const resolved = await this.entryIndex.get(e.hash);
 				if (!resolved) {
-					// eslint-disable-next-line no-console
-					console.warn("Unexpected missing entry when joining", e.hash);
+					warn("Unexpected missing entry when joining", e.hash);
 					continue;
 				}
 				nextEntry = resolved;
