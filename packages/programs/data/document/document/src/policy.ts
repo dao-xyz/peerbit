@@ -3,25 +3,25 @@ import type { Entry } from "@peerbit/log";
 import type { DeleteOperation, Operation, PutOperation } from "./operation.js";
 import type { CanPerform, CanPerformOperations } from "./program.js";
 
-export type NativeCanPerformPolicyDescriptor =
+export type CanPerformPolicyDescriptor =
 	| {
 			readonly kind: "allowAll";
 	  }
 	| {
 			readonly kind: "and";
-			readonly policies: readonly NativeCanPerformPolicyDescriptor[];
+			readonly policies: readonly CanPerformPolicyDescriptor[];
 	  }
 	| {
 			readonly kind: "or";
-			readonly policies: readonly NativeCanPerformPolicyDescriptor[];
+			readonly policies: readonly CanPerformPolicyDescriptor[];
 	  }
 	| {
 			readonly kind: "put";
-			readonly policy: NativeCanPerformPolicyDescriptor;
+			readonly policy: CanPerformPolicyDescriptor;
 	  }
 	| {
 			readonly kind: "delete";
-			readonly policy: NativeCanPerformPolicyDescriptor;
+			readonly policy: CanPerformPolicyDescriptor;
 	  }
 	| {
 			readonly kind: "signedByPublicKey";
@@ -158,10 +158,10 @@ const valueMatchesAnyPublicKey = (
 
 const allDescriptors = <T>(
 	policies: readonly CanPerform<T>[],
-): NativeCanPerformPolicyDescriptor[] | undefined => {
-	const descriptors: NativeCanPerformPolicyDescriptor[] = [];
+): CanPerformPolicyDescriptor[] | undefined => {
+	const descriptors: CanPerformPolicyDescriptor[] = [];
 	for (const policy of policies) {
-		const descriptor = getNativeCanPerformPolicyDescriptor(policy);
+		const descriptor = getCanPerformPolicyDescriptor(policy);
 		if (!descriptor) {
 			return;
 		}
@@ -170,16 +170,16 @@ const allDescriptors = <T>(
 	return descriptors;
 };
 
-type NativeCanPerformPolicyFunction<T> = CanPerform<T> & {
-	readonly [NATIVE_CAN_PERFORM_POLICY]?: NativeCanPerformPolicyDescriptor;
+type DescribedCanPerformFunction<T> = CanPerform<T> & {
+	readonly [NATIVE_CAN_PERFORM_POLICY]?: CanPerformPolicyDescriptor;
 };
 
-const attachNativeCanPerformPolicy = <T>(
+const attachCanPerformPolicyDescriptor = <T>(
 	fn: CanPerform<T>,
-	descriptor: NativeCanPerformPolicyDescriptor,
-): NativeCanPerformPolicyFunction<T> => {
-	if ((fn as NativeCanPerformPolicyFunction<T>)[NATIVE_CAN_PERFORM_POLICY]) {
-		return fn as NativeCanPerformPolicyFunction<T>;
+	descriptor: CanPerformPolicyDescriptor,
+): DescribedCanPerformFunction<T> => {
+	if ((fn as DescribedCanPerformFunction<T>)[NATIVE_CAN_PERFORM_POLICY]) {
+		return fn as DescribedCanPerformFunction<T>;
 	}
 	Object.defineProperty(fn, NATIVE_CAN_PERFORM_POLICY, {
 		value: Object.freeze(descriptor),
@@ -187,30 +187,30 @@ const attachNativeCanPerformPolicy = <T>(
 		writable: false,
 		configurable: false,
 	});
-	return fn as NativeCanPerformPolicyFunction<T>;
+	return fn as DescribedCanPerformFunction<T>;
 };
 
-export const getNativeCanPerformPolicyDescriptor = <T>(
+export const getCanPerformPolicyDescriptor = <T>(
 	canPerform: CanPerform<T> | undefined,
-): NativeCanPerformPolicyDescriptor | undefined =>
-	(canPerform as NativeCanPerformPolicyFunction<T> | undefined)?.[
+): CanPerformPolicyDescriptor | undefined =>
+	(canPerform as DescribedCanPerformFunction<T> | undefined)?.[
 		NATIVE_CAN_PERFORM_POLICY
 	];
 
-export type NativeFastPathCanPerformPolicyEvaluator = (
+export type CanPerformPolicyEvaluator = (
 	document: unknown,
 ) => boolean;
-type NativeFastPathDeletePolicyEvaluator = (
+type CanPerformDeletePolicyEvaluator = (
 	existingDocument: unknown,
 ) => boolean;
 
 const allowFastPath = (): boolean => true;
 const denyFastPath = (): boolean => false;
 
-export const createNativeFastPathCanPerformPolicyEvaluator = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const createCanPerformPolicyEvaluator = (
+	descriptor: CanPerformPolicyDescriptor,
 	localPublicKey: PublicSignKey | undefined,
-): NativeFastPathCanPerformPolicyEvaluator => {
+): CanPerformPolicyEvaluator => {
 	switch (descriptor.kind) {
 		case "allowAll":
 			return allowFastPath;
@@ -220,7 +220,7 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 				? allowFastPath
 				: denyFastPath;
 		case "put":
-			return createNativeFastPathCanPerformPolicyEvaluator(
+			return createCanPerformPolicyEvaluator(
 				descriptor.policy,
 				localPublicKey,
 			);
@@ -232,12 +232,12 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 		case "and":
 			return descriptor.policies
 				.map((policy) =>
-					createNativeFastPathCanPerformPolicyEvaluator(
+					createCanPerformPolicyEvaluator(
 						policy,
 						localPublicKey,
 					),
 				)
-				.reduce<NativeFastPathCanPerformPolicyEvaluator>(
+				.reduce<CanPerformPolicyEvaluator>(
 					(previous, next) => (document) =>
 						previous(document) && next(document),
 					allowFastPath,
@@ -245,12 +245,12 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 		case "or":
 			return descriptor.policies
 				.map((policy) =>
-					createNativeFastPathCanPerformPolicyEvaluator(
+					createCanPerformPolicyEvaluator(
 						policy,
 						localPublicKey,
 					),
 				)
-				.reduce<NativeFastPathCanPerformPolicyEvaluator>(
+				.reduce<CanPerformPolicyEvaluator>(
 					(previous, next) => (document) =>
 						previous(document) || next(document),
 					denyFastPath,
@@ -267,10 +267,10 @@ export const createNativeFastPathCanPerformPolicyEvaluator = (
 	}
 };
 
-export const createNativeFastPathDeletePolicyEvaluator = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const createCanPerformDeletePolicyEvaluator = (
+	descriptor: CanPerformPolicyDescriptor,
 	localPublicKey: PublicSignKey | undefined,
-): NativeFastPathDeletePolicyEvaluator => {
+): CanPerformDeletePolicyEvaluator => {
 	switch (descriptor.kind) {
 		case "allowAll":
 			return allowFastPath;
@@ -284,7 +284,7 @@ export const createNativeFastPathDeletePolicyEvaluator = (
 		case "put":
 			return denyFastPath;
 		case "delete":
-			return createNativeFastPathDeletePolicyEvaluator(
+			return createCanPerformDeletePolicyEvaluator(
 				descriptor.policy,
 				localPublicKey,
 			);
@@ -300,9 +300,9 @@ export const createNativeFastPathDeletePolicyEvaluator = (
 		case "and":
 			return descriptor.policies
 				.map((policy) =>
-					createNativeFastPathDeletePolicyEvaluator(policy, localPublicKey),
+					createCanPerformDeletePolicyEvaluator(policy, localPublicKey),
 				)
-				.reduce<NativeFastPathDeletePolicyEvaluator>(
+				.reduce<CanPerformDeletePolicyEvaluator>(
 					(previous, next) => (document) =>
 						previous(document) && next(document),
 					allowFastPath,
@@ -310,9 +310,9 @@ export const createNativeFastPathDeletePolicyEvaluator = (
 		case "or":
 			return descriptor.policies
 				.map((policy) =>
-					createNativeFastPathDeletePolicyEvaluator(policy, localPublicKey),
+					createCanPerformDeletePolicyEvaluator(policy, localPublicKey),
 				)
-				.reduce<NativeFastPathDeletePolicyEvaluator>(
+				.reduce<CanPerformDeletePolicyEvaluator>(
 					(previous, next) => (document) =>
 						previous(document) || next(document),
 					denyFastPath,
@@ -320,25 +320,25 @@ export const createNativeFastPathDeletePolicyEvaluator = (
 	}
 };
 
-export const nativeCanPerformPolicyNeedsDeleteValue = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const canPerformPolicyNeedsDeleteValue = (
+	descriptor: CanPerformPolicyDescriptor,
 ): boolean => {
 	switch (descriptor.kind) {
 		case "deleteSignedByExistingField":
 			return true;
 		case "and":
 		case "or":
-			return descriptor.policies.some(nativeCanPerformPolicyNeedsDeleteValue);
+			return descriptor.policies.some(canPerformPolicyNeedsDeleteValue);
 		case "put":
 		case "delete":
-			return nativeCanPerformPolicyNeedsDeleteValue(descriptor.policy);
+			return canPerformPolicyNeedsDeleteValue(descriptor.policy);
 		default:
 			return false;
 	}
 };
 
-export const nativeCanPerformPolicyDeleteFieldPaths = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const canPerformPolicyDeleteFieldPaths = (
+	descriptor: CanPerformPolicyDescriptor,
 ): readonly (string | readonly string[])[] => {
 	switch (descriptor.kind) {
 		case "deleteSignedByExistingField":
@@ -346,17 +346,17 @@ export const nativeCanPerformPolicyDeleteFieldPaths = (
 		case "and":
 		case "or":
 			return descriptor.policies.flatMap((policy) => [
-				...nativeCanPerformPolicyDeleteFieldPaths(policy),
+				...canPerformPolicyDeleteFieldPaths(policy),
 			]);
 		case "delete":
-			return nativeCanPerformPolicyDeleteFieldPaths(descriptor.policy);
+			return canPerformPolicyDeleteFieldPaths(descriptor.policy);
 		default:
 			return [];
 	}
 };
 
-export const nativeCanPerformPolicySignedByFieldPaths = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const canPerformPolicySignedByFieldPaths = (
+	descriptor: CanPerformPolicyDescriptor,
 ): readonly (string | readonly string[])[] => {
 	switch (descriptor.kind) {
 		case "signedByField":
@@ -364,17 +364,17 @@ export const nativeCanPerformPolicySignedByFieldPaths = (
 		case "and":
 		case "or":
 			return descriptor.policies.flatMap((policy) => [
-				...nativeCanPerformPolicySignedByFieldPaths(policy),
+				...canPerformPolicySignedByFieldPaths(policy),
 			]);
 		case "put":
-			return nativeCanPerformPolicySignedByFieldPaths(descriptor.policy);
+			return canPerformPolicySignedByFieldPaths(descriptor.policy);
 		default:
 			return [];
 	}
 };
 
-export const nativeCanPerformPolicyPutNeedsEntryPublicKeys = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const canPerformPolicyPutNeedsEntryPublicKeys = (
+	descriptor: CanPerformPolicyDescriptor,
 ): boolean => {
 	switch (descriptor.kind) {
 		case "signedByPublicKey":
@@ -384,17 +384,17 @@ export const nativeCanPerformPolicyPutNeedsEntryPublicKeys = (
 		case "and":
 		case "or":
 			return descriptor.policies.some(
-				nativeCanPerformPolicyPutNeedsEntryPublicKeys,
+				canPerformPolicyPutNeedsEntryPublicKeys,
 			);
 		case "put":
-			return nativeCanPerformPolicyPutNeedsEntryPublicKeys(descriptor.policy);
+			return canPerformPolicyPutNeedsEntryPublicKeys(descriptor.policy);
 		default:
 			return false;
 	}
 };
 
-export const nativeCanPerformPolicyNeedsPreviousEntries = (
-	descriptor: NativeCanPerformPolicyDescriptor,
+export const canPerformPolicyNeedsPreviousEntries = (
+	descriptor: CanPerformPolicyDescriptor,
 ): boolean => {
 	switch (descriptor.kind) {
 		case "sameSignersAsPrevious":
@@ -402,11 +402,11 @@ export const nativeCanPerformPolicyNeedsPreviousEntries = (
 		case "and":
 		case "or":
 			return descriptor.policies.some(
-				nativeCanPerformPolicyNeedsPreviousEntries,
+				canPerformPolicyNeedsPreviousEntries,
 			);
 		case "put":
 		case "delete":
-			return nativeCanPerformPolicyNeedsPreviousEntries(descriptor.policy);
+			return canPerformPolicyNeedsPreviousEntries(descriptor.policy);
 		default:
 			return false;
 	}
@@ -498,14 +498,15 @@ const orEvaluate = async <T>(
 
 const attachIfDescribed = <T>(
 	fn: CanPerform<T>,
-	descriptor: NativeCanPerformPolicyDescriptor | undefined,
-): CanPerform<T> => (descriptor ? attachNativeCanPerformPolicy(fn, descriptor) : fn);
+	descriptor: CanPerformPolicyDescriptor | undefined,
+): CanPerform<T> =>
+	descriptor ? attachCanPerformPolicyDescriptor(fn, descriptor) : fn;
 
 export const policy = {
 	allowAll: <T = unknown>(): CanPerform<T> =>
-		attachNativeCanPerformPolicy<T>(() => true, { kind: "allowAll" }),
+		attachCanPerformPolicyDescriptor<T>(() => true, { kind: "allowAll" }),
 	signedByPublicKey: <T = unknown>(publicKey: PublicSignKey): CanPerform<T> =>
-		attachNativeCanPerformPolicy<T>(
+		attachCanPerformPolicyDescriptor<T>(
 			(properties) => entryPublicKeysInclude(properties, publicKey),
 			{
 				kind: "signedByPublicKey",
@@ -516,7 +517,7 @@ export const policy = {
 		path: string | readonly string[],
 	): CanPerform<T> => {
 		const getFieldValue = createFieldValueAccessor(path);
-		return attachNativeCanPerformPolicy<T>(
+		return attachCanPerformPolicyDescriptor<T>(
 			async (properties) => {
 				if (properties.type !== "put") {
 					return false;
@@ -534,7 +535,7 @@ export const policy = {
 		path: string | readonly string[],
 	): CanPerform<T> => {
 		const getFieldValue = createFieldValueAccessor(path);
-		return attachNativeCanPerformPolicy<T>(
+		return attachCanPerformPolicyDescriptor<T>(
 			async (properties) => {
 				if (properties.type !== "delete" || !properties.value) {
 					return false;
@@ -549,14 +550,14 @@ export const policy = {
 		);
 	},
 	sameSignersAsPrevious: <T = unknown>(): CanPerform<T> =>
-		attachNativeCanPerformPolicy<T>(sameSignersAsPrevious, {
+		attachCanPerformPolicyDescriptor<T>(sameSignersAsPrevious, {
 			kind: "sameSignersAsPrevious",
 		}),
 	put: <T = unknown>(inner: CanPerform<T>): CanPerform<T> =>
 		attachIfDescribed<T>(
 			(properties) => properties.type === "put" && inner(properties),
 			(() => {
-				const descriptor = getNativeCanPerformPolicyDescriptor(inner);
+				const descriptor = getCanPerformPolicyDescriptor(inner);
 				return descriptor ? { kind: "put", policy: descriptor } : undefined;
 			})(),
 		),
@@ -564,7 +565,7 @@ export const policy = {
 		attachIfDescribed<T>(
 			(properties) => properties.type === "delete" && inner(properties),
 			(() => {
-				const descriptor = getNativeCanPerformPolicyDescriptor(inner);
+				const descriptor = getCanPerformPolicyDescriptor(inner);
 				return descriptor ? { kind: "delete", policy: descriptor } : undefined;
 			})(),
 		),

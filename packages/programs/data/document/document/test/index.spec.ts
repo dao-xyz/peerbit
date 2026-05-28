@@ -88,7 +88,7 @@ import {
 	PutWithKeyOperation,
 	isDeleteOperation,
 } from "../src/operation.js";
-import { getNativeCanPerformPolicyDescriptor } from "../src/policy.js";
+import { getCanPerformPolicyDescriptor } from "../src/policy.js";
 import {
 	type CountEstimate,
 	Documents,
@@ -9480,7 +9480,7 @@ describe("index", () => {
 						canPerform,
 					},
 				});
-				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
 				expect(descriptor).to.deep.equal({ kind: "allowAll" });
 				const descriptorSymbol = Object.getOwnPropertySymbols(canPerform).find(
 					(symbol) =>
@@ -9551,7 +9551,7 @@ describe("index", () => {
 						canPerform,
 					},
 				});
-				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
 				expect(descriptor?.kind).equal("signedByPublicKey");
 				expect(
 					equals(
@@ -9616,7 +9616,7 @@ describe("index", () => {
 						canPerform,
 					},
 				});
-				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
 				expect(descriptor?.kind).equal("and");
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(
@@ -9659,7 +9659,7 @@ describe("index", () => {
 						canPerform,
 					},
 				});
-				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
 				expect(descriptor?.kind).equal("put");
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(
@@ -9986,7 +9986,7 @@ describe("index", () => {
 						canPerform,
 					},
 				});
-				const descriptor = getNativeCanPerformPolicyDescriptor(canPerform);
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
 				expect(descriptor?.kind).equal("put");
 
 				const preparedPayloadCommitOnlySpy = sinon.spy(

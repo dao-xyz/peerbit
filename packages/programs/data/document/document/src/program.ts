@@ -62,16 +62,16 @@ import {
 	isPutOperation,
 } from "./operation.js";
 import {
-	type NativeCanPerformPolicyDescriptor,
-	type NativeFastPathCanPerformPolicyEvaluator,
-	createNativeFastPathCanPerformPolicyEvaluator,
-	createNativeFastPathDeletePolicyEvaluator,
-	getNativeCanPerformPolicyDescriptor,
-	nativeCanPerformPolicyDeleteFieldPaths,
-	nativeCanPerformPolicyNeedsDeleteValue,
-	nativeCanPerformPolicyNeedsPreviousEntries,
-	nativeCanPerformPolicyPutNeedsEntryPublicKeys,
-	nativeCanPerformPolicySignedByFieldPaths,
+	type CanPerformPolicyDescriptor,
+	type CanPerformPolicyEvaluator,
+	createCanPerformPolicyEvaluator,
+	createCanPerformDeletePolicyEvaluator,
+	getCanPerformPolicyDescriptor,
+	canPerformPolicyDeleteFieldPaths,
+	canPerformPolicyNeedsDeleteValue,
+	canPerformPolicyNeedsPreviousEntries,
+	canPerformPolicyPutNeedsEntryPublicKeys,
+	canPerformPolicySignedByFieldPaths,
 } from "./policy.js";
 import { isResultIndexedValue } from "./result-shape.js";
 import {
@@ -910,8 +910,8 @@ export class Documents<
 	private _clazz!: AbstractType<T>;
 
 	private _optionCanPerform?: CanPerform<T>;
-	private _optionCanPerformNativePolicy?: NativeCanPerformPolicyDescriptor;
-	private _optionCanPerformNativeFastPath?: NativeFastPathCanPerformPolicyEvaluator;
+	private _optionCanPerformNativePolicy?: CanPerformPolicyDescriptor;
+	private _optionCanPerformNativeFastPath?: CanPerformPolicyEvaluator;
 	private _nativeBackboneDocumentIndexEnabled = false;
 	private _mode: DocumentMode = "auto";
 	private _nativeModeReplicatedOpen = false;
@@ -1096,7 +1096,7 @@ export class Documents<
 		}
 		if (
 			options.canPerform &&
-			!getNativeCanPerformPolicyDescriptor(options.canPerform)
+			!getCanPerformPolicyDescriptor(options.canPerform)
 		) {
 			unsupported.push("arbitrary canPerform");
 		}
@@ -1180,7 +1180,7 @@ export class Documents<
 			);
 		}
 		if (this._optionCanPerformNativePolicy) {
-			const signedByFieldPaths = nativeCanPerformPolicySignedByFieldPaths(
+			const signedByFieldPaths = canPerformPolicySignedByFieldPaths(
 				this._optionCanPerformNativePolicy,
 			);
 			for (const path of signedByFieldPaths) {
@@ -1191,7 +1191,7 @@ export class Documents<
 					);
 				}
 			}
-			const deleteFieldPaths = nativeCanPerformPolicyDeleteFieldPaths(
+			const deleteFieldPaths = canPerformPolicyDeleteFieldPaths(
 				this._optionCanPerformNativePolicy,
 			);
 			if (
@@ -1217,7 +1217,7 @@ export class Documents<
 	private nativePlainPutPolicyNeedsPreviousEntries(): boolean {
 		return (
 			!!this._optionCanPerformNativePolicy &&
-			nativeCanPerformPolicyNeedsPreviousEntries(
+			canPerformPolicyNeedsPreviousEntries(
 				this._optionCanPerformNativePolicy,
 			)
 		);
@@ -1396,7 +1396,7 @@ export class Documents<
 	}
 
 	private async nativePutPolicyAllows(
-		descriptor: NativeCanPerformPolicyDescriptor,
+		descriptor: CanPerformPolicyDescriptor,
 		doc: T,
 		previousEntries: Entry<Operation>[],
 		previousSignerPublicKeys: Uint8Array[] = [],
@@ -1442,7 +1442,7 @@ export class Documents<
 	}
 
 	private nativeDeletePolicyNeedsEntryPublicKeys(
-		descriptor: NativeCanPerformPolicyDescriptor,
+		descriptor: CanPerformPolicyDescriptor,
 	): boolean {
 		switch (descriptor.kind) {
 			case "signedByPublicKey":
@@ -1461,7 +1461,7 @@ export class Documents<
 	}
 
 	private async nativePutOperationPolicyAllows(
-		descriptor: NativeCanPerformPolicyDescriptor,
+		descriptor: CanPerformPolicyDescriptor,
 		operation: PutOperation | undefined,
 		doc: T | undefined,
 		previousEntries: Entry<Operation>[],
@@ -1470,7 +1470,7 @@ export class Documents<
 	): Promise<boolean> {
 		switch (descriptor.kind) {
 			case "allowAll":
-				return createNativeFastPathCanPerformPolicyEvaluator(
+				return createCanPerformPolicyEvaluator(
 					descriptor,
 					this.log.log.identity.publicKey,
 				)(doc as unknown);
@@ -1480,13 +1480,13 @@ export class Documents<
 							descriptor.publicKey,
 							entryPublicKeys,
 						)
-					: createNativeFastPathCanPerformPolicyEvaluator(
+					: createCanPerformPolicyEvaluator(
 							descriptor,
 							this.log.log.identity.publicKey,
 						)(doc as unknown);
 			case "signedByField": {
 				if (doc) {
-					return createNativeFastPathCanPerformPolicyEvaluator(
+					return createCanPerformPolicyEvaluator(
 						descriptor,
 						this.log.log.identity.publicKey,
 					)(doc);
@@ -1584,7 +1584,7 @@ export class Documents<
 	}
 
 	private async nativeDeleteOperationPolicyAllows(
-		descriptor: NativeCanPerformPolicyDescriptor,
+		descriptor: CanPerformPolicyDescriptor,
 		operation: DeleteOperation,
 		entryPublicKeys?: readonly PublicSignKey[],
 	): Promise<boolean> {
@@ -1718,7 +1718,7 @@ export class Documents<
 		}
 		let deleteValue: T | undefined;
 		if (
-			nativeCanPerformPolicyNeedsDeleteValue(
+			canPerformPolicyNeedsDeleteValue(
 				this._optionCanPerformNativePolicy,
 			)
 		) {
@@ -1731,7 +1731,7 @@ export class Documents<
 				}
 			}
 		}
-		return createNativeFastPathDeletePolicyEvaluator(
+		return createCanPerformDeletePolicyEvaluator(
 			this._optionCanPerformNativePolicy,
 			this.log.log.identity.publicKey,
 		)(deleteValue);
@@ -2046,7 +2046,7 @@ export class Documents<
 		if (!this._optionCanPerformNativePolicy) {
 			return;
 		}
-		const fieldPaths = nativeCanPerformPolicyDeleteFieldPaths(
+		const fieldPaths = canPerformPolicyDeleteFieldPaths(
 			this._optionCanPerformNativePolicy,
 		);
 		if (
@@ -2108,7 +2108,7 @@ export class Documents<
 		}
 
 		this._optionCanPerform = options.canPerform;
-		this._optionCanPerformNativePolicy = getNativeCanPerformPolicyDescriptor(
+		this._optionCanPerformNativePolicy = getCanPerformPolicyDescriptor(
 			options.canPerform,
 		);
 		const idProperty =
@@ -2259,7 +2259,7 @@ export class Documents<
 		}
 
 		this._optionCanPerformNativeFastPath = this._optionCanPerformNativePolicy
-			? createNativeFastPathCanPerformPolicyEvaluator(
+			? createCanPerformPolicyEvaluator(
 					this._optionCanPerformNativePolicy,
 					this.log.log.identity.publicKey,
 				)
@@ -2333,7 +2333,7 @@ export class Documents<
 				const previousEntries =
 					this._optionCanPerformNativePolicy &&
 					isPutOperation(operation) &&
-					nativeCanPerformPolicyNeedsPreviousEntries(
+					canPerformPolicyNeedsPreviousEntries(
 						this._optionCanPerformNativePolicy,
 					)
 						? await this.resolveCanPerformPreviousEntries(entry)
@@ -2341,7 +2341,7 @@ export class Documents<
 				const deleteValue =
 					this._optionCanPerformNativePolicy &&
 					isDeleteOperation(operation) &&
-					nativeCanPerformPolicyNeedsDeleteValue(
+					canPerformPolicyNeedsDeleteValue(
 						this._optionCanPerformNativePolicy,
 					)
 						? await this.resolveCanPerformDeleteValue(operation)
@@ -2379,7 +2379,7 @@ export class Documents<
 	}
 
 	private async nativeCanPerformAllowsAppend(
-		descriptor: NativeCanPerformPolicyDescriptor,
+		descriptor: CanPerformPolicyDescriptor,
 		operation: PutOperation | DeleteOperation,
 		entry: Entry<Operation>,
 		document: T | undefined,
@@ -2387,7 +2387,7 @@ export class Documents<
 		if (isPutOperation(operation)) {
 			let previousSignerPublicKeys: Uint8Array[] = [];
 			let previousEntries: Entry<Operation>[] = [];
-			if (nativeCanPerformPolicyNeedsPreviousEntries(descriptor)) {
+			if (canPerformPolicyNeedsPreviousEntries(descriptor)) {
 				const lookup = this.getNativeEntrySignerPublicKeys(entry.meta.next);
 				if (lookup && lookup.every((key) => key != null)) {
 					previousSignerPublicKeys = lookup as Uint8Array[];
@@ -2409,7 +2409,7 @@ export class Documents<
 				}
 			}
 			const entryPublicKeys =
-				!document && nativeCanPerformPolicyPutNeedsEntryPublicKeys(descriptor)
+				!document && canPerformPolicyPutNeedsEntryPublicKeys(descriptor)
 					? entry.publicKeys.length > 0
 						? entry.publicKeys
 						: await entry.getPublicKeys()
