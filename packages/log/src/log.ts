@@ -333,6 +333,38 @@ type OnChange<T> = (
 	reference?: undefined,
 ) => void | Promise<void>;
 
+export type JoinOptions<T> = {
+	verifySignatures?: boolean;
+	trim?: TrimOptions;
+	timeout?: number;
+	onChange?: OnChange<T>;
+	reset?: boolean;
+};
+
+type TrustedJoinOptions<T> = JoinOptions<T> & {
+	__peerbitBatchIndependent?: boolean;
+	__peerbitEntriesAlreadyMissing?: boolean;
+	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnAppendHashes?: InternalAppendHashesSink;
+	__peerbitDeferIndexWrite?: boolean;
+	__peerbitProfile?: InternalProfileSink;
+};
+
+type TrustedPreparedAppendFactsBatchJoinOptions = {
+	__peerbitEntriesAlreadyMissing?: boolean;
+	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnAppendHashes?: InternalAppendHashesSink;
+	__peerbitDeferIndexWrite?: boolean;
+	__peerbitProfile?: InternalProfileSink;
+	__peerbitNativePreparedJoinCommit?: (
+		input: PreparedJoinNativeCommitInput,
+	) => MaybePromise<boolean>;
+	__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
+	__peerbitOnPreparedJoinCommitted?: (
+		input: PreparedJoinCommittedInput,
+	) => MaybePromise<void>;
+};
+
 export type JoinableEntry = {
 	meta: {
 		clock: {
@@ -3129,25 +3161,14 @@ export class Log<T> {
 			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
 			| Log<T>
 			| ResultsIterator<Entry<any>>,
-		options?: {
-			verifySignatures?: boolean;
-			trim?: TrimOptions;
-			timeout?: number;
-			onChange?: OnChange<T>;
-			reset?: boolean;
-			/** Internal: batch independent network joins after SharedLog owns validation semantics. */
-			__peerbitBatchIndependent?: boolean;
-			/** Internal: trusted caller already filtered existing hashes for this join. */
-			__peerbitEntriesAlreadyMissing?: boolean;
-			/** Internal: set only by trusted Peerbit join paths after validation. */
-			__peerbitCanAppendAlreadyValidated?: boolean;
-			/** Internal: trusted caller can consume joined append hashes without a full Change object. */
-			__peerbitOnAppendHashes?: InternalAppendHashesSink;
-			/** Internal: trusted caller can tolerate deferred generic index persistence. */
-			__peerbitDeferIndexWrite?: boolean;
-			/** Internal: optional diagnostic sink for trusted batched join paths. */
-			__peerbitProfile?: InternalProfileSink;
-		},
+		options?: JoinOptions<T>,
+	): Promise<void>;
+	async join(
+		entriesOrLog:
+			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
+			| Log<T>
+			| ResultsIterator<Entry<any>>,
+		options?: TrustedJoinOptions<T>,
 	): Promise<void> {
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
@@ -3334,22 +3355,9 @@ export class Log<T> {
 	}
 
 	// Internal trusted receive path for callers that can supply prepared append facts.
-	async joinPreparedAppendFactsBatch(
+	private async joinPreparedAppendFactsBatch(
 		entries: PreparedAppendJoinFacts[],
-		options?: {
-			__peerbitEntriesAlreadyMissing?: boolean;
-			__peerbitCanAppendAlreadyValidated?: boolean;
-			__peerbitOnAppendHashes?: InternalAppendHashesSink;
-			__peerbitDeferIndexWrite?: boolean;
-			__peerbitProfile?: InternalProfileSink;
-			__peerbitNativePreparedJoinCommit?: (
-				input: PreparedJoinNativeCommitInput,
-			) => MaybePromise<boolean>;
-			__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
-			__peerbitOnPreparedJoinCommitted?: (
-				input: PreparedJoinCommittedInput,
-			) => MaybePromise<void>;
-		},
+		options?: TrustedPreparedAppendFactsBatchJoinOptions,
 	): Promise<boolean> {
 		if (
 			entries.length === 0 ||
@@ -3632,19 +3640,7 @@ export class Log<T> {
 	private async tryJoinIndependentAppendBatch(
 		entries: Entry<T>[],
 		heads: Map<string, boolean>,
-		options: {
-			verifySignatures?: boolean;
-			trim?: TrimOptions;
-			timeout?: number;
-			onChange?: OnChange<T>;
-			reset?: boolean;
-			__peerbitBatchIndependent?: boolean;
-			__peerbitEntriesAlreadyMissing?: boolean;
-			__peerbitCanAppendAlreadyValidated?: boolean;
-			__peerbitOnAppendHashes?: InternalAppendHashesSink;
-			__peerbitDeferIndexWrite?: boolean;
-			__peerbitProfile?: InternalProfileSink;
-		},
+		options: TrustedJoinOptions<T>,
 	): Promise<boolean> {
 		if (
 			entries.length < 2 ||

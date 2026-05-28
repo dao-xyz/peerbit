@@ -1339,6 +1339,61 @@ export type SharedAppendOptions<T> =
 			delivery?: false | undefined;
 	  });
 
+type TrustedLowerLogAppendHashesSink = (
+	hashes: string[],
+) => void | Promise<void>;
+
+type TrustedLowerLogJoinOptions<T> = Parameters<Log<T>["join"]>[1] & {
+	__peerbitBatchIndependent?: boolean;
+	__peerbitEntriesAlreadyMissing?: boolean;
+	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnAppendHashes?: TrustedLowerLogAppendHashesSink;
+	__peerbitDeferIndexWrite?: boolean;
+	__peerbitProfile?: SyncProfileFn;
+};
+
+type TrustedLowerLogPreparedJoinCommitInput = {
+	entries: PreparedAppendJoinFacts[];
+	hashes: string[];
+	headFlags: boolean[];
+	headFlagsBytes: Uint8Array;
+	trustedMissing: boolean;
+	validatePlan?: boolean;
+};
+
+type TrustedLowerLogPreparedJoinCommittedInput = {
+	entries: PreparedAppendJoinFacts[];
+	hashes: string[];
+	headFlags: boolean[];
+	nativePreparedCommitted: boolean;
+};
+
+type TrustedLowerLogPreparedJoinOptions = {
+	__peerbitEntriesAlreadyMissing?: boolean;
+	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnAppendHashes?: TrustedLowerLogAppendHashesSink;
+	__peerbitDeferIndexWrite?: boolean;
+	__peerbitProfile?: SyncProfileFn;
+	__peerbitNativePreparedJoinCommit?: (
+		input: TrustedLowerLogPreparedJoinCommitInput,
+	) => Promise<boolean> | boolean;
+	__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
+	__peerbitOnPreparedJoinCommitted?: (
+		input: TrustedLowerLogPreparedJoinCommittedInput,
+	) => Promise<void> | void;
+};
+
+type TrustedLowerLog<T> = {
+	join(
+		entriesOrLog: Parameters<Log<T>["join"]>[0],
+		options?: TrustedLowerLogJoinOptions<T>,
+	): Promise<void>;
+	joinPreparedAppendFactsBatch(
+		entries: PreparedAppendJoinFacts[],
+		options?: TrustedLowerLogPreparedJoinOptions,
+	): Promise<boolean>;
+};
+
 export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
 export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
 export type ReplicationChangeEvent = { publicKey: PublicSignKey };
@@ -11449,9 +11504,10 @@ export class SharedLog<
 											.commitVerifiedPreparedRawReceiveJoinBatch
 								: !!this._nativeBackbone?.graph
 										.commitPreparedRawReceiveJoinBatch);
+						const trustedLowerLog = this.log as unknown as TrustedLowerLog<T>;
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
-							(await this.log.joinPreparedAppendFactsBatch(
+							(await trustedLowerLog.joinPreparedAppendFactsBatch(
 								preparedAppendFacts,
 								{
 									__peerbitEntriesAlreadyMissing: true,
@@ -11469,7 +11525,7 @@ export class SharedLog<
 								},
 							));
 						if (!joinedPreparedFacts) {
-							await this.log.join(materializeAllToMergeEntries(), {
+							await trustedLowerLog.join(materializeAllToMergeEntries(), {
 								__peerbitBatchIndependent: true,
 								__peerbitEntriesAlreadyMissing: true,
 								__peerbitCanAppendAlreadyValidated:
