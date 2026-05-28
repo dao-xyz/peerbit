@@ -77,13 +77,11 @@
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/log": "workspace:*",
 		"@peerbit/logger": "workspace:*",
-		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
 		"@peerbit/pubsub-interface": "workspace:*",
 		"@peerbit/riblt": "workspace:*",
 		"@peerbit/rpc": "workspace:*",
-		"@peerbit/shared-log-rust": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"json-stringify-deterministic": "^1.0.7",
@@ -93,6 +91,10 @@
 		"pidusage": "^4.0.1",
 		"pino": "^9.4.0",
 		"uint8arrays": "^5.1.0"
+	},
+	"optionalDependencies": {
+		"@peerbit/native-backbone": "workspace:*",
+		"@peerbit/shared-log-rust": "workspace:*"
 	},
 	"devDependencies": {
 		"@peerbit/any-store-rust": "workspace:*",

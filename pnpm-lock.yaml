@@ -1670,9 +1670,6 @@ importers:
       '@peerbit/logger':
         specifier: workspace:*
         version: link:../../../utils/logger
-      '@peerbit/native-backbone':
-        specifier: workspace:*
-        version: link:../../../utils/native-backbone
       '@peerbit/program':
         specifier: workspace:*
         version: link:../../program/program
@@ -1688,9 +1685,6 @@ importers:
       '@peerbit/rpc':
         specifier: workspace:*
         version: link:../../rpc
-      '@peerbit/shared-log-rust':
-        specifier: workspace:*
-        version: link:rust
       '@peerbit/stream-interface':
         specifier: workspace:*
         version: link:../../../transport/stream-interface
@@ -1737,6 +1731,13 @@ importers:
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
+    optionalDependencies:
+      '@peerbit/native-backbone':
+        specifier: workspace:*
+        version: link:../../../utils/native-backbone
+      '@peerbit/shared-log-rust':
+        specifier: workspace:*
+        version: link:rust
 
   packages/programs/data/shared-log/proxy:
     dependencies:

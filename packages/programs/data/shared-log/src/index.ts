@@ -55,8 +55,7 @@ import type {
 	NativeBackboneAppendResult,
 	NativeBackboneCoordinateCommitColumns,
 	NativeBackboneCoordinateFields,
-	NativeBackboneCoordinatePersistenceAdapter,
-	NativeBackboneCoordinatePersistenceConfig,
+	NativeBackboneCoordinatePersistenceConfig as RuntimeNativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
 	NativeBackboneRequestPruneHintColumns,
 	NativeBackboneRawReceiveGroupAssignmentPlan,
@@ -64,7 +63,6 @@ import type {
 	NativeBackboneRawReceiveGroupLeaderPlan,
 	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneRawReceiveSelectionPlan,
-	NativeBackboneSimpleDocumentProjectionPlan,
 	NativePeerbitBackbone,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
@@ -83,14 +81,12 @@ import {
 	UnsubcriptionEvent,
 } from "@peerbit/pubsub-interface";
 import { RPC, type RequestContext } from "@peerbit/rpc";
-import {
-	type AppendDeliveryPlan,
-	type NativeAppendCoordinatePlan,
-	type NativeReplicationRange,
-	type SharedLogNativeState,
-	type SharedLogRangePlanner,
-	createRangePlanner,
-	createSharedLogState,
+import type {
+	AppendDeliveryPlan,
+	NativeAppendCoordinatePlan,
+	NativeReplicationRange,
+	SharedLogNativeState,
+	SharedLogRangePlanner,
 } from "@peerbit/shared-log-rust";
 import {
 	ACK_CONTROL_PRIORITY,
@@ -542,6 +538,18 @@ type PreparedLocalAppendCommit<R extends "u32" | "u64"> = {
 	};
 };
 
+type NativeBackboneSimpleDocumentProjectionPlan = {
+	documentVariantType?: "u8" | "string";
+	documentVariantValue?: string;
+	documentFieldNames: string[];
+	documentFieldTypes: string[];
+	outputVariantType?: "u8" | "string";
+	outputVariantValue?: string;
+	outputFieldTypes: string[];
+	sourceKinds: string[];
+	sourceValues: string[];
+};
+
 type NativeBackboneDocumentIndexCommitInput = {
 	key: string;
 	valuePrefixBytes?: Uint8Array;
@@ -574,6 +582,53 @@ type NativeBackboneDocumentCommitOptions = {
 	useNativeExistingDocumentContext?: boolean;
 	nativeBackboneDocumentDeleteKey?: string;
 };
+
+type NativeBackboneCoordinatePersistenceFiles = {
+	snapshot?: string;
+	journal?: string;
+	documentSnapshot?: string;
+	documentJournal?: string;
+	documentSignerSnapshot?: string;
+	documentSignerJournal?: string;
+};
+
+type NativeBackboneCoordinatePersistenceOptions =
+	NativeBackboneCoordinatePersistenceFiles & {
+		flushOnAppend?: boolean;
+		flushMaxPendingBytes?: number;
+		flushIntervalMs?: number;
+		compactMaxJournalBytes?: number;
+		compactMaxJournalRecords?: number;
+	};
+
+type NativeBackboneCoordinatePersistenceStore = {
+	read(name: string): Promise<Uint8Array | undefined>;
+	write(name: string, bytes: Uint8Array): Promise<void>;
+	append(name: string, bytes: Uint8Array): Promise<void>;
+	remove?(name: string): Promise<void>;
+	flush?(): Promise<void>;
+	close?(): Promise<void>;
+};
+
+type NativeBackboneCoordinatePersistenceAdapter = {
+	flushOnAppend?: boolean;
+	flushMaxPendingBytes?: number;
+	flushIntervalMs?: number;
+	compactMaxJournalBytes?: number;
+	compactMaxJournalRecords?: number;
+	hydrate(backbone: unknown): Promise<number>;
+	flushJournal(backbone: unknown): Promise<number>;
+	flushJournalOnAppend?(backbone: unknown): number | Promise<number>;
+	compact?(backbone: unknown): Promise<void>;
+	close?(): Promise<void>;
+};
+
+type NativeBackboneCoordinatePersistenceConfig =
+	| NativeBackboneCoordinatePersistenceAdapter
+	| (NativeBackboneCoordinatePersistenceOptions & {
+			store: NativeBackboneCoordinatePersistenceStore;
+			buffered?: boolean | { maxBufferedBytes?: number };
+	  });
 
 type PreparedPayloadCommitOnlyProperties =
 	NativeBackboneDocumentCommitOptions & {
@@ -8455,6 +8510,9 @@ export class SharedLog<
 		}
 
 		try {
+			const { createRangePlanner, createSharedLogState } = await import(
+				"@peerbit/shared-log-rust",
+			);
 			const [planner, state] = await Promise.all([
 				createRangePlanner(this.domain.resolution),
 				createSharedLogState(this.domain.resolution),
@@ -8510,7 +8568,7 @@ export class SharedLog<
 			});
 			this._nativeBackboneCoordinatePersistence = options.coordinatePersistence
 				? createNativeBackboneCoordinatePersistence(
-						options.coordinatePersistence,
+						options.coordinatePersistence as RuntimeNativeBackboneCoordinatePersistenceConfig,
 					)
 				: undefined;
 			return backbone;
