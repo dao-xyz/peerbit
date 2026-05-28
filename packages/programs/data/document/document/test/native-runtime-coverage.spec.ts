@@ -65,7 +65,7 @@ describe("strict native runtime coverage", () => {
 		await session.peers[1].open(target, { args: openArgs() });
 		const documentPutSpy = sinon.spy(target.docs.index, "put");
 		const documentPreparedNativeStoredPutSpy = sinon.spy(
-			target.docs.index,
+			target.docs.index as any,
 			"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 		);
 		const decoderSpy = sinon.spy(target.docs.index.valueEncoding, "decoder");

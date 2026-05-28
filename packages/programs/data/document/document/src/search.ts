@@ -1625,7 +1625,7 @@ export class DocumentIndex<
 		}
 	}
 
-	public attachNativeBackboneDocumentIndex(
+	private attachNativeBackboneDocumentIndex(
 		backbone: unknown,
 		options?: { preserveExisting?: boolean },
 	): boolean {
@@ -1658,7 +1658,7 @@ export class DocumentIndex<
 		);
 	}
 
-	public getNativeDocumentFieldExtractionPlan(
+	private getNativeDocumentFieldExtractionPlan(
 		path: string | readonly string[],
 	): SimpleDocumentFieldExtractionPlan | undefined {
 		return createSimpleFieldExtractionPlan(getSchema(this.documentType), path);
@@ -1673,7 +1673,7 @@ export class DocumentIndex<
 		);
 	}
 
-	public canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts(): boolean {
+	private canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts(): boolean {
 		return (
 			this.canPrepareNativeBackboneDocumentIndexCommit() ||
 			!!this.nativeTransformProjectionPlan ||
@@ -1683,7 +1683,7 @@ export class DocumentIndex<
 		);
 	}
 
-	public canUseNativeBackboneContextualBatch(): boolean {
+	private canUseNativeBackboneContextualBatch(): boolean {
 		return (
 			!this.isProgramValued &&
 			typeof (this.index as ContextualIndexPut<I>).putWithContextBatch ===
@@ -1693,7 +1693,7 @@ export class DocumentIndex<
 		);
 	}
 
-	public prepareNativeBackboneDocumentIndexCommit(
+	private prepareNativeBackboneDocumentIndexCommit(
 		value: T,
 		encodedDocument: Uint8Array,
 		transformFacts?: DocumentTransformFacts,
@@ -1760,7 +1760,7 @@ export class DocumentIndex<
 			: finish(transformed);
 	}
 
-	public prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+	private prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
 		value: T,
 		encodedDocument: Uint8Array,
 		context: types.Context,
@@ -1842,7 +1842,7 @@ export class DocumentIndex<
 		};
 	}
 
-	public prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
+	private prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
 		encodedDocument: Uint8Array,
 		context: types.Context,
 		transformFacts?: DocumentTransformFacts,
@@ -2566,7 +2566,7 @@ export class DocumentIndex<
 		}
 	}
 
-	public _putPreparedNativeBackboneDocumentIndexWithContext(
+	private _putPreparedNativeBackboneDocumentIndexWithContext(
 		value: T,
 		id: indexerTypes.IdKey,
 		context: types.Context,
@@ -2627,7 +2627,7 @@ export class DocumentIndex<
 		}
 	}
 
-	public _putPreparedNativeBackboneDocumentIndexStoredWithContext(
+	private _putPreparedNativeBackboneDocumentIndexStoredWithContext(
 		id: indexerTypes.IdKey,
 		context: types.Context,
 		nativeDocumentIndex: NativeBackboneDocumentIndexCommit<I>,
@@ -2674,7 +2674,7 @@ export class DocumentIndex<
 		}
 	}
 
-	public _persistPreparedNativeBackboneDocumentIndexStoredWithContext(
+	private _persistPreparedNativeBackboneDocumentIndexStoredWithContext(
 		id: indexerTypes.IdKey,
 		context: types.Context,
 		nativeDocumentIndex?: NativeBackboneDocumentIndexCommit<I>,
@@ -2739,7 +2739,7 @@ export class DocumentIndex<
 		}
 	}
 
-	public async _putManyPreparedNativeBackboneDocumentIndexWithContext(
+	private async _putManyPreparedNativeBackboneDocumentIndexWithContext(
 		values: Array<{
 			value: T;
 			id: indexerTypes.IdKey;
@@ -2824,7 +2824,7 @@ export class DocumentIndex<
 		}
 	}
 
-	public async _putManyPreparedNativeBackboneDocumentIndexStored(
+	private async _putManyPreparedNativeBackboneDocumentIndexStored(
 		values: Array<{
 			value: T;
 			id: indexerTypes.IdKey;

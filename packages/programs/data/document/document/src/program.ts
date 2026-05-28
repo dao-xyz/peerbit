@@ -884,6 +884,86 @@ type PreparedNativeBackboneDocumentIndexCommit<I> = {
 	setContext?: (context: Context) => void;
 };
 
+type TrustedDocumentIndexTransformFacts = {
+	entryPublicKeys?: PublicSignKey[];
+};
+
+type TrustedDocumentIndex<T, I extends Record<string, any>> = {
+	attachNativeBackboneDocumentIndex(
+		backbone: unknown,
+		options?: { preserveExisting?: boolean },
+	): boolean;
+	getNativeDocumentFieldExtractionPlan(
+		path: string | readonly string[],
+	): SimpleDocumentFieldExtractionPlan | undefined;
+	canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts(): boolean;
+	canUseNativeBackboneContextualBatch(): boolean;
+	prepareNativeBackboneDocumentIndexCommit(
+		value: T,
+		encodedDocument: Uint8Array,
+		transformFacts?: TrustedDocumentIndexTransformFacts,
+	): MaybePromise<PreparedNativeBackboneDocumentIndexCommit<I> | undefined>;
+	prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+		value: T,
+		encodedDocument: Uint8Array,
+		context: Context,
+		transformFacts?: TrustedDocumentIndexTransformFacts,
+	): PreparedNativeBackboneDocumentIndexCommit<I> | undefined;
+	prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
+		encodedDocument: Uint8Array,
+		context: Context,
+		transformFacts?: TrustedDocumentIndexTransformFacts,
+	): PreparedNativeBackboneDocumentIndexCommit<I> | undefined;
+	_putPreparedNativeBackboneDocumentIndexWithContext(
+		value: T,
+		id: indexerTypes.IdKey,
+		context: Context,
+		nativeDocumentIndex: PreparedNativeBackboneDocumentIndexCommit<I>,
+		options?: { replace?: boolean },
+	): MaybePromise<WithIndexedContext<T, I> | undefined>;
+	_putPreparedNativeBackboneDocumentIndexStoredWithContext(
+		id: indexerTypes.IdKey,
+		context: Context,
+		nativeDocumentIndex: PreparedNativeBackboneDocumentIndexCommit<I>,
+		options?: { replace?: boolean },
+	): MaybePromise<boolean | undefined>;
+	_persistPreparedNativeBackboneDocumentIndexStoredWithContext(
+		id: indexerTypes.IdKey,
+		context: Context,
+		nativeDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>,
+		encodedValueParts?: ContextualEncodedValueParts,
+		options?: { replace?: boolean },
+	): MaybePromise<boolean | undefined>;
+	_putManyPreparedNativeBackboneDocumentIndexWithContext(
+		values: Array<{
+			value: T;
+			id: indexerTypes.IdKey;
+			context: Context;
+			nativeDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>;
+			options?: { replace?: boolean };
+		}>,
+	): Promise<WithIndexedContext<T, I>[] | undefined>;
+	_putManyPreparedNativeBackboneDocumentIndexStored(
+		values: Array<{
+			value: T;
+			id: indexerTypes.IdKey;
+			context: Context;
+			encodedValueParts?: ContextualEncodedValueParts;
+			nativeDocumentIndex?: PreparedNativeBackboneDocumentIndexCommit<I>;
+			options?: { replace?: boolean };
+		}>,
+	): Promise<boolean | undefined>;
+};
+
+const asTrustedDocumentIndex = <
+	T,
+	I extends Record<string, any>,
+	D extends ReplicationDomain<any, Operation, any>,
+>(
+	index: DocumentIndex<T, I, D>,
+): TrustedDocumentIndex<T, I> =>
+	index as unknown as TrustedDocumentIndex<T, I>;
+
 type NativeDocumentAppendCommitInput<
 	T,
 	I extends Record<string, any>,
@@ -1226,7 +1306,7 @@ export class Documents<
 			);
 		}
 		if (
-			!this._index.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()
+			!asTrustedDocumentIndex(this._index).canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()
 		) {
 			throw this.nativeModeError(
 				"requires a native-compatible document index transform",
@@ -1724,7 +1804,7 @@ export class Documents<
 		if (Program.isPrototypeOf(this._clazz)) {
 			unsupported.push("program-valued document type");
 		}
-		if (!this._index.canUseNativeBackboneContextualBatch()) {
+		if (!asTrustedDocumentIndex(this._index).canUseNativeBackboneContextualBatch()) {
 			unsupported.push("native batch document index");
 		}
 		if (unsupported.length > 0) {
@@ -2223,7 +2303,7 @@ export class Documents<
 		this._nativeDocumentFieldExtractionPlans ??= new Map();
 		this._nativeDocumentFieldExtractionPlans.clear();
 		this._nativeDocumentIdExtractionPlan =
-			this._index.getNativeDocumentFieldExtractionPlan(idProperty);
+			asTrustedDocumentIndex(this._index).getNativeDocumentFieldExtractionPlan(idProperty);
 
 		// document v6 and below need log compatibility of v8 or below
 		// document v7 needs log compatibility of v9
@@ -2307,7 +2387,7 @@ export class Documents<
 			options.nativeBackbone.documentIndex === true
 		) {
 			this._nativeBackboneDocumentIndexEnabled =
-				this._index.attachNativeBackboneDocumentIndex(
+				asTrustedDocumentIndex(this._index).attachNativeBackboneDocumentIndex(
 					this.getSharedLogNativeBackbone(),
 					{ preserveExisting: this._mode === "native" },
 				) === true;
@@ -2786,7 +2866,7 @@ export class Documents<
 		if (plans.has(key)) {
 			return plans.get(key);
 		}
-		const plan = this._index.getNativeDocumentFieldExtractionPlan(path);
+		const plan = asTrustedDocumentIndex(this._index).getNativeDocumentFieldExtractionPlan(path);
 		plans.set(key, plan);
 		return plan;
 	}
@@ -3380,7 +3460,7 @@ export class Documents<
 		if (!this._nativeBackboneDocumentIndexEnabled) {
 			return;
 		}
-		return this._index.prepareNativeBackboneDocumentIndexCommit(
+		return asTrustedDocumentIndex(this._index).prepareNativeBackboneDocumentIndexCommit(
 			input.document,
 			input.documentBytes,
 			{ entryPublicKeys: [this.log.log.identity.publicKey] },
@@ -3396,7 +3476,7 @@ export class Documents<
 		| undefined {
 		if (
 			!this._nativeBackboneDocumentIndexEnabled ||
-			!this._index.canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()
+			!asTrustedDocumentIndex(this._index).canPrepareNativeBackboneDocumentIndexCommitWithAppendFacts()
 		) {
 			return;
 		}
@@ -3415,7 +3495,7 @@ export class Documents<
 				gid: appendFacts.gid,
 				size: appendFacts.payloadSize,
 			});
-			return this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+			return asTrustedDocumentIndex(this._index).prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
 				input.document,
 				input.documentBytes,
 				context,
@@ -3913,7 +3993,7 @@ export class Documents<
 			(append.nativeBackboneDocumentIndexCommitted
 				? undefined
 				: this._nativeBackboneDocumentIndexEnabled
-					? this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+					? asTrustedDocumentIndex(this._index).prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
 							input.document,
 							input.documentBytes,
 							context,
@@ -4002,7 +4082,7 @@ export class Documents<
 			if (this._mode === "native") {
 				return true;
 			}
-			return this._index._persistPreparedNativeBackboneDocumentIndexStoredWithContext(
+			return asTrustedDocumentIndex(this._index)._persistPreparedNativeBackboneDocumentIndexStoredWithContext(
 				commit.key,
 				commit.context,
 				commit.nativeBackboneDocumentIndex,
@@ -4202,7 +4282,7 @@ export class Documents<
 			}
 			if (commit.nativeBackboneDocumentIndex) {
 				const nativePreparedIndexPut =
-					this._index._putPreparedNativeBackboneDocumentIndexWithContext(
+					asTrustedDocumentIndex(this._index)._putPreparedNativeBackboneDocumentIndexWithContext(
 						commit.document,
 						commit.key,
 						commit.context,
@@ -4413,7 +4493,7 @@ export class Documents<
 			commit.removed.length === 0
 		) {
 			const stored =
-				await this._index._putManyPreparedNativeBackboneDocumentIndexStored(
+				await asTrustedDocumentIndex(this._index)._putManyPreparedNativeBackboneDocumentIndexStored(
 					commit.commits.map((put) => {
 						const existing =
 							put.unique || put.existing === null ? null : put.existing;
@@ -4481,7 +4561,7 @@ export class Documents<
 			})),
 		);
 		indexedDocuments ??=
-			await this._index._putManyPreparedNativeBackboneDocumentIndexWithContext(
+			await asTrustedDocumentIndex(this._index)._putManyPreparedNativeBackboneDocumentIndexWithContext(
 				putsToIndex.map((put) => ({
 					value: put.document,
 					id: put.key,
@@ -4862,7 +4942,7 @@ export class Documents<
 			size: encodePutOperationPayload(payload.data).byteLength,
 		});
 		const nativeDocumentIndex =
-			this._index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
+			asTrustedDocumentIndex(this._index).prepareNativeBackboneDocumentIndexCommitWithAppendFacts(
 				value,
 				payload.data,
 				context,
@@ -4871,7 +4951,7 @@ export class Documents<
 		if (!nativeDocumentIndex) {
 			return;
 		}
-		return this._index._putPreparedNativeBackboneDocumentIndexWithContext(
+		return asTrustedDocumentIndex(this._index)._putPreparedNativeBackboneDocumentIndexWithContext(
 			value,
 			key,
 			context,
@@ -4901,7 +4981,7 @@ export class Documents<
 			size: encodePutOperationPayload(payload.data).byteLength,
 		});
 		const nativeDocumentIndex =
-			this._index.prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
+			asTrustedDocumentIndex(this._index).prepareNativeBackboneDocumentIndexStoredCommitWithAppendFacts(
 				payload.data,
 				context,
 				{ entryPublicKeys: entry.publicKeys },
@@ -4909,7 +4989,7 @@ export class Documents<
 		if (!nativeDocumentIndex) {
 			return;
 		}
-		return this._index._putPreparedNativeBackboneDocumentIndexStoredWithContext(
+		return asTrustedDocumentIndex(this._index)._putPreparedNativeBackboneDocumentIndexStoredWithContext(
 			key,
 			context,
 			nativeDocumentIndex,

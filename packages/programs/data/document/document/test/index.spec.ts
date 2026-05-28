@@ -1804,7 +1804,7 @@ describe("index", () => {
 					"putWithContext",
 				);
 				const documentPreparedNativePutSpy = sinon.spy(
-					localStore.docs.index,
+					localStore.docs.index as any,
 					"_putPreparedNativeBackboneDocumentIndexWithContext",
 				);
 				const documentIndexTransformSpy = sinon.spy(
@@ -4525,7 +4525,7 @@ describe("index", () => {
 							"prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes",
 						);
 						const prepareNativeProjection =
-							localStore.docs.index.prepareNativeBackboneDocumentIndexCommitWithAppendFacts.bind(
+							(localStore.docs.index as any).prepareNativeBackboneDocumentIndexCommitWithAppendFacts.bind(
 								localStore.docs.index,
 							) as any;
 						const nativeProjectionSetContextSpy = sinon.spy();
@@ -5098,11 +5098,11 @@ describe("index", () => {
 					await rustSession.peers[1].open(target, { args: openArgs() });
 					const documentPutSpy = sinon.spy(target.docs.index, "put");
 					const documentPreparedNativePutSpy = sinon.spy(
-						target.docs.index,
+						target.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexWithContext",
 					);
 					const documentPreparedNativeStoredPutSpy = sinon.spy(
-						target.docs.index,
+						target.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 					);
 					const decoderSpy = sinon.spy(
@@ -5197,7 +5197,7 @@ describe("index", () => {
 						"getNativeIndexedContext",
 					);
 					const documentPreparedNativeStoredPutSpy = sinon.spy(
-						store.docs.index,
+						store.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 					);
 					const decoderSpy = sinon.spy(
@@ -5286,7 +5286,7 @@ describe("index", () => {
 						"getNativeIndexedContext",
 					);
 					const documentPreparedNativePutSpy = sinon.spy(
-						store.docs.index,
+						store.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexWithContext",
 					);
 					const documentPutSpy = sinon.spy(store.docs.index, "put");
@@ -5565,11 +5565,11 @@ describe("index", () => {
 					await rustSession.peers[1].open(target, { args: openArgs() });
 					const documentPutSpy = sinon.spy(target.docs.index, "put");
 					const documentPreparedNativePutSpy = sinon.spy(
-						target.docs.index,
+						target.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexWithContext",
 					);
 					const documentPreparedNativeStoredPutSpy = sinon.spy(
-						target.docs.index,
+						target.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 					);
 					const decoderSpy = sinon.spy(
@@ -5687,11 +5687,11 @@ describe("index", () => {
 						await rustSession.peers[1].open(target, { args: openArgs() });
 						const documentPutSpy = sinon.spy(target.docs.index, "put");
 						const documentPreparedNativePutSpy = sinon.spy(
-							target.docs.index,
+							target.docs.index as any,
 							"_putPreparedNativeBackboneDocumentIndexWithContext",
 						);
 						const documentPreparedNativeStoredPutSpy = sinon.spy(
-							target.docs.index,
+							target.docs.index as any,
 							"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 						);
 						const decoderSpy = sinon.spy(
@@ -6002,7 +6002,7 @@ describe("index", () => {
 						"decoder",
 					);
 					const documentPreparedNativeStoredPutSpy = sinon.spy(
-						target.docs.index,
+						target.docs.index as any,
 						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 					);
 					try {
@@ -6202,7 +6202,7 @@ describe("index", () => {
 								throw new Error("Unexpected document decode");
 							});
 						const documentPreparedNativeStoredPutSpy = sinon.spy(
-							target.docs.index,
+							target.docs.index as any,
 							"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
 						);
 						try {
@@ -7288,7 +7288,7 @@ describe("index", () => {
 						"putManyWithContext",
 					);
 					const storedIdentityBatchSpy = sinon.spy(
-						store.docs.index,
+						store.docs.index as any,
 						"_putManyPreparedNativeBackboneDocumentIndexStored",
 					);
 					const nativeBackboneBatchTransactionSpy = sinon.spy(
@@ -7410,7 +7410,10 @@ describe("index", () => {
 						"commitNativeDocumentAppendMany",
 					);
 					const batchSupportStub = sinon
-						.stub(store.docs.index, "canUseNativeBackboneContextualBatch")
+						.stub(
+							store.docs.index as any,
+							"canUseNativeBackboneContextualBatch",
+						)
 						.returns(false);
 					const strictAppendSpy = sinon.spy(
 						store.docs.log as any,
@@ -7942,11 +7945,11 @@ describe("index", () => {
 						"commitNativeDocumentAppendMany",
 					);
 					const preparedBatchIndexSpy = sinon.spy(
-						localStore.docs.index,
+						localStore.docs.index as any,
 						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
 					);
 					const storedBatchIndexSpy = sinon.spy(
-						localStore.docs.index,
+						localStore.docs.index as any,
 						"_putManyPreparedNativeBackboneDocumentIndexStored",
 					);
 					const genericBatchIndexSpy = sinon.spy(
@@ -8087,11 +8090,11 @@ describe("index", () => {
 						"commitNativeDocumentAppendMany",
 					);
 					const preparedBatchIndexSpy = sinon.spy(
-						localStore.docs.index,
+						localStore.docs.index as any,
 						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
 					);
 					const storedBatchIndexSpy = sinon.spy(
-						localStore.docs.index,
+						localStore.docs.index as any,
 						"_putManyPreparedNativeBackboneDocumentIndexStored",
 					);
 					const genericBatchIndexSpy = sinon.spy(
