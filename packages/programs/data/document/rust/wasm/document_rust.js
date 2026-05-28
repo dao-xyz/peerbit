@@ -25,22 +25,6 @@ export function encode_context_suffix(created, modified, head, gid, size) {
 }
 
 /**
- * @param {Array<any>} createds
- * @param {Array<any>} modifieds
- * @param {Array<any>} heads
- * @param {Array<any>} gids
- * @param {Uint32Array} sizes
- * @returns {Array<any>}
- */
-export function encode_context_suffix_batch(createds, modifieds, heads, gids, sizes) {
-    const ret = wasm.encode_context_suffix_batch(createds, modifieds, heads, gids, sizes);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
  * @param {Uint8Array} encoded_document
  * @param {any} plan
  * @returns {any}

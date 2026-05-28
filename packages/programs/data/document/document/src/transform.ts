@@ -5,7 +5,7 @@ export type DocumentTransformFacts = {
 	entryPublicKeys?: readonly PublicSignKey[];
 };
 
-export type NativeDocumentTransformSourceDescriptor =
+type NativeDocumentTransformSourceDescriptor =
 	| {
 			readonly kind: "field";
 			readonly path: string | readonly string[];
@@ -46,7 +46,7 @@ export type NativeDocumentTransformer<T, I> = ((
 	readonly [NATIVE_DOCUMENT_TRANSFORM]?: NativeDocumentTransformDescriptor;
 };
 
-export type NativeDocumentTransformSource =
+type NativeDocumentTransformSource =
 	| string
 	| readonly string[]
 	| NativeDocumentTransformSourceDescriptor;

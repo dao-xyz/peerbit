@@ -638,53 +638,6 @@ pub fn encode_context_suffix(
 }
 
 #[wasm_bindgen]
-pub fn encode_context_suffix_batch(
-    createds: Array,
-    modifieds: Array,
-    heads: Array,
-    gids: Array,
-    sizes: Uint32Array,
-) -> Result<Array, JsValue> {
-    let len = createds.length();
-    if modifieds.length() != len
-        || heads.length() != len
-        || gids.length() != len
-        || sizes.length() != len
-    {
-        return Err(JsValue::from_str("Mismatched context batch lengths"));
-    }
-
-    let out = Array::new_with_length(len);
-    for index in 0..len {
-        let created = createds
-            .get(index)
-            .as_string()
-            .ok_or_else(|| JsValue::from_str("Invalid created value"))?;
-        let modified = modifieds
-            .get(index)
-            .as_string()
-            .ok_or_else(|| JsValue::from_str("Invalid modified value"))?;
-        let head = heads
-            .get(index)
-            .as_string()
-            .ok_or_else(|| JsValue::from_str("Invalid head value"))?;
-        let gid = gids
-            .get(index)
-            .as_string()
-            .ok_or_else(|| JsValue::from_str("Invalid gid value"))?;
-        let bytes = encode_context_suffix_inner(
-            parse_u64(&created, "created")?,
-            parse_u64(&modified, "modified")?,
-            &head,
-            &gid,
-            sizes.get_index(index),
-        );
-        out.set(index, Uint8Array::from(bytes.as_slice()).into());
-    }
-    Ok(out)
-}
-
-#[wasm_bindgen]
 pub fn plan_document_context(
     existing_created: JsValue,
     modified: &str,

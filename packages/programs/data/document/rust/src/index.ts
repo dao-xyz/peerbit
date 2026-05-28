@@ -62,13 +62,6 @@ type WasmModule = {
 		gid: string,
 		size: number,
 	) => Uint8Array;
-	encode_context_suffix_batch: (
-		createds: string[],
-		modifieds: string[],
-		heads: string[],
-		gids: string[],
-		sizes: Uint32Array,
-	) => Uint8Array[];
 	plan_document_context: (
 		existingCreated: string | undefined,
 		modified: string,
@@ -167,24 +160,6 @@ export const encodeContextSuffix = async (
 			context.size,
 		),
 	);
-};
-
-export const encodeContextSuffixBatch = async (
-	contexts: DocumentContextInput[],
-): Promise<Uint8Array[]> => {
-	if (contexts.length === 0) {
-		return [];
-	}
-	const wasm = await loadWasm();
-	return wasm
-		.encode_context_suffix_batch(
-			contexts.map((context) => asU64String(context.created)),
-			contexts.map((context) => asU64String(context.modified)),
-			contexts.map((context) => context.head),
-			contexts.map((context) => context.gid),
-			Uint32Array.from(contexts.map((context) => context.size)),
-		)
-		.map(copyBytes);
 };
 
 const toContextPlan = (

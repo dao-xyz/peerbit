@@ -198,7 +198,7 @@ export const getNativeCanPerformPolicyDescriptor = <T>(
 export type NativeFastPathCanPerformPolicyEvaluator = (
 	document: unknown,
 ) => boolean;
-export type NativeFastPathDeletePolicyEvaluator = (
+type NativeFastPathDeletePolicyEvaluator = (
 	existingDocument: unknown,
 ) => boolean;
 
@@ -317,24 +317,6 @@ export const createNativeFastPathDeletePolicyEvaluator = (
 				);
 	}
 };
-
-const nativeFastPathPutPolicyAllows = (
-	descriptor: NativeCanPerformPolicyDescriptor,
-	localPublicKey: PublicSignKey | undefined,
-	document: unknown,
-): boolean =>
-	createNativeFastPathCanPerformPolicyEvaluator(
-		descriptor,
-		localPublicKey,
-	)(document);
-
-export const isNativeFastPathCanPerformPolicy = (
-	descriptor: NativeCanPerformPolicyDescriptor | undefined,
-	localPublicKey?: PublicSignKey,
-	document?: unknown,
-): boolean =>
-	!!descriptor &&
-	nativeFastPathPutPolicyAllows(descriptor, localPublicKey, document);
 
 export const nativeCanPerformPolicyNeedsDeleteValue = (
 	descriptor: NativeCanPerformPolicyDescriptor,
