@@ -99,11 +99,6 @@ type NativePeerbitBackboneHandle = {
 		field: number,
 		value: string,
 	) => string | undefined;
-	document_index_has_exact_string: (
-		field: number,
-		value: string,
-		key: string,
-	) => boolean;
 	document_value_bytes: (key: string) => Uint8Array | undefined;
 	document_entry: (key: string) => [string, Uint8Array] | undefined;
 	document_keys_exist?: (keys: string[]) => Uint8Array;
@@ -5823,10 +5818,6 @@ export class NativePeerbitBackbone {
 		value: string,
 	): string | undefined {
 		return this.native.document_exact_string_first_key(field, value);
-	}
-
-	hasDocumentExactString(field: number, value: string, key: string): boolean {
-		return this.native.document_index_has_exact_string(field, value, key);
 	}
 
 	documentValueBytes(key: string): Uint8Array | undefined {

@@ -772,7 +772,6 @@ describe("native peerbit backbone", () => {
 		expect(backbone.documentIndexLength).to.equal(1);
 		expect(backbone.documentValueLength).to.equal(1);
 		expect(backbone.documentExactStringFirstKey(1, "abc")).to.equal("doc-1");
-		expect(backbone.hasDocumentExactString(1, "abc", "doc-1")).to.equal(true);
 		expect(
 			Array.from(backbone.documentValueBytes("doc-1") ?? []),
 		).to.deep.equal(Array.from(encoded));
