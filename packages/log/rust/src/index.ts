@@ -48,7 +48,7 @@ export type NativeLogEntryMetadata = {
 	replicas?: number;
 };
 
-export type NativeJoinPlan = {
+type NativeJoinPlan = {
 	skip: boolean;
 	missingParents: string[];
 	cutChecked: boolean;
@@ -631,7 +631,7 @@ const nativeLogBlockStoreHandle = (
 		store as NativeLogBlockStoreCarrier | undefined
 	)?.getNativeLogBlockStoreHandle?.();
 
-export class LogGraphIndex {
+class LogGraphIndex {
 	private plainEntryBuilder:
 		| {
 				clockId: Uint8Array;

@@ -34,7 +34,7 @@ type MaturedPeerOptions = {
 	selfReplicating: boolean;
 };
 
-export type FindLeaderOptions = {
+type FindLeaderOptions = {
 	roleAge?: number;
 	now?: bigint | number | string;
 	peerFilter?: Iterable<string>;
@@ -45,16 +45,16 @@ export type FindLeaderOptions = {
 	includeStrictFullReplica?: boolean;
 };
 
-export type LeaderSample = {
+type LeaderSample = {
 	intersecting: boolean;
 };
 
-export type LeaderPlan = {
+type LeaderPlan = {
 	coordinates: Array<number | bigint>;
 	leaders: Map<string, LeaderSample>;
 };
 
-export type EntryAssignmentPlan = LeaderPlan & {
+type EntryAssignmentPlan = LeaderPlan & {
 	assignedToRangeBoundary: boolean;
 };
 
@@ -80,18 +80,18 @@ export type NativeAppendCoordinatePlan = {
 	requestedReplicas: number;
 };
 
-export type AppendEntryPlan = EntryAssignmentPlan & {
+type AppendEntryPlan = EntryAssignmentPlan & {
 	isLeader: boolean;
 	delivery: AppendDeliveryPlan;
 	coordinate: NativeAppendCoordinatePlan;
 };
 
-export type ReceiveCoordinatePlan = EntryAssignmentPlan & {
+type ReceiveCoordinatePlan = EntryAssignmentPlan & {
 	isLeader: boolean;
 	coordinate: NativeAppendCoordinatePlan;
 };
 
-export type AppendEntryBatchInput = {
+type AppendEntryBatchInput = {
 	entryHash: string;
 	gid: string;
 	hashNumber?: bigint | number | string;
@@ -104,7 +104,7 @@ type LeaderBatchInput = {
 	replicas: number;
 };
 
-export type LeaderGidBatchInput = {
+type LeaderGidBatchInput = {
 	gid: string;
 	replicas: number;
 };
@@ -155,7 +155,7 @@ type ResidentRepairDispatchPlanInput = Omit<
 	"entries"
 >;
 
-export type RepairDispatchPlan = Map<string, Map<string, string[]>>;
+type RepairDispatchPlan = Map<string, Map<string, string[]>>;
 
 type NativeRangePlannerHandle = {
 	len: () => number;

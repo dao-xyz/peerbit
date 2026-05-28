@@ -660,8 +660,10 @@ describe("native shared-log range planner", () => {
 			coordinate: {
 				hash: "new-head",
 				hashNumber: 0,
+				hashNumberString: "0",
 				gid: "entry-gid",
 				coordinates: assignment.coordinates,
+				coordinateStrings: assignment.coordinates.map(String),
 				assignedToRangeBoundary: assignment.assignedToRangeBoundary,
 				requestedReplicas: 2,
 			},
