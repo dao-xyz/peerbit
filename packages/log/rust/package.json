@@ -58,7 +58,6 @@
 		"benchmark": "npm run build && node ./dist/benchmark/index.js",
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
 		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name log_rust && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
-		"build:crypto-candidates": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name log_rust --features crypto-bench-candidates && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
 		"test": "cargo test && npm run build && aegir test",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\"",
 		"test:cov": "aegir test -t node --cov"
