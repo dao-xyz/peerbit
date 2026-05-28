@@ -63,7 +63,7 @@ export class AnyBlockStore implements Blocks {
 		) {
 			return bytes;
 		}
-		const codec = (codecCodes as any)[cidObject.code];
+		const codec = codecCodes[cidObject.code as keyof typeof codecCodes];
 		const block = await decode({
 			bytes,
 			codec,

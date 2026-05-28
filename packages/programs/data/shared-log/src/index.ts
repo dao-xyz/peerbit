@@ -159,9 +159,7 @@ import {
 	MAX_U64,
 	type NumberFromType,
 	type Numbers,
-	bytesToNumber,
 	createNumbers,
-	denormalizer,
 } from "./integers.js";
 import { TransportMessage } from "./message.js";
 import { PIDReplicationController } from "./pid.js";
@@ -970,22 +968,16 @@ const combineCoordinateDeleteHashes = (
 const createIndexableDomainFromResolution = <R extends "u32" | "u64">(
 	resolution: R,
 ): IndexableDomain<R> => {
-	const denormalizerFn = denormalizer<R>(resolution);
-	const byteToNumberFn = bytesToNumber<R>(resolution);
 	if (resolution === "u32") {
 		return {
 			constructorEntry: EntryReplicatedU32,
 			constructorRange: ReplicationRangeIndexableU32,
-			denormalize: denormalizerFn,
-			bytesToNumber: byteToNumberFn,
 			numbers: createNumbers(resolution),
 		} as any as IndexableDomain<R>;
 	} else if (resolution === "u64") {
 		return {
 			constructorEntry: EntryReplicatedU64,
 			constructorRange: ReplicationRangeIndexableU64,
-			denormalize: denormalizerFn,
-			bytesToNumber: byteToNumberFn,
 			numbers: createNumbers(resolution),
 		} as any as IndexableDomain<R>;
 	}

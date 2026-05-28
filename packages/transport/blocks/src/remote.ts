@@ -607,7 +607,7 @@ export class RemoteBlocks implements IBlocks {
 		cidObject: CID,
 		options: RemoteReadOptions = {},
 	): Promise<Uint8Array | undefined> {
-		const codec = (codecCodes as any)[cidObject.code];
+		const codec = codecCodes[cidObject.code as keyof typeof codecCodes];
 
 		const tryDecode = async (bytes: Uint8Array) => {
 			const value = await checkDecodeBlock(cidObject, bytes, {
