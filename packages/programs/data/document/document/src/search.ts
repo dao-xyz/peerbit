@@ -1652,7 +1652,7 @@ export class DocumentIndex<
 		return attached;
 	}
 
-	public canUseNativeBackboneDocumentIndex(): boolean {
+	private canUseNativeBackboneDocumentIndex(): boolean {
 		return (
 			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
 			canUseNativeBackboneDocumentTransform(this.nativeTransformDescriptor)
@@ -1665,7 +1665,7 @@ export class DocumentIndex<
 		return createSimpleFieldExtractionPlan(getSchema(this.documentType), path);
 	}
 
-	public canPrepareNativeBackboneDocumentIndexCommit(): boolean {
+	private canPrepareNativeBackboneDocumentIndexCommit(): boolean {
 		return (
 			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
 			canPrepareNativeDocumentTransformBeforeAppend(
@@ -2364,7 +2364,7 @@ export class DocumentIndex<
 		return indexed?.id;
 	}
 
-	public getIndexedKeyByHead(
+	private getIndexedKeyByHead(
 		head: string,
 	): indexerTypes.IdKey | undefined {
 		const getIdByHead = (this.index as ContextHeadIndex<I>).getIdByContextHead;
