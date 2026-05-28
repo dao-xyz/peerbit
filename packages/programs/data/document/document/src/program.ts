@@ -91,7 +91,10 @@ import {
 	coerceWithLazyIndexed,
 	encodeContextSuffix as encodeDocumentContextSuffix,
 } from "./search.js";
-import { getNativeDocumentTransformDescriptor } from "./transform.js";
+import {
+	getNativeDocumentTransformDescriptor,
+	type NativeDocumentTransformer,
+} from "./transform.js";
 
 const logger = loggerFn("peerbit:program:document");
 const warn = logger.newScope("warn");
@@ -1050,6 +1053,15 @@ export class Documents<
 					transform?: unknown;
 			  }
 			| undefined;
+		const nativeIndexTransformDescriptor =
+			typeof indexTransform?.transform === "function"
+				? getNativeDocumentTransformDescriptor(
+						indexTransform.transform as NativeDocumentTransformer<
+							unknown,
+							unknown
+						>,
+					)
+				: undefined;
 
 		if (
 			!nativeBackbone ||
@@ -1130,10 +1142,7 @@ export class Documents<
 		) {
 			unsupported.push("unsupported log trim");
 		}
-		if (
-			indexTransform?.transform &&
-			!getNativeDocumentTransformDescriptor(indexTransform.transform as any)
-		) {
+		if (indexTransform?.transform && !nativeIndexTransformDescriptor) {
 			unsupported.push("arbitrary index transform");
 		}
 		if (

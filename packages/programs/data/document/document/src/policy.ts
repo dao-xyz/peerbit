@@ -1,4 +1,6 @@
 import type { PublicSignKey } from "@peerbit/crypto";
+import type { Entry } from "@peerbit/log";
+import type { DeleteOperation, Operation, PutOperation } from "./operation.js";
 import type { CanPerform, CanPerformOperations } from "./program.js";
 
 export type NativeCanPerformPolicyDescriptor =
@@ -410,24 +412,29 @@ export const nativeCanPerformPolicyNeedsPreviousEntries = (
 	}
 };
 
-const getEntryPublicKeys = async <T>(
-	properties: CanPerformOperations<T>,
+type CanPerformEntry =
+	| Entry<PutOperation>
+	| Entry<DeleteOperation>
+	| Entry<Operation>;
+
+const getEntryPublicKeys = async (
+	entry: CanPerformEntry,
 ): Promise<PublicSignKey[]> => {
 	try {
-		if (properties.entry.publicKeys.length > 0) {
-			return properties.entry.publicKeys;
+		if (entry.publicKeys.length > 0) {
+			return entry.publicKeys;
 		}
 	} catch {
-		return properties.entry.getPublicKeys();
+		return entry.getPublicKeys();
 	}
-	return properties.entry.getPublicKeys();
+	return entry.getPublicKeys();
 };
 
 const entryPublicKeysInclude = async <T>(
 	properties: CanPerformOperations<T>,
 	publicKey: PublicSignKey,
 ): Promise<boolean> => {
-	const publicKeys = await getEntryPublicKeys(properties);
+	const publicKeys = await getEntryPublicKeys(properties.entry);
 	return publicKeys.some((key) => key.equals(publicKey));
 };
 
@@ -435,7 +442,7 @@ const entryPublicKeysMatchValue = async <T>(
 	properties: CanPerformOperations<T>,
 	value: unknown,
 ): Promise<boolean> => {
-	const publicKeys = await getEntryPublicKeys(properties);
+	const publicKeys = await getEntryPublicKeys(properties.entry);
 	return valueMatchesAnyPublicKey(value, publicKeys);
 };
 
@@ -455,14 +462,9 @@ const sameSignersAsPrevious = async <T>(
 	if (!properties.previousEntries?.length) {
 		return true;
 	}
-	const currentPublicKeys = await getEntryPublicKeys(properties);
+	const currentPublicKeys = await getEntryPublicKeys(properties.entry);
 	for (const previousEntry of properties.previousEntries) {
-		const previousPublicKeys = await getEntryPublicKeys({
-			type: "put",
-			value: properties.value,
-			operation: properties.operation,
-			entry: previousEntry as any,
-		});
+		const previousPublicKeys = await getEntryPublicKeys(previousEntry);
 		if (!publicKeySetsEqual(currentPublicKeys, previousPublicKeys)) {
 			return false;
 		}
