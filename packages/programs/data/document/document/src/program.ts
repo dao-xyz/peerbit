@@ -1833,49 +1833,6 @@ export class Documents<
 		>;
 	}
 
-	private getLocalIndexedContexts(
-		keys: indexerTypes.IdKey[],
-	): Promise<
-		Array<indexerTypes.IndexedResult<IndexedContextOnly<I>> | undefined>
-	> {
-		if (keys.length === 0) {
-			return Promise.resolve([]);
-		}
-		const index = this._index.index as {
-			getContextByIdBatch?: (
-				keys: indexerTypes.IdKey[],
-			) => Array<Context | undefined>;
-			getContextById?: (key: indexerTypes.IdKey) => Context | undefined;
-		};
-		const contextBatch = index.getContextByIdBatch?.call(index, keys);
-		if (contextBatch) {
-			return Promise.resolve(
-				contextBatch.map((context, index) =>
-					context
-						? {
-								id: keys[index]!,
-								value: { __context: context } as IndexedContextOnly<I>,
-							}
-						: undefined,
-				),
-			);
-		}
-		if (index.getContextById) {
-			return Promise.resolve(
-				keys.map((key) => {
-					const context = index.getContextById!.call(index, key);
-					return context
-						? {
-								id: key,
-								value: { __context: context } as IndexedContextOnly<I>,
-							}
-						: undefined;
-				}),
-			);
-		}
-		return Promise.all(keys.map((key) => this.getLocalIndexedContext(key)));
-	}
-
 	private getNativeEntrySignerPublicKeys(
 		hashes: string[],
 	): Array<Uint8Array | undefined> | undefined {
