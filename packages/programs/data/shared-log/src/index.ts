@@ -4349,14 +4349,17 @@ export class SharedLog<
 					hashes.push(hash);
 				}
 
-				hashes.length > 0 &&
-					this.rpc.send(new ResponseIPrune({ hashes }), {
-						mode: new SilentDelivery({
-							to: allRequestingPeers,
-							redundancy: 1,
-						}),
-						priority: CONVERGENCE_MESSAGE_PRIORITY,
-					});
+				if (hashes.length > 0 && allRequestingPeers.size > 0) {
+					this.rpc
+						.send(new ResponseIPrune({ hashes }), {
+							mode: new AcknowledgeDelivery({
+								to: allRequestingPeers,
+								redundancy: 1,
+							}),
+							priority: CONVERGENCE_MESSAGE_PRIORITY,
+						})
+						.catch(() => {});
+				}
 			},
 			() => {
 				let accumulator = new Map<string, Set<string>>();
@@ -7431,7 +7434,7 @@ export class SharedLog<
 						hashes: filteredSet,
 					}),
 					{
-						mode: new SilentDelivery({
+						mode: new AcknowledgeDelivery({
 							to: [to], // TODO group by peers?
 							redundancy: 1,
 						}),
@@ -7442,7 +7445,7 @@ export class SharedLog<
 		};
 
 			for (const [k, v] of peerToEntries) {
-				emitMessages(v, k);
+				emitMessages(v, k).catch(() => {});
 			}
 
 			// Keep remote `_pendingIHave` alive in the common "leader doesn't have entry yet"
