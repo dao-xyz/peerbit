@@ -922,11 +922,9 @@ export class Log<T> {
 		return { entry, removed };
 	}
 
-	/**
-	 * Internal trusted local append path for callers that already handled validation
-	 * and want to apply change observers themselves.
-	 */
-	async appendLocallyPrepared(
+	// Internal trusted local append path for callers that already handled validation
+	// and want to apply change observers themselves.
+	private async appendLocallyPrepared(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties?: {
@@ -1021,11 +1019,9 @@ export class Log<T> {
 		return { entry, removed, change, appendFacts };
 	}
 
-	/**
-	 * Internal trusted local append path for callers that can consume compact
-	 * append facts before a public Entry object is needed.
-	 */
-	appendLocallyPreparedCommitOnly(
+	// Internal trusted local append path for callers that can consume compact
+	// append facts before a public Entry object is needed.
+	private appendLocallyPreparedCommitOnly(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties?: {
@@ -1062,7 +1058,7 @@ export class Log<T> {
 		);
 	}
 
-	appendLocallyPreparedNativeNoNextCommitOnly(
+	private appendLocallyPreparedNativeNoNextCommitOnly(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties: {
@@ -1092,7 +1088,7 @@ export class Log<T> {
 		);
 	}
 
-	appendLocallyPreparedNativeKnownNoNextCommitOnly(
+	private appendLocallyPreparedNativeKnownNoNextCommitOnly(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties: {
@@ -1432,7 +1428,7 @@ export class Log<T> {
 		});
 	}
 
-	appendLocallyPreparedNativeCommitOnly(
+	private appendLocallyPreparedNativeCommitOnly(
 		data: T,
 		options: AppendOptions<T> = {},
 		properties: {
@@ -1943,7 +1939,7 @@ export class Log<T> {
 		}
 	}
 
-	async appendLocallyPreparedManyIndependent(
+	private async appendLocallyPreparedManyIndependent(
 		data: T[],
 		options: AppendOptions<T> = {},
 		properties?: {
@@ -2036,7 +2032,7 @@ export class Log<T> {
 		return { entries, removed, change, appendFacts };
 	}
 
-	appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+	private appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
 		data: T[],
 		options: AppendOptions<T> = {},
 		properties: {

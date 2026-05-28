@@ -1521,7 +1521,7 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 	const append = async (count: number, profile?: Profile) => {
 		for (let i = 0; i < count; i++) {
 			const runAppend = () =>
-				log.appendLocallyPreparedCommitOnly(
+				(log as any).appendLocallyPreparedCommitOnly(
 					undefined as any,
 					{ meta: { next: [] } as any },
 					{

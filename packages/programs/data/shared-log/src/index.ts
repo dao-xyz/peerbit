@@ -1387,7 +1387,159 @@ type TrustedLowerLogPreparedJoinOptions = {
 	) => Promise<void> | void;
 };
 
+type TrustedLowerLogNativeCommitInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	type: EntryType;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	next?: string[];
+	resolveTrimmedEntries?: boolean;
+	trimLengthTo?: number;
+};
+
+type TrustedLowerLogNativePreparedCommit = {
+	bytes?: Uint8Array;
+	getBytes?: (hash: string) => Uint8Array | undefined;
+	cid?: string;
+	hash?: string;
+	gid?: string;
+	next?: string[];
+	byteLength: number;
+	metaBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
+	trimmedEntries?: unknown[];
+	trimmedEntryHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: PreparedLocalAppendCommit<"u32">["documentPreviousContext"];
+};
+
+type TrustedLowerLogPreparedAppendResult<T> = {
+	entry: Entry<T>;
+	removed: ShallowOrFullEntry<T>[];
+	change: Change<T>;
+	appendFacts: PreparedAppendFacts;
+};
+
+type TrustedLowerLogCommitOnlyAppendResult<T> = {
+	entry: Entry<T>;
+	materializeEntry: () => Entry<T>;
+	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
+	appendFacts: PreparedAppendFacts;
+	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: PreparedLocalAppendCommit<"u32">["documentPreviousContext"];
+};
+
+type TrustedLowerLogCommitOnlyAppendBatchResult<T> = {
+	entries: Entry<T>[];
+	materializeEntries: Array<() => Entry<T>>;
+	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
+	appendFacts: PreparedAppendFacts[];
+	documentTrimmedHeadsProcessed?: boolean[];
+};
+
 type TrustedLowerLog<T> = {
+	appendLocallyPrepared(
+		data: T,
+		options?: TrustedLogAppendOptions<T>,
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+	): Promise<TrustedLowerLogPreparedAppendResult<T>>;
+	appendLocallyPreparedCommitOnly(
+		data: T,
+		options?: TrustedLogAppendOptions<T>,
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+	): MaybePromise<TrustedLowerLogCommitOnlyAppendResult<T> | undefined>;
+	appendLocallyPreparedNativeNoNextCommitOnly(
+		data: T,
+		options: TrustedLogAppendOptions<T> | undefined,
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: TrustedLowerLogNativeCommitInput,
+		) => MaybePromise<TrustedLowerLogNativePreparedCommit | undefined>,
+	): MaybePromise<TrustedLowerLogCommitOnlyAppendResult<T> | undefined>;
+	appendLocallyPreparedNativeKnownNoNextCommitOnly(
+		data: T,
+		options: TrustedLogAppendOptions<T> | undefined,
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: TrustedLowerLogNativeCommitInput,
+		) => MaybePromise<TrustedLowerLogNativePreparedCommit | undefined>,
+	): MaybePromise<TrustedLowerLogCommitOnlyAppendResult<T> | undefined>;
+	appendLocallyPreparedNativeCommitOnly(
+		data: T,
+		options: TrustedLogAppendOptions<T> | undefined,
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+			knownNoNext?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: TrustedLowerLogNativeCommitInput,
+		) => MaybePromise<TrustedLowerLogNativePreparedCommit | undefined>,
+		knownNoNext?: boolean,
+	): MaybePromise<TrustedLowerLogCommitOnlyAppendResult<T> | undefined>;
+	appendLocallyPreparedManyIndependent(
+		data: T[],
+		options?: TrustedLogAppendOptions<T>,
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+			payloadDatas?: Uint8Array[];
+			nexts?: ShallowOrFullEntry<T>[][];
+		},
+	): Promise<
+		| {
+				entries: Entry<T>[];
+				removed: ShallowOrFullEntry<T>[];
+				change: Change<T>;
+				appendFacts: PreparedAppendFacts[];
+		  }
+		| undefined
+	>;
+	appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+		data: T[],
+		options: TrustedLogAppendOptions<T> | undefined,
+		properties: {
+			payloadDatas: Uint8Array[];
+			resolveTrimmedEntries?: boolean;
+			allowPreparedNexts?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			inputs: TrustedLowerLogNativeCommitInput[],
+		) => MaybePromise<
+			Array<TrustedLowerLogNativePreparedCommit | undefined> | undefined
+		>,
+	): MaybePromise<TrustedLowerLogCommitOnlyAppendBatchResult<T> | undefined>;
 	join(
 		entriesOrLog: Parameters<Log<T>["join"]>[0],
 		options?: TrustedLowerLogJoinOptions<T>,
@@ -1397,6 +1549,9 @@ type TrustedLowerLog<T> = {
 		options?: TrustedLowerLogPreparedJoinOptions,
 	): Promise<boolean>;
 };
+
+const asTrustedLowerLog = <T>(log: Log<T>): TrustedLowerLog<T> =>
+	log as unknown as TrustedLowerLog<T>;
 
 export type ReplicatorJoinEvent = { publicKey: PublicSignKey };
 export type ReplicatorLeaveEvent = { publicKey: PublicSignKey };
@@ -5304,11 +5459,15 @@ export class SharedLog<
 		const { appendOptions, minReplicasValue } =
 			this.createLogAppendOptions(options);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
-		const result = await this.log.appendLocallyPrepared(data, appendOptions, {
-			skipMissingNextJoin: properties?.skipMissingNextJoin,
-			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-			payloadData: properties?.payloadData,
-		});
+		const result = await asTrustedLowerLog(this.log).appendLocallyPrepared(
+			data,
+			appendOptions,
+			{
+				skipMissingNextJoin: properties?.skipMissingNextJoin,
+				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+				payloadData: properties?.payloadData,
+			},
+		);
 		const nativePreparedCommit =
 			await this.processNativePreparedTargetNoneAppend(result, options, {
 				minReplicasValue,
@@ -5589,7 +5748,9 @@ export class SharedLog<
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
-		const resultMaybe = this.log.appendLocallyPreparedCommitOnly(
+		const resultMaybe = asTrustedLowerLog(
+			this.log,
+		).appendLocallyPreparedCommitOnly(
 			undefined as T,
 			appendOptions,
 			{
@@ -5688,7 +5849,9 @@ export class SharedLog<
 			properties?.skipMissingNextJoin;
 		nativeCommitProperties.retainMaterializationBytes =
 			this._logProperties?.trim != null;
-		const result = this.log.appendLocallyPreparedNativeNoNextCommitOnly(
+		const result = asTrustedLowerLog(
+			this.log,
+		).appendLocallyPreparedNativeNoNextCommitOnly(
 			undefined as T,
 			appendOptions,
 			nativeCommitProperties,
@@ -5984,7 +6147,7 @@ export class SharedLog<
 				appendOptions.meta?.next != null &&
 				appendOptions.meta.next.length === 0;
 			const appendGenericNativeCommit = () =>
-				this.log.appendLocallyPreparedNativeCommitOnly(
+				asTrustedLowerLog(this.log).appendLocallyPreparedNativeCommitOnly(
 					undefined as T,
 					appendOptions,
 					{
@@ -5997,7 +6160,9 @@ export class SharedLog<
 					prepareBackboneAppend,
 				);
 			const directNoNextResult = hasKnownNoNext
-				? this.log.appendLocallyPreparedNativeKnownNoNextCommitOnly(
+				? asTrustedLowerLog(
+						this.log,
+					).appendLocallyPreparedNativeKnownNoNextCommitOnly(
 						undefined as T,
 						appendOptions,
 						{
@@ -6566,7 +6731,9 @@ export class SharedLog<
 		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 		let backboneAppends: NativeBackboneAppendResult[] | undefined;
 		const appended =
-			await this.log.appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+			await asTrustedLowerLog(
+				this.log,
+			).appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
 				data,
 				appendOptions,
 				{
@@ -6761,7 +6928,9 @@ export class SharedLog<
 		if (nativeBackboneBatch) {
 			return nativeBackboneBatch;
 		}
-		const result = await this.log.appendLocallyPreparedManyIndependent(
+		const result = await asTrustedLowerLog(
+			this.log,
+		).appendLocallyPreparedManyIndependent(
 			data,
 			appendOptions,
 			{

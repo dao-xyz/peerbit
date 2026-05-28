@@ -497,7 +497,7 @@ describe("index", () => {
 					"appendLocallyPreparedPayloadsManyIndependent",
 				);
 				const lowerBatchAppendSpy = sinon.spy(
-					store.docs.log.log,
+					store.docs.log.log as any,
 					"appendLocallyPreparedManyIndependent",
 				);
 				const preparedAppendSpy = sinon.spy(
@@ -790,7 +790,7 @@ describe("index", () => {
 					"appendLocallyPreparedCommitOnly",
 				);
 				const lowerPreparedSpy = sinon.spy(
-					store.docs.log.log,
+					store.docs.log.log as any,
 					"appendLocallyPrepared",
 				);
 				const lowerTrimSpy = sinon.spy(store.docs.log.log, "trim");

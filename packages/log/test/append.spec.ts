@@ -447,7 +447,7 @@ describe("append", function () {
 		const appendBatchSpy = sinon.spy(log.entryIndex, "putAppendBatch");
 
 		try {
-			const { entry, removed } = await log.appendLocallyPrepared(
+			const { entry, removed } = await (log as any).appendLocallyPrepared(
 				new Uint8Array([1]),
 				{
 					meta: { next: [] },
@@ -492,7 +492,7 @@ describe("append", function () {
 		);
 
 		try {
-			const { entry, removed } = await log.appendLocallyPrepared(
+			const { entry, removed } = await (log as any).appendLocallyPrepared(
 				new Uint8Array([1]),
 				{
 					meta: { next: [] },
