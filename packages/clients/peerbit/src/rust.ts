@@ -1,3 +1,4 @@
+import type { AnyStore } from "@peerbit/any-store";
 import {
 	createStore as createRustStore,
 	type RustAnyStoreOptions,
@@ -33,7 +34,7 @@ export type PeerbitRustCreateOptions = {
 	indexer: NonNullable<CreateInstanceOptions["indexer"]>;
 };
 
-class LazyNativeLogBlockStore {
+class LazyNativeLogBlockStore implements AnyStore {
 	private store?: NativeLogBlockStore;
 	private openPromise?: Promise<void>;
 
@@ -41,7 +42,7 @@ class LazyNativeLogBlockStore {
 		return this.store?.getNativeLogBlockStoreHandle();
 	}
 
-	status() {
+	status(): "opening" | "open" | "closing" | "closed" {
 		return this.store?.status() ?? "closed";
 	}
 
@@ -81,7 +82,7 @@ class LazyNativeLogBlockStore {
 	}
 
 	async putImmutable(key: string, value: Uint8Array): Promise<void> {
-		(await this.ready()).putImmutable(key, value);
+		await (await this.ready()).putImmutable(key, value);
 	}
 
 	async putMany(entries: Iterable<readonly [string, Uint8Array]>): Promise<void> {
@@ -91,11 +92,11 @@ class LazyNativeLogBlockStore {
 	async putManyImmutable(
 		entries: Iterable<readonly [string, Uint8Array]>,
 	): Promise<void> {
-		(await this.ready()).putManyImmutable(Array.from(entries));
+		await (await this.ready()).putManyImmutable(Array.from(entries));
 	}
 
 	async del(key: string): Promise<void> {
-		(await this.ready()).del(key);
+		await (await this.ready()).del(key);
 	}
 
 	async sublevel(): Promise<LazyNativeLogBlockStore> {
@@ -114,7 +115,7 @@ class LazyNativeLogBlockStore {
 	}
 
 	async clear(): Promise<void> {
-		(await this.ready()).clear();
+		await (await this.ready()).clear();
 	}
 
 	async size(): Promise<number> {
@@ -138,7 +139,7 @@ const createRustBlocksStoreFactory =
 	): StoreFactory =>
 	(directory) =>
 		nativeLogBlocks
-			? (new LazyNativeLogBlockStore() as unknown as ReturnType<StoreFactory>)
+			? new LazyNativeLogBlockStore()
 			: createRustStore(directory, options);
 
 export const createRustStorageOptions = (
