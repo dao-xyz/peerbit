@@ -624,20 +624,6 @@ fn context_plan_row(created: u64, bytes: Vec<u8>) -> Array {
 }
 
 #[wasm_bindgen]
-pub fn encode_context_suffix(
-    created: &str,
-    modified: &str,
-    head: &str,
-    gid: &str,
-    size: u32,
-) -> Result<Uint8Array, JsValue> {
-    let created = parse_u64(created, "created")?;
-    let modified = parse_u64(modified, "modified")?;
-    let bytes = encode_context_suffix_inner(created, modified, head, gid, size);
-    Ok(Uint8Array::from(bytes.as_slice()))
-}
-
-#[wasm_bindgen]
 pub fn plan_document_context(
     existing_created: JsValue,
     modified: &str,

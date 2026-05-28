@@ -1,30 +1,6 @@
 /* @ts-self-types="./document_rust.d.ts" */
 
 /**
- * @param {string} created
- * @param {string} modified
- * @param {string} head
- * @param {string} gid
- * @param {number} size
- * @returns {Uint8Array}
- */
-export function encode_context_suffix(created, modified, head, gid, size) {
-    const ptr0 = passStringToWasm0(created, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(modified, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(head, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ptr3 = passStringToWasm0(gid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len3 = WASM_VECTOR_LEN;
-    const ret = wasm.encode_context_suffix(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, size);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
  * @param {Uint8Array} encoded_document
  * @param {any} plan
  * @returns {any}

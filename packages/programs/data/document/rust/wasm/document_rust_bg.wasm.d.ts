@@ -1,7 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
-export const encode_context_suffix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
 export const extract_document_field_simple: (a: any, b: any) => [number, number, number];
 export const plan_document_context: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
 export const plan_document_context_batch: (a: any, b: any, c: any, d: any, e: any) => [number, number, number];

@@ -1,11 +1,3 @@
-type DocumentContextInput = {
-	created: bigint | number | string;
-	modified: bigint | number | string;
-	head: string;
-	gid: string;
-	size: number;
-};
-
 type DocumentCommitContextInput = {
 	existingCreated?: bigint | number | string | null;
 	modified: bigint | number | string;
@@ -55,13 +47,6 @@ export type SimpleDocumentProjectionContext = {
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
-	encode_context_suffix: (
-		created: string,
-		modified: string,
-		head: string,
-		gid: string,
-		size: number,
-	) => Uint8Array;
 	plan_document_context: (
 		existingCreated: string | undefined,
 		modified: string,
@@ -146,21 +131,6 @@ const asOptionalU64String = (
 			: String(value);
 
 const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
-
-export const encodeContextSuffix = async (
-	context: DocumentContextInput,
-): Promise<Uint8Array> => {
-	const wasm = await loadWasm();
-	return copyBytes(
-		wasm.encode_context_suffix(
-			asU64String(context.created),
-			asU64String(context.modified),
-			context.head,
-			context.gid,
-			context.size,
-		),
-	);
-};
 
 const toContextPlan = (
 	input: DocumentCommitContextInput,

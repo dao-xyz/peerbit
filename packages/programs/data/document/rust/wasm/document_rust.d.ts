@@ -1,8 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 
-export function encode_context_suffix(created: string, modified: string, head: string, gid: string, size: number): Uint8Array;
-
 export function extract_document_field_simple(encoded_document: Uint8Array, plan: any): any;
 
 export function plan_document_context(existing_created: any, modified: string, head: string, gid: string, size: number): Array<any>;
@@ -15,7 +13,6 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
-    readonly encode_context_suffix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly extract_document_field_simple: (a: any, b: any) => [number, number, number];
     readonly plan_document_context: (a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
     readonly plan_document_context_batch: (a: any, b: any, c: any, d: any, e: any) => [number, number, number];
