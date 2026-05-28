@@ -54,7 +54,7 @@ import {
 import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
-	type NativeBackboneCoordinatePersistenceStore,
+	NativeBackboneMemoryCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program } from "@peerbit/program";
@@ -122,42 +122,10 @@ const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
 		}
 	).fanout;
 
-const concatBytes = (chunks: Uint8Array[]) => {
-	const total = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		out.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return out;
-};
-
-class MemoryCoordinatePersistenceStore
-	implements NativeBackboneCoordinatePersistenceStore
-{
-	readonly files = new Map<string, Uint8Array>();
-
-	async read(name: string): Promise<Uint8Array | undefined> {
-		return this.files.get(name);
-	}
-
-	async write(name: string, bytes: Uint8Array): Promise<void> {
-		this.files.set(name, bytes.slice());
-	}
-
-	async append(name: string, bytes: Uint8Array): Promise<void> {
-		const existing = this.files.get(name);
-		this.files.set(
-			name,
-			existing ? concatBytes([existing, bytes]) : bytes.slice(),
-		);
-	}
-
-	async remove(name: string): Promise<void> {
-		this.files.delete(name);
-	}
-}
+const MemoryCoordinatePersistenceStore =
+	NativeBackboneMemoryCoordinatePersistenceStore;
+type MemoryCoordinatePersistenceStore =
+	NativeBackboneMemoryCoordinatePersistenceStore;
 
 const nativeBackboneDocumentIndexOptions = () => ({
 	optional: false,
