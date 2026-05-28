@@ -101,7 +101,7 @@ import {
 	type LateResultsEvent,
 	type UpdateReason,
 } from "../src/search.js";
-import { getNativeDocumentTransformDescriptor } from "../src/transform.js";
+import { getDocumentTransformDescriptor } from "../src/transform.js";
 import { Document, TestStore } from "./data.js";
 
 const nativeFieldHash = (field: string): number => {
@@ -2449,7 +2449,7 @@ describe("index", () => {
 						Document,
 						NativeTransformPickIndexable
 					>(["id", "name"]);
-					const descriptor = getNativeDocumentTransformDescriptor(transformer);
+					const descriptor = getDocumentTransformDescriptor(transformer);
 					expect(descriptor).to.deep.equal({
 						kind: "pick",
 						fields: ["id", "name"],

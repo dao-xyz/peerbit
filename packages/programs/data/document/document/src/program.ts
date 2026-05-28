@@ -93,7 +93,7 @@ import {
 } from "./search.js";
 import {
 	type DocumentTransformer,
-	getNativeDocumentTransformDescriptor,
+	getDocumentTransformDescriptor,
 } from "./transform.js";
 
 const logger = loggerFn("peerbit:program:document");
@@ -1055,7 +1055,7 @@ export class Documents<
 			| undefined;
 		const nativeIndexTransformDescriptor =
 			typeof indexTransform?.transform === "function"
-				? getNativeDocumentTransformDescriptor(
+				? getDocumentTransformDescriptor(
 						indexTransform.transform as DocumentTransformer<
 							unknown,
 							unknown

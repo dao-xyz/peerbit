@@ -66,14 +66,13 @@ import {
 } from "./result-shape.js";
 import { ResumableIterators } from "./resumable-iterator.js";
 import {
+	canPrepareDocumentTransformBeforeAppend,
+	canPrepareDocumentTransformWithAppendFacts,
+	documentTransformPreservesFieldPath,
+	getDocumentTransformDescriptor,
 	type DocumentTransformFacts,
+	type DocumentTransformDescriptor,
 	type DocumentTransformer,
-	type NativeDocumentTransformDescriptor,
-	canPrepareNativeDocumentTransformBeforeAppend,
-	canPrepareNativeDocumentTransformWithAppendFacts,
-	canUseNativeBackboneDocumentTransform,
-	getNativeDocumentTransformDescriptor,
-	nativeDocumentTransformPreservesFieldPath,
 } from "./transform.js";
 
 const WARNING_WHEN_ITERATING_FOR_MORE_THAN = 1e5;
@@ -173,7 +172,7 @@ const asSingleFieldPath = (
 const createSimpleProjectionPlan = (
 	documentSchema: ReturnType<typeof getSchema>,
 	indexedSchema: ReturnType<typeof getSchema>,
-	descriptor: NativeDocumentTransformDescriptor | undefined,
+	descriptor: DocumentTransformDescriptor | undefined,
 ): SimpleDocumentProjectionPlan | undefined => {
 	if (!descriptor || descriptor.kind === "identity") {
 		return;
@@ -1075,7 +1074,7 @@ export class DocumentIndex<
 	// transform options
 	transformer: Transformer<T, I>;
 	private transformerIsIdentity = false;
-	private nativeTransformDescriptor?: NativeDocumentTransformDescriptor;
+	private nativeTransformDescriptor?: DocumentTransformDescriptor;
 	private nativeTransformProjectionPlan?: SimpleDocumentProjectionPlan;
 	private nativeBackboneDocumentProjection?: NativeBackboneDocumentProjection;
 
@@ -1491,7 +1490,7 @@ export class DocumentIndex<
 		const hasTransformFunction =
 			transformOptions != null && isTransformerWithFunction(transformOptions);
 		this.nativeTransformDescriptor = hasTransformFunction
-			? getNativeDocumentTransformDescriptor(transformOptions.transform)
+			? getDocumentTransformDescriptor(transformOptions.transform)
 			: undefined;
 		this.nativeTransformProjectionPlan = createSimpleProjectionPlan(
 			getSchema(this.documentType),
@@ -1655,7 +1654,7 @@ export class DocumentIndex<
 	private canUseNativeBackboneDocumentIndex(): boolean {
 		return (
 			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
-			canUseNativeBackboneDocumentTransform(this.nativeTransformDescriptor)
+			this.nativeTransformDescriptor != null
 		);
 	}
 
@@ -1668,7 +1667,7 @@ export class DocumentIndex<
 	private canPrepareNativeBackboneDocumentIndexCommit(): boolean {
 		return (
 			(this.transformerIsIdentity && this.indexedTypeIsDocumentType) ||
-			canPrepareNativeDocumentTransformBeforeAppend(
+			canPrepareDocumentTransformBeforeAppend(
 				this.nativeTransformDescriptor,
 			)
 		);
@@ -1678,7 +1677,7 @@ export class DocumentIndex<
 		return (
 			this.canPrepareNativeBackboneDocumentIndexCommit() ||
 			!!this.nativeTransformProjectionPlan ||
-			canPrepareNativeDocumentTransformWithAppendFacts(
+			canPrepareDocumentTransformWithAppendFacts(
 				this.nativeTransformDescriptor,
 			)
 		);
@@ -1741,7 +1740,7 @@ export class DocumentIndex<
 			};
 		}
 		if (
-			!canPrepareNativeDocumentTransformBeforeAppend(
+			!canPrepareDocumentTransformBeforeAppend(
 				this.nativeTransformDescriptor,
 			)
 		) {
@@ -1823,10 +1822,10 @@ export class DocumentIndex<
 			};
 		}
 		if (
-			!canPrepareNativeDocumentTransformWithAppendFacts(
+			!canPrepareDocumentTransformWithAppendFacts(
 				this.nativeTransformDescriptor,
 			) &&
-			!canPrepareNativeDocumentTransformBeforeAppend(
+			!canPrepareDocumentTransformBeforeAppend(
 				this.nativeTransformDescriptor,
 			)
 		) {
@@ -1864,10 +1863,10 @@ export class DocumentIndex<
 			};
 		}
 		if (
-			!canPrepareNativeDocumentTransformWithAppendFacts(
+			!canPrepareDocumentTransformWithAppendFacts(
 				this.nativeTransformDescriptor,
 			) &&
-			!canPrepareNativeDocumentTransformBeforeAppend(
+			!canPrepareDocumentTransformBeforeAppend(
 				this.nativeTransformDescriptor,
 			)
 		) {
@@ -2438,7 +2437,7 @@ export class DocumentIndex<
 			paths.every((path) =>
 				this.transformerIsIdentity && this.indexedTypeIsDocumentType
 					? true
-					: nativeDocumentTransformPreservesFieldPath(
+					: documentTransformPreservesFieldPath(
 							this.nativeTransformDescriptor,
 							path,
 						),

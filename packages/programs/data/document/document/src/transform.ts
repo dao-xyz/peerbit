@@ -11,7 +11,7 @@ export type DocumentTransformer<T, I> = (
 	facts?: DocumentTransformFacts,
 ) => I | Promise<I>;
 
-type NativeDocumentTransformSourceDescriptor =
+type DocumentTransformSourceDescriptor =
 	| {
 			readonly kind: "field";
 			readonly path: string | readonly string[];
@@ -24,7 +24,7 @@ type NativeDocumentTransformSourceDescriptor =
 			readonly kind: "entryFirstSignerPublicKey";
 	  };
 
-export type NativeDocumentTransformDescriptor =
+export type DocumentTransformDescriptor =
 	| {
 			readonly kind: "identity";
 	  }
@@ -36,7 +36,7 @@ export type NativeDocumentTransformDescriptor =
 			readonly kind: "project";
 			readonly fields: readonly {
 				readonly target: string | readonly string[];
-				readonly source: NativeDocumentTransformSourceDescriptor;
+				readonly source: DocumentTransformSourceDescriptor;
 			}[];
 	  };
 
@@ -44,14 +44,14 @@ const NATIVE_DOCUMENT_TRANSFORM = Symbol.for(
 	"@peerbit/document/native-document-transform",
 );
 
-type NativeDocumentTransformer<T, I> = DocumentTransformer<T, I> & {
-	readonly [NATIVE_DOCUMENT_TRANSFORM]?: NativeDocumentTransformDescriptor;
+type DescribedDocumentTransformer<T, I> = DocumentTransformer<T, I> & {
+	readonly [NATIVE_DOCUMENT_TRANSFORM]?: DocumentTransformDescriptor;
 };
 
-type NativeDocumentTransformSource =
+type DocumentTransformSource =
 	| string
 	| readonly string[]
-	| NativeDocumentTransformSourceDescriptor;
+	| DocumentTransformSourceDescriptor;
 
 const copyBytes = (bytes: Uint8Array): Uint8Array => new Uint8Array(bytes);
 
@@ -108,8 +108,8 @@ const setFieldValue = (
 };
 
 const sourceDescriptor = (
-	source: NativeDocumentTransformSource,
-): NativeDocumentTransformSourceDescriptor =>
+	source: DocumentTransformSource,
+): DocumentTransformSourceDescriptor =>
 	typeof source === "object" && !Array.isArray(source) && "kind" in source
 		? source
 		: { kind: "field", path: freezePath(source) };
@@ -118,7 +118,7 @@ const readSource = (
 	document: unknown,
 	context: Context,
 	facts: DocumentTransformFacts | undefined,
-	source: NativeDocumentTransformSourceDescriptor,
+	source: DocumentTransformSourceDescriptor,
 ): unknown => {
 	switch (source.kind) {
 		case "field":
@@ -132,10 +132,10 @@ const readSource = (
 	}
 };
 
-const attachNativeDocumentTransform = <T, I>(
+const attachDocumentTransformDescriptor = <T, I>(
 	fn: DocumentTransformer<T, I>,
-	descriptor: NativeDocumentTransformDescriptor,
-): NativeDocumentTransformer<T, I> => {
+	descriptor: DocumentTransformDescriptor,
+): DescribedDocumentTransformer<T, I> => {
 	Object.defineProperty(fn, NATIVE_DOCUMENT_TRANSFORM, {
 		value: Object.freeze(descriptor),
 		enumerable: false,
@@ -145,15 +145,15 @@ const attachNativeDocumentTransform = <T, I>(
 	return fn;
 };
 
-export const getNativeDocumentTransformDescriptor = <T, I>(
+export const getDocumentTransformDescriptor = <T, I>(
 	transformer: DocumentTransformer<T, I> | undefined,
-): NativeDocumentTransformDescriptor | undefined =>
-	(transformer as NativeDocumentTransformer<T, I> | undefined)?.[
+): DocumentTransformDescriptor | undefined =>
+	(transformer as DescribedDocumentTransformer<T, I> | undefined)?.[
 		NATIVE_DOCUMENT_TRANSFORM
 	];
 
-export const canPrepareNativeDocumentTransformBeforeAppend = (
-	descriptor: NativeDocumentTransformDescriptor | undefined,
+export const canPrepareDocumentTransformBeforeAppend = (
+	descriptor: DocumentTransformDescriptor | undefined,
 ): boolean => {
 	if (!descriptor) {
 		return false;
@@ -169,8 +169,8 @@ export const canPrepareNativeDocumentTransformBeforeAppend = (
 	}
 };
 
-export const canPrepareNativeDocumentTransformWithAppendFacts = (
-	descriptor: NativeDocumentTransformDescriptor | undefined,
+export const canPrepareDocumentTransformWithAppendFacts = (
+	descriptor: DocumentTransformDescriptor | undefined,
 ): boolean => {
 	if (!descriptor) {
 		return false;
@@ -187,12 +187,8 @@ export const canPrepareNativeDocumentTransformWithAppendFacts = (
 	}
 };
 
-export const canUseNativeBackboneDocumentTransform = (
-	descriptor: NativeDocumentTransformDescriptor | undefined,
-): boolean => descriptor != null;
-
-export const nativeDocumentTransformPreservesFieldPath = (
-	descriptor: NativeDocumentTransformDescriptor | undefined,
+export const documentTransformPreservesFieldPath = (
+	descriptor: DocumentTransformDescriptor | undefined,
 	path: string | readonly string[],
 ): boolean => {
 	if (!descriptor) {
@@ -215,7 +211,7 @@ export const nativeDocumentTransformPreservesFieldPath = (
 
 export const transform = {
 	identity: <T = unknown>(): DocumentTransformer<T, T> =>
-		attachNativeDocumentTransform((obj) => obj, { kind: "identity" }),
+		attachDocumentTransformDescriptor((obj) => obj, { kind: "identity" }),
 
 	pick: <
 		T = Record<string, unknown>,
@@ -224,7 +220,7 @@ export const transform = {
 		fields: readonly (string | readonly string[])[],
 	): DocumentTransformer<T, I> => {
 		const frozenFields = Object.freeze(fields.map(freezePath));
-		return attachNativeDocumentTransform(
+		return attachDocumentTransformDescriptor(
 			(document) => {
 				const out: Record<string, unknown> = {};
 				for (const path of frozenFields) {
@@ -238,22 +234,22 @@ export const transform = {
 
 	field: (
 		path: string | readonly string[],
-	): NativeDocumentTransformSourceDescriptor => ({
+	): DocumentTransformSourceDescriptor => ({
 		kind: "field",
 		path: freezePath(path),
 	}),
 
 	context: (
 		field: "created" | "modified" | "head" | "gid" | "size",
-	): NativeDocumentTransformSourceDescriptor => ({ kind: "context", field }),
+	): DocumentTransformSourceDescriptor => ({ kind: "context", field }),
 
 	entryFirstSignerPublicKey:
-		(): NativeDocumentTransformSourceDescriptor => ({
+		(): DocumentTransformSourceDescriptor => ({
 			kind: "entryFirstSignerPublicKey",
 		}),
 
 	project: <T = unknown, I extends object = Record<string, unknown>>(
-		fields: Record<string, NativeDocumentTransformSource>,
+		fields: Record<string, DocumentTransformSource>,
 	): DocumentTransformer<T, I> => {
 		const entries = Object.freeze(
 			Object.entries(fields).map(([target, source]) =>
@@ -263,7 +259,7 @@ export const transform = {
 				}),
 			),
 		);
-		return attachNativeDocumentTransform(
+		return attachDocumentTransformDescriptor(
 			(document, context, facts) => {
 				const out: Record<string, unknown> = {};
 				for (const entry of entries) {
