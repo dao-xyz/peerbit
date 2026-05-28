@@ -888,17 +888,17 @@ export class TestSession {
 			start: false,
 			basePort: opts.basePort ?? 30_000,
 			networkOpts: opts.network,
-				services: {
-					blocks: (c: any) =>
-						new SimDirectBlock(
-							c,
-							{
-								directory: blocksStoreFactory ? undefined : blocksDirectory,
-								localStore: blocksStoreFactory?.(blocksDirectory),
-								canRelayMessage: true,
-							},
-							mockCrypto,
-						),
+			services: {
+				blocks: (c: any) =>
+					new SimDirectBlock(
+						c,
+						{
+							directory: blocksStoreFactory ? undefined : blocksDirectory,
+							localStore: blocksStoreFactory?.(blocksDirectory),
+							canRelayMessage: true,
+						},
+						mockCrypto,
+					),
 				pubsub: (c: any) =>
 					new SimTopicControlPlane(
 						c,

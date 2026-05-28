@@ -276,30 +276,30 @@ export class Peerbit implements ProgramClient {
 							const out: string[] = [];
 							const push = (hash?: string) => {
 								if (!hash) return;
-							if (hash === blocksService?.publicKeyHash) return;
-							// Small bounded list; avoid Set allocations on hot paths.
-							if (out.includes(hash)) return;
-							out.push(hash);
-						};
+								if (hash === blocksService?.publicKeyHash) return;
+								// Small bounded list; avoid Set allocations on hot paths.
+								if (out.includes(hash)) return;
+								out.push(hash);
+							};
 
-						// Prefer peers we've already negotiated `/peerbit/direct-block` streams with.
-						for (const h of blocksService?.peers.keys() ?? []) {
-							push(h);
-							if (out.length >= 32) return out;
-						}
-
-						// Fall back to currently connected libp2p peers.
-						for (const conn of c.connectionManager.getConnections()) {
-							try {
-								push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
-							} catch {
-								// ignore unexpected key types
+							// Prefer peers we've already negotiated `/peerbit/direct-block` streams with.
+							for (const h of blocksService?.peers.keys() ?? []) {
+								push(h);
+								if (out.length >= 32) return out;
 							}
-							if (out.length >= 32) break;
-						}
 
-						return out;
-					};
+							// Fall back to currently connected libp2p peers.
+							for (const conn of c.connectionManager.getConnections()) {
+								try {
+									push(getPublicKeyFromPeerId(conn.remotePeer).hashcode());
+								} catch {
+									// ignore unexpected key types
+								}
+								if (out.length >= 32) break;
+							}
+
+							return out;
+						};
 
 						const resolveProviders = async (
 							cid: string,
@@ -312,19 +312,19 @@ export class Peerbit implements ProgramClient {
 									{
 										want: 8,
 										timeoutMs: 2_000,
-									queryTimeoutMs: 500,
-									bootstrapMaxPeers: 2,
-									signal: options?.signal,
-								},
-							);
-							if (providers && providers.length > 0) return providers;
-						} catch {
-							// ignore discovery failures
-						}
+										queryTimeoutMs: 500,
+										bootstrapMaxPeers: 2,
+										signal: options?.signal,
+									},
+								);
+								if (providers && providers.length > 0) return providers;
+							} catch {
+								// ignore discovery failures
+							}
 
-						// 2) fallback to currently connected peers (keeps local/small nets working without trackers)
-						return fallbackConnectedPeers();
-					};
+							// 2) fallback to currently connected peers (keeps local/small nets working without trackers)
+							return fallbackConnectedPeers();
+						};
 
 						blocksService = new DirectBlock(c, {
 							canRelayMessage: asRelay,
@@ -339,11 +339,11 @@ export class Peerbit implements ProgramClient {
 										bootstrapMaxPeers: 2,
 									});
 								} catch {
-								// ignore announce failures
-							}
-						},
-					});
-					return blocksService;
+									// ignore announce failures
+								}
+							},
+						});
+						return blocksService;
 					},
 					pubsub: (c: any) =>
 						new TopicControlPlane(c, {
