@@ -3167,13 +3167,7 @@ export class DocumentIndex<
 	}
 
 	private cacheResolvedValue(id: string | number | bigint, value: T): void {
-		if (
-			this.isProgramValued /*
-			TODO should we skip caching program value if they are not openend through this db?
-			&&
-			(value as Program).closed === false &&
-			(value as Program).parents.includes(this._log) */
-		) {
+		if (this.isProgramValued) {
 			this._resolverProgramCache!.set(id, value);
 			indexCacheLogger("cache:set:program", { id });
 		} else if (this._resolverCache) {

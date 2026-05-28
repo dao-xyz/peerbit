@@ -994,8 +994,7 @@ export const createExchangeHeadsMessages = async function* (
 				continue;
 			}
 
-			// TODO eventually we don't want to load all refs
-			// since majority of the old leader would not be interested in these anymore
+			// Fallback for logs without native reference rows.
 			const refs = (await allEntriesWithUniqueGids(log, entry)).filter((x) => {
 				if (visitedHeads.has(x.hash)) {
 					return false;

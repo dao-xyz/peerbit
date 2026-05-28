@@ -2345,7 +2345,7 @@ export class Documents<
 						return true;
 					}
 				}
-				return false; // TODO also cache this?
+				return false;
 			};
 		} else {
 			keepFunction = options?.keep;
@@ -2748,9 +2748,7 @@ export class Documents<
 						}
 					}
 				} else {
-					// TODO should re reject next pointers to other documents?
-					// like if (entry.meta.next.length > 0) { return false; }
-					// for now the default behaviour will allow us to build document dependencies
+					// Keep existing behavior: next pointers may express document dependencies.
 				}
 			} else if (isDeleteOperation(operation)) {
 				if (entry.meta.next.length !== 1) {

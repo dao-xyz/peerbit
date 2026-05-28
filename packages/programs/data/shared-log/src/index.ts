@@ -3671,11 +3671,10 @@ export class SharedLog<
 							);
 
 							if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
-								// TODO this statement (might) cause issues with triggering pruning if the segment is strict and maturity timings will affect the outcome of rebalancing
 								this.replicationChangeDebounceFn.add({
 									...diff,
 									matured: true,
-								}); // we need to call this here because the outcom of findLeaders will be different when some ranges become mature, i.e. some of data we own might be prunable!
+								});
 							}
 							pendingRanges.delete(diff.range.idString);
 							if (pendingRanges.size === 0) {
@@ -8252,7 +8251,7 @@ export class SharedLog<
 					this.prune(current);
 				}
 			},
-			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
+			PRUNE_DEBOUNCE_INTERVAL,
 			(into, from) => {
 				for (const [k, v] of from.leaders) {
 					if (!into.leaders.has(k)) {
@@ -8319,7 +8318,7 @@ export class SharedLog<
 					has: (hash: string) => accumulator.has(hash),
 				};
 			},
-			PRUNE_DEBOUNCE_INTERVAL, // TODO make this dynamic on the number of replicators
+			PRUNE_DEBOUNCE_INTERVAL,
 		);
 
 		await remoteBlocksStartPromise;
@@ -9496,7 +9495,7 @@ export class SharedLog<
 
 			checkMinReplicasLimit(replicas);
 
-			// Don't verify entries that we have created (TODO should we? perf impact?)
+			// Locally-created entries were signed before append.
 			if (
 				!entry.createdLocally &&
 				!hasPreverifiedSignature(entry) &&
@@ -11333,8 +11332,7 @@ export class SharedLog<
 												},
 											],
 											{
-												// we do this here so that we quickly assume leader role (and also so that 'from' is also assumed to be leader)
-												// TODO potential side effects?
+												// Let raw receive confirm immediate leadership against the current replicator set.
 												roleAge: 0,
 												timeout: 2e4,
 												onLeader: (key) => {
@@ -12616,9 +12614,7 @@ export class SharedLog<
 		return this._entryCoordinatesIndex;
 	}
 
-	/**
-	 * TODO improve efficiency
-	 */
+	/** Return known replicator hashes from the replication index. */
 	async getReplicators() {
 		let set = new Set<string>();
 		const results = await this.replicationIndex
@@ -12654,10 +12650,7 @@ export class SharedLog<
 					)
 				: new Set<string>();
 		if (options?.replicate && this.log.length > 0) {
-			// TODO this block should perhaps be called from a callback on the this.log.join method on all the ignored element because already joined, like "onAlreadyJoined"
-
-			// check which entrise we already have but not are replicating, and replicate them
-			// we can not just do the 'join' call because it will ignore the already joined entries
+			// Replicate entries that are already joined locally; join ignores them.
 			for (const element of entries) {
 				if (typeof element === "string") {
 					if (localHashes.has(element)) {
@@ -13138,7 +13131,7 @@ export class SharedLog<
 			let settled = false;
 			const removeListeners = () => {
 				this.events.removeEventListener("replication:change", roleListener);
-				this.events.removeEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
+				this.events.removeEventListener("replicator:mature", roleListener);
 				this._closeController.signal.removeEventListener(
 					"abort",
 					abortListener,
@@ -13199,8 +13192,8 @@ export class SharedLog<
 				runCheck();
 			};
 
-			this.events.addEventListener("replication:change", roleListener); // TODO replication:change event  ?
-			this.events.addEventListener("replicator:mature", roleListener); // TODO replication:change event  ?
+			this.events.addEventListener("replication:change", roleListener);
+			this.events.addEventListener("replicator:mature", roleListener);
 			this._closeController.signal.addEventListener("abort", abortListener);
 			runCheck();
 		});
@@ -15511,7 +15504,7 @@ export class SharedLog<
 			return cached;
 		}
 		const selfHash = this.node.identity.publicKey.hashcode();
-		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge()); // TODO -500 as is added so that i f someone else is just as new as us, then we treat them as mature as us. without -500 we might be slower syncing if two nodes starts almost at the same time
+		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
 
 		// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
 		// If it is still warming up (for example, only contains self), supplement with
@@ -16414,7 +16407,6 @@ export class SharedLog<
 								this.deleteGidPeerHistory(entry.meta.gid);
 								this.removePruneRequestSent(entry.hash);
 								this._checkedPrune.clearConfirmedReplicators(entry.hash);
-								// TODO in the case we become leader again here we need to re-add the entry
 
 								const ownership = await this.revalidateCheckedPruneOwnership({
 									hash: entry.hash,
