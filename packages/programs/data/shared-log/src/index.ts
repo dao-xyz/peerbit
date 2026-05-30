@@ -2232,6 +2232,7 @@ export class SharedLog<
 		// Keep local sync/prune state consistent even when a peer disappears
 		// through replication-info updates without a topic unsubscribe event.
 		this.removePeerFromGidPeerHistory(keyHash);
+		this._checkedPrune.cleanupPeer(keyHash);
 		this.removeRepairFrontierTarget(keyHash);
 		this._recentRepairDispatch.delete(keyHash);
 		if (!isMe) {

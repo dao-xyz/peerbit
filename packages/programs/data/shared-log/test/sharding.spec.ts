@@ -1822,6 +1822,82 @@ testSetups.forEach((setup) => {
 				await checkBounded(entryCount, 1, 1, db1, db2);
 			});
 
+			it("clears checked-prune confirmations when replication-info removes a peer", async () => {
+				const args = {
+					timeUntilRoleMaturity: 0,
+					waitForPruneDelay: 50,
+					setup,
+				} as const;
+
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
+						},
+						...args,
+					},
+				});
+
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							replicate: {
+								offset: 0.3333,
+							},
+							...args,
+						},
+					},
+				);
+				db3 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[2],
+					{
+						args: {
+							replicate: {
+								offset: 0.6666,
+							},
+							...args,
+						},
+					},
+				);
+
+				await waitForResolved(async () =>
+					expect(await db1.log.replicationIndex?.getSize()).equal(3),
+				);
+
+				const { entry } = await db1.add("stale-prune-confirmation", {
+					meta: { next: [] },
+				});
+				const leavingHash = db3.node.identity.publicKey.hashcode();
+				const logInternals = db1.log as any;
+
+				logInternals._checkedPrune.addRequestSent(entry.hash, leavingHash);
+				logInternals._checkedPrune.addConfirmedReplicator(
+					entry.hash,
+					leavingHash,
+				);
+				expect(
+					logInternals._checkedPrune
+						.getConfirmedReplicators(entry.hash)
+						?.has(leavingHash),
+				).to.be.true;
+
+				await logInternals.removeReplicator(leavingHash, { noEvent: true });
+
+				expect(
+					logInternals._checkedPrune
+						.getConfirmedReplicators(entry.hash)
+						?.has(leavingHash) ?? false,
+				).to.be.false;
+				expect(
+					logInternals._checkedPrune
+						.getContactedReplicators(entry.hash)
+						?.has(leavingHash) ?? false,
+				).to.be.false;
+			});
+
 			it("repairs redistributed entry when churn repair misses one hash on peer leave", async function () {
 				if (setup.name !== "u64-iblt") {
 					this.skip();
