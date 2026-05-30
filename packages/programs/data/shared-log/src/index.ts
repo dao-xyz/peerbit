@@ -2232,6 +2232,7 @@ export class SharedLog<
 		// Keep local sync/prune state consistent even when a peer disappears
 		// through replication-info updates without a topic unsubscribe event.
 		this.removePeerFromGidPeerHistory(keyHash);
+		this._checkedPrune.cleanupPeer(keyHash);
 		this.removeRepairFrontierTarget(keyHash);
 		this._recentRepairDispatch.delete(keyHash);
 		if (!isMe) {
@@ -5229,8 +5230,10 @@ export class SharedLog<
 		this.responseToPruneDebouncedFn?.close?.();
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
-		this._replicationRangeIndex.stop();
-		this._entryCoordinatesIndex.stop();
+		await Promise.all([
+			this._replicationRangeIndex.stop(),
+			this._entryCoordinatesIndex.stop(),
+		]);
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 

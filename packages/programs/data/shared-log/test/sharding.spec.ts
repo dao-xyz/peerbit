@@ -1822,6 +1822,82 @@ testSetups.forEach((setup) => {
 				await checkBounded(entryCount, 1, 1, db1, db2);
 			});
 
+			it("clears checked-prune confirmations when replication-info removes a peer", async () => {
+				const args = {
+					timeUntilRoleMaturity: 0,
+					waitForPruneDelay: 50,
+					setup,
+				} as const;
+
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
+						},
+						...args,
+					},
+				});
+
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							replicate: {
+								offset: 0.3333,
+							},
+							...args,
+						},
+					},
+				);
+				db3 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[2],
+					{
+						args: {
+							replicate: {
+								offset: 0.6666,
+							},
+							...args,
+						},
+					},
+				);
+
+				await waitForResolved(async () =>
+					expect(await db1.log.replicationIndex?.getSize()).equal(3),
+				);
+
+				const { entry } = await db1.add("stale-prune-confirmation", {
+					meta: { next: [] },
+				});
+				const leavingHash = db3.node.identity.publicKey.hashcode();
+				const logInternals = db1.log as any;
+
+				logInternals._checkedPrune.addRequestSent(entry.hash, leavingHash);
+				logInternals._checkedPrune.addConfirmedReplicator(
+					entry.hash,
+					leavingHash,
+				);
+				expect(
+					logInternals._checkedPrune
+						.getConfirmedReplicators(entry.hash)
+						?.has(leavingHash),
+				).to.be.true;
+
+				await logInternals.removeReplicator(leavingHash, { noEvent: true });
+
+				expect(
+					logInternals._checkedPrune
+						.getConfirmedReplicators(entry.hash)
+						?.has(leavingHash) ?? false,
+				).to.be.false;
+				expect(
+					logInternals._checkedPrune
+						.getContactedReplicators(entry.hash)
+						?.has(leavingHash) ?? false,
+				).to.be.false;
+			});
+
 			it("repairs redistributed entry when churn repair misses one hash on peer leave", async function () {
 				if (setup.name !== "u64-iblt") {
 					this.skip();
@@ -2199,6 +2275,42 @@ testSetups.forEach((setup) => {
 				);
 			});
 
+			it("waits for local index shutdown before close resolves", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
+						},
+						setup,
+					},
+				});
+
+				const logInternals = db1.log as any;
+				const rangeIndex = logInternals._replicationRangeIndex;
+				const entryIndex = logInternals._entryCoordinatesIndex;
+				const originalRangeStop = rangeIndex.stop.bind(rangeIndex);
+				const originalEntryStop = entryIndex.stop.bind(entryIndex);
+				let pendingStops = 0;
+
+				const wrapStop = (stop: () => Promise<void>) => async () => {
+					pendingStops++;
+					try {
+						await delay(50);
+						await stop();
+					} finally {
+						pendingStops--;
+					}
+				};
+
+				rangeIndex.stop = wrapStop(originalRangeStop);
+				entryIndex.stop = wrapStop(originalEntryStop);
+
+				await db1.close();
+
+				expect(pendingStops).to.equal(0);
+				db1 = undefined as any;
+			});
+
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
@@ -2572,25 +2684,34 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
+							const assertMemoryNearLimit = async () => {
+								const memoryUsage = await db2.log.getMemoryUsage();
+								const tolerance = Math.max((memoryLimit / 100) * 12, 10_000);
+								expect(
+									Math.abs(memoryLimit - memoryUsage),
+									`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
+								).lessThan(tolerance);
+							};
+
 							try {
 								// For a late-joining constrained peer, the correctness contract is that
 								// join redistribution finishes and memory usage converges near the
-								// configured limit. Requiring the raw participation curve itself to
-								// fully settle is stricter than the behavior under test and flakes
-								// under full-shard CI load.
+								// configured limit after pending prune/distribution work has drained.
 								await waitForResolved(
 									() =>
 										expect(countActiveRepairSweepWork(db1, db2)).to.equal(0),
 									{ timeout: 120_000, delayInterval: 250 },
 								);
 
-								await waitForResolved(
-									async () =>
-										expect(
-											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-										).lessThan((memoryLimit / 100) * 12),
-									{ timeout: 60 * 1000, delayInterval: 1000 },
-								); // allow a bit more slack after settling under full-suite load
+								await waitForResolved(assertMemoryNearLimit, {
+									timeout: 180_000,
+									delayInterval: 1000,
+								});
+								await waitForDistributionQuiesced(db1, db2);
+								await waitForResolved(assertMemoryNearLimit, {
+									timeout: 120_000,
+									delayInterval: 1000,
+								});
 							} catch (error) {
 								await dbgLogs([db1.log, db2.log]);
 								throw error;
