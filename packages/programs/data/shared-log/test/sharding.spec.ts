@@ -2275,6 +2275,42 @@ testSetups.forEach((setup) => {
 				);
 			});
 
+			it("waits for local index shutdown before close resolves", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: {
+							offset: 0,
+						},
+						setup,
+					},
+				});
+
+				const logInternals = db1.log as any;
+				const rangeIndex = logInternals._replicationRangeIndex;
+				const entryIndex = logInternals._entryCoordinatesIndex;
+				const originalRangeStop = rangeIndex.stop.bind(rangeIndex);
+				const originalEntryStop = entryIndex.stop.bind(entryIndex);
+				let pendingStops = 0;
+
+				const wrapStop = (stop: () => Promise<void>) => async () => {
+					pendingStops++;
+					try {
+						await delay(50);
+						await stop();
+					} finally {
+						pendingStops--;
+					}
+				};
+
+				rangeIndex.stop = wrapStop(originalRangeStop);
+				entryIndex.stop = wrapStop(originalEntryStop);
+
+				await db1.close();
+
+				expect(pendingStops).to.equal(0);
+				db1 = undefined as any;
+			});
+
 			it("drops when no longer replicating as observer", async () => {
 				let COUNT = 10;
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {

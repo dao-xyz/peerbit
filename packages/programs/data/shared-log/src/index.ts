@@ -5230,8 +5230,10 @@ export class SharedLog<
 		this.responseToPruneDebouncedFn?.close?.();
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
-		this._replicationRangeIndex.stop();
-		this._entryCoordinatesIndex.stop();
+		await Promise.all([
+			this._replicationRangeIndex.stop(),
+			this._entryCoordinatesIndex.stop(),
+		]);
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 
