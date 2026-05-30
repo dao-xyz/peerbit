@@ -2684,25 +2684,34 @@ testSetups.forEach((setup) => {
 
 							await delay(db1.log.timeUntilRoleMaturity + 1000);
 
+							const assertMemoryNearLimit = async () => {
+								const memoryUsage = await db2.log.getMemoryUsage();
+								const tolerance = Math.max((memoryLimit / 100) * 12, 10_000);
+								expect(
+									Math.abs(memoryLimit - memoryUsage),
+									`memoryUsage=${memoryUsage} memoryLimit=${memoryLimit}`,
+								).lessThan(tolerance);
+							};
+
 							try {
 								// For a late-joining constrained peer, the correctness contract is that
 								// join redistribution finishes and memory usage converges near the
-								// configured limit. Requiring the raw participation curve itself to
-								// fully settle is stricter than the behavior under test and flakes
-								// under full-shard CI load.
+								// configured limit after pending prune/distribution work has drained.
 								await waitForResolved(
 									() =>
 										expect(countActiveRepairSweepWork(db1, db2)).to.equal(0),
 									{ timeout: 120_000, delayInterval: 250 },
 								);
 
-								await waitForResolved(
-									async () =>
-										expect(
-											Math.abs(memoryLimit - (await db2.log.getMemoryUsage())),
-										).lessThan((memoryLimit / 100) * 12),
-									{ timeout: 60 * 1000, delayInterval: 1000 },
-								); // allow a bit more slack after settling under full-suite load
+								await waitForResolved(assertMemoryNearLimit, {
+									timeout: 180_000,
+									delayInterval: 1000,
+								});
+								await waitForDistributionQuiesced(db1, db2);
+								await waitForResolved(assertMemoryNearLimit, {
+									timeout: 120_000,
+									delayInterval: 1000,
+								});
 							} catch (error) {
 								await dbgLogs([db1.log, db2.log]);
 								throw error;
