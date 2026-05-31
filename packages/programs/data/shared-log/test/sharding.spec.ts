@@ -456,13 +456,22 @@ testSetups.forEach((setup) => {
 			) => {
 				const startedAt = Date.now();
 				console.error(`[shared-log-sharding-phase:${label}:start]`);
-
-				const timer = setInterval(() => {
-					void safelyPrintShardingPhaseDiagnostics(
-						`${label}:still-running:${Date.now() - startedAt}ms`,
+				let activeDiagnostics: Promise<void> | undefined;
+				const runDiagnostics = (diagnosticsLabel: string) => {
+					if (activeDiagnostics) {
+						return;
+					}
+					activeDiagnostics = safelyPrintShardingPhaseDiagnostics(
+						diagnosticsLabel,
 						dbs,
 						options,
-					);
+					).finally(() => {
+						activeDiagnostics = undefined;
+					});
+				};
+
+				const timer = setInterval(() => {
+					runDiagnostics(`${label}:still-running:${Date.now() - startedAt}ms`);
 				}, 10_000);
 				timer.unref?.();
 
@@ -470,6 +479,7 @@ testSetups.forEach((setup) => {
 					const result = await fn();
 					const elapsed = Date.now() - startedAt;
 					if (elapsed >= 10_000) {
+						await activeDiagnostics;
 						await safelyPrintShardingPhaseDiagnostics(
 							`${label}:complete:${elapsed}ms`,
 							dbs,
@@ -482,6 +492,7 @@ testSetups.forEach((setup) => {
 					}
 					return result;
 				} catch (error) {
+					await activeDiagnostics;
 					await safelyPrintShardingPhaseDiagnostics(
 						`${label}:failed:${Date.now() - startedAt}ms`,
 						dbs,
@@ -490,6 +501,7 @@ testSetups.forEach((setup) => {
 					throw error;
 				} finally {
 					clearInterval(timer);
+					await activeDiagnostics;
 				}
 			};
 
