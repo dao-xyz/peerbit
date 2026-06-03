@@ -91,15 +91,6 @@ type CheckedPruneDebounceTestLog<E> = {
 	pruneDebouncedFn: { flush: () => Promise<void> };
 };
 
-type ShardingDiagnosticDb = {
-	log: EventStore<string, ReplicationDomainHash<any>>["log"];
-};
-
-type ShardingPhaseDiagnosticsOptions = {
-	minReplicas?: number;
-	expectedUnionSize?: number;
-};
-
 testSetups.forEach((setup) => {
 	describe(setup.name, () => {
 		describe(`sharding`, function () {
@@ -317,192 +308,6 @@ testSetups.forEach((setup) => {
 						rows,
 					)}`,
 				);
-			};
-
-			const collectShardingPhaseDiagnostics = async (
-				dbs: ShardingDiagnosticDb[],
-				options: ShardingPhaseDiagnosticsOptions = {},
-			) => {
-				const replicasByHash = new Map<string, number>();
-				const missingBlocks: { index: number; hash: string }[] = [];
-				const rows = [];
-				const minReplicas = options.minReplicas;
-
-				for (const [index, db] of dbs.entries()) {
-					const log = db.log as any;
-					const entries = await db.log.log.toArray();
-					const prunable = await db.log.getPrunable().catch(() => []);
-					const segments = await db.log
-						.getAllReplicationSegments()
-						.then((ranges) => ranges.map((range) => range.toString()))
-						.catch(() => []);
-					const pendingDeleteHashes = [
-						...(((log._pendingDeletes ?? new Map()) as Map<
-							string,
-							unknown
-						>).keys()),
-					];
-					const checkedPruneRetryHashes = [
-						...(((log._checkedPruneRetries ?? new Map()) as Map<
-							string,
-							unknown
-						>).keys()),
-					];
-					const syncInFlightHashes = [
-						...(db.log.syncronizer.syncInFlight.keys() as Iterable<string>),
-					];
-
-					for (const entry of entries) {
-						if ((await db.log.log.blocks.has(entry.hash)) === false) {
-							missingBlocks.push({ index, hash: entry.hash });
-						}
-						replicasByHash.set(
-							entry.hash,
-							(replicasByHash.get(entry.hash) || 0) + 1,
-						);
-					}
-
-					rows.push({
-						index,
-						length: db.log.log.length,
-						entries: entries.length,
-						prunable: prunable.length,
-						pendingDeletes: pendingDeleteHashes.length,
-						pendingDeleteSample: pendingDeleteHashes.slice(0, 5),
-						checkedPruneRetries: checkedPruneRetryHashes.length,
-						checkedPruneRetrySample: checkedPruneRetryHashes.slice(0, 5),
-						repairSweepWork: countActiveRepairSweepWork(db),
-						syncInFlight: syncInFlightHashes.length,
-						syncInFlightSample: syncInFlightHashes.slice(0, 5),
-						participation: await db.log
-							.calculateMyTotalParticipation()
-							.catch(() => undefined),
-						segments,
-					});
-				}
-
-				const underReplicated =
-					minReplicas == null
-						? []
-						: [...replicasByHash.entries()].filter(
-								([, replicas]) => replicas < minReplicas,
-							);
-				const idleUnderReplicated =
-					minReplicas == null
-						? []
-						: underReplicated.filter(([hash]) =>
-								dbs.every(
-									(db) =>
-										db.log.syncronizer.syncInFlight.has(hash) === false,
-								),
-							);
-
-				return {
-					expectedUnionSize: options.expectedUnionSize,
-					unionSize: replicasByHash.size,
-					missingUnion:
-						options.expectedUnionSize == null
-							? undefined
-							: options.expectedUnionSize - replicasByHash.size,
-					minReplicas,
-					underReplicatedCount: underReplicated.length,
-					underReplicatedSample: underReplicated
-						.slice(0, 10)
-						.map(([hash, replicas]) => ({ hash, replicas })),
-					idleUnderReplicatedCount: idleUnderReplicated.length,
-					idleUnderReplicatedSample: idleUnderReplicated
-						.slice(0, 10)
-						.map(([hash, replicas]) => ({ hash, replicas })),
-					missingBlocksCount: missingBlocks.length,
-					missingBlocksSample: missingBlocks.slice(0, 10),
-					rows,
-				};
-			};
-
-			const printShardingPhaseDiagnostics = async (
-				label: string,
-				dbs: ShardingDiagnosticDb[],
-				options: ShardingPhaseDiagnosticsOptions = {},
-			) => {
-				const diagnostics = await collectShardingPhaseDiagnostics(dbs, options);
-				console.error(
-					`[shared-log-sharding-phase-diagnostics:${label}] ${JSON.stringify(
-						diagnostics,
-					)}`,
-				);
-			};
-
-			const safelyPrintShardingPhaseDiagnostics = async (
-				label: string,
-				dbs: ShardingDiagnosticDb[],
-				options: ShardingPhaseDiagnosticsOptions = {},
-			) => {
-				try {
-					await printShardingPhaseDiagnostics(label, dbs, options);
-				} catch (error) {
-					console.error(
-						`[shared-log-sharding-phase-diagnostics:${label}:failed] ${
-							error instanceof Error ? (error.stack ?? error.message) : error
-						}`,
-					);
-				}
-			};
-
-			const withShardingPhaseDiagnostics = async <T>(
-				label: string,
-				dbs: ShardingDiagnosticDb[],
-				fn: () => Promise<T>,
-				options: ShardingPhaseDiagnosticsOptions = {},
-			) => {
-				const startedAt = Date.now();
-				console.error(`[shared-log-sharding-phase:${label}:start]`);
-				let activeDiagnostics: Promise<void> | undefined;
-				const runDiagnostics = (diagnosticsLabel: string) => {
-					if (activeDiagnostics) {
-						return;
-					}
-					activeDiagnostics = safelyPrintShardingPhaseDiagnostics(
-						diagnosticsLabel,
-						dbs,
-						options,
-					).finally(() => {
-						activeDiagnostics = undefined;
-					});
-				};
-
-				const timer = setInterval(() => {
-					runDiagnostics(`${label}:still-running:${Date.now() - startedAt}ms`);
-				}, 10_000);
-				timer.unref?.();
-
-				try {
-					const result = await fn();
-					const elapsed = Date.now() - startedAt;
-					if (elapsed >= 10_000) {
-						await activeDiagnostics;
-						await safelyPrintShardingPhaseDiagnostics(
-							`${label}:complete:${elapsed}ms`,
-							dbs,
-							options,
-						);
-					} else {
-						console.error(
-							`[shared-log-sharding-phase:${label}:complete:${elapsed}ms]`,
-						);
-					}
-					return result;
-				} catch (error) {
-					await activeDiagnostics;
-					await safelyPrintShardingPhaseDiagnostics(
-						`${label}:failed:${Date.now() - startedAt}ms`,
-						dbs,
-						options,
-					);
-					throw error;
-				} finally {
-					clearInterval(timer);
-					await activeDiagnostics;
-				}
 			};
 
 			const startEventLoopPressure = (
@@ -1074,34 +879,18 @@ testSetups.forEach((setup) => {
 				// Participation can report "full" while redistribution is still in flight.
 				// The bounded assertion is about the settled final split, so wait for
 				// coverage rather than raw repair-sweep idleness.
-				await withShardingPhaseDiagnostics(
-					"2-peers-write-while-joining:participation-settle",
-					[db1, db2],
-					() => waitForParticipationToSettle(db1, db2),
-					{ minReplicas: 1, expectedUnionSize: entryCount },
-				);
-				await withShardingPhaseDiagnostics(
-					"2-peers-write-while-joining:replication-coverage",
-					[db1, db2],
-					() => waitForReplicationCoverageSettled([db1, db2], 1, entryCount),
-					{ minReplicas: 1, expectedUnionSize: entryCount },
-				);
+				await waitForParticipationToSettle(db1, db2);
+				await waitForReplicationCoverageSettled([db1, db2], 1, entryCount);
 				// Writes during join can leave checked-prune work queued after the
 				// union and replica floor have settled. Keep the upper bound broad
 				// enough for that transient duplicate storage while still requiring
 				// both peers to carry a meaningful share.
-				await withShardingPhaseDiagnostics(
-					"2-peers-write-while-joining:bounded-distribution",
-					[db1, db2],
-					() =>
-						checkBounded(
-							entryCount,
-							setup.name === "u64-iblt" ? 0.25 : 0.3,
-							setup.name === "u64-iblt" ? 0.75 : 0.9,
-							db1,
-							db2,
-						),
-					{ minReplicas: 1, expectedUnionSize: entryCount },
+				await checkBounded(
+					entryCount,
+					setup.name === "u64-iblt" ? 0.25 : 0.3,
+					setup.name === "u64-iblt" ? 0.75 : 0.9,
+					db1,
+					db2,
 				);
 			});
 
