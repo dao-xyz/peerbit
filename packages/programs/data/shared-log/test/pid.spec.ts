@@ -2,6 +2,35 @@ import { expect } from "chai";
 import { PIDReplicationController } from "../src/pid.js";
 
 describe("PIDReplicationController", () => {
+	describe("balance", () => {
+		it("keeps unconstrained peers above an even share filling coverage gaps", () => {
+			const controller = new PIDReplicationController("");
+			const f = controller.step({
+				currentFactor: 0.64,
+				memoryUsage: 0,
+				totalFactor: 0.8,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.be.greaterThan(0.64);
+			expect(f).to.be.at.most(1);
+		});
+
+		it("keeps slightly over-even unconstrained peers filling large coverage gaps", () => {
+			const controller = new PIDReplicationController("");
+			const f = controller.step({
+				currentFactor: 0.51,
+				memoryUsage: 0,
+				totalFactor: 0.74,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.be.greaterThan(0.51);
+		});
+	});
+
 	describe("cpu", () => {
 		it("bounded by cpu available", () => {
 			const controller = new PIDReplicationController("", { cpu: { max: 0 } });

@@ -550,6 +550,7 @@ const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 	60_000,
 ];
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
+const RECENT_KNOWN_REPAIR_SUPPRESSION_MS = 30_000;
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
 const JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS = [
 	JOIN_AUTHORITATIVE_REPAIR_DELAY_MS,
@@ -907,6 +908,7 @@ export class SharedLog<
 	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _entryKnownPeers!: Map<string, Set<string>>;
+	private _entryKnownPeerObservedAt!: Map<string, Map<string, number>>;
 	private _joinAuthoritativeRepairTimersByDelay!: Map<
 		number,
 		ReturnType<typeof setTimeout>
@@ -2727,6 +2729,7 @@ export class SharedLog<
 	}
 
 	private markEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
+		const now = Date.now();
 		for (const hash of hashes) {
 			let peers = this._entryKnownPeers.get(hash);
 			if (!peers) {
@@ -2734,6 +2737,13 @@ export class SharedLog<
 				this._entryKnownPeers.set(hash, peers);
 			}
 			peers.add(peer);
+
+			let observedAt = this._entryKnownPeerObservedAt.get(hash);
+			if (!observedAt) {
+				observedAt = new Map();
+				this._entryKnownPeerObservedAt.set(hash, observedAt);
+			}
+			observedAt.set(peer, now);
 		}
 	}
 
@@ -2747,6 +2757,13 @@ export class SharedLog<
 			if (peers.size === 0) {
 				this._entryKnownPeers.delete(hash);
 			}
+			const observedAt = this._entryKnownPeerObservedAt.get(hash);
+			if (observedAt) {
+				observedAt.delete(peer);
+				if (observedAt.size === 0) {
+					this._entryKnownPeerObservedAt.delete(hash);
+				}
+			}
 		}
 	}
 
@@ -2757,10 +2774,25 @@ export class SharedLog<
 				this._entryKnownPeers.delete(hash);
 			}
 		}
+		for (const [hash, observedAt] of this._entryKnownPeerObservedAt) {
+			observedAt.delete(peer);
+			if (observedAt.size === 0) {
+				this._entryKnownPeerObservedAt.delete(hash);
+			}
+		}
 	}
 
 	private isEntryKnownByPeer(hash: string, peer: string) {
 		return this._entryKnownPeers.get(hash)?.has(peer) === true;
+	}
+
+	private isEntryRecentlyKnownByPeer(
+		hash: string,
+		peer: string,
+		maxAgeMs: number,
+	) {
+		const observedAt = this._entryKnownPeerObservedAt.get(hash)?.get(peer);
+		return observedAt != null && Date.now() - observedAt <= maxAgeMs;
 	}
 
 	private markRepairSweepOptimisticPeer(gid: string, peer: string) {
@@ -2919,9 +2951,10 @@ export class SharedLog<
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
 	) {
+		const hashes = [...entries.keys()];
 		for await (const message of createExchangeHeadsMessages(
 			this.log,
-			[...entries.keys()],
+			hashes,
 		)) {
 			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
@@ -2935,12 +2968,20 @@ export class SharedLog<
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
 		transport: RepairTransportMode,
-		options?: { bypassKnownPeers?: boolean },
+		options?: { bypassKnownPeers?: boolean; bypassRecentKnownPeers?: boolean },
 	) {
 		const unknownEntries = new Map<string, EntryReplicated<R>>();
 		const knownHashes: string[] = [];
 		for (const [hash, entry] of entries) {
-			if (options?.bypassKnownPeers || !this.isEntryKnownByPeer(hash, target)) {
+			if (
+				(options?.bypassRecentKnownPeers ||
+					!this.isEntryRecentlyKnownByPeer(
+						hash,
+						target,
+						RECENT_KNOWN_REPAIR_SUPPRESSION_MS,
+					)) &&
+				(options?.bypassKnownPeers || !this.isEntryKnownByPeer(hash, target))
+			) {
 				unknownEntries.set(hash, entry);
 			} else {
 				knownHashes.push(hash);
@@ -3024,7 +3065,10 @@ export class SharedLog<
 				target,
 				filteredEntries,
 				options.transport,
-				{ bypassKnownPeers: options.mode === "churn" },
+				{
+					bypassKnownPeers: options.mode === "churn",
+					bypassRecentKnownPeers: options.mode === "churn",
+				},
 			),
 		).catch((error: any) => logger.error(error));
 	}
@@ -3232,7 +3276,10 @@ export class SharedLog<
 					target,
 					filteredEntries,
 					transport,
-					{ bypassKnownPeers: options.mode === "churn" },
+					{
+						bypassKnownPeers: options.mode === "churn",
+						bypassRecentKnownPeers: options.mode === "churn",
+					},
 				),
 			).catch((error: any) => logger.error(error));
 		};
@@ -4047,9 +4094,10 @@ export class SharedLog<
 				value: { entry: result.entry, leaders },
 			});
 		}
-		if (!delayAdaptiveRebalance) {
-			this.rebalanceParticipationDebounced?.call();
-		}
+		// Keep the debounced rebalance loop alive even when the current write
+		// burst delays the actual rebalance; the loop will wake after the idle
+		// window and re-check participation/memory.
+		this.rebalanceParticipationDebounced?.call();
 
 		return result;
 	}
@@ -4098,6 +4146,7 @@ export class SharedLog<
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._entryKnownPeers = new Map();
+		this._entryKnownPeerObservedAt = new Map();
 		this._joinAuthoritativeRepairTimersByDelay = new Map();
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._assumeSyncedRepairSuppressedUntil = 0;
@@ -4123,12 +4172,19 @@ export class SharedLog<
 			options?.replicate && isAdaptiveReplicatorOption(options.replicate)
 				? options.replicate
 				: undefined;
-		this.adaptiveRebalanceIdleMs = Math.max(
-			ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS,
-			(adaptiveReplicateOptions?.limits?.interval ??
-				RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL) *
-				ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER,
-		);
+		const adaptiveRebalanceInterval =
+			adaptiveReplicateOptions?.limits?.interval ??
+			RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL;
+		const hasAdaptiveResourceLimits =
+			adaptiveReplicateOptions?.limits?.storage != null ||
+			adaptiveReplicateOptions?.limits?.cpu != null;
+		this.adaptiveRebalanceIdleMs = hasAdaptiveResourceLimits
+			? Math.max(
+					ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS,
+					adaptiveRebalanceInterval *
+						ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER,
+				)
+			: adaptiveRebalanceInterval;
 
 		this.openTime = +new Date();
 		this.oldestOpenTime = this.openTime;
@@ -4424,6 +4480,8 @@ export class SharedLog<
 				rpc: this.rpc,
 				coordinateToHash: this.coordinateToHash,
 				sync: options?.sync,
+				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
+					this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
 			});
 		} else {
 			if (
@@ -4436,6 +4494,8 @@ export class SharedLog<
 					entryIndex: this.entryCoordinatesIndex,
 					coordinateToHash: this.coordinateToHash,
 					sync: options?.sync,
+					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
+						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
 				});
 			} else {
 				if (this.domain.resolution === "u32") {
@@ -4452,6 +4512,8 @@ export class SharedLog<
 					rpc: this.rpc,
 					coordinateToHash: this.coordinateToHash,
 					sync: options?.sync,
+					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
+						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
 				}) as Syncronizer<R>;
 			}
 		}
@@ -5196,6 +5258,7 @@ export class SharedLog<
 		}
 		this._repairSweepOptimisticGidPeersPending.clear();
 		this._entryKnownPeers.clear();
+		this._entryKnownPeerObservedAt.clear();
 		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
 			clearTimeout(timer);
 		}
@@ -8031,7 +8094,10 @@ export class SharedLog<
 					this.replicationController.maxMemoryLimit != null &&
 					usedMemory > this.replicationController.maxMemoryLimit
 				) {
+					// Memory pressure can leave prunable frontier heads even when the
+					// coordinate-index scan has no pending prune candidates.
 					await this.pruneIndexedEntriesNoLongerLed();
+					await this.pruneCurrentHeadsNoLongerLed();
 				}
 
 				const peersSize = (await peers.getSize()) || 1;

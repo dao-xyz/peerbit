@@ -68,6 +68,11 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	coordinateToHash: Cache<string>;
 	numbers: Numbers<R>;
 	sync?: SyncOptions<R>;
+	isEntryRecentlyKnownByPeer?: (
+		hash: string,
+		peer: string,
+		maxAgeMs: number,
+	) => boolean;
 };
 export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
 	properties: SynchronizerComponents<R>,
