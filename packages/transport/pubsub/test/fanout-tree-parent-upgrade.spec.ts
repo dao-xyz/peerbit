@@ -1,5 +1,10 @@
 import { expect } from "chai";
 import { FanoutTree } from "../src/index.js";
+import {
+	evaluateParentUpgradeGate,
+	type ParentUpgradeGateOptions,
+	type ParentUpgradeGateState,
+} from "../src/fanout-tree-parent-upgrade.js";
 
 const JOIN_REJECT_NO_CAPACITY = 2;
 const TRACKER_FEEDBACK_JOIN_REJECT = 4;
@@ -423,37 +428,7 @@ const createParentUpgradeReservationContext = (random: () => number) => ({
 	pruneDisconnectedChildren: () => {},
 });
 
-type ParentUpgradeGateChannel = {
-	children: Map<string, unknown>;
-	missingSeqs: Set<number>;
-	endSeqExclusive: number;
-	parentUpgradeCount: number;
-	parentUpgradeLastAt: number;
-	parentUpgradeBackoffUntil: number;
-	lastParentDataAt: number;
-	lastRepairSentAt: number;
-};
-
-type ParentUpgradeGateOptions = {
-	leafOnly: boolean;
-	repairGuard: boolean;
-	dataGuard: boolean;
-	endedAndComplete: boolean;
-	maxPerPeer: number;
-	cooldownMs: number;
-	quietMs: number;
-	repairQuietMs: number;
-	now: number;
-};
-
-const evaluateParentUpgradeGate = Reflect.get(
-	FanoutTree.prototype,
-	"evaluateParentUpgradeGate",
-) as (
-	this: unknown,
-	ch: ParentUpgradeGateChannel,
-	options: ParentUpgradeGateOptions,
-) => { run: true } | { run: false; reason: string };
+type ParentUpgradeGateChannel = ParentUpgradeGateState;
 
 const createImproveChannel = (
 	overrides: Partial<ImproveChannel> = {},
@@ -508,6 +483,8 @@ const createParentUpgradeGateChannel = (
 	children: new Map(),
 	missingSeqs: new Set(),
 	endSeqExclusive: -1,
+	parentUpgradeRetryAfterSeq: -1,
+	maxSeqSeen: -1,
 	parentUpgradeCount: 0,
 	parentUpgradeLastAt: 0,
 	parentUpgradeBackoffUntil: 0,
@@ -520,22 +497,18 @@ const runParentUpgradeGate = (
 	channelOverrides: Partial<ParentUpgradeGateChannel> = {},
 	optionOverrides: Partial<ParentUpgradeGateOptions> = {},
 ) =>
-	evaluateParentUpgradeGate.call(
-		{},
-		createParentUpgradeGateChannel(channelOverrides),
-		{
-			leafOnly: true,
-			repairGuard: true,
-			dataGuard: true,
-			endedAndComplete: false,
-			maxPerPeer: 2,
-			cooldownMs: 5_000,
-			quietMs: 1_000,
-			repairQuietMs: 1_000,
-			now: 10_000,
-			...optionOverrides,
-		},
-	);
+	evaluateParentUpgradeGate(createParentUpgradeGateChannel(channelOverrides), {
+		leafOnly: true,
+		repairGuard: true,
+		dataGuard: true,
+		endedAndComplete: false,
+		maxPerPeer: 2,
+		cooldownMs: 5_000,
+		quietMs: 1_000,
+		repairQuietMs: 1_000,
+		now: 10_000,
+		...optionOverrides,
+	});
 
 const createImproveParentUpgradePolicy = (
 	options: ImproveOptionOverrides = {},
