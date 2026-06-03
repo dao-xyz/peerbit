@@ -22,6 +22,7 @@ const usage = () => {
 			"  fanout-tree-parent-upgrade-eval  A/B evidence harness for proactive parent upgrades",
 			"  fanout-tree-parent-upgrade-multi-eval  shared-network multi-writer parent-upgrade evidence harness",
 			"  fanout-tree-parent-upgrade-prepush  bounded local pre-push evidence suite for parent upgrades",
+			"  fanout-tree-parent-upgrade-default-ready  bounded PR/default-readiness gate for parent upgrades",
 			"",
 			"Example:",
 			"  pnpm -C packages/transport/pubsub run bench -- topic-sim --nodes 3 --degree 2 --subscribers 2 --messages 5 --msgSize 32 --intervalMs 0 --seed 1 --subscribeModel preseed --timeoutMs 300000",
@@ -30,6 +31,7 @@ const usage = () => {
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval --scenario ci-small --seeds 1,2,3",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
 			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-prepush --quick 1",
+			"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-default-ready --no-build --seeds 1 --idle-safety-seeds 1",
 		].join("\n"),
 	);
 };
@@ -54,6 +56,9 @@ switch (bench) {
 		break;
 	case "fanout-tree-parent-upgrade-prepush":
 		await import("./fanout-tree-parent-upgrade-prepush.js");
+		break;
+	case "fanout-tree-parent-upgrade-default-ready":
+		await import("./fanout-tree-parent-upgrade-default-ready.js");
 		break;
 	default:
 		usage();

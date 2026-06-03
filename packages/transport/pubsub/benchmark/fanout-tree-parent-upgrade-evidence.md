@@ -56,9 +56,10 @@ pressure limits.
 
 The preset defaults live in
 `benchmark/fanout-tree-parent-upgrade-preset.ts` so single evaluator, multi
-evaluator, prepush, default-ready, and nightly harnesses do not drift. If future
-work wants a production default policy, that should be a separate runtime
-policy helper and should come with default-on evidence.
+evaluator, prepush, default-ready, and nightly harnesses do not drift. The
+default-ready runner itself is a pubsub benchmark entrypoint, not a repo-root
+script. If future work wants a production default policy, that should be a
+separate runtime policy helper and should come with default-on evidence.
 
 ## Current Verdict
 
@@ -141,7 +142,8 @@ Bounded local readiness suite:
 ```bash
 PATH=/tmp/node22/node-v22.22.3-darwin-arm64/bin:$PATH \
 NODE_OPTIONS=--no-warnings \
-pnpm run test:fanout:parent-upgrade -- --no-build
+pnpm -C packages/transport/pubsub run bench -- \
+  fanout-tree-parent-upgrade-default-ready --no-build
 ```
 
 Pre-push evidence suite:

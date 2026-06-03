@@ -380,7 +380,8 @@ jobs:
             --assertMaxFormationScore 30
       - name: Run fanout parent-upgrade default-ready gate
         run: |
-          pnpm run test:fanout:parent-upgrade -- \
+          pnpm -C packages/transport/pubsub run bench -- \
+            fanout-tree-parent-upgrade-default-ready \
             --no-build \
             --seeds 1 \
             --idle-safety-seeds 1
