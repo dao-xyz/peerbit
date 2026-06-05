@@ -965,12 +965,15 @@ describe("index", () => {
 				beforeEach(async () => {
 					stores = [];
 				});
-				afterEach(async () => {
-					for (const store of stores) {
-						if (store && store.closed === false) {
-							await store.close();
-						}
-					}
+				afterEach(async function () {
+					// Large replicated document indexes can take longer than Mocha's
+					// default hook timeout to flush/close under CI load.
+					this.timeout(180_000);
+					await Promise.all(
+						stores
+							.filter((store) => store && store.closed === false)
+							.map((store) => store.close()),
+					);
 				});
 
 				describe("v7", () => {

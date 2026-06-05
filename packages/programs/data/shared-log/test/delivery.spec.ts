@@ -9,7 +9,10 @@ import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
-import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
+import {
+	EXCHANGE_HEADS_REPAIR_HINT,
+	ExchangeHeadsMessage,
+} from "../src/exchange-heads.js";
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -634,7 +637,11 @@ describe("append delivery options", () => {
 		rpc.send = async (...args: any[]) => {
 			const message = args[0];
 			const options = args[1];
-			if (capture && message instanceof ExchangeHeadsMessage) {
+			if (
+				capture &&
+				message instanceof ExchangeHeadsMessage &&
+				(message.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) === 0
+			) {
 				capturedModes.push(options?.mode);
 			}
 			return originalSend(...args);

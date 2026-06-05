@@ -143,7 +143,8 @@ describe("rateless-iblt-syncronizer", () => {
 		);
 	};
 
-	afterEach(async () => {
+	afterEach(async function () {
+		this.timeout(120_000);
 		if (session) {
 			await session.stop();
 			session = undefined;

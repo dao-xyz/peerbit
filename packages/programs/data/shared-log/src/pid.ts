@@ -1,4 +1,7 @@
 const MIN_MEMORY_HEADROOM_BALANCE_SCALER = 0.25;
+const MEMORY_TARGET_UTILIZATION = 0.95;
+const MEMORY_UNDERFILLED_UTILIZATION = 0.65;
+const MEMORY_OVERFILLED_UTILIZATION = 1.12;
 
 export class PIDReplicationController {
 	integral!: number;
@@ -49,38 +52,66 @@ export class PIDReplicationController {
 			currentFactor > 0 ? memoryUsage / currentFactor : 1e5;
 
 		let errorMemory = 0;
+		const memoryLimit = this.maxMemoryLimit;
+		const hasMemoryLimit = memoryLimit != null;
+		const hasPositiveMemoryLimit = memoryLimit != null && memoryLimit > 0;
 
-		if (this.maxMemoryLimit != null) {
+		if (memoryLimit != null) {
 			// Treat the configured storage limit as a ceiling, not the exact control
 			// target. A small reserve prevents discrete entry sizes and delayed checked
 			// prunes from repeatedly settling just above the hard budget.
 			const effectiveMemoryLimit =
-				this.maxMemoryLimit > 0 ? this.maxMemoryLimit * 0.95 : 0;
-			errorMemory =
-				currentFactor > 0 && memoryUsage > 0
-					? Math.max(
-							Math.min(1, effectiveMemoryLimit / estimatedTotalSize),
-							0,
-						) - currentFactor
-					: 0;
+				memoryLimit > 0 ? memoryLimit * MEMORY_TARGET_UTILIZATION : 0;
+			if (effectiveMemoryLimit <= 0) {
+				errorMemory = -currentFactor;
+			} else if (currentFactor > 0 && memoryUsage > 0) {
+				errorMemory =
+					Math.max(Math.min(1, effectiveMemoryLimit / estimatedTotalSize), 0) -
+					currentFactor;
+			} else {
+				// A memory-limited peer can shrink to zero width, or start empty, while
+				// still having storage headroom. Without a positive memory error, the
+				// balance term is disabled for constrained peers and the peer can get
+				// stuck underfilled forever. If the zero-width peer is already over the
+				// limit, keep memory neutral instead of negative so coverage repair can
+				// expand from zero when the ring is under-covered.
+				errorMemory = Math.max(
+					Math.min(1, (effectiveMemoryLimit - memoryUsage) / effectiveMemoryLimit),
+					0,
+				);
+			}
 			// Math.max(Math.min((this.maxMemoryLimit - memoryUsage) / 100e5, 1), -1)// Math.min(Math.max((this.maxMemoryLimit - memoryUsage, 0) / 10e5, 0), 1);
 		}
 
 		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
+		const coverageDeficit = Math.max(0, errorCoverageUnmodified);
+		const hasMemoryHeadroom =
+			hasPositiveMemoryLimit && errorMemory > 0;
 		let errorCoverage =
-			(this.maxMemoryLimit ? 1 - Math.sqrt(Math.abs(errorMemory)) : 1) *
+			(hasMemoryLimit
+				? hasPositiveMemoryLimit
+					? 1 - Math.sqrt(Math.abs(errorMemory))
+					: 0
+				: 1) *
 			errorCoverageUnmodified;
+		if (hasMemoryHeadroom && coverageDeficit > 0) {
+			// For unequal storage budgets, the larger peer has to grow past an even
+			// share when smaller constrained peers shed coverage. The coverage term is
+			// otherwise weakest exactly when memory has the most headroom, which can
+			// leave the ring underfilled under timer/load pressure.
+			errorCoverage = Math.max(
+				errorCoverage,
+				errorMemory * Math.min(1, coverageDeficit / 0.25),
+			);
+		}
 
 		const errorFromEven = 1 / peerCount - currentFactor;
-		const hasMemoryHeadroom =
-			this.maxMemoryLimit != null && this.maxMemoryLimit > 0 && errorMemory > 0;
 		// When the network is under-covered (`totalFactor < 1`) balancing "down" (negative
 		// error) can further reduce coverage and force constrained peers (memory/CPU limited)
 		// to take boundary assignments that exceed their budgets.
 		//
 		// Use a soft clamp: only suppress negative balance strongly when the coverage deficit
 		// is material. This avoids oscillations around `totalFactor ~= 1`.
-		const coverageDeficit = Math.max(0, errorCoverageUnmodified); // ~= max(0, 1 - totalFactor)
 		const negativeBalanceScale =
 			coverageDeficit <= 0 ? 1 : 1 - Math.min(1, coverageDeficit / 0.1); // full clamp at 10% deficit
 		let errorFromEvenForBalance =
@@ -96,7 +127,7 @@ export class PIDReplicationController {
 			errorCoverage = Math.max(errorCoverage, 0);
 		}
 
-		const balanceErrorScaler = this.maxMemoryLimit
+		const balanceErrorScaler = hasMemoryLimit
 			? hasMemoryHeadroom
 				? Math.max(
 						Math.abs(errorMemory),
@@ -108,7 +139,7 @@ export class PIDReplicationController {
 		// Balance should be symmetric (allow negative error) so a peer can *reduce*
 		// participation when peerCount increases. Otherwise early joiners can get
 		// "stuck" over-replicating even after new peers join (no memory/CPU limits).
-		const errorBalance = this.maxMemoryLimit
+		const errorBalance = hasMemoryLimit
 			? // Only balance when we have spare memory headroom. When memory is
 				// constrained (`errorMemory < 0`) the memory term will dominate anyway.
 				errorMemory > 0
@@ -177,6 +208,29 @@ export class PIDReplicationController {
 		// Calculate the new replication factor
 		const change = pTerm + iTerm + dTerm;
 		let newFactor = currentFactor + change;
+
+		if (
+			hasPositiveMemoryLimit &&
+			currentFactor > 0 &&
+			memoryUsage > 0 &&
+			memoryLimit != null
+		) {
+			const targetMemoryFactor = Math.max(
+				Math.min(1, (memoryLimit * MEMORY_TARGET_UTILIZATION) / estimatedTotalSize),
+				0,
+			);
+			const memoryUtilization = memoryUsage / memoryLimit;
+			if (
+				(memoryUtilization < MEMORY_UNDERFILLED_UTILIZATION &&
+					currentFactor < 1 / peerCount &&
+					newFactor < targetMemoryFactor) ||
+				(memoryUtilization > MEMORY_OVERFILLED_UTILIZATION &&
+					newFactor > targetMemoryFactor)
+			) {
+				newFactor = targetMemoryFactor;
+				this.integral = 0;
+			}
+		}
 
 		if (this.maxCPUUsage != null && this.maxMemoryLimit == null) {
 			// CPU pressure may shed surplus replicas, but it must not create a

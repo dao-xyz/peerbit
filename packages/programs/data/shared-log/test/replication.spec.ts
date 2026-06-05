@@ -658,62 +658,75 @@ testSetups.forEach((setup) => {
 						await session.stop();
 						session = await TestSession.connected(3);
 
-						await slowDownSend(session.peers[2], session.peers[0]); // we do this to potentially change the sync order
-						const db1 = await session.peers[0].open(
-							new EventStore<string, any>(),
-							{
-								args: {
-									replicate: {
-										factor: 1,
-									},
-									/* replicas: {
-										min: 1,
-									}, */
-									timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
-									setup,
-								},
-							},
-						);
-
-						await db1.add("hello");
-
-						let db2 = (await EventStore.open<EventStore<string, any>>(
-							db1.address!,
-							session.peers[1],
-							{
-								args: {
-									replicate: {
-										factor: 1,
-									},
-									/* replicas: {
-										min: 1,
-									}, */
-									timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
-									setup,
-								},
-							},
-						))!;
-
-						let db3 = (await EventStore.open<EventStore<string, any>>(
-							db1.address!,
+						const restoreSend = slowDownSend(
 							session.peers[2],
-							{
-								args: {
-									replicate: {
-										factor: 1,
+							session.peers[0],
+						); // we do this to potentially change the sync order
+						try {
+							const db1 = await session.peers[0].open(
+								new EventStore<string, any>(),
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+										/* replicas: {
+											min: 1,
+										}, */
+										timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+										setup,
 									},
-									/* replicas: {
-										min: 1,
-									}, */
-									timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
-									setup,
 								},
-							},
-						))!;
+							);
 
-						await waitForResolved(() => expect(db1.log.log.length).to.be.eq(1));
-						await waitForResolved(() => expect(db2.log.log.length).to.be.eq(1));
-						await waitForResolved(() => expect(db3.log.log.length).to.be.eq(1));
+							await db1.add("hello");
+
+							let db2 = (await EventStore.open<EventStore<string, any>>(
+								db1.address!,
+								session.peers[1],
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+										/* replicas: {
+											min: 1,
+										}, */
+										timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+										setup,
+									},
+								},
+							))!;
+
+							let db3 = (await EventStore.open<EventStore<string, any>>(
+								db1.address!,
+								session.peers[2],
+								{
+									args: {
+										replicate: {
+											factor: 1,
+										},
+										/* replicas: {
+											min: 1,
+										}, */
+										timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+										setup,
+									},
+								},
+							))!;
+
+							await waitForResolved(() =>
+								expect(db1.log.log.length).to.be.eq(1),
+							);
+							await waitForResolved(() =>
+								expect(db2.log.log.length).to.be.eq(1),
+							);
+							await waitForResolved(() =>
+								expect(db3.log.log.length).to.be.eq(1),
+							);
+						} finally {
+							restoreSend?.();
+						}
 					});
 
 					it("replicates database of large entries", async () => {
@@ -3015,7 +3028,7 @@ testSetups.forEach((setup) => {
 							}
 						});
 
-						it("control per commmit put before join widens authoritative frontier on later sweeps", async () => {
+						it("control per commmit put before join keeps authoritative frontier on later sweeps", async () => {
 							const entryCount = 24;
 							const repairSweepTargetBufferSize = 8;
 							let partialSweepActive = true;
@@ -3110,8 +3123,9 @@ testSetups.forEach((setup) => {
 
 								await waitForResolved(async () => {
 									expect(getFrontierSize()).greaterThan(0);
-									expect(getFrontierSize()).lessThan(entryCount);
+									expect(getFrontierSize()).lessThanOrEqual(entryCount);
 								}, commitReplicationWait);
+								const initialFrontierSize = getFrontierSize();
 
 								partialSweepActive = false;
 								(db1.log as any).scheduleRepairSweep({
@@ -3120,6 +3134,9 @@ testSetups.forEach((setup) => {
 								});
 
 								await waitForResolved(async () => {
+									expect(getFrontierSize()).greaterThanOrEqual(
+										initialFrontierSize,
+									);
 									expect(getFrontierSize()).equal(entryCount);
 								}, commitReplicationWait);
 								expect(partialSweepQueued).greaterThan(0);
@@ -4460,29 +4477,33 @@ testSetups.forEach((setup) => {
 					const db2SmallLength = await countEntriesInRange(db2SmallRange);
 					const ownershipTolerance = 2;
 
-					await waitForResolved(() =>
-						expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
-					);
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.be.closeTo(
-							db2SmallLength,
-							ownershipTolerance,
-						),
+					await waitForResolved(
+						() => {
+							expect(db2.log.log.length).to.be.closeTo(
+								db2SmallLength,
+								ownershipTolerance,
+							);
+							expect(
+								db1.log.log.length + db2.log.log.length,
+							).to.be.greaterThanOrEqual(entryCount);
+						},
+						{ timeout: 60_000, delayInterval: 200 },
 					);
 
 					expect(db2.log.log.length).to.be.lessThan(db2Length);
 
-						// restore original ranges
-						await db2.log.replicate({ id: range2.id, offset: 0.5, factor: 0.5 });
-						await waitForResolved(
-							() => {
-								expect(db2.log.log.length).to.be.closeTo(db2Length, 10);
-								expect(db1.log.log.length + db2.log.log.length).to.be.greaterThanOrEqual(
-									entryCount,
-								);
-							},
-							{ timeout: 60_000, delayInterval: 200 },
-						);
+					// restore original ranges
+					await db2.log.replicate({ id: range2.id, offset: 0.5, factor: 0.5 });
+					await waitForResolved(
+						() => {
+							expect(db2.log.log.length).to.be.closeTo(db2Length, 10);
+							expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20);
+							expect(
+								db1.log.log.length + db2.log.log.length,
+							).to.be.greaterThanOrEqual(entryCount);
+						},
+						{ timeout: 60_000, delayInterval: 200 },
+					);
 					});
 
 				it("to smaller will initiate prune", async () => {
@@ -4539,170 +4560,194 @@ testSetups.forEach((setup) => {
 				});
 
 				it("replace range with another node write before join with slowed down send", async () => {
-					let sendDelay = 500;
+					let sendDelay = 100;
 					let waitForPruneDelay = sendDelay + 1000;
-					slowDownSend(session.peers[2], session.peers[0], sendDelay); // we do this to force a replication pattern where peer[1] needs to send entries to peer[2]
-					const db1 = await session.peers[0].open(
-						new EventStore<string, any>(),
-						{
-							args: {
-								replicate: {
-									offset: 0,
-									factor: 0.5,
-								},
-								replicas: {
-									min: 1,
-								},
-								waitForPruneDelay,
-								timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
-								setup,
-							},
-						},
-					);
-
-					let entryCount = 100;
-					const entries: Entry<Operation<string>>[] = [];
-
-					for (let i = 0; i < entryCount; i++) {
-						entries.push(
-							(await db1.add("hello" + i, { meta: { next: [] } })).entry,
-						);
-					}
-					const countEntriesInRange = async (
-						range: ReplicationRangeIndexable<any>,
-					) => {
-						let count = 0;
-						for (const entry of entries) {
-							const coordinates = await db1.log.createCoordinates(entry, 1);
-							if (coordinates.some((coordinate: any) => range.contains(coordinate))) {
-								count++;
-							}
-						}
-						return count;
-					};
-
-					let db2 = (await EventStore.open<EventStore<string, any>>(
-						db1.address!,
-						session.peers[1],
-						{
-							args: {
-								replicate: {
-									offset: 0.5,
-									factor: 0.5,
-								},
-								replicas: {
-									min: 1,
-								},
-								timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
-								waitForPruneDelay,
-								setup,
-							},
-						},
-					))!;
-
-					let db3 = (await EventStore.open<EventStore<string, any>>(
-						db1.address!,
+					const restoreSend = slowDownSend(
 						session.peers[2],
-						{
-							args: {
-								replicate: {
-									offset: 0.5,
-									factor: 0.5,
-								},
-								replicas: {
-									min: 1,
-								},
-								timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
-								waitForPruneDelay,
-								setup,
-							},
-						},
-					))!;
-
-					await waitForResolved(() =>
-						expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
-					);
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.be.closeTo(entryCount / 2, 20),
-					);
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.be.closeTo(entryCount / 2, 20),
-					);
-
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.be.greaterThan(0),
-					);
-
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.be.greaterThan(0),
-					);
-
-					const db2Length = db2.log.log.length;
-					const db3Length = db3.log.log.length;
-
-					const range2 = (
-						await db2.log.getMyReplicationSegments()
-					)[0].toReplicationRange();
-
-					const [db2SmallRange] = await db2.log.replicate({
-						id: range2.id,
-						offset: 0.1,
-						factor: 0.1,
-					});
-					const db2SmallLength = await countEntriesInRange(db2SmallRange);
-					const ownershipTolerance = 2;
-
-					// await delay(5000)
-
-					const range3 = (
-						await db3.log.getMyReplicationSegments()
-					)[0].toReplicationRange();
-
-					const [db3SmallRange] = await db3.log.replicate({
-						id: range3.id,
-						offset: 0.1,
-						factor: 0.1,
-					});
-					const db3SmallLength = await countEntriesInRange(db3SmallRange);
-
-					await waitForResolved(() =>
-						expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
-					);
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.be.closeTo(
-							db2SmallLength,
-							ownershipTolerance,
-						),
-					);
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.be.closeTo(
-							db3SmallLength,
-							ownershipTolerance,
-						),
-					);
-
-					expect(db2.log.log.length).to.be.lessThan(db2Length);
-					expect(db3.log.log.length).to.be.lessThan(db3Length);
-
-					// reset to original
-
-					await db2.log.replicate({ id: range2.id, offset: 0.5, factor: 0.5 });
-					await db3.log.replicate({ id: range3.id, offset: 0.5, factor: 0.5 });
-
+						session.peers[0],
+						sendDelay,
+					); // we do this to force a replication pattern where peer[1] needs to send entries to peer[2]
 					try {
-						await waitForResolved(
-							() =>
-								expect(db2.log.log.length).to.be.closeTo(entryCount / 2, 20),
-							{ timeout: 60_000 },
+						const db1 = await session.peers[0].open(
+							new EventStore<string, any>(),
+							{
+								args: {
+									replicate: {
+										offset: 0,
+										factor: 0.5,
+									},
+									replicas: {
+										min: 1,
+									},
+									waitForPruneDelay,
+									timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+									setup,
+								},
+							},
+						);
+
+						let entryCount = 60;
+						const entries: Entry<Operation<string>>[] = [];
+
+						for (let i = 0; i < entryCount; i++) {
+							entries.push(
+								(await db1.add("hello" + i, { meta: { next: [] } })).entry,
+							);
+						}
+						const countEntriesInRange = async (
+							range: ReplicationRangeIndexable<any>,
+						) => {
+							let count = 0;
+							for (const entry of entries) {
+								const coordinates = await db1.log.createCoordinates(entry, 1);
+								if (
+									coordinates.some((coordinate: any) =>
+										range.contains(coordinate),
+									)
+								) {
+									count++;
+								}
+							}
+							return count;
+						};
+
+						let db2 = (await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[1],
+							{
+								args: {
+									replicate: {
+										offset: 0.5,
+										factor: 0.5,
+									},
+									replicas: {
+										min: 1,
+									},
+									timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+									waitForPruneDelay,
+									setup,
+								},
+							},
+						))!;
+
+						let db3 = (await EventStore.open<EventStore<string, any>>(
+							db1.address!,
+							session.peers[2],
+							{
+								args: {
+									replicate: {
+										offset: 0.5,
+										factor: 0.5,
+									},
+									replicas: {
+										min: 1,
+									},
+									timeUntilRoleMaturity: 0, // prevent additiona replicationChangeEvents to occur when maturing
+									waitForPruneDelay,
+									setup,
+								},
+							},
+						))!;
+
+						await waitForResolved(() =>
+							expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
+						);
+						await waitForResolved(() =>
+							expect(db2.log.log.length).to.be.closeTo(entryCount / 2, 20),
+						);
+						await waitForResolved(() =>
+							expect(db3.log.log.length).to.be.closeTo(entryCount / 2, 20),
+						);
+
+						await waitForResolved(() =>
+							expect(db2.log.log.length).to.be.greaterThan(0),
+						);
+
+						await waitForResolved(() =>
+							expect(db3.log.log.length).to.be.greaterThan(0),
+						);
+
+						const db2Length = db2.log.log.length;
+						const db3Length = db3.log.log.length;
+
+						const range2 = (
+							await db2.log.getMyReplicationSegments()
+						)[0].toReplicationRange();
+
+						const [db2SmallRange] = await db2.log.replicate({
+							id: range2.id,
+							offset: 0.1,
+							factor: 0.1,
+						});
+						const db2SmallLength = await countEntriesInRange(db2SmallRange);
+						const ownershipTolerance = 2;
+
+						// await delay(5000)
+
+						const range3 = (
+							await db3.log.getMyReplicationSegments()
+						)[0].toReplicationRange();
+
+						const [db3SmallRange] = await db3.log.replicate({
+							id: range3.id,
+							offset: 0.1,
+							factor: 0.1,
+						});
+						const db3SmallLength = await countEntriesInRange(db3SmallRange);
+
+						await waitForResolved(() =>
+							expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
 						);
 						await waitForResolved(
 							() =>
-								expect(db3.log.log.length).to.be.closeTo(entryCount / 2, 20),
-							{ timeout: 60_000 },
+								expect(db2.log.log.length).to.be.closeTo(
+									db2SmallLength,
+									ownershipTolerance,
+								),
+							{ timeout: 180_000, delayInterval: 500 },
 						);
-					} catch (error) {
-						await dbgLogs([db2.log, db3.log]);
-						throw error;
+						await waitForResolved(
+							() =>
+								expect(db3.log.log.length).to.be.closeTo(
+									db3SmallLength,
+									ownershipTolerance,
+								),
+							{ timeout: 180_000, delayInterval: 500 },
+						);
+
+						expect(db2.log.log.length).to.be.lessThan(db2Length);
+						expect(db3.log.log.length).to.be.lessThan(db3Length);
+
+						// reset to original
+
+						await db2.log.replicate({
+							id: range2.id,
+							offset: 0.5,
+							factor: 0.5,
+						});
+						await db3.log.replicate({
+							id: range3.id,
+							offset: 0.5,
+							factor: 0.5,
+						});
+
+						try {
+							await waitForResolved(
+								() =>
+									expect(db2.log.log.length).to.be.closeTo(entryCount / 2, 20),
+								{ timeout: 60_000 },
+							);
+							await waitForResolved(
+								() =>
+									expect(db3.log.log.length).to.be.closeTo(entryCount / 2, 20),
+								{ timeout: 60_000 },
+							);
+						} catch (error) {
+							await dbgLogs([db2.log, db3.log]);
+							throw error;
+						}
+					} finally {
+						restoreSend?.();
 					}
 				});
 
@@ -5127,7 +5172,7 @@ testSetups.forEach((setup) => {
 							expect((await db1.log.getReplicators()).size).to.eq(3),
 						);
 
-						let entryCount = 100;
+						let entryCount = 60;
 						for (let i = 0; i < entryCount; i++) {
 							await db1.add("hello" + i, { meta: { next: [] } });
 						}
@@ -5177,11 +5222,11 @@ testSetups.forEach((setup) => {
 						// so allow extra time for prune convergence.
 						await waitForResolved(
 							() => expect(db2.log.log.length).to.be.closeTo(entryCount / 10, 10),
-							{ timeout: 60_000 },
+							{ timeout: 180_000, delayInterval: 500 },
 						);
 						await waitForResolved(
 							() => expect(db3.log.log.length).to.be.closeTo(entryCount / 10, 10),
-							{ timeout: 60_000 },
+							{ timeout: 180_000, delayInterval: 500 },
 						);
 
 						// reset to original

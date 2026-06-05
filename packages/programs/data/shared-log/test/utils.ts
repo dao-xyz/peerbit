@@ -58,7 +58,9 @@ export const slowDownSend = (
 					return writeFn(msg, priority);
 				}
 			};
-			return;
+			return () => {
+				peer.write = writeFn;
+			};
 		}
 	}
 	throw new Error("Could not find peer");
@@ -142,6 +144,7 @@ export const slowDownMessagesWithSeed = (
 ) => {
 	const random = createSeededRandom(seed);
 	const sendFn = log.rpc.send.bind(log.rpc);
+	const pendingSends = new Set<Promise<unknown>>();
 	log.rpc.send = async (msg, options) => {
 		const canDelay = abortSignal ? abortSignal.aborted === false : true;
 		if (canDelay) {
@@ -164,7 +167,41 @@ export const slowDownMessagesWithSeed = (
 				break;
 			}
 		}
-		return sendFn(msg, options);
+		const pending = sendFn(msg, options);
+		pending.then(
+			() => {
+				pendingSends.delete(pending);
+			},
+			() => {
+				pendingSends.delete(pending);
+			},
+		);
+		pendingSends.add(pending);
+		return pending;
+	};
+	return async (options?: { settleTimeoutMs?: number }) => {
+		log.rpc.send = sendFn;
+		if (pendingSends.size === 0) {
+			return;
+		}
+
+		const settleTimeoutMs = options?.settleTimeoutMs ?? 5_000;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const result = await Promise.race([
+			Promise.allSettled([...pendingSends]).then(() => "settled" as const),
+			new Promise<"timeout">((resolve) => {
+				timer = setTimeout(() => resolve("timeout"), settleTimeoutMs);
+				timer.unref?.();
+			}),
+		]);
+		if (timer) {
+			clearTimeout(timer);
+		}
+		if (result === "timeout") {
+			console.error(
+				`[slowDownMessagesWithSeed] timed out waiting for ${pendingSends.size} pending sends`,
+			);
+		}
 	};
 };
 
@@ -179,7 +216,8 @@ export const slowDownPubSubWritesWithSeed = (
 	const peers = [...pubsub.peers.values()].sort((a, b) =>
 		a.publicKey.hashcode().localeCompare(b.publicKey.hashcode()),
 	);
-	const restoreFns: (() => Promise<void>)[] = [];
+	const restoreFns: ((options?: { settleTimeoutMs?: number }) => Promise<void>)[] =
+		[];
 	for (const peer of peers) {
 		// Tie randomness to the peer identity, not Map iteration order.
 		const random = createSeededRandom(
@@ -226,17 +264,35 @@ export const slowDownPubSubWritesWithSeed = (
 			}
 			return waitForWriteFn(bytes, priority, signal);
 		};
-		restoreFns.push(async () => {
+		restoreFns.push(async (options?: { settleTimeoutMs?: number }) => {
 			peer.waitForWrite = waitForWriteFn;
-			await Promise.allSettled([...pendingWrites]);
+			if (pendingWrites.size > 0) {
+				const settleTimeoutMs = options?.settleTimeoutMs ?? 5_000;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const result = await Promise.race([
+					Promise.allSettled([...pendingWrites]).then(() => "settled" as const),
+					new Promise<"timeout">((resolve) => {
+						timer = setTimeout(() => resolve("timeout"), settleTimeoutMs);
+						timer.unref?.();
+					}),
+				]);
+				if (timer) {
+					clearTimeout(timer);
+				}
+				if (result === "timeout") {
+					console.error(
+						`[slowDownPubSubWritesWithSeed] timed out waiting for ${pendingWrites.size} pending writes`,
+					);
+				}
+			}
 			if (writeFailures.length > 0) {
 				throw writeFailures[0];
 			}
 		});
 	}
-	return async () => {
+	return async (options?: { settleTimeoutMs?: number }) => {
 		for (const restore of restoreFns) {
-			await restore();
+			await restore(options);
 		}
 	};
 };
