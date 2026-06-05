@@ -82,6 +82,9 @@ export const createExchangeHeadsMessages = async function* (
 			continue; // missing this entry, could be deleted while iterating
 		}
 
+		if (visitedHeads.has(entry.hash)) {
+			continue;
+		}
 		visitedHeads.add(entry.hash);
 
 		// TODO eventually we don't want to load all refs

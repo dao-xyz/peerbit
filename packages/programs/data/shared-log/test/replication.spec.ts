@@ -14,6 +14,7 @@ import mapSeries from "p-each-series";
 import sinon from "sinon";
 import { BlocksMessage } from "../src/blocks.js";
 import {
+	EXCHANGE_HEADS_REPAIR_HINT,
 	ExchangeHeadsMessage,
 	RequestIPrune,
 	ResponseIPrune,
@@ -1005,6 +1006,7 @@ testSetups.forEach((setup) => {
 				};
 			});
 			after(async () => {
+				Entry.fromMultihash = fromMultihash;
 				await session.stop();
 			});
 
@@ -1049,7 +1051,15 @@ testSetups.forEach((setup) => {
 						new Set(dataMessages2.map((x) => x.entry.hash)).size,
 					).to.equal(count);
 
-					const dataMessages1 = getReceivedHeads(message1);
+					const dataMessages1 = getReceivedHeads(
+						message1.filter(
+							([msg]) =>
+								!(
+									msg instanceof ExchangeHeadsMessage &&
+									(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0
+								),
+						),
+					);
 					const uniqueBounceBack = new Set(
 						dataMessages1.map((x) => x.entry.hash),
 					);

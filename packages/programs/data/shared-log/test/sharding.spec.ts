@@ -2026,6 +2026,9 @@ testSetups.forEach((setup) => {
 						.all()
 				)[0]?.value;
 				expect(candidateIndexEntry).to.exist;
+				// Churn repair must not trust stale recent-known state; the target can
+				// have pruned or rotated away and then become responsible again.
+				sourceLogInternals.markEntriesKnownByPeer([candidateHash], targetHash);
 				const churnFrontier =
 					sourceLogInternals._repairFrontierByMode.get("churn");
 				churnFrontier.set(

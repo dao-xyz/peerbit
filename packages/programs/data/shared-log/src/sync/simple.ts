@@ -131,6 +131,8 @@ export const SYNC_MESSAGE_PRIORITY = CONVERGENCE_MESSAGE_PRIORITY;
 // pubsub stream warmup). Keep it coarse-grained so we do not hammer the network under
 // large historical backfills.
 const SIMPLE_SYNC_RETRY_AFTER_MS = 10_000;
+const EXCHANGE_HEAD_RESPONSE_DEDUPE_TTL_MS = SIMPLE_SYNC_RETRY_AFTER_MS - 1_000;
+const RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS = 30_000;
 
 const createDeferred = <T>() => {
 	let resolve!: (value: T | PromiseLike<T>) => void;
@@ -177,6 +179,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	entryIndex: Index<EntryReplicated<R>, any>;
 	coordinateToHash: Cache<string>;
 	private syncOptions?: SyncOptions<R>;
+	private isEntryRecentlyKnownByPeer?: (
+		hash: string,
+		peer: string,
+		maxAgeMs: number,
+	) => boolean;
+	private recentlySentExchangeHeads: Map<string, Map<string, number>>;
 	private repairSessionCounter: number;
 	private repairSessions: Map<string, RepairSessionState>;
 
@@ -191,6 +199,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		log: Log<any>;
 		coordinateToHash: Cache<string>;
 		sync?: SyncOptions<R>;
+		isEntryRecentlyKnownByPeer?: (
+			hash: string,
+			peer: string,
+			maxAgeMs: number,
+		) => boolean;
 	}) {
 		this.syncInFlightQueue = new Map();
 		this.syncInFlightQueueInverted = new Map();
@@ -200,6 +213,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.entryIndex = properties.entryIndex;
 		this.coordinateToHash = properties.coordinateToHash;
 		this.syncOptions = properties.sync;
+		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
+		this.recentlySentExchangeHeads = new Map();
 		this.repairSessionCounter = 0;
 		this.repairSessions = new Map();
 	}
@@ -273,6 +288,47 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const out: T[][] = [];
 		for (let i = 0; i < values.length; i += size) {
 			out.push(values.slice(i, i + size));
+		}
+		return out;
+	}
+
+	private filterRecentlySentExchangeHeads(
+		hashes: Iterable<string>,
+		peer: PublicSignKey,
+	): string[] {
+		const peerHash = peer.hashcode();
+		const now = Date.now();
+		let recentlySent = this.recentlySentExchangeHeads.get(peerHash);
+		if (!recentlySent) {
+			recentlySent = new Map();
+			this.recentlySentExchangeHeads.set(peerHash, recentlySent);
+		}
+		for (const [hash, timestamp] of recentlySent) {
+			if (now - timestamp > EXCHANGE_HEAD_RESPONSE_DEDUPE_TTL_MS) {
+				recentlySent.delete(hash);
+			}
+		}
+		const out: string[] = [];
+		const seen = new Set<string>();
+		for (const hash of hashes) {
+			if (seen.has(hash)) {
+				continue;
+			}
+			seen.add(hash);
+			if (recentlySent.has(hash)) {
+				continue;
+			}
+			if (
+				this.isEntryRecentlyKnownByPeer?.(
+					hash,
+					peerHash,
+					RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS,
+				)
+			) {
+				continue;
+			}
+			recentlySent.set(hash, now);
+			out.push(hash);
 		}
 		return out;
 	}
@@ -597,11 +653,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 			const profile = this.syncOptions?.profile;
 			const startedAt = syncProfileStart(profile);
+			const hashes = this.filterRecentlySentExchangeHeads(msg.hashes, from);
 			let messages = 0;
 			try {
 				for await (const message of createExchangeHeadsMessages(
 					this.log,
-					msg.hashes,
+					hashes,
 				)) {
 					messages += 1;
 					await this.rpc.send(message, {
@@ -612,7 +669,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				if (profile) {
 					emitSyncProfileDuration(profile, startedAt, {
 						name: "simple.exchangeHeads",
-						entries: msg.hashes.length,
+						entries: hashes.length,
 						messages,
 						targets: 1,
 						details: { source: "responseMaybeSync" },
@@ -637,11 +694,12 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 
 			const exchangeStartedAt = syncProfileStart(profile);
+			const hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
 			let messages = 0;
 			try {
 				for await (const message of createExchangeHeadsMessages(
 					this.log,
-					hashes,
+					hashesToSend,
 				)) {
 					messages += 1;
 					await this.rpc.send(message, {
@@ -653,7 +711,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				if (profile) {
 					emitSyncProfileDuration(profile, exchangeStartedAt, {
 						name: "simple.exchangeHeads",
-						entries: hashes.size,
+						entries: hashesToSend.length,
 						messages,
 						targets: 1,
 						details: { source: "requestMaybeSyncCoordinate" },
@@ -899,6 +957,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.syncInFlightQueue.clear();
 		this.syncInFlightQueueInverted.clear();
 		this.syncInFlight.clear();
+		this.recentlySentExchangeHeads.clear();
 		for (const sessionId of [...this.repairSessions.keys()]) {
 			this.finalizeRepairSession(sessionId, false);
 		}
@@ -979,6 +1038,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 	private clearSyncProcessPublicKeyHash(publicKeyHash: string) {
 		this.syncInFlight.delete(publicKeyHash);
+		this.recentlySentExchangeHeads.delete(publicKeyHash);
 		const map = this.syncInFlightQueueInverted.get(publicKeyHash);
 		if (map) {
 			for (const hash of map) {
