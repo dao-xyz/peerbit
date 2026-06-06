@@ -10,6 +10,8 @@ import {
 import { Entry, Log } from "@peerbit/log";
 import type { RPC, RequestContext } from "@peerbit/rpc";
 import {
+	ACK_CONTROL_PRIORITY,
+	AcknowledgeDelivery,
 	CONVERGENCE_MESSAGE_PRIORITY,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
@@ -639,6 +641,31 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
+	private async confirmKnownEntries(
+		hashes: Iterable<string>,
+		target: PublicSignKey,
+	) {
+		const uniqueHashes = [...new Set(hashes)];
+		if (uniqueHashes.length === 0) {
+			return;
+		}
+		const chunks = this.chunk(uniqueHashes, this.maxHashesPerMessage);
+		await chunks.reduce(
+			(promise, chunk) =>
+				promise.then(() =>
+					this.rpc.send(new ConfirmEntriesMessage({ hashes: chunk }), {
+						priority: SYNC_MESSAGE_PRIORITY,
+						responsePriority: ACK_CONTROL_PRIORITY,
+						mode: new AcknowledgeDelivery({
+							to: [target],
+							redundancy: 1,
+						}),
+					}),
+				),
+			Promise.resolve(),
+		);
+	}
+
 	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
@@ -746,12 +773,24 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		options?: { skipCheck?: boolean },
 	) {
 		const requestHashes: SyncableKey[] = [];
+		const knownHashes: string[] = [];
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
 
 		try {
 			for (const key of keys) {
 				const coordinateOrHash = this.getQueuedSyncKey(key) ?? key;
+				const has =
+					options?.skipCheck !== true &&
+					(await this.checkHasCoordinateOrHash(coordinateOrHash));
+				if (has) {
+					this.clearSyncProcessKey(coordinateOrHash);
+					if (typeof coordinateOrHash === "string") {
+						knownHashes.push(coordinateOrHash);
+					}
+					continue;
+				}
+
 				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
 				if (inFlight) {
 					if (!inFlight.find((x) => x.hashcode() === from.hashcode())) {
@@ -763,10 +802,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						}
 						inverted.add(coordinateOrHash);
 					}
-				} else if (
-					options?.skipCheck ||
-					!(await this.checkHasCoordinateOrHash(coordinateOrHash))
-				) {
+				} else {
 					// Track the initial sender so we can retry if the first request is lost.
 					this.syncInFlightQueue.set(coordinateOrHash, [from]);
 					let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
@@ -779,6 +815,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 			}
 
+			if (knownHashes.length > 0) {
+				await this.confirmKnownEntries(knownHashes, from).catch(() => {});
+			}
 			requestHashes.length > 0 &&
 				(await this.requestSync(requestHashes, [from!.hashcode()]));
 		} finally {
@@ -873,10 +912,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 		}
 	}
+	private async hasFullEntryHash(hash: string) {
+		const blocks = (this.log as {
+			blocks?: { has: (hash: string) => boolean | Promise<boolean> };
+		}).blocks;
+		return blocks ? blocks.has(hash) : this.log.has(hash);
+	}
 	private async checkHasCoordinateOrHash(key: string | bigint) {
 		return typeof key === "bigint"
 			? (await this.entryIndex.count({ query: { hashNumber: key } })) > 0
-			: this.log.has(key);
+			: this.hasFullEntryHash(key);
 	}
 	async open() {
 		this.closed = false;

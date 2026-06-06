@@ -3509,6 +3509,11 @@ testSetups.forEach((setup) => {
 					expect(pendingDelete).to.exist;
 
 					await pendingDelete.resolve(staleResponderHash);
+					expect(
+						log._checkedPrune
+							.getContactedReplicators(e1.entry.hash)
+							?.has(currentLeaderHash),
+					).to.equal(true);
 
 					await expect(prunePromise).rejectedWith(
 						"Timeout for checked pruning",
@@ -3517,6 +3522,127 @@ testSetups.forEach((setup) => {
 				} finally {
 					findLeadersStub.restore();
 					waitForReplicatorsStub.restore();
+				}
+			});
+
+			it("cancels pending prune confirmation when local peer leads again", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicas: {
+							min: 1,
+						},
+						replicate: {
+							factor: 1,
+						},
+						timeUntilRoleMaturity: 0,
+						waitForPruneDelay: 0,
+						setup,
+					},
+				});
+
+				const e1 = await db1.add("hello", { meta: { next: [] } });
+				const log = db1.log as any;
+				const staleResponderHash =
+					session.peers[1].identity.publicKey.hashcode();
+				const localHash = db1.node.identity.publicKey.hashcode();
+
+				const findLeadersStub = sinon
+					.stub(log, "findLeadersFromEntry")
+					.callsFake(
+						async () => new Map([[localHash, { intersecting: true }]]),
+					);
+
+				try {
+					const prunePromise = Promise.all(
+						db1.log.prune(
+							new Map([
+								[
+									e1.entry.hash,
+									{
+										entry: e1.entry,
+										leaders: new Set([staleResponderHash]),
+									},
+								],
+							]),
+							{ timeout: 5_000 },
+						),
+					);
+
+					const pendingDelete = log._checkedPrune.getPendingDelete(
+						e1.entry.hash,
+					);
+					expect(pendingDelete).to.exist;
+
+					await pendingDelete.resolve(staleResponderHash);
+
+					await expect(prunePromise).rejectedWith(
+						"Failed to delete, is leader again",
+					);
+					expect(log._checkedPrune.hasPendingDelete(e1.entry.hash)).to.equal(
+						false,
+					);
+					expect(await db1.log.log.has(e1.entry.hash)).to.equal(true);
+				} finally {
+					findLeadersStub.restore();
+				}
+			});
+
+			it("uses known-entry confirmations to complete checked prune", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicas: {
+							min: 1,
+						},
+						replicate: {
+							factor: 1,
+						},
+						timeUntilRoleMaturity: 0,
+						waitForPruneDelay: 0,
+						setup,
+					},
+				});
+
+				const e1 = await db1.add("hello", { meta: { next: [] } });
+				const log = db1.log as any;
+				const currentLeaderHash =
+					session.peers[1].identity.publicKey.hashcode();
+
+				const findLeadersStub = sinon
+					.stub(log, "findLeadersFromEntry")
+					.callsFake(
+						async () => new Map([[currentLeaderHash, { intersecting: true }]]),
+					);
+
+				try {
+					const prunePromise = Promise.all(
+						db1.log.prune(
+							new Map([
+								[
+									e1.entry.hash,
+									{
+										entry: e1.entry,
+										leaders: new Set([currentLeaderHash]),
+									},
+								],
+							]),
+							{ timeout: 5_000 },
+						),
+					);
+
+					const pendingDelete = log._checkedPrune.getPendingDelete(
+						e1.entry.hash,
+					);
+					expect(pendingDelete).to.exist;
+
+					log.resolvePendingCheckedPruneFromKnownPeer(
+						[e1.entry.hash],
+						currentLeaderHash,
+					);
+
+					await prunePromise;
+					expect(await db1.log.log.has(e1.entry.hash)).to.equal(false);
+				} finally {
+					findLeadersStub.restore();
 				}
 			});
 

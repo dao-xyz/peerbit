@@ -3,6 +3,7 @@ import { CONVERGENCE_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
+	ConfirmEntriesMessage,
 	RequestMaybeSync,
 	RequestMaybeSyncCoordinate,
 	ResponseMaybeSync,
@@ -47,6 +48,44 @@ describe("sync-chunking", () => {
 		});
 		expect(sentHashes.flat()).to.deep.equal(["h0", "h1", "h2", "h3", "h4"]);
 		expect(sentHashes.map((x) => x.length)).to.deep.equal([2, 2, 1]);
+	});
+
+	it("confirms hash maybe-sync requests for entries already present", async () => {
+		const send = sinon.stub().resolves();
+		const rpc = { send } as any;
+		const from = {
+			bytes: new Uint8Array([1]),
+			hashcode: () => "peer-a",
+			equals: () => false,
+		} as any;
+		const sync = new SimpleSyncronizer<"u64">({
+			rpc,
+			entryIndex: { count: async () => 0 } as any,
+			log: {
+				blocks: { has: async (hash: string) => hash === "known" },
+				has: async (hash: string) => hash === "known",
+			} as any,
+			coordinateToHash: new Cache<string>({ max: 10 }),
+		});
+
+		await sync.queueSync(["known", "missing"], from);
+
+		const sentMessages = send.getCalls().map((call) => call.args[0]);
+		const confirmations = sentMessages.filter(
+			(message) => message instanceof ConfirmEntriesMessage,
+		);
+		expect(confirmations).to.have.length(1);
+		expect((confirmations[0] as ConfirmEntriesMessage).hashes).to.deep.equal([
+			"known",
+		]);
+
+		const requests = sentMessages.filter(
+			(message) => message instanceof ResponseMaybeSync,
+		);
+		expect(requests).to.have.length(1);
+		expect((requests[0] as ResponseMaybeSync).hashes).to.deep.equal([
+			"missing",
+		]);
 	});
 
 	it("chunks coordinate maybe-sync requests", async () => {

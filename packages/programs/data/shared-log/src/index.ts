@@ -2828,6 +2828,18 @@ export class SharedLog<
 		}
 	}
 
+	private resolvePendingCheckedPruneFromKnownPeer(
+		hashes: Iterable<string>,
+		peer: string,
+	) {
+		for (const hash of hashes) {
+			const pendingDelete = this._checkedPrune.getPendingDelete(hash);
+			if (pendingDelete) {
+				void pendingDelete.resolve(peer);
+			}
+		}
+	}
+
 	private removeEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
 		for (const hash of hashes) {
 			const peers = this._entryKnownPeers.get(hash);
@@ -3845,6 +3857,36 @@ export class SharedLog<
 			}
 		}
 		return false;
+	}
+
+	private refreshPendingCheckedPruneLeaders(args: {
+		entry: CheckedPruneEntry<T, R>;
+		leaders: CheckedPruneLeaderMap;
+	}) {
+		if (
+			args.leaders.size === 0 ||
+			!this.shouldRefreshPendingCheckedPrune(args.entry.hash, args.leaders)
+		) {
+			return;
+		}
+
+		try {
+			void Promise.allSettled(
+				this.prune(
+					new Map([
+						[
+							args.entry.hash,
+							{
+								entry: args.entry,
+								leaders: args.leaders,
+							},
+						],
+					]),
+				),
+			);
+		} catch {
+			// Best-effort only; the original pending prune still owns completion.
+		}
 	}
 
 	private async revalidateCheckedPruneOwnership(args: {
@@ -6118,8 +6160,10 @@ export class SharedLog<
 					).catch((error) => logger.error(error.toString()));
 				}
 			} else if (msg instanceof ConfirmEntriesMessage) {
-				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
-				this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
+				const fromHash = context.from.hashcode();
+				this.markEntriesKnownByPeer(msg.hashes, fromHash);
+				this.clearRepairFrontierHashes(fromHash, msg.hashes);
+				this.resolvePendingCheckedPruneFromKnownPeer(msg.hashes, fromHash);
 				return;
 			} else if (await this.syncronizer.onMessage(msg, context)) {
 				return; // the syncronizer has handled the message
@@ -7738,6 +7782,18 @@ export class SharedLog<
 							minReplicasValue,
 							{ roleAge: 0 },
 						);
+
+						if (currentLeaders.has(selfHash)) {
+							await this.cancelCheckedPruneForLocalLeader(entry.hash);
+							return;
+						}
+
+						if (!currentLeaders.has(publicKeyHash)) {
+							this.refreshPendingCheckedPruneLeaders({
+								entry,
+								leaders: currentLeaders,
+							});
+						}
 
 						if (
 							!currentLeaders.has(publicKeyHash) &&
