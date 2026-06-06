@@ -3455,6 +3455,71 @@ testSetups.forEach((setup) => {
 				expect(db1.log.log.length).equal(1); // No deletions
 			});
 
+			it("ignores stale prune confirmations from obsolete leader views", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicas: {
+							min: 1,
+						},
+						replicate: {
+							factor: 1,
+						},
+						timeUntilRoleMaturity: 0,
+						waitForPruneDelay: 0,
+						setup,
+					},
+				});
+
+				const e1 = await db1.add("hello", { meta: { next: [] } });
+				const log = db1.log as any;
+				const staleResponderHash =
+					session.peers[1].identity.publicKey.hashcode();
+				const currentLeaderHash =
+					session.peers[2].identity.publicKey.hashcode();
+
+				const findLeadersStub = sinon
+					.stub(log, "findLeadersFromEntry")
+					.callsFake(
+						async () =>
+							new Map([[currentLeaderHash, { intersecting: true }]]),
+					);
+				const waitForReplicatorsStub = sinon
+					.stub(log, "_waitForReplicators")
+					.callsFake(async () => false);
+
+				try {
+					const prunePromise = Promise.all(
+						db1.log.prune(
+							new Map([
+								[
+									e1.entry.hash,
+									{
+										entry: e1.entry,
+										leaders: new Set([staleResponderHash]),
+									},
+								],
+							]),
+							{ timeout: 250 },
+						),
+					);
+
+					const pendingDelete = log._checkedPrune.getPendingDelete(
+						e1.entry.hash,
+					);
+					expect(pendingDelete).to.exist;
+
+					await pendingDelete.resolve(staleResponderHash);
+
+					await expect(prunePromise).rejectedWith(
+						"Timeout for checked pruning",
+					);
+					expect(await db1.log.log.has(e1.entry.hash)).to.equal(true);
+				} finally {
+					findLeadersStub.restore();
+					waitForReplicatorsStub.restore();
+				}
+			});
+
 			it("keep degree while updating role", async () => {
 				let min = 1;
 				let max = 1;

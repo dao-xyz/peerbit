@@ -7738,13 +7738,9 @@ export class SharedLog<
 							minReplicasValue,
 							{ roleAge: 0 },
 						);
-						const requestedLeaders = this.checkedPruneLeadersToMap(leaders);
-						const confirmedLeader =
-							currentLeaders.has(publicKeyHash) ||
-							requestedLeaders.has(publicKeyHash);
 
 						if (
-							!confirmedLeader &&
+							!currentLeaders.has(publicKeyHash) &&
 							!(await this._waitForReplicators(
 								cursor ??
 									(cursor = await this.createCoordinates(
