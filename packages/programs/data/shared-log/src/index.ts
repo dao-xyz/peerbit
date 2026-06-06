@@ -7735,8 +7735,6 @@ export class SharedLog<
 					deferredPromise.reject(e);
 				};
 
-			let cursor: NumberFromType<R>[] | undefined = undefined;
-
 			// Checked prune requests can legitimately take longer than a fixed 10s:
 			// - The remote may not have the entry yet and will wait up to `_respondToIHaveTimeout`
 			// - Leadership/replicator information may take up to `waitForReplicatorTimeout` to settle
@@ -7793,29 +7791,6 @@ export class SharedLog<
 								entry,
 								leaders: currentLeaders,
 							});
-						}
-
-						if (
-							!currentLeaders.has(publicKeyHash) &&
-							!(await this._waitForReplicators(
-								cursor ??
-									(cursor = await this.createCoordinates(
-										entry,
-										minReplicasValue,
-									)),
-								entry,
-								[
-									{ key: publicKeyHash, replicator: true },
-									{
-										key: selfHash,
-										replicator: false,
-									},
-								],
-								{
-									persist: false,
-								},
-							))
-						) {
 							return;
 						}
 

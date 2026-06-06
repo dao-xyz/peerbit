@@ -3514,6 +3514,11 @@ testSetups.forEach((setup) => {
 							.getContactedReplicators(e1.entry.hash)
 							?.has(currentLeaderHash),
 					).to.equal(true);
+					expect(
+						log._checkedPrune
+							.getConfirmedReplicators(e1.entry.hash)
+							?.has(staleResponderHash),
+					).to.not.equal(true);
 
 					await expect(prunePromise).rejectedWith(
 						"Timeout for checked pruning",
