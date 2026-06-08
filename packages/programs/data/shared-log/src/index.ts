@@ -518,6 +518,7 @@ const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
 const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
+const REPAIR_SWEEP_RANGE_QUERY_LIMIT = 256;
 const REPAIR_SWEEP_TARGET_BUFFER_SIZE = 1024;
 // In sparse topologies (browser/relay), peers can learn about replicators via broadcast
 // replication announcements without having a direct connection that emits unsubscribe
@@ -3499,8 +3500,10 @@ export class SharedLog<
 			: (await this.getRepairSweepRangesForPeers(pendingRepairPeers)).filter(
 					(range) => range.widthNormalized > 0,
 				);
+		const shouldUseRangeQuery =
+			ranges.length > 0 && ranges.length <= REPAIR_SWEEP_RANGE_QUERY_LIMIT;
 		const iterator =
-			ranges.length > 0
+			shouldUseRangeQuery
 				? this.entryCoordinatesIndex.iterate({
 						query: createAssignedRangesQuery(
 							ranges.map((range) => ({

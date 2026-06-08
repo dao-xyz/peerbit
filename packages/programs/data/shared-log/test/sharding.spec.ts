@@ -20,6 +20,7 @@ import {
 	AllReplicatingSegmentsMessage,
 	RequestReplicationInfoMessage,
 } from "../src/replication.js";
+import { ReplicationIntent } from "../src/ranges.js";
 import {
 	MoreSymbols,
 	RatelessIBLTSynchronizer,
@@ -2171,6 +2172,78 @@ testSetups.forEach((setup) => {
 				expect(
 					iterateCalls.every((call) => call?.query != null),
 					"repair sweep should query affected coordinate ranges, not scan the full entry index",
+				).to.be.true;
+			});
+
+			it("falls back to a full repair sweep when pending peer ranges are too fragmented", async function () {
+				if (setup.name !== "u64-iblt") {
+					this.skip();
+				}
+
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						timeUntilRoleMaturity: 0,
+						waitForPruneDelay: 50,
+						setup,
+					},
+				});
+
+				await appendInBatches(4, (i) =>
+					db1.add(`fragmented-range-sweep-${i}`, { meta: { next: [] } }),
+				);
+				await waitForResolved(async () =>
+					expect(await db1.log.entryCoordinatesIndex.getSize()).greaterThan(0),
+				);
+
+				const logInternals = db1.log as any;
+				const entryIndex = logInternals.entryCoordinatesIndex;
+				const originalIterate = entryIndex.iterate.bind(entryIndex);
+				const originalGetRanges =
+					logInternals.getRepairSweepRangesForPeers.bind(logInternals);
+				const pendingHash = session.peers[1].identity.publicKey.hashcode();
+				const iterateCalls: any[] = [];
+				const rangeCount = 512;
+				const max = 2n ** 64n - 1n;
+				const step = max / BigInt(rangeCount + 1);
+
+				entryIndex.iterate = (query?: any, options?: any) => {
+					iterateCalls.push(query);
+					return originalIterate(query, options);
+				};
+				logInternals.getRepairSweepRangesForPeers = async () =>
+					Array.from({ length: rangeCount }, (_, i) => {
+						const start = BigInt(i) * step;
+						return {
+							start1: start,
+							end1: start + 1n,
+							start2: start,
+							end2: start + 1n,
+							mode: ReplicationIntent.NonStrict,
+							widthNormalized: 1 / rangeCount,
+						};
+					});
+
+				try {
+					logInternals._repairSweepPendingModes.add("join-warmup");
+					logInternals._repairSweepPendingPeersByMode
+						.get("join-warmup")
+						.add(pendingHash);
+					logInternals._repairSweepRunning = true;
+					await logInternals.runRepairSweep();
+				} finally {
+					entryIndex.iterate = originalIterate;
+					logInternals.getRepairSweepRangesForPeers = originalGetRanges;
+					logInternals._repairSweepPendingModes.delete("join-warmup");
+					logInternals._repairSweepPendingPeersByMode
+						.get("join-warmup")
+						.delete(pendingHash);
+					logInternals._repairSweepRunning = false;
+				}
+
+				expect(iterateCalls.length).greaterThan(0);
+				expect(
+					iterateCalls[0]?.query == null,
+					"fragmented peer ranges should not build an unbounded OR query",
 				).to.be.true;
 			});
 
