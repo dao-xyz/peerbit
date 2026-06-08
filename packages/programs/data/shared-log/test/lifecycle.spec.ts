@@ -40,6 +40,27 @@ describe("lifecycle", () => {
 			await db.close();
 			expect((await db2.iterator({ limit: -1 })).collect()).to.have.length(1);
 		});
+
+		it("bounds close when replication reset delivery stalls", async function () {
+			this.timeout(10_000);
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: {
+					replicate: {
+						factor: 1,
+					},
+				},
+			});
+			const resetStub = sinon
+				.stub(db.log as any, "announceReplicationResetOnClose")
+				.callsFake(() => new Promise<void>(() => {}));
+
+			const started = Date.now();
+			await db.close();
+
+			expect(resetStub.calledOnce).to.equal(true);
+			expect(Date.now() - started).to.be.lessThan(5_000);
+		});
 	});
 	describe("drop", () => {
 		it("will drop all data", async () => {

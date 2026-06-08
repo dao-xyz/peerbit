@@ -1710,29 +1710,44 @@ export class SharedLog<
 
 	private async announceReplicationResetOnClose(signal?: AbortSignal) {
 		this.invalidateSharedLogTopicSubscribersCache();
-		const subscribers = (await this._getTopicSubscribers(this.topic)) ?? [];
-		const targetsByHash = new Map<string, PublicSignKey>();
-		for (const subscriber of subscribers) {
-			targetsByHash.set(subscriber.hashcode(), subscriber);
-		}
+		await this.rpc.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
+			mode: new AnyWhere(),
+			priority: CONVERGENCE_MESSAGE_PRIORITY,
+			signal,
+		});
+	}
 
-		const createResetMessage = () =>
-			new AllReplicatingSegmentsMessage({ segments: [] });
-
-		if (targetsByHash.size === 0) {
-			return;
-		}
-
-		await Promise.allSettled(
-			[...targetsByHash.values()].map((target) =>
-				this.rpc.send(createResetMessage(), {
-					mode: new AcknowledgeDelivery({ to: [target], redundancy: 1 }),
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
-					responsePriority: ACK_CONTROL_PRIORITY,
-					signal,
-				}),
-			),
+	private async announceReplicationResetOnCloseBounded(operation: "close" | "drop") {
+		const abort = new AbortController();
+		let abortTimer: ReturnType<typeof setTimeout> | undefined;
+		const resetPromise = this.announceReplicationResetOnClose(abort.signal).catch(
+			() => {},
 		);
+		const timeoutPromise = new Promise<void>((resolve) => {
+			abortTimer = setTimeout(() => {
+				try {
+					abort.abort(
+						new TimeoutError(
+							`shared-log ${operation} replication reset timed out`,
+						),
+					);
+				} catch {
+					abort.abort();
+				}
+				resolve();
+			}, REPLICATION_RESET_ON_CLOSE_TIMEOUT_MS);
+		});
+
+		try {
+			// Some delivery backends do not reject slow reset publishes immediately.
+			// Race locally so teardown remains bounded even if the transport keeps
+			// resolving the best-effort reset in the background.
+			await Promise.race([resetPromise, timeoutPromise]);
+		} finally {
+			if (abortTimer) {
+				clearTimeout(abortTimer);
+			}
+		}
 	}
 
 	// @deprecated
@@ -5638,25 +5653,7 @@ export class SharedLog<
 						// and forget here, the publish can race with `super.close()` and get dropped,
 						// leaving stale replication segments on remotes (flaky join/leave tests).
 						// Also ensure close is bounded even when shard overlays are mid-reconcile.
-						const abort = new AbortController();
-						const abortTimer = setTimeout(() => {
-							try {
-								abort.abort(
-									new TimeoutError(
-										"shared-log close replication reset timed out",
-									),
-								);
-							} catch {
-								abort.abort();
-							}
-						}, REPLICATION_RESET_ON_CLOSE_TIMEOUT_MS);
-						try {
-							await this.announceReplicationResetOnClose(abort.signal).catch(
-								() => {},
-							);
-						} finally {
-							clearTimeout(abortTimer);
-						}
+						await this.announceReplicationResetOnCloseBounded("close");
 					}
 				} catch {
 					// ignore: close should be resilient even if we were never fully started
@@ -5682,25 +5679,7 @@ export class SharedLog<
 					this.pruneDebouncedFn?.close?.();
 					this.responseToPruneDebouncedFn?.close?.();
 
-					const abort = new AbortController();
-					const abortTimer = setTimeout(() => {
-						try {
-							abort.abort(
-								new TimeoutError(
-									"shared-log drop replication reset timed out",
-								),
-							);
-						} catch {
-							abort.abort();
-						}
-					}, REPLICATION_RESET_ON_CLOSE_TIMEOUT_MS);
-					try {
-						await this.announceReplicationResetOnClose(abort.signal).catch(
-							() => {},
-						);
-					} finally {
-						clearTimeout(abortTimer);
-					}
+					await this.announceReplicationResetOnCloseBounded("drop");
 				}
 			} catch {
 				// ignore: drop should be resilient even if we were never fully started
