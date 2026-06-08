@@ -1114,7 +1114,7 @@ testSetups.forEach((setup) => {
 				// the union and replica floor are already settled. The lower bound keeps
 				// the distribution check meaningful without making CI depend on a
 				// one-entry pruning boundary.
-				await checkBounded(
+				await waitForBoundedLogLengths(
 					entryCount,
 					setup.name === "u32-simple" ? 0.35 : 0.2,
 					1,

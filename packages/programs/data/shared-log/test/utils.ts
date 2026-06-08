@@ -563,6 +563,29 @@ export const checkIfSetupIsUsed = (
 	expect(log.syncronizer.constructor).to.equal(setup.syncronizer);
 };
 
+const withDiagnosticTimeout = async <T>(
+	label: string,
+	fn: () => Promise<T>,
+	timeoutMs = 5_000,
+): Promise<T | string> => {
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			fn(),
+			new Promise<string>((resolve) => {
+				timer = setTimeout(() => resolve(`${label}:timeout`), timeoutMs);
+			}),
+		]);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return `${label}:error:${message}`;
+	} finally {
+		if (timer) {
+			clearTimeout(timer);
+		}
+	}
+};
+
 export const dbgLogs = async (log: SharedLog<any, any>[]) => {
 	for (const l of log) {
 		console.error(
@@ -572,8 +595,14 @@ export const dbgLogs = async (log: SharedLog<any, any>[]) => {
 			l.log.length,
 			"Replication segments:",
 			// eslint-disable-next-line @typescript-eslint/no-base-to-string
-			(await l.getAllReplicationSegments()).map((x) => x.toString()),
-			"Prunable: " + (await l.getPrunable()).length,
+			await withDiagnosticTimeout("getAllReplicationSegments", async () =>
+				(await l.getAllReplicationSegments()).map((x) => x.toString()),
+			),
+			"Prunable:",
+			await withDiagnosticTimeout(
+				"getPrunable",
+				async () => (await l.getPrunable()).length,
+			),
 			"log length: ",
 			l.log.length,
 		);
