@@ -4368,11 +4368,21 @@ export class SharedLog<
 		}
 
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-		if (!isLeader && !delayAdaptiveRebalance) {
-			this.pruneDebouncedFnAddIfNotKeeping({
-				key: result.entry.hash,
-				value: { entry: result.entry, leaders },
+		let pruneLeaders = leaders;
+		let isCurrentLeader = isLeader;
+		if (isCurrentLeader && !delayAdaptiveRebalance) {
+			pruneLeaders = await this.findLeaders(coordinates, result.entry, {
+				roleAge: 0,
+				persist: false,
 			});
+			isCurrentLeader = pruneLeaders.has(selfHash);
+		}
+		if (!isCurrentLeader && !delayAdaptiveRebalance) {
+			await this.pruneDebouncedFnAddIfNotKeeping({
+				key: result.entry.hash,
+				value: { entry: result.entry, leaders: pruneLeaders },
+			});
+			this.responseToPruneDebouncedFn.delete(result.entry.hash);
 		}
 		// Keep the debounced rebalance loop alive even when the current write
 		// burst delays the actual rebalance; the loop will wake after the idle
