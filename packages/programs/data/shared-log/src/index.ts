@@ -5767,6 +5767,7 @@ export class SharedLog<
 					}
 					const groupedByGid = await groupByGid(filteredHeads);
 					const promises: Promise<void>[] = [];
+					const postJoinTasks: (() => Promise<void>)[] = [];
 
 					for (const [gid, entries] of groupedByGid) {
 						const fn = async () => {
@@ -5910,66 +5911,75 @@ export class SharedLog<
 									context.from!.hashcode(),
 								);
 								await this.log.join(toMerge);
-								if (!fromIsSelf) {
-									await this.sendRepairConfirmation(
-										context.from!,
-										mergedHashes,
-									);
+								for (const mergedHash of mergedHashes) {
+									confirmedHashes.add(mergedHash);
 								}
-								// Network joins bypass SharedLog.join(), but churn repair scans
-								// the coordinate index to redistribute entries after membership changes.
-								for (const entry of toPersist) {
-									const replicas = decodeReplicas(entry).getValue(this);
-									await this.findLeaders(
-										await this.createCoordinates(entry, replicas),
-										entry,
-										{ roleAge: 0, persist: {} },
-									);
-								}
-								await this.pruneJoinedEntriesNoLongerLed(toMerge);
-
-								toDelete?.map((x) =>
-									// TODO types
-									this.pruneDebouncedFnAddIfNotKeeping({
-										key: x.hash,
-										value: { entry: x, leaders: leaders as Map<string, any> },
-									}),
-								);
-								this.rebalanceParticipationDebounced?.call();
 							}
 
-							if (maybeDelete) {
-								for (const entries of maybeDelete as EntryWithRefs<any>[][]) {
-									const headsWithGid = await this.log.entryIndex
-										.getHeads(entries[0].entry.meta.gid)
-										.all();
-									if (headsWithGid && headsWithGid.length > 0) {
-										const minReplicas = maxReplicas(
-											this,
-											headsWithGid.values(),
+							if (toMerge.length > 0 || maybeDelete) {
+								postJoinTasks.push(async () => {
+									if (toMerge.length > 0) {
+										// Network joins bypass SharedLog.join(), but churn repair scans
+										// the coordinate index to redistribute entries after membership changes.
+										for (const entry of toPersist) {
+											const replicas = decodeReplicas(entry).getValue(this);
+											await this.findLeaders(
+												await this.createCoordinates(entry, replicas),
+												entry,
+												{ roleAge: 0, persist: {} },
+											);
+										}
+										await this.pruneJoinedEntriesNoLongerLed(toMerge);
+
+										toDelete?.map((x) =>
+											// TODO types
+											this.pruneDebouncedFnAddIfNotKeeping({
+												key: x.hash,
+												value: {
+													entry: x,
+													leaders: leaders as Map<string, any>,
+												},
+											}),
 										);
+										this.rebalanceParticipationDebounced?.call();
+									}
 
-										const isLeader = await this.isLeader({
-											entry: entries[0].entry,
-											replicas: minReplicas,
-										});
+									if (maybeDelete) {
+										for (const entries of maybeDelete as EntryWithRefs<
+											any
+										>[][]) {
+											const headsWithGid = await this.log.entryIndex
+												.getHeads(entries[0].entry.meta.gid)
+												.all();
+											if (headsWithGid && headsWithGid.length > 0) {
+												const minReplicas = maxReplicas(
+													this,
+													headsWithGid.values(),
+												);
 
-										if (!isLeader) {
-											for (const x of entries) {
-												this.pruneDebouncedFnAddIfNotKeeping({
-													key: x.entry.hash,
-													// TODO types
-													value: {
-														entry: x.entry,
-														leaders: leaders as Map<string, any>,
-													},
+												const isLeader = await this.isLeader({
+													entry: entries[0].entry,
+													replicas: minReplicas,
 												});
+
+												if (!isLeader) {
+													for (const x of entries) {
+														this.pruneDebouncedFnAddIfNotKeeping({
+															key: x.entry.hash,
+															// TODO types
+															value: {
+																entry: x.entry,
+																leaders: leaders as Map<string, any>,
+															},
+														});
+													}
+												}
 											}
 										}
 									}
-								}
+								});
 							}
-						};
+							};
 						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
 					}
 					await Promise.all(promises);
@@ -5977,6 +5987,7 @@ export class SharedLog<
 						this.markEntriesKnownByPeer(confirmedHashes, context.from.hashcode());
 						await this.sendRepairConfirmation(context.from!, confirmedHashes);
 					}
+					await Promise.all(postJoinTasks.map((fn) => fn()));
 				}
 			} else if (msg instanceof RequestIPrune) {
 				const hasAndIsLeader: string[] = [];
