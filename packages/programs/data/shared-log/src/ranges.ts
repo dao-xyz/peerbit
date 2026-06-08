@@ -1310,6 +1310,11 @@ const allRangesContainingPoint = async <
 			},
 			options,
 		);
+		try {
+			(await firstIterator.all()).forEach((x) => allResults.push(x));
+		} finally {
+			await firstIterator.close();
+		}
 
 		const secondIterator = rects.iterate(
 			{
@@ -1318,10 +1323,11 @@ const allRangesContainingPoint = async <
 			},
 			options,
 		);
-
-		[...(await firstIterator.all()), ...(await secondIterator.all())].forEach(
-			(x) => allResults.push(x),
-		);
+		try {
+			(await secondIterator.all()).forEach((x) => allResults.push(x));
+		} finally {
+			await secondIterator.close();
+		}
 	}
 	return allResults;
 	/* return [...await iterateRangesContainingPoint(rects, points, options).all()]; */
@@ -2040,15 +2046,19 @@ const collectClosestAround = async <R extends "u32" | "u64">(
 	);
 
 	let visited = new Set<string>();
-	while (aroundIterator.done() !== true && done() !== true) {
-		const res = await aroundIterator.next(100);
-		for (const rect of res) {
-			visited.add(rect.value.idString);
-			collector(rect.value, isMatured(rect.value, now, roleAge));
-			if (done()) {
-				return;
+	try {
+		while (aroundIterator.done() !== true && done() !== true) {
+			const res = await aroundIterator.next(100);
+			for (const rect of res) {
+				visited.add(rect.value.idString);
+				collector(rect.value, isMatured(rect.value, now, roleAge));
+				if (done()) {
+					return;
+				}
 			}
 		}
+	} finally {
+		await aroundIterator.close();
 	}
 };
 
@@ -2718,22 +2728,26 @@ export const toRebalance = <R extends "u32" | "u64">(
 	options?: { forceFresh?: boolean },
 ): AsyncIterable<EntryReplicated<R>> => {
 	const change = options?.forceFresh
-		? (Array.isArray(changeOrChanges[0])
-				? (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[])
-						.flat()
-				: (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>))
+		? Array.isArray(changeOrChanges[0])
+			? (
+					changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[]
+				).flat()
+			: (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>)
 		: mergeReplicationChanges(changeOrChanges, rebalanceHistory);
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			const iterator = index.iterate({
 				query: createAssignedRangesQuery(change),
 			});
-
-			while (iterator.done() !== true) {
-				const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
-				for (const entry of entries) {
-					yield entry.value;
+			try {
+				while (iterator.done() !== true) {
+					const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
+					for (const entry of entries) {
+						yield entry.value;
+					}
 				}
+			} finally {
+				await iterator.close();
 			}
 		},
 	};

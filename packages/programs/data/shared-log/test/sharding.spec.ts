@@ -960,6 +960,7 @@ testSetups.forEach((setup) => {
 
 				await waitForParticipationToSettle(db1, db2);
 				await waitForReplicationCoverageSettled([db1, db2], 1, entryCount);
+				await waitForDistributionQuiesced(db1, db2);
 
 				await checkBounded(
 					entryCount,
@@ -1011,11 +1012,12 @@ testSetups.forEach((setup) => {
 					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
 				);
 
-				// Participation can report "full" while redistribution is still in flight.
-				// The bounded assertion is about the settled final split, so wait for
-				// coverage rather than raw repair-sweep idleness.
+				// Participation and coverage can settle while redistribution/prune
+				// work is still finishing. The bounded assertion is about the settled
+				// final split, so wait for distribution work to quiesce too.
 				await waitForParticipationToSettle(db1, db2);
 				await waitForReplicationCoverageSettled([db1, db2], 1, entryCount);
+				await waitForDistributionQuiesced(db1, db2);
 				// Writes during join can leave checked-prune work queued after the
 				// union and replica floor have settled. Keep the upper bound broad
 				// enough for that transient duplicate storage while still requiring
