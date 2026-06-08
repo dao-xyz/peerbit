@@ -548,6 +548,13 @@ testSetups.forEach((setup) => {
 					async () => expect(await db1.log.entryCoordinatesIndex.count()).eq(1),
 					{ timeout: 10_000, delayInterval: 100 },
 				);
+				await waitForResolved(
+					async () =>
+						expect(
+							(await db1.log.getNonPrunable(0)).map((entry) => entry.hash),
+						).include(entry.hash),
+					{ timeout: 10_000, delayInterval: 100 },
+				);
 
 				const log = db1.log as unknown as CheckedPruneLocalLeaderTestLog<
 					typeof entry
@@ -598,6 +605,13 @@ testSetups.forEach((setup) => {
 				const { entry } = await db1.add("hello", { meta: { next: [] } });
 				await waitForResolved(
 					async () => expect(await db1.log.entryCoordinatesIndex.count()).eq(1),
+					{ timeout: 10_000, delayInterval: 100 },
+				);
+				await waitForResolved(
+					async () =>
+						expect(
+							(await db1.log.getNonPrunable(0)).map((entry) => entry.hash),
+						).include(entry.hash),
 					{ timeout: 10_000, delayInterval: 100 },
 				);
 

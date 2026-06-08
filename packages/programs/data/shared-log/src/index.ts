@@ -828,6 +828,7 @@ export class SharedLog<
 			callback: (entry: Entry<T>) => void;
 		}
 	>;
+	private _pendingLocalReplicationHashes!: Set<string>;
 
 	// public key hash to range id to range
 	pendingMaturity!: Map<
@@ -3945,6 +3946,9 @@ export class SharedLog<
 			};
 		},
 	): Promise<boolean> {
+		if (await this.keepPendingLocalReplicationFromPrune(args.key)) {
+			return false;
+		}
 		if (this.keep && (await this.keep(args.value.entry))) {
 			return false;
 		}
@@ -3954,6 +3958,14 @@ export class SharedLog<
 			args.value.leaders,
 		);
 		into.set(args.key, args.value);
+		return true;
+	}
+
+	private async keepPendingLocalReplicationFromPrune(hash: string) {
+		if (!this._pendingLocalReplicationHashes.has(hash)) {
+			return false;
+		}
+		await this.cancelCheckedPruneForLocalLeader(hash);
 		return true;
 	}
 
@@ -4155,6 +4167,10 @@ export class SharedLog<
 				break;
 			}
 
+			if (await this.keepPendingLocalReplicationFromPrune(entry.hash)) {
+				continue;
+			}
+
 			const leaders = await this.findPruneLeadersFromEntry(entry);
 
 			if (leaders.has(selfHash)) {
@@ -4196,12 +4212,19 @@ export class SharedLog<
 						continue;
 					}
 
-					const leaders = await this.findLeaders(
-						entryReplicated.coordinates,
+					if (
+						await this.keepPendingLocalReplicationFromPrune(
+							entryReplicated.hash,
+						)
+					) {
+						continue;
+					}
+
+					const leaders = await this.findPruneLeadersFromEntry(
 						entryReplicated,
 						options?.useDefaultRoleAge
-							? { onlyIntersecting: true }
-							: { roleAge: 0, onlyIntersecting: true },
+							? { useDefaultRoleAge: true }
+							: { roleAge: 0 },
 					);
 
 					if (leaders.has(selfHash)) {
@@ -4254,6 +4277,10 @@ export class SharedLog<
 		for (const head of heads) {
 			if (this.closed) {
 				break;
+			}
+
+			if (await this.keepPendingLocalReplicationFromPrune(head.hash)) {
+				continue;
 			}
 
 			const leaders = await this.findPruneLeadersFromEntry(head, options);
@@ -4610,6 +4637,7 @@ export class SharedLog<
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
 		this._pendingIHave = new Map();
+		this._pendingLocalReplicationHashes = new Set();
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
@@ -6809,6 +6837,19 @@ export class SharedLog<
 			}
 		};
 		let entriesToPersist: Entry<T>[] = [];
+		// Joined entries become locally visible before replicate() installs local
+		// ownership. Keep checked-prune from deleting them in that gap.
+		let pendingJoinReplicationHashes = new Set<string>();
+		const markPendingLocalReplication = (entry: Entry<T>) => {
+			pendingJoinReplicationHashes.add(entry.hash);
+			this._pendingLocalReplicationHashes.add(entry.hash);
+		};
+		const clearPendingLocalReplication = () => {
+			for (const hash of pendingJoinReplicationHashes) {
+				this._pendingLocalReplicationHashes.delete(hash);
+			}
+			pendingJoinReplicationHashes.clear();
+		};
 		let joinOptions = {
 			...options,
 			onChange: async (change: Change<T>) => {
@@ -6835,59 +6876,68 @@ export class SharedLog<
 
 		if (options?.replicate) {
 			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
-
-			if (assumeSynced) {
-				// `assumeSynced` is an explicit contract that this join should trust the
-				// supplied history and avoid initiating outbound repair while the local
-				// replication ranges settle.
-				this._assumeSyncedRepairSuppressedUntil =
-					Date.now() + ASSUME_SYNCED_REPAIR_SUPPRESSION_MS;
-				for (const entry of entriesToReplicate) {
-					await seedAssumeSyncedPeerHistory(entry);
-				}
+			for (const entry of entriesToReplicate) {
+				markPendingLocalReplication(entry);
 			}
 
-			await this.replicate(entriesToReplicate, {
-				rebalance: assumeSynced ? false : true,
-				checkDuplicates: assumeSynced ? false : true,
-				mergeSegments:
-					typeof options.replicate !== "boolean" && options.replicate
-						? options.replicate.mergeSegments
-						: false,
-
-				// we override the announce step here to make sure we announce all new replication info
-				// in one large message instead
-				announce: (msg) => {
-					if (msg instanceof AllReplicatingSegmentsMessage) {
-						throw new Error("Unexpected");
+			try {
+				if (assumeSynced) {
+					// `assumeSynced` is an explicit contract that this join should trust the
+					// supplied history and avoid initiating outbound repair while the local
+					// replication ranges settle.
+					this._assumeSyncedRepairSuppressedUntil =
+						Date.now() + ASSUME_SYNCED_REPAIR_SUPPRESSION_MS;
+					for (const entry of entriesToReplicate) {
+						await seedAssumeSyncedPeerHistory(entry);
 					}
+				}
 
-					if (messageToSend) {
-						// merge segments to make it into one messages
-						for (const segment of msg.segments) {
-							messageToSend.segments.push(segment);
+				await this.replicate(entriesToReplicate, {
+					rebalance: assumeSynced ? false : true,
+					checkDuplicates: assumeSynced ? false : true,
+					mergeSegments:
+						typeof options.replicate !== "boolean" && options.replicate
+							? options.replicate.mergeSegments
+							: false,
+
+					// we override the announce step here to make sure we announce all new replication info
+					// in one large message instead
+					announce: (msg) => {
+						if (msg instanceof AllReplicatingSegmentsMessage) {
+							throw new Error("Unexpected");
 						}
-					} else {
-						messageToSend = msg;
-					}
-				},
-			});
 
-			// it is importat that we call persistCoordinate after this.replicate(entries) as else there might be a prune job deleting the entry before replication duties has been assigned to self
-			for (const entry of entriesToPersist) {
-				await persistCoordinate(entry);
-			}
-
-			await this.replicationChangeDebounceFn?.flush?.().catch((error: any) => {
-				if (!isNotStartedError(error)) {
-					logger.error(error?.toString?.() ?? String(error));
-				}
-			});
-
-			if (messageToSend) {
-				await this.rpc.send(messageToSend, {
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
+						if (messageToSend) {
+							// merge segments to make it into one messages
+							for (const segment of msg.segments) {
+								messageToSend.segments.push(segment);
+							}
+						} else {
+							messageToSend = msg;
+						}
+					},
 				});
+
+				// it is importat that we call persistCoordinate after this.replicate(entries) as else there might be a prune job deleting the entry before replication duties has been assigned to self
+				for (const entry of entriesToPersist) {
+					await persistCoordinate(entry);
+				}
+
+				await this.replicationChangeDebounceFn
+					?.flush?.()
+					.catch((error: any) => {
+						if (!isNotStartedError(error)) {
+							logger.error(error?.toString?.() ?? String(error));
+						}
+					});
+
+				if (messageToSend) {
+					await this.rpc.send(messageToSend, {
+						priority: CONVERGENCE_MESSAGE_PRIORITY,
+					});
+				}
+			} finally {
+				clearPendingLocalReplication();
 			}
 
 			if (entriesToPersist.length > 0) {
