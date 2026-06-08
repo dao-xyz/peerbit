@@ -5904,11 +5904,18 @@ export class SharedLog<
 							}
 
 							if (toMerge.length > 0) {
+								const mergedHashes = toMerge.map((entry) => entry.hash);
 								this.markEntriesKnownByPeer(
-									toMerge.map((entry) => entry.hash),
+									mergedHashes,
 									context.from!.hashcode(),
 								);
 								await this.log.join(toMerge);
+								if (!fromIsSelf) {
+									await this.sendRepairConfirmation(
+										context.from!,
+										mergedHashes,
+									);
+								}
 								// Network joins bypass SharedLog.join(), but churn repair scans
 								// the coordinate index to redistribute entries after membership changes.
 								for (const entry of toPersist) {
@@ -5918,9 +5925,6 @@ export class SharedLog<
 										entry,
 										{ roleAge: 0, persist: {} },
 									);
-								}
-								for (const merged of toMerge) {
-									confirmedHashes.add(merged.hash);
 								}
 								await this.pruneJoinedEntriesNoLongerLed(toMerge);
 
