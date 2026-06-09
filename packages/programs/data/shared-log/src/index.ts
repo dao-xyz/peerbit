@@ -2626,10 +2626,25 @@ export class SharedLog<
 		let isAllMature = true;
 
 		for (const diff of diffs) {
-			if (diff.type === "added") {
+			if (diff.type === "replaced") {
+				const pendingFromPeer = this.pendingMaturity.get(diff.range.hash);
+				if (pendingFromPeer) {
+					const prev = pendingFromPeer.get(diff.range.idString);
+					if (prev) {
+						clearTimeout(prev.timeout);
+						pendingFromPeer.delete(diff.range.idString);
+					}
+					if (pendingFromPeer.size === 0) {
+						this.pendingMaturity.delete(diff.range.hash);
+					}
+				}
+				await this.replicationIndex.del({
+					query: new ByteMatchQuery({ key: "id", value: diff.range.id }),
+				});
+			} else if (diff.type === "added") {
 				/* if (this.closed) {
-					return;
-				} */
+						return;
+					} */
 				await this.replicationIndex.put(diff.range);
 
 				if (!reset) {
@@ -2703,7 +2718,6 @@ export class SharedLog<
 					}
 				}
 			}
-			// else replaced, do nothing
 		}
 
 		if (diffs.length > 0) {
@@ -2778,8 +2792,8 @@ export class SharedLog<
 		}
 
 		if (change) {
-			let addedOrReplaced = change.filter((x) => x.type !== "removed");
-			if (addedOrReplaced.length > 0) {
+			let added = change.filter((x) => x.type === "added");
+			if (added.length > 0) {
 				// Provider discovery keep-alive (best-effort). This enables bounded targeted fetches
 				// without relying on any global subscriber list.
 				try {
@@ -2803,11 +2817,11 @@ export class SharedLog<
 					| undefined = undefined;
 				if (options.reset) {
 					message = new AllReplicatingSegmentsMessage({
-						segments: addedOrReplaced.map((x) => x.range.toReplicationRange()),
+						segments: added.map((x) => x.range.toReplicationRange()),
 					});
 				} else {
 					message = new AddedReplicationSegmentMessage({
-						segments: addedOrReplaced.map((x) => x.range.toReplicationRange()),
+						segments: added.map((x) => x.range.toReplicationRange()),
 					});
 				}
 				if (options.announce) {
@@ -4044,23 +4058,23 @@ export class SharedLog<
 	}): Promise<{
 		leaders: CheckedPruneLeaderMap;
 		localLeader: boolean;
-		}> {
-			const selfHash = this.node.identity.publicKey.hashcode();
-			let checkedFreshLeaders = false;
-			if (args.selfReplicating === false) {
-				return { leaders: args.leaders, localLeader: false };
-			}
+	}> {
+		const selfHash = this.node.identity.publicKey.hashcode();
+		let checkedFreshLeaders = false;
+		if (args.selfReplicating === false) {
+			return { leaders: args.leaders, localLeader: false };
+		}
 		if (args.selfReplicating == null && !(await this.isReplicating())) {
 			return { leaders: args.leaders, localLeader: false };
 		}
 
-			try {
-				const currentLeaders = await this.findPruneLeadersFromEntry(args.entry);
-				if (currentLeaders.size > 0) {
-					checkedFreshLeaders = true;
-					return {
-						leaders: currentLeaders,
-						localLeader: currentLeaders.has(selfHash),
+		try {
+			const currentLeaders = await this.findPruneLeadersFromEntry(args.entry);
+			if (currentLeaders.size > 0) {
+				checkedFreshLeaders = true;
+				return {
+					leaders: currentLeaders,
+					localLeader: currentLeaders.has(selfHash),
 				};
 			}
 		} catch {
@@ -4068,17 +4082,17 @@ export class SharedLog<
 			// decision instead of hiding a legitimately prunable entry.
 		}
 
-			if (args.leaders.has(selfHash)) {
-				return { leaders: args.leaders, localLeader: true };
-			}
+		if (args.leaders.has(selfHash)) {
+			return { leaders: args.leaders, localLeader: true };
+		}
 
-			if (!checkedFreshLeaders) {
-				return { leaders: args.leaders, localLeader: true };
-			}
+		if (!checkedFreshLeaders) {
+			return { leaders: args.leaders, localLeader: true };
+		}
 
-			if (!this.hasActiveCheckedPruneWork(args.hash)) {
-				return { leaders: args.leaders, localLeader: false };
-			}
+		if (!this.hasActiveCheckedPruneWork(args.hash)) {
+			return { leaders: args.leaders, localLeader: false };
+		}
 
 		return { leaders: args.leaders, localLeader: false };
 	}
@@ -4110,47 +4124,12 @@ export class SharedLog<
 		options?: { roleAge?: number; useDefaultRoleAge?: boolean },
 	): Promise<CheckedPruneLeaderMap> {
 		const replicas = decodeReplicas(entry).getValue(this);
-		return this.findIntersectingPruneLeadersByRangeScan(
-			entry,
-			replicas,
-			options,
-		);
-	}
-
-	private async findIntersectingPruneLeadersByRangeScan(
-		entry: CheckedPruneEntry<T, R>,
-		replicas: number,
-		options?: { roleAge?: number; useDefaultRoleAge?: boolean },
-	): Promise<CheckedPruneLeaderMap> {
 		const roleAge =
 			options?.roleAge ??
 			(options?.useDefaultRoleAge ? await this.getDefaultMinRoleAge() : 0);
-		const coordinates = await this.createCoordinates(entry, replicas);
-		const now = Date.now();
-		const leaders: CheckedPruneLeaderMap = new Map();
-		const iterator = this.replicationIndex.iterate({});
-		try {
-			while (!this.closed && !iterator.done()) {
-				const ranges = await iterator.next(64);
-				if (ranges.length === 0) {
-					break;
-				}
-				for (const range of ranges) {
-					if (!isMatured(range.value, now, roleAge)) {
-						continue;
-					}
-					for (const coordinate of coordinates) {
-						if (range.value.contains(coordinate)) {
-							leaders.set(range.value.hash, { intersecting: true });
-							break;
-						}
-					}
-				}
-			}
-		} finally {
-			await iterator.close();
-		}
-		return leaders;
+		return this.findLeadersFromEntry(entry, replicas, {
+			roleAge,
+		});
 	}
 
 	private async pruneJoinedEntriesNoLongerLed(entries: Entry<T>[]) {
@@ -4220,11 +4199,12 @@ export class SharedLog<
 						continue;
 					}
 
-					const leaders = await this.findPruneLeadersFromEntry(
+					const leaders = await this.findLeaders(
+						entryReplicated.coordinates,
 						entryReplicated,
 						options?.useDefaultRoleAge
-							? { useDefaultRoleAge: true }
-							: { roleAge: 0 },
+							? { onlyIntersecting: true }
+							: { roleAge: 0, onlyIntersecting: true },
 					);
 
 					if (leaders.has(selfHash)) {
@@ -4382,11 +4362,9 @@ export class SharedLog<
 
 			let leadersMap: CheckedPruneLeaderMap | undefined;
 			try {
-				const replicas = decodeReplicas(retryEntry).getValue(this);
-				leadersMap = await this.findIntersectingPruneLeadersByRangeScan(
-					retryEntry,
-					replicas,
-				);
+				leadersMap = await this.findPruneLeadersFromEntry(retryEntry, {
+					roleAge: 0,
+				});
 			} catch {
 				// Best-effort only.
 			}
@@ -6343,8 +6321,13 @@ export class SharedLog<
 					} else {
 						const prevPendingIHave = this._pendingIHave.get(hash);
 						if (prevPendingIHave) {
-							prevPendingIHave.requesting.add(context.from.hashcode());
-							prevPendingIHave.resetTimeout();
+							const requester = context.from.hashcode();
+							const alreadyRequested =
+								prevPendingIHave.requesting.has(requester);
+							prevPendingIHave.requesting.add(requester);
+							if (!alreadyRequested) {
+								prevPendingIHave.resetTimeout();
+							}
 						} else {
 							const requesting = new Set([context.from.hashcode()]);
 
@@ -7597,7 +7580,7 @@ export class SharedLog<
 		const now = Date.now();
 		const iterator = this.replicationIndex.iterate(
 			{},
-			{ shape: { hash: true, timestamp: true }, reference: true },
+			{ shape: { hash: true, timestamp: true, width: true }, reference: true },
 		);
 
 		try {
@@ -7608,6 +7591,9 @@ export class SharedLog<
 				}
 				for (const result of batch) {
 					const range = result.value;
+					if (range.width <= this.indexableDomain.numbers.zero) {
+						continue;
+					}
 					if (range.hash === selfHash && !selfReplicating) {
 						continue;
 					}
@@ -7635,7 +7621,7 @@ export class SharedLog<
 			this._logProperties?.strictFullReplicaFallback !== false;
 		const iterator = this.replicationIndex.iterate(
 			{},
-			{ shape: { hash: true, timestamp: true, mode: true } },
+			{ shape: { hash: true, timestamp: true, mode: true, width: true } },
 		);
 
 		try {
@@ -7646,6 +7632,9 @@ export class SharedLog<
 				}
 				for (const result of batch) {
 					const range = result.value;
+					if (range.width <= this.indexableDomain.numbers.zero) {
+						continue;
+					}
 					if (peerFilter && !peerFilter.has(range.hash)) {
 						continue;
 					}
@@ -7931,33 +7920,17 @@ export class SharedLog<
 			const pendingPrev = this._checkedPrune.getPendingDelete(entry.hash);
 			if (pendingPrev) {
 				// If a background prune is already in-flight, an explicit prune request should
-				// still respect the caller's timeout. Otherwise, tests (and user calls) can
-				// block on the longer "checked prune" timeout derived from
-				// `_respondToIHaveTimeout + waitForReplicatorTimeout`, which is intentionally
-				// large for resiliency.
+				// take over with its own bounded request. Otherwise it can inherit the
+				// background resend loop and keep remote `_pendingIHave` state alive past the
+				// caller's timeout.
 				if (explicitTimeout) {
-					const timeoutMs = Math.max(0, Math.floor(options?.timeout ?? 0));
-					promises.push(
-						new Promise((resolve, reject) => {
-							// Mirror the checked-prune error prefix so existing callers/tests can
-							// match on the message substring.
-							const timer = setTimeout(() => {
-								reject(
-									new Error(
-										`Timeout for checked pruning after ${timeoutMs}ms (pending=true closed=${this.closed})`,
-									),
-								);
-							}, timeoutMs);
-							timer.unref?.();
-							pendingPrev.promise.promise
-								.then(resolve, reject)
-								.finally(() => clearTimeout(timer));
-						}),
+					void pendingPrev.reject(
+						new Error("Interrupted by explicit checked prune"),
 					);
 				} else {
 					promises.push(pendingPrev.promise.promise);
+					continue;
 				}
-				continue;
 			}
 
 			const minReplicas = decodeReplicas(entry);
@@ -8091,11 +8064,9 @@ export class SharedLog<
 						const minReplicasValue = minReplicasObj.getValue(this);
 						const selfHash = this.node.identity.publicKey.hashcode();
 
-						const currentLeaders =
-							await this.findIntersectingPruneLeadersByRangeScan(
-								entry,
-								minReplicasValue,
-							);
+						const currentLeaders = await this.findPruneLeadersFromEntry(entry, {
+							roleAge: 0,
+						});
 
 						if (currentLeaders.has(selfHash)) {
 							await this.cancelCheckedPruneForLocalLeader(entry.hash);
@@ -8245,7 +8216,10 @@ export class SharedLog<
 				head,
 				roleAge == null ? { useDefaultRoleAge: true } : { roleAge },
 			);
-			if (leaders.size > 0 && !leaders.has(this.node.identity.publicKey.hashcode())) {
+			if (
+				leaders.size > 0 &&
+				!leaders.has(this.node.identity.publicKey.hashcode())
+			) {
 				prunable.push(head);
 			}
 		}
@@ -8798,6 +8772,9 @@ export class SharedLog<
 				}
 
 				const peersSize = (await peers.getSize()) || 1;
+				const hasAdaptiveResourceLimits =
+					this.replicationController.maxMemoryLimit != null ||
+					this.replicationController.maxCPUUsage != null;
 				let totalParticipation = await this.calculateTotalParticipation();
 				if (totalParticipation >= 1) {
 					// The sampled coverage estimate can miss a large gap when all samples
@@ -8878,7 +8855,7 @@ export class SharedLog<
 					this.rebalanceParticipationDebounced?.call();
 
 					return true;
-				} else {
+				} else if (hasAdaptiveResourceLimits) {
 					this.rebalanceParticipationDebounced?.call();
 				}
 				return false;

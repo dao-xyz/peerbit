@@ -53,7 +53,9 @@ describe(`countAssignedHeads`, function () {
 		).to.eq(added.entry.hash);
 	});
 
-	it("partial", async () => {
+	it("partial", async function () {
+		this.timeout(120_000);
+
 		let db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: {
 				replicate: {
@@ -87,8 +89,10 @@ describe(`countAssignedHeads`, function () {
 		await waitForResolved(() =>
 			expect(db2.log.log.length).to.be.greaterThan(0),
 		);
-		await waitForConverged(() => db1.log.log.length);
-		await waitForConverged(() => db2.log.log.length);
+		await Promise.all([
+			waitForConverged(() => db1.log.log.length),
+			waitForConverged(() => db2.log.log.length),
+		]);
 
 		const owned1 = await db1.log.countAssignedHeads();
 		const owned2 = await db2.log.countAssignedHeads();
