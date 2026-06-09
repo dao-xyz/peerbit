@@ -205,7 +205,7 @@ const DEFAULT_MAX_CONNECTIONS = 300;
 
 const DEFAULT_PRUNED_CONNNECTIONS_TIMEOUT = 30 * 1000;
 
-const DEFAULT_CREATE_OUTBOUND_STREAM_TIMEOUT = 30_000;
+const DEFAULT_CREATE_OUTBOUND_STREAM_TIMEOUT = 120_000;
 
 const PRIORITY_LANES = 4;
 
@@ -1764,16 +1764,21 @@ export abstract class DirectStream<
 			}
 
 			try {
-				stream = await connection.newStream(this.multicodecs, {
-					// TODO this property seems necessary, together with waitFor isReadable when making sure two peers are conencted before talking.
-					// research whether we can do without this so we can push data without beeing able to send
-					// more info here https://github.com/libp2p/js-libp2p/issues/2321
-					negotiateFully: true,
-					signal: anySignal([
-						this.closeController.signal,
-						...(opts?.signal ? [opts.signal] : []),
-					]),
-				});
+				const streamSignal = anySignal([
+					this.closeController.signal,
+					...(opts?.signal ? [opts.signal] : []),
+				]);
+				try {
+					stream = await connection.newStream(this.multicodecs, {
+						// TODO this property seems necessary, together with waitFor isReadable when making sure two peers are conencted before talking.
+						// research whether we can do without this so we can push data without beeing able to send
+						// more info here https://github.com/libp2p/js-libp2p/issues/2321
+						negotiateFully: true,
+						signal: streamSignal,
+					});
+				} finally {
+					streamSignal.clear?.();
+				}
 
 				if (stream.protocol == null) {
 					stream.abort(new Error("Stream was not multiplexed"));

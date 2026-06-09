@@ -16,7 +16,11 @@ import { expect } from "chai";
 import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
-import { createReplicationDomainHash, type ReplicationDomainHash } from "../src/index.js";
+import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
+import {
+	type ReplicationDomainHash,
+	createReplicationDomainHash,
+} from "../src/index.js";
 import {
 	MoreSymbols,
 	RatelessIBLTSynchronizer,
@@ -33,6 +37,7 @@ type MessageCounters = {
 	startSync: number;
 	moreSymbols: number;
 	requestAll: number;
+	exchangeHeads: number;
 	requestMaybeSync: number;
 	requestMaybeSyncCoordinate: number;
 };
@@ -47,6 +52,7 @@ type BatchTask = {
 	startSyncTotal: number;
 	moreSymbolsTotal: number;
 	requestAllTotal: number;
+	exchangeHeadsTotal: number;
 	requestMaybeSyncTotal: number;
 	requestMaybeSyncCoordinateTotal: number;
 };
@@ -62,7 +68,10 @@ const parsePositiveInteger = (value: string | undefined, fallback: number) => {
 	return parsed;
 };
 
-const parseNonNegativeInteger = (value: string | undefined, fallback: number) => {
+const parseNonNegativeInteger = (
+	value: string | undefined,
+	fallback: number,
+) => {
 	if (!value) {
 		return fallback;
 	}
@@ -131,10 +140,32 @@ const parseOptionalPositiveInteger = (value: string | undefined) => {
 	return parsed;
 };
 
+const isNativeAbortTimeout = (error: unknown) =>
+	error instanceof DOMException &&
+	error.name === "TimeoutError" &&
+	error.message === "The operation was aborted due to timeout";
+
+const stopBenchmarkSession = async (
+	session: Awaited<ReturnType<typeof TestSession.disconnected>>,
+): Promise<unknown | undefined> => {
+	try {
+		await session.stop();
+	} catch (error) {
+		if (isNativeAbortTimeout(error)) {
+			console.warn(
+				"ignored native abort timeout while stopping sync batch benchmark session",
+			);
+			return;
+		}
+		return error;
+	}
+};
+
 const createEmptyCounters = (): MessageCounters => ({
 	startSync: 0,
 	moreSymbols: 0,
 	requestAll: 0,
+	exchangeHeads: 0,
 	requestMaybeSync: 0,
 	requestMaybeSyncCoordinate: 0,
 });
@@ -146,6 +177,7 @@ const mergeCounters = (
 	startSync: left.startSync + right.startSync,
 	moreSymbols: left.moreSymbols + right.moreSymbols,
 	requestAll: left.requestAll + right.requestAll,
+	exchangeHeads: left.exchangeHeads + right.exchangeHeads,
 	requestMaybeSync: left.requestMaybeSync + right.requestMaybeSync,
 	requestMaybeSyncCoordinate:
 		left.requestMaybeSyncCoordinate + right.requestMaybeSyncCoordinate,
@@ -161,6 +193,7 @@ const attachMessageCounter = (
 		if (msg instanceof StartSync) counters.startSync += 1;
 		else if (msg instanceof MoreSymbols) counters.moreSymbols += 1;
 		else if (msg instanceof RequestAll) counters.requestAll += 1;
+		else if (msg instanceof ExchangeHeadsMessage) counters.exchangeHeads += 1;
 		else if (msg instanceof RequestMaybeSync) counters.requestMaybeSync += 1;
 		else if (msg instanceof RequestMaybeSyncCoordinate)
 			counters.requestMaybeSyncCoordinate += 1;
@@ -221,12 +254,12 @@ const runCatchup = async (properties: {
 	const store = new EventStore<string, ReplicationDomainHash<"u64">>();
 	let db1: EventStore<string, ReplicationDomainHash<"u64">> | undefined;
 	let db2: EventStore<string, ReplicationDomainHash<"u64">> | undefined;
-	let counter1:
-		| ReturnType<typeof attachMessageCounter>
+	let counter1: ReturnType<typeof attachMessageCounter> | undefined;
+	let counter2: ReturnType<typeof attachMessageCounter> | undefined;
+	let result:
+		| { catchupMs: number; counters: MessageCounters }
 		| undefined;
-	let counter2:
-		| ReturnType<typeof attachMessageCounter>
-		| undefined;
+	let primaryError: unknown;
 
 	try {
 		db1 = await session.peers[0].open(store.clone(), {
@@ -262,9 +295,22 @@ const runCatchup = async (properties: {
 		counter1 = attachMessageCounter(db1);
 		counter2 = attachMessageCounter(db2);
 
-		await waitForResolved(() =>
-			session.peers[0].dial(session.peers[1].getMultiaddrs()),
+		await waitForResolved(
+			() =>
+				session.peers[0].dial(session.peers[1].getMultiaddrs(), {
+					dialTimeoutMs: properties.timeoutMs,
+					serviceWaitTimeoutMs: properties.timeoutMs,
+				}),
+			{ timeout: properties.timeoutMs, delayInterval: 250 },
 		);
+		await Promise.all([
+			db1.log.waitFor(session.peers[1].peerId, {
+				timeout: properties.timeoutMs,
+			}),
+			db2.log.waitFor(session.peers[0].peerId, {
+				timeout: properties.timeoutMs,
+			}),
+		]);
 
 		const t0 = performance.now();
 		await waitForResolved(
@@ -274,30 +320,37 @@ const runCatchup = async (properties: {
 		const catchupMs = performance.now() - t0;
 
 		const counters = mergeCounters(counter1.read(), counter2.read());
-		return { catchupMs, counters };
+		result = { catchupMs, counters };
+	} catch (error) {
+		primaryError = error;
 	} finally {
 		counter1?.restore();
 		counter2?.restore();
-		await session.stop();
 	}
+	const stopError = await stopBenchmarkSession(session);
+	if (primaryError) {
+		throw primaryError;
+	}
+	if (stopError) {
+		throw stopError;
+	}
+	return result!;
 };
 
 const mean = (values: number[]) =>
 	values.reduce((acc, value) => acc + value, 0) / values.length;
 
-const batchSizes = parseNumberList(process.env.SWEEP_BATCH_SIZES, [
-	256,
-	512,
-	1024,
-	4096,
-	16384,
-	65536,
-]);
+const batchSizes = parseNumberList(
+	process.env.SWEEP_BATCH_SIZES,
+	[256, 512, 1024, 4096, 16384, 65536],
+);
 const entryCount = parsePositiveInteger(process.env.SWEEP_ENTRY_COUNT, 20_000);
 const timeoutMs = parsePositiveInteger(process.env.SWEEP_TIMEOUT, 120_000);
 const warmupRuns = parseNonNegativeInteger(process.env.SWEEP_WARMUP_RUNS, 0);
 const measuredRuns = parsePositiveInteger(process.env.SWEEP_RUNS, 1);
-const assertMaxRatio = parseOptionalPositiveFloat(process.env.SWEEP_ASSERT_MAX_RATIO);
+const assertMaxRatio = parseOptionalPositiveFloat(
+	process.env.SWEEP_ASSERT_MAX_RATIO,
+);
 const assertStartSyncForBatchGte = parseOptionalPositiveInteger(
 	process.env.SWEEP_ASSERT_REQUIRE_STARTSYNC_FOR_BATCH_GTE,
 );
@@ -333,6 +386,7 @@ const runBatchTasks = async (sizes: number[]) => {
 			startSyncTotal: counterTotals.startSync,
 			moreSymbolsTotal: counterTotals.moreSymbols,
 			requestAllTotal: counterTotals.requestAll,
+			exchangeHeadsTotal: counterTotals.exchangeHeads,
 			requestMaybeSyncTotal: counterTotals.requestMaybeSync,
 			requestMaybeSyncCoordinateTotal: counterTotals.requestMaybeSyncCoordinate,
 		});
@@ -344,9 +398,12 @@ const runBatchTasks = async (sizes: number[]) => {
 const runIsolatedBatchTask = async (batchSize: number): Promise<BatchTask> => {
 	// Fixed-key test sessions can leave transport work in-process; isolate
 	// batches while keeping the parent responsible for combined assertions.
+	const childExecArgv = process.execArgv.includes("--trace-uncaught")
+		? process.execArgv
+		: [...process.execArgv, "--trace-uncaught"];
 	const child = spawn(
 		process.execPath,
-		[...process.execArgv, fileURLToPath(import.meta.url)],
+		[...childExecArgv, fileURLToPath(import.meta.url)],
 		{
 			env: {
 				...process.env,
@@ -412,10 +469,11 @@ if (assertStartSyncForBatchGte != null) {
 	for (const task of tasks) {
 		if (
 			task.batchSize >= assertStartSyncForBatchGte &&
-			task.startSyncTotal === 0
+			task.startSyncTotal === 0 &&
+			task.exchangeHeadsTotal === 0
 		) {
 			failures.push(
-				`batch ${task.batchSize} produced zero StartSync messages (expected rateless path)`,
+				`batch ${task.batchSize} produced zero StartSync or repair exchange-head messages`,
 			);
 		}
 	}
@@ -424,7 +482,9 @@ if (assertStartSyncForBatchGte != null) {
 for (const [batchSize, maxMeanMs] of assertMaxMeanByBatch) {
 	const task = tasks.find((x) => x.batchSize === batchSize);
 	if (!task) {
-		failures.push(`missing configured batch size ${batchSize} for max mean assertion`);
+		failures.push(
+			`missing configured batch size ${batchSize} for max mean assertion`,
+		);
 		continue;
 	}
 	if (task.mean_ms > maxMeanMs) {
@@ -457,6 +517,7 @@ if (process.env.BENCH_JSON === "1") {
 			startSync: task.startSyncTotal,
 			moreSymbols: task.moreSymbolsTotal,
 			requestAll: task.requestAllTotal,
+			exchangeHeads: task.exchangeHeadsTotal,
 			requestMaybeSync: task.requestMaybeSyncTotal,
 			requestMaybeSyncCoordinate: task.requestMaybeSyncCoordinateTotal,
 		})),

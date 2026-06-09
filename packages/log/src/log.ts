@@ -12,7 +12,13 @@ import {
 	randomBytes,
 	sha256Base64Sync,
 } from "@peerbit/crypto";
-import { type Indices } from "@peerbit/indexer-interface";
+import {
+	BoolQuery,
+	type Indices,
+	Or,
+	StringMatch,
+	StringMatchMethod,
+} from "@peerbit/indexer-interface";
 import { type CryptoKeychain } from "@peerbit/keychain";
 import { type Change } from "./change.js";
 import {
@@ -715,10 +721,14 @@ export class Log<T> {
 			timeout?: number;
 			onChange?: OnChange<T>;
 			reset?: boolean;
+			skipExistingCutCheck?: boolean;
 		},
 	): Promise<void> {
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
+		let knownMissingHashes: Set<string> | undefined;
+		let prefetchedHeadGids: Set<string> | undefined;
+		let prefetchedHeadsByGid: Map<string, JoinableEntry[]> | undefined;
 
 		const fromCache = new Map<string, string[] | null>();
 		const resolveRemoteFrom = async (hash: string, signal?: AbortSignal) => {
@@ -749,19 +759,22 @@ export class Log<T> {
 			for (const element of entries) references.set(element.hash, element);
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) return;
-			const existingHashes = options?.reset
-				? new Set<string>()
-				: await this.entryIndex.hasMany(
-						entriesOrLog.map((element) =>
-							typeof element === "string"
-								? element
-								: element instanceof Entry
-									? element.hash
-									: element instanceof ShallowEntry
-										? element.hash
-										: element.entry.hash,
-						),
-					);
+			const inputHashes = entriesOrLog.map((element) =>
+				typeof element === "string"
+					? element
+					: element instanceof Entry
+						? element.hash
+						: element instanceof ShallowEntry
+							? element.hash
+							: element.entry.hash,
+			);
+			const existingHashes =
+				options?.reset || this.entryIndex.length === 0
+					? new Set<string>()
+					: await this.hasManyEntries(inputHashes);
+			knownMissingHashes = new Set(
+				inputHashes.filter((hash) => !existingHashes.has(hash)),
+			);
 
 			entries = [];
 			for (const element of entriesOrLog) {
@@ -844,11 +857,86 @@ export class Log<T> {
 			entries = all;
 		}
 
+		if (
+			!this.entryIndex.properties.nativeGraph?.useHeads &&
+			entries.length > 0 &&
+			!options?.reset &&
+			options?.skipExistingCutCheck !== true
+		) {
+			const gids = [...new Set(entries.map((entry) => entry.meta.gid))];
+			prefetchedHeadGids = new Set(gids);
+			prefetchedHeadsByGid = new Map();
+			if (this.entryIndex.length > 0) {
+				const batchSize = 64;
+				for (let i = 0; i < gids.length; i += batchSize) {
+					const batch = gids.slice(i, i + batchSize);
+					const query = [
+						new BoolQuery({ key: "head", value: true }),
+						batch.length === 1
+							? new StringMatch({
+									key: ["meta", "gid"],
+									value: batch[0]!,
+									caseInsensitive: false,
+									method: StringMatchMethod.exact,
+								})
+							: new Or(
+									batch.map(
+										(gid) =>
+											new StringMatch({
+												key: ["meta", "gid"],
+												value: gid,
+												caseInsensitive: false,
+												method: StringMatchMethod.exact,
+											}),
+									),
+								),
+					];
+					const heads = await this.entryIndex
+						.iterate(query, undefined, {
+							type: "shape",
+							shape: ENTRY_JOIN_SHAPE,
+						})
+						.all();
+					for (const head of heads) {
+						const gid = head.meta.gid;
+						let existing = prefetchedHeadsByGid.get(gid);
+						if (!existing) {
+							existing = [];
+							prefetchedHeadsByGid.set(gid, existing);
+						}
+						existing.push(head);
+					}
+				}
+			}
+		}
+
 		const heads: Map<string, boolean> = new Map();
 		for (const entry of entries) {
 			if (heads.has(entry.hash)) continue;
 			heads.set(entry.hash, true);
 			for (const next of await entry.getNext()) heads.set(next, false);
+		}
+
+		const canUseFlatAppendFastPath =
+			knownMissingHashes &&
+			entries.every(
+				(entry) =>
+					knownMissingHashes!.has(entry.hash) &&
+					entry.meta.type !== EntryType.CUT &&
+					entry.meta.next.length === 0,
+			);
+		if (canUseFlatAppendFastPath) {
+			await this.joinKnownMissingFlatAppends(entries, {
+				heads,
+				prefetchedHeadGids,
+				prefetchedHeadsByGid,
+				skipExistingCutCheck:
+					options?.reset === true || options?.skipExistingCutCheck === true,
+				verifySignatures: options?.verifySignatures,
+				trim: options?.trim,
+				onChange: options?.onChange,
+			});
+			return;
 		}
 
 		for (const entry of entries) {
@@ -863,6 +951,9 @@ export class Log<T> {
 				references,
 				isHead,
 				reset: options?.reset,
+				knownMissingHashes,
+				prefetchedHeadGids,
+				prefetchedHeadsByGid,
 				verifySignatures: options?.verifySignatures,
 				trim: options?.trim,
 				onChange: options?.onChange,
@@ -874,6 +965,115 @@ export class Log<T> {
 				this._joining.delete(entry.hash);
 			});
 			await p;
+		}
+	}
+
+	private async hasManyEntries(hashes: string[], batchSize = 512) {
+		if (hashes.length === 0) {
+			return new Set<string>();
+		}
+		const uniqueHashes = [...new Set(hashes)];
+		if (uniqueHashes.length <= batchSize) {
+			return this.entryIndex.hasMany(uniqueHashes);
+		}
+
+		const result = new Set<string>();
+		for (let i = 0; i < uniqueHashes.length; i += batchSize) {
+			const found = await this.entryIndex.hasMany(
+				uniqueHashes.slice(i, i + batchSize),
+			);
+			for (const hash of found) {
+				result.add(hash);
+			}
+		}
+		return result;
+	}
+
+	private async joinKnownMissingFlatAppends(
+		entries: Entry<T>[],
+		options: {
+			heads: Map<string, boolean>;
+			prefetchedHeadGids?: Set<string>;
+			prefetchedHeadsByGid?: Map<string, JoinableEntry[]>;
+			skipExistingCutCheck?: boolean;
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+			onChange?: OnChange<T>;
+		},
+	) {
+		const joined = new Set<string>();
+		for (const entry of entries) {
+			if (joined.has(entry.hash)) {
+				continue;
+			}
+			joined.add(entry.hash);
+
+			entry.init(this);
+
+			if (options.verifySignatures && !(await entry.verifySignatures())) {
+				throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
+			}
+
+			const headsWithGid: JoinableEntry[] = options.skipExistingCutCheck
+				? []
+				: options.prefetchedHeadGids?.has(entry.meta.gid)
+					? (options.prefetchedHeadsByGid?.get(entry.meta.gid) ?? [])
+					: await this.entryIndex
+							.getHeads(entry.meta.gid, {
+								type: "shape",
+								shape: ENTRY_JOIN_SHAPE,
+							})
+							.all();
+			let shadowedByCut = false;
+			for (const v of headsWithGid) {
+				if (
+					v.meta.type === EntryType.CUT &&
+					v.meta.next.includes(entry.hash) &&
+					Sorting.compare(entry, v, this._sortFn) < 0
+				) {
+					shadowedByCut = true;
+					break;
+				}
+			}
+			if (shadowedByCut) {
+				continue;
+			}
+
+			if (this._canAppend && !(await this._canAppend(entry))) {
+				continue;
+			}
+
+			const clock = await entry.getClock();
+			this._hlc.update(clock.timestamp);
+
+			await this._entryIndex.put(entry, {
+				unique: options.skipExistingCutCheck !== true,
+				isHead: options.heads.get(entry.hash)!,
+				toMultiHash: true,
+			});
+
+			const pendingDeletes: (
+				| PendingDelete<T>
+				| { entry: Entry<T>; fn: undefined }
+			)[] = [];
+			const trimmed = await this.trim(options.trim);
+			if (trimmed) {
+				for (const removedEntry of trimmed) {
+					pendingDeletes.push({ entry: removedEntry, fn: undefined });
+				}
+			}
+
+			const removed = pendingDeletes.map((x) => x.entry);
+			await options.onChange?.({
+				added: [{ head: options.heads.get(entry.hash)!, entry }],
+				removed,
+			});
+			await this._onChange?.({
+				added: [{ head: options.heads.get(entry.hash)!, entry }],
+				removed,
+			});
+
+			await Promise.all(pendingDeletes.map((x) => x.fn?.()));
 		}
 	}
 
@@ -893,6 +1093,9 @@ export class Log<T> {
 			references?: Map<string, Entry<T>>;
 			isHead: boolean;
 			reset?: boolean;
+			knownMissingHashes?: Set<string>;
+			prefetchedHeadGids?: Set<string>;
+			prefetchedHeadsByGid?: Map<string, JoinableEntry[]>;
 			onChange?: OnChange<T>;
 			remote?: GetOptions["remote"];
 			resolveRemoteFrom?: (
@@ -910,6 +1113,7 @@ export class Log<T> {
 		}
 
 		if (
+			!options.knownMissingHashes?.has(entry.hash) &&
 			(await this.entryIndex.getShallow(entry.hash)) != null &&
 			!options.reset
 		) {
@@ -924,9 +1128,13 @@ export class Log<T> {
 			}
 		}
 
-		const headsWithGid: JoinableEntry[] = await this.entryIndex
-			.getHeads(entry.meta.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
-			.all();
+		const headsWithGid: JoinableEntry[] = options.prefetchedHeadGids?.has(
+			entry.meta.gid,
+		)
+			? (options.prefetchedHeadsByGid?.get(entry.meta.gid) ?? [])
+			: await this.entryIndex
+					.getHeads(entry.meta.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
+					.all();
 		if (headsWithGid) {
 			for (const v of headsWithGid) {
 				// TODO second argument should be a time compare instead? what about next nexts?
@@ -953,7 +1161,11 @@ export class Log<T> {
 					await prev;
 					continue;
 				}
-				if ((await this.entryIndex.getShallow(a)) != null && !options.reset) {
+				if (
+					!options.knownMissingHashes?.has(a) &&
+					(await this.entryIndex.getShallow(a)) != null &&
+					!options.reset
+				) {
 					continue;
 				}
 

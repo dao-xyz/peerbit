@@ -58,11 +58,7 @@ export type NativeLogGraph = {
 	clear: () => void;
 	heads: (gid?: string) => string[];
 	countHasNext: (next: string, excludeHash?: string) => number;
-	shadowedGids: (
-		gid: string,
-		next: string[],
-		excludeHash?: string,
-	) => string[];
+	shadowedGids: (gid: string, next: string[], excludeHash?: string) => string[];
 };
 
 type ResolveFullyOptions =
@@ -326,10 +322,9 @@ export class EntryIndex<T> {
 				const resolved = await Promise.all(
 					hashes.map((hash) => this.resolve(hash, resolveInFullOptions)),
 				);
-				return resolved.filter((entry) => !!entry) as ReturnTypeFromResolveOptions<
-					R,
-					T
-				>[];
+				return resolved.filter(
+					(entry) => !!entry,
+				) as ReturnTypeFromResolveOptions<R, T>[];
 			}
 
 			const shallow = await Promise.all(
@@ -380,7 +375,9 @@ export class EntryIndex<T> {
 			? ({ hash: true } as const)
 			: ((options as { shape: Shape })?.shape as Shape);
 
-		let iteratorRef: ReturnType<typeof this.properties.index.iterate> | undefined;
+		let iteratorRef:
+			| ReturnType<typeof this.properties.index.iterate>
+			| undefined;
 		let iteratorPromise:
 			| Promise<ReturnType<typeof this.properties.index.iterate>>
 			| undefined;
@@ -514,6 +511,7 @@ export class EntryIndex<T> {
 
 	async hasMany(hashes: Iterable<string>) {
 		const batchSize = 64;
+		const directLookupThreshold = batchSize;
 		const existing = new Set<string>();
 		const missing: string[] = [];
 		for (const hash of new Set([...hashes].filter(Boolean))) {
@@ -525,6 +523,26 @@ export class EntryIndex<T> {
 		}
 
 		if (missing.length === 0) {
+			return existing;
+		}
+
+		if (this._length === 0) {
+			return existing;
+		}
+
+		if (missing.length > directLookupThreshold) {
+			await this.flushPendingWrites(missing);
+			for (let i = 0; i < missing.length; i++) {
+				if (i > 0 && i % batchSize === 0) {
+					await this.yieldLargeHasMany();
+				}
+				const result = await this.properties.index.get(toId(missing[i]!), {
+					shape: { hash: true },
+				});
+				if (result) {
+					existing.add(result.value.hash);
+				}
+			}
 			return existing;
 		}
 
@@ -563,6 +581,13 @@ export class EntryIndex<T> {
 		}
 
 		return existing;
+	}
+
+	private async yieldLargeHasMany() {
+		await new Promise<void>((resolve) => {
+			const timer = setTimeout(resolve, 0);
+			timer.unref?.();
+		});
 	}
 
 	async put(
@@ -692,7 +717,9 @@ export class EntryIndex<T> {
 			(sum, entry) => sum + (entry.payloadSize || 0),
 			0,
 		);
-		return typeof indexed === "bigint" ? indexed + BigInt(pending) : indexed + pending;
+		return typeof indexed === "bigint"
+			? indexed + BigInt(pending)
+			: indexed + pending;
 	}
 
 	private async privateUpdateNextHeadProperty(

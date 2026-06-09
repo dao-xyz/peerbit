@@ -22,7 +22,11 @@ import {
 } from "@peerbit/riblt";
 import type { RequestContext } from "@peerbit/rpc";
 import { SilentDelivery } from "@peerbit/stream-interface";
-import { type EntryWithRefs } from "../exchange-heads.js";
+import {
+	EXCHANGE_HEADS_REPAIR_HINT,
+	type EntryWithRefs,
+	createExchangeHeadsMessages,
+} from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
 import type {
@@ -39,10 +43,7 @@ import {
 	emitSyncProfileEvent,
 	syncProfileStart,
 } from "./profile.js";
-import {
-	SYNC_MESSAGE_PRIORITY,
-	SimpleSyncronizer,
-} from "./simple.js";
+import { SYNC_MESSAGE_PRIORITY, SimpleSyncronizer } from "./simple.js";
 
 export const logger = loggerFn("peerbit:shared-log:rateless");
 
@@ -77,6 +78,9 @@ class SymbolSerialized implements SSymbol {
 const CODED_SYMBOL_WORDS = 3;
 const CODED_SYMBOL_WORD_BYTES = 8;
 const CODED_SYMBOL_BYTES = CODED_SYMBOL_WORDS * CODED_SYMBOL_WORD_BYTES;
+// Full-replica RequestAll is already a fallback after IBLT decode failed.
+// Use larger exchange-head batches to avoid many independent join/index passes.
+const REQUEST_ALL_EXCHANGE_HEADS_MAX_MESSAGE_SIZE = 4e6;
 const BIG_UINT64_ARRAY_IS_LITTLE_ENDIAN =
 	typeof BigUint64Array !== "undefined" &&
 	new Uint8Array(new BigUint64Array([1n]).buffer)[0] === 1;
@@ -1614,14 +1618,37 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 			return true;
 		} else if (message instanceof RequestAll) {
-			const p = this.outgoingSyncProcesses.get(getSyncIdString(message));
+			const syncId = getSyncIdString(message);
+			const p = this.outgoingSyncProcesses.get(syncId);
 			if (!p) {
 				return true;
 			}
-			await this.simple.onMaybeMissingEntries({
-				entries: p.outgoing,
-				targets: [context.from!.hashcode()],
-			});
+			const sendStartedAt = syncProfileStart(profile);
+			let messages = 0;
+			for await (const exchangeMessage of createExchangeHeadsMessages(
+				this.properties.log,
+				[...p.outgoing.keys()],
+				{ maxMessageSize: REQUEST_ALL_EXCHANGE_HEADS_MAX_MESSAGE_SIZE },
+			)) {
+				messages += 1;
+				exchangeMessage.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+				await this.properties.rpc.send(exchangeMessage, {
+					mode: new SilentDelivery({
+						to: [context.from!.hashcode()],
+						redundancy: 1,
+					}),
+					priority: SYNC_MESSAGE_PRIORITY,
+				});
+			}
+			if (profile) {
+				emitSyncProfileDuration(profile, sendStartedAt, {
+					name: "rateless.sendRequestAllEntries",
+					entries: p.outgoing.size,
+					messages,
+					targets: 1,
+					syncId,
+				});
+			}
 			return true;
 		}
 		return this.simple.onMessage(message, context);
