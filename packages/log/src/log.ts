@@ -857,9 +857,18 @@ export class Log<T> {
 			entries = all;
 		}
 
+		const allEntriesAreFlatAppends = entries.every(
+			(entry) => entry.meta.type !== EntryType.CUT && entry.meta.next.length === 0,
+		);
+		const canUseFlatAppendFastPath =
+			knownMissingHashes &&
+			entries.length > 1 &&
+			allEntriesAreFlatAppends &&
+			entries.every((entry) => knownMissingHashes!.has(entry.hash));
+
 		if (
+			canUseFlatAppendFastPath &&
 			!this.entryIndex.properties.nativeGraph?.useHeads &&
-			entries.length > 0 &&
 			!options?.reset &&
 			options?.skipExistingCutCheck !== true
 		) {
@@ -917,14 +926,6 @@ export class Log<T> {
 			for (const next of await entry.getNext()) heads.set(next, false);
 		}
 
-		const canUseFlatAppendFastPath =
-			knownMissingHashes &&
-			entries.every(
-				(entry) =>
-					knownMissingHashes!.has(entry.hash) &&
-					entry.meta.type !== EntryType.CUT &&
-					entry.meta.next.length === 0,
-			);
 		if (canUseFlatAppendFastPath) {
 			await this.joinKnownMissingFlatAppends(entries, {
 				heads,
@@ -1008,73 +1009,99 @@ export class Log<T> {
 			}
 			joined.add(entry.hash);
 
-			entry.init(this);
-
-			if (options.verifySignatures && !(await entry.verifySignatures())) {
-				throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
-			}
-
-			const headsWithGid: JoinableEntry[] = options.skipExistingCutCheck
-				? []
-				: options.prefetchedHeadGids?.has(entry.meta.gid)
-					? (options.prefetchedHeadsByGid?.get(entry.meta.gid) ?? [])
-					: await this.entryIndex
-							.getHeads(entry.meta.gid, {
-								type: "shape",
-								shape: ENTRY_JOIN_SHAPE,
-							})
-							.all();
-			let shadowedByCut = false;
-			for (const v of headsWithGid) {
-				if (
-					v.meta.type === EntryType.CUT &&
-					v.meta.next.includes(entry.hash) &&
-					Sorting.compare(entry, v, this._sortFn) < 0
-				) {
-					shadowedByCut = true;
-					break;
-				}
-			}
-			if (shadowedByCut) {
+			const prev = this._joining.get(entry.hash);
+			if (prev) {
+				await prev;
 				continue;
 			}
 
-			if (this._canAppend && !(await this._canAppend(entry))) {
-				continue;
-			}
-
-			const clock = await entry.getClock();
-			this._hlc.update(clock.timestamp);
-
-			await this._entryIndex.put(entry, {
-				unique: options.skipExistingCutCheck !== true,
-				isHead: options.heads.get(entry.hash)!,
-				toMultiHash: true,
+			const p = this.joinKnownMissingFlatAppend(entry, options);
+			this._joining.set(entry.hash, p);
+			p.finally(() => {
+				this._joining.delete(entry.hash);
 			});
-
-			const pendingDeletes: (
-				| PendingDelete<T>
-				| { entry: Entry<T>; fn: undefined }
-			)[] = [];
-			const trimmed = await this.trim(options.trim);
-			if (trimmed) {
-				for (const removedEntry of trimmed) {
-					pendingDeletes.push({ entry: removedEntry, fn: undefined });
-				}
-			}
-
-			const removed = pendingDeletes.map((x) => x.entry);
-			await options.onChange?.({
-				added: [{ head: options.heads.get(entry.hash)!, entry }],
-				removed,
-			});
-			await this._onChange?.({
-				added: [{ head: options.heads.get(entry.hash)!, entry }],
-				removed,
-			});
-
-			await Promise.all(pendingDeletes.map((x) => x.fn?.()));
+			await p;
 		}
+	}
+
+	private async joinKnownMissingFlatAppend(
+		entry: Entry<T>,
+		options: {
+			heads: Map<string, boolean>;
+			prefetchedHeadGids?: Set<string>;
+			prefetchedHeadsByGid?: Map<string, JoinableEntry[]>;
+			skipExistingCutCheck?: boolean;
+			verifySignatures?: boolean;
+			trim?: TrimOptions;
+			onChange?: OnChange<T>;
+		},
+	) {
+		entry.init(this);
+
+		if (options.verifySignatures && !(await entry.verifySignatures())) {
+			throw new Error(`Invalid signature entry with hash "${entry.hash}"`);
+		}
+
+		const headsWithGid: JoinableEntry[] = options.skipExistingCutCheck
+			? []
+			: options.prefetchedHeadGids?.has(entry.meta.gid)
+				? (options.prefetchedHeadsByGid?.get(entry.meta.gid) ?? [])
+				: await this.entryIndex
+						.getHeads(entry.meta.gid, {
+							type: "shape",
+							shape: ENTRY_JOIN_SHAPE,
+						})
+						.all();
+		let shadowedByCut = false;
+		for (const v of headsWithGid) {
+			if (
+				v.meta.type === EntryType.CUT &&
+				v.meta.next.includes(entry.hash) &&
+				Sorting.compare(entry, v, this._sortFn) < 0
+			) {
+				shadowedByCut = true;
+				break;
+			}
+		}
+		if (shadowedByCut) {
+			return;
+		}
+
+		if (this._canAppend && !(await this._canAppend(entry))) {
+			return;
+		}
+
+		const clock = await entry.getClock();
+		this._hlc.update(clock.timestamp);
+
+		await this._entryIndex.put(entry, {
+			unique: options.skipExistingCutCheck !== true,
+			isHead: options.heads.get(entry.hash)!,
+			toMultiHash: true,
+		});
+
+		const pendingDeletes: (
+			| PendingDelete<T>
+			| { entry: Entry<T>; fn: undefined }
+		)[] = [];
+		const trimmed = await this.trim(options.trim);
+		if (trimmed) {
+			for (const removedEntry of trimmed) {
+				pendingDeletes.push({ entry: removedEntry, fn: undefined });
+			}
+		}
+
+		const removed = pendingDeletes.map((x) => x.entry);
+		await options.onChange?.({
+			added: [{ head: options.heads.get(entry.hash)!, entry }],
+			removed,
+		});
+		await this._onChange?.({
+			added: [{ head: options.heads.get(entry.hash)!, entry }],
+			removed,
+		});
+
+		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
 	}
 
 	/**
