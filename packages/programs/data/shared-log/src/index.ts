@@ -556,6 +556,7 @@ const CURRENT_HEAD_PRUNE_RETRY_SCHEDULE_MS = [
 const APPEND_BACKFILL_RETRY_SCHEDULE_MS = [0, 1_000, 3_000, 7_000];
 const RECENT_KNOWN_REPAIR_SUPPRESSION_MS = 30_000;
 const LARGE_JOIN_REPAIR_SYNC_GRACE_MS = 120_000;
+const LARGE_JOIN_REPAIR_SYNC_DEFER_ENTRY_COUNT = REPAIR_SWEEP_ENTRY_BATCH_SIZE;
 const JOIN_AUTHORITATIVE_REPAIR_DELAY_MS = 2_000;
 const JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS = [
 	JOIN_AUTHORITATIVE_REPAIR_DELAY_MS,
@@ -566,6 +567,8 @@ const JOIN_AUTHORITATIVE_REPAIR_SWEEP_DELAYS_MS = [
 const APPEND_BACKFILL_DELAY_MS = 500;
 const ASSUME_SYNCED_REPAIR_SUPPRESSION_MS = 5_000;
 const REPAIR_CONFIRMATION_HASH_BATCH_SIZE = 1_024;
+const REPAIR_EXCHANGE_HEADS_MAX_HEADS = 64;
+const EXCHANGE_HEADS_GROUP_PROCESSING_CONCURRENCY = 16;
 
 type RepairDispatchMode =
 	| "join-warmup"
@@ -668,7 +671,7 @@ const getRepairTransportForAttempt = (
 	mode: RepairDispatchMode,
 	attemptIndex: number,
 ): RepairTransportMode => {
-	if (mode === "churn") {
+	if (mode === "churn" || mode === "join-warmup") {
 		return "simple";
 	}
 	return attemptIndex === 0 ? "rateless" : "simple";
@@ -1398,11 +1401,9 @@ export class SharedLog<
 			await this.getFullReplicaRepairCandidates(undefined, {
 				includeSubscribers: false,
 			});
-		if (minReplicasValue >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
-			for (const peer of fullReplicaDeliveryCandidates) {
-				if (!leaders.has(peer)) {
-					leaders.set(peer, { intersecting: true });
-				}
+		for (const peer of fullReplicaDeliveryCandidates) {
+			if (!leaders.has(peer)) {
+				leaders.set(peer, { intersecting: true });
 			}
 		}
 
@@ -2968,14 +2969,11 @@ export class SharedLog<
 			if (leader === selfHash || details.intersecting === false) {
 				continue;
 			}
-			if (
-				confirmed?.has(leader) ||
-				this.isEntryRecentlyKnownByPeer(
-					hash,
-					leader,
-					RECENT_KNOWN_REPAIR_SUPPRESSION_MS,
-				)
-			) {
+			// A generic "peer recently had this entry" hint is not enough to make a
+			// delete safe during range churn: that peer may be concurrently pruning
+			// the same entry under its newer local range view. Only count explicit
+			// checked-prune confirmations here.
+			if (confirmed?.has(leader)) {
 				known.push(leader);
 			}
 		}
@@ -3148,7 +3146,9 @@ export class SharedLog<
 		entries: Map<string, EntryReplicated<R>>,
 	) {
 		const hashes = [...entries.keys()];
-		for await (const message of createExchangeHeadsMessages(this.log, hashes)) {
+		for await (const message of createExchangeHeadsMessages(this.log, hashes, {
+			maxHeads: REPAIR_EXCHANGE_HEADS_MAX_HEADS,
+		})) {
 			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
 				priority: SYNC_MESSAGE_PRIORITY,
@@ -3181,13 +3181,17 @@ export class SharedLog<
 		for await (const message of createExchangeHeadsMessages(
 			this.log,
 			this.iterateUnknownLogEntriesForTarget(target),
-			{ maxMessageSize: FULL_COVERAGE_REPAIR_EXCHANGE_HEADS_MAX_MESSAGE_SIZE },
+			{
+				maxHeads: REPAIR_EXCHANGE_HEADS_MAX_HEADS,
+				maxMessageSize: FULL_COVERAGE_REPAIR_EXCHANGE_HEADS_MAX_MESSAGE_SIZE,
+			},
 		)) {
 			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			queuedTotal += message.heads.length;
 			await this.rpc.send(message, {
 				priority: SYNC_MESSAGE_PRIORITY,
-				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+				responsePriority: ACK_CONTROL_PRIORITY,
+				mode: new AcknowledgeDelivery({ to: [target], redundancy: 1 }),
 			});
 		}
 
@@ -3809,10 +3813,6 @@ export class SharedLog<
 					await this.getFullReplicaRepairCandidates(pendingRepairPeers, {
 						includeSubscribers: false,
 					});
-				const fullReplicaRepairCandidateCount = Math.max(
-					1,
-					fullReplicaRepairCandidates.size,
-				);
 				const liveRepairCandidates = new Set<string>([
 					this.node.identity.publicKey.hashcode(),
 				]);
@@ -3881,7 +3881,6 @@ export class SharedLog<
 					}
 				};
 
-				let scannedRepairSweepCandidate = false;
 				let enqueuedPrune = false;
 				for await (const entryReplicated of this.iterateRepairSweepCandidates(
 					pendingRepairPeers,
@@ -3889,7 +3888,6 @@ export class SharedLog<
 						forceFullScan: pendingModes.has("churn"),
 					},
 				)) {
-					scannedRepairSweepCandidate = true;
 					const gid = entryReplicated.gid;
 					const knownPeers = this._gidPeersHistory.get(gid);
 					const requestedReplicas =
@@ -3904,8 +3902,7 @@ export class SharedLog<
 								continue;
 							}
 							if (
-								fullReplicaRepairCandidates.has(peer) &&
-								requestedReplicas >= fullReplicaRepairCandidateCount
+								fullReplicaRepairCandidates.has(peer)
 							) {
 								// Full-replica catch-up does not need a per-entry leader query:
 								// every full replica candidate should receive the entry.
@@ -3995,8 +3992,7 @@ export class SharedLog<
 								optimisticPeers?.has(peer) === true;
 							const isCoveredByFullReplicaRepair =
 								mode === "join-authoritative" &&
-								fullReplicaRepairCandidates.has(peer) &&
-								requestedReplicas >= fullReplicaRepairCandidateCount;
+								fullReplicaRepairCandidates.has(peer);
 							const isUnderCoveredByLiveRepairCandidates =
 								mode === "join-authoritative" &&
 								liveRepairCandidates.has(peer) &&
@@ -4058,13 +4054,10 @@ export class SharedLog<
 						const replacement = nextTargets.get(target) ?? new Map();
 						const existing = frontierTargets?.get(target);
 						if (existing && existing.size > 0) {
-							if (scannedRepairSweepCandidate) {
-								for (const hash of [...existing.keys()]) {
-									if (!replacement.has(hash)) {
-										existing.delete(hash);
-									}
-								}
-							}
+							// Tracked repair frontiers are confirmation-owned. A later sweep
+							// can run with a stale/intermediate range view during churn; treating
+							// its missing entries as removals can erase needed repair before the
+							// target has confirmed receipt.
 							for (const [hash, entry] of replacement) {
 								existing.set(hash, entry);
 							}
@@ -6183,16 +6176,15 @@ export class SharedLog<
 						}
 						return;
 					}
+
+					await Promise.all(
+						filteredHeads.map((head) => head.entry.getMeta()),
+					);
+
 					if (isRepairHint) {
 						const repairLeaders = await getFullReplicaRepairLeaders();
 						const acceptsFullReplicaRepairBatch =
-							repairLeaders.has(selfHash) &&
-							repairLeaders.has(fromHash) &&
-							filteredHeads.every(
-								(head) =>
-									decodeReplicas(head.entry).getValue(this) >=
-									Math.max(1, repairLeaders.size),
-							);
+							repairLeaders.has(selfHash) && repairLeaders.has(fromHash);
 						if (acceptsFullReplicaRepairBatch) {
 							await this.syncronizer.onReceivedEntries({
 								entries: filteredHeads,
@@ -6219,7 +6211,7 @@ export class SharedLog<
 					}
 
 					const groupedByGid = await groupByGid(filteredHeads);
-					const promises: Promise<void>[] = [];
+					const groupTasks: (() => Promise<void>)[] = [];
 					const postJoinTasks: (() => Promise<void>)[] = [];
 					if (existingHeadsToPrune.length > 0) {
 						postJoinTasks.push(() =>
@@ -6250,9 +6242,6 @@ export class SharedLog<
 								this,
 								entries.map((x) => x.entry),
 							);
-							const minReplicasFromNewEntries = Math.min(
-								...entries.map((x) => decodeReplicas(x.entry).getValue(this)),
-							);
 
 							const maxMaxReplicas = Math.max(
 								maxReplicasFromHead,
@@ -6274,8 +6263,7 @@ export class SharedLog<
 								const repairLeaders = await getFullReplicaRepairLeaders();
 								if (
 									repairLeaders.has(selfHash) &&
-									repairLeaders.has(fromHash) &&
-									minReplicasFromNewEntries >= Math.max(1, repairLeaders.size)
+									repairLeaders.has(fromHash)
 								) {
 									acceptsFullReplicaRepair = true;
 									isLeader = true;
@@ -6512,9 +6500,30 @@ export class SharedLog<
 								});
 							}
 						};
-						promises.push(fn()); // we do this concurrently since waitForIsLeader might be a blocking operation for some entries
+						groupTasks.push(fn);
 					}
-					await Promise.all(promises);
+					let nextGroupTask = 0;
+					const groupWorkerCount = Math.min(
+						EXCHANGE_HEADS_GROUP_PROCESSING_CONCURRENCY,
+						groupTasks.length,
+					);
+					await Promise.all(
+						Array.from({ length: groupWorkerCount }, async () => {
+							for (;;) {
+								if (this.closed || this._closeController.signal.aborted) {
+									return;
+								}
+								const task = groupTasks[nextGroupTask++];
+								if (!task) {
+									return;
+								}
+								await task();
+								if (nextGroupTask % groupWorkerCount === 0) {
+									await this.yieldRepairCoordinatePersistence();
+								}
+							}
+						}),
+					);
 					if (this.closed || this._closeController.signal.aborted) {
 						return;
 					}
@@ -8739,7 +8748,7 @@ export class SharedLog<
 		const deferJoinRepairToSync =
 			useJoinWarmupFastPath &&
 			(await this.entryCoordinatesIndex.getSize()) >=
-				this.repairSweepTargetBufferSize;
+				LARGE_JOIN_REPAIR_SYNC_DEFER_ENTRY_COUNT;
 		if (deferJoinRepairToSync) {
 			this._assumeSyncedRepairSuppressedUntil = Math.max(
 				this._assumeSyncedRepairSuppressedUntil,

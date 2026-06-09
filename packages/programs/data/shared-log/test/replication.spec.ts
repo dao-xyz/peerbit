@@ -2880,6 +2880,8 @@ testSetups.forEach((setup) => {
 							let dispatchStub: sinon.SinonStub | undefined;
 							let sendStub: sinon.SinonStub | undefined;
 							let findLeadersStub: sinon.SinonStub | undefined;
+							let fullReplicaCandidatesStub: sinon.SinonStub | undefined;
+							let sweepCandidatesStub: sinon.SinonStub | undefined;
 
 							try {
 								await init({
@@ -2910,6 +2912,25 @@ testSetups.forEach((setup) => {
 											.stub(db1.log as any, "sendMaybeMissingEntriesNow")
 											.callsFake(() => Promise.resolve());
 
+										const originalFullReplicaCandidates = (
+											db1.log as any
+										).getFullReplicaRepairCandidates.bind(db1.log);
+										fullReplicaCandidatesStub = sinon
+											.stub(
+												db1.log as any,
+												"getFullReplicaRepairCandidates",
+											)
+											.callsFake(async (...args: any[]) => {
+												const candidates =
+													await originalFullReplicaCandidates(...args);
+												if (partialSweepActive) {
+													candidates.delete(
+														session.peers[1].identity.publicKey.hashcode(),
+													);
+												}
+												return candidates;
+											});
+
 										const originalFindLeaders = (db1.log as any).findLeaders.bind(db1.log);
 										findLeadersStub = sinon
 											.stub(db1.log as any, "findLeaders")
@@ -2935,18 +2956,38 @@ testSetups.forEach((setup) => {
 									expect(getFrontierSize()).equal(entryCount);
 								}, commitReplicationWait);
 
-								partialSweepActive = true;
-								(db1.log as any).scheduleRepairSweep({
-									mode: "join-authoritative",
-									peers: new Set([joiner]),
-								});
-
-								await waitForResolved(async () => {
-									expect(partialFindCalls).greaterThan(0);
+								await waitForResolved(() => {
+									expect((db1.log as any)._repairSweepRunning).equal(false);
 								}, commitReplicationWait);
 
+								sweepCandidatesStub = sinon
+									.stub(db1.log as any, "iterateRepairSweepCandidates")
+									.callsFake(async function* () {
+										const iterator = db1.log.entryCoordinatesIndex.iterate({});
+										try {
+											const entries = await iterator.next(1);
+											for (const entry of entries) {
+												yield entry.value;
+											}
+										} finally {
+											await iterator.close();
+										}
+									});
+
+								partialSweepActive = true;
+								(db1.log as any)._repairSweepPendingModes.add(
+									"join-authoritative",
+								);
+								(db1.log as any)._repairSweepPendingPeersByMode
+									.get("join-authoritative")
+									.add(joiner);
+								await (db1.log as any).runRepairSweep();
+
+								expect(partialFindCalls).greaterThan(0);
 								expect(getFrontierSize()).equal(entryCount);
 							} finally {
+								sweepCandidatesStub?.restore();
+								fullReplicaCandidatesStub?.restore();
 								findLeadersStub?.restore();
 								sendStub?.restore();
 								dispatchStub?.restore();

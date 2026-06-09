@@ -72,11 +72,12 @@ const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be fas
 export const createExchangeHeadsMessages = async function* (
 	log: Log<any>,
 	heads: Iterable<Entry<any> | string> | AsyncIterable<Entry<any> | string>,
-	options?: { maxMessageSize?: number },
+	options?: { maxHeads?: number; maxMessageSize?: number },
 ): AsyncGenerator<ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: EntryWithRefs<any>[] = [];
 	const visitedHeads = new Set<string>();
+	const maxHeads = options?.maxHeads ?? Number.MAX_SAFE_INTEGER;
 	const maxMessageSize = options?.maxMessageSize ?? MAX_EXCHANGE_MESSAGE_SIZE;
 	for await (const fromHead of heads) {
 		let entry = fromHead instanceof Entry ? fromHead : await log.get(fromHead);
@@ -110,7 +111,7 @@ export const createExchangeHeadsMessages = async function* (
 		);
 
 		size += entry.size;
-		if (size > maxMessageSize) {
+		if (current.length >= maxHeads || size > maxMessageSize) {
 			size = 0;
 			yield new ExchangeHeadsMessage({
 				heads: current,

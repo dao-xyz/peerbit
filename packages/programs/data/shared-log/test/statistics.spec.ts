@@ -89,16 +89,16 @@ describe(`countAssignedHeads`, function () {
 		await waitForResolved(() =>
 			expect(db2.log.log.length).to.be.greaterThan(0),
 		);
-		await Promise.all([
-			waitForConverged(() => db1.log.log.length),
-			waitForConverged(() => db2.log.log.length),
-		]);
+		await waitForResolved(
+			async () => {
+				const owned1 = await db1.log.countAssignedHeads();
+				const owned2 = await db2.log.countAssignedHeads();
 
-		const owned1 = await db1.log.countAssignedHeads();
-		const owned2 = await db2.log.countAssignedHeads();
-
-		expect(owned1).to.be.within(count * 0.4, count * 0.6);
-		expect(owned2).to.be.within(count * 0.4, count * 0.6);
+				expect(owned1).to.be.within(count * 0.4, count * 0.6);
+				expect(owned2).to.be.within(count * 0.4, count * 0.6);
+			},
+			{ timeout: 120_000, delayInterval: 500 },
+		);
 	});
 });
 

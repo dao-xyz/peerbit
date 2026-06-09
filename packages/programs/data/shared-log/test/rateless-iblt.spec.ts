@@ -7,6 +7,10 @@ import {
 	type ReplicationDomainHash,
 	createReplicationDomainHash,
 } from "../src/index.js";
+import {
+	EXCHANGE_HEADS_REPAIR_HINT,
+	ExchangeHeadsMessage,
+} from "../src/exchange-heads.js";
 import { TransportMessage } from "../src/message.js";
 import {
 	MoreSymbols,
@@ -203,14 +207,20 @@ describe("rateless-iblt-syncronizer", () => {
 			const totalRequestAll =
 				countMessages(db1Messages.calls, RequestAll) +
 				countMessages(db2Messages.calls, RequestAll);
+			const totalRepairHeads = [...db1Messages.calls, ...db2Messages.calls].filter(
+				(x) =>
+					x instanceof ExchangeHeadsMessage &&
+					(x.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0,
+			).length;
 			const totalStartSync =
 				countMessages(db1Messages.calls, StartSync) +
 				countMessages(db2Messages.calls, StartSync);
 			// Direction can vary with scheduling, but behavior should remain:
-			// no incremental IBLT symbol exchange and at least one fallback/full-sync trigger.
+			// no incremental IBLT symbol exchange and at least one full-entry
+			// repair path, either via rateless RequestAll or direct repair heads.
 			expect(totalMoreSymbols).to.equal(0);
-			expect(totalRequestAll).to.be.greaterThan(0);
-			expect(totalStartSync).to.be.greaterThan(0);
+			expect(totalRequestAll + totalRepairHeads).to.be.greaterThan(0);
+			expect(totalStartSync + totalRepairHeads).to.be.greaterThan(0);
 		});
 	});
 

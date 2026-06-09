@@ -2741,7 +2741,10 @@ export const toRebalance = <R extends "u32" | "u64">(
 			});
 			try {
 				while (iterator.done() !== true) {
-					const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
+					const entries = await iterator.next(512);
+					if (entries.length === 0) {
+						break;
+					}
 					for (const entry of entries) {
 						yield entry.value;
 					}

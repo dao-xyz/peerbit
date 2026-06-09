@@ -21,7 +21,10 @@ import {
 	ready as ribltReady,
 } from "@peerbit/riblt";
 import type { RequestContext } from "@peerbit/rpc";
-import { SilentDelivery } from "@peerbit/stream-interface";
+import {
+	AcknowledgeDelivery,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	type EntryWithRefs,
@@ -79,8 +82,9 @@ const CODED_SYMBOL_WORDS = 3;
 const CODED_SYMBOL_WORD_BYTES = 8;
 const CODED_SYMBOL_BYTES = CODED_SYMBOL_WORDS * CODED_SYMBOL_WORD_BYTES;
 // Full-replica RequestAll is already a fallback after IBLT decode failed.
-// Use larger exchange-head batches to avoid many independent join/index passes.
+// Keep batches bounded so one fallback cannot monopolize receive-side join work.
 const REQUEST_ALL_EXCHANGE_HEADS_MAX_MESSAGE_SIZE = 4e6;
+const REQUEST_ALL_EXCHANGE_HEADS_MAX_HEADS = 64;
 const BIG_UINT64_ARRAY_IS_LITTLE_ENDIAN =
 	typeof BigUint64Array !== "undefined" &&
 	new Uint8Array(new BigUint64Array([1n]).buffer)[0] === 1;
@@ -1344,7 +1348,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						syncId: message.syncId,
 					}),
 					{
-						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
+						mode: new AcknowledgeDelivery({
+							to: [context.from!],
+							redundancy: 1,
+						}),
 						priority: SYNC_MESSAGE_PRIORITY,
 					},
 				);
@@ -1628,12 +1635,15 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			for await (const exchangeMessage of createExchangeHeadsMessages(
 				this.properties.log,
 				[...p.outgoing.keys()],
-				{ maxMessageSize: REQUEST_ALL_EXCHANGE_HEADS_MAX_MESSAGE_SIZE },
+				{
+					maxHeads: REQUEST_ALL_EXCHANGE_HEADS_MAX_HEADS,
+					maxMessageSize: REQUEST_ALL_EXCHANGE_HEADS_MAX_MESSAGE_SIZE,
+				},
 			)) {
 				messages += 1;
 				exchangeMessage.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 				await this.properties.rpc.send(exchangeMessage, {
-					mode: new SilentDelivery({
+					mode: new AcknowledgeDelivery({
 						to: [context.from!.hashcode()],
 						redundancy: 1,
 					}),
