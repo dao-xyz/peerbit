@@ -8,6 +8,8 @@ on:
       - "docs/**"
   pull_request:
     types: ["opened", "reopened", "synchronize"]
+env:
+  WASM_PACK_VERSION: 0.13.1
 jobs:
   build_workspace:
     name: Build Workspace
@@ -17,23 +19,41 @@ jobs:
       PEERBIT_TEST_SESSION: mock
     steps:
       - uses: actions/checkout@v4
+      - name: Restore cached workspace build
+        id: workspace_dist_cache
+        uses: actions/cache@v4
+        with:
+          path: workspace-dist.tar.gz
+          key: ${{ runner.os }}-workspace-dist-${{ github.sha }}
       - uses: pnpm/action-setup@v4
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         with:
           run_install: false
       - uses: actions/setup-node@v4
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         with:
           node-version: 22.x
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache wasm-pack
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
       - name: Install deps
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
           pnpm run build
       - name: Pack build outputs
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
           find . \
             \( -path '*/node_modules' -o -path '*/.git' \) -prune -o \
@@ -84,9 +104,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
@@ -193,9 +219,15 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
           # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
@@ -280,9 +312,15 @@ jobs:
           node-version: 22.x
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build pubsub workspace
@@ -367,9 +405,15 @@ jobs:
           node-version: 22.x
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
       - name: Build shared-log workspace
