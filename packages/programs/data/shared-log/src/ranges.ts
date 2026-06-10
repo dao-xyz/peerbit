@@ -2719,6 +2719,8 @@ export const mergeReplicationChanges = <R extends NumericType>(
 	return all;
 };
 
+const REBALANCE_ITERATOR_BATCH_SIZE = 1048;
+
 export const toRebalance = <R extends "u32" | "u64">(
 	changeOrChanges:
 		| ReplicationChanges<ReplicationRangeIndexable<R>>
@@ -2741,7 +2743,7 @@ export const toRebalance = <R extends "u32" | "u64">(
 			});
 			try {
 				while (iterator.done() !== true) {
-					const entries = await iterator.next(512);
+					const entries = await iterator.next(REBALANCE_ITERATOR_BATCH_SIZE);
 					if (entries.length === 0) {
 						break;
 					}
