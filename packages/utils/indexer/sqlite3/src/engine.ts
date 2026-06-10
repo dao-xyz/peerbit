@@ -173,6 +173,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 	closed: boolean = true;
 	private state: "closed" | "open" | "closing" = "closed";
 	private fkMode: FKMode;
+	private mutationVersion = 0;
 
 	id: string;
 	constructor(
@@ -629,7 +630,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 	): Promise<void> {
 		return this.withWriteIfOpen(undefined, async () => {
 			const classOfValue = value.constructor as Constructor<T>;
-			return insert(
+			await insert(
 				async (values, table) => {
 					let preId = values[table.primaryIndex];
 					let statement: Statement | undefined = undefined;
@@ -719,6 +720,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 					},
 				},
 			);
+			this.mutationVersion++;
 		});
 	}
 
@@ -742,6 +744,18 @@ export class SQLiteIndex<T extends Record<string, any>>
 		let once = false;
 		let requestId = uuid();
 		let hasMore = true;
+		let mutationMode = false;
+		let iteratorMutationVersion = this.mutationVersion;
+		const yielded = new Set<string>();
+		const idKey = (id: types.IdKey) =>
+			`${typeof id.primitive}:${String(id.primitive)}`;
+		const markYielded = (
+			results: IndexedResult<types.ReturnTypeFromShape<T, S>>[],
+		) => {
+			for (const result of results) {
+				yielded.add(idKey(result.id));
+			}
+		};
 
 		let stmt: Statement;
 		let kept: number | undefined = undefined;
@@ -755,7 +769,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 		let planningScope: ReturnType<QueryPlanner["scope"]>;
 
 		/* let totalCount: undefined | number = undefined; */
-		const fetch = async (amount: number | "all") => {
+		const fetch = async (
+			amount: number,
+			pageOptions?: { offset?: number; advance?: boolean },
+		) => {
 			const closeAsDone = () => {
 				once = true;
 				hasMore = false;
@@ -778,7 +795,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 						{
 							planner: planningScope,
 							shape: options?.shape,
-							fetchAll: amount === "all", // if we are to fetch all, we dont need stable sorting
+							fetchAll: false,
 						},
 					);
 
@@ -798,7 +815,8 @@ export class SQLiteIndex<T extends Record<string, any>>
 				const allResults = await planningScope.perform(async () => {
 					const allResults: Record<string, any>[] = await stmt.all([
 						...bindable,
-						...(amount !== "all" ? [amount, offset] : []),
+						amount,
+						pageOptions?.offset ?? offset,
 					]);
 					return allResults;
 				});
@@ -844,14 +862,16 @@ export class SQLiteIndex<T extends Record<string, any>>
 						}),
 					);
 
-				offset += results.length;
+				if (pageOptions?.advance !== false) {
+					offset += results.length;
+				}
 
 				/* const uniqueIds = new Set(results.map((x) => x.id.primitive));
 				if (uniqueIds.size !== results.length) {
 					throw new Error("Duplicate ids in result set");
 				} */
 
-				if (amount === "all" || results.length < amount) {
+				if (results.length < amount) {
 					hasMore = false;
 					await this.clearupIterator(requestId);
 				}
@@ -873,13 +893,168 @@ export class SQLiteIndex<T extends Record<string, any>>
 		this.cursor.set(requestId, iterator);
 		let totalCount: number | undefined = undefined;
 		/* 			return fetch(request.fetch); */
+		const fetchAllFresh = async () => {
+			const closeAsDone = () => {
+				once = true;
+				hasMore = false;
+				kept = 0;
+				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
+			};
+			if (this.isClosing()) {
+				return closeAsDone();
+			}
+			this.assertOpen();
+			try {
+				planningScope = this.planner.scope(normalizedQuery);
+				let { sql, bindable: toBind } = convertSearchRequestToQuery(
+					normalizedQuery,
+					this.tables,
+					this._rootTables,
+					{
+						planner: planningScope,
+						shape: options?.shape,
+						fetchAll: true,
+					},
+				);
+				await planningScope.beforePrepare();
+				const stmt = await this.properties.db.prepare(sql, sql);
+				iterator.expire = Date.now() + this.iteratorTimeout;
+				const allResults: Record<string, any>[] = await planningScope.perform(
+					async () => stmt.all(toBind),
+				);
+				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
+					await Promise.all(
+						allResults.map(async (row: any) => {
+							let selectedTable = this._rootTables.find(
+								(table) =>
+									row[getTablePrefixedField(table, this.primaryKeyString)] !=
+									null,
+							)!;
+
+							const value = await resolveInstanceFromValue<T, S>(
+								row,
+								this.tables,
+								selectedTable,
+								this.resolveDependencies.bind(this),
+								true,
+								options?.shape,
+							);
+
+							return {
+								value,
+								id: types.toId(
+									convertFromSQLType(
+										row[
+											getTablePrefixedField(
+												selectedTable,
+												this.primaryKeyString,
+											)
+										],
+										selectedTable.primaryField!.from!.type,
+									),
+								),
+							};
+						}),
+					);
+				once = true;
+				hasMore = false;
+				kept = 0;
+				offset += results.length;
+				await this.clearupIterator(requestId);
+				markYielded(results);
+				return results;
+			} catch (error) {
+				if (this.isClosing()) {
+					return closeAsDone();
+				}
+				throw error;
+			}
+		};
+		const next = async (
+			amount: number,
+		): Promise<IndexedResult<types.ReturnTypeFromShape<T, S>>[]> => {
+			if (amount <= 0) {
+				return [];
+			}
+			if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
+				const results = await fetch(amount);
+				markYielded(results);
+				return results;
+			}
+
+			mutationMode = true;
+			iteratorMutationVersion = this.mutationVersion;
+			kept = undefined;
+
+			const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
+			const pageSize = Math.max(amount, 128);
+			let scanOffset = 0;
+			let exhausted = false;
+			while (results.length < amount) {
+				const page = await fetch(pageSize, {
+					offset: scanOffset,
+					advance: false,
+				});
+				scanOffset += page.length;
+				if (page.length < pageSize) {
+					exhausted = true;
+				}
+				for (const result of page) {
+					const key = idKey(result.id);
+					if (yielded.has(key)) {
+						continue;
+					}
+					yielded.add(key);
+					results.push(result);
+					if (results.length >= amount) {
+						break;
+					}
+				}
+				if (page.length === 0 || exhausted) {
+					break;
+				}
+			}
+			hasMore = !exhausted;
+			return results;
+		};
+		const pendingUnseen = async () => {
+			let count = 0;
+			const pageSize = 128;
+			let scanOffset = 0;
+			while (true) {
+				const page = await fetch(pageSize, {
+					offset: scanOffset,
+					advance: false,
+				});
+				scanOffset += page.length;
+				for (const result of page) {
+					if (!yielded.has(idKey(result.id))) {
+						count++;
+					}
+				}
+				if (page.length < pageSize) {
+					break;
+				}
+			}
+			hasMore = count > 0;
+			kept = count;
+			return count;
+		};
 		return {
 			all: async () => {
+				if (
+					!once &&
+					offset === 0 &&
+					!mutationMode &&
+					this.mutationVersion === iteratorMutationVersion
+				) {
+					return fetchAllFresh();
+				}
 				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] = [];
 				while (true) {
-					const res = await fetch("all");
+					const res = await next(1024);
 					results.push(...res);
-					if (hasMore === false) {
+					if (res.length === 0 || hasMore === false) {
 						break;
 					}
 				}
@@ -891,7 +1066,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				kept = 0;
 				this.clearupIterator(requestId);
 			},
-			next: (amount: number) => fetch(amount),
+			next,
 			pending: async () => {
 				if (this.isClosing()) {
 					once = true;
@@ -902,6 +1077,11 @@ export class SQLiteIndex<T extends Record<string, any>>
 				this.assertOpen();
 				if (!hasMore) {
 					return 0;
+				}
+				if (mutationMode || this.mutationVersion !== iteratorMutationVersion) {
+					mutationMode = true;
+					iteratorMutationVersion = this.mutationVersion;
+					return pendingUnseen();
 				}
 				if (kept != null) {
 					return kept;
@@ -995,6 +1175,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 			if (!once) {
 				throw lastError!;
+			}
+
+			if (ret.length > 0) {
+				this.mutationVersion++;
 			}
 
 			return ret;
