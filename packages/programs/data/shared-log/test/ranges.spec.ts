@@ -18,8 +18,8 @@ import {
 	type EntryReplicated,
 	EntryReplicatedU32,
 	EntryReplicatedU64,
-	ReplicationIntent,
 	type ReplicationChange,
+	ReplicationIntent,
 	type ReplicationRangeIndexable,
 	ReplicationRangeIndexableU32,
 	ReplicationRangeIndexableU64,
@@ -2649,7 +2649,8 @@ resolutions.forEach((resolution) => {
 				const rotations = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1];
 
 				it("preserves multiple replaced ranges in one debounce window", async () => {
-					const emitted: ReplicationChange<ReplicationRangeIndexable<R>>[][] = [];
+					const emitted: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
 					let releaseFirstRun: () => void = undefined!;
 					const firstRunStarted = new Promise<void>((resolve) => {
 						releaseFirstRun = resolve;
@@ -2756,6 +2757,59 @@ resolutions.forEach((resolution) => {
 						meta: properties.meta,
 					} as any);
 				};
+
+				it("uses bounded batches and closes the rebalance iterator", async () => {
+					const entries = Array.from({ length: 1049 }, (_, i) =>
+						createEntryReplicated({
+							coordinate: denormalizeFn(i / 1049),
+							assignedToRangeBoundary: true,
+							hash: i.toString(),
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: i.toString(),
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+					let offset = 0;
+					let closeCalls = 0;
+					let allCalls = 0;
+					const nextCalls: number[] = [];
+					const iterator = {
+						next: async (amount: number) => {
+							nextCalls.push(amount);
+							const batch = entries.slice(offset, offset + amount);
+							offset += batch.length;
+							return batch.map((value) => ({ value })) as any;
+						},
+						all: async () => {
+							allCalls++;
+							throw new Error("unbounded iterator drain should not be used");
+						},
+						done: () => offset >= entries.length,
+						close: async () => {
+							closeCalls++;
+						},
+						pending: async () => entries.length - offset,
+					};
+					const fakeIndex = {
+						iterate: () => iterator,
+					} as unknown as Index<EntryReplicated<R>>;
+					const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance([], fakeIndex, cache),
+					);
+
+					expect(result.map((entry) => entry.hash)).to.deep.equal(
+						entries.map((entry) => entry.hash),
+					);
+					expect(nextCalls).to.deep.equal([1048, 1048]);
+					expect(allCalls).to.equal(0);
+					expect(closeCalls).to.equal(1);
+				});
 
 				rotations.forEach((rotation) => {
 					const rotate = (from: number) => (from + rotation) % 1;
