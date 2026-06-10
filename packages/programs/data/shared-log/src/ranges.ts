@@ -2709,6 +2709,8 @@ export const mergeReplicationChanges = <R extends NumericType>(
 	return all;
 };
 
+const REBALANCE_ITERATOR_BATCH_SIZE = 1048;
+
 export const toRebalance = <R extends "u32" | "u64">(
 	changeOrChanges:
 		| ReplicationChanges<ReplicationRangeIndexable<R>>
@@ -2718,22 +2720,29 @@ export const toRebalance = <R extends "u32" | "u64">(
 	options?: { forceFresh?: boolean },
 ): AsyncIterable<EntryReplicated<R>> => {
 	const change = options?.forceFresh
-		? (Array.isArray(changeOrChanges[0])
-				? (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[])
-						.flat()
-				: (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>))
+		? Array.isArray(changeOrChanges[0])
+			? (
+					changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[]
+				).flat()
+			: (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>)
 		: mergeReplicationChanges(changeOrChanges, rebalanceHistory);
 	return {
 		[Symbol.asyncIterator]: async function* () {
 			const iterator = index.iterate({
 				query: createAssignedRangesQuery(change),
 			});
-
-			while (iterator.done() !== true) {
-				const entries = await iterator.all(); // TODO choose right batch sizes here for optimal memory usage / speed
-				for (const entry of entries) {
-					yield entry.value;
+			try {
+				while (iterator.done() !== true) {
+					const entries = await iterator.next(REBALANCE_ITERATOR_BATCH_SIZE);
+					if (entries.length === 0) {
+						break;
+					}
+					for (const entry of entries) {
+						yield entry.value;
+					}
 				}
+			} finally {
+				await iterator.close();
 			}
 		},
 	};
