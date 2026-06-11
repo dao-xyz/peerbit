@@ -5639,6 +5639,22 @@ export class SharedLog<
 									}
 								}
 
+								if (process.env.PEERBIT_CHAOS_TRACE) {
+									console.log(
+										"[CHAOS_TRACE] drop-not-leader self=",
+										this.node.identity.publicKey.hashcode(),
+										"from=",
+										context.from!.hashcode().slice(0, 8),
+										"hash=",
+										entry.entry.hash,
+										"isLeader=",
+										isLeader,
+										"fromIsLeader=",
+										fromIsLeader,
+										"t=",
+										Date.now(),
+									);
+								}
 								logger.trace(
 									`${this.node.identity.publicKey.hashcode()}: Dropping heads with gid: ${
 										entry.entry.meta.gid

@@ -666,6 +666,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const profile = this.syncOptions?.profile;
 			const startedAt = syncProfileStart(profile);
 			const hashes = this.filterRecentlySentExchangeHeads(msg.hashes, from);
+			if (process.env.PEERBIT_CHAOS_TRACE) {
+				console.log(
+					"[CHAOS_TRACE] respMaybeSync self=",
+					(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+					"from=",
+					from.hashcode().slice(0, 8),
+					"requested=",
+					msg.hashes.length,
+					"afterFilter=",
+					hashes.length,
+					"t=",
+					Date.now(),
+				);
+			}
 			let messages = 0;
 			try {
 				for await (const message of createExchangeHeadsMessages(
