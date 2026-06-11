@@ -1,5 +1,8 @@
 name: SharedLog flake hunt
 on:
+  push:
+    branches:
+      - ci/shared-log-flake-hunt
   workflow_dispatch:
     inputs:
       grep:
@@ -54,12 +57,12 @@ jobs:
           set -uo pipefail
           mkdir -p hunt-results
           failures=0
-          for i in $(seq 1 ${{ github.event.inputs.iterations }}); do
+          for i in $(seq 1 ${{ github.event.inputs.iterations || '30' }}); do
             echo "=== iteration $i ==="
             if PEERBIT_MOCHA_LOG_TEST_START=1 PEERBIT_MOCHA_LOG_INTERVAL_MS=10000 \
               node ./node_modules/aegir/src/index.js run test \
                 --roots ./packages/programs/data/shared-log -- -t node --no-build \
-                --grep "${{ github.event.inputs.grep }}" \
+                --grep "${{ github.event.inputs.grep || 'u32-simple replication degree update to smaller' }}" \
                 > "hunt-results/iter-$i.log" 2>&1; then
               echo "iteration $i: PASS"
               rm "hunt-results/iter-$i.log"
@@ -68,7 +71,7 @@ jobs:
               failures=$((failures+1))
             fi
           done
-          echo "total failures: $failures / ${{ github.event.inputs.iterations }}"
+          echo "total failures: $failures / ${{ github.event.inputs.iterations || '30' }}"
           echo "$failures" > hunt-results/failure-count.txt
 
       - name: Upload failing logs
