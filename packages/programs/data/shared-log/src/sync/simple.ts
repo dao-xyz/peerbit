@@ -907,6 +907,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	async open() {
 		this.closed = false;
 		const requestSyncLoop = async () => {
+			if (process.env.PEERBIT_CHAOS_TRACE) {
+				console.log(
+					"[CHAOS_TRACE] syncLoop-tick self=",
+					(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+					"queueSize=",
+					this.syncInFlightQueue.size,
+					"t=",
+					Date.now(),
+				);
+			}
 			/**
 			 * This method fetches entries that we potentially want.
 			 * In a case in which we become replicator of a segment,
@@ -967,7 +977,44 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 					this.syncInFlight.delete(key);
 				}
 			}
-			this.requestSync(requestHashes, from).finally(() => {
+			if (process.env.PEERBIT_CHAOS_TRACE && requestHashes.length > 0) {
+				console.log(
+					"[CHAOS_TRACE] syncLoop-request self=",
+					(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+					"n=",
+					requestHashes.length,
+					"to=",
+					[...from].map((x) => x.slice(0, 8)).join(","),
+					"t=",
+					Date.now(),
+				);
+			}
+			this.requestSync(requestHashes, from)
+				.then(
+					() => {
+						if (process.env.PEERBIT_CHAOS_TRACE && requestHashes.length > 0) {
+							console.log(
+								"[CHAOS_TRACE] syncLoop-request-done self=",
+								(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+								"t=",
+								Date.now(),
+							);
+						}
+					},
+					(error: any) => {
+						if (process.env.PEERBIT_CHAOS_TRACE) {
+							console.log(
+								"[CHAOS_TRACE] syncLoop-request-error self=",
+								(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+								"err=",
+								error?.message,
+								"t=",
+								Date.now(),
+							);
+						}
+					},
+				)
+				.finally(() => {
 				if (this.closed) {
 					return;
 				}
