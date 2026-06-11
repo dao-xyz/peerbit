@@ -570,34 +570,62 @@ testSetups.forEach((setup) => {
 						);
 						const entryObj = entryByHash.get(hash);
 						if (entryObj) {
-							for (const [i, db] of dbs.entries()) {
-								try {
-									const l0 = await (db.log as any).findLeadersFromEntry(
-										entryObj,
-										minReplicas,
-										{ roleAge: 0 },
-									);
-									const lDef = await (db.log as any).findLeadersFromEntry(
-										entryObj,
-										minReplicas,
-									);
-									console.log(
-										"[CHAOS_DUMP] leaders-for",
-										hash.slice(0, 16),
-										"db" + i,
-										"roleAge0=",
-										[...l0.keys()].map((k: string) => k.slice(0, 8)).join("|"),
-										"default=",
-										[...lDef.keys()].map((k: string) => k.slice(0, 8)).join("|"),
-									);
-								} catch (e: any) {
-									console.log(
-										"[CHAOS_DUMP] leaders-for",
-										hash.slice(0, 16),
-										"db" + i,
-										"err",
-										e?.message,
-									);
+							const holderDb = dbs[info.holders[0]];
+							let coordinates: any = undefined;
+							try {
+								coordinates = await (holderDb.log as any).createCoordinates(
+									entryObj,
+									minReplicas,
+								);
+							} catch (e: any) {
+								console.log(
+									"[CHAOS_DUMP] coords-err",
+									hash.slice(0, 16),
+									e?.message,
+								);
+							}
+							if (coordinates) {
+								const withTimeout = (pr: Promise<any>, ms: number) =>
+									Promise.race([
+										pr,
+										new Promise((_, rej) => {
+											const timer = setTimeout(
+												() => rej(new Error("dump-timeout")),
+												ms,
+											);
+											(timer as any).unref?.();
+										}),
+									]);
+								for (const [i, db] of dbs.entries()) {
+									for (const opts of [
+										{ tag: "roleAge0", o: { roleAge: 0 } },
+										{ tag: "default", o: undefined },
+									]) {
+										try {
+											const l = await withTimeout(
+												(db.log as any)._findLeaders(coordinates, opts.o),
+												5_000,
+											);
+											console.log(
+												"[CHAOS_DUMP] leaders-for",
+												hash.slice(0, 16),
+												"db" + i,
+												opts.tag,
+												[...l.keys()]
+													.map((k: string) => k.slice(0, 8))
+													.join("|") || "EMPTY",
+											);
+										} catch (e: any) {
+											console.log(
+												"[CHAOS_DUMP] leaders-for",
+												hash.slice(0, 16),
+												"db" + i,
+												opts.tag,
+												"err",
+												e?.message,
+											);
+										}
+									}
 								}
 							}
 						}
