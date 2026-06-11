@@ -435,3 +435,63 @@ jobs:
       - name: Run shared-log sync batch sweep gate
         run: |
           node ./packages/programs/data/shared-log/dist/benchmark/sync-batch-sweep.js
+
+  test_native:
+    # The partition globs above only reach top-level package dirs, so the
+    # native (wasm-bindgen) packages are tested here explicitly: cargo tests,
+    # wasm builds and the TS glue suites, plus a packed-tarball smoke test
+    # proving published artifacts ship working wasm.
+    name: Native (cargo + wasm)
+    needs: build_workspace
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      PEERBIT_TEST_SESSION: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
+          pnpm install --frozen-lockfile=false
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore build outputs
+        run: |
+          tar -xzf workspace-dist.tar.gz
+      - name: Cargo test indexer core crate
+        # Pure Rust crate without a package.json, so it is invoked directly.
+        run: cargo test --manifest-path packages/utils/indexer/core/Cargo.toml
+      - name: Test @peerbit/any-store-rust
+        run: pnpm --filter @peerbit/any-store-rust run test
+      - name: Test @peerbit/native-backbone
+        run: pnpm --filter @peerbit/native-backbone run test
+      - name: Test @peerbit/log-rust
+        # The package "test" script runs aegir without "-t node"; CI is
+        # node-only (see the NOTE above), so the same steps are spelled out
+        # here with the node target. Workspace deps come from the restored
+        # build artifact.
+        run: |
+          cd packages/log/rust
+          cargo test
+          pnpm run build
+          pnpm exec aegir test -t node
+      - name: Test @peerbit/shared-log-rust
+        run: |
+          cd packages/programs/data/shared-log/rust
+          cargo test
+          pnpm run build
+          pnpm exec aegir test -t node
+      - name: Test @peerbit/document-rust
+        run: pnpm --filter @peerbit/document-rust run test
+      - name: Packed tarball smoke test
+        run: node ./scripts/native-pack-smoke.mjs
