@@ -13,6 +13,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-warnings
       PEERBIT_TEST_SESSION: mock
+      WASM_PACK_VERSION: 0.13.1
     steps:
       - uses: actions/checkout@v4
 
@@ -26,9 +27,17 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
       - name: Build pubsub workspace
@@ -74,6 +83,7 @@ jobs:
     env:
       NODE_OPTIONS: --no-warnings
       PEERBIT_TEST_SESSION: mock
+      WASM_PACK_VERSION: 0.13.1
     steps:
       - uses: actions/checkout@v4
 
@@ -87,9 +97,17 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+
       - name: Install deps
         run: |
-          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
+          rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
       - name: Build test-utils workspace
