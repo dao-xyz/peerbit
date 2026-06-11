@@ -1422,7 +1422,7 @@ export class NativeLogBlockStore {
 			if (!value) {
 				throw new Error("Missing block bytes");
 			}
-			this.native.put(blockOrKey, copyBytes(value));
+			this.native.put(blockOrKey, value);
 			return;
 		}
 		const cid =
@@ -1431,7 +1431,7 @@ export class NativeLogBlockStore {
 				: blockOrKey.cid;
 		const bytes =
 			blockOrKey instanceof Uint8Array ? blockOrKey : blockOrKey.block.bytes;
-		this.native.put(cid, copyBytes(bytes));
+		this.native.put(cid, bytes);
 		return cid;
 	}
 
@@ -1458,9 +1458,7 @@ export class NativeLogBlockStore {
 					block instanceof Uint8Array
 						? await calculateRawCidV1(block)
 						: block.cid;
-				values[index] = copyBytes(
-					block instanceof Uint8Array ? block : block.block.bytes,
-				);
+				values[index] = block instanceof Uint8Array ? block : block.block.bytes;
 			}),
 		);
 		this.native.put_many(cids, values);
@@ -1484,7 +1482,7 @@ export class NativeLogBlockStore {
 	}
 
 	putKnown(cid: string, bytes: Uint8Array): string {
-		this.native.put(cid, copyBytes(bytes));
+		this.native.put(cid, bytes);
 		return cid;
 	}
 
@@ -1503,37 +1501,28 @@ export class NativeLogBlockStore {
 		for (let i = 0; i < blocks.length; i++) {
 			const [cid, bytes] = blocks[i]!;
 			cids[i] = cid;
-			values[i] = copyBytes(bytes);
+			values[i] = bytes;
 		}
-		return this.putKnownManyColumns(cids, values, { copied: true });
+		return this.putKnownManyColumns(cids, values);
 	}
 
-	putKnownManyColumns(
-		cids: string[],
-		bytes: Uint8Array[],
-		options?: { copied?: boolean },
-	): string[] {
+	putKnownManyColumns(cids: string[], bytes: Uint8Array[]): string[] {
 		if (cids.length !== bytes.length) {
 			throw new Error("Expected equal block column lengths");
 		}
 		if (cids.length === 0) {
 			return [];
 		}
-		const values =
-			options?.copied === true ? bytes : bytes.map((value) => copyBytes(value));
-		this.native.put_many(cids, values);
+		this.native.put_many(cids, bytes);
 		return cids;
 	}
 
 	get(cid: string): Uint8Array | undefined {
-		const value = this.native.get(cid);
-		return value == null ? undefined : copyBytes(value);
+		return this.native.get(cid) ?? undefined;
 	}
 
 	getMany(cids: string[]): Array<Uint8Array | undefined> {
-		return this.native
-			.get_many(cids)
-			.map((value) => (value == null ? undefined : copyBytes(value)));
+		return this.native.get_many(cids).map((value) => value ?? undefined);
 	}
 
 	has(cid: string): boolean {
@@ -1558,7 +1547,7 @@ export class NativeLogBlockStore {
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
 		for (const [key, value] of this.native.entries()) {
-			yield [key, copyBytes(value)];
+			yield [key, value];
 		}
 	}
 

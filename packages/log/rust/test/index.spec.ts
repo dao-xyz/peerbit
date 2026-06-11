@@ -1197,3 +1197,189 @@ describe("native EntryV0 encoding", () => {
 		}
 	});
 });
+
+const isNode = Boolean(
+	(globalThis as { process?: { versions?: { node?: string } } }).process
+		?.versions?.node,
+);
+
+type LiveTsLogModules = {
+	createEntry: (properties: any) => Promise<any>;
+	EntryV0: any;
+	LamportClock: new (properties: { id: Uint8Array; timestamp?: any }) => any;
+	Timestamp: new (properties: { wallTime: bigint; logical?: number }) => any;
+	serialize: (value: unknown) => Uint8Array;
+	Ed25519Keypair: { create: () => Promise<any> };
+	calculateRawCid: (bytes: Uint8Array) => Promise<{ cid: string }>;
+};
+
+let liveTsLog: LiveTsLogModules | undefined;
+
+const loadLiveTsLog = async (): Promise<LiveTsLogModules> => {
+	if (!liveTsLog) {
+		// Variable specifiers keep these out of the browser bundles; the live
+		// parity tests below only run in node.
+		const logPath = "@peerbit/log";
+		const borshPath = "@dao-xyz/borsh";
+		const cryptoPath = "@peerbit/crypto";
+		const blocksPath = "@peerbit/blocks-interface";
+		const [log, borsh, crypto, blocks] = await Promise.all([
+			import(logPath),
+			import(borshPath),
+			import(cryptoPath),
+			import(blocksPath),
+		]);
+		liveTsLog = {
+			createEntry: log.createEntry,
+			EntryV0: log.EntryV0,
+			LamportClock: log.LamportClock,
+			Timestamp: log.Timestamp,
+			serialize: borsh.serialize,
+			Ed25519Keypair: crypto.Ed25519Keypair,
+			calculateRawCid: blocks.calculateRawCid,
+		};
+	}
+	return liveTsLog;
+};
+
+const toHex = (data: Uint8Array) =>
+	[...data].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+// Creates an entry through the real @peerbit/log TypeScript path and asserts
+// the native signable bytes, storage bytes, and CID match the TypeScript/Borsh
+// serialization byte-for-byte.
+const expectLiveTsEntryParity = async (properties: {
+	wallTime: bigint;
+	logical?: number;
+	gid?: string;
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	next?: any[];
+}) => {
+	const mods = await loadLiveTsLog();
+	const identity = await mods.Ed25519Keypair.create();
+	const clock = new mods.LamportClock({
+		id: identity.publicKey.bytes,
+		timestamp: new mods.Timestamp({
+			wallTime: properties.wallTime,
+			logical: properties.logical,
+		}),
+	});
+	const entry = await mods.createEntry({
+		store: {} as any,
+		data: properties.payloadData,
+		meta: {
+			clock,
+			type: properties.type,
+			data: properties.metaData,
+			...(properties.next ? { next: properties.next } : { gid: properties.gid }),
+		},
+		deferStore: true,
+		identity,
+	});
+
+	const meta = entry.meta;
+	const nativeInput = {
+		clockId: meta.clock.id,
+		wallTime: meta.clock.timestamp.wallTime,
+		logical: meta.clock.timestamp.logical,
+		gid: meta.gid,
+		next: meta.next,
+		type: meta.type,
+		metaData: properties.metaData,
+		payloadData: properties.payloadData,
+	};
+
+	const tsSignable = mods.serialize(mods.EntryV0.toSignable(entry));
+	const nativeSignable = await encodeEntryV0Signable(nativeInput);
+	expect(toHex(nativeSignable)).to.equal(toHex(tsSignable));
+
+	const signatures = entry.signatures;
+	expect(signatures).to.have.length(1);
+	const signature = signatures[0]!;
+	const trimmed = new mods.EntryV0({
+		meta: entry._meta,
+		payload: entry._payload,
+		signatures: entry._signatures,
+	});
+	const tsStorage = mods.serialize(trimmed);
+	const nativeStorage = await encodeEntryV0StorageWithCid({
+		...nativeInput,
+		signature: signature.signature,
+		signaturePublicKey: signature.publicKey.publicKey,
+		prehash: signature.prehash,
+	});
+	expect(toHex(nativeStorage.bytes)).to.equal(toHex(tsStorage));
+	expect(nativeStorage.cid).to.equal(
+		(await mods.calculateRawCid(tsStorage)).cid,
+	);
+	expect(nativeStorage.cid).to.equal(entry.hash);
+	return entry;
+};
+
+(isNode ? describe : describe.skip)("native EntryV0 live TS parity", () => {
+	it("matches the live TS encoder for a minimal empty-payload entry", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: 1n,
+			gid: "live-gid-empty",
+			payloadData: new Uint8Array(0),
+		});
+	});
+
+	it("matches the live TS encoder with metadata and a logical clock", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "live-gid-meta",
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: bytes(16, 1),
+		});
+	});
+
+	it("matches the live TS encoder for a cut entry with a kilobyte payload", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: BigInt(Date.now()) * 1_000_000n,
+			gid: "live-gid-cut",
+			type: CUT,
+			payloadData: bytes(1024, 5),
+		});
+	});
+
+	it("matches the live TS encoder for a large payload", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: 987654321n,
+			logical: 4242,
+			gid: "live-gid-large",
+			metaData: bytes(33, 2),
+			payloadData: bytes(70_000, 3),
+		});
+	});
+
+	it("matches the live TS encoder for chained entries with next links", async () => {
+		const parentA = await expectLiveTsEntryParity({
+			wallTime: 1n,
+			gid: "live-gid-parent-b",
+			payloadData: new Uint8Array([1]),
+		});
+		const parentB = await expectLiveTsEntryParity({
+			wallTime: 2n,
+			gid: "live-gid-parent-a",
+			payloadData: new Uint8Array([2]),
+		});
+
+		const child = await expectLiveTsEntryParity({
+			wallTime: 3n,
+			logical: 1,
+			type: APPEND,
+			metaData: new Uint8Array([4, 2]),
+			payloadData: bytes(8, 11),
+			next: [parentA, parentB],
+		});
+
+		// gid is inherited from the smallest parent gid and next carries both
+		// parent hashes, mirroring the TypeScript append path.
+		expect(child.meta.gid).to.equal("live-gid-parent-a");
+		expect(child.meta.next).to.deep.equal([parentA.hash, parentB.hash]);
+	});
+});

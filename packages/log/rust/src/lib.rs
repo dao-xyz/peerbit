@@ -1126,6 +1126,10 @@ impl NativeLogBlockStore {
 }
 
 impl NativeLogBlockStore {
+    pub fn get_ref(&self, key: &str) -> Option<&[u8]> {
+        self.entries.get(key).map(Vec::as_slice)
+    }
+
     fn put_entry(&mut self, key: String, value: Vec<u8>) {
         let value_len = value.len() as u64;
         if let Some(previous) = self.entries.insert(key, value) {
