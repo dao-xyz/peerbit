@@ -558,6 +558,7 @@ testSetups.forEach((setup) => {
 							console.log("[CHAOS_DUMP] replicationIndex db" + i, "err", e?.message);
 						}
 					}
+					let stagesProbed = false;
 					for (const [hash, info] of replicasByHash) {
 						if (info.count >= minReplicas) {
 							continue;
@@ -583,6 +584,59 @@ testSetups.forEach((setup) => {
 									hash.slice(0, 16),
 									e?.message,
 								);
+							}
+							if (coordinates && !stagesProbed) {
+								stagesProbed = true;
+								const stageTimeout = (pr: Promise<any>, ms: number) =>
+									Promise.race([
+										pr,
+										new Promise((_, rej) => {
+											const timer = setTimeout(
+												() => rej(new Error("stage-timeout")),
+												ms,
+											);
+											(timer as any).unref?.();
+										}),
+									]);
+								for (const [i, db] of dbs.entries()) {
+									const stages: [string, () => Promise<any>][] = [
+										[
+											"defaultMinRoleAge",
+											() => (db.log as any).getDefaultMinRoleAge(),
+										],
+										["isReplicating", () => (db.log as any).isReplicating()],
+										[
+											"topicSubscribers",
+											() =>
+												(db.log as any)._getTopicSubscribers(
+													(db.log as any).topic,
+												),
+										],
+										[
+											"rangeIndexAll",
+											() =>
+												(db.log as any).replicationIndex.iterate({}).all(),
+										],
+										[
+											"coordIndexCount",
+											() => (db.log as any).entryCoordinatesIndex.getSize(),
+										],
+									];
+									const results: string[] = [];
+									for (const [name, fn] of stages) {
+										const t0 = Date.now();
+										try {
+											await stageTimeout(fn(), 3_000);
+											results.push(`${name}:ok(${Date.now() - t0}ms)`);
+										} catch (e: any) {
+											results.push(`${name}:${e?.message}(${Date.now() - t0}ms)`);
+										}
+									}
+									console.log(
+										"[CHAOS_DUMP] stages db" + i,
+										results.join(" "),
+									);
+								}
 							}
 							if (coordinates) {
 								const withTimeout = (pr: Promise<any>, ms: number) =>
