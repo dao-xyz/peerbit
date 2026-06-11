@@ -158,7 +158,10 @@ pub fn decode_value_snapshot(bytes: &[u8]) -> Result<Vec<Vec<u8>>, DecodeError> 
     let payload = decode_envelope(bytes, VALUE_SNAPSHOT_MAGIC)?;
     let mut offset = 0;
     let count = read_u32(payload, &mut offset, "value snapshot count")? as usize;
-    let mut values = Vec::with_capacity(count);
+    // Cap preallocation at what the payload could hold (>= 4 bytes per entry)
+    // so a corrupt count fails with Truncated below instead of aborting on
+    // allocation.
+    let mut values = Vec::with_capacity(count.min(payload.len().saturating_sub(offset) / 4));
     for _ in 0..count {
         values.push(read_bytes(payload, &mut offset, "value snapshot entry")?.to_vec());
     }
@@ -190,7 +193,11 @@ pub fn decode_key_value_snapshot(bytes: &[u8]) -> Result<IndexMap<String, Vec<u8
     let payload = decode_envelope(bytes, KEY_VALUE_SNAPSHOT_MAGIC)?;
     let mut offset = 0;
     let count = read_u32(payload, &mut offset, "key-value snapshot count")? as usize;
-    let mut entries = IndexMap::with_capacity(count);
+    // Cap preallocation at what the payload could hold (>= 8 bytes per entry)
+    // so a corrupt count fails with Truncated below instead of aborting on
+    // allocation.
+    let mut entries =
+        IndexMap::with_capacity(count.min(payload.len().saturating_sub(offset) / 8));
     for _ in 0..count {
         let key = read_string(payload, &mut offset, "key-value snapshot key")?;
         let value = read_bytes(payload, &mut offset, "key-value snapshot value")?.to_vec();
@@ -415,6 +422,15 @@ mod tests {
                 JournalRecord::delete("b")
             ]
         );
+    }
+
+    #[test]
+    fn corrupt_snapshot_count_errors_instead_of_aborting() {
+        // Magic-less payload whose leading u32 decodes to ~4.3e9 entries; the
+        // decoders must fail with Truncated, not abort on preallocation.
+        let bytes = [0xff, 0xff, 0xff, 0xff];
+        assert!(decode_value_snapshot(&bytes).is_err());
+        assert!(decode_key_value_snapshot(&bytes).is_err());
     }
 
     #[test]

@@ -429,7 +429,11 @@ fn read_native_schema_node(reader: &mut BridgeReader) -> Result<NativeSchemaNode
             let variant_prefix_len = reader.read_u32()? as usize;
             let variant_prefix = reader.read_exact(variant_prefix_len)?.to_vec();
             let field_count = reader.read_u32()? as usize;
-            let mut fields = Vec::with_capacity(field_count);
+            // Cap preallocation at what the input could hold (>= 13 bytes per
+            // field) so a corrupt count fails with Truncated instead of
+            // aborting on allocation.
+            let remaining = reader.len.saturating_sub(reader.offset);
+            let mut fields = Vec::with_capacity(field_count.min(remaining / 13));
             for _ in 0..field_count {
                 fields.push(NativeSchemaField {
                     key: reader.read_string()?,
