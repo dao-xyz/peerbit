@@ -1389,6 +1389,11 @@ pub struct EntryLeaderAssignment {
     pub assigned_to_range_boundary: bool,
 }
 
+pub struct GidLeaderPlan {
+    pub coordinates: Vec<u64>,
+    pub leaders: Vec<LeaderSample>,
+}
+
 impl SharedLogStateInner {
     fn new(resolution: String) -> Self {
         Self {
@@ -1515,6 +1520,50 @@ impl NativeSharedLogState {
                 is_self_leader,
                 from_is_leader,
                 assigned_to_range_boundary,
+            });
+        }
+
+        Ok(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn plan_leaders_for_gids_batch_core(
+        &self,
+        gids: &[String],
+        replica_counts: &[usize],
+        role_age_ms: f64,
+        now: &str,
+        peer_filter: JsValue,
+        expand_peer_filter: bool,
+        self_hash: &str,
+        include_self: bool,
+        full_replica_fallback: bool,
+        include_strict_full_replica: bool,
+    ) -> Result<Vec<GidLeaderPlan>, JsValue> {
+        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
+        let options = find_leader_options(role_age_ms, now, peer_filter)?;
+        let mut prepared_options_by_replicas = HashMap::new();
+        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let mut out = Vec::with_capacity(gids.len());
+
+        for (gid, replicas) in gids.iter().zip(replica_counts.iter().copied()) {
+            let coordinates = self.inner.range_planner.get_gid_coordinates(gid, replicas);
+            let leaders = find_leaders_with_batch_caches(
+                &self.inner.range_planner,
+                &coordinates,
+                replicas,
+                &options,
+                &mut prepared_options_by_replicas,
+                &mut full_replica_leaders_by_replicas,
+                expand_peer_filter,
+                self_hash,
+                include_self,
+                full_replica_fallback,
+                include_strict_full_replica,
+            );
+            out.push(GidLeaderPlan {
+                coordinates,
+                leaders,
             });
         }
 
@@ -2738,33 +2787,26 @@ impl NativeSharedLogState {
     ) -> Result<Array, JsValue> {
         let gids = strings_from_array(gids)?;
         let replica_counts = usize_from_array(replica_counts)?;
-        ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
-        let options = find_leader_options(role_age_ms, &now, peer_filter)?;
-        let mut prepared_options_by_replicas = HashMap::new();
-        let mut full_replica_leaders_by_replicas = HashMap::new();
+        let plans = self.plan_leaders_for_gids_batch_core(
+            &gids,
+            &replica_counts,
+            role_age_ms,
+            &now,
+            peer_filter,
+            expand_peer_filter,
+            &self_hash,
+            include_self,
+            full_replica_fallback,
+            include_strict_full_replica,
+        )?;
         let out = Array::new();
-
-        for (gid, replicas) in gids.into_iter().zip(replica_counts) {
-            let coordinates = self.inner.range_planner.get_gid_coordinates(&gid, replicas);
-            let leaders = find_leaders_with_batch_caches(
-                &self.inner.range_planner,
-                &coordinates,
-                replicas,
-                &options,
-                &mut prepared_options_by_replicas,
-                &mut full_replica_leaders_by_replicas,
-                expand_peer_filter,
-                &self_hash,
-                include_self,
-                full_replica_fallback,
-                include_strict_full_replica,
-            );
+        for plan in plans {
             let row = Array::new();
             row.push(&numbers_to_rows(
-                coordinates,
+                plan.coordinates,
                 self.inner.range_planner.resolution,
             ));
-            row.push(&samples_to_rows(leaders));
+            row.push(&samples_to_rows(plan.leaders));
             out.push(&row);
         }
 
