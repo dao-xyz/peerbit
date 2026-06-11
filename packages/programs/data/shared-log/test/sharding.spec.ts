@@ -526,6 +526,7 @@ testSetups.forEach((setup) => {
 						string,
 						{ count: number; holders: number[] }
 					>();
+					const entryByHash = new Map<string, any>();
 					for (const [i, db] of dbs.entries()) {
 						for (const entry of await db.log.log.toArray()) {
 							const cur = replicasByHash.get(entry.hash) || {
@@ -535,6 +536,26 @@ testSetups.forEach((setup) => {
 							cur.count += 1;
 							cur.holders.push(i);
 							replicasByHash.set(entry.hash, cur);
+							entryByHash.set(entry.hash, entry);
+						}
+					}
+					for (const [i, db] of dbs.entries()) {
+						try {
+							const ranges = await (db.log as any).replicationIndex
+								.iterate({})
+								.all();
+							console.log(
+								"[CHAOS_DUMP] replicationIndex db" + i,
+								JSON.stringify(
+									ranges.map((r: any) => ({
+										peer: String(r.value.hash).slice(0, 8),
+										w: String(r.value.width ?? "?"),
+										ts: String(r.value.timestamp ?? "?"),
+									})),
+								),
+							);
+						} catch (e: any) {
+							console.log("[CHAOS_DUMP] replicationIndex db" + i, "err", e?.message);
 						}
 					}
 					for (const [hash, info] of replicasByHash) {
@@ -547,6 +568,39 @@ testSetups.forEach((setup) => {
 							"holders=",
 							info.holders.join(","),
 						);
+						const entryObj = entryByHash.get(hash);
+						if (entryObj) {
+							for (const [i, db] of dbs.entries()) {
+								try {
+									const l0 = await (db.log as any).findLeadersFromEntry(
+										entryObj,
+										minReplicas,
+										{ roleAge: 0 },
+									);
+									const lDef = await (db.log as any).findLeadersFromEntry(
+										entryObj,
+										minReplicas,
+									);
+									console.log(
+										"[CHAOS_DUMP] leaders-for",
+										hash.slice(0, 16),
+										"db" + i,
+										"roleAge0=",
+										[...l0.keys()].map((k: string) => k.slice(0, 8)).join("|"),
+										"default=",
+										[...lDef.keys()].map((k: string) => k.slice(0, 8)).join("|"),
+									);
+								} catch (e: any) {
+									console.log(
+										"[CHAOS_DUMP] leaders-for",
+										hash.slice(0, 16),
+										"db" + i,
+										"err",
+										e?.message,
+									);
+								}
+							}
+						}
 						for (const [i, db] of dbs.entries()) {
 							const segs = (await db.log.getMyReplicationSegments()).map((x) => {
 								const r = x.toReplicationRange();
