@@ -517,11 +517,67 @@ testSetups.forEach((setup) => {
 						),
 				).length;
 			};
+			const dumpUnderReplicated = async (
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+				minReplicas: number,
+			) => {
+				try {
+					const replicasByHash = new Map<
+						string,
+						{ count: number; holders: number[] }
+					>();
+					for (const [i, db] of dbs.entries()) {
+						for (const entry of await db.log.log.toArray()) {
+							const cur = replicasByHash.get(entry.hash) || {
+								count: 0,
+								holders: [] as number[],
+							};
+							cur.count += 1;
+							cur.holders.push(i);
+							replicasByHash.set(entry.hash, cur);
+						}
+					}
+					for (const [hash, info] of replicasByHash) {
+						if (info.count >= minReplicas) {
+							continue;
+						}
+						console.log(
+							"[CHAOS_DUMP] under-replicated",
+							hash,
+							"holders=",
+							info.holders.join(","),
+						);
+						for (const [i, db] of dbs.entries()) {
+							const segs = (await db.log.getMyReplicationSegments()).map((x) =>
+								String(x.toReplicationRange()),
+							);
+							console.log(
+								"[CHAOS_DUMP] db" + i,
+								"id=",
+								db.log.node.identity.publicKey.hashcode(),
+								"has=",
+								await db.log.log.has(hash),
+								"len=",
+								db.log.log.length,
+								"syncInFlight=",
+								db.log.syncronizer.syncInFlight.has(hash),
+								"pendingDelete=",
+								(db.log as any)._pendingDeletes?.has?.(hash) ?? "?",
+								"segs=",
+								JSON.stringify(segs),
+							);
+						}
+					}
+				} catch (dumpError: any) {
+					console.log("[CHAOS_DUMP] dump failed:", dumpError?.message);
+				}
+			};
 			const waitForReplicationCoverageSettled = async (
 				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
 				minReplicas: number,
 				expectedUnionSize: number,
 			) => {
+				try {
 				await waitForResolved(
 					async () => {
 						const replicasByHash = new Map<string, number>();
@@ -550,6 +606,10 @@ testSetups.forEach((setup) => {
 					},
 					{ timeout: 180_000, delayInterval: 500 },
 				);
+				} catch (error) {
+					await dumpUnderReplicated(dbs, minReplicas);
+					throw error;
+				}
 			};
 
 			it("uses direct pubsub peers when the fanout subscriber snapshot is empty", async () => {

@@ -7244,6 +7244,16 @@ export class SharedLog<
 				this._gidPeersHistory.delete(x.entry.meta.gid);
 				this.removePruneRequestSent(x.entry.hash);
 				this._checkedPrune.clearConfirmedReplicators(x.entry.hash);
+				if (process.env.PEERBIT_CHAOS_TRACE) {
+					console.log(
+						"[CHAOS_TRACE] prune-unchecked",
+						x.entry.hash,
+						"self=",
+						this.node.identity.publicKey.hashcode(),
+						"t=",
+						Date.now(),
+					);
+				}
 				return this.log.remove(x.entry, {
 					recursively: true,
 				});
@@ -7350,6 +7360,20 @@ export class SharedLog<
 									return;
 								}
 
+								if (process.env.PEERBIT_CHAOS_TRACE) {
+									console.log(
+										"[CHAOS_TRACE] prune-checked",
+										entry.hash,
+										"self=",
+										this.node.identity.publicKey.hashcode(),
+										"leaders=",
+										JSON.stringify([
+											...this.checkedPruneLeadersToMap(leaders).keys(),
+										]),
+										"t=",
+										Date.now(),
+									);
+								}
 								this._checkedPrune.markRemoving(entry.hash);
 								return this.log
 									.remove(entry, {
