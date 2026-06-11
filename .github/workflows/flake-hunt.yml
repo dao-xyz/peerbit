@@ -8,11 +8,11 @@ on:
       grep:
         description: Mocha grep for the tests to loop
         required: false
-        default: "^u32-simple replication degree"
+        default: "survives deterministic delayed join and leave churn"
       iterations:
         description: Number of repetitions
         required: false
-        default: "8"
+        default: "24"
 
 jobs:
   hunt:
@@ -57,17 +57,19 @@ jobs:
           set -uo pipefail
           mkdir -p hunt-results
           failures=0
-          for i in $(seq 1 ${{ github.event.inputs.iterations || '8' }}); do
-            echo "=== iteration $i ==="
-            if PEERBIT_MOCHA_LOG_TEST_START=1 PEERBIT_MOCHA_LOG_INTERVAL_MS=10000 \
+          for i in $(seq 1 ${{ github.event.inputs.iterations || '24' }}); do
+            if [ "$i" -eq 1 ]; then seed=13331; else seed=$((20000 + i * 997)); fi
+            echo "=== iteration $i seed=$seed ==="
+            if PEERBIT_SHARED_LOG_CHAOS_SEED=$seed \
+              PEERBIT_MOCHA_LOG_TEST_START=1 PEERBIT_MOCHA_LOG_INTERVAL_MS=10000 \
               node ./node_modules/aegir/src/index.js run test \
                 --roots ./packages/programs/data/shared-log -- -t node --no-build \
-                --grep "${{ github.event.inputs.grep || '^u32-simple replication degree' }}" \
-                > "hunt-results/iter-$i.log" 2>&1; then
-              echo "iteration $i: PASS"
-              rm "hunt-results/iter-$i.log"
+                --grep "${{ github.event.inputs.grep || 'survives deterministic delayed join and leave churn' }}" \
+                > "hunt-results/seed-$seed.log" 2>&1; then
+              echo "iteration $i seed=$seed: PASS"
+              rm "hunt-results/seed-$seed.log"
             else
-              echo "iteration $i: FAIL"
+              echo "iteration $i seed=$seed: FAIL"
               failures=$((failures+1))
             fi
           done
