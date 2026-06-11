@@ -636,6 +636,77 @@ testSetups.forEach((setup) => {
 										"[CHAOS_DUMP] stages db" + i,
 										results.join(" "),
 									);
+									const uniq = [
+										...((db.log as any).uniqueReplicators ?? []),
+									].map((x: string) => x.slice(0, 8));
+									let subs = "?";
+									try {
+										const s = await stageTimeout(
+											(db.log as any)._getTopicSubscribers(
+												(db.log as any).topic,
+											),
+											3_000,
+										);
+										subs = (s ?? [])
+											.map((k: any) => k.hashcode().slice(0, 8))
+											.join("|");
+									} catch (e: any) {
+										subs = "err:" + e?.message;
+									}
+									// composed probes
+									const composed: string[] = [];
+									for (const [name, fn] of [
+										[
+											"findLeaders8s",
+											() =>
+												(db.log as any)._findLeaders(coordinates, {
+													roleAge: 0,
+												}),
+										],
+										[
+											"fullReplica",
+											() =>
+												(db.log as any).findFullReplicaLeaders?.(
+													coordinates.length,
+													0,
+													undefined,
+												),
+										],
+										[
+											"underfilled",
+											() =>
+												(db.log as any)
+													.includeIndexedLeaderCandidatesWhenUnderfilled?.(
+														undefined,
+														0,
+														coordinates.length,
+														true,
+													),
+										],
+									] as [string, () => Promise<any>][]) {
+										const t0 = Date.now();
+										try {
+											const r = await stageTimeout(fn(), 8_000);
+											composed.push(
+												`${name}:ok(${Date.now() - t0}ms,${
+													r && r.size != null ? r.size : typeof r
+												})`,
+											);
+										} catch (e: any) {
+											composed.push(
+												`${name}:${e?.message}(${Date.now() - t0}ms)`,
+											);
+										}
+									}
+									console.log(
+										"[CHAOS_DUMP] state db" + i,
+										"uniqueReplicators=",
+										uniq.join("|") || "EMPTY",
+										"subscribers=",
+										subs,
+										"composed=",
+										composed.join(" "),
+									);
 								}
 							}
 							if (coordinates) {
