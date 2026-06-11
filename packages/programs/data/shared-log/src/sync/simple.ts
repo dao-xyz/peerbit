@@ -613,6 +613,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const startedAt = syncProfileStart(profile);
 		const hashes = this.getPrioritizedHashes(properties.entries);
 		const chunks = this.chunk(hashes, this.maxHashesPerMessage);
+		if (process.env.PEERBIT_CHAOS_TRACE) {
+			console.log(
+				"[CHAOS_TRACE] simple-announce self=",
+				(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+				"targets=",
+				properties.targets.join(","),
+				"n=",
+				hashes.length,
+				"t=",
+				Date.now(),
+			);
+		}
 		try {
 			await chunks.reduce(
 				(promise, chunk) =>
@@ -779,6 +791,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 			}
 
+			if (process.env.PEERBIT_CHAOS_TRACE) {
+				console.log(
+					"[CHAOS_TRACE] queueSync self=",
+					(this.log as any).identity?.publicKey?.hashcode?.() ?? "?",
+					"from=",
+					from.hashcode(),
+					"offered=",
+					keys.length,
+					"requested=",
+					requestHashes.length,
+					"t=",
+					Date.now(),
+				);
+			}
 			requestHashes.length > 0 &&
 				(await this.requestSync(requestHashes, [from!.hashcode()]));
 		} finally {

@@ -2729,6 +2729,22 @@ export class SharedLog<
 	}
 
 	private markEntriesKnownByPeer(hashes: Iterable<string>, peer: string) {
+		if (process.env.PEERBIT_CHAOS_TRACE) {
+			const arr = Array.isArray(hashes) ? (hashes as string[]) : [...hashes];
+			hashes = arr;
+			console.log(
+				"[CHAOS_TRACE] markKnown self=",
+				this.node.identity.publicKey.hashcode(),
+				"peer=",
+				peer,
+				"n=",
+				arr.length,
+				"via",
+				(new Error().stack || "").split("\n")[2]?.trim(),
+				"t=",
+				Date.now(),
+			);
+		}
 		const now = Date.now();
 		for (const hash of hashes) {
 			let peers = this._entryKnownPeers.get(hash);
@@ -2988,6 +3004,24 @@ export class SharedLog<
 			}
 		}
 		this.clearRepairFrontierHashes(target, knownHashes);
+		if (process.env.PEERBIT_CHAOS_TRACE) {
+			console.log(
+				"[CHAOS_TRACE] repair-dispatch self=",
+				this.node.identity.publicKey.hashcode(),
+				"target=",
+				target,
+				"total=",
+				entries.size,
+				"unknown=",
+				unknownEntries.size,
+				"suppressedKnown=",
+				knownHashes.length,
+				"transport=",
+				transport,
+				"t=",
+				Date.now(),
+			);
+		}
 		if (unknownEntries.size === 0) {
 			return;
 		}

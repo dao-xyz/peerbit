@@ -12,7 +12,7 @@ on:
       iterations:
         description: Number of repetitions
         required: false
-        default: "12"
+        default: "20"
 
 jobs:
   hunt:
@@ -57,7 +57,7 @@ jobs:
           set -uo pipefail
           mkdir -p hunt-results
           failures=0
-          for i in $(seq 1 ${{ github.event.inputs.iterations || '12' }}); do
+          for i in $(seq 1 ${{ github.event.inputs.iterations || '20' }}); do
             seed=13331
             echo "=== iteration $i seed=$seed ==="
             if PEERBIT_SHARED_LOG_CHAOS_SEED=$seed PEERBIT_CHAOS_TRACE=1 \
