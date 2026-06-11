@@ -161,6 +161,10 @@ type NativePeerbitBackboneHandle = {
 	set_document_journal_enabled: (enabled: boolean) => void;
 	document_journal: () => Uint8Array;
 	clear_document_journal: () => void;
+	clear_document_journal_prefix: (
+		byteLength: number,
+		recordCount: number,
+	) => void;
 	document_snapshot: () => Uint8Array;
 	load_document_snapshot_and_journal: (
 		snapshot: Uint8Array,
@@ -173,6 +177,10 @@ type NativePeerbitBackboneHandle = {
 	set_coordinate_journal_enabled: (enabled: boolean) => void;
 	coordinate_journal: () => Uint8Array;
 	clear_coordinate_journal: () => void;
+	clear_coordinate_journal_prefix: (
+		byteLength: number,
+		recordCount: number,
+	) => void;
 	coordinate_snapshot: () => Uint8Array;
 	load_coordinate_snapshot_and_journal: (
 		snapshot: Uint8Array,
@@ -185,6 +193,10 @@ type NativePeerbitBackboneHandle = {
 	set_document_signer_journal_enabled: (enabled: boolean) => void;
 	document_signer_journal: () => Uint8Array;
 	clear_document_signer_journal: () => void;
+	clear_document_signer_journal_prefix: (
+		byteLength: number,
+		recordCount: number,
+	) => void;
 	document_signer_snapshot: () => Uint8Array;
 	load_document_signer_snapshot_and_journal: (
 		snapshot: Uint8Array,
@@ -2836,6 +2848,15 @@ export const defaultNativeBackboneCoordinateFlushMaxPendingBytes = 1024 * 1024;
 export const defaultNativeBackboneCoordinateCompactMaxJournalBytes =
 	64 * 1024 * 1024;
 
+const resolveCoordinateFlushMaxPendingBytes = (
+	options: NativeBackboneCoordinatePersistenceOptions,
+): number | undefined =>
+	options.flushMaxPendingBytes != null
+		? Math.max(0, options.flushMaxPendingBytes)
+		: options.flushOnAppend === false
+			? defaultNativeBackboneCoordinateFlushMaxPendingBytes
+			: undefined;
+
 type NativeBackboneNodeFs = {
 	mkdir(path: string, options?: { recursive?: boolean }): Promise<unknown>;
 	readFile(path: string): Promise<Uint8Array>;
@@ -2895,6 +2916,14 @@ const isNotFoundError = (error: unknown): boolean => {
 	const maybeError = error as { code?: string; name?: string } | undefined;
 	return maybeError?.code === "ENOENT" || maybeError?.name === "NotFoundError";
 };
+
+let nodeFsModule: Promise<NativeBackboneNodeFs> | undefined;
+const importNodeFs = (): Promise<NativeBackboneNodeFs> =>
+	(nodeFsModule ??= import("node:fs/promises"));
+
+let nodePathJoin: Promise<(...parts: string[]) => string> | undefined;
+const importNodePathJoin = (): Promise<(...parts: string[]) => string> =>
+	(nodePathJoin ??= import("node:path").then((mod) => mod.join));
 
 const validateCoordinatePersistenceName = (name: string): string => {
 	if (
@@ -2972,6 +3001,78 @@ const rowsToRepairDispatchPlan = (
 	return plan;
 };
 
+// Coordinate plans frequently cross the wasm boundary with many decimal-string
+// values while callers typically read only one representation, so the numeric
+// and string views are materialized lazily on first access (and cached, so
+// repeated reads return the same array instance).
+const lazyCoordinatePlan = (
+	resolution: RangeResolution,
+	hash: string,
+	hashNumber: unknown,
+	gid: string,
+	coordinateRows: unknown[],
+	assignedToRangeBoundary: boolean,
+	requestedReplicas: number,
+): NativeBackboneCoordinatePlan => {
+	let hashNumberValue: number | bigint | undefined;
+	let coordinates: Array<number | bigint> | undefined;
+	let coordinateStrings: string[] | undefined;
+	return {
+		hash,
+		get hashNumber() {
+			return (hashNumberValue ??= rowsToNumbers(resolution, [hashNumber])[0]!);
+		},
+		set hashNumber(value: number | bigint) {
+			hashNumberValue = value;
+		},
+		hashNumberString:
+			typeof hashNumber === "string" ? hashNumber : String(hashNumber),
+		gid,
+		get coordinates() {
+			return (coordinates ??= rowsToNumbers(resolution, coordinateRows));
+		},
+		set coordinates(value: Array<number | bigint>) {
+			coordinates = value;
+		},
+		get coordinateStrings() {
+			return (coordinateStrings ??= coordinateRows.map((coordinate) =>
+				String(coordinate),
+			));
+		},
+		set coordinateStrings(value: string[]) {
+			coordinateStrings = value;
+		},
+		assignedToRangeBoundary,
+		requestedReplicas,
+	};
+};
+
+const lazyLeaderPlanFromRows = (
+	resolution: RangeResolution,
+	coordinateRows: unknown[],
+	leaderRows: unknown[] | undefined,
+): NativeBackboneLeaderPlan => {
+	let coordinates: Array<number | bigint> | undefined;
+	let coordinateStrings: string[] | undefined;
+	return {
+		get coordinates() {
+			return (coordinates ??= rowsToNumbers(resolution, coordinateRows));
+		},
+		set coordinates(value: Array<number | bigint>) {
+			coordinates = value;
+		},
+		get coordinateStrings() {
+			return (coordinateStrings ??= coordinateRows.map((coordinate) =>
+				String(coordinate),
+			));
+		},
+		set coordinateStrings(value: string[] | undefined) {
+			coordinateStrings = value;
+		},
+		leaders: rowsToSamples(leaderRows) ?? new Map(),
+	};
+};
+
 const appendCoordinatePlanFromRow = (
 	resolution: RangeResolution,
 	row: unknown[],
@@ -2984,20 +3085,15 @@ const appendCoordinatePlanFromRow = (
 		assignedToRangeBoundary,
 		requestedReplicas,
 	] = row as [string, unknown, string, unknown[], boolean, number];
-	const coordinateStrings = coordinateRows.map((coordinate) =>
-		String(coordinate),
-	);
-	return {
+	return lazyCoordinatePlan(
+		resolution,
 		hash,
-		hashNumber: rowsToNumbers(resolution, [hashNumber])[0]!,
-		hashNumberString:
-			typeof hashNumber === "string" ? hashNumber : String(hashNumber),
+		hashNumber,
 		gid,
-		coordinates: rowsToNumbers(resolution, coordinateStrings),
-		coordinateStrings,
+		coordinateRows,
 		assignedToRangeBoundary,
 		requestedReplicas,
-	};
+	);
 };
 
 const appendCoordinatePlanFromCompactNoNextRow = (
@@ -3012,20 +3108,15 @@ const appendCoordinatePlanFromCompactNoNextRow = (
 		assignedToRangeBoundary,
 		requestedReplicas,
 	] = row as [unknown, string, unknown[], boolean, number];
-	const coordinateStrings = coordinateRows.map((coordinate) =>
-		String(coordinate),
-	);
-	return {
+	return lazyCoordinatePlan(
+		resolution,
 		hash,
-		hashNumber: rowsToNumbers(resolution, [hashNumber])[0]!,
-		hashNumberString:
-			typeof hashNumber === "string" ? hashNumber : String(hashNumber),
+		hashNumber,
 		gid,
-		coordinates: rowsToNumbers(resolution, coordinateStrings),
-		coordinateStrings,
+		coordinateRows,
 		assignedToRangeBoundary,
 		requestedReplicas,
-	};
+	);
 };
 
 const documentContextFactsFromRow = (
@@ -3073,22 +3164,30 @@ const coordinateFieldsFromRow = (
 		string,
 		Uint8Array,
 	];
-	const coordinate = appendCoordinatePlanFromRow(resolution, [
+	// Extend the lazy plan in place; spreading it would eagerly invoke the
+	// memoized getters and defeat the lazy materialization.
+	const fields = appendCoordinatePlanFromRow(resolution, [
 		hash,
 		hashNumber,
 		gid,
 		coordinateRows,
 		assignedToRangeBoundary,
 		requestedReplicas,
-	]);
+	]) as NativeBackboneCoordinateFields;
 	const wallTimeString =
 		typeof wallTime === "string" ? wallTime : String(wallTime);
-	return {
-		...coordinate,
-		wallTime: BigInt(wallTimeString),
-		wallTimeString,
-		metaBytes,
-	};
+	let wallTimeValue: bigint | undefined;
+	Object.defineProperty(fields, "wallTime", {
+		configurable: true,
+		enumerable: true,
+		get: () => (wallTimeValue ??= BigInt(wallTimeString)),
+		set: (value: bigint) => {
+			wallTimeValue = value;
+		},
+	});
+	fields.wallTimeString = wallTimeString;
+	fields.metaBytes = metaBytes;
+	return fields;
 };
 
 const appendDeliveryPlanFromRow = (
@@ -3958,9 +4057,8 @@ const rawReceiveGroupLeaderPlanFromRow = (
 		leaderRows,
 	]: NativeBackboneRawReceiveGroupLeaderPlanRow,
 ): NativeBackboneRawReceiveGroupLeaderPlan => {
-	const coordinateStrings = coordinateRows.map((coordinate) =>
-		String(coordinate),
-	);
+	let coordinates: Array<number | bigint> | undefined;
+	let coordinateStrings: string[] | undefined;
 	return {
 		gid,
 		indexes,
@@ -3969,8 +4067,20 @@ const rawReceiveGroupLeaderPlanFromRow = (
 		maxReplicasFromHead,
 		maxReplicasFromNewEntries,
 		maxMaxReplicas,
-		coordinates: rowsToNumbers(resolution, coordinateStrings),
-		coordinateStrings,
+		get coordinates() {
+			return (coordinates ??= rowsToNumbers(resolution, coordinateRows));
+		},
+		set coordinates(value: Array<number | bigint>) {
+			coordinates = value;
+		},
+		get coordinateStrings() {
+			return (coordinateStrings ??= coordinateRows.map((coordinate) =>
+				String(coordinate),
+			));
+		},
+		set coordinateStrings(value: string[] | undefined) {
+			coordinateStrings = value;
+		},
 		leaders: rowsToSamples(leaderRows) ?? new Map(),
 	};
 };
@@ -3991,9 +4101,8 @@ const rawReceiveGroupAssignmentPlanFromRow = (
 		assignedToRangeBoundary,
 	]: NativeBackboneRawReceiveGroupAssignmentPlanRow,
 ): NativeBackboneRawReceiveGroupAssignmentPlan => {
-	const coordinateStrings = coordinateRows.map((coordinate) =>
-		String(coordinate),
-	);
+	let coordinates: Array<number | bigint> | undefined;
+	let coordinateStrings: string[] | undefined;
 	return {
 		gid,
 		indexes,
@@ -4002,8 +4111,20 @@ const rawReceiveGroupAssignmentPlanFromRow = (
 		maxReplicasFromHead,
 		maxReplicasFromNewEntries,
 		maxMaxReplicas,
-		coordinates: rowsToNumbers(resolution, coordinateStrings),
-		coordinateStrings,
+		get coordinates() {
+			return (coordinates ??= rowsToNumbers(resolution, coordinateRows));
+		},
+		set coordinates(value: Array<number | bigint>) {
+			coordinates = value;
+		},
+		get coordinateStrings() {
+			return (coordinateStrings ??= coordinateRows.map((coordinate) =>
+				String(coordinate),
+			));
+		},
+		set coordinateStrings(value: string[]) {
+			coordinateStrings = value;
+		},
 		isLeader,
 		fromIsLeader,
 		assignedToRangeBoundary,
@@ -6037,6 +6158,10 @@ export class NativePeerbitBackbone {
 		this.native.clear_document_journal();
 	}
 
+	clearDocumentJournalPrefix(byteLength: number, recordCount: number): void {
+		this.native.clear_document_journal_prefix(byteLength, recordCount);
+	}
+
 	documentSnapshot(): Uint8Array {
 		return this.native.document_snapshot();
 	}
@@ -6079,6 +6204,10 @@ export class NativePeerbitBackbone {
 		this.native.clear_coordinate_journal();
 	}
 
+	clearCoordinateJournalPrefix(byteLength: number, recordCount: number): void {
+		this.native.clear_coordinate_journal_prefix(byteLength, recordCount);
+	}
+
 	coordinateSnapshot(): Uint8Array {
 		return this.native.coordinate_snapshot();
 	}
@@ -6119,6 +6248,13 @@ export class NativePeerbitBackbone {
 
 	clearDocumentSignerJournal(): void {
 		this.native.clear_document_signer_journal();
+	}
+
+	clearDocumentSignerJournalPrefix(
+		byteLength: number,
+		recordCount: number,
+	): void {
+		this.native.clear_document_signer_journal_prefix(byteLength, recordCount);
 	}
 
 	documentSignerSnapshot(): Uint8Array {
@@ -6402,14 +6538,7 @@ export class NativePeerbitBackbone {
 			replicas,
 			...findLeaderArguments(options),
 		);
-		const coordinateStrings = coordinateRows.map((coordinate) =>
-			String(coordinate),
-		);
-		return {
-			coordinates: rowsToNumbers(this.resolution, coordinateStrings),
-			coordinateStrings,
-			leaders: rowsToSamples(leaderRows) ?? new Map(),
-		};
+		return lazyLeaderPlanFromRows(this.resolution, coordinateRows, leaderRows);
 	}
 
 	planLeadersForGidsBatch(
@@ -6422,16 +6551,9 @@ export class NativePeerbitBackbone {
 			entries.map((entry) => entry.replicas),
 			...findLeaderArguments(options),
 		);
-		return rows.map(([coordinateRows, leaderRows]) => {
-			const coordinateStrings = coordinateRows.map((coordinate) =>
-				String(coordinate),
-			);
-			return {
-				coordinates: rowsToNumbers(this.resolution, coordinateStrings),
-				coordinateStrings,
-				leaders: rowsToSamples(leaderRows) ?? new Map(),
-			};
-		});
+		return rows.map(([coordinateRows, leaderRows]) =>
+			lazyLeaderPlanFromRows(this.resolution, coordinateRows, leaderRows),
+		);
 	}
 
 	planLeaderSamplesForGidsBatch(
@@ -6686,8 +6808,14 @@ export class NativePeerbitBackbone {
 			this.resolution,
 			coordinatePlanRow,
 		);
+		let coordinates: Array<number | bigint> | undefined;
 		return {
-			coordinates: coordinate.coordinates,
+			get coordinates() {
+				return (coordinates ??= coordinate.coordinates);
+			},
+			set coordinates(value: Array<number | bigint>) {
+				coordinates = value;
+			},
 			leaders: rowsToSamples(leaderRows),
 			isLeader,
 			assignedToRangeBoundary,
@@ -6724,8 +6852,14 @@ export class NativePeerbitBackbone {
 			this.resolution,
 			coordinatePlanRow,
 		);
+		let coordinates: Array<number | bigint> | undefined;
 		return {
-			coordinates: coordinate.coordinates,
+			get coordinates() {
+				return (coordinates ??= coordinate.coordinates);
+			},
+			set coordinates(value: Array<number | bigint>) {
+				coordinates = value;
+			},
 			leaders: rowsToSamples(leaderRows),
 			isLeader,
 			assignedToRangeBoundary,
@@ -7982,6 +8116,8 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		string,
 		Promise<NativeBackboneNodeAppendFileHandle>
 	>();
+	private readonly filePaths = new Map<string, string>();
+	private directoryEnsured = false;
 
 	constructor(
 		private readonly directory: string,
@@ -7989,17 +8125,25 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 	) {}
 
 	private async nodeFs(): Promise<NativeBackboneNodeFs> {
-		return this.fs ?? (await import("node:fs/promises"));
+		return this.fs ?? (await importNodeFs());
 	}
 
 	private async filePath(name: string): Promise<string> {
-		const { join } = await import("node:path");
-		return join(this.directory, validateCoordinatePersistenceName(name));
+		const validName = validateCoordinatePersistenceName(name);
+		let path = this.filePaths.get(validName);
+		if (path === undefined) {
+			path = (await importNodePathJoin())(this.directory, validName);
+			this.filePaths.set(validName, path);
+		}
+		return path;
 	}
 
 	private async ensureDirectory(): Promise<NativeBackboneNodeFs> {
 		const fs = await this.nodeFs();
-		await fs.mkdir(this.directory, { recursive: true });
+		if (!this.directoryEnsured) {
+			await fs.mkdir(this.directory, { recursive: true });
+			this.directoryEnsured = true;
+		}
 		return fs;
 	}
 
@@ -8071,417 +8215,7 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 	}
 
 	async close(): Promise<void> {
-		const handles = [...this.appendHandles.values()];
-		this.appendHandles.clear();
-		await Promise.all(handles.map(async (handle) => (await handle).close()));
-	}
-}
-
-export class NativeBackboneNodeCoordinatePersistence
-	implements NativeBackboneCoordinatePersistenceAdapter
-{
-	readonly flushOnAppend: boolean;
-	readonly flushMaxPendingBytes?: number;
-	readonly flushIntervalMs?: number;
-	readonly compactMaxJournalBytes?: number;
-	readonly compactMaxJournalRecords?: number;
-	private readonly snapshotFile: string;
-	private readonly journalFile: string;
-	private readonly documentSnapshotFile: string;
-	private readonly documentJournalFile: string;
-	private readonly documentSignerSnapshotFile: string;
-	private readonly documentSignerJournalFile: string;
-	private readonly fs?: NativeBackboneNodeFs;
-	private readonly writeBufferMaxBytes?: number;
-	private readonly appendHandles = new Map<
-		string,
-		Promise<NativeBackboneNodeAppendFileHandle>
-	>();
-	private readonly journalWriteBuffers = new Map<string, Uint8Array[]>();
-	private journalWriteBufferBytes = 0;
-	private journalInitialized: boolean | undefined;
-	private journalByteLength = 0;
-	private journalRecordCount = 0;
-	private documentJournalInitialized: boolean | undefined;
-	private documentJournalByteLength = 0;
-	private documentJournalRecordCount = 0;
-	private documentSignerJournalInitialized: boolean | undefined;
-	private documentSignerJournalByteLength = 0;
-	private documentSignerJournalRecordCount = 0;
-	private lastFlushMs = Date.now();
-
-	constructor(
-		private readonly directory: string,
-		options: NativeBackboneNodeCoordinatePersistenceOptions = {},
-	) {
-		this.snapshotFile =
-			options.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot;
-		this.journalFile =
-			options.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
-		this.documentSnapshotFile =
-			options.documentSnapshot ??
-			nativeBackboneCoordinatePersistenceFiles.documentSnapshot;
-		this.documentJournalFile =
-			options.documentJournal ??
-			nativeBackboneCoordinatePersistenceFiles.documentJournal;
-		this.documentSignerSnapshotFile =
-			options.documentSignerSnapshot ??
-			nativeBackboneCoordinatePersistenceFiles.documentSignerSnapshot;
-		this.documentSignerJournalFile =
-			options.documentSignerJournal ??
-			nativeBackboneCoordinatePersistenceFiles.documentSignerJournal;
-		this.flushOnAppend = options.flushOnAppend ?? true;
-		if (options.flushMaxPendingBytes != null) {
-			this.flushMaxPendingBytes = Math.max(0, options.flushMaxPendingBytes);
-		} else if (this.flushOnAppend === false) {
-			this.flushMaxPendingBytes =
-				defaultNativeBackboneCoordinateFlushMaxPendingBytes;
-		}
-		if (options.flushIntervalMs != null) {
-			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
-		}
-		if (options.compactMaxJournalBytes != null) {
-			this.compactMaxJournalBytes = Math.max(
-				0,
-				options.compactMaxJournalBytes,
-			);
-		}
-		if (options.compactMaxJournalRecords != null) {
-			this.compactMaxJournalRecords = Math.max(
-				0,
-				options.compactMaxJournalRecords,
-			);
-		}
-		this.fs = options.fs;
-		if (options.writeBufferMaxBytes != null) {
-			this.writeBufferMaxBytes = Math.max(0, options.writeBufferMaxBytes);
-		} else if (this.flushOnAppend === false) {
-			this.writeBufferMaxBytes = this.flushMaxPendingBytes;
-		}
-	}
-
-	private async nodeFs(): Promise<NativeBackboneNodeFs> {
-		return this.fs ?? (await import("node:fs/promises"));
-	}
-
-	private async filePath(name: string): Promise<string> {
-		const { join } = await import("node:path");
-		return join(this.directory, validateCoordinatePersistenceName(name));
-	}
-
-	private async ensureDirectory(): Promise<NativeBackboneNodeFs> {
-		const fs = await this.nodeFs();
-		await fs.mkdir(this.directory, { recursive: true });
-		return fs;
-	}
-
-	private async closeAppendHandle(path: string): Promise<void> {
-		const handle = this.appendHandles.get(path);
-		if (!handle) {
-			return;
-		}
-		this.appendHandles.delete(path);
-		await (await handle).close();
-	}
-
-	private async appendHandle(
-		fs: NativeBackboneNodeFs,
-		path: string,
-	): Promise<NativeBackboneNodeAppendFileHandle | undefined> {
-		if (!fs.open) {
-			return undefined;
-		}
-		let handle = this.appendHandles.get(path);
-		if (!handle) {
-			handle = fs.open(path, "a");
-			this.appendHandles.set(path, handle);
-		}
-		return handle;
-	}
-
-	private async readFile(name: string): Promise<Uint8Array | undefined> {
-		const fs = await this.nodeFs();
-		try {
-			return await fs.readFile(await this.filePath(name));
-		} catch (error) {
-			if (isNotFoundError(error)) {
-				return undefined;
-			}
-			throw error;
-		}
-	}
-
-	private async writeFile(name: string, bytes: Uint8Array): Promise<void> {
-		const fs = await this.ensureDirectory();
-		const path = await this.filePath(name);
-		await this.closeAppendHandle(path);
-		await fs.writeFile(path, bytes);
-	}
-
-	private async appendFile(name: string, bytes: Uint8Array): Promise<void> {
-		if (bytes.byteLength === 0) {
-			return;
-		}
-		const fs = await this.ensureDirectory();
-		const path = await this.filePath(name);
-		const handle = await this.appendHandle(fs, path);
-		if (handle) {
-			await handle.write(bytes);
-			return;
-		}
-		await fs.appendFile(path, bytes);
-	}
-
-	private async removeFile(name: string): Promise<void> {
-		const fs = await this.nodeFs();
-		const path = await this.filePath(name);
-		await this.closeAppendHandle(path);
-		try {
-			await fs.rm(path, { force: true });
-		} catch (error) {
-			if (!isNotFoundError(error)) {
-				throw error;
-			}
-		}
-	}
-
-	private async appendJournalBytes(
-		fileName: string,
-		bytes: Uint8Array,
-	): Promise<void> {
-		if (this.writeBufferMaxBytes == null) {
-			await this.appendFile(fileName, bytes);
-			return;
-		}
-		const chunk = copyBytes(bytes);
-		const validName = validateCoordinatePersistenceName(fileName);
-		let buffer = this.journalWriteBuffers.get(validName);
-		if (!buffer) {
-			buffer = [];
-			this.journalWriteBuffers.set(validName, buffer);
-		}
-		buffer.push(chunk);
-		this.journalWriteBufferBytes += chunk.byteLength;
-		if (this.journalWriteBufferBytes >= this.writeBufferMaxBytes) {
-			await this.flushJournalWriteBuffer();
-		}
-	}
-
-	async flushJournalWriteBuffer(fileName?: string): Promise<void> {
-		const fileNames = fileName
-			? [validateCoordinatePersistenceName(fileName)]
-			: [...this.journalWriteBuffers.keys()];
-		for (const name of fileNames) {
-			const chunks = this.journalWriteBuffers.get(name);
-			if (!chunks || chunks.length === 0) {
-				continue;
-			}
-			this.journalWriteBuffers.delete(name);
-			const bytes = chunks.length === 1 ? chunks[0]! : concatBytes(chunks);
-			this.journalWriteBufferBytes -= bytes.byteLength;
-			await this.appendFile(name, bytes);
-		}
-	}
-
-	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
-		await this.flushJournalWriteBuffer();
-		const [
-			snapshot,
-			journal,
-			documentSnapshot,
-			documentJournal,
-			documentSignerSnapshot,
-			documentSignerJournal,
-		] = await Promise.all([
-			this.readFile(this.snapshotFile),
-			this.readFile(this.journalFile),
-			this.readFile(this.documentSnapshotFile),
-			this.readFile(this.documentJournalFile),
-			this.readFile(this.documentSignerSnapshotFile),
-			this.readFile(this.documentSignerJournalFile),
-		]);
-		const operations = backbone.loadCoordinateSnapshotAndJournal(
-			snapshot,
-			journal,
-		);
-		const documentOperations = backbone.loadDocumentSnapshotAndJournal(
-			documentSnapshot,
-			documentJournal,
-		);
-		const documentSignerOperations = backbone.loadDocumentSignerSnapshotAndJournal(
-			documentSignerSnapshot,
-			documentSignerJournal,
-		);
-		this.journalInitialized = !!journal && journal.byteLength > 0;
-		this.journalByteLength = journal?.byteLength ?? 0;
-		this.journalRecordCount = operations;
-		this.documentJournalInitialized =
-			!!documentJournal && documentJournal.byteLength > 0;
-		this.documentJournalByteLength = documentJournal?.byteLength ?? 0;
-		this.documentJournalRecordCount = documentOperations;
-		this.documentSignerJournalInitialized =
-			!!documentSignerJournal && documentSignerJournal.byteLength > 0;
-		this.documentSignerJournalByteLength =
-			documentSignerJournal?.byteLength ?? 0;
-		this.documentSignerJournalRecordCount = documentSignerOperations;
-		backbone.setCoordinateJournalEnabled(true);
-		backbone.setDocumentJournalEnabled(true);
-		backbone.setDocumentSignerJournalEnabled(true);
-		this.lastFlushMs = Date.now();
-		return operations + documentOperations + documentSignerOperations;
-	}
-
-	shouldFlushJournalOnAppend(
-		backbone: NativePeerbitBackbone,
-		now = Date.now(),
-	): boolean {
-		if (this.flushOnAppend !== false) {
-			return true;
-		}
-		const pendingLength =
-			backbone.coordinatePendingJournalLength +
-			backbone.documentPendingJournalLength +
-			backbone.documentSignerPendingJournalLength;
-		if (pendingLength === 0) {
-			return false;
-		}
-		if (
-			this.flushMaxPendingBytes != null &&
-			backbone.coordinatePendingJournalByteLength +
-				backbone.documentPendingJournalByteLength +
-				backbone.documentSignerPendingJournalByteLength >=
-				this.flushMaxPendingBytes
-		) {
-			return true;
-		}
-		return (
-			this.flushIntervalMs != null &&
-			now - this.lastFlushMs >= this.flushIntervalMs
-		);
-	}
-
-	flushJournalOnAppend(
-		backbone: NativePeerbitBackbone,
-	): number | Promise<number> {
-		if (!this.shouldFlushJournalOnAppend(backbone)) {
-			return 0;
-		}
-		return this.flushJournal(backbone);
-	}
-
-	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
-		let written = 0;
-		const coordinateRecords = backbone.coordinateJournal();
-		const coordinateRecordCount = backbone.coordinatePendingJournalLength;
-		if (coordinateRecords.byteLength > 0) {
-			if (this.journalInitialized === undefined) {
-				const existing = await this.readFile(this.journalFile);
-				this.journalInitialized = !!existing && existing.byteLength > 0;
-			}
-			const bytes = this.journalInitialized
-				? coordinateRecords
-				: concatBytes([backbone.coordinateJournalHeader(), coordinateRecords]);
-			await this.appendJournalBytes(this.journalFile, bytes);
-			this.journalInitialized = true;
-			this.journalByteLength += bytes.byteLength;
-			this.journalRecordCount += coordinateRecordCount;
-			backbone.clearCoordinateJournal();
-			written += coordinateRecords.byteLength;
-		}
-		const documentRecords = backbone.documentJournal();
-		const documentRecordCount = backbone.documentPendingJournalLength;
-		if (documentRecords.byteLength > 0) {
-			if (this.documentJournalInitialized === undefined) {
-				const existing = await this.readFile(this.documentJournalFile);
-				this.documentJournalInitialized = !!existing && existing.byteLength > 0;
-			}
-			const bytes = this.documentJournalInitialized
-				? documentRecords
-				: concatBytes([backbone.documentJournalHeader(), documentRecords]);
-			await this.appendJournalBytes(this.documentJournalFile, bytes);
-			this.documentJournalInitialized = true;
-			this.documentJournalByteLength += bytes.byteLength;
-			this.documentJournalRecordCount += documentRecordCount;
-			backbone.clearDocumentJournal();
-			written += documentRecords.byteLength;
-		}
-		const signerRecords = backbone.documentSignerJournal();
-		const signerRecordCount = backbone.documentSignerPendingJournalLength;
-		if (signerRecords.byteLength > 0) {
-			if (this.documentSignerJournalInitialized === undefined) {
-				const existing = await this.readFile(this.documentSignerJournalFile);
-				this.documentSignerJournalInitialized =
-					!!existing && existing.byteLength > 0;
-			}
-			const bytes = this.documentSignerJournalInitialized
-				? signerRecords
-				: concatBytes([backbone.documentSignerJournalHeader(), signerRecords]);
-			await this.appendJournalBytes(this.documentSignerJournalFile, bytes);
-			this.documentSignerJournalInitialized = true;
-			this.documentSignerJournalByteLength += bytes.byteLength;
-			this.documentSignerJournalRecordCount += signerRecordCount;
-			backbone.clearDocumentSignerJournal();
-			written += signerRecords.byteLength;
-		}
-		if (written === 0) {
-			this.lastFlushMs = Date.now();
-			return 0;
-		}
-		this.lastFlushMs = Date.now();
-		if (this.shouldCompactJournal()) {
-			await this.compact(backbone);
-		}
-		return written;
-	}
-
-	private shouldCompactJournal(): boolean {
-		return (
-			(this.compactMaxJournalBytes != null &&
-				this.journalByteLength +
-					this.documentJournalByteLength +
-					this.documentSignerJournalByteLength >=
-					this.compactMaxJournalBytes) ||
-			(this.compactMaxJournalRecords != null &&
-				this.journalRecordCount +
-					this.documentJournalRecordCount +
-					this.documentSignerJournalRecordCount >=
-					this.compactMaxJournalRecords)
-		);
-	}
-
-	async compact(backbone: NativePeerbitBackbone): Promise<void> {
-		await Promise.all([
-			this.writeFile(this.snapshotFile, backbone.coordinateSnapshot()),
-			this.writeFile(this.documentSnapshotFile, backbone.documentSnapshot()),
-			this.writeFile(
-				this.documentSignerSnapshotFile,
-				backbone.documentSignerSnapshot(),
-			),
-		]);
-		this.journalWriteBuffers.clear();
-		this.journalWriteBufferBytes = 0;
-		await Promise.all([
-			this.removeFile(this.journalFile),
-			this.removeFile(this.documentJournalFile),
-			this.removeFile(this.documentSignerJournalFile),
-		]);
-		this.journalInitialized = false;
-		this.journalByteLength = 0;
-		this.journalRecordCount = 0;
-		this.documentJournalInitialized = false;
-		this.documentJournalByteLength = 0;
-		this.documentJournalRecordCount = 0;
-		this.documentSignerJournalInitialized = false;
-		this.documentSignerJournalByteLength = 0;
-		this.documentSignerJournalRecordCount = 0;
-		backbone.clearCoordinateJournal();
-		backbone.clearDocumentJournal();
-		backbone.clearDocumentSignerJournal();
-		this.lastFlushMs = Date.now();
-	}
-
-	async close(): Promise<void> {
-		await this.flushJournalWriteBuffer();
+		this.directoryEnsured = false;
 		const handles = [...this.appendHandles.values()];
 		this.appendHandles.clear();
 		await Promise.all(handles.map(async (handle) => (await handle).close()));
@@ -8648,7 +8382,16 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 	}
 
 	async remove(name: string): Promise<void> {
-		await this.flush(name);
+		// Chunks buffered for a file that is being removed would be deleted
+		// right after being written; discard them instead of flushing.
+		const validName = validateCoordinatePersistenceName(name);
+		const chunks = this.buffers.get(validName);
+		if (chunks) {
+			this.buffers.delete(validName);
+			for (const chunk of chunks) {
+				this.bufferedBytes -= chunk.byteLength;
+			}
+		}
 		await this.inner.remove?.(name);
 	}
 
@@ -8697,6 +8440,7 @@ export class NativeBackboneCoordinatePersistence {
 	private documentSignerJournalByteLength = 0;
 	private documentSignerJournalRecordCount = 0;
 	private lastFlushMs = Date.now();
+	private persistenceQueue: Promise<unknown> = Promise.resolve();
 
 	constructor(
 		private readonly store: NativeBackboneCoordinatePersistenceStore,
@@ -8719,12 +8463,7 @@ export class NativeBackboneCoordinatePersistence {
 			options.documentSignerJournal ??
 			nativeBackboneCoordinatePersistenceFiles.documentSignerJournal;
 		this.flushOnAppend = options.flushOnAppend ?? true;
-		if (options.flushMaxPendingBytes != null) {
-			this.flushMaxPendingBytes = Math.max(0, options.flushMaxPendingBytes);
-		} else if (this.flushOnAppend === false) {
-			this.flushMaxPendingBytes =
-				defaultNativeBackboneCoordinateFlushMaxPendingBytes;
-		}
+		this.flushMaxPendingBytes = resolveCoordinateFlushMaxPendingBytes(options);
 		if (options.flushIntervalMs != null) {
 			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
 		}
@@ -8827,7 +8566,24 @@ export class NativeBackboneCoordinatePersistence {
 		return this.flushJournal(backbone);
 	}
 
-	async flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
+	flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
+		// Serialized with compact() so a flush never clears records appended to
+		// the wasm journal while a previous flush was awaiting its disk write.
+		return this.enqueuePersistence(() => this.flushJournalInternal(backbone));
+	}
+
+	private enqueuePersistence<T>(fn: () => Promise<T>): Promise<T> {
+		const next = this.persistenceQueue.then(fn);
+		this.persistenceQueue = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
+	}
+
+	private async flushJournalInternal(
+		backbone: NativePeerbitBackbone,
+	): Promise<number> {
 		let written = 0;
 		const coordinateRecords = backbone.coordinateJournal();
 		const coordinateRecordCount = backbone.coordinatePendingJournalLength;
@@ -8843,7 +8599,10 @@ export class NativeBackboneCoordinatePersistence {
 			this.journalInitialized = true;
 			this.journalByteLength += bytes.byteLength;
 			this.journalRecordCount += coordinateRecordCount;
-			backbone.clearCoordinateJournal();
+			backbone.clearCoordinateJournalPrefix(
+				coordinateRecords.byteLength,
+				coordinateRecordCount,
+			);
 			written += coordinateRecords.byteLength;
 		}
 		const documentRecords = backbone.documentJournal();
@@ -8860,7 +8619,10 @@ export class NativeBackboneCoordinatePersistence {
 			this.documentJournalInitialized = true;
 			this.documentJournalByteLength += bytes.byteLength;
 			this.documentJournalRecordCount += documentRecordCount;
-			backbone.clearDocumentJournal();
+			backbone.clearDocumentJournalPrefix(
+				documentRecords.byteLength,
+				documentRecordCount,
+			);
 			written += documentRecords.byteLength;
 		}
 		const signerRecords = backbone.documentSignerJournal();
@@ -8878,7 +8640,10 @@ export class NativeBackboneCoordinatePersistence {
 			this.documentSignerJournalInitialized = true;
 			this.documentSignerJournalByteLength += bytes.byteLength;
 			this.documentSignerJournalRecordCount += signerRecordCount;
-			backbone.clearDocumentSignerJournal();
+			backbone.clearDocumentSignerJournalPrefix(
+				signerRecords.byteLength,
+				signerRecordCount,
+			);
 			written += signerRecords.byteLength;
 		}
 		if (written === 0) {
@@ -8887,7 +8652,7 @@ export class NativeBackboneCoordinatePersistence {
 		}
 		this.lastFlushMs = Date.now();
 		if (this.shouldCompactJournal()) {
-			await this.compact(backbone);
+			await this.compactInternal(backbone);
 		}
 		return written;
 	}
@@ -8907,7 +8672,24 @@ export class NativeBackboneCoordinatePersistence {
 		);
 	}
 
-	async compact(backbone: NativePeerbitBackbone): Promise<void> {
+	compact(backbone: NativePeerbitBackbone): Promise<void> {
+		return this.enqueuePersistence(() => this.compactInternal(backbone));
+	}
+
+	private async compactInternal(backbone: NativePeerbitBackbone): Promise<void> {
+		// The snapshots below cover exactly the journal records pending right
+		// now; records appended during the awaited writes must survive the
+		// clears at the end, so only this prefix is dropped.
+		const coordinateJournalByteLength =
+			backbone.coordinatePendingJournalByteLength;
+		const coordinateJournalRecordCount =
+			backbone.coordinatePendingJournalLength;
+		const documentJournalByteLength = backbone.documentPendingJournalByteLength;
+		const documentJournalRecordCount = backbone.documentPendingJournalLength;
+		const documentSignerJournalByteLength =
+			backbone.documentSignerPendingJournalByteLength;
+		const documentSignerJournalRecordCount =
+			backbone.documentSignerPendingJournalLength;
 		await Promise.all([
 			this.store.write(this.snapshotFile, backbone.coordinateSnapshot()),
 			this.store.write(this.documentSnapshotFile, backbone.documentSnapshot()),
@@ -8930,14 +8712,65 @@ export class NativeBackboneCoordinatePersistence {
 		this.documentSignerJournalInitialized = false;
 		this.documentSignerJournalByteLength = 0;
 		this.documentSignerJournalRecordCount = 0;
-		backbone.clearCoordinateJournal();
-		backbone.clearDocumentJournal();
-		backbone.clearDocumentSignerJournal();
+		backbone.clearCoordinateJournalPrefix(
+			coordinateJournalByteLength,
+			coordinateJournalRecordCount,
+		);
+		backbone.clearDocumentJournalPrefix(
+			documentJournalByteLength,
+			documentJournalRecordCount,
+		);
+		backbone.clearDocumentSignerJournalPrefix(
+			documentSignerJournalByteLength,
+			documentSignerJournalRecordCount,
+		);
+		// Compact persists the full pending state, so it restarts the
+		// flushIntervalMs pacing window like a flush does.
+		this.lastFlushMs = Date.now();
 	}
 
 	async close(): Promise<void> {
 		await this.store.flush?.();
 		await this.store.close?.();
+	}
+}
+
+const resolveNodeWriteBufferMaxBytes = (
+	options: NativeBackboneNodeCoordinatePersistenceOptions,
+): number | undefined =>
+	options.writeBufferMaxBytes != null
+		? Math.max(0, options.writeBufferMaxBytes)
+		: options.flushOnAppend === false
+			? resolveCoordinateFlushMaxPendingBytes(options)
+			: undefined;
+
+export class NativeBackboneNodeCoordinatePersistence extends NativeBackboneCoordinatePersistence {
+	private readonly writeBuffer?: NativeBackboneBufferedCoordinatePersistenceStore;
+
+	constructor(
+		directory: string,
+		options: NativeBackboneNodeCoordinatePersistenceOptions = {},
+	) {
+		const writeBufferMaxBytes = resolveNodeWriteBufferMaxBytes(options);
+		const nodeStore = new NativeBackboneNodeCoordinatePersistenceStore(
+			directory,
+			options.fs,
+		);
+		const writeBuffer =
+			writeBufferMaxBytes != null
+				? new NativeBackboneBufferedCoordinatePersistenceStore(nodeStore, {
+						maxBufferedBytes: writeBufferMaxBytes,
+					})
+				: undefined;
+		super(writeBuffer ?? nodeStore, options);
+		this.writeBuffer = writeBuffer;
+	}
+
+	async flushJournalWriteBuffer(fileName?: string): Promise<void> {
+		if (fileName) {
+			validateCoordinatePersistenceName(fileName);
+		}
+		await this.writeBuffer?.flush(fileName);
 	}
 }
 

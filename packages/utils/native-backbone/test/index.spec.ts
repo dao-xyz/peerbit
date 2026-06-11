@@ -2,6 +2,7 @@ import { expect } from "chai";
 import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
+	type NativeBackboneCoordinatePersistenceStore,
 	NativeBackboneMemoryCoordinatePersistenceStore,
 	NativeBackboneNodeCoordinatePersistence,
 	NativeBackboneNodeCoordinatePersistenceStore,
@@ -51,6 +52,23 @@ const writeString = (out: number[], value: string) => {
 	const bytes = new TextEncoder().encode(value);
 	writeU32(out, bytes.byteLength);
 	out.push(...bytes);
+};
+
+const fnv1a = (bytes: Uint8Array) => {
+	let hash = 0x811c9dc5;
+	for (const byte of bytes) {
+		hash ^= byte;
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return hash >>> 0;
+};
+
+const keyValueSnapshotEnvelope = (payload: Uint8Array) => {
+	const out: number[] = [...new TextEncoder().encode("PBRIDXK1")];
+	writeU32(out, payload.byteLength);
+	writeU32(out, fnv1a(payload));
+	out.push(...payload);
+	return Uint8Array.from(out);
 };
 
 const schemaWithIdScoreAndBytes = () => {
@@ -2947,6 +2965,230 @@ describe("native peerbit backbone", () => {
 		expect(compacted.coordinateIndexLength).to.equal(2);
 	});
 
+	it("keeps journal records appended during a flush write for the next flush", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const restored = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let enteredAppend!: () => void;
+		const appendEntered = new Promise<void>((resolve) => {
+			enteredAppend = resolve;
+		});
+		let release!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		let gateArmed = false;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: async (name, bytes) => {
+				if (gateArmed) {
+					gateArmed = false;
+					enteredAppend();
+					await gate;
+				}
+				return memory.append(name, bytes);
+			},
+			remove: (name) => memory.remove(name),
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await persistence.hydrate(source);
+
+		source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+		gateArmed = true;
+		const flushing = persistence.flushJournal(source);
+		await appendEntered;
+		// The flush is parked inside its disk write; a record appended now must
+		// survive the flush's journal clear.
+		source.putEntryCoordinates("hash-b", "gid-b", [2n], false, 1, 2n);
+		release();
+		await flushing;
+		expect(source.coordinatePendingJournalLength).to.equal(1);
+
+		await persistence.flushJournal(source);
+		expect(source.coordinatePendingJournalLength).to.equal(0);
+		expect(await persistence.hydrate(restored)).to.equal(2);
+		expect(restored.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-a",
+			"hash-b",
+		]);
+	});
+
+	it("replays only the clean WAL prefix when the journal tail is truncated mid-record", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		source.setCoordinateJournalEnabled(true);
+		source.putEntryCoordinates("hash-snapshot", "gid-snapshot", [1n], false, 1, 1n);
+		const snapshot = source.coordinateSnapshot();
+		source.clearCoordinateJournal();
+		const recordBytes = (hash: string, coordinate: bigint) => {
+			source.putEntryCoordinates(hash, `gid-${hash}`, [coordinate], false, 1, coordinate);
+			const record = source.coordinateJournal();
+			source.clearCoordinateJournal();
+			return record;
+		};
+		const recordA = recordBytes("hash-a", 2n);
+		const recordB = recordBytes("hash-b", 3n);
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		await store.write("coordinates.bin", snapshot);
+		// Keep the length/checksum header of the trailing record but cut its
+		// payload short, as a crash mid-append would.
+		await store.write(
+			"coordinates.wal",
+			concatBytes([
+				source.coordinateJournalHeader(),
+				recordA,
+				recordB.subarray(0, recordB.byteLength - 3),
+			]),
+		);
+
+		// decode_journal is stop-at-tail tolerant: the torn record is dropped and
+		// only the clean prefix is replayed on top of the snapshot.
+		expect(await persistence.hydrate(target)).to.equal(1);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal([
+			"hash-snapshot",
+			"hash-a",
+		]);
+		expect(target.hasCoordinateIndexHash("hash-b")).equal(false);
+		expect(target.coordinatePendingJournalLength).to.equal(0);
+	});
+
+	it("stops WAL replay at a checksum-corrupted journal record", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		source.setCoordinateJournalEnabled(true);
+		const recordBytes = (hash: string, coordinate: bigint) => {
+			source.putEntryCoordinates(hash, `gid-${hash}`, [coordinate], false, 1, coordinate);
+			const record = source.coordinateJournal();
+			source.clearCoordinateJournal();
+			return record;
+		};
+		const recordA = recordBytes("hash-a", 1n);
+		const recordB = recordBytes("hash-b", 2n);
+		const recordC = recordBytes("hash-c", 3n);
+		// Flip a payload byte of the middle record so its checksum no longer
+		// matches; the length/checksum framing stays intact.
+		const corruptedB = recordB.slice();
+		corruptedB[8] ^= 0xff;
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		await store.write(
+			"coordinates.wal",
+			concatBytes([
+				source.coordinateJournalHeader(),
+				recordA,
+				corruptedB,
+				recordC,
+			]),
+		);
+
+		// Stop-at-tail semantics: replay halts at the corrupted record, so the
+		// intact record behind it is ignored too.
+		expect(await persistence.hydrate(target)).to.equal(1);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
+		expect(target.hasCoordinateIndexHash("hash-b")).equal(false);
+		expect(target.hasCoordinateIndexHash("hash-c")).equal(false);
+	});
+
+	it("rejects hydrate on a checksum-corrupted snapshot and stays usable", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		source.putEntryCoordinates("hash-snapshot", "gid-snapshot", [1n], false, 1, 1n);
+		const snapshot = source.coordinateSnapshot();
+		// Flip a payload byte behind the envelope header (magic + length +
+		// checksum = 16 bytes) so the envelope checksum no longer matches.
+		const corrupted = snapshot.slice();
+		corrupted[16] ^= 0xff;
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await store.write("coordinates.bin", corrupted);
+
+		let thrown: unknown;
+		try {
+			await persistence.hydrate(target);
+			expect.fail("hydrate should reject on a corrupted snapshot");
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).to.exist;
+		expect(thrown).to.not.be.instanceOf(WebAssembly.RuntimeError);
+		expect(String(thrown)).to.contain("checksum mismatch");
+
+		// The failed decode happens before any state is cleared; the backbone
+		// instance must remain usable.
+		target.putEntryCoordinates("hash-after", "gid-after", [9n], false, 1, 9n);
+		expect(target.hasCoordinateIndexHash("hash-after")).equal(true);
+		await store.write("coordinates.bin", snapshot);
+		expect(await persistence.hydrate(target)).to.equal(0);
+		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-snapshot"]);
+	});
+
+	it("rejects hydrate gracefully when a snapshot declares an oversized entry count", async () => {
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		// Valid envelope whose payload claims u32::MAX entries but carries no
+		// entry bytes; decoding must clamp the preallocation and fail with a
+		// decode error instead of aborting the wasm instance.
+		const oversized = keyValueSnapshotEnvelope(
+			Uint8Array.from([0xff, 0xff, 0xff, 0xff]),
+		);
+		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await store.write("coordinates.bin", oversized);
+
+		let thrown: unknown;
+		try {
+			await persistence.hydrate(target);
+			expect.fail("hydrate should reject on an oversized snapshot count");
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).to.exist;
+		expect(thrown).to.not.be.instanceOf(WebAssembly.RuntimeError);
+		expect(String(thrown)).to.contain("truncated");
+
+		target.putEntryCoordinates("hash-after", "gid-after", [9n], false, 1, 9n);
+		expect(target.hasCoordinateIndexHash("hash-after")).equal(true);
+	});
+
 	it("persists native document index values through the native persistence adapter", async () => {
 		const source = await createNativePeerbitBackbone({
 			clockId: publicKey,
@@ -3367,6 +3609,170 @@ describe("native peerbit backbone", () => {
 			await restoredPersistence.close();
 		} finally {
 			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps unflushed WAL records when a node append fails and flushes them on retry", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, rm } = fsPromises;
+		const directory = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-node-enospc-"),
+		);
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			let failNextAppend = false;
+			// No `open` so appends go through `appendFile`, the injection point.
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+				{
+					fs: {
+						mkdir: (path, options) => fsPromises.mkdir(path, options),
+						readFile: (path) => fsPromises.readFile(path),
+						writeFile: (path, data) => fsPromises.writeFile(path, data),
+						appendFile: async (path, data) => {
+							if (failNextAppend) {
+								failNextAppend = false;
+								throw Object.assign(
+									new Error("ENOSPC: no space left on device, write"),
+									{ code: "ENOSPC" },
+								);
+							}
+							return fsPromises.appendFile(path, data);
+						},
+						rm: (path, options) => fsPromises.rm(path, options),
+					},
+				},
+			);
+
+			await persistence.hydrate(source);
+			source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
+			source.putEntryCoordinates("hash-b", "gid-b", [2n], false, 1, 2n);
+			expect(source.coordinatePendingJournalLength).to.equal(2);
+
+			failNextAppend = true;
+			let thrown: unknown;
+			try {
+				await persistence.flushJournal(source);
+				expect.fail("flushJournal should reject when the append fails");
+			} catch (error) {
+				thrown = error;
+			}
+			expect((thrown as { code?: string })?.code).to.equal("ENOSPC");
+			// The journal prefix is only cleared after a successful write, so the
+			// unflushed records must still be pending in the wasm journal.
+			expect(source.coordinatePendingJournalLength).to.equal(2);
+
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+			expect(source.coordinatePendingJournalLength).to.equal(0);
+			await persistence.close();
+
+			const restoredPersistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			expect(await restoredPersistence.hydrate(restored)).to.equal(2);
+			expect(restored.getEntryCoordinateHashes()).to.deep.equal([
+				"hash-a",
+				"hash-b",
+			]);
+			await restoredPersistence.close();
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("propagates node mkdir failures and recovers on a later flush", async () => {
+		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
+			import("node:fs/promises"),
+			import("node:os"),
+			import("node:path"),
+		]);
+		const { mkdtemp, rm } = fsPromises;
+		const base = await mkdtemp(
+			join(tmpdir(), "peerbit-native-backbone-node-mkdir-"),
+		);
+		// The target directory does not exist yet, so a later append can only
+		// succeed if the failed mkdir was not memoized as ensured.
+		const directory = join(base, "nested");
+		try {
+			const source = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			const restored = await createNativePeerbitBackbone({
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+			});
+			let failNextMkdir = false;
+			const persistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+				{
+					fs: {
+						mkdir: async (path, options) => {
+							if (failNextMkdir) {
+								failNextMkdir = false;
+								throw Object.assign(
+									new Error("EACCES: permission denied, mkdir"),
+									{ code: "EACCES" },
+								);
+							}
+							return fsPromises.mkdir(path, options);
+						},
+						readFile: (path) => fsPromises.readFile(path),
+						writeFile: (path, data) => fsPromises.writeFile(path, data),
+						appendFile: (path, data) => fsPromises.appendFile(path, data),
+						rm: (path, options) => fsPromises.rm(path, options),
+					},
+				},
+			);
+
+			await persistence.hydrate(source);
+			source.putEntryCoordinates(
+				"hash-mkdir",
+				"gid-mkdir",
+				[1n],
+				false,
+				1,
+				1n,
+			);
+
+			failNextMkdir = true;
+			let thrown: unknown;
+			try {
+				await persistence.flushJournal(source);
+				expect.fail("flushJournal should reject when mkdir fails");
+			} catch (error) {
+				thrown = error;
+			}
+			expect((thrown as { code?: string })?.code).to.equal("EACCES");
+			expect(source.coordinatePendingJournalLength).to.equal(1);
+
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+			expect(source.coordinatePendingJournalLength).to.equal(0);
+			await persistence.close();
+
+			const restoredPersistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			expect(await restoredPersistence.hydrate(restored)).to.equal(1);
+			expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-mkdir"]);
+			await restoredPersistence.close();
+		} finally {
+			await rm(base, { recursive: true, force: true });
 		}
 	});
 
