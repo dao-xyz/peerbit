@@ -1,6 +1,6 @@
 import { type AnyStore } from "@peerbit/any-store-interface";
 import { expect } from "chai";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createStore } from "../src/index.js";
@@ -157,6 +157,36 @@ describe("@peerbit/any-store-rust", () => {
 		await store.open();
 		expect(await store.get("a")).to.equal(undefined);
 		expect(await store.get("b")).to.deep.equal(new Uint8Array([2]));
+		await store.close();
+	});
+
+	it("recovers from a torn journal tail and keeps later writes", async () => {
+		const directory = await tempDirectory();
+		cleanup.push(directory);
+
+		let store = createStore(directory, { compactOnClose: false });
+		await store.open();
+		await store.put("a", new Uint8Array([1]));
+		await store.put("b", new Uint8Array([2]));
+		await store.close();
+
+		// Simulate a crash mid-append: the last journal record is torn.
+		const journalPath = join(directory, "store.wal");
+		const journal = await readFile(journalPath);
+		await writeFile(journalPath, journal.subarray(0, journal.byteLength - 3));
+
+		store = createStore(directory, { compactOnClose: false });
+		await store.open();
+		expect(await store.get("a")).to.deep.equal(new Uint8Array([1]));
+		expect(await store.get("b")).to.equal(undefined);
+		await store.put("c", new Uint8Array([3]));
+		await store.close();
+
+		store = createStore(directory);
+		await store.open();
+		expect(await store.get("a")).to.deep.equal(new Uint8Array([1]));
+		expect(await store.get("b")).to.equal(undefined);
+		expect(await store.get("c")).to.deep.equal(new Uint8Array([3]));
 		await store.close();
 	});
 

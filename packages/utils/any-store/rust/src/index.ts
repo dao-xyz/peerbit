@@ -21,7 +21,7 @@ type NativeAnyStore = {
 type JournaledNativeAnyStore = NativeAnyStore & {
 	snapshot(): Uint8Array;
 	load_snapshot(bytes: Uint8Array): void;
-	apply_journal(bytes: Uint8Array): void;
+	apply_journal(bytes: Uint8Array): number;
 	encode_put_record(key: string, value: Uint8Array): Uint8Array;
 	encode_put_records(keys: string[], values: Uint8Array[]): Uint8Array;
 	encode_delete_record(key: string): Uint8Array;
@@ -143,8 +143,7 @@ export class RustAnyStore implements AnyStore {
 
 	async get(key: string): Promise<Uint8Array | undefined> {
 		const native = await this.ensureOpen();
-		const value = native.get(key);
-		return value == null ? undefined : copyBytes(value);
+		return native.get(key) ?? undefined;
 	}
 
 	put(key: string, value: Uint8Array): Promise<void> | void {
@@ -300,9 +299,7 @@ export class RustAnyStore implements AnyStore {
 
 	async getMany(keys: Iterable<string>): Promise<Array<Uint8Array | undefined>> {
 		const native = await this.ensureOpen();
-		return native
-			.get_many(Array.from(keys))
-			.map((value) => (value == null ? undefined : copyBytes(value)));
+		return native.get_many(Array.from(keys)).map((value) => value ?? undefined);
 	}
 
 	async hasMany(keys: string[]): Promise<boolean[]> {
@@ -339,7 +336,7 @@ export class RustAnyStore implements AnyStore {
 						const [key, value] = entries[index++];
 						return {
 							done: false,
-							value: [key, copyBytes(value)] as [string, Uint8Array],
+							value: [key, value] as [string, Uint8Array],
 						};
 					},
 				};
@@ -385,7 +382,13 @@ export class RustAnyStore implements AnyStore {
 		}
 		const journal = await this.persistence.readJournal();
 		if (journal && journal.byteLength > 0) {
-			native.apply_journal(journal);
+			const applied = native.apply_journal(journal);
+			if (applied < journal.byteLength) {
+				// Torn tail from a mid-write crash: rewrite the checkpoint so new
+				// records are not appended after the unreadable bytes and lost on
+				// the next replay.
+				await this.persistence.writeSnapshot(native.snapshot());
+			}
 		}
 	}
 

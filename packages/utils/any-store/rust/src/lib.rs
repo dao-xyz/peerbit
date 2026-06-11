@@ -57,7 +57,9 @@ impl NativeAnyStore {
     }
 
     pub fn delete(&mut self, key: &str) -> bool {
-        if let Some((_key, previous)) = self.entries.shift_remove_entry(key) {
+        // swap_remove is O(1); iteration order is not part of the AnyStore
+        // contract (backends already disagree on it).
+        if let Some((_key, previous)) = self.entries.swap_remove_entry(key) {
             self.total_size = self.total_size.saturating_sub(previous.len());
             true
         } else {
@@ -121,7 +123,7 @@ impl NativeAnyStore {
         Ok(())
     }
 
-    pub fn apply_journal(&mut self, bytes: Vec<u8>) -> Result<(), JsValue> {
+    pub fn apply_journal(&mut self, bytes: Vec<u8>) -> Result<usize, JsValue> {
         apply_journal(self, &bytes).map_err(js_error)
     }
 
@@ -301,22 +303,35 @@ fn encode_record(operation: JournalOperation, key: &[u8], value: &[u8]) -> Vec<u
     output
 }
 
-fn apply_journal(store: &mut NativeAnyStore, bytes: &[u8]) -> Result<(), String> {
-    let mut offset = 0;
-    while offset < bytes.len() {
+/// Replays journal records, stopping at the first record that does not frame
+/// cleanly (torn tail after a mid-write crash) instead of failing the whole
+/// replay, mirroring peerbit_indexer_core journal recovery. Returns the number
+/// of bytes applied so callers can detect the tear and rewrite the checkpoint.
+/// Records that pass the checksum but carry an invalid payload still error.
+fn apply_journal(store: &mut NativeAnyStore, bytes: &[u8]) -> Result<usize, String> {
+    let mut applied = 0;
+    while applied < bytes.len() {
+        let mut offset = applied;
         if !bytes[offset..].starts_with(JOURNAL_MAGIC) {
-            return Err("invalid journal record magic".to_string());
+            break;
         }
         offset += JOURNAL_MAGIC.len();
-        let payload_len = read_u32(bytes, &mut offset)? as usize;
-        let checksum = read_u32(bytes, &mut offset)?;
-        let payload = read_bytes(bytes, &mut offset, payload_len)?;
+        let Ok(payload_len) = read_u32(bytes, &mut offset) else {
+            break;
+        };
+        let Ok(checksum) = read_u32(bytes, &mut offset) else {
+            break;
+        };
+        let Ok(payload) = read_bytes(bytes, &mut offset, payload_len as usize) else {
+            break;
+        };
         if fnv1a(payload) != checksum {
-            return Err("journal checksum mismatch".to_string());
+            break;
         }
         apply_record_payload(store, payload)?;
+        applied = offset;
     }
-    Ok(())
+    Ok(applied)
 }
 
 fn apply_record_payload(store: &mut NativeAnyStore, payload: &[u8]) -> Result<(), String> {
@@ -345,7 +360,7 @@ fn apply_record_payload(store: &mut NativeAnyStore, payload: &[u8]) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_snapshot, NativeAnyStore};
+    use super::{apply_journal, decode_snapshot, NativeAnyStore};
 
     #[test]
     fn snapshot_roundtrips() {
@@ -367,9 +382,46 @@ mod tests {
         journal.extend_from_slice(&encoder.encode_delete_record("a".to_string()));
 
         let mut store = NativeAnyStore::new();
-        store.apply_journal(journal).unwrap();
+        let applied = store.apply_journal(journal.clone()).unwrap();
+        assert_eq!(applied, journal.len());
         assert_eq!(store.get("a"), None);
         assert_eq!(store.get("b"), Some(vec![2, 3]));
         assert_eq!(store.size(), 2);
+    }
+
+    #[test]
+    fn journal_stops_at_torn_tail() {
+        let encoder = NativeAnyStore::new();
+        let mut journal = Vec::new();
+        journal.extend_from_slice(&encoder.encode_put_record("a".to_string(), vec![1]));
+        journal.extend_from_slice(&encoder.encode_put_record("b".to_string(), vec![2, 3]));
+        let clean_len = journal.len();
+        let torn = encoder.encode_put_record("c".to_string(), vec![4, 5, 6]);
+        journal.extend_from_slice(&torn[..torn.len() - 3]);
+
+        let mut store = NativeAnyStore::new();
+        let applied = apply_journal(&mut store, &journal).unwrap();
+        assert_eq!(applied, clean_len);
+        assert_eq!(store.get("a"), Some(vec![1]));
+        assert_eq!(store.get("b"), Some(vec![2, 3]));
+        assert_eq!(store.get("c"), None);
+    }
+
+    #[test]
+    fn journal_stops_at_checksum_mismatch() {
+        let encoder = NativeAnyStore::new();
+        let mut journal = Vec::new();
+        journal.extend_from_slice(&encoder.encode_put_record("a".to_string(), vec![1]));
+        let clean_len = journal.len();
+        let mut corrupt = encoder.encode_put_record("b".to_string(), vec![2]);
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 0xff;
+        journal.extend_from_slice(&corrupt);
+
+        let mut store = NativeAnyStore::new();
+        let applied = apply_journal(&mut store, &journal).unwrap();
+        assert_eq!(applied, clean_len);
+        assert_eq!(store.get("a"), Some(vec![1]));
+        assert_eq!(store.get("b"), None);
     }
 }
