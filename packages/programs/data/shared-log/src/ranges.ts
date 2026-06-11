@@ -1310,6 +1310,11 @@ const allRangesContainingPoint = async <
 			},
 			options,
 		);
+		try {
+			(await firstIterator.all()).forEach((x) => allResults.push(x));
+		} finally {
+			await firstIterator.close();
+		}
 
 		const secondIterator = rects.iterate(
 			{
@@ -1318,10 +1323,11 @@ const allRangesContainingPoint = async <
 			},
 			options,
 		);
-
-		[...(await firstIterator.all()), ...(await secondIterator.all())].forEach(
-			(x) => allResults.push(x),
-		);
+		try {
+			(await secondIterator.all()).forEach((x) => allResults.push(x));
+		} finally {
+			await secondIterator.close();
+		}
 	}
 	return allResults;
 	/* return [...await iterateRangesContainingPoint(rects, points, options).all()]; */
@@ -2040,15 +2046,19 @@ const collectClosestAround = async <R extends "u32" | "u64">(
 	);
 
 	let visited = new Set<string>();
-	while (aroundIterator.done() !== true && done() !== true) {
-		const res = await aroundIterator.next(100);
-		for (const rect of res) {
-			visited.add(rect.value.idString);
-			collector(rect.value, isMatured(rect.value, now, roleAge));
-			if (done()) {
-				return;
+	try {
+		while (aroundIterator.done() !== true && done() !== true) {
+			const res = await aroundIterator.next(100);
+			for (const rect of res) {
+				visited.add(rect.value.idString);
+				collector(rect.value, isMatured(rect.value, now, roleAge));
+				if (done()) {
+					return;
+				}
 			}
 		}
+	} finally {
+		await aroundIterator.close();
 	}
 };
 
