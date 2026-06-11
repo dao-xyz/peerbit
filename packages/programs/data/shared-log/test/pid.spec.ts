@@ -208,5 +208,55 @@ describe("PIDReplicationController", () => {
 			expect(f).to.be.greaterThan(0.91);
 			expect(f).to.be.at.most(1);
 		});
+
+
+
+
+
+		it("keeps a zero-width peer stopped when storage budget is zero", () => {
+			const controller = new PIDReplicationController("", {
+				storage: { max: 0 },
+			});
+			const f = controller.step({
+				currentFactor: 0,
+				memoryUsage: 0,
+				totalFactor: 1,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.equal(0);
+		});
+
+		it("allows coverage repair to restart an over-target zero-width peer", () => {
+			const controller = new PIDReplicationController("", {
+				storage: { max: 100_000 },
+			});
+			const f = controller.step({
+				currentFactor: 0,
+				memoryUsage: 200_000,
+				totalFactor: 0,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.be.greaterThan(0);
+			expect(f).to.be.lessThan(0.5);
+		});
+
+		it("keeps a zero-budget peer stopped even when coverage is underfilled", () => {
+			const controller = new PIDReplicationController("", {
+				storage: { max: 0 },
+			});
+			const f = controller.step({
+				currentFactor: 0,
+				memoryUsage: 0,
+				totalFactor: 0,
+				peerCount: 2,
+				cpuUsage: undefined,
+			});
+
+			expect(f).to.equal(0);
+		});
 	});
 });

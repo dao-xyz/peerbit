@@ -56,19 +56,27 @@ export class PIDReplicationController {
 			// prunes from repeatedly settling just above the hard budget.
 			const effectiveMemoryLimit =
 				this.maxMemoryLimit > 0 ? this.maxMemoryLimit * 0.95 : 0;
-			errorMemory =
-				currentFactor > 0 && memoryUsage > 0
-					? Math.max(
-							Math.min(1, effectiveMemoryLimit / estimatedTotalSize),
-							0,
-						) - currentFactor
-					: 0;
+			if (effectiveMemoryLimit <= 0) {
+				// A zero storage budget can never hold data; drive the factor to zero
+				// instead of leaving the memory term neutral.
+				errorMemory = -currentFactor;
+			} else if (currentFactor > 0 && memoryUsage > 0) {
+				errorMemory =
+					Math.max(Math.min(1, effectiveMemoryLimit / estimatedTotalSize), 0) -
+					currentFactor;
+			} else {
+				errorMemory = 0;
+			}
 			// Math.max(Math.min((this.maxMemoryLimit - memoryUsage) / 100e5, 1), -1)// Math.min(Math.max((this.maxMemoryLimit - memoryUsage, 0) / 10e5, 0), 1);
 		}
 
 		const errorCoverageUnmodified = Math.min(1 - totalFactor, 1);
 		let errorCoverage =
-			(this.maxMemoryLimit ? 1 - Math.sqrt(Math.abs(errorMemory)) : 1) *
+			(this.maxMemoryLimit != null
+				? this.maxMemoryLimit > 0
+					? 1 - Math.sqrt(Math.abs(errorMemory))
+					: 0
+				: 1) *
 			errorCoverageUnmodified;
 
 		const errorFromEven = 1 / peerCount - currentFactor;
@@ -96,7 +104,7 @@ export class PIDReplicationController {
 			errorCoverage = Math.max(errorCoverage, 0);
 		}
 
-		const balanceErrorScaler = this.maxMemoryLimit
+		const balanceErrorScaler = this.maxMemoryLimit != null
 			? hasMemoryHeadroom
 				? Math.max(
 						Math.abs(errorMemory),
@@ -108,7 +116,7 @@ export class PIDReplicationController {
 		// Balance should be symmetric (allow negative error) so a peer can *reduce*
 		// participation when peerCount increases. Otherwise early joiners can get
 		// "stuck" over-replicating even after new peers join (no memory/CPU limits).
-		const errorBalance = this.maxMemoryLimit
+		const errorBalance = this.maxMemoryLimit != null
 			? // Only balance when we have spare memory headroom. When memory is
 				// constrained (`errorMemory < 0`) the memory term will dominate anyway.
 				errorMemory > 0
