@@ -548,21 +548,41 @@ testSetups.forEach((setup) => {
 							info.holders.join(","),
 						);
 						for (const [i, db] of dbs.entries()) {
-							const segs = (await db.log.getMyReplicationSegments()).map((x) =>
-								String(x.toReplicationRange()),
-							);
+							const segs = (await db.log.getMyReplicationSegments()).map((x) => {
+								const r = x.toReplicationRange();
+								return `${(r as any).offset ?? "?"}+${(r as any).factor ?? "?"}`;
+							});
+							const selfId = db.log.node.identity.publicKey.hashcode();
+							const knownBeliefs: string[] = [];
+							for (const other of dbs) {
+								const otherId = other.log.node.identity.publicKey.hashcode();
+								if (otherId === selfId) continue;
+								knownBeliefs.push(
+									`${otherId.slice(0, 8)}:${(db.log as any).isEntryKnownByPeer?.(hash, otherId) ?? "?"}/${(db.log as any).isEntryRecentlyKnownByPeer?.(hash, otherId, 30_000) ?? "?"}`,
+								);
+							}
+							const simpleSync =
+								(db.log.syncronizer as any).simple ?? db.log.syncronizer;
+							const queueEntry = simpleSync?.syncInFlightQueue?.get?.(hash);
+							const queueCandidates = Array.isArray(queueEntry)
+								? queueEntry.map((k: any) => k.hashcode().slice(0, 8)).join("|")
+								: "none";
 							console.log(
 								"[CHAOS_DUMP] db" + i,
 								"id=",
-								db.log.node.identity.publicKey.hashcode(),
+								selfId,
 								"has=",
 								await db.log.log.has(hash),
 								"len=",
 								db.log.log.length,
 								"syncInFlight=",
 								db.log.syncronizer.syncInFlight.has(hash),
+								"queueCandidates=",
+								queueCandidates,
 								"pendingDelete=",
 								(db.log as any)._pendingDeletes?.has?.(hash) ?? "?",
+								"knows(peer:known/recent)=",
+								knownBeliefs.join(","),
 								"segs=",
 								JSON.stringify(segs),
 							);
