@@ -326,6 +326,14 @@ impl RangePlanner {
         }
     }
 
+    /// Sample order is a native contract the TypeScript implementation cannot
+    /// offer: cursors are visited in input order, intersecting matches surface
+    /// in range-put order (containment buckets keep insertion order across
+    /// deletes; re-putting an id moves it to the back), and matured fallback
+    /// matches append in closest-distance order. The TypeScript getSamples
+    /// inherits unordered sqlite results behind a timing-driven index picker,
+    /// so identical calls can answer in different orders there; downstream
+    /// consumers must only rely on membership.
     pub fn get_samples(&self, cursors: &[u64], options: &SampleOptions) -> Vec<LeaderSample> {
         let mut leaders: IndexMap<String, bool> = IndexMap::new();
         let mut matured = 0usize;
@@ -4122,7 +4130,8 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_leaders_with_prepared_options, RangePlanner, ReplicationRange, SampleOptions,
+        find_leaders_with_prepared_options, LeaderSample, RangePlanner, ReplicationRange,
+        SampleOptions,
     };
     use indexmap::IndexSet;
 
@@ -4254,6 +4263,86 @@ mod tests {
         assert_eq!(samples.len(), 1);
         assert_eq!(samples[0].hash, "peer-b");
         assert!(samples[0].intersecting);
+    }
+
+    #[test]
+    fn sample_order_is_deterministic_cursor_major_put_order() {
+        let build = || {
+            let mut planner = RangePlanner::new("u32");
+            // Put order deliberately disagrees with both hash order and
+            // coordinate order so the assertions below pin put order.
+            planner.put(ReplicationRange::new(
+                "c", "peer-c", 0, 40, 60, 40, 60, 20, 0,
+            ));
+            planner.put(ReplicationRange::new(
+                "a", "peer-a", 0, 30, 70, 30, 70, 40, 0,
+            ));
+            planner.put(ReplicationRange::new(
+                "b", "peer-b", 0, 10, 55, 10, 55, 45, 0,
+            ));
+            planner.put(ReplicationRange::new(
+                "d", "peer-d", 0, 90, 100, 90, 100, 10, 0,
+            ));
+            planner
+        };
+        let options = SampleOptions {
+            now: 1_000,
+            ..Default::default()
+        };
+
+        let planner = build();
+        let samples = planner.get_samples(&[50, 95], &options);
+        let hashes: Vec<&str> = samples.iter().map(|sample| sample.hash.as_str()).collect();
+        assert_eq!(hashes, ["peer-c", "peer-a", "peer-b", "peer-d"]);
+        assert!(samples.iter().all(|sample| sample.intersecting));
+
+        assert_eq!(planner.get_samples(&[50, 95], &options), samples);
+        assert_eq!(build().get_samples(&[50, 95], &options), samples);
+
+        let mut reput = build();
+        reput.put(ReplicationRange::new(
+            "c", "peer-c", 0, 40, 60, 40, 60, 20, 0,
+        ));
+        let reput_hashes: Vec<String> = reput
+            .get_samples(&[50, 95], &options)
+            .into_iter()
+            .map(|sample| sample.hash)
+            .collect();
+        assert_eq!(reput_hashes, ["peer-a", "peer-b", "peer-c", "peer-d"]);
+    }
+
+    #[test]
+    fn fallback_samples_append_after_intersecting_matches() {
+        let mut planner = RangePlanner::new("u32");
+        planner.put(ReplicationRange::new(
+            "d", "peer-d", 0, 90, 100, 90, 100, 10, 0,
+        ));
+        planner.put(ReplicationRange::new(
+            "a", "peer-a", 950, 75, 85, 75, 85, 10, 0,
+        ));
+
+        let samples = planner.get_samples(
+            &[80],
+            &SampleOptions {
+                now: 1_000,
+                role_age_ms: 100,
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(
+            samples,
+            vec![
+                LeaderSample {
+                    hash: "peer-a".to_string(),
+                    intersecting: true,
+                },
+                LeaderSample {
+                    hash: "peer-d".to_string(),
+                    intersecting: false,
+                },
+            ],
+        );
     }
 
     #[test]

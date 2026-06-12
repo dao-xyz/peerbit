@@ -49,6 +49,56 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("returns samples in deterministic cursor-major put order", async () => {
+		const build = async () => {
+			const planner = await createRangePlanner("u32");
+			// Put order deliberately disagrees with both hash order and
+			// coordinate order so the assertions below pin put order.
+			planner.put(range({ id: "c", hash: "peer-c", start1: 40, end1: 60 }));
+			planner.put(range({ id: "a", hash: "peer-a", start1: 30, end1: 70 }));
+			planner.put(range({ id: "b", hash: "peer-b", start1: 10, end1: 55 }));
+			planner.put(range({ id: "d", hash: "peer-d", start1: 90, end1: 100 }));
+			return planner;
+		};
+
+		const planner = await build();
+		const samples = planner.getSamples([50, 95], { now: 1_000 });
+		expect([...samples.keys()]).to.deep.equal([
+			"peer-c",
+			"peer-a",
+			"peer-b",
+			"peer-d",
+		]);
+
+		expect([
+			...planner.getSamples([50, 95], { now: 1_000 }).entries(),
+		]).to.deep.equal([...samples.entries()]);
+		expect([
+			...(await build()).getSamples([50, 95], { now: 1_000 }).entries(),
+		]).to.deep.equal([...samples.entries()]);
+	});
+
+	it("appends fallback samples after intersecting matches", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(range({ id: "d", hash: "peer-d", start1: 90, end1: 100 }));
+		planner.put(
+			range({
+				id: "a",
+				hash: "peer-a",
+				start1: 75,
+				end1: 85,
+				timestamp: 950n,
+			}),
+		);
+
+		expect([
+			...planner.getSamples([80], { now: 1_000, roleAge: 100 }).entries(),
+		]).to.deep.equal([
+			["peer-a", { intersecting: true }],
+			["peer-d", { intersecting: false }],
+		]);
+	});
+
 	it("returns full replica leaders when ranges fit within the replica count", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));

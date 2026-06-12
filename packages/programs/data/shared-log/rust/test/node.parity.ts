@@ -145,9 +145,13 @@ const expectNativeParity = async (
 			peerFilter?: Set<string>;
 		};
 		// Compare entries sorted by hash instead of by map insertion order. The
-		// TypeScript getSamples insertion order for intersecting matches follows
-		// unordered sqlite query results, which the native planner does not
-		// reproduce in every multi-cursor scenario (see the seeded sweep below).
+		// TypeScript getSamples insertion order is genuinely unspecified: it
+		// follows sqlite results without an ORDER BY, behind a timing-driven
+		// index picker that rotates through candidate indexes, so even
+		// identical calls against the same index can answer in different
+		// orders (the first call often differs from every later one). The
+		// native planner instead guarantees a deterministic cursor-major,
+		// range-put order, asserted separately below.
 		ignoreOrder?: boolean;
 		message?: string;
 	},
@@ -189,6 +193,20 @@ const expectNativeParity = async (
 		const project = properties.ignoreOrder ? sortedMapEntries : mapEntries;
 		expect(project(actual)).to.deep.equal(
 			project(expected),
+			properties.message,
+		);
+
+		// Even where the TypeScript insertion order is unspecified, the native
+		// insertion order must reproduce exactly for identical inputs.
+		const repeated = planner.getSamples(properties.cursors, {
+			now,
+			roleAge: properties.roleAge,
+			onlyIntersecting: properties.options?.onlyIntersecting,
+			uniqueReplicators: properties.options?.uniqueReplicators,
+			peerFilter: properties.options?.peerFilter,
+		});
+		expect(mapEntries(repeated)).to.deep.equal(
+			mapEntries(actual),
 			properties.message,
 		);
 	} finally {
@@ -717,9 +735,11 @@ describe("native shared-log range planner seeded parity sweep", () => {
 							uniqueReplicators,
 						},
 						// Membership and intersecting flags are compared strictly, but
-						// map insertion order is not: TypeScript orders intersecting
-						// matches by unordered sqlite query results (observed order-only
-						// divergence at seed 12648438).
+						// map insertion order is not: the TypeScript order is
+						// unspecified (sqlite results without an ORDER BY, behind a
+						// timing-driven index picker whose first call can answer in a
+						// different order than repeat calls; order-only divergence
+						// first observed at seed 12648438).
 						ignoreOrder: true,
 						message: `seed=${seed} resolution=${resolution} roleAge=${roleAge} peers=${peerCount} cursors=${cursors.map(String).join(",")} onlyIntersecting=${onlyIntersecting} peerFilter=${peerFilter ? [...peerFilter].join("|") : "none"} uniqueReplicators=${uniqueReplicators ? "all" : "none"}`,
 					});
