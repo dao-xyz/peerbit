@@ -1,4 +1,5 @@
 import { Cache } from "@peerbit/cache";
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { CONVERGENCE_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import { expect } from "chai";
 import sinon from "sinon";
@@ -14,6 +15,12 @@ import {
 } from "../src/sync/simple.js";
 
 describe("sync-chunking", () => {
+	let peerA: Awaited<ReturnType<typeof Ed25519Keypair.create>>["publicKey"];
+
+	before(async () => {
+		peerA = (await Ed25519Keypair.create()).publicKey;
+	});
+
 	it("uses the convergence transport priority for sync messages", () => {
 		expect(SYNC_MESSAGE_PRIORITY).to.equal(CONVERGENCE_MESSAGE_PRIORITY);
 	});
@@ -138,7 +145,7 @@ describe("sync-chunking", () => {
 
 		await sync.onMessage(
 			new RequestMaybeSyncCoordinate({ hashNumbers: [42n] }),
-			{ from: "peer-a" } as any,
+			{ from: peerA } as any,
 		);
 
 		expect(iterate.called).to.equal(false);
@@ -173,7 +180,7 @@ describe("sync-chunking", () => {
 
 		await sync.onMessage(
 			new RequestMaybeSyncCoordinate({ hashNumbers: [42n] }),
-			{ from: "peer-a" } as any,
+			{ from: peerA } as any,
 		);
 
 		expect(iterate.called).to.equal(false);
@@ -274,7 +281,7 @@ describe("sync-chunking", () => {
 
 		await sync.onMessage(
 			new ResponseMaybeSyncCapabilities({ hashes: ["head-a"] }),
-			{ from: "peer-a" } as any,
+			{ from: peerA } as any,
 		);
 
 		expect(send.callCount).to.equal(1);
