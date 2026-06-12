@@ -639,6 +639,65 @@ testSetups.forEach((setup) => {
 				}
 			});
 
+			it("keeps uniqueReplicators when a duplicate announcement dedupes to empty", async () => {
+				db1 = await session.peers[0].open(new EventStore<string, any>(), {
+					args: {
+						replicate: { offset: 0, factor: 0.5 },
+						setup,
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				db2 = await EventStore.open<EventStore<string, any>>(
+					db1.address!,
+					session.peers[1],
+					{
+						args: {
+							replicate: { offset: 0.5, factor: 0.5 },
+							setup,
+							timeUntilRoleMaturity: 0,
+						},
+					},
+				);
+				const db2Key = db2.log.node.identity.publicKey;
+				const db2Hash = db2Key.hashcode();
+				await waitForResolved(() =>
+					expect((db1.log as any).uniqueReplicators.has(db2Hash)).to.be.true,
+				);
+				await waitForResolved(async () =>
+					expect(
+						await db1.log.replicationIndex.count({
+							query: { hash: db2Hash },
+						}),
+					).to.equal(1),
+				);
+
+				// A re-announce of an already-covered span under a fresh id dedupes
+				// to an empty insert list. That must not be mistaken for the peer
+				// stopping replication.
+				const segment = (await db2.log.getMyReplicationSegments())[0];
+				const replicationRange = segment.toReplicationRange();
+				(replicationRange as any).id = randomBytes(32);
+				const covered = (replicationRange as any).toReplicationRangeIndexable(
+					db2Key,
+				);
+				await (db1.log as any).addReplicationRange([covered], db2Key, {
+					reset: false,
+					checkDuplicates: true,
+				});
+
+				expect((db1.log as any).uniqueReplicators.has(db2Hash)).to.be.true;
+				expect(
+					await db1.log.replicationIndex.count({ query: { hash: db2Hash } }),
+				).to.equal(1);
+
+				// A full-state announcement with no segments still removes the peer.
+				await (db1.log as any).addReplicationRange([], db2Key, {
+					reset: true,
+					checkDuplicates: true,
+				});
+				expect((db1.log as any).uniqueReplicators.has(db2Hash)).to.be.false;
+			});
+
 			it("keeps requesting replication info through the replicator wait window", async () => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
