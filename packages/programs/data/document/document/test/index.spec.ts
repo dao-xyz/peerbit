@@ -1232,7 +1232,12 @@ describe("index", () => {
 
 					expect(completedBeforeNotify).equal(true);
 					expect(knownNoNextCommitSpy.callCount).equal(1);
-					expect(notifyStoredStub.callCount).equal(1);
+					// Stored-block provider announcements are deferred and batched
+					// (see notifyStoredDeferred in @peerbit/blocks): the put must not
+					// wait for them, but exactly one notification must still follow.
+					await waitForResolved(() =>
+						expect(notifyStoredStub!.callCount).equal(1),
+					);
 					expect((await store.docs.get(id))?.name).equal(
 						"backbone-notify-deferred",
 					);
@@ -1782,9 +1787,13 @@ describe("index", () => {
 				});
 				const sharedLog = localStore.docs.log as any;
 				const backbone = sharedLog._nativeBackbone;
-				const backboneGraphCommitSpy = sinon.spy(
-					backbone.graph,
-					"prepareEntryV0PlainEntryCommit",
+				// Local-only puts with coordinate persistence commit through the
+				// durable compact storage transaction (see "uses the native backbone
+				// storage transaction for strict native local puts with coordinate
+				// persistence"), not the plain graph entry commit.
+				const backboneCompactCommitSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
 				);
 				const registerProjectionPlanSpy = sinon.spy(
 					(backbone as any).native,
@@ -1834,8 +1843,8 @@ describe("index", () => {
 						target: "none",
 					});
 
-					expect(backboneGraphCommitSpy.callCount).equal(2);
-					expect(backboneGraphCommitSpy.firstCall.args[0].documentIndex).to
+					expect(backboneCompactCommitSpy.callCount).equal(2);
+					expect(backboneCompactCommitSpy.firstCall.args[0].documentIndex).to
 						.exist;
 					expect(registerProjectionPlanSpy.callCount).equal(1);
 					expect(documentPreparedNativePutSpy.callCount).equal(0);
@@ -1862,7 +1871,7 @@ describe("index", () => {
 					backendStoredContextPutSpy.restore();
 					backboneDocumentPutSpy.restore();
 					registerProjectionPlanSpy.restore();
-					backboneGraphCommitSpy.restore();
+					backboneCompactCommitSpy.restore();
 					await localStore.close();
 					store = undefined;
 					await rustSession.stop();

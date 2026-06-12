@@ -1053,6 +1053,7 @@ export class Documents<
 	private _nativeBackboneDocumentIndexEnabled = false;
 	private _mode: DocumentMode = "auto";
 	private _nativeModeReplicatedOpen = false;
+	private _valueClassIsProgram = false;
 	private _documentChangeListeners: Array<{
 		listener: unknown;
 		capture: boolean;
@@ -1061,7 +1062,7 @@ export class Documents<
 	private _documentInternalChangeListenerCount = 0;
 	private _documentChangeListenerTrackingInitialized = false;
 	private _documentBackend!: DocumentBackend<T>;
-	private readonly _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
+	private _canAppendDecodedDocuments = new WeakMap<PutOperation, T>();
 	private _nativeDocumentIdExtractionPlan?: SimpleDocumentFieldExtractionPlan;
 	private _nativeDocumentFieldExtractionPlans?: Map<
 		string,
@@ -2228,7 +2229,11 @@ export class Documents<
 	private keepCache: Set<string> | undefined = undefined;
 	async open(options: SetupOptions<T, I, D>) {
 		this.trackDocumentChangeListeners();
+		// Deserialized instances skip constructor/field initializers (borsh creates
+		// objects via Object.create), so re-establish constructor-only state here.
+		this._canAppendDecodedDocuments ??= new WeakMap<PutOperation, T>();
 		this._clazz = options.type;
+		this._valueClassIsProgram = Program.isPrototypeOf(this._clazz);
 		this.canOpen = options.canOpen;
 		this._mode = options.mode ?? "auto";
 		this._nativeModeReplicatedOpen =
@@ -4010,6 +4015,11 @@ export class Documents<
 	}
 
 	private hasDocumentChangeConsumers(): boolean {
+		if (this._valueClassIsProgram === true) {
+			// Program-valued documents must always materialize removed values so
+			// that open subprograms are dropped on delete, even without listeners.
+			return true;
+		}
 		const changeListenerCount = this._documentChangeListenerCount ?? 0;
 		const internalChangeListenerCount =
 			this._documentInternalChangeListenerCount ?? 0;

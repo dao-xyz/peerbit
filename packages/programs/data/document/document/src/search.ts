@@ -1297,9 +1297,16 @@ export class DocumentIndex<
 		return results;
 	}
 
-	private handleDocumentChange = async (
+	// Bound in open(). Deserialized instances skip constructor/field initializers
+	// (borsh creates objects via Object.create), so this must not rely on a field
+	// initializer to exist.
+	private handleDocumentChange?: (
 		event: CustomEvent<DocumentsChange<T, I>>,
-	) => {
+	) => Promise<void>;
+
+	private async onDocumentChange(
+		event: CustomEvent<DocumentsChange<T, I>>,
+	): Promise<void> {
 		const added = event.detail.added;
 		if (!added.length) {
 			return;
@@ -1374,7 +1381,7 @@ export class DocumentIndex<
 				queue.pushInFlight = false;
 			}
 		}
-	};
+	}
 
 	private get nestedProperties() {
 		return {
@@ -1620,9 +1627,8 @@ export class DocumentIndex<
 			responseType: types.AbstractSearchResult,
 			queryType: types.AbstractSearchRequest,
 		});
-		if (this.handleDocumentChange) {
-			this.documentEvents.addEventListener("change", this.handleDocumentChange);
-		}
+		this.handleDocumentChange ??= (event) => this.onDocumentChange(event);
+		this.documentEvents.addEventListener("change", this.handleDocumentChange);
 	}
 
 	private attachNativeBackboneDocumentIndex(
@@ -4073,19 +4079,29 @@ export class DocumentIndex<
 							extra.push(hash);
 						};
 
-						try {
-							for (const hash of await this._log.getReplicators()) {
-								addExtra(hash);
-								if (extra.length >= 8) break;
-							}
-						} catch {
-							// Fall through to connected peers when the local replicator
-							// index is not ready yet.
-						}
-
 						const peerMap: Map<string, unknown> | undefined = (
 							this.node.services.pubsub as any
 						)?.peers;
+
+						// Only consider replicators that are currently reachable.
+						// The replicator index can contain stale (offline) peers, e.g.
+						// persisted replicators after a restart; querying those would
+						// block the first batch for the full wait timeout instead of
+						// letting joining peers be merged as they arrive.
+						if (peerMap?.has) {
+							try {
+								for (const hash of await this._log.getReplicators()) {
+									if (peerMap.has(hash)) {
+										addExtra(hash);
+									}
+									if (extra.length >= 8) break;
+								}
+							} catch {
+								// Fall through to connected peers when the local replicator
+								// index is not ready yet.
+							}
+						}
+
 						if (peerMap?.keys) {
 							for (const hash of peerMap.keys()) {
 								addExtra(hash);
