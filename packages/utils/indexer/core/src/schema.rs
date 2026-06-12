@@ -334,6 +334,12 @@ impl<'a> BridgeReader<'a> {
         Ok(bytes[0])
     }
 
+    fn read_u16(&mut self) -> Result<u16, SchemaError> {
+        let mut bytes = [0u8; 2];
+        bytes.copy_from_slice(self.read_exact(2)?);
+        Ok(u16::from_le_bytes(bytes))
+    }
+
     fn read_u32(&mut self) -> Result<u32, SchemaError> {
         let mut bytes = [0u8; 4];
         bytes.copy_from_slice(self.read_exact(4)?);
@@ -536,7 +542,7 @@ fn extract_schema_node(
                 fields,
                 scope,
                 required_field(field)?,
-                FieldValue::U64(read_le_u64_with_width(reader, 2)?.unwrap_or_default()),
+                FieldValue::U64(reader.read_u16()? as u64),
             );
         }
         NativeSchemaNode::U32 => {
@@ -556,34 +562,28 @@ fn extract_schema_node(
             );
         }
         NativeSchemaNode::U128 => {
-            if let Some(value) = read_le_u64_with_width(reader, 16)? {
-                insert_scalar(
-                    fields,
-                    scope,
-                    required_field(field)?,
-                    FieldValue::U64(value),
-                );
-            }
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(read_le_u64_saturating(reader, 16)?),
+            );
         }
         NativeSchemaNode::U256 => {
-            if let Some(value) = read_le_u64_with_width(reader, 32)? {
-                insert_scalar(
-                    fields,
-                    scope,
-                    required_field(field)?,
-                    FieldValue::U64(value),
-                );
-            }
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(read_le_u64_saturating(reader, 32)?),
+            );
         }
         NativeSchemaNode::U512 => {
-            if let Some(value) = read_le_u64_with_width(reader, 64)? {
-                insert_scalar(
-                    fields,
-                    scope,
-                    required_field(field)?,
-                    FieldValue::U64(value),
-                );
-            }
+            insert_scalar(
+                fields,
+                scope,
+                required_field(field)?,
+                FieldValue::U64(read_le_u64_saturating(reader, 64)?),
+            );
         }
         NativeSchemaNode::I8 => {
             insert_scalar(
@@ -751,18 +751,21 @@ fn insert_bytes_facts(
     Ok(())
 }
 
-fn read_le_u64_with_width(
-    reader: &mut BridgeReader,
-    width: usize,
-) -> Result<Option<u64>, SchemaError> {
+// u128/u256/u512 values above u64::MAX saturate to u64::MAX so the field
+// keeps a presence fact (IsNull must not match) and Greater/GreaterOrEqual
+// ranges stay correct; Equal/Less comparisons against u64::MAX itself are
+// approximate. Query values are capped at u64 by the interface and the TS
+// sqlite engine rejects these schemas outright, so there is no narrower
+// observable behavior to match.
+fn read_le_u64_saturating(reader: &mut BridgeReader, width: usize) -> Result<u64, SchemaError> {
     let bytes = reader.read_exact(width)?;
+    if bytes.iter().skip(8).any(|byte| *byte != 0) {
+        return Ok(u64::MAX);
+    }
     let low_width = width.min(8);
     let mut low = [0u8; 8];
     low[..low_width].copy_from_slice(&bytes[..low_width]);
-    if bytes.iter().skip(8).any(|byte| *byte != 0) {
-        return Ok(None);
-    }
-    Ok(Some(u64::from_le_bytes(low)))
+    Ok(u64::from_le_bytes(low))
 }
 
 fn read_le_i64_with_width(reader: &mut BridgeReader, width: usize) -> Result<i64, SchemaError> {
@@ -791,7 +794,7 @@ mod tests {
         extract_encoded_document_fields_from_parts,
         extract_encoded_document_fields_from_parts_with_byte_limits,
     };
-    use crate::planner::{FieldPath, FieldValue};
+    use crate::planner::{Compare, FieldPath, FieldValue, NativeQueryIndex, Query};
 
     fn write_u32(out: &mut Vec<u8>, value: u32) {
         out.extend_from_slice(&value.to_le_bytes());
@@ -827,6 +830,29 @@ mod tests {
         write_u32(&mut out, 7);
         write_u32(&mut out, 2);
         out.extend_from_slice(&[9, 10]);
+        out
+    }
+
+    fn schema_with_wide_unsigned_fields() -> Vec<u8> {
+        let mut out = vec![1, 14];
+        write_u32(&mut out, 0);
+        write_u32(&mut out, 4);
+        write_string(&mut out, "small");
+        write_u32(&mut out, 1);
+        write_u32(&mut out, 201);
+        out.push(2);
+        write_string(&mut out, "u128");
+        write_u32(&mut out, 2);
+        write_u32(&mut out, 202);
+        out.push(5);
+        write_string(&mut out, "u256");
+        write_u32(&mut out, 3);
+        write_u32(&mut out, 203);
+        out.push(6);
+        write_string(&mut out, "u512");
+        write_u32(&mut out, 4);
+        write_u32(&mut out, 204);
+        out.push(7);
         out
     }
 
@@ -870,6 +896,101 @@ mod tests {
             ]
         );
         assert_eq!(schema.stats().root_fields, 3);
+    }
+
+    #[test]
+    fn extracts_wide_unsigned_values_within_u64_range() {
+        let schema = decode_native_schema_ir(&schema_with_wide_unsigned_fields()).unwrap();
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&0xbeef_u16.to_le_bytes());
+        encoded.extend_from_slice(&7_u128.to_le_bytes());
+        let mut u256 = [0u8; 32];
+        u256[..8].copy_from_slice(&u64::MAX.to_le_bytes());
+        encoded.extend_from_slice(&u256);
+        let mut u512 = [0u8; 64];
+        u512[0] = 9;
+        encoded.extend_from_slice(&u512);
+
+        let fields = extract_encoded_document_fields(&schema, &encoded, 0).unwrap();
+
+        assert_eq!(
+            fields.scalar_values(&FieldPath::Id(1)),
+            Some([FieldValue::U64(0xbeef)].as_slice())
+        );
+        assert_eq!(
+            fields.scalar_values(&FieldPath::Id(2)),
+            Some([FieldValue::U64(7)].as_slice())
+        );
+        assert_eq!(
+            fields.scalar_values(&FieldPath::Id(3)),
+            Some([FieldValue::U64(u64::MAX)].as_slice())
+        );
+        assert_eq!(
+            fields.scalar_values(&FieldPath::Id(4)),
+            Some([FieldValue::U64(9)].as_slice())
+        );
+    }
+
+    #[test]
+    fn saturates_wide_unsigned_values_above_u64_max() {
+        let schema = decode_native_schema_ir(&schema_with_wide_unsigned_fields()).unwrap();
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&1_u16.to_le_bytes());
+        encoded.extend_from_slice(&(u64::MAX as u128 + 1).to_le_bytes());
+        let mut u256 = [0u8; 32];
+        u256[31] = 1;
+        encoded.extend_from_slice(&u256);
+        let mut u512 = [0u8; 64];
+        u512[0] = 3;
+        u512[8] = 1;
+        encoded.extend_from_slice(&u512);
+
+        let fields = extract_encoded_document_fields(&schema, &encoded, 0).unwrap();
+
+        for field in [2, 3, 4] {
+            assert_eq!(
+                fields.scalar_values(&FieldPath::Id(field)),
+                Some([FieldValue::U64(u64::MAX)].as_slice()),
+                "field {field}",
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_wide_unsigned_values_stay_visible_to_queries() {
+        let schema = decode_native_schema_ir(&schema_with_wide_unsigned_fields()).unwrap();
+        let mut encoded = Vec::new();
+        encoded.extend_from_slice(&1_u16.to_le_bytes());
+        encoded.extend_from_slice(&(u64::MAX as u128 + 1).to_le_bytes());
+        encoded.extend_from_slice(&[0u8; 32]);
+        encoded.extend_from_slice(&[0u8; 64]);
+        let fields = extract_encoded_document_fields(&schema, &encoded, 0).unwrap();
+
+        let mut index = NativeQueryIndex::new();
+        index.put("doc", fields);
+
+        assert_eq!(
+            index.search(
+                &Query::IsNull {
+                    field: FieldPath::Id(2),
+                },
+                &[],
+                None,
+            ),
+            Vec::<String>::new(),
+        );
+        assert_eq!(
+            index.search(
+                &Query::Range {
+                    field: FieldPath::Id(2),
+                    compare: Compare::Greater,
+                    value: FieldValue::U64(1_000_000),
+                },
+                &[],
+                None,
+            ),
+            vec!["doc"],
+        );
     }
 
     #[test]

@@ -6,10 +6,6 @@ use std::sync::Arc;
 
 pub type DocId = u32;
 const MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH: usize = 128;
-// Trim-heavy document stores remove many old rows that are unlikely to be queried
-// again. Keep deletes cheap and rebuild secondary indexes once stale entries grow.
-const STALE_INDEX_DELETE_COMPACT_MIN: u64 = 4096;
-const STALE_INDEX_DELETE_COMPACT_FACTOR: u64 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FieldPath {
@@ -302,6 +298,7 @@ impl IndexBatch {
 pub struct NativeQueryIndex {
     generation: u64,
     next_doc_id: DocId,
+    free_doc_ids: Vec<DocId>,
     all_docs: RoaringBitmap,
     external_to_internal: HashMap<String, DocId>,
     internal_to_external: HashMap<DocId, String>,
@@ -316,7 +313,6 @@ pub struct NativeQueryIndex {
     sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, RoaringBitmap>>,
     large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
-    stale_index_deletes: u64,
 }
 
 impl NativeQueryIndex {
@@ -387,12 +383,6 @@ impl NativeQueryIndex {
 
     pub fn delete_id(&mut self, external_id: &str) {
         if self.remove_external(external_id) {
-            self.generation += 1;
-        }
-    }
-
-    pub fn delete_id_lazy(&mut self, external_id: &str) {
-        if self.remove_external_lazy(external_id) {
             self.generation += 1;
         }
     }
@@ -706,11 +696,28 @@ impl NativeQueryIndex {
     }
 
     fn allocate_doc_id(&mut self, external_id: String) -> DocId {
-        let doc_id = self.next_doc_id;
-        self.next_doc_id = self
-            .next_doc_id
-            .checked_add(1)
-            .expect("native index doc id overflow");
+        let doc_id = match self.free_doc_ids.pop() {
+            Some(doc_id) => {
+                debug_assert!(
+                    !self.internal_to_external.contains_key(&doc_id)
+                        && !self.documents.contains_key(&doc_id)
+                        && !self.all_docs.contains(doc_id),
+                    "recycled doc id is still referenced by live structures"
+                );
+                doc_id
+            }
+            None => {
+                let doc_id = self.next_doc_id;
+                // With id recycling this only grows while every id below it is
+                // live, so overflow requires 2^32 simultaneously live documents
+                // and memory exhaustion is reached long before this increment.
+                self.next_doc_id = self
+                    .next_doc_id
+                    .checked_add(1)
+                    .expect("native index doc id overflow");
+                doc_id
+            }
+        };
         self.external_to_internal
             .insert(external_id.clone(), doc_id);
         self.internal_to_external.insert(doc_id, external_id);
@@ -724,53 +731,8 @@ impl NativeQueryIndex {
         self.internal_to_external.remove(&doc_id);
         self.remove_document_fields(doc_id);
         self.all_docs.remove(doc_id);
+        self.free_doc_ids.push(doc_id);
         true
-    }
-
-    fn remove_external_lazy(&mut self, external_id: &str) -> bool {
-        let Some(doc_id) = self.external_to_internal.remove(external_id) else {
-            return false;
-        };
-        self.internal_to_external.remove(&doc_id);
-        self.documents.remove(&doc_id);
-        self.all_docs.remove(doc_id);
-        self.stale_index_deletes = self.stale_index_deletes.saturating_add(1);
-        self.compact_stale_indexes_if_needed();
-        true
-    }
-
-    fn compact_stale_indexes_if_needed(&mut self) {
-        if self.stale_index_deletes < STALE_INDEX_DELETE_COMPACT_MIN {
-            return;
-        }
-        let live = self.documents.len() as u64;
-        if self.stale_index_deletes < live.saturating_mul(STALE_INDEX_DELETE_COMPACT_FACTOR) {
-            return;
-        }
-        self.rebuild_secondary_indexes();
-    }
-
-    fn rebuild_secondary_indexes(&mut self) {
-        self.exact.clear();
-        self.range_i64.clear();
-        self.range_u64.clear();
-        self.sort_bool.clear();
-        self.sort_i64.clear();
-        self.sort_u64.clear();
-        self.sort_string.clear();
-        self.sort_bytes.clear();
-        self.large_exact_bytes.clear();
-        self.vectors.clear();
-
-        let documents = self
-            .documents
-            .iter()
-            .map(|(doc_id, fields)| (*doc_id, fields.clone()))
-            .collect::<Vec<_>>();
-        for (doc_id, fields) in documents {
-            self.index_document(doc_id, &fields);
-        }
-        self.stale_index_deletes = 0;
     }
 
     fn remove_document_fields(&mut self, doc_id: DocId) {
@@ -2100,54 +2062,126 @@ mod tests {
     }
 
     #[test]
-    fn lazy_delete_hides_docs_without_eager_secondary_index_cleanup() {
+    fn recycled_doc_ids_do_not_alias_stale_facts() {
         let mut index = NativeQueryIndex::new();
+        let large_bytes = vec![7_u8; MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH + 1];
         index.put(
-            "a",
+            "old",
             DocumentFields::new()
-                .with_scalar("head", "h-a")
-                .with_scalar("group", "left")
-                .with_scalar("score", 1_u64),
+                .with_scalar("title", "stale")
+                .with_scalar("score", 42_u64)
+                .with_scalar("offset", -7_i64)
+                .with_scalar("flag", true)
+                .with_scalar("small", vec![1_u8, 2_u8])
+                .with_scalar("large", large_bytes.clone())
+                .with_vector("embedding", vec![1.0, 0.0]),
         );
-        index.put(
-            "b",
-            DocumentFields::new()
-                .with_scalar("head", "h-b")
-                .with_scalar("group", "right")
-                .with_scalar("score", 2_u64),
-        );
+        index.delete_id("old");
+        index.put("new", DocumentFields::new().with_scalar("other", 1_u64));
 
-        index.delete_id_lazy("a");
+        // The recycled internal id must be observable to make the aliasing
+        // checks below meaningful.
+        assert_eq!(index.external_to_internal.get("new"), Some(&0));
+        assert_eq!(index.next_doc_id, 1);
 
-        assert_eq!(index.generation(), 3);
-        assert_eq!(index.len(), 1);
-        assert_eq!(index.stale_index_deletes, 1);
-        assert_eq!(
-            index.exact_first(&"head".into(), &FieldValue::from("h-a")),
-            None
-        );
-        assert_eq!(
-            index.search(
-                &Query::Exact {
-                    field: "group".into(),
-                    value: FieldValue::from("left"),
-                },
-                &[],
-                None,
-            ),
-            Vec::<String>::new(),
-        );
+        for query in [
+            Query::Exact {
+                field: "title".into(),
+                value: FieldValue::from("stale"),
+            },
+            Query::Exact {
+                field: "score".into(),
+                value: FieldValue::U64(42),
+            },
+            Query::Range {
+                field: "score".into(),
+                compare: Compare::GreaterOrEqual,
+                value: FieldValue::U64(0),
+            },
+            Query::Range {
+                field: "offset".into(),
+                compare: Compare::LessOrEqual,
+                value: FieldValue::I64(0),
+            },
+            Query::Exact {
+                field: "flag".into(),
+                value: FieldValue::Bool(true),
+            },
+            Query::Exact {
+                field: "small".into(),
+                value: FieldValue::from(vec![1_u8, 2_u8]),
+            },
+            Query::Exact {
+                field: "large".into(),
+                value: FieldValue::from(large_bytes),
+            },
+        ] {
+            assert_eq!(index.candidates(&query).len(), 0, "stale {query:?}");
+            assert_eq!(index.search(&query, &[], None), Vec::<String>::new());
+        }
         assert_eq!(
             index.search(
                 &Query::All,
                 &[SortField {
-                    field: "score".into(),
+                    field: "title".into(),
                     direction: SortDirection::Asc,
                 }],
                 None,
             ),
-            vec!["b"],
+            vec!["new"],
         );
+        assert_eq!(
+            index.vector_search(
+                &Query::All,
+                &VectorSort {
+                    field: "embedding".into(),
+                    query: vec![1.0, 0.0],
+                    metric: VectorMetric::Cosine,
+                },
+                10,
+            ),
+            Vec::new(),
+        );
+        assert_eq!(
+            index.search(
+                &Query::IsNull {
+                    field: "title".into(),
+                },
+                &[],
+                None,
+            ),
+            vec!["new"],
+        );
+    }
+
+    #[test]
+    fn doc_id_churn_reuses_ids_instead_of_growing() {
+        let mut index = NativeQueryIndex::new();
+        for round in 0..10_000_u64 {
+            let id = format!("doc-{round}");
+            index.put(&*id, DocumentFields::new().with_scalar("round", round));
+            index.delete_id(&id);
+        }
+        assert_eq!(index.next_doc_id, 1);
+        assert!(index.is_empty());
+
+        index.apply_batch(
+            IndexBatch::new()
+                .put("a", DocumentFields::new().with_scalar("round", 0_u64))
+                .put("b", DocumentFields::new().with_scalar("round", 1_u64)),
+        );
+        index.apply_batch(
+            IndexBatch::new()
+                .delete("a")
+                .delete("b")
+                .put("c", DocumentFields::new().with_scalar("round", 2_u64))
+                .put("d", DocumentFields::new().with_scalar("round", 3_u64)),
+        );
+        assert_eq!(index.next_doc_id, 2);
+        assert_eq!(index.len(), 2);
+        let mut results = index.search(&Query::All, &[], None);
+        results.sort();
+        assert_eq!(results, vec!["c", "d"]);
     }
 
     #[test]
