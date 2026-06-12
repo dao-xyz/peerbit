@@ -1218,8 +1218,11 @@ let liveTsLog: LiveTsLogModules | undefined;
 const loadLiveTsLog = async (): Promise<LiveTsLogModules> => {
 	if (!liveTsLog) {
 		// Variable specifiers keep these out of the browser bundles; the live
-		// parity tests below only run in node.
-		const logPath = "@peerbit/log";
+		// parity tests below only run in node. @peerbit/log is imported via a
+		// relative dist path (like shared-log-rust's parity tests) because a
+		// package dependency on it would be circular: @peerbit/log already
+		// depends on this package.
+		const logPath = "../../../dist/src/index.js";
 		const borshPath = "@dao-xyz/borsh";
 		const cryptoPath = "@peerbit/crypto";
 		const blocksPath = "@peerbit/blocks-interface";

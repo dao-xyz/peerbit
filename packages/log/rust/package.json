@@ -63,8 +63,5 @@
 		"test:cov": "aegir test -t node --cov"
 	},
 	"author": "dao.xyz",
-	"license": "MIT",
-	"devDependencies": {
-		"@peerbit/log": "workspace:*"
-	}
+	"license": "MIT"
 }

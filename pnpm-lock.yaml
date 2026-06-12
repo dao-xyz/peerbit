@@ -1047,11 +1047,7 @@ importers:
         specifier: workspace:*
         version: link:rust
 
-  packages/log/rust:
-    devDependencies:
-      '@peerbit/log':
-        specifier: workspace:*
-        version: link:..
+  packages/log/rust: {}
 
   packages/programs/acl/identity-access-controller:
     dependencies:
