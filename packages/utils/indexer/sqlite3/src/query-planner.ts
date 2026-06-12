@@ -251,9 +251,21 @@ export class QueryPlanner {
 				if (indexCreateCommands != null) {
 					const commandsToCreate: typeof indexCreateCommands = [];
 					for (const command of indexCreateCommands) {
-						if (this.pendingIndexCreation.has(command.key)) {
-							// TODO is this kind of debouncing needed? how do we end up here?
-							await this.pendingIndexCreation.get(command.key);
+						const pending = this.pendingIndexCreation.get(command.key);
+						if (pending) {
+							// Another plan key with the same column set is already creating
+							// this index ("create index if not exists ..."). Settle THIS
+							// scope's deferred from the in-flight creation: leaving it
+							// pending keeps created() === false for the lifetime of the
+							// process and every later query for this plan key awaits a
+							// promise nobody will ever resolve.
+							try {
+								await pending;
+								command.deferred.resolve();
+							} catch (error) {
+								command.deferred.reject(error);
+								throw error;
+							}
 							continue;
 						}
 						commandsToCreate.push(command);
@@ -323,9 +335,16 @@ export class QueryPlanner {
 						});
 
 						let created = false;
-						deferred.promise.then(() => {
-							created = true;
-						});
+						deferred.promise.then(
+							() => {
+								created = true;
+							},
+							() => {
+								// Rejections are observed by the scopes awaiting this
+								// creation; without this handler a rejected creation turns
+								// into an unhandled rejection through this side channel.
+							},
+						);
 						indexStats.results.push({
 							used: 0,
 							times: [],
