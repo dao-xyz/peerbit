@@ -881,17 +881,51 @@ describe("append", function () {
 		const blockPutManyStub = sinon
 			.stub(store, "putMany")
 			.rejects(new Error("boom"));
+		const blockPutKnownManyStub =
+			"putKnownMany" in store &&
+			typeof (store as { putKnownMany?: unknown }).putKnownMany === "function"
+				? sinon
+						.stub(
+							store as unknown as {
+								putKnownMany: (blocks: [string, Uint8Array][]) => any;
+							},
+							"putKnownMany",
+						)
+						.rejects(new Error("boom"))
+				: undefined;
+		const blockPutKnownManyColumnsStub =
+			"putKnownManyColumns" in store &&
+			typeof (store as { putKnownManyColumns?: unknown })
+				.putKnownManyColumns === "function"
+				? sinon
+						.stub(
+							store as unknown as {
+								putKnownManyColumns: (
+									cids: string[],
+									bytes: Uint8Array[],
+								) => any;
+							},
+							"putKnownManyColumns",
+						)
+						.rejects(new Error("boom"))
+				: undefined;
 
 		try {
 			await expect(
 				log.appendMany([new Uint8Array([1]), new Uint8Array([2])]),
 			).rejectedWith("boom");
-			expect(blockPutManyStub.callCount).equal(1);
+			expect(
+				blockPutManyStub.callCount +
+					(blockPutKnownManyStub?.callCount ?? 0) +
+					(blockPutKnownManyColumnsStub?.callCount ?? 0),
+			).equal(1);
 			expect(
 				(await log.getHeads().all()).map((head) => head.hash),
 			).to.deep.equal([root.hash]);
 			expect(graph.length).equal(1);
 		} finally {
+			blockPutKnownManyColumnsStub?.restore();
+			blockPutKnownManyStub?.restore();
 			blockPutManyStub.restore();
 			await log.close();
 		}
