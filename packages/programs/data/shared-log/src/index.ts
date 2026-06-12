@@ -2481,11 +2481,18 @@ export class SharedLog<
 			const fromHash = from.hashcode();
 			// Track replicator membership transitions synchronously so join/leave events are
 			// idempotent even if we process concurrent reset messages/unsubscribes.
-			const stoppedTransition =
-				ranges.length === 0 ? this.uniqueReplicators.delete(fromHash) : false;
-			if (ranges.length === 0) {
+			// Only a full-state (reset) announcement can signal that a peer stopped
+			// replicating: a non-reset message whose segments deduplicate to nothing
+			// means "nothing new", not "stopped". Removing the peer here would let
+			// uniqueReplicators diverge from replicationIndex while the peer's
+			// ranges stay indexed.
+			const announcedStopped = reset === true && ranges.length === 0;
+			const stoppedTransition = announcedStopped
+				? this.uniqueReplicators.delete(fromHash)
+				: false;
+			if (announcedStopped) {
 				this._replicatorJoinEmitted.delete(fromHash);
-			} else {
+			} else if (ranges.length > 0) {
 				this.uniqueReplicators.add(fromHash);
 			}
 
