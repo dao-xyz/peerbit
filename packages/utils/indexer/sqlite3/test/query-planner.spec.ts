@@ -16,6 +16,67 @@ import {
 	flattenQuery,
 } from "../src/query-planner.js";
 
+describe("QueryPlanner", () => {
+	it("settles scopes whose index creation collides across plan keys", async () => {
+		// Two plan keys (values nullified to different anchors) that share one
+		// index key (same table + columns). The scope that loses the creation
+		// race must still settle its own deferred, otherwise every later query
+		// for its plan key awaits a promise nobody resolves (#967).
+		let releaseExec: () => void = () => {};
+		const execGate = new Promise<void>((resolve) => {
+			releaseExec = resolve;
+		});
+		let execCalls = 0;
+		const planner = new QueryPlanner({
+			exec: async () => {
+				execCalls += 1;
+				await execGate;
+			},
+		});
+		const table = "t";
+		const columns = ["key"];
+		const plannable = (value: bigint) =>
+			new PlannableQuery({
+				query: [
+					new IntegerCompare({
+						compare: Compare.Greater,
+						key: "key",
+						value,
+					}),
+				],
+			});
+		const low = plannable(1n);
+		const high = plannable((1n << 63n) + 2n);
+		expect(low.key).to.not.eq(high.key);
+
+		const scope1 = planner.scope(low);
+		scope1.resolveIndex(table, columns);
+		const first = scope1.beforePrepare();
+
+		const scope2 = planner.scope(high);
+		scope2.resolveIndex(table, columns);
+		const second = scope2.beforePrepare();
+
+		releaseExec();
+		await first;
+
+		const timeout = (label: string) =>
+			delay(2000).then(() => {
+				throw new Error(label + " never settled");
+			});
+		await Promise.race([second, timeout("colliding scope")]);
+
+		// a fresh scope for the previously-collided plan key must settle too
+		const scope3 = planner.scope(high);
+		scope3.resolveIndex(table, columns);
+		await Promise.race([
+			scope3.beforePrepare(),
+			timeout("fresh scope for collided plan key"),
+		]);
+		expect(execCalls).to.eq(1);
+	});
+});
+
 describe("PlannableQuery", () => {
 	describe("IntegerCompare", () => {
 		it("key same for small change", async () => {
