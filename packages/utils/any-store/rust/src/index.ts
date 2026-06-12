@@ -81,6 +81,9 @@ export class RustAnyStore implements AnyStore {
 	private native?: NativeAnyStore;
 	private persistence?: RustAnyStorePersistenceBackend;
 	private openPromise?: Promise<void>;
+	private lifecycleQueue: Promise<unknown> = Promise.resolve();
+	private explicitlyClosed = false;
+	private pendingCloses = 0;
 	private mutationQueue: Promise<unknown> = Promise.resolve();
 	private queuedMutations = 0;
 	private journalQueue: Promise<unknown> = Promise.resolve();
@@ -99,46 +102,110 @@ export class RustAnyStore implements AnyStore {
 	}
 
 	async open(): Promise<void> {
-		if (this._status === "open") {
-			return;
+		if (!this.explicitlyClosed) {
+			if (this._status === "open") {
+				return;
+			}
+			if (this.openPromise) {
+				return this.openPromise;
+			}
 		}
-		if (this.openPromise) {
-			return this.openPromise;
-		}
-		this._status = "opening";
-		this.openPromise = this.openInternal()
-			.then(() => {
+		this.explicitlyClosed = false;
+		const open = this.enqueueLifecycle(async () => {
+			if (this._status === "open") {
+				return;
+			}
+			this._status = "opening";
+			try {
+				await this.openInternal();
 				this._status = "open";
-			})
-			.catch((error) => {
+			} catch (error) {
 				this._status = "closed";
 				this.native = undefined;
 				this.persistence = undefined;
 				throw error;
-			})
-			.finally(() => {
+			}
+		});
+		const wrapped: Promise<void> = open.finally(() => {
+			if (this.openPromise === wrapped) {
 				this.openPromise = undefined;
-			});
-		return this.openPromise;
+			}
+		});
+		this.openPromise = wrapped;
+		return wrapped;
 	}
 
+	/**
+	 * After close() resolves (or rejects) the store always reaches "closed"
+	 * and releases its native state; a pending journal failure makes close()
+	 * reject with that original error, matching how the level backend
+	 * propagates close-time failures. Mutations and reads after close()
+	 * reject until open() is called again.
+	 */
 	async close(): Promise<void> {
+		this.explicitlyClosed = true;
+		if (this._status === "closed" && !this.openPromise) {
+			return;
+		}
+		// Only mutations enqueued before this call drain into the closing
+		// store; later ones either reject (still closed) or wait for a
+		// queued re-open.
+		const drainTail = this.mutationQueue;
+		this.pendingCloses++;
+		return this.enqueueLifecycle(() => this.closeInternal(drainTail)).finally(
+			() => {
+				this.pendingCloses--;
+			},
+		);
+	}
+
+	private async closeInternal(drainTail: Promise<unknown>): Promise<void> {
 		if (this._status === "closed") {
 			return;
 		}
 		this._status = "closing";
-		await this.mutationQueue;
-		await this.waitForJournal();
+		let closeError: unknown;
+		await drainTail;
+		try {
+			await this.waitForJournal();
+		} catch (error) {
+			closeError = error;
+		}
 		for (const child of this.children.values()) {
-			await child.close();
+			try {
+				await child.close();
+			} catch (error) {
+				closeError ??= error;
+			}
 		}
 		if (this.native && this.directory && this.options.compactOnClose !== false) {
-			await this.compact();
+			try {
+				await this.compact();
+			} catch (error) {
+				closeError ??= error;
+			}
 		}
-		await this.persistence?.close();
+		const persistence = this.persistence;
 		this.persistence = undefined;
 		this.native = undefined;
+		try {
+			await persistence?.close();
+		} catch (error) {
+			closeError ??= error;
+		}
 		this._status = "closed";
+		if (closeError) {
+			throw closeError;
+		}
+	}
+
+	private enqueueLifecycle<T>(fn: () => Promise<T>): Promise<T> {
+		const next = this.lifecycleQueue.then(fn);
+		this.lifecycleQueue = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
 	}
 
 	async get(key: string): Promise<Uint8Array | undefined> {
@@ -176,6 +243,10 @@ export class RustAnyStore implements AnyStore {
 		}
 		const normalNative = this.openNormalDurabilityNative();
 		if (normalNative && this.directory) {
+			const journalError = this.takePendingJournalError();
+			if (journalError) {
+				return Promise.reject(journalError);
+			}
 			this.recordJournal(
 				this.journaledNative(normalNative).encode_put_record(key, value),
 			);
@@ -243,6 +314,10 @@ export class RustAnyStore implements AnyStore {
 		}
 		const normalNative = this.openNormalDurabilityNative();
 		if (normalNative && this.directory) {
+			const journalError = this.takePendingJournalError();
+			if (journalError) {
+				return Promise.reject(journalError);
+			}
 			this.recordJournal(
 				this.journaledNative(normalNative).encode_put_records(keys, values),
 			);
@@ -354,6 +429,9 @@ export class RustAnyStore implements AnyStore {
 		for (const child of this.children.values()) {
 			await child.clear();
 			await child.close();
+			// clear() resets children of a still-open parent; this close is an
+			// internal reset, not a user-facing close, so children stay usable.
+			child.explicitlyClosed = false;
 		}
 		if (this.directory) {
 			await this.removeSublevelsDirectory();
@@ -392,7 +470,18 @@ export class RustAnyStore implements AnyStore {
 		}
 	}
 
-	private async ensureOpen(): Promise<NativeAnyStore> {
+	private async ensureOpen(allowDraining = false): Promise<NativeAnyStore> {
+		if (this._status === "open" && this.native) {
+			return this.native;
+		}
+		// Mutations already enqueued before close() drain against the live
+		// native while the store is closing.
+		if (allowDraining && this.native && this._status === "closing") {
+			return this.native;
+		}
+		if (this.explicitlyClosed) {
+			throw new Error("RustAnyStore is closed");
+		}
 		if (this._status !== "open") {
 			await this.open();
 		}
@@ -405,6 +494,8 @@ export class RustAnyStore implements AnyStore {
 	private openTransientNative(): NativeAnyStore | undefined {
 		if (
 			this.directory == null &&
+			!this.explicitlyClosed &&
+			this.pendingCloses === 0 &&
 			this._status === "open" &&
 			this.native &&
 			this.queuedMutations === 0
@@ -416,6 +507,8 @@ export class RustAnyStore implements AnyStore {
 	private openNormalDurabilityNative(): NativeAnyStore | undefined {
 		if (
 			this.options.durability !== "strict" &&
+			!this.explicitlyClosed &&
+			this.pendingCloses === 0 &&
 			this._status === "open" &&
 			this.native &&
 			this.queuedMutations === 0
@@ -424,9 +517,27 @@ export class RustAnyStore implements AnyStore {
 		}
 	}
 
+	private takePendingJournalError(): unknown {
+		const error = this.journalError;
+		this.journalError = undefined;
+		return error;
+	}
+
 	private enqueueMutation<T>(fn: (native: NativeAnyStore) => Promise<T>): Promise<T> {
+		const journalError = this.takePendingJournalError();
+		if (journalError) {
+			return Promise.reject(journalError);
+		}
+		if (this.explicitlyClosed) {
+			return Promise.reject(new Error("RustAnyStore is closed"));
+		}
 		this.queuedMutations++;
-		const next = this.mutationQueue.then(async () => fn(await this.ensureOpen()));
+		// A mutation enqueued behind a pending close belongs to the queued
+		// re-open and must not drain into the closing native.
+		const drainAllowed = this.pendingCloses === 0;
+		const next = this.mutationQueue.then(async () =>
+			fn(await this.ensureOpen(drainAllowed)),
+		);
 		this.mutationQueue = next.then(
 			() => undefined,
 			() => undefined,
@@ -480,8 +591,9 @@ export class RustAnyStore implements AnyStore {
 
 	private async waitForJournal(): Promise<void> {
 		await this.journalQueue;
-		if (this.journalError) {
-			throw this.journalError;
+		const journalError = this.takePendingJournalError();
+		if (journalError) {
+			throw journalError;
 		}
 	}
 

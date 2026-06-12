@@ -98,11 +98,30 @@ const decodeManifest = (
 	}
 };
 
+type NodeFsModule = typeof import("fs/promises");
+
+let nodeFsModule: Promise<NodeFsModule> | undefined;
+const importNodeFs = (): Promise<NodeFsModule> => {
+	if (!nodeFsModule) {
+		const fsPromises = "fs/promises";
+		nodeFsModule = import(/* @vite-ignore */ fsPromises) as Promise<NodeFsModule>;
+	}
+	return nodeFsModule;
+};
+
+let nodePathJoin: Promise<(...parts: string[]) => string> | undefined;
+const importNodePathJoin = (): Promise<(...parts: string[]) => string> => {
+	if (!nodePathJoin) {
+		const pathModule = "path";
+		nodePathJoin = (
+			import(/* @vite-ignore */ pathModule) as Promise<typeof import("path")>
+		).then((mod) => mod.join);
+	}
+	return nodePathJoin;
+};
+
 const readNodeFileIfExists = async (path: string): Promise<Uint8Array | undefined> => {
-	const fsPromises = "fs/promises";
-	const { readFile } = (await import(
-		/* @vite-ignore */ fsPromises
-	)) as typeof import("fs/promises");
+	const { readFile } = await importNodeFs();
 	try {
 		return new Uint8Array(await readFile(path));
 	} catch (error) {
@@ -116,6 +135,12 @@ const readNodeFileIfExists = async (path: string): Promise<Uint8Array | undefine
 class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	private journalHandle?: import("fs/promises").FileHandle;
 	private journalOffset?: number;
+	private levelDirectoryPath?: string;
+	private sublevelsDirectoryPath?: string;
+	private snapshotFilePath?: string;
+	private snapshotTempFilePath?: string;
+	private journalFilePath?: string;
+	private directoryEnsured = false;
 
 	constructor(private readonly rootDirectory: string, private readonly level: string[]) {}
 
@@ -136,10 +161,7 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		durability: PersistenceDurability,
 	): Promise<void> {
 		await this.ensureLevelDirectory();
-		const fsPromises = "fs/promises";
-		const { open, stat } = (await import(
-			/* @vite-ignore */ fsPromises
-		)) as typeof import("fs/promises");
+		const { open, stat } = await importNodeFs();
 		if (!this.journalHandle) {
 			const path = await this.journalPath();
 			this.journalHandle = await open(path, "a+");
@@ -162,10 +184,7 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	async writeSnapshot(snapshot: Uint8Array): Promise<void> {
 		await this.close();
 		await this.ensureLevelDirectory();
-		const fsPromises = "fs/promises";
-		const { rename, writeFile } = (await import(
-			/* @vite-ignore */ fsPromises
-		)) as typeof import("fs/promises");
+		const { rename, writeFile } = await importNodeFs();
 		const tempPath = await this.snapshotTempPath();
 		await writeFile(tempPath, snapshot);
 		await rename(tempPath, await this.snapshotPath());
@@ -174,14 +193,12 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	}
 
 	async removeSublevels(): Promise<void> {
-		const fsPromises = "fs/promises";
-		const { rm } = (await import(
-			/* @vite-ignore */ fsPromises
-		)) as typeof import("fs/promises");
+		const { rm } = await importNodeFs();
 		await rm(await this.sublevelsDirectory(), { recursive: true, force: true });
 	}
 
 	async close(): Promise<void> {
+		this.directoryEnsured = false;
 		if (!this.journalHandle) {
 			return;
 		}
@@ -191,49 +208,57 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	}
 
 	private async ensureLevelDirectory(): Promise<void> {
-		const fsPromises = "fs/promises";
-		const { mkdir } = (await import(
-			/* @vite-ignore */ fsPromises
-		)) as typeof import("fs/promises");
+		// Success-only memo: a failed mkdir must retry on the next call.
+		if (this.directoryEnsured) {
+			return;
+		}
+		const { mkdir } = await importNodeFs();
 		await mkdir(await this.levelDirectory(), { recursive: true });
+		this.directoryEnsured = true;
 	}
 
 	private async levelDirectory(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
-		let current = this.rootDirectory;
-		for (const part of this.level) {
-			current = path.join(
-				current,
-				SUBLEVEL_DIRECTORY_NAME,
-				encodePathPart(part),
-			);
+		if (this.levelDirectoryPath === undefined) {
+			const join = await importNodePathJoin();
+			let current = this.rootDirectory;
+			for (const part of this.level) {
+				current = join(current, SUBLEVEL_DIRECTORY_NAME, encodePathPart(part));
+			}
+			this.levelDirectoryPath = current;
 		}
-		return current;
+		return this.levelDirectoryPath;
 	}
 
 	private async sublevelsDirectory(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), SUBLEVEL_DIRECTORY_NAME);
+		this.sublevelsDirectoryPath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			SUBLEVEL_DIRECTORY_NAME,
+		);
+		return this.sublevelsDirectoryPath;
 	}
 
 	private async snapshotPath(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), SNAPSHOT_FILE_NAME);
+		this.snapshotFilePath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			SNAPSHOT_FILE_NAME,
+		);
+		return this.snapshotFilePath;
 	}
 
 	private async snapshotTempPath(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), SNAPSHOT_TEMP_FILE_NAME);
+		this.snapshotTempFilePath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			SNAPSHOT_TEMP_FILE_NAME,
+		);
+		return this.snapshotTempFilePath;
 	}
 
 	private async journalPath(): Promise<string> {
-		const pathModule = "path";
-		const path = (await import(/* @vite-ignore */ pathModule)) as typeof import("path");
-		return path.join(await this.levelDirectory(), JOURNAL_FILE_NAME);
+		this.journalFilePath ??= (await importNodePathJoin())(
+			await this.levelDirectory(),
+			JOURNAL_FILE_NAME,
+		);
+		return this.journalFilePath;
 	}
 }
 
