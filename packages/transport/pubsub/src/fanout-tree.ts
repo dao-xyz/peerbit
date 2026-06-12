@@ -608,9 +608,11 @@ const encodeJoinAccept = (
 	reqId: number,
 	level: number,
 	parentRouteFromRoot?: string[],
+	haveRange?: { haveFrom: number; haveToExclusive: number },
 ) => {
 	const routeBytes: Uint8Array[] = [];
 	let bytes = 1 + 32 + 4 + 2 + 1;
+	if (haveRange) bytes += 8;
 	let count = 0;
 
 	for (const hop of parentRouteFromRoot ?? []) {
@@ -635,6 +637,12 @@ const encodeJoinAccept = (
 		buf[offset++] = hb.length & 0xff;
 		buf.set(hb, offset);
 		offset += hb.length;
+	}
+	if (haveRange) {
+		writeU32BE(buf, offset, haveRange.haveFrom >>> 0);
+		offset += 4;
+		writeU32BE(buf, offset, haveRange.haveToExclusive >>> 0);
+		offset += 4;
 	}
 	return buf;
 };
@@ -1411,6 +1419,7 @@ type ChannelState = {
 	missingSeqs: Set<number>;
 	endSeqExclusive: number;
 		lastRepairSentAt: number;
+	parentRepairUnansweredStreak: number;
 		lastParentDataAt: number;
 		receivedAnyParentData: boolean;
 		channelPeers: Map<string, number>;
@@ -1428,6 +1437,7 @@ type ChannelState = {
 	>;
 	maxSeqSeen: number;
 	lastIHaveSentAt: number;
+	cachedAnnounceTrackerPeers?: string[];
 	lastIHaveSentMaxSeq: number;
 
 	pendingJoin: Map<number, { resolve(res: JoinAttemptResult): void }>;
@@ -2460,6 +2470,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			missingSeqs: new Set<number>(),
 			endSeqExclusive: -1,
 			lastRepairSentAt: 0,
+			parentRepairUnansweredStreak: 0,
 			lastParentDataAt: 0,
 			receivedAnyParentData: false,
 			channelPeers: new Map<string, number>(),
@@ -2468,6 +2479,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			haveByPeer: new Map(),
 			maxSeqSeen: -1,
 			lastIHaveSentAt: 0,
+			cachedAnnounceTrackerPeers: undefined,
 			lastIHaveSentMaxSeq: -1,
 			pendingJoin: new Map(),
 			pendingTrackerQuery: new Map(),
@@ -3449,7 +3461,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!ch.isRoot) throw new Error("Only the channel root can publish");
 		const seq = ch.seq++;
 		const message = await this._sendData(ch, [...ch.children.keys()], seq, payload);
-		this.dispatchEvent(
+				this.dispatchEvent(
 			new CustomEvent("fanout:data", {
 				detail: {
 					topic: ch.id.topic,
@@ -4323,6 +4335,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		if (ch.parent) {
 			await this._sendControl(ch.parent, encodeRepairReq(ch.id.key, reqId, slice));
+			ch.parentRepairUnansweredStreak += 1;
 			sent = true;
 		}
 
@@ -4503,12 +4516,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		const bootstraps = this.getBootstrapsForChannel(ch);
 		if (bootstraps.length === 0) return;
-		const peers = await this.ensureBootstrapPeers(
-			bootstraps,
-			ch.bootstrapDialTimeoutMs,
-			signal,
-			ch.bootstrapMaxPeers,
-		);
+		// Announce to ALL trackers, not a random one per round: with B bootstraps
+		// and per-round random selection a given directory only refreshes an
+		// entry every ~announceIntervalMs * B on average, which starves
+		// directories (and exceeds the announce TTL entirely once B grows).
+		// Use already-connected tracker peers and only fall back to dialing when
+		// none are connected: serial dial timeouts here would otherwise make
+		// every announce tick glacial.
+		let peers = ch.cachedAnnounceTrackerPeers ?? [];
+		peers = peers.filter((h) => Boolean(this.peers.get(h)));
+		if (peers.length === 0) {
+			// Dial only when no tracker is connected at all: dialing every tick
+			// makes the announce loop glacial and starves everything behind it.
+			peers = await this.ensureBootstrapPeers(
+				bootstraps,
+				ch.bootstrapDialTimeoutMs,
+				signal,
+				0,
+			);
+		}
+		ch.cachedAnnounceTrackerPeers = peers;
 		if (peers.length === 0) return;
 
 		this.pruneDisconnectedChildren(ch);
@@ -4532,6 +4559,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (signal.aborted || ch.closed) return;
 			try {
 				this.pruneRouteCache(ch);
+			} catch {
+				// ignore
+			}
+			try {
+				// Child watermark heartbeat first: it only writes to already
+				// connected peers (children/mesh) and must not starve behind the
+				// dial-bound tracker announce below. Parents (root included - it
+				// runs no repair/mesh loop) advertise their have-range to children
+				// so a child whose data writes were silently lost can detect the
+				// gap and repair.
+				await this.maybeSendIHave(ch, Date.now());
 			} catch {
 				// ignore
 			}
@@ -4654,20 +4692,55 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private async maybeSendIHave(ch: ChannelState, now = Date.now()): Promise<void> {
-		if (!ch.neighborRepair) return;
-		if (ch.neighborMeshPeers <= 0) return;
-		if (ch.neighborAnnounceIntervalMs <= 0) return;
-		if (ch.maxSeqSeen <= ch.lastIHaveSentMaxSeq) return;
-		if (now - ch.lastIHaveSentAt < ch.neighborAnnounceIntervalMs) return;
+		const meshEnabled = ch.neighborRepair && ch.neighborMeshPeers > 0;
+		const childWatermarkEnabled = ch.repairEnabled && ch.children.size > 0;
+		if (!meshEnabled && !childWatermarkEnabled) {
+			return;
+		}
+		if (ch.neighborAnnounceIntervalMs <= 0) {
+			return;
+		}
+		if (now - ch.lastIHaveSentAt < ch.neighborAnnounceIntervalMs) {
+			return;
+		}
+		const hasNewData = ch.maxSeqSeen > ch.lastIHaveSentMaxSeq;
+		// Children also need a periodic watermark even without new data: a burst
+		// of data writes can be lost on a not-yet-writable stream and a child
+		// that received nothing has no gap signal to trigger repair. A periodic
+		// IHAVE from the parent converts that silent loss into a repairable gap.
+		const heartbeatDue =
+			childWatermarkEnabled &&
+			ch.maxSeqSeen >= 0 &&
+			now - ch.lastIHaveSentAt >=
+				Math.max(ch.neighborAnnounceIntervalMs * 4, 2_000);
+		if (!hasNewData && !heartbeatDue) {
+			return;
+		}
 
 		const range = this.getHaveRange(ch);
-		if (!range) return;
-		if (range.haveToExclusive <= range.haveFrom) return;
+		if (!range) {
+			return;
+		}
+		if (range.haveToExclusive <= range.haveFrom) {
+			return;
+		}
 
-		const peers = [...ch.lazyPeers].filter((h) => Boolean(this.peers.get(h)));
-		if (peers.length === 0) return;
+		const recipients = new Set<string>();
+		if (meshEnabled) {
+			for (const h of ch.lazyPeers) {
+				if (this.peers.get(h)) recipients.add(h);
+			}
+		}
+		if (childWatermarkEnabled) {
+			for (const h of ch.children.keys()) {
+				if (this.peers.get(h)) recipients.add(h);
+			}
+		}
+		if (recipients.size === 0) {
+			return;
+		}
 		await this._sendControlMany(
-			peers,
+			[...recipients],
 			encodeIHave(ch.id.key, range.haveFrom, range.haveToExclusive),
 		);
 		ch.lastIHaveSentAt = now;
@@ -5047,17 +5120,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						const expectingData =
 							ch.missingSeqs.size > 0 || (ch.maxDataAgeMs > 0 && !endedAndComplete);
 
+						// Repair requests travel child->parent on a direction that works
+						// even when the parent->child stream silently swallows writes.
+						// Several unanswered repairs are therefore a precise signal that
+						// the downstream link is dead, with no false positives from slow
+						// starts (requests only fire once seqs are known missing).
+						const parentRepairDead =
+							ch.repairEnabled && ch.parentRepairUnansweredStreak >= 3;
 						if (
-							staleAfterMs > 0 &&
+							parentRepairDead ||
+							(staleAfterMs > 0 &&
 							ch.receivedAnyParentData &&
 							ch.lastParentDataAt > 0 &&
 							Date.now() - ch.lastParentDataAt > staleAfterMs &&
-							expectingData
+							expectingData)
 							) {
 								// Parent is "alive" at the stream layer but we're not receiving
 								// data at the expected rate; detach and try to re-parent.
 								ch.metrics.reparentStale += 1;
 								ch.parent = undefined;
+								ch.parentRepairUnansweredStreak = 0;
 								ch.level = Number.POSITIVE_INFINITY;
 								ch.routeFromRoot = undefined;
 								ch.routeByPeer.clear();
@@ -5228,11 +5310,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					});
 				}
 
-				// Fallback: try a bounded set of already-connected peers.
+				// Fallback: try a bounded set of already-connected peers. Skip the
+				// bootstrap/tracker peers: if they host the channel they are already
+				// candidates via the tracker reply, and probing them otherwise only
+				// burns budget.
+				const bootstrapPeerSet = new Set(bootstrapPeers);
 				let connectedFallbackAdded = 0;
 				const connectedFallbackMax = 64;
 				for (const h of this.peers.keys()) {
 					if (h === this.publicKeyHash) continue;
+					if (bootstrapPeerSet.has(h)) continue;
 					upsertCandidate({
 						hash: h,
 						addrs: [],
@@ -5612,6 +5699,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return false;
 				}
 
+				if (!ch && kind === MSG_JOIN_REQ && data.length >= 1 + 32 + 4) {
+					// A joiner probed us for a channel we do not host (connected-peer
+					// fallbacks routinely hit bootstraps and non-subscribers). Failing
+					// fast lets the joiner spend its probe budget elsewhere instead of
+					// burning a full join-request timeout and a long cooldown on us.
+					const reqId = readU32BE(data, 33);
+					void this._sendControl(
+						fromHash,
+						encodeJoinReject(channelKey, reqId, JOIN_REJECT_NOT_ATTACHED),
+					).catch(() => {});
+					return true;
+				}
+
 			if (kind === MSG_TRACKER_ANNOUNCE) {
 				if (data.length < 1 + 32 + 4 + 2 + 2 + 2 + 4 + 1) return false;
 				const ttlMs = readU32BE(data, 33);
@@ -5697,7 +5797,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							continue;
 						}
 						if (hash === fromHash) continue;
-						if (e.freeSlots <= 0) continue;
+						if (e.freeSlots <= 0) {
+							continue;
+						}
 						entries.push(e);
 					}
 					this.pruneTrackerNamespaceIfEmpty(suffixKey);
@@ -5710,7 +5812,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
 				});
 
-				const picked = entries.slice(0, clampU16(want));
+				// Returning the deterministic head of the directory sends every
+				// concurrent joiner to the same few candidates while deeper capacity
+				// goes unprobed. Sample the reply from a wider best-first pool so
+				// load spreads across all advertised capacity.
+				const wantCount = clampU16(want);
+				const poolSize = Math.min(entries.length, Math.max(wantCount * 4, wantCount));
+				const pool = entries.slice(0, poolSize);
+				for (let i = 0; i < Math.min(wantCount, pool.length); i++) {
+					const j = i + Math.floor(this.random() * (pool.length - i));
+					const tmp = pool[i]!;
+					pool[i] = pool[j]!;
+					pool[j] = tmp;
+				}
+				const picked = pool.slice(0, wantCount);
 				void this._sendControl(fromHash, encodeTrackerReply(channelKey, reqId, picked));
 				return true;
 			}
@@ -5966,8 +6081,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (data.length < 1 + 32 + 4 + 1) return false;
 				const reqId = readU32BE(data, 33);
 				const pending = ch.pendingTrackerQuery.get(reqId);
-				if (!pending) return true;
-				ch.pendingTrackerQuery.delete(reqId);
+				if (pending) {
+					ch.pendingTrackerQuery.delete(reqId);
+				}
 
 				const count = data[37]!;
 				let offset = 38;
@@ -6006,7 +6122,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							this.cacheKnownCandidateAddrs(ch, hash, addrs);
 						}
 
-						pending.resolve(candidates);
+						if (pending) {
+							pending.resolve(candidates);
+						} else if (candidates.length > 0) {
+							// Late reply: the query already timed out, but the candidate
+							// list is still fresh directory state. Under load the 1s query
+							// timeout is routinely missed while trackers hold plenty of
+							// capacity - dropping these replies starves joiners of
+							// candidates they already paid a round trip for.
+							const merged = new Map<string, TrackerCandidate>();
+							for (const c of ch.cachedTrackerCandidates) merged.set(c.hash, c);
+							for (const c of candidates) merged.set(c.hash, c);
+							ch.cachedTrackerCandidates = [...merged.values()].slice(-256);
+						}
 					return true;
 				}
 
@@ -6132,6 +6260,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 					this.touchPeerHint(ch, fromHash, now);
 
+					if (ch.parent && fromHash === ch.parent && ch.maxDataAgeMs === 0) {
+						// A watermark from our parent doubles as gap detection: if data
+						// writes to us were lost (e.g. burst into a not-yet-writable
+						// stream) we may have received nothing at all and would
+						// otherwise never know data exists. Mark the advertised range
+						// missing so the repair loop pulls it. Deadline-oriented live
+						// channels (maxDataAgeMs > 0) skip this: catching up on stale
+						// history would trade deadline latency for completeness.
+						this.noteEnd(ch, fromHash, haveToExclusive);
+					}
+
 					// Opportunistic reciprocity: if we still have room in our lazy mesh, add
 					// peers that are actively exchanging IHAVE summaries with us.
 					if (
@@ -6236,7 +6375,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					this.touchPeerHint(ch, fromHash);
 					void this._sendControl(
 						fromHash,
-						encodeJoinAccept(ch.id.key, reqId, ch.level, ch.routeFromRoot),
+						encodeJoinAccept(
+							ch.id.key,
+							reqId,
+							ch.level,
+							ch.routeFromRoot,
+							this.getHaveRange(ch),
+						),
 					);
 					void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 					return true;
@@ -6285,8 +6430,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								ch.lastParentDataAt = Date.now();
 								// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
 								// if callers enable `staleAfterMs`, we should be able to detach even
-						// before the first data message arrives (for example, during churn
-						// or when a component is partitioned from the root).
+								// before the first data message arrives (for example, during churn
+								// or when a component is partitioned from the root).
 							ch.receivedAnyParentData = true;
 							// Build/refresh a route token that enables economical unicast.
 							if (
@@ -6296,6 +6441,24 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								} else if (fromHash === ch.id.root) {
 									// Minimal fallback: parent is the root.
 									ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
+							}
+							if (
+								ch.repairEnabled &&
+								ch.maxDataAgeMs === 0 &&
+								offset + 8 <= data.length
+							) {
+								// Optional appendix: the parent's current have-range. Lets a
+								// freshly attached child learn immediately which sequences
+								// already exist, so lost deliveries surface as missing seqs
+								// (and repair) instead of silent absence.
+								const haveFrom = readU32BE(data, offset);
+								const haveToExclusive = readU32BE(data, offset + 4);
+								if (haveToExclusive > haveFrom) {
+									// Mark only; the repair loop's own cadence picks the gaps
+									// up, giving in-flight live deliveries time to land first
+									// (an immediate pull here races them into duplicates).
+									this.noteEnd(ch, fromHash, haveToExclusive);
+								}
 							}
 							this.touchPeerHint(ch, fromHash);
 							pending.resolve({ ok: true });
@@ -6377,7 +6540,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								if (!isFromChild) return true;
 							const seq = ch.seq++;
 							const message = await this._sendData(ch, [...ch.children.keys()], seq, payload);
-							this.dispatchEvent(
+				this.dispatchEvent(
 								new CustomEvent("fanout:data", {
 									detail: {
 										topic: ch.id.topic,
@@ -6751,6 +6914,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						if (ch.parent && fromHash === ch.parent) {
 							ch.lastParentDataAt = Date.now();
 							ch.receivedAnyParentData = true;
+							ch.parentRepairUnansweredStreak = 0;
 						}
 						ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
 						this.noteReceivedSeq(ch, fromHash, seq);
