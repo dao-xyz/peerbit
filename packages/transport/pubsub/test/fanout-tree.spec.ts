@@ -1692,6 +1692,235 @@ describe("fanout-tree", () => {
 			}
 		});
 
+		it("re-parents after repeated parent data write failures", async function () {
+			this.timeout(30_000);
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(2);
+
+			try {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+
+				const rootNode = session.peers[0];
+				const root = rootNode.services.fanout;
+				const leaf = session.peers[1].services.fanout;
+				const bootstrapAddrs = rootNode
+					.getMultiaddrs()
+					.filter((x) => !x.getComponents().some((c) => c.code === 290));
+
+				const topic = "write-fail-reparent";
+				const rootId = root.publicKeyHash;
+
+				root.openChannel(topic, rootId, {
+					role: "root",
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					allowKick: true,
+					repair: true,
+				});
+
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						allowKick: true,
+						repair: true,
+					},
+					{ timeoutMs: 10_000, bootstrap: bootstrapAddrs, retryMs: 50 },
+				);
+
+				expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
+
+				const rootToLeaf = (root as any).peers.get(leaf.publicKeyHash);
+				expect(rootToLeaf).to.exist;
+				let failedWrites = 0;
+				rootToLeaf.write = () => {
+					failedWrites += 1;
+					throw new Error("simulated fanout data write failure");
+				};
+
+				for (let i = 0; i < 3; i++) {
+					// eslint-disable-next-line no-await-in-loop
+					await root.publishData(topic, rootId, new Uint8Array([i]));
+				}
+
+				await waitForResolved(
+					() => {
+						expect(failedWrites).to.be.at.least(3);
+						expect(root.getChannelStats(topic, rootId)?.children).to.equal(0);
+						expect(root.getChannelMetrics(topic, rootId).dataWriteDrops).to.be.at.least(
+							3,
+						);
+					},
+					{ timeout: 10_000, delayInterval: 50 },
+				);
+
+				await waitForResolved(
+					() =>
+						expect(
+							leaf.getChannelMetrics(topic, rootId).reparentDisconnect,
+						).to.be.greaterThan(0),
+					{ timeout: 20_000, delayInterval: 50 },
+				);
+
+				await waitForResolved(
+					() => expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId),
+					{ timeout: 20_000, delayInterval: 50 },
+				);
+
+				let markerReceived = false;
+				leaf.addEventListener("fanout:data", (ev: any) => {
+					if (ev.detail.topic !== topic) return;
+					if (ev.detail.root !== rootId) return;
+					if ((ev.detail.payload as Uint8Array)?.[0] !== 0x88) return;
+					markerReceived = true;
+				});
+				for (let i = 0; i < 20 && !markerReceived; i++) {
+					// eslint-disable-next-line no-await-in-loop
+					await root.publishData(topic, rootId, new Uint8Array([0x88]));
+					// eslint-disable-next-line no-await-in-loop
+					await delay(100);
+				}
+				expect(markerReceived).to.equal(true);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("sends the end watermark to children that join after publishEnd", async function () {
+			this.timeout(30_000);
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(2);
+
+			try {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+
+				const root = session.peers[0].services.fanout;
+				const leaf = session.peers[1].services.fanout;
+
+				const topic = "late-end";
+				const rootId = root.publicKeyHash;
+				const channelId = root.getChannelId(topic, rootId);
+
+				root.openChannel(topic, rootId, {
+					role: "root",
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					repair: true,
+				});
+
+				await root.publishEnd(topic, rootId, 3);
+				expect(
+					(root as any).channelsBySuffixKey.get(channelId.suffixKey)?.endSeqExclusive,
+				).to.equal(3);
+
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: true,
+					},
+					{ timeoutMs: 10_000 },
+				);
+
+				await waitForResolved(
+					() => {
+						const leafState = (leaf as any).channelsBySuffixKey.get(
+							channelId.suffixKey,
+						);
+						expect(leafState?.endSeqExclusive).to.equal(3);
+						expect([...leafState.missingSeqs].sort((a, b) => a - b)).to.deep.equal([
+							0, 1, 2,
+						]);
+					},
+					{ timeout: 10_000, delayInterval: 50 },
+				);
+			} finally {
+				await session.stop();
+			}
+		});
+
+		it("retries the end watermark for existing children", async function () {
+			this.timeout(30_000);
+			const session: TestSession<{ fanout: FanoutTree }> =
+				await createFanoutTestSession(2);
+
+			try {
+				await session.connect([[session.peers[0], session.peers[1]]]);
+
+				const root = session.peers[0].services.fanout;
+				const leaf = session.peers[1].services.fanout;
+
+				const topic = "end-heartbeat";
+				const rootId = root.publicKeyHash;
+				const channelId = root.getChannelId(topic, rootId);
+
+				root.openChannel(topic, rootId, {
+					role: "root",
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 1_000_000,
+					maxChildren: 1,
+					repair: true,
+				});
+
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: true,
+					},
+					{ timeoutMs: 10_000 },
+				);
+
+				await root.publishEnd(topic, rootId, 3);
+				const leafState = (leaf as any).channelsBySuffixKey.get(
+					channelId.suffixKey,
+				);
+				await waitForResolved(
+					() => expect(leafState?.endSeqExclusive).to.equal(3),
+					{ timeout: 10_000, delayInterval: 50 },
+				);
+
+				leafState.endSeqExclusive = -1;
+				leafState.nextExpectedSeq = 0;
+				leafState.missingSeqs.clear();
+
+				const rootState = (root as any).channelsBySuffixKey.get(
+					channelId.suffixKey,
+				);
+				rootState.lastIHaveSentAt = 0;
+				await (root as any).maybeSendIHave(rootState, Date.now() + 5_000);
+
+				await waitForResolved(
+					() => {
+						expect(leafState.endSeqExclusive).to.equal(3);
+						expect([...leafState.missingSeqs].sort((a, b) => a - b)).to.deep.equal([
+							0, 1, 2,
+						]);
+					},
+					{ timeout: 10_000, delayInterval: 50 },
+				);
+			} finally {
+				await session.stop();
+			}
+		});
+
 			it("prevents stable disconnected components when an intermediate relay loses the root", async function () {
 				this.timeout(30_000);
 				const session: TestSession<{ fanout: FanoutTree }> =
@@ -1792,13 +2021,8 @@ describe("fanout-tree", () => {
 							{ timeout: 20_000, delayInterval: 50 },
 						);
 
-					// Relay should kick its children once it loses the rooted route, and leaf should
+					// Relay should detach its children once it loses the rooted route, and leaf should
 					// rejoin directly to the root instead of stabilizing in a disconnected component.
-					await waitForResolved(
-						() =>
-							expect(leaf.getChannelMetrics(topic, rootId).reparentKicked).to.be.greaterThan(0),
-					{ timeout: 20_000, delayInterval: 50 },
-				);
 				await waitForResolved(
 					() => expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId),
 					{ timeout: 20_000, delayInterval: 50 },

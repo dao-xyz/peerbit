@@ -4571,10 +4571,49 @@ describe("start/stop", () => {
 			expect(recs[0].lastActivity).to.be.at.least(recs[1].lastActivity);
 		});
 
-	it("evicts oldest inactive when exceeding max inbound streams", async () => {
-		const MAX = 3;
-		session = await connected(2, {
-			services: {
+		it("removes inbound stream records when their reader ends", async () => {
+			session = await connected(2, {
+				services: {
+					directstream: (c) =>
+						new TestDirectStream(c, {
+							connectionManager: false,
+						}),
+				},
+			});
+			await waitForNeighbour(stream(session, 0), stream(session, 1));
+			const ps = stream(session, 0).peers.get(stream(session, 1).publicKeyHash)!;
+			const firstCount = ps.inboundStreams.length;
+			const closed = { abort: false, close: false };
+			const endingInbound: any = {
+				id: ps.rawInboundStream!.id + "-ended",
+				protocol: ps.protocol,
+				[Symbol.asyncIterator]: async function* () {},
+				abort: () => {
+					closed.abort = true;
+				},
+				close: async () => {
+					closed.close = true;
+				},
+			};
+			const record = ps.attachInboundStream(endingInbound as any);
+			expect(ps.inboundStreams.length).to.equal(firstCount + 1);
+
+			await stream(session, 0).processMessages(
+				stream(session, 1).publicKey,
+				record,
+				ps,
+			);
+
+			expect(ps.inboundStreams.includes(record)).to.equal(false);
+			expect(ps.inboundStreams.length).to.equal(firstCount);
+			expect(closed.abort).to.equal(true);
+			expect(closed.close).to.equal(true);
+		});
+
+		it("evicts oldest inactive when exceeding max inbound streams", async () => {
+			const MAX = 3;
+			session = await connected(2, {
+				services: {
 				directstream: (c) =>
 					new TestDirectStream(c, {
 						maxInboundStreams: MAX,
@@ -4631,6 +4670,41 @@ describe("start/stop", () => {
 			ps.rawOutboundStreams[0].id === first!.id ||
 				ps.rawOutboundStreams[0].id === fake.id,
 		).to.be.true;
+	});
+
+	it("does not let stale historical outbound bytes beat a fresh candidate", async () => {
+		session = await connected(2, {
+			transports: [tcp(), webSockets()],
+			services: { directstream: (c) => new TestDirectStream(c) },
+		});
+		await waitForNeighbour(stream(session, 0), stream(session, 1));
+		const peerHash = stream(session, 1).publicKeyHash;
+		const ps = stream(session, 0).peers.get(peerHash)!;
+		const first = ps.rawOutboundStreams[0];
+		expect(first).to.exist;
+
+		await stream(session, 0).publish(new Uint8Array([1]));
+		await waitForResolved(() => {
+			const firstCandidate = (ps as any).outboundStreams.find(
+				(c: any) => c.raw.id === first!.id,
+			);
+			expect(firstCandidate?.bytesDelivered).to.be.greaterThan(0);
+		});
+
+		const fresh: any = {
+			id: first!.id + "-fresh",
+			source: (async function* () {})(),
+			sink: async () => {},
+			protocol: first!.protocol,
+			send: () => true,
+			abort: () => {},
+			close: async () => {},
+		};
+		await ps.attachOutboundStream(fresh);
+
+		ps.forcePruneOutbound();
+		expect(ps.rawOutboundStreams.length).to.equal(1);
+		expect(ps.rawOutboundStreams[0].id).to.equal(fresh.id);
 	});
 
 	it("removes failing outbound on partial write failure", async () => {

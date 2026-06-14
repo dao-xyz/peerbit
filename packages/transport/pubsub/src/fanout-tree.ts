@@ -3602,6 +3602,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const ch = this.channelsBySuffixKey.get(id.suffixKey);
 		if (!ch) return;
 		if (!ch.isRoot) return;
+		ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
 		await this._sendControlMany([...ch.children.keys()], encodeEnd(ch.id.key, lastSeqExclusive));
 	}
 
@@ -3963,13 +3964,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					const kickCount = Math.min(OVERLOAD_KICK_MAX_PER_EVENT, droppedCandidates.length);
 					if (kickCount > 0) {
 						const toKick = droppedCandidates.slice(0, kickCount).map((c) => c.hash);
-						for (const h of toKick) {
-							ch.children.delete(h);
-							ch.dataWriteFailStreakByChild.delete(h);
-						}
 						ch.overloadStreak = 0;
 						ch.lastOverloadKickAt = now;
-						void this._sendControlMany(toKick, encodeKick(ch.id.key));
+						void this.kickChildHashes(ch, toKick).catch(() => {});
 						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 					}
 			}
@@ -4055,12 +4052,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const kickCount = Math.min(DATA_WRITE_FAIL_KICK_MAX_PER_EVENT, unique.length);
 			if (kickCount > 0) {
 				const toKick = unique.slice(0, kickCount);
-				for (const h of toKick) {
-					ch.children.delete(h);
-					ch.dataWriteFailStreakByChild.delete(h);
-				}
 				ch.lastDataWriteFailKickAt = now;
-				void this._sendControlMany(toKick, encodeKick(ch.id.key));
+				void this.kickChildHashes(ch, toKick, { resetPeerConnections: true }).catch(
+					() => {},
+				);
 				void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 			}
 		}
@@ -4156,13 +4151,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					const kickCount = Math.min(OVERLOAD_KICK_MAX_PER_EVENT, droppedCandidates.length);
 					if (kickCount > 0) {
 						const toKick = droppedCandidates.slice(0, kickCount).map((c) => c.hash);
-						for (const h of toKick) {
-							ch.children.delete(h);
-							ch.dataWriteFailStreakByChild.delete(h);
-						}
 						ch.overloadStreak = 0;
 						ch.lastOverloadKickAt = now;
-						void this._sendControlMany(toKick, encodeKick(ch.id.key));
+						void this.kickChildHashes(ch, toKick).catch(() => {});
 						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 					}
 			}
@@ -4233,12 +4224,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const kickCount = Math.min(DATA_WRITE_FAIL_KICK_MAX_PER_EVENT, unique.length);
 			if (kickCount > 0) {
 				const toKick = unique.slice(0, kickCount);
-				for (const h of toKick) {
-					ch.children.delete(h);
-					ch.dataWriteFailStreakByChild.delete(h);
-				}
 				ch.lastDataWriteFailKickAt = now;
-				void this._sendControlMany(toKick, encodeKick(ch.id.key));
+				void this.kickChildHashes(ch, toKick, { resetPeerConnections: true }).catch(
+					() => {},
+				);
 				void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 			}
 		}
@@ -4710,18 +4699,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		// IHAVE from the parent converts that silent loss into a repairable gap.
 		const heartbeatDue =
 			childWatermarkEnabled &&
-			ch.maxSeqSeen >= 0 &&
+			(ch.maxSeqSeen >= 0 || ch.endSeqExclusive > 0) &&
 			now - ch.lastIHaveSentAt >=
-				Math.max(ch.neighborAnnounceIntervalMs * 4, 2_000);
+				Math.max(ch.neighborAnnounceIntervalMs * 2, 1_000);
 		if (!hasNewData && !heartbeatDue) {
-			return;
-		}
-
-		const range = this.getHaveRange(ch);
-		if (!range) {
-			return;
-		}
-		if (range.haveToExclusive <= range.haveFrom) {
 			return;
 		}
 
@@ -4739,12 +4720,29 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (recipients.size === 0) {
 			return;
 		}
-		await this._sendControlMany(
-			[...recipients],
-			encodeIHave(ch.id.key, range.haveFrom, range.haveToExclusive),
-		);
-		ch.lastIHaveSentAt = now;
-		ch.lastIHaveSentMaxSeq = ch.maxSeqSeen;
+		let sent = false;
+		const range = this.getHaveRange(ch);
+		if (range && range.haveToExclusive > range.haveFrom) {
+			await this._sendControlMany(
+				[...recipients],
+				encodeIHave(ch.id.key, range.haveFrom, range.haveToExclusive),
+			);
+			sent = true;
+		}
+		if (childWatermarkEnabled && ch.endSeqExclusive > 0) {
+			const children = [...ch.children.keys()].filter((h) => this.peers.get(h));
+			if (children.length > 0) {
+				await this._sendControlMany(
+					children,
+					encodeEnd(ch.id.key, ch.endSeqExclusive),
+				);
+				sent = true;
+			}
+		}
+		if (sent) {
+			ch.lastIHaveSentAt = now;
+			ch.lastIHaveSentMaxSeq = ch.maxSeqSeen;
+		}
 	}
 
 	private async ensureMeshPeers(ch: ChannelState, signal: AbortSignal): Promise<void> {
@@ -5016,7 +5014,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private async _joinLoop(ch: ChannelState, joinOpts: FanoutTreeJoinOptions): Promise<void> {
 		const retryMs = Math.max(1, Math.floor(joinOpts.retryMs ?? 200));
 		const timeoutMs = Math.max(0, Math.floor(joinOpts.timeoutMs ?? 60_000));
-		const staleAfterMs = Math.max(0, Math.floor(joinOpts.staleAfterMs ?? 0));
+		const defaultStaleAfterMs = ch.repairEnabled
+			? Math.max(
+					1_500,
+					ch.neighborAnnounceIntervalMs * 3,
+					ch.repairIntervalMs * 8,
+				)
+			: 0;
+		const staleAfterMs = Math.max(
+			0,
+			Math.floor(joinOpts.staleAfterMs ?? defaultStaleAfterMs),
+		);
 		const joinReqTimeoutMs = Math.max(0, Math.floor(joinOpts.joinReqTimeoutMs ?? 2_000));
 		const bootstrapDialTimeoutMs = Math.max(
 			0,
@@ -5118,7 +5126,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							ch.missingSeqs.size === 0 &&
 							ch.nextExpectedSeq >= ch.endSeqExclusive;
 						const expectingData =
-							ch.missingSeqs.size > 0 || (ch.maxDataAgeMs > 0 && !endedAndComplete);
+							ch.missingSeqs.size > 0 ||
+							(ch.repairEnabled && ch.maxSeqSeen >= 0 && ch.endSeqExclusive < 0) ||
+							(ch.maxDataAgeMs > 0 && !endedAndComplete);
 
 						// Repair requests travel child->parent on a direction that works
 						// even when the parent->child stream silently swallows writes.
@@ -5631,12 +5641,37 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return res;
 	}
 
+	private async kickChildHashes(
+		ch: ChannelState,
+		children: string[],
+		options?: { resetPeerConnections?: boolean },
+	) {
+		const unique = [...new Set(children)].filter((h) => ch.children.has(h));
+		for (const h of unique) {
+			ch.children.delete(h);
+			ch.dataWriteFailStreakByChild.delete(h);
+		}
+		if (unique.length === 0) return;
+		const resetPeerConnections = options?.resetPeerConnections !== false;
+		try {
+			await this._sendControlMany(unique, encodeKick(ch.id.key));
+		} finally {
+			if (resetPeerConnections) {
+				// KICK travels over the same peer link that may already be one-way
+				// broken; closing the connection makes the topology change observable.
+				for (const h of unique) {
+					const stream = this.peers.get(h);
+					if (!stream) continue;
+					void this.components.connectionManager
+						.closeConnections(stream.peerId)
+						.catch(() => {});
+				}
+			}
+		}
+	}
+
 	private async kickChildren(ch: ChannelState) {
-		const children = [...ch.children.keys()];
-		ch.children.clear();
-		ch.dataWriteFailStreakByChild.clear();
-		if (children.length === 0) return;
-		await this._sendControlMany(children, encodeKick(ch.id.key));
+		await this.kickChildHashes(ch, [...ch.children.keys()]);
 	}
 
 	public async onDataMessage(
@@ -6244,6 +6279,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const haveFrom = readU32BE(data, 33);
 				const haveToExclusive = readU32BE(data, 37);
 				const now = Date.now();
+				if (ch.parent && fromHash === ch.parent) {
+					ch.lastParentDataAt = now;
+					ch.receivedAnyParentData = true;
+				}
 				const prev = ch.haveByPeer.get(fromHash);
 				if (prev) {
 					prev.haveFrom = haveFrom;
@@ -6329,70 +6368,74 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								ch,
 								fromHash,
 								reqId,
-							JOIN_REJECT_NO_CAPACITY,
-						).catch(() => {});
-						return true;
-					}
-
-					if (!ch.children.has(fromHash) && ch.children.size >= ch.effectiveMaxChildren) {
-						if (!ch.allowKick) {
-							void this.sendJoinReject(
-								ch,
-								fromHash,
-								reqId,
 								JOIN_REJECT_NO_CAPACITY,
 							).catch(() => {});
-							void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 							return true;
 						}
 
-					let worstChild: string | undefined;
-					let worstBid = Number.POSITIVE_INFINITY;
-					for (const [childHash, info] of ch.children) {
-						if (info.bidPerByte < worstBid) {
-							worstBid = info.bidPerByte;
-							worstChild = childHash;
+						if (!ch.children.has(fromHash) && ch.children.size >= ch.effectiveMaxChildren) {
+							if (!ch.allowKick) {
+								void this.sendJoinReject(
+									ch,
+									fromHash,
+									reqId,
+									JOIN_REJECT_NO_CAPACITY,
+								).catch(() => {});
+								void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
+								return true;
+							}
+
+							let worstChild: string | undefined;
+							let worstBid = Number.POSITIVE_INFINITY;
+							for (const [childHash, info] of ch.children) {
+								if (info.bidPerByte < worstBid) {
+									worstBid = info.bidPerByte;
+									worstChild = childHash;
+								}
+							}
+
+							if (worstChild == null || bidPerByte <= worstBid) {
+								void this.sendJoinReject(
+									ch,
+									fromHash,
+									reqId,
+									JOIN_REJECT_LOW_BID,
+								).catch(() => {});
+								void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
+								return true;
+							}
+
+							void this.kickChildHashes(ch, [worstChild]).catch(() => {});
 						}
-					}
 
-					if (worstChild == null || bidPerByte <= worstBid) {
-							void this.sendJoinReject(
-								ch,
-								fromHash,
-								reqId,
-								JOIN_REJECT_LOW_BID,
-							).catch(() => {});
-							void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-							return true;
-						}
-
-						ch.children.delete(worstChild);
-						ch.dataWriteFailStreakByChild.delete(worstChild);
-						void this._sendControl(worstChild, encodeKick(ch.id.key));
-					}
-
-					ch.children.set(fromHash, { bidPerByte });
-					this.touchPeerHint(ch, fromHash);
-					void this._sendControl(
-						fromHash,
-						encodeJoinAccept(
+						ch.children.set(fromHash, { bidPerByte });
+						this.touchPeerHint(ch, fromHash);
+						const joinAccept = encodeJoinAccept(
 							ch.id.key,
 							reqId,
 							ch.level,
 							ch.routeFromRoot,
 							this.getHaveRange(ch),
-						),
-					);
-					void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-					return true;
-				}
+						);
+						void (async () => {
+							await this._sendControl(fromHash, joinAccept);
+							if (ch.endSeqExclusive > 0) {
+								await this._sendControl(
+									fromHash,
+									encodeEnd(ch.id.key, ch.endSeqExclusive),
+								);
+							}
+						})().catch(() => {});
+						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
+						return true;
+					}
 
-			if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
-				if (data.length < 1 + 32 + 4) return false;
-				const reqId = readU32BE(data, 33);
-				const pending = ch.pendingJoin.get(reqId);
-				if (!pending) return true;
-				ch.pendingJoin.delete(reqId);
+				if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
+					if (data.length < 1 + 32 + 4) return false;
+					const reqId = readU32BE(data, 33);
+					const pending = ch.pendingJoin.get(reqId);
+					if (!pending) return true;
+					ch.pendingJoin.delete(reqId);
 
 					if (kind === MSG_JOIN_ACCEPT) {
 						if (data.length < 1 + 32 + 4 + 2 + 1) return false;
@@ -6401,73 +6444,71 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						let offset = 40;
 						const parentRouteFromRoot: string[] = [];
 						const max = Math.min(routeCount, MAX_ROUTE_HOPS);
-							for (let i = 0; i < max; i++) {
-								if (offset + 1 > data.length) break;
-								const len = data[offset++]!;
-								if (len === 0) break;
-								if (offset + len > data.length) break;
-								parentRouteFromRoot.push(
-									textDecoder.decode(data.subarray(offset, offset + len)),
-								);
-								offset += len;
-							}
+						for (let i = 0; i < max; i++) {
+							if (offset + 1 > data.length) break;
+							const len = data[offset++]!;
+							if (len === 0) break;
+							if (offset + len > data.length) break;
+							parentRouteFromRoot.push(
+								textDecoder.decode(data.subarray(offset, offset + len)),
+							);
+							offset += len;
+						}
 
-							const hasValidParentRoute =
-								parentRouteFromRoot.length > 0 &&
-								parentRouteFromRoot[0] === ch.id.root &&
-								parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash;
+						const hasValidParentRoute =
+							parentRouteFromRoot.length > 0 &&
+							parentRouteFromRoot[0] === ch.id.root &&
+							parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash;
 
-							// Defensive: a JOIN_ACCEPT without a rooted route token (unless the parent is the
-							// actual root) can create stable disconnected components. Treat it as a reject.
-							if (fromHash !== ch.id.root && !hasValidParentRoute) {
-								pending.resolve({ ok: false, rejectReason: JOIN_REJECT_NOT_ATTACHED });
-								return true;
-							}
+						// Defensive: a JOIN_ACCEPT without a rooted route token (unless the parent is the
+						// actual root) can create stable disconnected components. Treat it as a reject.
+						if (fromHash !== ch.id.root && !hasValidParentRoute) {
+							pending.resolve({ ok: false, rejectReason: JOIN_REJECT_NOT_ATTACHED });
+							return true;
+						}
 
-								ch.parent = fromHash;
-								ch.level = parentLevel + 1;
-								ch.joinedAtLeastOnce = true;
-								ch.lastParentDataAt = Date.now();
-								// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
-								// if callers enable `staleAfterMs`, we should be able to detach even
-								// before the first data message arrives (for example, during churn
-								// or when a component is partitioned from the root).
-							ch.receivedAnyParentData = true;
-							// Build/refresh a route token that enables economical unicast.
-							if (
-								hasValidParentRoute
-							) {
-								ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
-								} else if (fromHash === ch.id.root) {
-									// Minimal fallback: parent is the root.
-									ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
+						ch.parent = fromHash;
+						ch.level = parentLevel + 1;
+						ch.joinedAtLeastOnce = true;
+						ch.lastParentDataAt = Date.now();
+						// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
+						// if callers enable `staleAfterMs`, we should be able to detach even
+						// before the first data message arrives (for example, during churn
+						// or when a component is partitioned from the root).
+						ch.receivedAnyParentData = true;
+						// Build/refresh a route token that enables economical unicast.
+						if (hasValidParentRoute) {
+							ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
+						} else if (fromHash === ch.id.root) {
+							// Minimal fallback: parent is the root.
+							ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
+						}
+						if (
+							ch.repairEnabled &&
+							ch.maxDataAgeMs === 0 &&
+							offset + 8 <= data.length
+						) {
+							// Optional appendix: the parent's current have-range. Lets a
+							// freshly attached child learn immediately which sequences
+							// already exist, so lost deliveries surface as missing seqs
+							// (and repair) instead of silent absence.
+							const haveFrom = readU32BE(data, offset);
+							const haveToExclusive = readU32BE(data, offset + 4);
+							if (haveToExclusive > haveFrom) {
+								// Mark only; the repair loop's own cadence picks the gaps
+								// up, giving in-flight live deliveries time to land first
+								// (an immediate pull here races them into duplicates).
+								this.noteEnd(ch, fromHash, haveToExclusive);
 							}
-							if (
-								ch.repairEnabled &&
-								ch.maxDataAgeMs === 0 &&
-								offset + 8 <= data.length
-							) {
-								// Optional appendix: the parent's current have-range. Lets a
-								// freshly attached child learn immediately which sequences
-								// already exist, so lost deliveries surface as missing seqs
-								// (and repair) instead of silent absence.
-								const haveFrom = readU32BE(data, offset);
-								const haveToExclusive = readU32BE(data, offset + 4);
-								if (haveToExclusive > haveFrom) {
-									// Mark only; the repair loop's own cadence picks the gaps
-									// up, giving in-flight live deliveries time to land first
-									// (an immediate pull here races them into duplicates).
-									this.noteEnd(ch, fromHash, haveToExclusive);
-								}
-							}
-							this.touchPeerHint(ch, fromHash);
-							pending.resolve({ ok: true });
-							this.dispatchEvent(
-								new CustomEvent("fanout:joined", {
-									detail: { topic: ch.id.topic, root: ch.id.root, parent: fromHash },
-						}),
-					);
-					void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
+						}
+						this.touchPeerHint(ch, fromHash);
+						pending.resolve({ ok: true });
+						this.dispatchEvent(
+							new CustomEvent("fanout:joined", {
+								detail: { topic: ch.id.topic, root: ch.id.root, parent: fromHash },
+							}),
+						);
+						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
 					} else {
 						if (data.length < 1 + 32 + 4 + 1) return false;
 						const reason = data[37]! & 0xff;
@@ -6499,17 +6540,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									} catch {
 										// ignore invalid multiaddrs
 									}
-									}
-									if (hash && addrs.length > 0) {
-										redirects.push({ hash, addrs });
-										this.cacheKnownCandidateAddrs(ch, hash, addrs);
-									}
+								}
+								if (hash && addrs.length > 0) {
+									redirects.push({ hash, addrs });
+									this.cacheKnownCandidateAddrs(ch, hash, addrs);
 								}
 							}
+						}
 						pending.resolve({ ok: false, rejectReason: reason, redirects });
 					}
 					return true;
-					}
+				}
 	
 					if (kind === MSG_PUBLISH_PROXY) {
 						// Requires an open channel state
@@ -6847,10 +6888,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-					if (kind === MSG_END) {
-							if (data.length < 1 + 32 + 4) return false;
-							const lastSeqExclusive = readU32BE(data, 33);
-							ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
+						if (kind === MSG_END) {
+								if (data.length < 1 + 32 + 4) return false;
+								const lastSeqExclusive = readU32BE(data, 33);
+								if (ch.parent && fromHash === ch.parent) {
+									ch.lastParentDataAt = Date.now();
+									ch.receivedAnyParentData = true;
+								}
+								ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
 							this.touchPeerHint(ch, fromHash);
 							this.noteEnd(ch, fromHash, lastSeqExclusive);
 							if (ch.children.size > 0) {

@@ -234,6 +234,7 @@ interface OutboundCandidate {
 	pushable: PushableLanes<Uint8Array | Uint8ArrayList>;
 	created: number;
 	bytesDelivered: number;
+	replacementBytesDelivered: number;
 	aborted: boolean;
 	existing: boolean;
 }
@@ -380,6 +381,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	private _addOutboundCandidate(raw: Stream): OutboundCandidate {
 		const existing = this.outboundStreams.find((c) => c.raw === raw);
 		if (existing) return existing;
+		for (const candidate of this.outboundStreams) {
+			candidate.replacementBytesDelivered = 0;
+		}
 		const pushableInst = pushableLanes<Uint8Array | Uint8ArrayList>({
 			lanes: PRIORITY_LANES,
 			maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
@@ -389,6 +393,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			},
 			onPush: (val) => {
 				candidate.bytesDelivered += val.byteLength;
+				candidate.replacementBytesDelivered += val.byteLength;
 			},
 		});
 		const candidate: OutboundCandidate = {
@@ -396,6 +401,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			pushable: pushableInst,
 			created: Date.now(),
 			bytesDelivered: 0,
+			replacementBytesDelivered: 0,
 			aborted: false,
 			existing: false,
 		};
@@ -817,6 +823,33 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this._pruneInboundInactive();
 	}
 
+	public detachInboundStream(
+		record: InboundStreamRecord,
+		reason: Error = new AbortError("Inbound stream ended"),
+	) {
+		const index = this.inboundStreams.indexOf(record);
+		if (index === -1) return false;
+		this.inboundStreams.splice(index, 1);
+		try {
+			record.abortController.abort(reason);
+		} catch {}
+		try {
+			record.raw.abort?.(reason);
+		} catch {}
+		void Promise.resolve(record.raw.close?.()).catch(() => {});
+		if (this.rawInboundStream === record.raw) {
+			const next = this.inboundStreams[0];
+			this.rawInboundStream = next?.raw;
+			this.inboundStream = next?.iterable;
+		}
+		if (this.inboundStreams.length <= 1 && this._inboundPruneTimer) {
+			clearTimeout(this._inboundPruneTimer);
+			this._inboundPruneTimer = undefined;
+		}
+		this.dispatchEvent(new CustomEvent("stream:inbound"));
+		return true;
+	}
+
 	/**
 	 * Attach a raw outbound stream and setup a write stream
 	 */
@@ -838,7 +871,8 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			if (!candidates.length) return;
 			const now = Date.now();
 			const healthy = candidates.filter(
-				(c: OutboundCandidate) => !c.aborted && c.bytesDelivered > 0,
+				(c: OutboundCandidate) =>
+					!c.aborted && c.replacementBytesDelivered > 0,
 			);
 			let chosen: OutboundCandidate | undefined;
 			if (healthy.length === 0) {
@@ -847,7 +881,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				let bestScore = -Infinity;
 				for (const c of healthy) {
 					const age = now - c.created || 1;
-					const score = c.bytesDelivered / age;
+					const score = c.replacementBytesDelivered / age;
 					if (
 						score > bestScore ||
 						(score === bestScore && chosen && c.created > chosen.created)
@@ -2108,6 +2142,7 @@ export abstract class DirectStream<
 		record: InboundStreamRecord,
 		peerStreams: PeerStreams,
 	) {
+		let failed = false;
 		try {
 			for await (const data of record.iterable) {
 				const now = Date.now();
@@ -2117,6 +2152,7 @@ export abstract class DirectStream<
 				this.processRpc(peerId, peerStreams, data).catch((e) => logError(e));
 			}
 		} catch (err: any) {
+			failed = true;
 			if (err?.code === "ERR_STREAM_RESET") {
 				// only send stream reset messages to info
 				logger(
@@ -2134,6 +2170,14 @@ export abstract class DirectStream<
 				);
 			}
 			this.onPeerDisconnected(peerStreams.peerId);
+		} finally {
+			const removed = peerStreams.detachInboundStream(
+				record,
+				new AbortError("Inbound stream reader ended"),
+			);
+			if (removed && !failed && !peerStreams.isReadable) {
+				void this.onPeerDisconnected(peerStreams.peerId).catch(logError);
+			}
 		}
 	}
 
