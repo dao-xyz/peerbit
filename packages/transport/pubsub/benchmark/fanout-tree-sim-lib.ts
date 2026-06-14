@@ -232,6 +232,9 @@ export type FanoutTreeSimResult = {
 	protocolRepairReqSent: number;
 	protocolFetchReqSent: number;
 	protocolIHaveSent: number;
+	protocolTrackerAnnounceSent: number;
+	protocolTrackerQuerySent: number;
+	protocolTrackerReplySent: number;
 	protocolTrackerFeedbackSent: number;
 	protocolCacheHitsServed: number;
 	protocolHoleFillsFromNeighbor: number;
@@ -415,7 +418,7 @@ export const formatFanoutTreeSimResult = (r: FanoutTreeSimResult) => {
 			`stream: queuedBytes total=${r.streamQueuedBytesTotal} max=${r.streamQueuedBytesMax} p95=${r.streamQueuedBytesP95.toFixed(0)} node=${r.streamQueuedBytesMaxNode ?? "-"} lanes=${r.streamQueuedBytesByLane.join(",")}`,
 		`overhead: dataFactor=${r.overheadFactorData.toFixed(3)} (sentPayloadBytes / ideal)`,
 			`economics: earningsTotal=${r.earningsTotal} relayCount=${r.earningsRelayCount} p50=${r.earningsRelayP50} p95=${r.earningsRelayP95} max=${r.earningsRelayMax}`,
-			`protocol: controlBytesSent=${r.protocolControlBytesSent} (join=${r.protocolControlBytesSentJoin} tracker=${r.protocolControlBytesSentTracker} repair=${r.protocolControlBytesSentRepair}) bpp=${r.controlBpp.toFixed(4)} (tracker=${r.trackerBpp.toFixed(4)} repair=${r.repairBpp.toFixed(4)}) dataPayloadBytesSent=${r.protocolDataPayloadBytesSent} fetchReqSent=${r.protocolFetchReqSent} ihaveSent=${r.protocolIHaveSent} trackerFeedbackSent=${r.protocolTrackerFeedbackSent} holeFills=${r.protocolHoleFillsFromNeighbor} routeCache(h/m/x/e)=${r.protocolRouteCacheHits}/${r.protocolRouteCacheMisses}/${r.protocolRouteCacheExpirations}/${r.protocolRouteCacheEvictions} routeProxy(q/t/f)=${r.protocolRouteProxyQueries}/${r.protocolRouteProxyTimeouts}/${r.protocolRouteProxyFanout}`,
+			`protocol: controlBytesSent=${r.protocolControlBytesSent} (join=${r.protocolControlBytesSentJoin} tracker=${r.protocolControlBytesSentTracker} repair=${r.protocolControlBytesSentRepair}) bpp=${r.controlBpp.toFixed(4)} (tracker=${r.trackerBpp.toFixed(4)} repair=${r.repairBpp.toFixed(4)}) dataPayloadBytesSent=${r.protocolDataPayloadBytesSent} fetchReqSent=${r.protocolFetchReqSent} ihaveSent=${r.protocolIHaveSent} tracker(a/q/r/f)=${r.protocolTrackerAnnounceSent}/${r.protocolTrackerQuerySent}/${r.protocolTrackerReplySent}/${r.protocolTrackerFeedbackSent} holeFills=${r.protocolHoleFillsFromNeighbor} routeCache(h/m/x/e)=${r.protocolRouteCacheHits}/${r.protocolRouteCacheMisses}/${r.protocolRouteCacheExpirations}/${r.protocolRouteCacheEvictions} routeProxy(q/t/f)=${r.protocolRouteProxyQueries}/${r.protocolRouteProxyTimeouts}/${r.protocolRouteProxyFanout}`,
 			`network: dials=${r.network.dials} connsOpened=${r.network.connectionsOpened} streamsOpened=${r.network.streamsOpened} framesSent=${r.network.framesSent} bytesSent=${r.network.bytesSent} framesDropped=${r.network.framesDropped} bytesDropped=${r.network.bytesDropped}`,
 			...(r.profile
 				? [
@@ -1351,18 +1354,21 @@ export const runFanoutTreeSim = async (
 			let protocolDataReceives = 0;
 			let protocolDataPayloadBytesReceived = 0;
 			let protocolRepairReqSent = 0;
-				let protocolFetchReqSent = 0;
-				let protocolIHaveSent = 0;
-				let protocolTrackerFeedbackSent = 0;
-				let protocolCacheHitsServed = 0;
-				let protocolHoleFillsFromNeighbor = 0;
-				let protocolRouteCacheHits = 0;
-				let protocolRouteCacheMisses = 0;
-				let protocolRouteCacheExpirations = 0;
-				let protocolRouteCacheEvictions = 0;
-				let protocolRouteProxyQueries = 0;
-				let protocolRouteProxyTimeouts = 0;
-				let protocolRouteProxyFanout = 0;
+			let protocolFetchReqSent = 0;
+			let protocolIHaveSent = 0;
+			let protocolTrackerAnnounceSent = 0;
+			let protocolTrackerQuerySent = 0;
+			let protocolTrackerReplySent = 0;
+			let protocolTrackerFeedbackSent = 0;
+			let protocolCacheHitsServed = 0;
+			let protocolHoleFillsFromNeighbor = 0;
+			let protocolRouteCacheHits = 0;
+			let protocolRouteCacheMisses = 0;
+			let protocolRouteCacheExpirations = 0;
+			let protocolRouteCacheEvictions = 0;
+			let protocolRouteProxyQueries = 0;
+			let protocolRouteProxyTimeouts = 0;
+			let protocolRouteProxyFanout = 0;
 					let staleForwardsDroppedTotal = 0;
 					let staleForwardsDroppedMax = 0;
 					let staleForwardsDroppedMaxNode: string | undefined;
@@ -1407,9 +1413,12 @@ export const runFanoutTreeSim = async (
 				protocolRepairReqSent += m.repairReqSent;
 				protocolFetchReqSent += m.fetchReqSent;
 				protocolIHaveSent += m.ihaveSent;
-					protocolTrackerFeedbackSent += m.trackerFeedbackSent;
-					protocolCacheHitsServed += m.cacheHitsServed;
-					protocolHoleFillsFromNeighbor += m.holeFillsFromNeighbor;
+				protocolTrackerAnnounceSent += m.trackerAnnounceSent;
+				protocolTrackerQuerySent += m.trackerQuerySent;
+				protocolTrackerReplySent += m.trackerReplySent;
+				protocolTrackerFeedbackSent += m.trackerFeedbackSent;
+				protocolCacheHitsServed += m.cacheHitsServed;
+				protocolHoleFillsFromNeighbor += m.holeFillsFromNeighbor;
 					protocolRouteCacheHits += m.routeCacheHits;
 					protocolRouteCacheMisses += m.routeCacheMisses;
 					protocolRouteCacheExpirations += m.routeCacheExpirations;
@@ -1546,6 +1555,9 @@ export const runFanoutTreeSim = async (
 				protocolRepairReqSent,
 				protocolFetchReqSent,
 				protocolIHaveSent,
+				protocolTrackerAnnounceSent,
+				protocolTrackerQuerySent,
+				protocolTrackerReplySent,
 				protocolTrackerFeedbackSent,
 				protocolCacheHitsServed,
 				protocolHoleFillsFromNeighbor,

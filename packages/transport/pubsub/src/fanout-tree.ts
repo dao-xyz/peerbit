@@ -502,6 +502,10 @@ const OVERLOAD_KICK_MAX_PER_EVENT = 4;
 const DATA_WRITE_FAIL_KICK_STREAK_THRESHOLD = 3;
 const DATA_WRITE_FAIL_KICK_COOLDOWN_MS = 2_000;
 const DATA_WRITE_FAIL_KICK_MAX_PER_EVENT = 4;
+const PARENT_REPAIR_DEAD_STREAK_THRESHOLD = 16;
+const PARENT_REPAIR_DEAD_MIN_LIVENESS_MS = 15_000;
+const REPAIR_RETRY_MIN_MS = 1_000;
+const REPAIR_RETRY_INTERVAL_FACTOR = 5;
 
 const JOIN_REJECT_REDIRECT_MAX = 4;
 const JOIN_REJECT_REDIRECT_ADDR_MAX = 8;
@@ -1417,6 +1421,7 @@ type ChannelState = {
 	cachePayloads?: Array<Uint8Array | undefined>;
 	nextExpectedSeq: number;
 	missingSeqs: Set<number>;
+	repairRequestedAtBySeq: Map<number, number>;
 	endSeqExclusive: number;
 		lastRepairSentAt: number;
 	parentRepairUnansweredStreak: number;
@@ -2360,7 +2365,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const neighborMeshRefreshIntervalMs = Math.max(
 			0,
-			Math.floor(opts.neighborMeshRefreshIntervalMs ?? 2_000),
+			Math.floor(opts.neighborMeshRefreshIntervalMs ?? 10_000),
 		);
 		const neighborHaveTtlMs = Math.max(
 			0,
@@ -2468,6 +2473,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					: undefined,
 			nextExpectedSeq: 0,
 			missingSeqs: new Set<number>(),
+			repairRequestedAtBySeq: new Map<number, number>(),
 			endSeqExclusive: -1,
 			lastRepairSentAt: 0,
 			parentRepairUnansweredStreak: 0,
@@ -3998,13 +4004,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const stream = c.stream;
 			if (!stream.isWritable) {
 				writeDrops += 1;
-				if (ch.children.has(c.hash)) {
-					const streak = (ch.dataWriteFailStreakByChild.get(c.hash) ?? 0) + 1;
-					ch.dataWriteFailStreakByChild.set(c.hash, streak);
-					if (streak >= DATA_WRITE_FAIL_KICK_STREAK_THRESHOLD) {
-						writeFailKickCandidates.push(c.hash);
-					}
-				}
 				continue;
 			}
 
@@ -4174,11 +4173,6 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const stream = c.stream;
 			if (!stream.isWritable) {
 				writeDrops += 1;
-				const streak = (ch.dataWriteFailStreakByChild.get(c.hash) ?? 0) + 1;
-				ch.dataWriteFailStreakByChild.set(c.hash, streak);
-				if (streak >= DATA_WRITE_FAIL_KICK_STREAK_THRESHOLD) {
-					writeFailKickCandidates.push(c.hash);
-				}
 				continue;
 			}
 
@@ -4235,6 +4229,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		private noteReceivedSeq(ch: ChannelState, fromHash: string, seq: number) {
 			if (!ch.repairEnabled) return;
+			ch.repairRequestedAtBySeq.delete(seq);
 			if (!ch.parent || fromHash !== ch.parent) {
 				// Neighbor-assisted repair may deliver payload from a peer other than the
 			// current parent; treat it as a "hole fill" only.
@@ -4307,18 +4302,28 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (s < minSeq) ch.missingSeqs.delete(s);
 			}
 		}
+		for (const s of ch.repairRequestedAtBySeq.keys()) {
+			if (!ch.missingSeqs.has(s)) ch.repairRequestedAtBySeq.delete(s);
+		}
 
 		if (ch.missingSeqs.size === 0) return false;
 		if (ch.repairIntervalMs > 0 && now - ch.lastRepairSentAt < ch.repairIntervalMs) {
 			return false;
 		}
 
-		ch.lastRepairSentAt = now;
-		const missing = [...ch.missingSeqs].sort((a, b) => a - b);
+		const repairRetryMs = Math.max(
+			REPAIR_RETRY_MIN_MS,
+			ch.repairIntervalMs * REPAIR_RETRY_INTERVAL_FACTOR,
+		);
+		const missing = [...ch.missingSeqs]
+			.filter((s) => now - (ch.repairRequestedAtBySeq.get(s) ?? 0) >= repairRetryMs)
+			.sort((a, b) => a - b);
 		const count = Math.min(ch.repairMaxPerReq, missing.length, 255);
 		if (count <= 0) return false;
+		ch.lastRepairSentAt = now;
 		const reqId = (this.random() * 0xffffffff) >>> 0;
 		const slice = missing.slice(0, count);
+		for (const s of slice) ch.repairRequestedAtBySeq.set(s, now);
 
 		let sent = false;
 
@@ -4376,25 +4381,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				};
 			});
 
-			scored.sort((a, b) => {
+			const viable = scored.filter((s) => s.coverage > 0);
+
+			viable.sort((a, b) => {
 				if (a.coverage !== b.coverage) return b.coverage - a.coverage;
-				if (a.coverage > 0) {
-					if (a.successRate !== b.successRate) return b.successRate - a.successRate;
-					if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
-					const al = ch.lazyPeers.has(a.peerHash) ? 1 : 0;
-					const bl = ch.lazyPeers.has(b.peerHash) ? 1 : 0;
-					if (al !== bl) return bl - al;
-				} else {
-					const al = ch.lazyPeers.has(a.peerHash) ? 1 : 0;
-					const bl = ch.lazyPeers.has(b.peerHash) ? 1 : 0;
-					if (al !== bl) return bl - al;
-					if (a.successRate !== b.successRate) return b.successRate - a.successRate;
-					if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
-				}
+				if (a.successRate !== b.successRate) return b.successRate - a.successRate;
+				if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt;
+				const al = ch.lazyPeers.has(a.peerHash) ? 1 : 0;
+				const bl = ch.lazyPeers.has(b.peerHash) ? 1 : 0;
+				if (al !== bl) return bl - al;
 				return a.peerHash < b.peerHash ? -1 : a.peerHash > b.peerHash ? 1 : 0;
 			});
 
-			let peers = scored.slice(0, ch.neighborRepairPeers).map((s) => s.peerHash);
+			let peers = viable.slice(0, ch.neighborRepairPeers).map((s) => s.peerHash);
 			if (peers.length > 0) {
 				const bytes = encodeFetchReq(ch.id.key, reqId, slice);
 
@@ -4701,7 +4700,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			childWatermarkEnabled &&
 			(ch.maxSeqSeen >= 0 || ch.endSeqExclusive > 0) &&
 			now - ch.lastIHaveSentAt >=
-				Math.max(ch.neighborAnnounceIntervalMs * 2, 1_000);
+				Math.max(ch.neighborAnnounceIntervalMs * 4, 2_000);
 		if (!hasNewData && !heartbeatDue) {
 			return;
 		}
@@ -4784,6 +4783,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private async refreshMeshCandidates(ch: ChannelState, signal: AbortSignal): Promise<void> {
+		if (ch.neighborMeshPeers <= 0) return;
+		if (ch.lazyPeers.size >= ch.neighborMeshPeers) return;
+
 		const bootstraps = this.getBootstrapsForChannel(ch);
 		if (bootstraps.length === 0) return;
 		const trackerPeers = await this.ensureBootstrapPeers(
@@ -4814,13 +4816,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					this.pruneLazyPeers(ch);
 					this.pruneHaveByPeer(ch, now);
 
+				await this.ensureMeshPeers(ch, signal);
 				const refreshMs = Math.max(0, ch.neighborMeshRefreshIntervalMs);
-				if (refreshMs === 0 || now - lastRefreshAt >= refreshMs) {
+				if (
+					ch.lazyPeers.size < ch.neighborMeshPeers &&
+					(refreshMs === 0 || now - lastRefreshAt >= refreshMs)
+				) {
 					lastRefreshAt = now;
 					await this.refreshMeshCandidates(ch, signal);
+					await this.ensureMeshPeers(ch, signal);
 				}
-
-				await this.ensureMeshPeers(ch, signal);
 				await this.maybeSendIHave(ch, now);
 			} catch {
 				// ignore
@@ -5014,16 +5019,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private async _joinLoop(ch: ChannelState, joinOpts: FanoutTreeJoinOptions): Promise<void> {
 		const retryMs = Math.max(1, Math.floor(joinOpts.retryMs ?? 200));
 		const timeoutMs = Math.max(0, Math.floor(joinOpts.timeoutMs ?? 60_000));
-		const defaultStaleAfterMs = ch.repairEnabled
-			? Math.max(
-					1_500,
-					ch.neighborAnnounceIntervalMs * 3,
-					ch.repairIntervalMs * 8,
-				)
-			: 0;
 		const staleAfterMs = Math.max(
 			0,
-			Math.floor(joinOpts.staleAfterMs ?? defaultStaleAfterMs),
+			Math.floor(joinOpts.staleAfterMs ?? 0),
 		);
 		const joinReqTimeoutMs = Math.max(0, Math.floor(joinOpts.joinReqTimeoutMs ?? 2_000));
 		const bootstrapDialTimeoutMs = Math.max(
@@ -5131,12 +5129,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							(ch.maxDataAgeMs > 0 && !endedAndComplete);
 
 						// Repair requests travel child->parent on a direction that works
-						// even when the parent->child stream silently swallows writes.
-						// Several unanswered repairs are therefore a precise signal that
-						// the downstream link is dead, with no false positives from slow
-						// starts (requests only fire once seqs are known missing).
+						// even when parent->child data writes silently fail. A repair that
+						// does not fill a gap is not sufficient evidence by itself though:
+						// the repair payload can be dropped or the parent cache can miss.
+						// Re-parent only after both repeated unanswered repairs and a
+						// quiet parent liveness window.
+						const parentRepairDeadLivenessMs = Math.max(
+							PARENT_REPAIR_DEAD_MIN_LIVENESS_MS,
+							ch.repairIntervalMs * PARENT_REPAIR_DEAD_STREAK_THRESHOLD,
+							ch.neighborAnnounceIntervalMs * 8,
+						);
+						const parentRepairNow = Date.now();
+						const parentLivenessQuietMs =
+							ch.lastParentDataAt > 0
+								? parentRepairNow - ch.lastParentDataAt
+								: 0;
 						const parentRepairDead =
-							ch.repairEnabled && ch.parentRepairUnansweredStreak >= 3;
+							ch.repairEnabled &&
+							ch.parentRepairUnansweredStreak >=
+								PARENT_REPAIR_DEAD_STREAK_THRESHOLD &&
+							parentLivenessQuietMs >= parentRepairDeadLivenessMs;
 						if (
 							parentRepairDead ||
 							(staleAfterMs > 0 &&
@@ -5652,13 +5664,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			ch.dataWriteFailStreakByChild.delete(h);
 		}
 		if (unique.length === 0) return;
-		const resetPeerConnections = options?.resetPeerConnections !== false;
+		const resetPeerConnections = options?.resetPeerConnections === true;
+		let kickFailed = false;
 		try {
 			await this._sendControlMany(unique, encodeKick(ch.id.key));
+		} catch (error) {
+			kickFailed = true;
+			throw error;
 		} finally {
-			if (resetPeerConnections) {
-				// KICK travels over the same peer link that may already be one-way
-				// broken; closing the connection makes the topology change observable.
+			if (resetPeerConnections && kickFailed) {
+				// If KICK cannot be written on the existing stream, close the peer
+				// connection so the topology change becomes observable.
 				for (const h of unique) {
 					const stream = this.peers.get(h);
 					if (!stream) continue;
@@ -6282,6 +6298,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (ch.parent && fromHash === ch.parent) {
 					ch.lastParentDataAt = now;
 					ch.receivedAnyParentData = true;
+					ch.parentRepairUnansweredStreak = 0;
 				}
 				const prev = ch.haveByPeer.get(fromHash);
 				if (prev) {
@@ -6471,6 +6488,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						ch.level = parentLevel + 1;
 						ch.joinedAtLeastOnce = true;
 						ch.lastParentDataAt = Date.now();
+						ch.parentRepairUnansweredStreak = 0;
 						// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
 						// if callers enable `staleAfterMs`, we should be able to detach even
 						// before the first data message arrives (for example, during churn
@@ -6894,6 +6912,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								if (ch.parent && fromHash === ch.parent) {
 									ch.lastParentDataAt = Date.now();
 									ch.receivedAnyParentData = true;
+									ch.parentRepairUnansweredStreak = 0;
 								}
 								ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
 							this.touchPeerHint(ch, fromHash);

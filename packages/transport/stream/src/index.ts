@@ -234,7 +234,6 @@ interface OutboundCandidate {
 	pushable: PushableLanes<Uint8Array | Uint8ArrayList>;
 	created: number;
 	bytesDelivered: number;
-	replacementBytesDelivered: number;
 	aborted: boolean;
 	existing: boolean;
 }
@@ -381,9 +380,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	private _addOutboundCandidate(raw: Stream): OutboundCandidate {
 		const existing = this.outboundStreams.find((c) => c.raw === raw);
 		if (existing) return existing;
-		for (const candidate of this.outboundStreams) {
-			candidate.replacementBytesDelivered = 0;
-		}
 		const pushableInst = pushableLanes<Uint8Array | Uint8ArrayList>({
 			lanes: PRIORITY_LANES,
 			maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
@@ -393,7 +389,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			},
 			onPush: (val) => {
 				candidate.bytesDelivered += val.byteLength;
-				candidate.replacementBytesDelivered += val.byteLength;
 			},
 		});
 		const candidate: OutboundCandidate = {
@@ -401,7 +396,6 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			pushable: pushableInst,
 			created: Date.now(),
 			bytesDelivered: 0,
-			replacementBytesDelivered: 0,
 			aborted: false,
 			existing: false,
 		};
@@ -826,6 +820,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	public detachInboundStream(
 		record: InboundStreamRecord,
 		reason: Error = new AbortError("Inbound stream ended"),
+		options?: { closeRaw?: boolean },
 	) {
 		const index = this.inboundStreams.indexOf(record);
 		if (index === -1) return false;
@@ -833,10 +828,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		try {
 			record.abortController.abort(reason);
 		} catch {}
-		try {
-			record.raw.abort?.(reason);
-		} catch {}
-		void Promise.resolve(record.raw.close?.()).catch(() => {});
+		if (options?.closeRaw !== false) {
+			try {
+				record.raw.abort?.(reason);
+			} catch {}
+			void Promise.resolve(record.raw.close?.()).catch(() => {});
+		}
 		if (this.rawInboundStream === record.raw) {
 			const next = this.inboundStreams[0];
 			this.rawInboundStream = next?.raw;
@@ -871,8 +868,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			if (!candidates.length) return;
 			const now = Date.now();
 			const healthy = candidates.filter(
-				(c: OutboundCandidate) =>
-					!c.aborted && c.replacementBytesDelivered > 0,
+				(c: OutboundCandidate) => !c.aborted && c.bytesDelivered > 0,
 			);
 			let chosen: OutboundCandidate | undefined;
 			if (healthy.length === 0) {
@@ -881,7 +877,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				let bestScore = -Infinity;
 				for (const c of healthy) {
 					const age = now - c.created || 1;
-					const score = c.replacementBytesDelivered / age;
+					const score = c.bytesDelivered / age;
 					if (
 						score > bestScore ||
 						(score === bestScore && chosen && c.created > chosen.created)
@@ -2174,6 +2170,7 @@ export abstract class DirectStream<
 			const removed = peerStreams.detachInboundStream(
 				record,
 				new AbortError("Inbound stream reader ended"),
+				{ closeRaw: failed },
 			);
 			if (removed && !failed && !peerStreams.isReadable) {
 				void this.onPeerDisconnected(peerStreams.peerId).catch(logError);

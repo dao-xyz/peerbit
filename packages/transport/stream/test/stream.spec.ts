@@ -4606,8 +4606,8 @@ describe("start/stop", () => {
 
 			expect(ps.inboundStreams.includes(record)).to.equal(false);
 			expect(ps.inboundStreams.length).to.equal(firstCount);
-			expect(closed.abort).to.equal(true);
-			expect(closed.close).to.equal(true);
+			expect(closed.abort).to.equal(false);
+			expect(closed.close).to.equal(false);
 		});
 
 		it("evicts oldest inactive when exceeding max inbound streams", async () => {
@@ -4672,7 +4672,7 @@ describe("start/stop", () => {
 		).to.be.true;
 	});
 
-	it("does not let stale historical outbound bytes beat a fresh candidate", async () => {
+	it("does not let an unproven fresh outbound beat a working candidate", async () => {
 		session = await connected(2, {
 			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
@@ -4704,10 +4704,10 @@ describe("start/stop", () => {
 
 		ps.forcePruneOutbound();
 		expect(ps.rawOutboundStreams.length).to.equal(1);
-		expect(ps.rawOutboundStreams[0].id).to.equal(fresh.id);
+		expect(ps.rawOutboundStreams[0].id).to.equal(first!.id);
 	});
 
-	it("removes failing outbound on partial write failure", async () => {
+		it("removes failing outbound on partial write failure", async () => {
 		session = await connected(2, {
 			transports: [tcp(), webSockets()],
 			services: { directstream: (c) => new TestDirectStream(c) },
