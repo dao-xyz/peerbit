@@ -2373,8 +2373,7 @@ testSetups.forEach((setup) => {
 				db1 = undefined as any;
 			});
 
-			it("drops when no longer replicating as observer", async () => {
-				let COUNT = 10;
+			const openFullReplicatorTriad = async (count: number) => {
 				db1 = await session.peers[0].open(new EventStore<string, any>(), {
 					args: {
 						replicate: {
@@ -2397,11 +2396,11 @@ testSetups.forEach((setup) => {
 					},
 				);
 
-				for (let i = 0; i < COUNT; i++) {
+				for (let i = 0; i < count; i++) {
 					await db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } });
 				}
 
-				await waitForResolved(() => expect(db2.log.log.length).equal(COUNT));
+				await waitForResolved(() => expect(db2.log.log.length).equal(count));
 
 				db3 = await EventStore.open<EventStore<string, any>>(
 					db1.address!,
@@ -2430,11 +2429,35 @@ testSetups.forEach((setup) => {
 						timeout: 30_000,
 					}),
 				]);
+			};
+
+			it("drops when no longer replicating as observer", async () => {
+				const COUNT = 10;
+				await openFullReplicatorTriad(COUNT);
 
 				await db2.log.replicate(false);
 
 				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
 				await waitForResolved(() => expect(db2.log.log.length).equal(0));
+			});
+
+			it("drops observer entries when unreplicate rebalance debounce is delayed", async () => {
+				const COUNT = 10;
+				await openFullReplicatorTriad(COUNT);
+
+				const replicationChangeAdd = sinon
+					.stub((db2.log as any).replicationChangeDebounceFn, "add")
+					.callsFake(() => undefined);
+
+				try {
+					await db2.log.replicate(false);
+					expect(replicationChangeAdd.callCount).to.be.greaterThan(0);
+
+					await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
+					await waitForResolved(() => expect(db2.log.log.length).equal(0));
+				} finally {
+					replicationChangeAdd.restore();
+				}
 			});
 
 			it("drops when no longer replicating with factor 0", async () => {

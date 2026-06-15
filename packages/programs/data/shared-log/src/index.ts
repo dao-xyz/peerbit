@@ -2153,6 +2153,12 @@ export class SharedLog<
 			this._isReplicating = false;
 			this._isAdaptiveReplicating = false;
 			await this.removeReplicator(this.node.identity.publicKey);
+			await this.pruneIndexedEntriesNoLongerLed({
+				useDefaultRoleAge: true,
+			});
+			await this.pruneCurrentHeadsNoLongerLed({
+				useDefaultRoleAge: true,
+			});
 			return;
 		}
 
