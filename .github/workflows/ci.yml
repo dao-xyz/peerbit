@@ -298,7 +298,7 @@ jobs:
     if: github.event_name == 'pull_request'
     name: Fanout Gate (PR)
     runs-on: ubuntu-22.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
       NODE_OPTIONS: --no-warnings
@@ -378,6 +378,19 @@ jobs:
             --assertAttachP95Ms 10000 \
             --assertMaxTreeLevelP95 8 \
             --assertMaxFormationScore 30
+      - name: Run fanout parent-upgrade default-ready gate
+        run: |
+          pnpm -C packages/transport/pubsub run bench -- \
+            fanout-tree-parent-upgrade-default-ready \
+            --no-build \
+            --seeds 1 \
+            --idle-safety-seeds 1
+      - name: Upload fanout gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fanout-gate-pr-${{ github.run_id }}
+          path: sim-results
 
   shared_log_sync_batch_gate_pr:
     if: github.event_name == 'pull_request'

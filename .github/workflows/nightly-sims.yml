@@ -75,6 +75,120 @@ jobs:
           name: nightly-sims-${{ github.run_id }}
           path: sim-results
 
+  fanout_parent_upgrade_soak:
+    name: Fanout parent-upgrade soak (${{ matrix.name }})
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: single-all
+            artifact: fanout-parent-upgrade-single-all
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval
+              --scenario all --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: single-live-stream
+            artifact: fanout-parent-upgrade-single-live-stream
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval
+              --scenario ci-live-stream --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: single-idle-large
+            artifact: fanout-parent-upgrade-single-idle-large
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval
+              --scenario ci-idle-upgrade-large --seeds 1,2,3 --parentUpgradePreset default-candidate
+              --parentUpgradeRootMaxChildLoadRatio 0.25 --maxRootChildrenDelta 3 --maxCostRatio 1.2 --strict 1
+          - name: single-idle-large-frontier
+            artifact: fanout-parent-upgrade-single-idle-large-frontier
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-prepush
+              --only frontier --outDir sim-results
+          - name: multi-live
+            artifact: fanout-parent-upgrade-multi-live
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: multi-live-churn
+            artifact: fanout-parent-upgrade-multi-live-churn
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: multi-video-live
+            artifact: fanout-parent-upgrade-multi-video-live
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-video-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: multi-idle
+            artifact: fanout-parent-upgrade-multi-idle
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: multi-sparse-idle
+            artifact: fanout-parent-upgrade-multi-sparse-idle
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-sparse-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+          - name: multi-hotspot-idle
+            artifact: fanout-parent-upgrade-multi-hotspot-idle
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-hotspot-idle --seeds 1,2,3 --parentUpgradePreset default-candidate
+              --maxUsefulIdleDeadlinePctDelta 2 --maxDataOverheadRatio 1.05 --strict 0
+          - name: multi-scale-live
+            artifact: fanout-parent-upgrade-multi-scale-live
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-live --seeds 1 --parentUpgradePreset default-candidate --strict 1
+              --nodes 80 --writers 8 --activeWriters 8 --subscribersPerTree 56
+          - name: multi-scale-idle
+            artifact: fanout-parent-upgrade-multi-scale-idle
+            command: >-
+              pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval
+              --scenario ci-multi-idle --seeds 1 --parentUpgradePreset default-candidate --strict 0
+              --nodes 80 --writers 8 --activeWriters 8 --subscribersPerTree 56
+    env:
+      NODE_OPTIONS: --no-warnings
+      PEERBIT_TEST_SESSION: mock
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
+          pnpm install --frozen-lockfile=false
+
+      - name: Build pubsub workspace
+        run: |
+          pnpm --filter @peerbit/pubsub... run build
+
+      - name: Run parent-upgrade soak scenario
+        run: |
+          set -euo pipefail
+          mkdir -p sim-results
+          echo "${{ matrix.command }}"
+          {
+            ${{ matrix.command }}
+          } 2>&1 | tee "sim-results/${{ matrix.artifact }}.txt"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.artifact }}-${{ github.run_id }}
+          path: sim-results
+
 
   shared_log_chaos:
     name: SharedLog chaos

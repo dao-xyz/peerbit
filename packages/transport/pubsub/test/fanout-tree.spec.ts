@@ -16,272 +16,277 @@ const createFanoutTestSession = (n: number) =>
 	});
 
 describe("fanout-tree", () => {
-		it("bounds per-channel route token cache (LRU + TTL)", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
+	it("bounds per-channel route token cache (LRU + TTL)", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
 
-			try {
-				const fanout = session.peers[0].services.fanout;
-				const topic = "route-cache";
-				const root = fanout.publicKeyHash;
+		try {
+			const fanout = session.peers[0].services.fanout;
+			const topic = "route-cache";
+			const root = fanout.publicKeyHash;
 
-				const id = fanout.openChannel(topic, root, {
-					role: "root",
-					msgRate: 1,
-					msgSize: 8,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 128,
-					repair: false,
-					routeCacheMaxEntries: 3,
-					routeCacheTtlMs: 0,
-				});
+			const id = fanout.openChannel(topic, root, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 128,
+				repair: false,
+				routeCacheMaxEntries: 3,
+				routeCacheTtlMs: 0,
+			});
 
-				const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
-				expect(ch).to.exist;
+			const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
+			expect(ch).to.exist;
 
-				const cacheRoute = (fanout as any).cacheRoute.bind(fanout) as (
-					ch: any,
-					route: string[],
-				) => void;
-				const getCachedRoute = (fanout as any).getCachedRoute.bind(fanout) as (
-					ch: any,
-					target: string,
-				) => string[] | undefined;
+			const cacheRoute = (fanout as any).cacheRoute.bind(fanout) as (
+				ch: any,
+				route: string[],
+			) => void;
+			const getCachedRoute = (fanout as any).getCachedRoute.bind(fanout) as (
+				ch: any,
+				target: string,
+			) => string[] | undefined;
 
-				// Root route-cache entries must start with a valid child hop.
-				ch.children.set("child1", { bidPerByte: 0 });
+			// Root route-cache entries must start with a valid child hop.
+			ch.children.set("child1", { bidPerByte: 0 });
 
-				cacheRoute(ch, [root, "child1", "p1"]);
-				cacheRoute(ch, [root, "child1", "p2"]);
-				cacheRoute(ch, [root, "child1", "p3"]);
-				expect(ch.routeByPeer.size).to.equal(3);
+			cacheRoute(ch, [root, "child1", "p1"]);
+			cacheRoute(ch, [root, "child1", "p2"]);
+			cacheRoute(ch, [root, "child1", "p3"]);
+			expect(ch.routeByPeer.size).to.equal(3);
 
-				// LRU touch p1, then insert p4: p2 should be evicted.
-				expect(getCachedRoute(ch, "p1")).to.deep.equal([root, "child1", "p1"]);
-				cacheRoute(ch, [root, "child1", "p4"]);
-				expect(ch.routeByPeer.size).to.equal(3);
-				expect(ch.routeByPeer.has("p2")).to.equal(false);
-				expect(ch.routeByPeer.has("p1")).to.equal(true);
-				expect(ch.routeByPeer.has("p3")).to.equal(true);
-				expect(ch.routeByPeer.has("p4")).to.equal(true);
+			// LRU touch p1, then insert p4: p2 should be evicted.
+			expect(getCachedRoute(ch, "p1")).to.deep.equal([root, "child1", "p1"]);
+			cacheRoute(ch, [root, "child1", "p4"]);
+			expect(ch.routeByPeer.size).to.equal(3);
+			expect(ch.routeByPeer.has("p2")).to.equal(false);
+			expect(ch.routeByPeer.has("p1")).to.equal(true);
+			expect(ch.routeByPeer.has("p3")).to.equal(true);
+			expect(ch.routeByPeer.has("p4")).to.equal(true);
 
-				// TTL expiry prunes oldest entries.
-				// Mutate timestamps to avoid relying on wall-clock timing (keeps this test deterministic).
-				ch.routeCacheTtlMs = 25;
-				const expiredAt = Date.now() - 1_000;
-				for (const entry of ch.routeByPeer.values()) entry.updatedAt = expiredAt;
-				expect(getCachedRoute(ch, "p1")).to.equal(undefined);
-				expect(getCachedRoute(ch, "p3")).to.equal(undefined);
-				expect(getCachedRoute(ch, "p4")).to.equal(undefined);
-				expect(ch.routeByPeer.size).to.equal(0);
-			} finally {
-				await session.stop();
-			}
-		});
+			// TTL expiry prunes oldest entries.
+			// Mutate timestamps to avoid relying on wall-clock timing (keeps this test deterministic).
+			ch.routeCacheTtlMs = 25;
+			const expiredAt = Date.now() - 1_000;
+			for (const entry of ch.routeByPeer.values()) entry.updatedAt = expiredAt;
+			expect(getCachedRoute(ch, "p1")).to.equal(undefined);
+			expect(getCachedRoute(ch, "p3")).to.equal(undefined);
+			expect(getCachedRoute(ch, "p4")).to.equal(undefined);
+			expect(ch.routeByPeer.size).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
 
-		it("invalidates cached routes when root child set changes", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
+	it("invalidates cached routes when root child set changes", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
 
-			try {
-				const fanout = session.peers[0].services.fanout;
-				const topic = "route-cache-validity";
-				const root = fanout.publicKeyHash;
+		try {
+			const fanout = session.peers[0].services.fanout;
+			const topic = "route-cache-validity";
+			const root = fanout.publicKeyHash;
 
-				const id = fanout.openChannel(topic, root, {
-					role: "root",
-					msgRate: 1,
-					msgSize: 8,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 128,
-					repair: false,
-					routeCacheMaxEntries: 16,
-					routeCacheTtlMs: 0,
-				});
+			const id = fanout.openChannel(topic, root, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 128,
+				repair: false,
+				routeCacheMaxEntries: 16,
+				routeCacheTtlMs: 0,
+			});
 
-				const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
-				expect(ch).to.exist;
+			const ch = (fanout as any).channelsBySuffixKey.get(id.suffixKey);
+			expect(ch).to.exist;
 
-				const cacheRoute = (fanout as any).cacheRoute.bind(fanout) as (
-					ch: any,
-					route: string[],
-				) => void;
-				const getCachedRoute = (fanout as any).getCachedRoute.bind(fanout) as (
-					ch: any,
-					target: string,
-				) => string[] | undefined;
+			const cacheRoute = (fanout as any).cacheRoute.bind(fanout) as (
+				ch: any,
+				route: string[],
+			) => void;
+			const getCachedRoute = (fanout as any).getCachedRoute.bind(fanout) as (
+				ch: any,
+				target: string,
+			) => string[] | undefined;
 
-				// Root requires the first hop after root to be a current child.
-				ch.children.set("child1", { bidPerByte: 0 });
-				cacheRoute(ch, [root, "child1", "target"]);
-				expect(getCachedRoute(ch, "target")).to.deep.equal([root, "child1", "target"]);
+			// Root requires the first hop after root to be a current child.
+			ch.children.set("child1", { bidPerByte: 0 });
+			cacheRoute(ch, [root, "child1", "target"]);
+			expect(getCachedRoute(ch, "target")).to.deep.equal([
+				root,
+				"child1",
+				"target",
+			]);
 
-				// Drop child1, cached route must be treated as invalid and removed.
-				ch.children.delete("child1");
-				expect(getCachedRoute(ch, "target")).to.equal(undefined);
-				expect(ch.routeByPeer.has("target")).to.equal(false);
-			} finally {
-				await session.stop();
-			}
-		});
+			// Drop child1, cached route must be treated as invalid and removed.
+			ch.children.delete("child1");
+			expect(getCachedRoute(ch, "target")).to.equal(undefined);
+			expect(ch.routeByPeer.has("target")).to.equal(false);
+		} finally {
+			await session.stop();
+		}
+	});
 
-		it("does not miss channel attachment when parent appears during join-listener setup", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
+	it("does not miss channel attachment when parent appears during join-listener setup", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
 
-			try {
-				const fanout = session.peers[0].services.fanout as any;
-				const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(fanout) as (
-					ch: any,
-					timeoutMs: number,
-				) => Promise<void>;
-				const ch = {
-					isRoot: false,
-					parent: undefined as string | undefined,
-					id: { topic: "attachment-race", root: "root" },
-				};
+		try {
+			const fanout = session.peers[0].services.fanout as any;
+			const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(
+				fanout,
+			) as (ch: any, timeoutMs: number) => Promise<void>;
+			const ch = {
+				isRoot: false,
+				parent: undefined as string | undefined,
+				id: { topic: "attachment-race", root: "root" },
+			};
 
-				const originalAddEventListener = fanout.addEventListener.bind(fanout);
-				fanout.addEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) => {
-					const result = originalAddEventListener(type, listener, options);
-					if (type === "fanout:joined") {
-						ch.parent = "parent";
-					}
-					return result;
-				}) as typeof fanout.addEventListener;
-
-				try {
-					await waitForChannelAttachment(ch, 25);
-				} finally {
-					fanout.addEventListener = originalAddEventListener;
-				}
-
-				expect(ch.parent).to.equal("parent");
-			} finally {
-				await session.stop();
-			}
-		});
-
-		it("accepts parent attachment that becomes visible before timeout even without a join event", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
-
-			try {
-				const fanout = session.peers[0].services.fanout as any;
-				const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(fanout) as (
-					ch: any,
-					timeoutMs: number,
-				) => Promise<void>;
-				const ch = {
-					isRoot: false,
-					parent: undefined as string | undefined,
-					id: { topic: "attachment-timeout-fallback", root: "root" },
-				};
-
-				setTimeout(() => {
+			const originalAddEventListener = fanout.addEventListener.bind(fanout);
+			fanout.addEventListener = ((
+				type: string,
+				listener: EventListenerOrEventListenerObject,
+				options?: AddEventListenerOptions | boolean,
+			) => {
+				const result = originalAddEventListener(type, listener, options);
+				if (type === "fanout:joined") {
 					ch.parent = "parent";
-				}, 5);
+				}
+				return result;
+			}) as typeof fanout.addEventListener;
 
+			try {
 				await waitForChannelAttachment(ch, 25);
-				expect(ch.parent).to.equal("parent");
 			} finally {
-				await session.stop();
+				fanout.addEventListener = originalAddEventListener;
 			}
-		});
 
-		it("reports attachment waits as delivery timeouts", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
+			expect(ch.parent).to.equal("parent");
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("accepts parent attachment that becomes visible before timeout even without a join event", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
+
+		try {
+			const fanout = session.peers[0].services.fanout as any;
+			const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(
+				fanout,
+			) as (ch: any, timeoutMs: number) => Promise<void>;
+			const ch = {
+				isRoot: false,
+				parent: undefined as string | undefined,
+				id: { topic: "attachment-timeout-fallback", root: "root" },
+			};
+
+			setTimeout(() => {
+				ch.parent = "parent";
+			}, 5);
+
+			await waitForChannelAttachment(ch, 25);
+			expect(ch.parent).to.equal("parent");
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("reports attachment waits as delivery timeouts", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
+
+		try {
+			const fanout = session.peers[0].services.fanout as any;
+			const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(
+				fanout,
+			) as (ch: any, timeoutMs: number) => Promise<void>;
+			const ch = {
+				isRoot: false,
+				parent: undefined as string | undefined,
+				id: { topic: "attachment-timeout", root: "root" },
+			};
+
+			await expect(waitForChannelAttachment(ch, 5)).to.be.rejectedWith(
+				TimeoutError,
+				"fanout proxy publish timed out waiting for attachment",
+			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("returns false when maybe-publishing to a channel that is not open", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
+
+		try {
+			const fanout = session.peers[0].services.fanout;
+			const ok = await fanout.publishToChannelMaybe(
+				"missing-channel",
+				fanout.publicKeyHash,
+				new Uint8Array([1]),
+			);
+			expect(ok).to.equal(false);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("returns false for late channel-close races on maybe-publish but still rethrows unexpected errors", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
+
+		try {
+			const fanout = session.peers[0].services.fanout;
+			const topic = "maybe-publish-close-race";
+			const root = fanout.publicKeyHash;
+
+			fanout.openChannel(topic, root, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const originalPublishToChannel = fanout.publishToChannel.bind(fanout);
 
 			try {
-				const fanout = session.peers[0].services.fanout as any;
-				const waitForChannelAttachment = fanout.waitForChannelAttachment.bind(fanout) as (
-					ch: any,
-					timeoutMs: number,
-				) => Promise<void>;
-				const ch = {
-					isRoot: false,
-					parent: undefined as string | undefined,
-					id: { topic: "attachment-timeout", root: "root" },
-				};
+				fanout.publishToChannel = (async () => {
+					throw new Error(`Channel not open: ${topic} (${root})`);
+				}) as typeof fanout.publishToChannel;
 
-				await expect(waitForChannelAttachment(ch, 5)).to.be.rejectedWith(
-					TimeoutError,
-					"fanout proxy publish timed out waiting for attachment",
-				);
-			} finally {
-				await session.stop();
-			}
-		});
-
-		it("returns false when maybe-publishing to a channel that is not open", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
-
-			try {
-				const fanout = session.peers[0].services.fanout;
 				const ok = await fanout.publishToChannelMaybe(
-					"missing-channel",
-					fanout.publicKeyHash,
+					topic,
+					root,
 					new Uint8Array([1]),
 				);
 				expect(ok).to.equal(false);
+
+				fanout.publishToChannel = (async () => {
+					throw new Error("unexpected publish failure");
+				}) as typeof fanout.publishToChannel;
+
+				await expect(
+					fanout.publishToChannelMaybe(topic, root, new Uint8Array([1])),
+				).to.be.rejectedWith("unexpected publish failure");
 			} finally {
-				await session.stop();
+				fanout.publishToChannel =
+					originalPublishToChannel as typeof fanout.publishToChannel;
 			}
-		});
-
-		it("returns false for late channel-close races on maybe-publish but still rethrows unexpected errors", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> =
-				await createFanoutTestSession(1);
-
-			try {
-				const fanout = session.peers[0].services.fanout;
-				const topic = "maybe-publish-close-race";
-				const root = fanout.publicKeyHash;
-
-				fanout.openChannel(topic, root, {
-					role: "root",
-					msgRate: 1,
-					msgSize: 8,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 1,
-					repair: false,
-				});
-
-				const originalPublishToChannel =
-					fanout.publishToChannel.bind(fanout);
-
-				try {
-					fanout.publishToChannel = (async () => {
-						throw new Error(`Channel not open: ${topic} (${root})`);
-					}) as typeof fanout.publishToChannel;
-
-					const ok = await fanout.publishToChannelMaybe(
-						topic,
-						root,
-						new Uint8Array([1]),
-					);
-					expect(ok).to.equal(false);
-
-					fanout.publishToChannel = (async () => {
-						throw new Error("unexpected publish failure");
-					}) as typeof fanout.publishToChannel;
-
-					await expect(
-						fanout.publishToChannelMaybe(topic, root, new Uint8Array([1])),
-					).to.be.rejectedWith("unexpected publish failure");
-				} finally {
-					fanout.publishToChannel =
-						originalPublishToChannel as typeof fanout.publishToChannel;
-				}
-			} finally {
-				await session.stop();
-			}
-		});
+		} finally {
+			await session.stop();
+		}
+	});
 
 	it("forms a small tree and delivers data", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			// Connect 0<->1<->2 (line) so 2 can join via 1 if root is full.
@@ -413,7 +418,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("allows a child to leave and immediately frees parent capacity", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -478,7 +484,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("proxies publish from non-root via the root", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -502,7 +509,10 @@ describe("fanout-tree", () => {
 				repair: true,
 			});
 
-			const publisherChannel = new FanoutChannel(publisher, { topic, root: rootId });
+			const publisherChannel = new FanoutChannel(publisher, {
+				topic,
+				root: rootId,
+			});
 			await publisherChannel.join(
 				{
 					msgRate: 10,
@@ -514,7 +524,10 @@ describe("fanout-tree", () => {
 				{ timeoutMs: 10_000 },
 			);
 
-			const subscriberChannel = new FanoutChannel(subscriber, { topic, root: rootId });
+			const subscriberChannel = new FanoutChannel(subscriber, {
+				topic,
+				root: rootId,
+			});
 			await subscriberChannel.join(
 				{
 					msgRate: 10,
@@ -556,7 +569,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("exposes channel peers for fanout membership-aware consumers", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -620,7 +634,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("supports economical unicast via route tokens through the root", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -674,7 +689,9 @@ describe("fanout-tree", () => {
 				expect(targetRoute).to.exist;
 			});
 			expect(targetRoute![0]).to.equal(rootId);
-			expect(targetRoute![targetRoute!.length - 1]).to.equal(target.publicKeyHash);
+			expect(targetRoute![targetRoute!.length - 1]).to.equal(
+				target.publicKeyHash,
+			);
 
 			let received: Uint8Array | undefined;
 			let origin: string | undefined;
@@ -695,7 +712,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("resolves route tokens through control-plane proxy and unicasts across branches", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(5);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(5);
 
 		try {
 			// Root <-> relayA and root <-> relayB. sender is only connected to relayA,
@@ -775,13 +793,18 @@ describe("fanout-tree", () => {
 
 			let resolvedRoute: string[] | undefined;
 			await waitForResolved(async () => {
-				resolvedRoute = await senderChannel.resolveRouteToken(target.publicKeyHash, {
-					timeoutMs: 2_000,
-				});
+				resolvedRoute = await senderChannel.resolveRouteToken(
+					target.publicKeyHash,
+					{
+						timeoutMs: 2_000,
+					},
+				);
 				expect(resolvedRoute).to.exist;
 			});
 			expect(resolvedRoute![0]).to.equal(rootId);
-			expect(resolvedRoute![resolvedRoute!.length - 1]).to.equal(target.publicKeyHash);
+			expect(resolvedRoute![resolvedRoute!.length - 1]).to.equal(
+				target.publicKeyHash,
+			);
 
 			let received: Uint8Array | undefined;
 			let origin: string | undefined;
@@ -791,7 +814,9 @@ describe("fanout-tree", () => {
 			});
 
 			const payload = new Uint8Array([5, 6, 7, 8]);
-			await senderChannel.unicastTo(target.publicKeyHash, payload, { timeoutMs: 2_000 });
+			await senderChannel.unicastTo(target.publicKeyHash, payload, {
+				timeoutMs: 2_000,
+			});
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
@@ -802,7 +827,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("supports economical unicast with ACKs (shared intermediate hop)", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(4);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(4);
 
 		try {
 			// Root <-> relay. Two leaves only connect to relay. This creates a shared intermediate
@@ -873,27 +899,30 @@ describe("fanout-tree", () => {
 			});
 
 			let received: Uint8Array | undefined;
-				targetChannel.addEventListener("unicast", (ev: any) => {
-					received = ev.detail.payload;
-				});
+			targetChannel.addEventListener("unicast", (ev: any) => {
+				received = ev.detail.payload;
+			});
 
-				const payload = new Uint8Array([9, 8, 7, 6]);
-				received = undefined;
-				await senderChannel.unicast(targetRoute!, payload);
-				await waitForResolved(() => expect(received).to.exist);
-				expect([...received!]).to.deep.equal([...payload]);
+			const payload = new Uint8Array([9, 8, 7, 6]);
+			received = undefined;
+			await senderChannel.unicast(targetRoute!, payload);
+			await waitForResolved(() => expect(received).to.exist);
+			expect([...received!]).to.deep.equal([...payload]);
 
-				received = undefined;
-				await senderChannel.unicastAck(targetRoute!, payload, { timeoutMs: 2_000 });
-				await waitForResolved(() => expect(received).to.exist);
-				expect([...received!]).to.deep.equal([...payload]);
-			} finally {
-				await session.stop();
+			received = undefined;
+			await senderChannel.unicastAck(targetRoute!, payload, {
+				timeoutMs: 2_000,
+			});
+			await waitForResolved(() => expect(received).to.exist);
+			expect([...received!]).to.deep.equal([...payload]);
+		} finally {
+			await session.stop();
 		}
 	});
 
 	it("supports economical unicast with ACKs across branches", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(5);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(5);
 
 		try {
 			// Root <-> relayA and root <-> relayB. sender is only connected to relayA,
@@ -977,7 +1006,9 @@ describe("fanout-tree", () => {
 			});
 
 			const payload = new Uint8Array([1, 3, 3, 7]);
-			await senderChannel.unicastToAck(target.publicKeyHash, payload, { timeoutMs: 10_000 });
+			await senderChannel.unicastToAck(target.publicKeyHash, payload, {
+				timeoutMs: 10_000,
+			});
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
@@ -987,7 +1018,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("bounds route cache size and evicts old entries", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(5);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(5);
 
 		try {
 			await session.connect([
@@ -1049,18 +1081,27 @@ describe("fanout-tree", () => {
 			// Drive route discovery on-demand so the root cache actually fills and evicts.
 			for (const leaf of [leafA, leafB, leafC]) {
 				await waitForResolved(async () => {
-					const route = await relay.resolveRouteToken(topic, rootId, leaf.publicKeyHash, {
-						timeoutMs: 4_000,
-					});
+					const route = await relay.resolveRouteToken(
+						topic,
+						rootId,
+						leaf.publicKeyHash,
+						{
+							timeoutMs: 4_000,
+						},
+					);
 					expect(route).to.exist;
 				});
 			}
 
 			await waitForResolved(() =>
-				expect(root.getChannelStats(topic, rootId)?.routeCacheEntries).to.be.at.most(2),
+				expect(
+					root.getChannelStats(topic, rootId)?.routeCacheEntries,
+				).to.be.at.most(2),
 			);
 			await waitForResolved(() =>
-				expect(root.getChannelMetrics(topic, rootId).routeCacheEvictions).to.be.greaterThan(0),
+				expect(
+					root.getChannelMetrics(topic, rootId).routeCacheEvictions,
+				).to.be.greaterThan(0),
 			);
 		} finally {
 			await session.stop();
@@ -1068,7 +1109,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("clamps requested route cache size to a hard safety cap", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(1);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
 
 		try {
 			const root = session.peers[0].services.fanout;
@@ -1094,7 +1136,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("bounds peer hint cache size and prunes old entries", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(8);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(8);
 
 		try {
 			// Star topology: all peers connect to the root so we can drive many JOIN_REQs.
@@ -1142,7 +1185,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("clamps requested peer hint size to a hard safety cap", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(1);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(1);
 
 		try {
 			const root = session.peers[0].services.fanout;
@@ -1168,7 +1212,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("root resolves deep route tokens on-demand without route announcements", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			await session.connect([
@@ -1221,9 +1266,14 @@ describe("fanout-tree", () => {
 				{ timeoutMs: 10_000 },
 			);
 
-			const route = await root.resolveRouteToken(topic, rootId, leaf.publicKeyHash, {
-				timeoutMs: 4_000,
-			});
+			const route = await root.resolveRouteToken(
+				topic,
+				rootId,
+				leaf.publicKeyHash,
+				{
+					timeoutMs: 4_000,
+				},
+			);
 			expect(route).to.exist;
 			expect(route?.[0]).to.equal(rootId);
 			expect(route?.[1]).to.equal(relay.publicKeyHash);
@@ -1234,7 +1284,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("resolves route tokens after cache expiry via subtree fallback search", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(6);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(6);
 
 		try {
 			await session.connect([
@@ -1293,26 +1344,40 @@ describe("fanout-tree", () => {
 
 			// Warm caches once, then let route tokens expire before resolving again.
 			await waitForResolved(async () => {
-				const route = await senderChannel.resolveRouteToken(target.publicKeyHash, {
-					timeoutMs: 4_000,
-				});
+				const route = await senderChannel.resolveRouteToken(
+					target.publicKeyHash,
+					{
+						timeoutMs: 4_000,
+					},
+				);
 				expect(route).to.exist;
 			});
 
 			await delay(160);
-			const missesBefore = root.getChannelMetrics(topic, rootId).routeCacheMisses;
+			const missesBefore = root.getChannelMetrics(
+				topic,
+				rootId,
+			).routeCacheMisses;
 
 			let resolvedRoute: string[] | undefined;
 			await waitForResolved(async () => {
-				resolvedRoute = await senderChannel.resolveRouteToken(target.publicKeyHash, {
-					timeoutMs: 4_000,
-				});
+				resolvedRoute = await senderChannel.resolveRouteToken(
+					target.publicKeyHash,
+					{
+						timeoutMs: 4_000,
+					},
+				);
 				expect(resolvedRoute).to.exist;
 			});
 			expect(resolvedRoute![0]).to.equal(rootId);
-			expect(resolvedRoute![resolvedRoute!.length - 1]).to.equal(target.publicKeyHash);
+			expect(resolvedRoute![resolvedRoute!.length - 1]).to.equal(
+				target.publicKeyHash,
+			);
 
-			const missesAfter = root.getChannelMetrics(topic, rootId).routeCacheMisses;
+			const missesAfter = root.getChannelMetrics(
+				topic,
+				rootId,
+			).routeCacheMisses;
 			expect(missesAfter).to.be.greaterThan(missesBefore);
 		} finally {
 			await session.stop();
@@ -1320,7 +1385,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("uses JOIN_REJECT redirects to attach via relay without trackers", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			// 0 connected to both 1 and 2. Leaf (2) should be able to re-attach to relay (1)
@@ -1382,7 +1448,8 @@ describe("fanout-tree", () => {
 	});
 
 	it("joins via bootstrap tracker (dial + capacity announcements)", async () => {
-		const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(4);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(4);
 
 		try {
 			// Star topology via a bootstrap node so join must happen via dial + tracker redirect.
@@ -1468,148 +1535,155 @@ describe("fanout-tree", () => {
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
-			} finally {
-				await session.stop();
-			}
-		});
+		} finally {
+			await session.stop();
+		}
+	});
 
-		it("re-parents when no data arrives within staleAfterMs", async function () {
-			this.timeout(30_000);
-			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(2);
+	it("re-parents when no data arrives within staleAfterMs", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
 
-			try {
-				await session.connect([[session.peers[0], session.peers[1]]]);
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
 
-				const root = session.peers[0].services.fanout;
-				const leaf = session.peers[1].services.fanout;
+			const root = session.peers[0].services.fanout;
+			const leaf = session.peers[1].services.fanout;
 
-				const topic = "stale";
-				const rootId = root.publicKeyHash;
+			const topic = "stale";
+			const rootId = root.publicKeyHash;
 
-				root.openChannel(topic, rootId, {
-					role: "root",
-					msgRate: 10,
-					msgSize: 64,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 1,
-					maxDataAgeMs: 10_000,
-					repair: false,
-				});
-
-				await leaf.joinChannel(
-					topic,
-					rootId,
-					{
-						msgRate: 10,
-						msgSize: 64,
-						uploadLimitBps: 0,
-						maxChildren: 0,
-						maxDataAgeMs: 10_000,
-						repair: false,
-					},
-					{
-						timeoutMs: 10_000,
-						staleAfterMs: 200,
-						retryMs: 50,
-					},
-				);
-
-				await waitForResolved(() =>
-					expect(leaf.getChannelMetrics(topic, rootId).reparentStale).to.be.greaterThan(0),
-				);
-			} finally {
-				await session.stop();
-			}
-		});
-
-		it("keeps rejoining after the initial join timeout has elapsed", async function () {
-			this.timeout(30_000);
-			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(2);
-
-			try {
-				await session.connect([[session.peers[0], session.peers[1]]]);
-
-				const rootNode = session.peers[0];
-				const root = rootNode.services.fanout;
-				const leaf = session.peers[1].services.fanout;
-
-				const bootstrapAddrs = rootNode
-					.getMultiaddrs()
-					.filter((x) => !x.getComponents().some((c) => c.code === 290));
-
-				const topic = "rejoin-timeout";
-				const rootId = root.publicKeyHash;
-
-				root.openChannel(topic, rootId, {
-					role: "root",
-					msgRate: 10,
-					msgSize: 64,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 1,
-					maxDataAgeMs: 10_000,
-					repair: false,
-				});
-
-				const timeoutMs = 2_000;
-					await leaf.joinChannel(
-						topic,
-						rootId,
-						{
-							msgRate: 10,
-							msgSize: 64,
-							uploadLimitBps: 0,
-							maxChildren: 0,
-							maxDataAgeMs: 10_000,
-							repair: false,
-						},
-						{
-							timeoutMs,
-							bootstrap: bootstrapAddrs,
-							staleAfterMs: 250,
-							retryMs: 50,
-						},
-					);
-
-					expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
-
-					// Keep data flowing until after the initial `timeoutMs` has elapsed, so any later
-					// detach/rejoin would have previously tripped the join-loop timeout bug.
-					const keepAliveUntil = Date.now() + timeoutMs + 500;
-					while (Date.now() < keepAliveUntil) {
-						await root.publishData(topic, rootId, new Uint8Array([0x01]));
-						// eslint-disable-next-line no-await-in-loop
-						await delay(100);
-					}
-
-					// Stop sending for long enough to trigger stale re-parenting.
-					await waitForResolved(
-						() =>
-							expect(leaf.getChannelMetrics(topic, rootId).reparentStale).to.be.greaterThan(0),
-						{ timeout: 20_000, delayInterval: 50 },
-					);
-
-					// Once it has re-joined, it should receive fresh data again.
-					let markerReceived = false;
-					leaf.addEventListener("fanout:data", (ev: any) => {
-						if (ev.detail.topic !== topic) return;
-						if (ev.detail.root !== rootId) return;
-						if ((ev.detail.payload as Uint8Array)?.[0] !== 0x99) return;
-						markerReceived = true;
-					});
-					for (let i = 0; i < 20 && !markerReceived; i++) {
-						await root.publishData(topic, rootId, new Uint8Array([0x99]));
-						// eslint-disable-next-line no-await-in-loop
-						await delay(100);
-					}
-					expect(markerReceived).to.equal(true);
-				} finally {
-					await session.stop();
-				}
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				maxDataAgeMs: 10_000,
+				repair: false,
 			});
 
-		it("re-parents when its parent disconnects", async function () {
-			this.timeout(30_000);
-			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+			await leaf.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					maxDataAgeMs: 10_000,
+					repair: false,
+				},
+				{
+					timeoutMs: 10_000,
+					staleAfterMs: 200,
+					retryMs: 50,
+				},
+			);
+
+			await waitForResolved(() =>
+				expect(
+					leaf.getChannelMetrics(topic, rootId).reparentStale,
+				).to.be.greaterThan(0),
+			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps rejoining after the initial join timeout has elapsed", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			const rootNode = session.peers[0];
+			const root = rootNode.services.fanout;
+			const leaf = session.peers[1].services.fanout;
+
+			const bootstrapAddrs = rootNode
+				.getMultiaddrs()
+				.filter((x) => !x.getComponents().some((c) => c.code === 290));
+
+			const topic = "rejoin-timeout";
+			const rootId = root.publicKeyHash;
+
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				maxDataAgeMs: 10_000,
+				repair: false,
+			});
+
+			const timeoutMs = 2_000;
+			await leaf.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					maxDataAgeMs: 10_000,
+					repair: false,
+				},
+				{
+					timeoutMs,
+					bootstrap: bootstrapAddrs,
+					staleAfterMs: 250,
+					retryMs: 50,
+				},
+			);
+
+			expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
+
+			// Keep data flowing until after the initial `timeoutMs` has elapsed, so any later
+			// detach/rejoin would have previously tripped the join-loop timeout bug.
+			const keepAliveUntil = Date.now() + timeoutMs + 500;
+			while (Date.now() < keepAliveUntil) {
+				await root.publishData(topic, rootId, new Uint8Array([0x01]));
+				// eslint-disable-next-line no-await-in-loop
+				await delay(100);
+			}
+
+			// Stop sending for long enough to trigger stale re-parenting.
+			await waitForResolved(
+				() =>
+					expect(
+						leaf.getChannelMetrics(topic, rootId).reparentStale,
+					).to.be.greaterThan(0),
+				{ timeout: 20_000, delayInterval: 50 },
+			);
+
+			// Once it has re-joined, it should receive fresh data again.
+			let markerReceived = false;
+			leaf.addEventListener("fanout:data", (ev: any) => {
+				if (ev.detail.topic !== topic) return;
+				if (ev.detail.root !== rootId) return;
+				if ((ev.detail.payload as Uint8Array)?.[0] !== 0x99) return;
+				markerReceived = true;
+			});
+			for (let i = 0; i < 20 && !markerReceived; i++) {
+				await root.publishData(topic, rootId, new Uint8Array([0x99]));
+				// eslint-disable-next-line no-await-in-loop
+				await delay(100);
+			}
+			expect(markerReceived).to.equal(true);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("re-parents when its parent disconnects", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
 		try {
 			// Root connected to both relay and leaf. Leaf initially joins via relay (root full),
@@ -1664,7 +1738,9 @@ describe("fanout-tree", () => {
 				{ timeoutMs: 10_000 },
 			);
 
-			expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(relay.publicKeyHash);
+			expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(
+				relay.publicKeyHash,
+			);
 
 			// Kill relay.
 			await relayNode.stop();
@@ -1687,12 +1763,12 @@ describe("fanout-tree", () => {
 
 			await waitForResolved(() => expect(received).to.exist);
 			expect([...received!]).to.deep.equal([...payload]);
-			} finally {
-				await session.stop();
-			}
-		});
+		} finally {
+			await session.stop();
+		}
+	});
 
-		it("re-parents after repeated parent data write failures", async function () {
+	it("re-parents after repeated parent data write failures", async function () {
 			this.timeout(30_000);
 			const session: TestSession<{ fanout: FanoutTree }> =
 				await createFanoutTestSession(2);
@@ -1921,239 +1997,257 @@ describe("fanout-tree", () => {
 			}
 		});
 
-			it("prevents stable disconnected components when an intermediate relay loses the root", async function () {
-				this.timeout(30_000);
-				const session: TestSession<{ fanout: FanoutTree }> =
-					await createFanoutTestSession(3);
+	it("prevents stable disconnected components when an intermediate relay loses the root", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
-				try {
-					await session.connect([
-						[session.peers[0], session.peers[1]],
-						[session.peers[1], session.peers[2]],
-					]);
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[1], session.peers[2]],
+			]);
 
-					const rootNode = session.peers[0];
-					const relayNode = session.peers[1];
+			const rootNode = session.peers[0];
+			const relayNode = session.peers[1];
 
-					const root = rootNode.services.fanout;
-					const relay = relayNode.services.fanout;
-					const leaf = session.peers[2].services.fanout;
+			const root = rootNode.services.fanout;
+			const relay = relayNode.services.fanout;
+			const leaf = session.peers[2].services.fanout;
 
-				const bootstrapAddrs = rootNode
-					.getMultiaddrs()
-					.filter((x) => !x.getComponents().some((c) => c.code === 290));
+			const bootstrapAddrs = rootNode
+				.getMultiaddrs()
+				.filter((x) => !x.getComponents().some((c) => c.code === 290));
 
-				const topic = "partition";
-				const rootId = root.publicKeyHash;
+			const topic = "partition";
+			const rootId = root.publicKeyHash;
 
-				root.openChannel(topic, rootId, {
-					role: "root",
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			await relay.joinChannel(
+				topic,
+				rootId,
+				{
 					msgRate: 10,
 					msgSize: 64,
 					uploadLimitBps: 1_000_000,
 					maxChildren: 1,
 					repair: false,
-				});
+				},
+				{ timeoutMs: 10_000, bootstrap: bootstrapAddrs },
+			);
 
-				await relay.joinChannel(
-					topic,
-					rootId,
-					{
-						msgRate: 10,
-						msgSize: 64,
-						uploadLimitBps: 1_000_000,
-						maxChildren: 1,
-						repair: false,
-					},
-					{ timeoutMs: 10_000, bootstrap: bootstrapAddrs },
-				);
+			await leaf.joinChannel(
+				topic,
+				rootId,
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: false,
+				},
+				{ timeoutMs: 10_000, bootstrap: bootstrapAddrs },
+			);
 
-				await leaf.joinChannel(
-					topic,
-					rootId,
-					{
-						msgRate: 10,
-						msgSize: 64,
-						uploadLimitBps: 0,
-						maxChildren: 0,
-						repair: false,
-					},
-					{ timeoutMs: 10_000, bootstrap: bootstrapAddrs },
-				);
+			expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(
+				relay.publicKeyHash,
+			);
 
-					expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(relay.publicKeyHash);
+			// Break the relay<->root connection but keep relay alive.
+			const rootConnMgr = (root as any)?.components?.connectionManager;
+			const relayConnMgr = (relay as any)?.components?.connectionManager;
+			expect(rootConnMgr).to.exist;
+			expect(relayConnMgr).to.exist;
+			const relayAsSeenByRoot = (root as any)?.peers?.get?.(
+				relay.publicKeyHash,
+			);
+			const rootAsSeenByRelay = (relay as any)?.peers?.get?.(rootId);
+			const relayPeerId = relayAsSeenByRoot?.peerId;
+			const rootPeerId = rootAsSeenByRelay?.peerId;
+			expect(relayPeerId).to.exist;
+			expect(rootPeerId).to.exist;
+			await Promise.allSettled([
+				rootConnMgr?.closeConnections?.(relayPeerId),
+				relayConnMgr?.closeConnections?.(rootPeerId),
+			]);
 
-					// Break the relay<->root connection but keep relay alive.
-					const rootConnMgr = (root as any)?.components?.connectionManager;
-					const relayConnMgr = (relay as any)?.components?.connectionManager;
-					expect(rootConnMgr).to.exist;
-					expect(relayConnMgr).to.exist;
-					const relayAsSeenByRoot = (root as any)?.peers?.get?.(relay.publicKeyHash);
-					const rootAsSeenByRelay = (relay as any)?.peers?.get?.(rootId);
-					const relayPeerId = relayAsSeenByRoot?.peerId;
-					const rootPeerId = rootAsSeenByRelay?.peerId;
-					expect(relayPeerId).to.exist;
-					expect(rootPeerId).to.exist;
-					await Promise.allSettled([
-						rootConnMgr?.closeConnections?.(relayPeerId),
-						relayConnMgr?.closeConnections?.(rootPeerId),
-					]);
+			// Ensure the connection is actually down (otherwise the rest of the test is meaningless).
+			await waitForResolved(
+				() => {
+					const a = rootConnMgr?.getConnections?.(relayPeerId) ?? [];
+					const b = relayConnMgr?.getConnections?.(rootPeerId) ?? [];
+					expect(a.length).to.equal(0);
+					expect(b.length).to.equal(0);
+				},
+				{ timeout: 20_000, delayInterval: 50 },
+			);
 
-					// Ensure the connection is actually down (otherwise the rest of the test is meaningless).
-					await waitForResolved(
-						() => {
-							const a = rootConnMgr?.getConnections?.(relayPeerId) ?? [];
-							const b = relayConnMgr?.getConnections?.(rootPeerId) ?? [];
-							expect(a.length).to.equal(0);
-							expect(b.length).to.equal(0);
-						},
-						{ timeout: 20_000, delayInterval: 50 },
-					);
+			// Relay should detect the disconnect from its parent and trigger a reparent.
+			// `stats.parent` can be transiently undefined and then quickly restored if the
+			// root reconnects, so assert on the metric rather than the brief state.
+			await waitForResolved(
+				() =>
+					expect(
+						relay.getChannelMetrics(topic, rootId).reparentDisconnect,
+					).to.be.greaterThan(0),
+				{ timeout: 20_000, delayInterval: 50 },
+			);
 
-						// Relay should detect the disconnect from its parent and trigger a reparent.
-						// `stats.parent` can be transiently undefined and then quickly restored if the
-						// root reconnects, so assert on the metric rather than the brief state.
-						await waitForResolved(
-							() =>
-								expect(
-									relay.getChannelMetrics(topic, rootId).reparentDisconnect,
-								).to.be.greaterThan(0),
-							{ timeout: 20_000, delayInterval: 50 },
-						);
+			// Relay should kick its children once it loses the rooted route, and leaf should
+			// rejoin directly to the root instead of stabilizing in a disconnected component.
+			await waitForResolved(
+				() =>
+					expect(
+						leaf.getChannelMetrics(topic, rootId).reparentKicked,
+					).to.be.greaterThan(0),
+				{ timeout: 20_000, delayInterval: 50 },
+			);
+			await waitForResolved(
+				() =>
+					expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId),
+				{ timeout: 20_000, delayInterval: 50 },
+			);
+		} finally {
+			await session.stop();
+		}
+	});
 
-					// Relay should detach its children once it loses the rooted route, and leaf should
-					// rejoin directly to the root instead of stabilizing in a disconnected component.
-				await waitForResolved(
-					() => expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId),
-					{ timeout: 20_000, delayInterval: 50 },
-				);
-			} finally {
-				await session.stop();
-			}
-		});
+	it("rate limits proxy publish ingress (abuse resistance)", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
 
-		it("rate limits proxy publish ingress (abuse resistance)", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(2);
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
 
-			try {
-				await session.connect([[session.peers[0], session.peers[1]]]);
+			const root = session.peers[0].services.fanout;
+			const leaf = session.peers[1].services.fanout;
 
-				const root = session.peers[0].services.fanout;
-				const leaf = session.peers[1].services.fanout;
+			const topic = "proxy-publish-rate-limit";
+			const rootId = root.publicKeyHash;
 
-				const topic = "proxy-publish-rate-limit";
-				const rootId = root.publicKeyHash;
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 32,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+				// Deterministic drop: capacity=1 byte, but payload > 1 byte.
+				proxyPublishBudgetBps: 1,
+				proxyPublishBurstMs: 1_000,
+			});
 
-				const rootChannel = FanoutChannel.fromSelf(root, topic);
-				rootChannel.openAsRoot({
+			const leafChannel = new FanoutChannel(leaf, { topic, root: rootId });
+			await leafChannel.join(
+				{
 					msgRate: 10,
 					msgSize: 32,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 1,
+					uploadLimitBps: 0,
+					maxChildren: 0,
 					repair: false,
-					// Deterministic drop: capacity=1 byte, but payload > 1 byte.
-					proxyPublishBudgetBps: 1,
-					proxyPublishBurstMs: 1_000,
-				});
+				},
+				{ timeoutMs: 10_000 },
+			);
 
-				const leafChannel = new FanoutChannel(leaf, { topic, root: rootId });
-				await leafChannel.join(
-					{
-						msgRate: 10,
-						msgSize: 32,
-						uploadLimitBps: 0,
-						maxChildren: 0,
-						repair: false,
-					},
-					{ timeoutMs: 10_000 },
-				);
+			let received = 0;
+			leafChannel.addEventListener("data", () => {
+				received += 1;
+			});
 
-				let received = 0;
-				leafChannel.addEventListener("data", () => {
-					received += 1;
-				});
+			await leafChannel.publish(new Uint8Array(16).fill(7));
+			await delay(200);
+			expect(received).to.equal(0);
 
-				await leafChannel.publish(new Uint8Array(16).fill(7));
-				await delay(200);
-				expect(received).to.equal(0);
+			const id = root.getChannelId(topic, rootId);
+			const ch = (root as any).channelsBySuffixKey.get(id.suffixKey);
+			expect(ch?.metrics?.proxyPublishDrops ?? 0).to.be.greaterThan(0);
+		} finally {
+			await session.stop();
+		}
+	});
 
-				const id = root.getChannelId(topic, rootId);
-				const ch = (root as any).channelsBySuffixKey.get(id.suffixKey);
-				expect(ch?.metrics?.proxyPublishDrops ?? 0).to.be.greaterThan(0);
-			} finally {
-				await session.stop();
-			}
-		});
+	it("rate limits unicast ingress (abuse resistance)", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(3);
 
-		it("rate limits unicast ingress (abuse resistance)", async () => {
-			const session: TestSession<{ fanout: FanoutTree }> = await createFanoutTestSession(3);
+		try {
+			await session.connect([
+				[session.peers[0], session.peers[1]],
+				[session.peers[0], session.peers[2]],
+			]);
 
-			try {
-				await session.connect([
-					[session.peers[0], session.peers[1]],
-					[session.peers[0], session.peers[2]],
-				]);
+			const root = session.peers[0].services.fanout;
+			const leafA = session.peers[1].services.fanout;
+			const leafB = session.peers[2].services.fanout;
 
-				const root = session.peers[0].services.fanout;
-				const leafA = session.peers[1].services.fanout;
-				const leafB = session.peers[2].services.fanout;
+			const topic = "unicast-rate-limit";
+			const rootId = root.publicKeyHash;
 
-				const topic = "unicast-rate-limit";
-				const rootId = root.publicKeyHash;
+			const rootChannel = FanoutChannel.fromSelf(root, topic);
+			rootChannel.openAsRoot({
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 2,
+				repair: false,
+				// Deterministic drop for unicast payload frames.
+				unicastBudgetBps: 1,
+				unicastBurstMs: 1_000,
+			});
 
-				const rootChannel = FanoutChannel.fromSelf(root, topic);
-				rootChannel.openAsRoot({
+			const leafAChannel = new FanoutChannel(leafA, { topic, root: rootId });
+			await leafAChannel.join(
+				{
 					msgRate: 10,
 					msgSize: 64,
-					uploadLimitBps: 1_000_000,
-					maxChildren: 2,
+					uploadLimitBps: 0,
+					maxChildren: 0,
 					repair: false,
-					// Deterministic drop for unicast payload frames.
-					unicastBudgetBps: 1,
-					unicastBurstMs: 1_000,
-				});
+				},
+				{ timeoutMs: 10_000 },
+			);
 
-				const leafAChannel = new FanoutChannel(leafA, { topic, root: rootId });
-				await leafAChannel.join(
-					{
-						msgRate: 10,
-						msgSize: 64,
-						uploadLimitBps: 0,
-						maxChildren: 0,
-						repair: false,
-					},
-					{ timeoutMs: 10_000 },
-				);
+			const leafBChannel = new FanoutChannel(leafB, { topic, root: rootId });
+			await leafBChannel.join(
+				{
+					msgRate: 10,
+					msgSize: 64,
+					uploadLimitBps: 0,
+					maxChildren: 0,
+					repair: false,
+				},
+				{ timeoutMs: 10_000 },
+			);
 
-				const leafBChannel = new FanoutChannel(leafB, { topic, root: rootId });
-				await leafBChannel.join(
-					{
-						msgRate: 10,
-						msgSize: 64,
-						uploadLimitBps: 0,
-						maxChildren: 0,
-						repair: false,
-					},
-					{ timeoutMs: 10_000 },
-				);
+			let received: Uint8Array | undefined;
+			leafBChannel.addEventListener("unicast", (ev: any) => {
+				received = (ev?.detail as any)?.payload;
+			});
 
-				let received: Uint8Array | undefined;
-				leafBChannel.addEventListener("unicast", (ev: any) => {
-					received = (ev?.detail as any)?.payload;
-				});
-
-				await leafAChannel.unicastTo(leafB.publicKeyHash, new Uint8Array([1, 2, 3]), {
+			await leafAChannel.unicastTo(
+				leafB.publicKeyHash,
+				new Uint8Array([1, 2, 3]),
+				{
 					timeoutMs: 5_000,
-				});
+				},
+			);
 
-				await delay(200);
-				expect(received).to.equal(undefined);
+			await delay(200);
+			expect(received).to.equal(undefined);
 
-				const id = root.getChannelId(topic, rootId);
-				const ch = (root as any).channelsBySuffixKey.get(id.suffixKey);
-				expect(ch?.metrics?.unicastDrops ?? 0).to.be.greaterThan(0);
-			} finally {
-				await session.stop();
-			}
-		});
+			const id = root.getChannelId(topic, rootId);
+			const ch = (root as any).channelsBySuffixKey.get(id.suffixKey);
+			expect(ch?.metrics?.unicastDrops ?? 0).to.be.greaterThan(0);
+		} finally {
+			await session.stop();
+		}
 	});
+});

@@ -1,8 +1,59 @@
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { expect } from "chai";
 import {
 	formatFanoutTreeSimResult,
-	runFanoutTreeSim,
+	type FanoutTreeSimParams,
+	type FanoutTreeSimResult,
 } from "../benchmark/fanout-tree-sim-lib.js";
+
+const execFileAsync = promisify(execFile);
+
+const resolveSimRunnerPath = () => {
+	const currentDir = dirname(fileURLToPath(import.meta.url));
+	const candidates = [
+		resolve(currentDir, "fanout-tree-sim.runner.js"),
+		resolve(currentDir, "../dist/test/fanout-tree-sim.runner.js"),
+	];
+	for (const candidate of candidates) {
+		if (existsSync(candidate)) return candidate;
+	}
+	throw new Error(
+		`Unable to locate fanout-tree sim runner. Tried: ${candidates.join(", ")}`,
+	);
+};
+
+const runFanoutTreeSimIsolated = async (
+	params: Partial<FanoutTreeSimParams>,
+): Promise<FanoutTreeSimResult> => {
+	const runner = resolveSimRunnerPath();
+	const { stdout, stderr } = await execFileAsync(
+		process.execPath,
+		[runner, JSON.stringify(params)],
+		{
+			maxBuffer: 16 * 1024 * 1024,
+			env: process.env,
+		},
+	);
+
+	const trimmed = stdout.trim();
+	if (!trimmed) {
+		throw new Error(
+			`FanoutTreeSim runner produced no stdout${stderr ? `\n${stderr.trim()}` : ""}`,
+		);
+	}
+
+	try {
+		return JSON.parse(trimmed) as FanoutTreeSimResult;
+	} catch (error: any) {
+		throw new Error(
+			`Failed to parse FanoutTreeSim runner output as JSON: ${error?.message ?? String(error)}\n${trimmed}${stderr ? `\n${stderr.trim()}` : ""}`,
+		);
+	}
+};
 
 describe("fanout-tree-sim (ci)", () => {
 	const LOSSY_CHURN_TRACKER_BYTES_MAX = 150_000;
@@ -10,7 +61,7 @@ describe("fanout-tree-sim (ci)", () => {
 	it("joins and delivers on a small sim", async function () {
 		this.timeout(60_000);
 
-		const result = await runFanoutTreeSim({
+		const result = await runFanoutTreeSimIsolated({
 			nodes: 25,
 			bootstraps: 1,
 			subscribers: 20,
@@ -59,17 +110,18 @@ describe("fanout-tree-sim (ci)", () => {
 		expect(result.formationScore).to.be.lessThan(20);
 		expect(result.protocolFetchReqSent).to.equal(0);
 		expect(result.protocolIHaveSent).to.equal(0);
-		expect(result.protocolControlBytesSent).to.be.lessThan(50_000);
-		expect(result.trackerBpp).to.be.lessThan(3);
-		expect(result.repairBpp).to.be.lessThan(0.5);
-		expect(result.droppedForwardsTotal).to.equal(0);
+			expect(result.protocolControlBytesSent).to.be.lessThan(50_000);
+			expect(result.trackerBpp).to.be.lessThan(3);
+			expect(result.repairBpp).to.be.lessThan(0.5);
+			expect(result.reparentUpgradeTotal).to.equal(0);
+			expect(result.droppedForwardsTotal).to.equal(0);
 	});
 
 	it("stays structurally healthy under mild loss + churn", async function () {
 			this.timeout(90_000);
 			this.retries(1);
 
-			const result = await runFanoutTreeSim({
+			const result = await runFanoutTreeSimIsolated({
 				nodes: 40,
 				bootstraps: 1,
 				subscribers: 30,
@@ -147,9 +199,92 @@ describe("fanout-tree-sim (ci)", () => {
 		// In the lossy/churny smoke test, delivered payload fluctuates by design, so
 		// trackerBpp is noisier than the underlying tracker-byte volume. Gate the
 		// structural scenario on tracker control bytes directly instead.
-		expect(result.protocolControlBytesSentTracker).to.be.lessThan(
-			LOSSY_CHURN_TRACKER_BYTES_MAX,
-		);
-		expect(result.repairBpp).to.be.lessThan(5);
+			expect(result.protocolControlBytesSentTracker).to.be.lessThan(
+				LOSSY_CHURN_TRACKER_BYTES_MAX,
+			);
+			expect(result.repairBpp).to.be.lessThan(5);
+			expect(result.reparentUpgradeTotal).to.equal(0);
+		});
+
+	it("can shadow-cut over during active data with a dual path", async function () {
+		this.timeout(90_000);
+		this.retries(1);
+
+		const result = await runFanoutTreeSimIsolated({
+			nodes: 42,
+			bootstraps: 1,
+			subscribers: 32,
+			relayFraction: 0.5,
+			candidateScoringMode: "weighted",
+			joinConcurrency: 1,
+			joinPhases: true,
+			joinPhaseSettleMs: 300,
+			messages: 180,
+			msgRate: 60,
+			msgSize: 128,
+			streamRxDelayMs: 1,
+			settleMs: 2_000,
+			deadlineMs: 1_000,
+			timeoutMs: 60_000,
+			trackerQueryIntervalMs: 500,
+			repair: true,
+			rootUploadLimitBps: 100_000_000,
+			relayUploadLimitBps: 100_000_000,
+			rootMaxChildren: 2,
+			relayMaxChildren: 4,
+			dropDataFrameRate: 0,
+			churnEveryMs: 0,
+			lateRootConnectAfterMs: 750,
+			lateRootDuringPublish: true,
+			lateRootMaxChildren: 12,
+			lateRootConnectFraction: 0.6,
+			parentUpgradeIntervalMs: 250,
+			parentUpgradeLeafOnly: false,
+			parentUpgradeMinLevelGain: 1,
+			parentUpgradeRootMinLevelGain: 1,
+			parentUpgradeRootMinSubtreeGain: 1,
+			parentUpgradeNonRootMinLevelGain: 1,
+			parentUpgradeMinFreeSlots: 0,
+			parentUpgradeRootMinFreeSlots: 0,
+			parentUpgradeMaxChildLoadRatio: 1,
+			parentUpgradeRootMaxChildLoadRatio: 1,
+			parentUpgradeCooldownMs: 500,
+			parentUpgradeQuietMs: 0,
+			parentUpgradeRepairQuietMs: 0,
+			parentUpgradeMaxPerPeer: 1,
+			parentUpgradeRepairGuard: false,
+			parentUpgradeDataGuard: false,
+			parentUpgradeMode: "shadow",
+			parentUpgradeVerifyStaleRootCapacity: true,
+			parentUpgradeStaleRootProbeProbability: 1,
+			parentProbeTimeoutMs: 300,
+			parentProbeMaxPerRound: 1,
+			parentProbeMaxLagMessages: 100,
+			parentShadowObserveMs: 0,
+			parentShadowMinObservations: 1,
+			parentShadowDualPathMs: 1_000,
+			parentShadowDualPathMinMessages: 1,
+		});
+
+		if (
+			result.joinedPct < 99 ||
+			result.deliveredPct < 99 ||
+			result.deliveredWithinDeadlinePct < 95 ||
+			result.publishActiveParentShadowPromoteTotal < 1 ||
+			result.reparentUpgradeTotal < 1 ||
+			result.overheadFactorData > 1.5 ||
+			result.formationTreeOrphans > 0
+		) {
+			console.log(formatFanoutTreeSimResult(result));
+		}
+
+		expect(result.joinedPct).to.be.greaterThan(99);
+		expect(result.deliveredPct).to.be.greaterThan(99);
+		expect(result.deliveredWithinDeadlinePct).to.be.greaterThan(95);
+		expect(result.reparentUpgradeTotal).to.be.greaterThan(0);
+		expect(result.publishActiveParentShadowPromoteTotal).to.be.greaterThan(0);
+		expect(result.publishActiveReparentUpgradeTotal).to.be.greaterThan(0);
+		expect(result.overheadFactorData).to.be.lessThan(1.5);
+		expect(result.formationTreeOrphans).to.equal(0);
 	});
-});
+	});

@@ -253,10 +253,7 @@ export class TopicControlPlane
 	private readonly shardCount: number;
 	private readonly shardTopicPrefix: string;
 	private readonly hostShards: boolean;
-	private readonly shardRootCache = new Map<
-		string,
-		{ root: string; authoritative: boolean }
-	>();
+	private readonly shardRootCache = new Map<string, { root: string; authoritative: boolean }>();
 	private readonly shardTopicCache = new Map<string, string>();
 	private readonly shardRefCounts = new Map<string, number>();
 	private readonly pinnedShards = new Set<string>();
@@ -1137,6 +1134,7 @@ export class TopicControlPlane
 			signal?: AbortSignal;
 		},
 	): Promise<void> {
+		if (!this.started) throw new NotStartedError();
 		const t = shardTopic.toString();
 		const pin = options?.pin === true;
 		const wantEphemeral = options?.ephemeral === true;

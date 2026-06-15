@@ -1,6 +1,11 @@
-import { getPublicKeyFromPeerId, ready, sha256Sync, toBase64 } from "@peerbit/crypto";
 import type { Connection } from "@libp2p/interface";
 import { type Multiaddr, multiaddr } from "@multiformats/multiaddr";
+import {
+	getPublicKeyFromPeerId,
+	ready,
+	sha256Sync,
+	toBase64,
+} from "@peerbit/crypto";
 import {
 	DirectStream,
 	type DirectStreamComponents,
@@ -18,6 +23,99 @@ import { AbortError, TimeoutError, delay } from "@peerbit/time";
 import { anySignal } from "any-signal";
 import { Uint8ArrayList } from "uint8arraylist";
 import { normalizeUint8Array, toUint8Array } from "./bytes.js";
+import {
+	JOIN_REJECT_LOW_BID,
+	JOIN_REJECT_NO_CAPACITY,
+	JOIN_REJECT_NOT_ATTACHED,
+	JOIN_REJECT_REDIRECT_ADDR_MAX,
+	JOIN_REJECT_REDIRECT_MAX,
+	MAX_ROUTE_HOPS,
+	MSG_DATA,
+	MSG_END,
+	MSG_FETCH_REQ,
+	MSG_IHAVE,
+	MSG_JOIN_ACCEPT,
+	MSG_JOIN_REJECT,
+	MSG_JOIN_REQ,
+	MSG_KICK,
+	MSG_LEAVE,
+	MSG_PARENT_PROBE_REPLY,
+	MSG_PARENT_PROBE_REQ,
+	MSG_PROVIDER_ANNOUNCE,
+	MSG_PROVIDER_NOTIFY,
+	MSG_PROVIDER_QUERY,
+	MSG_PROVIDER_REPLY,
+	MSG_PROVIDER_SUBSCRIBE,
+	MSG_PROVIDER_UNSUBSCRIBE,
+	MSG_PUBLISH_PROXY,
+	MSG_REPAIR_REQ,
+	MSG_ROUTE_QUERY,
+	MSG_ROUTE_REPLY,
+	MSG_TRACKER_ANNOUNCE,
+	MSG_TRACKER_FEEDBACK,
+	MSG_TRACKER_QUERY,
+	MSG_TRACKER_REPLY,
+	MSG_UNICAST,
+	MSG_UNICAST_ACK,
+	PARENT_PROBE_FLAG_ACCEPTING,
+	PARENT_PROBE_FLAG_OVERLOADED,
+	PARENT_PROBE_FLAG_REPAIRING,
+	PARENT_PROBE_FLAG_ROOTED,
+	TRACKER_FEEDBACK_DIAL_FAILED,
+	TRACKER_FEEDBACK_JOINED,
+	TRACKER_FEEDBACK_JOIN_REJECT,
+	TRACKER_FEEDBACK_JOIN_TIMEOUT,
+	UNICAST_ACK_DEFAULT_TIMEOUT_MS,
+	UNICAST_FLAG_ACK,
+	clampU16,
+	decodeJoinReq,
+	decodeParentProbeReply,
+	decodeParentProbeReq,
+	decodeProviderEntries,
+	decodeRoute,
+	encodeData,
+	encodeEnd,
+	encodeFetchReq,
+	encodeIHave,
+	encodeJoinAccept,
+	encodeJoinReject,
+	encodeJoinReq,
+	encodeKick,
+	encodeLeave,
+	encodeParentProbeReply,
+	encodeParentProbeReq,
+	encodeProviderAnnounce,
+	encodeProviderNotify,
+	encodeProviderQuery,
+	encodeProviderReply,
+	encodeProviderSubscribe,
+	encodeProviderUnsubscribe,
+	encodePublishProxy,
+	encodeRepairReq,
+	encodeRouteQuery,
+	encodeRouteReply,
+	encodeTrackerAnnounce,
+	encodeTrackerFeedback,
+	encodeTrackerQuery,
+	encodeTrackerReply,
+	encodeUnicast,
+	encodeUnicastAck,
+	type JoinRejectRedirect,
+	type ParentProbeReply,
+	type ProviderEntry,
+	readU16BE,
+	readU32BE,
+	readU64BE,
+	type TrackerEntry,
+	writeU32BE,
+} from "./fanout-tree-codec.js";
+import {
+	evaluateParentUpgradeGate,
+	normalizeParentUpgradePolicy,
+	recordParentUpgradeSkip,
+	type ParentUpgradePolicy,
+	type ParentUpgradeSkipReason,
+} from "./fanout-tree-parent-upgrade.js";
 import { TopicRootControlPlane } from "./topic-root-control-plane.js";
 
 export type FanoutTreeChannelId = {
@@ -265,6 +363,243 @@ export type FanoutTreeJoinOptions = {
 	trackerQueryIntervalMs?: number;
 
 	/**
+	 * Min interval between parent-improvement checks while already attached.
+	 *
+	 * Set to `0` to preserve the current stability-first behavior where a healthy
+	 * parent is only replaced after disconnect/staleness/kick.
+	 */
+	parentUpgradeIntervalMs?: number;
+
+	/**
+	 * Restrict proactive parent upgrades to leaves (nodes with no children).
+	 *
+	 * Defaults to `true` so parent improvement can be evaluated without
+	 * introducing relay churn higher in the tree.
+	 */
+	parentUpgradeLeafOnly?: boolean;
+
+	/**
+	 * Minimum tree-level improvement required before replacing a healthy parent.
+	 *
+	 * `1` means only strictly better parents are eligible. Higher values add
+	 * hysteresis against marginal topology churn.
+	 */
+	parentUpgradeMinLevelGain?: number;
+
+	/**
+	 * Minimum tree-level improvement required for proactive upgrades directly to
+	 * the root.
+	 *
+	 * Defaults to `3`. Root fanout is the scarce sender-side resource for a topic,
+	 * so direct-root upgrades require a stronger benefit than ordinary relay
+	 * improvements.
+	 */
+	parentUpgradeRootMinLevelGain?: number;
+
+	/**
+	 * Minimum local branch improvement required for proactive upgrades directly to
+	 * the root.
+	 *
+	 * This is `levelGain * (1 + directChildren)`. It lets a relay-to-root move be
+	 * admitted when it improves a branch, even if the relay's own level gain is
+	 * smaller than `parentUpgradeRootMinLevelGain`. Defaults to
+	 * `parentUpgradeRootMinLevelGain`.
+	 */
+	parentUpgradeRootMinSubtreeGain?: number;
+
+	/**
+	 * Minimum tree-level improvement required for proactive upgrades to non-root
+	 * relay parents.
+	 *
+	 * Defaults to `2` so a late direct root edge can still repair a one-level
+	 * detour, while marginal relay-to-relay moves are avoided under load.
+	 */
+	parentUpgradeNonRootMinLevelGain?: number;
+
+	/**
+	 * Minimum advertised free child slots required for a proactive upgrade target.
+	 *
+	 * Defaults to `8` so a target still has several spare slots after accepting
+	 * this child; this avoids stampeding nearly-full parents under constrained
+	 * fanout.
+	 */
+	parentUpgradeMinFreeSlots?: number;
+
+	/**
+	 * Minimum advertised free child slots required for a proactive direct-root
+	 * upgrade target.
+	 *
+	 * Defaults to `parentUpgradeMinFreeSlots`. This can be tuned independently
+	 * because root spare capacity protects sender-side fanout pressure, while
+	 * relay spare capacity protects intermediate branch stability.
+	 */
+	parentUpgradeRootMinFreeSlots?: number;
+
+	/**
+	 * Maximum child-load ratio allowed for a live-probed proactive upgrade target
+	 * after accepting this peer.
+	 *
+	 * Defaults to `0.5`. Set to `0` to disable the ratio check.
+	 */
+	parentUpgradeMaxChildLoadRatio?: number;
+
+	/**
+	 * Maximum child-load ratio allowed for a live-probed direct-root upgrade target
+	 * after accepting this peer.
+	 *
+	 * Defaults to `min(parentUpgradeMaxChildLoadRatio, 0.4)`. Root fanout is the
+	 * scarce sender-side resource, so root pressure stays more conservative than
+	 * relay parent pressure. Peers maintaining multiple local channels apply an
+	 * additional effective cap of `0.2` for direct-root upgrades so concurrent
+	 * writer trees do not concentrate on the same root at once.
+	 */
+	parentUpgradeRootMaxChildLoadRatio?: number;
+
+	/**
+	 * Cooldown after a successful proactive upgrade before trying another one.
+	 */
+	parentUpgradeCooldownMs?: number;
+
+	/**
+	 * Initial backoff after a failed probe/shadow parent-upgrade round.
+	 *
+	 * Failed rounds usually mean stale tracker state or saturated candidate
+	 * parents. Backoff is per channel and doubles up to
+	 * `parentUpgradeFailedBackoffMaxMs`.
+	 */
+	parentUpgradeFailedBackoffMinMs?: number;
+
+	/**
+	 * Maximum per-channel backoff after repeated failed probe/shadow rounds.
+	 */
+	parentUpgradeFailedBackoffMaxMs?: number;
+
+	/**
+	 * Minimum quiet time since parent attachment/data before a proactive upgrade.
+	 *
+	 * Defaults to 5s. This avoids voluntarily probing or switching parents during
+	 * active delivery or directly after a repair/rejoin event.
+	 */
+	parentUpgradeQuietMs?: number;
+
+	/**
+	 * Minimum quiet time since the last local repair request before a proactive
+	 * upgrade check.
+	 *
+	 * Defaults to `parentUpgradeQuietMs` so upgrade probing stays silent while the
+	 * peer is still recovering missing data.
+	 */
+	parentUpgradeRepairQuietMs?: number;
+
+	/**
+	 * Max successful proactive upgrades for one channel peer. Set to `0` for no cap.
+	 */
+	parentUpgradeMaxPerPeer?: number;
+
+	/**
+	 * Skip proactive upgrades while this peer is actively missing data.
+	 */
+	parentUpgradeRepairGuard?: boolean;
+
+	/**
+	 * Skip proactive upgrades until a finite channel end has been received and caught up.
+	 */
+	parentUpgradeDataGuard?: boolean;
+
+	/**
+	 * Parent-upgrade strategy.
+	 *
+	 * - `direct`: join a better advertised parent directly.
+	 * - `probe`: first ask candidate parents for fresh level/capacity/data-state,
+	 *   then only join a bounded winner.
+	 * - `shadow` (default): keep the current parent active, repeatedly probe one
+	 *   candidate over an observation window, then promote only after it remains
+	 *   healthy.
+	 */
+	parentUpgradeMode?: "direct" | "probe" | "shadow";
+
+	/**
+	 * Allow shadow mode to probe a direct root candidate even when tracker
+	 * capacity says the root is full.
+	 *
+	 * Defaults to `true` in shadow mode and `false` otherwise. Shadow mode keeps
+	 * this bounded by `parentUpgradeStaleRootProbeProbability` and live capacity
+	 * probes, while direct/probe modes avoid stale-root pressure unless explicitly
+	 * enabled.
+	 */
+	parentUpgradeVerifyStaleRootCapacity?: boolean;
+
+	/**
+	 * Deterministic per-peer base sampling probability for stale-root verification.
+	 *
+	 * This applies only when `parentUpgradeVerifyStaleRootCapacity` is enabled and
+	 * tracker capacity says the root is full. Defaults to `0.015625` to avoid every
+	 * eligible peer probing the same advertised-full root at once. Single-channel
+	 * branch peers may use a bounded sample boost, capped at `0.25`; quiet,
+	 * completed single-channel leaves may use a `0.5` sample. Settled leaves that
+	 * maintain multiple local channels require fresh tracker capacity, recent slow
+	 * parent-delivery evidence, and a low-rate deterministic sample at the default
+	 * probability; raise this value explicitly to opt into more pressure.
+	 */
+	parentUpgradeStaleRootProbeProbability?: number;
+
+	/**
+	 * How long to wait for a parent probe reply before skipping that candidate.
+	 */
+	parentProbeTimeoutMs?: number;
+
+	/**
+	 * Max candidate parents to probe per upgrade check.
+	 */
+	parentProbeMaxPerRound?: number;
+
+	/**
+	 * Max sequence lag tolerated for a probed parent candidate.
+	 *
+	 * `0` requires the candidate to be at least as fresh as this peer.
+	 */
+	parentProbeMaxLagMessages?: number;
+
+	/**
+	 * Cooldown for a candidate after a probe proves it cannot safely become
+	 * our parent. This bounds repeated probes against stale tracker entries.
+	 */
+	parentProbeRejectCooldownMs?: number;
+
+	/**
+	 * Maximum adaptive cooldown for a candidate after repeated rejected parent
+	 * probes.
+	 */
+	parentProbeRejectCooldownMaxMs?: number;
+
+	/**
+	 * Minimum time a shadow parent candidate must stay healthy before promotion.
+	 */
+	parentShadowObserveMs?: number;
+
+	/**
+	 * Minimum successful shadow observations required before promotion.
+	 */
+	parentShadowMinObservations?: number;
+
+	/**
+	 * In shadow mode, keep the old parent attached for this long after a
+	 * candidate accepts JOIN before promoting during active data flow.
+	 *
+	 * Defaults to `5000` in shadow mode and `0` otherwise. Set to `0` to use
+	 * immediate post-probe promotion.
+	 */
+	parentShadowDualPathMs?: number;
+
+	/**
+	 * Minimum live messages that must arrive from a shadow-attached candidate
+	 * before active-flow promotion is allowed.
+	 *
+	 * Defaults to `32` in shadow mode and `1` otherwise.
+	 */
+	parentShadowDualPathMinMessages?: number;
+
+	/**
 	 * Max number of join candidates to try per retry "round".
 	 *
 	 * This prevents a long tail of sequential JOIN_REQ timeouts from blocking
@@ -374,6 +709,14 @@ export type FanoutTreeUnicastEvent = {
 	message: DataMessage; // transport-level message carrying the unicast control frame
 };
 
+/**
+ * Diagnostic counters used by tests and simulation harnesses.
+ *
+ * These fields are intentionally detailed so failures can explain which guard
+ * fired, but they are not a stable product API.
+ *
+ * @internal
+ */
 export type FanoutTreeChannelMetrics = {
 	controlSends: number;
 	controlBytesSent: number;
@@ -421,6 +764,44 @@ export type FanoutTreeChannelMetrics = {
 	reparentDisconnect: number;
 	reparentStale: number;
 	reparentKicked: number;
+	reparentUpgrade: number;
+	reparentUpgradeSkipLeaf: number;
+	reparentUpgradeSkipRepair: number;
+	reparentUpgradeSkipData: number;
+	reparentUpgradeSkipCooldown: number;
+	reparentUpgradeSkipQuiet: number;
+	reparentUpgradeSkipBudget: number;
+	reparentUpgradeSkipCandidateLevel: number;
+	reparentUpgradeSkipCandidateSlots: number;
+	reparentUpgradeSkipCandidatePressure: number;
+	reparentUpgradeSkipRootPressure: number;
+	reparentUpgradeSkipProbeNoReply: number;
+	reparentUpgradeSkipProbeNotRooted: number;
+	reparentUpgradeSkipProbeRepair: number;
+	reparentUpgradeSkipProbeLag: number;
+	reparentUpgradeSkipProbeOverloaded: number;
+	reparentUpgradeSkipProbeCooldown: number;
+	parentProbeReqSent: number;
+	parentProbeReqReceived: number;
+	parentProbeReplySent: number;
+	parentProbeReplyReceived: number;
+	parentUpgradeRootReservationCreated: number;
+	parentUpgradeRootReservationConsumed: number;
+	parentUpgradeRootReservationRejected: number;
+	parentUpgradeRootReservationMarginRejected: number;
+	parentUpgradeRootReservationBlocked: number;
+	parentUpgradeRootReservationExpired: number;
+	parentShadowStart: number;
+	parentShadowObserve: number;
+	parentShadowPromote: number;
+	parentShadowReset: number;
+	parentShadowRejectNoReply: number;
+	parentShadowRejectNotRooted: number;
+	parentShadowRejectCapacity: number;
+	parentShadowRejectRepair: number;
+	parentShadowRejectLag: number;
+	parentShadowRejectOverloaded: number;
+	parentShadowRejectLevel: number;
 	endSent: number;
 	endReceived: number;
 
@@ -507,8 +888,6 @@ const PARENT_REPAIR_DEAD_MIN_LIVENESS_MS = 15_000;
 const REPAIR_RETRY_MIN_MS = 1_000;
 const REPAIR_RETRY_INTERVAL_FACTOR = 5;
 
-const JOIN_REJECT_REDIRECT_MAX = 4;
-const JOIN_REJECT_REDIRECT_ADDR_MAX = 8;
 const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
 // When a relay loses its parent, pause before trying to rejoin so its children can
 // attach elsewhere (helps avoid disconnected components stabilizing).
@@ -517,440 +896,19 @@ const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
 // This gives kicked children a window to reattach elsewhere (helps avoid stable
 // disconnected components). Leaf nodes (no children) rejoin immediately.
 const RELAY_REJOIN_COOLDOWN_MS = 3_000;
+const PARENT_UPGRADE_ROOT_RESERVATION_TTL_MS = 5_000;
 
-const MSG_JOIN_REQ = 1;
-const MSG_JOIN_ACCEPT = 2;
-const MSG_JOIN_REJECT = 3;
-const MSG_KICK = 4;
-const MSG_DATA = 10;
-const MSG_END = 11;
-const MSG_UNICAST = 12;
-const MSG_ROUTE_QUERY = 13;
-const MSG_ROUTE_REPLY = 14;
-const MSG_PUBLISH_PROXY = 15;
-const MSG_LEAVE = 16;
-const MSG_UNICAST_ACK = 17;
-const MSG_REPAIR_REQ = 20;
-const MSG_FETCH_REQ = 21;
-const MSG_IHAVE = 22;
-const MSG_TRACKER_ANNOUNCE = 30;
-const MSG_TRACKER_QUERY = 31;
-const MSG_TRACKER_REPLY = 32;
-const MSG_TRACKER_FEEDBACK = 33;
-const MSG_PROVIDER_ANNOUNCE = 34;
-const MSG_PROVIDER_QUERY = 35;
-const MSG_PROVIDER_REPLY = 36;
-const MSG_PROVIDER_SUBSCRIBE = 37;
-const MSG_PROVIDER_UNSUBSCRIBE = 38;
-const MSG_PROVIDER_NOTIFY = 39;
-
-const JOIN_REJECT_NOT_ATTACHED = 1;
-const JOIN_REJECT_NO_CAPACITY = 2;
-const JOIN_REJECT_LOW_BID = 3;
-
-const TRACKER_FEEDBACK_JOINED = 1;
-const TRACKER_FEEDBACK_DIAL_FAILED = 2;
-const TRACKER_FEEDBACK_JOIN_TIMEOUT = 3;
-const TRACKER_FEEDBACK_JOIN_REJECT = 4;
+const stableUnitInterval = (input: string) => {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < input.length; i++) {
+		hash ^= input.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0) / 0x100000000;
+};
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-
-const writeU32BE = (buf: Uint8Array, offset: number, value: number) => {
-	buf[offset + 0] = (value >>> 24) & 0xff;
-	buf[offset + 1] = (value >>> 16) & 0xff;
-	buf[offset + 2] = (value >>> 8) & 0xff;
-	buf[offset + 3] = value & 0xff;
-};
-
-const readU32BE = (buf: Uint8Array, offset: number) =>
-	((buf[offset + 0] << 24) |
-		(buf[offset + 1] << 16) |
-		(buf[offset + 2] << 8) |
-		buf[offset + 3]) >>> 0;
-
-const writeU64BE = (buf: Uint8Array, offset: number, value: bigint) => {
-	let v = value & 0xffffffffffffffffn;
-	for (let i = 7; i >= 0; i--) {
-		buf[offset + i] = Number(v & 0xffn);
-		v >>= 8n;
-	}
-};
-
-const readU64BE = (buf: Uint8Array, offset: number) => {
-	let v = 0n;
-	for (let i = 0; i < 8; i++) {
-		v = (v << 8n) | BigInt(buf[offset + i]!);
-	}
-	return v;
-};
-
-const writeU16BE = (buf: Uint8Array, offset: number, value: number) => {
-	buf[offset + 0] = (value >>> 8) & 0xff;
-	buf[offset + 1] = value & 0xff;
-};
-
-const readU16BE = (buf: Uint8Array, offset: number) =>
-	((buf[offset + 0] << 8) | buf[offset + 1]) >>> 0;
-
-const encodeJoinReq = (channelKey: Uint8Array, reqId: number, bidPerByte: number) => {
-	const buf = new Uint8Array(1 + 32 + 4 + 4);
-	buf[0] = MSG_JOIN_REQ;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	writeU32BE(buf, 37, bidPerByte >>> 0);
-	return buf;
-};
-
-const MAX_ROUTE_HOPS = 32;
-
-const UNICAST_FLAG_ACK = 1;
-const UNICAST_ACK_DEFAULT_TIMEOUT_MS = 30_000;
-
-const encodeJoinAccept = (
-	channelKey: Uint8Array,
-	reqId: number,
-	level: number,
-	parentRouteFromRoot?: string[],
-	haveRange?: { haveFrom: number; haveToExclusive: number },
-) => {
-	const routeBytes: Uint8Array[] = [];
-	let bytes = 1 + 32 + 4 + 2 + 1;
-	if (haveRange) bytes += 8;
-	let count = 0;
-
-	for (const hop of parentRouteFromRoot ?? []) {
-		if (count >= MAX_ROUTE_HOPS) break;
-		if (typeof hop !== "string") continue;
-		const hb = textEncoder.encode(hop);
-		if (hb.length === 0 || hb.length > 255) continue;
-		routeBytes.push(hb);
-		bytes += 1 + hb.length;
-		count += 1;
-	}
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_JOIN_ACCEPT;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	writeU16BE(buf, 37, level & 0xffff);
-	buf[39] = count & 0xff;
-
-	let offset = 40;
-	for (const hb of routeBytes) {
-		buf[offset++] = hb.length & 0xff;
-		buf.set(hb, offset);
-		offset += hb.length;
-	}
-	if (haveRange) {
-		writeU32BE(buf, offset, haveRange.haveFrom >>> 0);
-		offset += 4;
-		writeU32BE(buf, offset, haveRange.haveToExclusive >>> 0);
-		offset += 4;
-	}
-	return buf;
-};
-
-const encodeJoinReject = (
-	channelKey: Uint8Array,
-	reqId: number,
-	reason: number,
-	redirects?: JoinRejectRedirect[],
-) => {
-	const encoded: Array<{ hashBytes: Uint8Array; addrs: Uint8Array[] }> = [];
-	for (const r of redirects ?? []) {
-		if (!r?.hash) continue;
-		const hashBytes = textEncoder.encode(r.hash);
-		if (hashBytes.length === 0 || hashBytes.length > 255) continue;
-		const addrs = (r.addrs ?? [])
-			.filter((a): a is Uint8Array => a instanceof Uint8Array)
-			.filter((a) => a.length > 0 && a.length <= 0xffff)
-			.slice(0, JOIN_REJECT_REDIRECT_ADDR_MAX);
-		if (addrs.length === 0) continue;
-		encoded.push({ hashBytes, addrs });
-		if (encoded.length >= JOIN_REJECT_REDIRECT_MAX) break;
-	}
-
-	if (encoded.length === 0) {
-		const buf = new Uint8Array(1 + 32 + 4 + 1);
-		buf[0] = MSG_JOIN_REJECT;
-		buf.set(channelKey, 1);
-		writeU32BE(buf, 33, reqId >>> 0);
-		buf[37] = reason & 0xff;
-		return buf;
-	}
-
-	let bytes = 1 + 32 + 4 + 1 + 1;
-	for (const e of encoded) {
-		bytes += 1 + e.hashBytes.length + 1;
-		for (const a of e.addrs) bytes += 2 + a.length;
-	}
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_JOIN_REJECT;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = reason & 0xff;
-	buf[38] = Math.max(0, Math.min(255, encoded.length)) & 0xff;
-	let offset = 39;
-	for (const e of encoded) {
-		buf[offset++] = e.hashBytes.length & 0xff;
-		buf.set(e.hashBytes, offset);
-		offset += e.hashBytes.length;
-		buf[offset++] = Math.max(0, Math.min(255, e.addrs.length)) & 0xff;
-		for (const a of e.addrs) {
-			writeU16BE(buf, offset, a.length);
-			offset += 2;
-			buf.set(a, offset);
-			offset += a.length;
-		}
-	}
-
-	return buf;
-};
-
-const encodeKick = (channelKey: Uint8Array) => {
-	const buf = new Uint8Array(1 + 32);
-	buf[0] = MSG_KICK;
-	buf.set(channelKey, 1);
-	return buf;
-};
-
-const encodeEnd = (channelKey: Uint8Array, lastSeqExclusive: number) => {
-	const buf = new Uint8Array(1 + 32 + 4);
-	buf[0] = MSG_END;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, lastSeqExclusive >>> 0);
-	return buf;
-};
-
-const encodeRepairReq = (
-	channelKey: Uint8Array,
-	reqId: number,
-	missingSeqs: number[],
-) => {
-	const count = Math.max(0, Math.min(255, missingSeqs.length));
-	const buf = new Uint8Array(1 + 32 + 4 + 1 + count * 4);
-	buf[0] = MSG_REPAIR_REQ;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = count & 0xff;
-	for (let i = 0; i < count; i++) {
-		writeU32BE(buf, 38 + i * 4, missingSeqs[i]! >>> 0);
-	}
-	return buf;
-};
-
-const encodeFetchReq = (
-	channelKey: Uint8Array,
-	reqId: number,
-	missingSeqs: number[],
-) => {
-	const count = Math.max(0, Math.min(255, missingSeqs.length));
-	const buf = new Uint8Array(1 + 32 + 4 + 1 + count * 4);
-	buf[0] = MSG_FETCH_REQ;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = count & 0xff;
-	for (let i = 0; i < count; i++) {
-		writeU32BE(buf, 38 + i * 4, missingSeqs[i]! >>> 0);
-	}
-	return buf;
-};
-
-const encodeIHave = (
-	channelKey: Uint8Array,
-	haveFrom: number,
-	haveToExclusive: number,
-) => {
-	const buf = new Uint8Array(1 + 32 + 4 + 4);
-	buf[0] = MSG_IHAVE;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, haveFrom >>> 0);
-	writeU32BE(buf, 37, haveToExclusive >>> 0);
-	return buf;
-};
-
-const encodeData = (payload: Uint8Array) => {
-	const buf = new Uint8Array(1 + payload.length);
-	buf[0] = MSG_DATA;
-	buf.set(payload, 1);
-	return buf;
-};
-
-const encodePublishProxy = (channelKey: Uint8Array, payload: Uint8Array) => {
-	const buf = new Uint8Array(1 + 32 + payload.length);
-	buf[0] = MSG_PUBLISH_PROXY;
-	buf.set(channelKey, 1);
-	buf.set(payload, 33);
-	return buf;
-};
-
-const encodeLeave = (channelKey: Uint8Array) => {
-	const buf = new Uint8Array(1 + 32);
-	buf[0] = MSG_LEAVE;
-	buf.set(channelKey, 1);
-	return buf;
-};
-
-const encodeUnicast = (
-	channelKey: Uint8Array,
-	route: string[],
-	payload: Uint8Array,
-	options?: { ackToken?: bigint; replyRoute?: string[] },
-) => {
-	const wantsAck = options?.ackToken != null;
-	const flags = wantsAck ? UNICAST_FLAG_ACK : 0;
-	const toRouteBytes: Uint8Array[] = [];
-	let bytes = 1 + 32 + 1 + (wantsAck ? 8 : 0) + 1;
-	let toCount = 0;
-
-	for (const hop of route ?? []) {
-		if (toCount >= MAX_ROUTE_HOPS) break;
-		if (typeof hop !== "string") continue;
-		const hb = textEncoder.encode(hop);
-		if (hb.length === 0 || hb.length > 255) continue;
-		toRouteBytes.push(hb);
-		bytes += 1 + hb.length;
-		toCount += 1;
-	}
-
-	const replyRouteBytes: Uint8Array[] = [];
-	let replyCount = 0;
-	if (wantsAck) {
-		bytes += 1; // replyRouteCount
-		for (const hop of options?.replyRoute ?? []) {
-			if (replyCount >= MAX_ROUTE_HOPS) break;
-			if (typeof hop !== "string") continue;
-			const hb = textEncoder.encode(hop);
-			if (hb.length === 0 || hb.length > 255) continue;
-			replyRouteBytes.push(hb);
-			bytes += 1 + hb.length;
-			replyCount += 1;
-		}
-	}
-
-	bytes += payload.byteLength;
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_UNICAST;
-	buf.set(channelKey, 1);
-	buf[33] = flags & 0xff;
-	let offset = 34;
-	if (wantsAck) {
-		writeU64BE(buf, offset, options!.ackToken!);
-		offset += 8;
-	}
-	buf[offset++] = toCount & 0xff;
-	for (const hb of toRouteBytes) {
-		buf[offset++] = hb.length & 0xff;
-		buf.set(hb, offset);
-		offset += hb.length;
-	}
-	if (wantsAck) {
-		buf[offset++] = replyCount & 0xff;
-		for (const hb of replyRouteBytes) {
-			buf[offset++] = hb.length & 0xff;
-			buf.set(hb, offset);
-			offset += hb.length;
-		}
-	}
-	buf.set(payload, offset);
-	return buf;
-};
-
-const encodeUnicastAck = (channelKey: Uint8Array, ackToken: bigint, route: string[]) => {
-	const routeBytes: Uint8Array[] = [];
-	let bytes = 1 + 32 + 8 + 1;
-	let count = 0;
-	for (const hop of route ?? []) {
-		if (count >= MAX_ROUTE_HOPS) break;
-		if (typeof hop !== "string") continue;
-		const hb = textEncoder.encode(hop);
-		if (hb.length === 0 || hb.length > 255) continue;
-		routeBytes.push(hb);
-		bytes += 1 + hb.length;
-		count += 1;
-	}
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_UNICAST_ACK;
-	buf.set(channelKey, 1);
-	writeU64BE(buf, 33, ackToken);
-	buf[41] = count & 0xff;
-	let offset = 42;
-	for (const hb of routeBytes) {
-		buf[offset++] = hb.length & 0xff;
-		buf.set(hb, offset);
-		offset += hb.length;
-	}
-	return buf;
-};
-
-const encodeRouteQuery = (
-	channelKey: Uint8Array,
-	reqId: number,
-	targetHash: string,
-) => {
-	const targetBytes = textEncoder.encode(targetHash);
-	const targetLen = Math.max(0, Math.min(255, targetBytes.length));
-	const buf = new Uint8Array(1 + 32 + 4 + 1 + targetLen);
-	buf[0] = MSG_ROUTE_QUERY;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = targetLen & 0xff;
-	buf.set(targetBytes.subarray(0, targetLen), 38);
-	return buf;
-};
-
-const encodeRouteReply = (
-	channelKey: Uint8Array,
-	reqId: number,
-	route?: string[],
-) => {
-	const routeBytes: Uint8Array[] = [];
-	let bytes = 1 + 32 + 4 + 1;
-	let count = 0;
-	for (const hop of route ?? []) {
-		if (count >= MAX_ROUTE_HOPS) break;
-		if (typeof hop !== "string") continue;
-		const hb = textEncoder.encode(hop);
-		if (hb.length === 0 || hb.length > 255) continue;
-		routeBytes.push(hb);
-		bytes += 1 + hb.length;
-		count += 1;
-	}
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_ROUTE_REPLY;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = count & 0xff;
-	let offset = 38;
-	for (const hb of routeBytes) {
-		buf[offset++] = hb.length & 0xff;
-		buf.set(hb, offset);
-		offset += hb.length;
-	}
-	return buf;
-};
-
-const decodeRoute = (
-	data: Uint8Array,
-	offsetStart: number,
-	routeCount: number,
-): { route: string[]; offset: number } => {
-	let offset = offsetStart;
-	const route: string[] = [];
-	for (let i = 0; i < routeCount; i++) {
-		if (offset + 1 > data.length) break;
-		const len = data[offset++]!;
-		if (len === 0) break;
-		if (offset + len > data.length) break;
-		if (route.length < MAX_ROUTE_HOPS) {
-			route.push(textDecoder.decode(data.subarray(offset, offset + len)));
-		}
-		offset += len;
-	}
-	return { route, offset };
-};
 
 type RouteCacheEntry = {
 	route: string[];
@@ -965,151 +923,45 @@ type TrackerCandidate = {
 	addrs: Multiaddr[];
 };
 
-type TrackerEntry = {
+type ParentShadowState = {
 	hash: string;
+	startedAt: number;
+	observations: number;
 	level: number;
 	freeSlots: number;
-	bidPerByte: number;
-	addrs: Uint8Array[];
-	expiresAt: number;
+	haveToExclusive: number;
+	liveDataMessages: number;
+	liveFirstDataMessages: number;
+	liveParentFirstDataMessages: number;
+	liveCandidateLeadSamples: number;
+	liveCandidateLeadMsTotal: number;
+	liveCandidateFirstAtBySeq: Map<number, number>;
+	liveParentFirstAtBySeq: Map<number, number>;
+	liveComparedSeqs: Set<number>;
+	liveMaxSeqSeen: number;
+	liveLastDataAt: number;
 };
 
-type JoinRejectRedirect = {
-	hash: string;
-	addrs: Uint8Array[];
-};
-
-const clampU16 = (v: number) => Math.max(0, Math.min(0xffff, v | 0));
-
-const encodeTrackerAnnounce = (
-	channelKey: Uint8Array,
-	ttlMs: number,
-	level: number,
-	maxChildren: number,
-	freeSlots: number,
-	bidPerByte: number,
-	addrs: Multiaddr[],
-) => {
-	const addrCount = Math.max(0, Math.min(255, addrs.length));
-	let bytes = 1 + 32 + 4 + 2 + 2 + 2 + 4 + 1;
-	const addrBytes = new Array<Uint8Array>(addrCount);
-	for (let i = 0; i < addrCount; i++) {
-		const b = addrs[i]!.bytes;
-		addrBytes[i] = b;
-		bytes += 2 + b.length;
-	}
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_TRACKER_ANNOUNCE;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, Math.max(0, Math.floor(ttlMs)) >>> 0);
-	writeU16BE(buf, 37, clampU16(level));
-	writeU16BE(buf, 39, clampU16(maxChildren));
-	writeU16BE(buf, 41, clampU16(freeSlots));
-	writeU32BE(buf, 43, Math.max(0, Math.floor(bidPerByte)) >>> 0);
-	buf[47] = addrCount & 0xff;
-	let offset = 48;
-	for (let i = 0; i < addrCount; i++) {
-		const b = addrBytes[i]!;
-		writeU16BE(buf, offset, b.length);
-		offset += 2;
-		buf.set(b, offset);
-		offset += b.length;
-	}
-	return buf;
-};
-
-const encodeTrackerQuery = (channelKey: Uint8Array, reqId: number, want: number) => {
-	const buf = new Uint8Array(1 + 32 + 4 + 2);
-	buf[0] = MSG_TRACKER_QUERY;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	writeU16BE(buf, 37, clampU16(want));
-	return buf;
-};
-
-const encodeTrackerReply = (channelKey: Uint8Array, reqId: number, entries: TrackerEntry[]) => {
-	const count = Math.max(0, Math.min(255, entries.length));
-	let bytes = 1 + 32 + 4 + 1;
-	const encoded: Array<{
-		hashBytes: Uint8Array;
-		level: number;
-		freeSlots: number;
-		bidPerByte: number;
-		addrs: Uint8Array[];
-	}> = [];
-	for (let i = 0; i < count; i++) {
-		const e = entries[i]!;
-		const hashBytes = textEncoder.encode(e.hash);
-		if (hashBytes.length > 255) continue;
-		const addrCount = Math.max(0, Math.min(255, e.addrs.length));
-		const addrs = e.addrs.slice(0, addrCount);
-		bytes += 1 + hashBytes.length + 2 + 2 + 4 + 1;
-		for (const a of addrs) bytes += 2 + a.length;
-		encoded.push({
-			hashBytes,
-			level: e.level,
-			freeSlots: e.freeSlots,
-			bidPerByte: e.bidPerByte,
-			addrs,
-		});
-	}
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_TRACKER_REPLY;
-	buf.set(channelKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = Math.max(0, Math.min(255, encoded.length)) & 0xff;
-	let offset = 38;
-	for (const e of encoded) {
-		buf[offset++] = e.hashBytes.length & 0xff;
-		buf.set(e.hashBytes, offset);
-		offset += e.hashBytes.length;
-		writeU16BE(buf, offset, clampU16(e.level));
-		offset += 2;
-		writeU16BE(buf, offset, clampU16(e.freeSlots));
-		offset += 2;
-		writeU32BE(buf, offset, Math.max(0, Math.floor(e.bidPerByte)) >>> 0);
-		offset += 4;
-		buf[offset++] = Math.max(0, Math.min(255, e.addrs.length)) & 0xff;
-		for (const a of e.addrs) {
-			writeU16BE(buf, offset, a.length);
-			offset += 2;
-			buf.set(a, offset);
-			offset += a.length;
-		}
-	}
-	return buf;
-};
-
-const encodeTrackerFeedback = (
-	channelKey: Uint8Array,
-	candidateHash: string,
-	event: number,
-	reason: number,
-) => {
-	const hashBytes = textEncoder.encode(candidateHash);
-	const hashLen = Math.max(0, Math.min(255, hashBytes.length));
-	const buf = new Uint8Array(1 + 32 + 1 + hashLen + 1 + 1);
-	buf[0] = MSG_TRACKER_FEEDBACK;
-	buf.set(channelKey, 1);
-	buf[33] = hashLen & 0xff;
-	buf.set(hashBytes.subarray(0, hashLen), 34);
-	buf[34 + hashLen] = event & 0xff;
-	buf[34 + hashLen + 1] = reason & 0xff;
-	return buf;
+type ParentUpgradeGraceState = {
+	previousParent: string;
+	candidateParent: string;
+	previousLevel: number;
+	previousRouteFromRoot?: string[];
+	previousLastParentDataAt: number;
+	previousLastParentUpgradeActivityAt: number;
+	previousReceivedAnyParentData: boolean;
+	timer: ReturnType<typeof setTimeout>;
+	candidateFirstMessages: number;
+	previousFirstMessages: number;
+	minCandidateFirstMessages: number;
+	minCandidateAdvantageMessages: number;
+	maxPreviousFirstMessages: number;
 };
 
 type ProviderNamespaceId = {
 	namespace: string;
 	key: Uint8Array;
 	suffixKey: string;
-};
-
-type ProviderEntry = {
-	hash: string;
-	addrs: Uint8Array[];
-	expiresAt: number;
 };
 
 type ProviderWatchRegistration = {
@@ -1144,185 +996,12 @@ type ProviderWatchState = {
 	loop?: Promise<void>;
 };
 
-const encodeProviderAnnounce = (
-	namespaceKey: Uint8Array,
-	ttlMs: number,
-	addrs: Multiaddr[],
-) => {
-	const addrCount = Math.max(0, Math.min(255, addrs.length));
-	let bytes = 1 + 32 + 4 + 1;
-	const addrBytes = new Array<Uint8Array>(addrCount);
-	for (let i = 0; i < addrCount; i++) {
-		const b = addrs[i]!.bytes;
-		addrBytes[i] = b;
-		bytes += 2 + b.length;
-	}
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_PROVIDER_ANNOUNCE;
-	buf.set(namespaceKey, 1);
-	writeU32BE(buf, 33, Math.max(0, Math.floor(ttlMs)) >>> 0);
-	buf[37] = addrCount & 0xff;
-	let offset = 38;
-	for (let i = 0; i < addrCount; i++) {
-		const b = addrBytes[i]!;
-		writeU16BE(buf, offset, b.length);
-		offset += 2;
-		buf.set(b, offset);
-		offset += b.length;
-	}
-	return buf;
-};
-
-const encodeProviderQuery = (
-	namespaceKey: Uint8Array,
-	reqId: number,
-	want: number,
-	seed: number,
-) => {
-	const buf = new Uint8Array(1 + 32 + 4 + 2 + 4);
-	buf[0] = MSG_PROVIDER_QUERY;
-	buf.set(namespaceKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	writeU16BE(buf, 37, clampU16(want));
-	writeU32BE(buf, 39, seed >>> 0);
-	return buf;
-};
-
-const encodeProviderEntries = (entries: ProviderEntry[]) => {
-	const count = Math.max(0, Math.min(255, entries.length));
-	let bytes = 1;
-	const encoded: Array<{ hashBytes: Uint8Array; addrs: Uint8Array[] }> = [];
-	for (let i = 0; i < count; i++) {
-		const e = entries[i]!;
-		const hashBytes = textEncoder.encode(e.hash);
-		if (hashBytes.length > 255) continue;
-		const addrCount = Math.max(0, Math.min(255, e.addrs.length));
-		const addrs = e.addrs.slice(0, addrCount);
-		bytes += 1 + hashBytes.length + 1;
-		for (const a of addrs) bytes += 2 + a.length;
-		encoded.push({ hashBytes, addrs });
-	}
-	return { bytes, encoded };
-};
-
-const encodeProviderReply = (
-	namespaceKey: Uint8Array,
-	reqId: number,
-	entries: ProviderEntry[],
-) => {
-	const { bytes: entryBytes, encoded } = encodeProviderEntries(entries);
-	let bytes = 1 + 32 + 4 + entryBytes;
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_PROVIDER_REPLY;
-	buf.set(namespaceKey, 1);
-	writeU32BE(buf, 33, reqId >>> 0);
-	buf[37] = Math.max(0, Math.min(255, encoded.length)) & 0xff;
-	let offset = 38;
-	for (const e of encoded) {
-		buf[offset++] = e.hashBytes.length & 0xff;
-		buf.set(e.hashBytes, offset);
-		offset += e.hashBytes.length;
-		buf[offset++] = Math.max(0, Math.min(255, e.addrs.length)) & 0xff;
-		for (const a of e.addrs) {
-			writeU16BE(buf, offset, a.length);
-			offset += 2;
-			buf.set(a, offset);
-			offset += a.length;
-		}
-	}
-	return buf;
-};
-
-const encodeProviderSubscribe = (
-	namespaceKey: Uint8Array,
-	want: number,
-	ttlMs: number,
-) => {
-	const buf = new Uint8Array(1 + 32 + 2 + 4);
-	buf[0] = MSG_PROVIDER_SUBSCRIBE;
-	buf.set(namespaceKey, 1);
-	writeU16BE(buf, 33, clampU16(want));
-	writeU32BE(buf, 35, Math.max(0, Math.floor(ttlMs)) >>> 0);
-	return buf;
-};
-
-const encodeProviderUnsubscribe = (namespaceKey: Uint8Array) => {
-	const buf = new Uint8Array(1 + 32);
-	buf[0] = MSG_PROVIDER_UNSUBSCRIBE;
-	buf.set(namespaceKey, 1);
-	return buf;
-};
-
-const encodeProviderNotify = (
-	namespaceKey: Uint8Array,
-	entries: ProviderEntry[],
-) => {
-	const { bytes: entryBytes, encoded } = encodeProviderEntries(entries);
-	let bytes = 1 + 32 + entryBytes;
-
-	const buf = new Uint8Array(bytes);
-	buf[0] = MSG_PROVIDER_NOTIFY;
-	buf.set(namespaceKey, 1);
-	buf[33] = Math.max(0, Math.min(255, encoded.length)) & 0xff;
-	let offset = 34;
-	for (const e of encoded) {
-		buf[offset++] = e.hashBytes.length & 0xff;
-		buf.set(e.hashBytes, offset);
-		offset += e.hashBytes.length;
-		buf[offset++] = Math.max(0, Math.min(255, e.addrs.length)) & 0xff;
-		for (const a of e.addrs) {
-			writeU16BE(buf, offset, a.length);
-			offset += 2;
-			buf.set(a, offset);
-			offset += a.length;
-		}
-	}
-	return buf;
-};
-
-const decodeProviderEntries = (
-	data: Uint8Array,
-	offsetStart: number,
-	maxCount: number,
-) => {
-	let offset = offsetStart;
-	const providers: FanoutProviderCandidate[] = [];
-	const limit = Math.min(maxCount, 255);
-	for (let i = 0; i < limit; i++) {
-		if (offset + 1 > data.length) break;
-		const hashLen = data[offset++]!;
-		if (offset + hashLen > data.length) break;
-		const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
-		offset += hashLen;
-		if (offset + 1 > data.length) break;
-		const addrCount = data[offset++]!;
-		const addrs: Multiaddr[] = [];
-		const addrMax = Math.min(addrCount, 16);
-		for (let j = 0; j < addrMax; j++) {
-			if (offset + 2 > data.length) break;
-			const len = readU16BE(data, offset);
-			offset += 2;
-			if (offset + len > data.length) break;
-			const bytes = data.subarray(offset, offset + len);
-			offset += len;
-			try {
-				addrs.push(multiaddr(bytes));
-			} catch {
-				// ignore invalid
-			}
-		}
-		if (!hash) continue;
-		providers.push({ hash, addrs });
-	}
-	return { providers, offset };
-};
-
 type ChildInfo = { bidPerByte: number };
 
 type JoinAttemptResult = {
 	ok: boolean;
+	parentLevel?: number;
+	parentRouteFromRoot?: string[];
 	rejectReason?: number;
 	timedOut?: boolean;
 	redirects?: Array<{ hash: string; addrs: Multiaddr[] }>;
@@ -1353,6 +1032,14 @@ type ChannelState = {
 	 * disconnected components stabilizing under an unrooted relay.
 	 */
 	rejoinCooldownUntil: number;
+	parentUpgradeCount: number;
+	parentUpgradeLastAt: number;
+	parentUpgradeBackoffMs: number;
+	parentUpgradeBackoffUntil: number;
+	parentUpgradeRetryAfterSeq: number;
+	parentUpgradeStaleRootProbeRound: number;
+	parentUpgradeTrackerNoCapacityUntil: number;
+	parentProbeRejectBackoffMsByHash: Map<string, number>;
 	/**
 	 * True once this node has successfully joined the channel at least once.
 	 *
@@ -1401,7 +1088,10 @@ type ChannelState = {
 	neighborRepairLastRefillAt: number;
 	proxyPublishBudgetBps: number;
 	proxyPublishTokenCapacity: number;
-	proxyPublishTokensByPeer: Map<string, { tokens: number; lastRefillAt: number }>;
+	proxyPublishTokensByPeer: Map<
+		string,
+		{ tokens: number; lastRefillAt: number }
+	>;
 	unicastBudgetBps: number;
 	unicastTokenCapacity: number;
 	unicastTokensByPeer: Map<string, { tokens: number; lastRefillAt: number }>;
@@ -1423,13 +1113,17 @@ type ChannelState = {
 	missingSeqs: Set<number>;
 	repairRequestedAtBySeq: Map<number, number>;
 	endSeqExclusive: number;
-		lastRepairSentAt: number;
+	lastRepairSentAt: number;
 	parentRepairUnansweredStreak: number;
-		lastParentDataAt: number;
-		receivedAnyParentData: boolean;
-		channelPeers: Map<string, number>;
-		knownCandidateAddrs: Map<string, Multiaddr[]>;
-		lazyPeers: Set<string>;
+	lastParentDataAt: number;
+	lastParentUpgradeActivityAt: number;
+	receivedAnyParentData: boolean;
+	parentDataLatencySamples: number;
+	parentDataLatencyEwmaMs: number;
+	parentDataLatencyMaxMs: number;
+	channelPeers: Map<string, number>;
+	knownCandidateAddrs: Map<string, Multiaddr[]>;
+	lazyPeers: Set<string>;
 	haveByPeer: Map<
 		string,
 		{
@@ -1445,8 +1139,22 @@ type ChannelState = {
 	cachedAnnounceTrackerPeers?: string[];
 	lastIHaveSentMaxSeq: number;
 
-	pendingJoin: Map<number, { resolve(res: JoinAttemptResult): void }>;
-	pendingTrackerQuery: Map<number, { resolve(entries: TrackerCandidate[]): void }>;
+	pendingJoin: Map<
+		number,
+		{ resolve(res: JoinAttemptResult): void; shadowAttach?: boolean }
+	>;
+	pendingTrackerQuery: Map<
+		number,
+		{ resolve(entries: TrackerCandidate[]): void }
+	>;
+	pendingParentProbe: Map<number, { resolve(reply?: ParentProbeReply): void }>;
+	parentUpgradeReservationsByHash: Map<
+		string,
+		{ token: number; expiresAt: number; minFreeSlots: number }
+	>;
+	parentProbeRejectUntilByHash: Map<string, number>;
+	parentUpgradeGrace?: ParentUpgradeGraceState;
+	parentShadow?: ParentShadowState;
 	pendingRouteQuery: Map<number, { resolve(route?: string[]): void }>;
 	pendingUnicastAck: Map<bigint, PendingUnicastAck>;
 	pendingRouteProxy: Map<
@@ -1471,18 +1179,22 @@ type ChannelState = {
 	cachedBootstrapPeers: string[];
 	lastBootstrapEnsureAt: number;
 
-			announceIntervalMs: number;
-			announceTtlMs: number;
-			lastAnnouncedAt: number;
-			peerHintMaxEntries: number;
-			peerHintTtlMs: number;
-			routeCacheMaxEntries: number;
-			routeCacheTtlMs: number;
-		announceLoop?: Promise<void>;
+	announceIntervalMs: number;
+	announceTtlMs: number;
+	lastAnnouncedAt: number;
+	peerHintMaxEntries: number;
+	peerHintTtlMs: number;
+	routeCacheMaxEntries: number;
+	routeCacheTtlMs: number;
+	announceLoop?: Promise<void>;
 	repairLoop?: Promise<void>;
 	meshLoop?: Promise<void>;
 	joinLoop?: Promise<void>;
-	joinedOnce?: { resolve(): void; reject(err: unknown): void; promise: Promise<void> };
+	joinedOnce?: {
+		resolve(): void;
+		reject(err: unknown): void;
+		promise: Promise<void>;
+	};
 
 	trackerQueryIntervalMs: number;
 	cachedTrackerCandidates: TrackerCandidate[];
@@ -1533,6 +1245,44 @@ const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
 	reparentDisconnect: 0,
 	reparentStale: 0,
 	reparentKicked: 0,
+	reparentUpgrade: 0,
+	reparentUpgradeSkipLeaf: 0,
+	reparentUpgradeSkipRepair: 0,
+	reparentUpgradeSkipData: 0,
+	reparentUpgradeSkipCooldown: 0,
+	reparentUpgradeSkipQuiet: 0,
+	reparentUpgradeSkipBudget: 0,
+	reparentUpgradeSkipCandidateLevel: 0,
+	reparentUpgradeSkipCandidateSlots: 0,
+	reparentUpgradeSkipCandidatePressure: 0,
+	reparentUpgradeSkipRootPressure: 0,
+	reparentUpgradeSkipProbeNoReply: 0,
+	reparentUpgradeSkipProbeNotRooted: 0,
+	reparentUpgradeSkipProbeRepair: 0,
+	reparentUpgradeSkipProbeLag: 0,
+	reparentUpgradeSkipProbeOverloaded: 0,
+	reparentUpgradeSkipProbeCooldown: 0,
+	parentProbeReqSent: 0,
+	parentProbeReqReceived: 0,
+	parentProbeReplySent: 0,
+	parentProbeReplyReceived: 0,
+	parentUpgradeRootReservationCreated: 0,
+	parentUpgradeRootReservationConsumed: 0,
+	parentUpgradeRootReservationRejected: 0,
+	parentUpgradeRootReservationMarginRejected: 0,
+	parentUpgradeRootReservationBlocked: 0,
+	parentUpgradeRootReservationExpired: 0,
+	parentShadowStart: 0,
+	parentShadowObserve: 0,
+	parentShadowPromote: 0,
+	parentShadowReset: 0,
+	parentShadowRejectNoReply: 0,
+	parentShadowRejectNotRooted: 0,
+	parentShadowRejectCapacity: 0,
+	parentShadowRejectRepair: 0,
+	parentShadowRejectLag: 0,
+	parentShadowRejectOverloaded: 0,
+	parentShadowRejectLevel: 0,
 	endSent: 0,
 	endReceived: 0,
 	repairReqSent: 0,
@@ -1572,7 +1322,10 @@ const isDataId = (id: Uint8Array) =>
 export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private channelsBySuffixKey = new Map<string, ChannelState>();
 	private readonly cachedSuffixKey = new WeakMap<Uint8Array, string>();
-	private readonly metricsBySuffixKey = new Map<string, FanoutTreeChannelMetrics>();
+	private readonly metricsBySuffixKey = new Map<
+		string,
+		FanoutTreeChannelMetrics
+	>();
 	private bootstraps: Multiaddr[] = [];
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
 	private trackerNamespaceLru = new Map<string, number>();
@@ -1583,13 +1336,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		string,
 		Map<string, ProviderWatchRegistration>
 	>();
-	private providerWatchesBySuffixKey = new Map<string, Set<ProviderWatchState>>();
+	private providerWatchesBySuffixKey = new Map<
+		string,
+		Set<ProviderWatchState>
+	>();
 	private underlayPeerDisconnectHandler?: (ev: any) => void;
 	private pendingProviderQueryBySuffixKey = new Map<
 		string,
 		Map<number, { resolve: (providers: FanoutProviderCandidate[]) => void }>
 	>();
-	private providerAnnounceBySuffixKey = new Map<string, ProviderAnnounceState>();
+	private providerAnnounceBySuffixKey = new Map<
+		string,
+		ProviderAnnounceState
+	>();
+	private parentUpgradeShadowInFlightSuffixKey?: string;
 	private readonly defaultUploadOverheadBytes = 128;
 	private readonly random: () => number;
 	private readonly unicastAckNodeTag32: number;
@@ -1600,7 +1360,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		components: DirectStreamComponents,
 		opts?: FanoutTreeStreamOptions,
 	) {
-		const { random, topicRootControlPlane, ...rest } = (opts ?? {}) as FanoutTreeStreamOptions;
+		const { random, topicRootControlPlane, ...rest } = (opts ??
+			{}) as FanoutTreeStreamOptions;
 		super(components, FANOUT_PROTOCOLS, {
 			canRelayMessage: false,
 			...rest,
@@ -1610,33 +1371,37 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			sha256Sync(textEncoder.encode(this.publicKeyHash)),
 			0,
 		);
-			this.topicRootControlPlane = topicRootControlPlane ?? new TopicRootControlPlane();
+		this.topicRootControlPlane =
+			topicRootControlPlane ?? new TopicRootControlPlane();
 
-			const onPeerDisconnect = (ev: any) => {
-				const peerId = ev?.detail;
+		const onPeerDisconnect = (ev: any) => {
+			const peerId = ev?.detail;
 			if (!peerId) return;
 			let peerHash: string;
 			try {
 				peerHash = getPublicKeyFromPeerId(peerId).hashcode();
 			} catch {
 				return;
-				}
-				this.onPeerDisconnectedFromUnderlay(peerHash);
-			};
-			this.underlayPeerDisconnectHandler = onPeerDisconnect;
-			this.components.events.addEventListener("peer:disconnect", onPeerDisconnect as any);
-		}
-
-		public override async stop() {
-			if (this.underlayPeerDisconnectHandler) {
-				this.components.events.removeEventListener(
-					"peer:disconnect",
-					this.underlayPeerDisconnectHandler as any,
-				);
-				this.underlayPeerDisconnectHandler = undefined;
 			}
-			return super.stop();
+			this.onPeerDisconnectedFromUnderlay(peerHash);
+		};
+		this.underlayPeerDisconnectHandler = onPeerDisconnect;
+		this.components.events.addEventListener(
+			"peer:disconnect",
+			onPeerDisconnect as any,
+		);
+	}
+
+	public override async stop() {
+		if (this.underlayPeerDisconnectHandler) {
+			this.components.events.removeEventListener(
+				"peer:disconnect",
+				this.underlayPeerDisconnectHandler as any,
+			);
+			this.underlayPeerDisconnectHandler = undefined;
 		}
+		return super.stop();
+	}
 
 	public setBootstraps(addrs: Array<string | Multiaddr>) {
 		this.bootstraps = addrs
@@ -1645,7 +1410,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	public addBootstraps(addrs: Array<string | Multiaddr>) {
-		const merged = new Map(this.bootstraps.map((addr) => [addr.toString(), addr]));
+		const merged = new Map(
+			this.bootstraps.map((addr) => [addr.toString(), addr]),
+		);
 		for (const addr of addrs) {
 			const multiaddrValue = typeof addr === "string" ? multiaddr(addr) : addr;
 			merged.set(multiaddrValue.toString(), multiaddrValue);
@@ -1659,7 +1426,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.trackerNamespaceLru.delete(suffixKey);
 		this.trackerNamespaceLru.set(suffixKey, now);
 		while (this.trackerNamespaceLru.size > TRACKER_DIRECTORY_MAX_NAMESPACES) {
-			const oldest = this.trackerNamespaceLru.keys().next().value as string | undefined;
+			const oldest = this.trackerNamespaceLru.keys().next().value as
+				| string
+				| undefined;
 			if (!oldest) break;
 			this.trackerNamespaceLru.delete(oldest);
 			this.trackerBySuffixKey.delete(oldest);
@@ -1680,7 +1449,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.providerNamespaceLru.delete(suffixKey);
 		this.providerNamespaceLru.set(suffixKey, now);
 		while (this.providerNamespaceLru.size > PROVIDER_DIRECTORY_MAX_NAMESPACES) {
-			const oldest = this.providerNamespaceLru.keys().next().value as string | undefined;
+			const oldest = this.providerNamespaceLru.keys().next().value as
+				| string
+				| undefined;
 			if (!oldest) break;
 			this.providerNamespaceLru.delete(oldest);
 			this.providerBySuffixKey.delete(oldest);
@@ -1887,9 +1658,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				current.closed = true;
 				this.providerAnnounceBySuffixKey.delete(id.suffixKey);
 				// Best-effort immediate withdrawal (ttl=0).
-				void this.announceProviderOnce(current, this.closeController.signal, 0).catch(
-					() => {},
-				);
+				void this.announceProviderOnce(
+					current,
+					this.closeController.signal,
+					0,
+				).catch(() => {});
 			},
 		};
 	}
@@ -1943,7 +1716,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		await this.announceProviderOnce(state, this.closeController.signal, ttlMs);
 	}
 
-	private async _providerAnnounceLoop(state: ProviderAnnounceState): Promise<void> {
+	private async _providerAnnounceLoop(
+		state: ProviderAnnounceState,
+	): Promise<void> {
 		const signal = this.closeController.signal;
 		for (;;) {
 			if (signal.aborted || state.closed) return;
@@ -2010,9 +1785,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const now = Date.now();
 			this.touchProviderNamespace(id.suffixKey, now);
 
-			const shuffleInPlace = (arr: FanoutProviderCandidate[], seed32: number) => {
+			const shuffleInPlace = (
+				arr: FanoutProviderCandidate[],
+				seed32: number,
+			) => {
 				if (arr.length <= 1) return;
-				if ((seed32 >>> 0) === 0) {
+				if (seed32 >>> 0 === 0) {
 					for (let i = arr.length - 1; i > 0; i--) {
 						const j = Math.floor(this.random() * (i + 1));
 						const tmp = arr[i]!;
@@ -2082,12 +1860,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				0,
 				Math.floor(options.queryTimeoutMs ?? 1_000),
 			);
-			const overallTimeout = Math.max(0, Math.floor(options.timeoutMs ?? 5_000));
+			const overallTimeout = Math.max(
+				0,
+				Math.floor(options.timeoutMs ?? 8_000),
+			);
 			const deadlineAt = overallTimeout > 0 ? Date.now() + overallTimeout : 0;
 
 			const byReq =
 				this.pendingProviderQueryBySuffixKey.get(id.suffixKey) ||
-				new Map<number, { resolve: (providers: FanoutProviderCandidate[]) => void }>();
+				new Map<
+					number,
+					{ resolve: (providers: FanoutProviderCandidate[]) => void }
+				>();
 			this.pendingProviderQueryBySuffixKey.set(id.suffixKey, byReq);
 
 			const results = await Promise.all(
@@ -2102,9 +1886,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					);
 
 					const remainingMs =
-						deadlineAt > 0 ? Math.max(0, deadlineAt - Date.now()) : perTrackerTimeout;
+						deadlineAt > 0
+							? Math.max(0, deadlineAt - Date.now())
+							: perTrackerTimeout;
 					const timeoutMs =
-						deadlineAt > 0 ? Math.min(perTrackerTimeout, remainingMs) : perTrackerTimeout;
+						deadlineAt > 0
+							? Math.min(perTrackerTimeout, remainingMs)
+							: perTrackerTimeout;
 
 					const res = await Promise.race([
 						p,
@@ -2263,12 +2051,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				} catch (error) {
 					if (
 						error instanceof AbortError ||
-						(error && typeof error === "object" && "name" in error && error.name === "AbortError")
+						(error &&
+							typeof error === "object" &&
+							"name" in error &&
+							error.name === "AbortError")
 					) {
 						return;
 					}
 				}
-				await delay(watch.renewIntervalMs, { signal: loopSignal }).catch(() => {});
+				await delay(watch.renewIntervalMs, { signal: loopSignal }).catch(
+					() => {},
+				);
 			}
 		})();
 
@@ -2287,7 +2080,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return { topic, root, key, suffixKey };
 	}
 
-	public openChannel(topic: string, root: string, opts: FanoutTreeChannelOptions) {
+	public openChannel(
+		topic: string,
+		root: string,
+		opts: FanoutTreeChannelOptions,
+	) {
 		if (!this.started) {
 			throw new Error("FanoutTree must be started before opening channels");
 		}
@@ -2306,29 +2103,43 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
 		const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
-		const byBps = uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
+		const byBps =
+			uploadLimitBps > 0 ? Math.floor(uploadLimitBps / perChildBps) : 0;
 		const effectiveMaxChildren = Math.max(0, Math.min(maxChildren, byBps));
 		const maxDataAgeMs = Math.max(0, Math.floor(opts.maxDataAgeMs ?? 0));
 		const requestedRouteCacheMaxEntries = Math.max(
 			0,
-			Math.floor(opts.routeCacheMaxEntries ?? (opts.role === "root" ? 2_048 : 512)),
+			Math.floor(
+				opts.routeCacheMaxEntries ?? (opts.role === "root" ? 2_048 : 512),
+			),
 		);
 		const routeCacheMaxEntries = Math.min(
 			ROUTE_CACHE_MAX_ENTRIES_HARD_CAP,
 			requestedRouteCacheMaxEntries,
 		);
-		const routeCacheTtlMs = Math.max(0, Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000));
+		const routeCacheTtlMs = Math.max(
+			0,
+			Math.floor(opts.routeCacheTtlMs ?? 10 * 60_000),
+		);
 		const requestedPeerHintMaxEntries = Math.max(
 			0,
-			Math.floor(opts.peerHintMaxEntries ?? (opts.role === "root" ? 4_096 : 1_024)),
+			Math.floor(
+				opts.peerHintMaxEntries ?? (opts.role === "root" ? 4_096 : 1_024),
+			),
 		);
 		const peerHintMaxEntries = Math.min(
 			PEER_HINT_MAX_ENTRIES_HARD_CAP,
 			requestedPeerHintMaxEntries,
 		);
-		const peerHintTtlMs = Math.max(0, Math.floor(opts.peerHintTtlMs ?? 10 * 60_000));
+		const peerHintTtlMs = Math.max(
+			0,
+			Math.floor(opts.peerHintTtlMs ?? 10 * 60_000),
+		);
 		const uploadBurstMsDefault = Math.max(1, Math.ceil(1_000 / msgRate));
-		const uploadBurstMs = Math.max(0, Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault));
+		const uploadBurstMs = Math.max(
+			0,
+			Math.floor(opts.uploadBurstMs ?? uploadBurstMsDefault),
+		);
 		const uploadTokenCapacity =
 			uploadLimitBps > 0 && uploadBurstMs > 0
 				? Math.max(1, Math.floor((uploadLimitBps * uploadBurstMs) / 1_000))
@@ -2347,7 +2158,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			repairEnabled && repairWindowMessages > 0
 				? Math.min(repairMaxBackfillMessagesRaw, repairWindowMessages)
 				: 0;
-		const repairIntervalMs = Math.max(0, Math.floor(opts.repairIntervalMs ?? 200));
+		const repairIntervalMs = Math.max(
+			0,
+			Math.floor(opts.repairIntervalMs ?? 200),
+		);
 		const repairMaxPerReq = Math.max(0, Math.floor(opts.repairMaxPerReq ?? 64));
 
 		const neighborRepair = opts.neighborRepair === true;
@@ -2357,11 +2171,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const neighborMeshPeers = Math.max(
 			0,
-			Math.floor(opts.neighborMeshPeers ?? Math.max(0, neighborRepairPeers * 2)),
+			Math.floor(
+				opts.neighborMeshPeers ?? Math.max(0, neighborRepairPeers * 2),
+			),
 		);
 		const neighborAnnounceIntervalMs = Math.max(
 			0,
-			Math.floor(opts.neighborAnnounceIntervalMs ?? 500),
+			Math.floor(opts.neighborAnnounceIntervalMs ?? 800),
 		);
 		const neighborMeshRefreshIntervalMs = Math.max(
 			0,
@@ -2369,7 +2185,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const neighborHaveTtlMs = Math.max(
 			0,
-			Math.floor(opts.neighborHaveTtlMs ?? 5_000),
+			Math.floor(opts.neighborHaveTtlMs ?? 8_000),
 		);
 		const neighborRepairBudgetBps = Math.max(
 			0,
@@ -2383,7 +2199,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			neighborRepairBudgetBps > 0 && neighborRepairBurstMs > 0
 				? Math.max(
 						1,
-						Math.floor((neighborRepairBudgetBps * neighborRepairBurstMs) / 1_000),
+						Math.floor(
+							(neighborRepairBudgetBps * neighborRepairBurstMs) / 1_000,
+						),
 					)
 				: 0;
 
@@ -2407,26 +2225,37 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(opts.unicastBudgetBps ?? perChildBps),
 		);
-		const unicastBurstMs = Math.max(0, Math.floor(opts.unicastBurstMs ?? 1_000));
+		const unicastBurstMs = Math.max(
+			0,
+			Math.floor(opts.unicastBurstMs ?? 1_000),
+		);
 		const unicastTokenCapacity =
 			unicastBudgetBps > 0 && unicastBurstMs > 0
 				? Math.max(1, Math.floor((unicastBudgetBps * unicastBurstMs) / 1_000))
 				: 0;
 
-				ch = {
-					id,
-					metrics: this.getMetricsForSuffixKey(id.suffixKey),
-					level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
-					isRoot: opts.role === "root",
-					closed: false,
-					parent: undefined,
-					children: new Map(),
-					rejoinCooldownUntil: 0,
-					joinedAtLeastOnce: opts.role === "root",
-					routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
-					routeByPeer: new Map(),
-					seq: 0,
-				bidPerByte,
+		ch = {
+			id,
+			metrics: this.getMetricsForSuffixKey(id.suffixKey),
+			level: opts.role === "root" ? 0 : Number.POSITIVE_INFINITY,
+			isRoot: opts.role === "root",
+			closed: false,
+			parent: undefined,
+			children: new Map(),
+			rejoinCooldownUntil: 0,
+			parentUpgradeCount: 0,
+			parentUpgradeLastAt: 0,
+			parentUpgradeBackoffMs: 0,
+			parentUpgradeBackoffUntil: 0,
+			parentUpgradeRetryAfterSeq: -1,
+			parentUpgradeStaleRootProbeRound: 0,
+			parentUpgradeTrackerNoCapacityUntil: 0,
+			parentProbeRejectBackoffMsByHash: new Map(),
+			joinedAtLeastOnce: opts.role === "root",
+			routeFromRoot: opts.role === "root" ? [this.publicKeyHash] : undefined,
+			routeByPeer: new Map(),
+			seq: 0,
+			bidPerByte,
 			uploadLimitBps,
 			maxChildren,
 			effectiveMaxChildren,
@@ -2478,7 +2307,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			lastRepairSentAt: 0,
 			parentRepairUnansweredStreak: 0,
 			lastParentDataAt: 0,
+			lastParentUpgradeActivityAt: 0,
 			receivedAnyParentData: false,
+			parentDataLatencySamples: 0,
+			parentDataLatencyEwmaMs: 0,
+			parentDataLatencyMaxMs: 0,
 			channelPeers: new Map<string, number>(),
 			knownCandidateAddrs: new Map<string, Multiaddr[]>(),
 			lazyPeers: new Set<string>(),
@@ -2489,12 +2322,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			lastIHaveSentMaxSeq: -1,
 			pendingJoin: new Map(),
 			pendingTrackerQuery: new Map(),
-				pendingRouteQuery: new Map(),
-				pendingUnicastAck: new Map(),
-				pendingRouteProxy: new Map(),
-				bootstrapOverride: undefined,
-				bootstrapDialTimeoutMs: 10_000,
-				bootstrapMaxPeers: 0,
+			pendingParentProbe: new Map(),
+			parentUpgradeReservationsByHash: new Map(),
+			parentProbeRejectUntilByHash: new Map(),
+			pendingRouteQuery: new Map(),
+			pendingUnicastAck: new Map(),
+			pendingRouteProxy: new Map(),
+			bootstrapOverride: undefined,
+			bootstrapDialTimeoutMs: 10_000,
+			bootstrapMaxPeers: 0,
 			bootstrapEnsureIntervalMs: 5_000,
 			cachedBootstrapPeers: [],
 			lastBootstrapEnsureAt: 0,
@@ -2508,7 +2344,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			trackerQueryIntervalMs: 2_000,
 			cachedTrackerCandidates: [],
 			lastTrackerQueryAt: 0,
-			};
+		};
 		this.channelsBySuffixKey.set(id.suffixKey, ch);
 		const needsAnnounceLoop = ch.effectiveMaxChildren > 0;
 		if (needsAnnounceLoop) {
@@ -2525,8 +2361,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		) {
 			ch.meshLoop = this._meshLoop(ch).catch(() => {});
 		}
-			return id;
-		}
+		return id;
+	}
 
 	private abortPendingUnicastAcks(ch: ChannelState, error: AbortError) {
 		for (const pending of ch.pendingUnicastAck.values()) {
@@ -2551,14 +2387,156 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.pendingUnicastAck.clear();
 	}
 
+	private resetParentDataLatency(ch: ChannelState) {
+		ch.parentDataLatencySamples = 0;
+		ch.parentDataLatencyEwmaMs = 0;
+		ch.parentDataLatencyMaxMs = 0;
+	}
+
+	private noteParentDataLatency(ch: ChannelState, timestamp: bigint) {
+		const sentAt = Number(timestamp);
+		if (!Number.isFinite(sentAt) || sentAt <= 0) return;
+		const latencyMs = Date.now() - sentAt;
+		if (!Number.isFinite(latencyMs) || latencyMs < 0 || latencyMs > 60_000) {
+			return;
+		}
+		const samples = Math.min(0xffff, ch.parentDataLatencySamples + 1);
+		ch.parentDataLatencySamples = samples;
+		ch.parentDataLatencyEwmaMs =
+			samples <= 1
+				? latencyMs
+				: ch.parentDataLatencyEwmaMs * 0.875 + latencyMs * 0.125;
+		ch.parentDataLatencyMaxMs = Math.max(ch.parentDataLatencyMaxMs, latencyMs);
+	}
+
+	private clearParentUpgradeGrace(
+		ch: ChannelState,
+		notifyPreviousParent = false,
+		notifyCandidateParent = false,
+	): Array<Promise<void>> {
+		const grace = ch.parentUpgradeGrace;
+		if (!grace) return [];
+		clearTimeout(grace.timer);
+		ch.parentUpgradeGrace = undefined;
+		const sends: Array<Promise<void>> = [];
+		if (notifyPreviousParent && grace.previousParent !== ch.parent) {
+			sends.push(
+				this._sendControl(grace.previousParent, encodeLeave(ch.id.key)).catch(
+					() => {},
+				),
+			);
+		}
+		if (notifyCandidateParent && grace.candidateParent !== ch.parent) {
+			sends.push(
+				this._sendControl(grace.candidateParent, encodeLeave(ch.id.key)).catch(
+					() => {},
+				),
+			);
+		}
+		return sends;
+	}
+
+	private commitParentUpgradeGrace(ch: ChannelState) {
+		const grace = ch.parentUpgradeGrace;
+		if (!grace) return;
+		clearTimeout(grace.timer);
+		ch.parentUpgradeGrace = undefined;
+		if (ch.closed || ch.parent !== grace.candidateParent) return;
+		void this._sendControl(grace.previousParent, encodeLeave(ch.id.key)).catch(
+			() => {},
+		);
+	}
+
+	private rollbackParentUpgradeGrace(ch: ChannelState) {
+		const grace = ch.parentUpgradeGrace;
+		if (!grace) return;
+		clearTimeout(grace.timer);
+		ch.parentUpgradeGrace = undefined;
+		if (ch.closed || ch.parent !== grace.candidateParent) return;
+		ch.parent = grace.previousParent;
+		ch.level = grace.previousLevel;
+		ch.routeFromRoot = grace.previousRouteFromRoot
+			? [...grace.previousRouteFromRoot]
+			: undefined;
+		ch.lastParentDataAt = grace.previousLastParentDataAt;
+		ch.lastParentUpgradeActivityAt =
+			grace.previousLastParentUpgradeActivityAt;
+		ch.receivedAnyParentData = grace.previousReceivedAnyParentData;
+		this.resetParentDataLatency(ch);
+		this.touchPeerHint(ch, grace.previousParent);
+		void this._sendControl(grace.candidateParent, encodeLeave(ch.id.key)).catch(
+			() => {},
+		);
+		void this.announceToTrackers(ch, this.closeController.signal).catch(
+			() => {},
+		);
+	}
+
+	private startParentUpgradeGrace(
+		ch: ChannelState,
+		options: Omit<ParentUpgradeGraceState, "timer"> & { timeoutMs: number },
+	) {
+		if (ch.closed || options.previousParent === options.candidateParent) return;
+		void Promise.all(this.clearParentUpgradeGrace(ch, true, true)).catch(
+			() => {},
+		);
+		const timeoutMs = Math.max(0, Math.floor(options.timeoutMs));
+		if (timeoutMs <= 0) {
+			void this._sendControl(
+				options.previousParent,
+				encodeLeave(ch.id.key),
+			).catch(() => {});
+			return;
+		}
+		const timer = setTimeout(
+			() => this.rollbackParentUpgradeGrace(ch),
+			timeoutMs,
+		);
+		ch.parentUpgradeGrace = {
+			previousParent: options.previousParent,
+			candidateParent: options.candidateParent,
+			previousLevel: options.previousLevel,
+			previousRouteFromRoot: options.previousRouteFromRoot
+				? [...options.previousRouteFromRoot]
+				: undefined,
+			previousLastParentDataAt: options.previousLastParentDataAt,
+			previousLastParentUpgradeActivityAt:
+				options.previousLastParentUpgradeActivityAt,
+			previousReceivedAnyParentData: options.previousReceivedAnyParentData,
+			timer,
+			candidateFirstMessages: options.candidateFirstMessages,
+			previousFirstMessages: options.previousFirstMessages,
+			minCandidateFirstMessages: options.minCandidateFirstMessages,
+			minCandidateAdvantageMessages: options.minCandidateAdvantageMessages,
+			maxPreviousFirstMessages: options.maxPreviousFirstMessages,
+		};
+	}
+
 	private detachFromParent(ch: ChannelState) {
+		if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+			this.parentUpgradeShadowInFlightSuffixKey = undefined;
+		}
+		void Promise.all(this.clearParentUpgradeGrace(ch, true, true)).catch(
+			() => {},
+		);
 		ch.parent = undefined;
 		ch.level = Number.POSITIVE_INFINITY;
 		ch.routeFromRoot = undefined;
 		ch.routeByPeer.clear();
 		ch.lastParentDataAt = 0;
+		ch.lastParentUpgradeActivityAt = 0;
 		ch.receivedAnyParentData = false;
+		this.resetParentDataLatency(ch);
 		ch.pendingJoin.clear();
+		ch.pendingParentProbe.clear();
+		ch.parentShadow = undefined;
+		ch.parentUpgradeBackoffMs = 0;
+		ch.parentUpgradeBackoffUntil = 0;
+		ch.parentUpgradeRetryAfterSeq = -1;
+		ch.parentUpgradeStaleRootProbeRound = 0;
+		ch.parentUpgradeTrackerNoCapacityUntil = 0;
+		ch.parentProbeRejectUntilByHash.clear();
+		ch.parentProbeRejectBackoffMsByHash.clear();
 		ch.pendingRouteQuery.clear();
 		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel detached"));
 		for (const pending of ch.pendingRouteProxy.values()) {
@@ -2636,12 +2614,22 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				this._sendControl(ch.parent, encodeLeave(ch.id.key)).catch(() => {}),
 			);
 		}
+		pendingSends.push(
+			...this.clearParentUpgradeGrace(ch, notifyParent && !ch.isRoot, false),
+		);
 		if (kickChildren && ch.children.size > 0) {
 			pendingSends.push(this.kickChildren(ch).catch(() => {}));
 		}
 
 		ch.pendingJoin.clear();
 		ch.pendingTrackerQuery.clear();
+		ch.pendingParentProbe.clear();
+		ch.parentProbeRejectUntilByHash.clear();
+		ch.parentProbeRejectBackoffMsByHash.clear();
+		ch.parentShadow = undefined;
+		if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+			this.parentUpgradeShadowInFlightSuffixKey = undefined;
+		}
 		ch.pendingRouteQuery.clear();
 		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel closed"));
 		for (const pending of ch.pendingRouteProxy.values()) {
@@ -2664,7 +2652,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		await Promise.all(pendingSends);
 	}
 
-	public getChannelStats(topic: string, root: string):
+	public getChannelStats(
+		topic: string,
+		root: string,
+	):
 		| {
 				topic: string;
 				root: string;
@@ -2672,14 +2663,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				level: number;
 				children: number;
 				effectiveMaxChildren: number;
-					uploadLimitBps: number;
-					droppedForwards: number;
-					peerHintEntries: number;
-					peerHintMaxEntries: number;
-					routeCacheEntries: number;
-					routeCacheMaxEntries: number;
-			  }
-			| undefined {
+				uploadLimitBps: number;
+				droppedForwards: number;
+				peerHintEntries: number;
+				peerHintMaxEntries: number;
+				routeCacheEntries: number;
+				routeCacheMaxEntries: number;
+		  }
+		| undefined {
 		const id = this.getChannelId(topic, root);
 		const ch = this.channelsBySuffixKey.get(id.suffixKey);
 		if (!ch) return;
@@ -2689,17 +2680,25 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			parent: ch.parent,
 			level: ch.level,
 			children: ch.children.size,
-				effectiveMaxChildren: ch.effectiveMaxChildren,
-				uploadLimitBps: ch.uploadLimitBps,
-				droppedForwards: ch.droppedForwards,
-				peerHintEntries: ch.channelPeers.size,
-				peerHintMaxEntries: ch.peerHintMaxEntries,
-				routeCacheEntries: ch.routeByPeer.size,
-				routeCacheMaxEntries: ch.routeCacheMaxEntries,
-			};
-		}
+			effectiveMaxChildren: ch.effectiveMaxChildren,
+			uploadLimitBps: ch.uploadLimitBps,
+			droppedForwards: ch.droppedForwards,
+			peerHintEntries: ch.channelPeers.size,
+			peerHintMaxEntries: ch.peerHintMaxEntries,
+			routeCacheEntries: ch.routeByPeer.size,
+			routeCacheMaxEntries: ch.routeCacheMaxEntries,
+		};
+	}
 
-	public getChannelMetrics(topic: string, root: string): FanoutTreeChannelMetrics {
+	/**
+	 * Returns diagnostic counters for tests and simulation harnesses.
+	 *
+	 * @internal
+	 */
+	public getChannelMetrics(
+		topic: string,
+		root: string,
+	): FanoutTreeChannelMetrics {
 		const id = this.getChannelId(topic, root);
 		return this.getMetricsForSuffixKey(id.suffixKey);
 	}
@@ -2716,12 +2715,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const includeSelf = options?.includeSelf === true;
 		const peers = new Set<string>();
 
-			if (ch.parent) peers.add(ch.parent);
-			for (const child of ch.children.keys()) peers.add(child);
-			for (const peer of ch.channelPeers.keys()) peers.add(peer);
-			if (ch.routeFromRoot) {
-				for (const peer of ch.routeFromRoot) peers.add(peer);
-			}
+		if (ch.parent) peers.add(ch.parent);
+		for (const child of ch.children.keys()) peers.add(child);
+		for (const peer of ch.channelPeers.keys()) peers.add(peer);
+		if (ch.routeFromRoot) {
+			for (const peer of ch.routeFromRoot) peers.add(peer);
+		}
 
 		if (includeSelf) {
 			peers.add(this.publicKeyHash);
@@ -2755,10 +2754,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			);
 		}
 		if (joinOpts.bootstrapMaxPeers != null) {
-			ch.bootstrapMaxPeers = Math.max(0, Math.floor(joinOpts.bootstrapMaxPeers));
+			ch.bootstrapMaxPeers = Math.max(
+				0,
+				Math.floor(joinOpts.bootstrapMaxPeers),
+			);
 		}
 		if (joinOpts.announceIntervalMs != null) {
-			ch.announceIntervalMs = Math.max(0, Math.floor(joinOpts.announceIntervalMs));
+			ch.announceIntervalMs = Math.max(
+				0,
+				Math.floor(joinOpts.announceIntervalMs),
+			);
 		}
 		if (joinOpts.announceTtlMs != null) {
 			ch.announceTtlMs = Math.max(0, Math.floor(joinOpts.announceTtlMs));
@@ -2873,8 +2878,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.knownCandidateAddrs.delete(hash);
 		ch.knownCandidateAddrs.set(hash, limited);
 		while (ch.knownCandidateAddrs.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES) {
-			const oldest = ch.knownCandidateAddrs.keys().next()
-				.value as string | undefined;
+			const oldest = ch.knownCandidateAddrs.keys().next().value as
+				| string
+				| undefined;
 			if (!oldest) break;
 			ch.knownCandidateAddrs.delete(oldest);
 		}
@@ -2901,7 +2907,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		// entry is always first. This makes TTL pruning O(expired) rather than O(N).
 		if (ch.peerHintTtlMs > 0) {
 			for (;;) {
-				const oldest = ch.channelPeers.keys().next().value as string | undefined;
+				const oldest = ch.channelPeers.keys().next().value as
+					| string
+					| undefined;
 				if (!oldest) break;
 				const seenAt = ch.channelPeers.get(oldest) ?? 0;
 				if (now - seenAt <= ch.peerHintTtlMs) break;
@@ -2950,7 +2958,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private getCachedRoute(ch: ChannelState, targetHash: string): string[] | undefined {
+	private getCachedRoute(
+		ch: ChannelState,
+		targetHash: string,
+	): string[] | undefined {
 		this.pruneRouteCache(ch);
 		const entry = ch.routeByPeer.get(targetHash);
 		if (!entry) {
@@ -2980,7 +2991,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!route || route.length === 0) return false;
 		if (route[0] !== ch.id.root) return false;
 		// Root must be able to forward the first downstream hop immediately.
-		if (ch.isRoot && route.length > 1 && !ch.children.has(route[1]!)) return false;
+		if (ch.isRoot && route.length > 1 && !ch.children.has(route[1]!))
+			return false;
 		return true;
 	}
 
@@ -2997,7 +3009,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return reqId;
 	}
 
-	private completeRouteProxy(ch: ChannelState, proxyReqId: number, route?: string[]) {
+	private completeRouteProxy(
+		ch: ChannelState,
+		proxyReqId: number,
+		route?: string[],
+	) {
 		const proxy = ch.pendingRouteProxy.get(proxyReqId);
 		if (!proxy) return;
 		ch.pendingRouteProxy.delete(proxyReqId);
@@ -3031,19 +3047,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 
 		if (unique.length === 0) {
-			void this._sendControl(requester, encodeRouteReply(ch.id.key, downstreamReqId)).catch(
-				() => {},
-			);
+			void this._sendControl(
+				requester,
+				encodeRouteReply(ch.id.key, downstreamReqId),
+			).catch(() => {});
 			return;
 		}
 		ch.metrics.routeProxyQueries += 1;
 		ch.metrics.routeProxyFanout += unique.length;
 
 		const proxyReqId = this.nextReqId(ch);
-		const timer = setTimeout(() => {
-			ch.metrics.routeProxyTimeouts += 1;
-			this.completeRouteProxy(ch, proxyReqId);
-		}, Math.max(1, timeoutMs));
+		const timer = setTimeout(
+			() => {
+				ch.metrics.routeProxyTimeouts += 1;
+				this.completeRouteProxy(ch, proxyReqId);
+			},
+			Math.max(1, timeoutMs),
+		);
 		ch.pendingRouteProxy.set(proxyReqId, {
 			requester,
 			downstreamReqId,
@@ -3051,10 +3071,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			expectedReplies: new Set(unique),
 		});
 
-		void this._sendControlMany(unique, encodeRouteQuery(ch.id.key, proxyReqId, targetHash))
-			.catch(() => {
-				this.completeRouteProxy(ch, proxyReqId);
-			});
+		void this._sendControlMany(
+			unique,
+			encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
+		).catch(() => {
+			this.completeRouteProxy(ch, proxyReqId);
+		});
 	}
 
 	public async resolveRouteToken(
@@ -3146,10 +3168,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					},
 				});
 
-				void this._sendControlMany(unique, encodeRouteQuery(ch.id.key, proxyReqId, targetHash))
-					.catch(() => {
-						this.completeRouteProxy(ch, proxyReqId);
-					});
+				void this._sendControlMany(
+					unique,
+					encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
+				).catch(() => {
+					this.completeRouteProxy(ch, proxyReqId);
+				});
 			});
 		}
 
@@ -3193,17 +3217,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					resolve(undefined);
 				},
 			});
-			void this._sendControl(ch.parent!, encodeRouteQuery(ch.id.key, reqId, targetHash))
-				.catch((error) => {
-					if (settled) return;
-					settled = true;
-					clearTimeout(timer);
-					if (options?.signal) {
-						options.signal.removeEventListener("abort", onAbort);
-					}
-					ch.pendingRouteQuery.delete(reqId);
-					reject(error);
-				});
+			void this._sendControl(
+				ch.parent!,
+				encodeRouteQuery(ch.id.key, reqId, targetHash),
+			).catch((error) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				if (options?.signal) {
+					options.signal.removeEventListener("abort", onAbort);
+				}
+				ch.pendingRouteQuery.delete(reqId);
+				reject(error);
+			});
 		});
 	}
 
@@ -3220,7 +3246,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		payload: Uint8Array,
 		options?: { timeoutMs?: number; signal?: AbortSignal },
 	) {
-		const route = await this.resolveRouteToken(topic, root, targetHash, options);
+		const route = await this.resolveRouteToken(
+			topic,
+			root,
+			targetHash,
+			options,
+		);
 		if (!route) {
 			throw new Error(`No route token available for target ${targetHash}`);
 		}
@@ -3234,7 +3265,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		payload: Uint8Array,
 		options?: { timeoutMs?: number; signal?: AbortSignal },
 	): Promise<void> {
-		const route = await this.resolveRouteToken(topic, root, targetHash, options);
+		const route = await this.resolveRouteToken(
+			topic,
+			root,
+			targetHash,
+			options,
+		);
 		if (!route) {
 			throw new Error(`No route token available for target ${targetHash}`);
 		}
@@ -3301,11 +3337,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			throw new Error("Cannot unicast with ACK without a route token to self");
 		}
 		if (replyRoute[0] !== ch.id.root) {
-			throw new Error("Cannot unicast with ACK: self route token root mismatch");
+			throw new Error(
+				"Cannot unicast with ACK: self route token root mismatch",
+			);
 		}
 		const selfHash = this.publicKeyHash;
 		if (replyRoute[replyRoute.length - 1] !== selfHash) {
-			throw new Error("Cannot unicast with ACK: self route token target mismatch");
+			throw new Error(
+				"Cannot unicast with ACK: self route token target mismatch",
+			);
 		}
 
 		const data = encodeUnicast(ch.id.key, toRoute, payload, {
@@ -3460,14 +3500,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		await this._sendControl(ch.parent, data);
 	}
 
-	public async publishData(topic: string, root: string, payload: Uint8Array): Promise<void> {
+	public async publishData(
+		topic: string,
+		root: string,
+		payload: Uint8Array,
+	): Promise<void> {
 		const id = this.getChannelId(topic, root);
 		const ch = this.channelsBySuffixKey.get(id.suffixKey);
 		if (!ch) throw new Error(`Channel not open: ${topic} (${root})`);
 		if (!ch.isRoot) throw new Error("Only the channel root can publish");
 		const seq = ch.seq++;
-		const message = await this._sendData(ch, [...ch.children.keys()], seq, payload);
-				this.dispatchEvent(
+		const message = await this._sendData(
+			ch,
+			[...ch.children.keys()],
+			seq,
+			payload,
+		);
+		this.dispatchEvent(
 			new CustomEvent("fanout:data", {
 				detail: {
 					topic: ch.id.topic,
@@ -3540,7 +3589,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private waitForChannelAttachment(ch: ChannelState, timeoutMs: number): Promise<void> {
+	private waitForChannelAttachment(
+		ch: ChannelState,
+		timeoutMs: number,
+	): Promise<void> {
 		if (ch.isRoot || ch.parent) return Promise.resolve();
 		const ms = Math.max(0, Math.floor(timeoutMs));
 		if (ms === 0) return Promise.resolve();
@@ -3603,13 +3655,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		});
 	}
 
-	public async publishEnd(topic: string, root: string, lastSeqExclusive: number): Promise<void> {
+	public async publishEnd(
+		topic: string,
+		root: string,
+		lastSeqExclusive: number,
+	): Promise<void> {
 		const id = this.getChannelId(topic, root);
 		const ch = this.channelsBySuffixKey.get(id.suffixKey);
 		if (!ch) return;
 		if (!ch.isRoot) return;
 		ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
-		await this._sendControlMany([...ch.children.keys()], encodeEnd(ch.id.key, lastSeqExclusive));
+		await this._sendControlMany(
+			[...ch.children.keys()],
+			encodeEnd(ch.id.key, lastSeqExclusive),
+		);
 	}
 
 	private makeDataId(ch: ChannelState, seq: number): Uint8Array {
@@ -3695,6 +3754,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				m.trackerFeedbackSent += transmissions;
 				m.controlBytesSentTracker += sentBytes;
 				break;
+			case MSG_PARENT_PROBE_REQ:
+				m.parentProbeReqSent += transmissions;
+				m.controlBytesSentJoin += sentBytes;
+				break;
+			case MSG_PARENT_PROBE_REPLY:
+				m.parentProbeReplySent += transmissions;
+				m.controlBytesSentJoin += sentBytes;
+				break;
 			case MSG_PROVIDER_ANNOUNCE:
 			case MSG_PROVIDER_QUERY:
 			case MSG_PROVIDER_REPLY:
@@ -3708,7 +3775,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private recordControlReceive(suffixKey: string, kind: number, bytesReceived: number) {
+	private recordControlReceive(
+		suffixKey: string,
+		kind: number,
+		bytesReceived: number,
+	) {
 		const m = this.getMetricsForSuffixKey(suffixKey);
 		m.controlReceives += 1;
 		m.controlBytesReceived += bytesReceived;
@@ -3760,6 +3831,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			case MSG_TRACKER_FEEDBACK:
 				m.trackerFeedbackReceived += 1;
 				m.controlBytesReceivedTracker += bytesReceived;
+				break;
+			case MSG_PARENT_PROBE_REQ:
+				m.parentProbeReqReceived += 1;
+				m.controlBytesReceivedJoin += bytesReceived;
+				break;
+			case MSG_PARENT_PROBE_REPLY:
+				m.parentProbeReplyReceived += 1;
+				m.controlBytesReceivedJoin += bytesReceived;
 				break;
 			case MSG_PROVIDER_ANNOUNCE:
 			case MSG_PROVIDER_QUERY:
@@ -3834,7 +3913,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.neighborRepairLastRefillAt = now;
 		ch.neighborRepairTokens = Math.min(
 			ch.neighborRepairTokenCapacity,
-			ch.neighborRepairTokens + (elapsedMs * ch.neighborRepairBudgetBps) / 1_000,
+			ch.neighborRepairTokens +
+				(elapsedMs * ch.neighborRepairBudgetBps) / 1_000,
 		);
 	}
 
@@ -3862,8 +3942,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (budgetBps <= 0 || capacity <= 0) return true;
 
 		const prev = byPeer.get(fromHash);
-		const entry =
-			prev || ({ tokens: capacity, lastRefillAt: now } as const);
+		const entry = prev || ({ tokens: capacity, lastRefillAt: now } as const);
 		const elapsedMs = now - entry.lastRefillAt;
 		let tokens = entry.tokens;
 		if (elapsedMs > 0) {
@@ -3905,7 +3984,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		const candidates = to
 			.map((hash) => ({ hash, stream: this.peers.get(hash) }))
-			.filter((c): c is { hash: string; stream: PeerStreams } => Boolean(c.stream));
+			.filter((c): c is { hash: string; stream: PeerStreams } =>
+				Boolean(c.stream),
+			);
 		if (candidates.length === 0) return message;
 
 		let selected = candidates;
@@ -3933,26 +4014,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				dropped = candidates.length - selected.length;
 			}
 
-				const hasChildCandidate = candidates.some((c) => ch.children.has(c.hash));
-				if (hasChildCandidate) {
-					if (dropped > 0) {
-						ch.droppedForwards += dropped;
-						ch.overloadStreak += 1;
-					} else {
-						ch.overloadStreak = 0;
-					}
+			const hasChildCandidate = candidates.some((c) => ch.children.has(c.hash));
+			if (hasChildCandidate) {
+				if (dropped > 0) {
+					ch.droppedForwards += dropped;
+					ch.overloadStreak += 1;
+				} else {
+					ch.overloadStreak = 0;
 				}
+			}
 
-				// Reserve tokens up front to keep the cap consistent under concurrent sends.
-				// Any unused reservation is refunded after attempting writes.
-				if (selected.length > 0) {
-					ch.uploadTokens -= selected.length * costPerChild;
-				}
+			// Reserve tokens up front to keep the cap consistent under concurrent sends.
+			// Any unused reservation is refunded after attempting writes.
+			if (selected.length > 0) {
+				ch.uploadTokens -= selected.length * costPerChild;
+			}
 
-				if (
-					dropped > 0 &&
-					hasChildCandidate &&
-					ch.allowKick &&
+			if (
+				dropped > 0 &&
+				hasChildCandidate &&
+				ch.allowKick &&
 				ch.overloadStreak >= OVERLOAD_KICK_STREAK_THRESHOLD &&
 				now - ch.lastOverloadKickAt > OVERLOAD_KICK_COOLDOWN_MS
 			) {
@@ -3967,14 +4048,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
 				});
 
-					const kickCount = Math.min(OVERLOAD_KICK_MAX_PER_EVENT, droppedCandidates.length);
-					if (kickCount > 0) {
-						const toKick = droppedCandidates.slice(0, kickCount).map((c) => c.hash);
-						ch.overloadStreak = 0;
-						ch.lastOverloadKickAt = now;
-						void this.kickChildHashes(ch, toKick).catch(() => {});
-						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-					}
+				const kickCount = Math.min(
+					OVERLOAD_KICK_MAX_PER_EVENT,
+					droppedCandidates.length,
+				);
+				if (kickCount > 0) {
+					const toKick = droppedCandidates
+						.slice(0, kickCount)
+						.map((c) => c.hash);
+					ch.overloadStreak = 0;
+					ch.lastOverloadKickAt = now;
+					void this.kickChildHashes(ch, toKick).catch(() => {});
+					void this.announceToTrackers(ch, this.closeController.signal).catch(
+						() => {},
+					);
+				}
 			}
 		}
 
@@ -4031,7 +4119,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		if (costPerChild > 0 && successes < selected.length) {
 			const refund = (selected.length - successes) * costPerChild;
-			ch.uploadTokens = Math.min(ch.uploadTokenCapacity, ch.uploadTokens + refund);
+			ch.uploadTokens = Math.min(
+				ch.uploadTokenCapacity,
+				ch.uploadTokens + refund,
+			);
 		}
 		if (writeDrops > 0) ch.metrics.dataWriteDrops += writeDrops;
 
@@ -4041,21 +4132,28 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			writeFailKickCandidates.length > 0 &&
 			now - ch.lastDataWriteFailKickAt > DATA_WRITE_FAIL_KICK_COOLDOWN_MS
 		) {
-			const unique = [...new Set(writeFailKickCandidates)].filter((h) => ch.children.has(h));
+			const unique = [...new Set(writeFailKickCandidates)].filter((h) =>
+				ch.children.has(h),
+			);
 			unique.sort((a, b) => {
 				const bidA = ch.children.get(a)?.bidPerByte ?? 0;
 				const bidB = ch.children.get(b)?.bidPerByte ?? 0;
 				if (bidA !== bidB) return bidA - bidB;
 				return a < b ? -1 : a > b ? 1 : 0;
 			});
-			const kickCount = Math.min(DATA_WRITE_FAIL_KICK_MAX_PER_EVENT, unique.length);
+			const kickCount = Math.min(
+				DATA_WRITE_FAIL_KICK_MAX_PER_EVENT,
+				unique.length,
+			);
 			if (kickCount > 0) {
 				const toKick = unique.slice(0, kickCount);
 				ch.lastDataWriteFailKickAt = now;
 				void this.kickChildHashes(ch, toKick, { resetPeerConnections: true }).catch(
 					() => {},
 				);
-				void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
+				void this.announceToTrackers(ch, this.closeController.signal).catch(
+					() => {},
+				);
 			}
 		}
 
@@ -4074,7 +4172,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		const candidates = to
 			.map((hash) => ({ hash, stream: this.peers.get(hash) }))
-			.filter((c): c is { hash: string; stream: PeerStreams } => Boolean(c.stream));
+			.filter((c): c is { hash: string; stream: PeerStreams } =>
+				Boolean(c.stream),
+			);
 		if (candidates.length === 0) return;
 
 		if (ch.maxDataAgeMs > 0) {
@@ -4096,7 +4196,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (ch.uploadLimitBps > 0 && ch.uploadTokenCapacity > 0) {
 			const now = Date.now();
 			this.refillUploadTokens(ch, now);
-			costPerChild = Math.max(1, payload.byteLength + 1 + ch.uploadOverheadBytes);
+			costPerChild = Math.max(
+				1,
+				payload.byteLength + 1 + ch.uploadOverheadBytes,
+			);
 			const affordable = Math.floor(ch.uploadTokens / costPerChild);
 
 			if (affordable <= 0) {
@@ -4113,26 +4216,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				dropped = candidates.length - selected.length;
 			}
 
-				const hasChildCandidate = candidates.some((c) => ch.children.has(c.hash));
-				if (hasChildCandidate) {
-					if (dropped > 0) {
-						ch.droppedForwards += dropped;
-						ch.overloadStreak += 1;
-					} else {
-						ch.overloadStreak = 0;
-					}
-					}
-
-				// Reserve tokens up front to keep the cap consistent under concurrent sends.
-				// Any unused reservation is refunded after attempting writes.
-				if (selected.length > 0) {
-					ch.uploadTokens -= selected.length * costPerChild;
+			const hasChildCandidate = candidates.some((c) => ch.children.has(c.hash));
+			if (hasChildCandidate) {
+				if (dropped > 0) {
+					ch.droppedForwards += dropped;
+					ch.overloadStreak += 1;
+				} else {
+					ch.overloadStreak = 0;
 				}
+			}
 
-					if (
-						dropped > 0 &&
-						hasChildCandidate &&
-						ch.allowKick &&
+			// Reserve tokens up front to keep the cap consistent under concurrent sends.
+			// Any unused reservation is refunded after attempting writes.
+			if (selected.length > 0) {
+				ch.uploadTokens -= selected.length * costPerChild;
+			}
+
+			if (
+				dropped > 0 &&
+				hasChildCandidate &&
+				ch.allowKick &&
 				ch.overloadStreak >= OVERLOAD_KICK_STREAK_THRESHOLD &&
 				now - ch.lastOverloadKickAt > OVERLOAD_KICK_COOLDOWN_MS
 			) {
@@ -4147,14 +4250,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
 				});
 
-					const kickCount = Math.min(OVERLOAD_KICK_MAX_PER_EVENT, droppedCandidates.length);
-					if (kickCount > 0) {
-						const toKick = droppedCandidates.slice(0, kickCount).map((c) => c.hash);
-						ch.overloadStreak = 0;
-						ch.lastOverloadKickAt = now;
-						void this.kickChildHashes(ch, toKick).catch(() => {});
-						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-					}
+				const kickCount = Math.min(
+					OVERLOAD_KICK_MAX_PER_EVENT,
+					droppedCandidates.length,
+				);
+				if (kickCount > 0) {
+					const toKick = droppedCandidates
+						.slice(0, kickCount)
+						.map((c) => c.hash);
+					ch.overloadStreak = 0;
+					ch.lastOverloadKickAt = now;
+					void this.kickChildHashes(ch, toKick).catch(() => {});
+					void this.announceToTrackers(ch, this.closeController.signal).catch(
+						() => {},
+					);
+				}
 			}
 		}
 
@@ -4198,7 +4308,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		if (costPerChild > 0 && successes < selected.length) {
 			const refund = (selected.length - successes) * costPerChild;
-			ch.uploadTokens = Math.min(ch.uploadTokenCapacity, ch.uploadTokens + refund);
+			ch.uploadTokens = Math.min(
+				ch.uploadTokenCapacity,
+				ch.uploadTokens + refund,
+			);
 		}
 		if (writeDrops > 0) ch.metrics.dataWriteDrops += writeDrops;
 
@@ -4208,30 +4321,37 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			writeFailKickCandidates.length > 0 &&
 			now - ch.lastDataWriteFailKickAt > DATA_WRITE_FAIL_KICK_COOLDOWN_MS
 		) {
-			const unique = [...new Set(writeFailKickCandidates)].filter((h) => ch.children.has(h));
+			const unique = [...new Set(writeFailKickCandidates)].filter((h) =>
+				ch.children.has(h),
+			);
 			unique.sort((a, b) => {
 				const bidA = ch.children.get(a)?.bidPerByte ?? 0;
 				const bidB = ch.children.get(b)?.bidPerByte ?? 0;
 				if (bidA !== bidB) return bidA - bidB;
 				return a < b ? -1 : a > b ? 1 : 0;
 			});
-			const kickCount = Math.min(DATA_WRITE_FAIL_KICK_MAX_PER_EVENT, unique.length);
+			const kickCount = Math.min(
+				DATA_WRITE_FAIL_KICK_MAX_PER_EVENT,
+				unique.length,
+			);
 			if (kickCount > 0) {
 				const toKick = unique.slice(0, kickCount);
 				ch.lastDataWriteFailKickAt = now;
 				void this.kickChildHashes(ch, toKick, { resetPeerConnections: true }).catch(
 					() => {},
 				);
-				void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
+				void this.announceToTrackers(ch, this.closeController.signal).catch(
+					() => {},
+				);
 			}
 		}
 	}
 
-		private noteReceivedSeq(ch: ChannelState, fromHash: string, seq: number) {
-			if (!ch.repairEnabled) return;
-			ch.repairRequestedAtBySeq.delete(seq);
-			if (!ch.parent || fromHash !== ch.parent) {
-				// Neighbor-assisted repair may deliver payload from a peer other than the
+	private noteReceivedSeq(ch: ChannelState, fromHash: string, seq: number) {
+		if (!ch.repairEnabled) return;
+		ch.repairRequestedAtBySeq.delete(seq);
+		if (!ch.parent || fromHash !== ch.parent) {
+			// Neighbor-assisted repair may deliver payload from a peer other than the
 			// current parent; treat it as a "hole fill" only.
 			const wasMissing = ch.missingSeqs.delete(seq);
 			if (wasMissing) {
@@ -4249,13 +4369,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				have.successes += 1;
 				ch.metrics.holeFillsFromNeighbor += 1;
 			}
-				return;
-			}
+			return;
+		}
 
-			if (seq >= ch.nextExpectedSeq) {
-				const maxBackfill = Math.max(0, ch.repairMaxBackfillMessages);
-				const start =
-				maxBackfill > 0 ? Math.max(ch.nextExpectedSeq, Math.max(0, seq - maxBackfill)) : ch.nextExpectedSeq;
+		if (seq >= ch.nextExpectedSeq) {
+			const maxBackfill = Math.max(0, ch.repairMaxBackfillMessages);
+			const start =
+				maxBackfill > 0
+					? Math.max(ch.nextExpectedSeq, Math.max(0, seq - maxBackfill))
+					: ch.nextExpectedSeq;
 			for (let s = start; s < seq; s++) ch.missingSeqs.add(s);
 			ch.nextExpectedSeq = seq + 1;
 			if (maxBackfill > 0) {
@@ -4268,7 +4390,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.missingSeqs.delete(seq);
 	}
 
-	private noteEnd(ch: ChannelState, fromHash: string, lastSeqExclusive: number) {
+	private noteEnd(
+		ch: ChannelState,
+		fromHash: string,
+		lastSeqExclusive: number,
+	) {
 		if (!ch.repairEnabled) return;
 		if (!ch.parent || fromHash !== ch.parent) return;
 
@@ -4292,12 +4418,18 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private async tickRepair(ch: ChannelState, now = Date.now()): Promise<boolean> {
+	private async tickRepair(
+		ch: ChannelState,
+		now = Date.now(),
+	): Promise<boolean> {
 		if (!ch.repairEnabled) return false;
 
 		// Drop missing seqs that are too old to be realistically repaired (bounded window / live mode).
 		if (ch.missingSeqs.size > 0 && ch.repairMaxBackfillMessages > 0) {
-			const minSeq = Math.max(0, ch.nextExpectedSeq - ch.repairMaxBackfillMessages);
+			const minSeq = Math.max(
+				0,
+				ch.nextExpectedSeq - ch.repairMaxBackfillMessages,
+			);
 			for (const s of ch.missingSeqs) {
 				if (s < minSeq) ch.missingSeqs.delete(s);
 			}
@@ -4307,7 +4439,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 
 		if (ch.missingSeqs.size === 0) return false;
-		if (ch.repairIntervalMs > 0 && now - ch.lastRepairSentAt < ch.repairIntervalMs) {
+		if (
+			ch.repairIntervalMs > 0 &&
+			now - ch.lastRepairSentAt < ch.repairIntervalMs
+		) {
 			return false;
 		}
 
@@ -4328,7 +4463,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		let sent = false;
 
 		if (ch.parent) {
-			await this._sendControl(ch.parent, encodeRepairReq(ch.id.key, reqId, slice));
+			await this._sendControl(
+				ch.parent,
+				encodeRepairReq(ch.id.key, reqId, slice),
+			);
 			ch.parentRepairUnansweredStreak += 1;
 			sent = true;
 		}
@@ -4397,7 +4535,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (peers.length > 0) {
 				const bytes = encodeFetchReq(ch.id.key, reqId, slice);
 
-				if (ch.neighborRepairBudgetBps > 0 && ch.neighborRepairTokenCapacity > 0) {
+				if (
+					ch.neighborRepairBudgetBps > 0 &&
+					ch.neighborRepairTokenCapacity > 0
+				) {
 					this.refillNeighborRepairTokens(ch, now);
 					const costPerPeer = Math.max(1, bytes.byteLength);
 					const affordable = Math.floor(ch.neighborRepairTokens / costPerPeer);
@@ -4493,7 +4634,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return [...new Set(out)];
 	}
 
-	private async announceToTrackers(ch: ChannelState, signal: AbortSignal): Promise<void> {
+	private async announceToTrackers(
+		ch: ChannelState,
+		signal: AbortSignal,
+	): Promise<void> {
 		const now = Date.now();
 		if (now - ch.lastAnnouncedAt < 100) return;
 		ch.lastAnnouncedAt = now;
@@ -4527,11 +4671,24 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (peers.length === 0) return;
 
 		this.pruneDisconnectedChildren(ch);
-		const freeSlots = Math.max(0, ch.effectiveMaxChildren - ch.children.size);
+		const parentUpgradeNoCapacity =
+			ch.isRoot && ch.parentUpgradeTrackerNoCapacityUntil > now;
+		const freeSlots = parentUpgradeNoCapacity
+			? 0
+			: Math.max(0, ch.effectiveMaxChildren - ch.children.size);
+		const announceTtlMs = parentUpgradeNoCapacity
+			? Math.max(
+					1_000,
+					Math.min(
+						ch.announceTtlMs,
+						ch.parentUpgradeTrackerNoCapacityUntil - now,
+					),
+				)
+			: ch.announceTtlMs;
 		const addrs = this.getSelfAnnounceAddrs();
 		const bytes = encodeTrackerAnnounce(
 			ch.id.key,
-			ch.announceTtlMs,
+			announceTtlMs,
 			Number.isFinite(ch.level) ? ch.level : 0xffff,
 			ch.effectiveMaxChildren,
 			freeSlots,
@@ -4581,7 +4738,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				// ignore
 			}
 			const activeMs = ch.repairIntervalMs > 0 ? ch.repairIntervalMs : 200;
-			const sleepMs = ch.missingSeqs.size > 0 ? activeMs : Math.max(activeMs, 1_000);
+			const sleepMs =
+				ch.missingSeqs.size > 0 ? activeMs : Math.max(activeMs, 1_000);
 			await delay(sleepMs);
 		}
 	}
@@ -4634,7 +4792,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			let connected = true;
 			try {
-				const conns = this.components.connectionManager.getConnections(peer.peerId);
+				const conns = this.components.connectionManager.getConnections(
+					peer.peerId,
+				);
 				connected = conns.length > 0;
 			} catch {
 				connected = peer.isReadable || peer.isWritable;
@@ -4744,7 +4904,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private async ensureMeshPeers(ch: ChannelState, signal: AbortSignal): Promise<void> {
+	private async ensureMeshPeers(
+		ch: ChannelState,
+		signal: AbortSignal,
+	): Promise<void> {
 		if (ch.neighborMeshPeers <= 0) return;
 		if (ch.lazyPeers.size >= ch.neighborMeshPeers) return;
 
@@ -4782,7 +4945,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 	}
 
-	private async refreshMeshCandidates(ch: ChannelState, signal: AbortSignal): Promise<void> {
+	private async refreshMeshCandidates(
+		ch: ChannelState,
+		signal: AbortSignal,
+	): Promise<void> {
 		if (ch.neighborMeshPeers <= 0) return;
 		if (ch.lazyPeers.size >= ch.neighborMeshPeers) return;
 
@@ -4796,25 +4962,31 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		if (trackerPeers.length === 0) return;
 
-			const want = Math.max(16, ch.neighborMeshPeers * 4);
-			const candidates = await this.queryTrackers(ch, trackerPeers, want, 1_000, signal);
-			for (const c of candidates) {
-				if (c.hash === this.publicKeyHash) continue;
-				if (c.addrs.length === 0) continue;
-				this.cacheKnownCandidateAddrs(ch, c.hash, c.addrs);
-			}
+		const want = Math.max(16, ch.neighborMeshPeers * 4);
+		const candidates = await this.queryTrackers(
+			ch,
+			trackerPeers,
+			want,
+			1_000,
+			signal,
+		);
+		for (const c of candidates) {
+			if (c.hash === this.publicKeyHash) continue;
+			if (c.addrs.length === 0) continue;
+			this.cacheKnownCandidateAddrs(ch, c.hash, c.addrs);
 		}
+	}
 
-		private async _meshLoop(ch: ChannelState): Promise<void> {
-			const signal = this.closeController.signal;
-			let lastRefreshAt = 0;
-			for (;;) {
-				if (signal.aborted || ch.closed) return;
+	private async _meshLoop(ch: ChannelState): Promise<void> {
+		const signal = this.closeController.signal;
+		let lastRefreshAt = 0;
+		for (;;) {
+			if (signal.aborted || ch.closed) return;
 
-				const now = Date.now();
-				try {
-					this.pruneLazyPeers(ch);
-					this.pruneHaveByPeer(ch, now);
+			const now = Date.now();
+			try {
+				this.pruneLazyPeers(ch);
+				this.pruneHaveByPeer(ch, now);
 
 				await this.ensureMeshPeers(ch, signal);
 				const refreshMs = Math.max(0, ch.neighborMeshRefreshIntervalMs);
@@ -4831,9 +5003,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				// ignore
 			}
 
-			const intervals = [ch.neighborAnnounceIntervalMs, ch.neighborMeshRefreshIntervalMs].filter(
-				(v) => v > 0,
-			);
+			const intervals = [
+				ch.neighborAnnounceIntervalMs,
+				ch.neighborMeshRefreshIntervalMs,
+			].filter((v) => v > 0);
 			const sleepMs = intervals.length > 0 ? Math.min(...intervals) : 500;
 			await delay(Math.max(50, sleepMs));
 		}
@@ -4854,7 +5027,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const p = new Promise<TrackerCandidate[]>((resolve) => {
 					ch.pendingTrackerQuery.set(reqId, { resolve });
 				});
-				void this._sendControl(trackerHash, encodeTrackerQuery(ch.id.key, reqId, want));
+				void this._sendControl(
+					trackerHash,
+					encodeTrackerQuery(ch.id.key, reqId, want),
+				);
 				const res = await Promise.race([
 					p,
 					delay(perTrackerTimeout, { signal }).then((): null => null),
@@ -4889,7 +5065,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (signal.aborted) return false;
 			try {
 				await this.components.connectionManager.openConnection(a);
-				await this.waitFor(hash, { seek: "present", timeout: timeoutMs, signal });
+				await this.waitFor(hash, {
+					seek: "present",
+					timeout: timeoutMs,
+					signal,
+				});
 				return true;
 			} catch {
 				// ignore and try next
@@ -4903,7 +5083,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (!stream) return [];
 		try {
 			const peer: any = await this.components.peerStore.get(stream.peerId);
-			const addresses: any[] = Array.isArray(peer?.addresses) ? peer.addresses : [];
+			const addresses: any[] = Array.isArray(peer?.addresses)
+				? peer.addresses
+				: [];
 			const out: Uint8Array[] = [];
 			for (const a of addresses) {
 				const ma: any = a?.multiaddr ?? a;
@@ -4923,7 +5105,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		excludeHash: string,
 		limit: number,
 	): Promise<JoinRejectRedirect[]> {
-		const max = Math.max(0, Math.min(JOIN_REJECT_REDIRECT_MAX, Math.floor(limit)));
+		const max = Math.max(
+			0,
+			Math.min(JOIN_REJECT_REDIRECT_MAX, Math.floor(limit)),
+		);
 		if (max === 0) return [];
 
 		const seen = new Set<string>([excludeHash, this.publicKeyHash]);
@@ -4965,7 +5150,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			for (const e of entries) {
 				if (out.length >= max) break;
 				seen.add(e.hash);
-				out.push({ hash: e.hash, addrs: e.addrs.slice(0, JOIN_REJECT_REDIRECT_ADDR_MAX) });
+				out.push({
+					hash: e.hash,
+					addrs: e.addrs.slice(0, JOIN_REJECT_REDIRECT_ADDR_MAX),
+				});
 			}
 		}
 
@@ -4998,8 +5186,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		reqId: number,
 		reason: number,
 	): Promise<void> {
-		const redirects = await this.pickJoinRejectRedirects(ch, toHash, JOIN_REJECT_REDIRECT_MAX);
-		await this._sendControl(toHash, encodeJoinReject(ch.id.key, reqId, reason, redirects));
+		const redirects = await this.pickJoinRejectRedirects(
+			ch,
+			toHash,
+			JOIN_REJECT_REDIRECT_MAX,
+		);
+		await this._sendControl(
+			toHash,
+			encodeJoinReject(ch.id.key, reqId, reason, redirects),
+		);
 	}
 
 	private async sendTrackerFeedback(
@@ -5016,14 +5211,210 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 	}
 
-	private async _joinLoop(ch: ChannelState, joinOpts: FanoutTreeJoinOptions): Promise<void> {
+	private pruneParentUpgradeReservations(ch: ChannelState, now = Date.now()) {
+		for (const [hash, reservation] of ch.parentUpgradeReservationsByHash) {
+			if (reservation.expiresAt <= now) {
+				ch.parentUpgradeReservationsByHash.delete(hash);
+				ch.metrics.parentUpgradeRootReservationExpired += 1;
+				continue;
+			}
+			if (ch.children.has(hash)) {
+				ch.parentUpgradeReservationsByHash.delete(hash);
+			}
+		}
+	}
+
+	private parentUpgradeReservationCount(
+		ch: ChannelState,
+		excludeHash?: string,
+		now = Date.now(),
+	) {
+		this.pruneParentUpgradeReservations(ch, now);
+		let count = 0;
+		for (const hash of ch.parentUpgradeReservationsByHash.keys()) {
+			if (hash === excludeHash) continue;
+			if (ch.children.has(hash)) continue;
+			count += 1;
+		}
+		return count;
+	}
+
+	private createParentUpgradeReservation(
+		ch: ChannelState,
+		toHash: string,
+		minFreeSlots = 0,
+		now = Date.now(),
+	) {
+		if (!ch.isRoot || ch.children.has(toHash)) return 0;
+		const maxChildren = Math.max(0, Math.floor(ch.effectiveMaxChildren));
+		if (maxChildren <= 0) return 0;
+		const reserved = this.parentUpgradeReservationCount(ch, toHash, now);
+		const requestedMinFreeSlots = Math.max(0, Math.floor(minFreeSlots));
+		const freeSlots = maxChildren - ch.children.size - reserved;
+		if (
+			freeSlots <= 0 ||
+			(requestedMinFreeSlots > 0 && freeSlots < requestedMinFreeSlots)
+		) {
+			ch.metrics.parentUpgradeRootReservationBlocked += 1;
+			return 0;
+		}
+		const token = (this.random() * 0xffffffff) >>> 0 || 1;
+		ch.parentUpgradeReservationsByHash.set(toHash, {
+			token,
+			expiresAt: now + PARENT_UPGRADE_ROOT_RESERVATION_TTL_MS,
+			minFreeSlots: requestedMinFreeSlots,
+		});
+		ch.metrics.parentUpgradeRootReservationCreated += 1;
+		return token;
+	}
+
+	private consumeParentUpgradeReservation(
+		ch: ChannelState,
+		fromHash: string,
+		token: number,
+		now = Date.now(),
+	) {
+		if (!ch.isRoot || token <= 0) return false;
+		this.pruneParentUpgradeReservations(ch, now);
+		const reservation = ch.parentUpgradeReservationsByHash.get(fromHash);
+		if (!reservation) return false;
+		if (reservation.expiresAt <= now) {
+			ch.parentUpgradeReservationsByHash.delete(fromHash);
+			ch.metrics.parentUpgradeRootReservationExpired += 1;
+			return false;
+		}
+		if (reservation.token !== token) return false;
+		const requestedMinFreeSlots = Math.max(
+			0,
+			Math.floor(reservation.minFreeSlots ?? 0),
+		);
+		if (requestedMinFreeSlots > 0) {
+			const maxChildren = Math.max(0, Math.floor(ch.effectiveMaxChildren));
+			const freeSlots = Math.max(0, maxChildren - ch.children.size);
+			if (freeSlots < requestedMinFreeSlots) {
+				ch.parentUpgradeReservationsByHash.delete(fromHash);
+				ch.metrics.parentUpgradeRootReservationMarginRejected += 1;
+				return false;
+			}
+		}
+		ch.parentUpgradeReservationsByHash.delete(fromHash);
+		ch.metrics.parentUpgradeRootReservationConsumed += 1;
+		return true;
+	}
+
+	private isRootedForParentProbe(ch: ChannelState): boolean {
+		if (ch.isRoot) return true;
+		const route = ch.routeFromRoot;
+		return Boolean(
+			ch.parent &&
+				Array.isArray(route) &&
+				route.length >= 2 &&
+				route[0] === ch.id.root &&
+				route[route.length - 1] === this.publicKeyHash,
+		);
+	}
+
+	private encodeParentProbeReplyForChannel(
+		ch: ChannelState,
+		reqId: number,
+		toHash: string,
+		minFreeSlots = 0,
+		reserveRootCapacity = true,
+	): Uint8Array {
+		this.pruneDisconnectedChildren(ch);
+		const rooted = this.isRootedForParentProbe(ch);
+		const requestedMinFreeSlots = Math.max(0, Math.floor(minFreeSlots));
+		const maxChildren = Math.max(0, Math.floor(ch.effectiveMaxChildren));
+		const reserved = ch.isRoot
+			? this.parentUpgradeReservationCount(ch, toHash)
+			: 0;
+		const freeSlots = rooted
+			? Math.max(0, maxChildren - ch.children.size - reserved)
+			: 0;
+		const requesterHasEnoughSlots =
+			freeSlots > 0 &&
+			(requestedMinFreeSlots <= 0 || freeSlots >= requestedMinFreeSlots);
+		if (
+			ch.isRoot &&
+			rooted &&
+			maxChildren > 0 &&
+			!ch.children.has(toHash) &&
+			!requesterHasEnoughSlots
+		) {
+			ch.metrics.parentUpgradeRootReservationBlocked += 1;
+		}
+		const reservationToken =
+			ch.isRoot && rooted && requesterHasEnoughSlots && reserveRootCapacity
+				? this.createParentUpgradeReservation(ch, toHash, requestedMinFreeSlots)
+				: 0;
+		const repairing = ch.missingSeqs.size > 0;
+		const overloaded = ch.overloadStreak > 0;
+		let flags = 0;
+		if (rooted) flags |= PARENT_PROBE_FLAG_ROOTED;
+		if (
+			rooted &&
+			(reservationToken > 0 ||
+				(!ch.isRoot && requesterHasEnoughSlots) ||
+				(ch.isRoot && requesterHasEnoughSlots && !reserveRootCapacity))
+		) {
+			flags |= PARENT_PROBE_FLAG_ACCEPTING;
+		}
+		if (repairing) flags |= PARENT_PROBE_FLAG_REPAIRING;
+		if (overloaded) flags |= PARENT_PROBE_FLAG_OVERLOADED;
+		return encodeParentProbeReply(ch.id.key, reqId, {
+			flags,
+			level: Number.isFinite(ch.level) ? ch.level : 0xffff,
+			maxChildren,
+			freeSlots,
+			// For roots, expose reserved slots as child pressure so concurrent
+			// upgrade probes cannot all pass the load-ratio check from stale state.
+			children: ch.isRoot ? ch.children.size + reserved : ch.children.size,
+			haveToExclusive: ch.maxSeqSeen >= 0 ? ch.maxSeqSeen + 1 : 0,
+			missingSeqs: ch.missingSeqs.size,
+			dataWriteDrops: ch.metrics.dataWriteDrops,
+			droppedForwards: ch.droppedForwards,
+			reservationToken,
+		});
+	}
+
+	private async probeParentCandidate(
+		ch: ChannelState,
+		parentHash: string,
+		timeoutMs: number,
+		signal: AbortSignal,
+		minFreeSlots = 0,
+		reserveRootCapacity = true,
+	): Promise<ParentProbeReply | undefined> {
+		if (!this.peers.get(parentHash)) return;
+		const reqId = (this.random() * 0xffffffff) >>> 0;
+		const p = new Promise<ParentProbeReply | undefined>((resolve) => {
+			ch.pendingParentProbe.set(reqId, { resolve });
+		});
+		await this._sendControl(
+			parentHash,
+			encodeParentProbeReq(ch.id.key, reqId, minFreeSlots, reserveRootCapacity),
+		);
+		const res = await Promise.race([
+			p,
+			delay(Math.max(1, timeoutMs), { signal }).then(
+				(): undefined => undefined,
+			),
+		]);
+		if (!res) ch.pendingParentProbe.delete(reqId);
+		return res;
+	}
+
+	private async _joinLoop(
+		ch: ChannelState,
+		joinOpts: FanoutTreeJoinOptions,
+	): Promise<void> {
 		const retryMs = Math.max(1, Math.floor(joinOpts.retryMs ?? 200));
 		const timeoutMs = Math.max(0, Math.floor(joinOpts.timeoutMs ?? 60_000));
-		const staleAfterMs = Math.max(
+		const staleAfterMs = Math.max(0, Math.floor(joinOpts.staleAfterMs ?? 0));
+		const joinReqTimeoutMs = Math.max(
 			0,
-			Math.floor(joinOpts.staleAfterMs ?? 0),
+			Math.floor(joinOpts.joinReqTimeoutMs ?? 2_000),
 		);
-		const joinReqTimeoutMs = Math.max(0, Math.floor(joinOpts.joinReqTimeoutMs ?? 2_000));
 		const bootstrapDialTimeoutMs = Math.max(
 			0,
 			Math.floor(joinOpts.bootstrapDialTimeoutMs ?? ch.bootstrapDialTimeoutMs),
@@ -5032,7 +5423,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(joinOpts.bootstrapMaxPeers ?? ch.bootstrapMaxPeers),
 		);
-		const trackerCandidates = Math.max(0, Math.floor(joinOpts.trackerCandidates ?? 16));
+		const trackerCandidates = Math.max(
+			0,
+			Math.floor(joinOpts.trackerCandidates ?? 16),
+		);
 		const candidateShuffleTopK = Math.max(
 			0,
 			Math.floor(joinOpts.candidateShuffleTopK ?? 8),
@@ -5043,7 +5437,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		const bootstrapEnsureIntervalMs = Math.max(
 			0,
-			Math.floor(joinOpts.bootstrapEnsureIntervalMs ?? ch.bootstrapEnsureIntervalMs),
+			Math.floor(
+				joinOpts.bootstrapEnsureIntervalMs ?? ch.bootstrapEnsureIntervalMs,
+			),
 		);
 		const trackerQueryIntervalMs = Math.max(
 			0,
@@ -5057,8 +5453,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(joinOpts.candidateCooldownMs ?? 2_000),
 		);
-		const candidateScoringModeRaw = joinOpts.candidateScoringMode ?? "ranked-shuffle";
-		const candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted" =
+		const parentUpgrade = normalizeParentUpgradePolicy(joinOpts);
+		const candidateScoringModeRaw =
+			joinOpts.candidateScoringMode ?? "ranked-shuffle";
+		const candidateScoringMode:
+			| "ranked-shuffle"
+			| "ranked-strict"
+			| "weighted" =
 			candidateScoringModeRaw === "ranked-strict" ||
 			candidateScoringModeRaw === "weighted" ||
 			candidateScoringModeRaw === "ranked-shuffle"
@@ -5077,143 +5478,301 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			? anySignal([this.closeController.signal, joinOpts.signal])
 			: this.closeController.signal;
 		const signal = combinedSignal as AbortSignal & { clear?: () => void };
-
-			try {
-				for (;;) {
-					if (ch.closed) {
-						throw new AbortError("fanout join aborted: channel closed");
-					}
-					if (signal.aborted) {
-						throw signal.reason ?? new AbortError("fanout join aborted");
-					}
-
-						// Parent disappeared? Rejoin.
-						if (ch.parent) {
-							const parentPeer = this.peers.get(ch.parent);
-							let connected = false;
-							if (parentPeer) {
-								try {
-									const conns =
-										this.components.connectionManager.getConnections(parentPeer.peerId) as
-											| Connection[]
-											| undefined;
-									connected = (conns?.length ?? 0) > 0;
-								} catch {
-									connected = parentPeer.isReadable || parentPeer.isWritable;
-								}
-							}
-							if (!connected) {
-								ch.metrics.reparentDisconnect += 1;
-								const hadChildren = ch.children.size > 0;
-								this.detachFromParent(ch);
-								// If we lose our parent, we are no longer on the rooted tree; detach children so
-								// they can rejoin as well (prevents stable disconnected components).
-								void this.kickChildren(ch).catch(() => {});
-								if (hadChildren) {
-									ch.rejoinCooldownUntil = Math.max(
-										ch.rejoinCooldownUntil,
-										Date.now() + Math.max(retryMs, RELAY_REJOIN_COOLDOWN_MS),
-									);
-								}
-							}
-						}
-
-						if (ch.parent) {
-						const endedAndComplete =
-							ch.endSeqExclusive > 0 &&
-							ch.missingSeqs.size === 0 &&
-							ch.nextExpectedSeq >= ch.endSeqExclusive;
-						const expectingData =
-							ch.missingSeqs.size > 0 ||
-							(ch.repairEnabled && ch.maxSeqSeen >= 0 && ch.endSeqExclusive < 0) ||
-							(ch.maxDataAgeMs > 0 && !endedAndComplete);
-
-						// Repair requests travel child->parent on a direction that works
-						// even when parent->child data writes silently fail. A repair that
-						// does not fill a gap is not sufficient evidence by itself though:
-						// the repair payload can be dropped or the parent cache can miss.
-						// Re-parent only after both repeated unanswered repairs and a
-						// quiet parent liveness window.
-						const parentRepairDeadLivenessMs = Math.max(
-							PARENT_REPAIR_DEAD_MIN_LIVENESS_MS,
-							ch.repairIntervalMs * PARENT_REPAIR_DEAD_STREAK_THRESHOLD,
-							ch.neighborAnnounceIntervalMs * 8,
+		let nextParentUpgradeCheckAt = 0;
+		let parentUpgradeCheckSeq = 0;
+		let parentUpgradeActiveGuardBackoffMs = 0;
+		const scheduleNextParentUpgradeCheck = (
+			now: number,
+			first = false,
+			minDelayMs = parentUpgrade.intervalMs,
+		) => {
+			if (parentUpgrade.intervalMs <= 0) {
+				nextParentUpgradeCheckAt = 0;
+				return;
+			}
+			const factor = first
+				? stableUnitInterval(
+						`${ch.id.suffixKey}:${this.publicKeyHash}:parent-upgrade-phase`,
+					)
+				: 0.75 +
+					stableUnitInterval(
+						`${ch.id.suffixKey}:${this.publicKeyHash}:parent-upgrade-interval:${parentUpgradeCheckSeq++}`,
+					) *
+						0.5;
+			nextParentUpgradeCheckAt =
+				now +
+				Math.max(
+					1,
+					Math.floor(parentUpgrade.intervalMs * factor),
+					Math.floor(minDelayMs),
+				);
+		};
+		const resetParentUpgradeActiveGuardBackoff = () => {
+			parentUpgradeActiveGuardBackoffMs = 0;
+		};
+		const parentUpgradeGuardDelayMs = (
+			reason: ParentUpgradeSkipReason,
+			now: number,
+		) => {
+			const baseDelayMs = (() => {
+				switch (reason) {
+					case "data":
+						return Math.max(parentUpgrade.quietMs, parentUpgrade.repairQuietMs);
+					case "repair":
+						return parentUpgrade.repairQuietMs;
+					case "quiet":
+						return ch.lastParentUpgradeActivityAt > 0
+							? Math.max(
+									0,
+									parentUpgrade.quietMs -
+										(now - ch.lastParentUpgradeActivityAt),
+								)
+							: parentUpgrade.quietMs;
+					case "cooldown":
+						return Math.max(
+							0,
+							ch.parentUpgradeBackoffUntil - now,
+							ch.parentUpgradeLastAt > 0
+								? parentUpgrade.cooldownMs - (now - ch.parentUpgradeLastAt)
+								: 0,
 						);
-						const parentRepairNow = Date.now();
-						const parentLivenessQuietMs =
-							ch.lastParentDataAt > 0
-								? parentRepairNow - ch.lastParentDataAt
-								: 0;
-						const parentRepairDead =
-							ch.repairEnabled &&
-							ch.parentRepairUnansweredStreak >=
-								PARENT_REPAIR_DEAD_STREAK_THRESHOLD &&
-							parentLivenessQuietMs >= parentRepairDeadLivenessMs;
-						if (
-							parentRepairDead ||
-							(staleAfterMs > 0 &&
-							ch.receivedAnyParentData &&
-							ch.lastParentDataAt > 0 &&
-							Date.now() - ch.lastParentDataAt > staleAfterMs &&
-							expectingData)
-							) {
-								// Parent is "alive" at the stream layer but we're not receiving
-								// data at the expected rate; detach and try to re-parent.
-								ch.metrics.reparentStale += 1;
-								ch.parent = undefined;
-								ch.parentRepairUnansweredStreak = 0;
-								ch.level = Number.POSITIVE_INFINITY;
-								ch.routeFromRoot = undefined;
-								ch.routeByPeer.clear();
-								ch.lastParentDataAt = 0;
-								ch.receivedAnyParentData = false;
-								ch.pendingJoin.clear();
-								ch.pendingRouteQuery.clear();
-								for (const pending of ch.pendingRouteProxy.values()) {
-									clearTimeout(pending.timer);
-								}
-								ch.pendingRouteProxy.clear();
-								void this.kickChildren(ch).catch(() => {});
-								await delay(retryMs);
-								continue;
-							}
+					default:
+						return parentUpgrade.intervalMs;
+				}
+			})();
 
-						if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
-						ch.joinedOnce.resolve();
-						ch.joinedAtLeastOnce = true;
-						// Once attached, we don't need a fast retry cadence; keep polling coarse to
-						// avoid excessive timers when simulating many nodes in one process.
-						await delay(Math.max(retryMs, 1_000));
+			if (reason !== "data" && reason !== "repair") {
+				resetParentUpgradeActiveGuardBackoff();
+				return baseDelayMs;
+			}
+
+			parentUpgradeActiveGuardBackoffMs =
+				parentUpgradeActiveGuardBackoffMs > 0
+					? Math.min(
+							Math.max(parentUpgrade.failedBackoff.maxMs, baseDelayMs),
+							Math.max(baseDelayMs, parentUpgradeActiveGuardBackoffMs * 2),
+						)
+					: baseDelayMs;
+			return parentUpgradeActiveGuardBackoffMs;
+		};
+
+		try {
+			for (;;) {
+				if (ch.closed) {
+					throw new AbortError("fanout join aborted: channel closed");
+				}
+				if (signal.aborted) {
+					throw signal.reason ?? new AbortError("fanout join aborted");
+				}
+
+				// Parent disappeared? Rejoin.
+				if (ch.parent) {
+					const parentPeer = this.peers.get(ch.parent);
+					let connected = false;
+					if (parentPeer) {
+						try {
+							const conns = this.components.connectionManager.getConnections(
+								parentPeer.peerId,
+							) as Connection[] | undefined;
+							connected = (conns?.length ?? 0) > 0;
+						} catch {
+							connected = parentPeer.isReadable || parentPeer.isWritable;
+						}
+					}
+					if (!connected) {
+						ch.metrics.reparentDisconnect += 1;
+						const hadChildren = ch.children.size > 0;
+						this.detachFromParent(ch);
+						nextParentUpgradeCheckAt = 0;
+						resetParentUpgradeActiveGuardBackoff();
+						// If we lose our parent, we are no longer on the rooted tree; detach children so
+						// they can rejoin as well (prevents stable disconnected components).
+						void this.kickChildren(ch).catch(() => {});
+						if (hadChildren) {
+							ch.rejoinCooldownUntil = Math.max(
+								ch.rejoinCooldownUntil,
+								Date.now() + Math.max(retryMs, RELAY_REJOIN_COOLDOWN_MS),
+							);
+						}
+					}
+				}
+
+				if (ch.parent) {
+					const endedAndComplete =
+						ch.endSeqExclusive > 0 &&
+						ch.missingSeqs.size === 0 &&
+						ch.nextExpectedSeq >= ch.endSeqExclusive;
+					const expectingData =
+						ch.missingSeqs.size > 0 ||
+						(ch.repairEnabled && ch.maxSeqSeen >= 0 && ch.endSeqExclusive < 0) ||
+						(ch.maxDataAgeMs > 0 && !endedAndComplete);
+
+					// Repair requests travel child->parent on a direction that works
+					// even when parent->child data writes silently fail. A repair that
+					// does not fill a gap is not sufficient evidence by itself though:
+					// the repair payload can be dropped or the parent cache can miss.
+					// Re-parent only after both repeated unanswered repairs and a
+					// quiet parent liveness window.
+					const parentRepairDeadLivenessMs = Math.max(
+						PARENT_REPAIR_DEAD_MIN_LIVENESS_MS,
+						ch.repairIntervalMs * PARENT_REPAIR_DEAD_STREAK_THRESHOLD,
+						ch.neighborAnnounceIntervalMs * 8,
+					);
+					const parentRepairNow = Date.now();
+					const parentLivenessQuietMs =
+						ch.lastParentDataAt > 0 ? parentRepairNow - ch.lastParentDataAt : 0;
+					const parentRepairDead =
+						ch.repairEnabled &&
+						ch.parentRepairUnansweredStreak >=
+							PARENT_REPAIR_DEAD_STREAK_THRESHOLD &&
+						parentLivenessQuietMs >= parentRepairDeadLivenessMs;
+					if (
+						parentRepairDead ||
+						(
+						staleAfterMs > 0 &&
+						ch.receivedAnyParentData &&
+						ch.lastParentDataAt > 0 &&
+						Date.now() - ch.lastParentDataAt > staleAfterMs &&
+						expectingData
+						)
+					) {
+						// Parent is "alive" at the stream layer but we're not receiving
+						// data at the expected rate; detach and try to re-parent.
+						ch.metrics.reparentStale += 1;
+						ch.parent = undefined;
+						ch.parentRepairUnansweredStreak = 0;
+						ch.level = Number.POSITIVE_INFINITY;
+						ch.routeFromRoot = undefined;
+						ch.routeByPeer.clear();
+						ch.lastParentDataAt = 0;
+						ch.lastParentUpgradeActivityAt = 0;
+						ch.receivedAnyParentData = false;
+						ch.pendingJoin.clear();
+						ch.pendingParentProbe.clear();
+						ch.parentShadow = undefined;
+						void Promise.all(
+							this.clearParentUpgradeGrace(ch, true, true),
+						).catch(() => {});
+						if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+							this.parentUpgradeShadowInFlightSuffixKey = undefined;
+						}
+						ch.parentUpgradeRetryAfterSeq = -1;
+						ch.parentProbeRejectUntilByHash.clear();
+						ch.parentProbeRejectBackoffMsByHash.clear();
+						nextParentUpgradeCheckAt = 0;
+						resetParentUpgradeActiveGuardBackoff();
+						ch.pendingRouteQuery.clear();
+						for (const pending of ch.pendingRouteProxy.values()) {
+							clearTimeout(pending.timer);
+						}
+						ch.pendingRouteProxy.clear();
+						void this.kickChildren(ch).catch(() => {});
+						await delay(retryMs, { signal });
 						continue;
 					}
 
-							// `timeoutMs` is meant to bound the initial `joinChannel()` await, not to
-							// stop re-parenting attempts for long-running nodes.
-							if (!ch.joinedAtLeastOnce && timeoutMs > 0 && Date.now() - start > timeoutMs) {
-								const bootstrapsCount = this.getBootstrapsForChannel(ch).length;
-								const rootPeer = this.peers.get(ch.id.root);
-								const rootNeighbor = Boolean(
-									rootPeer && rootPeer.isReadable && rootPeer.isWritable,
-								);
-								const bootstrapHint =
-									bootstrapsCount === 0 && !rootNeighbor
-										? " No fanout bootstraps are configured for this channel, and the root is not a direct neighbor. If this peer reached the network via a bootstrap or relay node, initialize it with Peerbit.bootstrap(...) instead of Peerbit.dial(...), or configure FanoutTree.setBootstraps(...) before joining sharded topics."
-										: "";
-								throw new Error(
-									`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount}).${bootstrapHint}`,
-								);
-							}
-
-						const cooldownMs = ch.rejoinCooldownUntil - Date.now();
-						if (cooldownMs > 0) {
-							await delay(cooldownMs, { signal });
-							continue;
-						}
-
-					const bootstraps = this.getBootstrapsForChannel(ch);
-					let bootstrapPeers: string[] = [];
-					if (bootstraps.length > 0) {
+					if (parentUpgrade.intervalMs > 0 && ch.level > 1) {
 						const now = Date.now();
+						if (nextParentUpgradeCheckAt === 0) {
+							scheduleNextParentUpgradeCheck(
+								now,
+								true,
+								parentUpgrade.dataGuard || parentUpgrade.repairGuard
+									? Math.max(
+											parentUpgrade.quietMs,
+											parentUpgrade.repairQuietMs,
+										)
+									: parentUpgrade.intervalMs,
+							);
+						}
+						const due = now >= nextParentUpgradeCheckAt;
+						if (due) {
+							const gate = evaluateParentUpgradeGate(ch, {
+								leafOnly: parentUpgrade.leafOnly,
+								repairGuard: parentUpgrade.repairGuard,
+								dataGuard: parentUpgrade.dataGuard,
+								endedAndComplete,
+								maxPerPeer: parentUpgrade.maxPerPeer,
+								cooldownMs: parentUpgrade.cooldownMs,
+								quietMs: parentUpgrade.quietMs,
+								repairQuietMs: parentUpgrade.repairQuietMs,
+								now,
+							});
+							if ("reason" in gate) {
+								recordParentUpgradeSkip(ch.metrics, gate.reason);
+								scheduleNextParentUpgradeCheck(
+									now,
+									false,
+									parentUpgradeGuardDelayMs(gate.reason, now),
+								);
+							} else {
+								resetParentUpgradeActiveGuardBackoff();
+								const improved = await this.maybeImproveParent(ch, {
+									signal,
+									candidateShuffleTopK,
+									candidateScoringMode,
+									candidateScoringWeights,
+									joinAttemptsPerRound,
+									joinReqTimeoutMs,
+									parentUpgrade,
+									trackerPeers: ch.cachedBootstrapPeers.filter((h) =>
+										Boolean(this.peers.get(h)),
+									),
+								});
+								scheduleNextParentUpgradeCheck(Date.now());
+								if (improved) {
+									ch.metrics.reparentUpgrade += 1;
+									ch.parentUpgradeCount += 1;
+									ch.parentUpgradeLastAt = Date.now();
+									ch.parentUpgradeBackoffMs = 0;
+									ch.parentUpgradeBackoffUntil = 0;
+									ch.parentUpgradeRetryAfterSeq = -1;
+									ch.parentUpgradeStaleRootProbeRound = 0;
+								}
+							}
+						}
+					}
+
+					if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
+					ch.joinedOnce.resolve();
+					ch.joinedAtLeastOnce = true;
+					// Once attached, we don't need a fast retry cadence; keep polling coarse to
+					// avoid excessive timers when simulating many nodes in one process.
+					await delay(Math.max(retryMs, 1_000), { signal });
+					continue;
+				}
+
+				// `timeoutMs` is meant to bound the initial `joinChannel()` await, not to
+				// stop re-parenting attempts for long-running nodes.
+				if (
+					!ch.joinedAtLeastOnce &&
+					timeoutMs > 0 &&
+					Date.now() - start > timeoutMs
+				) {
+					const bootstrapsCount = this.getBootstrapsForChannel(ch).length;
+					const rootPeer = this.peers.get(ch.id.root);
+					const rootNeighbor = Boolean(
+						rootPeer && rootPeer.isReadable && rootPeer.isWritable,
+					);
+					const bootstrapHint =
+						bootstrapsCount === 0 && !rootNeighbor
+							? " No fanout bootstraps are configured for this channel, and the root is not a direct neighbor. If this peer reached the network via a bootstrap or relay node, initialize it with Peerbit.bootstrap(...) instead of Peerbit.dial(...), or configure FanoutTree.setBootstraps(...) before joining sharded topics."
+							: "";
+					throw new Error(
+						`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount}).${bootstrapHint}`,
+					);
+				}
+
+				const cooldownMs = ch.rejoinCooldownUntil - Date.now();
+				if (cooldownMs > 0) {
+					await delay(cooldownMs, { signal });
+					continue;
+				}
+
+				const bootstraps = this.getBootstrapsForChannel(ch);
+				let bootstrapPeers: string[] = [];
+				if (bootstraps.length > 0) {
+					const now = Date.now();
 					const connectedCached = ch.cachedBootstrapPeers.filter((h) =>
 						Boolean(this.peers.get(h)),
 					);
@@ -5235,7 +5794,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						);
 						if (peers.length > 0) ch.cachedBootstrapPeers = peers;
 					}
-					bootstrapPeers = ch.cachedBootstrapPeers.filter((h) => Boolean(this.peers.get(h)));
+					bootstrapPeers = ch.cachedBootstrapPeers.filter((h) =>
+						Boolean(this.peers.get(h)),
+					);
 				}
 
 				let tracker: TrackerCandidate[] = [];
@@ -5284,7 +5845,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						candidatesByHash.set(c.hash, { ...c });
 						return;
 					}
-					if (prev.addrs.length === 0 && c.addrs.length > 0) prev.addrs = c.addrs;
+					if (prev.addrs.length === 0 && c.addrs.length > 0)
+						prev.addrs = c.addrs;
 					prev.level = Math.min(prev.level, c.level);
 					prev.freeSlots = Math.max(prev.freeSlots, c.freeSlots);
 					prev.bidPerByte = Math.max(prev.bidPerByte, c.bidPerByte);
@@ -5332,16 +5894,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					});
 				}
 
-				// Fallback: try a bounded set of already-connected peers. Skip the
-				// bootstrap/tracker peers: if they host the channel they are already
-				// candidates via the tracker reply, and probing them otherwise only
-				// burns budget.
+				// Fallback: try a bounded set of already-connected peers. Bootstrap
+				// peers are often just trackers, but they can also be the only
+				// connected channel host and may not list themselves in tracker
+				// replies. Keep them as low-priority candidates unless tracker state
+				// already represented them above.
 				const bootstrapPeerSet = new Set(bootstrapPeers);
 				let connectedFallbackAdded = 0;
 				const connectedFallbackMax = 64;
 				for (const h of this.peers.keys()) {
 					if (h === this.publicKeyHash) continue;
-					if (bootstrapPeerSet.has(h)) continue;
+					if (bootstrapPeerSet.has(h) && candidatesByHash.has(h)) continue;
 					upsertCandidate({
 						hash: h,
 						addrs: [],
@@ -5360,7 +5923,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					.sort((a, b) => {
 						if (a.level !== b.level) return a.level - b.level;
 						if (a.freeSlots !== b.freeSlots) return b.freeSlots - a.freeSlots;
-						if (a.bidPerByte !== b.bidPerByte) return b.bidPerByte - a.bidPerByte;
+						if (a.bidPerByte !== b.bidPerByte)
+							return b.bidPerByte - a.bidPerByte;
 						if (a.source !== b.source) return a.source - b.source;
 						return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
 					});
@@ -5376,20 +5940,23 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						let nextAt = Number.POSITIVE_INFINITY;
 						for (const c of allCandidates) {
 							const until = cooldownUntilByHash.get(c.hash);
-							if (until != null && until > now) nextAt = Math.min(nextAt, until);
+							if (until != null && until > now)
+								nextAt = Math.min(nextAt, until);
 						}
 						const waitMs =
-							nextAt !== Number.POSITIVE_INFINITY ? Math.max(1, nextAt - now) : retryMs;
+							nextAt !== Number.POSITIVE_INFINITY
+								? Math.max(1, nextAt - now)
+								: retryMs;
 						const capMs = Math.max(
 							retryMs,
 							trackerQueryIntervalMs > 0 ? trackerQueryIntervalMs : retryMs,
 						);
-							await delay(Math.max(1, Math.min(waitMs, capMs)));
-							continue;
-						}
-						await delay(retryMs);
+						await delay(Math.max(1, Math.min(waitMs, capMs)), { signal });
 						continue;
 					}
+					await delay(retryMs, { signal });
+					continue;
+				}
 
 				let ordered = [...candidates];
 
@@ -5474,32 +6041,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 						ordered = out.concat(tail);
 					}
-					}
+				}
 
-					const queue = ordered;
-					const queued = new Set<string>(queue.map((c) => c.hash));
-					const dialedNew = new Set<string>();
-					let attempts = 0;
-					for (
-						let i = 0;
-						i < queue.length && i < JOIN_REJECT_REDIRECT_QUEUE_MAX;
+				const queue = ordered;
+				const queued = new Set<string>(queue.map((c) => c.hash));
+				const dialedNew = new Set<string>();
+				let attempts = 0;
+				for (
+					let i = 0;
+					i < queue.length && i < JOIN_REJECT_REDIRECT_QUEUE_MAX;
 					i++
 				) {
-						if (signal.aborted) break;
-						if (attempts >= joinAttemptsPerRound) break;
-						const c = queue[i]!;
-						attempts += 1;
-						const wasConnected = Boolean(this.peers.get(c.hash));
-						let dialOk = wasConnected;
-						if (!dialOk && c.addrs.length > 0) {
-							dialOk = await this.ensurePeerConnection(
-								c.hash,
-								c.addrs,
-								bootstrapDialTimeoutMs,
-								signal,
-							);
-						}
-						if (!dialOk) {
+					if (signal.aborted) break;
+					if (attempts >= joinAttemptsPerRound) break;
+					const c = queue[i]!;
+					attempts += 1;
+					const wasConnected = Boolean(this.peers.get(c.hash));
+					let dialOk = wasConnected;
+					if (!dialOk && c.addrs.length > 0) {
+						dialOk = await this.ensurePeerConnection(
+							c.hash,
+							c.addrs,
+							bootstrapDialTimeoutMs,
+							signal,
+						);
+					}
+					if (!dialOk) {
 						try {
 							await this.sendTrackerFeedback(
 								ch,
@@ -5511,17 +6078,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							// ignore
 						}
 						if (candidateCooldownMs > 0) {
-							cooldownUntilByHash.set(c.hash, Date.now() + candidateCooldownMs * 5);
-							}
-							continue;
+							cooldownUntilByHash.set(
+								c.hash,
+								Date.now() + candidateCooldownMs * 5,
+							);
 						}
-						if (!wasConnected) {
-							dialedNew.add(c.hash);
-						}
-						const reqId = (this.random() * 0xffffffff) >>> 0;
-						const res = await this.tryJoinOnce(ch, c.hash, reqId, joinReqTimeoutMs, signal);
+						continue;
+					}
+					if (!wasConnected) {
+						dialedNew.add(c.hash);
+					}
+					const reqId = (this.random() * 0xffffffff) >>> 0;
+					const res = await this.tryJoinOnce(
+						ch,
+						c.hash,
+						reqId,
+						joinReqTimeoutMs,
+						signal,
+					);
 
-						if (res.redirects && res.redirects.length > 0) {
+					if (res.redirects && res.redirects.length > 0) {
 						for (const r of res.redirects) {
 							if (queue.length >= JOIN_REJECT_REDIRECT_QUEUE_MAX) break;
 							if (!r?.hash) continue;
@@ -5552,26 +6128,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						} catch {
 							// ignore
 						}
-							cooldownUntilByHash.delete(c.hash);
-							break;
-						}
+						cooldownUntilByHash.delete(c.hash);
+						break;
+					}
 
-						// Connection hygiene: if we dialed this candidate just for joining and it
-						// didn't work out, drop it so large join storms don't accumulate thousands
-						// of idle neighbours (important for large sims and long-running clients).
-						if (!wasConnected && !bootstrapPeers.includes(c.hash)) {
-							const stream = this.peers.get(c.hash);
-							if (stream) {
-								void this.components.connectionManager
-									.closeConnections(stream.peerId)
-									.catch(() => {});
-							}
+					// Connection hygiene: if we dialed this candidate just for joining and it
+					// didn't work out, drop it so large join storms don't accumulate thousands
+					// of idle neighbours (important for large sims and long-running clients).
+					if (!wasConnected && !bootstrapPeers.includes(c.hash)) {
+						const stream = this.peers.get(c.hash);
+						if (stream) {
+							void this.components.connectionManager
+								.closeConnections(stream.peerId)
+								.catch(() => {});
 						}
+					}
 
-						if (res.timedOut) {
-							try {
-								await this.sendTrackerFeedback(
-									ch,
+					if (res.timedOut) {
+						try {
+							await this.sendTrackerFeedback(
+								ch,
 								bootstrapPeers,
 								c.hash,
 								TRACKER_FEEDBACK_JOIN_TIMEOUT,
@@ -5580,7 +6156,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							// ignore
 						}
 						if (candidateCooldownMs > 0) {
-							cooldownUntilByHash.set(c.hash, Date.now() + candidateCooldownMs * 2);
+							cooldownUntilByHash.set(
+								c.hash,
+								Date.now() + candidateCooldownMs * 2,
+							);
 						}
 						continue;
 					}
@@ -5595,7 +6174,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						) {
 							factor = 1;
 						}
-						cooldownUntilByHash.set(c.hash, Date.now() + candidateCooldownMs * factor);
+						cooldownUntilByHash.set(
+							c.hash,
+							Date.now() + candidateCooldownMs * factor,
+						);
 					}
 					try {
 						await this.sendTrackerFeedback(
@@ -5604,29 +6186,1161 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							c.hash,
 							TRACKER_FEEDBACK_JOIN_REJECT,
 							rejectReason,
-							);
-						} catch {
-							// ignore
-						}
+						);
+					} catch {
+						// ignore
+					}
+				}
+
+				if (ch.parent) {
+					// Keep only the selected parent + bootstraps. Everything else we dialed is
+					// best-effort and can be re-dialed if needed later.
+					for (const h of dialedNew) {
+						if (h === ch.parent) continue;
+						if (bootstrapPeers.includes(h)) continue;
+						const stream = this.peers.get(h);
+						if (!stream) continue;
+						void this.components.connectionManager
+							.closeConnections(stream.peerId)
+							.catch(() => {});
+					}
+					continue;
+				}
+				await delay(retryMs, { signal });
+			}
+		} finally {
+			signal.clear?.();
+		}
+	}
+
+	private async maybeImproveParent(
+		ch: ChannelState,
+		options: {
+			signal: AbortSignal;
+			candidateShuffleTopK: number;
+			candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
+			candidateScoringWeights: {
+				level: number;
+				freeSlots: number;
+				connected: number;
+				bidPerByte: number;
+				source: number;
+			};
+			joinAttemptsPerRound: number;
+			joinReqTimeoutMs: number;
+			parentUpgrade: ParentUpgradePolicy;
+			trackerPeers?: string[];
+		},
+	): Promise<boolean> {
+		const parentUpgrade = options.parentUpgrade;
+		const currentParent = ch.parent;
+		if (!currentParent || ch.closed || ch.isRoot || ch.level <= 1) return false;
+		if (
+			parentUpgrade.mode === "shadow" &&
+			this.parentUpgradeShadowInFlightSuffixKey != null &&
+			this.parentUpgradeShadowInFlightSuffixKey !== ch.id.suffixKey
+		) {
+			ch.metrics.reparentUpgradeSkipBudget += 1;
+			return false;
+		}
+		const staleRootProbeRound = Math.max(
+			0,
+			Math.floor(ch.parentUpgradeStaleRootProbeRound || 0),
+		);
+		ch.parentUpgradeStaleRootProbeRound = Math.min(
+			0x7fffffff,
+			staleRootProbeRound + 1,
+		);
+		const upgradeRandom = (scope: string) =>
+			stableUnitInterval(
+				`${ch.id.suffixKey}:${this.publicKeyHash}:${currentParent}:${scope}`,
+			);
+		const clearFailedBackoff = () => {
+			ch.parentUpgradeBackoffMs = 0;
+			ch.parentUpgradeBackoffUntil = 0;
+		};
+		const clearShadowInFlight = () => {
+			if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+				this.parentUpgradeShadowInFlightSuffixKey = undefined;
+			}
+		};
+		const resetShadow = () => {
+			if (!ch.parentShadow) return;
+			ch.parentShadow = undefined;
+			clearShadowInFlight();
+			ch.metrics.parentShadowReset += 1;
+		};
+		const deferParentUpgradeRetryUntilFreshData = (multiplier = 1) => {
+			const minFreshMessages = Math.max(
+				1,
+				parentUpgrade.shadow.dualPathMinMessages *
+					Math.max(1, Math.floor(multiplier)),
+			);
+			ch.parentUpgradeRetryAfterSeq = Math.max(
+				ch.parentUpgradeRetryAfterSeq,
+				ch.maxSeqSeen + minFreshMessages - 1,
+			);
+		};
+		const applyFailedBackoff = () => {
+			const minMs = parentUpgrade.failedBackoff.minMs;
+			const maxMs = parentUpgrade.failedBackoff.maxMs;
+			if (minMs <= 0 || maxMs <= 0) {
+				ch.parentUpgradeBackoffMs = 0;
+				ch.parentUpgradeBackoffUntil = 0;
+				return;
+			}
+			const nextMs =
+				ch.parentUpgradeBackoffMs > 0
+					? Math.min(maxMs, Math.max(minMs, ch.parentUpgradeBackoffMs * 2))
+					: minMs;
+			ch.parentUpgradeBackoffMs = nextMs;
+			const jitter = 0.75 + upgradeRandom(`failed-backoff:${nextMs}`) * 0.5;
+			ch.parentUpgradeBackoffUntil =
+				Date.now() + Math.max(1, Math.floor(nextMs * jitter));
+		};
+		const isDirectNeighbor = (hash: string) => {
+			const peer = this.peers.get(hash);
+			if (!peer) return false;
+			try {
+				const conns = this.components.connectionManager.getConnections(
+					peer.peerId,
+				) as Connection[] | undefined;
+				return (conns?.length ?? 0) > 0;
+			} catch {
+				return peer.isReadable || peer.isWritable;
+			}
+		};
+
+		const candidatesByHash = new Map<
+			string,
+			{
+				hash: string;
+				addrs: Multiaddr[];
+				level: number;
+				freeSlots: number;
+				bidPerByte: number;
+				source: number;
+			}
+		>();
+
+		const upsertCandidate = (c: {
+			hash: string;
+			addrs: Multiaddr[];
+			level: number;
+			freeSlots: number;
+			bidPerByte: number;
+			source: number;
+		}) => {
+			const prev = candidatesByHash.get(c.hash);
+			if (!prev) {
+				candidatesByHash.set(c.hash, { ...c });
+				return;
+			}
+			if (prev.addrs.length === 0 && c.addrs.length > 0) prev.addrs = c.addrs;
+			prev.level = Math.min(prev.level, c.level);
+			prev.freeSlots = Math.max(prev.freeSlots, c.freeSlots);
+			prev.bidPerByte = Math.max(prev.bidPerByte, c.bidPerByte);
+			prev.source = Math.min(prev.source, c.source);
+		};
+		const nonRootMinLevelGain = Math.max(
+			parentUpgrade.minLevelGain,
+			parentUpgrade.nonRootMinLevelGain,
+		);
+		const rootMinLevelGain = Math.max(
+			parentUpgrade.minLevelGain,
+			parentUpgrade.rootMinLevelGain,
+		);
+		const rootMinSubtreeGain = Math.max(
+			parentUpgrade.minLevelGain,
+			parentUpgrade.rootMinSubtreeGain,
+		);
+		const levelGainFor = (parentLevel: number) => ch.level - (parentLevel + 1);
+		const impactedPeersForRoot = () => Math.max(1, 1 + ch.children.size);
+		const rootSubtreeGainFor = (parentLevel: number) =>
+			levelGainFor(parentLevel) * impactedPeersForRoot();
+		const isEnoughLevelGain = (hash: string, parentLevel: number) => {
+			const levelGain = levelGainFor(parentLevel);
+			if (hash !== ch.id.root) return levelGain >= nonRootMinLevelGain;
+			if (levelGain >= rootMinLevelGain) return true;
+			return rootSubtreeGainFor(parentLevel) >= rootMinSubtreeGain;
+		};
+		let localChannelCount = 1;
+		if (this.channelsBySuffixKey instanceof Map) {
+			localChannelCount = 0;
+			for (const localCh of this.channelsBySuffixKey.values()) {
+				if (localCh.closed) continue;
+				localChannelCount += 1;
+				if (localChannelCount > 1) break;
+			}
+		}
+		const singleChannelBranch = ch.children.size > 0 && localChannelCount <= 1;
+		const multiChannelBranch = ch.children.size > 0 && localChannelCount > 1;
+		const endedAndComplete =
+			ch.endSeqExclusive > 0 &&
+			ch.missingSeqs.size === 0 &&
+			ch.nextExpectedSeq >= ch.endSeqExclusive;
+		const singleChannelSettledLeaf =
+			ch.children.size === 0 && localChannelCount <= 1 && endedAndComplete;
+		const multiChannelSettledLeaf =
+			ch.children.size === 0 && localChannelCount > 1 && endedAndComplete;
+		const knownChannelPeerCount = Math.max(1, ch.channelPeers?.size ?? 1);
+		const defaultStaleRootProbeProbability = 0.015625;
+		const configuredStaleRootProbeProbabilityRaw = Number(
+			parentUpgrade.staleRootProbeProbability,
+		);
+		const staleRootProbeBaseProbability = Number.isFinite(
+			configuredStaleRootProbeProbabilityRaw,
+		)
+			? Math.max(0, Math.min(1, configuredStaleRootProbeProbabilityRaw))
+			: defaultStaleRootProbeProbability;
+		const defaultMultiChannelSettledLeafRootCandidate =
+			parentUpgrade.leafOnly &&
+			multiChannelSettledLeaf &&
+			staleRootProbeBaseProbability <= defaultStaleRootProbeProbability;
+		const hasDefaultMultiChannelLeafRootSignal = () => {
+			if (!defaultMultiChannelSettledLeafRootCandidate) return true;
+			if (!isEnoughLevelGain(ch.id.root, 0)) return false;
+			if ((ch.parentDataLatencySamples ?? 0) < 8) return false;
+			if (
+				(ch.parentDataLatencyEwmaMs ?? 0) < 64 &&
+				(ch.parentDataLatencyMaxMs ?? 0) < 256
+			) {
+				return false;
+			}
+			if (staleRootProbeBaseProbability <= 0) return false;
+			const sampleProbability = Math.min(1, staleRootProbeBaseProbability);
+			return (
+				stableUnitInterval(
+					`${ch.id.suffixKey}:${this.publicKeyHash}:${ch.id.root}:multi-channel-leaf-root-signal:${ch.maxSeqSeen}`,
+				) < sampleProbability
+			);
+		};
+		const defaultMultiChannelLeafRootSignal =
+			hasDefaultMultiChannelLeafRootSignal();
+		if (
+			defaultMultiChannelSettledLeafRootCandidate &&
+			defaultMultiChannelLeafRootSignal &&
+			ch.id.root !== this.publicKeyHash &&
+			isDirectNeighbor(ch.id.root) &&
+			(options.trackerPeers?.length ?? 0) > 0
+		) {
+			const rootMinFreeSlots = parentUpgrade.rootMinFreeSlots;
+			const cachedRoot = ch.cachedTrackerCandidates.find(
+				(c) => c.hash === ch.id.root,
+			);
+			if (!cachedRoot || cachedRoot.freeSlots < rootMinFreeSlots) {
+				const refreshed = await this.queryTrackers(
+					ch,
+					options.trackerPeers ?? [],
+					Math.max(16, ch.cachedTrackerCandidates.length),
+					parentUpgrade.probe.timeoutMs,
+					options.signal,
+				).catch((): TrackerCandidate[] => []);
+				if (refreshed.length > 0) {
+					ch.cachedTrackerCandidates = refreshed;
+				}
+			}
+		}
+		const configuredRejectCooldownMs = Math.max(
+			0,
+			parentUpgrade.probe.rejectCooldownMs,
+		);
+		const rejectCooldownMs =
+			localChannelCount > 1
+				? Math.max(configuredRejectCooldownMs, 20_000)
+				: configuredRejectCooldownMs;
+		const rejectCooldownMaxMs = Math.max(
+			rejectCooldownMs,
+			parentUpgrade.probe.rejectCooldownMaxMs,
+		);
+		const clearProbeRejectBackoff = (candidateHash: string) => {
+			ch.parentProbeRejectUntilByHash.delete(candidateHash);
+			ch.parentProbeRejectBackoffMsByHash.delete(candidateHash);
+		};
+		const rejectProbeCandidate = (candidateHash: string) => {
+			if (rejectCooldownMs <= 0) return;
+			const nextBackoffMs =
+				(ch.parentProbeRejectBackoffMsByHash.get(candidateHash) ?? 0) > 0
+					? Math.min(
+							rejectCooldownMaxMs,
+							Math.max(
+								rejectCooldownMs,
+								(ch.parentProbeRejectBackoffMsByHash.get(candidateHash) ?? 0) *
+									2,
+							),
+						)
+					: rejectCooldownMs;
+			ch.parentProbeRejectBackoffMsByHash.set(candidateHash, nextBackoffMs);
+			const jitter =
+				0.75 +
+				upgradeRandom(`probe-reject:${candidateHash}:${nextBackoffMs}`) * 0.5;
+			ch.parentProbeRejectUntilByHash.set(
+				candidateHash,
+				Date.now() + Math.max(1, Math.floor(nextBackoffMs * jitter)),
+			);
+			while (
+				ch.parentProbeRejectBackoffMsByHash.size >
+				KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES
+			) {
+				const oldest = ch.parentProbeRejectBackoffMsByHash.keys().next()
+					.value as string | undefined;
+				if (!oldest) break;
+				ch.parentProbeRejectBackoffMsByHash.delete(oldest);
+				ch.parentProbeRejectUntilByHash.delete(oldest);
+			}
+			while (
+				ch.parentProbeRejectUntilByHash.size > KNOWN_CANDIDATE_ADDRS_MAX_ENTRIES
+			) {
+				const oldest = ch.parentProbeRejectUntilByHash.keys().next().value as
+					| string
+					| undefined;
+				if (!oldest) break;
+				ch.parentProbeRejectUntilByHash.delete(oldest);
+				ch.parentProbeRejectBackoffMsByHash.delete(oldest);
+			}
+		};
+		const minFreeSlotsFor = (hash: string) =>
+			hash === ch.id.root
+				? parentUpgrade.rootMinFreeSlots
+				: parentUpgrade.minFreeSlots;
+		const refreshCachedTrackerCandidate = (
+			hash: string,
+			level: number,
+			freeSlots: number,
+		) => {
+			const cached = ch.cachedTrackerCandidates.find((c) => c.hash === hash);
+			if (!cached) return;
+			if (Number.isFinite(level)) cached.level = Math.max(0, Math.floor(level));
+			if (Number.isFinite(freeSlots)) {
+				cached.freeSlots = Math.max(0, Math.floor(freeSlots));
+			}
+		};
+		const sendProbeTrackerFeedback = (
+			candidateHash: string,
+			reason: number,
+		) => {
+			const trackerPeers = options.trackerPeers ?? [];
+			if (trackerPeers.length === 0) return;
+			void this.sendTrackerFeedback(
+				ch,
+				trackerPeers,
+				candidateHash,
+				TRACKER_FEEDBACK_JOIN_REJECT,
+				reason,
+			).catch(() => {});
+		};
+
+		for (const c of ch.cachedTrackerCandidates) {
+			if (c.hash === this.publicKeyHash) continue;
+			if (!isDirectNeighbor(c.hash)) continue;
+			upsertCandidate({
+				hash: c.hash,
+				addrs: c.addrs,
+				level: c.level,
+				freeSlots: Number.isFinite(c.freeSlots)
+					? Math.max(0, Math.floor(c.freeSlots))
+					: 0,
+				bidPerByte: c.bidPerByte,
+				source: 0,
+			});
+		}
+
+		if (
+			ch.id.root !== this.publicKeyHash &&
+			isDirectNeighbor(ch.id.root) &&
+			!candidatesByHash.has(ch.id.root)
+		) {
+			upsertCandidate({
+				hash: ch.id.root,
+				addrs: [],
+				level: 0,
+				freeSlots: 1,
+				bidPerByte: 0,
+				source: -1,
+			});
+		}
+
+		let connectedFallbackAdded = 0;
+		const connectedFallbackMax = 64;
+		for (const h of this.peers.keys()) {
+			if (h === this.publicKeyHash) continue;
+			if (!isDirectNeighbor(h)) continue;
+			upsertCandidate({
+				hash: h,
+				addrs: [],
+				level: 0xffff,
+				freeSlots: 0,
+				bidPerByte: 0,
+				source: 2,
+			});
+			connectedFallbackAdded += 1;
+			if (connectedFallbackAdded >= connectedFallbackMax) break;
+		}
+
+		const orderedCandidates: Array<{
+			hash: string;
+			addrs: Multiaddr[];
+			level: number;
+			freeSlots: number;
+			bidPerByte: number;
+			source: number;
+		}> = [];
+		for (const c of candidatesByHash.values()) {
+			if (c.hash === this.publicKeyHash || c.hash === currentParent) continue;
+			const canVerifyRootCapacityLive =
+				parentUpgrade.verifyStaleRootCapacity === true &&
+				parentUpgrade.mode === "shadow" &&
+				c.hash === ch.id.root;
+			const requiredMinFreeSlots = minFreeSlotsFor(c.hash);
+			if (
+				c.hash === ch.id.root &&
+				defaultMultiChannelSettledLeafRootCandidate &&
+				!defaultMultiChannelLeafRootSignal
+			) {
+				ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
+				continue;
+			}
+			if (canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
+				const staleRootProbeProbability = (() => {
+					if (singleChannelBranch && staleRootProbeBaseProbability > 0) {
+						const highValueBranch =
+							rootSubtreeGainFor(c.level) >=
+							Math.max(rootMinSubtreeGain + 1, 4);
+						const branchCap = highValueBranch ? 0.25 : 0.2;
+						return Math.max(
+							staleRootProbeBaseProbability,
+							Math.min(branchCap, staleRootProbeBaseProbability * 8),
+						);
+					}
+					if (multiChannelBranch && staleRootProbeBaseProbability > 0) {
+						return Math.max(
+							staleRootProbeBaseProbability,
+							Math.min(0.03125, staleRootProbeBaseProbability * 2),
+						);
+					}
+					if (singleChannelSettledLeaf && staleRootProbeBaseProbability > 0) {
+						return 0.5;
+					}
+					if (multiChannelSettledLeaf && parentUpgrade.leafOnly) {
+						return staleRootProbeBaseProbability >
+							defaultStaleRootProbeProbability
+							? Math.max(
+									staleRootProbeBaseProbability,
+									Math.min(0.125, 3 / knownChannelPeerCount),
+								)
+							: 0;
+					}
+					return Math.min(
+						1,
+						staleRootProbeBaseProbability *
+							Math.max(1, Math.min(4, staleRootProbeRound + 1)),
+					);
+				})();
+				const staleRootProbeScore = stableUnitInterval(
+					`${ch.id.suffixKey}:${this.publicKeyHash}:${c.hash}:stale-root-probe:${staleRootProbeRound}`,
+				);
+				if (staleRootProbeScore >= staleRootProbeProbability) {
+					ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
+					continue;
+				}
+			}
+			if (!canVerifyRootCapacityLive && c.freeSlots < requiredMinFreeSlots) {
+				ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
+				continue;
+			}
+			if (!isEnoughLevelGain(c.hash, c.level)) {
+				ch.metrics.reparentUpgradeSkipCandidateLevel += 1;
+				continue;
+			}
+			orderedCandidates.push(c);
+		}
+
+		let ordered = orderedCandidates.sort((a, b) => {
+			if (a.level !== b.level) return a.level - b.level;
+			if (a.freeSlots !== b.freeSlots) return b.freeSlots - a.freeSlots;
+			if (a.bidPerByte !== b.bidPerByte) return b.bidPerByte - a.bidPerByte;
+			if (a.source !== b.source) return a.source - b.source;
+			return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
+		});
+
+		if (ordered.length === 0) {
+			if (parentUpgrade.mode === "probe" || parentUpgrade.mode === "shadow") {
+				applyFailedBackoff();
+			}
+			return false;
+		}
+
+		if (options.candidateScoringMode === "ranked-shuffle") {
+			if (options.candidateShuffleTopK > 0 && ordered.length > 1) {
+				const k = Math.min(options.candidateShuffleTopK, ordered.length);
+				const shuffleScope = ordered.map((c) => c.hash).join(",");
+				for (let i = k - 1; i > 0; i--) {
+					const j = Math.floor(
+						upgradeRandom(`shuffle:${shuffleScope}:${i}`) * (i + 1),
+					);
+					const tmp = ordered[i]!;
+					ordered[i] = ordered[j]!;
+					ordered[j] = tmp;
+				}
+			}
+		} else if (options.candidateScoringMode === "weighted") {
+			const wLevel = Number.isFinite(options.candidateScoringWeights.level)
+				? Math.max(0, options.candidateScoringWeights.level)
+				: 0;
+			const wSlots = Number.isFinite(options.candidateScoringWeights.freeSlots)
+				? Math.max(0, options.candidateScoringWeights.freeSlots)
+				: 0;
+			const wConnected = Number.isFinite(
+				options.candidateScoringWeights.connected,
+			)
+				? Math.max(0, options.candidateScoringWeights.connected)
+				: 0;
+			const wBid = Number.isFinite(options.candidateScoringWeights.bidPerByte)
+				? Math.max(0, options.candidateScoringWeights.bidPerByte)
+				: 0;
+			const wSource = Number.isFinite(options.candidateScoringWeights.source)
+				? Math.max(0, options.candidateScoringWeights.source)
+				: 0;
+
+			const k =
+				options.candidateShuffleTopK > 0
+					? Math.min(options.candidateShuffleTopK, ordered.length)
+					: 0;
+			const hasWeightedSignal =
+				wLevel > 0 || wSlots > 0 || wConnected > 0 || wBid > 0 || wSource > 0;
+			if (k > 1 && hasWeightedSignal) {
+				const head = ordered.slice(0, k);
+				const tail = ordered.slice(k);
+
+				const weightOf = (c: (typeof head)[number]) => {
+					const level = Math.max(0, Math.floor(c.level));
+					const freeSlots = Math.max(0, Math.floor(c.freeSlots));
+					const bidPerByte = Math.max(0, Math.floor(c.bidPerByte));
+					const source = Math.max(0, Math.floor(c.source));
+					const connected = Boolean(this.peers.get(c.hash));
+
+					let weight = 1;
+					if (wLevel > 0) weight *= 1 / (1 + wLevel * level);
+					if (wSlots > 0) weight *= 1 + wSlots * freeSlots;
+					if (wConnected > 0 && connected) weight *= 1 + wConnected;
+					if (wBid > 0) weight *= 1 + wBid * bidPerByte;
+					if (wSource > 0) weight *= 1 / (1 + wSource * source);
+					return weight;
+				};
+
+				const out: typeof head = [];
+				const remaining = [...head];
+				while (remaining.length > 0) {
+					let sum = 0;
+					const weights: number[] = new Array(remaining.length);
+					for (let i = 0; i < remaining.length; i++) {
+						const w = weightOf(remaining[i]!);
+						const v = Number.isFinite(w) ? Math.max(0, w) : 0;
+						weights[i] = v;
+						sum += v;
+					}
+					if (sum <= 0) {
+						out.push(...remaining);
+						break;
 					}
 
-						if (ch.parent) {
-							// Keep only the selected parent + bootstraps. Everything else we dialed is
-							// best-effort and can be re-dialed if needed later.
-							for (const h of dialedNew) {
-								if (h === ch.parent) continue;
-								if (bootstrapPeers.includes(h)) continue;
-								const stream = this.peers.get(h);
-								if (!stream) continue;
-								void this.components.connectionManager.closeConnections(stream.peerId).catch(() => {});
-							}
-							continue;
-						}
-						await delay(retryMs);
+					let r =
+						upgradeRandom(
+							`weighted:${out.length}:${remaining
+								.map((candidate) => candidate.hash)
+								.join(",")}`,
+						) * sum;
+					let pick = 0;
+					for (; pick < weights.length; pick++) {
+						r -= weights[pick]!;
+						if (r <= 0) break;
 					}
-				} finally {
-					signal.clear?.();
+					if (pick >= remaining.length) pick = remaining.length - 1;
+					out.push(remaining[pick]!);
+					remaining.splice(pick, 1);
+				}
+
+				ordered = out.concat(tail);
 			}
+		}
+
+		if (parentUpgrade.mode === "probe" || parentUpgrade.mode === "shadow") {
+			const mode = parentUpgrade.mode;
+			const probeLimit =
+				parentUpgrade.mode === "shadow"
+					? 1
+					: parentUpgrade.probe.maxPerRound;
+			const shadowObserveMsForGate = parentUpgrade.shadow.observeMs;
+			const shadowMinObservationsForGate =
+				parentUpgrade.shadow.minObservations;
+			const probeTimeoutMs = parentUpgrade.probe.timeoutMs;
+			const maxLag = parentUpgrade.probe.maxLagMessages;
+			const now = Date.now();
+			const candidatesToProbe: typeof ordered = [];
+			const shadowCandidate =
+				mode === "shadow" && ch.parentShadow
+					? ordered.find(
+							(candidate) => candidate.hash === ch.parentShadow?.hash,
+						)
+					: undefined;
+			if (
+				mode === "shadow" &&
+				shadowCandidate &&
+				ch.parentShadow &&
+				shadowObserveMsForGate > 0 &&
+				now - ch.parentShadow.startedAt < shadowObserveMsForGate
+			) {
+				return false;
+			}
+			const probeOrder = shadowCandidate
+				? [
+						shadowCandidate,
+						...ordered.filter(
+							(candidate) => candidate.hash !== shadowCandidate.hash,
+						),
+					]
+				: ordered;
+			for (const candidate of probeOrder) {
+				const rejectUntil = ch.parentProbeRejectUntilByHash.get(candidate.hash);
+				if (rejectUntil != null && rejectUntil > now) {
+					ch.metrics.reparentUpgradeSkipProbeCooldown += 1;
+					continue;
+				}
+				if (rejectUntil != null)
+					ch.parentProbeRejectUntilByHash.delete(candidate.hash);
+				candidatesToProbe.push(candidate);
+				if (candidatesToProbe.length >= probeLimit) break;
+			}
+			if (candidatesToProbe.length === 0) {
+				applyFailedBackoff();
+				return false;
+			}
+
+			const shouldReserveRootCapacityForProbe = (
+				candidate: (typeof ordered)[number],
+			) => {
+				if (candidate.hash !== ch.id.root) return true;
+				if (mode !== "shadow") return true;
+				if (endedAndComplete && candidate.level === 0) return true;
+				if (!ch.parentShadow || ch.parentShadow.hash !== candidate.hash) {
+					return (
+						shadowObserveMsForGate <= 0 && shadowMinObservationsForGate <= 1
+					);
+				}
+				return (
+					now - ch.parentShadow.startedAt >= shadowObserveMsForGate &&
+					ch.parentShadow.observations + 1 >= shadowMinObservationsForGate
+				);
+			};
+
+			const rejectShadowCandidate = (
+				candidateHash: string,
+				reason:
+					| "noReply"
+					| "notRooted"
+					| "capacity"
+					| "repair"
+					| "lag"
+					| "overloaded"
+					| "level",
+			) => {
+				if (mode !== "shadow") return;
+				switch (reason) {
+					case "noReply":
+						ch.metrics.parentShadowRejectNoReply += 1;
+						break;
+					case "notRooted":
+						ch.metrics.parentShadowRejectNotRooted += 1;
+						break;
+					case "capacity":
+						ch.metrics.parentShadowRejectCapacity += 1;
+						break;
+					case "repair":
+						ch.metrics.parentShadowRejectRepair += 1;
+						break;
+					case "lag":
+						ch.metrics.parentShadowRejectLag += 1;
+						break;
+					case "overloaded":
+						ch.metrics.parentShadowRejectOverloaded += 1;
+						break;
+					case "level":
+						ch.metrics.parentShadowRejectLevel += 1;
+						break;
+				}
+				if (ch.parentShadow?.hash === candidateHash) resetShadow();
+				deferParentUpgradeRetryUntilFreshData();
+			};
+
+			const probed = await Promise.all(
+				candidatesToProbe.map(async (candidate) => ({
+					candidate,
+					reply: await this.probeParentCandidate(
+						ch,
+						candidate.hash,
+						probeTimeoutMs,
+						options.signal,
+						minFreeSlotsFor(candidate.hash),
+						shouldReserveRootCapacityForProbe(candidate),
+					),
+				})),
+			);
+
+			type LiveParentCandidate = (typeof ordered)[number] & {
+				haveToExclusive: number;
+				reservationToken: number;
+			};
+			const liveCandidates: LiveParentCandidate[] = [];
+			for (const { candidate, reply } of probed) {
+				if (!reply) {
+					ch.metrics.reparentUpgradeSkipProbeNoReply += 1;
+					rejectShadowCandidate(candidate.hash, "noReply");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				if (!reply.rooted) {
+					ch.metrics.reparentUpgradeSkipProbeNotRooted += 1;
+					refreshCachedTrackerCandidate(candidate.hash, reply.level, 0);
+					sendProbeTrackerFeedback(candidate.hash, JOIN_REJECT_NOT_ATTACHED);
+					rejectShadowCandidate(candidate.hash, "notRooted");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				const liveLevel = Number.isFinite(reply.level)
+					? Math.max(0, Math.floor(reply.level))
+					: candidate.level;
+				const liveFreeSlots = Number.isFinite(reply.freeSlots)
+					? Math.max(0, Math.floor(reply.freeSlots))
+					: 0;
+				refreshCachedTrackerCandidate(candidate.hash, liveLevel, liveFreeSlots);
+				const requiredMinFreeSlots = minFreeSlotsFor(candidate.hash);
+				if (!reply.accepting || liveFreeSlots < requiredMinFreeSlots) {
+					ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
+					if (!reply.accepting || liveFreeSlots <= 0) {
+						sendProbeTrackerFeedback(candidate.hash, JOIN_REJECT_NO_CAPACITY);
+					}
+					rejectShadowCandidate(candidate.hash, "capacity");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				const configuredMaxChildLoadRatioRaw =
+					candidate.hash === ch.id.root
+						? parentUpgrade.rootMaxChildLoadRatio
+						: parentUpgrade.maxChildLoadRatio;
+				const configuredMaxChildLoadRatio =
+					candidate.hash === ch.id.root &&
+					localChannelCount > 1 &&
+					Number(configuredMaxChildLoadRatioRaw) > 0
+						? Math.min(0.2, Number(configuredMaxChildLoadRatioRaw))
+						: configuredMaxChildLoadRatioRaw;
+				const maxChildLoadRatio = Math.max(
+					0,
+					Number(configuredMaxChildLoadRatio),
+				);
+				if (
+					maxChildLoadRatio > 0 &&
+					reply.maxChildren > 0 &&
+					(reply.children + 1) / reply.maxChildren > maxChildLoadRatio
+				) {
+					ch.metrics.reparentUpgradeSkipCandidateSlots += 1;
+					ch.metrics.reparentUpgradeSkipCandidatePressure += 1;
+					if (candidate.hash === ch.id.root) {
+						ch.metrics.reparentUpgradeSkipRootPressure += 1;
+						refreshCachedTrackerCandidate(candidate.hash, liveLevel, 0);
+						sendProbeTrackerFeedback(candidate.hash, JOIN_REJECT_NO_CAPACITY);
+					}
+					rejectShadowCandidate(candidate.hash, "capacity");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				if (reply.repairing || reply.missingSeqs > 0) {
+					ch.metrics.reparentUpgradeSkipProbeRepair += 1;
+					rejectShadowCandidate(candidate.hash, "repair");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				if (reply.overloaded) {
+					ch.metrics.reparentUpgradeSkipProbeOverloaded += 1;
+					rejectShadowCandidate(candidate.hash, "overloaded");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				if (
+					ch.maxSeqSeen >= 0 &&
+					reply.haveToExclusive + maxLag < ch.maxSeqSeen + 1
+				) {
+					ch.metrics.reparentUpgradeSkipProbeLag += 1;
+					rejectShadowCandidate(candidate.hash, "lag");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				if (!isEnoughLevelGain(candidate.hash, liveLevel)) {
+					ch.metrics.reparentUpgradeSkipCandidateLevel += 1;
+					rejectShadowCandidate(candidate.hash, "level");
+					rejectProbeCandidate(candidate.hash);
+					continue;
+				}
+				clearProbeRejectBackoff(candidate.hash);
+				liveCandidates.push({
+					...candidate,
+					level: liveLevel,
+					freeSlots: liveFreeSlots,
+					haveToExclusive: reply.haveToExclusive,
+					reservationToken: reply.reservationToken,
+				});
+			}
+
+			ordered = liveCandidates.sort((a, b) => {
+				if (a.level !== b.level) return a.level - b.level;
+				if (a.freeSlots !== b.freeSlots) return b.freeSlots - a.freeSlots;
+				if (a.bidPerByte !== b.bidPerByte) return b.bidPerByte - a.bidPerByte;
+				if (a.source !== b.source) return a.source - b.source;
+				return a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0;
+			});
+			if (ordered.length === 0) {
+				applyFailedBackoff();
+				return false;
+			}
+			clearFailedBackoff();
+
+			if (mode === "shadow") {
+				const nowAfterProbe = Date.now();
+				const observeMs = parentUpgrade.shadow.observeMs;
+				const minObservations = shadowMinObservationsForGate;
+				const requireDataForShadowPromotion =
+					parentUpgrade.shadow.dualPathMs > 0;
+				const selected =
+					ch.parentShadow != null
+						? (ordered.find(
+								(candidate) => candidate.hash === ch.parentShadow?.hash,
+							) ?? ordered[0]!)
+						: ordered[0]!;
+				if (!selected) {
+					resetShadow();
+					return false;
+				}
+				if (
+					endedAndComplete &&
+					selected.hash === ch.id.root &&
+					selected.level === 0 &&
+					!requireDataForShadowPromotion
+				) {
+					if (!ch.parentShadow || ch.parentShadow.hash !== selected.hash) {
+						ch.parentShadow = {
+							hash: selected.hash,
+							startedAt: nowAfterProbe - observeMs,
+							observations: minObservations,
+							level: selected.level,
+							freeSlots: selected.freeSlots,
+							haveToExclusive:
+								"haveToExclusive" in selected &&
+								typeof selected.haveToExclusive === "number"
+									? selected.haveToExclusive
+									: 0,
+							liveDataMessages: 0,
+							liveFirstDataMessages: 0,
+							liveParentFirstDataMessages: 0,
+							liveCandidateLeadSamples: 0,
+							liveCandidateLeadMsTotal: 0,
+							liveCandidateFirstAtBySeq: new Map(),
+							liveParentFirstAtBySeq: new Map(),
+							liveComparedSeqs: new Set(),
+							liveMaxSeqSeen: -1,
+							liveLastDataAt: 0,
+						};
+						this.parentUpgradeShadowInFlightSuffixKey = ch.id.suffixKey;
+						ch.metrics.parentShadowStart += 1;
+					} else {
+						ch.parentShadow.observations += 1;
+						ch.parentShadow.level = selected.level;
+						ch.parentShadow.freeSlots = selected.freeSlots;
+						ch.parentShadow.haveToExclusive =
+							"haveToExclusive" in selected &&
+							typeof selected.haveToExclusive === "number"
+								? selected.haveToExclusive
+								: 0;
+						ch.metrics.parentShadowObserve += 1;
+					}
+					ordered = [selected];
+				} else {
+					if (!ch.parentShadow || ch.parentShadow.hash !== selected.hash) {
+						ch.parentShadow = {
+							hash: selected.hash,
+							startedAt: nowAfterProbe,
+							observations: 1,
+							level: selected.level,
+							freeSlots: selected.freeSlots,
+							haveToExclusive:
+								"haveToExclusive" in selected &&
+								typeof selected.haveToExclusive === "number"
+									? selected.haveToExclusive
+									: 0,
+							liveDataMessages: 0,
+							liveFirstDataMessages: 0,
+							liveParentFirstDataMessages: 0,
+							liveCandidateLeadSamples: 0,
+							liveCandidateLeadMsTotal: 0,
+							liveCandidateFirstAtBySeq: new Map(),
+							liveParentFirstAtBySeq: new Map(),
+							liveComparedSeqs: new Set(),
+							liveMaxSeqSeen: -1,
+							liveLastDataAt: 0,
+						};
+						this.parentUpgradeShadowInFlightSuffixKey = ch.id.suffixKey;
+						ch.metrics.parentShadowStart += 1;
+						return false;
+					}
+
+					ch.parentShadow.observations += 1;
+					ch.parentShadow.level = selected.level;
+					ch.parentShadow.freeSlots = selected.freeSlots;
+					ch.parentShadow.haveToExclusive =
+						"haveToExclusive" in selected &&
+						typeof selected.haveToExclusive === "number"
+							? selected.haveToExclusive
+							: 0;
+					ch.metrics.parentShadowObserve += 1;
+
+					if (
+						ch.parentShadow.observations < minObservations ||
+						nowAfterProbe - ch.parentShadow.startedAt < observeMs
+					) {
+						return false;
+					}
+				}
+
+				ordered = [selected];
+			}
+		}
+
+		let attempts = 0;
+		for (const candidate of ordered) {
+			if (options.signal.aborted) break;
+			if (attempts >= options.joinAttemptsPerRound) break;
+			attempts += 1;
+
+			if (!isDirectNeighbor(candidate.hash)) continue;
+
+			const previousParent = ch.parent;
+			const previousLevel = ch.level;
+			const previousRouteFromRoot = ch.routeFromRoot
+				? [...ch.routeFromRoot]
+				: undefined;
+			const previousLastParentDataAt = ch.lastParentDataAt;
+			const previousLastParentUpgradeActivityAt =
+				ch.lastParentUpgradeActivityAt;
+			const previousReceivedAnyParentData = ch.receivedAnyParentData;
+			const shadowDualPathMs = parentUpgrade.shadow.dualPathMs;
+			const shadowDualPathMinMessages =
+				parentUpgrade.shadow.dualPathMinMessages;
+			const shadowDualPathMinAdvantageMessages = Math.max(
+				1,
+				Math.min(16, Math.ceil(shadowDualPathMinMessages / 2)),
+			);
+			const shadowDualPathMinLeadSamples = Math.max(
+				1,
+				Math.min(32, shadowDualPathMinMessages),
+			);
+			const shadowDualPathMaxParentFirstMessages = Math.max(
+				0,
+				Math.floor(shadowDualPathMinMessages / 8),
+			);
+			const shadowDualPathMinLeadMsAvg =
+				shadowDualPathMinMessages <= 1 ? 0 : 128;
+			const useShadowDualPath =
+				parentUpgrade.mode === "shadow" &&
+				shadowDualPathMs > 0 &&
+				previousParent != null &&
+				previousParent !== candidate.hash;
+			const seqAtShadowAttach = ch.maxSeqSeen;
+			const reqId = (this.random() * 0xffffffff) >>> 0;
+			const res = await this.tryJoinOnce(
+				ch,
+				candidate.hash,
+				reqId,
+				options.joinReqTimeoutMs,
+				options.signal,
+				{
+					allowReplace: true,
+					parentUpgradeReservationToken:
+						candidate.hash === ch.id.root &&
+						"reservationToken" in candidate &&
+						typeof candidate.reservationToken === "number"
+							? candidate.reservationToken
+							: 0,
+					shadowAttach: useShadowDualPath,
+				},
+			);
+
+			if (res.ok) {
+				if (useShadowDualPath) {
+					const acceptedParentLevel = Number.isFinite(res.parentLevel)
+						? Math.max(0, Math.floor(res.parentLevel!))
+						: candidate.level;
+					if (!isEnoughLevelGain(candidate.hash, acceptedParentLevel)) {
+						void this._sendControl(
+							candidate.hash,
+							encodeLeave(ch.id.key),
+						).catch(() => {});
+						resetShadow();
+						rejectProbeCandidate(candidate.hash);
+						deferParentUpgradeRetryUntilFreshData(2);
+						applyFailedBackoff();
+						return false;
+					}
+					const shadow = ch.parentShadow;
+					if (shadow?.hash === candidate.hash) {
+						shadow.liveDataMessages = 0;
+						shadow.liveFirstDataMessages = 0;
+						shadow.liveParentFirstDataMessages = 0;
+						shadow.liveCandidateLeadSamples = 0;
+						shadow.liveCandidateLeadMsTotal = 0;
+						shadow.liveCandidateFirstAtBySeq.clear();
+						shadow.liveParentFirstAtBySeq.clear();
+						shadow.liveComparedSeqs.clear();
+						shadow.liveMaxSeqSeen = seqAtShadowAttach;
+						shadow.liveLastDataAt = 0;
+					}
+
+					const deadline = Date.now() + shadowDualPathMs;
+					for (;;) {
+						if (options.signal.aborted) break;
+						const currentShadow = ch.parentShadow;
+						const observedFreshCandidateData =
+							currentShadow?.hash === candidate.hash &&
+							currentShadow.liveFirstDataMessages >=
+								shadowDualPathMinMessages &&
+							currentShadow.liveParentFirstDataMessages <=
+								shadowDualPathMaxParentFirstMessages &&
+							currentShadow.liveFirstDataMessages >=
+								currentShadow.liveParentFirstDataMessages +
+									shadowDualPathMinAdvantageMessages &&
+							currentShadow.liveCandidateLeadSamples >=
+								shadowDualPathMinLeadSamples &&
+							currentShadow.liveCandidateLeadMsTotal >=
+								currentShadow.liveCandidateLeadSamples *
+									shadowDualPathMinLeadMsAvg &&
+							currentShadow.liveMaxSeqSeen > seqAtShadowAttach;
+						if (observedFreshCandidateData) {
+							const parentRoute = res.parentRouteFromRoot;
+							if (!parentRoute || parentRoute.length === 0) break;
+							ch.parent = candidate.hash;
+							ch.level = Math.max(
+								1,
+								Math.floor(res.parentLevel ?? candidate.level) + 1,
+							);
+							ch.routeFromRoot = [...parentRoute, this.publicKeyHash];
+							ch.joinedAtLeastOnce = true;
+							ch.lastParentDataAt =
+								currentShadow.liveLastDataAt > 0
+									? currentShadow.liveLastDataAt
+									: Date.now();
+							ch.lastParentUpgradeActivityAt = ch.lastParentDataAt;
+							ch.receivedAnyParentData = true;
+							this.resetParentDataLatency(ch);
+							this.touchPeerHint(ch, candidate.hash);
+							if (previousParent) {
+								this.startParentUpgradeGrace(ch, {
+									previousParent,
+									candidateParent: candidate.hash,
+									previousLevel,
+									previousRouteFromRoot,
+									previousLastParentDataAt,
+									previousLastParentUpgradeActivityAt,
+									previousReceivedAnyParentData,
+									candidateFirstMessages: 0,
+									previousFirstMessages: 0,
+									minCandidateFirstMessages: shadowDualPathMinMessages,
+									minCandidateAdvantageMessages:
+										shadowDualPathMinAdvantageMessages,
+									maxPreviousFirstMessages:
+										shadowDualPathMaxParentFirstMessages,
+									timeoutMs: shadowDualPathMs,
+								});
+							}
+							ch.metrics.parentShadowPromote += 1;
+							ch.parentShadow = undefined;
+							clearShadowInFlight();
+							clearFailedBackoff();
+							void this.announceToTrackers(
+								ch,
+								this.closeController.signal,
+							).catch(() => {});
+							return true;
+						}
+
+						const remainingMs = deadline - Date.now();
+						if (remainingMs <= 0) break;
+						await delay(Math.min(50, remainingMs), {
+							signal: options.signal,
+						});
+					}
+
+					if (ch.parent === previousParent) {
+						ch.level = previousLevel;
+						ch.routeFromRoot = previousRouteFromRoot;
+						ch.lastParentDataAt = previousLastParentDataAt;
+						ch.lastParentUpgradeActivityAt =
+							previousLastParentUpgradeActivityAt;
+						ch.receivedAnyParentData = previousReceivedAnyParentData;
+					}
+					void this._sendControl(candidate.hash, encodeLeave(ch.id.key)).catch(
+						() => {},
+					);
+					if (ch.parentShadow) {
+						ch.parentShadow = undefined;
+						clearShadowInFlight();
+						ch.metrics.parentShadowReset += 1;
+					}
+					// A shadow cutover can only be proven by fresh data. If no
+					// candidate-first data arrived, wait for enough newer data before
+					// spending more probes on the same channel. Also cool down this
+					// candidate; accepting JOIN without proving live data is a weak
+					// parent signal, not a reason to probe it repeatedly.
+					rejectProbeCandidate(candidate.hash);
+					deferParentUpgradeRetryUntilFreshData(2);
+					applyFailedBackoff();
+					return false;
+				}
+
+				const newParent = ch.parent;
+				if (previousParent && newParent && newParent !== previousParent) {
+					void this._sendControl(previousParent, encodeLeave(ch.id.key)).catch(
+						() => {},
+					);
+					if (parentUpgrade.mode === "shadow") {
+						ch.metrics.parentShadowPromote += 1;
+						ch.parentShadow = undefined;
+						clearShadowInFlight();
+						clearFailedBackoff();
+					}
+					return true;
+				}
+				return false;
+			}
+
+			if (useShadowDualPath) {
+				if (ch.parent === previousParent) {
+					ch.level = previousLevel;
+					ch.routeFromRoot = previousRouteFromRoot;
+					ch.lastParentDataAt = previousLastParentDataAt;
+					ch.lastParentUpgradeActivityAt =
+						previousLastParentUpgradeActivityAt;
+					ch.receivedAnyParentData = previousReceivedAnyParentData;
+				}
+				if (ch.parentShadow?.hash === candidate.hash) {
+					ch.parentShadow = undefined;
+					clearShadowInFlight();
+					ch.metrics.parentShadowReset += 1;
+				}
+				rejectProbeCandidate(candidate.hash);
+				deferParentUpgradeRetryUntilFreshData(2);
+				applyFailedBackoff();
+				return false;
+			}
+		}
+
+		return false;
 	}
 
 	private async tryJoinOnce(
@@ -5635,19 +7349,37 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		reqId: number,
 		timeoutMs: number,
 		signal: AbortSignal,
+		options?: {
+			allowReplace?: boolean;
+			parentUpgradeReservationToken?: number;
+			shadowAttach?: boolean;
+		},
 	): Promise<JoinAttemptResult> {
-		if (ch.parent) return { ok: true };
+		if (ch.parent && options?.allowReplace !== true) return { ok: true };
 		if (!this.peers.get(parentHash)) return { ok: false, timedOut: true };
 		const p = new Promise<JoinAttemptResult>((resolve) => {
-			ch.pendingJoin.set(reqId, { resolve });
+			ch.pendingJoin.set(reqId, {
+				resolve,
+				shadowAttach: options?.shadowAttach === true,
+			});
 		});
-		await this._sendControl(parentHash, encodeJoinReq(ch.id.key, reqId, ch.bidPerByte));
+		await this._sendControl(
+			parentHash,
+			encodeJoinReq(
+				ch.id.key,
+				reqId,
+				ch.bidPerByte,
+				options?.parentUpgradeReservationToken,
+			),
+		);
 		const res = await Promise.race([
 			p,
-			delay(Math.max(1, timeoutMs), { signal }).then((): JoinAttemptResult => ({
-				ok: false,
-				timedOut: true,
-			})),
+			delay(Math.max(1, timeoutMs), { signal }).then(
+				(): JoinAttemptResult => ({
+					ok: false,
+					timedOut: true,
+				}),
+			),
 		]);
 		if (res.timedOut) ch.pendingJoin.delete(reqId);
 		return res;
@@ -5701,54 +7433,56 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const data = raw ? toUint8Array(raw) : undefined;
 		if (!data || data.length === 0) return false;
 
-			const kind = data[0]!;
-			const fromHash = from.hashcode();
+		const kind = data[0]!;
+		const fromHash = from.hashcode();
 
-			// Control-plane + tracker messages carry channelKey (32 bytes) at offset 1.
+		// Control-plane + tracker messages carry channelKey (32 bytes) at offset 1.
+		if (
+			kind === MSG_JOIN_REQ ||
+			kind === MSG_JOIN_ACCEPT ||
+			kind === MSG_JOIN_REJECT ||
+			kind === MSG_KICK ||
+			kind === MSG_END ||
+			kind === MSG_UNICAST ||
+			kind === MSG_UNICAST_ACK ||
+			kind === MSG_ROUTE_QUERY ||
+			kind === MSG_ROUTE_REPLY ||
+			kind === MSG_PUBLISH_PROXY ||
+			kind === MSG_LEAVE ||
+			kind === MSG_REPAIR_REQ ||
+			kind === MSG_FETCH_REQ ||
+			kind === MSG_IHAVE ||
+			kind === MSG_TRACKER_ANNOUNCE ||
+			kind === MSG_TRACKER_QUERY ||
+			kind === MSG_TRACKER_REPLY ||
+			kind === MSG_TRACKER_FEEDBACK ||
+			kind === MSG_PARENT_PROBE_REQ ||
+			kind === MSG_PARENT_PROBE_REPLY ||
+			kind === MSG_PROVIDER_ANNOUNCE ||
+			kind === MSG_PROVIDER_QUERY ||
+			kind === MSG_PROVIDER_REPLY ||
+			kind === MSG_PROVIDER_SUBSCRIBE ||
+			kind === MSG_PROVIDER_UNSUBSCRIBE ||
+			kind === MSG_PROVIDER_NOTIFY
+		) {
+			if (data.length < 1 + 32) return false;
+			const channelKey = data.subarray(1, 33);
+			const suffixKey = toBase64(channelKey.subarray(0, 24));
+			this.recordControlReceive(suffixKey, kind, data.byteLength);
+			const ch = this.channelsBySuffixKey.get(suffixKey);
+			// DirectStream de-duplicates by message-id, but FanoutTree unicast (and its ACK)
+			// legitimately reflect "up to root, then down" through the same top-level branch.
+			// Allow a duplicate only when it arrives from the parent (downstream reflection).
 			if (
-				kind === MSG_JOIN_REQ ||
-				kind === MSG_JOIN_ACCEPT ||
-				kind === MSG_JOIN_REJECT ||
-				kind === MSG_KICK ||
-				kind === MSG_END ||
-				kind === MSG_UNICAST ||
-				kind === MSG_UNICAST_ACK ||
-				kind === MSG_ROUTE_QUERY ||
-				kind === MSG_ROUTE_REPLY ||
-				kind === MSG_PUBLISH_PROXY ||
-				kind === MSG_LEAVE ||
-				kind === MSG_REPAIR_REQ ||
-				kind === MSG_FETCH_REQ ||
-				kind === MSG_IHAVE ||
-				kind === MSG_TRACKER_ANNOUNCE ||
-				kind === MSG_TRACKER_QUERY ||
-				kind === MSG_TRACKER_REPLY ||
-				kind === MSG_TRACKER_FEEDBACK ||
-				kind === MSG_PROVIDER_ANNOUNCE ||
-				kind === MSG_PROVIDER_QUERY ||
-				kind === MSG_PROVIDER_REPLY ||
-				kind === MSG_PROVIDER_SUBSCRIBE ||
-				kind === MSG_PROVIDER_UNSUBSCRIBE ||
-				kind === MSG_PROVIDER_NOTIFY
+				ignore &&
+				!(
+					(kind === MSG_UNICAST || kind === MSG_UNICAST_ACK) &&
+					ch &&
+					fromHash === ch.parent
+				)
 			) {
-				if (data.length < 1 + 32) return false;
-				const channelKey = data.subarray(1, 33);
-				const suffixKey = toBase64(channelKey.subarray(0, 24));
-				this.recordControlReceive(suffixKey, kind, data.byteLength);
-				const ch = this.channelsBySuffixKey.get(suffixKey);
-				// DirectStream de-duplicates by message-id, but FanoutTree unicast (and its ACK)
-				// legitimately reflect "up to root, then down" through the same top-level branch.
-				// Allow a duplicate only when it arrives from the parent (downstream reflection).
-				if (
-					ignore &&
-					!(
-						(kind === MSG_UNICAST || kind === MSG_UNICAST_ACK) &&
-						ch &&
-						fromHash === ch.parent
-					)
-				) {
-					return false;
-				}
+				return false;
+			}
 
 				if (!ch && kind === MSG_JOIN_REQ && data.length >= 1 + 32 + 4) {
 					// A joiner probed us for a channel we do not host (connected-peer
@@ -5787,8 +7521,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				if (addrs.length === 0) {
 					try {
-						const peer: any = await this.components.peerStore.get(peerStream.peerId);
-						const addresses: any[] = Array.isArray(peer?.addresses) ? peer.addresses : [];
+						const peer: any = await this.components.peerStore.get(
+							peerStream.peerId,
+						);
+						const addresses: any[] = Array.isArray(peer?.addresses)
+							? peer.addresses
+							: [];
 						for (const a of addresses) {
 							const ma: any = a?.multiaddr ?? a;
 							const bytes = normalizeUint8Array(ma?.bytes);
@@ -5886,7 +7624,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const hashLen = data[33]!;
 				let offset = 34;
 				if (offset + hashLen + 2 > data.length) return false;
-				const candidateHash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+				const candidateHash = textDecoder.decode(
+					data.subarray(offset, offset + hashLen),
+				);
 				offset += hashLen;
 				const event = data[offset++]! & 0xff;
 				const reason = data[offset++]! & 0xff;
@@ -5908,13 +7648,19 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					entry.freeSlots = clampU16(Math.max(0, entry.freeSlots - 1));
 					return true;
 				}
-				if (event === TRACKER_FEEDBACK_DIAL_FAILED || event === TRACKER_FEEDBACK_JOIN_TIMEOUT) {
+				if (
+					event === TRACKER_FEEDBACK_DIAL_FAILED ||
+					event === TRACKER_FEEDBACK_JOIN_TIMEOUT
+				) {
 					byPeer.delete(candidateHash);
 					this.pruneTrackerNamespaceIfEmpty(suffixKey);
 					return true;
 				}
 				if (event === TRACKER_FEEDBACK_JOIN_REJECT) {
-					if (reason === JOIN_REJECT_NO_CAPACITY || reason === JOIN_REJECT_NOT_ATTACHED) {
+					if (
+						reason === JOIN_REJECT_NO_CAPACITY ||
+						reason === JOIN_REJECT_NOT_ATTACHED
+					) {
 						entry.freeSlots = 0;
 						// Expire earlier to reduce time-to-recovery if the entry is stale.
 						entry.expiresAt = Math.min(entry.expiresAt, now + 2_000);
@@ -5925,73 +7671,57 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-				if (kind === MSG_PROVIDER_ANNOUNCE) {
-					if (data.length < 1 + 32 + 4 + 1) return false;
-					const providerId = this.getProviderNamespaceIdFromKey(channelKey, suffixKey);
-					const ttlMs = readU32BE(data, 33);
-					const addrCount = data[37]!;
-					let offset = 38;
+			if (kind === MSG_PROVIDER_ANNOUNCE) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				const providerId = this.getProviderNamespaceIdFromKey(
+					channelKey,
+					suffixKey,
+				);
+				const ttlMs = readU32BE(data, 33);
+				const addrCount = data[37]!;
+				let offset = 38;
 
-					const addrs: Uint8Array[] = [];
-					const max = Math.min(addrCount, 16);
-					for (let i = 0; i < max; i++) {
-						if (offset + 2 > data.length) break;
-						const len = readU16BE(data, offset);
-						offset += 2;
-						if (offset + len > data.length) break;
-						addrs.push(data.subarray(offset, offset + len));
-						offset += len;
-					}
+				const addrs: Uint8Array[] = [];
+				const max = Math.min(addrCount, 16);
+				for (let i = 0; i < max; i++) {
+					if (offset + 2 > data.length) break;
+					const len = readU16BE(data, offset);
+					offset += 2;
+					if (offset + len > data.length) break;
+					addrs.push(data.subarray(offset, offset + len));
+					offset += len;
+				}
 
-					if (addrs.length === 0) {
-						try {
-							const peer: any = await this.components.peerStore.get(peerStream.peerId);
-							const addresses: any[] = Array.isArray(peer?.addresses)
-								? peer.addresses
-								: [];
-							for (const a of addresses) {
-								const ma: any = a?.multiaddr ?? a;
-								const bytes = normalizeUint8Array(ma?.bytes);
-								if (bytes) addrs.push(bytes);
-								if (addrs.length >= 16) break;
-							}
-						} catch {
-							// ignore
-						}
-					}
-
-					let byPeer = this.providerBySuffixKey.get(suffixKey);
-					if (!byPeer) {
-						byPeer = new Map<string, ProviderEntry>();
-						this.providerBySuffixKey.set(suffixKey, byPeer);
-					}
-
-					const now = Date.now();
-					this.touchProviderNamespace(suffixKey, now);
-					const ttl = Math.min(ttlMs, 120_000);
-					if (ttl === 0) {
-						byPeer.delete(fromHash);
-						this.pruneProviderNamespaceIfEmpty(suffixKey);
-						this.emitProviderUpdate(
-							providerId,
-							this.getProviderCandidatesFromCache(providerId, { now }),
+				if (addrs.length === 0) {
+					try {
+						const peer: any = await this.components.peerStore.get(
+							peerStream.peerId,
 						);
-						await this.publishProviderWatchUpdate(providerId);
-						return true;
+						const addresses: any[] = Array.isArray(peer?.addresses)
+							? peer.addresses
+							: [];
+						for (const a of addresses) {
+							const ma: any = a?.multiaddr ?? a;
+							const bytes = normalizeUint8Array(ma?.bytes);
+							if (bytes) addrs.push(bytes);
+							if (addrs.length >= 16) break;
+						}
+					} catch {
+						// ignore
 					}
+				}
 
-					// LRU by announce freshness, with a hard per-namespace cap.
+				let byPeer = this.providerBySuffixKey.get(suffixKey);
+				if (!byPeer) {
+					byPeer = new Map<string, ProviderEntry>();
+					this.providerBySuffixKey.set(suffixKey, byPeer);
+				}
+
+				const now = Date.now();
+				this.touchProviderNamespace(suffixKey, now);
+				const ttl = Math.min(ttlMs, 120_000);
+				if (ttl === 0) {
 					byPeer.delete(fromHash);
-					byPeer.set(fromHash, {
-						hash: fromHash,
-						addrs,
-						expiresAt: now + ttl,
-					});
-					while (byPeer.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
-						const oldest = byPeer.keys().next().value as string | undefined;
-						if (!oldest) break;
-						byPeer.delete(oldest);
-					}
 					this.pruneProviderNamespaceIfEmpty(suffixKey);
 					this.emitProviderUpdate(
 						providerId,
@@ -6000,6 +7730,27 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					await this.publishProviderWatchUpdate(providerId);
 					return true;
 				}
+
+				// LRU by announce freshness, with a hard per-namespace cap.
+				byPeer.delete(fromHash);
+				byPeer.set(fromHash, {
+					hash: fromHash,
+					addrs,
+					expiresAt: now + ttl,
+				});
+				while (byPeer.size > PROVIDER_DIRECTORY_MAX_ENTRIES) {
+					const oldest = byPeer.keys().next().value as string | undefined;
+					if (!oldest) break;
+					byPeer.delete(oldest);
+				}
+				this.pruneProviderNamespaceIfEmpty(suffixKey);
+				this.emitProviderUpdate(
+					providerId,
+					this.getProviderCandidatesFromCache(providerId, { now }),
+				);
+				await this.publishProviderWatchUpdate(providerId);
+				return true;
+			}
 
 			if (kind === MSG_PROVIDER_QUERY) {
 				if (data.length < 1 + 32 + 4 + 2 + 4) return false;
@@ -6047,12 +7798,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}
 
 				const picked = entries.slice(0, clampU16(want));
-				void this._sendControl(fromHash, encodeProviderReply(channelKey, reqId, picked));
+				void this._sendControl(
+					fromHash,
+					encodeProviderReply(channelKey, reqId, picked),
+				);
 				return true;
 			}
 
-				if (kind === MSG_PROVIDER_SUBSCRIBE) {
-					if (data.length < 1 + 32 + 2 + 4) return false;
+			if (kind === MSG_PROVIDER_SUBSCRIBE) {
+				if (data.length < 1 + 32 + 2 + 4) return false;
 				const want = Math.max(1, readU16BE(data, 33));
 				const ttlMs = Math.min(120_000, Math.max(1_000, readU32BE(data, 35)));
 				const now = Date.now();
@@ -6083,7 +7837,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (data.length < 1 + 32 + 4 + 1) return false;
 				const reqId = readU32BE(data, 33);
 
-				const pendingByReq = this.pendingProviderQueryBySuffixKey.get(suffixKey);
+				const pendingByReq =
+					this.pendingProviderQueryBySuffixKey.get(suffixKey);
 				const pending = pendingByReq?.get(reqId);
 				if (!pending) return true;
 				pendingByReq!.delete(reqId);
@@ -6091,7 +7846,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const count = data[37]!;
 				const now = Date.now();
 				this.touchProviderNamespace(suffixKey, now);
-				const { providers: candidates } = decodeProviderEntries(data, 38, count);
+				const { providers: candidates } = decodeProviderEntries(
+					data,
+					38,
+					count,
+				);
 				this.rememberProviderCandidates(
 					this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
 					candidates,
@@ -6140,11 +7899,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				let offset = 38;
 				const candidates: TrackerCandidate[] = [];
 				const max = Math.min(count, 255);
-					for (let i = 0; i < max; i++) {
+				for (let i = 0; i < max; i++) {
 					if (offset + 1 > data.length) break;
 					const hashLen = data[offset++]!;
 					if (offset + hashLen > data.length) break;
-					const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+					const hash = textDecoder.decode(
+						data.subarray(offset, offset + hashLen),
+					);
 					offset += hashLen;
 					if (offset + 2 + 2 + 4 + 1 > data.length) break;
 					const level = readU16BE(data, offset);
@@ -6168,129 +7929,166 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						} catch {
 							// ignore invalid multiaddrs
 						}
-							}
-							candidates.push({ hash, level, freeSlots, bidPerByte, addrs });
-							this.cacheKnownCandidateAddrs(ch, hash, addrs);
-						}
+					}
+					candidates.push({ hash, level, freeSlots, bidPerByte, addrs });
+					this.cacheKnownCandidateAddrs(ch, hash, addrs);
+				}
 
-						if (pending) {
-							pending.resolve(candidates);
-						} else if (candidates.length > 0) {
-							// Late reply: the query already timed out, but the candidate
-							// list is still fresh directory state. Under load the 1s query
-							// timeout is routinely missed while trackers hold plenty of
-							// capacity - dropping these replies starves joiners of
-							// candidates they already paid a round trip for.
-							const merged = new Map<string, TrackerCandidate>();
-							for (const c of ch.cachedTrackerCandidates) merged.set(c.hash, c);
-							for (const c of candidates) merged.set(c.hash, c);
-							ch.cachedTrackerCandidates = [...merged.values()].slice(-256);
-						}
+				if (pending) {
+					pending.resolve(candidates);
+				} else if (candidates.length > 0) {
+					// Late reply: the query already timed out, but the candidate
+					// list is still fresh directory state. Under load the 1s query
+					// timeout is routinely missed while trackers hold plenty of
+					// capacity - dropping these replies starves joiners of
+					// candidates they already paid a round trip for.
+					const merged = new Map<string, TrackerCandidate>();
+					for (const c of ch.cachedTrackerCandidates) merged.set(c.hash, c);
+					for (const c of candidates) merged.set(c.hash, c);
+					ch.cachedTrackerCandidates = [...merged.values()].slice(-256);
+				}
+				return true;
+			}
+
+			if (kind === MSG_PARENT_PROBE_REQ) {
+				if (!ch || ch.closed) return true;
+				const decoded = decodeParentProbeReq(data);
+				if (!decoded) return false;
+				this.touchPeerHint(ch, fromHash);
+				void this._sendControl(
+					fromHash,
+					this.encodeParentProbeReplyForChannel(
+						ch,
+						decoded.reqId,
+						fromHash,
+						decoded.minFreeSlots,
+						decoded.reserveRootCapacity,
+					),
+				).catch(() => {});
+				return true;
+			}
+
+			if (kind === MSG_PARENT_PROBE_REPLY) {
+				if (!ch || ch.closed) return true;
+				const decoded = decodeParentProbeReply(data, fromHash);
+				if (!decoded) return false;
+				const { reqId, ...reply } = decoded;
+				const pending = ch.pendingParentProbe.get(reqId);
+				if (!pending) return true;
+				ch.pendingParentProbe.delete(reqId);
+				pending.resolve(reply);
+				this.touchPeerHint(ch, fromHash);
+				return true;
+			}
+
+			if (!ch) return true;
+			if (ch.closed) return true;
+
+			if (kind === MSG_LEAVE) {
+				// Best-effort: allow a child to explicitly detach to immediately free capacity.
+				if (!ch.children.has(fromHash)) return true;
+				ch.children.delete(fromHash);
+				ch.dataWriteFailStreakByChild.delete(fromHash);
+				ch.channelPeers.delete(fromHash);
+				ch.lazyPeers.delete(fromHash);
+				ch.haveByPeer.delete(fromHash);
+				return true;
+			}
+
+			if (kind === MSG_ROUTE_QUERY) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				const reqId = readU32BE(data, 33);
+				const hashLen = data[37]!;
+				if (hashLen === 0 || 38 + hashLen > data.length) {
+					void this._sendControl(
+						fromHash,
+						encodeRouteReply(ch.id.key, reqId),
+					).catch(() => {});
+					return true;
+				}
+				const targetHash = textDecoder.decode(data.subarray(38, 38 + hashLen));
+
+				const localRoute =
+					targetHash === this.publicKeyHash && ch.routeFromRoot
+						? ch.routeFromRoot
+						: this.getCachedRoute(ch, targetHash);
+				if (this.isRouteValidForChannel(ch, localRoute)) {
+					void this._sendControl(
+						fromHash,
+						encodeRouteReply(ch.id.key, reqId, localRoute),
+					).catch(() => {});
 					return true;
 				}
 
-					if (!ch) return true;
-					if (ch.closed) return true;
-
-					if (kind === MSG_LEAVE) {
-						// Best-effort: allow a child to explicitly detach to immediately free capacity.
-						if (!ch.children.has(fromHash)) return true;
-						ch.children.delete(fromHash);
-						ch.dataWriteFailStreakByChild.delete(fromHash);
-						ch.channelPeers.delete(fromHash);
-						ch.lazyPeers.delete(fromHash);
-						ch.haveByPeer.delete(fromHash);
-						return true;
-					}
-
-					if (kind === MSG_ROUTE_QUERY) {
-					if (data.length < 1 + 32 + 4 + 1) return false;
-					const reqId = readU32BE(data, 33);
-					const hashLen = data[37]!;
-					if (hashLen === 0 || 38 + hashLen > data.length) {
-						void this._sendControl(fromHash, encodeRouteReply(ch.id.key, reqId)).catch(
-							() => {},
-						);
-						return true;
-					}
-					const targetHash = textDecoder.decode(data.subarray(38, 38 + hashLen));
-
-					const localRoute =
-						targetHash === this.publicKeyHash && ch.routeFromRoot
-							? ch.routeFromRoot
-							: this.getCachedRoute(ch, targetHash);
-					if (this.isRouteValidForChannel(ch, localRoute)) {
+				if (ch.isRoot) {
+					const rootRoute = ch.children.has(targetHash)
+						? [ch.id.root, targetHash]
+						: undefined;
+					if (rootRoute) this.cacheRoute(ch, rootRoute);
+					if (rootRoute) {
 						void this._sendControl(
 							fromHash,
-							encodeRouteReply(ch.id.key, reqId, localRoute),
+							encodeRouteReply(ch.id.key, reqId, rootRoute),
 						).catch(() => {});
 						return true;
 					}
+				}
 
-					if (ch.isRoot) {
-						const rootRoute = ch.children.has(targetHash)
-							? [ch.id.root, targetHash]
-							: undefined;
-						if (rootRoute) this.cacheRoute(ch, rootRoute);
-						if (rootRoute) {
-							void this._sendControl(
-								fromHash,
-								encodeRouteReply(ch.id.key, reqId, rootRoute),
-							).catch(() => {});
-							return true;
-						}
-					}
+				const fromParent =
+					!ch.isRoot && ch.parent != null && fromHash === ch.parent;
 
-					const fromParent = !ch.isRoot && ch.parent != null && fromHash === ch.parent;
-
-					// Child->parent lookups still go upstream first, which keeps cross-branch
-					// route discovery efficient when caches are warm.
-					if (!ch.isRoot && !fromParent && ch.parent) {
-						this.proxyRouteQuery(ch, fromHash, reqId, targetHash, [ch.parent]);
-						return true;
-					}
-
-					// Cache miss on a parent->child (or root->child) query:
-					// recursively search subtree branches and reply with the first valid route.
-					this.proxyRouteQuery(ch, fromHash, reqId, targetHash, [...ch.children.keys()]);
+				// Child->parent lookups still go upstream first, which keeps cross-branch
+				// route discovery efficient when caches are warm.
+				if (!ch.isRoot && !fromParent && ch.parent) {
+					this.proxyRouteQuery(ch, fromHash, reqId, targetHash, [ch.parent]);
 					return true;
 				}
 
-				if (kind === MSG_ROUTE_REPLY) {
-					if (data.length < 1 + 32 + 4 + 1) return false;
-					const reqId = readU32BE(data, 33);
-					const routeCount = Math.min(255, data[37]!);
-					const { route } = decodeRoute(data, 38, routeCount);
-					const parsedRoute = this.isRouteValidForChannel(ch, route) ? route : undefined;
-					if (parsedRoute) {
-						this.cacheRoute(ch, parsedRoute);
-					}
+				// Cache miss on a parent->child (or root->child) query:
+				// recursively search subtree branches and reply with the first valid route.
+				this.proxyRouteQuery(ch, fromHash, reqId, targetHash, [
+					...ch.children.keys(),
+				]);
+				return true;
+			}
 
-					const pendingLocal = ch.pendingRouteQuery.get(reqId);
-					if (pendingLocal) {
-						ch.pendingRouteQuery.delete(reqId);
-						pendingLocal.resolve(parsedRoute);
-						return true;
-					}
+			if (kind === MSG_ROUTE_REPLY) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				const reqId = readU32BE(data, 33);
+				const routeCount = Math.min(255, data[37]!);
+				const { route } = decodeRoute(data, 38, routeCount);
+				const parsedRoute = this.isRouteValidForChannel(ch, route)
+					? route
+					: undefined;
+				if (parsedRoute) {
+					this.cacheRoute(ch, parsedRoute);
+				}
 
-					const proxy = ch.pendingRouteProxy.get(reqId);
-					if (!proxy) return true;
-
-					if (!proxy.expectedReplies.has(fromHash)) return true;
-					proxy.expectedReplies.delete(fromHash);
-
-					if (parsedRoute) {
-						this.completeRouteProxy(ch, reqId, parsedRoute);
-						return true;
-					}
-
-					if (proxy.expectedReplies.size === 0) {
-						this.completeRouteProxy(ch, reqId);
-					}
+				const pendingLocal = ch.pendingRouteQuery.get(reqId);
+				if (pendingLocal) {
+					ch.pendingRouteQuery.delete(reqId);
+					pendingLocal.resolve(parsedRoute);
 					return true;
 				}
 
-				if (kind === MSG_IHAVE) {
+				const proxy = ch.pendingRouteProxy.get(reqId);
+				if (!proxy) return true;
+
+				if (!proxy.expectedReplies.has(fromHash)) return true;
+				proxy.expectedReplies.delete(fromHash);
+
+				if (parsedRoute) {
+					this.completeRouteProxy(ch, reqId, parsedRoute);
+					return true;
+				}
+
+				if (proxy.expectedReplies.size === 0) {
+					this.completeRouteProxy(ch, reqId);
+				}
+				return true;
+			}
+
+			if (kind === MSG_IHAVE) {
 				if (data.length < 1 + 32 + 4 + 4) return false;
 				const haveFrom = readU32BE(data, 33);
 				const haveToExclusive = readU32BE(data, 37);
@@ -6305,31 +8103,31 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					prev.haveFrom = haveFrom;
 					prev.haveToExclusive = haveToExclusive;
 					prev.updatedAt = now;
-					} else {
-						ch.haveByPeer.set(fromHash, {
-							haveFrom,
-							haveToExclusive,
-							updatedAt: now,
-							requests: 0,
-							successes: 0,
-						});
-					}
-					this.touchPeerHint(ch, fromHash, now);
+				} else {
+					ch.haveByPeer.set(fromHash, {
+						haveFrom,
+						haveToExclusive,
+						updatedAt: now,
+						requests: 0,
+						successes: 0,
+					});
+				}
+				this.touchPeerHint(ch, fromHash, now);
 
-					if (ch.parent && fromHash === ch.parent && ch.maxDataAgeMs === 0) {
-						// A watermark from our parent doubles as gap detection: if data
-						// writes to us were lost (e.g. burst into a not-yet-writable
-						// stream) we may have received nothing at all and would
-						// otherwise never know data exists. Mark the advertised range
-						// missing so the repair loop pulls it. Deadline-oriented live
-						// channels (maxDataAgeMs > 0) skip this: catching up on stale
-						// history would trade deadline latency for completeness.
-						this.noteEnd(ch, fromHash, haveToExclusive);
-					}
+				if (ch.parent && fromHash === ch.parent && ch.maxDataAgeMs === 0) {
+					// A watermark from our parent doubles as gap detection: if data
+					// writes to us were lost (e.g. burst into a not-yet-writable
+					// stream) we may have received nothing at all and would
+					// otherwise never know data exists. Mark the advertised range
+					// missing so the repair loop pulls it. Deadline-oriented live
+					// channels (maxDataAgeMs > 0) skip this: catching up on stale
+					// history would trade deadline latency for completeness.
+					this.noteEnd(ch, fromHash, haveToExclusive);
+				}
 
-					// Opportunistic reciprocity: if we still have room in our lazy mesh, add
-					// peers that are actively exchanging IHAVE summaries with us.
-					if (
+				// Opportunistic reciprocity: if we still have room in our lazy mesh, add
+				// peers that are actively exchanging IHAVE summaries with us.
+				if (
 					ch.neighborRepair &&
 					ch.neighborMeshPeers > 0 &&
 					ch.lazyPeers.size < ch.neighborMeshPeers &&
@@ -6343,536 +8141,421 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-					if (kind === MSG_JOIN_REQ) {
-						if (data.length < 1 + 32 + 4 + 4) return false;
-						const reqId = readU32BE(data, 33);
-						const bidPerByte = readU32BE(data, 37);
-						this.pruneDisconnectedChildren(ch);
-
-						// Only accept if we're already attached.
-						if (!ch.isRoot && !ch.parent) {
-							void this.sendJoinReject(
-								ch,
-								fromHash,
-								reqId,
-								JOIN_REJECT_NOT_ATTACHED,
-							).catch(() => {});
-							return true;
-						}
-
-						// Only accept children if we can prove we're on the rooted tree.
-						// Otherwise, disconnected components can "stabilize" by joining via unrooted parents.
-						if (!ch.isRoot) {
-							const route = ch.routeFromRoot;
-							const rooted =
-								Array.isArray(route) &&
-								route.length >= 2 &&
-								route[0] === ch.id.root &&
-								route[route.length - 1] === this.publicKeyHash;
-							if (!rooted) {
-								void this.sendJoinReject(
-									ch,
-									fromHash,
-									reqId,
-									JOIN_REJECT_NOT_ATTACHED,
-								).catch(() => {});
-								return true;
-							}
-						}
-
-						if (ch.effectiveMaxChildren <= 0) {
-							void this.sendJoinReject(
-								ch,
-								fromHash,
-								reqId,
-								JOIN_REJECT_NO_CAPACITY,
-							).catch(() => {});
-							return true;
-						}
-
-						if (!ch.children.has(fromHash) && ch.children.size >= ch.effectiveMaxChildren) {
-							if (!ch.allowKick) {
-								void this.sendJoinReject(
-									ch,
-									fromHash,
-									reqId,
-									JOIN_REJECT_NO_CAPACITY,
-								).catch(() => {});
-								void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-								return true;
-							}
-
-							let worstChild: string | undefined;
-							let worstBid = Number.POSITIVE_INFINITY;
-							for (const [childHash, info] of ch.children) {
-								if (info.bidPerByte < worstBid) {
-									worstBid = info.bidPerByte;
-									worstChild = childHash;
-								}
-							}
-
-							if (worstChild == null || bidPerByte <= worstBid) {
-								void this.sendJoinReject(
-									ch,
-									fromHash,
-									reqId,
-									JOIN_REJECT_LOW_BID,
-								).catch(() => {});
-								void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-								return true;
-							}
-
-							void this.kickChildHashes(ch, [worstChild]).catch(() => {});
-						}
-
-						ch.children.set(fromHash, { bidPerByte });
-						this.touchPeerHint(ch, fromHash);
-						const joinAccept = encodeJoinAccept(
-							ch.id.key,
-							reqId,
-							ch.level,
-							ch.routeFromRoot,
-							this.getHaveRange(ch),
-						);
-						void (async () => {
-							await this._sendControl(fromHash, joinAccept);
-							if (ch.endSeqExclusive > 0) {
-								await this._sendControl(
-									fromHash,
-									encodeEnd(ch.id.key, ch.endSeqExclusive),
-								);
-							}
-						})().catch(() => {});
-						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-						return true;
-					}
-
-				if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
-					if (data.length < 1 + 32 + 4) return false;
-					const reqId = readU32BE(data, 33);
-					const pending = ch.pendingJoin.get(reqId);
-					if (!pending) return true;
-					ch.pendingJoin.delete(reqId);
-
-					if (kind === MSG_JOIN_ACCEPT) {
-						if (data.length < 1 + 32 + 4 + 2 + 1) return false;
-						const parentLevel = readU16BE(data, 37);
-						const routeCount = Math.min(255, data[39]!);
-						let offset = 40;
-						const parentRouteFromRoot: string[] = [];
-						const max = Math.min(routeCount, MAX_ROUTE_HOPS);
-						for (let i = 0; i < max; i++) {
-							if (offset + 1 > data.length) break;
-							const len = data[offset++]!;
-							if (len === 0) break;
-							if (offset + len > data.length) break;
-							parentRouteFromRoot.push(
-								textDecoder.decode(data.subarray(offset, offset + len)),
-							);
-							offset += len;
-						}
-
-						const hasValidParentRoute =
-							parentRouteFromRoot.length > 0 &&
-							parentRouteFromRoot[0] === ch.id.root &&
-							parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash;
-
-						// Defensive: a JOIN_ACCEPT without a rooted route token (unless the parent is the
-						// actual root) can create stable disconnected components. Treat it as a reject.
-						if (fromHash !== ch.id.root && !hasValidParentRoute) {
-							pending.resolve({ ok: false, rejectReason: JOIN_REJECT_NOT_ATTACHED });
-							return true;
-						}
-
-						ch.parent = fromHash;
-						ch.level = parentLevel + 1;
-						ch.joinedAtLeastOnce = true;
-						ch.lastParentDataAt = Date.now();
-						ch.parentRepairUnansweredStreak = 0;
-						// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
-						// if callers enable `staleAfterMs`, we should be able to detach even
-						// before the first data message arrives (for example, during churn
-						// or when a component is partitioned from the root).
-						ch.receivedAnyParentData = true;
-						// Build/refresh a route token that enables economical unicast.
-						if (hasValidParentRoute) {
-							ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
-						} else if (fromHash === ch.id.root) {
-							// Minimal fallback: parent is the root.
-							ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
-						}
-						if (
-							ch.repairEnabled &&
-							ch.maxDataAgeMs === 0 &&
-							offset + 8 <= data.length
-						) {
-							// Optional appendix: the parent's current have-range. Lets a
-							// freshly attached child learn immediately which sequences
-							// already exist, so lost deliveries surface as missing seqs
-							// (and repair) instead of silent absence.
-							const haveFrom = readU32BE(data, offset);
-							const haveToExclusive = readU32BE(data, offset + 4);
-							if (haveToExclusive > haveFrom) {
-								// Mark only; the repair loop's own cadence picks the gaps
-								// up, giving in-flight live deliveries time to land first
-								// (an immediate pull here races them into duplicates).
-								this.noteEnd(ch, fromHash, haveToExclusive);
-							}
-						}
-						this.touchPeerHint(ch, fromHash);
-						pending.resolve({ ok: true });
-						this.dispatchEvent(
-							new CustomEvent("fanout:joined", {
-								detail: { topic: ch.id.topic, root: ch.id.root, parent: fromHash },
-							}),
-						);
-						void this.announceToTrackers(ch, this.closeController.signal).catch(() => {});
-					} else {
-						if (data.length < 1 + 32 + 4 + 1) return false;
-						const reason = data[37]! & 0xff;
-						const redirects: Array<{ hash: string; addrs: Multiaddr[] }> = [];
-						if (data.length >= 1 + 32 + 4 + 1 + 1) {
-							const count = Math.min(255, data[38]!);
-							let offset = 39;
-							const max = Math.min(count, JOIN_REJECT_REDIRECT_MAX);
-							for (let i = 0; i < max; i++) {
-								if (offset + 1 > data.length) break;
-								const hashLen = data[offset++]!;
-								if (hashLen === 0) break;
-								if (offset + hashLen > data.length) break;
-								const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
-								offset += hashLen;
-								if (offset + 1 > data.length) break;
-								const addrCount = Math.min(255, data[offset++]!);
-								const addrs: Multiaddr[] = [];
-								const addrMax = Math.min(addrCount, JOIN_REJECT_REDIRECT_ADDR_MAX);
-								for (let j = 0; j < addrMax; j++) {
-									if (offset + 2 > data.length) break;
-									const len = readU16BE(data, offset);
-									offset += 2;
-									if (offset + len > data.length) break;
-									const bytes = data.subarray(offset, offset + len);
-									offset += len;
-									try {
-										addrs.push(multiaddr(bytes));
-									} catch {
-										// ignore invalid multiaddrs
-									}
-								}
-								if (hash && addrs.length > 0) {
-									redirects.push({ hash, addrs });
-									this.cacheKnownCandidateAddrs(ch, hash, addrs);
-								}
-							}
-						}
-						pending.resolve({ ok: false, rejectReason: reason, redirects });
-					}
+			if (kind === MSG_JOIN_REQ) {
+				const decoded = decodeJoinReq(data);
+				if (!decoded) return false;
+				const { reqId, bidPerByte, parentUpgradeReservationToken } = decoded;
+				this.pruneDisconnectedChildren(ch);
+				const hasParentUpgradeReservation =
+					ch.isRoot && parentUpgradeReservationToken > 0;
+				const consumedParentUpgradeReservation = hasParentUpgradeReservation
+					? this.consumeParentUpgradeReservation(
+							ch,
+							fromHash,
+							parentUpgradeReservationToken,
+						)
+					: false;
+				if (hasParentUpgradeReservation && !consumedParentUpgradeReservation) {
+					ch.metrics.parentUpgradeRootReservationRejected += 1;
+					void this.sendJoinReject(
+						ch,
+						fromHash,
+						reqId,
+						JOIN_REJECT_NO_CAPACITY,
+					).catch(() => {});
+					void this.announceToTrackers(ch, this.closeController.signal).catch(
+						() => {},
+					);
 					return true;
 				}
-	
-					if (kind === MSG_PUBLISH_PROXY) {
-						// Requires an open channel state
-						if (!ch) return true;
 
-						// Only accept/forward within established tree edges to keep the data-plane economical.
-						const isFromParent = fromHash === ch.parent;
-						const isFromChild = ch.children.has(fromHash);
-							if (!isFromParent && !isFromChild) return true;
+				// Only accept if we're already attached.
+				if (!ch.isRoot && !ch.parent) {
+					void this.sendJoinReject(
+						ch,
+						fromHash,
+						reqId,
+						JOIN_REJECT_NOT_ATTACHED,
+					).catch(() => {});
+					return true;
+				}
 
-							const payload = data.subarray(33);
-							if (isFromChild) {
-								const ok = this.takeIngressBudget(
-									ch,
-									"proxy-publish",
-									fromHash,
-									payload.byteLength,
-								);
-								if (!ok) {
-									ch.metrics.proxyPublishDrops += 1;
-									return true;
-								}
-							}
-							this.touchPeerHint(ch, fromHash);
-
-							if (ch.isRoot) {
-								// Only accept upstream proxy publishes from established children.
-								if (!isFromChild) return true;
-							const seq = ch.seq++;
-							const message = await this._sendData(ch, [...ch.children.keys()], seq, payload);
-				this.dispatchEvent(
-								new CustomEvent("fanout:data", {
-									detail: {
-										topic: ch.id.topic,
-										root: ch.id.root,
-										seq,
-										payload,
-										from: this.publicKeyHash,
-										origin: this.publicKeyHash,
-										timestamp: message.header.timestamp,
-										message,
-									},
-								}),
-							);
-							return true;
-						}
-
-						// Upstream forwarding (child -> ... -> root).
-						if (!isFromChild) return true;
-						if (!ch.parent) return true;
-						const up = this.peers.get(ch.parent);
-						if (!up) return true;
-						void up
-							.waitForWrite(
-								message.bytes(),
-								Number(message.header.priority ?? CONTROL_PRIORITY),
-								this.closeController.signal,
-							)
-							.catch(() => {});
-						return true;
-					}
-
-					if (kind === MSG_UNICAST_ACK) {
-						// Requires an open channel state
-						if (!ch) return true;
-
-						// Only accept/forward within established tree edges.
-						const isFromParent = fromHash === ch.parent;
-						const isFromChild = ch.children.has(fromHash);
-						if (!isFromParent && !isFromChild) return true;
-
-						if (data.length < 1 + 32 + 8 + 1) return false;
-						const ackToken = readU64BE(data, 33);
-						const routeCount = Math.min(255, data[41]!);
-						const decoded = decodeRoute(data, 42, routeCount);
-						const route = decoded.route;
-						const target = route.length > 0 ? route[route.length - 1]! : "";
-						const origin =
-							message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
-
-						this.touchPeerHint(ch, fromHash);
-
-						const settleLocal = () => {
-							const pending = ch.pendingUnicastAck.get(ackToken);
-							if (!pending) return;
-							if (pending.expectedOrigin !== origin) return;
-							pending.resolve();
-						};
-
-						// Root routes downward using the provided token.
-						if (ch.isRoot) {
-							if (route.length === 0 || route[0] !== ch.id.root) return true;
-							if (target === this.publicKeyHash) {
-								settleLocal();
-								return true;
-							}
-							const nextHop = route[1];
-							if (!nextHop || !ch.children.has(nextHop)) return true;
-							const stream = this.peers.get(nextHop);
-							if (!stream) return true;
-							void stream
-								.waitForWrite(
-									message.bytes(),
-									Number(message.header.priority ?? CONTROL_PRIORITY),
-									this.closeController.signal,
-								)
-								.catch(() => {});
-							return true;
-						}
-
-						// Downstream routing: parent -> child -> ... -> sender.
-						if (isFromParent) {
-							const selfHash = this.publicKeyHash;
-							const myIndex = route.indexOf(selfHash);
-							if (myIndex < 0) return true;
-							if (myIndex === route.length - 1) {
-								settleLocal();
-								return true;
-							}
-							const nextHop = route[myIndex + 1];
-							if (!nextHop || !ch.children.has(nextHop)) return true;
-							const stream = this.peers.get(nextHop);
-							if (!stream) return true;
-							void stream
-								.waitForWrite(
-									message.bytes(),
-									Number(message.header.priority ?? CONTROL_PRIORITY),
-									this.closeController.signal,
-								)
-								.catch(() => {});
-							return true;
-						}
-
-						// Upstream forwarding (child -> ... -> root). Route token is only used by the root.
-						if (!ch.parent) return true;
-						const up = this.peers.get(ch.parent);
-						if (!up) return true;
-						void up
-							.waitForWrite(
-								message.bytes(),
-								Number(message.header.priority ?? CONTROL_PRIORITY),
-								this.closeController.signal,
-							)
-							.catch(() => {});
-						return true;
-					}
-
-					if (kind === MSG_UNICAST) {
-						// Requires an open channel state
-						if (!ch) return true;
-	
-					// Only accept/forward within established tree edges to keep the data-plane economical.
-					const isFromParent = fromHash === ch.parent;
-					const isFromChild = ch.children.has(fromHash);
-					if (!isFromParent && !isFromChild) return true;
-					if (isFromChild) {
-						const ok = this.takeIngressBudget(
+				// Only accept children if we can prove we're on the rooted tree.
+				// Otherwise, disconnected components can "stabilize" by joining via unrooted parents.
+				if (!ch.isRoot) {
+					const route = ch.routeFromRoot;
+					const rooted =
+						Array.isArray(route) &&
+						route.length >= 2 &&
+						route[0] === ch.id.root &&
+						route[route.length - 1] === this.publicKeyHash;
+					if (!rooted) {
+						void this.sendJoinReject(
 							ch,
-							"unicast",
 							fromHash,
-							data.byteLength,
+							reqId,
+							JOIN_REJECT_NOT_ATTACHED,
+						).catch(() => {});
+						return true;
+					}
+				}
+
+				if (ch.effectiveMaxChildren <= 0) {
+					void this.sendJoinReject(
+						ch,
+						fromHash,
+						reqId,
+						JOIN_REJECT_NO_CAPACITY,
+					).catch(() => {});
+					return true;
+				}
+
+				if (
+					!ch.children.has(fromHash) &&
+					(consumedParentUpgradeReservation
+						? ch.children.size >= ch.effectiveMaxChildren
+						: ch.children.size +
+								this.parentUpgradeReservationCount(ch, fromHash) >=
+							ch.effectiveMaxChildren)
+				) {
+					const blockedByReservedRootCapacity =
+						ch.isRoot &&
+						!consumedParentUpgradeReservation &&
+						ch.children.size < ch.effectiveMaxChildren;
+					if (!ch.allowKick || blockedByReservedRootCapacity) {
+						void this.sendJoinReject(
+							ch,
+							fromHash,
+							reqId,
+							JOIN_REJECT_NO_CAPACITY,
+						).catch(() => {});
+						void this.announceToTrackers(ch, this.closeController.signal).catch(
+							() => {},
 						);
-						if (!ok) {
-							ch.metrics.unicastDrops += 1;
-							return true;
-						}
-					}
-
-					if (data.length < 1 + 32 + 1 + 1) return false;
-					const flags = data[33]! & 0xff;
-					let offset = 34;
-					let ackToken: bigint | undefined;
-					if (flags & UNICAST_FLAG_ACK) {
-						if (data.length < offset + 8 + 1) return false;
-						ackToken = readU64BE(data, offset);
-						offset += 8;
-					}
-					const routeCount = Math.min(255, data[offset]!);
-					offset += 1;
-					const decoded = decodeRoute(data, offset, routeCount);
-					const route = decoded.route;
-					offset = decoded.offset;
-					let replyRoute: string[] | undefined;
-					if (ackToken != null) {
-						if (data.length < offset + 1) return false;
-						const replyCount = Math.min(255, data[offset]!);
-						offset += 1;
-						const decodedReply = decodeRoute(data, offset, replyCount);
-						replyRoute = decodedReply.route;
-						offset = decodedReply.offset;
-					}
-					const payload = data.subarray(offset);
-					const target = route.length > 0 ? route[route.length - 1]! : "";
-						const origin =
-							message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
-
-							this.touchPeerHint(ch, fromHash);
-
-							// Root routes downward using the provided token.
-							if (ch.isRoot) {
-							if (route.length === 0 || route[0] !== ch.id.root) return true;
-						if (target === this.publicKeyHash) {
-							this.dispatchEvent(
-								new CustomEvent("fanout:unicast", {
-									detail: {
-										topic: ch.id.topic,
-										root: ch.id.root,
-										route,
-										payload,
-										from: fromHash,
-										origin,
-										to: target,
-										timestamp: message.header.timestamp,
-										message,
-									},
-								}),
-							);
-							if (ackToken != null) {
-								const canAck =
-									replyRoute &&
-									replyRoute.length > 0 &&
-									replyRoute[0] === ch.id.root &&
-									replyRoute[replyRoute.length - 1] === origin;
-								if (canAck) {
-									const nextHop = replyRoute![1];
-									if (nextHop && ch.children.has(nextHop)) {
-										void this._sendControl(
-											nextHop,
-											encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
-										).catch(() => {});
-									}
-								}
-							}
-							return true;
-						}
-						const nextHop = route[1];
-						if (!nextHop || !ch.children.has(nextHop)) return true;
-						const stream = this.peers.get(nextHop);
-						if (!stream) return true;
-						void stream
-							.waitForWrite(
-								message.bytes(),
-								Number(message.header.priority ?? CONTROL_PRIORITY),
-								this.closeController.signal,
-							)
-							.catch(() => {});
 						return true;
 					}
 
-					// Downstream routing: parent -> child -> ... -> target.
-					if (isFromParent) {
-						const selfHash = this.publicKeyHash;
-						const myIndex = route.indexOf(selfHash);
-						if (myIndex < 0) return true;
-						if (myIndex === route.length - 1) {
-							this.dispatchEvent(
-								new CustomEvent("fanout:unicast", {
-									detail: {
-										topic: ch.id.topic,
-										root: ch.id.root,
-										route,
-										payload,
-										from: fromHash,
-										origin,
-										to: target,
-										timestamp: message.header.timestamp,
-										message,
-									},
-								}),
-							);
-							if (ackToken != null && ch.parent) {
-								const canAck =
-									replyRoute &&
-									replyRoute.length > 0 &&
-									replyRoute[0] === ch.id.root &&
-									replyRoute[replyRoute.length - 1] === origin;
-								if (canAck) {
-									void this._sendControl(
-										ch.parent,
-										encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
-									).catch(() => {});
-								}
-							}
-							return true;
+					let worstChild: string | undefined;
+					let worstBid = Number.POSITIVE_INFINITY;
+					for (const [childHash, info] of ch.children) {
+						if (info.bidPerByte < worstBid) {
+							worstBid = info.bidPerByte;
+							worstChild = childHash;
 						}
-						const nextHop = route[myIndex + 1];
-						if (!nextHop || !ch.children.has(nextHop)) return true;
-						const stream = this.peers.get(nextHop);
-						if (!stream) return true;
-						void stream
-							.waitForWrite(
-								message.bytes(),
-								Number(message.header.priority ?? CONTROL_PRIORITY),
-								this.closeController.signal,
-							)
-							.catch(() => {});
+					}
+
+					if (worstChild == null || bidPerByte <= worstBid) {
+						void this.sendJoinReject(
+							ch,
+							fromHash,
+							reqId,
+							JOIN_REJECT_LOW_BID,
+						).catch(() => {});
+						void this.announceToTrackers(ch, this.closeController.signal).catch(
+							() => {},
+						);
 						return true;
 					}
 
-					// Upstream forwarding (child -> ... -> root). Route token is only used by the root.
-					if (!ch.parent) return true;
-					const up = this.peers.get(ch.parent);
-					if (!up) return true;
-					void up
+					void this.kickChildHashes(ch, [worstChild]).catch(() => {});
+				}
+
+				ch.children.set(fromHash, { bidPerByte });
+				if (ch.isRoot && consumedParentUpgradeReservation) {
+					ch.parentUpgradeTrackerNoCapacityUntil = Math.max(
+						ch.parentUpgradeTrackerNoCapacityUntil,
+						Date.now() + 2_000,
+					);
+				}
+				this.touchPeerHint(ch, fromHash);
+				const joinAccept = encodeJoinAccept(
+					ch.id.key,
+					reqId,
+					ch.level,
+					ch.routeFromRoot,
+					this.getHaveRange(ch),
+				);
+				void (async () => {
+					await this._sendControl(fromHash, joinAccept);
+					if (ch.endSeqExclusive > 0) {
+						await this._sendControl(
+							fromHash,
+							encodeEnd(ch.id.key, ch.endSeqExclusive),
+						);
+					}
+				})().catch(() => {});
+				void this.announceToTrackers(ch, this.closeController.signal).catch(
+					() => {},
+				);
+				return true;
+			}
+
+			if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
+				if (data.length < 1 + 32 + 4) return false;
+				const reqId = readU32BE(data, 33);
+				const pending = ch.pendingJoin.get(reqId);
+				if (!pending) return true;
+				ch.pendingJoin.delete(reqId);
+
+				if (kind === MSG_JOIN_ACCEPT) {
+					if (data.length < 1 + 32 + 4 + 2 + 1) return false;
+					const parentLevel = readU16BE(data, 37);
+					const routeCount = Math.min(255, data[39]!);
+					let offset = 40;
+					const parentRouteFromRoot: string[] = [];
+					const max = Math.min(routeCount, MAX_ROUTE_HOPS);
+					for (let i = 0; i < max; i++) {
+						if (offset + 1 > data.length) break;
+						const len = data[offset++]!;
+						if (len === 0) break;
+						if (offset + len > data.length) break;
+						parentRouteFromRoot.push(
+							textDecoder.decode(data.subarray(offset, offset + len)),
+						);
+						offset += len;
+					}
+
+					const hasValidParentRoute =
+						parentRouteFromRoot.length > 0 &&
+						parentRouteFromRoot[0] === ch.id.root &&
+						parentRouteFromRoot[parentRouteFromRoot.length - 1] === fromHash;
+
+					// Defensive: a JOIN_ACCEPT without a rooted route token (unless the parent is the
+					// actual root) can create stable disconnected components. Treat it as a reject.
+					if (fromHash !== ch.id.root && !hasValidParentRoute) {
+						pending.resolve({
+							ok: false,
+							rejectReason: JOIN_REJECT_NOT_ATTACHED,
+						});
+						return true;
+					}
+
+					const acceptedParentRoute =
+						hasValidParentRoute || fromHash === ch.id.root
+							? fromHash === ch.id.root && !hasValidParentRoute
+								? [ch.id.root]
+								: parentRouteFromRoot
+							: undefined;
+
+					if (pending.shadowAttach) {
+						this.touchPeerHint(ch, fromHash);
+						pending.resolve({
+							ok: true,
+							parentLevel,
+							parentRouteFromRoot: acceptedParentRoute,
+						});
+						return true;
+					}
+
+					const attachedAt = Date.now();
+					ch.parent = fromHash;
+					ch.level = parentLevel + 1;
+					ch.joinedAtLeastOnce = true;
+					ch.lastParentDataAt = attachedAt;
+					ch.lastParentUpgradeActivityAt = attachedAt;
+					ch.parentRepairUnansweredStreak = 0;
+					this.resetParentDataLatency(ch);
+					// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
+					// if callers enable `staleAfterMs`, we should be able to detach even
+					// before the first data message arrives (for example, during churn
+					// or when a component is partitioned from the root).
+					ch.receivedAnyParentData = true;
+					// Build/refresh a route token that enables economical unicast.
+					if (hasValidParentRoute) {
+						ch.routeFromRoot = [...parentRouteFromRoot, this.publicKeyHash];
+					} else if (fromHash === ch.id.root) {
+						// Minimal fallback: parent is the root.
+						ch.routeFromRoot = [ch.id.root, this.publicKeyHash];
+					}
+					if (
+						ch.repairEnabled &&
+						ch.maxDataAgeMs === 0 &&
+						offset + 8 <= data.length
+					) {
+						// Optional appendix: the parent's current have-range. Lets a
+						// freshly attached child learn immediately which sequences
+						// already exist, so lost deliveries surface as missing seqs
+						// (and repair) instead of silent absence.
+						const haveFrom = readU32BE(data, offset);
+						const haveToExclusive = readU32BE(data, offset + 4);
+						if (haveToExclusive > haveFrom) {
+							// Mark only; the repair loop's own cadence picks the gaps
+							// up, giving in-flight live deliveries time to land first
+							// (an immediate pull here races them into duplicates).
+							this.noteEnd(ch, fromHash, haveToExclusive);
+						}
+					}
+					this.touchPeerHint(ch, fromHash);
+					pending.resolve({
+						ok: true,
+						parentLevel,
+						parentRouteFromRoot: acceptedParentRoute,
+					});
+					this.dispatchEvent(
+						new CustomEvent("fanout:joined", {
+							detail: {
+								topic: ch.id.topic,
+								root: ch.id.root,
+								parent: fromHash,
+							},
+						}),
+					);
+					void this.announceToTrackers(ch, this.closeController.signal).catch(
+						() => {},
+					);
+				} else {
+					if (data.length < 1 + 32 + 4 + 1) return false;
+					const reason = data[37]! & 0xff;
+					const redirects: Array<{ hash: string; addrs: Multiaddr[] }> = [];
+					if (data.length >= 1 + 32 + 4 + 1 + 1) {
+						const count = Math.min(255, data[38]!);
+						let offset = 39;
+						const max = Math.min(count, JOIN_REJECT_REDIRECT_MAX);
+						for (let i = 0; i < max; i++) {
+							if (offset + 1 > data.length) break;
+							const hashLen = data[offset++]!;
+							if (hashLen === 0) break;
+							if (offset + hashLen > data.length) break;
+							const hash = textDecoder.decode(
+								data.subarray(offset, offset + hashLen),
+							);
+							offset += hashLen;
+							if (offset + 1 > data.length) break;
+							const addrCount = Math.min(255, data[offset++]!);
+							const addrs: Multiaddr[] = [];
+							const addrMax = Math.min(
+								addrCount,
+								JOIN_REJECT_REDIRECT_ADDR_MAX,
+							);
+							for (let j = 0; j < addrMax; j++) {
+								if (offset + 2 > data.length) break;
+								const len = readU16BE(data, offset);
+								offset += 2;
+								if (offset + len > data.length) break;
+								const bytes = data.subarray(offset, offset + len);
+								offset += len;
+								try {
+									addrs.push(multiaddr(bytes));
+								} catch {
+									// ignore invalid multiaddrs
+								}
+							}
+							if (hash && addrs.length > 0) {
+								redirects.push({ hash, addrs });
+								this.cacheKnownCandidateAddrs(ch, hash, addrs);
+							}
+						}
+					}
+					pending.resolve({ ok: false, rejectReason: reason, redirects });
+				}
+				return true;
+			}
+
+			if (kind === MSG_PUBLISH_PROXY) {
+				// Requires an open channel state
+				if (!ch) return true;
+
+				// Only accept/forward within established tree edges to keep the data-plane economical.
+				const isFromParent = fromHash === ch.parent;
+				const isFromChild = ch.children.has(fromHash);
+				if (!isFromParent && !isFromChild) return true;
+
+				const payload = data.subarray(33);
+				if (isFromChild) {
+					const ok = this.takeIngressBudget(
+						ch,
+						"proxy-publish",
+						fromHash,
+						payload.byteLength,
+					);
+					if (!ok) {
+						ch.metrics.proxyPublishDrops += 1;
+						return true;
+					}
+				}
+				this.touchPeerHint(ch, fromHash);
+
+				if (ch.isRoot) {
+					// Only accept upstream proxy publishes from established children.
+					if (!isFromChild) return true;
+					const seq = ch.seq++;
+					const message = await this._sendData(
+						ch,
+						[...ch.children.keys()],
+						seq,
+						payload,
+					);
+					this.dispatchEvent(
+						new CustomEvent("fanout:data", {
+							detail: {
+								topic: ch.id.topic,
+								root: ch.id.root,
+								seq,
+								payload,
+								from: this.publicKeyHash,
+								origin: this.publicKeyHash,
+								timestamp: message.header.timestamp,
+								message,
+							},
+						}),
+					);
+					return true;
+				}
+
+				// Upstream forwarding (child -> ... -> root).
+				if (!isFromChild) return true;
+				if (!ch.parent) return true;
+				const up = this.peers.get(ch.parent);
+				if (!up) return true;
+				void up
+					.waitForWrite(
+						message.bytes(),
+						Number(message.header.priority ?? CONTROL_PRIORITY),
+						this.closeController.signal,
+					)
+					.catch(() => {});
+				return true;
+			}
+
+			if (kind === MSG_UNICAST_ACK) {
+				// Requires an open channel state
+				if (!ch) return true;
+
+				// Only accept/forward within established tree edges.
+				const isFromParent = fromHash === ch.parent;
+				const isFromChild = ch.children.has(fromHash);
+				if (!isFromParent && !isFromChild) return true;
+
+				if (data.length < 1 + 32 + 8 + 1) return false;
+				const ackToken = readU64BE(data, 33);
+				const routeCount = Math.min(255, data[41]!);
+				const decoded = decodeRoute(data, 42, routeCount);
+				const route = decoded.route;
+				const target = route.length > 0 ? route[route.length - 1]! : "";
+				const origin =
+					message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
+
+				this.touchPeerHint(ch, fromHash);
+
+				const settleLocal = () => {
+					const pending = ch.pendingUnicastAck.get(ackToken);
+					if (!pending) return;
+					if (pending.expectedOrigin !== origin) return;
+					pending.resolve();
+				};
+
+				// Root routes downward using the provided token.
+				if (ch.isRoot) {
+					if (route.length === 0 || route[0] !== ch.id.root) return true;
+					if (target === this.publicKeyHash) {
+						settleLocal();
+						return true;
+					}
+					const nextHop = route[1];
+					if (!nextHop || !ch.children.has(nextHop)) return true;
+					const stream = this.peers.get(nextHop);
+					if (!stream) return true;
+					void stream
 						.waitForWrite(
 							message.bytes(),
 							Number(message.header.priority ?? CONTROL_PRIORITY),
@@ -6882,22 +8565,237 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					return true;
 				}
 
-					if (kind === MSG_KICK) {
-						ch.metrics.reparentKicked += 1;
-					ch.parent = undefined;
-					ch.level = Number.POSITIVE_INFINITY;
-					ch.routeFromRoot = undefined;
-					ch.routeByPeer.clear();
-					ch.lastParentDataAt = 0;
-					ch.receivedAnyParentData = false;
-						ch.pendingJoin.clear();
-						ch.pendingRouteQuery.clear();
-						this.abortPendingUnicastAcks(ch, new AbortError("fanout channel kicked"));
-						for (const pending of ch.pendingRouteProxy.values()) {
-							clearTimeout(pending.timer);
+				// Downstream routing: parent -> child -> ... -> sender.
+				if (isFromParent) {
+					const selfHash = this.publicKeyHash;
+					const myIndex = route.indexOf(selfHash);
+					if (myIndex < 0) return true;
+					if (myIndex === route.length - 1) {
+						settleLocal();
+						return true;
+					}
+					const nextHop = route[myIndex + 1];
+					if (!nextHop || !ch.children.has(nextHop)) return true;
+					const stream = this.peers.get(nextHop);
+					if (!stream) return true;
+					void stream
+						.waitForWrite(
+							message.bytes(),
+							Number(message.header.priority ?? CONTROL_PRIORITY),
+							this.closeController.signal,
+						)
+						.catch(() => {});
+					return true;
+				}
+
+				// Upstream forwarding (child -> ... -> root). Route token is only used by the root.
+				if (!ch.parent) return true;
+				const up = this.peers.get(ch.parent);
+				if (!up) return true;
+				void up
+					.waitForWrite(
+						message.bytes(),
+						Number(message.header.priority ?? CONTROL_PRIORITY),
+						this.closeController.signal,
+					)
+					.catch(() => {});
+				return true;
+			}
+
+			if (kind === MSG_UNICAST) {
+				// Requires an open channel state
+				if (!ch) return true;
+
+				// Only accept/forward within established tree edges to keep the data-plane economical.
+				const isFromParent = fromHash === ch.parent;
+				const isFromChild = ch.children.has(fromHash);
+				if (!isFromParent && !isFromChild) return true;
+				if (isFromChild) {
+					const ok = this.takeIngressBudget(
+						ch,
+						"unicast",
+						fromHash,
+						data.byteLength,
+					);
+					if (!ok) {
+						ch.metrics.unicastDrops += 1;
+						return true;
+					}
+				}
+
+				if (data.length < 1 + 32 + 1 + 1) return false;
+				const flags = data[33]! & 0xff;
+				let offset = 34;
+				let ackToken: bigint | undefined;
+				if (flags & UNICAST_FLAG_ACK) {
+					if (data.length < offset + 8 + 1) return false;
+					ackToken = readU64BE(data, offset);
+					offset += 8;
+				}
+				const routeCount = Math.min(255, data[offset]!);
+				offset += 1;
+				const decoded = decodeRoute(data, offset, routeCount);
+				const route = decoded.route;
+				offset = decoded.offset;
+				let replyRoute: string[] | undefined;
+				if (ackToken != null) {
+					if (data.length < offset + 1) return false;
+					const replyCount = Math.min(255, data[offset]!);
+					offset += 1;
+					const decodedReply = decodeRoute(data, offset, replyCount);
+					replyRoute = decodedReply.route;
+					offset = decodedReply.offset;
+				}
+				const payload = data.subarray(offset);
+				const target = route.length > 0 ? route[route.length - 1]! : "";
+				const origin =
+					message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
+
+				this.touchPeerHint(ch, fromHash);
+
+				// Root routes downward using the provided token.
+				if (ch.isRoot) {
+					if (route.length === 0 || route[0] !== ch.id.root) return true;
+					if (target === this.publicKeyHash) {
+						this.dispatchEvent(
+							new CustomEvent("fanout:unicast", {
+								detail: {
+									topic: ch.id.topic,
+									root: ch.id.root,
+									route,
+									payload,
+									from: fromHash,
+									origin,
+									to: target,
+									timestamp: message.header.timestamp,
+									message,
+								},
+							}),
+						);
+						if (ackToken != null) {
+							const canAck =
+								replyRoute &&
+								replyRoute.length > 0 &&
+								replyRoute[0] === ch.id.root &&
+								replyRoute[replyRoute.length - 1] === origin;
+							if (canAck) {
+								const nextHop = replyRoute![1];
+								if (nextHop && ch.children.has(nextHop)) {
+									void this._sendControl(
+										nextHop,
+										encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
+									).catch(() => {});
+								}
+							}
 						}
-					ch.pendingRouteProxy.clear();
-					void this.kickChildren(ch).catch(() => {});
+						return true;
+					}
+					const nextHop = route[1];
+					if (!nextHop || !ch.children.has(nextHop)) return true;
+					const stream = this.peers.get(nextHop);
+					if (!stream) return true;
+					void stream
+						.waitForWrite(
+							message.bytes(),
+							Number(message.header.priority ?? CONTROL_PRIORITY),
+							this.closeController.signal,
+						)
+						.catch(() => {});
+					return true;
+				}
+
+				// Downstream routing: parent -> child -> ... -> target.
+				if (isFromParent) {
+					const selfHash = this.publicKeyHash;
+					const myIndex = route.indexOf(selfHash);
+					if (myIndex < 0) return true;
+					if (myIndex === route.length - 1) {
+						this.dispatchEvent(
+							new CustomEvent("fanout:unicast", {
+								detail: {
+									topic: ch.id.topic,
+									root: ch.id.root,
+									route,
+									payload,
+									from: fromHash,
+									origin,
+									to: target,
+									timestamp: message.header.timestamp,
+									message,
+								},
+							}),
+						);
+						if (ackToken != null && ch.parent) {
+							const canAck =
+								replyRoute &&
+								replyRoute.length > 0 &&
+								replyRoute[0] === ch.id.root &&
+								replyRoute[replyRoute.length - 1] === origin;
+							if (canAck) {
+								void this._sendControl(
+									ch.parent,
+									encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
+								).catch(() => {});
+							}
+						}
+						return true;
+					}
+					const nextHop = route[myIndex + 1];
+					if (!nextHop || !ch.children.has(nextHop)) return true;
+					const stream = this.peers.get(nextHop);
+					if (!stream) return true;
+					void stream
+						.waitForWrite(
+							message.bytes(),
+							Number(message.header.priority ?? CONTROL_PRIORITY),
+							this.closeController.signal,
+						)
+						.catch(() => {});
+					return true;
+				}
+
+				// Upstream forwarding (child -> ... -> root). Route token is only used by the root.
+				if (!ch.parent) return true;
+				const up = this.peers.get(ch.parent);
+				if (!up) return true;
+				void up
+					.waitForWrite(
+						message.bytes(),
+						Number(message.header.priority ?? CONTROL_PRIORITY),
+						this.closeController.signal,
+					)
+					.catch(() => {});
+				return true;
+			}
+
+			if (kind === MSG_KICK) {
+				ch.metrics.reparentKicked += 1;
+				ch.parent = undefined;
+				ch.level = Number.POSITIVE_INFINITY;
+				ch.routeFromRoot = undefined;
+				ch.routeByPeer.clear();
+				ch.lastParentDataAt = 0;
+				ch.lastParentUpgradeActivityAt = 0;
+				ch.receivedAnyParentData = false;
+				ch.pendingJoin.clear();
+				ch.pendingParentProbe.clear();
+				ch.parentShadow = undefined;
+				void Promise.all(this.clearParentUpgradeGrace(ch, true, true)).catch(
+					() => {},
+				);
+				if (this.parentUpgradeShadowInFlightSuffixKey === ch.id.suffixKey) {
+					this.parentUpgradeShadowInFlightSuffixKey = undefined;
+				}
+				ch.pendingRouteQuery.clear();
+				this.abortPendingUnicastAcks(
+					ch,
+					new AbortError("fanout channel kicked"),
+				);
+				for (const pending of ch.pendingRouteProxy.values()) {
+					clearTimeout(pending.timer);
+				}
+				ch.pendingRouteProxy.clear();
+				void this.kickChildren(ch).catch(() => {});
 				this.dispatchEvent(
 					new CustomEvent("fanout:kicked", {
 						detail: { topic: ch.id.topic, root: ch.id.root, from: fromHash },
@@ -6906,20 +8804,20 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-						if (kind === MSG_END) {
-								if (data.length < 1 + 32 + 4) return false;
-								const lastSeqExclusive = readU32BE(data, 33);
-								if (ch.parent && fromHash === ch.parent) {
-									ch.lastParentDataAt = Date.now();
-									ch.receivedAnyParentData = true;
-									ch.parentRepairUnansweredStreak = 0;
-								}
-								ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
-							this.touchPeerHint(ch, fromHash);
-							this.noteEnd(ch, fromHash, lastSeqExclusive);
-							if (ch.children.size > 0) {
-							void this._sendControlMany(
-								[...ch.children.keys()],
+			if (kind === MSG_END) {
+				if (data.length < 1 + 32 + 4) return false;
+				const lastSeqExclusive = readU32BE(data, 33);
+				if (ch.parent && fromHash === ch.parent) {
+					ch.lastParentDataAt = Date.now();
+					ch.receivedAnyParentData = true;
+					ch.parentRepairUnansweredStreak = 0;
+				}
+				ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
+				this.touchPeerHint(ch, fromHash);
+				this.noteEnd(ch, fromHash, lastSeqExclusive);
+				if (ch.children.size > 0) {
+					void this._sendControlMany(
+						[...ch.children.keys()],
 						encodeEnd(ch.id.key, lastSeqExclusive),
 					);
 				}
@@ -6927,10 +8825,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				return true;
 			}
 
-				if (kind === MSG_REPAIR_REQ) {
-					if (data.length < 1 + 32 + 4 + 1) return false;
-					if (!ch.children.has(fromHash)) return true;
-					const count = data[37]!;
+			if (kind === MSG_REPAIR_REQ) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				if (!ch.children.has(fromHash)) return true;
+				const count = data[37]!;
 				const max = Math.min(count, Math.floor((data.length - 38) / 4));
 				for (let i = 0; i < max; i++) {
 					const seq = readU32BE(data, 38 + i * 4);
@@ -6942,70 +8840,179 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch.metrics.cacheHitsServed += 1;
 					void this._sendData(ch, [fromHash], seq, cached);
 				}
-					return true;
-				}
-
-					if (kind === MSG_FETCH_REQ) {
-						if (data.length < 1 + 32 + 4 + 1) return false;
-						this.touchPeerHint(ch, fromHash);
-						const count = data[37]!;
-						const max = Math.min(count, Math.floor((data.length - 38) / 4));
-						for (let i = 0; i < max; i++) {
-							const seq = readU32BE(data, 38 + i * 4);
-						const cached = this.getCached(ch, seq);
-						if (!cached) {
-							ch.metrics.cacheMissesServed += 1;
-							continue;
-						}
-						ch.metrics.cacheHitsServed += 1;
-						void this._sendData(ch, [fromHash], seq, cached);
-					}
-					return true;
-				}
-
 				return true;
 			}
-	
-			// Data-plane (topic identified via id suffix)
-				if (kind === MSG_DATA) {
-				const id = message.id as Uint8Array;
-					if (!(id instanceof Uint8Array) || !isDataId(id)) return false;
-				const suffixKey = this.getSuffixKeyFromId(id);
-				const ch = this.channelsBySuffixKey.get(suffixKey);
-				if (!ch) return false;
 
-						const seq = readU32BE(id, 4);
-						if (ch.parent && fromHash === ch.parent) {
-							ch.lastParentDataAt = Date.now();
-							ch.receivedAnyParentData = true;
-							ch.parentRepairUnansweredStreak = 0;
-						}
-						ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
-						this.noteReceivedSeq(ch, fromHash, seq);
+			if (kind === MSG_FETCH_REQ) {
+				if (data.length < 1 + 32 + 4 + 1) return false;
+				this.touchPeerHint(ch, fromHash);
+				const count = data[37]!;
+				const max = Math.min(count, Math.floor((data.length - 38) / 4));
+				for (let i = 0; i < max; i++) {
+					const seq = readU32BE(data, 38 + i * 4);
+					const cached = this.getCached(ch, seq);
+					if (!cached) {
+						ch.metrics.cacheMissesServed += 1;
+						continue;
+					}
+					ch.metrics.cacheHitsServed += 1;
+					void this._sendData(ch, [fromHash], seq, cached);
+				}
+				return true;
+			}
 
-				const payload = (data as Uint8Array).subarray(1);
-				ch.metrics.dataReceives += 1;
-				ch.metrics.dataPayloadBytesReceived += payload.byteLength;
-				this.markCached(ch, seq, payload);
-				this.dispatchEvent(
-					new CustomEvent("fanout:data", {
-						detail: {
-							topic: ch.id.topic,
-							root: ch.id.root,
-							seq,
-							payload,
-							from: fromHash,
-							origin:
-								message.header.signatures?.publicKeys?.[0]?.hashcode?.() ??
-								fromHash,
-							timestamp: message.header.timestamp,
-							message,
-						},
-					}),
+			return true;
+		}
+
+		// Data-plane (topic identified via id suffix)
+		if (kind === MSG_DATA) {
+			const id = message.id as Uint8Array;
+			if (!(id instanceof Uint8Array) || !isDataId(id)) return false;
+			const suffixKey = this.getSuffixKeyFromId(id);
+			const ch = this.channelsBySuffixKey.get(suffixKey);
+			if (!ch) return false;
+
+			const seq = readU32BE(id, 4);
+			if (ch.parent && fromHash === ch.parent) {
+				const receivedAt = Date.now();
+				ch.lastParentDataAt = receivedAt;
+				ch.lastParentUpgradeActivityAt = receivedAt;
+				ch.receivedAnyParentData = true;
+				ch.parentRepairUnansweredStreak = 0;
+			}
+			const hadCachedBeforeData = this.getCached(ch, seq) != null;
+			if (ch.parent && fromHash === ch.parent && !hadCachedBeforeData) {
+				this.noteParentDataLatency(ch, message.header.timestamp);
+			}
+			ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
+			if (
+				ch.parentUpgradeRetryAfterSeq >= 0 &&
+				seq > ch.parentUpgradeRetryAfterSeq
+			) {
+				ch.parentUpgradeRetryAfterSeq = -1;
+			}
+			const parentShadow = ch.parentShadow;
+			if (parentShadow != null) {
+				const now = Date.now();
+				const pruneShadowSeqMap = (map: Map<number, number>) => {
+					while (map.size > 512) {
+						const oldest = map.keys().next().value as number | undefined;
+						if (oldest == null) break;
+						map.delete(oldest);
+					}
+				};
+				const pruneShadowSeqSet = (set: Set<number>) => {
+					while (set.size > 512) {
+						const oldest = set.keys().next().value as number | undefined;
+						if (oldest == null) break;
+						set.delete(oldest);
+					}
+				};
+				const rememberShadowArrival = (map: Map<number, number>) => {
+					if (map.has(seq)) return map.get(seq);
+					map.set(seq, now);
+					pruneShadowSeqMap(map);
+					return now;
+				};
+				const recordCandidateLead = (
+					candidateAt: number | undefined,
+					parentAt: number | undefined,
+				) => {
+					if (
+						candidateAt == null ||
+						parentAt == null ||
+						parentShadow.liveComparedSeqs.has(seq)
+					) {
+						return;
+					}
+					parentShadow.liveComparedSeqs.add(seq);
+					pruneShadowSeqSet(parentShadow.liveComparedSeqs);
+					if (candidateAt < parentAt) {
+						parentShadow.liveCandidateLeadSamples += 1;
+						parentShadow.liveCandidateLeadMsTotal += parentAt - candidateAt;
+					}
+				};
+				if (parentShadow.hash === fromHash) {
+					const candidateAt = rememberShadowArrival(
+						parentShadow.liveCandidateFirstAtBySeq,
+					);
+					recordCandidateLead(
+						candidateAt,
+						parentShadow.liveParentFirstAtBySeq.get(seq),
+					);
+					if (seq > parentShadow.liveMaxSeqSeen) {
+						parentShadow.liveMaxSeqSeen = seq;
+						parentShadow.liveDataMessages += 1;
+					}
+					if (!hadCachedBeforeData) {
+						parentShadow.liveFirstDataMessages += 1;
+					}
+					parentShadow.liveLastDataAt = now;
+				} else if (ch.parent != null && fromHash === ch.parent) {
+					const parentAt = rememberShadowArrival(
+						parentShadow.liveParentFirstAtBySeq,
+					);
+					recordCandidateLead(
+						parentShadow.liveCandidateFirstAtBySeq.get(seq),
+						parentAt,
+					);
+					if (!hadCachedBeforeData) {
+						parentShadow.liveParentFirstDataMessages += 1;
+					}
+				}
+			}
+			const parentUpgradeGrace = ch.parentUpgradeGrace;
+			if (parentUpgradeGrace != null && !hadCachedBeforeData) {
+				if (fromHash === parentUpgradeGrace.candidateParent) {
+					parentUpgradeGrace.candidateFirstMessages += 1;
+				} else if (fromHash === parentUpgradeGrace.previousParent) {
+					parentUpgradeGrace.previousFirstMessages += 1;
+				}
+				if (
+					parentUpgradeGrace.previousFirstMessages >
+					parentUpgradeGrace.maxPreviousFirstMessages
+				) {
+					this.rollbackParentUpgradeGrace(ch);
+				} else if (
+					parentUpgradeGrace.candidateFirstMessages >=
+						parentUpgradeGrace.minCandidateFirstMessages &&
+					parentUpgradeGrace.candidateFirstMessages >=
+						parentUpgradeGrace.previousFirstMessages +
+							parentUpgradeGrace.minCandidateAdvantageMessages
+				) {
+					this.commitParentUpgradeGrace(ch);
+				}
+			}
+			this.noteReceivedSeq(ch, fromHash, seq);
+
+			const payload = (data as Uint8Array).subarray(1);
+			ch.metrics.dataReceives += 1;
+			ch.metrics.dataPayloadBytesReceived += payload.byteLength;
+			this.markCached(ch, seq, payload);
+			this.dispatchEvent(
+				new CustomEvent("fanout:data", {
+					detail: {
+						topic: ch.id.topic,
+						root: ch.id.root,
+						seq,
+						payload,
+						from: fromHash,
+						origin:
+							message.header.signatures?.publicKeys?.[0]?.hashcode?.() ??
+							fromHash,
+						timestamp: message.header.timestamp,
+						message,
+					},
+				}),
 			);
 
 			if (ch.children.size > 0) {
-				void this._forwardDataMessage(ch, [...ch.children.keys()], payload, message);
+				void this._forwardDataMessage(
+					ch,
+					[...ch.children.keys()],
+					payload,
+					message,
+				);
 			}
 			void this.tickRepair(ch).catch(() => {});
 			return true;

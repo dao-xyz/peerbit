@@ -2,16 +2,54 @@ import { getPublicKeyFromPeerId, randomBytes } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import {
 	PubSubData,
+	type DataEvent as PubSubDataEvent,
 	PubSubMessage,
 	Subscribe,
-	type DataEvent as PubSubDataEvent,
 } from "@peerbit/pubsub-interface";
 import { SilentDelivery } from "@peerbit/stream-interface";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import { FanoutTree, TopicControlPlane, TopicRootControlPlane } from "../src/index.js";
+import {
+	FanoutTree,
+	TopicControlPlane,
+	TopicRootControlPlane,
+} from "../src/index.js";
 
 describe("pubsub (fanout topics)", function () {
+	const createSessionServices = (
+		topicRootControlPlane: TopicRootControlPlane,
+		getOrCreateFanout: (c: any) => FanoutTree,
+		options?: {
+			pubsub?: Partial<ConstructorParameters<typeof TopicControlPlane>[1]>;
+		},
+	) => {
+		const { fanoutJoin, ...pubsubOptions } = options?.pubsub ?? {};
+		return {
+			services: {
+				fanout: (c: any) => getOrCreateFanout(c),
+				pubsub: (c: any) =>
+					new TopicControlPlane(c, {
+						canRelayMessage: true,
+						connectionManager: false,
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
+						shardCount: 16,
+						// Make join tests fast/deterministic.
+						fanoutJoin: {
+							timeoutMs: 10_000,
+							retryMs: 50,
+							bootstrapEnsureIntervalMs: 200,
+							trackerQueryIntervalMs: 200,
+							joinReqTimeoutMs: 1_000,
+							trackerQueryTimeoutMs: 1_000,
+							...(fanoutJoin ?? {}),
+						},
+						...pubsubOptions,
+					}),
+			},
+		};
+	};
+
 	const createSession = async (
 		peerCount: number,
 		options?: {
@@ -34,30 +72,13 @@ describe("pubsub (fanout topics)", function () {
 			return fanout;
 		};
 
-		const session: TestSession<{ pubsub: TopicControlPlane; fanout: FanoutTree }> =
-			await TestSession.connected(peerCount, {
-				services: {
-					fanout: (c) => getOrCreateFanout(c),
-						pubsub: (c) =>
-							new TopicControlPlane(c, {
-								canRelayMessage: true,
-								connectionManager: false,
-								topicRootControlPlane,
-								fanout: getOrCreateFanout(c),
-								shardCount: DEFAULT_SHARD_COUNT,
-								// Make join tests fast/deterministic.
-								fanoutJoin: {
-									timeoutMs: 10_000,
-									retryMs: 50,
-								bootstrapEnsureIntervalMs: 200,
-								trackerQueryIntervalMs: 200,
-								joinReqTimeoutMs: 1_000,
-								trackerQueryTimeoutMs: 1_000,
-							},
-							...(options?.pubsub || {}),
-						}),
-				},
-			});
+		const session: TestSession<{
+			pubsub: TopicControlPlane;
+			fanout: FanoutTree;
+		}> = await TestSession.connected(
+			peerCount,
+			createSessionServices(topicRootControlPlane, getOrCreateFanout, options),
+		);
 
 		const configureBootstraps = (trackerIndices: number[]) => {
 			const addrs: any[] = [];
@@ -68,8 +89,8 @@ describe("pubsub (fanout topics)", function () {
 				const self = new Set(peer.getMultiaddrs().map((a) => a.toString()));
 				const filtered = addrs.filter((a) => !self.has(a.toString()));
 				peer.services.fanout.setBootstraps(filtered);
-				}
-			};
+			}
+		};
 
 		const configureShards = async (routerIndices: number[]) => {
 			const candidates = routerIndices.map(
@@ -118,28 +139,10 @@ describe("pubsub (fanout topics)", function () {
 		return TestSession.disconnected<{
 			pubsub: TopicControlPlane;
 			fanout: FanoutTree;
-		}>(peerCount, {
-			services: {
-				fanout: (c) => getOrCreateFanout(c),
-				pubsub: (c) =>
-					new TopicControlPlane(c, {
-						canRelayMessage: true,
-						connectionManager: false,
-						topicRootControlPlane,
-						fanout: getOrCreateFanout(c),
-						shardCount: DEFAULT_SHARD_COUNT,
-						fanoutJoin: {
-							timeoutMs: 10_000,
-							retryMs: 50,
-							bootstrapEnsureIntervalMs: 200,
-							trackerQueryIntervalMs: 200,
-							joinReqTimeoutMs: 1_000,
-							trackerQueryTimeoutMs: 1_000,
-						},
-						...(options?.pubsub || {}),
-					}),
-			},
-		});
+		}>(
+			peerCount,
+			createSessionServices(topicRootControlPlane, getOrCreateFanout, options),
+		);
 	};
 
 	const topicHash32 = (topic: string) => {
@@ -151,8 +154,100 @@ describe("pubsub (fanout topics)", function () {
 		return hash >>> 0;
 	};
 
+	const stableUnitInterval = (input: string) => {
+		let hash = 0x811c9dc5; // FNV-1a
+		for (let i = 0; i < input.length; i++) {
+			hash ^= input.charCodeAt(i);
+			hash = (hash * 0x01000193) >>> 0;
+		}
+		return hash / 0x100000000;
+	};
+
+	const isFanoutDataMessage = (message: { id?: unknown }) => {
+		const id = message.id;
+		return (
+			id instanceof Uint8Array &&
+			id[0] === 0x46 &&
+			id[1] === 0x4f &&
+			id[2] === 0x55 &&
+			id[3] === 0x54
+		);
+	};
+
+	const pickSampledFanoutTopic = (
+		fanout: FanoutTree,
+		rootHash: string,
+		selfHash: string,
+		prefix: string,
+		maxSeqSeen: number,
+	) => {
+		for (let i = 0; i < 10_000; i++) {
+			const topic = `${prefix}-${i}`;
+			const id = fanout.getChannelId(topic, rootHash);
+			const score = stableUnitInterval(
+				`${id.suffixKey}:${selfHash}:${rootHash}:multi-channel-leaf-root-signal:${maxSeqSeen}`,
+			);
+			if (score < 0.015625) {
+				return topic;
+			}
+		}
+		throw new Error("unable to find sampled fanout topic");
+	};
+
+	const parentUpgradeMetricsSnapshot = (metrics: any) => ({
+		reparentUpgrade: metrics.reparentUpgrade,
+		skipData: metrics.reparentUpgradeSkipData,
+		skipRepair: metrics.reparentUpgradeSkipRepair,
+		skipQuiet: metrics.reparentUpgradeSkipQuiet,
+		skipCooldown: metrics.reparentUpgradeSkipCooldown,
+		skipBudget: metrics.reparentUpgradeSkipBudget,
+		skipSlots: metrics.reparentUpgradeSkipCandidateSlots,
+		skipLevel: metrics.reparentUpgradeSkipCandidateLevel,
+		skipPressure: metrics.reparentUpgradeSkipCandidatePressure,
+		skipRootPressure: metrics.reparentUpgradeSkipRootPressure,
+		probeNoReply: metrics.reparentUpgradeSkipProbeNoReply,
+		probeNotRooted: metrics.reparentUpgradeSkipProbeNotRooted,
+		probeOverloaded: metrics.reparentUpgradeSkipProbeOverloaded,
+		probeCooldown: metrics.reparentUpgradeSkipProbeCooldown,
+		parentProbeReqSent: metrics.parentProbeReqSent,
+		parentProbeReplyReceived: metrics.parentProbeReplyReceived,
+		shadowStart: metrics.parentShadowStart,
+		shadowObserve: metrics.parentShadowObserve,
+		shadowPromote: metrics.parentShadowPromote,
+		shadowReset: metrics.parentShadowReset,
+		shadowRejectCapacity: metrics.parentShadowRejectCapacity,
+		shadowRejectNoReply: metrics.parentShadowRejectNoReply,
+	});
+
+	const parentShadowSnapshot = (shadow: any) =>
+		shadow == null
+			? undefined
+			: {
+					hash: shadow.hash,
+					liveDataMessages: shadow.liveDataMessages,
+					liveFirstDataMessages: shadow.liveFirstDataMessages,
+					liveParentFirstDataMessages: shadow.liveParentFirstDataMessages,
+					liveCandidateLeadSamples: shadow.liveCandidateLeadSamples,
+					liveCandidateLeadMsTotal: shadow.liveCandidateLeadMsTotal,
+					liveMaxSeqSeen: shadow.liveMaxSeqSeen,
+					liveLastDataAt: shadow.liveLastDataAt,
+				};
+
+	const parentUpgradeDiagnosticMessage = (
+		values: Record<string, unknown> & { metrics?: any; shadow?: any },
+	) => {
+		const { metrics, shadow, ...rest } = values;
+		return JSON.stringify({
+			...rest,
+			metrics:
+				metrics == null ? undefined : parentUpgradeMetricsSnapshot(metrics),
+			shadow: parentShadowSnapshot(shadow),
+		});
+	};
+
 	it("delivers over sharded fanout (no direct subscription gossip)", async () => {
-		const { session, configureBootstraps, configureShards } = await createSession(4);
+		const { session, configureBootstraps, configureShards } =
+			await createSession(4);
 
 		try {
 			const TOPIC = "fanout-backed-topic";
@@ -170,7 +265,10 @@ describe("pubsub (fanout topics)", function () {
 					try {
 						if (message.data) {
 							const decoded = PubSubMessage.from(message.data);
-							if (decoded instanceof Subscribe && decoded.topics.includes(TOPIC)) {
+							if (
+								decoded instanceof Subscribe &&
+								decoded.topics.includes(TOPIC)
+							) {
 								subscribesByPeer[i] += 1;
 							}
 						}
@@ -198,7 +296,9 @@ describe("pubsub (fanout topics)", function () {
 			}
 
 			const payload = new Uint8Array([1, 2, 3, 4]);
-			await session.peers[2].services.pubsub.publish(payload, { topics: [TOPIC] });
+			await session.peers[2].services.pubsub.publish(payload, {
+				topics: [TOPIC],
+			});
 
 			await waitForResolved(() => {
 				for (const [i, received] of receivedByPeer.entries()) {
@@ -227,7 +327,8 @@ describe("pubsub (fanout topics)", function () {
 	});
 
 	it("exposes unified route hints from directstream and fanout", async () => {
-		const { session, configureBootstraps, configureShards } = await createSession(2);
+		const { session, configureBootstraps, configureShards } =
+			await createSession(2);
 
 		try {
 			const TOPIC = "fanout-route-hints-topic";
@@ -253,7 +354,8 @@ describe("pubsub (fanout topics)", function () {
 	});
 
 	it("preserves publish id/priority/signatures for fanout-backed topics", async () => {
-		const { session, configureBootstraps, configureShards } = await createSession(3);
+		const { session, configureBootstraps, configureShards } =
+			await createSession(3);
 
 		try {
 			const TOPIC = "fanout-signed-topic";
@@ -291,7 +393,9 @@ describe("pubsub (fanout topics)", function () {
 			expect(ev.message.header.priority).to.equal(priority);
 			expect(await ev.message.verify(true)).to.equal(true);
 			expect(
-				ev.message.header.signatures?.publicKeys[0]?.equals(publisher.publicKey),
+				ev.message.header.signatures?.publicKeys[0]?.equals(
+					publisher.publicKey,
+				),
 			).to.equal(true);
 		} finally {
 			await session.stop();
@@ -307,10 +411,10 @@ describe("pubsub (fanout topics)", function () {
 			shardCount,
 			shardTopicPrefix,
 		} = await createSession(4, {
-				pubsub: {
-					fanoutPublishIdleCloseMs,
-				} as any,
-			});
+			pubsub: {
+				fanoutPublishIdleCloseMs,
+			} as any,
+		});
 
 		try {
 			const TOPIC = "fanout-ephemeral-publish-topic";
@@ -342,16 +446,16 @@ describe("pubsub (fanout topics)", function () {
 
 			// Publisher is not subscribed, but should have an ephemeral shard channel right after publish.
 			await waitForResolved(() => {
-				expect(Boolean((publisher as any).fanoutChannels?.get(shardTopic))).to.equal(
-					true,
-				);
+				expect(
+					Boolean((publisher as any).fanoutChannels?.get(shardTopic)),
+				).to.equal(true);
 			});
 
 			// After idle timeout, the ephemeral join should be closed.
 			await waitForResolved(() => {
-				expect(Boolean((publisher as any).fanoutChannels?.get(shardTopic))).to.equal(
-					false,
-				);
+				expect(
+					Boolean((publisher as any).fanoutChannels?.get(shardTopic)),
+				).to.equal(false);
 			});
 		} finally {
 			await session.stop();
@@ -460,7 +564,11 @@ describe("pubsub (fanout topics)", function () {
 			const pendingSubscribe = receiver.subscribe(topic);
 			const payload = new Uint8Array([7, 9, 11, 13]);
 			const strictMessage = await (sender as any).createMessage(
-				new PubSubData({ topics: [topic], data: payload, strict: true }).bytes(),
+				new PubSubData({
+					topics: [topic],
+					data: payload,
+					strict: true,
+				}).bytes(),
 				{
 					mode: new SilentDelivery({
 						to: [receiver.publicKeyHash],
@@ -568,5 +676,656 @@ describe("pubsub (fanout topics)", function () {
 		} finally {
 			await session.stop();
 		}
+	});
+
+	const runLateDirectRootScenario = async (options: {
+		topic: string;
+		parentUpgradeIntervalMs?: number;
+		parentUpgradeDataGuard?: boolean;
+		parentUpgradeRepairGuard?: boolean;
+		parentUpgradeMode?: "direct" | "probe" | "shadow";
+		parentUpgradeRootMinLevelGain?: number;
+		parentUpgradeMinFreeSlots?: number;
+		parentUpgradeRootMinFreeSlots?: number;
+		parentUpgradeFailedBackoffMinMs?: number;
+		parentUpgradeFailedBackoffMaxMs?: number;
+		parentProbeRejectCooldownMs?: number;
+		parentProbeRejectCooldownMaxMs?: number;
+		parentShadowObserveMs?: number;
+		parentShadowMinObservations?: number;
+		parentShadowDualPathMs?: number;
+		parentShadowDualPathMinMessages?: number;
+		parentUpgradeQuietMs?: number;
+		parentUpgradeRepairQuietMs?: number;
+		expectedParentAfterDirect: "relay" | "root";
+		expectedShadowPromotion?: boolean;
+		expectedShadowStartWithoutPromotion?: boolean;
+	}) => {
+		const session = await createDisconnectedSession(
+			3,
+			options.parentUpgradeIntervalMs === undefined
+				? undefined
+				: {
+						pubsub: {
+							fanoutJoin: {
+								parentUpgradeIntervalMs: options.parentUpgradeIntervalMs,
+								...(options.parentUpgradeDataGuard === undefined
+									? {}
+									: { parentUpgradeDataGuard: options.parentUpgradeDataGuard }),
+								...(options.parentUpgradeRepairGuard === undefined
+									? {}
+									: {
+											parentUpgradeRepairGuard:
+												options.parentUpgradeRepairGuard,
+										}),
+								...(options.parentUpgradeMode === undefined
+									? {}
+									: { parentUpgradeMode: options.parentUpgradeMode }),
+								...(options.parentUpgradeRootMinLevelGain === undefined
+									? {}
+									: {
+											parentUpgradeRootMinLevelGain:
+												options.parentUpgradeRootMinLevelGain,
+										}),
+								...(options.parentUpgradeMinFreeSlots === undefined
+									? {}
+									: {
+											parentUpgradeMinFreeSlots:
+												options.parentUpgradeMinFreeSlots,
+										}),
+								...(options.parentUpgradeRootMinFreeSlots === undefined
+									? {}
+									: {
+											parentUpgradeRootMinFreeSlots:
+												options.parentUpgradeRootMinFreeSlots,
+										}),
+								...(options.parentUpgradeFailedBackoffMinMs === undefined
+									? {}
+									: {
+											parentUpgradeFailedBackoffMinMs:
+												options.parentUpgradeFailedBackoffMinMs,
+										}),
+								...(options.parentUpgradeFailedBackoffMaxMs === undefined
+									? {}
+									: {
+											parentUpgradeFailedBackoffMaxMs:
+												options.parentUpgradeFailedBackoffMaxMs,
+										}),
+								...(options.parentProbeRejectCooldownMs === undefined
+									? {}
+									: {
+											parentProbeRejectCooldownMs:
+												options.parentProbeRejectCooldownMs,
+										}),
+								...(options.parentProbeRejectCooldownMaxMs === undefined
+									? {}
+									: {
+											parentProbeRejectCooldownMaxMs:
+												options.parentProbeRejectCooldownMaxMs,
+										}),
+								...(options.parentShadowObserveMs === undefined
+									? {}
+									: { parentShadowObserveMs: options.parentShadowObserveMs }),
+								...(options.parentShadowMinObservations === undefined
+									? {}
+									: {
+											parentShadowMinObservations:
+												options.parentShadowMinObservations,
+										}),
+								...(options.parentShadowDualPathMs === undefined
+									? {}
+									: {
+											parentShadowDualPathMs: options.parentShadowDualPathMs,
+										}),
+								...(options.parentShadowDualPathMinMessages === undefined
+									? {}
+									: {
+											parentShadowDualPathMinMessages:
+												options.parentShadowDualPathMinMessages,
+										}),
+								...(options.parentUpgradeQuietMs === undefined
+									? {}
+									: { parentUpgradeQuietMs: options.parentUpgradeQuietMs }),
+								...(options.parentUpgradeRepairQuietMs === undefined
+									? {}
+									: {
+											parentUpgradeRepairQuietMs:
+												options.parentUpgradeRepairQuietMs,
+										}),
+							},
+						},
+					},
+		);
+		const rootPeer = session.peers[0]!;
+		const relayPeer = session.peers[1]!;
+		const publisherPeer = session.peers[2]!;
+		const publisherFanout = publisherPeer.services.pubsub.fanout as any;
+		const originalPublisherDial = publisherPeer.dial.bind(publisherPeer);
+		const originalSendControl =
+			publisherFanout._sendControl.bind(publisherFanout);
+
+		try {
+			const topic = options.topic;
+			const root = rootPeer.services.pubsub;
+			const relay = relayPeer.services.pubsub;
+			const publisher = publisherPeer.services.pubsub;
+			const rootHash = root.publicKeyHash;
+			const relayHash = relay.publicKeyHash;
+			const shardTopic = (root as any).getShardTopicForUserTopic(topic);
+			const rootAddrs = new Set(
+				rootPeer.getMultiaddrs().map((a) => a.toString()),
+			);
+			let allowDirectRootTraffic = false;
+			publisherPeer.dial = (async (addrs: any) => {
+				const list = Array.isArray(addrs) ? addrs : [addrs];
+				if (
+					!allowDirectRootTraffic &&
+					list.some((addr) => rootAddrs.has(addr.toString()))
+				) {
+					throw new Error("blocked direct root dial");
+				}
+				return originalPublisherDial(addrs as any);
+			}) as typeof publisherPeer.dial;
+			publisherFanout._sendControl = (async (to: string, bytes: Uint8Array) => {
+				if (!allowDirectRootTraffic && to === rootHash) {
+					return;
+				}
+				return originalSendControl(to, bytes);
+			}) as typeof publisherFanout._sendControl;
+
+			await session.connect([
+				[rootPeer, relayPeer],
+				[relayPeer, publisherPeer],
+			]);
+
+			const relayBootstraps = relayPeer.getMultiaddrs();
+			for (const peer of session.peers) {
+				const self = new Set(peer!.getMultiaddrs().map((a) => a.toString()));
+				peer!.services.fanout.setBootstraps(
+					relayBootstraps.filter((a) => !self.has(a.toString())),
+				);
+			}
+
+			for (const peer of session.peers) {
+				peer!.services.pubsub.setTopicRootCandidates([rootHash]);
+			}
+			await root.hostShardRootsNow();
+
+			await root.subscribe(topic);
+			await relay.subscribe(topic);
+			await waitForResolved(() => {
+				const relayStats = relay.fanout.getChannelStats(shardTopic, rootHash);
+				expect(relayStats?.parent).to.equal(rootHash);
+			});
+			await publisher.subscribe(topic);
+
+			await waitForResolved(() => {
+				const stats = publisher.fanout.getChannelStats(shardTopic, rootHash);
+				expect(stats?.parent).to.equal(relayHash);
+			});
+			expect(
+				publisher.fanout.getChannelMetrics(shardTopic, rootHash)
+					.reparentUpgrade,
+			).to.equal(0);
+
+			allowDirectRootTraffic = true;
+			await session.connect([[rootPeer, publisherPeer]]);
+			await waitForResolved(() =>
+				expect(root.peers.has(publisher.publicKeyHash)).to.equal(true),
+			);
+			await waitForResolved(() =>
+				expect(publisher.peers.has(rootHash)).to.equal(true),
+			);
+
+			if (options.expectedParentAfterDirect === "root") {
+				await waitForResolved(() => {
+					const statsAfterDirect = publisher.fanout.getChannelStats(
+						shardTopic,
+						rootHash,
+					);
+					const metrics = publisher.fanout.getChannelMetrics(
+						shardTopic,
+						rootHash,
+					);
+					expect(
+						statsAfterDirect?.parent,
+						parentUpgradeDiagnosticMessage({
+							parent: statsAfterDirect?.parent,
+							root: rootHash,
+							metrics,
+						}),
+					).to.equal(rootHash);
+				});
+				expect(
+					publisher.fanout.getChannelMetrics(shardTopic, rootHash)
+						.reparentUpgrade,
+				).to.be.greaterThan(0);
+				if (options.expectedShadowPromotion === true) {
+					expect(
+						publisher.fanout.getChannelMetrics(shardTopic, rootHash)
+							.parentShadowPromote,
+					).to.be.greaterThan(0);
+				}
+			} else {
+				if (options.expectedShadowStartWithoutPromotion === true) {
+					await waitForResolved(() => {
+						const metrics = publisher.fanout.getChannelMetrics(
+							shardTopic,
+							rootHash,
+						);
+						expect(metrics.parentShadowStart).to.be.greaterThan(0);
+						expect(metrics.parentShadowPromote).to.equal(0);
+					});
+				} else {
+					await delay(700);
+				}
+				const statsAfterDirect = publisher.fanout.getChannelStats(
+					shardTopic,
+					rootHash,
+				);
+				expect(statsAfterDirect?.parent).to.equal(relayHash);
+				const metrics = publisher.fanout.getChannelMetrics(shardTopic, rootHash);
+				expect(metrics.reparentUpgrade).to.equal(0);
+				if (options.parentUpgradeIntervalMs === undefined) {
+					expect(metrics.parentProbeReqSent).to.equal(0);
+					expect(metrics.parentShadowStart).to.equal(0);
+				}
+			}
+		} finally {
+			publisherFanout._sendControl = originalSendControl;
+			publisherPeer.dial = originalPublisherDial;
+			await session.stop();
+		}
+	};
+
+	const runThirdBatchParentUpgradeScenario = async (options: {
+		topicPrefix: string;
+		rootCandidateDataDelayMs: number;
+		expectedPromotion: boolean;
+	}) => {
+		const learnMessages = 16;
+		const thirdBatchMessages = 8;
+		const relayDataDelayMs = 300;
+		const session = await createDisconnectedSession(3);
+		const rootPeer = session.peers[0]!;
+		const relayPeer = session.peers[1]!;
+		const publisherPeer = session.peers[2]!;
+		const rootFanout = rootPeer.services.fanout;
+		const publisherFanout = publisherPeer.services.fanout as any;
+		const rootHash = rootFanout.publicKeyHash;
+		const relayHash = relayPeer.services.fanout.publicKeyHash;
+		const publisherHash = publisherPeer.services.fanout.publicKeyHash;
+		const targetTopic = pickSampledFanoutTopic(
+			publisherPeer.services.fanout,
+			rootHash,
+			publisherHash,
+			options.topicPrefix,
+			learnMessages - 1,
+		);
+		const auxTopic = `${targetTopic}-aux`;
+		const targetId = publisherPeer.services.fanout.getChannelId(
+			targetTopic,
+			rootHash,
+		);
+		const originalPublisherOnData =
+			publisherFanout.onDataMessage.bind(publisherFanout);
+		let allowDirectRootTraffic = false;
+
+		const channelOptions = {
+			maxChildren: 16,
+			uploadLimitBps: 100_000_000,
+			msgRate: 100,
+			msgSize: 128,
+			repair: true,
+			repairIntervalMs: 50,
+			repairWindowMessages: 64,
+			repairMaxPerReq: 64,
+			neighborRepair: false,
+			peerHintMaxEntries: 64,
+			routeCacheMaxEntries: 64,
+		};
+		const joinOptions = {
+			timeoutMs: 10_000,
+			retryMs: 50,
+			joinReqTimeoutMs: 1_000,
+			trackerQueryIntervalMs: 50,
+			trackerQueryTimeoutMs: 500,
+			bootstrapEnsureIntervalMs: 50,
+			parentUpgradeIntervalMs: 50,
+			parentUpgradeDataGuard: false,
+			parentUpgradeRepairGuard: false,
+			parentUpgradeMode: "shadow" as const,
+			parentUpgradeRootMinLevelGain: 1,
+			parentUpgradeRootMinSubtreeGain: 1,
+			parentUpgradeMinFreeSlots: 0,
+			parentUpgradeRootMinFreeSlots: 0,
+			parentUpgradeMaxChildLoadRatio: 0,
+			parentUpgradeRootMaxChildLoadRatio: 0,
+			parentUpgradeQuietMs: 0,
+			parentUpgradeRepairQuietMs: 0,
+			parentUpgradeCooldownMs: 50,
+			parentUpgradeFailedBackoffMinMs: 50,
+			parentUpgradeFailedBackoffMaxMs: 50,
+			// Keep stale-root sampling deterministic; the scenario still asserts
+			// learned parent latency before the root candidate is allowed to deliver.
+			parentUpgradeStaleRootProbeProbability: 1,
+			parentProbeTimeoutMs: 500,
+			parentProbeRejectCooldownMs: 50,
+			parentProbeRejectCooldownMaxMs: 50,
+			parentShadowObserveMs: 0,
+			parentShadowMinObservations: 1,
+			parentShadowDualPathMs: 1_000,
+			parentShadowDualPathMinMessages: 4,
+		};
+
+		const publisherTargetChannel = () =>
+			publisherFanout.channelsBySuffixKey.get(targetId.suffixKey);
+
+		const publishBatch = async (count: number) => {
+			for (let i = 0; i < count; i++) {
+				await rootFanout.publishData(
+					targetTopic,
+					rootHash,
+					new Uint8Array([i & 0xff]),
+				);
+				await delay(5);
+			}
+		};
+
+		try {
+			publisherFanout.onDataMessage = (async (
+				from: any,
+				stream: any,
+				message: any,
+				seenBefore: number,
+			) => {
+				const fromHash = from.hashcode();
+				const isData = isFanoutDataMessage(message);
+				if (!allowDirectRootTraffic && fromHash === rootHash && isData) {
+					return false;
+				}
+				if (fromHash === relayHash && isData && relayDataDelayMs > 0) {
+					await delay(relayDataDelayMs);
+				}
+				if (
+					options.rootCandidateDataDelayMs > 0 &&
+					fromHash === rootHash &&
+					isData
+				) {
+					await delay(options.rootCandidateDataDelayMs);
+				}
+				return originalPublisherOnData(from, stream, message, seenBefore);
+			}) as typeof publisherFanout.onDataMessage;
+
+			await session.connect([
+				[rootPeer, relayPeer],
+				[relayPeer, publisherPeer],
+			]);
+
+			for (const topic of [targetTopic, auxTopic]) {
+				rootFanout.openChannel(topic, rootHash, {
+					...channelOptions,
+					role: "root",
+				});
+				await relayPeer.services.fanout.joinChannel(
+					topic,
+					rootHash,
+					channelOptions,
+					{
+						bootstrap: rootPeer.getMultiaddrs(),
+						...joinOptions,
+					},
+				);
+				await publisherPeer.services.fanout.joinChannel(
+					topic,
+					rootHash,
+					channelOptions,
+					{
+						bootstrap: relayPeer.getMultiaddrs(),
+						...joinOptions,
+					},
+				);
+			}
+
+			await waitForResolved(() => {
+				const stats = publisherPeer.services.fanout.getChannelStats(
+					targetTopic,
+					rootHash,
+				);
+				expect(stats?.parent).to.equal(relayHash);
+			});
+
+			await publishBatch(learnMessages);
+			await rootFanout.publishEnd(targetTopic, rootHash, learnMessages);
+
+			await waitForResolved(() => {
+				const ch = publisherTargetChannel();
+				expect(ch?.maxSeqSeen).to.be.at.least(learnMessages - 1);
+				expect(ch?.parentDataLatencySamples).to.be.at.least(8);
+				expect(ch?.endSeqExclusive).to.equal(learnMessages);
+				expect(ch?.missingSeqs.size).to.equal(0);
+			});
+
+			const targetChannel = publisherTargetChannel();
+			// Isolate the third-batch proof from stale tracker capacity; the root's
+			// real capacity is still verified by the shadow join/probe.
+			targetChannel.cachedTrackerCandidates = [
+				{
+					hash: rootHash,
+					addrs: rootPeer.getMultiaddrs(),
+					level: 0,
+					freeSlots: 15,
+					bidPerByte: 0,
+				},
+			];
+			targetChannel.parentUpgradeBackoffUntil = 0;
+			targetChannel.parentProbeRejectUntilByHash.clear();
+			targetChannel.parentProbeRejectBackoffMsByHash.clear();
+
+			allowDirectRootTraffic = true;
+			await session.connect([[rootPeer, publisherPeer]]);
+			await waitForResolved(() =>
+				expect(rootFanout.peers.has(publisherHash)).to.equal(true),
+			);
+			await waitForResolved(() =>
+				expect(publisherPeer.services.fanout.peers.has(rootHash)).to.equal(true),
+			);
+			await waitForResolved(() => {
+				const metrics = publisherPeer.services.fanout.getChannelMetrics(
+					targetTopic,
+					rootHash,
+				);
+				const ch = publisherTargetChannel();
+				const rootStats = rootFanout.getChannelStats(targetTopic, rootHash);
+				const rootChannel = (rootFanout as any).channelsBySuffixKey.get(
+					targetId.suffixKey,
+				);
+				expect(
+					metrics.parentShadowStart,
+					parentUpgradeDiagnosticMessage({
+						parent: ch?.parent,
+						level: ch?.level,
+						children: ch?.children?.size,
+						channelPeers: ch?.channelPeers?.size,
+						localChannels: publisherFanout.channelsBySuffixKey.size,
+						maxSeqSeen: ch?.maxSeqSeen,
+						endSeqExclusive: ch?.endSeqExclusive,
+						nextExpectedSeq: ch?.nextExpectedSeq,
+						missingSeqs: ch?.missingSeqs?.size,
+						parentDataLatencySamples: ch?.parentDataLatencySamples,
+						parentDataLatencyEwmaMs: ch?.parentDataLatencyEwmaMs,
+						parentDataLatencyMaxMs: ch?.parentDataLatencyMaxMs,
+						rootChildren: rootStats?.children,
+						rootChildHashes:
+							rootChannel == null ? undefined : [...rootChannel.children.keys()],
+						rootEffectiveMaxChildren: rootStats?.effectiveMaxChildren,
+						sampleScore:
+							ch == null
+								? undefined
+								: stableUnitInterval(
+										`${ch.id.suffixKey}:${publisherHash}:${rootHash}:multi-channel-leaf-root-signal:${ch.maxSeqSeen}`,
+									),
+						metrics,
+					}),
+				).to.be.greaterThan(0);
+			});
+			await waitForResolved(() => {
+				const rootChannel = (rootFanout as any).channelsBySuffixKey.get(
+					targetId.suffixKey,
+				);
+				expect(rootChannel?.children.has(publisherHash)).to.equal(true);
+			});
+
+			await publishBatch(thirdBatchMessages);
+
+			if (options.expectedPromotion) {
+				await waitForResolved(() => {
+					const stats = publisherPeer.services.fanout.getChannelStats(
+						targetTopic,
+						rootHash,
+					);
+					const metrics = publisherPeer.services.fanout.getChannelMetrics(
+						targetTopic,
+						rootHash,
+					);
+					const ch = publisherTargetChannel();
+					const shadow = ch?.parentShadow;
+					const message = parentUpgradeDiagnosticMessage({
+						parent: stats?.parent,
+						root: rootHash,
+						metrics,
+						shadow,
+					});
+					expect(stats?.parent, message).to.equal(rootHash);
+					expect(metrics.parentShadowPromote, message).to.be.greaterThan(0);
+					expect(metrics.reparentUpgrade, message).to.be.greaterThan(0);
+				});
+			} else {
+				await delay(1_500);
+				const stats = publisherPeer.services.fanout.getChannelStats(
+					targetTopic,
+					rootHash,
+				);
+				const metrics = publisherPeer.services.fanout.getChannelMetrics(
+					targetTopic,
+					rootHash,
+				);
+				expect(stats?.parent).to.equal(relayHash);
+				expect(metrics.parentShadowStart).to.be.greaterThan(0);
+				expect(metrics.parentShadowPromote).to.equal(0);
+				expect(metrics.reparentUpgrade).to.equal(0);
+			}
+
+			await waitForResolved(() => {
+				const ch = publisherTargetChannel();
+				expect(ch?.maxSeqSeen).to.be.at.least(
+					learnMessages + thirdBatchMessages - 1,
+				);
+				expect(ch?.missingSeqs.size).to.equal(0);
+			});
+		} finally {
+			publisherFanout.onDataMessage = originalPublisherOnData;
+			await session.stop();
+		}
+	};
+
+	const lateDirectRootUpgradeOptions = (
+		options: Parameters<typeof runLateDirectRootScenario>[0],
+	) => ({
+		parentUpgradeIntervalMs: 200,
+		parentUpgradeDataGuard: false,
+		parentUpgradeRepairGuard: false,
+		parentUpgradeRootMinLevelGain: 1,
+		parentUpgradeMinFreeSlots: 1,
+		parentUpgradeRootMinFreeSlots: 1,
+		parentUpgradeFailedBackoffMinMs: 100,
+		parentUpgradeFailedBackoffMaxMs: 100,
+		parentProbeRejectCooldownMs: 100,
+		parentProbeRejectCooldownMaxMs: 100,
+		...options,
+	});
+
+	it("keeps a relay parent after a late direct root edge when parent upgrades are disabled", async () => {
+		await runLateDirectRootScenario({
+			topic: "fanout-direct-no-reparent-to-root",
+			expectedParentAfterDirect: "relay",
+		});
+	});
+
+	it("can proactively reparent to the root when a late direct edge becomes available", async () => {
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-direct-reparent-to-root",
+				parentUpgradeMode: "direct",
+				expectedParentAfterDirect: "root",
+			}),
+		);
+	});
+
+	it("defaults parent upgrades to shadow mode when enabled", async () => {
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-default-shadow-reparent-to-root",
+				parentShadowObserveMs: 0,
+				parentShadowMinObservations: 1,
+				parentShadowDualPathMs: 0,
+				expectedParentAfterDirect: "root",
+				expectedShadowPromotion: true,
+			}),
+		);
+	});
+
+	it("defaults shadow upgrades to make-before-break cutover", async () => {
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-default-shadow-dual-path-waits-for-data",
+				parentShadowObserveMs: 0,
+				parentShadowMinObservations: 1,
+				parentUpgradeQuietMs: 0,
+				parentUpgradeRepairQuietMs: 0,
+				expectedParentAfterDirect: "relay",
+				expectedShadowStartWithoutPromotion: true,
+			}),
+		);
+	});
+
+	it("promotes on a third batch after learning the parent path is slow", async () => {
+		await runThirdBatchParentUpgradeScenario({
+			topicPrefix: "fanout-third-batch-learned-slow-parent",
+			rootCandidateDataDelayMs: 0,
+			expectedPromotion: true,
+		});
+	});
+
+	it("does not promote on a third batch without a material candidate lead", async () => {
+		await runThirdBatchParentUpgradeScenario({
+			topicPrefix: "fanout-third-batch-weak-candidate-lead",
+			rootCandidateDataDelayMs: 420,
+			expectedPromotion: false,
+		});
+	});
+
+	it("can probe then reparent to the root when a late direct edge becomes available", async () => {
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-probe-reparent-to-root",
+				parentUpgradeMode: "probe",
+				expectedParentAfterDirect: "root",
+			}),
+		);
+	});
+
+	it("can shadow-observe then reparent to the root when a late direct edge becomes available", async () => {
+		await runLateDirectRootScenario(
+			lateDirectRootUpgradeOptions({
+				topic: "fanout-shadow-reparent-to-root",
+				parentUpgradeMode: "shadow",
+				parentShadowObserveMs: 0,
+				parentShadowMinObservations: 2,
+				parentShadowDualPathMs: 0,
+				expectedParentAfterDirect: "root",
+				expectedShadowPromotion: true,
+			}),
+		);
 	});
 });

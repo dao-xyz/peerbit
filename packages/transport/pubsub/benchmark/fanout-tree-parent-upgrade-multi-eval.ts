@@ -1,0 +1,2488 @@
+import { PreHash, SignatureWithKey } from "@peerbit/crypto";
+import {
+	InMemoryNetwork,
+	InMemorySession,
+} from "@peerbit/libp2p-test-utils/inmemory-libp2p.js";
+import { delay } from "@peerbit/time";
+import { anySignal } from "any-signal";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+import { FanoutTree } from "../src/index.js";
+import {
+	DEFAULT_PARENT_UPGRADE_SEEDS,
+	PARENT_UPGRADE_HELP_TEXT,
+	type EvidenceFailure as Failure,
+	type ParentUpgradePresetConfig,
+	type UpgradeMode,
+	avgFinite,
+	defaultEvidenceLimitsForPreset,
+	fmt,
+	maxFinite,
+	parentUpgradeRuntimeOptions,
+	parseBool01,
+	parseCsvNumbers,
+	parseParentUpgradePresetConfig,
+	ratioLimit,
+} from "./fanout-tree-parent-upgrade-preset.js";
+import {
+	int,
+	mulberry32,
+	quantile,
+	runWithConcurrency,
+} from "./sim/bench-utils.js";
+
+/**
+ * Shared-network A/B evidence for proactive parent upgrades.
+ *
+ * The single-tree simulator is intentionally kept focused on one root/topic. This
+ * harness creates several writer roots and topics inside one in-memory network so
+ * probes, root reservations, tracker state, subscriber timers, and publish loops
+ * contend in the same process. That is the default-readiness risk this PR needs
+ * to measure: a policy can be quiet for one writer while still multiplying
+ * control-plane pressure across many independent writer trees.
+ */
+class SimFanoutTree extends FanoutTree {
+	constructor(c: any, opts?: any) {
+		super(c, opts);
+		this.sign = async () =>
+			new SignatureWithKey({
+				signature: new Uint8Array([0]),
+				publicKey: this.publicKey,
+				prehash: PreHash.NONE,
+			});
+	}
+
+	public async verifyAndProcess(message: any) {
+		const from = message.header.signatures!.publicKeys[0];
+		if (!this.peers.has(from.hashcode())) {
+			this.updateSession(from, Number(message.header.session));
+		}
+		return true;
+	}
+}
+
+type ScenarioName =
+	| "ci-multi-live"
+	| "ci-multi-live-churn"
+	| "ci-multi-video-live"
+	| "ci-multi-idle"
+	| "ci-multi-sparse-idle"
+	| "ci-multi-hotspot-idle";
+type EvalArgs = ParentUpgradePresetConfig & {
+	scenarios: ScenarioName[];
+	seeds: number[];
+	nodes?: number;
+	writers?: number;
+	activeWriters?: number;
+	subscribersPerTree?: number;
+	secondBatchSettleMs?: number;
+	thirdBatchMessages?: number;
+	thirdBatchSettleMs?: number;
+	streamRxDelayMs?: number;
+	timeoutMs?: number;
+	jsonOut?: string;
+	maxCostRatio: number;
+	maxLiveDeadlinePctDelta: number;
+	maxUsefulIdleDeadlinePctDelta: number;
+	maxGuardedIdleDeadlinePctDelta: number;
+	maxGuardedIdleProbePerSlotForSlack: number;
+	maxLiveChurnGuardSkipsPerSlot: number;
+	maxSecondBatchLatencyP95DeltaMs: number;
+	maxSecondBatchLatencyP95DeltaRatio: number;
+	maxDataOverheadRatio: number;
+	maxProbePerUpgrade: number;
+	maxRootChildrenDelta: number;
+	maxRootUploadPctDelta: number;
+	minPromotedBranchGainMs: number;
+	minPromotedTreeLevelAvgGain: number;
+	sameRunAB: boolean;
+	strict: boolean;
+};
+
+type MultiWriterParams = {
+	scenario: ScenarioName;
+	seed: number;
+	nodes: number;
+	writers: number;
+	activeWriters: number;
+	bootstraps: number;
+	subscribersPerTree: number;
+	relayFraction: number;
+	joinConcurrency: number;
+	joinPhaseSettleMs: number;
+	messages: number;
+	secondBatchMessages: number;
+	secondBatchSettleMs: number;
+	thirdBatchMessages: number;
+	thirdBatchSettleMs: number;
+	msgRate: number;
+	msgSize: number;
+	intervalMs: number;
+	settleMs: number;
+	deadlineMs: number;
+	timeoutMs: number;
+	topicPrefix: string;
+	rootUploadLimitBps: number;
+	rootMaxChildren: number;
+	relayUploadLimitBps: number;
+	relayMaxChildren: number;
+	repair: boolean;
+	repairWindowMessages: number;
+	repairIntervalMs: number;
+	repairMaxPerReq: number;
+	neighborRepair: boolean;
+	neighborRepairPeers: number;
+	streamRxDelayMs: number;
+	streamHighWaterMarkBytes: number;
+	dialDelayMs: number;
+	candidateScoringMode: "ranked-shuffle" | "ranked-strict" | "weighted";
+	trackerQueryIntervalMs: number;
+	parentUpgradeIntervalMs: number;
+	parentUpgradeLeafOnly: boolean;
+	parentUpgradeMinLevelGain: number;
+	parentUpgradeRootMinLevelGain: number;
+	parentUpgradeRootMinSubtreeGain: number;
+	parentUpgradeNonRootMinLevelGain: number;
+	parentUpgradeMinFreeSlots: number;
+	parentUpgradeRootMinFreeSlots: number;
+	parentUpgradeMaxChildLoadRatio: number;
+	parentUpgradeRootMaxChildLoadRatio: number;
+	parentUpgradeCooldownMs: number;
+	parentUpgradeFailedBackoffMinMs: number;
+	parentUpgradeFailedBackoffMaxMs: number;
+	parentUpgradeQuietMs: number;
+	parentUpgradeRepairQuietMs: number;
+	parentUpgradeMaxPerPeer: number;
+	parentUpgradeRepairGuard: boolean;
+	parentUpgradeDataGuard: boolean;
+	parentUpgradeMode: UpgradeMode;
+	parentUpgradeVerifyStaleRootCapacity: boolean;
+	parentUpgradeStaleRootProbeProbability: number;
+	parentProbeTimeoutMs: number;
+	parentProbeMaxPerRound: number;
+	parentProbeMaxLagMessages: number;
+	parentProbeRejectCooldownMs: number;
+	parentProbeRejectCooldownMaxMs: number;
+	parentShadowObserveMs: number;
+	parentShadowMinObservations: number;
+	parentShadowDualPathMs: number;
+	parentShadowDualPathMinMessages: number;
+	lateRootConnectAfterMs: number;
+	lateRootDuringPublish: boolean;
+	lateRootMaxChildren: number;
+	lateRootConnectFraction: number;
+	churnEveryMs: number;
+	churnDownMs: number;
+	churnFraction: number;
+};
+
+const effectiveMaxChildrenForUpload = (
+	params: { msgRate: number; msgSize: number },
+	ch: { uploadLimitBps?: number; uploadOverheadBytes?: number },
+	maxChildren: number,
+) => {
+	const requested = Math.max(0, Math.floor(maxChildren));
+	const uploadLimitBps = Math.max(0, Math.floor(ch.uploadLimitBps ?? 0));
+	if (uploadLimitBps <= 0) return 0;
+	const msgRate = Math.max(1, Math.floor(params.msgRate));
+	const msgSize = Math.max(1, Math.floor(params.msgSize));
+	const uploadOverheadBytes = Math.max(
+		0,
+		Math.floor(ch.uploadOverheadBytes ?? 128),
+	);
+	const perChildBytes = Math.max(1, 1 + msgSize + uploadOverheadBytes);
+	const perChildBps = Math.max(1, Math.floor(msgRate * perChildBytes));
+	return Math.max(
+		0,
+		Math.min(requested, Math.floor(uploadLimitBps / perChildBps)),
+	);
+};
+
+type ParentUpgradeActivity = {
+	reparentUpgrade: number;
+	reparentUpgradeSkipData: number;
+	reparentUpgradeSkipRepair: number;
+	reparentUpgradeSkipQuiet: number;
+	parentProbeReqSent: number;
+	parentShadowStart: number;
+	parentShadowPromote: number;
+};
+
+type TreeShape = {
+	treeMaxLevel: number;
+	treeLevelP95: number;
+	treeLevelAvg: number;
+	treeRootChildren: number;
+	treeOrphans: number;
+	childrenByHash: Map<string, string[]>;
+};
+
+type TreeResult = {
+	tree: number;
+	active: boolean;
+	topic: string;
+	rootHash: string;
+	subscriberCount: number;
+	joinedCount: number;
+	formationTreeLevelP95: number;
+	formationTreeLevelAvg: number;
+	formationRootChildren: number;
+	treeLevelP95: number;
+	treeLevelAvg: number;
+	treeRootChildren: number;
+	treeOrphans: number;
+	expected: number;
+	delivered: number;
+	deliveredPct: number;
+	deliveredWithinDeadlinePct: number;
+	secondBatchExpected: number;
+	secondBatchDeliveredWithinDeadlinePct: number;
+	secondBatchLatencyP95: number;
+	secondBatchLatencyP95ByHash: Record<string, number>;
+	reparentUpgradeTotal: number;
+	publishActiveReparentUpgradeTotal: number;
+	publishActiveReparentUpgradeSkipDataTotal: number;
+	publishActiveReparentUpgradeSkipRepairTotal: number;
+	publishActiveReparentUpgradeSkipQuietTotal: number;
+	publishActiveParentProbeReqSentTotal: number;
+	publishActiveParentShadowStartTotal: number;
+	publishActiveParentShadowPromoteTotal: number;
+	parentProbeReqSentTotal: number;
+	parentShadowStartTotal: number;
+	parentShadowPromoteTotal: number;
+	maxReparentUpgradePerPeer: number;
+	upgradedPeerHashes: string[];
+	upgradedBranchPeerHashes: string[];
+	rootUploadFracPct: number;
+	controlBytesSent: number;
+	controlBytesSentRepair: number;
+	controlBytesSentTracker: number;
+	dataPayloadBytesSent: number;
+	duplicates: number;
+	dataOverheadFactor: number;
+};
+
+type MultiWriterResult = {
+	params: MultiWriterParams;
+	trees: TreeResult[];
+	joinedCount: number;
+	subscriberSlots: number;
+	expected: number;
+	delivered: number;
+	deliveredPct: number;
+	deliveredWithinDeadlinePct: number;
+	secondBatchExpected: number;
+	secondBatchDeliveredWithinDeadlinePct: number;
+	secondBatchLatencyP95: number;
+	reparentUpgradeTotal: number;
+	parentProbeReqSentTotal: number;
+	parentShadowStartTotal: number;
+	parentShadowPromoteTotal: number;
+	publishActiveReparentUpgradeTotal: number;
+	publishActiveParentProbeReqSentTotal: number;
+	publishActiveParentShadowStartTotal: number;
+	publishActiveParentShadowPromoteTotal: number;
+	publishActiveGuardSkipsTotal: number;
+	activeGuardedTrees: number;
+	treeLevelAvg: number;
+	treeLevelP95: number;
+	rootChildrenSum: number;
+	rootChildrenMax: number;
+	rootUploadPctMax: number;
+	maxReparentUpgradePerPeer: number;
+	duplicates: number;
+	dataOverheadFactor: number;
+	controlBpp: number;
+	trackerBpp: number;
+	repairBpp: number;
+	network: InMemoryNetwork["metrics"];
+};
+
+type SummarySample = {
+	scenario: ScenarioName;
+	seed: number;
+	baseline: MultiWriterResult;
+	upgrade: MultiWriterResult;
+	failures: Failure[];
+	usefulPromotedTrees: number;
+	promotedBranchGainAvg: number;
+	promotedTreeSecondBatchLatencyP95RegressionMax: number;
+	promotedBranchSecondBatchLatencyP95RegressionMax: number;
+	backgroundSecondBatchLatencyP95RegressionMax: number;
+};
+
+const SCENARIOS: Record<ScenarioName, Partial<MultiWriterParams>> = {
+	"ci-multi-live": {
+		scenario: "ci-multi-live",
+		nodes: 40,
+		writers: 4,
+		bootstraps: 1,
+		subscribersPerTree: 28,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 120,
+		secondBatchMessages: 0,
+		secondBatchSettleMs: 0,
+		msgRate: 60,
+		msgSize: 192,
+		settleMs: 1_000,
+		deadlineMs: 750,
+		timeoutMs: 120_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 2,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 2,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 700,
+		lateRootDuringPublish: true,
+		lateRootMaxChildren: 12,
+		lateRootConnectFraction: 0.5,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
+	"ci-multi-live-churn": {
+		scenario: "ci-multi-live-churn",
+		nodes: 60,
+		writers: 6,
+		bootstraps: 1,
+		subscribersPerTree: 42,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 120,
+		secondBatchMessages: 0,
+		secondBatchSettleMs: 0,
+		msgRate: 60,
+		msgSize: 192,
+		settleMs: 1_000,
+		deadlineMs: 750,
+		timeoutMs: 150_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 2,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 2,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 700,
+		lateRootDuringPublish: true,
+		lateRootMaxChildren: 16,
+		lateRootConnectFraction: 0.5,
+		churnEveryMs: 500,
+		churnDownMs: 150,
+		churnFraction: 0.03,
+	},
+	"ci-multi-video-live": {
+		scenario: "ci-multi-video-live",
+		nodes: 48,
+		writers: 4,
+		bootstraps: 1,
+		subscribersPerTree: 32,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 80,
+		secondBatchMessages: 0,
+		secondBatchSettleMs: 0,
+		msgRate: 24,
+		msgSize: 1200,
+		settleMs: 1_000,
+		deadlineMs: 1_500,
+		timeoutMs: 150_000,
+		rootUploadLimitBps: 150_000,
+		rootMaxChildren: 2,
+		relayUploadLimitBps: 150_000,
+		relayMaxChildren: 3,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 4,
+		streamHighWaterMarkBytes: 512 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 700,
+		lateRootDuringPublish: true,
+		lateRootMaxChildren: 6,
+		lateRootConnectFraction: 0.5,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
+	"ci-multi-idle": {
+		scenario: "ci-multi-idle",
+		nodes: 40,
+		writers: 4,
+		activeWriters: 4,
+		bootstraps: 1,
+		subscribersPerTree: 28,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 12,
+		secondBatchMessages: 48,
+		secondBatchSettleMs: 1_000,
+		msgRate: 50,
+		msgSize: 96,
+		settleMs: 9_000,
+		deadlineMs: 750,
+		timeoutMs: 140_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 1,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 3,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 1_000,
+		lateRootDuringPublish: false,
+		lateRootMaxChildren: 10,
+		lateRootConnectFraction: 0.75,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
+	"ci-multi-sparse-idle": {
+		scenario: "ci-multi-sparse-idle",
+		nodes: 72,
+		writers: 12,
+		activeWriters: 4,
+		bootstraps: 1,
+		subscribersPerTree: 36,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 12,
+		secondBatchMessages: 48,
+		secondBatchSettleMs: 1_000,
+		msgRate: 50,
+		msgSize: 96,
+		settleMs: 9_000,
+		deadlineMs: 750,
+		timeoutMs: 180_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 1,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 3,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 1_000,
+		lateRootDuringPublish: false,
+		lateRootMaxChildren: 10,
+		lateRootConnectFraction: 0.75,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
+	"ci-multi-hotspot-idle": {
+		scenario: "ci-multi-hotspot-idle",
+		nodes: 64,
+		writers: 4,
+		activeWriters: 4,
+		bootstraps: 1,
+		subscribersPerTree: 48,
+		relayFraction: 0.5,
+		joinConcurrency: 12,
+		joinPhaseSettleMs: 500,
+		messages: 12,
+		secondBatchMessages: 48,
+		secondBatchSettleMs: 1_000,
+		msgRate: 50,
+		msgSize: 96,
+		settleMs: 9_000,
+		deadlineMs: 750,
+		timeoutMs: 180_000,
+		rootUploadLimitBps: 100_000_000,
+		rootMaxChildren: 1,
+		relayUploadLimitBps: 100_000_000,
+		relayMaxChildren: 4,
+		repair: true,
+		repairWindowMessages: 512,
+		repairIntervalMs: 200,
+		repairMaxPerReq: 64,
+		neighborRepair: true,
+		neighborRepairPeers: 3,
+		streamRxDelayMs: 3,
+		streamHighWaterMarkBytes: 256 * 1024,
+		dialDelayMs: 0,
+		candidateScoringMode: "weighted",
+		trackerQueryIntervalMs: 1_000,
+		lateRootConnectAfterMs: 1_000,
+		lateRootDuringPublish: false,
+		lateRootMaxChildren: 12,
+		lateRootConnectFraction: 1,
+		churnEveryMs: 0,
+		churnDownMs: 0,
+		churnFraction: 0,
+	},
+};
+
+const HELP_TEXT = [
+	"fanout-tree-parent-upgrade-multi-eval.ts",
+	"",
+	"Options:",
+	"  --scenario NAME              ci-multi-live|ci-multi-live-churn|ci-multi-video-live|ci-multi-idle|ci-multi-sparse-idle|ci-multi-hotspot-idle|all (default: all)",
+	"  --seeds CSV                  seeds to run for each scenario (default: 1,2,3)",
+	...PARENT_UPGRADE_HELP_TEXT,
+	"  --maxLiveChurnGuardSkipsPerSlot N max active guard skips per subscriber slot for ci-multi-live-churn (default: 1)",
+	"  --nodes N                    override scenario node count",
+	"  --writers N                  override scenario writer/root count",
+	"  --activeWriters N            override active publisher count; remaining joined writer trees stay idle",
+	"  --subscribersPerTree N       override scenario subscriber slots per writer",
+	"  --secondBatchSettleMs MS     override settle after the normal second batch",
+	"  --thirdBatchMessages N       publish an extra post-learning batch after second-batch settle (default: scenario value, usually 0)",
+	"  --thirdBatchSettleMs MS      settle after the extra post-learning batch (default: secondBatchSettleMs)",
+	"  --timeoutMs MS               override scenario timeout",
+	"  --jsonOut FILE               write compact JSON evidence summary",
+	"  --maxUsefulIdleDeadlinePctDelta PCT max deadline pct jitter for idle runs with useful promotions (default: 0.15)",
+	"  --maxGuardedIdleDeadlinePctDelta PCT max deadline pct jitter for low-probe idle guard trials (default: 0.15)",
+	"  --maxGuardedIdleProbePerSlotForSlack R max probe/subscriber slot for guarded idle deadline slack (default: 0.02)",
+	"  --maxSecondBatchLatencyP95DeltaMs N max idle second-batch p95 latency jitter tolerated (default: 3)",
+	"  --maxSecondBatchLatencyP95DeltaRatio R max idle second-batch p95 latency relative jitter tolerated (default: 0.15)",
+	"  --maxDataOverheadRatio R     max treatment/base data payload overhead factor ratio (default: 1.05)",
+	"  --minPromotedBranchGainMs MS min branch/second-batch p95 gain for promoted trees (default: 10)",
+	"  --minPromotedTreeLevelAvgGain N min avg tree-level gain for promoted trees (default: 0.1)",
+	"  --sameRunAB 0|1              run baseline and treatment concurrently for idle scenarios (default: 1 for default-candidate, otherwise 0)",
+	"  --strict 0|1                 exit non-zero on evidence failure (default: 0)",
+	"",
+	"Examples:",
+	"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+	"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-live-churn --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+	"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-video-live --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+	"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+	"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-sparse-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1",
+	"  pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-multi-eval --scenario ci-multi-hotspot-idle --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 0",
+].join("\n");
+
+const usage = () => {
+	console.log(HELP_TEXT);
+};
+
+const parseScenarios = (value: string | undefined): ScenarioName[] => {
+	if (!value || value === "all") {
+		return [
+			"ci-multi-live",
+			"ci-multi-live-churn",
+			"ci-multi-video-live",
+			"ci-multi-idle",
+			"ci-multi-sparse-idle",
+			"ci-multi-hotspot-idle",
+		];
+	}
+	const scenarios = value.split(",").map((part) => part.trim());
+	for (const scenario of scenarios) {
+		if (
+			scenario !== "ci-multi-live" &&
+			scenario !== "ci-multi-live-churn" &&
+			scenario !== "ci-multi-video-live" &&
+			scenario !== "ci-multi-idle" &&
+			scenario !== "ci-multi-sparse-idle" &&
+			scenario !== "ci-multi-hotspot-idle"
+		) {
+			throw new Error(`Unknown scenario: ${scenario}`);
+		}
+	}
+	return scenarios as ScenarioName[];
+};
+
+const isLiveScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-live" ||
+	scenario === "ci-multi-live-churn" ||
+	scenario === "ci-multi-video-live";
+const isLiveChurnScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-live-churn";
+const isPositiveIdleScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-idle";
+const isHotspotIdleScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-hotspot-idle";
+const isSparseIdleScenario = (scenario: ScenarioName) =>
+	scenario === "ci-multi-sparse-idle";
+const isIdleScenario = (scenario: ScenarioName) =>
+	isPositiveIdleScenario(scenario) ||
+	isHotspotIdleScenario(scenario) ||
+	isSparseIdleScenario(scenario);
+
+const parseArgs = (argv: string[]): EvalArgs => {
+	const get = (name: string) => {
+		const i = argv.indexOf(name);
+		return i >= 0 ? argv[i + 1] : undefined;
+	};
+	if (argv.includes("--help") || argv.includes("-h")) {
+		usage();
+		process.exit(0);
+	}
+	const parentUpgradeConfig = parseParentUpgradePresetConfig(get);
+	const defaultCandidate =
+		parentUpgradeConfig.parentUpgradePreset === "default-candidate";
+	const evidenceDefaults = defaultEvidenceLimitsForPreset(
+		parentUpgradeConfig.parentUpgradePreset,
+		"multi",
+	);
+	return {
+		scenarios: parseScenarios(get("--scenario")),
+		seeds: parseCsvNumbers(get("--seeds"), DEFAULT_PARENT_UPGRADE_SEEDS),
+		...parentUpgradeConfig,
+		nodes: get("--nodes") == null ? undefined : Number(get("--nodes")),
+		writers: get("--writers") == null ? undefined : Number(get("--writers")),
+		activeWriters:
+			get("--activeWriters") == null
+				? undefined
+				: Number(get("--activeWriters")),
+		subscribersPerTree:
+			get("--subscribersPerTree") == null
+				? undefined
+				: Number(get("--subscribersPerTree")),
+		secondBatchSettleMs:
+			get("--secondBatchSettleMs") == null
+				? undefined
+				: Number(get("--secondBatchSettleMs")),
+		thirdBatchMessages:
+			get("--thirdBatchMessages") == null
+				? undefined
+				: Number(get("--thirdBatchMessages")),
+		thirdBatchSettleMs:
+			get("--thirdBatchSettleMs") == null
+				? undefined
+				: Number(get("--thirdBatchSettleMs")),
+		streamRxDelayMs:
+			get("--streamRxDelayMs") == null
+				? undefined
+				: Number(get("--streamRxDelayMs")),
+		timeoutMs:
+			get("--timeoutMs") == null ? undefined : Number(get("--timeoutMs")),
+		jsonOut: get("--jsonOut"),
+		maxCostRatio: Number(get("--maxCostRatio") ?? 1.15),
+		maxLiveDeadlinePctDelta: Number(get("--maxLiveDeadlinePctDelta") ?? 2),
+		maxUsefulIdleDeadlinePctDelta: Number(
+			get("--maxUsefulIdleDeadlinePctDelta") ?? 0.15,
+		),
+		maxGuardedIdleDeadlinePctDelta: Number(
+			get("--maxGuardedIdleDeadlinePctDelta") ?? 0.15,
+		),
+		maxGuardedIdleProbePerSlotForSlack: Number(
+			get("--maxGuardedIdleProbePerSlotForSlack") ?? 0.02,
+		),
+		maxLiveChurnGuardSkipsPerSlot: Number(
+			get("--maxLiveChurnGuardSkipsPerSlot") ?? 1,
+		),
+		maxSecondBatchLatencyP95DeltaMs: Number(
+			get("--maxSecondBatchLatencyP95DeltaMs") ?? 3,
+		),
+		maxSecondBatchLatencyP95DeltaRatio: Number(
+			get("--maxSecondBatchLatencyP95DeltaRatio") ?? 0.15,
+		),
+		maxDataOverheadRatio: Number(get("--maxDataOverheadRatio") ?? 1.05),
+		maxProbePerUpgrade: Number(
+			get("--maxProbePerUpgrade") ?? evidenceDefaults.maxProbePerUpgrade,
+		),
+		maxRootChildrenDelta: Number(
+			get("--maxRootChildrenDelta") ?? evidenceDefaults.maxRootChildrenDelta,
+		),
+		maxRootUploadPctDelta: Number(
+			get("--maxRootUploadPctDelta") ?? evidenceDefaults.maxRootUploadPctDelta,
+		),
+		minPromotedBranchGainMs: Number(get("--minPromotedBranchGainMs") ?? 10),
+		minPromotedTreeLevelAvgGain: Number(
+			get("--minPromotedTreeLevelAvgGain") ?? 0.1,
+		),
+		sameRunAB: parseBool01(get("--sameRunAB"), defaultCandidate),
+		strict: parseBool01(get("--strict"), false),
+	};
+};
+
+const resolveParams = (
+	scenario: ScenarioName,
+	seed: number,
+	args: EvalArgs,
+	upgradeEnabled: boolean,
+): MultiWriterParams => {
+	const base = SCENARIOS[scenario];
+	const msgRate = Number(base.msgRate ?? 30);
+	const writers = Number(args.writers ?? base.writers ?? 4);
+	const activeWriters = Math.max(
+		0,
+		Math.min(
+			writers,
+			Math.floor(Number(args.activeWriters ?? base.activeWriters ?? writers)),
+		),
+	);
+	return {
+		scenario,
+		seed,
+		nodes: Number(args.nodes ?? base.nodes ?? 40),
+		writers,
+		activeWriters,
+		bootstraps: Number(base.bootstraps ?? 1),
+		subscribersPerTree: Number(
+			args.subscribersPerTree ?? base.subscribersPerTree ?? 28,
+		),
+		relayFraction: Number(base.relayFraction ?? 0.5),
+		joinConcurrency: Number(base.joinConcurrency ?? 12),
+		joinPhaseSettleMs: Number(base.joinPhaseSettleMs ?? 500),
+		messages: Number(base.messages ?? 120),
+		secondBatchMessages: Number(base.secondBatchMessages ?? 0),
+		secondBatchSettleMs: Number(
+			args.secondBatchSettleMs ?? base.secondBatchSettleMs ?? 0,
+		),
+		thirdBatchMessages: Number(args.thirdBatchMessages ?? 0),
+		thirdBatchSettleMs: Number(
+			args.thirdBatchSettleMs ?? base.secondBatchSettleMs ?? 0,
+		),
+		msgRate,
+		msgSize: Number(base.msgSize ?? 128),
+		intervalMs: msgRate > 0 ? Math.floor(1000 / msgRate) : 0,
+		settleMs: Number(base.settleMs ?? 1_000),
+		deadlineMs: Number(base.deadlineMs ?? 750),
+		timeoutMs: Number(args.timeoutMs ?? base.timeoutMs ?? 120_000),
+		topicPrefix: `multi-${scenario}-${seed}`,
+		rootUploadLimitBps: Number(base.rootUploadLimitBps ?? 100_000_000),
+		rootMaxChildren: Number(base.rootMaxChildren ?? 2),
+		relayUploadLimitBps: Number(base.relayUploadLimitBps ?? 100_000_000),
+		relayMaxChildren: Number(base.relayMaxChildren ?? 4),
+		repair: Boolean(base.repair ?? true),
+		repairWindowMessages: Number(base.repairWindowMessages ?? 512),
+		repairIntervalMs: Number(base.repairIntervalMs ?? 200),
+		repairMaxPerReq: Number(base.repairMaxPerReq ?? 64),
+		neighborRepair: Boolean(base.neighborRepair ?? true),
+		neighborRepairPeers: Number(base.neighborRepairPeers ?? 3),
+		streamRxDelayMs: Number(args.streamRxDelayMs ?? base.streamRxDelayMs ?? 0),
+		streamHighWaterMarkBytes: Number(
+			base.streamHighWaterMarkBytes ?? 256 * 1024,
+		),
+		dialDelayMs: Number(base.dialDelayMs ?? 0),
+		candidateScoringMode:
+			base.candidateScoringMode === "ranked-strict" ||
+			base.candidateScoringMode === "weighted" ||
+			base.candidateScoringMode === "ranked-shuffle"
+				? base.candidateScoringMode
+				: "weighted",
+		trackerQueryIntervalMs: Number(base.trackerQueryIntervalMs ?? 1_000),
+		...parentUpgradeRuntimeOptions(args, upgradeEnabled),
+		lateRootConnectAfterMs: Number(base.lateRootConnectAfterMs ?? -1),
+		lateRootDuringPublish: Boolean(base.lateRootDuringPublish ?? false),
+		lateRootMaxChildren: Number(base.lateRootMaxChildren ?? 0),
+		lateRootConnectFraction: Number(base.lateRootConnectFraction ?? 1),
+		churnEveryMs: Number(base.churnEveryMs ?? 0),
+		churnDownMs: Number(base.churnDownMs ?? 0),
+		churnFraction: Number(base.churnFraction ?? 0),
+	};
+};
+
+const parseSimPeerIndex = (peerId: any): number => {
+	const s = String(peerId?.toString?.() ?? "");
+	const m = s.match(/sim-(\d+)/);
+	if (!m) return 0;
+	const n = Number(m[1]);
+	return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+};
+
+const pickDistinct = (
+	rng: () => number,
+	values: number[],
+	count: number,
+): number[] => {
+	const target = Math.max(0, Math.min(values.length, Math.floor(count)));
+	const chosen = new Set<number>();
+	while (chosen.size < target) {
+		chosen.add(values[int(rng, values.length)]!);
+	}
+	return [...chosen];
+};
+
+const failIfGreater = (
+	failures: Failure[],
+	metric: string,
+	baseline: number,
+	upgrade: number,
+	limit: number,
+) => {
+	if (!Number.isFinite(upgrade) || upgrade > limit) {
+		failures.push({ metric, baseline, upgrade, limit });
+	}
+};
+
+const failIfLess = (
+	failures: Failure[],
+	metric: string,
+	baseline: number,
+	upgrade: number,
+	limit: number,
+) => {
+	if (!Number.isFinite(upgrade) || upgrade < limit) {
+		failures.push({ metric, baseline, upgrade, limit });
+	}
+};
+
+const peerLatencyP95For = (result: TreeResult, hashes: string[]): number => {
+	const values: number[] = [];
+	for (const hash of hashes) {
+		const value = result.secondBatchLatencyP95ByHash[hash];
+		if (Number.isFinite(value)) values.push(value);
+	}
+	values.sort((a, b) => a - b);
+	return quantile(values, 0.95);
+};
+
+const secondBatchLatencySlackMs = (baseline: number, args: EvalArgs) =>
+	Number.isFinite(baseline)
+		? Math.max(
+				0,
+				args.maxSecondBatchLatencyP95DeltaMs,
+				baseline * Math.max(0, args.maxSecondBatchLatencyP95DeltaRatio),
+			)
+		: Math.max(0, args.maxSecondBatchLatencyP95DeltaMs);
+
+const runMultiWriterSim = async (
+	params: MultiWriterParams,
+): Promise<MultiWriterResult> => {
+	const timeoutMs = Math.max(0, Math.floor(params.timeoutMs));
+	const timeoutController = new AbortController();
+	const timeoutSignal = timeoutController.signal;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	if (timeoutMs > 0) {
+		timer = setTimeout(() => {
+			timeoutController.abort(
+				new Error(
+					`fanout-tree-parent-upgrade-multi-eval timed out after ${timeoutMs}ms`,
+				),
+			);
+		}, timeoutMs);
+	}
+
+	const rng = mulberry32(params.seed);
+	const rootIndices = Array.from({ length: params.writers }, (_, i) => i);
+	const bootstrapIndices = Array.from(
+		{ length: params.bootstraps },
+		(_, i) => params.writers + i,
+	).filter((i) => i < params.nodes);
+	const reserved = new Set([...rootIndices, ...bootstrapIndices]);
+	const subscriberPool = Array.from(
+		{ length: params.nodes },
+		(_, i) => i,
+	).filter((i) => !reserved.has(i));
+	const subscriberIndices = pickDistinct(
+		rng,
+		subscriberPool,
+		params.subscribersPerTree,
+	).sort((a, b) => a - b);
+	const relayCount = Math.max(
+		1,
+		Math.floor(subscriberIndices.length * params.relayFraction),
+	);
+	const relaySet = new Set(pickDistinct(rng, subscriberIndices, relayCount));
+	const bootstrapIndexSet = new Set(bootstrapIndices);
+	const rootIndexSet = new Set(rootIndices);
+
+	const network = new InMemoryNetwork({
+		streamRxDelayMs: params.streamRxDelayMs,
+		streamHighWaterMarkBytes: params.streamHighWaterMarkBytes,
+		dialDelayMs: params.dialDelayMs,
+		dropSeed: params.seed,
+	});
+	const maxConnectionsFor = (index: number) => {
+		if (rootIndexSet.has(index)) {
+			return Math.max(256, params.lateRootMaxChildren * params.writers * 8);
+		}
+		if (bootstrapIndexSet.has(index)) return Math.max(512, params.nodes * 8);
+		if (relaySet.has(index)) {
+			return Math.max(128, params.relayMaxChildren * params.writers * 4);
+		}
+		return Math.max(32, params.writers * 8);
+	};
+	const session = await InMemorySession.disconnected<{ fanout: FanoutTree }>(
+		params.nodes,
+		{
+			network,
+			basePort: 31_000,
+			services: {
+				fanout: (c) => {
+					const index = parseSimPeerIndex(c?.peerId);
+					return new SimFanoutTree(c, {
+						connectionManager: {
+							minConnections: 0,
+							maxConnections: maxConnectionsFor(index),
+							dialer: false,
+							pruner: { interval: 1_000 },
+						},
+						seenCacheMax: rootIndexSet.has(index)
+							? 200_000
+							: bootstrapIndexSet.has(index)
+								? 100_000
+								: relaySet.has(index)
+									? 50_000
+									: 20_000,
+						seenCacheTtlMs:
+							rootIndexSet.has(index) || bootstrapIndexSet.has(index)
+								? 120_000
+								: 60_000,
+						random: mulberry32((params.seed >>> 0) ^ index),
+					});
+				},
+			},
+		},
+	);
+
+	try {
+		const bootstrapAddrs = bootstrapIndices.flatMap((i) =>
+			session.peers[i]!.getMultiaddrs(),
+		);
+		if (bootstrapAddrs.length === 0) {
+			throw new Error("No bootstrap addrs; scenario needs bootstraps >= 1");
+		}
+		for (const p of session.peers) {
+			p.services.fanout.setBootstraps(bootstrapAddrs);
+		}
+
+		const trees = rootIndices.map((rootIndex, tree) => {
+			const root = session.peers[rootIndex]!.services.fanout;
+			const rootHash = root.publicKeyHash;
+			const topic = `${params.topicPrefix}-${tree}`;
+			root.openChannel(topic, rootHash, {
+				role: "root",
+				msgRate: params.msgRate,
+				msgSize: params.msgSize,
+				uploadLimitBps: params.rootUploadLimitBps,
+				maxChildren: params.rootMaxChildren,
+				repair: params.repair,
+				repairWindowMessages: params.repairWindowMessages,
+				repairIntervalMs: params.repairIntervalMs,
+				repairMaxPerReq: params.repairMaxPerReq,
+				neighborRepair: params.neighborRepair,
+				neighborRepairPeers: params.neighborRepairPeers,
+			});
+			return {
+				tree,
+				active: tree < params.activeWriters,
+				rootIndex,
+				root,
+				rootHash,
+				topic,
+				joinedIndices: new Set<number>(),
+			};
+		});
+		const activeTrees = trees.filter((tree) => tree.active);
+
+		const joinOne = async (
+			tree: (typeof trees)[number],
+			index: number,
+		): Promise<boolean> => {
+			const node = session.peers[index]!.services.fanout;
+			const isRelay = relaySet.has(index);
+			try {
+				await node.joinChannel(
+					tree.topic,
+					tree.rootHash,
+					{
+						msgRate: params.msgRate,
+						msgSize: params.msgSize,
+						uploadLimitBps: isRelay ? params.relayUploadLimitBps : 0,
+						maxChildren: isRelay ? params.relayMaxChildren : 0,
+						repair: params.repair,
+						repairWindowMessages: params.repairWindowMessages,
+						repairIntervalMs: params.repairIntervalMs,
+						repairMaxPerReq: params.repairMaxPerReq,
+						neighborRepair: params.neighborRepair,
+						neighborRepairPeers: params.neighborRepairPeers,
+					},
+					{
+						timeoutMs: Math.max(
+							10_000,
+							Math.min(120_000, timeoutMs || 120_000),
+						),
+						candidateScoringMode: params.candidateScoringMode,
+						trackerQueryIntervalMs: params.trackerQueryIntervalMs,
+						...parentUpgradeRuntimeOptions(params),
+						signal: timeoutSignal,
+					},
+				);
+				tree.joinedIndices.add(index);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+
+		const relayTasks: Array<() => Promise<boolean>> = [];
+		const leafTasks: Array<() => Promise<boolean>> = [];
+		for (const tree of trees) {
+			for (const index of subscriberIndices) {
+				const task = () => joinOne(tree, index);
+				if (relaySet.has(index)) relayTasks.push(task);
+				else leafTasks.push(task);
+			}
+		}
+		await runWithConcurrency(relayTasks, params.joinConcurrency);
+		if (params.joinPhaseSettleMs > 0) {
+			await delay(params.joinPhaseSettleMs, { signal: timeoutSignal });
+		}
+		await runWithConcurrency(leafTasks, params.joinConcurrency);
+
+		const computeTreeShape = (tree: (typeof trees)[number]): TreeShape => {
+			const levels: number[] = [];
+			const childrenByHash = new Map<string, string[]>();
+			let treeRootChildren = 0;
+			let treeOrphans = 0;
+			for (const p of session.peers) {
+				const hash = p.services.fanout.publicKeyHash;
+				const s = p.services.fanout.getChannelStats(tree.topic, tree.rootHash);
+				if (!s) continue;
+				if (!childrenByHash.has(hash)) childrenByHash.set(hash, []);
+				if (Number.isFinite(s.level)) levels.push(s.level);
+				if (s.parent) {
+					const children = childrenByHash.get(s.parent) ?? [];
+					children.push(hash);
+					childrenByHash.set(s.parent, children);
+				}
+				if (s.level === 0) {
+					treeRootChildren = s.children;
+				} else if (Number.isFinite(s.level) && !s.parent) {
+					treeOrphans += 1;
+				}
+			}
+			levels.sort((a, b) => a - b);
+			return {
+				treeMaxLevel: levels.length > 0 ? levels[levels.length - 1]! : 0,
+				treeLevelP95: levels.length > 0 ? quantile(levels, 0.95) : 0,
+				treeLevelAvg:
+					levels.length > 0
+						? levels.reduce((sum, value) => sum + value, 0) / levels.length
+						: 0,
+				treeRootChildren,
+				treeOrphans,
+				childrenByHash,
+			};
+		};
+
+		const formationByTree = trees.map((tree) => computeTreeShape(tree));
+		const totalMessages =
+			params.messages + params.secondBatchMessages + params.thirdBatchMessages;
+		const secondBatchStartSeq = params.messages;
+		const thirdBatchStartSeq = secondBatchStartSeq + params.secondBatchMessages;
+		const payload = new Uint8Array(Math.max(0, params.msgSize));
+		for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+
+		const deliveryByTree = trees.map((tree) => {
+			const joinedHashes = [...tree.joinedIndices].map(
+				(i) => session.peers[i]!.services.fanout.publicKeyHash,
+			);
+			const hashToIndex = new Map<string, number>();
+			for (let i = 0; i < joinedHashes.length; i++) {
+				hashToIndex.set(joinedHashes[i]!, i);
+			}
+			const bitsetBytes = Math.ceil(totalMessages / 8);
+			return {
+				publishAt: new Map<number, number>(),
+				joinedHashes,
+				hashToIndex,
+				receivedBits: joinedHashes.map(() => new Uint8Array(bitsetBytes)),
+				receivedCounts: new Uint32Array(joinedHashes.length),
+				secondBatchReceivedCounts: new Uint32Array(joinedHashes.length),
+				deliveredWithinDeadline: 0,
+				secondBatchDeliveredWithinDeadline: 0,
+				duplicates: 0,
+				secondBatchLatencySamples: [] as number[],
+				secondBatchLatencySamplesByPeer: joinedHashes.map(() => [] as number[]),
+			};
+		});
+
+		const treeByKey = new Map<string, number>();
+		for (const tree of trees)
+			treeByKey.set(`${tree.topic}:${tree.rootHash}`, tree.tree);
+		const makeOnData = (localHash: string) => (ev: any) => {
+			const d = ev?.detail;
+			if (!d) return;
+			const treeIndex = treeByKey.get(`${d.topic}:${d.root}`);
+			if (treeIndex == null) return;
+			const delivery = deliveryByTree[treeIndex]!;
+			const peerIndex = delivery.hashToIndex.get(localHash);
+			if (peerIndex == null) return;
+			const seq = d.seq >>> 0;
+			if (seq >= totalMessages) return;
+			const bits = delivery.receivedBits[peerIndex]!;
+			const byteIndex = seq >>> 3;
+			const mask = 1 << (seq & 7);
+			if ((bits[byteIndex]! & mask) !== 0) {
+				delivery.duplicates += 1;
+				return;
+			}
+			bits[byteIndex] |= mask;
+			delivery.receivedCounts[peerIndex] += 1;
+			if (seq >= secondBatchStartSeq) {
+				delivery.secondBatchReceivedCounts[peerIndex] += 1;
+			}
+			const sentAt = delivery.publishAt.get(seq);
+			if (sentAt == null) return;
+			const latency = Date.now() - sentAt;
+			if (params.deadlineMs > 0 && latency <= params.deadlineMs) {
+				delivery.deliveredWithinDeadline += 1;
+				if (seq >= secondBatchStartSeq) {
+					delivery.secondBatchDeliveredWithinDeadline += 1;
+				}
+			}
+			if (seq >= secondBatchStartSeq) {
+				delivery.secondBatchLatencySamples.push(latency);
+				delivery.secondBatchLatencySamplesByPeer[peerIndex]!.push(latency);
+			}
+		};
+
+		for (const index of subscriberIndices) {
+			const node = session.peers[index]!.services.fanout;
+			node.addEventListener(
+				"fanout:data",
+				makeOnData(node.publicKeyHash) as any,
+			);
+		}
+
+		const collectParentUpgradeActivity = (
+			tree: (typeof trees)[number],
+		): ParentUpgradeActivity => {
+			const out: ParentUpgradeActivity = {
+				reparentUpgrade: 0,
+				reparentUpgradeSkipData: 0,
+				reparentUpgradeSkipRepair: 0,
+				reparentUpgradeSkipQuiet: 0,
+				parentProbeReqSent: 0,
+				parentShadowStart: 0,
+				parentShadowPromote: 0,
+			};
+			for (const p of session.peers) {
+				const m = p.services.fanout.getChannelMetrics(
+					tree.topic,
+					tree.rootHash,
+				);
+				out.reparentUpgrade += m.reparentUpgrade;
+				out.reparentUpgradeSkipData += m.reparentUpgradeSkipData;
+				out.reparentUpgradeSkipRepair += m.reparentUpgradeSkipRepair;
+				out.reparentUpgradeSkipQuiet += m.reparentUpgradeSkipQuiet;
+				out.parentProbeReqSent += m.parentProbeReqSent;
+				out.parentShadowStart += m.parentShadowStart;
+				out.parentShadowPromote += m.parentShadowPromote;
+			}
+			return out;
+		};
+		const diffActivity = (
+			after: ParentUpgradeActivity,
+			before: ParentUpgradeActivity,
+		): ParentUpgradeActivity => ({
+			reparentUpgrade: Math.max(
+				0,
+				after.reparentUpgrade - before.reparentUpgrade,
+			),
+			reparentUpgradeSkipData: Math.max(
+				0,
+				after.reparentUpgradeSkipData - before.reparentUpgradeSkipData,
+			),
+			reparentUpgradeSkipRepair: Math.max(
+				0,
+				after.reparentUpgradeSkipRepair - before.reparentUpgradeSkipRepair,
+			),
+			reparentUpgradeSkipQuiet: Math.max(
+				0,
+				after.reparentUpgradeSkipQuiet - before.reparentUpgradeSkipQuiet,
+			),
+			parentProbeReqSent: Math.max(
+				0,
+				after.parentProbeReqSent - before.parentProbeReqSent,
+			),
+			parentShadowStart: Math.max(
+				0,
+				after.parentShadowStart - before.parentShadowStart,
+			),
+			parentShadowPromote: Math.max(
+				0,
+				after.parentShadowPromote - before.parentShadowPromote,
+			),
+		});
+
+		const applyLateRootTopology = async () => {
+			if (params.lateRootMaxChildren > 0) {
+				for (const tree of trees) {
+					const id = tree.root.getChannelId(tree.topic, tree.rootHash);
+					const ch = (tree.root as any).channelsBySuffixKey?.get?.(
+						id.suffixKey,
+					);
+					if (ch) {
+						ch.maxChildren = Math.max(
+							ch.maxChildren ?? 0,
+							params.lateRootMaxChildren,
+						);
+						const uploadBoundedMaxChildren = effectiveMaxChildrenForUpload(
+							params,
+							ch,
+							params.lateRootMaxChildren,
+						);
+						ch.effectiveMaxChildren = Math.max(
+							ch.effectiveMaxChildren ?? 0,
+							uploadBoundedMaxChildren,
+						);
+						void (tree.root as any)
+							.announceToTrackers?.(ch, timeoutSignal)
+							?.catch?.(() => {});
+					}
+				}
+			}
+			const target = Math.min(
+				subscriberIndices.length,
+				Math.max(
+					0,
+					Math.ceil(subscriberIndices.length * params.lateRootConnectFraction),
+				),
+			);
+			for (const tree of trees) {
+				for (let i = 0; i < target; i++) {
+					const idx =
+						subscriberIndices[(i + tree.tree * 3) % subscriberIndices.length]!;
+					try {
+						await session.peers[idx]!.dial(
+							session.peers[tree.rootIndex]!.getMultiaddrs(),
+						);
+					} catch {
+						// best-effort late underlay shortcut
+					}
+				}
+			}
+		};
+
+		let lateRootApplied = false;
+		const applyLateRootOnce = async () => {
+			if (lateRootApplied || params.lateRootConnectAfterMs < 0) return;
+			lateRootApplied = true;
+			await applyLateRootTopology();
+		};
+
+		const churnController = new AbortController();
+		const churnSignal = anySignal([
+			timeoutSignal,
+			churnController.signal,
+		]) as AbortSignal & { clear?: () => void };
+		const churnLoop = async () => {
+			if (
+				params.churnEveryMs <= 0 ||
+				params.churnDownMs <= 0 ||
+				params.churnFraction <= 0
+			) {
+				return;
+			}
+			for (;;) {
+				if (churnSignal.aborted) return;
+				try {
+					await delay(params.churnEveryMs, { signal: churnSignal });
+				} catch (err) {
+					if (churnSignal.aborted) return;
+					throw err;
+				}
+				const target = Math.max(
+					1,
+					Math.floor(subscriberIndices.length * params.churnFraction),
+				);
+				const chosen = pickDistinct(rng, subscriberIndices, target);
+				const now = Date.now();
+				await Promise.all(
+					chosen.map(async (idx) => {
+						const peer = session.peers[idx]!;
+						network.setPeerOffline(peer.peerId, params.churnDownMs, now);
+						await network.disconnectPeer(peer.peerId);
+					}),
+				);
+			}
+		};
+		const churnPromise = churnLoop().catch(() => {});
+
+		const publishStartActivity = trees.map((tree) =>
+			collectParentUpgradeActivity(tree),
+		);
+		let activeActivity = publishStartActivity.map((activity) =>
+			diffActivity(activity, activity),
+		);
+		const lateRootDuringPublishPromise =
+			params.lateRootDuringPublish && params.lateRootConnectAfterMs >= 0
+				? (async () => {
+						if (params.lateRootConnectAfterMs > 0) {
+							await delay(params.lateRootConnectAfterMs, {
+								signal: timeoutSignal,
+							});
+						}
+						await applyLateRootOnce();
+					})()
+				: undefined;
+
+		const publishRange = async (from: number, to: number) => {
+			await Promise.all(
+				activeTrees.map(async (tree) => {
+					const delivery = deliveryByTree[tree.tree]!;
+					for (let seq = from; seq < to; seq++) {
+						if (timeoutSignal.aborted) {
+							throw timeoutSignal.reason ?? new Error("multi eval aborted");
+						}
+						delivery.publishAt.set(seq, Date.now());
+						await tree.root.publishData(tree.topic, tree.rootHash, payload);
+						if (params.intervalMs > 0) {
+							await delay(params.intervalMs, { signal: timeoutSignal });
+						}
+					}
+				}),
+			);
+		};
+
+		try {
+			await publishRange(0, params.messages);
+		} finally {
+			activeActivity = trees.map((tree, i) =>
+				diffActivity(
+					collectParentUpgradeActivity(tree),
+					publishStartActivity[i]!,
+				),
+			);
+			await lateRootDuringPublishPromise;
+		}
+
+		if (params.repair && params.messages > 0) {
+			await Promise.all(
+				activeTrees.map((tree) =>
+					tree.root.publishEnd(tree.topic, tree.rootHash, params.messages),
+				),
+			);
+		}
+
+		if (params.settleMs > 0) {
+			if (
+				!params.lateRootDuringPublish &&
+				params.lateRootConnectAfterMs >= 0 &&
+				params.lateRootConnectAfterMs < params.settleMs
+			) {
+				if (params.lateRootConnectAfterMs > 0) {
+					await delay(params.lateRootConnectAfterMs, { signal: timeoutSignal });
+				}
+				await applyLateRootOnce();
+				const remaining = Math.max(
+					0,
+					params.settleMs - params.lateRootConnectAfterMs,
+				);
+				if (remaining > 0) await delay(remaining, { signal: timeoutSignal });
+			} else {
+				await delay(params.settleMs, { signal: timeoutSignal });
+			}
+		}
+
+		if (params.secondBatchMessages > 0) {
+			await publishRange(
+				secondBatchStartSeq,
+				secondBatchStartSeq + params.secondBatchMessages,
+			);
+			if (params.repair) {
+				await Promise.all(
+					activeTrees.map((tree) =>
+						tree.root.publishEnd(
+							tree.topic,
+							tree.rootHash,
+							secondBatchStartSeq + params.secondBatchMessages,
+						),
+					),
+				);
+			}
+			if (params.secondBatchSettleMs > 0) {
+				await delay(params.secondBatchSettleMs, { signal: timeoutSignal });
+			}
+		}
+		if (params.thirdBatchMessages > 0) {
+			await publishRange(
+				thirdBatchStartSeq,
+				thirdBatchStartSeq + params.thirdBatchMessages,
+			);
+			if (params.repair) {
+				await Promise.all(
+					activeTrees.map((tree) =>
+						tree.root.publishEnd(
+							tree.topic,
+							tree.rootHash,
+							thirdBatchStartSeq + params.thirdBatchMessages,
+						),
+					),
+				);
+			}
+			if (params.thirdBatchSettleMs > 0) {
+				await delay(params.thirdBatchSettleMs, { signal: timeoutSignal });
+			}
+		}
+		churnController.abort();
+		await churnPromise;
+		churnSignal.clear?.();
+
+		const finalShapeByTree = trees.map((tree) => computeTreeShape(tree));
+		const treeResults: TreeResult[] = [];
+		for (const tree of trees) {
+			const formation = formationByTree[tree.tree]!;
+			const shape = finalShapeByTree[tree.tree]!;
+			const delivery = deliveryByTree[tree.tree]!;
+			const joinedCount = delivery.joinedHashes.length;
+			const treeMessageCount = tree.active ? totalMessages : 0;
+			const treeSecondBatchMessages = tree.active
+				? params.secondBatchMessages + params.thirdBatchMessages
+				: 0;
+			let delivered = 0;
+			for (const c of delivery.receivedCounts) delivered += c;
+			let secondBatchDelivered = 0;
+			for (const c of delivery.secondBatchReceivedCounts) {
+				secondBatchDelivered += c;
+			}
+			const expected = joinedCount * treeMessageCount;
+			const secondBatchExpected = joinedCount * treeSecondBatchMessages;
+			const idealPayloadBytes = expected * Math.max(0, params.msgSize);
+			const secondBatchLatencySamples = delivery.secondBatchLatencySamples.sort(
+				(a, b) => a - b,
+			);
+			const secondBatchLatencyP95ByHash: Record<string, number> = {};
+			for (let i = 0; i < delivery.joinedHashes.length; i++) {
+				const samples = delivery.secondBatchLatencySamplesByPeer[i]!;
+				if (samples.length === 0) continue;
+				samples.sort((a, b) => a - b);
+				secondBatchLatencyP95ByHash[delivery.joinedHashes[i]!] = quantile(
+					samples,
+					0.95,
+				);
+			}
+
+			let controlBytesSent = 0;
+			let controlBytesSentRepair = 0;
+			let controlBytesSentTracker = 0;
+			let dataPayloadBytesSent = 0;
+			let reparentUpgradeTotal = 0;
+			let parentProbeReqSentTotal = 0;
+			let parentShadowStartTotal = 0;
+			let parentShadowPromoteTotal = 0;
+			let maxReparentUpgradePerPeer = 0;
+			const upgradedPeerHashes: string[] = [];
+
+			for (const p of session.peers) {
+				const nodeHash = p.services.fanout.publicKeyHash;
+				const m = p.services.fanout.getChannelMetrics(
+					tree.topic,
+					tree.rootHash,
+				);
+				controlBytesSent += m.controlBytesSent;
+				controlBytesSentRepair += m.controlBytesSentRepair;
+				controlBytesSentTracker += m.controlBytesSentTracker;
+				dataPayloadBytesSent += m.dataPayloadBytesSent;
+				reparentUpgradeTotal += m.reparentUpgrade;
+				parentProbeReqSentTotal += m.parentProbeReqSent;
+				parentShadowStartTotal += m.parentShadowStart;
+				parentShadowPromoteTotal += m.parentShadowPromote;
+				maxReparentUpgradePerPeer = Math.max(
+					maxReparentUpgradePerPeer,
+					m.reparentUpgrade,
+				);
+				if (m.reparentUpgrade > 0) upgradedPeerHashes.push(nodeHash);
+			}
+
+			const upgradedBranchHashSet = new Set<string>();
+			const formationChildrenByHash = formation.childrenByHash;
+			for (const hash of upgradedPeerHashes) {
+				const stack = [hash];
+				while (stack.length > 0) {
+					const next = stack.pop()!;
+					if (upgradedBranchHashSet.has(next)) continue;
+					if (delivery.hashToIndex.has(next)) upgradedBranchHashSet.add(next);
+					for (const child of formationChildrenByHash.get(next) ?? []) {
+						stack.push(child);
+					}
+				}
+			}
+			const active = activeActivity[tree.tree]!;
+			const rootUploadBps =
+				session.network.peerMetricsByHash.get(tree.rootHash)
+					?.maxBytesPerSecond ?? 0;
+			treeResults.push({
+				tree: tree.tree,
+				active: tree.active,
+				topic: tree.topic,
+				rootHash: tree.rootHash,
+				subscriberCount: subscriberIndices.length,
+				joinedCount,
+				formationTreeLevelP95: formation.treeLevelP95,
+				formationTreeLevelAvg: formation.treeLevelAvg,
+				formationRootChildren: formation.treeRootChildren,
+				treeLevelP95: shape.treeLevelP95,
+				treeLevelAvg: shape.treeLevelAvg,
+				treeRootChildren: shape.treeRootChildren,
+				treeOrphans: shape.treeOrphans,
+				expected,
+				delivered,
+				deliveredPct: expected === 0 ? 100 : (100 * delivered) / expected,
+				deliveredWithinDeadlinePct:
+					expected === 0
+						? 100
+						: (100 * delivery.deliveredWithinDeadline) / expected,
+				secondBatchExpected,
+				secondBatchDeliveredWithinDeadlinePct:
+					secondBatchExpected === 0
+						? 100
+						: (100 * delivery.secondBatchDeliveredWithinDeadline) /
+							secondBatchExpected,
+				secondBatchLatencyP95:
+					secondBatchLatencySamples.length > 0
+						? quantile(secondBatchLatencySamples, 0.95)
+						: NaN,
+				secondBatchLatencyP95ByHash,
+				reparentUpgradeTotal,
+				publishActiveReparentUpgradeTotal: active.reparentUpgrade,
+				publishActiveReparentUpgradeSkipDataTotal:
+					active.reparentUpgradeSkipData,
+				publishActiveReparentUpgradeSkipRepairTotal:
+					active.reparentUpgradeSkipRepair,
+				publishActiveReparentUpgradeSkipQuietTotal:
+					active.reparentUpgradeSkipQuiet,
+				publishActiveParentProbeReqSentTotal: active.parentProbeReqSent,
+				publishActiveParentShadowStartTotal: active.parentShadowStart,
+				publishActiveParentShadowPromoteTotal: active.parentShadowPromote,
+				parentProbeReqSentTotal,
+				parentShadowStartTotal,
+				parentShadowPromoteTotal,
+				maxReparentUpgradePerPeer,
+				upgradedPeerHashes,
+				upgradedBranchPeerHashes: [...upgradedBranchHashSet],
+				rootUploadFracPct:
+					params.rootUploadLimitBps > 0
+						? (100 * rootUploadBps) / params.rootUploadLimitBps
+						: 0,
+				controlBytesSent,
+				controlBytesSentRepair,
+				controlBytesSentTracker,
+				dataPayloadBytesSent,
+				duplicates: delivery.duplicates,
+				dataOverheadFactor:
+					idealPayloadBytes <= 0
+						? 1
+						: dataPayloadBytesSent / idealPayloadBytes,
+			});
+		}
+
+		const expected = treeResults.reduce((sum, tree) => sum + tree.expected, 0);
+		const delivered = treeResults.reduce(
+			(sum, tree) => sum + tree.delivered,
+			0,
+		);
+		const secondBatchExpected = treeResults.reduce(
+			(sum, tree) => sum + tree.secondBatchExpected,
+			0,
+		);
+		const deliveredWithinDeadline = treeResults.reduce(
+			(sum, tree) =>
+				sum + (tree.deliveredWithinDeadlinePct * tree.expected) / 100,
+			0,
+		);
+		const secondBatchDeliveredWithinDeadline = treeResults.reduce(
+			(sum, tree) =>
+				sum +
+				(tree.secondBatchDeliveredWithinDeadlinePct *
+					tree.secondBatchExpected) /
+					100,
+			0,
+		);
+		const secondBatchLatencies = treeResults
+			.map((tree) => tree.secondBatchLatencyP95)
+			.filter((value) => Number.isFinite(value))
+			.sort((a, b) => a - b);
+		const deliveredPayloadBytes = delivered * Math.max(0, params.msgSize);
+		const idealPayloadBytes = expected * Math.max(0, params.msgSize);
+		const dataPayloadBytesSent = treeResults.reduce(
+			(sum, tree) => sum + tree.dataPayloadBytesSent,
+			0,
+		);
+		const controlBytesSent = treeResults.reduce(
+			(sum, tree) => sum + tree.controlBytesSent,
+			0,
+		);
+		const controlBytesSentTracker = treeResults.reduce(
+			(sum, tree) => sum + tree.controlBytesSentTracker,
+			0,
+		);
+		const controlBytesSentRepair = treeResults.reduce(
+			(sum, tree) => sum + tree.controlBytesSentRepair,
+			0,
+		);
+		return {
+			params,
+			trees: treeResults,
+			joinedCount: treeResults.reduce((sum, tree) => sum + tree.joinedCount, 0),
+			subscriberSlots: params.writers * subscriberIndices.length,
+			expected,
+			delivered,
+			deliveredPct: expected === 0 ? 100 : (100 * delivered) / expected,
+			deliveredWithinDeadlinePct:
+				expected === 0 ? 100 : (100 * deliveredWithinDeadline) / expected,
+			secondBatchExpected,
+			secondBatchDeliveredWithinDeadlinePct:
+				secondBatchExpected === 0
+					? 100
+					: (100 * secondBatchDeliveredWithinDeadline) / secondBatchExpected,
+			secondBatchLatencyP95:
+				secondBatchLatencies.length > 0
+					? quantile(secondBatchLatencies, 0.95)
+					: NaN,
+			reparentUpgradeTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.reparentUpgradeTotal,
+				0,
+			),
+			parentProbeReqSentTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.parentProbeReqSentTotal,
+				0,
+			),
+			parentShadowStartTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.parentShadowStartTotal,
+				0,
+			),
+			parentShadowPromoteTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.parentShadowPromoteTotal,
+				0,
+			),
+			publishActiveReparentUpgradeTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.publishActiveReparentUpgradeTotal,
+				0,
+			),
+			publishActiveParentProbeReqSentTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.publishActiveParentProbeReqSentTotal,
+				0,
+			),
+			publishActiveParentShadowStartTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.publishActiveParentShadowStartTotal,
+				0,
+			),
+			publishActiveParentShadowPromoteTotal: treeResults.reduce(
+				(sum, tree) => sum + tree.publishActiveParentShadowPromoteTotal,
+				0,
+			),
+			publishActiveGuardSkipsTotal: treeResults.reduce(
+				(sum, tree) =>
+					sum +
+					tree.publishActiveReparentUpgradeSkipDataTotal +
+					tree.publishActiveReparentUpgradeSkipRepairTotal +
+					tree.publishActiveReparentUpgradeSkipQuietTotal,
+				0,
+			),
+			activeGuardedTrees: treeResults.filter(
+				(tree) =>
+					tree.publishActiveReparentUpgradeSkipDataTotal +
+						tree.publishActiveReparentUpgradeSkipRepairTotal +
+						tree.publishActiveReparentUpgradeSkipQuietTotal >
+					0,
+			).length,
+			treeLevelAvg: avgFinite(treeResults.map((tree) => tree.treeLevelAvg)),
+			treeLevelP95: avgFinite(treeResults.map((tree) => tree.treeLevelP95)),
+			rootChildrenSum: treeResults.reduce(
+				(sum, tree) => sum + tree.treeRootChildren,
+				0,
+			),
+			rootChildrenMax: Math.max(
+				0,
+				...treeResults.map((tree) => tree.treeRootChildren),
+			),
+			rootUploadPctMax: Math.max(
+				0,
+				...treeResults.map((tree) => tree.rootUploadFracPct),
+			),
+			maxReparentUpgradePerPeer: Math.max(
+				0,
+				...treeResults.map((tree) => tree.maxReparentUpgradePerPeer),
+			),
+			duplicates: treeResults.reduce((sum, tree) => sum + tree.duplicates, 0),
+			dataOverheadFactor:
+				idealPayloadBytes <= 0 ? 1 : dataPayloadBytesSent / idealPayloadBytes,
+			controlBpp:
+				deliveredPayloadBytes <= 0
+					? 0
+					: controlBytesSent / deliveredPayloadBytes,
+			trackerBpp:
+				deliveredPayloadBytes <= 0
+					? 0
+					: controlBytesSentTracker / deliveredPayloadBytes,
+			repairBpp:
+				deliveredPayloadBytes <= 0
+					? 0
+					: controlBytesSentRepair / deliveredPayloadBytes,
+			network: session.network.metrics,
+		};
+	} finally {
+		if (timer) clearTimeout(timer);
+		try {
+			await session.stop();
+		} catch {
+			// ignore teardown aborts in the shim
+		}
+	}
+};
+
+const formatResult = (result: MultiWriterResult) => {
+	const p = result.params;
+	return [
+		"fanout-tree-parent-upgrade-multi-eval",
+		`scenario=${p.scenario} seed=${p.seed} writers=${p.writers} activeWriters=${p.activeWriters} nodes=${p.nodes} subscribersPerTree=${p.subscribersPerTree}`,
+		`joinedSlots=${result.joinedCount}/${result.subscriberSlots} delivered=${result.delivered}/${result.expected} (${fmt(result.deliveredPct)}%) deadline=${fmt(result.deliveredWithinDeadlinePct)}%`,
+		...(result.secondBatchExpected > 0
+			? [
+					`secondBatch deadline=${fmt(result.secondBatchDeliveredWithinDeadlinePct)}% p95=${fmt(result.secondBatchLatencyP95, 1)}ms`,
+				]
+			: []),
+		`tree avgLevel=${fmt(result.treeLevelAvg)} p95Level=${fmt(result.treeLevelP95, 1)} rootChildren sum=${result.rootChildrenSum} max=${result.rootChildrenMax} rootUploadPctMax=${fmt(result.rootUploadPctMax)}`,
+		`parentUpgrade upgrades=${result.reparentUpgradeTotal} probes=${result.parentProbeReqSentTotal} shadowStart=${result.parentShadowStartTotal} shadowPromote=${result.parentShadowPromoteTotal} maxPerPeer=${result.maxReparentUpgradePerPeer}`,
+		`publishActive upgrades=${result.publishActiveReparentUpgradeTotal} probes=${result.publishActiveParentProbeReqSentTotal} shadowStart=${result.publishActiveParentShadowStartTotal} shadowPromote=${result.publishActiveParentShadowPromoteTotal} guardSkips=${result.publishActiveGuardSkipsTotal} guardedTrees=${result.activeGuardedTrees}/${p.writers}`,
+		`redundancy dataFactor=${fmt(result.dataOverheadFactor, 3)} dup=${result.duplicates}`,
+		`cost controlBpp=${fmt(result.controlBpp, 4)} trackerBpp=${fmt(result.trackerBpp, 4)} repairBpp=${fmt(result.repairBpp, 4)}`,
+		`network dials=${result.network.dials} connsOpened=${result.network.connectionsOpened} streamsOpened=${result.network.streamsOpened} bytesSent=${result.network.bytesSent}`,
+		...result.trees.map(
+			(tree) =>
+				`tree[${tree.tree}${tree.active ? "" : ":idle"}] joined=${tree.joinedCount}/${tree.subscriberCount} upgrades=${tree.reparentUpgradeTotal} probes=${tree.parentProbeReqSentTotal} active(probes/upgrades/guards)=${tree.publishActiveParentProbeReqSentTotal}/${tree.publishActiveReparentUpgradeTotal}/${tree.publishActiveReparentUpgradeSkipDataTotal + tree.publishActiveReparentUpgradeSkipRepairTotal + tree.publishActiveReparentUpgradeSkipQuietTotal} rootChildren=${tree.treeRootChildren} rootUploadPct=${fmt(tree.rootUploadFracPct)} secondP95=${fmt(tree.secondBatchLatencyP95, 1)}`,
+		),
+	].join("\n");
+};
+
+const analyzeUsefulPromotions = (
+	scenario: ScenarioName,
+	baseline: MultiWriterResult,
+	upgrade: MultiWriterResult,
+	args: EvalArgs,
+) => {
+	let usefulPromotedTrees = 0;
+	const branchGains: number[] = [];
+	const treeSecondBatchRegressions: number[] = [];
+	const branchSecondBatchRegressions: number[] = [];
+	const minBranchGainMs = Math.max(1, args.minPromotedBranchGainMs);
+	const minTreeLevelAvgGain = Math.max(0, args.minPromotedTreeLevelAvgGain);
+	const backgroundSecondBatchLatencyP95RegressionMax = maxFinite(
+		upgrade.trees
+			.filter((tree) => tree.active && tree.reparentUpgradeTotal <= 0)
+			.map((tree) => {
+				const baseTree = baseline.trees[tree.tree];
+				if (!baseTree) return NaN;
+				if (
+					!Number.isFinite(baseTree.secondBatchLatencyP95) ||
+					!Number.isFinite(tree.secondBatchLatencyP95)
+				) {
+					return NaN;
+				}
+				return tree.secondBatchLatencyP95 - baseTree.secondBatchLatencyP95;
+			}),
+	);
+	const backgroundLatencySlackMs = isHotspotIdleScenario(scenario)
+		? Math.max(0, backgroundSecondBatchLatencyP95RegressionMax)
+		: 0;
+	for (const tree of upgrade.trees) {
+		if (tree.reparentUpgradeTotal <= 0) continue;
+		const baseTree = baseline.trees[tree.tree];
+		if (!baseTree) continue;
+		const latencySlackMs = secondBatchLatencySlackMs(
+			baseTree.secondBatchLatencyP95,
+			args,
+		);
+		const treeLevelAvgGain = baseTree.treeLevelAvg - tree.treeLevelAvg;
+		const secondBatchP95Gain =
+			baseTree.secondBatchLatencyP95 - tree.secondBatchLatencyP95;
+		if (
+			Number.isFinite(baseTree.secondBatchLatencyP95) &&
+			Number.isFinite(tree.secondBatchLatencyP95)
+		) {
+			treeSecondBatchRegressions.push(
+				tree.secondBatchLatencyP95 - baseTree.secondBatchLatencyP95,
+			);
+		}
+		const branchBase = peerLatencyP95For(
+			baseTree,
+			tree.upgradedBranchPeerHashes,
+		);
+		const branchUpgrade = peerLatencyP95For(
+			tree,
+			tree.upgradedBranchPeerHashes,
+		);
+		const branchGain = branchBase - branchUpgrade;
+		if (Number.isFinite(branchGain)) branchGains.push(branchGain);
+		if (Number.isFinite(branchBase) && Number.isFinite(branchUpgrade)) {
+			branchSecondBatchRegressions.push(branchUpgrade - branchBase);
+		}
+		const branchLatencyOk =
+			!Number.isFinite(branchGain) ||
+			branchGain >= -(latencySlackMs + backgroundLatencySlackMs);
+		const usefulLatencyGain =
+			Math.max(secondBatchP95Gain, branchGain) >= minBranchGainMs;
+		const usefulDepthGain = treeLevelAvgGain >= minTreeLevelAvgGain;
+		if (branchLatencyOk && (usefulLatencyGain || usefulDepthGain)) {
+			usefulPromotedTrees += 1;
+		}
+	}
+	return {
+		usefulPromotedTrees,
+		promotedBranchGainAvg: avgFinite(branchGains),
+		promotedTreeSecondBatchLatencyP95RegressionMax: maxFinite(
+			treeSecondBatchRegressions,
+		),
+		promotedBranchSecondBatchLatencyP95RegressionMax: maxFinite(
+			branchSecondBatchRegressions,
+		),
+		backgroundSecondBatchLatencyP95RegressionMax,
+	};
+};
+
+const evaluateRun = (
+	scenario: ScenarioName,
+	baseline: MultiWriterResult,
+	upgrade: MultiWriterResult,
+	args: EvalArgs,
+) => {
+	const failures: Failure[] = [];
+	const useful = analyzeUsefulPromotions(scenario, baseline, upgrade, args);
+	const costRatio = isHotspotIdleScenario(scenario)
+		? Math.max(args.maxCostRatio, 1.2)
+		: args.maxCostRatio;
+	const sentProactiveUpgradeTraffic =
+		upgrade.reparentUpgradeTotal > 0 ||
+		upgrade.parentProbeReqSentTotal > 0 ||
+		upgrade.parentShadowStartTotal > 0;
+	const usefulIdleDeadlineSlack =
+		isIdleScenario(scenario) && useful.usefulPromotedTrees > 0
+			? Math.max(0, args.maxUsefulIdleDeadlinePctDelta)
+			: 0;
+	const guardedIdleProbePerSlot =
+		isIdleScenario(scenario) &&
+		useful.usefulPromotedTrees === 0 &&
+		upgrade.reparentUpgradeTotal === 0
+			? upgrade.parentProbeReqSentTotal / Math.max(1, upgrade.subscriberSlots)
+			: 0;
+	const guardedIdleDeadlineSlack =
+		guardedIdleProbePerSlot > 0 &&
+		guardedIdleProbePerSlot <=
+			Math.max(0, args.maxGuardedIdleProbePerSlotForSlack)
+			? Math.max(0, args.maxGuardedIdleDeadlinePctDelta)
+			: 0;
+	const idleDeadlineSlack = Math.max(
+		usefulIdleDeadlineSlack,
+		guardedIdleDeadlineSlack,
+	);
+	// Live scenarios are no-work safety gates. Independent baseline/treatment
+	// runs can still move delivery, root pressure, or whether a local guard timer
+	// happens to fire. If the policy sends no proactive traffic, those values are
+	// observability only; the hard contract is zero probes/shadows/upgrades.
+	const compareIndependentRunShape =
+		!isLiveChurnScenario(scenario) && sentProactiveUpgradeTraffic;
+
+	if (compareIndependentRunShape) {
+		failIfLess(
+			failures,
+			"deliveredPct",
+			baseline.deliveredPct,
+			upgrade.deliveredPct,
+			baseline.deliveredPct,
+		);
+		failIfLess(
+			failures,
+			"deliveredWithinDeadlinePct",
+			baseline.deliveredWithinDeadlinePct,
+			upgrade.deliveredWithinDeadlinePct,
+			isLiveScenario(scenario)
+				? baseline.deliveredWithinDeadlinePct -
+						Math.max(0, args.maxLiveDeadlinePctDelta)
+				: baseline.deliveredWithinDeadlinePct - idleDeadlineSlack,
+		);
+		failIfGreater(
+			failures,
+			"dataOverheadFactor",
+			baseline.dataOverheadFactor,
+			upgrade.dataOverheadFactor,
+			ratioLimit(baseline.dataOverheadFactor, args.maxDataOverheadRatio, 0.01),
+		);
+		failIfGreater(
+			failures,
+			"controlBpp",
+			baseline.controlBpp,
+			upgrade.controlBpp,
+			ratioLimit(baseline.controlBpp, costRatio, 0.001),
+		);
+		failIfGreater(
+			failures,
+			"trackerBpp",
+			baseline.trackerBpp,
+			upgrade.trackerBpp,
+			ratioLimit(baseline.trackerBpp, costRatio, 0.001),
+		);
+		failIfGreater(
+			failures,
+			"repairBpp",
+			baseline.repairBpp,
+			upgrade.repairBpp,
+			ratioLimit(baseline.repairBpp, costRatio, 0.001),
+		);
+	}
+
+	if (isLiveScenario(scenario)) {
+		failIfGreater(
+			failures,
+			"activeProbes",
+			0,
+			upgrade.publishActiveParentProbeReqSentTotal,
+			0,
+		);
+		failIfGreater(
+			failures,
+			"activeShadowStarts",
+			0,
+			upgrade.publishActiveParentShadowStartTotal,
+			0,
+		);
+		failIfGreater(
+			failures,
+			"activeReparentUpgrades",
+			0,
+			upgrade.publishActiveReparentUpgradeTotal,
+			0,
+		);
+		failIfGreater(
+			failures,
+			"totalProbes",
+			0,
+			upgrade.parentProbeReqSentTotal,
+			0,
+		);
+		failIfGreater(
+			failures,
+			"totalReparentUpgrades",
+			0,
+			upgrade.reparentUpgradeTotal,
+			0,
+		);
+		if (isLiveChurnScenario(scenario)) {
+			failIfGreater(
+				failures,
+				"activeGuardSkipsPerSlot",
+				0,
+				upgrade.publishActiveGuardSkipsTotal /
+					Math.max(1, upgrade.subscriberSlots),
+				Math.max(0, args.maxLiveChurnGuardSkipsPerSlot),
+			);
+		}
+	}
+
+	if (isIdleScenario(scenario) && upgrade.reparentUpgradeTotal > 0) {
+		const latencySlackMs = secondBatchLatencySlackMs(
+			baseline.secondBatchLatencyP95,
+			args,
+		);
+		failIfLess(
+			failures,
+			"usefulPromotedTrees",
+			0,
+			useful.usefulPromotedTrees,
+			1,
+		);
+		if (isHotspotIdleScenario(scenario)) {
+			failIfGreater(
+				failures,
+				"probePerSubscriberSlot",
+				0,
+				upgrade.parentProbeReqSentTotal / Math.max(1, upgrade.subscriberSlots),
+				0.125,
+			);
+		} else {
+			failIfGreater(
+				failures,
+				"probePerUpgrade",
+				0,
+				upgrade.parentProbeReqSentTotal / upgrade.reparentUpgradeTotal,
+				args.maxProbePerUpgrade,
+			);
+		}
+		failIfGreater(
+			failures,
+			"maxReparentUpgradePerPeer",
+			baseline.maxReparentUpgradePerPeer,
+			upgrade.maxReparentUpgradePerPeer,
+			1,
+		);
+		failIfLess(
+			failures,
+			"secondBatchDeadlinePct",
+			baseline.secondBatchDeliveredWithinDeadlinePct,
+			upgrade.secondBatchDeliveredWithinDeadlinePct,
+			baseline.secondBatchDeliveredWithinDeadlinePct - idleDeadlineSlack,
+		);
+		failIfGreater(
+			failures,
+			"promotedBranchSecondBatchLatencyP95Regression",
+			0,
+			useful.promotedBranchSecondBatchLatencyP95RegressionMax,
+			latencySlackMs +
+				(isHotspotIdleScenario(scenario)
+					? Math.max(0, useful.backgroundSecondBatchLatencyP95RegressionMax)
+					: 0),
+		);
+		failIfLess(
+			failures,
+			"secondBatchOrBranchGain",
+			0,
+			Math.max(
+				baseline.secondBatchLatencyP95 - upgrade.secondBatchLatencyP95,
+				useful.promotedBranchGainAvg,
+			),
+			Math.max(1, args.minPromotedBranchGainMs),
+		);
+	}
+
+	if (isSparseIdleScenario(scenario)) {
+		const inactiveTrees = upgrade.trees.filter((tree) => !tree.active);
+		const inactiveUpgrades = inactiveTrees.reduce(
+			(sum, tree) => sum + tree.reparentUpgradeTotal,
+			0,
+		);
+		const inactiveProbes = inactiveTrees.reduce(
+			(sum, tree) => sum + tree.parentProbeReqSentTotal,
+			0,
+		);
+		const inactiveShadowStarts = inactiveTrees.reduce(
+			(sum, tree) => sum + tree.parentShadowStartTotal,
+			0,
+		);
+		failIfGreater(failures, "inactiveTreeUpgrades", 0, inactiveUpgrades, 0);
+		failIfGreater(failures, "inactiveTreeProbes", 0, inactiveProbes, 0);
+		failIfGreater(
+			failures,
+			"inactiveTreeShadowStarts",
+			0,
+			inactiveShadowStarts,
+			0,
+		);
+	}
+
+	if (compareIndependentRunShape) {
+		for (const tree of upgrade.trees) {
+			const baselineTree = baseline.trees[tree.tree];
+			if (!baselineTree) continue;
+			failIfGreater(
+				failures,
+				`tree${tree.tree}RootChildrenDelta`,
+				baselineTree.treeRootChildren,
+				tree.treeRootChildren,
+				baselineTree.treeRootChildren + Math.max(0, args.maxRootChildrenDelta),
+			);
+			failIfGreater(
+				failures,
+				`tree${tree.tree}RootUploadPctDelta`,
+				baselineTree.rootUploadFracPct,
+				tree.rootUploadFracPct,
+				baselineTree.rootUploadFracPct +
+					Math.max(0, args.maxRootUploadPctDelta),
+			);
+		}
+	}
+
+	return { failures, ...useful };
+};
+
+const printComparison = (
+	scenario: ScenarioName,
+	seed: number,
+	baseline: MultiWriterResult,
+	upgrade: MultiWriterResult,
+	failures: Failure[],
+	usefulPromotedTrees: number,
+	promotedBranchGainAvg: number,
+	promotedTreeSecondBatchLatencyP95RegressionMax: number,
+	promotedBranchSecondBatchLatencyP95RegressionMax: number,
+) => {
+	const rootDeltas = upgrade.trees.map((tree) => {
+		const base = baseline.trees[tree.tree]!;
+		return tree.treeRootChildren - base.treeRootChildren;
+	});
+	const rootUploadDeltas = upgrade.trees.map((tree) => {
+		const base = baseline.trees[tree.tree]!;
+		return tree.rootUploadFracPct - base.rootUploadFracPct;
+	});
+	console.log(
+		[
+			`parent-upgrade-multi-eval scenario=${scenario} seed=${seed} viable=${failures.length === 0}`,
+			`  joinedSlots ${baseline.joinedCount}/${baseline.subscriberSlots} -> ${upgrade.joinedCount}/${upgrade.subscriberSlots}`,
+			`  deadline ${fmt(baseline.deliveredWithinDeadlinePct)} -> ${fmt(upgrade.deliveredWithinDeadlinePct)} secondP95 ${fmt(baseline.secondBatchLatencyP95, 1)} -> ${fmt(upgrade.secondBatchLatencyP95, 1)}`,
+			`  upgrades=${upgrade.reparentUpgradeTotal} usefulPromotedTrees=${usefulPromotedTrees} probes=${upgrade.parentProbeReqSentTotal} shadowStart=${upgrade.parentShadowStartTotal} branchGainAvg=${fmt(promotedBranchGainAvg, 1)}`,
+			`  promotedLatencyRegressionMax tree=${fmt(promotedTreeSecondBatchLatencyP95RegressionMax, 1)}ms branch=${fmt(promotedBranchSecondBatchLatencyP95RegressionMax, 1)}ms`,
+			`  active upgrades=${upgrade.publishActiveReparentUpgradeTotal} probes=${upgrade.publishActiveParentProbeReqSentTotal} shadowStart=${upgrade.publishActiveParentShadowStartTotal} guardSkips=${upgrade.publishActiveGuardSkipsTotal} guardedTrees=${upgrade.activeGuardedTrees}/${upgrade.params.writers}`,
+			`  rootChildrenDelta sum=${rootDeltas.reduce((sum, value) => sum + value, 0)} max=${Math.max(...rootDeltas)} rootUploadPctDeltaMax=${fmt(Math.max(...rootUploadDeltas), 2)}`,
+			`  redundancy dataFactor ${fmt(baseline.dataOverheadFactor, 3)} -> ${fmt(upgrade.dataOverheadFactor, 3)} dup ${baseline.duplicates} -> ${upgrade.duplicates}`,
+			`  cost controlBpp ${fmt(baseline.controlBpp, 4)} -> ${fmt(upgrade.controlBpp, 4)} trackerBpp ${fmt(baseline.trackerBpp, 4)} -> ${fmt(upgrade.trackerBpp, 4)} repairBpp ${fmt(baseline.repairBpp, 4)} -> ${fmt(upgrade.repairBpp, 4)}`,
+			...(failures.length > 0
+				? [
+						`  failures ${failures
+							.map(
+								(f) =>
+									`${f.metric}: baseline=${fmt(f.baseline)} upgrade=${fmt(f.upgrade)} limit=${fmt(f.limit)}`,
+							)
+							.join("; ")}`,
+					]
+				: []),
+		].join("\n"),
+	);
+};
+
+const printSummary = (samples: SummarySample[]) => {
+	if (samples.length === 0) return;
+	const groups = new Map<ScenarioName, SummarySample[]>();
+	for (const sample of samples) {
+		const group = groups.get(sample.scenario) ?? [];
+		group.push(sample);
+		groups.set(sample.scenario, group);
+	}
+	console.log(
+		[
+			"",
+			"parent-upgrade-multi-summary",
+			"scenario seeds viable usefulPromotedTrees upgrades probes activeUpgrades activeProbes activeGuardSkips branchGainAvg secondBatchP95DeltaAvg/Max promotedLatencyRegressionMax(tree/branch) dataFactorDeltaPctAvg controlBppDeltaPctAvg rootChildrenDeltaMax rootChildrenDeltaSumMax rootUploadPctDeltaMax maxPerPeer failures",
+			...[...groups.entries()].map(([scenario, group]) => {
+				const dataFactorDeltas = group.map((sample) =>
+					sample.baseline.dataOverheadFactor > 0
+						? (100 *
+								(sample.upgrade.dataOverheadFactor -
+									sample.baseline.dataOverheadFactor)) /
+							sample.baseline.dataOverheadFactor
+						: NaN,
+				);
+				const controlDeltas = group.map((sample) =>
+					sample.baseline.controlBpp > 0
+						? (100 * (sample.upgrade.controlBpp - sample.baseline.controlBpp)) /
+							sample.baseline.controlBpp
+						: NaN,
+				);
+				const secondBatchP95Deltas = group.map((sample) =>
+					sample.baseline.secondBatchExpected > 0 ||
+					sample.upgrade.secondBatchExpected > 0
+						? sample.upgrade.secondBatchLatencyP95 -
+							sample.baseline.secondBatchLatencyP95
+						: NaN,
+				);
+				const rootChildrenDeltaMax = Math.max(
+					...group.flatMap((sample) =>
+						sample.upgrade.trees.map(
+							(tree) =>
+								tree.treeRootChildren -
+								sample.baseline.trees[tree.tree]!.treeRootChildren,
+						),
+					),
+				);
+				const rootChildrenDeltaSumMax = Math.max(
+					...group.map((sample) =>
+						sample.upgrade.trees.reduce(
+							(sum, tree) =>
+								sum +
+								tree.treeRootChildren -
+								sample.baseline.trees[tree.tree]!.treeRootChildren,
+							0,
+						),
+					),
+				);
+				const rootUploadDeltaMax = Math.max(
+					...group.flatMap((sample) =>
+						sample.upgrade.trees.map(
+							(tree) =>
+								tree.rootUploadFracPct -
+								sample.baseline.trees[tree.tree]!.rootUploadFracPct,
+						),
+					),
+				);
+				return [
+					scenario,
+					group.length,
+					`${group.filter((sample) => sample.failures.length === 0).length}/${group.length}`,
+					group.reduce((sum, sample) => sum + sample.usefulPromotedTrees, 0),
+					group.reduce(
+						(sum, sample) => sum + sample.upgrade.reparentUpgradeTotal,
+						0,
+					),
+					group.reduce(
+						(sum, sample) => sum + sample.upgrade.parentProbeReqSentTotal,
+						0,
+					),
+					group.reduce(
+						(sum, sample) =>
+							sum + sample.upgrade.publishActiveReparentUpgradeTotal,
+						0,
+					),
+					group.reduce(
+						(sum, sample) =>
+							sum + sample.upgrade.publishActiveParentProbeReqSentTotal,
+						0,
+					),
+					group.reduce(
+						(sum, sample) => sum + sample.upgrade.publishActiveGuardSkipsTotal,
+						0,
+					),
+					fmt(
+						avgFinite(group.map((sample) => sample.promotedBranchGainAvg)),
+						1,
+					),
+					`${fmt(avgFinite(secondBatchP95Deltas), 1)}/${fmt(maxFinite(secondBatchP95Deltas), 1)}`,
+					`${fmt(maxFinite(group.map((sample) => sample.promotedTreeSecondBatchLatencyP95RegressionMax)), 1)}/${fmt(maxFinite(group.map((sample) => sample.promotedBranchSecondBatchLatencyP95RegressionMax)), 1)}`,
+					fmt(avgFinite(dataFactorDeltas), 1),
+					fmt(avgFinite(controlDeltas), 1),
+					rootChildrenDeltaMax,
+					rootChildrenDeltaSumMax,
+					fmt(rootUploadDeltaMax, 2),
+					Math.max(
+						...group.map((sample) => sample.upgrade.maxReparentUpgradePerPeer),
+					),
+					group.reduce((sum, sample) => sum + sample.failures.length, 0),
+				].join(" ");
+			}),
+		].join("\n"),
+	);
+};
+
+const evaluateAggregate = (samples: SummarySample[]): Failure[] => {
+	const failures: Failure[] = [];
+	const groups = new Map<ScenarioName, SummarySample[]>();
+	for (const sample of samples) {
+		const group = groups.get(sample.scenario) ?? [];
+		group.push(sample);
+		groups.set(sample.scenario, group);
+	}
+	return failures;
+};
+
+const printAggregateFailures = (failures: Failure[]) => {
+	if (failures.length === 0) return;
+	console.log(
+		[
+			"",
+			"parent-upgrade-multi-aggregate-failures",
+			...failures.map(
+				(f) =>
+					`${f.metric}: observed=${fmt(f.upgrade)} required=${fmt(f.limit)}`,
+			),
+		].join("\n"),
+	);
+};
+
+const compactTreeResult = (tree: TreeResult) => ({
+	tree: tree.tree,
+	active: tree.active,
+	joinedCount: tree.joinedCount,
+	subscriberCount: tree.subscriberCount,
+	expected: tree.expected,
+	delivered: tree.delivered,
+	deliveredPct: tree.deliveredPct,
+	deliveredWithinDeadlinePct: tree.deliveredWithinDeadlinePct,
+	secondBatchExpected: tree.secondBatchExpected,
+	secondBatchDeliveredWithinDeadlinePct:
+		tree.secondBatchDeliveredWithinDeadlinePct,
+	secondBatchLatencyP95: tree.secondBatchLatencyP95,
+	reparentUpgradeTotal: tree.reparentUpgradeTotal,
+	parentProbeReqSentTotal: tree.parentProbeReqSentTotal,
+	parentShadowStartTotal: tree.parentShadowStartTotal,
+	parentShadowPromoteTotal: tree.parentShadowPromoteTotal,
+	publishActiveGuardSkipsTotal:
+		tree.publishActiveReparentUpgradeSkipDataTotal +
+		tree.publishActiveReparentUpgradeSkipRepairTotal +
+		tree.publishActiveReparentUpgradeSkipQuietTotal,
+	rootChildren: tree.treeRootChildren,
+	rootUploadFracPct: tree.rootUploadFracPct,
+	maxReparentUpgradePerPeer: tree.maxReparentUpgradePerPeer,
+	duplicates: tree.duplicates,
+	dataOverheadFactor: tree.dataOverheadFactor,
+	controlBytesSent: tree.controlBytesSent,
+	controlBytesSentTracker: tree.controlBytesSentTracker,
+	controlBytesSentRepair: tree.controlBytesSentRepair,
+});
+
+const compactResult = (result: MultiWriterResult) => ({
+	params: {
+		scenario: result.params.scenario,
+		seed: result.params.seed,
+		nodes: result.params.nodes,
+		writers: result.params.writers,
+		activeWriters: result.params.activeWriters,
+		subscribersPerTree: result.params.subscribersPerTree,
+		streamRxDelayMs: result.params.streamRxDelayMs,
+		deadlineMs: result.params.deadlineMs,
+		secondBatchMessages: result.params.secondBatchMessages,
+		secondBatchSettleMs: result.params.secondBatchSettleMs,
+	},
+	joinedCount: result.joinedCount,
+	subscriberSlots: result.subscriberSlots,
+	expected: result.expected,
+	delivered: result.delivered,
+	deliveredPct: result.deliveredPct,
+	deliveredWithinDeadlinePct: result.deliveredWithinDeadlinePct,
+	secondBatchExpected: result.secondBatchExpected,
+	secondBatchDeliveredWithinDeadlinePct:
+		result.secondBatchDeliveredWithinDeadlinePct,
+	secondBatchLatencyP95: result.secondBatchLatencyP95,
+	reparentUpgradeTotal: result.reparentUpgradeTotal,
+	parentProbeReqSentTotal: result.parentProbeReqSentTotal,
+	parentShadowStartTotal: result.parentShadowStartTotal,
+	parentShadowPromoteTotal: result.parentShadowPromoteTotal,
+	publishActiveGuardSkipsTotal: result.publishActiveGuardSkipsTotal,
+	activeGuardedTrees: result.activeGuardedTrees,
+	treeLevelAvg: result.treeLevelAvg,
+	treeLevelP95: result.treeLevelP95,
+	rootChildrenSum: result.rootChildrenSum,
+	rootChildrenMax: result.rootChildrenMax,
+	rootUploadPctMax: result.rootUploadPctMax,
+	maxReparentUpgradePerPeer: result.maxReparentUpgradePerPeer,
+	duplicates: result.duplicates,
+	dataOverheadFactor: result.dataOverheadFactor,
+	controlBpp: result.controlBpp,
+	trackerBpp: result.trackerBpp,
+	repairBpp: result.repairBpp,
+	network: result.network,
+	trees: result.trees.map(compactTreeResult),
+});
+
+const writeJsonSummary = async (
+	args: EvalArgs,
+	samples: SummarySample[],
+	aggregateFailures: Failure[],
+) => {
+	if (!args.jsonOut) return;
+	await mkdir(dirname(args.jsonOut), { recursive: true });
+	await writeFile(
+		args.jsonOut,
+		JSON.stringify(
+			{
+				kind: "fanout-tree-parent-upgrade-multi-eval",
+				generatedAt: new Date().toISOString(),
+				args,
+				aggregateFailures,
+				samples: samples.map((sample) => ({
+					scenario: sample.scenario,
+					seed: sample.seed,
+					viable: sample.failures.length === 0,
+					failures: sample.failures,
+					usefulPromotedTrees: sample.usefulPromotedTrees,
+					promotedBranchGainAvg: sample.promotedBranchGainAvg,
+					promotedTreeSecondBatchLatencyP95RegressionMax:
+						sample.promotedTreeSecondBatchLatencyP95RegressionMax,
+					promotedBranchSecondBatchLatencyP95RegressionMax:
+						sample.promotedBranchSecondBatchLatencyP95RegressionMax,
+					backgroundSecondBatchLatencyP95RegressionMax:
+						sample.backgroundSecondBatchLatencyP95RegressionMax,
+					baseline: compactResult(sample.baseline),
+					upgrade: compactResult(sample.upgrade),
+				})),
+			},
+			null,
+			2,
+		) + "\n",
+	);
+};
+
+const main = async () => {
+	const args = parseArgs(process.argv.slice(2));
+	const samples: SummarySample[] = [];
+	let failureCount = 0;
+	for (const scenario of args.scenarios) {
+		for (const seed of args.seeds) {
+			const baselineParams = resolveParams(scenario, seed, args, false);
+			const upgradeParams = resolveParams(scenario, seed, args, true);
+			let baseline: MultiWriterResult;
+			let upgrade: MultiWriterResult;
+			if (args.sameRunAB && isIdleScenario(scenario)) {
+				console.log(`\n[multi-same-run-a/b] scenario=${scenario} seed=${seed}`);
+				[baseline, upgrade] = await Promise.all([
+					runMultiWriterSim(baselineParams),
+					runMultiWriterSim(upgradeParams),
+				]);
+				console.log(`\n[multi-baseline] scenario=${scenario} seed=${seed}`);
+				console.log(formatResult(baseline));
+				console.log(
+					`\n[multi-parent-upgrade] scenario=${scenario} seed=${seed}`,
+				);
+			} else {
+				console.log(`\n[multi-baseline] scenario=${scenario} seed=${seed}`);
+				baseline = await runMultiWriterSim(baselineParams);
+				console.log(formatResult(baseline));
+
+				console.log(
+					`\n[multi-parent-upgrade] scenario=${scenario} seed=${seed}`,
+				);
+				upgrade = await runMultiWriterSim(upgradeParams);
+			}
+			console.log(formatResult(upgrade));
+
+			const evaluated = evaluateRun(scenario, baseline, upgrade, args);
+			printComparison(
+				scenario,
+				seed,
+				baseline,
+				upgrade,
+				evaluated.failures,
+				evaluated.usefulPromotedTrees,
+				evaluated.promotedBranchGainAvg,
+				evaluated.promotedTreeSecondBatchLatencyP95RegressionMax,
+				evaluated.promotedBranchSecondBatchLatencyP95RegressionMax,
+			);
+			failureCount += evaluated.failures.length;
+			samples.push({
+				scenario,
+				seed,
+				baseline,
+				upgrade,
+				failures: evaluated.failures,
+				usefulPromotedTrees: evaluated.usefulPromotedTrees,
+				promotedBranchGainAvg: evaluated.promotedBranchGainAvg,
+				promotedTreeSecondBatchLatencyP95RegressionMax:
+					evaluated.promotedTreeSecondBatchLatencyP95RegressionMax,
+				promotedBranchSecondBatchLatencyP95RegressionMax:
+					evaluated.promotedBranchSecondBatchLatencyP95RegressionMax,
+				backgroundSecondBatchLatencyP95RegressionMax:
+					evaluated.backgroundSecondBatchLatencyP95RegressionMax,
+			});
+		}
+	}
+	printSummary(samples);
+	const aggregateFailures = evaluateAggregate(samples);
+	printAggregateFailures(aggregateFailures);
+	await writeJsonSummary(args, samples, aggregateFailures);
+	failureCount += aggregateFailures.length;
+	if (args.strict && failureCount > 0) {
+		process.exit(2);
+	}
+};
+
+try {
+	await main();
+} catch (err: any) {
+	console.error(err?.stack || err?.message || String(err));
+	process.exit(1);
+}
