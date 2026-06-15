@@ -2435,10 +2435,21 @@ testSetups.forEach((setup) => {
 				const COUNT = 10;
 				await openFullReplicatorTriad(COUNT);
 
-				await db2.log.replicate(false);
+				try {
+					await db2.log.replicate(false);
 
-				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
-				await waitForResolved(() => expect(db2.log.log.length).equal(0));
+					await waitForResolved(() => expect(db3.log.log.length).equal(COUNT), {
+						timeout: 30_000,
+					});
+					await waitForPruneQuiesced(db2);
+					await waitForResolved(() => expect(db2.log.log.length).equal(0), {
+						timeout: 30_000,
+					});
+				} catch (error) {
+					await printShardingPruneDiagnostics("observer-unreplicate", db1, db2, db3);
+					await dbgLogs([db1.log, db2.log, db3.log]);
+					throw error;
+				}
 			});
 
 			it("drops observer entries when unreplicate rebalance debounce is delayed", async () => {
