@@ -3959,12 +3959,9 @@ export class SharedLog<
 		const hashArray = Array.isArray(hashes) ? hashes : [...hashes];
 		this._nativeSharedLogState?.removeEntriesKnownByPeer(hashArray, peer);
 		this._nativeBackbone?.removeEntriesKnownByPeer(hashArray, peer);
-		if (this._entryKnownPeers.size > 0) {
-			for (const hash of hashArray) {
-				const peers = this._entryKnownPeers.get(hash);
-				if (!peers) {
-					continue;
-				}
+		for (const hash of hashArray) {
+			const peers = this._entryKnownPeers.get(hash);
+			if (peers) {
 				peers.delete(peer);
 				if (peers.size === 0) {
 					this._entryKnownPeers.delete(hash);
