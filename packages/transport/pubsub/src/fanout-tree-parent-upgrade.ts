@@ -91,6 +91,7 @@ export type ParentUpgradeGateState = {
 	parentUpgradeBackoffUntil: number;
 	parentUpgradeLastAt: number;
 	lastParentDataAt: number;
+	lastParentUpgradeActivityAt?: number;
 };
 
 export type ParentUpgradeGateOptions = {
@@ -313,10 +314,12 @@ export const evaluateParentUpgradeGate = (
 	) {
 		return { run: false, reason: "cooldown" };
 	}
+	const lastParentUpgradeActivityAt =
+		state.lastParentUpgradeActivityAt ?? state.lastParentDataAt;
 	if (
 		options.quietMs > 0 &&
-		state.lastParentDataAt > 0 &&
-		options.now - state.lastParentDataAt < options.quietMs
+		lastParentUpgradeActivityAt > 0 &&
+		options.now - lastParentUpgradeActivityAt < options.quietMs
 	) {
 		return { run: false, reason: "quiet" };
 	}

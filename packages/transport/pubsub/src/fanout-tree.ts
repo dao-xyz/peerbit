@@ -948,6 +948,7 @@ type ParentUpgradeGraceState = {
 	previousLevel: number;
 	previousRouteFromRoot?: string[];
 	previousLastParentDataAt: number;
+	previousLastParentUpgradeActivityAt: number;
 	previousReceivedAnyParentData: boolean;
 	timer: ReturnType<typeof setTimeout>;
 	candidateFirstMessages: number;
@@ -1115,6 +1116,7 @@ type ChannelState = {
 	lastRepairSentAt: number;
 	parentRepairUnansweredStreak: number;
 	lastParentDataAt: number;
+	lastParentUpgradeActivityAt: number;
 	receivedAnyParentData: boolean;
 	parentDataLatencySamples: number;
 	parentDataLatencyEwmaMs: number;
@@ -2305,6 +2307,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			lastRepairSentAt: 0,
 			parentRepairUnansweredStreak: 0,
 			lastParentDataAt: 0,
+			lastParentUpgradeActivityAt: 0,
 			receivedAnyParentData: false,
 			parentDataLatencySamples: 0,
 			parentDataLatencyEwmaMs: 0,
@@ -2456,6 +2459,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			? [...grace.previousRouteFromRoot]
 			: undefined;
 		ch.lastParentDataAt = grace.previousLastParentDataAt;
+		ch.lastParentUpgradeActivityAt =
+			grace.previousLastParentUpgradeActivityAt;
 		ch.receivedAnyParentData = grace.previousReceivedAnyParentData;
 		this.resetParentDataLatency(ch);
 		this.touchPeerHint(ch, grace.previousParent);
@@ -2495,6 +2500,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				? [...options.previousRouteFromRoot]
 				: undefined,
 			previousLastParentDataAt: options.previousLastParentDataAt,
+			previousLastParentUpgradeActivityAt:
+				options.previousLastParentUpgradeActivityAt,
 			previousReceivedAnyParentData: options.previousReceivedAnyParentData,
 			timer,
 			candidateFirstMessages: options.candidateFirstMessages,
@@ -2517,6 +2524,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.routeFromRoot = undefined;
 		ch.routeByPeer.clear();
 		ch.lastParentDataAt = 0;
+		ch.lastParentUpgradeActivityAt = 0;
 		ch.receivedAnyParentData = false;
 		this.resetParentDataLatency(ch);
 		ch.pendingJoin.clear();
@@ -5513,10 +5521,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					case "repair":
 						return parentUpgrade.repairQuietMs;
 					case "quiet":
-						return ch.lastParentDataAt > 0
+						return ch.lastParentUpgradeActivityAt > 0
 							? Math.max(
 									0,
-									parentUpgrade.quietMs - (now - ch.lastParentDataAt),
+									parentUpgrade.quietMs -
+										(now - ch.lastParentUpgradeActivityAt),
 								)
 							: parentUpgrade.quietMs;
 					case "cooldown":
@@ -5636,6 +5645,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						ch.routeFromRoot = undefined;
 						ch.routeByPeer.clear();
 						ch.lastParentDataAt = 0;
+						ch.lastParentUpgradeActivityAt = 0;
 						ch.receivedAnyParentData = false;
 						ch.pendingJoin.clear();
 						ch.pendingParentProbe.clear();
@@ -5884,16 +5894,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					});
 				}
 
-				// Fallback: try a bounded set of already-connected peers. Skip the
-				// bootstrap/tracker peers: if they host the channel they are already
-				// candidates via the tracker reply, and probing them otherwise only
-				// burns budget.
+				// Fallback: try a bounded set of already-connected peers. Bootstrap
+				// peers are often just trackers, but they can also be the only
+				// connected channel host and may not list themselves in tracker
+				// replies. Keep them as low-priority candidates unless tracker state
+				// already represented them above.
 				const bootstrapPeerSet = new Set(bootstrapPeers);
 				let connectedFallbackAdded = 0;
 				const connectedFallbackMax = 64;
 				for (const h of this.peers.keys()) {
 					if (h === this.publicKeyHash) continue;
-					if (bootstrapPeerSet.has(h)) continue;
+					if (bootstrapPeerSet.has(h) && candidatesByHash.has(h)) continue;
 					upsertCandidate({
 						hash: h,
 						addrs: [],
@@ -7116,6 +7127,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				? [...ch.routeFromRoot]
 				: undefined;
 			const previousLastParentDataAt = ch.lastParentDataAt;
+			const previousLastParentUpgradeActivityAt =
+				ch.lastParentUpgradeActivityAt;
 			const previousReceivedAnyParentData = ch.receivedAnyParentData;
 			const shadowDualPathMs = parentUpgrade.shadow.dualPathMs;
 			const shadowDualPathMinMessages =
@@ -7222,6 +7235,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								currentShadow.liveLastDataAt > 0
 									? currentShadow.liveLastDataAt
 									: Date.now();
+							ch.lastParentUpgradeActivityAt = ch.lastParentDataAt;
 							ch.receivedAnyParentData = true;
 							this.resetParentDataLatency(ch);
 							this.touchPeerHint(ch, candidate.hash);
@@ -7232,6 +7246,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 									previousLevel,
 									previousRouteFromRoot,
 									previousLastParentDataAt,
+									previousLastParentUpgradeActivityAt,
 									previousReceivedAnyParentData,
 									candidateFirstMessages: 0,
 									previousFirstMessages: 0,
@@ -7265,6 +7280,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						ch.level = previousLevel;
 						ch.routeFromRoot = previousRouteFromRoot;
 						ch.lastParentDataAt = previousLastParentDataAt;
+						ch.lastParentUpgradeActivityAt =
+							previousLastParentUpgradeActivityAt;
 						ch.receivedAnyParentData = previousReceivedAnyParentData;
 					}
 					void this._sendControl(candidate.hash, encodeLeave(ch.id.key)).catch(
@@ -7307,6 +7324,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch.level = previousLevel;
 					ch.routeFromRoot = previousRouteFromRoot;
 					ch.lastParentDataAt = previousLastParentDataAt;
+					ch.lastParentUpgradeActivityAt =
+						previousLastParentUpgradeActivityAt;
 					ch.receivedAnyParentData = previousReceivedAnyParentData;
 				}
 				if (ch.parentShadow?.hash === candidate.hash) {
@@ -8328,10 +8347,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						return true;
 					}
 
+					const attachedAt = Date.now();
 					ch.parent = fromHash;
 					ch.level = parentLevel + 1;
 					ch.joinedAtLeastOnce = true;
-					ch.lastParentDataAt = Date.now();
+					ch.lastParentDataAt = attachedAt;
+					ch.lastParentUpgradeActivityAt = attachedAt;
 					ch.parentRepairUnansweredStreak = 0;
 					this.resetParentDataLatency(ch);
 					// Treat JOIN_ACCEPT as parent liveness for stale re-parenting:
@@ -8754,6 +8775,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				ch.routeFromRoot = undefined;
 				ch.routeByPeer.clear();
 				ch.lastParentDataAt = 0;
+				ch.lastParentUpgradeActivityAt = 0;
 				ch.receivedAnyParentData = false;
 				ch.pendingJoin.clear();
 				ch.pendingParentProbe.clear();
@@ -8852,7 +8874,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			const seq = readU32BE(id, 4);
 			if (ch.parent && fromHash === ch.parent) {
-				ch.lastParentDataAt = Date.now();
+				const receivedAt = Date.now();
+				ch.lastParentDataAt = receivedAt;
+				ch.lastParentUpgradeActivityAt = receivedAt;
 				ch.receivedAnyParentData = true;
 				ch.parentRepairUnansweredStreak = 0;
 			}
