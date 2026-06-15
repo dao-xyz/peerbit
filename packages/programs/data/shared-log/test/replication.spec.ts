@@ -2783,6 +2783,108 @@ testSetups.forEach((setup) => {
 							},
 						);
 
+						it("control per commmit put before join uses receipts instead of known-peer hints for authoritative repair", async () => {
+							const entryCount = 12;
+							let dispatchStub: sinon.SinonStub | undefined;
+							let pushStub: sinon.SinonStub | undefined;
+							let sendNowStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									beforeOther: async () => {
+										const value = "hello";
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add(value, {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const originalDispatch = (db1.log as any).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [_target, _entries, options] = args as [string, Map<string, any>, { mode?: string }];
+												if (
+													options?.mode === "join-warmup" ||
+													options?.mode === "join-authoritative"
+												) {
+													return;
+												}
+												return originalDispatch(...args);
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+								dispatchStub?.restore();
+								dispatchStub = undefined;
+
+								const target =
+									session.peers[1].identity.publicKey.hashcode();
+								const log = db1.log as any;
+								const entries = new Map(
+									(await db1.log.log.toArray()).map((entry) => [
+										entry.hash,
+										entry,
+									]),
+								);
+								expect(entries.size).equal(entryCount);
+
+								// A local known-peer hint is only an optimization. Authoritative
+								// join repair is receipt-driven and must still send until the target
+								// confirms the hashes.
+								log.markEntriesKnownByPeer(entries.keys(), target);
+
+								const pushed = new Set<string>();
+								pushStub = sinon
+									.stub(log, "pushRepairEntries")
+									.callsFake(async (...args: any[]) => {
+										const [sentTarget, sentEntries] = args as [
+											string,
+											Map<string, any>,
+										];
+										if (sentTarget !== target) {
+											return;
+										}
+										for (const hash of sentEntries.keys()) {
+											pushed.add(hash);
+										}
+									});
+								await log.sendMaybeMissingEntriesNow(target, entries, {
+									bypassKnownPeerHints: true,
+									bypassRecentDedupe: true,
+									mode: "join-authoritative",
+									transport: "simple",
+								});
+								expect(pushed.size).equal(entryCount);
+								pushStub.restore();
+								pushStub = undefined;
+
+								const frontier = log._repairFrontierByMode.get(
+									"join-authoritative",
+								);
+								frontier.delete(target);
+								sendNowStub = sinon
+									.stub(log, "sendMaybeMissingEntriesNow")
+									.callsFake(() => Promise.resolve());
+								log.scheduleRepairSweep({
+									mode: "join-authoritative",
+									peers: new Set([target]),
+								});
+
+								await waitForResolved(async () => {
+									expect(frontier.get(target)?.size ?? 0).equal(entryCount);
+								}, commitReplicationWait);
+							} finally {
+								sendNowStub?.restore();
+								pushStub?.restore();
+								dispatchStub?.restore();
+							}
+						});
+
 						it("control per commmit put before join keeps the full authoritative repair frontier across sweep flushes", async () => {
 							const entryCount = 40;
 							const repairSweepTargetBufferSize = 8;

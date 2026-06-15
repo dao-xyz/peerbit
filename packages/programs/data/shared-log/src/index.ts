@@ -620,6 +620,11 @@ const createRepairActiveTargetsByMode = () =>
 		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set()]),
 	);
 
+const createRepairFrontierBypassKnownPeersByMode = () =>
+	new Map<RepairDispatchMode, Set<string>>(
+		REPAIR_DISPATCH_MODES.map((mode) => [mode, new Set()]),
+	);
+
 const getRepairRetrySchedule = (mode: RepairDispatchMode) => {
 	switch (mode) {
 		case "join-warmup":
@@ -906,6 +911,10 @@ export class SharedLog<
 		Map<string, Map<string, EntryReplicated<R>>>
 	>;
 	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
+	private _repairFrontierBypassKnownPeersByMode!: Map<
+		RepairDispatchMode,
+		Set<string>
+	>;
 	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
 	private _entryKnownPeers!: Map<string, Set<string>>;
 	private _entryKnownPeerObservedAt!: Map<string, Map<string, number>>;
@@ -2859,6 +2868,17 @@ export class SharedLog<
 		return mode !== "join-warmup";
 	}
 
+	private isReceiptDrivenRepairMode(mode: RepairDispatchMode) {
+		return mode === "join-authoritative" || mode === "churn";
+	}
+
+	private shouldBypassKnownPeerHints(
+		mode: RepairDispatchMode,
+		bypassKnownPeerHints?: boolean,
+	) {
+		return mode === "churn" || bypassKnownPeerHints === true;
+	}
+
 	private async sleepTracked(delayMs: number) {
 		if (delayMs <= 0) {
 			return;
@@ -2877,6 +2897,7 @@ export class SharedLog<
 		mode: RepairDispatchMode,
 		target: string,
 		entries: Map<string, EntryReplicated<R>>,
+		options?: { bypassKnownPeerHints?: boolean },
 	) {
 		let targets = this._repairFrontierByMode.get(mode);
 		if (!targets) {
@@ -2890,6 +2911,9 @@ export class SharedLog<
 		}
 		for (const [hash, entry] of entries) {
 			pending.set(hash, entry);
+		}
+		if (options?.bypassKnownPeerHints === true) {
+			this._repairFrontierBypassKnownPeersByMode.get(mode)?.add(target);
 		}
 	}
 
@@ -2908,6 +2932,7 @@ export class SharedLog<
 			}
 			if (pending.size === 0) {
 				this._repairFrontierByMode.get(mode)?.delete(target);
+				this._repairFrontierBypassKnownPeersByMode.get(mode)?.delete(target);
 			}
 		}
 	}
@@ -2947,6 +2972,7 @@ export class SharedLog<
 		for (const mode of REPAIR_DISPATCH_MODES) {
 			this._repairFrontierByMode.get(mode)?.delete(target);
 			this._repairFrontierActiveTargetsByMode.get(mode)?.delete(target);
+			this._repairFrontierBypassKnownPeersByMode.get(mode)?.delete(target);
 		}
 	}
 
@@ -3031,6 +3057,7 @@ export class SharedLog<
 			mode: RepairDispatchMode;
 			transport: RepairTransportMode;
 			bypassRecentDedupe?: boolean;
+			bypassKnownPeerHints?: boolean;
 		},
 	) {
 		if (entries.size === 0) {
@@ -3079,6 +3106,10 @@ export class SharedLog<
 		} else {
 			bucket.ratelessFirstPasses += 1;
 		}
+		const bypassKnownPeerHints = this.shouldBypassKnownPeerHints(
+			options.mode,
+			options.bypassKnownPeerHints,
+		);
 
 		await Promise.resolve(
 			this.sendRepairEntriesWithTransport(
@@ -3086,8 +3117,8 @@ export class SharedLog<
 				filteredEntries,
 				options.transport,
 				{
-					bypassKnownPeers: options.mode === "churn",
-					bypassRecentKnownPeers: options.mode === "churn",
+					bypassKnownPeers: bypassKnownPeerHints,
+					bypassRecentKnownPeers: bypassKnownPeerHints,
 				},
 			),
 		).catch((error: any) => logger.error(error));
@@ -3122,6 +3153,9 @@ export class SharedLog<
 					}
 					const pending = this._repairFrontierByMode.get(mode)?.get(target);
 					if (!pending || pending.size === 0) {
+						this._repairFrontierBypassKnownPeersByMode
+							.get(mode)
+							?.delete(target);
 						return;
 					}
 
@@ -3139,6 +3173,10 @@ export class SharedLog<
 						mode,
 						transport: getRepairTransportForAttempt(mode, attemptIndex),
 						bypassRecentDedupe: true,
+						bypassKnownPeerHints:
+							this._repairFrontierBypassKnownPeersByMode
+								.get(mode)
+								?.has(target) === true,
 					});
 
 					const remaining = this._repairFrontierByMode.get(mode)?.get(target);
@@ -3216,6 +3254,7 @@ export class SharedLog<
 		options: {
 			mode: RepairDispatchMode;
 			bypassRecentDedupe?: boolean;
+			bypassKnownPeerHints?: boolean;
 			retryScheduleMs?: number[];
 		},
 	) {
@@ -3224,7 +3263,12 @@ export class SharedLog<
 		}
 
 		if (this.isFrontierTrackedRepairMode(options.mode)) {
-			this.queueRepairFrontierEntries(options.mode, target, entries);
+			this.queueRepairFrontierEntries(options.mode, target, entries, {
+				bypassKnownPeerHints: this.shouldBypassKnownPeerHints(
+					options.mode,
+					options.bypassKnownPeerHints,
+				),
+			});
 			this.ensureRepairFrontierRunner(
 				options.mode,
 				target,
@@ -3290,6 +3334,10 @@ export class SharedLog<
 			} else {
 				bucket.ratelessFirstPasses += 1;
 			}
+			const bypassKnownPeerHints = this.shouldBypassKnownPeerHints(
+				options.mode,
+				options.bypassKnownPeerHints,
+			);
 
 			return Promise.resolve(
 				this.sendRepairEntriesWithTransport(
@@ -3297,8 +3345,8 @@ export class SharedLog<
 					filteredEntries,
 					transport,
 					{
-						bypassKnownPeers: options.mode === "churn",
-						bypassRecentKnownPeers: options.mode === "churn",
+						bypassKnownPeers: bypassKnownPeerHints,
+						bypassRecentKnownPeers: bypassKnownPeerHints,
 					},
 				),
 			).catch((error: any) => logger.error(error));
@@ -3474,6 +3522,7 @@ export class SharedLog<
 					}
 					this.dispatchMaybeMissingEntries(target, entries, {
 						bypassRecentDedupe: true,
+						bypassKnownPeerHints: this.isReceiptDrivenRepairMode(mode),
 						mode,
 					});
 					targets?.delete(target);
@@ -3537,9 +3586,14 @@ export class SharedLog<
 								if (!modePeers || modePeers.size === 0) {
 									continue;
 								}
+								const bypassKnownPeerHints =
+									this.isReceiptDrivenRepairMode(mode);
 								const optimisticPeers = optimisticGidPeersByMode.get(mode)?.get(gid);
 								for (const peer of modePeers) {
-									if (this.isEntryKnownByPeer(entryReplicated.hash, peer)) {
+									if (
+										!bypassKnownPeerHints &&
+										this.isEntryKnownByPeer(entryReplicated.hash, peer)
+									) {
 										continue;
 									}
 									const wasOptimisticallyAssigned =
@@ -4164,6 +4218,8 @@ export class SharedLog<
 			Map<string, Map<string, EntryReplicated<R>>>
 		>;
 		this._repairFrontierActiveTargetsByMode = createRepairActiveTargetsByMode();
+		this._repairFrontierBypassKnownPeersByMode =
+			createRepairFrontierBypassKnownPeersByMode();
 		this._repairSweepOptimisticGidPeersPending = new Map();
 		this._entryKnownPeers = new Map();
 		this._entryKnownPeerObservedAt = new Map();
@@ -5288,6 +5344,9 @@ export class SharedLog<
 			targets.clear();
 		}
 		for (const targets of this._repairFrontierActiveTargetsByMode.values()) {
+			targets.clear();
+		}
+		for (const targets of this._repairFrontierBypassKnownPeersByMode.values()) {
 			targets.clear();
 		}
 		if (this._appendBackfillTimer) {
@@ -7762,6 +7821,9 @@ export class SharedLog<
 							: "join-authoritative";
 					this.dispatchMaybeMissingEntries(target, entries, {
 						bypassRecentDedupe: isWarmupTarget || forceFreshDelivery,
+						bypassKnownPeerHints:
+							forceFreshDelivery ||
+							(mode === "join-authoritative" && addedPeers.has(target)),
 						mode,
 						retryScheduleMs:
 							mode === "join-warmup"
