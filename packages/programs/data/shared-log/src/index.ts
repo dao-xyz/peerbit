@@ -2153,6 +2153,13 @@ export class SharedLog<
 			this._isReplicating = false;
 			this._isAdaptiveReplicating = false;
 			await this.removeReplicator(this.node.identity.publicKey);
+			try {
+				await this.replicationChangeDebounceFn.flush?.();
+			} catch (error: any) {
+				if (!isNotStartedError(error)) {
+					throw error;
+				}
+			}
 			await this.pruneIndexedEntriesNoLongerLed({
 				useDefaultRoleAge: true,
 			});
@@ -7662,7 +7669,7 @@ export class SharedLog<
 		// On removed ranges (peer leaves / shrink), gid-level history can hide
 		// per-entry gaps. Force a fresh delivery pass for reassigned entries.
 		const forceFreshDelivery = changes.some(
-			(change) => change.type === "removed" && change.range.hash !== selfHash,
+			(change) => change.type === "removed",
 		);
 		const gidPeersHistorySnapshot = new Map<string, Set<string> | undefined>();
 		const dedupeCutoff = Date.now() - RECENT_REPAIR_DISPATCH_TTL_MS;
