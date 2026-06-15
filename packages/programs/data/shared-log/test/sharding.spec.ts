@@ -1147,9 +1147,9 @@ testSetups.forEach((setup) => {
 					db3.log.rebalanceAll({ clearCache: true }),
 				]);
 				await waitForParticipationToSettle(db1, db2, db3);
-				// The contract here is the settled replica floor and bounded split after the join,
-				// not that every prune/repair timer has gone fully idle. Waiting on full internal
-				// quiescence was the source of CI-only 5 minute hangs on slower runners.
+				await waitForDistributionQuiesced(db1, db2, db3);
+				// The final bound is meaningful after the ownership, checked-prune, and
+				// repair work kicked off by the join has drained.
 				await waitForResolved(
 					async () => {
 						await checkBounded(
@@ -2445,6 +2445,10 @@ testSetups.forEach((setup) => {
 				const COUNT = 10;
 				await openFullReplicatorTriad(COUNT);
 
+				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT), {
+					timeout: 30_000,
+				});
+				await (db2.log as any).replicationChangeDebounceFn.flush?.();
 				const replicationChangeAdd = sinon
 					.stub((db2.log as any).replicationChangeDebounceFn, "add")
 					.callsFake(() => undefined);
@@ -2453,10 +2457,59 @@ testSetups.forEach((setup) => {
 					await db2.log.replicate(false);
 					expect(replicationChangeAdd.callCount).to.be.greaterThan(0);
 
-					await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
-					await waitForResolved(() => expect(db2.log.log.length).equal(0));
+					await waitForResolved(() => expect(db3.log.log.length).equal(COUNT), {
+						timeout: 30_000,
+					});
+					await waitForPruneQuiesced(db2);
+					await waitForResolved(() => expect(db2.log.log.length).equal(0), {
+						timeout: 30_000,
+					});
+				} catch (error) {
+					await printShardingPruneDiagnostics(
+						"observer-delayed-unreplicate",
+						db1,
+						db2,
+						db3,
+					);
+					await dbgLogs([db1.log, db2.log, db3.log]);
+					throw error;
 				} finally {
 					replicationChangeAdd.restore();
+				}
+			});
+
+			it("retries observer handoff when initial unreplicate delivery is dropped", async () => {
+				const COUNT = 10;
+				await openFullReplicatorTriad(COUNT);
+
+				await (db2.log as any).replicationChangeDebounceFn.flush?.();
+				const db3Hash = db3.log.node.identity.publicKey.hashcode();
+				const log = db2.log as any;
+				const originalDispatch = log.dispatchMaybeMissingEntries.bind(log);
+				let droppedInitialHandoff = false;
+				const dispatchMaybeMissingEntries = sinon
+					.stub(log, "dispatchMaybeMissingEntries")
+					.callsFake((...args: unknown[]) => {
+						const [target, entries, options] = args as [string, any, any];
+						if (!droppedInitialHandoff && target === db3Hash) {
+							droppedInitialHandoff = true;
+							return;
+						}
+						return originalDispatch(target, entries, options);
+					});
+
+				try {
+					await db2.log.replicate(false);
+					expect(droppedInitialHandoff).to.be.true;
+
+					await waitForResolved(() => expect(db3.log.log.length).equal(COUNT), {
+						timeout: 30_000,
+					});
+					await waitForResolved(() => expect(db2.log.log.length).equal(0), {
+						timeout: 30_000,
+					});
+				} finally {
+					dispatchMaybeMissingEntries.restore();
 				}
 			});
 
