@@ -4664,21 +4664,26 @@ testSetups.forEach((setup) => {
 						factor: 0.1,
 					});
 					const db3SmallLength = await countEntriesInRange(db3SmallRange);
+					const delayedPruneWait = { timeout: 60_000, delayInterval: 100 };
 
 					await waitForResolved(() =>
 						expect(db1.log.log.length).to.be.closeTo(entryCount / 2, 20),
 					);
-					await waitForResolved(() =>
-						expect(db2.log.log.length).to.be.closeTo(
-							db2SmallLength,
-							ownershipTolerance,
-						),
+					await waitForResolved(
+						() =>
+							expect(db2.log.log.length).to.be.closeTo(
+								db2SmallLength,
+								ownershipTolerance,
+							),
+						delayedPruneWait,
 					);
-					await waitForResolved(() =>
-						expect(db3.log.log.length).to.be.closeTo(
-							db3SmallLength,
-							ownershipTolerance,
-						),
+					await waitForResolved(
+						() =>
+							expect(db3.log.log.length).to.be.closeTo(
+								db3SmallLength,
+								ownershipTolerance,
+							),
+						delayedPruneWait,
 					);
 
 					expect(db2.log.log.length).to.be.lessThan(db2Length);

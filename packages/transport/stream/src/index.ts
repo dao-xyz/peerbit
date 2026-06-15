@@ -817,6 +817,36 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this._pruneInboundInactive();
 	}
 
+	public detachInboundStream(
+		record: InboundStreamRecord,
+		reason: Error = new AbortError("Inbound stream ended"),
+		options?: { closeRaw?: boolean },
+	) {
+		const index = this.inboundStreams.indexOf(record);
+		if (index === -1) return false;
+		this.inboundStreams.splice(index, 1);
+		try {
+			record.abortController.abort(reason);
+		} catch {}
+		if (options?.closeRaw !== false) {
+			try {
+				record.raw.abort?.(reason);
+			} catch {}
+			void Promise.resolve(record.raw.close?.()).catch(() => {});
+		}
+		if (this.rawInboundStream === record.raw) {
+			const next = this.inboundStreams[0];
+			this.rawInboundStream = next?.raw;
+			this.inboundStream = next?.iterable;
+		}
+		if (this.inboundStreams.length <= 1 && this._inboundPruneTimer) {
+			clearTimeout(this._inboundPruneTimer);
+			this._inboundPruneTimer = undefined;
+		}
+		this.dispatchEvent(new CustomEvent("stream:inbound"));
+		return true;
+	}
+
 	/**
 	 * Attach a raw outbound stream and setup a write stream
 	 */
@@ -2108,6 +2138,7 @@ export abstract class DirectStream<
 		record: InboundStreamRecord,
 		peerStreams: PeerStreams,
 	) {
+		let failed = false;
 		try {
 			for await (const data of record.iterable) {
 				const now = Date.now();
@@ -2117,6 +2148,7 @@ export abstract class DirectStream<
 				this.processRpc(peerId, peerStreams, data).catch((e) => logError(e));
 			}
 		} catch (err: any) {
+			failed = true;
 			if (err?.code === "ERR_STREAM_RESET") {
 				// only send stream reset messages to info
 				logger(
@@ -2134,6 +2166,15 @@ export abstract class DirectStream<
 				);
 			}
 			this.onPeerDisconnected(peerStreams.peerId);
+		} finally {
+			const removed = peerStreams.detachInboundStream(
+				record,
+				new AbortError("Inbound stream reader ended"),
+				{ closeRaw: failed },
+			);
+			if (removed && !failed && !peerStreams.isReadable) {
+				void this.onPeerDisconnected(peerStreams.peerId).catch(logError);
+			}
 		}
 	}
 
