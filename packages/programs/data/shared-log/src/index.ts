@@ -8048,20 +8048,29 @@ export class SharedLog<
 				flushUncheckedDeliverTarget(target);
 			}
 
-			if (
-				this._isAdaptiveReplicating &&
-				(hasSelfRangeRemoval ||
+			const localSegmentsAfterChange =
+				hasSelfRangeRemoval && !this._isAdaptiveReplicating
+					? await this.getMyReplicationSegments()
+					: undefined;
+			const hasFixedSelfRangeRemovalToZero =
+				localSegmentsAfterChange != null &&
+				localSegmentsAfterChange.length > 0 &&
+				localSegmentsAfterChange.every((segment) => segment.widthNormalized === 0);
+			const shouldRunLocalPruneScan =
+				hasFixedSelfRangeRemovalToZero ||
+				(this._isAdaptiveReplicating &&
 					changes.some(
 						(change) =>
 							change.type === "added" ||
 							change.type === "removed" ||
 							change.type === "replaced",
-					))
-			) {
-				// Adaptive range changes can make already-indexed local heads prunable
-				// even when the incremental rebalance scan misses them under churn or
-				// timing pressure. Re-scan after repair dispatches are flushed using the
-				// mature-role view, which matches the bounded pruning contract.
+					));
+
+			if (shouldRunLocalPruneScan) {
+				// Adaptive range changes and fixed zero-width updates can make already-indexed
+				// local heads prunable even when the incremental rebalance scan misses them
+				// under churn or timing pressure. Re-scan after repair dispatches are flushed
+				// using the mature-role view, which matches the bounded pruning contract.
 				await this.pruneIndexedEntriesNoLongerLed({
 					useDefaultRoleAge: true,
 				});

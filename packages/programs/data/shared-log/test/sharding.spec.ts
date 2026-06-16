@@ -2582,8 +2582,14 @@ testSetups.forEach((setup) => {
 					}),
 				]);
 				await db2.log.replicate({ factor: 0 });
-				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT));
-				await waitForResolved(() => expect(db2.log.log.length).equal(0)); // min replicas is set to 2 so, if there are 2 dbs still replicating, this nod should not store any data
+				await waitForResolved(() => expect(db3.log.log.length).equal(COUNT), {
+					timeout: 30_000,
+				});
+				await waitForPruneQuiesced(db2);
+				// Min replicas is 2, so two remaining replicators should be enough.
+				await waitForResolved(() => expect(db2.log.log.length).equal(0), {
+					timeout: 30_000,
+				});
 			});
 
 			describe("distribution", () => {
