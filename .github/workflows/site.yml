@@ -65,7 +65,22 @@ jobs:
           UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
           UPDATES_SYNC_SECRET: ${{ secrets.SUPABASE_UPDATES_SYNC_SECRET }}
         run: |
-          curl -sS -X POST "$UPDATES_SYNC_URL" \
+          if ! sync_host="$(node -e 'try { console.log(new URL(process.env.UPDATES_SYNC_URL).hostname) } catch { process.exit(1) }')"; then
+            echo "::warning::Skipping updates email sync because SUPABASE_UPDATES_SYNC_URL is not a valid URL."
+            exit 0
+          fi
+
+          if [ -z "$sync_host" ]; then
+            echo "::warning::Skipping updates email sync because SUPABASE_UPDATES_SYNC_URL is not a valid URL."
+            exit 0
+          fi
+
+          if ! getent hosts "$sync_host" > /dev/null; then
+            echo "::warning::Skipping updates email sync because $sync_host does not resolve."
+            exit 0
+          fi
+
+          curl --fail-with-body -sS --retry 2 --retry-delay 2 --retry-all-errors --connect-timeout 10 --max-time 60 -X POST "$UPDATES_SYNC_URL" \
             -H "Authorization: Bearer $UPDATES_SYNC_SECRET" \
             -H "Content-Type: application/json" \
             --data-binary @apps/peerbit-org/dist/content/docs/updates/index.json
