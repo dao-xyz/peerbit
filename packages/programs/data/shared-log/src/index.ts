@@ -37,6 +37,7 @@ import {
 	type Ed25519VerifyBatchInput,
 	Entry,
 	EntryType,
+	LamportClock,
 	Log,
 	type LogEvents,
 	type LogProperties,
@@ -46,6 +47,7 @@ import {
 	ShallowEntry,
 	ShallowMeta,
 	type ShallowOrFullEntry,
+	Timestamp,
 	verifyEd25519Batch,
 	verifyEntryV0Ed25519BatchFromEntries,
 } from "@peerbit/log";
@@ -5187,7 +5189,10 @@ export class SharedLog<
 		useDefaultRoleAge?: boolean;
 	}) {
 		const selfHash = this.node.identity.publicKey.hashcode();
-		const heads = await this.log.getHeads(true).all();
+		const nativeHeads = this.log.entryIndex.getHeadsForAppend();
+		const heads: ShallowOrFullEntry<T>[] = nativeHeads
+			? await this.pruneHeadEntriesFromNativeHeadFacts(nativeHeads)
+			: await this.log.getHeads(true).all();
 		let enqueuedPrune = false;
 
 		for (const head of heads) {
@@ -5225,6 +5230,56 @@ export class SharedLog<
 		if (enqueuedPrune && !this.closed) {
 			await this.pruneDebouncedFn.flush();
 		}
+	}
+
+	private async pruneHeadEntriesFromNativeHeadFacts(
+		heads: Array<{
+			hash: string;
+			meta: { gid: string; clock: { timestamp: Timestamp } };
+		}>,
+	): Promise<ShallowEntry[]> {
+		if (heads.length === 0) {
+			return [];
+		}
+		const headDataRows = (await this.log.entryIndex
+			.getHeads(undefined, {
+				type: "shape",
+				shape: { hash: true, meta: { data: true } },
+			})
+			.all()) as Array<{ hash: string; meta: { data?: Uint8Array } }>;
+		const dataByHash = new Map(
+			headDataRows
+				.filter((entry) => entry.meta.data)
+				.map((entry) => [entry.hash, entry.meta.data!]),
+		);
+		const prunableHeads: ShallowEntry[] = [];
+		for (const head of heads) {
+			const data = dataByHash.get(head.hash);
+			if (!data) {
+				continue;
+			}
+			prunableHeads.push(
+				new ShallowEntry({
+					hash: head.hash,
+					head: true,
+					payloadSize: 0,
+					meta: new ShallowMeta({
+						gid: head.meta.gid,
+						clock: new LamportClock({
+							id: this.node.identity.publicKey.bytes,
+							timestamp: new Timestamp({
+								wallTime: head.meta.clock.timestamp.wallTime,
+								logical: head.meta.clock.timestamp.logical,
+							}),
+						}),
+						data,
+						next: [],
+						type: EntryType.APPEND,
+					}),
+				}),
+			);
+		}
+		return prunableHeads;
 	}
 
 	private checkedPruneLeadersToMap(
@@ -15917,13 +15972,13 @@ export class SharedLog<
 				const optimisticPeers = properties.optimisticGidPeersByMode
 					.get(mode)
 					?.get(entry.gid);
-				const broadRepairCandidatePlanning =
-					this.usesBroadRepairCandidatePlanning(mode);
-				for (const peer of modePeers) {
-					if (
-						!broadRepairCandidatePlanning &&
-						this.isEntryKnownByPeer(entry.hash, peer)
-					) {
+					const broadRepairCandidatePlanning =
+						this.usesBroadRepairCandidatePlanning(mode);
+					for (const peer of modePeers) {
+						if (
+							!broadRepairCandidatePlanning &&
+							this.isEntryKnownByPeer(entry.hash, peer)
+						) {
 						continue;
 					}
 					const wasOptimisticallyAssigned = optimisticPeers?.has(peer) === true;

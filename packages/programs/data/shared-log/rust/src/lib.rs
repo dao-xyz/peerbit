@@ -1323,7 +1323,8 @@ fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, JsValu
         for (mode_index, mode) in batch.pending_modes.iter().enumerate() {
             let optimistic_peers = &batch.optimistic_peers_by_mode[mode_index][i];
             for peer in &batch.pending_peers_by_mode[mode_index] {
-                if contains_string(known_entry_peers, peer) {
+                if !is_receipt_driven_repair_mode(mode) && contains_string(known_entry_peers, peer)
+                {
                     continue;
                 }
                 let is_current_leader = contains_string(current_leaders, peer);
@@ -1355,6 +1356,10 @@ fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, JsValu
         out.push(&row);
     }
     Ok(out)
+}
+
+fn is_receipt_driven_repair_mode(mode: &str) -> bool {
+    mode == "join-authoritative" || mode == "churn"
 }
 
 #[wasm_bindgen]
