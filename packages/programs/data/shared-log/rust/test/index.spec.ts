@@ -931,7 +931,7 @@ describe("native shared-log range planner", () => {
 			["join-warmup", new Map([["peer-a", ["entry-fresh"]]])],
 			[
 				"join-authoritative",
-				new Map([["peer-a", ["entry-gid", "entry-fresh"]]]),
+				new Map([["peer-a", ["entry-known", "entry-gid", "entry-fresh"]]]),
 			],
 		]);
 
