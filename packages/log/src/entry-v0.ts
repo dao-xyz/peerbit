@@ -40,6 +40,7 @@ import {
 import type { SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 import { Payload } from "./payload.js";
+import { canUseOptionalNativeModuleImports } from "./runtime.js";
 import { equals } from "./utils.js";
 
 const log = baseLogger.newScope("entry-v0");
@@ -310,9 +311,15 @@ const loadNativeEntryV0Encoder = ():
 	if (nativeEntryV0EncoderLoaded) {
 		return nativeEntryV0Encoder;
 	}
+	if (!canUseOptionalNativeModuleImports()) {
+		nativeEntryV0EncoderLoaded = true;
+		return undefined;
+	}
 	if (!nativeEntryV0EncoderPromise) {
 		try {
-			nativeEntryV0EncoderPromise = import(["@peerbit", "log-rust"].join("/"))
+			nativeEntryV0EncoderPromise = import(
+				/* @vite-ignore */ ["@peerbit", "log-rust"].join("/")
+			)
 				.then((mod) => {
 					nativeEntryV0Encoder = nativeEntryV0EncoderFromModule(mod);
 					nativeEntryV0EncoderLoaded = true;

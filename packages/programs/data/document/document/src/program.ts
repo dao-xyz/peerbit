@@ -3741,12 +3741,19 @@ export class Documents<
 			);
 		}
 		return planDocumentContext(contextInput).then((plannedContext) =>
-			this.createDocumentAppendCommitFactsWithContext(
-				inputWithExisting,
-				appended,
-				plannedContext,
-				nativeBackboneDocumentIndex,
-			),
+			plannedContext
+				? this.createDocumentAppendCommitFactsWithContext(
+						inputWithExisting,
+						appended,
+						plannedContext,
+						nativeBackboneDocumentIndex,
+					)
+				: this.createDocumentAppendCommitFactsWithLazyContext(
+						inputWithExisting,
+						appended,
+						contextInput,
+						nativeBackboneDocumentIndex,
+					),
 		);
 	}
 
@@ -3933,7 +3940,6 @@ export class Documents<
 			tryPlanDocumentContextBatch(contextInputs) ??
 			(await planDocumentContextBatch(contextInputs));
 		return rows.map((row, index) => {
-			const contextPlan = contextPlans[index]!;
 			const append = row.appended.appendCommit;
 			const nativePreviousContext =
 				append.documentPreviousContext == null
@@ -3954,8 +3960,17 @@ export class Documents<
 					? {
 							...row.input,
 							existing: nativePreviousIndexedContext,
-						}
+					}
 					: row.input;
+			const contextPlan = contextPlans?.[index];
+			if (!contextPlan) {
+				return this.createDocumentAppendCommitFactsWithLazyContext(
+					input,
+					row.appended,
+					contextInputs[index]!,
+					input.nativeBackboneDocumentIndex,
+				);
+			}
 			if (input.nativeBackboneDocumentIndex) {
 				let context: Context | undefined;
 				return this.createNativeDocumentAppendTransaction(

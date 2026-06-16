@@ -72,9 +72,31 @@ type DocumentRustModule = {
 let documentRustPromise: Promise<DocumentRustModule> | undefined;
 let documentRustModule: DocumentRustModule | undefined;
 
-const loadDocumentRust = async (): Promise<DocumentRustModule> => {
+const canUseOptionalDocumentNativeImports = (): boolean => {
+	const scope = globalThis as {
+		ServiceWorkerGlobalScope?: unknown;
+		clients?: unknown;
+		registration?: unknown;
+		skipWaiting?: unknown;
+	};
+	const serviceWorkerGlobalScope = scope.ServiceWorkerGlobalScope;
+	return !(
+		(typeof serviceWorkerGlobalScope === "function" &&
+			globalThis instanceof serviceWorkerGlobalScope) ||
+		(!!scope.clients &&
+			!!scope.registration &&
+			typeof scope.skipWaiting === "function")
+	);
+};
+
+const loadDocumentRust = async (): Promise<DocumentRustModule | undefined> => {
+	if (!canUseOptionalDocumentNativeImports()) {
+		return undefined;
+	}
 	if (!documentRustPromise) {
-		documentRustPromise = import("@peerbit/document-rust").then((module) => {
+		documentRustPromise = import(
+			/* @vite-ignore */ "@peerbit/document-rust",
+		).then((module) => {
 			documentRustModule = module as DocumentRustModule;
 			return documentRustModule;
 		});
@@ -84,6 +106,11 @@ const loadDocumentRust = async (): Promise<DocumentRustModule> => {
 
 export const initializeDocumentRust = async (): Promise<void> => {
 	const module = await loadDocumentRust();
+	if (!module) {
+		throw new Error(
+			"Document native module is unavailable in service worker contexts",
+		);
+	}
 	await module.initializeDocumentRust();
 };
 
@@ -99,13 +126,13 @@ export const tryPlanDocumentContextBatch = (
 
 export const planDocumentContext = async (
 	input: DocumentCommitContextInput,
-): Promise<DocumentCommitContextPlan> =>
-	(await loadDocumentRust()).planDocumentContext(input);
+): Promise<DocumentCommitContextPlan | undefined> =>
+	(await loadDocumentRust())?.planDocumentContext(input);
 
 export const planDocumentContextBatch = async (
 	inputs: DocumentCommitContextInput[],
-): Promise<DocumentCommitContextPlan[]> =>
-	(await loadDocumentRust()).planDocumentContextBatch(inputs);
+): Promise<DocumentCommitContextPlan[] | undefined> =>
+	(await loadDocumentRust())?.planDocumentContextBatch(inputs);
 
 export const tryProjectDocumentIndexSimple = (
 	encodedDocument: Uint8Array,
@@ -122,4 +149,4 @@ export const extractDocumentFieldSimple = async (
 	encodedDocument: Uint8Array,
 	plan: SimpleDocumentFieldExtractionPlan,
 ): Promise<string | number | bigint | Uint8Array | undefined> =>
-	(await loadDocumentRust()).extractDocumentFieldSimple(encodedDocument, plan);
+	(await loadDocumentRust())?.extractDocumentFieldSimple(encodedDocument, plan);

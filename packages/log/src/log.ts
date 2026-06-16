@@ -50,6 +50,7 @@ import { logger as baseLogger } from "./logger.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import type { Payload } from "./payload.js";
+import { canUseOptionalNativeModuleImports } from "./runtime.js";
 import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
@@ -508,10 +509,18 @@ export class Log<T> {
 						useHeads: headsRequested && this._sortFn === LastWriteWins,
 					};
 				}
+				if (!canUseOptionalNativeModuleImports()) {
+					if (nativeGraphOptions?.optional === true) {
+						return undefined;
+					}
+					throw new Error(
+						"Log nativeGraph is unavailable in service worker contexts",
+					);
+				}
 				let createLogGraphIndex: () => Promise<NativeLogGraph>;
 				try {
 					({ createLogGraphIndex } = (await import(
-						["@peerbit", "log-rust"].join("/")
+						/* @vite-ignore */ ["@peerbit", "log-rust"].join("/")
 					)) as {
 						createLogGraphIndex: () => Promise<NativeLogGraph>;
 					});

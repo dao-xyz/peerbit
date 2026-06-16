@@ -333,6 +333,23 @@ export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
 
+const canUseOptionalNativeModuleImports = (): boolean => {
+	const scope = globalThis as {
+		ServiceWorkerGlobalScope?: unknown;
+		clients?: unknown;
+		registration?: unknown;
+		skipWaiting?: unknown;
+	};
+	const serviceWorkerGlobalScope = scope.ServiceWorkerGlobalScope;
+	return !(
+		(typeof serviceWorkerGlobalScope === "function" &&
+			globalThis instanceof serviceWorkerGlobalScope) ||
+		(!!scope.clients &&
+			!!scope.registration &&
+			typeof scope.skipWaiting === "function")
+	);
+};
+
 type LeaderMap = Map<string, { intersecting: boolean }>;
 
 type LeaderSelectionOptions<R extends "u32" | "u64"> = {
@@ -8784,10 +8801,18 @@ export class SharedLog<
 		if (options === false) {
 			return;
 		}
+		if (!canUseOptionalNativeModuleImports()) {
+			if (options?.optional === false) {
+				throw new Error(
+					"Native range planner is unavailable in service worker contexts",
+				);
+			}
+			return;
+		}
 
 		try {
 			const { createRangePlanner, createSharedLogState } = await import(
-				"@peerbit/shared-log-rust",
+				/* @vite-ignore */ "@peerbit/shared-log-rust",
 			);
 			const [planner, state] = await Promise.all([
 				createRangePlanner(this.domain.resolution),
@@ -8821,6 +8846,16 @@ export class SharedLog<
 		if (!options) {
 			return undefined;
 		}
+		if (!canUseOptionalNativeModuleImports()) {
+			const error = new Error(
+				"Native backbone is unavailable in service worker contexts",
+			);
+			if (options.optional === false) {
+				throw error;
+			}
+			warn(error.message);
+			return undefined;
+		}
 		if (!(this.node.identity instanceof Ed25519Keypair)) {
 			const error = new Error(
 				"nativeBackbone requires an Ed25519 node identity",
@@ -8835,7 +8870,7 @@ export class SharedLog<
 			const {
 				createNativeBackboneCoordinatePersistence,
 				createNativePeerbitBackbone,
-			} = await import("@peerbit/native-backbone");
+			} = await import(/* @vite-ignore */ "@peerbit/native-backbone");
 			const backbone = await createNativePeerbitBackbone({
 				resolution: this.domain.resolution,
 				clockId: this.node.identity.publicKey.bytes,
