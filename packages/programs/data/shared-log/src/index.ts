@@ -2868,7 +2868,9 @@ export class SharedLog<
 		return mode !== "join-warmup";
 	}
 
-	private isReceiptDrivenRepairMode(mode: RepairDispatchMode) {
+	private usesBroadRepairCandidatePlanning(mode: RepairDispatchMode) {
+		// Candidate planning may ignore stale gid-peer history, but final sends
+		// still suppress hashes that the target has already confirmed.
 		return mode === "join-authoritative" || mode === "churn";
 	}
 
@@ -3522,7 +3524,11 @@ export class SharedLog<
 					}
 					this.dispatchMaybeMissingEntries(target, entries, {
 						bypassRecentDedupe: true,
-						bypassKnownPeerHints: this.isReceiptDrivenRepairMode(mode),
+						bypassKnownPeerHints:
+							mode === "churn" ||
+							this._repairFrontierBypassKnownPeersByMode
+								.get(mode)
+								?.has(target) === true,
 						mode,
 					});
 					targets?.delete(target);
@@ -3586,12 +3592,12 @@ export class SharedLog<
 								if (!modePeers || modePeers.size === 0) {
 									continue;
 								}
-								const bypassKnownPeerHints =
-									this.isReceiptDrivenRepairMode(mode);
+								const broadRepairCandidatePlanning =
+									this.usesBroadRepairCandidatePlanning(mode);
 								const optimisticPeers = optimisticGidPeersByMode.get(mode)?.get(gid);
 								for (const peer of modePeers) {
 									if (
-										!bypassKnownPeerHints &&
+										!broadRepairCandidatePlanning &&
 										this.isEntryKnownByPeer(entryReplicated.hash, peer)
 									) {
 										continue;
