@@ -3,11 +3,6 @@ import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import { create as createSqliteIndexer } from "@peerbit/indexer-sqlite3";
 import { Log } from "@peerbit/log";
 import {
-	benchmarkPlainEntryV0Core,
-	benchmarkPlainEntryV0Crypto,
-	benchmarkPlainEntryV0DigestKeyCore,
-} from "@peerbit/log-rust/benchmark";
-import {
 	NativeBackboneNodeCoordinatePersistence,
 	NativeBackboneNodeCoordinatePersistenceStore,
 	createBufferedNativeBackboneCoordinatePersistence,
@@ -320,6 +315,107 @@ type BenchRow = Profile & {
 	opsPerSecond: number;
 	cleanupMs: number;
 };
+
+type NativeBenchmarkInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	iterations: number;
+	payloadData: Uint8Array;
+};
+
+type NativeLogCoreBenchmark = {
+	totalMs: number;
+	inputCopyMs: number;
+	entryCoreMs: number;
+	encodeMetaMs: number;
+	encodePayloadMs: number;
+	encodeSignableMs: number;
+	signMs: number;
+	encodeSignatureMs: number;
+	encodeStorageMs: number;
+	cidMs: number;
+	cidHashMs: number;
+	cidStringMs: number;
+	indexEntryMs: number;
+};
+
+type NativeLogCryptoBenchmark = {
+	totalMs: number;
+	signableBytes: number;
+	storageBytes: number;
+	signMs: number;
+	verifyMs: number;
+	sha256Ms: number;
+	cidStringMs: number;
+	checksum: number;
+	cidLenTotal: number;
+};
+
+type NativeLogBenchmarkHelpers = {
+	benchmarkPlainEntryV0Core: (
+		input: NativeBenchmarkInput,
+	) => Promise<NativeLogCoreBenchmark>;
+	benchmarkPlainEntryV0DigestKeyCore: (
+		input: NativeBenchmarkInput,
+	) => Promise<NativeLogCoreBenchmark>;
+	benchmarkPlainEntryV0Crypto: (
+		input: NativeBenchmarkInput,
+	) => Promise<NativeLogCryptoBenchmark>;
+};
+
+type NativeBackboneLoopBenchmark = {
+	totalMs: number;
+};
+
+type NativeBackboneBenchmarkHelpers = {
+	benchmarkPlainCommittedNoNextStorageAppendTransactionLoop: (
+		backbone: Awaited<ReturnType<typeof createNativePeerbitBackbone>>,
+		input: {
+			iterations: number;
+			wallTimeStart: bigint | number | string;
+			payloadData: Uint8Array;
+			replicas: number;
+			selfHash: string;
+			useDocumentIndex?: boolean;
+			documentByteElementIndexLimit?: number;
+			trimLengthTo?: number;
+		},
+	) => NativeBackboneLoopBenchmark;
+};
+
+const importPrivateBenchmarkModule = async <T>(
+	distPath: string,
+	sourcePath: string,
+): Promise<T> => {
+	try {
+		return (await import(new URL(distPath, import.meta.url).href)) as T;
+	} catch (distError) {
+		try {
+			return (await import(new URL(sourcePath, import.meta.url).href)) as T;
+		} catch {
+			throw distError;
+		}
+	}
+};
+
+let nativeLogBenchmarkHelpersPromise:
+	| Promise<NativeLogBenchmarkHelpers>
+	| undefined;
+const loadNativeLogBenchmarkHelpers = () =>
+	(nativeLogBenchmarkHelpersPromise ??= importPrivateBenchmarkModule<NativeLogBenchmarkHelpers>(
+		"../../../../../log/rust/dist/src/benchmark.js",
+		"../../../../../log/rust/src/benchmark.js",
+	));
+
+let nativeBackboneBenchmarkHelpersPromise:
+	| Promise<NativeBackboneBenchmarkHelpers>
+	| undefined;
+const loadNativeBackboneBenchmarkHelpers = () =>
+	(nativeBackboneBenchmarkHelpersPromise ??= importPrivateBenchmarkModule<NativeBackboneBenchmarkHelpers>(
+		"../../../../../utils/native-backbone/dist/src/benchmark.js",
+		"../../../../../utils/native-backbone/src/benchmark.js",
+	));
 
 const deepProfileKeys = new Set<keyof Profile>([
 	"documentCommitPlainPutPlanMs",
@@ -1607,6 +1703,10 @@ const runNativeCeilingScenario = async (name: string): Promise<BenchRow> => {
 const runNativeLogCoreCeilingScenario = async (
 	name: string,
 ): Promise<BenchRow> => {
+	const {
+		benchmarkPlainEntryV0Core,
+		benchmarkPlainEntryV0DigestKeyCore,
+	} = await loadNativeLogBenchmarkHelpers();
 	const benchmark = name.includes("digest-key")
 		? benchmarkPlainEntryV0DigestKeyCore
 		: benchmarkPlainEntryV0Core;
@@ -1658,6 +1758,8 @@ const runNativeLogCoreCeilingScenario = async (
 const runNativeLogCryptoCeilingScenario = async (
 	name: string,
 ): Promise<BenchRow> => {
+	const { benchmarkPlainEntryV0Crypto } =
+		await loadNativeLogBenchmarkHelpers();
 	await benchmarkPlainEntryV0Crypto({
 		clockId: nativeBackbonePublicKey,
 		privateKey: nativeBackbonePrivateKey,
@@ -1839,6 +1941,8 @@ const runNativeBackboneCeilingScenario = async (
 const runNativeBackboneLoopCeilingScenario = async (
 	name: string,
 ): Promise<BenchRow> => {
+	const { benchmarkPlainCommittedNoNextStorageAppendTransactionLoop } =
+		await loadNativeBackboneBenchmarkHelpers();
 	const backbone = await createNativePeerbitBackbone({
 		clockId: nativeBackbonePublicKey,
 		privateKey: nativeBackbonePrivateKey,
@@ -1853,7 +1957,7 @@ const runNativeBackboneLoopCeilingScenario = async (
 	}
 	const trimLengthTo = scenarioDisablesTrim(name) ? undefined : 100;
 	const runLoop = (count: number, wallTimeStart: number) =>
-		backbone.benchmarkPlainCommittedNoNextStorageAppendTransactionLoop({
+		benchmarkPlainCommittedNoNextStorageAppendTransactionLoop(backbone, {
 			iterations: count,
 			wallTimeStart,
 			payloadData: payload,

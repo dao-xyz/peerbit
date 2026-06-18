@@ -33,10 +33,6 @@
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"
-		},
-		"./benchmark": {
-			"types": "./dist/src/benchmark.d.ts",
-			"import": "./dist/src/benchmark.js"
 		}
 	},
 	"eslintConfig": {

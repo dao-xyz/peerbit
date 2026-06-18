@@ -15,6 +15,7 @@ import {
 	defaultNativeBackboneCoordinateCompactMaxJournalBytes,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "../src/index.js";
+import { benchmarkPlainCommittedNoNextStorageAppendTransactionLoop } from "../src/benchmark.js";
 
 const fromHex = (hex: string) =>
 	Uint8Array.from(
@@ -2706,7 +2707,7 @@ describe("native peerbit backbone", () => {
 		]);
 	});
 
-	it("benchmarks committed no-next storage appends inside one native loop", async () => {
+	it("exposes committed no-next storage append loop counters", async () => {
 		const backbone = await createNativePeerbitBackbone({
 			clockId: publicKey,
 			privateKey,
@@ -2718,7 +2719,7 @@ describe("native peerbit backbone", () => {
 		backbone.resetAppendProfile();
 		backbone.setAppendProfileEnabled(true);
 		const result =
-			backbone.benchmarkPlainCommittedNoNextStorageAppendTransactionLoop({
+			benchmarkPlainCommittedNoNextStorageAppendTransactionLoop(backbone, {
 				iterations: 3,
 				wallTimeStart: 100n,
 				payloadData: new Uint8Array([1, 2, 3]),

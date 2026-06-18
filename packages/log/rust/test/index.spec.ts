@@ -581,7 +581,7 @@ describe("native EntryV0 encoding", () => {
 		).to.deep.equal([true, false]);
 	});
 
-	it("benchmarks Ed25519 and CID primitives over EntryV0 signable bytes", async () => {
+	it("exposes Ed25519 and CID primitive timing counters over EntryV0 signable bytes", async () => {
 		const result = await benchmarkPlainEntryV0Crypto({
 			clockId: fromHex(
 				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
@@ -602,7 +602,7 @@ describe("native EntryV0 encoding", () => {
 		expect(Number.isFinite(result.checksum)).to.equal(true);
 	});
 
-	it("benchmarks EntryV0 storage verification modes", async () => {
+	it("exposes EntryV0 storage verification mode timing counters", async () => {
 		const result = await benchmarkEntryV0StorageVerifyModes({
 			clockId: fromHex(
 				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
