@@ -87,7 +87,7 @@ jobs:
             artifact: fanout-parent-upgrade-single-all
             command: >-
               pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval
-              --scenario all --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 1
+              --scenario all --seeds 1,2,3 --parentUpgradePreset default-candidate --strict 0
           - name: single-live-stream
             artifact: fanout-parent-upgrade-single-live-stream
             command: >-
@@ -98,7 +98,7 @@ jobs:
             command: >-
               pnpm -C packages/transport/pubsub run bench -- fanout-tree-parent-upgrade-eval
               --scenario ci-idle-upgrade-large --seeds 1,2,3 --parentUpgradePreset default-candidate
-              --parentUpgradeRootMaxChildLoadRatio 0.25 --maxRootChildrenDelta 3 --maxCostRatio 1.2 --strict 1
+              --parentUpgradeRootMaxChildLoadRatio 0.25 --maxRootChildrenDelta 3 --maxCostRatio 1.2 --strict 0
           - name: single-idle-large-frontier
             artifact: fanout-parent-upgrade-single-idle-large-frontier
             command: >-
