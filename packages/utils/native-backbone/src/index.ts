@@ -2784,6 +2784,11 @@ export type NativeBackboneCoordinatePersistenceOptions =
 export type NativeBackboneCoordinatePersistenceStore = {
 	read(name: string): Promise<Uint8Array | undefined>;
 	write(name: string, bytes: Uint8Array): Promise<void>;
+	/**
+	 * Appends `bytes` to the named file. Callers hand over ownership of
+	 * `bytes` and must not mutate it afterwards: buffering stores keep the
+	 * array until their next flush instead of copying it.
+	 */
 	append(name: string, bytes: Uint8Array): Promise<void>;
 	remove?(name: string): Promise<void>;
 	flush?(): Promise<void>;
@@ -8333,9 +8338,10 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 	}
 
 	async append(name: string, bytes: Uint8Array): Promise<void> {
-		const chunk = copyBytes(bytes);
-		this.buffer(name).push(chunk);
-		this.bufferedBytes += chunk.byteLength;
+		// Ownership of `bytes` is handed over by the persistence store
+		// contract, so the chunk is buffered without a defensive copy.
+		this.buffer(name).push(bytes);
+		this.bufferedBytes += bytes.byteLength;
 		if (
 			this.options.maxBufferedBytes != null &&
 			this.bufferedBytes >= this.options.maxBufferedBytes
@@ -8368,7 +8374,7 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 				continue;
 			}
 			this.buffers.delete(fileName);
-			const bytes = concatBytes(chunks);
+			const bytes = chunks.length === 1 ? chunks[0]! : concatBytes(chunks);
 			this.bufferedBytes -= bytes.byteLength;
 			await this.inner.append(fileName, bytes);
 		}
@@ -8403,7 +8409,7 @@ export class NativeBackboneCoordinatePersistence {
 	private documentSignerJournalByteLength = 0;
 	private documentSignerJournalRecordCount = 0;
 	private lastFlushMs = Date.now();
-	private persistenceQueue: Promise<unknown> = Promise.resolve();
+	private persistenceQueue: Promise<unknown> | undefined;
 
 	constructor(
 		private readonly store: NativeBackboneCoordinatePersistenceStore,
@@ -8536,11 +8542,22 @@ export class NativeBackboneCoordinatePersistence {
 	}
 
 	private enqueuePersistence<T>(fn: () => Promise<T>): Promise<T> {
-		const next = this.persistenceQueue.then(fn);
-		this.persistenceQueue = next.then(
+		// Runs `fn` immediately when no other persistence operation is in
+		// flight so the common uncontended flush starts synchronously; queued
+		// operations still run strictly one at a time, in order.
+		const next = this.persistenceQueue
+			? this.persistenceQueue.then(fn)
+			: fn();
+		const tail: Promise<void> = next.then(
 			() => undefined,
 			() => undefined,
 		);
+		this.persistenceQueue = tail;
+		void tail.then(() => {
+			if (this.persistenceQueue === tail) {
+				this.persistenceQueue = undefined;
+			}
+		});
 		return next;
 	}
 

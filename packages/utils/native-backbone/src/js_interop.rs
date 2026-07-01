@@ -1,5 +1,4 @@
 use js_sys::{Array, Reflect, Uint8Array};
-use peerbit_indexer_core::persistence::{encode_journal_delete_record, encode_journal_put_record};
 use peerbit_indexer_core::wire::{self, WireError};
 use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
@@ -231,12 +230,64 @@ pub(crate) fn parse_optional_u64_string(value: &str, label: &str) -> Result<Opti
     }
 }
 
+const JOURNAL_PUT_OPERATION: u8 = 1;
+const JOURNAL_DELETE_OPERATION: u8 = 2;
+
+/// Writes the same wire format as
+/// `peerbit_indexer_core::persistence::encode_journal_put_record`, but
+/// directly into `out` — the journal push runs once per append transaction,
+/// so the intermediate payload/record allocations are avoided on purpose
+/// (see the `journal record encoding matches indexer core` parity test).
 pub(crate) fn append_journal_put_record(out: &mut Vec<u8>, key: &str, value: &[u8]) {
-    out.extend_from_slice(&encode_journal_put_record(key, value));
+    let payload_len = 1usize + 4 + key.len() + 4 + value.len();
+    let key_len = (key.len() as u32).to_le_bytes();
+    let value_len = (value.len() as u32).to_le_bytes();
+    let checksum = fnv1a_parts([
+        &[JOURNAL_PUT_OPERATION][..],
+        key_len.as_slice(),
+        key.as_bytes(),
+        value_len.as_slice(),
+        value,
+    ]);
+    out.reserve(8 + payload_len);
+    out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+    out.extend_from_slice(&checksum.to_le_bytes());
+    out.push(JOURNAL_PUT_OPERATION);
+    out.extend_from_slice(&key_len);
+    out.extend_from_slice(key.as_bytes());
+    out.extend_from_slice(&value_len);
+    out.extend_from_slice(value);
 }
 
+/// Allocation-free equivalent of
+/// `peerbit_indexer_core::persistence::encode_journal_delete_record`.
 pub(crate) fn append_journal_delete_record(out: &mut Vec<u8>, key: &str) {
-    out.extend_from_slice(&encode_journal_delete_record(key));
+    let payload_len = 1usize + 4 + key.len();
+    let key_len = (key.len() as u32).to_le_bytes();
+    let checksum = fnv1a_parts([
+        &[JOURNAL_DELETE_OPERATION][..],
+        key_len.as_slice(),
+        key.as_bytes(),
+    ]);
+    out.reserve(8 + payload_len);
+    out.extend_from_slice(&(payload_len as u32).to_le_bytes());
+    out.extend_from_slice(&checksum.to_le_bytes());
+    out.push(JOURNAL_DELETE_OPERATION);
+    out.extend_from_slice(&key_len);
+    out.extend_from_slice(key.as_bytes());
+}
+
+/// FNV-1a over concatenated parts; must stay identical to
+/// `peerbit_indexer_core::persistence::fnv1a` over the joined bytes.
+fn fnv1a_parts<const N: usize>(parts: [&[u8]; N]) -> u32 {
+    let mut hash = 0x811c9dc5u32;
+    for part in parts {
+        for byte in part {
+            hash ^= u32::from(*byte);
+            hash = hash.wrapping_mul(0x01000193);
+        }
+    }
+    hash
 }
 
 pub(crate) fn write_string(out: &mut Vec<u8>, value: &str) {
@@ -359,12 +410,39 @@ pub(crate) fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, Js
 
 #[cfg(test)]
 mod tests {
-    use super::hash_number_u64;
+    use super::{append_journal_delete_record, append_journal_put_record, hash_number_u64};
+    use peerbit_indexer_core::persistence::{
+        encode_journal_delete_record, encode_journal_put_record,
+    };
 
     #[test]
     fn decodes_hash_numbers_like_shared_log_integer_helpers() {
         let bytes = [1, 0, 0, 0, 2, 0, 0, 0];
         assert_eq!(hash_number_u64("u32", &bytes).unwrap(), 1);
         assert_eq!(hash_number_u64("u64", &bytes).unwrap(), 8_589_934_593);
+    }
+
+    #[test]
+    fn journal_record_encoding_matches_indexer_core() {
+        for (key, value) in [
+            ("", &[][..]),
+            ("k", &[0u8][..]),
+            ("some-journal-key", &[1u8, 2, 3, 255, 0, 42][..]),
+            ("zAbc123", &[7u8; 1200][..]),
+        ] {
+            let mut direct = vec![9u8, 9, 9];
+            append_journal_put_record(&mut direct, key, value);
+            let mut expected = vec![9u8, 9, 9];
+            expected.extend_from_slice(&encode_journal_put_record(key, value));
+            assert_eq!(direct, expected, "put record for key {key:?}");
+
+            let mut direct = Vec::new();
+            append_journal_delete_record(&mut direct, key);
+            assert_eq!(
+                direct,
+                encode_journal_delete_record(key),
+                "delete record for key {key:?}"
+            );
+        }
     }
 }
