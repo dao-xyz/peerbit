@@ -3,11 +3,17 @@ on:
   schedule:
     # 03:30 UTC every day
     - cron: '30 3 * * *'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      only:
+        description: 'Job filter: comma-separated subset of pubsub_sims, fanout_parent_upgrade_soak, shared_log_chaos. Empty runs all jobs.'
+        required: false
+        default: ''
 
 jobs:
   pubsub_sims:
     name: PubSub sims
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.only == '' || contains(inputs.only, 'pubsub_sims') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     env:
@@ -83,6 +89,7 @@ jobs:
 
   fanout_parent_upgrade_soak:
     name: Fanout parent-upgrade soak (${{ matrix.name }})
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.only == '' || contains(inputs.only, 'fanout_parent_upgrade_soak') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 75
     strategy:
@@ -198,6 +205,7 @@ jobs:
 
   shared_log_chaos:
     name: SharedLog chaos
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.only == '' || contains(inputs.only, 'shared_log_chaos') }}
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
