@@ -2129,12 +2129,21 @@ importers:
         specifier: ^4.0.0
         version: 4.0.1
     devDependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@peerbit/blocks':
+        specifier: workspace:*
+        version: link:../blocks
       '@peerbit/crypto':
         specifier: workspace:*
         version: link:../../utils/crypto
       '@peerbit/libp2p-test-utils':
         specifier: workspace:*
         version: link:../libp2p-test-utils
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:../../log/rust
       '@peerbit/stream':
         specifier: workspace:*
         version: link:../stream
