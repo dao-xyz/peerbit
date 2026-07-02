@@ -314,6 +314,7 @@ dependencies = [
  "ed25519-dalek",
  "indexmap",
  "js-sys",
+ "peerbit_wire",
  "sha2",
  "wasm-bindgen",
 ]
@@ -345,6 +346,7 @@ name = "peerbit_wire"
 version = "0.0.0"
 dependencies = [
  "ed25519-dalek",
+ "indexmap",
  "js-sys",
  "sha2",
  "wasm-bindgen",

@@ -493,6 +493,10 @@ type WasmModule = {
 	prepare_raw_entry_v0_batch: (
 		blocks: Uint8Array[],
 	) => RawEntryV0PreparedFactsRow[];
+	block_response_payload: (
+		store: NativeLogBlockStoreHandle,
+		cid: string,
+	) => Uint8Array | undefined;
 };
 
 const loadLogWasm = () => loadWasm<WasmModule>();
@@ -1381,15 +1385,27 @@ class LogGraphIndex {
 export class NativeLogBlockStore {
 	private statusValue: "open" | "opening" | "closed" | "closing" = "closed";
 
-	private constructor(private readonly native: NativeLogBlockStoreHandle) {}
+	private constructor(
+		private readonly native: NativeLogBlockStoreHandle,
+		private readonly wasm: WasmModule,
+	) {}
 
 	static async create(): Promise<NativeLogBlockStore> {
 		const wasm = await loadLogWasm();
-		return new NativeLogBlockStore(new wasm.NativeLogBlockStore());
+		return new NativeLogBlockStore(new wasm.NativeLogBlockStore(), wasm);
 	}
 
 	getNativeLogBlockStoreHandle(): NativeLogBlockStoreHandle {
 		return this.native;
+	}
+
+	/**
+	 * Serialize a `/peerbit/direct-block` BlockResponse payload for a stored
+	 * block inside wasm; the block bytes never materialize as a JS value.
+	 * `undefined` when the block is not stored.
+	 */
+	getBlockResponsePayload(cid: string): Uint8Array | undefined {
+		return this.wasm.block_response_payload(this.native, cid) ?? undefined;
 	}
 
 	async open(): Promise<void> {
