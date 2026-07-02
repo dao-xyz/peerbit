@@ -1,3 +1,5 @@
+import type { RustTopicRootDirectoryState } from "@peerbit/stream";
+
 const topicHash32 = (topic: string) => {
 	let hash = 0x811c9dc5; // FNV-1a
 	for (let index = 0; index < topic.length; index++) {
@@ -24,6 +26,7 @@ export class TopicRootDirectory {
 	private readonly explicitRootsByTopic = new Map<string, string>();
 	private defaultCandidates: string[] = [];
 	private resolver?: TopicRootResolver;
+	private native?: RustTopicRootDirectoryState;
 
 	constructor(options?: TopicRootDirectoryOptions) {
 		if (options?.defaultCandidates) {
@@ -32,19 +35,53 @@ export class TopicRootDirectory {
 		this.resolver = options?.resolver;
 	}
 
+	/**
+	 * Move the root-resolution state (explicit roots + deterministic
+	 * candidates) into the native topic-control core. Current contents are
+	 * copied over; a directory that already adopted native state keeps it
+	 * (the first adoption owns the state, so directories shared between
+	 * co-located planes are only migrated once). The resolver callback and
+	 * trackers stay host-side.
+	 */
+	public adoptNativeState(state: RustTopicRootDirectoryState) {
+		if (this.native) return;
+		for (const [topic, root] of this.explicitRootsByTopic) {
+			state.setRoot(topic, root);
+		}
+		state.setDefaultCandidates(this.defaultCandidates);
+		this.explicitRootsByTopic.clear();
+		this.defaultCandidates = [];
+		this.native = state;
+	}
+
 	public setRoot(topic: string, root: string) {
+		if (this.native) {
+			this.native.setRoot(topic, root);
+			return;
+		}
 		this.explicitRootsByTopic.set(topic, root);
 	}
 
 	public deleteRoot(topic: string) {
+		if (this.native) {
+			this.native.deleteRoot(topic);
+			return;
+		}
 		this.explicitRootsByTopic.delete(topic);
 	}
 
 	public getRoot(topic: string) {
+		if (this.native) {
+			return this.native.getRoot(topic);
+		}
 		return this.explicitRootsByTopic.get(topic);
 	}
 
 	public setDefaultCandidates(candidates: string[]) {
+		if (this.native) {
+			this.native.setDefaultCandidates(candidates);
+			return;
+		}
 		const unique = new Set<string>();
 		for (const candidate of candidates) {
 			if (!candidate) continue;
@@ -56,6 +93,9 @@ export class TopicRootDirectory {
 	}
 
 	public getDefaultCandidates() {
+		if (this.native) {
+			return this.native.getDefaultCandidates();
+		}
 		return [...this.defaultCandidates];
 	}
 
@@ -78,6 +118,9 @@ export class TopicRootDirectory {
 	}
 
 	public resolveDeterministicCandidate(topic: string): string | undefined {
+		if (this.native) {
+			return this.native.resolveDeterministicCandidate(topic);
+		}
 		if (this.defaultCandidates.length === 0) return undefined;
 		const index = topicHash32(topic) % this.defaultCandidates.length;
 		return this.defaultCandidates[index];
@@ -101,6 +144,11 @@ export class TopicRootControlPlane {
 				resolver: options?.resolver,
 			});
 		this.trackers = options?.trackers ? [...options.trackers] : [];
+	}
+
+	/** See {@link TopicRootDirectory.adoptNativeState}. */
+	public adoptNativeDirectoryState(state: RustTopicRootDirectoryState) {
+		this.directory.adoptNativeState(state);
 	}
 
 	public setTopicRoot(topic: string, root: string) {

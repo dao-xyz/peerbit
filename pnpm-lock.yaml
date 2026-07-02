@@ -400,6 +400,9 @@ importers:
       '@peerbit/pubsub':
         specifier: workspace:*
         version: link:../../transport/pubsub
+      '@peerbit/stream':
+        specifier: workspace:*
+        version: link:../../transport/stream
       '@peerbit/stream-interface':
         specifier: workspace:*
         version: link:../../transport/stream-interface
@@ -456,6 +459,12 @@ importers:
       '@peerbit/log-rust':
         specifier: workspace:*
         version: link:../../log/rust
+      '@peerbit/native-backbone':
+        specifier: workspace:*
+        version: link:../../utils/native-backbone
+      '@peerbit/network-rust':
+        specifier: workspace:*
+        version: link:../../transport/network-rust
 
   packages/clients/peerbit-react:
     dependencies:
@@ -1729,6 +1738,9 @@ importers:
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
+      peerbit:
+        specifier: workspace:*
+        version: link:../../../clients/peerbit
       uuid:
         specifier: ^10.0.0
         version: 10.0.0
@@ -2119,6 +2131,46 @@ importers:
       '@types/libsodium-wrappers':
         specifier: ^0.7.14
         version: 0.7.14
+
+  packages/transport/network-rust:
+    dependencies:
+      '@peerbit/time':
+        specifier: workspace:*
+        version: link:../../utils/time
+      p-defer:
+        specifier: ^4.0.0
+        version: 4.0.1
+    devDependencies:
+      '@dao-xyz/borsh':
+        specifier: 6.0.1
+        version: 6.0.1
+      '@peerbit/blocks':
+        specifier: workspace:*
+        version: link:../blocks
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../utils/crypto
+      '@peerbit/libp2p-test-utils':
+        specifier: workspace:*
+        version: link:../libp2p-test-utils
+      '@peerbit/log-rust':
+        specifier: workspace:*
+        version: link:../../log/rust
+      '@peerbit/pubsub':
+        specifier: workspace:*
+        version: link:../pubsub
+      '@peerbit/pubsub-interface':
+        specifier: workspace:*
+        version: link:../pubsub-interface
+      '@peerbit/stream':
+        specifier: workspace:*
+        version: link:../stream
+      '@peerbit/stream-interface':
+        specifier: workspace:*
+        version: link:../stream-interface
+      uint8arraylist:
+        specifier: ^2.4.8
+        version: 2.4.8
 
   packages/transport/pubsub:
     dependencies:

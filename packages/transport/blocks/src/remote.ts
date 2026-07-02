@@ -11,7 +11,12 @@ import {
 import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
 import { logger as loggerFn } from "@peerbit/logger";
-import { type PublishOptions, dontThrowIfDeliveryError } from "@peerbit/stream";
+import {
+	type PublishOptions,
+	type RustBlockExchange,
+	type RustBlockProviderCache,
+	dontThrowIfDeliveryError,
+} from "@peerbit/stream";
 import {
 	type RequestTransportContext,
 	type PeerRefs,
@@ -71,6 +76,17 @@ type RemoteReadOptions = Exclude<GetOptions["remote"], boolean | undefined> & {
 	hasher?: any;
 };
 
+/**
+ * Shared shape of the TS eager-block cache (`Cache<Uint8Array>`) and the
+ * native-backed one (`RustEagerBlockCache`).
+ */
+type EagerBlockCache = {
+	add(cid: string, bytes: Uint8Array): void;
+	get(cid: string): Uint8Array | null | undefined;
+	del(cid: string): unknown;
+	clear(): void;
+};
+
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
@@ -79,8 +95,10 @@ export class RemoteBlocks implements IBlocks {
 		context?: BlockMessageContext,
 	) => any;
 	private _resolvers: Map<string, (data: Uint8Array) => Promise<void>>;
-	private _blockCache?: Cache<Uint8Array>;
+	private _blockCache?: EagerBlockCache;
 	private _providerCache?: Cache<string[]>;
+	private _rustProviderCache?: RustBlockProviderCache;
+	private readonly rustExchange?: RustBlockExchange;
 	private readonly publicKeyHash: string;
 	private readonly maxProviderHintsPerCid: number;
 	private readonly maxRequeryOnReachable: number;
@@ -159,25 +177,40 @@ export class RemoteBlocks implements IBlocks {
 				options: PublishOptions,
 			) => Promise<Uint8Array | undefined | void>;
 			waitFor: WaitForPeersFn;
+			/**
+			 * Native block-exchange components (rust-core mode). When set, the
+			 * provider caches/decisions and eager-block bookkeeping run in the
+			 * native core; `publishRaw` additionally enables serving natively
+			 * stored blocks as wasm-serialized payloads that never surface the
+			 * block bytes to JS.
+			 */
+			rust?: {
+				exchange: RustBlockExchange;
+				publishRaw?: (
+					payload: Uint8Array,
+					options: PublishOptions,
+				) => Promise<Uint8Array | undefined | void>;
+			};
 		},
 	) {
 		const localTimeout = options?.localTimeout || 1000;
 		this.publicKeyHash = options.publicKey.hashcode();
+		this.rustExchange = options.rust?.exchange;
 		this._loadFetchQueue = new PQueue({
 			concurrency: options?.messageProcessingConcurrency || 10,
 		});
 		this.localStore = options?.local;
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
-		this._blockCache = options?.eagerBlocks
-			? new Cache<Uint8Array>({
-					max:
-						typeof options.eagerBlocks === "boolean"
-							? 1e3
-							: (options.eagerBlocks.cacheSize ?? 1e3),
-					ttl: 1e4,
-				})
-			: undefined;
+		if (options?.eagerBlocks) {
+			const eagerBlocksMax =
+				typeof options.eagerBlocks === "boolean"
+					? 1e3
+					: (options.eagerBlocks.cacheSize ?? 1e3);
+			this._blockCache = this.rustExchange
+				? this.rustExchange.createEagerCache({ max: eagerBlocksMax, ttl: 1e4 })
+				: new Cache<Uint8Array>({ max: eagerBlocksMax, ttl: 1e4 });
+		}
 		type ProviderCacheOptions = {
 			maxEntries?: number;
 			ttlMs?: number;
@@ -189,12 +222,21 @@ export class RemoteBlocks implements IBlocks {
 				: typeof options.providerCache === "object"
 					? options.providerCache
 					: {};
-		this._providerCache = providerCache
-			? new Cache<string[]>({
+		if (providerCache) {
+			if (this.rustExchange) {
+				this._rustProviderCache = this.rustExchange.createProviderCache({
+					me: this.publicKeyHash,
+					maxEntries: providerCache.maxEntries ?? 2048,
+					ttlMs: providerCache.ttlMs ?? 10 * 60 * 1000,
+					maxProvidersPerCid: providerCache.maxProvidersPerCid ?? 8,
+				});
+			} else {
+				this._providerCache = new Cache<string[]>({
 					max: providerCache.maxEntries ?? 2048,
 					ttl: providerCache.ttlMs ?? 10 * 60 * 1000,
-				})
-			: undefined;
+				});
+			}
+		}
 		this.maxProviderHintsPerCid = providerCache?.maxProvidersPerCid ?? 8;
 		this.maxRequeryOnReachable = options.requeryOnReachable ?? 4;
 
@@ -244,6 +286,13 @@ export class RemoteBlocks implements IBlocks {
 		limit = this.maxProviderHintsPerCid || 8,
 	): string[] {
 		if (!providers || providers.length === 0) return [];
+		if (this.rustExchange) {
+			return this.rustExchange.normalizeProviderHints(
+				providers,
+				this.publicKeyHash,
+				limit,
+			);
+		}
 		const out: string[] = [];
 		for (const p of providers) {
 			if (!p) continue;
@@ -257,6 +306,10 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	private rememberProvider(cidString: string, providerHash: string) {
+		if (this._rustProviderCache) {
+			this._rustProviderCache.rememberProvider(cidString, providerHash);
+			return;
+		}
 		if (!this._providerCache) return;
 		if (!providerHash || providerHash === this.publicKeyHash) return;
 		const current = this._providerCache.get(cidString) ?? [];
@@ -271,13 +324,30 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	private rememberProviderHints(cidString: string, providers: string[]) {
+		if (this._rustProviderCache) {
+			this._rustProviderCache.rememberHints(cidString, providers);
+			return;
+		}
 		if (!this._providerCache) return;
 		const normalized = this.normalizeProviderHints(providers);
 		if (normalized.length === 0) return;
 		this._providerCache.add(cidString, normalized);
 	}
 
+	private getCachedProviders(cidString: string): string[] | undefined {
+		return this._rustProviderCache
+			? this._rustProviderCache.get(cidString)
+			: (this._providerCache?.get(cidString) ?? undefined);
+	}
+
 	private pickRequestBatch(providers: string[], attempt: number): string[] {
+		if (this.rustExchange) {
+			return this.rustExchange.pickRequestBatch(
+				providers,
+				this.publicKeyHash,
+				attempt,
+			);
+		}
 		if (providers.length <= 1) {
 			return providers;
 		}
@@ -298,7 +368,7 @@ export class RemoteBlocks implements IBlocks {
 		// 1. cached providers (from previous reads)
 		// 2. resolveProviders hook (e.g. program-level replicators, DHT, tracker)
 		const cached = this.normalizeProviderHints(
-			this._providerCache?.get(cidString) ?? undefined,
+			this.getCachedProviders(cidString),
 		);
 		if (!this.options.resolveProviders) return cached;
 		if (cached.length > 0 && !options?.refresh) return cached;
@@ -544,6 +614,22 @@ export class RemoteBlocks implements IBlocks {
 			return;
 		}
 		const cid = stringifyCid(request.cid);
+		const publishRaw = this.options.rust?.publishRaw;
+		if (publishRaw) {
+			// Native-store-served response: the borsh BlockResponse payload is
+			// serialized inside wasm straight from the native log block store,
+			// so the block bytes never materialize as a JS value.
+			const payload = this.localStore.getBlockResponsePayload?.(cid);
+			if (payload) {
+				const responsePublishOptions = context?.transport
+					? context.transport.withResponseOptions({ to: [from] })
+					: { to: [from] };
+				await publishRaw(payload, responsePublishOptions).catch(
+					dontThrowIfDeliveryError,
+				);
+				return;
+			}
+		}
 		let bytes = await this.localStore.get(cid, {
 			remote: {
 				timeout: localTimeout,
@@ -916,6 +1002,7 @@ export class RemoteBlocks implements IBlocks {
 		this._resolvers.clear();
 		this._blockCache?.clear();
 		this._providerCache?.clear();
+		this._rustProviderCache?.clear();
 		this._open = false;
 		// we dont cleanup subscription because we dont know if someone else is sbuscribing also
 	}

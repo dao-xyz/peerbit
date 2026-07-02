@@ -103,6 +103,7 @@
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/pidusage": "^2.0.5",
+		"peerbit": "workspace:*",
 		"uuid": "^10.0.0"
 	},
 	"repository": {

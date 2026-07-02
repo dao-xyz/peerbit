@@ -1032,6 +1032,397 @@ export const encodeProviderNotify = (
 	return buf;
 };
 
+// --- decoders ---------------------------------------------------------------
+// Message-level decoders with the exact tolerance of the historical inline
+// parsers in fanout-tree.ts: `undefined` means the same minimum-length
+// rejects, and truncated lists end at the same element. Multiaddr bytes are
+// returned raw; `multiaddr()` construction and validity filtering stay in
+// the message handlers so the native codec (which mirrors these functions
+// byte-for-byte) drops the same invalid entries.
+
+export type DecodedFanoutJoinAccept = {
+	parentLevel: number;
+	parentRouteFromRoot: string[];
+	haveRange?: { haveFrom: number; haveToExclusive: number };
+};
+
+export type DecodedFanoutJoinReject = {
+	reason: number;
+	redirects: { hash: string; addrs: Uint8Array[] }[];
+};
+
+export type DecodedFanoutUnicast = {
+	ackToken?: bigint;
+	route: string[];
+	replyRoute?: string[];
+	payloadOffset: number;
+};
+
+export type DecodedFanoutTrackerReplyEntry = {
+	hash: string;
+	level: number;
+	freeSlots: number;
+	bidPerByte: number;
+	addrs: Uint8Array[];
+};
+
+export type DecodedFanoutProviderEntry = {
+	hash: string;
+	addrs: Uint8Array[];
+};
+
+/** The shared JOIN_ACCEPT/JOIN_REJECT head (reqId) parsed before the
+ * pending-join lookup. */
+export const decodeJoinResponseReqId = (
+	data: Uint8Array,
+): number | undefined => {
+	if (data.length < 1 + 32 + 4) return undefined;
+	return readU32BE(data, 33);
+};
+
+export const decodeJoinAccept = (
+	data: Uint8Array,
+): DecodedFanoutJoinAccept | undefined => {
+	if (data.length < 1 + 32 + 4 + 2 + 1) return undefined;
+	const parentLevel = readU16BE(data, 37);
+	const routeCount = Math.min(255, data[39]!);
+	let offset = 40;
+	const parentRouteFromRoot: string[] = [];
+	// Unlike `decodeRoute`, this parser stops consuming at MAX_ROUTE_HOPS,
+	// which the have-range appendix offset depends on.
+	const max = Math.min(routeCount, MAX_ROUTE_HOPS);
+	for (let i = 0; i < max; i++) {
+		if (offset + 1 > data.length) break;
+		const len = data[offset++]!;
+		if (len === 0) break;
+		if (offset + len > data.length) break;
+		parentRouteFromRoot.push(
+			textDecoder.decode(data.subarray(offset, offset + len)),
+		);
+		offset += len;
+	}
+	const haveRange =
+		offset + 8 <= data.length
+			? {
+					haveFrom: readU32BE(data, offset),
+					haveToExclusive: readU32BE(data, offset + 4),
+				}
+			: undefined;
+	return { parentLevel, parentRouteFromRoot, haveRange };
+};
+
+export const decodeJoinReject = (
+	data: Uint8Array,
+): DecodedFanoutJoinReject | undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	const reason = data[37]! & 0xff;
+	const redirects: { hash: string; addrs: Uint8Array[] }[] = [];
+	if (data.length >= 1 + 32 + 4 + 1 + 1) {
+		const count = Math.min(255, data[38]!);
+		let offset = 39;
+		const max = Math.min(count, JOIN_REJECT_REDIRECT_MAX);
+		for (let i = 0; i < max; i++) {
+			if (offset + 1 > data.length) break;
+			const hashLen = data[offset++]!;
+			if (hashLen === 0) break;
+			if (offset + hashLen > data.length) break;
+			const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+			offset += hashLen;
+			if (offset + 1 > data.length) break;
+			const addrCount = Math.min(255, data[offset++]!);
+			const addrs: Uint8Array[] = [];
+			const addrMax = Math.min(addrCount, JOIN_REJECT_REDIRECT_ADDR_MAX);
+			for (let j = 0; j < addrMax; j++) {
+				if (offset + 2 > data.length) break;
+				const len = readU16BE(data, offset);
+				offset += 2;
+				if (offset + len > data.length) break;
+				addrs.push(data.subarray(offset, offset + len));
+				offset += len;
+			}
+			redirects.push({ hash, addrs });
+		}
+	}
+	return { reason, redirects };
+};
+
+export const decodeEnd = (data: Uint8Array): number | undefined => {
+	if (data.length < 1 + 32 + 4) return undefined;
+	return readU32BE(data, 33);
+};
+
+/** MSG_REPAIR_REQ / MSG_FETCH_REQ sequence list: `count` capped by the
+ * bytes actually present. */
+export const decodeRepairSeqs = (data: Uint8Array): number[] | undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	const count = data[37]!;
+	const max = Math.min(count, Math.floor((data.length - 38) / 4));
+	const seqs: number[] = [];
+	for (let i = 0; i < max; i++) {
+		seqs.push(readU32BE(data, 38 + i * 4));
+	}
+	return seqs;
+};
+
+export const decodeIHave = (
+	data: Uint8Array,
+): { haveFrom: number; haveToExclusive: number } | undefined => {
+	if (data.length < 1 + 32 + 4 + 4) return undefined;
+	return {
+		haveFrom: readU32BE(data, 33),
+		haveToExclusive: readU32BE(data, 37),
+	};
+};
+
+export const decodeUnicast = (
+	data: Uint8Array,
+): DecodedFanoutUnicast | undefined => {
+	if (data.length < 1 + 32 + 1 + 1) return undefined;
+	const flags = data[33]! & 0xff;
+	let offset = 34;
+	let ackToken: bigint | undefined;
+	if (flags & UNICAST_FLAG_ACK) {
+		if (data.length < offset + 8 + 1) return undefined;
+		ackToken = readU64BE(data, offset);
+		offset += 8;
+	}
+	const routeCount = Math.min(255, data[offset]!);
+	offset += 1;
+	const decoded = decodeRoute(data, offset, routeCount);
+	const route = decoded.route;
+	offset = decoded.offset;
+	let replyRoute: string[] | undefined;
+	if (ackToken != null) {
+		if (data.length < offset + 1) return undefined;
+		const replyCount = Math.min(255, data[offset]!);
+		offset += 1;
+		const decodedReply = decodeRoute(data, offset, replyCount);
+		replyRoute = decodedReply.route;
+		offset = decodedReply.offset;
+	}
+	return {
+		ackToken,
+		route,
+		replyRoute,
+		payloadOffset: Math.min(offset, data.length),
+	};
+};
+
+export const decodeUnicastAck = (
+	data: Uint8Array,
+): { ackToken: bigint; route: string[] } | undefined => {
+	if (data.length < 1 + 32 + 8 + 1) return undefined;
+	const ackToken = readU64BE(data, 33);
+	const routeCount = Math.min(255, data[41]!);
+	return { ackToken, route: decodeRoute(data, 42, routeCount).route };
+};
+
+export const decodeRouteQuery = (
+	data: Uint8Array,
+): { reqId: number; targetHash?: string } | undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	const reqId = readU32BE(data, 33);
+	const hashLen = data[37]!;
+	// A zero/overflowing target is answered with an empty reply, not dropped.
+	const targetHash =
+		hashLen === 0 || 38 + hashLen > data.length
+			? undefined
+			: textDecoder.decode(data.subarray(38, 38 + hashLen));
+	return { reqId, targetHash };
+};
+
+export const decodeRouteReply = (
+	data: Uint8Array,
+): { reqId: number; route: string[] } | undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	const reqId = readU32BE(data, 33);
+	const routeCount = Math.min(255, data[37]!);
+	return { reqId, route: decodeRoute(data, 38, routeCount).route };
+};
+
+const decodeAddrList = (
+	data: Uint8Array,
+	offsetStart: number,
+	addrCount: number,
+): Uint8Array[] => {
+	let offset = offsetStart;
+	const addrs: Uint8Array[] = [];
+	const max = Math.min(addrCount, 16);
+	for (let i = 0; i < max; i++) {
+		if (offset + 2 > data.length) break;
+		const len = readU16BE(data, offset);
+		offset += 2;
+		if (offset + len > data.length) break;
+		addrs.push(data.subarray(offset, offset + len));
+		offset += len;
+	}
+	return addrs;
+};
+
+export const decodeTrackerAnnounce = (
+	data: Uint8Array,
+):
+	| {
+			ttlMs: number;
+			level: number;
+			freeSlots: number;
+			bidPerByte: number;
+			addrs: Uint8Array[];
+	  }
+	| undefined => {
+	if (data.length < 1 + 32 + 4 + 2 + 2 + 2 + 4 + 1) return undefined;
+	return {
+		ttlMs: readU32BE(data, 33),
+		level: readU16BE(data, 37),
+		// maxChildren at offset 39 is kept in the wire format but unused.
+		freeSlots: readU16BE(data, 41),
+		bidPerByte: readU32BE(data, 43),
+		addrs: decodeAddrList(data, 48, data[47]!),
+	};
+};
+
+export const decodeTrackerQuery = (
+	data: Uint8Array,
+): { reqId: number; want: number } | undefined => {
+	if (data.length < 1 + 32 + 4 + 2) return undefined;
+	return { reqId: readU32BE(data, 33), want: readU16BE(data, 37) };
+};
+
+export const decodeTrackerReply = (
+	data: Uint8Array,
+):
+	| { reqId: number; entries: DecodedFanoutTrackerReplyEntry[] }
+	| undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	const reqId = readU32BE(data, 33);
+	const count = data[37]!;
+	let offset = 38;
+	const entries: DecodedFanoutTrackerReplyEntry[] = [];
+	const max = Math.min(count, 255);
+	for (let i = 0; i < max; i++) {
+		if (offset + 1 > data.length) break;
+		const hashLen = data[offset++]!;
+		if (offset + hashLen > data.length) break;
+		const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+		offset += hashLen;
+		if (offset + 2 + 2 + 4 + 1 > data.length) break;
+		const level = readU16BE(data, offset);
+		offset += 2;
+		const freeSlots = readU16BE(data, offset);
+		offset += 2;
+		const bidPerByte = readU32BE(data, offset);
+		offset += 4;
+		const addrCount = data[offset++]!;
+		const addrs: Uint8Array[] = [];
+		const addrMax = Math.min(addrCount, 16);
+		for (let j = 0; j < addrMax; j++) {
+			if (offset + 2 > data.length) break;
+			const len = readU16BE(data, offset);
+			offset += 2;
+			if (offset + len > data.length) break;
+			addrs.push(data.subarray(offset, offset + len));
+			offset += len;
+		}
+		entries.push({ hash, level, freeSlots, bidPerByte, addrs });
+	}
+	return { reqId, entries };
+};
+
+export const decodeTrackerFeedback = (
+	data: Uint8Array,
+): { candidateHash: string; event: number; reason: number } | undefined => {
+	if (data.length < 1 + 32 + 1 + 1 + 1) return undefined;
+	const hashLen = data[33]!;
+	const offset = 34;
+	if (offset + hashLen + 2 > data.length) return undefined;
+	return {
+		candidateHash: textDecoder.decode(
+			data.subarray(offset, offset + hashLen),
+		),
+		event: data[offset + hashLen]! & 0xff,
+		reason: data[offset + hashLen + 1]! & 0xff,
+	};
+};
+
+export const decodeProviderAnnounce = (
+	data: Uint8Array,
+): { ttlMs: number; addrs: Uint8Array[] } | undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	return {
+		ttlMs: readU32BE(data, 33),
+		addrs: decodeAddrList(data, 38, data[37]!),
+	};
+};
+
+export const decodeProviderQuery = (
+	data: Uint8Array,
+): { reqId: number; want: number; seed: number } | undefined => {
+	if (data.length < 1 + 32 + 4 + 2 + 4) return undefined;
+	return {
+		reqId: readU32BE(data, 33),
+		want: readU16BE(data, 37),
+		seed: readU32BE(data, 39),
+	};
+};
+
+/** `decodeProviderEntries` with the multiaddr construction left to the
+ * caller: entries with an empty hash are consumed but skipped. */
+const decodeProviderEntriesRaw = (
+	data: Uint8Array,
+	offsetStart: number,
+	maxCount: number,
+): DecodedFanoutProviderEntry[] => {
+	let offset = offsetStart;
+	const providers: DecodedFanoutProviderEntry[] = [];
+	const limit = Math.min(maxCount, 255);
+	for (let i = 0; i < limit; i++) {
+		if (offset + 1 > data.length) break;
+		const hashLen = data[offset++]!;
+		if (offset + hashLen > data.length) break;
+		const hash = textDecoder.decode(data.subarray(offset, offset + hashLen));
+		offset += hashLen;
+		if (offset + 1 > data.length) break;
+		const addrCount = data[offset++]!;
+		const addrs: Uint8Array[] = [];
+		const addrMax = Math.min(addrCount, 16);
+		for (let j = 0; j < addrMax; j++) {
+			if (offset + 2 > data.length) break;
+			const len = readU16BE(data, offset);
+			offset += 2;
+			if (offset + len > data.length) break;
+			addrs.push(data.subarray(offset, offset + len));
+			offset += len;
+		}
+		if (!hash) continue;
+		providers.push({ hash, addrs });
+	}
+	return providers;
+};
+
+export const decodeProviderReply = (
+	data: Uint8Array,
+): { reqId: number; entries: DecodedFanoutProviderEntry[] } | undefined => {
+	if (data.length < 1 + 32 + 4 + 1) return undefined;
+	return {
+		reqId: readU32BE(data, 33),
+		entries: decodeProviderEntriesRaw(data, 38, data[37]!),
+	};
+};
+
+export const decodeProviderNotify = (
+	data: Uint8Array,
+): { entries: DecodedFanoutProviderEntry[] } | undefined => {
+	if (data.length < 1 + 32 + 1) return undefined;
+	return { entries: decodeProviderEntriesRaw(data, 34, data[33]!) };
+};
+
+export const decodeProviderSubscribe = (
+	data: Uint8Array,
+): { want: number; ttlMs: number } | undefined => {
+	if (data.length < 1 + 32 + 2 + 4) return undefined;
+	return { want: readU16BE(data, 33), ttlMs: readU32BE(data, 35) };
+};
+
 export const decodeProviderEntries = (
 	data: Uint8Array,
 	offsetStart: number,
@@ -1067,4 +1458,123 @@ export const decodeProviderEntries = (
 		providers.push({ hash, addrs });
 	}
 	return { providers, offset };
+};
+
+/**
+ * The complete `/peerbit/fanout-tree/0.5.0` wire codec seam. FanoutTree
+ * dispatches every frame encode/decode through this surface: the default
+ * implementation is [`tsFanoutWireCodec`] (the functions in this file); in
+ * rust-core mode the structurally identical native codec from
+ * `@peerbit/network-rust` (`RustFanoutTree`) is used instead, with byte
+ * identity covered by the golden-vector parity suite.
+ */
+/** Widen `Uint8Array<ArrayBuffer>` returns to plain `Uint8Array` so the
+ * structurally identical native codec (`RustFanoutTree`) satisfies the
+ * same seam type. */
+type WireEncoder<F> = F extends (...args: infer A) => Uint8Array
+	? (...args: A) => Uint8Array
+	: never;
+
+export type FanoutWireCodec = {
+	encodeJoinReq: WireEncoder<typeof encodeJoinReq>;
+	encodeJoinAccept: WireEncoder<typeof encodeJoinAccept>;
+	encodeJoinReject: WireEncoder<typeof encodeJoinReject>;
+	encodeKick: WireEncoder<typeof encodeKick>;
+	encodeEnd: WireEncoder<typeof encodeEnd>;
+	encodeRepairReq: WireEncoder<typeof encodeRepairReq>;
+	encodeFetchReq: WireEncoder<typeof encodeFetchReq>;
+	encodeIHave: WireEncoder<typeof encodeIHave>;
+	encodeData: WireEncoder<typeof encodeData>;
+	encodePublishProxy: WireEncoder<typeof encodePublishProxy>;
+	encodeLeave: WireEncoder<typeof encodeLeave>;
+	encodeUnicast: WireEncoder<typeof encodeUnicast>;
+	encodeUnicastAck: WireEncoder<typeof encodeUnicastAck>;
+	encodeRouteQuery: WireEncoder<typeof encodeRouteQuery>;
+	encodeRouteReply: WireEncoder<typeof encodeRouteReply>;
+	encodeTrackerAnnounce: WireEncoder<typeof encodeTrackerAnnounce>;
+	encodeTrackerQuery: WireEncoder<typeof encodeTrackerQuery>;
+	encodeTrackerReply: WireEncoder<typeof encodeTrackerReply>;
+	encodeTrackerFeedback: WireEncoder<typeof encodeTrackerFeedback>;
+	encodeParentProbeReq: WireEncoder<typeof encodeParentProbeReq>;
+	encodeParentProbeReply: WireEncoder<typeof encodeParentProbeReply>;
+	encodeProviderAnnounce: WireEncoder<typeof encodeProviderAnnounce>;
+	encodeProviderQuery: WireEncoder<typeof encodeProviderQuery>;
+	encodeProviderReply: WireEncoder<typeof encodeProviderReply>;
+	encodeProviderSubscribe: WireEncoder<typeof encodeProviderSubscribe>;
+	encodeProviderUnsubscribe: WireEncoder<typeof encodeProviderUnsubscribe>;
+	encodeProviderNotify: WireEncoder<typeof encodeProviderNotify>;
+	decodeJoinReq: typeof decodeJoinReq;
+	decodeJoinResponseReqId: typeof decodeJoinResponseReqId;
+	decodeJoinAccept: typeof decodeJoinAccept;
+	decodeJoinReject: typeof decodeJoinReject;
+	decodeEnd: typeof decodeEnd;
+	decodeRepairSeqs: typeof decodeRepairSeqs;
+	decodeIHave: typeof decodeIHave;
+	decodeUnicast: typeof decodeUnicast;
+	decodeUnicastAck: typeof decodeUnicastAck;
+	decodeRouteQuery: typeof decodeRouteQuery;
+	decodeRouteReply: typeof decodeRouteReply;
+	decodeTrackerAnnounce: typeof decodeTrackerAnnounce;
+	decodeTrackerQuery: typeof decodeTrackerQuery;
+	decodeTrackerReply: typeof decodeTrackerReply;
+	decodeTrackerFeedback: typeof decodeTrackerFeedback;
+	decodeParentProbeReq: typeof decodeParentProbeReq;
+	decodeParentProbeReply: typeof decodeParentProbeReply;
+	decodeProviderAnnounce: typeof decodeProviderAnnounce;
+	decodeProviderQuery: typeof decodeProviderQuery;
+	decodeProviderReply: typeof decodeProviderReply;
+	decodeProviderNotify: typeof decodeProviderNotify;
+	decodeProviderSubscribe: typeof decodeProviderSubscribe;
+};
+
+export const tsFanoutWireCodec: FanoutWireCodec = {
+	encodeJoinReq,
+	encodeJoinAccept,
+	encodeJoinReject,
+	encodeKick,
+	encodeEnd,
+	encodeRepairReq,
+	encodeFetchReq,
+	encodeIHave,
+	encodeData,
+	encodePublishProxy,
+	encodeLeave,
+	encodeUnicast,
+	encodeUnicastAck,
+	encodeRouteQuery,
+	encodeRouteReply,
+	encodeTrackerAnnounce,
+	encodeTrackerQuery,
+	encodeTrackerReply,
+	encodeTrackerFeedback,
+	encodeParentProbeReq,
+	encodeParentProbeReply,
+	encodeProviderAnnounce,
+	encodeProviderQuery,
+	encodeProviderReply,
+	encodeProviderSubscribe,
+	encodeProviderUnsubscribe,
+	encodeProviderNotify,
+	decodeJoinReq,
+	decodeJoinResponseReqId,
+	decodeJoinAccept,
+	decodeJoinReject,
+	decodeEnd,
+	decodeRepairSeqs,
+	decodeIHave,
+	decodeUnicast,
+	decodeUnicastAck,
+	decodeRouteQuery,
+	decodeRouteReply,
+	decodeTrackerAnnounce,
+	decodeTrackerQuery,
+	decodeTrackerReply,
+	decodeTrackerFeedback,
+	decodeParentProbeReq,
+	decodeParentProbeReply,
+	decodeProviderAnnounce,
+	decodeProviderQuery,
+	decodeProviderReply,
+	decodeProviderNotify,
+	decodeProviderSubscribe,
 };

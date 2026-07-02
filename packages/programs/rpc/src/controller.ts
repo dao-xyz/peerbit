@@ -44,6 +44,13 @@ export type RPCSetupOptions<Q, R> = {
 	queryType: AbstractType<Q>;
 	responseType: AbstractType<R>;
 	responseHandler?: ResponseHandler<Q, R>;
+	/**
+	 * Opt-in fast path: resolve the request object for an inbound message
+	 * without decoding `RequestV0.request` (e.g. from a native wire stash
+	 * keyed by the message id). Returning undefined falls back to the normal
+	 * decrypt + deserialize path, so semantics never diverge.
+	 */
+	resolveRequest?: (message: DataMessage) => Q | undefined;
 };
 export type RequestContext = {
 	from?: PublicSignKey;
@@ -99,6 +106,7 @@ export interface RPCEvents<Q, R> extends ProgramEvents {
 export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	private _subscribed = false;
 	private _responseHandler?: ResponseHandler<Q, (R | undefined) | R>;
+	private _resolveRequest?: (message: DataMessage) => Q | undefined;
 	private _responseResolver!: Map<
 		string,
 		(properties: { response: ResponseV0; message: DataMessage }) => any
@@ -115,6 +123,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	async open(args: RPCSetupOptions<Q, R>): Promise<void> {
 		this._rpcTopic = args.topic ?? this._rpcTopic;
 		this._responseHandler = args.responseHandler;
+		this._resolveRequest = args.resolveRequest;
 		this._requestType = args.queryType;
 		this._requestTypeIsUint8Array = (this._requestType as any) === Uint8Array;
 		this._responseType = args.responseType;
@@ -173,11 +182,14 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				const rpcMessage = deserialize(data.data, RPCMessage);
 				if (rpcMessage instanceof RequestV0) {
 					if (this._responseHandler) {
-						const maybeEncrypted = rpcMessage.request;
-						const decrypted = await maybeEncrypted.decrypt(
-							this.node.services.keychain,
-						);
-						const request = this._getRequestValueFn(decrypted);
+						let request = this._resolveRequest?.(message);
+						if (request === undefined) {
+							const maybeEncrypted = rpcMessage.request;
+							const decrypted = await maybeEncrypted.decrypt(
+								this.node.services.keychain,
+							);
+							request = this._getRequestValueFn(decrypted);
+						}
 						let from = message.header.signatures!.publicKeys[0];
 
 						this.events.dispatchEvent(

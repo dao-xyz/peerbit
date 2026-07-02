@@ -75,10 +75,46 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	repairSweepTargetBufferSize?: number;
 
 	/**
+	 * Native wire receive fusion (requires nativeBackbone). Shared-log
+	 * registers its RPC topic with this session so raw exchange-head payloads
+	 * recognized by the native wire decoder stay in wasm memory: the TS borsh
+	 * decode of the entries and the JS-to-wasm copy of their block bytes are
+	 * skipped. Messages without a stash entry fall back to the regular path.
+	 */
+	nativeWireSync?: SharedLogNativeWireSync;
+
+	/**
 	 * Optional profiling callback. It is only invoked when provided, and should
 	 * avoid blocking because it runs inside sync hot paths.
 	 */
 	profile?: SyncProfileFn;
+};
+
+/**
+ * The per-node native wire-sync session surface shared-log consumes
+ * (implemented by `NativeBackboneWireSyncSession` in `@peerbit/native-backbone`;
+ * the same object also implements the `nativeWire` option of
+ * `@peerbit/stream`'s DirectStream).
+ */
+export type SharedLogNativeWireSync = {
+	/** Raw wasm session handle consumed by `prepareStashedRawReceive*`. */
+	handle: unknown;
+	registerTopic(topic: string): void;
+	unregisterTopic(topic: string): boolean;
+	stashedMeta(id: Uint8Array):
+		| {
+				hashes: string[];
+				gidRefrences: string[][];
+				byteLengths: Uint32Array;
+				reserved: Uint8Array;
+				payloadLength: number;
+		  }
+		| undefined;
+	stashedBlocks(
+		id: Uint8Array,
+		indexes?: Uint32Array,
+	): Uint8Array[] | undefined;
+	release(id: Uint8Array): boolean;
 };
 
 export type HashSymbolInput = readonly bigint[] | BigUint64Array;

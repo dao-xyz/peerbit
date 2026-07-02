@@ -89,7 +89,14 @@ import {
 } from "./core/seek-routing.js";
 import { logger } from "./logger.js";
 import { type PushableLanes, pushableLanes } from "./pushable-lanes.js";
-import { MAX_ROUTE_DISTANCE, Routes } from "./routes.js";
+import { MAX_ROUTE_DISTANCE, Routes, type RoutesLike } from "./routes.js";
+import {
+	type NativeWire,
+	type RustCoreStream,
+	type RustLanesInit,
+	type RustSeenCache,
+	resolveInjectedRustCore,
+} from "./rust-core.js";
 import { BandwidthTracker } from "./stats.js";
 import { waitForEvent } from "./wait-for-event.js";
 
@@ -97,6 +104,41 @@ export { logger };
 const warn = logger.newScope("warn");
 
 export { BandwidthTracker }; // might be useful for others
+export {
+	Routes,
+	type RelayInfo,
+	type RouteInfo,
+	type RoutesLike,
+} from "./routes.js";
+export {
+	RUST_CORE_GLOBAL_KEY,
+	type NativeWire,
+	type RustBlockExchange,
+	type RustBlockProviderCache,
+	type RustCoreStream,
+	type RustDecodedBlockMessage,
+	type RustDecodedFanoutJoinAccept,
+	type RustDecodedFanoutJoinReject,
+	type RustDecodedFanoutJoinReq,
+	type RustDecodedFanoutParentProbeReply,
+	type RustDecodedFanoutProviderEntry,
+	type RustDecodedFanoutTrackerReplyEntry,
+	type RustDecodedFanoutUnicast,
+	type RustDecodedPubSubMessage,
+	type RustEagerBlockCache,
+	type RustFanoutTree,
+	type RustLanesInit,
+	type RustParentUpgradeGateOptions,
+	type RustParentUpgradeGateState,
+	type RustParentUpgradeOptions,
+	type RustParentUpgradePolicy,
+	type RustRoutesInit,
+	type RustSeenCache,
+	type RustStreamDecisions,
+	type RustTopicControl,
+	type RustTopicRootDirectoryState,
+} from "./rust-core.js";
+export type { PushableLanes } from "./pushable-lanes.js";
 
 const getErrorName = (e: any): string | undefined =>
 	e?.name ?? e?.constructor?.name;
@@ -174,6 +216,14 @@ export interface PeerStreamsInit {
 	protocol: string;
 	connId: string;
 	outboundQueue?: PeerOutboundQueueOptions;
+	/**
+	 * Native outbound lane scheduler factory (rust-core mode). When set, the
+	 * WRR scheduling/byte-budget decisions of the outbound queue run in the
+	 * native core instead of the TS `pushableLanes`.
+	 */
+	lanesFactory?: (
+		init: RustLanesInit,
+	) => PushableLanes<Uint8Array | Uint8ArrayList>;
 }
 const DEFAULT_SEEK_MESSAGE_REDUDANCY = 2;
 const DEFAULT_SILENT_MESSAGE_REDUDANCY = 1;
@@ -328,6 +378,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 
 	private usedBandWidthTracker: BandwidthTracker;
 	private readonly outboundQueue?: PeerOutboundQueueOptions;
+	private readonly lanesFactory?: PeerStreamsInit["lanesFactory"];
 
 	// Unified outbound streams list (during grace may contain >1; after pruning length==1)
 	private outboundStreams: OutboundCandidate[] = [];
@@ -380,17 +431,28 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	private _addOutboundCandidate(raw: Stream): OutboundCandidate {
 		const existing = this.outboundStreams.find((c) => c.raw === raw);
 		if (existing) return existing;
-		const pushableInst = pushableLanes<Uint8Array | Uint8ArrayList>({
-			lanes: PRIORITY_LANES,
-			maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
-			overflow: "throw",
-			onBufferSize: () => {
-				this.dispatchEvent(new CustomEvent("queue:outbound"));
-			},
-			onPush: (val) => {
-				candidate.bytesDelivered += val.byteLength;
-			},
-		});
+		const pushableInst = this.lanesFactory
+			? this.lanesFactory({
+					lanes: PRIORITY_LANES,
+					maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
+					onBufferSize: () => {
+						this.dispatchEvent(new CustomEvent("queue:outbound"));
+					},
+					onPush: (val) => {
+						candidate.bytesDelivered += val.byteLength;
+					},
+				})
+			: pushableLanes<Uint8Array | Uint8ArrayList>({
+					lanes: PRIORITY_LANES,
+					maxBufferedBytes: this.outboundQueue?.maxBufferedBytes,
+					overflow: "throw",
+					onBufferSize: () => {
+						this.dispatchEvent(new CustomEvent("queue:outbound"));
+					},
+					onPush: (val) => {
+						candidate.bytesDelivered += val.byteLength;
+					},
+				});
 		const candidate: OutboundCandidate = {
 			raw,
 			pushable: pushableInst,
@@ -477,6 +539,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		this.usedBandWidthTracker = new BandwidthTracker(10);
 		this.usedBandWidthTracker.start();
 		this.outboundQueue = init.outboundQueue;
+		this.lanesFactory = init.lanesFactory;
 	}
 
 	/**
@@ -1051,6 +1114,11 @@ type OutboundQueueArguments =
 	  }
 	| false;
 
+const NATIVE_WIRE_RECORD_WORDS = 4;
+const NATIVE_WIRE_FLAG_DECODE_OK = 0x01;
+const NATIVE_WIRE_VERIFY_VERIFIED = 1;
+const NATIVE_WIRE_VERIFY_UNSUPPORTED = 2;
+
 export type DirectStreamOptions = {
 	canRelayMessage?: boolean;
 	messageProcessingConcurrency?: number;
@@ -1080,6 +1148,23 @@ export type DirectStreamOptions = {
 	seenCacheMax?: number;
 	seenCacheTtlMs?: number;
 	outboundQueue?: OutboundQueueArguments;
+	/**
+	 * Offload inbound envelope decode + signature verification to a native
+	 * (wasm) module (`@peerbit/network-rust`). Frames arriving within the
+	 * same tick are verified as one batch. When unset (the default) the pure
+	 * TS path is used, byte-for-byte unchanged.
+	 */
+	nativeWire?: NativeWire;
+	/**
+	 * Run the DirectStream protocol state machine (routing table, seen-cache
+	 * dedup, outbound lane scheduling, relay/ack decisions) in the native
+	 * (wasm) core from `@peerbit/network-rust`; implies `nativeWire` for the
+	 * inbound batch decode+verify unless one is given explicitly. JS keeps
+	 * the sockets and the public API/events; routing decisions come from the
+	 * core. Off by default; `false` also opts out of any test-time injected
+	 * core (see `RUST_CORE_GLOBAL_KEY`).
+	 */
+	rustCore?: RustCoreStream | false;
 };
 
 type ConnectionManagerLike = {
@@ -1111,7 +1196,7 @@ export interface DirectStreamComponents {
 
 type SharedRoutingState = {
 	session: number;
-	routes: Routes;
+	routes: RoutesLike;
 	controller: AbortController;
 	refs: number;
 };
@@ -1143,7 +1228,7 @@ export abstract class DirectStream<
 	 */
 	public peers: Map<string, PeerStreams>;
 	public peerKeyHashToPublicKey: Map<string, PublicSignKey>;
-	public routes: Routes;
+	public routes: RoutesLike;
 	/**
 	 * If router can relay received messages, even if not subscribed
 	 */
@@ -1179,6 +1264,37 @@ export abstract class DirectStream<
 	}> = new Set();
 	private sharedRoutingKey?: PrivateKey;
 	private sharedRoutingState?: SharedRoutingState;
+	private readonly nativeWire?: NativeWire;
+	protected readonly rustCore?: RustCoreStream;
+	private readonly rustSeenCache?: RustSeenCache;
+	private pendingNativeWireFrames: {
+		from: PublicSignKey;
+		peerStreams: PeerStreams;
+		bytes: Uint8ArrayList;
+		done: DeferredPromise<void>;
+	}[] = [];
+	private nativeWireFlushScheduled = false;
+	/**
+	 * Always-on counters recording where per-frame wire work executed. Tests
+	 * and benchmarks use them to prove the native path leaves no per-message
+	 * JS decode/verify work on the hot path. `tsEnvelopeDecodes` counts the
+	 * TS envelope object materializations (`Message.from`); on the native
+	 * path that object only feeds the routing state machine and app-facing
+	 * events, holding the payload as a zero-copy view, while decode
+	 * validation and signature verification stay native.
+	 */
+	public readonly wireCounters = {
+		/** Frames decoded and signature-verified by the native wire module. */
+		nativeFrames: 0,
+		/** Frames where the native decode failed and the TS path took over. */
+		nativeFallbackFrames: 0,
+		/** Frames processed without a native wire module (pure TS path). */
+		tsFrames: 0,
+		/** TS-side signature verifications (not pre-seeded by native decode). */
+		tsSignatureVerifies: 0,
+		/** TS envelope object materializations (`Message.from`). */
+		tsEnvelopeDecodes: 0,
+	};
 
 	// for sequential creation of outbound streams
 		public outboundInflightQueue: Pushable<{
@@ -1226,8 +1342,17 @@ export abstract class DirectStream<
 				seenCacheTtlMs = 10 * 60 * 1e3,
 				inboundIdleTimeout,
 				outboundQueue,
+				nativeWire,
+				rustCore,
 			} = options || {};
 
+		this.rustCore =
+			rustCore === false ? undefined : (rustCore ?? resolveInjectedRustCore());
+		this.nativeWire = nativeWire ?? this.rustCore?.nativeWire;
+		this.rustSeenCache = this.rustCore?.createSeenCache({
+			max: Math.max(1, Math.floor(seenCacheMax)),
+			ttl: Math.max(1, Math.floor(seenCacheTtlMs)),
+		});
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
 		this.sign = (bytes) => signKey.sign(bytes, PreHash.SHA_256);
@@ -1354,6 +1479,26 @@ export abstract class DirectStream<
 						ttl: this.connectionManagerOptions.pruner.connectionTimeout,
 					})
 				: undefined;
+		}
+
+		private createRoutes(signal: AbortSignal): RoutesLike {
+			if (this.rustCore) {
+				return this.rustCore.createRoutes({
+					me: this.publicKeyHash,
+					routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
+					signal,
+					maxFromEntries: this.routeCacheMaxFromEntries,
+					maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
+					maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
+				});
+			}
+			return new Routes(this.publicKeyHash, {
+				routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
+				signal,
+				maxFromEntries: this.routeCacheMaxFromEntries,
+				maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
+				maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
+			});
 		}
 
 		private pruneConnectionsToLimits(): Promise<void> {
@@ -1488,13 +1633,7 @@ export abstract class DirectStream<
 				state = {
 					session: Date.now(),
 					controller,
-					routes: new Routes(this.publicKeyHash, {
-						routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
-						signal: controller.signal,
-						maxFromEntries: this.routeCacheMaxFromEntries,
-						maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
-						maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
-					}),
+					routes: this.createRoutes(controller.signal),
 					refs: 0,
 				};
 				sharedRoutingByPrivateKey.set(key, state);
@@ -1512,13 +1651,7 @@ export abstract class DirectStream<
 			this.routes = state.routes;
 		} else {
 			this.session = Date.now();
-			this.routes = new Routes(this.publicKeyHash, {
-				routeMaxRetentionPeriod: this.routeMaxRetentionPeriod,
-				signal: this.closeController.signal,
-				maxFromEntries: this.routeCacheMaxFromEntries,
-				maxTargetsPerFrom: this.routeCacheMaxTargetsPerFrom,
-				maxRelaysPerTarget: this.routeCacheMaxRelaysPerTarget,
-			});
+			this.routes = this.createRoutes(this.closeController.signal);
 		}
 
 		this.started = true;
@@ -1693,6 +1826,11 @@ export abstract class DirectStream<
 		this.queue.clear();
 		this.peers.clear();
 		this.seenCache.clear();
+		this.rustSeenCache?.clear();
+		for (const pending of this.pendingNativeWireFrames) {
+			pending.done.resolve();
+		}
+		this.pendingNativeWireFrames = [];
 		// When routing is shared across co-located protocols, only clear once the last
 		// instance stops. Otherwise we'd wipe routes still in use by other services.
 		if (!sharedState) {
@@ -2060,6 +2198,9 @@ export abstract class DirectStream<
 			protocol,
 			connId,
 			outboundQueue: this.outboundQueueOptions,
+			lanesFactory: this.rustCore
+				? (init) => this.rustCore!.createLanes(init)
+				: undefined,
 		});
 
 		this.peers.set(publicKeyHash, peerStreams);
@@ -2189,10 +2330,32 @@ export abstract class DirectStream<
 		// logger.trace("rpc from " + from + ", " + this.peerIdStr);
 
 		if (message.length > 0) {
+			if (this.nativeWire) {
+				// Batch frames arriving within the same tick so decode +
+				// signature verification happen in one native call. The
+				// returned promise still resolves only after this frame's
+				// processMessage turn completes (the TS-path contract).
+				const done = pDefer<void>();
+				this.pendingNativeWireFrames.push({
+					from,
+					peerStreams,
+					bytes: message,
+					done,
+				});
+				if (!this.nativeWireFlushScheduled) {
+					this.nativeWireFlushScheduled = true;
+					queueMicrotask(() => this.flushNativeWireFrames());
+				}
+				await done.promise;
+				return true;
+			}
+
+			this.wireCounters.tsFrames++;
 			let decodedMessage: Message | undefined;
 			let priority = 0;
 			try {
 				decodedMessage = Message.from(message);
+				this.wireCounters.tsEnvelopeDecodes++;
 				priority = decodedMessage.header.priority ?? 0;
 			} catch {
 				// This is only a best-effort priority peek. processMessage()
@@ -2218,12 +2381,146 @@ export abstract class DirectStream<
 		return true;
 	}
 
+	/**
+	 * Drain the frames collected by processRpc() through the native wire
+	 * module: one batched decode+verify call, then the usual per-message
+	 * pipeline with the TS message object pre-seeded with the native
+	 * verification result. Any native failure falls back to the pure TS
+	 * path for that frame, so semantics never diverge.
+	 */
+	private flushNativeWireFrames() {
+		this.nativeWireFlushScheduled = false;
+		const pending = this.pendingNativeWireFrames;
+		if (pending.length === 0) {
+			return;
+		}
+		this.pendingNativeWireFrames = [];
+
+		let records: Uint32Array | undefined;
+		if (this.nativeWire) {
+			try {
+				records = this.nativeWire.decodeAndVerifyBatch(
+					pending.map((frame) => frame.bytes.subarray()),
+					Date.now(),
+				);
+				if (records.length !== pending.length * NATIVE_WIRE_RECORD_WORDS) {
+					records = undefined;
+				}
+			} catch (error: any) {
+				logger(
+					"Native wire batch decode failed, falling back to TS path: " +
+						error?.message,
+				);
+				records = undefined;
+			}
+		}
+
+		for (let i = 0; i < pending.length; i++) {
+			const { from, peerStreams, bytes, done } = pending[i];
+			const base = i * NATIVE_WIRE_RECORD_WORDS;
+			const word0 = records ? records[base] : 0;
+			const decodeOk =
+				records != null && (word0 & NATIVE_WIRE_FLAG_DECODE_OK) !== 0;
+			const verifyStatus = (word0 >>> 16) & 0xff;
+			if (decodeOk && verifyStatus !== NATIVE_WIRE_VERIFY_UNSUPPORTED) {
+				this.wireCounters.nativeFrames++;
+			} else {
+				this.wireCounters.nativeFallbackFrames++;
+			}
+
+			let decodedMessage: Message | undefined;
+			let priority = 0;
+			try {
+				decodedMessage = Message.from(bytes);
+				this.wireCounters.tsEnvelopeDecodes++;
+				priority = decodedMessage.header.priority ?? 0;
+			} catch {
+				// Best-effort peek, same as the TS path: processMessage()
+				// performs the authoritative decode and logs invalid frames.
+			}
+			if (
+				decodedMessage &&
+				decodeOk &&
+				verifyStatus !== NATIVE_WIRE_VERIFY_UNSUPPORTED
+			) {
+				// Seed the memoized verification result; verify(true) in the
+				// dispatch path (verifyAndProcess) short-circuits on it.
+				decodedMessage._verified =
+					verifyStatus === NATIVE_WIRE_VERIFY_VERIFIED;
+			}
+			this.queue
+				.add(
+					async () => {
+						try {
+							await this.processMessage(
+								from,
+								peerStreams,
+								bytes,
+								decodedMessage,
+							);
+						} catch (err: any) {
+							logger.error(err);
+						}
+					},
+					{ priority },
+				)
+				.catch(logError)
+				.finally(() => done.resolve());
+		}
+	}
+
+	/**
+	 * Native decode+verify for an envelope frame that arrived outside the
+	 * inbound stream path (e.g. nested inside another protocol's payload).
+	 * Seeds the memoized verification result so `verify(true)`
+	 * short-circuits; on any native failure the TS verification path stays
+	 * authoritative.
+	 */
+	protected seedNativeWireVerification(
+		message: Message,
+		frame: Uint8Array | Uint8ArrayList,
+	): void {
+		if (!this.nativeWire || message._verified != null) {
+			return;
+		}
+		try {
+			const records = this.nativeWire.decodeAndVerifyBatch(
+				[frame instanceof Uint8Array ? frame : frame.subarray()],
+				Date.now(),
+			);
+			if (records.length !== NATIVE_WIRE_RECORD_WORDS) {
+				return;
+			}
+			const word0 = records[0];
+			if ((word0 & NATIVE_WIRE_FLAG_DECODE_OK) === 0) {
+				this.wireCounters.nativeFallbackFrames++;
+				return;
+			}
+			const verifyStatus = (word0 >>> 16) & 0xff;
+			if (verifyStatus === NATIVE_WIRE_VERIFY_UNSUPPORTED) {
+				this.wireCounters.nativeFallbackFrames++;
+				return;
+			}
+			this.wireCounters.nativeFrames++;
+			message._verified = verifyStatus === NATIVE_WIRE_VERIFY_VERIFIED;
+		} catch {
+			// TS verification stays authoritative
+		}
+	}
+
 	private async modifySeenCache(
 		message: Uint8Array | Uint8ArrayList,
 		getIdFn: (
 			bytes: Uint8Array | Uint8ArrayList,
 		) => Promise<string> = getMsgId,
+		seenKeyKind: 0 | 1 = 0,
 	) {
+		if (this.rustSeenCache) {
+			return this.rustSeenCache.modify(
+				message instanceof Uint8Array ? message : message.subarray(),
+				seenKeyKind,
+			);
+		}
 		const msgId = await getIdFn(message);
 		const seen = this.seenCache.get(msgId);
 		this.seenCache.add(msgId, seen ? seen + 1 : 1);
@@ -2246,7 +2543,10 @@ export abstract class DirectStream<
 		// Ensure the message is valid before processing it
 		let message: Message | undefined = decodedMessage;
 		try {
-			message ??= Message.from(msg);
+			if (message == null) {
+				message = Message.from(msg);
+				this.wireCounters.tsEnvelopeDecodes++;
+			}
 		} catch (error) {
 			warn(error, "Failed to decode message frame from", from.hashcode());
 			return;
@@ -2276,6 +2576,20 @@ export abstract class DirectStream<
 	}
 
 	public shouldIgnore(message: DataMessage, seenBefore: number) {
+		if (this.rustCore) {
+			const mode = message.header.mode;
+			return this.rustCore.decisions.shouldIgnoreData({
+				seenBefore,
+				acknowledgedMode: isAcknowledgedDeliveryMode(mode),
+				redundancy: isAcknowledgedDeliveryMode(mode) ? mode.redundancy : 0,
+				hops: getDeliveryHopTrace(mode),
+				me: this.publicKeyHash,
+				signedBySelf:
+					message.header.signatures?.publicKeys.some((x) =>
+						x.equals(this.publicKey),
+					) ?? false,
+			});
+		}
 		if (isAcknowledgedDeliveryMode(message.header.mode)) {
 			if (hasDeliveryHop(message.header.mode, this.publicKeyHash)) {
 				return true;
@@ -2368,6 +2682,9 @@ export abstract class DirectStream<
 	}
 
 	public async verifyAndProcess(message: Message<any>) {
+		if (message._verified == null) {
+			this.wireCounters.tsSignatureVerifies++;
+		}
 		const verified = await message.verify(true);
 		if (!verified) {
 			return false;
@@ -2395,13 +2712,18 @@ export abstract class DirectStream<
 				message.header.mode instanceof AcknowledgeAnyWhere
 					? true
 					: message.header.mode.to.includes(this.publicKeyHash);
-			if (
-				!shouldAcknowledgeDataMessage({
-					isRecipient,
-					seenBefore,
-					redundancy: message.header.mode.redundancy,
-				})
-			) {
+			const shouldAcknowledge = this.rustCore
+				? this.rustCore.decisions.shouldAcknowledge({
+						isRecipient,
+						seenBefore,
+						redundancy: message.header.mode.redundancy,
+					})
+				: shouldAcknowledgeDataMessage({
+						isRecipient,
+						seenBefore,
+						redundancy: message.header.mode.redundancy,
+					});
+			if (!shouldAcknowledge) {
 				return;
 			}
 			const signers = [...getDeliveryHopTrace(message.header.mode)];
@@ -2464,6 +2786,7 @@ export abstract class DirectStream<
 				: messageBytes.subarray(),
 			(bytes) =>
 				sha256Base64(bytes instanceof Uint8Array ? bytes : bytes.subarray()),
+			1,
 		);
 
 		if (seenBefore > 0) {
@@ -2479,10 +2802,21 @@ export abstract class DirectStream<
 		}
 
 		const messageIdString = toBase64(message.messageIdToAcknowledge);
-		const myIndex = message.header.mode.trace.findIndex(
-			(x) => x === this.publicKeyHash,
-		);
-		const next = message.header.mode.trace[myIndex - 1];
+		let myIndex: number;
+		let next: string | undefined;
+		if (this.rustCore) {
+			const hop = this.rustCore.decisions.ackNextHop(
+				message.header.mode.trace,
+				this.publicKeyHash,
+			);
+			myIndex = hop.myIndex;
+			next = hop.next;
+		} else {
+			myIndex = message.header.mode.trace.findIndex(
+				(x) => x === this.publicKeyHash,
+			);
+			next = message.header.mode.trace[myIndex - 1];
+		}
 		const nextStream = next ? this.peers.get(next) : undefined;
 
 		this._ackCallbacks
@@ -3031,15 +3365,25 @@ export abstract class DirectStream<
 				) {
 					const upstreamHash = messageFrom?.publicKey.hashcode();
 
-					const routeUpdate = computeSeekAckRouteUpdate({
-						current: this.publicKeyHash,
-						upstream: upstreamHash,
-						downstream: messageThrough.publicKey.hashcode(),
-						target: messageTargetHash,
-						// Route "distance" is based on recipient-seen order (0 = fastest). This is relied upon by
-						// `Routes.getFanout(...)` which uses `distance < redundancy` to select redundant next-hops.
-						distance: seenCounter,
-					});
+					// Route "distance" is based on recipient-seen order (0 = fastest). This is relied upon by
+					// `Routes.getFanout(...)` which uses `distance < redundancy` to select redundant next-hops.
+					const routeUpdate = this.rustCore
+						? {
+								...this.rustCore.decisions.seekAckRouteUpdate({
+									current: this.publicKeyHash,
+									upstream: upstreamHash,
+									downstream: messageThrough.publicKey.hashcode(),
+								}),
+								target: messageTargetHash,
+								distance: seenCounter,
+							}
+						: computeSeekAckRouteUpdate({
+								current: this.publicKeyHash,
+								upstream: upstreamHash,
+								downstream: messageThrough.publicKey.hashcode(),
+								target: messageTargetHash,
+								distance: seenCounter,
+							});
 
 					this.addRouteConnection(
 						routeUpdate.from,
@@ -3200,20 +3544,41 @@ export abstract class DirectStream<
 							message.header.mode instanceof AcknowledgeDelivery &&
 							usedNeighbours.size < message.header.mode.redundancy
 						) {
-							for (const [neighbour, stream] of this.peers) {
-								if (usedNeighbours.size >= message.header.mode.redundancy) {
-									break;
-								}
-								if (usedNeighbours.has(neighbour)) continue;
-								usedNeighbours.add(neighbour);
-								promises.push(
-									this.waitForPeerWrite(
-										stream,
-										bytes,
-										message.header.priority,
-										signal,
-									),
+							if (this.rustCore) {
+								const probes = this.rustCore.decisions.selectRedundancyProbes(
+									[...this.peers.keys()],
+									[...usedNeighbours],
+									message.header.mode.redundancy,
 								);
+								for (const neighbour of probes) {
+									const stream = this.peers.get(neighbour);
+									if (!stream) continue;
+									usedNeighbours.add(neighbour);
+									promises.push(
+										this.waitForPeerWrite(
+											stream,
+											bytes,
+											message.header.priority,
+											signal,
+										),
+									);
+								}
+							} else {
+								for (const [neighbour, stream] of this.peers) {
+									if (usedNeighbours.size >= message.header.mode.redundancy) {
+										break;
+									}
+									if (usedNeighbours.has(neighbour)) continue;
+									usedNeighbours.add(neighbour);
+									promises.push(
+										this.waitForPeerWrite(
+											stream,
+											bytes,
+											message.header.priority,
+											signal,
+										),
+									);
+								}
 							}
 						}
 
@@ -3229,14 +3594,25 @@ export abstract class DirectStream<
 					if (isRelayed && message.header.mode instanceof SilentDelivery) {
 						const promises: Promise<any>[] = [];
 						const originalTo = message.header.mode.to;
-						for (const recipient of originalTo) {
-							if (recipient === this.publicKeyHash) continue;
-							if (recipient === from.hashcode()) continue; // never send back to previous hop
+						const recipients = this.rustCore
+							? this.rustCore.decisions.filterSilentRelayRecipients(
+									originalTo,
+									this.publicKeyHash,
+									from.hashcode(),
+									[...this.peers.keys()],
+									getDeliveryHopTrace(message.header.mode),
+								)
+							: undefined;
+						for (const recipient of recipients ?? originalTo) {
+							if (!recipients) {
+								if (recipient === this.publicKeyHash) continue;
+								if (recipient === from.hashcode()) continue; // never send back to previous hop
+								if (hasDeliveryHop(message.header.mode, recipient)) {
+									continue; // recipient already signed/seen this message
+								}
+							}
 							const stream = this.peers.get(recipient);
 							if (!stream) continue;
-							if (hasDeliveryHop(message.header.mode, recipient)) {
-								continue; // recipient already signed/seen this message
-							}
 							message.header.mode.to = [recipient];
 							promises.push(
 								this.waitForPeerWrite(
@@ -3271,26 +3647,47 @@ export abstract class DirectStream<
 
 			let sentOnce = false;
 			const promises: Promise<any>[] = [];
-			for (const stream of peers.values()) {
-				const id = stream as PeerStreams;
-
-				// Dont sent back to the sender
-				if (id.publicKey.equals(from)) {
-					continue;
-				}
-				// Dont send message back to any peer already present in the path.
-				if (
-					message.header.signatures?.publicKeys.find((x) =>
-						x.equals(id.publicKey),
-					) ||
-					hasDeliveryHop(message.header.mode, id.publicKey.hashcode())
-				) {
-					continue;
-				}
-				sentOnce = true;
-				promises.push(
-					this.waitForPeerWrite(id, bytes, message.header.priority, signal),
+			if (this.rustCore) {
+				const candidates = [...peers.values()] as PeerStreams[];
+				const kept = this.rustCore.decisions.filterFloodTargets(
+					candidates.map((stream) => stream.publicKey.hashcode()),
+					from.hashcode(),
+					message.header.signatures?.publicKeys.map((x) => x.hashcode()) ?? [],
+					getDeliveryHopTrace(message.header.mode),
 				);
+				for (const index of kept) {
+					sentOnce = true;
+					promises.push(
+						this.waitForPeerWrite(
+							candidates[index],
+							bytes,
+							message.header.priority,
+							signal,
+						),
+					);
+				}
+			} else {
+				for (const stream of peers.values()) {
+					const id = stream as PeerStreams;
+
+					// Dont sent back to the sender
+					if (id.publicKey.equals(from)) {
+						continue;
+					}
+					// Dont send message back to any peer already present in the path.
+					if (
+						message.header.signatures?.publicKeys.find((x) =>
+							x.equals(id.publicKey),
+						) ||
+						hasDeliveryHop(message.header.mode, id.publicKey.hashcode())
+					) {
+						continue;
+					}
+					sentOnce = true;
+					promises.push(
+						this.waitForPeerWrite(id, bytes, message.header.priority, signal),
+					);
+				}
 			}
 			await Promise.all(promises);
 			startDeliveryTimeout?.();

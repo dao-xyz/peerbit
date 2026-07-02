@@ -11,8 +11,11 @@ import {
 	createNativeLogBlockStore,
 	type NativeLogBlockStore,
 } from "@peerbit/log-rust";
+import { createNativeWireSyncSession } from "@peerbit/native-backbone";
+import { createRustCoreStream } from "@peerbit/network-rust";
 import type {
 	CreateInstanceOptions,
+	NativeNetworkCreateOptions,
 	StorageCreateOptions,
 	StoreFactory,
 } from "./peer.js";
@@ -24,14 +27,38 @@ export type PeerbitRustStorageOptions = {
 	keychain?: RustAnyStoreOptions;
 };
 
+export type PeerbitRustNetworkOptions = {
+	/**
+	 * Run the DirectStream engine and the protocol codecs (topic control,
+	 * fanout tree, block exchange) on the native core of
+	 * `@peerbit/network-rust`. Default true.
+	 */
+	rustCore?: boolean;
+	/**
+	 * Decode+verify inbound pubsub frames in the native-backbone wasm module
+	 * and stash shared-log raw exchange-head payloads there for the fused
+	 * receive (no JS entry decode, no JS block-byte copies). Default true.
+	 */
+	wireSync?: boolean;
+	/**
+	 * Advertise native shared-log defaults (native backbone data plane,
+	 * native graph, raw exchange-heads sync + the wire-sync session) to
+	 * programs opened on this client. Default true.
+	 */
+	sharedLogDefaults?: boolean;
+};
+
 export type PeerbitRustOptions = {
 	storage?: PeerbitRustStorageOptions;
 	indexer?: RustIndexerOptions;
+	/** Native network plane; `false` keeps the js-libp2p wire path. */
+	network?: boolean | PeerbitRustNetworkOptions;
 };
 
 export type PeerbitRustCreateOptions = {
 	storage: StorageCreateOptions;
 	indexer: NonNullable<CreateInstanceOptions["indexer"]>;
+	network?: NativeNetworkCreateOptions;
 };
 
 class LazyNativeLogBlockStore implements AnyStore {
@@ -155,9 +182,28 @@ export const createRustStorageOptions = (
 	),
 });
 
+export const createRustNetworkOptions = (
+	options: PeerbitRustNetworkOptions = {},
+): NativeNetworkCreateOptions => ({
+	rustCore:
+		options.rustCore === false ? undefined : () => createRustCoreStream(),
+	wireSync:
+		options.wireSync === false
+			? undefined
+			: (selfHash) => createNativeWireSyncSession({ selfHash }),
+	sharedLogDefaults: options.sharedLogDefaults,
+});
+
 export const createRustPeerbitOptions = (
 	options: PeerbitRustOptions = {},
 ): PeerbitRustCreateOptions => ({
 	storage: createRustStorageOptions(options.storage),
 	indexer: (directory) => createRustIndexer(directory, options.indexer),
+	...(options.network === false
+		? {}
+		: {
+				network: createRustNetworkOptions(
+					options.network === true ? {} : options.network,
+				),
+			}),
 });

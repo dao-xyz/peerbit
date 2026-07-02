@@ -135,6 +135,7 @@ import {
 	type RawReceiveHashSelection,
 	RequestIPrune,
 	ResponseIPrune,
+	StashBackedRawExchangeHeadsMessage,
 	createExchangeHeadsMessages,
 	getExchangeHeadHash,
 	getPreparedRawExchangeGid,
@@ -147,8 +148,11 @@ import {
 	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
 	getPreparedRawExchangeTimestamp,
+	getRawExchangeHeadByteLength,
+	getRawExchangeHeadStashIndexes,
 	initExchangeHeadEntry,
 	isPreparedRawEntryWithRefs,
+	isStashBackedRawExchangeHeadsMessage,
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
@@ -219,6 +223,7 @@ import {
 } from "./replication.js";
 import { Observer, Replicator } from "./role.js";
 import type {
+	SharedLogNativeWireSync,
 	SyncEntryCoordinates,
 	SyncOptions,
 	SyncProfileFn,
@@ -329,6 +334,12 @@ export {
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
+export type {
+	SharedLogNativeWireSync,
+	SyncOptions,
+	SyncProfileEvent,
+	SyncProfileFn,
+} from "./sync/index.js";
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
@@ -1098,6 +1109,62 @@ export type SharedLogOptions<
 	fanout?: SharedLogFanoutOptions;
 };
 
+/**
+ * Native defaults a client can advertise for shared-log programs opened on
+ * it (the peerbit client's native network preset sets these; see
+ * `peerbit/rust`). They fill in open options the caller left undefined;
+ * explicit per-open options (including `false`) always win. Without the
+ * property on the client, behavior is unchanged.
+ */
+export type SharedLogNativeDefaults = {
+	nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
+	nativeGraph?: LogProperties<any>["nativeGraph"];
+	sync?: Pick<SyncOptions<any>, "rawExchangeHeads" | "nativeWireSync">;
+};
+
+type NodeWithSharedLogNativeDefaults = {
+	sharedLogNativeDefaults?: SharedLogNativeDefaults;
+};
+
+const applySharedLogNativeDefaults = <
+	O extends {
+		nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
+		nativeGraph?: LogProperties<any>["nativeGraph"];
+		sync?: SyncOptions<any>;
+		onChange?: unknown;
+	},
+>(
+	options: O | undefined,
+	defaults: SharedLogNativeDefaults | undefined,
+): O | undefined => {
+	if (!defaults) {
+		return options;
+	}
+	// The prepared raw receive commits entries without dispatching the
+	// program-level change event (entries never materialize in JS), so the
+	// raw sync defaults only apply to programs that do not consume
+	// per-entry changes. Programs can still opt in explicitly.
+	const applySyncDefaults = options?.onChange == null;
+	const sync =
+		(applySyncDefaults && defaults.sync) || options?.sync
+			? {
+					...options?.sync,
+					rawExchangeHeads:
+						options?.sync?.rawExchangeHeads ??
+						(applySyncDefaults ? defaults.sync?.rawExchangeHeads : undefined),
+					nativeWireSync:
+						options?.sync?.nativeWireSync ??
+						(applySyncDefaults ? defaults.sync?.nativeWireSync : undefined),
+				}
+			: undefined;
+	return {
+		...options,
+		nativeBackbone: options?.nativeBackbone ?? defaults.nativeBackbone,
+		nativeGraph: options?.nativeGraph ?? defaults.nativeGraph,
+		sync,
+	} as O;
+};
+
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 20000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
@@ -1615,6 +1682,7 @@ export class SharedLog<
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
 	private _nativeBackbone?: NativePeerbitBackbone;
+	private _wireSyncSession?: SharedLogNativeWireSync;
 	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
 	private _defaultAppendReplicaMetadataCache?: {
@@ -8002,6 +8070,11 @@ export class SharedLog<
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
+		options = applySharedLogNativeDefaults(
+			options,
+			(this.node as unknown as NodeWithSharedLogNativeDefaults)
+				.sharedLogNativeDefaults,
+		);
 		this.replicas = {
 			min:
 				options?.replicas?.min != null
@@ -8190,6 +8263,16 @@ export class SharedLog<
 			await this.hydrateNativeBackboneSharedLog(this._nativeBackbone);
 		} else if (deferStandaloneNativeRangePlanner) {
 			await this.openNativeRangePlanner(options?.nativeRangePlanner);
+		}
+		// Receive fusion: register this program's RPC topic so the native wire
+		// decoder stashes raw exchange-head payloads addressed to it. Only
+		// useful together with the native backbone (the stashed prepare runs in
+		// the same wasm module); without it the regular decode path is used.
+		this._wireSyncSession = undefined;
+		const wireSyncSession = options?.sync?.nativeWireSync;
+		if (wireSyncSession && this._nativeBackbone) {
+			this._wireSyncSession = wireSyncSession;
+			wireSyncSession.registerTopic(this.topic);
 		}
 		const localBlocks = this._nativeBackbone
 			? this._nativeBackbone.blocks
@@ -8547,6 +8630,8 @@ export class SharedLog<
 				queryType: TransportMessage,
 				responseType: TransportMessage,
 				responseHandler: (query, context) => this.onMessage(query, context),
+				resolveRequest: (message) =>
+					this.resolveStashedRawExchangeHeadsMessage(message),
 				topic: this.topic,
 			}),
 			this.node.services.pubsub.addEventListener(
@@ -10069,6 +10154,10 @@ export class SharedLog<
 		if (!this._entryCoordinatesIndex && !this._replicationRangeIndex) {
 			return;
 		}
+		if (this._wireSyncSession) {
+			this._wireSyncSession.unregisterTopic(this.topic);
+			this._wireSyncSession = undefined;
+		}
 		await this.closeNativeBackboneCoordinatePersistence();
 		await this.syncronizer?.close();
 
@@ -10290,11 +10379,54 @@ export class SharedLog<
 		return this.log.recover();
 	}
 
+	/**
+	 * Receive-fusion resolver passed to the RPC controller: when the native
+	 * wire decoder stashed this message's raw exchange-head payload (keyed by
+	 * the DataMessage id), build the message from stash metadata instead of
+	 * borsh-decoding the entries in JS. The block bytes stay in wasm memory
+	 * for the stashed prepare pipeline.
+	 */
+	private resolveStashedRawExchangeHeadsMessage(
+		message: DataMessage,
+	): StashBackedRawExchangeHeadsMessage | undefined {
+		const session = this._wireSyncSession;
+		const backbone = this._nativeBackbone;
+		if (!session || !backbone) {
+			return undefined;
+		}
+		const meta = session.stashedMeta(message.header.id);
+		if (!meta) {
+			return undefined;
+		}
+		const syncProfile = this._logProperties?.sync?.profile;
+		if (syncProfile) {
+			emitSyncProfileEvent(syncProfile, {
+				name: "sharedLog.rawReceive.wireStashResolve",
+				component: "shared-log",
+				entries: meta.hashes.length,
+				bytes: meta.payloadLength,
+				messages: 1,
+			});
+		}
+		return new StashBackedRawExchangeHeadsMessage({
+			messageId: message.header.id,
+			hashes: meta.hashes,
+			gidRefrences: meta.gidRefrences,
+			byteLengths: meta.byteLengths,
+			reserved: meta.reserved,
+			stash: session,
+			resolveReleasedBlock: (hash) => backbone.rawReceiveBlockBytes(hash),
+		});
+	}
+
 	// Callback for receiving a message from the network
 	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
 	): Promise<void> {
+		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
+			? msg
+			: undefined;
 		try {
 			if (!context.from) {
 				throw new Error("Missing from in update role message");
@@ -10315,6 +10447,18 @@ export class SharedLog<
 			if (msg instanceof RawExchangeHeadsMessage) {
 				const rawFrom = context.from!;
 				const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
+				if (syncProfile && !stashBackedRawMessage) {
+					// Per-message JS-side entry decode: the heads were
+					// borsh-decoded in TS (regular RPC path) instead of being
+					// resolved from the native wire stash. Zero on the fused
+					// hot path.
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.jsEntryDecode",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 				const rawExistingStartedAt = syncProfileStart(syncProfile);
 				const rawExistingHashes = await this.log.hasMany(
 					msg.heads.map((head) => head.hash),
@@ -10335,7 +10479,7 @@ export class SharedLog<
 						rawConfirmedHashes.add(head.hash);
 					} else {
 						rawMissingHeads.push(head);
-						rawMissingBytes += head.bytes.byteLength;
+						rawMissingBytes += getRawExchangeHeadByteLength(head);
 					}
 				}
 				if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
@@ -10407,6 +10551,40 @@ export class SharedLog<
 						await rawPreparedReceiveSelection;
 					return rawPreparedReceiveSelectionValue;
 				};
+				// Receive fusion: when this message was resolved from the wire
+				// stash, the prepared receive reads entry block bytes straight
+				// out of wasm memory (indexed into the stashed frame) instead
+				// of copying a JS blocks array across the boundary.
+				const rawStashIndexes = stashBackedRawMessage
+					? getRawExchangeHeadStashIndexes(rawMissingHeads)
+					: undefined;
+				const prepareNativeBackboneExpectedColumns =
+					stashBackedRawMessage && rawStashIndexes
+						? ({
+								hashes,
+								verifySignatures,
+							}: {
+								hashes: string[];
+								verifySignatures: boolean;
+							}) => {
+								const backbone = this._nativeBackbone;
+								const wireSession = this._wireSyncSession;
+								if (!backbone || !wireSession) {
+									return undefined;
+								}
+								try {
+									return backbone.prepareStashedRawReceiveExpectedColumnsBatch(
+										wireSession,
+										stashBackedRawMessage.messageId,
+										rawStashIndexes,
+										hashes,
+										{ verifySignatures },
+									);
+								} catch {
+									return undefined;
+								}
+							}
+						: undefined;
 				const prepareNativeBackboneExpectedColumnsAndSelection =
 					rawIsRepairHint
 						? undefined
@@ -10415,15 +10593,13 @@ export class SharedLog<
 								hashes,
 								verifySignatures,
 							}: {
-								blocks: Uint8Array[];
+								blocks: () => Uint8Array[];
 								hashes: string[];
 								verifySignatures: boolean;
 							}) => {
 								if (
 									verifySignatures ||
-									!canDeferRawReceiveVerificationUntilNativeSelection ||
-									!this._nativeBackbone
-										?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+									!canDeferRawReceiveVerificationUntilNativeSelection
 								) {
 									return undefined;
 								}
@@ -10435,20 +10611,48 @@ export class SharedLog<
 									};
 									const leaderSelectionContext =
 										await this.createLeaderSelectionContext();
-									const prepared =
-										this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
-											blocks,
-											hashes,
-											{
-												verifySignatures: false,
-												...replicaOptions,
-												leaderOptions:
-													this.createNativeLeaderOptions(
-														leaderSelectionContext,
-													),
-												fromHash: rawFrom.hashcode(),
-											},
-										);
+									const prepareOptions = {
+										verifySignatures: false as const,
+										...replicaOptions,
+										leaderOptions:
+											this.createNativeLeaderOptions(
+												leaderSelectionContext,
+											),
+										fromHash: rawFrom.hashcode(),
+									};
+									let prepared:
+										| ReturnType<
+												NativePeerbitBackbone["prepareRawReceiveExpectedColumnsAndSelectionBatch"]
+										  >
+										| undefined;
+									const wireSession = this._wireSyncSession;
+									if (
+										stashBackedRawMessage &&
+										rawStashIndexes &&
+										wireSession &&
+										this._nativeBackbone
+									) {
+										prepared =
+											this._nativeBackbone.prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
+												wireSession,
+												stashBackedRawMessage.messageId,
+												rawStashIndexes,
+												hashes,
+												prepareOptions,
+											);
+									}
+									if (
+										!prepared &&
+										this._nativeBackbone
+											?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+									) {
+										prepared =
+											this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+												blocks(),
+												hashes,
+												prepareOptions,
+											);
+									}
 									if (!prepared) {
 										return undefined;
 									}
@@ -10481,6 +10685,8 @@ export class SharedLog<
 								deferNativeBackboneSignatureVerificationUntilCommit,
 							prepareNativeBackboneExpectedColumnsAndSelection:
 								prepareNativeBackboneExpectedColumnsAndSelection,
+							prepareNativeBackboneExpectedColumns:
+								prepareNativeBackboneExpectedColumns,
 							tryPreparedRawReceiveFastDrop: rawIsRepairHint
 								? undefined
 								: async ({ heads, hashes }) =>
@@ -10538,6 +10744,17 @@ export class SharedLog<
 				 * I have received heads from someone else.
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
+
+				if (syncProfile && !rawMaterializedKnownMissing) {
+					// Entries arrived as fully TS-decoded `Entry` objects (the
+					// non-raw exchange path). Zero on the fused hot path.
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.jsEntryDecode",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 
 				const { heads } = msg;
 				const headHashes =
@@ -12569,6 +12786,22 @@ export class SharedLog<
 				return;
 			}
 			logger.error(e);
+		} finally {
+			if (stashBackedRawMessage && stashBackedRawMessage.release()) {
+				const syncProfile = this._logProperties?.sync?.profile;
+				if (syncProfile) {
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.wireStashRelease",
+						component: "shared-log",
+						entries: stashBackedRawMessage.heads.length,
+						messages: 1,
+						details: {
+							bytesMaterialized:
+								stashBackedRawMessage.bytesMaterializedCount,
+						},
+					});
+				}
+			}
 		}
 	}
 

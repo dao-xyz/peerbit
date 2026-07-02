@@ -4,7 +4,10 @@ import type { AnyStore } from "@peerbit/any-store-interface";
 import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
 import { getPublicKeyFromPeerId, type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
-import { type DirectStreamComponents } from "@peerbit/stream";
+import {
+	type DirectStreamComponents,
+	type RustCoreStream,
+} from "@peerbit/stream";
 import {
 	createRequestTransportContext,
 	type DataMessage,
@@ -12,7 +15,7 @@ import {
 } from "@peerbit/stream-interface";
 import type { Block } from "multiformats/block";
 import { AnyBlockStore } from "./any-blockstore.js";
-import { BlockMessage, RemoteBlocks } from "./remote.js";
+import { BlockMessage, BlockRequest, BlockResponse, RemoteBlocks } from "./remote.js";
 
 export type DirectBlockComponents = DirectStreamComponents;
 
@@ -50,6 +53,14 @@ export class DirectBlock extends DirectStream implements IBlocks {
 						maxProvidersPerCid?: number;
 				  };
 			requeryOnReachable?: number;
+			/**
+			 * Run the block-exchange protocol on the native DirectStream core
+			 * (`@peerbit/network-rust`): codec, provider resolution and caches
+			 * execute in wasm, and natively stored blocks are served without
+			 * surfacing their bytes to JS. Defaults to the same rust-core mode
+			 * as the underlying DirectStream.
+			 */
+			rustCore?: RustCoreStream | false;
 		},
 	) {
 		if (options?.directory && options.localStore) {
@@ -63,9 +74,29 @@ export class DirectBlock extends DirectStream implements IBlocks {
 				dialer: false,
 				pruner: false,
 			},
+			rustCore: options?.rustCore,
 		});
 
+		const blockExchange = this.rustCore?.blockExchange;
 		const defaultResolveProviders = () => {
+			if (blockExchange) {
+				const negotiated = [...this.peers.keys()];
+				const connected: string[] = [];
+				for (const conn of this.components.connectionManager.getConnections()) {
+					try {
+						connected.push(
+							getPublicKeyFromPeerId(conn.remotePeer).hashcode(),
+						);
+					} catch {
+						// ignore unexpected key types
+					}
+				}
+				return blockExchange.defaultProviderCandidates(
+					negotiated,
+					connected,
+					this.publicKeyHash,
+				);
+			}
 			const out: string[] = [];
 			const push = (hash?: string) => {
 				if (!hash) return;
@@ -99,7 +130,8 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			local: new AnyBlockStore(
 				options?.localStore ?? createStore(options?.directory),
 			),
-			publish: (message, options) => this.publish(serialize(message), options),
+			publish: (message, options) =>
+				this.publish(this.encodeBlockMessage(message), options),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			waitFor: this.waitFor.bind(this) as WaitForPeersFn,
@@ -110,13 +142,19 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			onPut: options?.onPut,
 			providerCache: options?.providerCache,
 			requeryOnReachable: options?.requeryOnReachable,
+			rust: blockExchange
+				? {
+						exchange: blockExchange,
+						publishRaw: (payload, options) => this.publish(payload, options),
+					}
+				: undefined,
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
 			data.detail?.data?.length &&
 				data.detail?.data.length > 0 &&
 				this.remoteBlocks.onMessage(
-					deserialize(data.detail.data!, BlockMessage),
+					this.decodeBlockMessage(data.detail.data!),
 					{
 						from: data.detail.header.signatures?.publicKeys[0]?.hashcode(),
 						transport: createRequestTransportContext(data.detail),
@@ -125,6 +163,30 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		};
 		this.onPeerConnectedFn = (evt: CustomEvent<PublicSignKey>) =>
 			this.remoteBlocks.onReachable(evt.detail);
+	}
+
+	private encodeBlockMessage(message: BlockRequest | BlockResponse): Uint8Array {
+		const blockExchange = this.rustCore?.blockExchange;
+		if (blockExchange) {
+			if (message instanceof BlockRequest) {
+				return blockExchange.encodeBlockRequest(message.cid);
+			}
+			if (message instanceof BlockResponse) {
+				return blockExchange.encodeBlockResponse(message.cid, message.bytes);
+			}
+		}
+		return serialize(message);
+	}
+
+	private decodeBlockMessage(bytes: Uint8Array): BlockMessage {
+		const blockExchange = this.rustCore?.blockExchange;
+		if (blockExchange) {
+			const decoded = blockExchange.decodeBlockMessage(bytes);
+			return decoded.type === "request"
+				? new BlockRequest(decoded.cid)
+				: new BlockResponse(decoded.cid, decoded.bytes);
+		}
+		return deserialize(bytes, BlockMessage);
 	}
 
 	getNativeLogBlockStoreHandle(): unknown {

@@ -415,6 +415,142 @@ export class RawExchangeHeadsMessage extends TransportMessage {
 	}
 }
 
+/**
+ * The stash surface a {@link StashBackedRawExchangeHeadsMessage} consumes:
+ * entry block bytes kept in native (wasm) memory by the wire-level decoder,
+ * keyed by the enclosing DataMessage id.
+ */
+export type RawExchangeHeadsStash = {
+	stashedBlocks(
+		id: Uint8Array,
+		indexes?: Uint32Array,
+	): Uint8Array[] | undefined;
+	release(id: Uint8Array): boolean;
+};
+
+/**
+ * A head of a stash-backed raw exchange message: hash/refs/length come from
+ * stash metadata; `bytes` materializes lazily (and is counted) because the
+ * fused receive path never needs the block bytes in JS.
+ */
+export class StashBackedRawEntryWithRefs {
+	private bytesValue?: Uint8Array;
+
+	constructor(
+		private readonly message: StashBackedRawExchangeHeadsMessage,
+		readonly stashIndex: number,
+		readonly hash: string,
+		readonly gidRefrences: string[],
+		readonly byteLength: number,
+	) {}
+
+	get bytes(): Uint8Array {
+		return (this.bytesValue ??= this.message.materializeHeadBytes(
+			this.stashIndex,
+			this.hash,
+		));
+	}
+}
+
+/**
+ * A raw exchange-heads message resolved from the native wire stash instead of
+ * a TS borsh decode: JS holds only head facts while the entry block bytes stay
+ * in wasm memory until `prepareStashedRawReceive*` consumes them there — or a
+ * fallback path materializes them per head.
+ */
+export class StashBackedRawExchangeHeadsMessage extends RawExchangeHeadsMessage {
+	readonly messageId: Uint8Array;
+	/** Wasm-to-JS head byte materializations (0 on the fully fused path). */
+	bytesMaterializedCount = 0;
+	private released = false;
+	private readonly stash: RawExchangeHeadsStash;
+	private readonly resolveReleasedBlock?: (
+		hash: string,
+	) => Uint8Array | undefined;
+
+	constructor(properties: {
+		messageId: Uint8Array;
+		hashes: string[];
+		gidRefrences: string[][];
+		byteLengths: Uint32Array;
+		reserved: Uint8Array;
+		stash: RawExchangeHeadsStash;
+		resolveReleasedBlock?: (hash: string) => Uint8Array | undefined;
+	}) {
+		const heads = new Array<RawEntryWithRefs>(properties.hashes.length);
+		super({ heads, reserved: properties.reserved });
+		this.messageId = properties.messageId;
+		this.stash = properties.stash;
+		this.resolveReleasedBlock = properties.resolveReleasedBlock;
+		for (let i = 0; i < properties.hashes.length; i++) {
+			heads[i] = new StashBackedRawEntryWithRefs(
+				this,
+				i,
+				properties.hashes[i]!,
+				properties.gidRefrences[i] ?? [],
+				properties.byteLengths[i]!,
+			) as unknown as RawEntryWithRefs;
+		}
+	}
+
+	materializeHeadBytes(index: number, hash: string): Uint8Array {
+		if (!this.released) {
+			const bytes = this.stash.stashedBlocks(
+				this.messageId,
+				Uint32Array.of(index),
+			)?.[0];
+			if (bytes) {
+				this.bytesMaterializedCount++;
+				return bytes;
+			}
+		}
+		const bytes = this.resolveReleasedBlock?.(hash);
+		if (bytes) {
+			this.bytesMaterializedCount++;
+			return bytes;
+		}
+		throw new Error(
+			"Stashed raw exchange head bytes are no longer available: " + hash,
+		);
+	}
+
+	release(): boolean {
+		if (this.released) {
+			return false;
+		}
+		this.released = true;
+		return this.stash.release(this.messageId);
+	}
+}
+
+export const isStashBackedRawExchangeHeadsMessage = (
+	message: TransportMessage,
+): message is StashBackedRawExchangeHeadsMessage =>
+	message instanceof StashBackedRawExchangeHeadsMessage;
+
+export const getRawExchangeHeadByteLength = (head: RawEntryWithRefs): number =>
+	head instanceof StashBackedRawEntryWithRefs
+		? head.byteLength
+		: head.bytes.byteLength;
+
+/**
+ * Stash indexes for a subset of a stash-backed message's heads (in subset
+ * order), or undefined when any head is not stash-backed.
+ */
+export const getRawExchangeHeadStashIndexes = (
+	heads: RawEntryWithRefs[],
+): Uint32Array | undefined => {
+	const indexes = new Uint32Array(heads.length);
+	for (let i = 0; i < heads.length; i++) {
+		const head = heads[i]!;
+		if (!(head instanceof StashBackedRawEntryWithRefs)) {
+			return undefined;
+		}
+		indexes[i] = head.stashIndex;
+	}
+	return indexes;
+};
+
 export type RawReceiveHashSelection =
 	| Iterable<string>
 	| {
@@ -775,9 +911,14 @@ class PreparedRawEntryWithRefs<T> {
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
 		const shallow = this.toShallow(true);
+		const head = this.head;
 		return {
-			hash: this.head.hash,
-			bytes: this.head.bytes,
+			hash: head.hash,
+			// Lazy: stash-backed heads keep entry bytes in wasm memory and the
+			// native prepared-join commit never reads them in JS.
+			get bytes() {
+				return head.bytes;
+			},
 			byteLength: preparedRawByteLength(this.facts, this.factsIndex),
 			meta: shallow.meta,
 			getShallowEntry: (isHead = true) => this.toShallow(isHead),
@@ -1184,13 +1325,23 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		deferNativeBackboneSignatureVerificationUntilSelection?: boolean;
 		deferNativeBackboneSignatureVerificationUntilCommit?: boolean;
 		prepareNativeBackboneExpectedColumnsAndSelection?: (properties: {
-			blocks: Uint8Array[];
+			/** Lazy so the fused (stash-backed) path never builds JS block arrays. */
+			blocks: () => Uint8Array[];
 			hashes: string[];
 			verifySignatures: boolean;
 		}) =>
 			| { columns: PreparedRawEntryV0FactsColumns }
 			| undefined
 			| Promise<{ columns: PreparedRawEntryV0FactsColumns } | undefined>;
+		/**
+		 * Stash-backed expected-columns prepare (blocks stay in wasm memory).
+		 * Tried before the blocks-based nativeBackbone variants; undefined
+		 * falls through to them.
+		 */
+		prepareNativeBackboneExpectedColumns?: (properties: {
+			hashes: string[];
+			verifySignatures: boolean;
+		}) => PreparedRawEntryV0FactsColumns | undefined;
 		tryPreparedRawReceiveFastDrop?: (properties: {
 			heads: RawEntryWithRefs[];
 			hashes: string[];
@@ -1204,16 +1355,18 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			| Promise<RawReceiveHashSelection | undefined>;
 	},
 ): Promise<ExchangeHeadsMessage<any> | undefined> => {
-	const blocks = new Array<Uint8Array>(message.heads.length);
 	const hashes = new Array<string>(message.heads.length);
 	let rawBytes = 0;
 	for (let i = 0; i < message.heads.length; i++) {
 		const head = message.heads[i]!;
-		const bytes = head.bytes;
-		blocks[i] = bytes;
 		hashes[i] = head.hash;
-		rawBytes += bytes.byteLength;
+		rawBytes += getRawExchangeHeadByteLength(head);
 	}
+	// Built lazily: the fused (stash-backed) prepare paths keep the entry
+	// block bytes in wasm memory and never need a JS blocks array.
+	let blocksValue: Uint8Array[] | undefined;
+	const blocks = () =>
+		(blocksValue ??= message.heads.map((head) => head.bytes));
 	const nativePrepareStartedAt = syncProfileStart(profile);
 	let preparedFacts: PreparedRawEntryV0Facts[] | undefined;
 	let preparedColumns: PreparedRawEntryV0FactsColumns | undefined;
@@ -1247,21 +1400,29 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 					verifySignatures: verifySignaturesInPrepare,
 				});
 			preparedColumns = preparedColumnsAndSelection?.columns;
+			preparedColumns ??= options.prepareNativeBackboneExpectedColumns?.({
+				hashes,
+				verifySignatures: verifySignaturesInPrepare,
+			});
 			preparedColumns ??=
 				options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
-					blocks,
+					blocks(),
 					hashes,
 					{ verifySignatures: verifySignaturesInPrepare },
 				);
 			hashesVerifiedByNative = !!preparedColumns;
 			preparedColumns ??=
-				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks, hashes, {
-					verifySignatures: verifySignaturesInPrepare,
-				});
+				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
+					blocks(),
+					hashes,
+					{
+						verifySignatures: verifySignaturesInPrepare,
+					},
+				);
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";
 			} else {
-				preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks);
+				preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks());
 				nativePrepareSource = "backbone";
 			}
 		} catch {
@@ -1280,7 +1441,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		}
 	}
 	if (!preparedColumns && !preparedFacts) {
-		preparedFacts = await prepareRawEntryV0Batch(blocks)
+		preparedFacts = await prepareRawEntryV0Batch(blocks())
 			.then((facts) => {
 				nativePrepareSource = "log";
 				return facts;
@@ -1585,7 +1746,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		details: { native: false },
 	});
 	const hashStartedAt = syncProfileStart(profile);
-	const calculatedHashes = await calculateRawCidV1Batch(blocks);
+	const calculatedHashes = await calculateRawCidV1Batch(blocks());
 	emitSyncProfileDuration(profile, hashStartedAt, {
 		name: "sharedLog.rawReceive.calculateHashes",
 		component: "shared-log",
