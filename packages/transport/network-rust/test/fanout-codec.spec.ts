@@ -608,6 +608,25 @@ describe("fanout-tree parity", () => {
 				parentShadowDualPathMinMessages: 0.4,
 				parentUpgradeMode: "probe",
 			},
+			// Explicitly-NaN numeric options: `??` falls back only on
+			// absent options, so both cores must keep the NaN (through
+			// `Math.max(0, Math.floor(NaN))`) instead of the defaults.
+			{ parentUpgradeNonRootMinLevelGain: Number.NaN },
+			{ parentProbeMaxLagMessages: Number.NaN },
+			{ parentShadowObserveMs: Number.NaN },
+			{
+				parentUpgradeIntervalMs: Number.NaN,
+				parentUpgradeMinLevelGain: Number.NaN,
+				parentUpgradeCooldownMs: Number.NaN,
+				parentUpgradeQuietMs: Number.NaN,
+				parentUpgradeMaxPerPeer: Number.NaN,
+				parentUpgradeFailedBackoffMinMs: Number.NaN,
+			},
+			{
+				parentUpgradeMaxChildLoadRatio: Number.NaN,
+				parentUpgradeRootMaxChildLoadRatio: Number.NaN,
+				parentUpgradeStaleRootProbeProbability: Number.NaN,
+			},
 		];
 
 		it("normalizes policies identically", () => {
@@ -617,6 +636,78 @@ describe("fanout-tree parity", () => {
 					JSON.stringify(options),
 				);
 			}
+		});
+
+		it("keeps explicitly-NaN numeric options exactly like the TS core", () => {
+			// `??` falls back only on absent options, so an explicit NaN
+			// flows through `Math.max(0, Math.floor(NaN))` and stays NaN
+			// (silently disabling the downstream `> 0` guards) instead of
+			// taking the documented defaults.
+			expect(
+				fanout.normalizeParentUpgradePolicy({
+					parentUpgradeNonRootMinLevelGain: Number.NaN,
+				}).nonRootMinLevelGain,
+			).to.be.NaN;
+			expect(
+				fanout.normalizeParentUpgradePolicy({
+					parentProbeMaxLagMessages: Number.NaN,
+				}).probe.maxLagMessages,
+			).to.be.NaN;
+			expect(
+				fanout.normalizeParentUpgradePolicy({
+					parentShadowObserveMs: Number.NaN,
+				}).shadow.observeMs,
+			).to.be.NaN;
+		});
+
+		it("gates identically when NaN options disable the guards", () => {
+			const options = {
+				parentUpgradeCooldownMs: Number.NaN,
+				parentUpgradeQuietMs: Number.NaN,
+				parentUpgradeRepairQuietMs: Number.NaN,
+			};
+			const nativePolicy = fanout.normalizeParentUpgradePolicy(options);
+			const tsPolicy =
+				fanoutParentUpgrade.normalizeParentUpgradePolicy(options);
+			expect(nativePolicy).to.deep.equal(tsPolicy);
+
+			const now = 100_000;
+			const state = () => ({
+				children: { size: 0 },
+				missingSeqs: { size: 0 },
+				lastRepairSentAt: now - 100,
+				endSeqExclusive: 1,
+				parentUpgradeRetryAfterSeq: -1,
+				maxSeqSeen: 0,
+				parentUpgradeCount: 0,
+				parentUpgradeBackoffUntil: 0,
+				parentUpgradeLastAt: now - 100,
+				lastParentDataAt: now - 100,
+			});
+			const gateOptions = (policy: typeof tsPolicy) => ({
+				leafOnly: policy.leafOnly,
+				repairGuard: policy.repairGuard,
+				dataGuard: policy.dataGuard,
+				endedAndComplete: true,
+				maxPerPeer: policy.maxPerPeer,
+				cooldownMs: policy.cooldownMs,
+				quietMs: policy.quietMs,
+				repairQuietMs: policy.repairQuietMs,
+				now,
+			});
+			const tsResult = fanoutParentUpgrade.evaluateParentUpgradeGate(
+				state() as any,
+				gateOptions(tsPolicy),
+			);
+			const nativeResult = fanout.evaluateParentUpgradeGate(
+				state(),
+				gateOptions(nativePolicy),
+			);
+			expect(nativeResult).to.deep.equal(tsResult);
+			// the NaN cooldown/quiet/repair-quiet guards are silently
+			// disabled (`NaN > 0` is false): the gate runs even though the
+			// recent activity in `state` would normally trip all three
+			expect(nativeResult).to.deep.equal({ run: true });
 		});
 
 		it("evaluates the upgrade gate identically (fuzzed)", () => {

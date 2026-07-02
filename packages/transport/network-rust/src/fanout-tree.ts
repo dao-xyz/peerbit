@@ -335,7 +335,9 @@ const groupEntryAddrs = (
 	return grouped;
 };
 
-/** Numeric option: NaN marks "unset" (the `??` fallback branch). */
+/** Numeric option slot: `Number(value)` verbatim (an explicit NaN is
+ * kept); absent options leave a NaN placeholder that the presence mask
+ * gates off. */
 const num = (value: number | undefined) =>
 	value == null ? Number.NaN : Number(value);
 /** Tri-state boolean option: -1 unset / 0 false / 1 true. */
@@ -344,33 +346,47 @@ const tri = (value: boolean | undefined) =>
 
 const parentUpgradeOptionsVector = (
 	options: RustParentUpgradeOptions,
-): Float64Array =>
-	Float64Array.from([
-		num(options.parentUpgradeIntervalMs),
-		num(options.parentUpgradeMinLevelGain),
-		num(options.parentUpgradeRootMinLevelGain),
-		num(options.parentUpgradeRootMinSubtreeGain),
-		num(options.parentUpgradeNonRootMinLevelGain),
-		num(options.parentUpgradeMinFreeSlots),
-		num(options.parentUpgradeRootMinFreeSlots),
-		num(options.parentUpgradeMaxChildLoadRatio),
-		num(options.parentUpgradeRootMaxChildLoadRatio),
-		num(options.parentUpgradeCooldownMs),
-		num(options.parentUpgradeFailedBackoffMinMs),
-		num(options.parentUpgradeFailedBackoffMaxMs),
-		num(options.parentUpgradeQuietMs),
-		num(options.parentUpgradeRepairQuietMs),
-		num(options.parentUpgradeMaxPerPeer),
-		num(options.parentUpgradeStaleRootProbeProbability),
-		num(options.parentProbeTimeoutMs),
-		num(options.parentProbeMaxPerRound),
-		num(options.parentProbeMaxLagMessages),
-		num(options.parentProbeRejectCooldownMs),
-		num(options.parentProbeRejectCooldownMaxMs),
-		num(options.parentShadowObserveMs),
-		num(options.parentShadowMinObservations),
-		num(options.parentShadowDualPathMs),
-		num(options.parentShadowDualPathMinMessages),
+): Float64Array => {
+	// Fixed order documented in fanout_tree.rs (indices 0-24).
+	const numerics = [
+		options.parentUpgradeIntervalMs,
+		options.parentUpgradeMinLevelGain,
+		options.parentUpgradeRootMinLevelGain,
+		options.parentUpgradeRootMinSubtreeGain,
+		options.parentUpgradeNonRootMinLevelGain,
+		options.parentUpgradeMinFreeSlots,
+		options.parentUpgradeRootMinFreeSlots,
+		options.parentUpgradeMaxChildLoadRatio,
+		options.parentUpgradeRootMaxChildLoadRatio,
+		options.parentUpgradeCooldownMs,
+		options.parentUpgradeFailedBackoffMinMs,
+		options.parentUpgradeFailedBackoffMaxMs,
+		options.parentUpgradeQuietMs,
+		options.parentUpgradeRepairQuietMs,
+		options.parentUpgradeMaxPerPeer,
+		options.parentUpgradeStaleRootProbeProbability,
+		options.parentProbeTimeoutMs,
+		options.parentProbeMaxPerRound,
+		options.parentProbeMaxLagMessages,
+		options.parentProbeRejectCooldownMs,
+		options.parentProbeRejectCooldownMaxMs,
+		options.parentShadowObserveMs,
+		options.parentShadowMinObservations,
+		options.parentShadowDualPathMs,
+		options.parentShadowDualPathMinMessages,
+	];
+	// Bit i marks numeric option i as provided. The TS core's `??` falls
+	// back only on null/undefined, so an explicitly-NaN option must stay
+	// distinguishable from an absent one: it flows through
+	// `Math.max(0, Math.floor(NaN))` as NaN, like the TS implementation.
+	let presence = 0;
+	for (const [index, value] of numerics.entries()) {
+		if (value != null) {
+			presence |= 1 << index;
+		}
+	}
+	return Float64Array.from([
+		...numerics.map(num),
 		tri(options.parentUpgradeLeafOnly),
 		tri(options.parentUpgradeRepairGuard),
 		tri(options.parentUpgradeDataGuard),
@@ -382,7 +398,9 @@ const parentUpgradeOptionsVector = (
 				: options.parentUpgradeMode === "shadow"
 					? 3
 					: 0,
+		presence,
 	]);
+};
 
 const parentUpgradePolicyFromVector = (
 	policy: Float64Array,

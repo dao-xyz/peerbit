@@ -1320,27 +1320,42 @@ pub fn decode_provider_subscribe(data: &[u8]) -> Option<DecodedProviderSubscribe
 // --- parent-upgrade policy + gate (fanout-tree-parent-upgrade.ts, PR #911) ---
 
 /// `normalizeParentUpgradePolicy` input, in the fixed order documented by
-/// the TS adapter. Numeric options use NaN for "unset" (`??` fallback);
-/// tri-state booleans use -1 unset / 0 false / 1 true; mode uses
-/// 0 unset-or-unknown / 1 direct / 2 probe / 3 shadow.
-pub const PU_OPTIONS_LEN: usize = 30;
+/// the TS adapter. Numeric options (indices 0-24) carry `Number(value)`
+/// verbatim; bit `i` of the presence mask (index 30) marks option `i` as
+/// provided. The mask exists because the TS core's `??` falls back only on
+/// absent options: an explicitly-NaN option must stay distinguishable from
+/// an unset one so it can flow through `Math.max(0, Math.floor(NaN))` as
+/// NaN, exactly like TS. Tri-state booleans use -1 unset / 0 false /
+/// 1 true; mode uses 0 unset-or-unknown / 1 direct / 2 probe / 3 shadow.
+pub const PU_OPTIONS_LEN: usize = 31;
 pub const PU_POLICY_LEN: usize = 30;
+pub const PU_NUMERIC_OPTIONS_LEN: usize = 25;
+pub const PU_OPTIONS_PRESENCE_INDEX: usize = 30;
 
 pub const PU_MODE_DIRECT: f64 = 1.0;
 pub const PU_MODE_PROBE: f64 = 2.0;
 pub const PU_MODE_SHADOW: f64 = 3.0;
 
 fn opt(values: &[f64], index: usize) -> Option<f64> {
-    let value = values[index];
-    if value.is_nan() {
+    debug_assert!(index < PU_NUMERIC_OPTIONS_LEN);
+    let mask = values[PU_OPTIONS_PRESENCE_INDEX] as u32;
+    if mask & (1u32 << index) == 0 {
         None
     } else {
-        Some(value)
+        Some(values[index])
     }
 }
 
+/// `Math.max(min, Math.floor(value))` with JS semantics: NaN in either
+/// operand poisons the result (an explicitly-NaN option disables the
+/// downstream `> 0` guards identically in both cores).
 fn floor_max(min: f64, value: f64) -> f64 {
-    value.floor().max(min)
+    let floored = value.floor();
+    if min.is_nan() || floored.is_nan() {
+        f64::NAN
+    } else {
+        floored.max(min)
+    }
 }
 
 pub fn normalize_parent_upgrade_policy(options: &[f64]) -> Vec<f64> {
@@ -1886,14 +1901,26 @@ mod tests {
         assert_eq!((decoded.want, decoded.ttl_ms), (3, 45_000));
     }
 
-    #[test]
-    fn parent_upgrade_policy_defaults() {
+    fn pu_unset_options() -> [f64; PU_OPTIONS_LEN] {
         let mut options = [f64::NAN; PU_OPTIONS_LEN];
         options[25] = -1.0;
         options[26] = -1.0;
         options[27] = -1.0;
         options[28] = -1.0;
         options[29] = 0.0;
+        options[PU_OPTIONS_PRESENCE_INDEX] = 0.0;
+        options
+    }
+
+    fn pu_set(options: &mut [f64; PU_OPTIONS_LEN], index: usize, value: f64) {
+        options[index] = value;
+        options[PU_OPTIONS_PRESENCE_INDEX] =
+            ((options[PU_OPTIONS_PRESENCE_INDEX] as u32) | (1u32 << index)) as f64;
+    }
+
+    #[test]
+    fn parent_upgrade_policy_defaults() {
+        let options = pu_unset_options();
         let policy = normalize_parent_upgrade_policy(&options);
         assert_eq!(policy.len(), PU_POLICY_LEN);
         assert_eq!(policy[0], 0.0); // intervalMs
@@ -1922,15 +1949,13 @@ mod tests {
 
     #[test]
     fn parent_upgrade_policy_direct_mode_and_overrides() {
-        let mut options = [f64::NAN; PU_OPTIONS_LEN];
+        let mut options = pu_unset_options();
         options[25] = 0.0; // leafOnly: false
-        options[26] = -1.0;
         options[27] = 1.0; // dataGuard: true
-        options[28] = -1.0;
         options[29] = PU_MODE_DIRECT;
-        options[1] = 5.9; // minLevelGain -> floor 5
-        options[2] = 2.0; // rootMinLevelGain -> max(minLevelGain, 2) = 5
-        options[7] = f64::INFINITY; // maxChildLoadRatio -> default 0.5
+        pu_set(&mut options, 1, 5.9); // minLevelGain -> floor 5
+        pu_set(&mut options, 2, 2.0); // rootMinLevelGain -> max(minLevelGain, 2) = 5
+        pu_set(&mut options, 7, f64::INFINITY); // maxChildLoadRatio -> default 0.5
         let policy = normalize_parent_upgrade_policy(&options);
         assert_eq!(policy[1], 0.0); // leafOnly false
         assert_eq!(policy[2], 5.0);
@@ -1940,6 +1965,41 @@ mod tests {
         assert_eq!(policy[18], 0.0); // verifyStaleRootCapacity (mode != shadow)
         assert_eq!(policy[28], 0.0); // dualPathMs (mode != shadow)
         assert_eq!(policy[29], 1.0); // dualPathMinMessages (mode != shadow)
+    }
+
+    #[test]
+    fn parent_upgrade_policy_explicit_nan_is_kept() {
+        // An explicitly-NaN numeric option is "set": the TS core's `??`
+        // keeps it and `Math.max(0, Math.floor(NaN))` stays NaN, silently
+        // disabling the downstream `> 0` guards. Only absent options take
+        // the documented defaults.
+        let mut options = pu_unset_options();
+        pu_set(&mut options, 4, f64::NAN); // parentUpgradeNonRootMinLevelGain
+        pu_set(&mut options, 18, f64::NAN); // parentProbeMaxLagMessages
+        pu_set(&mut options, 21, f64::NAN); // parentShadowObserveMs
+        let policy = normalize_parent_upgrade_policy(&options);
+        assert!(policy[5].is_nan()); // nonRootMinLevelGain (default 2)
+        assert!(policy[23].is_nan()); // probe.maxLagMessages (default 0)
+        assert!(policy[26].is_nan()); // shadow.observeMs (default 2000)
+        assert_eq!(policy[11], 5_000.0); // unrelated cooldownMs keeps its default
+
+        // NaN poisons dependent defaults like TS `Math.max(NaN, ...)` ...
+        let mut options = pu_unset_options();
+        pu_set(&mut options, 1, f64::NAN); // minLevelGain
+        let policy = normalize_parent_upgrade_policy(&options);
+        assert!(policy[2].is_nan()); // minLevelGain
+        assert!(policy[3].is_nan()); // rootMinLevelGain = max(NaN, 3)
+        assert!(policy[4].is_nan()); // rootMinSubtreeGain
+        assert!(policy[5].is_nan()); // nonRootMinLevelGain = max(NaN, 2)
+
+        // ... while the isFinite-guarded ratio options fall back to their
+        // defaults, exactly like TS
+        let mut options = pu_unset_options();
+        pu_set(&mut options, 7, f64::NAN); // maxChildLoadRatio
+        pu_set(&mut options, 15, f64::NAN); // staleRootProbeProbability
+        let policy = normalize_parent_upgrade_policy(&options);
+        assert_eq!(policy[8], 0.5);
+        assert_eq!(policy[10], 0.015625);
     }
 
     fn gate_state() -> ParentUpgradeGateState {

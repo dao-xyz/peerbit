@@ -1718,7 +1718,8 @@ pub fn ft_decode_provider_subscribe(data: &[u8]) -> Option<FanoutTreeDecodedFram
 }
 
 /// `normalizeParentUpgradePolicy` over the fixed-order f64 protocol
-/// documented in `fanout_tree.rs` (NaN = unset numeric option, -1/0/1
+/// documented in `fanout_tree.rs` (numeric options gated by the presence
+/// bitmask at index 30 so an explicit NaN flows through like TS, -1/0/1
 /// tri-state booleans, mode 0 unset / 1 direct / 2 probe / 3 shadow).
 #[wasm_bindgen]
 pub fn ft_pu_normalize_policy(options: Vec<f64>) -> Vec<f64> {
