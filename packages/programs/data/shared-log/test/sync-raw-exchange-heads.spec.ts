@@ -1,9 +1,11 @@
 import { keys } from "@libp2p/crypto";
+import { getKeypairFromPrivateKey } from "@peerbit/crypto";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import { Entry } from "@peerbit/log";
 import {
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
+	createNativeWireSyncSession,
 } from "@peerbit/native-backbone";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
@@ -19,6 +21,7 @@ import {
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
+import type { SyncProfileEvent } from "../src/sync/index.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { groupByGid, tryGroupByGidSync } from "../src/utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -3239,6 +3242,193 @@ describe("raw exchange-head sync", () => {
 				}),
 				{ from: db2.node.identity.publicKey } as any,
 			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	const fusedReceiverPrivateKeyRaw = new Uint8Array([
+		237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28, 157,
+		208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120, 122, 222, 174,
+		242, 120, 50, 165, 97, 8, 235, 97, 186, 148, 251, 100, 168, 49, 10, 119,
+		71, 246, 246, 174, 163, 198, 54, 224, 6, 174, 212, 159, 187, 2, 137, 47,
+		192,
+	]);
+
+	const setupFusedSyncSession = async (options: { wireOnPubsub: boolean }) => {
+		// The wire-sync session needs the receiver's public key hash before the
+		// node exists, so the receiver uses a fixed identity.
+		const receiverPrivateKey = keys.privateKeyFromRaw(
+			fusedReceiverPrivateKeyRaw,
+		);
+		const receiverSelfHash =
+			getKeypairFromPrivateKey(receiverPrivateKey).publicKey.hashcode();
+		const wireSync = await createNativeWireSyncSession({
+			selfHash: receiverSelfHash,
+		});
+		const session = await TestSession.disconnected(2, [
+			{
+				indexer: (directory) => createRustIndexer(directory),
+			},
+			{
+				libp2p: { privateKey: receiverPrivateKey },
+				indexer: (directory) => createRustIndexer(directory),
+				...(options.wireOnPubsub ? { nativeWire: wireSync } : {}),
+			},
+		]);
+		const setup = {
+			domain: createReplicationDomainHash("u32"),
+			type: "u32" as const,
+			syncronizer: SimpleSyncronizer,
+			name: "u32-simple-raw",
+		};
+		const profileEvents: SyncProfileEvent[] = [];
+		const store = new EventStore<string, any>();
+		const db1 = await session.peers[0].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				setup,
+				nativeGraph: true,
+				sync: { rawExchangeHeads: true },
+			},
+		});
+		const db2 = await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: {
+					rawExchangeHeads: true,
+					nativeWireSync: wireSync,
+					profile: (event: SyncProfileEvent) => profileEvents.push(event),
+				},
+			},
+		});
+		return { session, wireSync, profileEvents, db1, db2 };
+	};
+
+	const syncFusedEntries = async (
+		session: TestSession,
+		db1: EventStore<string, any>,
+		db2: EventStore<string, any>,
+		entryCount: number,
+	) => {
+		const hashes: string[] = [];
+		for (let i = 0; i < entryCount; i++) {
+			const { entry } = await db1.add(uuid(), { meta: { next: [] } });
+			hashes.push(entry.hash);
+		}
+		await waitForResolved(() =>
+			session.peers[0].dial(session.peers[1].getMultiaddrs()),
+		);
+		await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+			hashes,
+			db1.node.identity.publicKey,
+			{ skipCheck: true },
+		);
+		await waitForResolved(
+			() => {
+				expect(db2.log.log.length).to.equal(entryCount);
+			},
+			{ timeout: 30_000, delayInterval: 100 },
+		);
+		return hashes;
+	};
+
+	it("fuses wire-stashed raw exchange heads into the native receive without JS entry decode or copies", async () => {
+		const { session, wireSync, profileEvents, db1, db2 } =
+			await setupFusedSyncSession({ wireOnPubsub: true });
+		try {
+			const backbone = (db2.log as any)._nativeBackbone;
+			expect(backbone).to.exist;
+			const stashedColumnsSpy = sinon.spy(
+				backbone,
+				"prepareStashedRawReceiveExpectedColumnsBatch",
+			);
+			const stashedSelectionSpy = sinon.spy(
+				backbone,
+				"prepareStashedRawReceiveExpectedColumnsAndSelectionBatch",
+			);
+			const blocksSelectionSpy = sinon.spy(
+				backbone,
+				"prepareRawReceiveExpectedColumnsAndSelectionBatch",
+			);
+			const blocksExpectedColumnsSpy = sinon.spy(
+				backbone,
+				"prepareRawReceiveExpectedColumnsBatch",
+			);
+			const blocksColumnsSpy = sinon.spy(
+				backbone,
+				"prepareRawReceiveColumnsBatch",
+			);
+			const blocksBatchSpy = sinon.spy(backbone, "prepareRawReceiveBatch");
+
+			const entryCount = 10;
+			await syncFusedEntries(session, db1, db2, entryCount);
+
+			// The messages were resolved from the wire stash: no TS borsh
+			// decode of the RawEntryWithRefs heads happened for them.
+			const resolveEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawReceive.wireStashResolve",
+			);
+			expect(resolveEvents.length).to.be.greaterThan(0);
+			expect(
+				resolveEvents.reduce((sum, event) => sum + (event.entries ?? 0), 0),
+			).to.equal(entryCount);
+
+			// The prepared receive consumed the stashed blocks inside wasm
+			// memory; no JS blocks array crossed the boundary.
+			expect(
+				stashedColumnsSpy.callCount + stashedSelectionSpy.callCount,
+			).to.be.greaterThan(0);
+			expect(blocksSelectionSpy.callCount).to.equal(0);
+			expect(blocksExpectedColumnsSpy.callCount).to.equal(0);
+			expect(blocksColumnsSpy.callCount).to.equal(0);
+			expect(blocksBatchSpy.callCount).to.equal(0);
+
+			// No stashed head bytes were ever copied out to JS.
+			const releaseEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawReceive.wireStashRelease",
+			);
+			expect(releaseEvents.length).to.equal(resolveEvents.length);
+			expect(
+				releaseEvents.reduce(
+					(sum, event) =>
+						sum + ((event.details?.bytesMaterialized as number) ?? 0),
+					0,
+				),
+			).to.equal(0);
+
+			const counters = wireSync.counters();
+			expect(counters.stashed).to.be.greaterThan(0);
+			expect(counters.blockCopyOuts).to.equal(0);
+			expect(counters.released).to.equal(resolveEvents.length);
+			expect(counters.evicted).to.equal(0);
+			expect(wireSync.stashLength).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("falls back to the regular decode when the wire stash is empty", async () => {
+		// Registration is active but the pubsub DirectStream decodes with the
+		// plain TS path, so nothing is ever stashed and every message takes
+		// the regular borsh decode route.
+		const { session, wireSync, profileEvents, db1, db2 } =
+			await setupFusedSyncSession({ wireOnPubsub: false });
+		try {
+			const entryCount = 10;
+			await syncFusedEntries(session, db1, db2, entryCount);
+
+			expect(
+				profileEvents.filter(
+					(event) => event.name === "sharedLog.rawReceive.wireStashResolve",
+				),
+			).to.have.length(0);
+			const counters = wireSync.counters();
+			expect(counters.stashed).to.equal(0);
+			expect(wireSync.stashLength).to.equal(0);
 		} finally {
 			await session.stop();
 		}

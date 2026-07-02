@@ -32,6 +32,13 @@ type CreateOptions = {
 	libp2p?: Libp2pCreateOptions;
 	directory?: string;
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
+	/**
+	 * Native wire module for the pubsub DirectStream (the `nativeWire` option
+	 * of `@peerbit/stream`), e.g. a `NativeBackboneWireSyncSession`.
+	 */
+	nativeWire?: {
+		decodeAndVerifyBatch(frames: Uint8Array[], nowMs: number): Uint32Array;
+	};
 	storage?: {
 		storeFactory?: (directory?: string) => AnyStore;
 		blocksStoreFactory?: (directory?: string) => AnyStore;
@@ -797,6 +804,7 @@ export class TestSession {
 							canRelayMessage: true,
 							topicRootControlPlane: getOrCreatePerPeer(c).topicRootControlPlane,
 							fanout: getOrCreatePerPeer(c).fanout,
+							nativeWire: o?.nativeWire,
 						}),
 					fanout: (c: any) => getOrCreateFanout(c),
 					keychain: keychain(),
