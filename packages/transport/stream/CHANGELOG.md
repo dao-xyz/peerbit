@@ -43,6 +43,26 @@
   * dependencies
     * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
 
+## [5.0.18](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.17...stream-v5.0.18) (2026-07-02)
+
+
+### Bug Fixes
+
+* **stream:** clear anySignal listeners after outbound stream creation ([fa98ae7](https://github.com/dao-xyz/peerbit/commit/fa98ae7d3fe60b06658d60f13311e21b96b01f14))
+* **stream:** clear anySignal listeners after outbound stream creation ([edeefb6](https://github.com/dao-xyz/peerbit/commit/edeefb69ccb59e36e711476758734087a034ed7d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 3.0.1
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/stream-interface bumped to 6.0.11
+    * @peerbit/time bumped to 3.0.1
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.6
+
 ## [5.0.17](https://github.com/dao-xyz/peerbit/compare/stream-v5.0.16...stream-v5.0.17) (2026-05-26)
 
 

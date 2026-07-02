@@ -54,6 +54,22 @@
   * devDependencies
     * @peerbit/time bumped from 2.0.5 to 2.0.6
 
+## [3.0.6](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.5...libp2p-test-utils-v3.0.6) (2026-07-02)
+
+
+### Bug Fixes
+
+* **libp2p-test-utils:** await sodium.ready at module init ([f9db571](https://github.com/dao-xyz/peerbit/commit/f9db571b96dadd6167f1304e0168904c67ba00b2))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.2
+  * devDependencies
+    * @peerbit/time bumped to 3.0.1
+
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.4...libp2p-test-utils-v3.0.5) (2026-04-29)
 
 

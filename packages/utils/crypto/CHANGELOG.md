@@ -61,6 +61,15 @@
   * dependencies
     * @peerbit/cache bumped from ^2.0.5 to ^2.0.6
 
+## [3.1.2](https://github.com/dao-xyz/peerbit/compare/crypto-v3.1.1...crypto-v3.1.2) (2026-07-02)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/cache bumped to 3.0.1
+
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/crypto-v3.1.0...crypto-v3.1.1) (2026-03-30)
 
 

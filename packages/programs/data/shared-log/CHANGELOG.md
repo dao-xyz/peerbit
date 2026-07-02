@@ -389,6 +389,48 @@
   * devDependencies
     * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
+## [13.1.19](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.18...shared-log-v13.1.19) (2026-07-02)
+
+
+### Bug Fixes
+
+* **shared-log:** acknowledge checked prune control messages ([6e22fb1](https://github.com/dao-xyz/peerbit/commit/6e22fb130fc304e8d604073adaf5508451bd4445))
+* **shared-log:** close range iterators deterministically ([8d3cb94](https://github.com/dao-xyz/peerbit/commit/8d3cb94a46fb4d6e0a3873b8a44d1430fe860904))
+* **shared-log:** close range iterators deterministically ([9e29feb](https://github.com/dao-xyz/peerbit/commit/9e29febc2bd1fc9728b6a74b558e5b7e64300caa))
+* **shared-log:** keep uniqueReplicators when announcements dedupe to empty ([e2b6fd4](https://github.com/dao-xyz/peerbit/commit/e2b6fd44e749e0cf9a94b372509b90b26825ead6))
+* **shared-log:** keep uniqueReplicators when announcements dedupe to empty ([937e43d](https://github.com/dao-xyz/peerbit/commit/937e43d1ec9d2924856457310220e3ba8c28065e))
+* **shared-log:** park replicators with a zero storage budget ([533c917](https://github.com/dao-xyz/peerbit/commit/533c917179e3b585f9e285c5dac5f07a4a8fc7b2))
+* **shared-log:** park replicators with a zero storage budget ([324e767](https://github.com/dao-xyz/peerbit/commit/324e767502362054e9c20bdd0900af23bc9ee3b3))
+* **shared-log:** prioritize coverage for memory headroom ([4e4bf88](https://github.com/dao-xyz/peerbit/commit/4e4bf88f7612767b23de53e9ad6da66895424c74))
+* **shared-log:** prune after local unreplicate ([#974](https://github.com/dao-xyz/peerbit/issues/974)) ([d875326](https://github.com/dao-xyz/peerbit/commit/d8753267900213f8935bd13ea26ea28662195558))
+* **shared-log:** rescan fixed range removals for prune ([#978](https://github.com/dao-xyz/peerbit/issues/978)) ([429a2ed](https://github.com/dao-xyz/peerbit/commit/429a2edecf1883d7ccaf8343bddba3275b9909a4))
+* **shared-log:** retry local unreplicate handoff ([#975](https://github.com/dao-xyz/peerbit/issues/975)) ([fe77bbc](https://github.com/dao-xyz/peerbit/commit/fe77bbc6e0e46a91b3b6c07a4524fae358d19189))
+* **shared-log:** suppress confirmed authoritative repair sends ([#979](https://github.com/dao-xyz/peerbit/issues/979)) ([1e1024b](https://github.com/dao-xyz/peerbit/commit/1e1024be5b4c48c5d9129cdf3c29a5ffb5c5aa0f))
+* **shared-log:** wake adaptive rebalance after writes ([#951](https://github.com/dao-xyz/peerbit/issues/951)) ([306a596](https://github.com/dao-xyz/peerbit/commit/306a596f46ee39c60c7f7f07b8b8bd9ae2741418))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.10
+    * @peerbit/blocks bumped to 4.1.10
+    * @peerbit/blocks-interface bumped to 2.0.13
+    * @peerbit/cache bumped to 3.0.1
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/indexer-interface bumped to 3.0.5
+    * @peerbit/indexer-sqlite3 bumped to 3.0.8
+    * @peerbit/log bumped to 6.1.2
+    * @peerbit/program bumped to 6.0.32
+    * @peerbit/pubsub bumped to 5.2.12
+    * @peerbit/pubsub-interface bumped to 5.1.5
+    * @peerbit/rpc bumped to 6.0.36
+    * @peerbit/stream-interface bumped to 6.0.11
+    * @peerbit/time bumped to 3.0.1
+  * devDependencies
+    * @peerbit/indexer-rust bumped to 1.0.1
+    * @peerbit/test-utils bumped to 3.0.36
+
 ## [13.1.18](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.17...shared-log-v13.1.18) (2026-05-28)
 
 

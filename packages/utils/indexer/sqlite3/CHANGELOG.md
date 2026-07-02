@@ -1,5 +1,24 @@
 # Changelog
 
+## [3.0.8](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v3.0.7...indexer-sqlite3-v3.0.8) (2026-07-02)
+
+
+### Bug Fixes
+
+* **indexer-sqlite3:** settle colliding index-creation scopes ([b616eb2](https://github.com/dao-xyz/peerbit/commit/b616eb25bd128d9bc361a158d1ec620e6d61c4ea))
+* **indexer-sqlite3:** settle colliding index-creation scopes ([e711bb3](https://github.com/dao-xyz/peerbit/commit/e711bb30c964d3f46f023d9652853a8f9195b6c1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 3.0.5
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/time bumped to 3.0.1
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 3.0.5
+
 ## [3.0.7](https://github.com/dao-xyz/peerbit/compare/indexer-sqlite3-v3.0.6...indexer-sqlite3-v3.0.7) (2026-05-26)
 
 
