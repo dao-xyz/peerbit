@@ -13,6 +13,11 @@ import { getPublicKeyFromPeerId } from "@peerbit/crypto";
 import { pushable, type Pushable } from "it-pushable";
 import sodium from "libsodium-wrappers";
 
+// libsodium-wrappers attaches its functions asynchronously after the wasm
+// loads; the synchronous createPeer path (and any other direct caller) must
+// never observe a half-initialized module.
+await sodium.ready;
+
 type ProtocolHandler = (stream: Stream, connection: Connection) => Promise<void>;
 
 type Topology = {
