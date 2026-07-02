@@ -117,11 +117,14 @@ export {
 	type RustBlockProviderCache,
 	type RustCoreStream,
 	type RustDecodedBlockMessage,
+	type RustDecodedPubSubMessage,
 	type RustEagerBlockCache,
 	type RustLanesInit,
 	type RustRoutesInit,
 	type RustSeenCache,
 	type RustStreamDecisions,
+	type RustTopicControl,
+	type RustTopicRootDirectoryState,
 } from "./rust-core.js";
 export type { PushableLanes } from "./pushable-lanes.js";
 

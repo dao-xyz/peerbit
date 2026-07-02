@@ -7,6 +7,7 @@
 pub mod block_exchange;
 pub mod direct_stream;
 pub mod sync_payload;
+pub mod topic_control;
 pub mod wire;
 
 use js_sys::{Array, Uint8Array};
@@ -18,6 +19,7 @@ use direct_stream::lanes::{LaneScheduler, PushOutcome};
 use direct_stream::routes::{AddOutcome, Routes};
 use direct_stream::seen_cache::SeenCache;
 use direct_stream::{decisions, routes};
+use topic_control::{DecodedPubSubMessage, TopicRootDirectoryCore};
 use wire::{FrameRecord, VerifyStatus};
 
 /// Flat record layout returned by [`decode_and_verify_batch`]: 4 u32 words
@@ -615,5 +617,280 @@ impl DirectBlockEagerIndex {
 
     pub fn clear(&mut self) {
         self.inner.clear();
+    }
+}
+
+// --- TopicControlPlane (topic_control module) --------------------------------
+
+/// A decoded `/peerbit/topic-control-plane` message. `Data` payload bytes are
+/// reported as a range into the input frame so the host can alias them
+/// without copying. `topics` doubles as the candidate list for the
+/// `TopicRootCandidates` variant; `text` carries the public-key hash
+/// (`PeerUnavailable`) or the topic (`TopicRootQuery`/`Response`).
+#[wasm_bindgen]
+pub struct TopicControlDecodedMessage {
+    variant: u8,
+    topics: Vec<String>,
+    flag: bool,
+    data_offset: u32,
+    data_length: u32,
+    text: String,
+    root: Option<String>,
+    request_id: u32,
+    session: u64,
+    timestamp: u64,
+}
+
+#[wasm_bindgen]
+impl TopicControlDecodedMessage {
+    #[wasm_bindgen(getter)]
+    pub fn variant(&self) -> u8 {
+        self.variant
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn topics(&self) -> Vec<String> {
+        self.topics.clone()
+    }
+
+    /// `strict` (PubSubData) or `requestSubscribers` (Subscribe).
+    #[wasm_bindgen(getter)]
+    pub fn flag(&self) -> bool {
+        self.flag
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_offset(&self) -> u32 {
+        self.data_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_length(&self) -> u32 {
+        self.data_length
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn root(&self) -> Option<String> {
+        self.root.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn request_id(&self) -> u32 {
+        self.request_id
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn session(&self) -> u64 {
+        self.session
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+}
+
+/// Decode a borsh `PubSubMessage` payload (variants 0-7).
+#[wasm_bindgen]
+pub fn tc_decode_pubsub_message(frame: &[u8]) -> Result<TopicControlDecodedMessage, JsValue> {
+    let decoded =
+        topic_control::decode_pubsub_message(frame).map_err(|error| JsValue::from_str(&error))?;
+    let mut message = TopicControlDecodedMessage {
+        variant: 0,
+        topics: Vec::new(),
+        flag: false,
+        data_offset: 0,
+        data_length: 0,
+        text: String::new(),
+        root: None,
+        request_id: 0,
+        session: 0,
+        timestamp: 0,
+    };
+    match decoded {
+        DecodedPubSubMessage::Data {
+            topics,
+            strict,
+            data_offset,
+            data_length,
+        } => {
+            message.variant = topic_control::PUBSUB_VARIANT_DATA;
+            message.topics = topics;
+            message.flag = strict;
+            message.data_offset = data_offset as u32;
+            message.data_length = data_length as u32;
+        }
+        DecodedPubSubMessage::Subscribe {
+            topics,
+            request_subscribers,
+        } => {
+            message.variant = topic_control::PUBSUB_VARIANT_SUBSCRIBE;
+            message.topics = topics;
+            message.flag = request_subscribers;
+        }
+        DecodedPubSubMessage::Unsubscribe { topics } => {
+            message.variant = topic_control::PUBSUB_VARIANT_UNSUBSCRIBE;
+            message.topics = topics;
+        }
+        DecodedPubSubMessage::GetSubscribers { topics } => {
+            message.variant = topic_control::PUBSUB_VARIANT_GET_SUBSCRIBERS;
+            message.topics = topics;
+        }
+        DecodedPubSubMessage::TopicRootCandidates { candidates } => {
+            message.variant = topic_control::PUBSUB_VARIANT_TOPIC_ROOT_CANDIDATES;
+            message.topics = candidates;
+        }
+        DecodedPubSubMessage::PeerUnavailable {
+            public_key_hash,
+            session,
+            timestamp,
+            topics,
+        } => {
+            message.variant = topic_control::PUBSUB_VARIANT_PEER_UNAVAILABLE;
+            message.text = public_key_hash;
+            message.session = session;
+            message.timestamp = timestamp;
+            message.topics = topics;
+        }
+        DecodedPubSubMessage::TopicRootQuery { request_id, topic } => {
+            message.variant = topic_control::PUBSUB_VARIANT_TOPIC_ROOT_QUERY;
+            message.request_id = request_id;
+            message.text = topic;
+        }
+        DecodedPubSubMessage::TopicRootQueryResponse {
+            request_id,
+            topic,
+            root,
+        } => {
+            message.variant = topic_control::PUBSUB_VARIANT_TOPIC_ROOT_QUERY_RESPONSE;
+            message.request_id = request_id;
+            message.text = topic;
+            message.root = root;
+        }
+    }
+    Ok(message)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_pubsub_data(topics: Vec<String>, strict: bool, data: &[u8]) -> Vec<u8> {
+    topic_control::encode_pubsub_data(&topics, strict, data)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_subscribe(topics: Vec<String>, request_subscribers: bool) -> Vec<u8> {
+    topic_control::encode_subscribe(&topics, request_subscribers)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_unsubscribe(topics: Vec<String>) -> Vec<u8> {
+    topic_control::encode_unsubscribe(&topics)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_get_subscribers(topics: Vec<String>) -> Vec<u8> {
+    topic_control::encode_get_subscribers(&topics)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_topic_root_candidates(candidates: Vec<String>) -> Vec<u8> {
+    topic_control::encode_topic_root_candidates(&candidates)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_peer_unavailable(
+    public_key_hash: &str,
+    session: u64,
+    timestamp: u64,
+    topics: Vec<String>,
+) -> Vec<u8> {
+    topic_control::encode_peer_unavailable(public_key_hash, session, timestamp, &topics)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_topic_root_query(request_id: u32, topic: &str) -> Vec<u8> {
+    topic_control::encode_topic_root_query(request_id, topic)
+}
+
+#[wasm_bindgen]
+pub fn tc_encode_topic_root_query_response(
+    request_id: u32,
+    topic: &str,
+    root: Option<String>,
+) -> Vec<u8> {
+    topic_control::encode_topic_root_query_response(request_id, topic, root.as_deref())
+}
+
+#[wasm_bindgen]
+pub fn tc_topic_hash32(topic: &str) -> u32 {
+    topic_control::topic_hash32(topic)
+}
+
+#[wasm_bindgen]
+pub fn tc_shard_topic(topic: &str, shard_count: u32, prefix: &str) -> String {
+    topic_control::shard_topic_for(topic, shard_count, prefix)
+}
+
+#[wasm_bindgen]
+pub fn tc_normalize_auto_candidates(candidates: Vec<String>, me: &str) -> Vec<String> {
+    topic_control::normalize_auto_candidates(&candidates, me)
+}
+
+/// `lasts` carries interleaved (session, timestamp) watermark pairs for the
+/// relevant topics that have one; see `subscription_is_latest`.
+#[wasm_bindgen]
+pub fn tc_subscription_is_latest(lasts: Vec<u64>, session: u64, timestamp: u64) -> bool {
+    topic_control::subscription_is_latest(&lasts, session, timestamp)
+}
+
+#[wasm_bindgen]
+pub fn tc_subscribe_should_replace(existing_session: Option<u64>, session: u64) -> bool {
+    topic_control::subscribe_should_replace(existing_session, session)
+}
+
+/// `TopicRootDirectory` root-resolution state (explicit roots + normalized
+/// deterministic candidates). Trackers and the resolver callback stay
+/// host-side.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct TopicControlRootDirectory {
+    inner: TopicRootDirectoryCore,
+}
+
+#[wasm_bindgen]
+impl TopicControlRootDirectory {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> TopicControlRootDirectory {
+        TopicControlRootDirectory {
+            inner: TopicRootDirectoryCore::new(),
+        }
+    }
+
+    pub fn set_root(&mut self, topic: &str, root: &str) {
+        self.inner.set_root(topic, root);
+    }
+
+    pub fn delete_root(&mut self, topic: &str) {
+        self.inner.delete_root(topic);
+    }
+
+    pub fn get_root(&self, topic: &str) -> Option<String> {
+        self.inner.get_root(topic)
+    }
+
+    pub fn set_default_candidates(&mut self, candidates: Vec<String>) {
+        self.inner.set_default_candidates(&candidates);
+    }
+
+    pub fn get_default_candidates(&self) -> Vec<String> {
+        self.inner.get_default_candidates()
+    }
+
+    pub fn resolve_deterministic_candidate(&self, topic: &str) -> Option<String> {
+        self.inner.resolve_deterministic_candidate(topic)
     }
 }

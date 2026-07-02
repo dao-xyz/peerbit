@@ -23,6 +23,10 @@ import {
 	type BlockExchangeWasmExports,
 	createRustBlockExchange,
 } from "./block-exchange.js";
+import {
+	type TopicControlWasmExports,
+	createRustTopicControl,
+} from "./topic-control.js";
 import { loadWasm } from "./wasm.js";
 
 const ROUTES_ADD_OUTCOMES = ["new", "updated", "restart"] as const;
@@ -688,13 +692,14 @@ const buildDecisions = (
 /**
  * Create the native DirectStream core for
  * `DirectStreamOptions.rustCore`. Includes the batched inbound
- * decode+verify module (nativeWire) and the block-exchange components
- * consumed by `@peerbit/blocks`, so enabling rust-core also enables the
- * native inbound wire path and the native block exchange.
+ * decode+verify module (nativeWire), the block-exchange components
+ * consumed by `@peerbit/blocks` and the topic-control components consumed
+ * by `@peerbit/pubsub`, so enabling rust-core also enables the native
+ * inbound wire path and the native protocol codecs.
  */
 export const createRustCoreStream = async (): Promise<RustCoreStream> => {
 	const wasm = await loadWasm<
-		DirectStreamWasmExports & BlockExchangeWasmExports
+		DirectStreamWasmExports & BlockExchangeWasmExports & TopicControlWasmExports
 	>();
 	return {
 		nativeWire: {
@@ -706,5 +711,6 @@ export const createRustCoreStream = async (): Promise<RustCoreStream> => {
 		createLanes: (init) => createRustLanes(wasm, init),
 		decisions: buildDecisions(wasm),
 		blockExchange: createRustBlockExchange(wasm),
+		topicControl: createRustTopicControl(wasm),
 	};
 };

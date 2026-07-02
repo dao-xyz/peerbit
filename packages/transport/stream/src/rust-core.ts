@@ -154,6 +154,110 @@ export interface RustBlockExchange {
 }
 
 /**
+ * A decoded `/peerbit/topic-control-plane` message produced by the native
+ * codec (borsh `PubSubMessage` variants 0-7).
+ */
+export type RustDecodedPubSubMessage =
+	| {
+			type: "data";
+			topics: string[];
+			strict: boolean;
+			/** View into the input payload (no copy). */
+			data: Uint8Array;
+	  }
+	| { type: "subscribe"; topics: string[]; requestSubscribers: boolean }
+	| { type: "unsubscribe"; topics: string[] }
+	| { type: "get-subscribers"; topics: string[] }
+	| { type: "topic-root-candidates"; candidates: string[] }
+	| {
+			type: "peer-unavailable";
+			publicKeyHash: string;
+			session: bigint;
+			timestamp: bigint;
+			topics: string[];
+	  }
+	| { type: "topic-root-query"; requestId: number; topic: string }
+	| {
+			type: "topic-root-query-response";
+			requestId: number;
+			topic: string;
+			root?: string;
+	  };
+
+/**
+ * `TopicRootDirectory` root-resolution state backed by the native core
+ * (explicit per-topic roots plus the normalized deterministic candidate
+ * set). Trackers and the resolver callback stay host-side.
+ */
+export interface RustTopicRootDirectoryState {
+	setRoot(topic: string, root: string): void;
+	deleteRoot(topic: string): void;
+	getRoot(topic: string): string | undefined;
+	setDefaultCandidates(candidates: string[]): void;
+	getDefaultCandidates(): string[];
+	resolveDeterministicCandidate(topic: string): string | undefined;
+}
+
+/**
+ * Native topic-control-plane components consumed by `@peerbit/pubsub`: the
+ * `PubSubMessage` codec, the topic hashing that keys shard mapping and
+ * deterministic root selection, the root-directory state and the
+ * subscribe-state convergence rules. The observable subscription maps stay
+ * host-side (they are public API); every protocol decision that feeds them
+ * runs natively.
+ */
+export interface RustTopicControl {
+	encodePubSubData(
+		topics: string[],
+		strict: boolean,
+		data: Uint8Array,
+	): Uint8Array;
+	encodeSubscribe(topics: string[], requestSubscribers: boolean): Uint8Array;
+	encodeUnsubscribe(topics: string[]): Uint8Array;
+	encodeGetSubscribers(topics: string[]): Uint8Array;
+	encodeTopicRootCandidates(candidates: string[]): Uint8Array;
+	encodePeerUnavailable(
+		publicKeyHash: string,
+		session: bigint,
+		timestamp: bigint,
+		topics: string[],
+	): Uint8Array;
+	encodeTopicRootQuery(requestId: number, topic: string): Uint8Array;
+	encodeTopicRootQueryResponse(
+		requestId: number,
+		topic: string,
+		root?: string,
+	): Uint8Array;
+	decodePubSubMessage(payload: Uint8Array): RustDecodedPubSubMessage;
+	/** `getShardTopicForUserTopic`: user topic -> internal shard topic. */
+	shardTopic(topic: string, shardCount: number, prefix: string): string;
+	/**
+	 * `normalizeAutoTopicRootCandidates`: dedupe, include self, sort and cap
+	 * at the auto-candidate bound.
+	 */
+	normalizeAutoCandidates(candidates: string[], me: string): string[];
+	/**
+	 * The `subscriptionStateIsLatest` comparison rule. `lasts` carries
+	 * interleaved (session, timestamp) watermark pairs for the relevant
+	 * topics that have one; the watermark write-back stays host-side.
+	 */
+	subscriptionIsLatest(
+		lasts: BigUint64Array,
+		session: bigint,
+		timestamp: bigint,
+	): boolean;
+	/**
+	 * The subscribe-apply replacement rule: replace tracked subscription data
+	 * for new subscribers or strictly newer sessions, else only refresh.
+	 */
+	subscribeShouldReplace(
+		existingSession: bigint | undefined,
+		session: bigint,
+	): boolean;
+	createRootDirectoryState(): RustTopicRootDirectoryState;
+}
+
+/**
  * The full native DirectStream core: created by
  * `@peerbit/network-rust`'s `createRustCoreStream()` and passed as
  * `DirectStreamOptions.rustCore`.
@@ -167,6 +271,8 @@ export interface RustCoreStream {
 	decisions: RustStreamDecisions;
 	/** Native block-exchange components consumed by `@peerbit/blocks`. */
 	blockExchange?: RustBlockExchange;
+	/** Native topic-control-plane components consumed by `@peerbit/pubsub`. */
+	topicControl?: RustTopicControl;
 }
 
 /**
