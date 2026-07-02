@@ -1274,6 +1274,27 @@ export abstract class DirectStream<
 		done: DeferredPromise<void>;
 	}[] = [];
 	private nativeWireFlushScheduled = false;
+	/**
+	 * Always-on counters recording where per-frame wire work executed. Tests
+	 * and benchmarks use them to prove the native path leaves no per-message
+	 * JS decode/verify work on the hot path. `tsEnvelopeDecodes` counts the
+	 * TS envelope object materializations (`Message.from`); on the native
+	 * path that object only feeds the routing state machine and app-facing
+	 * events, holding the payload as a zero-copy view, while decode
+	 * validation and signature verification stay native.
+	 */
+	public readonly wireCounters = {
+		/** Frames decoded and signature-verified by the native wire module. */
+		nativeFrames: 0,
+		/** Frames where the native decode failed and the TS path took over. */
+		nativeFallbackFrames: 0,
+		/** Frames processed without a native wire module (pure TS path). */
+		tsFrames: 0,
+		/** TS-side signature verifications (not pre-seeded by native decode). */
+		tsSignatureVerifies: 0,
+		/** TS envelope object materializations (`Message.from`). */
+		tsEnvelopeDecodes: 0,
+	};
 
 	// for sequential creation of outbound streams
 		public outboundInflightQueue: Pushable<{
@@ -2329,10 +2350,12 @@ export abstract class DirectStream<
 				return true;
 			}
 
+			this.wireCounters.tsFrames++;
 			let decodedMessage: Message | undefined;
 			let priority = 0;
 			try {
 				decodedMessage = Message.from(message);
+				this.wireCounters.tsEnvelopeDecodes++;
 				priority = decodedMessage.header.priority ?? 0;
 			} catch {
 				// This is only a best-effort priority peek. processMessage()
@@ -2399,11 +2422,17 @@ export abstract class DirectStream<
 			const decodeOk =
 				records != null && (word0 & NATIVE_WIRE_FLAG_DECODE_OK) !== 0;
 			const verifyStatus = (word0 >>> 16) & 0xff;
+			if (decodeOk && verifyStatus !== NATIVE_WIRE_VERIFY_UNSUPPORTED) {
+				this.wireCounters.nativeFrames++;
+			} else {
+				this.wireCounters.nativeFallbackFrames++;
+			}
 
 			let decodedMessage: Message | undefined;
 			let priority = 0;
 			try {
 				decodedMessage = Message.from(bytes);
+				this.wireCounters.tsEnvelopeDecodes++;
 				priority = decodedMessage.header.priority ?? 0;
 			} catch {
 				// Best-effort peek, same as the TS path: processMessage()
@@ -2437,6 +2466,45 @@ export abstract class DirectStream<
 				)
 				.catch(logError)
 				.finally(() => done.resolve());
+		}
+	}
+
+	/**
+	 * Native decode+verify for an envelope frame that arrived outside the
+	 * inbound stream path (e.g. nested inside another protocol's payload).
+	 * Seeds the memoized verification result so `verify(true)`
+	 * short-circuits; on any native failure the TS verification path stays
+	 * authoritative.
+	 */
+	protected seedNativeWireVerification(
+		message: Message,
+		frame: Uint8Array | Uint8ArrayList,
+	): void {
+		if (!this.nativeWire || message._verified != null) {
+			return;
+		}
+		try {
+			const records = this.nativeWire.decodeAndVerifyBatch(
+				[frame instanceof Uint8Array ? frame : frame.subarray()],
+				Date.now(),
+			);
+			if (records.length !== NATIVE_WIRE_RECORD_WORDS) {
+				return;
+			}
+			const word0 = records[0];
+			if ((word0 & NATIVE_WIRE_FLAG_DECODE_OK) === 0) {
+				this.wireCounters.nativeFallbackFrames++;
+				return;
+			}
+			const verifyStatus = (word0 >>> 16) & 0xff;
+			if (verifyStatus === NATIVE_WIRE_VERIFY_UNSUPPORTED) {
+				this.wireCounters.nativeFallbackFrames++;
+				return;
+			}
+			this.wireCounters.nativeFrames++;
+			message._verified = verifyStatus === NATIVE_WIRE_VERIFY_VERIFIED;
+		} catch {
+			// TS verification stays authoritative
 		}
 	}
 
@@ -2475,7 +2543,10 @@ export abstract class DirectStream<
 		// Ensure the message is valid before processing it
 		let message: Message | undefined = decodedMessage;
 		try {
-			message ??= Message.from(msg);
+			if (message == null) {
+				message = Message.from(msg);
+				this.wireCounters.tsEnvelopeDecodes++;
+			}
 		} catch (error) {
 			warn(error, "Failed to decode message frame from", from.hashcode());
 			return;
@@ -2611,6 +2682,9 @@ export abstract class DirectStream<
 	}
 
 	public async verifyAndProcess(message: Message<any>) {
+		if (message._verified == null) {
+			this.wireCounters.tsSignatureVerifies++;
+		}
 		const verified = await message.verify(true);
 		if (!verified) {
 			return false;

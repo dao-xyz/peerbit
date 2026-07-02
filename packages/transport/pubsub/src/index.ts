@@ -1361,6 +1361,9 @@ export class TopicControlPlane
 				this.seenCache.add(msgId, seen ? seen + 1 : 1);
 				if (seen) return;
 
+				// fanout-delivered frames bypass the inbound stream decode, so
+				// the nested envelope is verified natively here when possible
+				this.seedNativeWireVerification(dm, payload);
 				if ((await this.verifyAndProcess(dm)) === false) {
 					return;
 				}
