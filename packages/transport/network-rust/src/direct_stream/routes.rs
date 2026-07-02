@@ -271,9 +271,17 @@ impl Routes {
         let mut is_new_remote_session = false;
         if route_did_exist {
             // if the remote session is later, we consider that the remote has
-            // 'restarted'
-            is_new_remote_session = remote_session > prev.remote_session;
-            prev.remote_session = remote_session.max(prev.remote_session);
+            // 'restarted'. TS reads the stored value as
+            // `prev.remoteSession || -1`, so a falsy stored remote session
+            // (exactly 0) is coerced to -1: a re-add with remoteSession 0
+            // counts as a restart, and merging keeps the coerced -1.
+            let prev_remote_session = if prev.remote_session == 0 {
+                -1
+            } else {
+                prev.remote_session
+            };
+            is_new_remote_session = remote_session > prev_remote_session;
+            prev.remote_session = remote_session.max(prev_remote_session);
         }
 
         prev.session = session.max(prev.session);
@@ -867,6 +875,50 @@ mod tests {
         let info = r.find_neighbor("me", "n").unwrap();
         assert_eq!(info.list.len(), 1);
         assert_eq!(info.list[0].expire_at, None);
+    }
+
+    #[test]
+    fn re_add_with_remote_session_zero_is_a_restart() {
+        // TS compares against `prev.remoteSession || -1`: a stored remote
+        // session of exactly 0 is coerced to -1, so a re-add with
+        // remoteSession 0 reports "restart" rather than "updated".
+        let mut r = routes("me");
+        assert_eq!(
+            r.add("me", "n", "t", 0, 100, 0, NOW).outcome,
+            AddOutcome::New
+        );
+        assert_eq!(
+            r.add("me", "n", "t", 0, 100, 0, NOW).outcome,
+            AddOutcome::Restart
+        );
+        // the merge keeps the stored value at max(0, -1) = 0, so it keeps
+        // reporting restart
+        assert_eq!(
+            r.add("me", "n", "t", 0, 100, 0, NOW).outcome,
+            AddOutcome::Restart
+        );
+
+        // the coercion also applies to the merge: a lower incoming remote
+        // session stores Math.max(-5, 0 || -1) = -1
+        let mut r = routes("me");
+        r.add("me", "n", "t", 0, 100, 0, NOW);
+        assert_eq!(
+            r.add("me", "n", "t", 0, 100, -5, NOW).outcome,
+            AddOutcome::Updated
+        );
+        assert_eq!(r.find_neighbor("me", "t").unwrap().remote_session, -1);
+
+        // non-zero stored remote sessions are not coerced
+        let mut r = routes("me");
+        r.add("me", "n", "t", 0, 100, 5, NOW);
+        assert_eq!(
+            r.add("me", "n", "t", 0, 100, 5, NOW).outcome,
+            AddOutcome::Updated
+        );
+        assert_eq!(
+            r.add("me", "n", "t", 0, 100, 6, NOW).outcome,
+            AddOutcome::Restart
+        );
     }
 
     #[test]
