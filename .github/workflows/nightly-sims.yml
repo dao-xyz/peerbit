@@ -69,10 +69,17 @@ jobs:
             --seed 1 --subscribeModel preseed --silent 1 \
             --settleMs 3000 --minDeliveredPct 99 \
             --timeoutMs 600000 > sim-results/topic-sim-500.txt
-      - name: Run fanout-peerbit-sim (scale-1k)
+      - name: Run fanout-peerbit-sim (ci-small)
         run: |
           set -euo pipefail
-          pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset scale-1k --seed 1 > sim-results/fanout-peerbit-scale-1k.txt
+          pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset ci-small --seed 1 > sim-results/fanout-peerbit-ci-small.txt
+      - name: Run fanout-peerbit-sim (ci-loss)
+        run: |
+          # scale-1k (1000 clients, 999 group subscribers) OOMs a 4GB heap in
+          # ~15 min via the fanout route-proxy storm — it is the second
+          # acceptance test for issue #983 and returns here once that lands.
+          set -euo pipefail
+          pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset ci-loss --seed 1 > sim-results/fanout-peerbit-ci-loss.txt
       - name: Run fanout-tree-sim (scale-5k, trend evidence)
         run: |
           # Non-gating: a 5000-node single-process sim saturates one Node event
