@@ -11,6 +11,7 @@ import {
 	type DirectStreamComponents,
 	type DirectStreamOptions,
 	type PeerStreams,
+	type RustFanoutTree,
 	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
@@ -29,7 +30,6 @@ import {
 	JOIN_REJECT_NOT_ATTACHED,
 	JOIN_REJECT_REDIRECT_ADDR_MAX,
 	JOIN_REJECT_REDIRECT_MAX,
-	MAX_ROUTE_HOPS,
 	MSG_DATA,
 	MSG_END,
 	MSG_FETCH_REQ,
@@ -66,47 +66,15 @@ import {
 	TRACKER_FEEDBACK_JOIN_REJECT,
 	TRACKER_FEEDBACK_JOIN_TIMEOUT,
 	UNICAST_ACK_DEFAULT_TIMEOUT_MS,
-	UNICAST_FLAG_ACK,
-	clampU16,
-	decodeJoinReq,
-	decodeParentProbeReply,
-	decodeParentProbeReq,
-	decodeProviderEntries,
-	decodeRoute,
-	encodeData,
-	encodeEnd,
-	encodeFetchReq,
-	encodeIHave,
-	encodeJoinAccept,
-	encodeJoinReject,
-	encodeJoinReq,
-	encodeKick,
-	encodeLeave,
-	encodeParentProbeReply,
-	encodeParentProbeReq,
-	encodeProviderAnnounce,
-	encodeProviderNotify,
-	encodeProviderQuery,
-	encodeProviderReply,
-	encodeProviderSubscribe,
-	encodeProviderUnsubscribe,
-	encodePublishProxy,
-	encodeRepairReq,
-	encodeRouteQuery,
-	encodeRouteReply,
-	encodeTrackerAnnounce,
-	encodeTrackerFeedback,
-	encodeTrackerQuery,
-	encodeTrackerReply,
-	encodeUnicast,
-	encodeUnicastAck,
+	type FanoutWireCodec,
 	type JoinRejectRedirect,
 	type ParentProbeReply,
+	type ProviderCandidate,
 	type ProviderEntry,
-	readU16BE,
-	readU32BE,
-	readU64BE,
 	type TrackerEntry,
+	clampU16,
+	readU32BE,
+	tsFanoutWireCodec,
 	writeU32BE,
 } from "./fanout-tree-codec.js";
 import {
@@ -908,7 +876,6 @@ const stableUnitInterval = (input: string) => {
 };
 
 const textEncoder = new TextEncoder();
-const textDecoder = new TextDecoder();
 
 type RouteCacheEntry = {
 	route: string[];
@@ -1355,6 +1322,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private readonly unicastAckNodeTag32: number;
 	private unicastAckSeq = 0;
 	public readonly topicRootControlPlane: TopicRootControlPlane;
+	// Native fanout components of the rust-core DirectStream engine
+	// (`@peerbit/network-rust`). When set, every frame encode/decode of the
+	// `/peerbit/fanout-tree/0.5.0` codec plus the parent-upgrade policy/gate
+	// decisions run natively (byte- and decision-identical, covered by the
+	// golden parity suite); the channel state machine, timers and events
+	// stay host-side. Unset (the default) leaves every code path as-is.
+	private readonly nativeFanout?: RustFanoutTree;
+	private readonly codec: FanoutWireCodec;
 
 	constructor(
 		components: DirectStreamComponents,
@@ -1367,6 +1342,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			...rest,
 		});
 		this.random = typeof random === "function" ? random : Math.random;
+		this.nativeFanout = this.rustCore?.fanout;
+		this.codec = this.nativeFanout ?? tsFanoutWireCodec;
 		this.unicastAckNodeTag32 = readU32BE(
 			sha256Sync(textEncoder.encode(this.publicKeyHash)),
 			0,
@@ -1506,6 +1483,26 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		return cached;
 	}
 
+	/** Decoded provider entries (raw multiaddr bytes) -> candidates. Invalid
+	 * multiaddrs are dropped exactly like the historical inline parsing. */
+	private toProviderCandidates(
+		entries: { hash: string; addrs: Uint8Array[] }[],
+	): ProviderCandidate[] {
+		const candidates: ProviderCandidate[] = [];
+		for (const entry of entries) {
+			const addrs: Multiaddr[] = [];
+			for (const bytes of entry.addrs) {
+				try {
+					addrs.push(multiaddr(bytes));
+				} catch {
+					// ignore invalid multiaddrs
+				}
+			}
+			candidates.push({ hash: entry.hash, addrs });
+		}
+		return candidates;
+	}
+
 	private rememberProviderCandidates(
 		id: ProviderNamespaceId,
 		candidates: FanoutProviderCandidate[],
@@ -1574,7 +1571,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					addrs: candidate.addrs.map((a) => a.bytes),
 					expiresAt: now + 60_000,
 				}));
-			void this._sendControl(hash, encodeProviderNotify(id.key, entries)).catch(
+			void this._sendControl(hash, this.codec.encodeProviderNotify(id.key, entries)).catch(
 				dontThrowIfDeliveryError,
 			);
 		}
@@ -1749,7 +1746,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		const ttlMs = ttlOverrideMs != null ? ttlOverrideMs : state.ttlMs;
 		const addrs = this.getSelfAnnounceAddrs();
-		const bytes = encodeProviderAnnounce(state.id.key, ttlMs, addrs);
+		const bytes = this.codec.encodeProviderAnnounce(state.id.key, ttlMs, addrs);
 		await this._sendControlMany(peers, bytes);
 	}
 
@@ -1882,7 +1879,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					});
 					void this._sendControl(
 						trackerHash,
-						encodeProviderQuery(id.key, reqId, want, seed),
+						this.codec.encodeProviderQuery(id.key, reqId, want, seed),
 					);
 
 					const remainingMs =
@@ -2014,7 +2011,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			for (const trackerHash of watch.trackerPeers) {
 				void this._sendControl(
 					trackerHash,
-					encodeProviderUnsubscribe(id.key),
+					this.codec.encodeProviderUnsubscribe(id.key),
 				).catch(dontThrowIfDeliveryError);
 			}
 			watch.trackerPeers = [];
@@ -2045,7 +2042,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					for (const trackerHash of trackerPeers) {
 						void this._sendControl(
 							trackerHash,
-							encodeProviderSubscribe(id.key, watch.want, watch.ttlMs),
+							this.codec.encodeProviderSubscribe(id.key, watch.want, watch.ttlMs),
 						).catch(dontThrowIfDeliveryError);
 					}
 				} catch (error) {
@@ -2421,14 +2418,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const sends: Array<Promise<void>> = [];
 		if (notifyPreviousParent && grace.previousParent !== ch.parent) {
 			sends.push(
-				this._sendControl(grace.previousParent, encodeLeave(ch.id.key)).catch(
+				this._sendControl(grace.previousParent, this.codec.encodeLeave(ch.id.key)).catch(
 					() => {},
 				),
 			);
 		}
 		if (notifyCandidateParent && grace.candidateParent !== ch.parent) {
 			sends.push(
-				this._sendControl(grace.candidateParent, encodeLeave(ch.id.key)).catch(
+				this._sendControl(grace.candidateParent, this.codec.encodeLeave(ch.id.key)).catch(
 					() => {},
 				),
 			);
@@ -2442,7 +2439,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		clearTimeout(grace.timer);
 		ch.parentUpgradeGrace = undefined;
 		if (ch.closed || ch.parent !== grace.candidateParent) return;
-		void this._sendControl(grace.previousParent, encodeLeave(ch.id.key)).catch(
+		void this._sendControl(grace.previousParent, this.codec.encodeLeave(ch.id.key)).catch(
 			() => {},
 		);
 	}
@@ -2464,7 +2461,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.receivedAnyParentData = grace.previousReceivedAnyParentData;
 		this.resetParentDataLatency(ch);
 		this.touchPeerHint(ch, grace.previousParent);
-		void this._sendControl(grace.candidateParent, encodeLeave(ch.id.key)).catch(
+		void this._sendControl(grace.candidateParent, this.codec.encodeLeave(ch.id.key)).catch(
 			() => {},
 		);
 		void this.announceToTrackers(ch, this.closeController.signal).catch(
@@ -2484,7 +2481,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (timeoutMs <= 0) {
 			void this._sendControl(
 				options.previousParent,
-				encodeLeave(ch.id.key),
+				this.codec.encodeLeave(ch.id.key),
 			).catch(() => {});
 			return;
 		}
@@ -2611,7 +2608,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const pendingSends: Array<Promise<void>> = [];
 		if (notifyParent && !ch.isRoot && ch.parent) {
 			pendingSends.push(
-				this._sendControl(ch.parent, encodeLeave(ch.id.key)).catch(() => {}),
+				this._sendControl(ch.parent, this.codec.encodeLeave(ch.id.key)).catch(() => {}),
 			);
 		}
 		pendingSends.push(
@@ -3024,7 +3021,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		void this._sendControl(
 			proxy.requester,
-			encodeRouteReply(ch.id.key, proxy.downstreamReqId, route),
+			this.codec.encodeRouteReply(ch.id.key, proxy.downstreamReqId, route),
 		).catch(() => {});
 	}
 
@@ -3049,7 +3046,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (unique.length === 0) {
 			void this._sendControl(
 				requester,
-				encodeRouteReply(ch.id.key, downstreamReqId),
+				this.codec.encodeRouteReply(ch.id.key, downstreamReqId),
 			).catch(() => {});
 			return;
 		}
@@ -3073,7 +3070,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		void this._sendControlMany(
 			unique,
-			encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
+			this.codec.encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
 		).catch(() => {
 			this.completeRouteProxy(ch, proxyReqId);
 		});
@@ -3170,7 +3167,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				void this._sendControlMany(
 					unique,
-					encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
+					this.codec.encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
 				).catch(() => {
 					this.completeRouteProxy(ch, proxyReqId);
 				});
@@ -3219,7 +3216,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			});
 			void this._sendControl(
 				ch.parent!,
-				encodeRouteQuery(ch.id.key, reqId, targetHash),
+				this.codec.encodeRouteQuery(ch.id.key, reqId, targetHash),
 			).catch((error) => {
 				if (settled) return;
 				settled = true;
@@ -3300,7 +3297,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			throw new Error("Unicast route token target mismatch");
 		}
 		if (target === this.publicKeyHash) {
-			const wire = encodeUnicast(ch.id.key, toRoute, payload);
+			const wire = this.codec.encodeUnicast(ch.id.key, toRoute, payload);
 			const message = await this.createMessage(wire, {
 				mode: new AnyWhere(),
 				priority: CONTROL_PRIORITY,
@@ -3348,7 +3345,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			);
 		}
 
-		const data = encodeUnicast(ch.id.key, toRoute, payload, {
+		const data = this.codec.encodeUnicast(ch.id.key, toRoute, payload, {
 			ackToken,
 			replyRoute,
 		});
@@ -3457,7 +3454,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			throw new Error("Unicast route token root mismatch");
 		}
 
-		const data = encodeUnicast(ch.id.key, toRoute, payload);
+		const data = this.codec.encodeUnicast(ch.id.key, toRoute, payload);
 
 		if (ch.isRoot) {
 			const target = toRoute[toRoute.length - 1]!;
@@ -3560,7 +3557,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				`Cannot proxy publish while not attached to a parent (topic=${topic} root=${root} self=${this.publicKeyHash})`,
 			);
 		}
-		await this._sendControl(ch.parent, encodePublishProxy(ch.id.key, payload));
+		await this._sendControl(ch.parent, this.codec.encodePublishProxy(ch.id.key, payload));
 	}
 
 	public async publishToChannelMaybe(
@@ -3667,7 +3664,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.endSeqExclusive = Math.max(ch.endSeqExclusive, lastSeqExclusive);
 		await this._sendControlMany(
 			[...ch.children.keys()],
-			encodeEnd(ch.id.key, lastSeqExclusive),
+			this.codec.encodeEnd(ch.id.key, lastSeqExclusive),
 		);
 	}
 
@@ -3969,7 +3966,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		this.markCached(ch, seq, payload);
 		ch.maxSeqSeen = Math.max(ch.maxSeqSeen, seq);
 
-		const framed = encodeData(payload);
+		const framed = this.codec.encodeData(payload);
 		const message = await this.createMessage(framed, {
 			mode: new AnyWhere(),
 			priority: DATA_PRIORITY,
@@ -4465,7 +4462,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (ch.parent) {
 			await this._sendControl(
 				ch.parent,
-				encodeRepairReq(ch.id.key, reqId, slice),
+				this.codec.encodeRepairReq(ch.id.key, reqId, slice),
 			);
 			ch.parentRepairUnansweredStreak += 1;
 			sent = true;
@@ -4533,7 +4530,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			let peers = viable.slice(0, ch.neighborRepairPeers).map((s) => s.peerHash);
 			if (peers.length > 0) {
-				const bytes = encodeFetchReq(ch.id.key, reqId, slice);
+				const bytes = this.codec.encodeFetchReq(ch.id.key, reqId, slice);
 
 				if (
 					ch.neighborRepairBudgetBps > 0 &&
@@ -4686,7 +4683,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				)
 			: ch.announceTtlMs;
 		const addrs = this.getSelfAnnounceAddrs();
-		const bytes = encodeTrackerAnnounce(
+		const bytes = this.codec.encodeTrackerAnnounce(
 			ch.id.key,
 			announceTtlMs,
 			Number.isFinite(ch.level) ? ch.level : 0xffff,
@@ -4884,7 +4881,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (range && range.haveToExclusive > range.haveFrom) {
 			await this._sendControlMany(
 				[...recipients],
-				encodeIHave(ch.id.key, range.haveFrom, range.haveToExclusive),
+				this.codec.encodeIHave(ch.id.key, range.haveFrom, range.haveToExclusive),
 			);
 			sent = true;
 		}
@@ -4893,7 +4890,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (children.length > 0) {
 				await this._sendControlMany(
 					children,
-					encodeEnd(ch.id.key, ch.endSeqExclusive),
+					this.codec.encodeEnd(ch.id.key, ch.endSeqExclusive),
 				);
 				sent = true;
 			}
@@ -5029,7 +5026,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				});
 				void this._sendControl(
 					trackerHash,
-					encodeTrackerQuery(ch.id.key, reqId, want),
+					this.codec.encodeTrackerQuery(ch.id.key, reqId, want),
 				);
 				const res = await Promise.race([
 					p,
@@ -5193,7 +5190,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		);
 		await this._sendControl(
 			toHash,
-			encodeJoinReject(ch.id.key, reqId, reason, redirects),
+			this.codec.encodeJoinReject(ch.id.key, reqId, reason, redirects),
 		);
 	}
 
@@ -5207,7 +5204,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		if (trackerPeers.length === 0) return;
 		await this._sendControlMany(
 			trackerPeers,
-			encodeTrackerFeedback(ch.id.key, candidateHash, event, reason),
+			this.codec.encodeTrackerFeedback(ch.id.key, candidateHash, event, reason),
 		);
 	}
 
@@ -5361,7 +5358,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		if (repairing) flags |= PARENT_PROBE_FLAG_REPAIRING;
 		if (overloaded) flags |= PARENT_PROBE_FLAG_OVERLOADED;
-		return encodeParentProbeReply(ch.id.key, reqId, {
+		return this.codec.encodeParentProbeReply(ch.id.key, reqId, {
 			flags,
 			level: Number.isFinite(ch.level) ? ch.level : 0xffff,
 			maxChildren,
@@ -5392,7 +5389,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		});
 		await this._sendControl(
 			parentHash,
-			encodeParentProbeReq(ch.id.key, reqId, minFreeSlots, reserveRootCapacity),
+			this.codec.encodeParentProbeReq(ch.id.key, reqId, minFreeSlots, reserveRootCapacity),
 		);
 		const res = await Promise.race([
 			p,
@@ -5453,7 +5450,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			0,
 			Math.floor(joinOpts.candidateCooldownMs ?? 2_000),
 		);
-		const parentUpgrade = normalizeParentUpgradePolicy(joinOpts);
+		const parentUpgrade: ParentUpgradePolicy = this.nativeFanout
+			? this.nativeFanout.normalizeParentUpgradePolicy(joinOpts)
+			: normalizeParentUpgradePolicy(joinOpts);
 		const candidateScoringModeRaw =
 			joinOpts.candidateScoringMode ?? "ranked-shuffle";
 		const candidateScoringMode:
@@ -5687,7 +5686,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						}
 						const due = now >= nextParentUpgradeCheckAt;
 						if (due) {
-							const gate = evaluateParentUpgradeGate(ch, {
+							const gateOptions = {
 								leafOnly: parentUpgrade.leafOnly,
 								repairGuard: parentUpgrade.repairGuard,
 								dataGuard: parentUpgrade.dataGuard,
@@ -5697,7 +5696,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								quietMs: parentUpgrade.quietMs,
 								repairQuietMs: parentUpgrade.repairQuietMs,
 								now,
-							});
+							};
+							const gate = this.nativeFanout
+								? this.nativeFanout.evaluateParentUpgradeGate(ch, gateOptions)
+								: evaluateParentUpgradeGate(ch, gateOptions);
 							if ("reason" in gate) {
 								recordParentUpgradeSkip(ch.metrics, gate.reason);
 								scheduleNextParentUpgradeCheck(
@@ -7180,7 +7182,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (!isEnoughLevelGain(candidate.hash, acceptedParentLevel)) {
 						void this._sendControl(
 							candidate.hash,
-							encodeLeave(ch.id.key),
+							this.codec.encodeLeave(ch.id.key),
 						).catch(() => {});
 						resetShadow();
 						rejectProbeCandidate(candidate.hash);
@@ -7284,7 +7286,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							previousLastParentUpgradeActivityAt;
 						ch.receivedAnyParentData = previousReceivedAnyParentData;
 					}
-					void this._sendControl(candidate.hash, encodeLeave(ch.id.key)).catch(
+					void this._sendControl(candidate.hash, this.codec.encodeLeave(ch.id.key)).catch(
 						() => {},
 					);
 					if (ch.parentShadow) {
@@ -7305,7 +7307,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 				const newParent = ch.parent;
 				if (previousParent && newParent && newParent !== previousParent) {
-					void this._sendControl(previousParent, encodeLeave(ch.id.key)).catch(
+					void this._sendControl(previousParent, this.codec.encodeLeave(ch.id.key)).catch(
 						() => {},
 					);
 					if (parentUpgrade.mode === "shadow") {
@@ -7365,7 +7367,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		});
 		await this._sendControl(
 			parentHash,
-			encodeJoinReq(
+			this.codec.encodeJoinReq(
 				ch.id.key,
 				reqId,
 				ch.bidPerByte,
@@ -7399,7 +7401,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const resetPeerConnections = options?.resetPeerConnections === true;
 		let kickFailed = false;
 		try {
-			await this._sendControlMany(unique, encodeKick(ch.id.key));
+			await this._sendControlMany(unique, this.codec.encodeKick(ch.id.key));
 		} catch (error) {
 			kickFailed = true;
 			throw error;
@@ -7492,32 +7494,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					const reqId = readU32BE(data, 33);
 					void this._sendControl(
 						fromHash,
-						encodeJoinReject(channelKey, reqId, JOIN_REJECT_NOT_ATTACHED),
+						this.codec.encodeJoinReject(channelKey, reqId, JOIN_REJECT_NOT_ATTACHED),
 					).catch(() => {});
 					return true;
 				}
 
 			if (kind === MSG_TRACKER_ANNOUNCE) {
-				if (data.length < 1 + 32 + 4 + 2 + 2 + 2 + 4 + 1) return false;
-				const ttlMs = readU32BE(data, 33);
-				const level = readU16BE(data, 37);
-				// maxChildren is currently unused, but kept in the wire format.
-				// const maxChildren = readU16BE(data, 39);
-				const freeSlots = readU16BE(data, 41);
-				const bidPerByte = readU32BE(data, 43);
-				const addrCount = data[47]!;
-				let offset = 48;
-
-				const addrs: Uint8Array[] = [];
-				const max = Math.min(addrCount, 16);
-				for (let i = 0; i < max; i++) {
-					if (offset + 2 > data.length) break;
-					const len = readU16BE(data, offset);
-					offset += 2;
-					if (offset + len > data.length) break;
-					addrs.push(data.subarray(offset, offset + len));
-					offset += len;
-				}
+				const decoded = this.codec.decodeTrackerAnnounce(data);
+				if (!decoded) return false;
+				const { ttlMs, level, freeSlots, bidPerByte, addrs } = decoded;
 
 				if (addrs.length === 0) {
 					try {
@@ -7571,9 +7556,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_TRACKER_QUERY) {
-				if (data.length < 1 + 32 + 4 + 2) return false;
-				const reqId = readU32BE(data, 33);
-				const want = readU16BE(data, 37);
+				const decoded = this.codec.decodeTrackerQuery(data);
+				if (!decoded) return false;
+				const { reqId, want } = decoded;
 
 				const now = Date.now();
 				this.touchTrackerNamespace(suffixKey, now);
@@ -7615,21 +7600,14 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					pool[j] = tmp;
 				}
 				const picked = pool.slice(0, wantCount);
-				void this._sendControl(fromHash, encodeTrackerReply(channelKey, reqId, picked));
+				void this._sendControl(fromHash, this.codec.encodeTrackerReply(channelKey, reqId, picked));
 				return true;
 			}
 
 			if (kind === MSG_TRACKER_FEEDBACK) {
-				if (data.length < 1 + 32 + 1 + 1 + 1) return false;
-				const hashLen = data[33]!;
-				let offset = 34;
-				if (offset + hashLen + 2 > data.length) return false;
-				const candidateHash = textDecoder.decode(
-					data.subarray(offset, offset + hashLen),
-				);
-				offset += hashLen;
-				const event = data[offset++]! & 0xff;
-				const reason = data[offset++]! & 0xff;
+				const decoded = this.codec.decodeTrackerFeedback(data);
+				if (!decoded) return false;
+				const { candidateHash, event, reason } = decoded;
 
 				const byPeer = this.trackerBySuffixKey.get(suffixKey);
 				if (!byPeer) return true;
@@ -7672,25 +7650,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_PROVIDER_ANNOUNCE) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
+				const decoded = this.codec.decodeProviderAnnounce(data);
+				if (!decoded) return false;
 				const providerId = this.getProviderNamespaceIdFromKey(
 					channelKey,
 					suffixKey,
 				);
-				const ttlMs = readU32BE(data, 33);
-				const addrCount = data[37]!;
-				let offset = 38;
-
-				const addrs: Uint8Array[] = [];
-				const max = Math.min(addrCount, 16);
-				for (let i = 0; i < max; i++) {
-					if (offset + 2 > data.length) break;
-					const len = readU16BE(data, offset);
-					offset += 2;
-					if (offset + len > data.length) break;
-					addrs.push(data.subarray(offset, offset + len));
-					offset += len;
-				}
+				const { ttlMs, addrs } = decoded;
 
 				if (addrs.length === 0) {
 					try {
@@ -7753,10 +7719,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_PROVIDER_QUERY) {
-				if (data.length < 1 + 32 + 4 + 2 + 4) return false;
-				const reqId = readU32BE(data, 33);
-				const want = readU16BE(data, 37);
-				const seed = readU32BE(data, 39);
+				const decoded = this.codec.decodeProviderQuery(data);
+				if (!decoded) return false;
+				const { reqId, want, seed } = decoded;
 
 				const now = Date.now();
 				this.touchProviderNamespace(suffixKey, now);
@@ -7800,15 +7765,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const picked = entries.slice(0, clampU16(want));
 				void this._sendControl(
 					fromHash,
-					encodeProviderReply(channelKey, reqId, picked),
+					this.codec.encodeProviderReply(channelKey, reqId, picked),
 				);
 				return true;
 			}
 
 			if (kind === MSG_PROVIDER_SUBSCRIBE) {
-				if (data.length < 1 + 32 + 2 + 4) return false;
-				const want = Math.max(1, readU16BE(data, 33));
-				const ttlMs = Math.min(120_000, Math.max(1_000, readU32BE(data, 35)));
+				const decoded = this.codec.decodeProviderSubscribe(data);
+				if (!decoded) return false;
+				const want = Math.max(1, decoded.want);
+				const ttlMs = Math.min(120_000, Math.max(1_000, decoded.ttlMs));
 				const now = Date.now();
 				let watchers = this.providerWatchersBySuffixKey.get(suffixKey);
 				if (!watchers) {
@@ -7834,8 +7800,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_PROVIDER_REPLY) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
-				const reqId = readU32BE(data, 33);
+				const decoded = this.codec.decodeProviderReply(data);
+				if (!decoded) return false;
+				const reqId = decoded.reqId;
 
 				const pendingByReq =
 					this.pendingProviderQueryBySuffixKey.get(suffixKey);
@@ -7843,14 +7810,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (!pending) return true;
 				pendingByReq!.delete(reqId);
 
-				const count = data[37]!;
 				const now = Date.now();
 				this.touchProviderNamespace(suffixKey, now);
-				const { providers: candidates } = decodeProviderEntries(
-					data,
-					38,
-					count,
-				);
+				const candidates = this.toProviderCandidates(decoded.entries);
 				this.rememberProviderCandidates(
 					this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
 					candidates,
@@ -7868,10 +7830,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_PROVIDER_NOTIFY) {
-				if (data.length < 1 + 32 + 1) return false;
-				const count = data[33]!;
+				const decoded = this.codec.decodeProviderNotify(data);
+				if (!decoded) return false;
 				const now = Date.now();
-				const { providers } = decodeProviderEntries(data, 34, count);
+				const providers = this.toProviderCandidates(decoded.entries);
 				this.rememberProviderCandidates(
 					this.getProviderNamespaceIdFromKey(channelKey, suffixKey),
 					providers,
@@ -7888,50 +7850,32 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (kind === MSG_TRACKER_REPLY) {
 				if (!ch) return true;
-				if (data.length < 1 + 32 + 4 + 1) return false;
-				const reqId = readU32BE(data, 33);
+				const decoded = this.codec.decodeTrackerReply(data);
+				if (!decoded) return false;
+				const reqId = decoded.reqId;
 				const pending = ch.pendingTrackerQuery.get(reqId);
 				if (pending) {
 					ch.pendingTrackerQuery.delete(reqId);
 				}
 
-				const count = data[37]!;
-				let offset = 38;
 				const candidates: TrackerCandidate[] = [];
-				const max = Math.min(count, 255);
-				for (let i = 0; i < max; i++) {
-					if (offset + 1 > data.length) break;
-					const hashLen = data[offset++]!;
-					if (offset + hashLen > data.length) break;
-					const hash = textDecoder.decode(
-						data.subarray(offset, offset + hashLen),
-					);
-					offset += hashLen;
-					if (offset + 2 + 2 + 4 + 1 > data.length) break;
-					const level = readU16BE(data, offset);
-					offset += 2;
-					const freeSlots = readU16BE(data, offset);
-					offset += 2;
-					const bidPerByte = readU32BE(data, offset);
-					offset += 4;
-					const addrCount = data[offset++]!;
+				for (const entry of decoded.entries) {
 					const addrs: Multiaddr[] = [];
-					const addrMax = Math.min(addrCount, 16);
-					for (let j = 0; j < addrMax; j++) {
-						if (offset + 2 > data.length) break;
-						const len = readU16BE(data, offset);
-						offset += 2;
-						if (offset + len > data.length) break;
-						const bytes = data.subarray(offset, offset + len);
-						offset += len;
+					for (const bytes of entry.addrs) {
 						try {
 							addrs.push(multiaddr(bytes));
 						} catch {
 							// ignore invalid multiaddrs
 						}
 					}
-					candidates.push({ hash, level, freeSlots, bidPerByte, addrs });
-					this.cacheKnownCandidateAddrs(ch, hash, addrs);
+					candidates.push({
+						hash: entry.hash,
+						level: entry.level,
+						freeSlots: entry.freeSlots,
+						bidPerByte: entry.bidPerByte,
+						addrs,
+					});
+					this.cacheKnownCandidateAddrs(ch, entry.hash, addrs);
 				}
 
 				if (pending) {
@@ -7952,7 +7896,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (kind === MSG_PARENT_PROBE_REQ) {
 				if (!ch || ch.closed) return true;
-				const decoded = decodeParentProbeReq(data);
+				const decoded = this.codec.decodeParentProbeReq(data);
 				if (!decoded) return false;
 				this.touchPeerHint(ch, fromHash);
 				void this._sendControl(
@@ -7970,7 +7914,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 			if (kind === MSG_PARENT_PROBE_REPLY) {
 				if (!ch || ch.closed) return true;
-				const decoded = decodeParentProbeReply(data, fromHash);
+				const decoded = this.codec.decodeParentProbeReply(data, fromHash);
 				if (!decoded) return false;
 				const { reqId, ...reply } = decoded;
 				const pending = ch.pendingParentProbe.get(reqId);
@@ -7996,17 +7940,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_ROUTE_QUERY) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
-				const reqId = readU32BE(data, 33);
-				const hashLen = data[37]!;
-				if (hashLen === 0 || 38 + hashLen > data.length) {
+				const decoded = this.codec.decodeRouteQuery(data);
+				if (!decoded) return false;
+				const reqId = decoded.reqId;
+				if (decoded.targetHash == null) {
 					void this._sendControl(
 						fromHash,
-						encodeRouteReply(ch.id.key, reqId),
+						this.codec.encodeRouteReply(ch.id.key, reqId),
 					).catch(() => {});
 					return true;
 				}
-				const targetHash = textDecoder.decode(data.subarray(38, 38 + hashLen));
+				const targetHash = decoded.targetHash;
 
 				const localRoute =
 					targetHash === this.publicKeyHash && ch.routeFromRoot
@@ -8015,7 +7959,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (this.isRouteValidForChannel(ch, localRoute)) {
 					void this._sendControl(
 						fromHash,
-						encodeRouteReply(ch.id.key, reqId, localRoute),
+						this.codec.encodeRouteReply(ch.id.key, reqId, localRoute),
 					).catch(() => {});
 					return true;
 				}
@@ -8028,7 +7972,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (rootRoute) {
 						void this._sendControl(
 							fromHash,
-							encodeRouteReply(ch.id.key, reqId, rootRoute),
+							this.codec.encodeRouteReply(ch.id.key, reqId, rootRoute),
 						).catch(() => {});
 						return true;
 					}
@@ -8053,10 +7997,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_ROUTE_REPLY) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
-				const reqId = readU32BE(data, 33);
-				const routeCount = Math.min(255, data[37]!);
-				const { route } = decodeRoute(data, 38, routeCount);
+				const decoded = this.codec.decodeRouteReply(data);
+				if (!decoded) return false;
+				const { reqId, route } = decoded;
 				const parsedRoute = this.isRouteValidForChannel(ch, route)
 					? route
 					: undefined;
@@ -8089,9 +8032,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_IHAVE) {
-				if (data.length < 1 + 32 + 4 + 4) return false;
-				const haveFrom = readU32BE(data, 33);
-				const haveToExclusive = readU32BE(data, 37);
+				const decoded = this.codec.decodeIHave(data);
+				if (!decoded) return false;
+				const { haveFrom, haveToExclusive } = decoded;
 				const now = Date.now();
 				if (ch.parent && fromHash === ch.parent) {
 					ch.lastParentDataAt = now;
@@ -8142,7 +8085,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_JOIN_REQ) {
-				const decoded = decodeJoinReq(data);
+				const decoded = this.codec.decodeJoinReq(data);
 				if (!decoded) return false;
 				const { reqId, bidPerByte, parentUpgradeReservationToken } = decoded;
 				this.pruneDisconnectedChildren(ch);
@@ -8268,7 +8211,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					);
 				}
 				this.touchPeerHint(ch, fromHash);
-				const joinAccept = encodeJoinAccept(
+				const joinAccept = this.codec.encodeJoinAccept(
 					ch.id.key,
 					reqId,
 					ch.level,
@@ -8280,7 +8223,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (ch.endSeqExclusive > 0) {
 						await this._sendControl(
 							fromHash,
-							encodeEnd(ch.id.key, ch.endSeqExclusive),
+							this.codec.encodeEnd(ch.id.key, ch.endSeqExclusive),
 						);
 					}
 				})().catch(() => {});
@@ -8291,29 +8234,16 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
-				if (data.length < 1 + 32 + 4) return false;
-				const reqId = readU32BE(data, 33);
+				const reqId = this.codec.decodeJoinResponseReqId(data);
+				if (reqId == null) return false;
 				const pending = ch.pendingJoin.get(reqId);
 				if (!pending) return true;
 				ch.pendingJoin.delete(reqId);
 
 				if (kind === MSG_JOIN_ACCEPT) {
-					if (data.length < 1 + 32 + 4 + 2 + 1) return false;
-					const parentLevel = readU16BE(data, 37);
-					const routeCount = Math.min(255, data[39]!);
-					let offset = 40;
-					const parentRouteFromRoot: string[] = [];
-					const max = Math.min(routeCount, MAX_ROUTE_HOPS);
-					for (let i = 0; i < max; i++) {
-						if (offset + 1 > data.length) break;
-						const len = data[offset++]!;
-						if (len === 0) break;
-						if (offset + len > data.length) break;
-						parentRouteFromRoot.push(
-							textDecoder.decode(data.subarray(offset, offset + len)),
-						);
-						offset += len;
-					}
+					const decoded = this.codec.decodeJoinAccept(data);
+					if (!decoded) return false;
+					const { parentLevel, parentRouteFromRoot } = decoded;
 
 					const hasValidParentRoute =
 						parentRouteFromRoot.length > 0 &&
@@ -8370,14 +8300,13 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (
 						ch.repairEnabled &&
 						ch.maxDataAgeMs === 0 &&
-						offset + 8 <= data.length
+						decoded.haveRange != null
 					) {
 						// Optional appendix: the parent's current have-range. Lets a
 						// freshly attached child learn immediately which sequences
 						// already exist, so lost deliveries surface as missing seqs
 						// (and repair) instead of silent absence.
-						const haveFrom = readU32BE(data, offset);
-						const haveToExclusive = readU32BE(data, offset + 4);
+						const { haveFrom, haveToExclusive } = decoded.haveRange;
 						if (haveToExclusive > haveFrom) {
 							// Mark only; the repair loop's own cadence picks the gaps
 							// up, giving in-flight live deliveries time to land first
@@ -8404,46 +8333,22 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						() => {},
 					);
 				} else {
-					if (data.length < 1 + 32 + 4 + 1) return false;
-					const reason = data[37]! & 0xff;
+					const decoded = this.codec.decodeJoinReject(data);
+					if (!decoded) return false;
+					const reason = decoded.reason;
 					const redirects: Array<{ hash: string; addrs: Multiaddr[] }> = [];
-					if (data.length >= 1 + 32 + 4 + 1 + 1) {
-						const count = Math.min(255, data[38]!);
-						let offset = 39;
-						const max = Math.min(count, JOIN_REJECT_REDIRECT_MAX);
-						for (let i = 0; i < max; i++) {
-							if (offset + 1 > data.length) break;
-							const hashLen = data[offset++]!;
-							if (hashLen === 0) break;
-							if (offset + hashLen > data.length) break;
-							const hash = textDecoder.decode(
-								data.subarray(offset, offset + hashLen),
-							);
-							offset += hashLen;
-							if (offset + 1 > data.length) break;
-							const addrCount = Math.min(255, data[offset++]!);
-							const addrs: Multiaddr[] = [];
-							const addrMax = Math.min(
-								addrCount,
-								JOIN_REJECT_REDIRECT_ADDR_MAX,
-							);
-							for (let j = 0; j < addrMax; j++) {
-								if (offset + 2 > data.length) break;
-								const len = readU16BE(data, offset);
-								offset += 2;
-								if (offset + len > data.length) break;
-								const bytes = data.subarray(offset, offset + len);
-								offset += len;
-								try {
-									addrs.push(multiaddr(bytes));
-								} catch {
-									// ignore invalid multiaddrs
-								}
+					for (const redirect of decoded.redirects) {
+						const addrs: Multiaddr[] = [];
+						for (const bytes of redirect.addrs) {
+							try {
+								addrs.push(multiaddr(bytes));
+							} catch {
+								// ignore invalid multiaddrs
 							}
-							if (hash && addrs.length > 0) {
-								redirects.push({ hash, addrs });
-								this.cacheKnownCandidateAddrs(ch, hash, addrs);
-							}
+						}
+						if (redirect.hash && addrs.length > 0) {
+							redirects.push({ hash: redirect.hash, addrs });
+							this.cacheKnownCandidateAddrs(ch, redirect.hash, addrs);
 						}
 					}
 					pending.resolve({ ok: false, rejectReason: reason, redirects });
@@ -8526,10 +8431,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				const isFromChild = ch.children.has(fromHash);
 				if (!isFromParent && !isFromChild) return true;
 
-				if (data.length < 1 + 32 + 8 + 1) return false;
-				const ackToken = readU64BE(data, 33);
-				const routeCount = Math.min(255, data[41]!);
-				const decoded = decodeRoute(data, 42, routeCount);
+				const decoded = this.codec.decodeUnicastAck(data);
+				if (!decoded) return false;
+				const ackToken = decoded.ackToken;
 				const route = decoded.route;
 				const target = route.length > 0 ? route[route.length - 1]! : "";
 				const origin =
@@ -8623,30 +8527,12 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 				}
 
-				if (data.length < 1 + 32 + 1 + 1) return false;
-				const flags = data[33]! & 0xff;
-				let offset = 34;
-				let ackToken: bigint | undefined;
-				if (flags & UNICAST_FLAG_ACK) {
-					if (data.length < offset + 8 + 1) return false;
-					ackToken = readU64BE(data, offset);
-					offset += 8;
-				}
-				const routeCount = Math.min(255, data[offset]!);
-				offset += 1;
-				const decoded = decodeRoute(data, offset, routeCount);
+				const decoded = this.codec.decodeUnicast(data);
+				if (!decoded) return false;
+				const ackToken = decoded.ackToken;
 				const route = decoded.route;
-				offset = decoded.offset;
-				let replyRoute: string[] | undefined;
-				if (ackToken != null) {
-					if (data.length < offset + 1) return false;
-					const replyCount = Math.min(255, data[offset]!);
-					offset += 1;
-					const decodedReply = decodeRoute(data, offset, replyCount);
-					replyRoute = decodedReply.route;
-					offset = decodedReply.offset;
-				}
-				const payload = data.subarray(offset);
+				const replyRoute = decoded.replyRoute;
+				const payload = data.subarray(decoded.payloadOffset);
 				const target = route.length > 0 ? route[route.length - 1]! : "";
 				const origin =
 					message.header.signatures?.publicKeys?.[0]?.hashcode?.() ?? fromHash;
@@ -8683,7 +8569,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 								if (nextHop && ch.children.has(nextHop)) {
 									void this._sendControl(
 										nextHop,
-										encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
+										this.codec.encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
 									).catch(() => {});
 								}
 							}
@@ -8734,7 +8620,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							if (canAck) {
 								void this._sendControl(
 									ch.parent,
-									encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
+									this.codec.encodeUnicastAck(ch.id.key, ackToken, replyRoute!),
 								).catch(() => {});
 							}
 						}
@@ -8805,8 +8691,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_END) {
-				if (data.length < 1 + 32 + 4) return false;
-				const lastSeqExclusive = readU32BE(data, 33);
+				const lastSeqExclusive = this.codec.decodeEnd(data);
+				if (lastSeqExclusive == null) return false;
 				if (ch.parent && fromHash === ch.parent) {
 					ch.lastParentDataAt = Date.now();
 					ch.receivedAnyParentData = true;
@@ -8818,7 +8704,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				if (ch.children.size > 0) {
 					void this._sendControlMany(
 						[...ch.children.keys()],
-						encodeEnd(ch.id.key, lastSeqExclusive),
+						this.codec.encodeEnd(ch.id.key, lastSeqExclusive),
 					);
 				}
 				void this.tickRepair(ch).catch(() => {});
@@ -8826,12 +8712,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_REPAIR_REQ) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
+				const seqs = this.codec.decodeRepairSeqs(data);
+				if (!seqs) return false;
 				if (!ch.children.has(fromHash)) return true;
-				const count = data[37]!;
-				const max = Math.min(count, Math.floor((data.length - 38) / 4));
-				for (let i = 0; i < max; i++) {
-					const seq = readU32BE(data, 38 + i * 4);
+				for (const seq of seqs) {
 					const cached = this.getCached(ch, seq);
 					if (!cached) {
 						ch.metrics.cacheMissesServed += 1;
@@ -8844,12 +8728,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			}
 
 			if (kind === MSG_FETCH_REQ) {
-				if (data.length < 1 + 32 + 4 + 1) return false;
+				const seqs = this.codec.decodeRepairSeqs(data);
+				if (!seqs) return false;
 				this.touchPeerHint(ch, fromHash);
-				const count = data[37]!;
-				const max = Math.min(count, Math.floor((data.length - 38) / 4));
-				for (let i = 0; i < max; i++) {
-					const seq = readU32BE(data, 38 + i * 4);
+				for (const seq of seqs) {
 					const cached = this.getCached(ch, seq);
 					if (!cached) {
 						ch.metrics.cacheMissesServed += 1;

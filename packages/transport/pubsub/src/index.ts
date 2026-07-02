@@ -65,6 +65,11 @@ import type {
 import { TopicRootControlPlane } from "./topic-root-control-plane.js";
 
 export * from "./fanout-tree.js";
+// The complete /peerbit/fanout-tree/0.5.0 wire codec and the
+// parent-upgrade decision module (the TS references the native rust-core
+// implementations are parity-tested against).
+export * as fanoutWire from "./fanout-tree-codec.js";
+export * as fanoutParentUpgrade from "./fanout-tree-parent-upgrade.js";
 export * from "./fanout-channel.js";
 export * from "./topic-root-control-plane.js";
 export { toUint8Array } from "./bytes.js";

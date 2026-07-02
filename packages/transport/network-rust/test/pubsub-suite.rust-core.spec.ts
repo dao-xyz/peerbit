@@ -2,9 +2,10 @@
 // RUST_CORE_GLOBAL_KEY in @peerbit/stream): every TopicControlPlane the
 // suite constructs picks up the rust-core DirectStream engine plus the
 // native PubSubMessage codec, topic hashing, root-directory state and
-// subscribe-state convergence rules, so the same multi-peer sessions double
-// as behavioral-parity evidence for the port. The fanout specs keep running
-// on the TS FanoutTree (only its DirectStream substrate is native).
+// subscribe-state convergence rules, and every FanoutTree additionally runs
+// the native /peerbit/fanout-tree/0.5.0 frame codec and parent-upgrade
+// decisions, so the same multi-peer sessions (including the fanout tree and
+// sim specs) double as behavioral-parity evidence for the ports.
 //
 // Gated behind PEERBIT_STREAM_RUST_CORE=1 (the `test:stream-rust-core`
 // script) so the plain `npm test` run keeps the default mode.
