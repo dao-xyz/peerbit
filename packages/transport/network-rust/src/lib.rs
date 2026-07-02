@@ -4,6 +4,7 @@
 //! can run under host `cargo test`; this file only translates across the
 //! wasm boundary.
 
+pub mod sync_payload;
 pub mod wire;
 
 use js_sys::{Array, Uint8Array};
@@ -26,9 +27,14 @@ use wire::{FrameRecord, VerifyStatus};
 pub const RECORD_WORDS: usize = 4;
 pub const RECORD_FLAG_DECODE_OK: u32 = 0x01;
 pub const RECORD_FLAG_HAS_DATA: u32 = 0x02;
+/// Set by receive-fusion decoders (the native-backbone re-export) when the
+/// frame's sync payload was stashed for a registered topic. Plain
+/// `decode_and_verify_batch` never sets it; consumers that only mask the two
+/// bits above are unaffected.
+pub const RECORD_FLAG_SYNC_STASHED: u32 = 0x04;
 pub const RECORD_NO_PRIORITY: u32 = u32::MAX;
 
-fn record_to_words(record: &FrameRecord, out: &mut Vec<u32>) {
+pub fn record_to_words(record: &FrameRecord, out: &mut Vec<u32>) {
     let mut flags = 0u32;
     if record.decode_ok {
         flags |= RECORD_FLAG_DECODE_OK;

@@ -157,21 +157,21 @@ pub struct DecodedFrame {
     pub data_length: usize,
 }
 
-struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     bytes: &'a [u8],
-    offset: usize,
+    pub(crate) offset: usize,
 }
 
 impl<'a> Reader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Reader { bytes, offset: 0 }
     }
 
-    fn remaining(&self) -> usize {
+    pub(crate) fn remaining(&self) -> usize {
         self.bytes.len() - self.offset
     }
 
-    fn u8(&mut self) -> WireResult<u8> {
+    pub(crate) fn u8(&mut self) -> WireResult<u8> {
         if self.remaining() < 1 {
             return Err("unexpected end of frame reading u8".to_string());
         }
@@ -180,7 +180,7 @@ impl<'a> Reader<'a> {
         Ok(value)
     }
 
-    fn u32_le(&mut self) -> WireResult<u32> {
+    pub(crate) fn u32_le(&mut self) -> WireResult<u32> {
         if self.remaining() < 4 {
             return Err("unexpected end of frame reading u32".to_string());
         }
@@ -190,7 +190,7 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes(buf))
     }
 
-    fn u64_le(&mut self) -> WireResult<u64> {
+    pub(crate) fn u64_le(&mut self) -> WireResult<u64> {
         if self.remaining() < 8 {
             return Err("unexpected end of frame reading u64".to_string());
         }
@@ -200,7 +200,7 @@ impl<'a> Reader<'a> {
         Ok(u64::from_le_bytes(buf))
     }
 
-    fn take(&mut self, length: usize) -> WireResult<&'a [u8]> {
+    pub(crate) fn take(&mut self, length: usize) -> WireResult<&'a [u8]> {
         if self.remaining() < length {
             return Err("unexpected end of frame reading bytes".to_string());
         }
@@ -209,19 +209,19 @@ impl<'a> Reader<'a> {
         Ok(slice)
     }
 
-    fn fixed_32(&mut self) -> WireResult<[u8; 32]> {
+    pub(crate) fn fixed_32(&mut self) -> WireResult<[u8; 32]> {
         let mut out = [0u8; 32];
         out.copy_from_slice(self.take(32)?);
         Ok(out)
     }
 
-    fn string(&mut self) -> WireResult<String> {
+    pub(crate) fn string(&mut self) -> WireResult<String> {
         let length = self.u32_le()? as usize;
         let bytes = self.take(length)?;
         String::from_utf8(bytes.to_vec()).map_err(|_| "invalid utf8 in string".to_string())
     }
 
-    fn string_vec(&mut self) -> WireResult<Vec<String>> {
+    pub(crate) fn string_vec(&mut self) -> WireResult<Vec<String>> {
         let length = self.u32_le()? as usize;
         // Cheap sanity bound: every string needs at least its 4-byte length.
         if length > self.remaining() / 4 {
@@ -439,37 +439,84 @@ pub fn decode_frame(bytes: &[u8]) -> WireResult<DecodedFrame> {
     })
 }
 
-struct Writer {
-    bytes: Vec<u8>,
+/// Frame metadata needed by receive-fusion stash decisions: the header id
+/// (stash key) and the delivery mode (local-delivery check). Parsing stops at
+/// the mode field, so this stays cheap enough to run per candidate frame on
+/// top of the batched decode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameDeliveryMeta {
+    pub variant: u8,
+    pub id: [u8; ID_LENGTH],
+    pub mode: Option<DeliveryMode>,
+}
+
+pub fn decode_frame_delivery_meta(frame: &[u8]) -> WireResult<FrameDeliveryMeta> {
+    let mut reader = Reader::new(frame);
+    let variant = reader.u8()?;
+    let header_variant = reader.u8()?;
+    if header_variant != 0 {
+        return Err(format!(
+            "unsupported message header variant: {header_variant}"
+        ));
+    }
+    let id = reader.fixed_32()?;
+    reader.u64_le()?; // timestamp
+    reader.u64_le()?; // session
+    reader.u64_le()?; // expires
+    if reader.u8()? == 1 {
+        reader.u32_le()?; // priority
+    }
+    if reader.u8()? == 1 {
+        reader.u32_le()?; // responsePriority
+    }
+    if reader.u8()? == 1 {
+        let peer_info_variant = reader.u8()?;
+        if peer_info_variant != 0 {
+            return Err(format!(
+                "unsupported peer info variant: {peer_info_variant}"
+            ));
+        }
+        reader.string_vec()?; // origin multiaddrs
+    }
+    let mode = if reader.u8()? == 1 {
+        Some(read_delivery_mode(&mut reader)?)
+    } else {
+        None
+    };
+    Ok(FrameDeliveryMeta { variant, id, mode })
+}
+
+pub(crate) struct Writer {
+    pub(crate) bytes: Vec<u8>,
 }
 
 impl Writer {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Writer { bytes: Vec::new() }
     }
 
-    fn u8(&mut self, value: u8) {
+    pub(crate) fn u8(&mut self, value: u8) {
         self.bytes.push(value);
     }
 
-    fn u32_le(&mut self, value: u32) {
+    pub(crate) fn u32_le(&mut self, value: u32) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn u64_le(&mut self, value: u64) {
+    pub(crate) fn u64_le(&mut self, value: u64) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn raw(&mut self, bytes: &[u8]) {
+    pub(crate) fn raw(&mut self, bytes: &[u8]) {
         self.bytes.extend_from_slice(bytes);
     }
 
-    fn string(&mut self, value: &str) {
+    pub(crate) fn string(&mut self, value: &str) {
         self.u32_le(value.len() as u32);
         self.raw(value.as_bytes());
     }
 
-    fn string_vec(&mut self, values: &[String]) {
+    pub(crate) fn string_vec(&mut self, values: &[String]) {
         self.u32_le(values.len() as u32);
         for value in values {
             self.string(value);

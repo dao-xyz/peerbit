@@ -5,7 +5,9 @@ import { loadWasm } from "./wasm.js";
  * input frame. Must stay in sync with `RECORD_*` in `src/lib.rs` and the
  * consumer constants inside `@peerbit/stream`.
  *
- * word 0, byte 0: flags — bit 0 = decode ok, bit 1 = payload present
+ * word 0, byte 0: flags — bit 0 = decode ok, bit 1 = payload present,
+ *   bit 2 = sync payload stashed (only set by receive-fusion decoders such as
+ *   native-backbone's NativeWireSyncSession; never by this module)
  * word 0, byte 1: top-level message variant (0 data, 1 ack, 2 hello, 3 goodbye)
  * word 0, byte 2: verify status (0 failed, 1 verified, 2 unsupported)
  * word 0, byte 3: signature count (clamped to 255)
@@ -16,6 +18,7 @@ import { loadWasm } from "./wasm.js";
 export const NATIVE_WIRE_RECORD_WORDS = 4;
 export const NATIVE_WIRE_FLAG_DECODE_OK = 0x01;
 export const NATIVE_WIRE_FLAG_HAS_DATA = 0x02;
+export const NATIVE_WIRE_FLAG_SYNC_STASHED = 0x04;
 export const NATIVE_WIRE_NO_PRIORITY = 0xffffffff;
 
 export enum NativeWireVerifyStatus {

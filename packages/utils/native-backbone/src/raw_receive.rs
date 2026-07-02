@@ -30,6 +30,10 @@ pub(crate) struct PendingRawReceiveEntry {
 }
 
 impl PendingRawReceiveEntry {
+    pub(crate) fn storage_bytes(&self) -> &[u8] {
+        &self.storage_bytes
+    }
+
     fn signature_input(&self) -> PreparedEntryV0SignatureInput<'_> {
         PreparedEntryV0SignatureInput {
             storage_bytes: &self.storage_bytes,
@@ -1027,7 +1031,7 @@ impl NativePeerbitBackbone {
 }
 
 impl NativePeerbitBackbone {
-    fn prepare_raw_receive_entries(
+    pub(crate) fn prepare_raw_receive_entries(
         &mut self,
         blocks: Vec<Vec<u8>>,
         expected_cids: Option<Vec<String>>,
@@ -1051,7 +1055,7 @@ impl NativePeerbitBackbone {
         Ok(prepared)
     }
 
-    fn prepare_raw_receive_columns_from_entries(
+    pub(crate) fn prepare_raw_receive_columns_from_entries(
         &mut self,
         prepared: Vec<PreparedRawEntryV0>,
         include_hash_digest_bytes: bool,
@@ -1139,7 +1143,7 @@ impl NativePeerbitBackbone {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn plan_prepared_raw_receive_selection_core(
+    pub(crate) fn plan_prepared_raw_receive_selection_core(
         &self,
         hashes: Vec<String>,
         min_replicas: u32,
