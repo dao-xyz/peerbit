@@ -1051,6 +1051,22 @@ type OutboundQueueArguments =
 	  }
 	| false;
 
+/**
+ * Native (wasm) batch decode+verify module for inbound frames, implemented by
+ * `@peerbit/network-rust`. The result is a flat Uint32Array with
+ * NATIVE_WIRE_RECORD_WORDS words per frame; the layout is defined by the
+ * `peerbit_wire` crate (see RECORD_* in its lib.rs) and mirrored by the
+ * NATIVE_WIRE_* constants below.
+ */
+export interface NativeWire {
+	decodeAndVerifyBatch(frames: Uint8Array[], nowMs: number): Uint32Array;
+}
+
+const NATIVE_WIRE_RECORD_WORDS = 4;
+const NATIVE_WIRE_FLAG_DECODE_OK = 0x01;
+const NATIVE_WIRE_VERIFY_VERIFIED = 1;
+const NATIVE_WIRE_VERIFY_UNSUPPORTED = 2;
+
 export type DirectStreamOptions = {
 	canRelayMessage?: boolean;
 	messageProcessingConcurrency?: number;
@@ -1080,6 +1096,13 @@ export type DirectStreamOptions = {
 	seenCacheMax?: number;
 	seenCacheTtlMs?: number;
 	outboundQueue?: OutboundQueueArguments;
+	/**
+	 * Offload inbound envelope decode + signature verification to a native
+	 * (wasm) module (`@peerbit/network-rust`). Frames arriving within the
+	 * same tick are verified as one batch. When unset (the default) the pure
+	 * TS path is used, byte-for-byte unchanged.
+	 */
+	nativeWire?: NativeWire;
 };
 
 type ConnectionManagerLike = {
@@ -1179,6 +1202,13 @@ export abstract class DirectStream<
 	}> = new Set();
 	private sharedRoutingKey?: PrivateKey;
 	private sharedRoutingState?: SharedRoutingState;
+	private readonly nativeWire?: NativeWire;
+	private pendingNativeWireFrames: {
+		from: PublicSignKey;
+		peerStreams: PeerStreams;
+		bytes: Uint8ArrayList;
+	}[] = [];
+	private nativeWireFlushScheduled = false;
 
 	// for sequential creation of outbound streams
 		public outboundInflightQueue: Pushable<{
@@ -1226,8 +1256,10 @@ export abstract class DirectStream<
 				seenCacheTtlMs = 10 * 60 * 1e3,
 				inboundIdleTimeout,
 				outboundQueue,
+				nativeWire,
 			} = options || {};
 
+		this.nativeWire = nativeWire;
 		const signKey = getKeypairFromPrivateKey(components.privateKey);
 		this.seekTimeout = seekTimeout;
 		this.sign = (bytes) => signKey.sign(bytes, PreHash.SHA_256);
@@ -1693,6 +1725,7 @@ export abstract class DirectStream<
 		this.queue.clear();
 		this.peers.clear();
 		this.seenCache.clear();
+		this.pendingNativeWireFrames = [];
 		// When routing is shared across co-located protocols, only clear once the last
 		// instance stops. Otherwise we'd wipe routes still in use by other services.
 		if (!sharedState) {
@@ -2189,6 +2222,21 @@ export abstract class DirectStream<
 		// logger.trace("rpc from " + from + ", " + this.peerIdStr);
 
 		if (message.length > 0) {
+			if (this.nativeWire) {
+				// Batch frames arriving within the same tick so decode +
+				// signature verification happen in one native call.
+				this.pendingNativeWireFrames.push({
+					from,
+					peerStreams,
+					bytes: message,
+				});
+				if (!this.nativeWireFlushScheduled) {
+					this.nativeWireFlushScheduled = true;
+					queueMicrotask(() => this.flushNativeWireFrames());
+				}
+				return true;
+			}
+
 			let decodedMessage: Message | undefined;
 			let priority = 0;
 			try {
@@ -2216,6 +2264,87 @@ export abstract class DirectStream<
 		}
 
 		return true;
+	}
+
+	/**
+	 * Drain the frames collected by processRpc() through the native wire
+	 * module: one batched decode+verify call, then the usual per-message
+	 * pipeline with the TS message object pre-seeded with the native
+	 * verification result. Any native failure falls back to the pure TS
+	 * path for that frame, so semantics never diverge.
+	 */
+	private flushNativeWireFrames() {
+		this.nativeWireFlushScheduled = false;
+		const pending = this.pendingNativeWireFrames;
+		if (pending.length === 0) {
+			return;
+		}
+		this.pendingNativeWireFrames = [];
+
+		let records: Uint32Array | undefined;
+		if (this.nativeWire) {
+			try {
+				records = this.nativeWire.decodeAndVerifyBatch(
+					pending.map((frame) => frame.bytes.subarray()),
+					Date.now(),
+				);
+				if (records.length !== pending.length * NATIVE_WIRE_RECORD_WORDS) {
+					records = undefined;
+				}
+			} catch (error: any) {
+				logger(
+					"Native wire batch decode failed, falling back to TS path: " +
+						error?.message,
+				);
+				records = undefined;
+			}
+		}
+
+		for (let i = 0; i < pending.length; i++) {
+			const { from, peerStreams, bytes } = pending[i];
+			const base = i * NATIVE_WIRE_RECORD_WORDS;
+			const word0 = records ? records[base] : 0;
+			const decodeOk =
+				records != null && (word0 & NATIVE_WIRE_FLAG_DECODE_OK) !== 0;
+			const verifyStatus = (word0 >>> 16) & 0xff;
+
+			let decodedMessage: Message | undefined;
+			let priority = 0;
+			try {
+				decodedMessage = Message.from(bytes);
+				priority = decodedMessage.header.priority ?? 0;
+			} catch {
+				// Best-effort peek, same as the TS path: processMessage()
+				// performs the authoritative decode and logs invalid frames.
+			}
+			if (
+				decodedMessage &&
+				decodeOk &&
+				verifyStatus !== NATIVE_WIRE_VERIFY_UNSUPPORTED
+			) {
+				// Seed the memoized verification result; verify(true) in the
+				// dispatch path (verifyAndProcess) short-circuits on it.
+				decodedMessage._verified =
+					verifyStatus === NATIVE_WIRE_VERIFY_VERIFIED;
+			}
+			this.queue
+				.add(
+					async () => {
+						try {
+							await this.processMessage(
+								from,
+								peerStreams,
+								bytes,
+								decodedMessage,
+							);
+						} catch (err: any) {
+							logger.error(err);
+						}
+					},
+					{ priority },
+				)
+				.catch(logError);
+		}
 	}
 
 	private async modifySeenCache(
