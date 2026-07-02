@@ -4116,6 +4116,74 @@ export const tests = (
 				expect(await iterator.pending()).to.eq(0);
 			});
 
+			it("all after partial next returns only remaining sorted results", async () => {
+				await put(0);
+				await put(1);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["0"],
+				);
+				expect((await iterator.all()).map((x) => x.value.name)).to.deep.equal([
+					"1",
+					"2",
+				]);
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("deleting an already yielded sorted result does not skip the next result", async () => {
+				await put(0);
+				await put(1);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["0"],
+				);
+				await store.del({
+					query: new StringMatch({
+						key: "id",
+						value: "0",
+						method: StringMatchMethod.exact,
+						caseInsensitive: false,
+					}),
+				});
+
+				expect((await iterator.next(2)).map((x) => x.value.name)).to.deep.equal(
+					["1", "2"],
+				);
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("inserting before an already yielded sorted result does not duplicate it", async () => {
+				await put(1);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["1"],
+				);
+				await put(0);
+
+				const rest = (await iterator.next(3)).map((x) => x.value.name);
+				expect(new Set(rest).size).to.equal(rest.length);
+				expect(rest).to.not.include("1");
+				expect(rest).to.include("2");
+			});
+
 			describe("close", () => {
 				it("by invoking close()", async () => {
 					await put(0);

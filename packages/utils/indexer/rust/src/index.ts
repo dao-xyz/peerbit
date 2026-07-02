@@ -1131,6 +1131,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	private persistQueue: Promise<void> = Promise.resolve();
 	private mutationQueue: Promise<void> = Promise.resolve();
 	private state: "closed" | "open" | "closing" = "closed";
+	private mutationVersion = 0;
 
 	constructor(
 		private readonly directory?: string,
@@ -1243,6 +1244,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		id = id ?? types.toId(types.extractFieldValue(value, this.indexByArr));
 		if (!this.snapshotFile) {
 			this.putNativeDocument(keyToStoreKey(id), id, value);
+			this.mutationVersion++;
 			return;
 		}
 		await this.enqueueMutation(async () => {
@@ -1251,6 +1253,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			await this.appendPut(storeKey, value);
 			this.getNative().put(storeKey, id, value, fields);
 			await this.compactIfNeeded();
+			this.mutationVersion++;
 		});
 	}
 
@@ -1270,6 +1273,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			});
 			if (deletedEntries.length > 0) {
 				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
+				this.mutationVersion++;
 			}
 			return deletedEntries.map((entry) => entry.id);
 		}
@@ -1288,6 +1292,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				);
 				this.getNative().delete_matching(encodeNativeQuerySpec(compiled.spec));
 				await this.compactIfNeeded();
+				this.mutationVersion++;
 			}
 			return deletedEntries.map((entry) => entry.id);
 		});
@@ -1406,9 +1411,27 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				: cloneResults(batch, this.properties.schema)) as types.IndexedResults<
 				types.ReturnTypeFromShape<T, S>
 			>;
+		let mutationMode = false;
+		let iteratorMutationVersion = this.mutationVersion;
+		const yielded = new Set<string>();
+		const idKey = (id: types.IdKey) =>
+			`${typeof id.primitive}:${String(id.primitive)}`;
+		const markYielded = (
+			results: types.IndexedResults<types.ReturnTypeFromShape<T, S>>,
+		) => {
+			for (const result of results) {
+				yielded.add(idKey(result.id));
+			}
+		};
 
 		const fetch = async (
 			n: number,
+			options?: {
+				offset?: number;
+				advance?: boolean;
+				ignoreDone?: boolean;
+				liveLimit?: boolean;
+			},
 		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
 			const closeAsDone = () => {
 				done = true;
@@ -1418,14 +1441,18 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return closeAsDone();
 			}
 			this.assertOpen();
-			if (done) {
+			if (done && !options?.ignoreDone) {
 				return [];
 			}
-			const remaining = getTotal() - offset;
-			const wanted = Math.max(
+			const pageOffset = options?.offset ?? offset;
+			const requested = Math.max(
 				0,
-				Math.min(Number.isFinite(n) ? Math.floor(n) : remaining, remaining),
+				Number.isFinite(n) ? Math.floor(n) : getTotal(),
 			);
+			const remaining = options?.liveLimit
+				? requested
+				: Math.max(0, getTotal() - pageOffset);
+			const wanted = Math.max(0, Math.min(requested, remaining));
 			if (wanted === 0) {
 				done = remaining === 0;
 				return [];
@@ -1433,17 +1460,102 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			const batch = this.getNativeCandidatesForPlan({
 				compiled: nativePagePlan.compiled,
 				sort: nativePagePlan.sort,
-				offset,
+				offset: pageOffset,
 				limit: wanted,
 			});
-			offset += batch.length;
-			done = offset >= getTotal();
+			if (options?.advance !== false) {
+				offset += batch.length;
+				done = offset >= getTotal();
+			}
 			return clonePage(batch);
+		};
+		const next = async (
+			n: number,
+		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+			if (n <= 0) {
+				return [] as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
+			}
+			if (!mutationMode && this.mutationVersion === iteratorMutationVersion) {
+				const results = await fetch(n);
+				markYielded(results);
+				return results;
+			}
+
+			mutationMode = true;
+			iteratorMutationVersion = this.mutationVersion;
+			const results: types.IndexedResults<types.ReturnTypeFromShape<T, S>> =
+				[];
+			const pageSize = Math.max(n, 128);
+			let scanOffset = 0;
+			let exhausted = false;
+			while (results.length < n) {
+				const page = await fetch(pageSize, {
+					offset: scanOffset,
+					advance: false,
+					ignoreDone: true,
+					liveLimit: true,
+				});
+				scanOffset += page.length;
+				if (page.length < pageSize) {
+					exhausted = true;
+				}
+				for (const result of page) {
+					const key = idKey(result.id);
+					if (yielded.has(key)) {
+						continue;
+					}
+					yielded.add(key);
+					results.push(result);
+					if (results.length >= n) {
+						break;
+					}
+				}
+				if (page.length === 0 || exhausted) {
+					break;
+				}
+			}
+			done = exhausted;
+			return results;
+		};
+		const pendingUnseen = async () => {
+			let count = 0;
+			const pageSize = 128;
+			let scanOffset = 0;
+			while (true) {
+				const page = await fetch(pageSize, {
+					offset: scanOffset,
+					advance: false,
+					ignoreDone: true,
+					liveLimit: true,
+				});
+				scanOffset += page.length;
+				for (const result of page) {
+					if (!yielded.has(idKey(result.id))) {
+						count++;
+					}
+				}
+				if (page.length < pageSize) {
+					break;
+				}
+			}
+			done = count === 0;
+			return count;
 		};
 
 		return {
-			all: async () => fetch(Infinity),
-			next: (n: number) => fetch(n),
+			all: async () => {
+				const results: types.IndexedResults<types.ReturnTypeFromShape<T, S>> =
+					[];
+				while (true) {
+					const batch = await next(1024);
+					results.push(...batch);
+					if (batch.length === 0 || done === true) {
+						break;
+					}
+				}
+				return results;
+			},
+			next,
 			done: () => (this.isClosing() ? true : done),
 			pending: async () => {
 				if (this.isClosing()) {
@@ -1451,6 +1563,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					return 0;
 				}
 				this.assertOpen();
+				if (mutationMode || this.mutationVersion !== iteratorMutationVersion) {
+					mutationMode = true;
+					iteratorMutationVersion = this.mutationVersion;
+					return pendingUnseen();
+				}
 				return done ? 0 : Math.max(0, getTotal() - offset);
 			},
 			close: () => {

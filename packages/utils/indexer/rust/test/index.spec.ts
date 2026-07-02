@@ -126,12 +126,12 @@ describe("all", () => {
 	tests(create, "persist", {
 		shapingSupported: false,
 		u64SumSupported: true,
-		iteratorsMutable: false,
+		iteratorsMutable: true,
 	});
 	tests(create, "transient", {
 		shapingSupported: false,
 		u64SumSupported: true,
-		iteratorsMutable: false,
+		iteratorsMutable: true,
 	});
 });
 
