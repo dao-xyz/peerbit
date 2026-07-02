@@ -1,5 +1,7 @@
 import { loadWasm } from "./wasm.js";
 
+export { createRustCoreStream } from "./direct-stream.js";
+
 /**
  * Flat record layout returned by `decodeAndVerifyBatch`: 4 u32 words per
  * input frame. Must stay in sync with `RECORD_*` in `src/lib.rs` and the

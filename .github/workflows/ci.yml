@@ -495,5 +495,7 @@ jobs:
         run: pnpm --filter @peerbit/document-rust run test
       - name: Test @peerbit/network-rust
         run: pnpm --filter @peerbit/network-rust run test
+      - name: Test @peerbit/stream suite in rust-core mode
+        run: pnpm --filter @peerbit/network-rust run test:stream-rust-core
       - name: Packed tarball smoke test
         run: node ./scripts/native-pack-smoke.mjs
