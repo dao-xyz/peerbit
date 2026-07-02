@@ -400,6 +400,26 @@
   * dependencies
     * peerbit bumped from 4.0.6 to 4.0.7
 
+## [3.0.36](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.35...test-utils-v3.0.36) (2026-07-02)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.10
+    * @peerbit/blocks bumped to 4.1.10
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/indexer-interface bumped to 3.0.5
+    * @peerbit/keychain bumped to 1.2.10
+    * @peerbit/libp2p-test-utils bumped to 3.0.6
+    * @peerbit/program bumped to 6.0.32
+    * @peerbit/pubsub bumped to 5.2.12
+    * @peerbit/stream bumped to 5.0.18
+    * peerbit bumped to 5.2.21
+  * devDependencies
+    * @peerbit/time bumped to 3.0.1
+
 ## [3.0.35](https://github.com/dao-xyz/peerbit/compare/test-utils-v3.0.34...test-utils-v3.0.35) (2026-05-28)
 
 

@@ -313,6 +313,26 @@
     * @peerbit/pubsub bumped from ^3.0.4 to ^3.0.5
     * @peerbit/blocks bumped from ^2.0.31 to ^2.0.32
 
+## [5.2.21](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.20...peerbit-v5.2.21) (2026-07-02)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/any-store bumped to 2.2.10
+    * @peerbit/any-store-opfs bumped to 1.1.8
+    * @peerbit/blocks bumped to 4.1.10
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/indexer-interface bumped to 3.0.5
+    * @peerbit/indexer-simple bumped to 1.2.8
+    * @peerbit/indexer-sqlite3 bumped to 3.0.8
+    * @peerbit/keychain bumped to 1.2.10
+    * @peerbit/program bumped to 6.0.32
+    * @peerbit/pubsub bumped to 5.2.12
+    * @peerbit/stream-interface bumped to 6.0.11
+    * @peerbit/time bumped to 3.0.1
+
 ## [5.2.20](https://github.com/dao-xyz/peerbit/compare/peerbit-v5.2.19...peerbit-v5.2.20) (2026-05-28)
 
 

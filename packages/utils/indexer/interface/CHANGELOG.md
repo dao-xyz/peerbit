@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.5](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v3.0.4...indexer-interface-v3.0.5) (2026-07-02)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.2
+
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/indexer-interface-v3.0.3...indexer-interface-v3.0.4) (2026-05-26)
 
 
