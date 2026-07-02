@@ -34,6 +34,10 @@
 		".": {
 			"types": "./dist/src/index.d.ts",
 			"import": "./dist/src/index.js"
+		},
+		"./rust": {
+			"types": "./dist/src/rust.d.ts",
+			"import": "./dist/src/rust.js"
 		}
 	},
 	"eslintConfig": {
@@ -98,6 +102,11 @@
 		"p-queue": "^8.0.1",
 		"path-browserify": "^1.0.1",
 		"uint8arrays": "^5.1.0"
+	},
+	"optionalDependencies": {
+		"@peerbit/any-store-rust": "workspace:*",
+		"@peerbit/indexer-rust": "workspace:*",
+		"@peerbit/log-rust": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.14",

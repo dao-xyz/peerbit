@@ -2,8 +2,10 @@ use roaring::RoaringBitmap;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Bound::{Excluded, Unbounded};
+use std::sync::Arc;
 
 pub type DocId = u32;
+const MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH: usize = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FieldPath {
@@ -40,8 +42,8 @@ pub enum FieldValue {
     Bool(bool),
     I64(i64),
     U64(u64),
-    String(String),
-    Bytes(Vec<u8>),
+    String(Arc<str>),
+    Bytes(Arc<[u8]>),
 }
 
 impl FieldValue {
@@ -80,18 +82,30 @@ impl From<u64> for FieldValue {
 
 impl From<String> for FieldValue {
     fn from(value: String) -> Self {
-        Self::String(value)
+        Self::String(value.into())
     }
 }
 
 impl From<&str> for FieldValue {
     fn from(value: &str) -> Self {
-        Self::String(value.to_string())
+        Self::String(value.into())
+    }
+}
+
+impl From<Arc<str>> for FieldValue {
+    fn from(value: Arc<str>) -> Self {
+        Self::String(value)
     }
 }
 
 impl From<Vec<u8>> for FieldValue {
     fn from(value: Vec<u8>) -> Self {
+        Self::Bytes(value.into())
+    }
+}
+
+impl From<Arc<[u8]>> for FieldValue {
+    fn from(value: Arc<[u8]>) -> Self {
         Self::Bytes(value)
     }
 }
@@ -284,6 +298,7 @@ impl IndexBatch {
 pub struct NativeQueryIndex {
     generation: u64,
     next_doc_id: DocId,
+    free_doc_ids: Vec<DocId>,
     all_docs: RoaringBitmap,
     external_to_internal: HashMap<String, DocId>,
     internal_to_external: HashMap<DocId, String>,
@@ -294,8 +309,9 @@ pub struct NativeQueryIndex {
     sort_bool: HashMap<FieldPath, BTreeMap<bool, RoaringBitmap>>,
     sort_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
     sort_u64: HashMap<FieldPath, BTreeMap<u64, RoaringBitmap>>,
-    sort_string: HashMap<FieldPath, BTreeMap<String, RoaringBitmap>>,
-    sort_bytes: HashMap<FieldPath, BTreeMap<Vec<u8>, RoaringBitmap>>,
+    sort_string: HashMap<FieldPath, BTreeMap<Arc<str>, RoaringBitmap>>,
+    sort_bytes: HashMap<FieldPath, BTreeMap<Arc<[u8]>, RoaringBitmap>>,
+    large_exact_bytes: HashMap<FieldPath, RoaringBitmap>,
     vectors: HashMap<FieldPath, HashMap<DocId, Vec<f32>>>,
 }
 
@@ -320,15 +336,40 @@ impl NativeQueryIndex {
         *self = Self::default();
     }
 
+    pub fn reserve_documents(&mut self, additional: usize) {
+        self.external_to_internal.reserve(additional);
+        self.internal_to_external.reserve(additional);
+        self.documents.reserve(additional);
+    }
+
     pub fn put(&mut self, id: impl Into<String>, fields: DocumentFields) {
         let external_id = id.into();
         let doc_id = match self.external_to_internal.get(&external_id).copied() {
-            Some(doc_id) => {
-                self.remove_document_fields(doc_id);
-                doc_id
-            }
+            Some(doc_id) => doc_id,
             None => self.allocate_doc_id(external_id),
         };
+        self.replace_document_fields(doc_id, fields);
+        self.all_docs.insert(doc_id);
+        self.generation += 1;
+    }
+
+    pub fn put_existing_unchecked(&mut self, id: &str, fields: DocumentFields) -> bool {
+        let Some(doc_id) = self.external_to_internal.get(id).copied() else {
+            return false;
+        };
+        self.replace_document_fields(doc_id, fields);
+        self.all_docs.insert(doc_id);
+        self.generation += 1;
+        true
+    }
+
+    pub fn put_new_unchecked(&mut self, id: impl Into<String>, fields: DocumentFields) {
+        let external_id = id.into();
+        debug_assert!(
+            !self.external_to_internal.contains_key(&external_id),
+            "put_new_unchecked called with an existing document id"
+        );
+        let doc_id = self.allocate_doc_id(external_id);
         self.index_document(doc_id, &fields);
         self.documents.insert(doc_id, fields);
         self.all_docs.insert(doc_id);
@@ -336,7 +377,12 @@ impl NativeQueryIndex {
     }
 
     pub fn delete(&mut self, id: impl Into<String>) {
-        if self.remove_external(&id.into()) {
+        let external_id = id.into();
+        self.delete_id(&external_id);
+    }
+
+    pub fn delete_id(&mut self, external_id: &str) {
+        if self.remove_external(external_id) {
             self.generation += 1;
         }
     }
@@ -355,14 +401,10 @@ impl NativeQueryIndex {
         for (external_id, fields) in batch.puts {
             changed = true;
             let doc_id = match self.external_to_internal.get(&external_id).copied() {
-                Some(doc_id) => {
-                    self.remove_document_fields(doc_id);
-                    doc_id
-                }
+                Some(doc_id) => doc_id,
                 None => self.allocate_doc_id(external_id),
             };
-            self.index_document(doc_id, &fields);
-            self.documents.insert(doc_id, fields);
+            self.replace_document_fields(doc_id, fields);
             self.all_docs.insert(doc_id);
         }
 
@@ -375,12 +417,7 @@ impl NativeQueryIndex {
     pub fn candidates(&self, query: &Query) -> RoaringBitmap {
         match query {
             Query::All => self.all_docs.clone(),
-            Query::Exact { field, value } => self
-                .exact
-                .get(field)
-                .and_then(|values| values.get(value))
-                .cloned()
-                .unwrap_or_default(),
+            Query::Exact { field, value } => self.exact_candidates(field, value),
             Query::Range {
                 field,
                 compare,
@@ -394,7 +431,7 @@ impl NativeQueryIndex {
             } => self
                 .exact
                 .get(field)
-                .and_then(|values| values.get(&FieldValue::String(value.clone())))
+                .and_then(|values| values.get(&FieldValue::from(value.clone())))
                 .cloned()
                 .unwrap_or_default(),
             Query::StringMatch { .. } | Query::IsNull { .. } => self.all_docs.clone(),
@@ -436,6 +473,22 @@ impl NativeQueryIndex {
 
     pub fn search(&self, query: &Query, sort: &[SortField], limit: Option<usize>) -> Vec<String> {
         self.search_page(query, sort, 0, limit)
+    }
+
+    pub fn exact_first(&self, field: &FieldPath, value: &FieldValue) -> Option<String> {
+        self.exact
+            .get(field)
+            .and_then(|values| values.get(value))
+            .and_then(|matches| {
+                matches
+                    .iter()
+                    .find_map(|doc_id| self.internal_to_external.get(&doc_id).cloned())
+            })
+    }
+
+    pub fn document_fields_by_id(&self, id: &str) -> Option<&DocumentFields> {
+        let doc_id = self.external_to_internal.get(id)?;
+        self.documents.get(doc_id)
     }
 
     pub fn search_page(
@@ -643,11 +696,28 @@ impl NativeQueryIndex {
     }
 
     fn allocate_doc_id(&mut self, external_id: String) -> DocId {
-        let doc_id = self.next_doc_id;
-        self.next_doc_id = self
-            .next_doc_id
-            .checked_add(1)
-            .expect("native index doc id overflow");
+        let doc_id = match self.free_doc_ids.pop() {
+            Some(doc_id) => {
+                debug_assert!(
+                    !self.internal_to_external.contains_key(&doc_id)
+                        && !self.documents.contains_key(&doc_id)
+                        && !self.all_docs.contains(doc_id),
+                    "recycled doc id is still referenced by live structures"
+                );
+                doc_id
+            }
+            None => {
+                let doc_id = self.next_doc_id;
+                // With id recycling this only grows while every id below it is
+                // live, so overflow requires 2^32 simultaneously live documents
+                // and memory exhaustion is reached long before this increment.
+                self.next_doc_id = self
+                    .next_doc_id
+                    .checked_add(1)
+                    .expect("native index doc id overflow");
+                doc_id
+            }
+        };
         self.external_to_internal
             .insert(external_id.clone(), doc_id);
         self.internal_to_external.insert(doc_id, external_id);
@@ -661,6 +731,7 @@ impl NativeQueryIndex {
         self.internal_to_external.remove(&doc_id);
         self.remove_document_fields(doc_id);
         self.all_docs.remove(doc_id);
+        self.free_doc_ids.push(doc_id);
         true
     }
 
@@ -669,17 +740,7 @@ impl NativeQueryIndex {
             return;
         };
         for (path, values) in fields.scalars {
-            if let Some(value) = values.first() {
-                self.remove_sort_value(&path, value, doc_id);
-            }
-            for value in values {
-                remove_from_exact(&mut self.exact, &path, &value, doc_id);
-                if let Some(value) = value.as_i64() {
-                    remove_from_range_i64(&mut self.range_i64, &path, value, doc_id);
-                } else if let Some(value) = value.as_u64() {
-                    remove_from_range_u64(&mut self.range_u64, &path, value, doc_id);
-                }
-            }
+            self.remove_scalar_values(&path, values, doc_id);
         }
         for (path, _) in fields.vectors {
             if let Some(values) = self.vectors.get_mut(&path) {
@@ -688,40 +749,122 @@ impl NativeQueryIndex {
         }
     }
 
+    fn replace_document_fields(&mut self, doc_id: DocId, fields: DocumentFields) {
+        let Some(existing) = self.documents.get(&doc_id) else {
+            self.index_document(doc_id, &fields);
+            self.documents.insert(doc_id, fields);
+            return;
+        };
+        if existing.scalars == fields.scalars && existing.vectors == fields.vectors {
+            self.documents.insert(doc_id, fields);
+            return;
+        }
+
+        let removed_scalars = existing
+            .scalars
+            .iter()
+            .filter(|(path, values)| fields.scalars.get(*path) != Some(*values))
+            .map(|(path, values)| (path.clone(), values.clone()))
+            .collect::<Vec<_>>();
+        let inserted_scalars = fields
+            .scalars
+            .iter()
+            .filter(|(path, values)| existing.scalars.get(*path) != Some(*values))
+            .map(|(path, values)| (path.clone(), values.clone()))
+            .collect::<Vec<_>>();
+        let removed_vectors = existing
+            .vectors
+            .iter()
+            .filter(|(path, value)| fields.vectors.get(*path) != Some(*value))
+            .map(|(path, _)| path.clone())
+            .collect::<Vec<_>>();
+        let inserted_vectors = fields
+            .vectors
+            .iter()
+            .filter(|(path, value)| existing.vectors.get(*path) != Some(*value))
+            .map(|(path, value)| (path.clone(), value.clone()))
+            .collect::<Vec<_>>();
+
+        for (path, values) in removed_scalars {
+            self.remove_scalar_values(&path, values, doc_id);
+        }
+        for path in removed_vectors {
+            if let Some(values) = self.vectors.get_mut(&path) {
+                values.remove(&doc_id);
+            }
+        }
+        for (path, values) in inserted_scalars {
+            self.index_scalar_values(&path, &values, doc_id);
+        }
+        for (path, vector) in inserted_vectors {
+            self.vectors.entry(path).or_default().insert(doc_id, vector);
+        }
+        self.documents.insert(doc_id, fields);
+    }
+
     fn index_document(&mut self, doc_id: DocId, fields: &DocumentFields) {
         for (path, values) in &fields.scalars {
-            if let Some(value) = values.first() {
-                self.insert_sort_value(path, value, doc_id);
-            }
-            for value in values {
-                self.exact
-                    .entry(path.clone())
-                    .or_default()
-                    .entry(value.clone())
-                    .or_default()
-                    .insert(doc_id);
-                if let Some(value) = value.as_i64() {
-                    self.range_i64
-                        .entry(path.clone())
-                        .or_default()
-                        .entry(value)
-                        .or_default()
-                        .insert(doc_id);
-                } else if let Some(value) = value.as_u64() {
-                    self.range_u64
-                        .entry(path.clone())
-                        .or_default()
-                        .entry(value)
-                        .or_default()
-                        .insert(doc_id);
-                }
-            }
+            self.index_scalar_values(path, values, doc_id);
         }
         for (path, vector) in &fields.vectors {
             self.vectors
                 .entry(path.clone())
                 .or_default()
                 .insert(doc_id, vector.clone());
+        }
+    }
+
+    fn index_scalar_values(&mut self, path: &FieldPath, values: &[FieldValue], doc_id: DocId) {
+        if let Some(value) = values.first() {
+            self.insert_sort_value(path, value, doc_id);
+        }
+        for value in values {
+            if is_large_byte_value(value) {
+                self.large_exact_bytes
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(doc_id);
+            } else {
+                self.exact
+                    .entry(path.clone())
+                    .or_default()
+                    .entry(value.clone())
+                    .or_default()
+                    .insert(doc_id);
+            }
+            if let Some(value) = value.as_i64() {
+                self.range_i64
+                    .entry(path.clone())
+                    .or_default()
+                    .entry(value)
+                    .or_default()
+                    .insert(doc_id);
+            } else if let Some(value) = value.as_u64() {
+                self.range_u64
+                    .entry(path.clone())
+                    .or_default()
+                    .entry(value)
+                    .or_default()
+                    .insert(doc_id);
+            }
+        }
+    }
+
+    fn remove_scalar_values(&mut self, path: &FieldPath, values: Vec<FieldValue>, doc_id: DocId) {
+        if let Some(value) = values.first() {
+            self.remove_sort_value(path, value, doc_id);
+        }
+        for value in values {
+            if is_large_byte_value(&value) {
+                remove_from_bitmap_map(&mut self.large_exact_bytes, path, doc_id);
+            } else {
+                remove_from_exact(&mut self.exact, path, &value, doc_id);
+            }
+            if let Some(value) = value.as_i64() {
+                remove_from_range_i64(&mut self.range_i64, path, value, doc_id);
+            } else if let Some(value) = value.as_u64() {
+                remove_from_range_u64(&mut self.range_u64, path, value, doc_id);
+            }
         }
     }
 
@@ -762,12 +905,7 @@ impl NativeQueryIndex {
     fn estimated_candidate_len(&self, query: &Query) -> u64 {
         match query {
             Query::All => self.all_docs.len(),
-            Query::Exact { field, value } => self
-                .exact
-                .get(field)
-                .and_then(|values| values.get(value))
-                .map(RoaringBitmap::len)
-                .unwrap_or(0),
+            Query::Exact { field, value } => self.estimated_exact_candidate_len(field, value),
             Query::Range {
                 field,
                 compare,
@@ -781,7 +919,7 @@ impl NativeQueryIndex {
             } => self
                 .exact
                 .get(field)
-                .and_then(|values| values.get(&FieldValue::String(value.clone())))
+                .and_then(|values| values.get(&FieldValue::from(value.clone())))
                 .map(RoaringBitmap::len)
                 .unwrap_or(0),
             Query::And(queries) => queries
@@ -815,6 +953,39 @@ impl NativeQueryIndex {
             return estimate_u64_range_len(self.range_u64.get(field), compare, value);
         }
         0
+    }
+
+    fn exact_candidates(&self, field: &FieldPath, value: &FieldValue) -> RoaringBitmap {
+        let mut matches = self
+            .exact
+            .get(field)
+            .and_then(|values| values.get(value))
+            .cloned()
+            .unwrap_or_default();
+        if is_large_byte_value(value) {
+            if let Some(large_byte_docs) = self.large_exact_bytes.get(field) {
+                matches |= large_byte_docs;
+            }
+        }
+        matches
+    }
+
+    fn estimated_exact_candidate_len(&self, field: &FieldPath, value: &FieldValue) -> u64 {
+        let mut len = self
+            .exact
+            .get(field)
+            .and_then(|values| values.get(value))
+            .map(RoaringBitmap::len)
+            .unwrap_or(0);
+        if is_large_byte_value(value) {
+            len = len.saturating_add(
+                self.large_exact_bytes
+                    .get(field)
+                    .map(RoaringBitmap::len)
+                    .unwrap_or(0),
+            );
+        }
+        len.min(self.all_docs.len())
     }
 
     fn compare_docs(&self, left: DocId, right: DocId, sort: &[SortField]) -> Ordering {
@@ -855,6 +1026,13 @@ impl NativeQueryIndex {
         let limit = limit.unwrap_or(usize::MAX);
         if limit == 0 {
             return Some(Vec::new());
+        }
+        if self
+            .large_exact_bytes
+            .get(&sort.field)
+            .is_some_and(|docs| !docs.is_empty())
+        {
+            return None;
         }
 
         let mut result = Vec::new();
@@ -1122,11 +1300,12 @@ impl NativeQueryIndex {
                 insert_into_ordered_index(&mut self.sort_u64, path, *value, doc_id)
             }
             FieldValue::String(value) => {
-                insert_into_ordered_index(&mut self.sort_string, path, value.clone(), doc_id)
+                insert_into_ordered_index(&mut self.sort_string, path, Arc::clone(value), doc_id)
             }
-            FieldValue::Bytes(value) => {
+            FieldValue::Bytes(value) if value.len() <= MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH => {
                 insert_into_ordered_index(&mut self.sort_bytes, path, value.clone(), doc_id)
             }
+            FieldValue::Bytes(_) => {}
         }
     }
 
@@ -1144,9 +1323,10 @@ impl NativeQueryIndex {
             FieldValue::String(value) => {
                 remove_from_ordered_index(&mut self.sort_string, path, value, doc_id)
             }
-            FieldValue::Bytes(value) => {
+            FieldValue::Bytes(value) if value.len() <= MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH => {
                 remove_from_ordered_index(&mut self.sort_bytes, path, value, doc_id)
             }
+            FieldValue::Bytes(_) => {}
         }
     }
 }
@@ -1442,6 +1622,13 @@ fn union_bitmaps<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) -> Roarin
     result
 }
 
+fn is_large_byte_value(value: &FieldValue) -> bool {
+    matches!(
+        value,
+        FieldValue::Bytes(bytes) if bytes.len() > MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH
+    )
+}
+
 fn remove_from_exact(
     index: &mut HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
     path: &FieldPath,
@@ -1452,6 +1639,16 @@ fn remove_from_exact(
         if let Some(bitmap) = values.get_mut(value) {
             bitmap.remove(doc_id);
         }
+    }
+}
+
+fn remove_from_bitmap_map(
+    index: &mut HashMap<FieldPath, RoaringBitmap>,
+    path: &FieldPath,
+    doc_id: DocId,
+) {
+    if let Some(bitmap) = index.get_mut(path) {
+        bitmap.remove(doc_id);
     }
 }
 
@@ -1574,7 +1771,7 @@ fn vector_distance(left: &[f32], right: &[f32], metric: VectorMetric) -> f32 {
 mod tests {
     use super::{
         Compare, DocumentFields, FieldValue, IndexBatch, NativeQueryIndex, Query, SortDirection,
-        SortField, SumResult, VectorMetric, VectorSort,
+        SortField, SumResult, VectorMetric, VectorSort, MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH,
     };
 
     #[test]
@@ -1708,7 +1905,7 @@ mod tests {
         let results = index.search(
             &Query::Exact {
                 field: "group".into(),
-                value: FieldValue::String("left".to_string()),
+                value: FieldValue::from("left"),
             },
             &[SortField {
                 field: "timestamp".into(),
@@ -1790,6 +1987,49 @@ mod tests {
     }
 
     #[test]
+    fn large_byte_fields_scan_exact_and_use_generic_sort() {
+        let mut index = NativeQueryIndex::new();
+        let large_low = vec![0_u8; MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH + 1];
+        let small = vec![1_u8];
+        let large_high = vec![2_u8; MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH + 1];
+        index.put(
+            "large-low",
+            DocumentFields::new().with_scalar("bytes", large_low.clone()),
+        );
+        index.put(
+            "small",
+            DocumentFields::new().with_scalar("bytes", small.clone()),
+        );
+        index.put(
+            "large-high",
+            DocumentFields::new().with_scalar("bytes", large_high.clone()),
+        );
+
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "bytes".into(),
+                    value: FieldValue::from(large_low),
+                },
+                &[],
+                None,
+            ),
+            vec!["large-low"]
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "bytes".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["large-low", "small", "large-high"]
+        );
+    }
+
+    #[test]
     fn sums_and_deletes_matching_docs() {
         let mut index = NativeQueryIndex::new();
         index.put(
@@ -1813,12 +2053,135 @@ mod tests {
 
         let query = Query::Exact {
             field: "group".into(),
-            value: FieldValue::String("left".to_string()),
+            value: FieldValue::from("left"),
         };
 
         assert_eq!(index.sum(&query, "value").unwrap(), SumResult::U64(4));
         assert_eq!(index.delete_matching(&query), vec!["a", "c"]);
         assert_eq!(index.search(&Query::All, &[], None), vec!["b"]);
+    }
+
+    #[test]
+    fn recycled_doc_ids_do_not_alias_stale_facts() {
+        let mut index = NativeQueryIndex::new();
+        let large_bytes = vec![7_u8; MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH + 1];
+        index.put(
+            "old",
+            DocumentFields::new()
+                .with_scalar("title", "stale")
+                .with_scalar("score", 42_u64)
+                .with_scalar("offset", -7_i64)
+                .with_scalar("flag", true)
+                .with_scalar("small", vec![1_u8, 2_u8])
+                .with_scalar("large", large_bytes.clone())
+                .with_vector("embedding", vec![1.0, 0.0]),
+        );
+        index.delete_id("old");
+        index.put("new", DocumentFields::new().with_scalar("other", 1_u64));
+
+        // The recycled internal id must be observable to make the aliasing
+        // checks below meaningful.
+        assert_eq!(index.external_to_internal.get("new"), Some(&0));
+        assert_eq!(index.next_doc_id, 1);
+
+        for query in [
+            Query::Exact {
+                field: "title".into(),
+                value: FieldValue::from("stale"),
+            },
+            Query::Exact {
+                field: "score".into(),
+                value: FieldValue::U64(42),
+            },
+            Query::Range {
+                field: "score".into(),
+                compare: Compare::GreaterOrEqual,
+                value: FieldValue::U64(0),
+            },
+            Query::Range {
+                field: "offset".into(),
+                compare: Compare::LessOrEqual,
+                value: FieldValue::I64(0),
+            },
+            Query::Exact {
+                field: "flag".into(),
+                value: FieldValue::Bool(true),
+            },
+            Query::Exact {
+                field: "small".into(),
+                value: FieldValue::from(vec![1_u8, 2_u8]),
+            },
+            Query::Exact {
+                field: "large".into(),
+                value: FieldValue::from(large_bytes),
+            },
+        ] {
+            assert_eq!(index.candidates(&query).len(), 0, "stale {query:?}");
+            assert_eq!(index.search(&query, &[], None), Vec::<String>::new());
+        }
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "title".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["new"],
+        );
+        assert_eq!(
+            index.vector_search(
+                &Query::All,
+                &VectorSort {
+                    field: "embedding".into(),
+                    query: vec![1.0, 0.0],
+                    metric: VectorMetric::Cosine,
+                },
+                10,
+            ),
+            Vec::new(),
+        );
+        assert_eq!(
+            index.search(
+                &Query::IsNull {
+                    field: "title".into(),
+                },
+                &[],
+                None,
+            ),
+            vec!["new"],
+        );
+    }
+
+    #[test]
+    fn doc_id_churn_reuses_ids_instead_of_growing() {
+        let mut index = NativeQueryIndex::new();
+        for round in 0..10_000_u64 {
+            let id = format!("doc-{round}");
+            index.put(&*id, DocumentFields::new().with_scalar("round", round));
+            index.delete_id(&id);
+        }
+        assert_eq!(index.next_doc_id, 1);
+        assert!(index.is_empty());
+
+        index.apply_batch(
+            IndexBatch::new()
+                .put("a", DocumentFields::new().with_scalar("round", 0_u64))
+                .put("b", DocumentFields::new().with_scalar("round", 1_u64)),
+        );
+        index.apply_batch(
+            IndexBatch::new()
+                .delete("a")
+                .delete("b")
+                .put("c", DocumentFields::new().with_scalar("round", 2_u64))
+                .put("d", DocumentFields::new().with_scalar("round", 3_u64)),
+        );
+        assert_eq!(index.next_doc_id, 2);
+        assert_eq!(index.len(), 2);
+        let mut results = index.search(&Query::All, &[], None);
+        results.sort();
+        assert_eq!(results, vec!["c", "d"]);
     }
 
     #[test]
@@ -1844,6 +2207,97 @@ mod tests {
         assert_eq!(
             index.search_page(&query, &[], 5, Some(2)),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn put_new_unchecked_indexes_new_documents() {
+        let mut index = NativeQueryIndex::new();
+        index.put_new_unchecked(
+            "a",
+            DocumentFields::new()
+                .with_scalar("status", "published")
+                .with_scalar("score", 10_u64),
+        );
+
+        assert_eq!(index.generation(), 1);
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "status".into(),
+                    value: FieldValue::from("published"),
+                },
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["a"]
+        );
+    }
+
+    #[test]
+    fn put_existing_unchecked_replaces_existing_document() {
+        let mut index = NativeQueryIndex::new();
+        index.put_new_unchecked(
+            "a",
+            DocumentFields::new()
+                .with_scalar("category", "post")
+                .with_scalar("status", "draft")
+                .with_scalar("score", 1_u64),
+        );
+
+        assert!(index.put_existing_unchecked(
+            "a",
+            DocumentFields::new()
+                .with_scalar("category", "post")
+                .with_scalar("status", "published")
+                .with_scalar("score", 2_u64),
+        ));
+        assert!(!index.put_existing_unchecked(
+            "missing",
+            DocumentFields::new().with_scalar("status", "ignored"),
+        ));
+
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "status".into(),
+                    value: FieldValue::from("draft"),
+                },
+                &[],
+                None,
+            ),
+            Vec::<String>::new(),
+        );
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "status".into(),
+                    value: FieldValue::from("published"),
+                },
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["a"],
+        );
+        assert_eq!(
+            index.search(
+                &Query::Exact {
+                    field: "category".into(),
+                    value: FieldValue::from("post"),
+                },
+                &[SortField {
+                    field: "score".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["a"],
         );
     }
 
@@ -1886,7 +2340,7 @@ mod tests {
             index.search(
                 &Query::Exact {
                     field: "status".into(),
-                    value: FieldValue::String("draft".to_string()),
+                    value: FieldValue::from("draft"),
                 },
                 &[],
                 None,
@@ -1897,7 +2351,7 @@ mod tests {
             index.search(
                 &Query::Exact {
                     field: "status".into(),
-                    value: FieldValue::String("published".to_string()),
+                    value: FieldValue::from("published"),
                 },
                 &[],
                 None,

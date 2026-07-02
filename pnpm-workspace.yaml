@@ -33,6 +33,7 @@ packages:
   - packages/programs/transport
   - packages/programs/data/document/*
   - packages/programs/data/*
+  - packages/programs/data/shared-log/rust
   - packages/programs/data/document/react/e2e/party
   - packages/programs/data/document/react/e2e/party/shared
   - packages/programs/data/document/react/e2e/party/browser-node
@@ -43,6 +44,7 @@ packages:
   - packages/utils/crypto
   - packages/utils/any-store/*
   - packages/utils/any-store/proxy/e2e
+  - packages/utils/native-backbone
   - packages/utils/build-assets
   - packages/utils/time
   - packages/utils/cache

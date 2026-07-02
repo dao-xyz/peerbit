@@ -2,7 +2,13 @@ export * from "./log.js";
 export * from "./log-sorting.js";
 export * from "./log-errors.js";
 export * from "./snapshot.js";
-export * from "./entry.js";
+export {
+	Entry,
+	type CanAppend,
+	type PreparedAppendFacts,
+	type PreparedNativeLogEntry,
+	type ShallowOrFullEntry,
+} from "./entry.js";
 export * from "./entry-type.js";
 export * from "./entry-with-refs.js";
 export * from "./entry-shallow.js";

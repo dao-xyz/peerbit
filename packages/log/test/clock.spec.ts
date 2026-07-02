@@ -85,6 +85,26 @@ describe("hlc", () => {
 		t.equals(time2.logical, 2);
 		t.equals(time3.logical, 3);
 	});
+	it(".nowBatch() returns ordered timestamps from one walltime sample", () => {
+		let samples = 0;
+		const wallTimes = [10n, 11n, 11n];
+		const clock = new HLC({
+			wallTime: () => wallTimes[Math.min(samples++, wallTimes.length - 1)]!,
+		});
+
+		const timestamps = clock.nowBatch(3);
+
+		t.equals(samples, 2); // constructor + batch
+		t.deepEquals(timestamps, [
+			new Timestamp({ wallTime: 11n, logical: 0 }),
+			new Timestamp({ wallTime: 11n, logical: 1 }),
+			new Timestamp({ wallTime: 11n, logical: 2 }),
+		]);
+		t.deepEquals(
+			clock.now(),
+			new Timestamp({ wallTime: 11n, logical: 3 }),
+		);
+	});
 	it("Timestamp comparison", () => {
 		const a = new Timestamp({ wallTime: 0n, logical: 0 });
 		const b = new Timestamp({ wallTime: 0n, logical: 1 });

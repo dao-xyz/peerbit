@@ -1,5 +1,10 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
+import {
+	type Blocks,
+	type GetOptions,
+	calculateRawCid,
+	cidifyString,
+} from "@peerbit/blocks-interface";
 import type { PublicSignKey, SignatureWithKey } from "@peerbit/crypto";
 import type { CryptoKeychain } from "@peerbit/keychain";
 import { LamportClock as Clock } from "./clock.js";
@@ -10,6 +15,79 @@ import type { Payload } from "./payload.js";
 
 export type CanAppend<T> = (canAppend: Entry<T>) => Promise<boolean> | boolean;
 export type ShallowOrFullEntry<T> = ShallowEntry | Entry<T>;
+export type PreparedEntryBlock = Awaited<ReturnType<typeof calculateRawCid>>;
+export type PreparedAppendFacts = {
+	hash: string;
+	gid: string;
+	next: string[];
+	wallTime: bigint;
+	logical: number;
+	clockId?: Uint8Array;
+	type?: EntryType;
+	metaData?: Uint8Array;
+	payloadSize: number;
+	metaBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
+};
+export type PreparedNativeLogEntry = {
+	hash: string;
+	gid: string;
+	next: string[];
+	type: number;
+	head?: boolean;
+	payloadSize?: number;
+	data?: Uint8Array;
+	clock: {
+		timestamp: {
+			wallTime: bigint | number | string;
+			logical?: number;
+		};
+	};
+};
+export type PreparedAppendChain<T> = {
+	entries: Entry<T>[];
+	blocks?: PreparedEntryBlock[];
+	shallowEntries: ShallowEntry[];
+	appendFacts?: PreparedAppendFacts[];
+	nativeEntries?: PreparedNativeLogEntry[];
+	nativeGraphUpdated?: boolean;
+	nativeBlocksCommitted?: boolean;
+};
+export type PreparedAppendCommitOnlyChain<T> = {
+	materializeEntry: (index?: number) => Entry<T>;
+	materializeEntries: () => Entry<T>[];
+	blocks?: PreparedEntryBlock[];
+	shallowEntries: ShallowEntry[];
+	appendFacts: PreparedAppendFacts[];
+	nativeEntries?: PreparedNativeLogEntry[];
+	trimmedNativeEntries?: PreparedNativeLogEntry[];
+	trimmedNativeEntryHashes?: string[];
+	trimmedNativeBlocksDeleted?: boolean;
+	nativeGraphUpdated?: boolean;
+	nativeBlocksCommitted?: boolean;
+};
+
+const preparedEntryBlocks = new WeakMap<object, PreparedEntryBlock>();
+const preparedShallowEntries = new WeakMap<object, ShallowEntry>();
+const preparedNativeLogEntries = new WeakMap<object, PreparedNativeLogEntry>();
+
+const preparedEntryBlockFromBytes = (
+	bytes: Uint8Array,
+	cid: string,
+): PreparedEntryBlock => {
+	let cidObject: ReturnType<typeof cidifyString> | undefined;
+	return {
+		block: {
+			bytes,
+			get cid() {
+				cidObject ??= cidifyString(cid);
+				return cidObject;
+			},
+			value: bytes,
+		} as PreparedEntryBlock["block"],
+		cid,
+	};
+};
 
 interface Meta {
 	clock: Clock;
@@ -89,6 +167,113 @@ export abstract class Entry<T> {
 		return store.put(bytes);
 	}
 
+	static async prepareMultihash<T>(entry: Entry<T>): Promise<string> {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		const bytes = entry.getStorageBytes();
+		entry.size = bytes.length;
+		const prepared = await calculateRawCid(bytes);
+		preparedEntryBlocks.set(entry, prepared);
+		return prepared.cid;
+	}
+
+	static prepareMultihashBytes<T>(
+		entry: Entry<T>,
+		bytes: Uint8Array,
+		cid: string,
+	): string {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		entry.size = bytes.length;
+		preparedEntryBlocks.set(entry, preparedEntryBlockFromBytes(bytes, cid));
+		return cid;
+	}
+
+	static preparedBlockFromBytes(bytes: Uint8Array, cid: string): PreparedEntryBlock {
+		return preparedEntryBlockFromBytes(bytes, cid);
+	}
+
+	static toMultihashBytes<T>(
+		store: Blocks,
+		entry: Entry<T>,
+		bytes: Uint8Array,
+		cid: string,
+	): Promise<string> | string {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		entry.size = bytes.length;
+		return store.put(preparedEntryBlockFromBytes(bytes, cid));
+	}
+
+	static takePreparedBlock<T>(entry: Entry<T>): PreparedEntryBlock | undefined {
+		const prepared = preparedEntryBlocks.get(entry);
+		if (prepared) {
+			preparedEntryBlocks.delete(entry);
+		}
+		return prepared;
+	}
+
+	static hasPreparedBlock<T>(entry: Entry<T>): boolean {
+		return preparedEntryBlocks.has(entry);
+	}
+
+	static getPreparedStorageBytes<T>(entry: Entry<T>): Uint8Array | undefined {
+		const prepared = preparedEntryBlocks.get(entry);
+		const block = prepared?.block as
+			| { bytes?: Uint8Array; value?: Uint8Array }
+			| undefined;
+		return block?.bytes ?? block?.value;
+	}
+
+	static prepareShallowEntry<T>(entry: Entry<T>, shallow: ShallowEntry): void {
+		preparedShallowEntries.set(entry, shallow);
+	}
+
+	static hasPreparedShallowEntry<T>(entry: Entry<T>): boolean {
+		return preparedShallowEntries.has(entry);
+	}
+
+	static takePreparedShallowEntry<T>(
+		entry: Entry<T>,
+		isHead: boolean,
+	): ShallowEntry | undefined {
+		const prepared = preparedShallowEntries.get(entry);
+		if (prepared) {
+			preparedShallowEntries.delete(entry);
+			prepared.head = isHead;
+		}
+		return prepared;
+	}
+
+	static prepareNativeLogEntry<T>(
+		entry: Entry<T>,
+		nativeEntry: PreparedNativeLogEntry,
+	): void {
+		preparedNativeLogEntries.set(entry, nativeEntry);
+	}
+
+	static hasPreparedNativeLogEntry<T>(entry: Entry<T>): boolean {
+		return preparedNativeLogEntries.has(entry);
+	}
+
+	static takePreparedNativeLogEntry<T>(
+		entry: Entry<T>,
+		isHead: boolean,
+	): PreparedNativeLogEntry | undefined {
+		const prepared = preparedNativeLogEntries.get(entry);
+		if (prepared) {
+			preparedNativeLogEntries.delete(entry);
+			prepared.head = isHead;
+		}
+		return prepared;
+	}
+
 	static fromMultihash = async <T>(
 		store: Blocks,
 		hash: string,
@@ -102,6 +287,7 @@ export abstract class Entry<T> {
 			throw new Error("Failed to resolve block: " + hash);
 		}
 		const entry = deserialize(bytes, Entry);
+		Entry.prepareMultihashBytes(entry, bytes, hash);
 		entry.hash = hash;
 		entry.size = bytes.length;
 		return entry as Entry<T>;

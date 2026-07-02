@@ -1,14 +1,21 @@
-use borsh::BorshDeserialize;
 use indexmap::IndexMap;
-use js_sys::Array;
-use planner::{
-    Compare, DocumentFields, FieldPath, FieldValue, NativeQueryIndex, Query, SortDirection,
-    SortField, StringMatchMethod, SumResult,
+use js_sys::{Array, Uint8Array};
+use peerbit_indexer_core::codec::{
+    decode_query as decode_core_query, decode_sort as decode_core_sort,
+};
+use peerbit_indexer_core::planner::{
+    DocumentFields, FieldPath, FieldValue, NativeQueryIndex, Query, SortField, SumResult,
+};
+use peerbit_indexer_core::schema::{
+    decode_document_fields as decode_core_document_fields,
+    decode_native_schema_ir as decode_core_native_schema_ir,
+    extract_encoded_document_fields as extract_core_encoded_document_fields,
+    extract_encoded_document_fields_from_parts as extract_core_encoded_document_fields_from_parts,
+    NativeSchemaIr as CoreNativeSchemaIr,
 };
 use wasm_bindgen::prelude::*;
 
-pub mod planner;
-pub mod storage;
+pub use peerbit_indexer_core::{planner, storage};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native_fs;
@@ -94,12 +101,35 @@ impl NativeIndexStore {
         }
         entries
     }
+
+    fn delete_keys_void(&mut self, keys: &[String]) {
+        for key in keys {
+            self.entries.shift_remove(key);
+        }
+    }
+
+    fn delete_keys_count(&mut self, keys: &[String]) -> usize {
+        let mut deleted = 0;
+        for key in keys {
+            if self.entries.shift_remove(key).is_some() {
+                deleted += 1;
+            }
+        }
+        deleted
+    }
 }
 
 fn entry_to_js(entry: &StoredEntry) -> JsValue {
     let pair = Array::new();
     pair.push(&entry.id);
     pair.push(&entry.value);
+    pair.into()
+}
+
+fn encoded_parts_to_js_value(prefix: JsValue, suffix: JsValue) -> JsValue {
+    let pair = Array::new();
+    pair.push(&prefix);
+    pair.push(&suffix);
     pair.into()
 }
 
@@ -180,6 +210,7 @@ impl NativeQueryPlanner {
 pub struct NativeRustIndex {
     store: NativeIndexStore,
     planner: NativeQueryPlanner,
+    schema_ir: Option<CoreNativeSchemaIr>,
 }
 
 #[wasm_bindgen]
@@ -189,12 +220,24 @@ impl NativeRustIndex {
         NativeRustIndex {
             store: NativeIndexStore::new(),
             planner: NativeQueryPlanner::new(),
+            schema_ir: None,
         }
     }
 
     pub fn clear(&mut self) {
         self.store.clear();
         self.planner.clear();
+    }
+
+    pub fn configure_schema_ir(&mut self, schema_ir_bytes: Vec<u8>) -> Result<Array, JsValue> {
+        let schema_ir = decode_core_native_schema_ir(&schema_ir_bytes).map_err(js_error)?;
+        let stats = schema_ir.stats();
+        self.schema_ir = Some(schema_ir);
+        let out = Array::new();
+        out.push(&JsValue::from_f64(stats.root_fields as f64));
+        out.push(&JsValue::from_f64(stats.node_count as f64));
+        out.push(&JsValue::from_f64(stats.generic_nodes as f64));
+        Ok(out)
     }
 
     pub fn len(&self) -> usize {
@@ -212,6 +255,532 @@ impl NativeRustIndex {
         self.store.put(key.clone(), id, value);
         self.planner.index.put(key, fields);
         Ok(())
+    }
+
+    pub fn put_encoded(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        value_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let fields =
+            self.extract_encoded_document_fields(&value_bytes, byte_element_index_limit)?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    pub fn put_encoded_parts(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        value_prefix_bytes: Vec<u8>,
+        value_suffix_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let fields = self.extract_encoded_document_fields_from_parts(
+            &value_prefix_bytes,
+            &value_suffix_bytes,
+            byte_element_index_limit,
+        )?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    pub fn validate_encoded_parts(
+        &self,
+        value_prefix_bytes: Vec<u8>,
+        value_suffix_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        self.extract_encoded_document_fields_from_parts(
+            &value_prefix_bytes,
+            &value_suffix_bytes,
+            byte_element_index_limit,
+        )?;
+        Ok(())
+    }
+
+    pub fn put_encoded_parts_stored(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value_prefix_bytes: JsValue,
+        value_suffix_bytes: JsValue,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let prefix = Uint8Array::new(&value_prefix_bytes).to_vec();
+        let suffix = Uint8Array::new(&value_suffix_bytes).to_vec();
+        let fields = self.extract_encoded_document_fields_from_parts(
+            &prefix,
+            &suffix,
+            byte_element_index_limit,
+        )?;
+        let stored_value = encoded_parts_to_js_value(value_prefix_bytes, value_suffix_bytes);
+        self.store.put(key.clone(), id, stored_value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    pub fn put_encoded_parts_batch(
+        &mut self,
+        keys: Array,
+        ids: Array,
+        values: Array,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let len = keys.length();
+        if ids.length() != len
+            || values.length() != len
+            || value_prefix_bytes.length() != len
+            || value_suffix_bytes.length() != len
+        {
+            return Err(js_error("Mismatched encoded parts batch lengths"));
+        }
+
+        let mut prepared = Vec::with_capacity(len as usize);
+        for index in 0..len {
+            let key = keys
+                .get(index)
+                .as_string()
+                .ok_or_else(|| js_error("Invalid encoded parts batch key"))?;
+            let prefix = Uint8Array::new(&value_prefix_bytes.get(index)).to_vec();
+            let suffix = Uint8Array::new(&value_suffix_bytes.get(index)).to_vec();
+            let fields = self.extract_encoded_document_fields_from_parts(
+                &prefix,
+                &suffix,
+                byte_element_index_limit,
+            )?;
+            prepared.push((key, ids.get(index), values.get(index), fields));
+        }
+
+        for (key, id, value, fields) in prepared {
+            self.store.put(key.clone(), id, value);
+            self.planner.index.put(key, fields);
+        }
+        Ok(())
+    }
+
+    pub fn validate_encoded_parts_batch(
+        &self,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let len = value_prefix_bytes.length();
+        if value_suffix_bytes.length() != len {
+            return Err(js_error("Mismatched encoded parts batch lengths"));
+        }
+        for index in 0..len {
+            let prefix = Uint8Array::new(&value_prefix_bytes.get(index)).to_vec();
+            let suffix = Uint8Array::new(&value_suffix_bytes.get(index)).to_vec();
+            self.extract_encoded_document_fields_from_parts(
+                &prefix,
+                &suffix,
+                byte_element_index_limit,
+            )?;
+        }
+        Ok(())
+    }
+
+    pub fn put_encoded_parts_stored_batch(
+        &mut self,
+        keys: Array,
+        ids: Array,
+        value_prefix_bytes: Array,
+        value_suffix_bytes: Array,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let len = keys.length();
+        if ids.length() != len
+            || value_prefix_bytes.length() != len
+            || value_suffix_bytes.length() != len
+        {
+            return Err(js_error("Mismatched encoded parts stored batch lengths"));
+        }
+
+        let mut prepared = Vec::with_capacity(len as usize);
+        for index in 0..len {
+            let key = keys
+                .get(index)
+                .as_string()
+                .ok_or_else(|| js_error("Invalid encoded parts stored batch key"))?;
+            let prefix_value = value_prefix_bytes.get(index);
+            let suffix_value = value_suffix_bytes.get(index);
+            let prefix = Uint8Array::new(&prefix_value).to_vec();
+            let suffix = Uint8Array::new(&suffix_value).to_vec();
+            let fields = self.extract_encoded_document_fields_from_parts(
+                &prefix,
+                &suffix,
+                byte_element_index_limit,
+            )?;
+            prepared.push((key, ids.get(index), prefix_value, suffix_value, fields));
+        }
+
+        for (key, id, prefix_value, suffix_value, fields) in prepared {
+            self.store.put(
+                key.clone(),
+                id,
+                encoded_parts_to_js_value(prefix_value, suffix_value),
+            );
+            self.planner.index.put(key, fields);
+        }
+        Ok(())
+    }
+
+    pub fn put_and_delete_matching(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        fields_bytes: Vec<u8>,
+        query_bytes: Vec<u8>,
+    ) -> Result<Array, JsValue> {
+        let fields = decode_document_fields(&fields_bytes)?;
+        let query = decode_query(&query_bytes)?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        let keys = self.planner.index.delete_matching(&query);
+        Ok(self.store.delete_keys(&keys))
+    }
+
+    pub fn put_and_delete_keys(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        fields_bytes: Vec<u8>,
+        keys: Array,
+    ) -> Result<Array, JsValue> {
+        let fields = decode_document_fields(&fields_bytes)?;
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        Ok(self.store.delete_keys(&keys))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+    ) -> Result<(), JsValue> {
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
+            hash_number_field,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
+            wall_time_field,
+            assigned_to_range_boundary_field,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
+            byte_element_index_limit,
+        })?;
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate_and_delete_keys(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+        keys: Array,
+    ) -> Result<Array, JsValue> {
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
+            hash_number_field,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
+            wall_time_field,
+            assigned_to_range_boundary_field,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
+            byte_element_index_limit,
+        })?;
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        Ok(self.store.delete_keys(&keys))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate_and_delete_keys_void(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value: JsValue,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+        keys: Array,
+    ) -> Result<(), JsValue> {
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
+            hash_number_field,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
+            wall_time_field,
+            assigned_to_range_boundary_field,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
+            byte_element_index_limit,
+        })?;
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value);
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+            self.store.delete(key);
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinates_and_delete_keys_void(
+        &mut self,
+        keys: Array,
+        ids: Array,
+        values: Array,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hashes: Array,
+        hash_numbers: Array,
+        gids: Array,
+        coordinates: Array,
+        wall_times: Array,
+        assigned_to_range_boundaries: Uint8Array,
+        meta_bytes: Array,
+        byte_element_index_limit: usize,
+        delete_keys: Array,
+    ) -> Result<(), JsValue> {
+        let len = keys.length();
+        if ids.length() != len
+            || values.length() != len
+            || hashes.length() != len
+            || hash_numbers.length() != len
+            || gids.length() != len
+            || coordinates.length() != len
+            || wall_times.length() != len
+            || assigned_to_range_boundaries.length() != len
+            || meta_bytes.length() != len
+            || delete_keys.length() != len
+        {
+            return Err(js_error("Mismatched shared-log coordinate batch lengths"));
+        }
+
+        for index in 0..len {
+            let key = required_array_string(&keys, index, "shared-log coordinate key")?;
+            let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+                hash_field,
+                hash_number_field,
+                gid_field,
+                coordinates_field,
+                coordinates_array_field,
+                wall_time_field,
+                assigned_to_range_boundary_field,
+                meta_field,
+                hash: required_array_string(&hashes, index, "shared-log coordinate hash")?,
+                hash_number: required_array_string(
+                    &hash_numbers,
+                    index,
+                    "shared-log coordinate hashNumber",
+                )?,
+                gid: required_array_string(&gids, index, "shared-log coordinate gid")?,
+                coordinates: required_nested_array(
+                    &coordinates,
+                    index,
+                    "shared-log coordinate coordinates",
+                )?,
+                wall_time: required_array_string(
+                    &wall_times,
+                    index,
+                    "shared-log coordinate wallTime",
+                )?,
+                assigned_to_range_boundary: assigned_to_range_boundaries.get_index(index) != 0,
+                meta_bytes: Uint8Array::new(&meta_bytes.get(index)).to_vec(),
+                byte_element_index_limit,
+            })?;
+            let keys_to_delete =
+                required_nested_array(&delete_keys, index, "shared-log coordinate deleteKeys")?;
+            let keys_to_delete: Vec<_> = keys_to_delete
+                .iter()
+                .filter_map(|key| key.as_string())
+                .collect();
+
+            self.store
+                .put(key.clone(), ids.get(index), values.get(index));
+            self.planner.index.put(key, fields);
+            for key in &keys_to_delete {
+                self.planner.index.delete(key);
+                self.store.delete(key);
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_shared_log_coordinate_encoded_and_delete_keys_void(
+        &mut self,
+        key: String,
+        id: JsValue,
+        value_bytes: Vec<u8>,
+        hash_field: u32,
+        hash_number_field: u32,
+        gid_field: u32,
+        coordinates_field: u32,
+        coordinates_array_field: u32,
+        wall_time_field: u32,
+        assigned_to_range_boundary_field: u32,
+        meta_field: u32,
+        hash: String,
+        hash_number: String,
+        gid: String,
+        coordinates: Array,
+        wall_time: String,
+        assigned_to_range_boundary: bool,
+        meta_bytes: Vec<u8>,
+        byte_element_index_limit: usize,
+        keys: Array,
+    ) -> Result<(), JsValue> {
+        let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
+            hash_field,
+            hash_number_field,
+            gid_field,
+            coordinates_field,
+            coordinates_array_field,
+            wall_time_field,
+            assigned_to_range_boundary_field,
+            meta_field,
+            hash,
+            hash_number,
+            gid,
+            coordinates,
+            wall_time,
+            assigned_to_range_boundary,
+            meta_bytes,
+            byte_element_index_limit,
+        })?;
+        let value = Uint8Array::from(value_bytes.as_slice());
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        self.store.put(key.clone(), id, value.into());
+        self.planner.index.put(key, fields);
+        for key in &keys {
+            self.planner.index.delete(key);
+            self.store.delete(key);
+        }
+        Ok(())
+    }
+
+    pub fn delete_keys(&mut self, keys: Array) -> Array {
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        self.store.delete_keys(&keys)
+    }
+
+    pub fn delete_keys_void(&mut self, keys: Array) {
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        self.store.delete_keys_void(&keys);
+    }
+
+    pub fn delete_keys_count(&mut self, keys: Array) -> usize {
+        let keys: Vec<_> = keys.iter().filter_map(|key| key.as_string()).collect();
+        for key in &keys {
+            self.planner.index.delete(key);
+        }
+        self.store.delete_keys_count(&keys)
     }
 
     pub fn get(&self, key: &str) -> JsValue {
@@ -245,6 +814,24 @@ impl NativeRustIndex {
         Ok(self.store.entries_for_keys(&keys))
     }
 
+    pub fn query_exact_string_first_batch(&self, field: u32, values: Array) -> Array {
+        let out = Array::new();
+        let field = FieldPath::Id(field);
+        for value in values.iter() {
+            let entry = value
+                .as_string()
+                .and_then(|value| {
+                    self.planner
+                        .index
+                        .exact_first(&field, &FieldValue::from(value))
+                })
+                .map(|key| self.store.get(&key))
+                .unwrap_or(JsValue::UNDEFINED);
+            out.push(&entry);
+        }
+        out
+    }
+
     pub fn count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
         self.planner.count(query_bytes)
     }
@@ -257,6 +844,40 @@ impl NativeRustIndex {
         let query = decode_query(&query_bytes)?;
         let keys = self.planner.index.delete_matching(&query);
         Ok(self.store.delete_keys(&keys))
+    }
+}
+
+impl NativeRustIndex {
+    fn extract_encoded_document_fields(
+        &self,
+        value_bytes: &[u8],
+        byte_element_index_limit: usize,
+    ) -> Result<DocumentFields, JsValue> {
+        let schema_ir = self
+            .schema_ir
+            .as_ref()
+            .ok_or_else(|| js_error("Native schema IR has not been configured"))?;
+        extract_core_encoded_document_fields(schema_ir, value_bytes, byte_element_index_limit)
+            .map_err(js_error)
+    }
+
+    fn extract_encoded_document_fields_from_parts(
+        &self,
+        prefix: &[u8],
+        suffix: &[u8],
+        byte_element_index_limit: usize,
+    ) -> Result<DocumentFields, JsValue> {
+        let schema_ir = self
+            .schema_ir
+            .as_ref()
+            .ok_or_else(|| js_error("Native schema IR has not been configured"))?;
+        extract_core_encoded_document_fields_from_parts(
+            schema_ir,
+            prefix,
+            suffix,
+            byte_element_index_limit,
+        )
+        .map_err(js_error)
     }
 }
 
@@ -287,294 +908,164 @@ fn sum_to_js(sum: SumResult) -> Array {
     out
 }
 
-const BRIDGE_VERSION: u8 = 1;
-
-// Enum declaration order is part of the TS/Rust bridge ABI.
-#[derive(Clone, BorshDeserialize)]
-enum FieldValueDto {
-    Bool(bool),
-    I64(i64),
-    U64(u64),
-    String(String),
+struct NativeExtractState {
+    next_scope: u32,
+    byte_element_index_limit: usize,
 }
 
-#[derive(BorshDeserialize)]
-struct QueryPayloadDto {
-    version: u8,
-    query: QueryDto,
-}
-
-// Enum declaration order is part of the TS/Rust bridge ABI.
-#[derive(Clone, BorshDeserialize)]
-enum QueryDto {
-    All,
-    Exact {
-        field: u32,
-        value: FieldValueDto,
-    },
-    Range {
-        field: u32,
-        compare: CompareDto,
-        value: FieldValueDto,
-    },
-    And {
-        queries: Vec<QueryDto>,
-    },
-    Or {
-        queries: Vec<QueryDto>,
-    },
-    Not {
-        query: Box<QueryDto>,
-    },
-    StringMatch {
-        field: u32,
-        value: String,
-        method: StringMatchMethodDto,
-        case_insensitive: bool,
-    },
-    IsNull {
-        field: u32,
-    },
-}
-
-// Enum declaration order is part of the TS/Rust bridge ABI.
-#[derive(Clone, Copy, BorshDeserialize)]
-enum CompareDto {
-    Equal,
-    Greater,
-    GreaterOrEqual,
-    Less,
-    LessOrEqual,
-}
-
-#[derive(BorshDeserialize)]
-struct SortPayloadDto {
-    version: u8,
-    fields: Vec<SortFieldDto>,
-}
-
-#[derive(BorshDeserialize)]
-struct SortFieldDto {
-    field: u32,
-    direction: SortDirectionDto,
-}
-
-// Enum declaration order is part of the TS/Rust bridge ABI.
-#[derive(BorshDeserialize)]
-enum SortDirectionDto {
-    Asc,
-    Desc,
-}
-
-// Enum declaration order is part of the TS/Rust bridge ABI.
-#[derive(Clone, Copy, BorshDeserialize)]
-enum StringMatchMethodDto {
-    Exact,
-    Prefix,
-    Contains,
-}
-
-struct BridgeReader<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> BridgeReader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
+impl NativeExtractState {
+    fn next_scope(&mut self) -> Result<u32, JsValue> {
+        let scope = self.next_scope;
+        self.next_scope = self
+            .next_scope
+            .checked_add(1)
+            .ok_or_else(|| js_error("Native schema extraction scope overflow"))?;
+        Ok(scope)
     }
+}
 
-    fn finish(&self) -> Result<(), JsValue> {
-        if self.offset == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(js_error("Trailing bytes in bridge payload"))
+fn insert_scalar(fields: &mut DocumentFields, scope: u32, field: u32, value: FieldValue) {
+    fields.insert_scoped_scalar(scope, FieldPath::Id(field), value);
+}
+
+fn insert_bytes_facts(
+    fields: &mut DocumentFields,
+    state: &mut NativeExtractState,
+    scope: u32,
+    field: u32,
+    bytes: Vec<u8>,
+) -> Result<(), JsValue> {
+    let index_byte_elements = bytes.len() <= state.byte_element_index_limit;
+    if index_byte_elements {
+        for byte in bytes.iter().copied() {
+            let byte_scope = state.next_scope()?;
+            fields.insert_scoped_scalar(
+                byte_scope,
+                FieldPath::Id(field),
+                FieldValue::U64(byte as u64),
+            );
         }
     }
-
-    fn read_u8(&mut self) -> Result<u8, JsValue> {
-        let bytes = self.read_exact(1)?;
-        Ok(bytes[0])
-    }
-
-    fn read_u32(&mut self) -> Result<u32, JsValue> {
-        let mut bytes = [0u8; 4];
-        bytes.copy_from_slice(self.read_exact(4)?);
-        Ok(u32::from_le_bytes(bytes))
-    }
-
-    fn read_i64(&mut self) -> Result<i64, JsValue> {
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(self.read_exact(8)?);
-        Ok(i64::from_le_bytes(bytes))
-    }
-
-    fn read_u64(&mut self) -> Result<u64, JsValue> {
-        let mut bytes = [0u8; 8];
-        bytes.copy_from_slice(self.read_exact(8)?);
-        Ok(u64::from_le_bytes(bytes))
-    }
-
-    fn read_string(&mut self) -> Result<String, JsValue> {
-        let len = self.read_u32()? as usize;
-        let bytes = self.read_exact(len)?;
-        String::from_utf8(bytes.to_vec()).map_err(js_error)
-    }
-
-    fn read_field_value(&mut self) -> Result<FieldValue, JsValue> {
-        Ok(match self.read_u8()? {
-            0 => match self.read_u8()? {
-                0 => FieldValue::Bool(false),
-                1 => FieldValue::Bool(true),
-                value => return Err(js_error(format!("Invalid bridge bool value {value}"))),
-            },
-            1 => FieldValue::I64(self.read_i64()?),
-            2 => FieldValue::U64(self.read_u64()?),
-            3 => FieldValue::String(self.read_string()?),
-            tag => return Err(js_error(format!("Unknown bridge field value tag {tag}"))),
-        })
-    }
-
-    fn read_exact(&mut self, len: usize) -> Result<&'a [u8], JsValue> {
-        let Some(end) = self.offset.checked_add(len) else {
-            return Err(js_error("Bridge payload offset overflow"));
-        };
-        let Some(bytes) = self.bytes.get(self.offset..end) else {
-            return Err(js_error("Unexpected end of bridge payload"));
-        };
-        self.offset = end;
-        Ok(bytes)
-    }
+    fields.insert_scoped_scalar(scope, FieldPath::Id(field), FieldValue::from(bytes));
+    Ok(())
 }
 
-fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
-    let mut reader = BridgeReader::new(fields_bytes);
-    ensure_bridge_version(reader.read_u8()?)?;
-    let fact_count = reader.read_u32()? as usize;
-    let mut fields = DocumentFields::with_scalar_capacity(fact_count);
-    for _ in 0..fact_count {
-        let scope = reader.read_u32()?;
-        let field = reader.read_u32()?;
-        let value = reader.read_field_value()?;
-        fields.insert_scoped_scalar(scope, field, value);
+struct SharedLogCoordinateFieldsInput {
+    hash_field: u32,
+    hash_number_field: u32,
+    gid_field: u32,
+    coordinates_field: u32,
+    coordinates_array_field: u32,
+    wall_time_field: u32,
+    assigned_to_range_boundary_field: u32,
+    meta_field: u32,
+    hash: String,
+    hash_number: String,
+    gid: String,
+    coordinates: Array,
+    wall_time: String,
+    assigned_to_range_boundary: bool,
+    meta_bytes: Vec<u8>,
+    byte_element_index_limit: usize,
+}
+
+fn shared_log_coordinate_fields(
+    input: SharedLogCoordinateFieldsInput,
+) -> Result<DocumentFields, JsValue> {
+    let mut fields =
+        DocumentFields::with_scalar_capacity(8 + input.coordinates.length() as usize * 2);
+    let mut next_scope = 1u32;
+    insert_scalar(
+        &mut fields,
+        0,
+        input.hash_field,
+        FieldValue::from(input.hash),
+    );
+    insert_scalar(
+        &mut fields,
+        0,
+        input.hash_number_field,
+        FieldValue::U64(parse_u64_string(&input.hash_number, "hashNumber")?),
+    );
+    insert_scalar(&mut fields, 0, input.gid_field, FieldValue::from(input.gid));
+    for coordinate in input.coordinates.iter() {
+        let coordinate = coordinate
+            .as_string()
+            .ok_or_else(|| js_error("Invalid shared-log coordinate"))?;
+        let scope = next_scope;
+        next_scope = next_scope
+            .checked_add(1)
+            .ok_or_else(|| js_error("Shared-log coordinate scope overflow"))?;
+        insert_scalar(
+            &mut fields,
+            scope,
+            input.coordinates_array_field,
+            FieldValue::Bool(true),
+        );
+        insert_scalar(
+            &mut fields,
+            scope,
+            input.coordinates_field,
+            FieldValue::U64(parse_u64_string(&coordinate, "coordinate")?),
+        );
     }
-    reader.finish()?;
+    insert_scalar(
+        &mut fields,
+        0,
+        input.wall_time_field,
+        FieldValue::U64(parse_u64_string(&input.wall_time, "wallTime")?),
+    );
+    insert_scalar(
+        &mut fields,
+        0,
+        input.assigned_to_range_boundary_field,
+        FieldValue::Bool(input.assigned_to_range_boundary),
+    );
+    let mut state = NativeExtractState {
+        next_scope,
+        byte_element_index_limit: input.byte_element_index_limit,
+    };
+    insert_bytes_facts(
+        &mut fields,
+        &mut state,
+        0,
+        input.meta_field,
+        input.meta_bytes,
+    )?;
     Ok(fields)
 }
 
+fn parse_u64_string(value: &str, field: &str) -> Result<u64, JsValue> {
+    value
+        .parse::<u64>()
+        .map_err(|_| js_error(format!("Invalid shared-log {field}")))
+}
+
+fn required_array_string(array: &Array, index: u32, field: &str) -> Result<String, JsValue> {
+    array
+        .get(index)
+        .as_string()
+        .ok_or_else(|| js_error(format!("Invalid {field}")))
+}
+
+fn required_nested_array(array: &Array, index: u32, field: &str) -> Result<Array, JsValue> {
+    let value = array.get(index);
+    if !Array::is_array(&value) {
+        return Err(js_error(format!("Invalid {field}")));
+    }
+    Ok(Array::from(&value))
+}
+
+fn decode_document_fields(fields_bytes: &[u8]) -> Result<DocumentFields, JsValue> {
+    decode_core_document_fields(fields_bytes).map_err(js_error)
+}
+
 fn decode_query(query_bytes: &[u8]) -> Result<Query, JsValue> {
-    let payload = QueryPayloadDto::try_from_slice(query_bytes).map_err(js_error)?;
-    ensure_bridge_version(payload.version)?;
-    payload.query.try_into()
+    decode_core_query(query_bytes).map_err(js_error)
 }
 
 fn decode_sort(sort_bytes: &[u8]) -> Result<Vec<SortField>, JsValue> {
-    let payload = SortPayloadDto::try_from_slice(sort_bytes).map_err(js_error)?;
-    ensure_bridge_version(payload.version)?;
-    Ok(payload
-        .fields
-        .into_iter()
-        .map(|field| SortField {
-            field: FieldPath::Id(field.field),
-            direction: field.direction.into(),
-        })
-        .collect())
-}
-
-impl TryFrom<QueryDto> for Query {
-    type Error = JsValue;
-
-    fn try_from(value: QueryDto) -> Result<Self, Self::Error> {
-        Ok(match value {
-            QueryDto::All => Query::All,
-            QueryDto::Exact { field, value } => Query::Exact {
-                field: FieldPath::Id(field),
-                value: value.into(),
-            },
-            QueryDto::Range {
-                field,
-                compare,
-                value,
-            } => Query::Range {
-                field: FieldPath::Id(field),
-                compare: compare.into(),
-                value: value.into(),
-            },
-            QueryDto::And { queries } => Query::And(decode_queries(queries)?),
-            QueryDto::Or { queries } => Query::Or(decode_queries(queries)?),
-            QueryDto::Not { query } => Query::Not(Box::new((*query).try_into()?)),
-            QueryDto::StringMatch {
-                field,
-                value,
-                method,
-                case_insensitive,
-            } => Query::StringMatch {
-                field: FieldPath::Id(field),
-                value,
-                method: method.into(),
-                case_insensitive,
-            },
-            QueryDto::IsNull { field } => Query::IsNull {
-                field: FieldPath::Id(field),
-            },
-        })
-    }
-}
-
-impl From<FieldValueDto> for FieldValue {
-    fn from(value: FieldValueDto) -> Self {
-        match value {
-            FieldValueDto::Bool(value) => FieldValue::Bool(value),
-            FieldValueDto::I64(value) => FieldValue::I64(value),
-            FieldValueDto::U64(value) => FieldValue::U64(value),
-            FieldValueDto::String(value) => FieldValue::String(value),
-        }
-    }
-}
-
-impl From<CompareDto> for Compare {
-    fn from(value: CompareDto) -> Self {
-        match value {
-            CompareDto::Equal => Compare::Equal,
-            CompareDto::Greater => Compare::Greater,
-            CompareDto::GreaterOrEqual => Compare::GreaterOrEqual,
-            CompareDto::Less => Compare::Less,
-            CompareDto::LessOrEqual => Compare::LessOrEqual,
-        }
-    }
-}
-
-impl From<SortDirectionDto> for SortDirection {
-    fn from(value: SortDirectionDto) -> Self {
-        match value {
-            SortDirectionDto::Asc => SortDirection::Asc,
-            SortDirectionDto::Desc => SortDirection::Desc,
-        }
-    }
-}
-
-impl From<StringMatchMethodDto> for StringMatchMethod {
-    fn from(value: StringMatchMethodDto) -> Self {
-        match value {
-            StringMatchMethodDto::Exact => StringMatchMethod::Exact,
-            StringMatchMethodDto::Prefix => StringMatchMethod::Prefix,
-            StringMatchMethodDto::Contains => StringMatchMethod::Contains,
-        }
-    }
-}
-
-fn decode_queries(queries: Vec<QueryDto>) -> Result<Vec<Query>, JsValue> {
-    queries.into_iter().map(Query::try_from).collect()
-}
-
-fn ensure_bridge_version(version: u8) -> Result<(), JsValue> {
-    if version == BRIDGE_VERSION {
-        Ok(())
-    } else {
-        Err(js_error(format!(
-            "Unsupported bridge payload version {version}"
-        )))
-    }
+    decode_core_sort(sort_bytes).map_err(js_error)
 }
 
 fn js_error(error: impl ToString) -> JsValue {

@@ -16,13 +16,17 @@ import {
 import {
 	EntryWithRefs,
 	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
 } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import type { EntryReplicated } from "../ranges.js";
 import type {
+	HashSymbolResolver,
+	HashSymbolHashListResolver,
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
+	SyncEntryCoordinates,
 	SyncOptions,
 	SyncableKey,
 	Syncronizer,
@@ -73,14 +77,76 @@ export class ConfirmEntriesMessage extends TransportMessage {
 	}
 }
 
+export const SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY = 1;
+
+@variant([0, 8])
+export class ResponseMaybeSyncCapabilities extends TransportMessage {
+	@field({ type: vec("string") })
+	hashes: string[];
+
+	@field({ type: "u32" })
+	capabilities: number;
+
+	constructor(props: { hashes: string[]; capabilities?: number }) {
+		super();
+		this.hashes = props.hashes;
+		this.capabilities =
+			props.capabilities ?? SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY;
+	}
+}
+
+@variant([0, 9])
+export class RequestMaybeSyncCoordinateCapabilities extends TransportMessage {
+	@field({ type: vec("u64") })
+	hashNumbers: bigint[];
+
+	@field({ type: "u32" })
+	capabilities: number;
+
+	constructor(props: { hashNumbers: bigint[]; capabilities?: number }) {
+		super();
+		this.hashNumbers = props.hashNumbers;
+		this.capabilities =
+			props.capabilities ?? SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY;
+	}
+}
+
+const canReceiveRawExchangeHeads = (
+	message:
+		| ResponseMaybeSync
+		| ResponseMaybeSyncCapabilities
+		| RequestMaybeSyncCoordinate
+		| RequestMaybeSyncCoordinateCapabilities,
+) =>
+	(message instanceof ResponseMaybeSyncCapabilities ||
+		message instanceof RequestMaybeSyncCoordinateCapabilities) &&
+	(message.capabilities & SIMPLE_SYNC_RAW_EXCHANGE_HEADS_CAPABILITY) !== 0;
+
+type KnownSyncKeys = {
+	keys: Set<SyncableKey>;
+	checkedCoordinates: boolean;
+	checkedHashes: boolean;
+};
+
 const getHashesFromSymbols = async (
 	symbols: bigint[],
 	entryIndex: Index<EntryReplicated<any>, any>,
 	coordinateToHash: Cache<string>,
-) => {
+	resolveHashesForSymbols?: HashSymbolResolver,
+	resolveHashListForSymbols?: HashSymbolHashListResolver,
+): Promise<Set<string> | string[]> => {
 	let queries: IntegerCompare[] = [];
 	let batchSize = 128; // TODO arg
 	let results = new Set<string>();
+	let missingSymbols: bigint[] = [];
+	const addMissingUnlessCached = (symbol: bigint) => {
+		const fromCache = coordinateToHash.get(symbol);
+		if (fromCache) {
+			results.add(fromCache);
+			return;
+		}
+		missingSymbols.push(symbol);
+	};
 	const handleBatch = async (end = false) => {
 		if (queries.length >= batchSize || (end && queries.length > 0)) {
 			const entries = await entryIndex
@@ -97,16 +163,63 @@ const getHashesFromSymbols = async (
 			}
 		}
 	};
-	for (let i = 0; i < symbols.length; i++) {
-		const fromCache = coordinateToHash.get(symbols[i]);
-		if (fromCache) {
-			results.add(fromCache);
-			continue;
+
+	if (resolveHashListForSymbols) {
+		const resolvedHashes = await resolveHashListForSymbols(symbols);
+		if (resolvedHashes) {
+			const resolvedHashList = Array.isArray(resolvedHashes)
+				? resolvedHashes
+				: [...resolvedHashes];
+			let mergedHashes: Set<string> | undefined;
+			for (const symbol of symbols) {
+				const fromCache = coordinateToHash.get(symbol);
+				if (fromCache) {
+					mergedHashes ??= new Set(resolvedHashList);
+					mergedHashes.add(fromCache);
+				}
+			}
+			return mergedHashes ?? resolvedHashList;
 		}
+	}
+
+	if (resolveHashesForSymbols) {
+		const resolved = await resolveHashesForSymbols(symbols);
+		if (resolved) {
+			for (const symbol of symbols) {
+				const hashes = resolved.get(symbol);
+				if (!hashes) {
+					addMissingUnlessCached(symbol);
+					continue;
+				}
+				let singleHash: string | undefined;
+				let count = 0;
+				for (const hash of hashes) {
+					results.add(hash);
+					singleHash = hash;
+					count += 1;
+				}
+				if (count === 0) {
+					addMissingUnlessCached(symbol);
+				} else if (count === 1) {
+					coordinateToHash.add(symbol, singleHash!);
+				}
+			}
+		} else {
+			for (const symbol of symbols) {
+				addMissingUnlessCached(symbol);
+			}
+		}
+	} else {
+		for (const symbol of symbols) {
+			addMissingUnlessCached(symbol);
+		}
+	}
+
+	for (const symbol of missingSymbols) {
 		const matchQuery = new IntegerCompare({
 			key: "hashNumber",
 			compare: Compare.Equal,
-			value: symbols[i],
+			value: symbol,
 		});
 
 		queries.push(matchQuery);
@@ -116,6 +229,9 @@ const getHashesFromSymbols = async (
 
 	return results;
 };
+
+const hashLookupResultSize = (hashes: Set<string> | string[]) =>
+	Array.isArray(hashes) ? hashes.length : hashes.size;
 
 const DEFAULT_CONVERGENT_REPAIR_TIMEOUT_MS = 30_000;
 const DEFAULT_CONVERGENT_RETRY_INTERVALS_MS = [0, 1_000, 3_000, 7_000];
@@ -178,6 +294,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	log: Log<any>;
 	entryIndex: Index<EntryReplicated<R>, any>;
 	coordinateToHash: Cache<string>;
+	private resolveHashesForSymbols?: HashSymbolResolver;
+	private resolveHashListForSymbols?: HashSymbolHashListResolver;
 	private syncOptions?: SyncOptions<R>;
 	private isEntryRecentlyKnownByPeer?: (
 		hash: string,
@@ -198,6 +316,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entryIndex: Index<EntryReplicated<R>, any>;
 		log: Log<any>;
 		coordinateToHash: Cache<string>;
+		resolveHashesForSymbols?: HashSymbolResolver;
+		resolveHashListForSymbols?: HashSymbolHashListResolver;
 		sync?: SyncOptions<R>;
 		isEntryRecentlyKnownByPeer?: (
 			hash: string,
@@ -212,6 +332,8 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.log = properties.log;
 		this.entryIndex = properties.entryIndex;
 		this.coordinateToHash = properties.coordinateToHash;
+		this.resolveHashesForSymbols = properties.resolveHashesForSymbols;
+		this.resolveHashListForSymbols = properties.resolveHashListForSymbols;
 		this.syncOptions = properties.sync;
 		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
 		this.recentlySentExchangeHeads = new Map();
@@ -220,7 +342,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	private getPrioritizedHashes(
-		entries: Map<string, EntryReplicated<R>>,
+		entries: Map<string, SyncEntryCoordinates<R>>,
 	): string[] {
 		const priorityFn = this.syncOptions?.priority;
 		if (!priorityFn) {
@@ -230,7 +352,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		let index = 0;
 		const scored: { hash: string; index: number; priority: number }[] = [];
 		for (const [hash, entry] of entries) {
-			const priorityValue = priorityFn(entry);
+			const priorityValue = priorityFn(entry as EntryReplicated<R>);
 			scored.push({
 				hash,
 				index,
@@ -384,12 +506,26 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			return;
 		}
 		for (const state of session.targets.values()) {
-			for (const hash of [...state.unresolved]) {
-				if (await this.log.has(hash)) {
-					state.unresolved.delete(hash);
-				}
+			const resolved =
+				typeof this.log.hasMany === "function"
+					? await this.log.hasMany(state.unresolved)
+					: await this.getExistingRepairHashes(state.unresolved);
+			for (const hash of resolved) {
+				state.unresolved.delete(hash);
 			}
 		}
+	}
+
+	private async getExistingRepairHashes(
+		hashes: Iterable<string>,
+	): Promise<Set<string>> {
+		const resolved = new Set<string>();
+		for (const hash of hashes) {
+			if (await this.log.has(hash)) {
+				resolved.add(hash);
+			}
+		}
+		return resolved;
 	}
 
 	private markRepairSessionResolvedHashes(hashes: string[]): void {
@@ -401,6 +537,20 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				for (const hash of hashes) {
 					state.unresolved.delete(hash);
 				}
+			}
+			if (this.isRepairSessionComplete(session)) {
+				this.finalizeRepairSession(sessionId, true);
+			}
+		}
+	}
+
+	private markRepairSessionResolvedHash(hash: string): void {
+		if (this.repairSessions.size === 0) {
+			return;
+		}
+		for (const [sessionId, session] of this.repairSessions) {
+			for (const state of session.targets.values()) {
+				state.unresolved.delete(hash);
 			}
 			if (this.isRepairSessionComplete(session)) {
 				this.finalizeRepairSession(sessionId, true);
@@ -510,7 +660,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	startRepairSession(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 		mode?: RepairSessionMode;
 		timeoutMs?: number;
@@ -606,12 +756,22 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	async onMaybeMissingEntries(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
+		targets: string[];
+	}): Promise<void> {
+		await this.onMaybeMissingHashes({
+			hashes: this.getPrioritizedHashes(properties.entries),
+			targets: properties.targets,
+		});
+	}
+
+	async onMaybeMissingHashes(properties: {
+		hashes: Iterable<string>;
 		targets: string[];
 	}): Promise<void> {
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
-		const hashes = this.getPrioritizedHashes(properties.entries);
+		const hashes = [...properties.hashes];
 		const chunks = this.chunk(hashes, this.maxHashesPerMessage);
 		try {
 			await chunks.reduce(
@@ -647,7 +807,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (msg instanceof RequestMaybeSync) {
 			await this.queueSync(msg.hashes, from);
 			return true;
-		} else if (msg instanceof ResponseMaybeSync) {
+		} else if (
+			msg instanceof ResponseMaybeSync ||
+			msg instanceof ResponseMaybeSyncCapabilities
+		) {
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			// TODO wait for previous send to target before trying to send more?
 
@@ -655,11 +818,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const startedAt = syncProfileStart(profile);
 			const hashes = this.filterRecentlySentExchangeHeads(msg.hashes, from);
 			let messages = 0;
+			const createMessages = canReceiveRawExchangeHeads(msg)
+				? createRawExchangeHeadsMessages
+				: createExchangeHeadsMessages;
 			try {
-				for await (const message of createExchangeHeadsMessages(
-					this.log,
-					hashes,
-				)) {
+				for await (const message of createMessages(this.log, hashes)) {
 					messages += 1;
 					await this.rpc.send(message, {
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
@@ -677,18 +840,23 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 			}
 			return true;
-		} else if (msg instanceof RequestMaybeSyncCoordinate) {
+		} else if (
+			msg instanceof RequestMaybeSyncCoordinate ||
+			msg instanceof RequestMaybeSyncCoordinateCapabilities
+		) {
 			const profile = this.syncOptions?.profile;
 			const lookupStartedAt = syncProfileStart(profile);
 			const hashes = await getHashesFromSymbols(
 				msg.hashNumbers,
 				this.entryIndex,
 				this.coordinateToHash,
+				this.resolveHashesForSymbols,
+				this.resolveHashListForSymbols,
 			);
 			if (profile) {
 				emitSyncProfileDuration(profile, lookupStartedAt, {
 					name: "simple.coordinateLookup",
-					entries: hashes.size,
+					entries: hashLookupResultSize(hashes),
 					symbols: msg.hashNumbers.length,
 				});
 			}
@@ -696,11 +864,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const exchangeStartedAt = syncProfileStart(profile);
 			const hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
 			let messages = 0;
+			const createMessages = canReceiveRawExchangeHeads(msg)
+				? createRawExchangeHeadsMessages
+				: createExchangeHeadsMessages;
 			try {
-				for await (const message of createExchangeHeadsMessages(
-					this.log,
-					hashesToSend,
-				)) {
+				for await (const message of createMessages(this.log, hashesToSend)) {
 					messages += 1;
 					await this.rpc.send(message, {
 						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
@@ -729,15 +897,21 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		entries: EntryWithRefs<any>[];
 		from: PublicSignKey;
 	}): Promise<void> | void {
-		const resolvedHashes: string[] = [];
-		for (const entry of properties.entries) {
-			resolvedHashes.push(entry.entry.hash);
-			this.clearSyncInFlightForPeer(
-				properties.from.hashcode(),
-				entry.entry.hash,
-			);
-		}
-		this.markRepairSessionResolvedHashes(resolvedHashes);
+		return this.onReceivedEntryHashes({
+			hashes: properties.entries.map((entry) => entry.entry.hash),
+			from: properties.from,
+		});
+	}
+
+	onReceivedEntryHashes(properties: {
+		hashes: string[];
+		from: PublicSignKey;
+	}): Promise<void> | void {
+		this.clearSyncInFlightForPeerHashes(
+			properties.from.hashcode(),
+			properties.hashes,
+		);
+		this.markRepairSessionResolvedHashes(properties.hashes);
 	}
 
 	async queueSync(
@@ -748,39 +922,101 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		const requestHashes: SyncableKey[] = [];
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
+		const resolveKnownStartedAt = syncProfileStart(profile);
+		const knownKeys =
+			options?.skipCheck === true
+				? undefined
+				: await this.resolveKnownSyncKeys(keys);
+		if (profile) {
+			emitSyncProfileDuration(profile, resolveKnownStartedAt, {
+				name: "simple.queueSync.resolveKnown",
+				entries: keys.length,
+				count: knownKeys?.keys.size ?? 0,
+				details: {
+					checkedCoordinates: knownKeys?.checkedCoordinates === true,
+					checkedHashes: knownKeys?.checkedHashes === true,
+					skipCheck: options?.skipCheck === true,
+				},
+			});
+		}
+		const fromHash = from.hashcode();
+		let queuedHashAliases: Map<string, SyncableKey> | undefined;
+		const getQueuedSyncKeyForBatch = (key: SyncableKey) => {
+			if (this.syncInFlightQueue.has(key)) {
+				return key;
+			}
+			if (typeof key === "string") {
+				if (!queuedHashAliases) {
+					queuedHashAliases = new Map();
+					for (const queuedKey of this.syncInFlightQueue.keys()) {
+						if (typeof queuedKey !== "bigint") {
+							continue;
+						}
+						const hash = this.coordinateToHash.get(queuedKey);
+						if (hash) {
+							queuedHashAliases.set(hash, queuedKey);
+						}
+					}
+				}
+				return queuedHashAliases.get(key);
+			}
+			const hash = this.coordinateToHash.get(key);
+			return hash && this.syncInFlightQueue.has(hash) ? hash : undefined;
+		};
 
 		try {
+			const loopStartedAt = syncProfileStart(profile);
 			for (const key of keys) {
-				const coordinateOrHash = this.getQueuedSyncKey(key) ?? key;
+				const coordinateOrHash = getQueuedSyncKeyForBatch(key) ?? key;
 				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
 				if (inFlight) {
-					if (!inFlight.find((x) => x.hashcode() === from.hashcode())) {
+					if (!inFlight.find((x) => x.hashcode() === fromHash)) {
 						inFlight.push(from);
-						let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
+						let inverted = this.syncInFlightQueueInverted.get(fromHash);
 						if (!inverted) {
 							inverted = new Set();
-							this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
+							this.syncInFlightQueueInverted.set(fromHash, inverted);
 						}
 						inverted.add(coordinateOrHash);
 					}
 				} else if (
 					options?.skipCheck ||
-					!(await this.checkHasCoordinateOrHash(coordinateOrHash))
+					!(await this.checkHasCoordinateOrHash(
+						coordinateOrHash,
+						knownKeys,
+					))
 				) {
 					// Track the initial sender so we can retry if the first request is lost.
 					this.syncInFlightQueue.set(coordinateOrHash, [from]);
-					let inverted = this.syncInFlightQueueInverted.get(from.hashcode());
+					let inverted = this.syncInFlightQueueInverted.get(fromHash);
 					if (!inverted) {
 						inverted = new Set();
-						this.syncInFlightQueueInverted.set(from.hashcode(), inverted);
+						this.syncInFlightQueueInverted.set(fromHash, inverted);
 					}
 					inverted.add(coordinateOrHash);
 					requestHashes.push(coordinateOrHash); // request immediately (first time we have seen this hash)
+					if (
+						queuedHashAliases &&
+						typeof coordinateOrHash === "bigint"
+					) {
+						const hash = this.coordinateToHash.get(coordinateOrHash);
+						if (hash) {
+							queuedHashAliases.set(hash, coordinateOrHash);
+						}
+					}
 				}
+			}
+			if (profile) {
+				emitSyncProfileDuration(profile, loopStartedAt, {
+					name: "simple.queueSync.plan",
+					entries: keys.length,
+					count: requestHashes.length,
+					targets: 1,
+				});
 			}
 
 			requestHashes.length > 0 &&
-				(await this.requestSync(requestHashes, [from!.hashcode()]));
+				(await this.requestSync(requestHashes, [fromHash]));
 		} finally {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
@@ -832,32 +1068,41 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			coordinateHashCount = coordinateHashes.length;
 			stringHashCount = stringHashes.length;
 
-			if (coordinateHashes.length > 0) {
-				const chunks = this.chunk(
-					coordinateHashes,
-					this.maxCoordinatesPerMessage,
-				);
-				coordinateMessages = chunks.length;
-				for (const chunk of chunks) {
-					await this.rpc.send(
-						new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
-						{
-							mode: new SilentDelivery({ to, redundancy: 1 }),
-							priority: SYNC_MESSAGE_PRIORITY,
-						},
+				if (coordinateHashes.length > 0) {
+					const chunks = this.chunk(
+						coordinateHashes,
+						this.maxCoordinatesPerMessage,
 					);
+					coordinateMessages = chunks.length;
+					for (const chunk of chunks) {
+						await this.rpc.send(
+							this.syncOptions?.rawExchangeHeads
+								? new RequestMaybeSyncCoordinateCapabilities({
+										hashNumbers: chunk,
+									})
+								: new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
+							{
+								mode: new SilentDelivery({ to, redundancy: 1 }),
+								priority: SYNC_MESSAGE_PRIORITY,
+							},
+						);
+					}
 				}
-			}
-			if (stringHashes.length > 0) {
-				const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
-				stringMessages = chunks.length;
-				for (const chunk of chunks) {
-					await this.rpc.send(new ResponseMaybeSync({ hashes: chunk }), {
-						mode: new SilentDelivery({ to, redundancy: 1 }),
-						priority: SYNC_MESSAGE_PRIORITY,
-					});
+				if (stringHashes.length > 0) {
+					const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
+					stringMessages = chunks.length;
+					for (const chunk of chunks) {
+						await this.rpc.send(
+							this.syncOptions?.rawExchangeHeads
+								? new ResponseMaybeSyncCapabilities({ hashes: chunk })
+								: new ResponseMaybeSync({ hashes: chunk }),
+							{
+								mode: new SilentDelivery({ to, redundancy: 1 }),
+								priority: SYNC_MESSAGE_PRIORITY,
+							},
+						);
+					}
 				}
-			}
 		} finally {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
@@ -873,7 +1118,63 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 		}
 	}
-	private async checkHasCoordinateOrHash(key: string | bigint) {
+	private async resolveKnownSyncKeys(
+		keys: SyncableKey[],
+	): Promise<KnownSyncKeys | undefined> {
+		const hashes: string[] = [];
+		const coordinates: bigint[] = [];
+		for (const key of keys) {
+			if (typeof key === "bigint") {
+				coordinates.push(key);
+			} else {
+				hashes.push(key);
+			}
+		}
+		const known: KnownSyncKeys = {
+			keys: new Set(),
+			checkedCoordinates: false,
+			checkedHashes: false,
+		};
+		if (hashes.length > 0) {
+			for (const hash of await this.log.hasMany(hashes)) {
+				known.keys.add(hash);
+			}
+			known.checkedHashes = true;
+		}
+		if (coordinates.length > 0 && this.resolveHashesForSymbols) {
+			const resolved = await this.resolveHashesForSymbols(coordinates);
+			if (resolved) {
+				for (const coordinate of coordinates) {
+					const hashes = resolved.get(coordinate);
+					if (!hashes) {
+						continue;
+					}
+					for (const _hash of hashes) {
+						known.keys.add(coordinate);
+						break;
+					}
+				}
+				known.checkedCoordinates = true;
+			}
+		}
+		return known.checkedCoordinates || known.checkedHashes ? known : undefined;
+	}
+
+	private async checkHasCoordinateOrHash(
+		key: string | bigint,
+		knownKeys?: KnownSyncKeys,
+	) {
+		if (knownKeys) {
+			if (knownKeys.keys.has(key)) {
+				return true;
+			}
+			if (typeof key === "bigint" && knownKeys.checkedCoordinates) {
+				return false;
+			}
+			if (typeof key === "string" && knownKeys.checkedHashes) {
+				return false;
+			}
+		}
 		return typeof key === "bigint"
 			? (await this.entryIndex.count({ query: { hashNumber: key } })) > 0
 			: this.log.has(key);
@@ -964,12 +1265,49 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		clearTimeout(this.syncMoreInterval);
 	}
 	onEntryAdded(entry: Entry<any>): void {
-		this.clearSyncProcess(entry.hash);
-		this.markRepairSessionResolvedHashes([entry.hash]);
+		this.onEntryAddedHash(entry.hash);
+	}
+
+	onEntryAddedHashes(hashes: string[]): void {
+		if (hashes.length === 0 || !this.hasEntryAddedState()) {
+			return;
+		}
+		this.clearSyncProcesses(hashes);
+		this.markRepairSessionResolvedHashes(hashes);
+	}
+
+	onEntryAddedHash(hash: string): void {
+		if (!this.hasEntryAddedState()) {
+			return;
+		}
+		this.clearSyncProcess(hash);
+		this.markRepairSessionResolvedHash(hash);
 	}
 
 	onEntryRemoved(hash: string): void {
+		if (!this.hasSyncProcessState()) {
+			return;
+		}
 		return this.clearSyncProcess(hash);
+	}
+
+	onEntryRemovedHashes(hashes: string[]): void {
+		if (hashes.length === 0 || !this.hasSyncProcessState()) {
+			return;
+		}
+		return this.clearSyncProcesses(hashes);
+	}
+
+	private hasEntryAddedState(): boolean {
+		return this.hasSyncProcessState() || this.repairSessions.size > 0;
+	}
+
+	private hasSyncProcessState(): boolean {
+		return (
+			this.syncInFlightQueue.size > 0 ||
+			this.syncInFlightQueueInverted.size > 0 ||
+			this.syncInFlight.size > 0
+		);
 	}
 
 	private clearSyncProcessKey(key: SyncableKey) {
@@ -1000,17 +1338,29 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
-	private getKnownAliases(hash: string): SyncableKey[] {
-		const aliases = new Set<SyncableKey>([hash]);
-		for (const key of [
-			...this.syncInFlightQueue.keys(),
-			...[...this.syncInFlight.values()].flatMap((map) => [...map.keys()]),
-		]) {
+	private forEachKnownAlias(
+		hash: string,
+		callback: (key: SyncableKey) => void,
+	): void {
+		callback(hash);
+		if (this.syncInFlightQueue.size === 0 && this.syncInFlight.size === 0) {
+			return;
+		}
+		for (const key of this.syncInFlightQueue.keys()) {
 			if (typeof key === "bigint" && this.coordinateToHash.get(key) === hash) {
-				aliases.add(key);
+				callback(key);
 			}
 		}
-		return [...aliases];
+		for (const map of this.syncInFlight.values()) {
+			for (const key of map.keys()) {
+				if (
+					typeof key === "bigint" &&
+					this.coordinateToHash.get(key) === hash
+				) {
+					callback(key);
+				}
+			}
+		}
 	}
 
 	private clearSyncInFlightForPeer(publicKeyHash: string, hash: string) {
@@ -1018,7 +1368,32 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		if (!map) {
 			return;
 		}
-		for (const key of this.getKnownAliases(hash)) {
+		this.forEachKnownAlias(hash, (key) => map.delete(key));
+		if (map.size === 0) {
+			this.syncInFlight.delete(publicKeyHash);
+		}
+	}
+
+	private clearSyncInFlightForPeerHashes(
+		publicKeyHash: string,
+		hashes: string[],
+	) {
+		const map = this.syncInFlight.get(publicKeyHash);
+		if (!map || hashes.length === 0) {
+			return;
+		}
+		const keys = new Set<SyncableKey>(hashes);
+		const hashSet = new Set(hashes);
+		for (const key of map.keys()) {
+			if (typeof key !== "bigint") {
+				continue;
+			}
+			const hash = this.coordinateToHash.get(key);
+			if (hash != null && hashSet.has(hash)) {
+				keys.add(key);
+			}
+		}
+		for (const key of keys) {
 			map.delete(key);
 		}
 		if (map.size === 0) {
@@ -1027,7 +1402,33 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	}
 
 	private clearSyncProcess(hash: string) {
-		for (const key of this.getKnownAliases(hash)) {
+		this.forEachKnownAlias(hash, (key) => this.clearSyncProcessKey(key));
+	}
+
+	private clearSyncProcesses(hashes: string[]) {
+		if (hashes.length === 0) {
+			return;
+		}
+		const keys = new Set<SyncableKey>(hashes);
+		const hashSet = new Set(hashes);
+		const maybeAddAlias = (key: SyncableKey) => {
+			if (typeof key !== "bigint") {
+				return;
+			}
+			const hash = this.coordinateToHash.get(key);
+			if (hash != null && hashSet.has(hash)) {
+				keys.add(key);
+			}
+		};
+		for (const key of this.syncInFlightQueue.keys()) {
+			maybeAddAlias(key);
+		}
+		for (const map of this.syncInFlight.values()) {
+			for (const key of map.keys()) {
+				maybeAddAlias(key);
+			}
+		}
+		for (const key of keys) {
 			this.clearSyncProcessKey(key);
 		}
 	}

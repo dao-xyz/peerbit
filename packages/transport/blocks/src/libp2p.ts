@@ -1,5 +1,6 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { createStore } from "@peerbit/any-store";
+import type { AnyStore } from "@peerbit/any-store-interface";
 import type { GetOptions, Blocks as IBlocks } from "@peerbit/blocks-interface";
 import { getPublicKeyFromPeerId, type PublicSignKey } from "@peerbit/crypto";
 import { DirectStream } from "@peerbit/stream";
@@ -9,6 +10,7 @@ import {
 	type DataMessage,
 	type WaitForPeersFn,
 } from "@peerbit/stream-interface";
+import type { Block } from "multiformats/block";
 import { AnyBlockStore } from "./any-blockstore.js";
 import { BlockMessage, RemoteBlocks } from "./remote.js";
 
@@ -23,6 +25,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		components: DirectBlockComponents,
 		options?: {
 			directory?: string;
+			localStore?: AnyStore;
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
@@ -49,6 +52,10 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			requeryOnReachable?: number;
 		},
 	) {
+		if (options?.directory && options.localStore) {
+			throw new Error("DirectBlock options cannot include both directory and localStore");
+		}
+
 		super(components, ["/peerbit/direct-block/1.0.0"], {
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
 			canRelayMessage: options?.canRelayMessage ?? true,
@@ -89,7 +96,9 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			return out;
 		};
 		this.remoteBlocks = new RemoteBlocks({
-			local: new AnyBlockStore(createStore(options?.directory)),
+			local: new AnyBlockStore(
+				options?.localStore ?? createStore(options?.directory),
+			),
 			publish: (message, options) => this.publish(serialize(message), options),
 			localTimeout: options?.localTimeout || 1000,
 			messageProcessingConcurrency: options?.messageProcessingConcurrency || 10,
@@ -118,12 +127,39 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			this.remoteBlocks.onReachable(evt.detail);
 	}
 
-	async put(bytes: Uint8Array): Promise<string> {
+	getNativeLogBlockStoreHandle(): unknown {
+		return this.remoteBlocks.getNativeLogBlockStoreHandle();
+	}
+
+	async put(
+		bytes: Uint8Array | { block: Block<any, any, any, any>; cid: string },
+	): Promise<string> {
 		return this.remoteBlocks.put(bytes);
+	}
+
+	async putMany(
+		blocks: Array<
+			Uint8Array | { block: Block<any, any, any, any>; cid: string }
+		>,
+	): Promise<string[]> {
+		return this.remoteBlocks.putMany(blocks);
+	}
+
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		return this.remoteBlocks.putKnown(cid, bytes);
+	}
+
+	async putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): Promise<string[]> {
+		return this.remoteBlocks.putKnownMany(blocks);
 	}
 
 	async has(cid: string) {
 		return this.remoteBlocks.has(cid);
+	}
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		return this.remoteBlocks.hasMany(cids);
 	}
 	async get(
 		cid: string,
@@ -132,12 +168,23 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		return this.remoteBlocks.get(cid, options);
 	}
 
+	async getMany(
+		cids: string[],
+		options?: GetOptions | undefined,
+	): Promise<Array<Uint8Array | undefined>> {
+		return this.remoteBlocks.getMany(cids, options);
+	}
+
 	hintProviders(cid: string, providers: string[]) {
 		this.remoteBlocks.hintProviders(cid, providers);
 	}
 
 	async rm(cid: string) {
 		return this.remoteBlocks.rm(cid);
+	}
+
+	async rmMany(cids: string[]) {
+		return this.remoteBlocks.rmMany(cids);
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {

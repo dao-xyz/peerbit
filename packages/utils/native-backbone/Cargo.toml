@@ -1,0 +1,19 @@
+[package]
+name = "peerbit_native_backbone"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "Native transaction backbone for Peerbit"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+js-sys = "0.3.80"
+peerbit_indexer_core = { path = "../indexer/core" }
+peerbit_log_rust = { path = "../../log/rust" }
+peerbit_shared_log_rust = { path = "../../programs/data/shared-log/rust" }
+wasm-bindgen = "0.2.103"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

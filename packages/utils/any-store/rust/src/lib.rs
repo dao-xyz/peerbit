@@ -1,0 +1,427 @@
+use indexmap::IndexMap;
+use js_sys::{Array, Uint8Array};
+use wasm_bindgen::prelude::*;
+
+const SNAPSHOT_MAGIC: &[u8; 8] = b"PBAKVS1\0";
+const JOURNAL_MAGIC: &[u8; 8] = b"PBAKVJ1\0";
+
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum JournalOperation {
+    Put = 1,
+    Delete = 2,
+    Clear = 3,
+}
+
+#[wasm_bindgen]
+pub struct NativeAnyStore {
+    entries: IndexMap<String, Vec<u8>>,
+    total_size: usize,
+}
+
+#[wasm_bindgen]
+impl NativeAnyStore {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> NativeAnyStore {
+        NativeAnyStore {
+            entries: IndexMap::new(),
+            total_size: 0,
+        }
+    }
+
+    pub fn get(&self, key: &str) -> Option<Vec<u8>> {
+        self.entries.get(key).cloned()
+    }
+
+    pub fn has_many(&self, keys: Array) -> Result<Array, JsValue> {
+        let present = Array::new();
+        for key in parse_keys(&keys).map_err(js_error)? {
+            present.push(&JsValue::from_bool(self.entries.contains_key(&key)));
+        }
+        Ok(present)
+    }
+
+    pub fn put(&mut self, key: String, value: Vec<u8>) {
+        let value_len = value.len();
+        if let Some(previous) = self.entries.insert(key, value) {
+            self.total_size = self.total_size.saturating_sub(previous.len());
+        }
+        self.total_size += value_len;
+    }
+
+    pub fn put_many(&mut self, keys: Array, values: Array) -> Result<(), JsValue> {
+        for (key, value) in parse_key_values(&keys, &values).map_err(js_error)? {
+            self.put(key, value);
+        }
+        Ok(())
+    }
+
+    pub fn delete(&mut self, key: &str) -> bool {
+        // swap_remove is O(1); iteration order is not part of the AnyStore
+        // contract (backends already disagree on it).
+        if let Some((_key, previous)) = self.entries.swap_remove_entry(key) {
+            self.total_size = self.total_size.saturating_sub(previous.len());
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn delete_many(&mut self, keys: Array) -> Result<usize, JsValue> {
+        let mut deleted = 0;
+        for key in parse_keys(&keys).map_err(js_error)? {
+            if self.delete(&key) {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.total_size = 0;
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn size(&self) -> usize {
+        self.total_size
+    }
+
+    pub fn entries(&self) -> Array {
+        let entries = Array::new();
+        for (key, value) in &self.entries {
+            let pair = Array::new();
+            pair.push(&JsValue::from_str(key));
+            pair.push(&Uint8Array::from(value.as_slice()));
+            entries.push(&pair);
+        }
+        entries
+    }
+
+    pub fn get_many(&self, keys: Array) -> Result<Array, JsValue> {
+        let values = Array::new();
+        for key in parse_keys(&keys).map_err(js_error)? {
+            match self.entries.get(&key) {
+                Some(value) => values.push(&Uint8Array::from(value.as_slice())),
+                None => values.push(&JsValue::UNDEFINED),
+            };
+        }
+        Ok(values)
+    }
+
+    pub fn snapshot(&self) -> Vec<u8> {
+        encode_snapshot(&self.entries)
+    }
+
+    pub fn load_snapshot(&mut self, bytes: Vec<u8>) -> Result<(), JsValue> {
+        let entries = decode_snapshot(&bytes).map_err(js_error)?;
+        self.entries = entries;
+        self.recalculate_size();
+        Ok(())
+    }
+
+    pub fn apply_journal(&mut self, bytes: Vec<u8>) -> Result<usize, JsValue> {
+        apply_journal(self, &bytes).map_err(js_error)
+    }
+
+    pub fn encode_put_record(&self, key: String, value: Vec<u8>) -> Vec<u8> {
+        encode_record(JournalOperation::Put, key.as_bytes(), &value)
+    }
+
+    pub fn encode_put_records(&self, keys: Array, values: Array) -> Result<Vec<u8>, JsValue> {
+        let entries = parse_key_values(&keys, &values).map_err(js_error)?;
+        let mut output = Vec::new();
+        for (key, value) in entries {
+            output.extend_from_slice(&encode_record(
+                JournalOperation::Put,
+                key.as_bytes(),
+                &value,
+            ));
+        }
+        Ok(output)
+    }
+
+    pub fn encode_delete_record(&self, key: String) -> Vec<u8> {
+        encode_record(JournalOperation::Delete, key.as_bytes(), &[])
+    }
+
+    pub fn encode_delete_records(&self, keys: Array) -> Result<Vec<u8>, JsValue> {
+        let keys = parse_keys(&keys).map_err(js_error)?;
+        let mut output = Vec::new();
+        for key in keys {
+            output.extend_from_slice(&encode_record(
+                JournalOperation::Delete,
+                key.as_bytes(),
+                &[],
+            ));
+        }
+        Ok(output)
+    }
+
+    pub fn encode_clear_record(&self) -> Vec<u8> {
+        encode_record(JournalOperation::Clear, &[], &[])
+    }
+}
+
+impl NativeAnyStore {
+    fn recalculate_size(&mut self) {
+        self.total_size = self.entries.values().map(|value| value.len()).sum();
+    }
+}
+
+fn js_error(error: String) -> JsValue {
+    JsValue::from_str(&error)
+}
+
+fn parse_keys(keys: &Array) -> Result<Vec<String>, String> {
+    let mut parsed = Vec::with_capacity(keys.length() as usize);
+    for index in 0..keys.length() {
+        let key = keys
+            .get(index)
+            .as_string()
+            .ok_or_else(|| format!("key at index {index} is not a string"))?;
+        parsed.push(key);
+    }
+    Ok(parsed)
+}
+
+fn parse_key_values(keys: &Array, values: &Array) -> Result<Vec<(String, Vec<u8>)>, String> {
+    if keys.length() != values.length() {
+        return Err("keys and values length mismatch".to_string());
+    }
+    let mut parsed = Vec::with_capacity(keys.length() as usize);
+    for index in 0..keys.length() {
+        let key = keys
+            .get(index)
+            .as_string()
+            .ok_or_else(|| format!("key at index {index} is not a string"))?;
+        let value = values.get(index);
+        if value.is_null() || value.is_undefined() {
+            return Err(format!("value at index {index} is missing"));
+        }
+        parsed.push((key, Uint8Array::new(&value).to_vec()));
+    }
+    Ok(parsed)
+}
+
+fn fnv1a(bytes: &[u8]) -> u32 {
+    let mut hash = 0x811c9dc5_u32;
+    for byte in bytes {
+        hash ^= *byte as u32;
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    hash
+}
+
+fn push_u32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_le_bytes());
+}
+
+fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32, String> {
+    let data = read_bytes(bytes, offset, 4)?;
+    Ok(u32::from_le_bytes([data[0], data[1], data[2], data[3]]))
+}
+
+fn read_bytes<'a>(bytes: &'a [u8], offset: &mut usize, len: usize) -> Result<&'a [u8], String> {
+    let end = offset
+        .checked_add(len)
+        .ok_or_else(|| "offset overflow".to_string())?;
+    if end > bytes.len() {
+        return Err("truncated bytes".to_string());
+    }
+    let data = &bytes[*offset..end];
+    *offset = end;
+    Ok(data)
+}
+
+fn encode_snapshot(entries: &IndexMap<String, Vec<u8>>) -> Vec<u8> {
+    let mut payload = Vec::new();
+    push_u32(&mut payload, entries.len() as u32);
+    for (key, value) in entries {
+        push_u32(&mut payload, key.as_bytes().len() as u32);
+        push_u32(&mut payload, value.len() as u32);
+        payload.extend_from_slice(key.as_bytes());
+        payload.extend_from_slice(value);
+    }
+
+    let mut output = Vec::with_capacity(SNAPSHOT_MAGIC.len() + 8 + payload.len());
+    output.extend_from_slice(SNAPSHOT_MAGIC);
+    push_u32(&mut output, payload.len() as u32);
+    push_u32(&mut output, fnv1a(&payload));
+    output.extend_from_slice(&payload);
+    output
+}
+
+fn decode_snapshot(bytes: &[u8]) -> Result<IndexMap<String, Vec<u8>>, String> {
+    if bytes.is_empty() {
+        return Ok(IndexMap::new());
+    }
+
+    let payload = if bytes.starts_with(SNAPSHOT_MAGIC) {
+        let mut offset = SNAPSHOT_MAGIC.len();
+        let payload_len = read_u32(bytes, &mut offset)? as usize;
+        let checksum = read_u32(bytes, &mut offset)?;
+        let payload = read_bytes(bytes, &mut offset, payload_len)?;
+        if fnv1a(payload) != checksum {
+            return Err("snapshot checksum mismatch".to_string());
+        }
+        payload
+    } else {
+        bytes
+    };
+
+    let mut offset = 0;
+    let count = read_u32(payload, &mut offset)? as usize;
+    let mut entries = IndexMap::new();
+    for _ in 0..count {
+        let key_len = read_u32(payload, &mut offset)? as usize;
+        let value_len = read_u32(payload, &mut offset)? as usize;
+        let key = read_bytes(payload, &mut offset, key_len)?;
+        let value = read_bytes(payload, &mut offset, value_len)?;
+        let key = String::from_utf8(key.to_vec()).map_err(|error| error.to_string())?;
+        entries.insert(key, value.to_vec());
+    }
+    Ok(entries)
+}
+
+fn encode_record(operation: JournalOperation, key: &[u8], value: &[u8]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(1 + 8 + key.len() + value.len());
+    payload.push(operation as u8);
+    push_u32(&mut payload, key.len() as u32);
+    push_u32(&mut payload, value.len() as u32);
+    payload.extend_from_slice(key);
+    payload.extend_from_slice(value);
+
+    let mut output = Vec::with_capacity(JOURNAL_MAGIC.len() + 8 + payload.len());
+    output.extend_from_slice(JOURNAL_MAGIC);
+    push_u32(&mut output, payload.len() as u32);
+    push_u32(&mut output, fnv1a(&payload));
+    output.extend_from_slice(&payload);
+    output
+}
+
+/// Replays journal records, stopping at the first record that does not frame
+/// cleanly (torn tail after a mid-write crash) instead of failing the whole
+/// replay, mirroring peerbit_indexer_core journal recovery. Returns the number
+/// of bytes applied so callers can detect the tear and rewrite the checkpoint.
+/// Records that pass the checksum but carry an invalid payload still error.
+fn apply_journal(store: &mut NativeAnyStore, bytes: &[u8]) -> Result<usize, String> {
+    let mut applied = 0;
+    while applied < bytes.len() {
+        let mut offset = applied;
+        if !bytes[offset..].starts_with(JOURNAL_MAGIC) {
+            break;
+        }
+        offset += JOURNAL_MAGIC.len();
+        let Ok(payload_len) = read_u32(bytes, &mut offset) else {
+            break;
+        };
+        let Ok(checksum) = read_u32(bytes, &mut offset) else {
+            break;
+        };
+        let Ok(payload) = read_bytes(bytes, &mut offset, payload_len as usize) else {
+            break;
+        };
+        if fnv1a(payload) != checksum {
+            break;
+        }
+        apply_record_payload(store, payload)?;
+        applied = offset;
+    }
+    Ok(applied)
+}
+
+fn apply_record_payload(store: &mut NativeAnyStore, payload: &[u8]) -> Result<(), String> {
+    let mut offset = 0;
+    let operation = *read_bytes(payload, &mut offset, 1)?
+        .first()
+        .ok_or_else(|| "missing journal operation".to_string())?;
+    let key_len = read_u32(payload, &mut offset)? as usize;
+    let value_len = read_u32(payload, &mut offset)? as usize;
+    let key = read_bytes(payload, &mut offset, key_len)?;
+    let value = read_bytes(payload, &mut offset, value_len)?;
+    match operation {
+        1 => {
+            let key = String::from_utf8(key.to_vec()).map_err(|error| error.to_string())?;
+            store.put(key, value.to_vec());
+        }
+        2 => {
+            let key = String::from_utf8(key.to_vec()).map_err(|error| error.to_string())?;
+            store.delete(&key);
+        }
+        3 => store.clear(),
+        _ => return Err("unknown journal operation".to_string()),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_journal, decode_snapshot, NativeAnyStore};
+
+    #[test]
+    fn snapshot_roundtrips() {
+        let mut store = NativeAnyStore::new();
+        store.put("a".to_string(), vec![1, 2, 3]);
+        store.put("b".to_string(), vec![4]);
+        let snapshot = store.snapshot();
+        let entries = decode_snapshot(&snapshot).unwrap();
+        assert_eq!(entries.get("a").unwrap(), &vec![1, 2, 3]);
+        assert_eq!(entries.get("b").unwrap(), &vec![4]);
+    }
+
+    #[test]
+    fn journal_replays() {
+        let encoder = NativeAnyStore::new();
+        let mut journal = Vec::new();
+        journal.extend_from_slice(&encoder.encode_put_record("a".to_string(), vec![1]));
+        journal.extend_from_slice(&encoder.encode_put_record("b".to_string(), vec![2, 3]));
+        journal.extend_from_slice(&encoder.encode_delete_record("a".to_string()));
+
+        let mut store = NativeAnyStore::new();
+        let applied = store.apply_journal(journal.clone()).unwrap();
+        assert_eq!(applied, journal.len());
+        assert_eq!(store.get("a"), None);
+        assert_eq!(store.get("b"), Some(vec![2, 3]));
+        assert_eq!(store.size(), 2);
+    }
+
+    #[test]
+    fn journal_stops_at_torn_tail() {
+        let encoder = NativeAnyStore::new();
+        let mut journal = Vec::new();
+        journal.extend_from_slice(&encoder.encode_put_record("a".to_string(), vec![1]));
+        journal.extend_from_slice(&encoder.encode_put_record("b".to_string(), vec![2, 3]));
+        let clean_len = journal.len();
+        let torn = encoder.encode_put_record("c".to_string(), vec![4, 5, 6]);
+        journal.extend_from_slice(&torn[..torn.len() - 3]);
+
+        let mut store = NativeAnyStore::new();
+        let applied = apply_journal(&mut store, &journal).unwrap();
+        assert_eq!(applied, clean_len);
+        assert_eq!(store.get("a"), Some(vec![1]));
+        assert_eq!(store.get("b"), Some(vec![2, 3]));
+        assert_eq!(store.get("c"), None);
+    }
+
+    #[test]
+    fn journal_stops_at_checksum_mismatch() {
+        let encoder = NativeAnyStore::new();
+        let mut journal = Vec::new();
+        journal.extend_from_slice(&encoder.encode_put_record("a".to_string(), vec![1]));
+        let clean_len = journal.len();
+        let mut corrupt = encoder.encode_put_record("b".to_string(), vec![2]);
+        let last = corrupt.len() - 1;
+        corrupt[last] ^= 0xff;
+        journal.extend_from_slice(&corrupt);
+
+        let mut store = NativeAnyStore::new();
+        let applied = apply_journal(&mut store, &journal).unwrap();
+        assert_eq!(applied, clean_len);
+        assert_eq!(store.get("a"), Some(vec![1]));
+        assert_eq!(store.get("b"), None);
+    }
+}

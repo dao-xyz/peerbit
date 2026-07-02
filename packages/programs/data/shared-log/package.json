@@ -53,8 +53,11 @@
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"benchmark:adaptive-ingest": "node --loader ts-node/esm ./benchmark/adaptive-ingest.ts",
+		"benchmark:append-storage": "node --loader ts-node/esm ./benchmark/index.ts",
 		"benchmark:join-backfill-repair": "node --loader ts-node/esm ./benchmark/join-backfill-repair.ts",
 		"benchmark:native-graph": "node --loader ts-node/esm ./benchmark/native-graph.ts",
+		"benchmark:receive-prune": "node --loader ts-node/esm ./benchmark/receive-prune.ts",
+		"benchmark:sync-catchup": "node --loader ts-node/esm ./benchmark/sync-catchup.ts",
 		"benchmark:sync-phase-profile": "node --loader ts-node/esm ./benchmark/sync-phase-profile.ts",
 		"test": "aegir test --target node",
 		"lint": "aegir lint",
@@ -90,7 +93,12 @@
 		"pino": "^9.4.0",
 		"uint8arrays": "^5.1.0"
 	},
+	"optionalDependencies": {
+		"@peerbit/native-backbone": "workspace:*",
+		"@peerbit/shared-log-rust": "workspace:*"
+	},
 	"devDependencies": {
+		"@peerbit/any-store-rust": "workspace:*",
 		"@peerbit/indexer-rust": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",

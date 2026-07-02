@@ -1,3 +1,4 @@
+import { AnyBlockStore } from "@peerbit/blocks";
 import { Ed25519Keypair } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import assert from "assert";
@@ -275,6 +276,49 @@ describe("join", function () {
 				new Uint8Array([1]),
 				new Uint8Array([2]),
 			]);
+		});
+
+		it("batches local parent reads while joining recursively", async () => {
+			const store = new AnyBlockStore();
+			await store.start();
+			const source = new Log<Uint8Array>();
+			const target = new Log<Uint8Array>();
+			try {
+				await source.open(store, signKey);
+				await target.open(store, signKey2);
+
+				const { entry: a } = await source.append(new Uint8Array([1]), {
+					meta: { next: [] },
+				});
+				const { entry: b } = await source.append(new Uint8Array([2]), {
+					meta: { next: [] },
+				});
+				const { entry: c } = await source.append(new Uint8Array([3]), {
+					meta: { next: [] },
+				});
+				const { entry: merge } = await source.append(new Uint8Array([4]), {
+					meta: { next: [a, b, c] },
+				});
+
+				const getManySpy = sinon.spy(store, "getMany");
+				try {
+					await target.join([merge]);
+
+					expect(getManySpy.callCount).equal(1);
+					expect(getManySpy.firstCall.args[0]).to.have.members([
+						a.hash,
+						b.hash,
+						c.hash,
+					]);
+					expect(await target.toArray()).to.have.length(4);
+				} finally {
+					getManySpy.restore();
+				}
+			} finally {
+				await source.close();
+				await target.close();
+				await store.stop();
+			}
 		});
 
 		describe("cut", () => {

@@ -1,0 +1,65 @@
+{
+	"name": "@peerbit/shared-log-rust",
+	"version": "0.0.0",
+	"description": "Rust-backed shared-log range planner for Peerbit",
+	"sideEffects": [
+		"./dist/wasm/shared_log_rust.js"
+	],
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"benchmark:get-samples": "npm run build && pnpm --filter @peerbit/shared-log run build && node ./dist/benchmark/get-samples.js",
+		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
+		"build": "wasm-pack build --target web --out-dir wasm --out-name shared_log_rust && shx rm -rf ./wasm/.gitignore ./wasm/package.json && aegir build --no-bundle && shx rm -rf ./dist/wasm && shx cp -r ./wasm ./dist/wasm",
+		"test": "cargo test && npm run build && pnpm --filter @peerbit/shared-log run build && aegir test",
+		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\""
+	},
+	"author": "dao.xyz",
+	"license": "MIT",
+	"devDependencies": {
+		"@peerbit/indexer-sqlite3": "workspace:*"
+	}
+}

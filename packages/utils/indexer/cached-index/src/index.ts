@@ -32,6 +32,40 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 				reference: true,
 			}),
 		);
+		this.attachExactDeleteHelpers();
+	}
+
+	private attachExactDeleteHelpers() {
+		const origin = this.origin as {
+			delIds?: (deleteIds: any[]) => any;
+			delIdsNoReturn?: (deleteIds: any[]) => any;
+			delIdsCount?: (deleteIds: any[]) => any;
+		};
+		const self = this as unknown as {
+			delIds?: (deleteIds: any[]) => Promise<any>;
+			delIdsNoReturn?: (deleteIds: any[]) => Promise<void>;
+			delIdsCount?: (deleteIds: any[]) => Promise<number>;
+		};
+		if (origin.delIds) {
+			self.delIds = async (deleteIds) => {
+				const res = await origin.delIds!.call(this.origin, deleteIds);
+				await this._cache.refresh();
+				return res;
+			};
+		}
+		if (origin.delIdsNoReturn) {
+			self.delIdsNoReturn = async (deleteIds) => {
+				await origin.delIdsNoReturn!.call(this.origin, deleteIds);
+				await this._cache.refresh();
+			};
+		}
+		if (origin.delIdsCount) {
+			self.delIdsCount = async (deleteIds) => {
+				const res = await origin.delIdsCount!.call(this.origin, deleteIds);
+				await this._cache.refresh();
+				return res;
+			};
+		}
 	}
 
 	/* -------------------------- normal Index life-cycle -------------------- */
@@ -72,6 +106,17 @@ export class CachedIndex<T extends Record<string, any>, Nested = unknown>
 
 	async put(value: T, id?: any, options?: { replace?: boolean }) {
 		await this.origin.put(value, id, options);
+		await this._cache.refresh();
+	}
+
+	async putBatch(values: T[]) {
+		if (this.origin.putBatch) {
+			await this.origin.putBatch(values);
+		} else {
+			for (const value of values) {
+				await this.origin.put(value);
+			}
+		}
 		await this._cache.refresh();
 	}
 

@@ -96,6 +96,7 @@ export interface EntryReplicated<R extends "u32" | "u64"> {
 	wallTime: bigint;
 	assignedToRangeBoundary: boolean;
 	get meta(): ShallowMeta;
+	getMetaBytes(): Uint8Array;
 }
 
 export const isEntryReplicated = (x: any): x is EntryReplicated<any> => {
@@ -130,22 +131,33 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 	constructor(properties: {
 		coordinates: number[];
 		hash: string;
-		meta: Meta;
+		meta?: Meta | ShallowMeta;
+		metaBytes?: Uint8Array;
+		gid?: string;
+		wallTime?: bigint;
 		assignedToRangeBoundary: boolean;
 		hashNumber: number;
 	}) {
+		if (!properties.meta && !properties.metaBytes) {
+			throw new Error("Expected meta or metaBytes");
+		}
+		if (!properties.meta && (properties.gid == null || properties.wallTime == null)) {
+			throw new Error("Expected gid and wallTime with metaBytes");
+		}
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
-		this.gid = properties.meta.gid;
-		this.wallTime = properties.meta.clock.timestamp.wallTime;
+		this.gid = properties.meta?.gid ?? properties.gid!;
+		this.wallTime =
+			properties.meta?.clock.timestamp.wallTime ?? properties.wallTime!;
 		this.hashNumber = properties.hashNumber;
-		const shallow =
-			properties.meta instanceof Meta
-				? new ShallowMeta(properties.meta)
-				: properties.meta;
-		this._meta = serialize(shallow);
-		this._metaResolved = deserialize(this._meta, ShallowMeta);
-		this._metaResolved = properties.meta;
+		this._meta =
+			properties.metaBytes ??
+			serialize(
+				properties.meta instanceof Meta
+					? new ShallowMeta(properties.meta)
+					: properties.meta!,
+			);
+		this._metaResolved = properties.meta as ShallowMeta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
 
@@ -154,6 +166,10 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 			this._metaResolved = deserialize(this._meta, ShallowMeta);
 		}
 		return this._metaResolved;
+	}
+
+	getMetaBytes(): Uint8Array {
+		return this._meta;
 	}
 }
 
@@ -185,22 +201,33 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 	constructor(properties: {
 		coordinates: bigint[];
 		hash: string;
-		meta: Meta;
+		meta?: Meta | ShallowMeta;
+		metaBytes?: Uint8Array;
+		gid?: string;
+		wallTime?: bigint;
 		assignedToRangeBoundary: boolean;
 		hashNumber: bigint;
 	}) {
+		if (!properties.meta && !properties.metaBytes) {
+			throw new Error("Expected meta or metaBytes");
+		}
+		if (!properties.meta && (properties.gid == null || properties.wallTime == null)) {
+			throw new Error("Expected gid and wallTime with metaBytes");
+		}
 		this.coordinates = properties.coordinates;
 		this.hash = properties.hash;
 		this.hashNumber = properties.hashNumber;
-		this.gid = properties.meta.gid;
-		this.wallTime = properties.meta.clock.timestamp.wallTime;
-		const shallow =
-			properties.meta instanceof Meta
-				? new ShallowMeta(properties.meta)
-				: properties.meta;
-		this._meta = serialize(shallow);
-		this._metaResolved = deserialize(this._meta, ShallowMeta);
-		this._metaResolved = properties.meta;
+		this.gid = properties.meta?.gid ?? properties.gid!;
+		this.wallTime =
+			properties.meta?.clock.timestamp.wallTime ?? properties.wallTime!;
+		this._meta =
+			properties.metaBytes ??
+			serialize(
+				properties.meta instanceof Meta
+					? new ShallowMeta(properties.meta)
+					: properties.meta!,
+			);
+		this._metaResolved = properties.meta as ShallowMeta;
 		this.assignedToRangeBoundary = properties.assignedToRangeBoundary;
 	}
 
@@ -209,6 +236,10 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 			this._metaResolved = deserialize(this._meta, ShallowMeta);
 		}
 		return this._metaResolved;
+	}
+
+	getMetaBytes(): Uint8Array {
+		return this._meta;
 	}
 }
 

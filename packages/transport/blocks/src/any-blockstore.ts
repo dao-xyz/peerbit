@@ -2,6 +2,7 @@ import { createStore } from "@peerbit/any-store";
 import { type AnyStore } from "@peerbit/any-store-interface";
 import {
 	type Blocks,
+	type GetOptions,
 	calculateRawCid,
 	cidifyString,
 	codecCodes,
@@ -16,6 +17,26 @@ import { waitFor } from "@peerbit/time";
 import { type Block, decode } from "multiformats/block";
 import * as raw from "multiformats/codecs/raw";
 
+const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
+	typeof (value as { then?: unknown })?.then === "function";
+
+type ImmutableBlockStore = AnyStore & {
+	putImmutable?: (key: string, value: Uint8Array) => Promise<void> | void;
+	putManyImmutable?: (
+		entries: Iterable<readonly [string, Uint8Array]>,
+	) => Promise<void> | void;
+};
+
+type NativeLogBlockStoreCarrier = {
+	getNativeLogBlockStoreHandle?: () => unknown;
+};
+
+type BlockGetOptions = GetOptions & {
+	raw?: boolean;
+	links?: string[];
+	hasher?: any;
+};
+
 export class AnyBlockStore implements Blocks {
 	private _store: AnyStore;
 	private _opening: Promise<any>;
@@ -25,42 +46,78 @@ export class AnyBlockStore implements Blocks {
 		this._store = store;
 	}
 
+	getNativeLogBlockStoreHandle(): unknown {
+		return (this._store as NativeLogBlockStoreCarrier)
+			.getNativeLogBlockStoreHandle?.();
+	}
+
+	private async decodeStoredBytes(
+		cid: string,
+		bytes: Uint8Array,
+		options?: BlockGetOptions,
+	): Promise<Uint8Array> {
+		const cidObject = cidifyString(cid);
+		if (
+			cidObject.code === raw.code &&
+			(options?.hasher == null || options.hasher === defaultHasher)
+		) {
+			return bytes;
+		}
+		const codec = codecCodes[cidObject.code as keyof typeof codecCodes];
+		const block = await decode({
+			bytes,
+			codec,
+			hasher: options?.hasher || defaultHasher,
+		});
+		return (block as Block<Uint8Array, any, any, any>).bytes;
+	}
+
 	async get(
 		cid: string,
-		options?: {
-			raw?: boolean;
-			links?: string[];
-			hasher?: any;
-			remote: {
-				timeout?: number;
-			};
-		},
+		options?: BlockGetOptions,
 	): Promise<Uint8Array | undefined> {
-		const cidObject = cidifyString(cid);
 		try {
 			const bytes = await this._store.get(cid);
 			if (!bytes) {
 				return undefined;
 			}
-			if (
-				cidObject.code === raw.code &&
-				(options?.hasher == null || options.hasher === defaultHasher)
-			) {
-				return bytes;
-			}
-			const codec = (codecCodes as any)[cidObject.code];
-			const block = await decode({
-				bytes,
-				codec,
-				hasher: options?.hasher || defaultHasher,
-			});
-			return (block as Block<Uint8Array, any, any, any>).bytes;
+			return this.decodeStoredBytes(cid, bytes, options);
 		} catch (error: any) {
 			if (
 				typeof error?.code === "string" &&
 				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
 			) {
 				return undefined;
+			}
+			throw error;
+		}
+	}
+
+	async getMany(
+		cids: string[],
+		options?: BlockGetOptions,
+	): Promise<Array<Uint8Array | undefined>> {
+		const store = this._store as AnyStore & {
+			getMany?: (keys: string[]) => Promise<Array<Uint8Array | undefined>>;
+		};
+		try {
+			if (typeof store.getMany === "function") {
+				const values = await store.getMany(cids);
+				return Promise.all(
+					values.map((bytes, index) =>
+						bytes
+							? this.decodeStoredBytes(cids[index]!, bytes, options)
+							: undefined,
+					),
+				);
+			}
+			return Promise.all(cids.map((cid) => this.get(cid, options)));
+		} catch (error: any) {
+			if (
+				typeof error?.code === "string" &&
+				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
+			) {
+				return Promise.all(cids.map((cid) => this.get(cid, options)));
 			}
 			throw error;
 		}
@@ -75,13 +132,7 @@ export class AnyBlockStore implements Blocks {
 		try {
 			await this._store.put(put.cid, bbytes);
 		} catch (error: any) {
-			const status = await this._store.status();
-			if (
-				typeof error?.code === "string" &&
-				error.code === "LEVEL_DATABASE_NOT_OPEN" &&
-				this._closeController?.signal.aborted === true &&
-				(status === "closing" || status === "closed")
-			) {
+			if (await this.isClosingStorePutError(error)) {
 				// Late replication writes can outlive shutdown. At this point the
 				// backing store is intentionally closing, so report the deterministic
 				// CID while discarding the write instead of leaking an unhandled
@@ -93,8 +144,138 @@ export class AnyBlockStore implements Blocks {
 		return put.cid;
 	}
 
+	async putMany(
+		blocks: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
+	): Promise<string[]> {
+		const puts = await Promise.all(
+			blocks.map((bytes) =>
+				bytes instanceof Uint8Array ? calculateRawCid(bytes) : bytes,
+			),
+		);
+		const store = this._store as AnyStore & {
+			putMany?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
+		};
+		try {
+			if (puts.length === 1) {
+				const put = puts[0]!;
+				const result = this.putKnown(put.cid, put.block.bytes);
+				if (isPromiseLike(result)) {
+					await result;
+				}
+			} else if (typeof store.putMany === "function") {
+				await store.putMany(puts.map((put) => [put.cid, put.block.bytes] as const));
+			} else {
+				for (const put of puts) {
+					await this._store.put(put.cid, put.block.bytes);
+				}
+			}
+		} catch (error: any) {
+			if (await this.isClosingStorePutError(error)) {
+				return puts.map((put) => put.cid);
+			}
+			throw error;
+		}
+		return puts.map((put) => put.cid);
+	}
+
+	putKnown(cid: string, bytes: Uint8Array): Promise<string> | string {
+		try {
+			const immutableStore = this._store as ImmutableBlockStore;
+			const result = immutableStore.putImmutable
+				? immutableStore.putImmutable(cid, bytes)
+				: this._store.put(cid, bytes);
+			if (isPromiseLike(result)) {
+				return result
+					.then(() => cid)
+					.catch((error) => this.handleStorePutError(error, cid));
+			}
+		} catch (error: any) {
+			return this.handleStorePutError(error, cid);
+		}
+		return cid;
+	}
+
+	putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): Promise<string[]> | string[] {
+		const store = this._store as AnyStore & {
+			putMany?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
+			putManyImmutable?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
+		};
+		if (blocks.length === 1) {
+			const [cid, bytes] = blocks[0]!;
+			const result = this.putKnown(cid, bytes);
+			return isPromiseLike(result) ? result.then(() => [cid]) : [cid];
+		}
+		return this.putKnownManyWithStoreBatch(blocks, store);
+	}
+
+	private async putKnownManyWithStoreBatch(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+		store: AnyStore & {
+			putMany?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
+			putManyImmutable?: (
+				entries: Iterable<readonly [string, Uint8Array]>,
+			) => Promise<void> | void;
+		},
+	): Promise<string[]> {
+		try {
+			if (typeof store.putManyImmutable === "function") {
+				await store.putManyImmutable(blocks);
+			} else if (typeof store.putMany === "function") {
+				await store.putMany(blocks);
+			} else {
+				for (const [cid, bytes] of blocks) {
+					await this._store.put(cid, bytes);
+				}
+			}
+		} catch (error: any) {
+			if (await this.isClosingStorePutError(error)) {
+				return blocks.map(([cid]) => cid);
+			}
+			throw error;
+		}
+		return blocks.map(([cid]) => cid);
+	}
+
+	private async handleStorePutError<T>(error: any, value: T): Promise<T> {
+		if (await this.isClosingStorePutError(error)) {
+			return value;
+		}
+		throw error;
+	}
+
+	private async isClosingStorePutError(error: any): Promise<boolean> {
+		const status = await this._store.status();
+		return (
+			typeof error?.code === "string" &&
+			error.code === "LEVEL_DATABASE_NOT_OPEN" &&
+			this._closeController?.signal.aborted === true &&
+			(status === "closing" || status === "closed")
+		);
+	}
+
 	async rm(cid: string): Promise<void> {
 		await this._store.del(cid);
+	}
+
+	async rmMany(cids: string[]): Promise<number> {
+		const store = this._store as AnyStore & {
+			delMany?: (keys: string[]) => Promise<number>;
+		};
+		if (typeof store.delMany === "function") {
+			return store.delMany(cids);
+		}
+		await Promise.all(cids.map((cid) => this._store.del(cid)));
+		return cids.length;
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
@@ -104,7 +285,35 @@ export class AnyBlockStore implements Blocks {
 	}
 
 	async has(cid: string) {
-		return !!(await this._store.get(cid));
+		try {
+			return !!(await this._store.get(cid));
+		} catch (error: any) {
+			if (
+				typeof error?.code === "string" &&
+				error?.code?.indexOf("LEVEL_NOT_FOUND") !== -1
+			) {
+				return false;
+			}
+			throw error;
+		}
+	}
+
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		const store = this._store as AnyStore & {
+			getMany?: (
+				keys: string[],
+			) => Promise<Array<Uint8Array | undefined>> | Array<Uint8Array | undefined>;
+			hasMany?: (keys: string[]) => Promise<boolean[]> | boolean[];
+		};
+		if (typeof store.hasMany === "function") {
+			return store.hasMany(cids);
+		}
+		if (typeof store.getMany === "function") {
+			const values = await store.getMany(cids);
+			return values.map((value) => value != null);
+		}
+
+		return Promise.all(cids.map((cid) => this.has(cid)));
 	}
 
 	async start(): Promise<void> {
