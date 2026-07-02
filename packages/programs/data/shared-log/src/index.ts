@@ -334,6 +334,12 @@ export {
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
+export type {
+	SharedLogNativeWireSync,
+	SyncOptions,
+	SyncProfileEvent,
+	SyncProfileFn,
+} from "./sync/index.js";
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
@@ -1101,6 +1107,62 @@ export type SharedLogOptions<
 	domain?: ReplicationDomainConstructor<D>;
 	eagerBlocks?: boolean | { cacheSize?: number };
 	fanout?: SharedLogFanoutOptions;
+};
+
+/**
+ * Native defaults a client can advertise for shared-log programs opened on
+ * it (the peerbit client's native network preset sets these; see
+ * `peerbit/rust`). They fill in open options the caller left undefined;
+ * explicit per-open options (including `false`) always win. Without the
+ * property on the client, behavior is unchanged.
+ */
+export type SharedLogNativeDefaults = {
+	nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
+	nativeGraph?: LogProperties<any>["nativeGraph"];
+	sync?: Pick<SyncOptions<any>, "rawExchangeHeads" | "nativeWireSync">;
+};
+
+type NodeWithSharedLogNativeDefaults = {
+	sharedLogNativeDefaults?: SharedLogNativeDefaults;
+};
+
+const applySharedLogNativeDefaults = <
+	O extends {
+		nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
+		nativeGraph?: LogProperties<any>["nativeGraph"];
+		sync?: SyncOptions<any>;
+		onChange?: unknown;
+	},
+>(
+	options: O | undefined,
+	defaults: SharedLogNativeDefaults | undefined,
+): O | undefined => {
+	if (!defaults) {
+		return options;
+	}
+	// The prepared raw receive commits entries without dispatching the
+	// program-level change event (entries never materialize in JS), so the
+	// raw sync defaults only apply to programs that do not consume
+	// per-entry changes. Programs can still opt in explicitly.
+	const applySyncDefaults = options?.onChange == null;
+	const sync =
+		(applySyncDefaults && defaults.sync) || options?.sync
+			? {
+					...options?.sync,
+					rawExchangeHeads:
+						options?.sync?.rawExchangeHeads ??
+						(applySyncDefaults ? defaults.sync?.rawExchangeHeads : undefined),
+					nativeWireSync:
+						options?.sync?.nativeWireSync ??
+						(applySyncDefaults ? defaults.sync?.nativeWireSync : undefined),
+				}
+			: undefined;
+	return {
+		...options,
+		nativeBackbone: options?.nativeBackbone ?? defaults.nativeBackbone,
+		nativeGraph: options?.nativeGraph ?? defaults.nativeGraph,
+		sync,
+	} as O;
 };
 
 export const DEFAULT_MIN_REPLICAS = 2;
@@ -8008,6 +8070,11 @@ export class SharedLog<
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
+		options = applySharedLogNativeDefaults(
+			options,
+			(this.node as unknown as NodeWithSharedLogNativeDefaults)
+				.sharedLogNativeDefaults,
+		);
 		this.replicas = {
 			min:
 				options?.replicas?.min != null
@@ -10380,6 +10447,18 @@ export class SharedLog<
 			if (msg instanceof RawExchangeHeadsMessage) {
 				const rawFrom = context.from!;
 				const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
+				if (syncProfile && !stashBackedRawMessage) {
+					// Per-message JS-side entry decode: the heads were
+					// borsh-decoded in TS (regular RPC path) instead of being
+					// resolved from the native wire stash. Zero on the fused
+					// hot path.
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.jsEntryDecode",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 				const rawExistingStartedAt = syncProfileStart(syncProfile);
 				const rawExistingHashes = await this.log.hasMany(
 					msg.heads.map((head) => head.hash),
@@ -10665,6 +10744,17 @@ export class SharedLog<
 				 * I have received heads from someone else.
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
+
+				if (syncProfile && !rawMaterializedKnownMissing) {
+					// Entries arrived as fully TS-decoded `Entry` objects (the
+					// non-raw exchange path). Zero on the fused hot path.
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.jsEntryDecode",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 
 				const { heads } = msg;
 				const headHashes =
