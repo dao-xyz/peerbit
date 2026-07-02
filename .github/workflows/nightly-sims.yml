@@ -58,13 +58,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p sim-results
-          # 60 subscribers fits the shard root's child capacity: joins are
-          # deterministic and delivery is 100% across seeds. Raising the
-          # subscriber count is gated on the fanout route-proxy storm fix
-          # (see issue #983) — at 120+ subscribers route resolution floods
-          # the tree superlinearly and the sim OOMs before subscribe ends.
+          # Full 400-subscriber gate, unblocked by the #983 fix (subscribe-
+          # response batching + route-proxy coalescing): before it, route
+          # resolution flooded the tree superlinearly and OOMed a 4GB heap.
           pnpm -C packages/transport/pubsub run bench -- topic-sim \
-            --nodes 500 --degree 6 --subscribers 60 \
+            --nodes 500 --degree 6 --subscribers 400 \
             --messages 50 --msgSize 256 --intervalMs 0 \
             --seed 1 --subscribeModel preseed --silent 1 \
             --settleMs 3000 --minDeliveredPct 99 \
@@ -75,9 +73,10 @@ jobs:
           pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset ci-small --seed 1 > sim-results/fanout-peerbit-ci-small.txt
       - name: Run fanout-peerbit-sim (ci-loss)
         run: |
-          # scale-1k (1000 clients, 999 group subscribers) OOMs a 4GB heap in
-          # ~15 min via the fanout route-proxy storm — it is the second
-          # acceptance test for issue #983 and returns here once that lands.
+          # scale-1k (1000 full Peerbit clients in one process) still OOMs a
+          # 4GB heap even after the #983 route-proxy storm fix — the residual
+          # is footprint/state in other layers and needs its own memory
+          # profile (tracked in #983) before it can gate here.
           set -euo pipefail
           pnpm -C packages/clients/test-utils run bench -- fanout-peerbit-sim --preset ci-loss --seed 1 > sim-results/fanout-peerbit-ci-loss.txt
       - name: Run fanout-tree-sim (scale-5k, trend evidence)
