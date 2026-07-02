@@ -24,6 +24,10 @@ import {
 	createRustBlockExchange,
 } from "./block-exchange.js";
 import {
+	type FanoutTreeWasmExports,
+	createRustFanoutTree,
+} from "./fanout-tree.js";
+import {
 	type TopicControlWasmExports,
 	createRustTopicControl,
 } from "./topic-control.js";
@@ -693,13 +697,16 @@ const buildDecisions = (
  * Create the native DirectStream core for
  * `DirectStreamOptions.rustCore`. Includes the batched inbound
  * decode+verify module (nativeWire), the block-exchange components
- * consumed by `@peerbit/blocks` and the topic-control components consumed
- * by `@peerbit/pubsub`, so enabling rust-core also enables the native
- * inbound wire path and the native protocol codecs.
+ * consumed by `@peerbit/blocks` and the topic-control and fanout-tree
+ * components consumed by `@peerbit/pubsub`, so enabling rust-core also
+ * enables the native inbound wire path and the native protocol codecs.
  */
 export const createRustCoreStream = async (): Promise<RustCoreStream> => {
 	const wasm = await loadWasm<
-		DirectStreamWasmExports & BlockExchangeWasmExports & TopicControlWasmExports
+		DirectStreamWasmExports &
+			BlockExchangeWasmExports &
+			TopicControlWasmExports &
+			FanoutTreeWasmExports
 	>();
 	return {
 		nativeWire: {
@@ -712,5 +719,6 @@ export const createRustCoreStream = async (): Promise<RustCoreStream> => {
 		decisions: buildDecisions(wasm),
 		blockExchange: createRustBlockExchange(wasm),
 		topicControl: createRustTopicControl(wasm),
+		fanout: createRustFanoutTree(wasm),
 	};
 };

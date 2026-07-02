@@ -6,6 +6,7 @@
 
 pub mod block_exchange;
 pub mod direct_stream;
+pub mod fanout_tree;
 pub mod sync_payload;
 pub mod topic_control;
 pub mod wire;
@@ -19,6 +20,7 @@ use direct_stream::lanes::{LaneScheduler, PushOutcome};
 use direct_stream::routes::{AddOutcome, Routes};
 use direct_stream::seen_cache::SeenCache;
 use direct_stream::{decisions, routes};
+use fanout_tree::{JoinRejectRedirectInput, ProviderEntryInput, TrackerEntryInput};
 use topic_control::{DecodedPubSubMessage, TopicRootDirectoryCore};
 use wire::{FrameRecord, VerifyStatus};
 
@@ -893,4 +895,886 @@ impl TopicControlRootDirectory {
     pub fn resolve_deterministic_candidate(&self, topic: &str) -> Option<String> {
         self.inner.resolve_deterministic_candidate(topic)
     }
+}
+
+// --- FanoutTree (fanout_tree module) ------------------------------------------
+
+fn array_to_byte_vecs(values: &Array) -> Vec<Vec<u8>> {
+    values
+        .iter()
+        .map(|value| {
+            value
+                .dyn_into::<Uint8Array>()
+                .map(|array| array.to_vec())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+fn byte_vecs_to_array(values: &[Vec<u8>]) -> Array {
+    let out = Array::new();
+    for value in values {
+        out.push(&Uint8Array::from(value.as_slice()));
+    }
+    out
+}
+
+/// Group a flat addr list into per-entry lists using `addr_counts`.
+fn group_addrs(addr_counts: &[u32], flat: Vec<Vec<u8>>) -> Vec<Vec<Vec<u8>>> {
+    let mut grouped: Vec<Vec<Vec<u8>>> = Vec::with_capacity(addr_counts.len());
+    let mut iter = flat.into_iter();
+    for count in addr_counts {
+        grouped.push(iter.by_ref().take(*count as usize).collect());
+    }
+    grouped
+}
+
+/// A decoded `/peerbit/fanout-tree` control frame. One shared shape covers
+/// every message kind; the per-kind `ft_decode_*` function documents which
+/// fields it populates. Entry lists (tracker reply, provider reply/notify)
+/// are flattened into parallel arrays with `entry_addr_counts` delimiting
+/// each entry's slice of `entry_addrs`.
+#[wasm_bindgen]
+#[derive(Default)]
+pub struct FanoutTreeDecodedFrame {
+    req_id: u32,
+    bid_per_byte: u32,
+    reservation_token: u32,
+    level: u32,
+    max_children: u32,
+    free_slots: u32,
+    children: u32,
+    have_from: u32,
+    have_to_exclusive: u32,
+    has_have_range: bool,
+    missing_seqs: u32,
+    data_write_drops: u32,
+    dropped_forwards: u32,
+    ttl_ms: u32,
+    want: u32,
+    seed: u32,
+    flags: u32,
+    event: u32,
+    reason: u32,
+    ack_token: u64,
+    has_ack: bool,
+    seqs: Vec<u32>,
+    route: Vec<String>,
+    reply_route: Vec<String>,
+    has_reply_route: bool,
+    text: String,
+    has_text: bool,
+    payload_offset: u32,
+    min_free_slots: u32,
+    reserve_root_capacity: bool,
+    addrs: Vec<Vec<u8>>,
+    entry_hashes: Vec<String>,
+    entry_levels: Vec<u32>,
+    entry_free_slots: Vec<u32>,
+    entry_bids: Vec<u32>,
+    entry_addr_counts: Vec<u32>,
+    entry_addrs: Vec<Vec<u8>>,
+}
+
+#[wasm_bindgen]
+impl FanoutTreeDecodedFrame {
+    #[wasm_bindgen(getter)]
+    pub fn req_id(&self) -> u32 {
+        self.req_id
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn bid_per_byte(&self) -> u32 {
+        self.bid_per_byte
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn reservation_token(&self) -> u32 {
+        self.reservation_token
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn level(&self) -> u32 {
+        self.level
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn max_children(&self) -> u32 {
+        self.max_children
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn free_slots(&self) -> u32 {
+        self.free_slots
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn children(&self) -> u32 {
+        self.children
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn have_from(&self) -> u32 {
+        self.have_from
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn have_to_exclusive(&self) -> u32 {
+        self.have_to_exclusive
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_have_range(&self) -> bool {
+        self.has_have_range
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn missing_seqs(&self) -> u32 {
+        self.missing_seqs
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn data_write_drops(&self) -> u32 {
+        self.data_write_drops
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn dropped_forwards(&self) -> u32 {
+        self.dropped_forwards
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn ttl_ms(&self) -> u32 {
+        self.ttl_ms
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn want(&self) -> u32 {
+        self.want
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn seed(&self) -> u32 {
+        self.seed
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn event(&self) -> u32 {
+        self.event
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn reason(&self) -> u32 {
+        self.reason
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn ack_token(&self) -> u64 {
+        self.ack_token
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_ack(&self) -> bool {
+        self.has_ack
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn seqs(&self) -> Vec<u32> {
+        self.seqs.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn route(&self) -> Vec<String> {
+        self.route.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn reply_route(&self) -> Vec<String> {
+        self.reply_route.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_reply_route(&self) -> bool {
+        self.has_reply_route
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn text(&self) -> String {
+        self.text.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_text(&self) -> bool {
+        self.has_text
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn payload_offset(&self) -> u32 {
+        self.payload_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn min_free_slots(&self) -> u32 {
+        self.min_free_slots
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn reserve_root_capacity(&self) -> bool {
+        self.reserve_root_capacity
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn addrs(&self) -> Array {
+        byte_vecs_to_array(&self.addrs)
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn entry_hashes(&self) -> Vec<String> {
+        self.entry_hashes.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn entry_levels(&self) -> Vec<u32> {
+        self.entry_levels.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn entry_free_slots(&self) -> Vec<u32> {
+        self.entry_free_slots.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn entry_bids(&self) -> Vec<u32> {
+        self.entry_bids.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn entry_addr_counts(&self) -> Vec<u32> {
+        self.entry_addr_counts.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn entry_addrs(&self) -> Array {
+        byte_vecs_to_array(&self.entry_addrs)
+    }
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_join_req(
+    channel_key: &[u8],
+    req_id: f64,
+    bid_per_byte: f64,
+    parent_upgrade_reservation_token: f64,
+) -> Vec<u8> {
+    fanout_tree::encode_join_req(
+        channel_key,
+        req_id,
+        bid_per_byte,
+        parent_upgrade_reservation_token,
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_join_accept(
+    channel_key: &[u8],
+    req_id: f64,
+    level: f64,
+    parent_route_from_root: Vec<String>,
+    has_have_range: bool,
+    have_from: f64,
+    have_to_exclusive: f64,
+) -> Vec<u8> {
+    fanout_tree::encode_join_accept(
+        channel_key,
+        req_id,
+        level,
+        &parent_route_from_root,
+        has_have_range.then_some((have_from, have_to_exclusive)),
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_join_reject(
+    channel_key: &[u8],
+    req_id: f64,
+    reason: f64,
+    redirect_hashes: Vec<String>,
+    redirect_addr_counts: Vec<u32>,
+    redirect_addrs: Array,
+) -> Vec<u8> {
+    let grouped = group_addrs(&redirect_addr_counts, array_to_byte_vecs(&redirect_addrs));
+    let redirects: Vec<JoinRejectRedirectInput> = redirect_hashes
+        .into_iter()
+        .zip(grouped)
+        .map(|(hash, addrs)| JoinRejectRedirectInput { hash, addrs })
+        .collect();
+    fanout_tree::encode_join_reject(channel_key, req_id, reason, &redirects)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_kick(channel_key: &[u8]) -> Vec<u8> {
+    fanout_tree::encode_kick(channel_key)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_end(channel_key: &[u8], last_seq_exclusive: f64) -> Vec<u8> {
+    fanout_tree::encode_end(channel_key, last_seq_exclusive)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_repair_req(channel_key: &[u8], req_id: f64, missing_seqs: Vec<f64>) -> Vec<u8> {
+    fanout_tree::encode_repair_req(channel_key, req_id, &missing_seqs)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_fetch_req(channel_key: &[u8], req_id: f64, missing_seqs: Vec<f64>) -> Vec<u8> {
+    fanout_tree::encode_fetch_req(channel_key, req_id, &missing_seqs)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_ihave(channel_key: &[u8], have_from: f64, have_to_exclusive: f64) -> Vec<u8> {
+    fanout_tree::encode_ihave(channel_key, have_from, have_to_exclusive)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_data(payload: &[u8]) -> Vec<u8> {
+    fanout_tree::encode_data(payload)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_publish_proxy(channel_key: &[u8], payload: &[u8]) -> Vec<u8> {
+    fanout_tree::encode_publish_proxy(channel_key, payload)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_leave(channel_key: &[u8]) -> Vec<u8> {
+    fanout_tree::encode_leave(channel_key)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_unicast(
+    channel_key: &[u8],
+    route: Vec<String>,
+    payload: &[u8],
+    has_ack: bool,
+    ack_token: u64,
+    reply_route: Vec<String>,
+) -> Vec<u8> {
+    fanout_tree::encode_unicast(
+        channel_key,
+        &route,
+        payload,
+        has_ack.then_some(ack_token),
+        &reply_route,
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_unicast_ack(channel_key: &[u8], ack_token: u64, route: Vec<String>) -> Vec<u8> {
+    fanout_tree::encode_unicast_ack(channel_key, ack_token, &route)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_route_query(channel_key: &[u8], req_id: f64, target_hash: &str) -> Vec<u8> {
+    fanout_tree::encode_route_query(channel_key, req_id, target_hash)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_route_reply(channel_key: &[u8], req_id: f64, route: Vec<String>) -> Vec<u8> {
+    fanout_tree::encode_route_reply(channel_key, req_id, &route)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_tracker_announce(
+    channel_key: &[u8],
+    ttl_ms: f64,
+    level: f64,
+    max_children: f64,
+    free_slots: f64,
+    bid_per_byte: f64,
+    addrs: Array,
+) -> Vec<u8> {
+    fanout_tree::encode_tracker_announce(
+        channel_key,
+        ttl_ms,
+        level,
+        max_children,
+        free_slots,
+        bid_per_byte,
+        &array_to_byte_vecs(&addrs),
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_tracker_query(channel_key: &[u8], req_id: f64, want: f64) -> Vec<u8> {
+    fanout_tree::encode_tracker_query(channel_key, req_id, want)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen]
+pub fn ft_encode_tracker_reply(
+    channel_key: &[u8],
+    req_id: f64,
+    entry_hashes: Vec<String>,
+    entry_levels: Vec<f64>,
+    entry_free_slots: Vec<f64>,
+    entry_bids: Vec<f64>,
+    entry_addr_counts: Vec<u32>,
+    entry_addrs: Array,
+) -> Vec<u8> {
+    let grouped = group_addrs(&entry_addr_counts, array_to_byte_vecs(&entry_addrs));
+    let entries: Vec<TrackerEntryInput> = entry_hashes
+        .into_iter()
+        .zip(entry_levels)
+        .zip(entry_free_slots)
+        .zip(entry_bids)
+        .zip(grouped)
+        .map(
+            |((((hash, level), free_slots), bid_per_byte), addrs)| TrackerEntryInput {
+                hash,
+                level,
+                free_slots,
+                bid_per_byte,
+                addrs,
+            },
+        )
+        .collect();
+    fanout_tree::encode_tracker_reply(channel_key, req_id, &entries)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_tracker_feedback(
+    channel_key: &[u8],
+    candidate_hash: &str,
+    event: f64,
+    reason: f64,
+) -> Vec<u8> {
+    fanout_tree::encode_tracker_feedback(channel_key, candidate_hash, event, reason)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_parent_probe_req(
+    channel_key: &[u8],
+    req_id: f64,
+    min_free_slots: f64,
+    reserve_root_capacity: bool,
+) -> Vec<u8> {
+    fanout_tree::encode_parent_probe_req(channel_key, req_id, min_free_slots, reserve_root_capacity)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen]
+pub fn ft_encode_parent_probe_reply(
+    channel_key: &[u8],
+    req_id: f64,
+    flags: f64,
+    level: f64,
+    max_children: f64,
+    free_slots: f64,
+    children: f64,
+    have_to_exclusive: f64,
+    missing_seqs: f64,
+    data_write_drops: f64,
+    dropped_forwards: f64,
+    reservation_token: f64,
+) -> Vec<u8> {
+    fanout_tree::encode_parent_probe_reply(
+        channel_key,
+        req_id,
+        flags,
+        level,
+        max_children,
+        free_slots,
+        children,
+        have_to_exclusive,
+        missing_seqs,
+        data_write_drops,
+        dropped_forwards,
+        reservation_token,
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_provider_announce(namespace_key: &[u8], ttl_ms: f64, addrs: Array) -> Vec<u8> {
+    fanout_tree::encode_provider_announce(namespace_key, ttl_ms, &array_to_byte_vecs(&addrs))
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_provider_query(
+    namespace_key: &[u8],
+    req_id: f64,
+    want: f64,
+    seed: f64,
+) -> Vec<u8> {
+    fanout_tree::encode_provider_query(namespace_key, req_id, want, seed)
+}
+
+fn provider_entries_from_parts(
+    hashes: Vec<String>,
+    addr_counts: Vec<u32>,
+    addrs: Array,
+) -> Vec<ProviderEntryInput> {
+    let grouped = group_addrs(&addr_counts, array_to_byte_vecs(&addrs));
+    hashes
+        .into_iter()
+        .zip(grouped)
+        .map(|(hash, addrs)| ProviderEntryInput { hash, addrs })
+        .collect()
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_provider_reply(
+    namespace_key: &[u8],
+    req_id: f64,
+    entry_hashes: Vec<String>,
+    entry_addr_counts: Vec<u32>,
+    entry_addrs: Array,
+) -> Vec<u8> {
+    fanout_tree::encode_provider_reply(
+        namespace_key,
+        req_id,
+        &provider_entries_from_parts(entry_hashes, entry_addr_counts, entry_addrs),
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_provider_subscribe(namespace_key: &[u8], want: f64, ttl_ms: f64) -> Vec<u8> {
+    fanout_tree::encode_provider_subscribe(namespace_key, want, ttl_ms)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_provider_unsubscribe(namespace_key: &[u8]) -> Vec<u8> {
+    fanout_tree::encode_provider_unsubscribe(namespace_key)
+}
+
+#[wasm_bindgen]
+pub fn ft_encode_provider_notify(
+    namespace_key: &[u8],
+    entry_hashes: Vec<String>,
+    entry_addr_counts: Vec<u32>,
+    entry_addrs: Array,
+) -> Vec<u8> {
+    fanout_tree::encode_provider_notify(
+        namespace_key,
+        &provider_entries_from_parts(entry_hashes, entry_addr_counts, entry_addrs),
+    )
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_join_req(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_join_req(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        bid_per_byte: decoded.bid_per_byte,
+        reservation_token: decoded.parent_upgrade_reservation_token,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_join_response_req_id(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_join_response_req_id(data).map(|req_id| FanoutTreeDecodedFrame {
+        req_id,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_join_accept(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_join_accept(data).map(|decoded| FanoutTreeDecodedFrame {
+        level: decoded.parent_level as u32,
+        route: decoded.parent_route_from_root,
+        has_have_range: decoded.have_range.is_some(),
+        have_from: decoded.have_range.map(|range| range.0).unwrap_or(0),
+        have_to_exclusive: decoded.have_range.map(|range| range.1).unwrap_or(0),
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_join_reject(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_join_reject(data).map(|decoded| {
+        let mut frame = FanoutTreeDecodedFrame {
+            reason: decoded.reason as u32,
+            ..Default::default()
+        };
+        for redirect in decoded.redirects {
+            frame.entry_hashes.push(redirect.hash);
+            frame.entry_addr_counts.push(redirect.addrs.len() as u32);
+            frame.entry_addrs.extend(redirect.addrs);
+        }
+        frame
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_end(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_end(data).map(|last_seq_exclusive| FanoutTreeDecodedFrame {
+        have_to_exclusive: last_seq_exclusive,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_repair_seqs(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_repair_seqs(data).map(|seqs| FanoutTreeDecodedFrame {
+        seqs,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_ihave(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_ihave(data).map(|(have_from, have_to_exclusive)| FanoutTreeDecodedFrame {
+        have_from,
+        have_to_exclusive,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_unicast(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_unicast(data).map(|decoded| FanoutTreeDecodedFrame {
+        has_ack: decoded.ack_token.is_some(),
+        ack_token: decoded.ack_token.unwrap_or(0),
+        route: decoded.route,
+        has_reply_route: decoded.reply_route.is_some(),
+        reply_route: decoded.reply_route.unwrap_or_default(),
+        payload_offset: decoded.payload_offset as u32,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_unicast_ack(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_unicast_ack(data).map(|decoded| FanoutTreeDecodedFrame {
+        has_ack: true,
+        ack_token: decoded.ack_token,
+        route: decoded.route,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_route_query(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_route_query(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        has_text: decoded.target_hash.is_some(),
+        text: decoded.target_hash.unwrap_or_default(),
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_route_reply(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_route_reply(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        route: decoded.route,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_tracker_announce(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_tracker_announce(data).map(|decoded| FanoutTreeDecodedFrame {
+        ttl_ms: decoded.ttl_ms,
+        level: decoded.level as u32,
+        free_slots: decoded.free_slots as u32,
+        bid_per_byte: decoded.bid_per_byte,
+        addrs: decoded.addrs,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_tracker_query(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_tracker_query(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        want: decoded.want as u32,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_tracker_reply(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_tracker_reply(data).map(|decoded| {
+        let mut frame = FanoutTreeDecodedFrame {
+            req_id: decoded.req_id,
+            ..Default::default()
+        };
+        for entry in decoded.entries {
+            frame.entry_hashes.push(entry.hash);
+            frame.entry_levels.push(entry.level as u32);
+            frame.entry_free_slots.push(entry.free_slots as u32);
+            frame.entry_bids.push(entry.bid_per_byte);
+            frame.entry_addr_counts.push(entry.addrs.len() as u32);
+            frame.entry_addrs.extend(entry.addrs);
+        }
+        frame
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_tracker_feedback(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_tracker_feedback(data).map(|decoded| FanoutTreeDecodedFrame {
+        has_text: true,
+        text: decoded.candidate_hash,
+        event: decoded.event as u32,
+        reason: decoded.reason as u32,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_parent_probe_req(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_parent_probe_req(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        min_free_slots: decoded.min_free_slots as u32,
+        reserve_root_capacity: decoded.reserve_root_capacity,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_parent_probe_reply(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_parent_probe_reply(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        flags: decoded.flags as u32,
+        reservation_token: decoded.reservation_token,
+        level: decoded.level as u32,
+        max_children: decoded.max_children as u32,
+        free_slots: decoded.free_slots as u32,
+        children: decoded.children as u32,
+        have_to_exclusive: decoded.have_to_exclusive,
+        missing_seqs: decoded.missing_seqs as u32,
+        data_write_drops: decoded.data_write_drops,
+        dropped_forwards: decoded.dropped_forwards,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_provider_announce(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_provider_announce(data).map(|decoded| FanoutTreeDecodedFrame {
+        ttl_ms: decoded.ttl_ms,
+        addrs: decoded.addrs,
+        ..Default::default()
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_provider_query(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_provider_query(data).map(|decoded| FanoutTreeDecodedFrame {
+        req_id: decoded.req_id,
+        want: decoded.want as u32,
+        seed: decoded.seed,
+        ..Default::default()
+    })
+}
+
+fn provider_entries_into_frame(
+    frame: &mut FanoutTreeDecodedFrame,
+    entries: Vec<fanout_tree::DecodedProviderEntry>,
+) {
+    for entry in entries {
+        frame.entry_hashes.push(entry.hash);
+        frame.entry_addr_counts.push(entry.addrs.len() as u32);
+        frame.entry_addrs.extend(entry.addrs);
+    }
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_provider_reply(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_provider_reply(data).map(|decoded| {
+        let mut frame = FanoutTreeDecodedFrame {
+            req_id: decoded.req_id,
+            ..Default::default()
+        };
+        provider_entries_into_frame(&mut frame, decoded.entries);
+        frame
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_provider_notify(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_provider_notify(data).map(|entries| {
+        let mut frame = FanoutTreeDecodedFrame::default();
+        provider_entries_into_frame(&mut frame, entries);
+        frame
+    })
+}
+
+#[wasm_bindgen]
+pub fn ft_decode_provider_subscribe(data: &[u8]) -> Option<FanoutTreeDecodedFrame> {
+    fanout_tree::decode_provider_subscribe(data).map(|decoded| FanoutTreeDecodedFrame {
+        want: decoded.want as u32,
+        ttl_ms: decoded.ttl_ms,
+        ..Default::default()
+    })
+}
+
+/// `normalizeParentUpgradePolicy` over the fixed-order f64 protocol
+/// documented in `fanout_tree.rs` (NaN = unset numeric option, -1/0/1
+/// tri-state booleans, mode 0 unset / 1 direct / 2 probe / 3 shadow).
+#[wasm_bindgen]
+pub fn ft_pu_normalize_policy(options: Vec<f64>) -> Vec<f64> {
+    fanout_tree::normalize_parent_upgrade_policy(&options)
+}
+
+/// `evaluateParentUpgradeGate`; returns the skip-reason code in the low
+/// byte (0 = run) plus the retry-after-seq reset flag (0x100).
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen]
+pub fn ft_pu_evaluate_gate(
+    children_size: f64,
+    missing_seqs_size: f64,
+    last_repair_sent_at: f64,
+    end_seq_exclusive: f64,
+    parent_upgrade_retry_after_seq: f64,
+    max_seq_seen: f64,
+    parent_upgrade_count: f64,
+    parent_upgrade_backoff_until: f64,
+    parent_upgrade_last_at: f64,
+    last_parent_data_at: f64,
+    last_parent_upgrade_activity_at: f64,
+    leaf_only: bool,
+    repair_guard: bool,
+    data_guard: bool,
+    ended_and_complete: bool,
+    max_per_peer: f64,
+    cooldown_ms: f64,
+    quiet_ms: f64,
+    repair_quiet_ms: f64,
+    now: f64,
+) -> u32 {
+    fanout_tree::evaluate_parent_upgrade_gate(
+        &fanout_tree::ParentUpgradeGateState {
+            children_size,
+            missing_seqs_size,
+            last_repair_sent_at,
+            end_seq_exclusive,
+            parent_upgrade_retry_after_seq,
+            max_seq_seen,
+            parent_upgrade_count,
+            parent_upgrade_backoff_until,
+            parent_upgrade_last_at,
+            last_parent_data_at,
+            last_parent_upgrade_activity_at,
+        },
+        &fanout_tree::ParentUpgradeGateOptions {
+            leaf_only,
+            repair_guard,
+            data_guard,
+            ended_and_complete,
+            max_per_peer,
+            cooldown_ms,
+            quiet_ms,
+            repair_quiet_ms,
+            now,
+        },
+    )
 }
