@@ -879,7 +879,7 @@ pub fn decode_and_verify_frames(frames: &[&[u8]], now_ms: u64) -> Vec<FrameRecor
 
 // --- Debug JSON (parity-test surface; hand-rolled to avoid serde) ----------
 
-fn push_json_string(out: &mut String, value: &str) {
+pub(crate) fn push_json_string(out: &mut String, value: &str) {
     out.push('"');
     for character in value.chars() {
         match character {
