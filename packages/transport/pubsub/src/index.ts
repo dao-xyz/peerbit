@@ -2313,7 +2313,7 @@ export class TopicControlPlane
 						changed.push(topic);
 					} else {
 						peers.delete(senderKey);
-						peers.set(senderKey, existing);
+						peers.set(senderKey, existing!);
 					}
 
 					if (!existing) {
@@ -2422,7 +2422,7 @@ export class TopicControlPlane
 						changed.push(topic);
 					} else {
 						peers.delete(senderKey);
-						peers.set(senderKey, existing);
+						peers.set(senderKey, existing!);
 					}
 
 					if (!existing) {
