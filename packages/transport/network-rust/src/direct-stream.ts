@@ -19,6 +19,10 @@ import type { DirectStreamAckRouteHint } from "@peerbit/stream-interface";
 import { AbortError } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
 import type { Uint8ArrayList } from "uint8arraylist";
+import {
+	type BlockExchangeWasmExports,
+	createRustBlockExchange,
+} from "./block-exchange.js";
 import { loadWasm } from "./wasm.js";
 
 const ROUTES_ADD_OUTCOMES = ["new", "updated", "restart"] as const;
@@ -684,11 +688,14 @@ const buildDecisions = (
 /**
  * Create the native DirectStream core for
  * `DirectStreamOptions.rustCore`. Includes the batched inbound
- * decode+verify module (nativeWire), so enabling rust-core also enables the
- * native inbound wire path.
+ * decode+verify module (nativeWire) and the block-exchange components
+ * consumed by `@peerbit/blocks`, so enabling rust-core also enables the
+ * native inbound wire path and the native block exchange.
  */
 export const createRustCoreStream = async (): Promise<RustCoreStream> => {
-	const wasm = await loadWasm<DirectStreamWasmExports>();
+	const wasm = await loadWasm<
+		DirectStreamWasmExports & BlockExchangeWasmExports
+	>();
 	return {
 		nativeWire: {
 			decodeAndVerifyBatch: (frames, nowMs) =>
@@ -698,5 +705,6 @@ export const createRustCoreStream = async (): Promise<RustCoreStream> => {
 		createSeenCache: (init) => new RustSeenCacheAdapter(wasm, init),
 		createLanes: (init) => createRustLanes(wasm, init),
 		decisions: buildDecisions(wasm),
+		blockExchange: createRustBlockExchange(wasm),
 	};
 };

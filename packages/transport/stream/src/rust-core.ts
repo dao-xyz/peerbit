@@ -91,6 +91,68 @@ export interface RustLanesInit {
 	onPush?(value: { byteLength: number }, lane: number): void;
 }
 
+/** A decoded `/peerbit/direct-block` message produced by the native codec. */
+export type RustDecodedBlockMessage =
+	| { type: "request"; cid: string }
+	| {
+			type: "response";
+			cid: string;
+			/** View into the input payload (no copy). */
+			bytes: Uint8Array;
+	  };
+
+/**
+ * Provider-hint cache of `RemoteBlocks` backed by the native core
+ * (`rememberProvider`/`rememberProviderHints`/lookup semantics).
+ */
+export interface RustBlockProviderCache {
+	get(cid: string): string[] | undefined;
+	rememberProvider(cid: string, provider: string): void;
+	rememberHints(cid: string, providers: string[]): void;
+	clear(): void;
+}
+
+/**
+ * Eager-block cache with native bookkeeping. Block bytes stay host-side;
+ * the native index decides retention/eviction.
+ */
+export interface RustEagerBlockCache {
+	add(cid: string, bytes: Uint8Array): void;
+	get(cid: string): Uint8Array | undefined;
+	del(cid: string): void;
+	clear(): void;
+}
+
+/**
+ * Native block-exchange components for `DirectBlock`/`RemoteBlocks`
+ * (`@peerbit/blocks`): the `BlockMessage` codec, the provider resolution
+ * rules and the caches. Part of the same rust-core mode as the DirectStream
+ * state machine.
+ */
+export interface RustBlockExchange {
+	encodeBlockRequest(cid: string): Uint8Array;
+	encodeBlockResponse(cid: string, bytes: Uint8Array): Uint8Array;
+	decodeBlockMessage(payload: Uint8Array): RustDecodedBlockMessage;
+	normalizeProviderHints(
+		providers: string[],
+		me: string,
+		limit: number,
+	): string[];
+	pickRequestBatch(providers: string[], me: string, attempt: number): string[];
+	defaultProviderCandidates(
+		negotiated: string[],
+		connected: string[],
+		me: string,
+	): string[];
+	createProviderCache(init: {
+		me: string;
+		maxEntries: number;
+		ttlMs: number;
+		maxProvidersPerCid: number;
+	}): RustBlockProviderCache;
+	createEagerCache(init: { max: number; ttl: number }): RustEagerBlockCache;
+}
+
 /**
  * The full native DirectStream core: created by
  * `@peerbit/network-rust`'s `createRustCoreStream()` and passed as
@@ -103,6 +165,8 @@ export interface RustCoreStream {
 	createSeenCache(init: { max: number; ttl: number }): RustSeenCache;
 	createLanes(init: RustLanesInit): PushableLanes<Uint8Array | Uint8ArrayList>;
 	decisions: RustStreamDecisions;
+	/** Native block-exchange components consumed by `@peerbit/blocks`. */
+	blockExchange?: RustBlockExchange;
 }
 
 /**

@@ -113,7 +113,11 @@ export {
 export {
 	RUST_CORE_GLOBAL_KEY,
 	type NativeWire,
+	type RustBlockExchange,
+	type RustBlockProviderCache,
 	type RustCoreStream,
+	type RustDecodedBlockMessage,
+	type RustEagerBlockCache,
 	type RustLanesInit,
 	type RustRoutesInit,
 	type RustSeenCache,
@@ -1246,7 +1250,7 @@ export abstract class DirectStream<
 	private sharedRoutingKey?: PrivateKey;
 	private sharedRoutingState?: SharedRoutingState;
 	private readonly nativeWire?: NativeWire;
-	private readonly rustCore?: RustCoreStream;
+	protected readonly rustCore?: RustCoreStream;
 	private readonly rustSeenCache?: RustSeenCache;
 	private pendingNativeWireFrames: {
 		from: PublicSignKey;

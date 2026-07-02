@@ -4,6 +4,7 @@
 //! can run under host `cargo test`; this file only translates across the
 //! wasm boundary.
 
+pub mod block_exchange;
 pub mod direct_stream;
 pub mod sync_payload;
 pub mod wire;
@@ -12,6 +13,7 @@ use js_sys::{Array, Uint8Array};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
+use block_exchange::{DecodedBlockMessage, EagerBlockIndex, ProviderHintCache};
 use direct_stream::lanes::{LaneScheduler, PushOutcome};
 use direct_stream::routes::{AddOutcome, Routes};
 use direct_stream::seen_cache::SeenCache;
@@ -439,4 +441,179 @@ pub fn ds_select_redundancy_probes(
     redundancy: u8,
 ) -> Vec<String> {
     decisions::select_redundancy_probes(&peers, &used, redundancy)
+}
+
+// --- DirectBlock exchange (block_exchange module) ---------------------------
+
+pub const BLOCK_MESSAGE_REQUEST: u8 = block_exchange::BLOCK_MESSAGE_VARIANT_REQUEST;
+pub const BLOCK_MESSAGE_RESPONSE: u8 = block_exchange::BLOCK_MESSAGE_VARIANT_RESPONSE;
+
+/// A decoded `/peerbit/direct-block` message. Response payload bytes are
+/// reported as a range into the input frame so the host can alias them
+/// without copying.
+#[wasm_bindgen]
+pub struct DirectBlockDecodedMessage {
+    variant: u8,
+    cid: String,
+    bytes_offset: u32,
+    bytes_length: u32,
+}
+
+#[wasm_bindgen]
+impl DirectBlockDecodedMessage {
+    #[wasm_bindgen(getter)]
+    pub fn variant(&self) -> u8 {
+        self.variant
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn cid(&self) -> String {
+        self.cid.clone()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn bytes_offset(&self) -> u32 {
+        self.bytes_offset
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn bytes_length(&self) -> u32 {
+        self.bytes_length
+    }
+}
+
+/// Decode a borsh `BlockMessage` payload (`BlockRequest(0)`/`BlockResponse(1)`).
+#[wasm_bindgen]
+pub fn db_decode_block_message(frame: &[u8]) -> Result<DirectBlockDecodedMessage, JsValue> {
+    match block_exchange::decode_block_message(frame).map_err(|error| JsValue::from_str(&error))? {
+        DecodedBlockMessage::Request { cid } => Ok(DirectBlockDecodedMessage {
+            variant: BLOCK_MESSAGE_REQUEST,
+            cid,
+            bytes_offset: 0,
+            bytes_length: 0,
+        }),
+        DecodedBlockMessage::Response {
+            cid,
+            bytes_offset,
+            bytes_length,
+        } => Ok(DirectBlockDecodedMessage {
+            variant: BLOCK_MESSAGE_RESPONSE,
+            cid,
+            bytes_offset: bytes_offset as u32,
+            bytes_length: bytes_length as u32,
+        }),
+    }
+}
+
+#[wasm_bindgen]
+pub fn db_encode_block_request(cid: &str) -> Vec<u8> {
+    block_exchange::encode_block_request(cid)
+}
+
+#[wasm_bindgen]
+pub fn db_encode_block_response(cid: &str, bytes: &[u8]) -> Vec<u8> {
+    block_exchange::encode_block_response(cid, bytes)
+}
+
+#[wasm_bindgen]
+pub fn db_normalize_provider_hints(providers: Vec<String>, me: &str, limit: u32) -> Vec<String> {
+    block_exchange::normalize_provider_hints(&providers, me, limit.max(1) as usize)
+}
+
+#[wasm_bindgen]
+pub fn db_pick_request_batch(providers: Vec<String>, me: &str, attempt: u32) -> Vec<String> {
+    block_exchange::pick_request_batch(&providers, me, attempt as usize)
+}
+
+#[wasm_bindgen]
+pub fn db_default_provider_candidates(
+    negotiated: Vec<String>,
+    connected: Vec<String>,
+    me: &str,
+) -> Vec<String> {
+    block_exchange::default_provider_candidates(&negotiated, &connected, me)
+}
+
+/// Provider-hint cache of `RemoteBlocks` (`rememberProvider`/
+/// `rememberProviderHints`/lookup). Timestamps are host-supplied wall-clock
+/// milliseconds, as in the other DirectStream cores.
+#[wasm_bindgen]
+pub struct DirectBlockProviderCache {
+    inner: ProviderHintCache,
+}
+
+#[wasm_bindgen]
+impl DirectBlockProviderCache {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        me: String,
+        max_entries: u32,
+        ttl_ms: f64,
+        max_providers_per_cid: u32,
+    ) -> DirectBlockProviderCache {
+        DirectBlockProviderCache {
+            inner: ProviderHintCache::new(
+                me,
+                max_entries as usize,
+                ttl_ms.max(1.0) as u64,
+                max_providers_per_cid as usize,
+            ),
+        }
+    }
+
+    pub fn get(&mut self, cid: &str, now_ms: f64) -> Option<Vec<String>> {
+        self.inner.get(cid, now_ms as u64)
+    }
+
+    pub fn remember_provider(&mut self, cid: &str, provider: &str, now_ms: f64) {
+        self.inner.remember_provider(cid, provider, now_ms as u64);
+    }
+
+    pub fn remember_hints(&mut self, cid: &str, providers: Vec<String>, now_ms: f64) {
+        self.inner.remember_hints(cid, &providers, now_ms as u64);
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+}
+
+/// Eager-block bookkeeping (`_blockCache` in `RemoteBlocks`). The host keeps
+/// the block bytes and drops the buffers named by the returned eviction
+/// lists, so bytes never cross the boundary.
+#[wasm_bindgen]
+pub struct DirectBlockEagerIndex {
+    inner: EagerBlockIndex,
+}
+
+#[wasm_bindgen]
+impl DirectBlockEagerIndex {
+    #[wasm_bindgen(constructor)]
+    pub fn new(max: u32, ttl_ms: f64) -> DirectBlockEagerIndex {
+        DirectBlockEagerIndex {
+            inner: EagerBlockIndex::new(max as usize, ttl_ms.max(1.0) as u64),
+        }
+    }
+
+    /// Track a cid; returns the cids evicted by the insert (ttl/max bound).
+    pub fn add(&mut self, cid: &str, now_ms: f64) -> Vec<String> {
+        self.inner.add(cid, now_ms as u64)
+    }
+
+    /// Evict expired entries and return their cids.
+    pub fn sweep(&mut self, now_ms: f64) -> Vec<String> {
+        self.inner.sweep(now_ms as u64)
+    }
+
+    pub fn contains(&self, cid: &str) -> bool {
+        self.inner.contains(cid)
+    }
+
+    pub fn del(&mut self, cid: &str) {
+        self.inner.del(cid);
+    }
+
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
 }
