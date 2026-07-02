@@ -2144,6 +2144,12 @@ importers:
       '@peerbit/log-rust':
         specifier: workspace:*
         version: link:../../log/rust
+      '@peerbit/pubsub':
+        specifier: workspace:*
+        version: link:../pubsub
+      '@peerbit/pubsub-interface':
+        specifier: workspace:*
+        version: link:../pubsub-interface
       '@peerbit/stream':
         specifier: workspace:*
         version: link:../stream

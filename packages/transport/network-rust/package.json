@@ -69,6 +69,8 @@
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/libp2p-test-utils": "workspace:*",
 		"@peerbit/log-rust": "workspace:*",
+		"@peerbit/pubsub": "workspace:*",
+		"@peerbit/pubsub-interface": "workspace:*",
 		"@peerbit/stream": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"uint8arraylist": "^2.4.8"

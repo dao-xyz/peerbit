@@ -28,6 +28,7 @@ import {
 	type DirectStreamComponents,
 	type DirectStreamOptions,
 	type PeerStreams,
+	type RustTopicControl,
 } from "@peerbit/stream";
 import {
 	AcknowledgeAnyWhere,
@@ -246,6 +247,13 @@ export class TopicControlPlane
 	public readonly topicRootControlPlane: TopicRootControlPlane;
 	public readonly subscriberCacheMaxEntries: number;
 	public readonly fanout: FanoutTree;
+	// Native topic-control components of the rust-core DirectStream engine
+	// (`@peerbit/network-rust`). When set, the PubSubMessage codec, the topic
+	// hashing behind shard mapping and root selection, the root-directory
+	// state and the subscribe-state convergence rules run natively; the
+	// observable subscription maps and all events stay unchanged. Unset (the
+	// default) leaves every code path as-is.
+	private readonly nativeTopicControl?: RustTopicControl;
 
 	private debounceSubscribeAggregator: DebouncedAccumulatorCounterMap;
 	private debounceUnsubscribeAggregator: DebouncedAccumulatorCounterMap;
@@ -322,6 +330,12 @@ export class TopicControlPlane
 
 		this.topicRootControlPlane =
 			props?.topicRootControlPlane || new TopicRootControlPlane();
+		this.nativeTopicControl = this.rustCore?.topicControl;
+		if (this.nativeTopicControl) {
+			this.topicRootControlPlane.adoptNativeDirectoryState(
+				this.nativeTopicControl.createRootDirectoryState(),
+			);
+		}
 		this.dispatchEventOnSelfPublish =
 			props?.dispatchEventOnSelfPublish || false;
 
@@ -608,6 +622,12 @@ export class TopicControlPlane
 	}
 
 	private normalizeAutoTopicRootCandidates(candidates: string[]): string[] {
+		if (this.nativeTopicControl) {
+			return this.nativeTopicControl.normalizeAutoCandidates(
+				candidates,
+				this.publicKeyHash,
+			);
+		}
 		const unique = new Set<string>();
 		for (const c of candidates) {
 			if (!c) continue;
@@ -677,7 +697,7 @@ export class TopicControlPlane
 		if (candidates.length === 0) return;
 
 		const msg = new TopicRootCandidates({ candidates });
-		const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+		const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 			mode: new AnyWhere(),
 			priority: 1,
 			skipRecipientValidation: true,
@@ -773,7 +793,7 @@ export class TopicControlPlane
 					topics: userTopics,
 					requestSubscribers: true,
 				});
-				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+				const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 					mode: new AnyWhere(),
 					priority: 1,
 					skipRecipientValidation: true,
@@ -922,10 +942,116 @@ export class TopicControlPlane
 		const t = topic.toString();
 		const cached = this.shardTopicCache.get(t);
 		if (cached) return cached;
-		const index = topicHash32(t) % this.shardCount;
-		const shardTopic = `${this.shardTopicPrefix}${index}`;
+		const shardTopic = this.nativeTopicControl
+			? this.nativeTopicControl.shardTopic(
+					t,
+					this.shardCount,
+					this.shardTopicPrefix,
+				)
+			: `${this.shardTopicPrefix}${topicHash32(t) % this.shardCount}`;
 		this.shardTopicCache.set(t, shardTopic);
 		return shardTopic;
+	}
+
+	/**
+	 * Serialize a control-plane message (borsh `PubSubMessage`); rust-core
+	 * mode encodes natively (byte-identical, covered by the parity suite).
+	 */
+	private encodePubSubMessage(message: PubSubMessage): Uint8Array {
+		const native = this.nativeTopicControl;
+		if (native) {
+			if (message instanceof PubSubData) {
+				return native.encodePubSubData(
+					message.topics,
+					message.strict,
+					message.data,
+				);
+			}
+			if (message instanceof Subscribe) {
+				return native.encodeSubscribe(
+					message.topics,
+					message.requestSubscribers,
+				);
+			}
+			if (message instanceof Unsubscribe) {
+				return native.encodeUnsubscribe(message.topics);
+			}
+			if (message instanceof GetSubscribers) {
+				return native.encodeGetSubscribers(message.topics);
+			}
+			if (message instanceof TopicRootCandidates) {
+				return native.encodeTopicRootCandidates(message.candidates);
+			}
+			if (message instanceof PeerUnavailable) {
+				return native.encodePeerUnavailable(
+					message.publicKeyHash,
+					message.session,
+					message.timestamp,
+					message.topics,
+				);
+			}
+			if (message instanceof TopicRootQuery) {
+				return native.encodeTopicRootQuery(message.requestId, message.topic);
+			}
+			if (message instanceof TopicRootQueryResponse) {
+				return native.encodeTopicRootQueryResponse(
+					message.requestId,
+					message.topic,
+					message.root,
+				);
+			}
+		}
+		return toUint8Array(message.bytes());
+	}
+
+	/**
+	 * Parse a control-plane payload; rust-core mode decodes natively into the
+	 * same message classes (decode failures throw either way, so callers keep
+	 * their fallback behavior).
+	 */
+	private decodePubSubMessage(bytes: Uint8Array): PubSubMessage {
+		const native = this.nativeTopicControl;
+		if (native) {
+			const decoded = native.decodePubSubMessage(bytes);
+			switch (decoded.type) {
+				case "data":
+					return new PubSubData({
+						topics: decoded.topics,
+						data: decoded.data,
+						strict: decoded.strict,
+					});
+				case "subscribe":
+					return new Subscribe({
+						topics: decoded.topics,
+						requestSubscribers: decoded.requestSubscribers,
+					});
+				case "unsubscribe":
+					return new Unsubscribe({ topics: decoded.topics });
+				case "get-subscribers":
+					return new GetSubscribers({ topics: decoded.topics });
+				case "topic-root-candidates":
+					return new TopicRootCandidates({ candidates: decoded.candidates });
+				case "peer-unavailable":
+					return new PeerUnavailable({
+						publicKeyHash: decoded.publicKeyHash,
+						session: decoded.session,
+						timestamp: decoded.timestamp,
+						topics: decoded.topics,
+					});
+				case "topic-root-query":
+					return new TopicRootQuery({
+						requestId: decoded.requestId,
+						topic: decoded.topic,
+					});
+				case "topic-root-query-response":
+					return new TopicRootQueryResponse({
+						requestId: decoded.requestId,
+						topic: decoded.topic,
+						root: decoded.root,
+					});
+			}
+		}
+		return PubSubMessage.from(bytes);
 	}
 
 	private async resolveTopicRootState(
@@ -1021,7 +1147,7 @@ export class TopicControlPlane
 		peer: PeerStreams,
 		pubsubMessage: PubSubMessage,
 	) {
-		const embedded = await this.createMessage(toUint8Array(pubsubMessage.bytes()), {
+		const embedded = await this.createMessage(this.encodePubSubMessage(pubsubMessage), {
 			mode: new SilentDelivery({
 				to: [peer.publicKey.hashcode()],
 				redundancy: 1,
@@ -1184,7 +1310,7 @@ export class TopicControlPlane
 
 			let pubsubMessage: PubSubMessage;
 			try {
-				pubsubMessage = PubSubMessage.from(dm.data);
+				pubsubMessage = this.decodePubSubMessage(dm.data);
 			} catch {
 				return;
 			}
@@ -1417,7 +1543,7 @@ export class TopicControlPlane
 					topics: userTopics,
 					requestSubscribers: true,
 				});
-				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+				const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 					mode: new AnyWhere(),
 					priority: 1,
 					skipRecipientValidation: true,
@@ -1496,7 +1622,7 @@ export class TopicControlPlane
 				// Announce first.
 				try {
 					const msg = new Unsubscribe({ topics: userTopics });
-					const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+					const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 						mode: new AnyWhere(),
 						priority: 1,
 						skipRecipientValidation: true,
@@ -1569,7 +1695,7 @@ export class TopicControlPlane
 						timestamp: batch.timestamp,
 						topics: batch.topics,
 					});
-					const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+					const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 						mode: new AnyWhere(),
 						priority: 1,
 						skipRecipientValidation: true,
@@ -1599,7 +1725,7 @@ export class TopicControlPlane
 				timestamp: 0n,
 				topics: [],
 			});
-			const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+			const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 				mode: new AnyWhere(),
 				priority: 1,
 				skipRecipientValidation: true,
@@ -1700,7 +1826,7 @@ export class TopicControlPlane
 				const persistent = (this.shardRefCounts.get(shardTopic) ?? 0) > 0;
 				await this.ensureFanoutChannel(shardTopic, { ephemeral: !persistent });
 
-				const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+				const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 					mode: new AnyWhere(),
 					priority: 1,
 					skipRecipientValidation: true,
@@ -1752,10 +1878,13 @@ export class TopicControlPlane
 			const msg = data
 				? new PubSubData({ topics: topicsAll, data, strict: true })
 				: undefined;
-			const message = await this.createMessage(msg?.bytes(), {
-				...options,
-				skipRecipientValidation: this.dispatchEventOnSelfPublish,
-			});
+			const message = await this.createMessage(
+				msg ? this.encodePubSubMessage(msg) : undefined,
+				{
+					...options,
+					skipRecipientValidation: this.dispatchEventOnSelfPublish,
+				},
+			);
 
 			if (msg) {
 				this.dispatchEvent(
@@ -1798,7 +1927,7 @@ export class TopicControlPlane
 		}
 
 		const msg = new PubSubData({ topics: topicsAll, data, strict: false });
-		const embedded = await this.createMessage(toUint8Array(msg.bytes()), {
+		const embedded = await this.createMessage(this.encodePubSubMessage(msg), {
 			mode: new AnyWhere(),
 			priority: options?.priority,
 			responsePriority: options?.responsePriority,
@@ -1997,22 +2126,43 @@ export class TopicControlPlane
 		timestamp: bigint,
 		relevantTopics: string[],
 	) {
-		for (const topic of relevantTopics) {
-			const last = this.lastSubscriptionMessages
-				.get(subscriberKey)
-				?.get(topic);
-			if (!last) {
-				continue;
-			}
-			if (last.session > session) {
-				return false;
+		if (this.nativeTopicControl) {
+			const lasts: bigint[] = [];
+			for (const topic of relevantTopics) {
+				const last = this.lastSubscriptionMessages
+					.get(subscriberKey)
+					?.get(topic);
+				if (last) {
+					lasts.push(last.session, last.timestamp);
+				}
 			}
 			if (
-				timestamp !== 0n &&
-				last.session === session &&
-				last.timestamp > timestamp
+				!this.nativeTopicControl.subscriptionIsLatest(
+					BigUint64Array.from(lasts),
+					session,
+					timestamp,
+				)
 			) {
 				return false;
+			}
+		} else {
+			for (const topic of relevantTopics) {
+				const last = this.lastSubscriptionMessages
+					.get(subscriberKey)
+					?.get(topic);
+				if (!last) {
+					continue;
+				}
+				if (last.session > session) {
+					return false;
+				}
+				if (
+					timestamp !== 0n &&
+					last.session === session &&
+					last.timestamp > timestamp
+				) {
+					return false;
+				}
 			}
 		}
 
@@ -2028,6 +2178,23 @@ export class TopicControlPlane
 				});
 		}
 		return true;
+	}
+
+	/**
+	 * `Subscribe` replaces tracked subscription data for new subscribers or
+	 * strictly newer sessions; equal/older sessions only refresh cache order.
+	 */
+	private subscribeShouldReplace(
+		existing: SubscriptionData | undefined,
+		session: bigint,
+	): boolean {
+		if (this.nativeTopicControl) {
+			return this.nativeTopicControl.subscribeShouldReplace(
+				existing?.session,
+				session,
+			);
+		}
+		return !existing || existing.session < session;
 	}
 
 	private subscriptionMessageIsLatest(
@@ -2125,7 +2292,7 @@ export class TopicControlPlane
 					this.initializePeer(sender);
 
 					const existing = peers.get(senderKey);
-					if (!existing || existing.session < message.header.session) {
+					if (this.subscribeShouldReplace(existing, message.header.session)) {
 						peers.delete(senderKey);
 						peers.set(
 							senderKey,
@@ -2234,7 +2401,7 @@ export class TopicControlPlane
 					this.initializePeer(sender);
 
 					const existing = peers.get(senderKey);
-					if (!existing || existing.session < message.header.session) {
+					if (this.subscribeShouldReplace(existing, message.header.session)) {
 						peers.delete(senderKey);
 						peers.set(
 							senderKey,
@@ -2273,7 +2440,7 @@ export class TopicControlPlane
 						requestSubscribers: false,
 					});
 					const embedded = await this.createMessage(
-						toUint8Array(response.bytes()),
+						this.encodePubSubMessage(response),
 						{
 							mode: new AnyWhere(),
 							priority: 1,
@@ -2404,7 +2571,7 @@ export class TopicControlPlane
 				requestSubscribers: false,
 			});
 			const embedded = await this.createMessage(
-				toUint8Array(response.bytes()),
+				this.encodePubSubMessage(response),
 				{
 					mode: new AnyWhere(),
 					priority: 1,
@@ -2430,7 +2597,7 @@ export class TopicControlPlane
 
 		let pubsubMessage: PubSubMessage;
 		try {
-			pubsubMessage = PubSubMessage.from(message.data);
+			pubsubMessage = this.decodePubSubMessage(message.data);
 		} catch {
 			return super.onDataMessage(from, stream, message, seenBefore);
 		}
