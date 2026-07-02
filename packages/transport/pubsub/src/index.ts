@@ -390,12 +390,18 @@ export class TopicControlPlane
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._subscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
+			(error) =>
+				logger.error(`Debounced subscribe failed: ${error?.message ?? error}`),
 		);
 		// NOTE: Unsubscribe should update local state immediately and batch only the
 		// best-effort network announcements to avoid teardown stalls (program close).
 		this.debounceUnsubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._announceUnsubscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
+			(error) =>
+				logger.error(
+					`Debounced unsubscribe announce failed: ${error?.message ?? error}`,
+				),
 		);
 	}
 
