@@ -9,6 +9,7 @@ packages:
   - packages/transport/stream/e2e/browser/browser-node
   - packages/transport/pubsub
   - packages/transport/pubsub-interface
+  - packages/transport/network-rust
   - packages/transport/libp2p-test-utils
   - packages/log
   - packages/log/rust
