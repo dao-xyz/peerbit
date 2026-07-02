@@ -60,6 +60,23 @@ assert(read, "expected the wasm block store to return the stored block");
 assert.deepEqual([...read], [...bytes]);
 console.log("@peerbit/native-backbone tarball smoke OK");
 `,
+	"@peerbit/network-rust": `
+import { strict as assert } from "node:assert";
+import {
+	createNativeWire,
+	readNativeWireFrameRecord,
+} from "@peerbit/network-rust";
+
+const wire = await createNativeWire();
+const frames = wire.testCorpusFrames();
+assert(frames.length > 0, "expected the wasm module to emit corpus frames");
+const records = wire.decodeAndVerifyBatch(frames, Date.now());
+const first = readNativeWireFrameRecord(records, 0);
+assert.equal(first.decodeOk, true);
+assert.equal(first.verifyStatus, 1); // ed25519 signature verified in wasm
+assert.deepEqual([...wire.reencodeFrame(frames[0])], [...frames[0]]);
+console.log("@peerbit/network-rust tarball smoke OK");
+`,
 };
 
 const run = (cmd, args, options = {}) =>

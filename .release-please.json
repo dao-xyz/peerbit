@@ -42,6 +42,7 @@
 		"packages/transport/stream": {},
 		"packages/transport/stream-interface": {},
 		"packages/transport/libp2p-test-utils": {},
+		"packages/transport/network-rust": {},
 		"packages/log": {},
 		"packages/log/rust": {},
 		"packages/utils/native-backbone": {},
