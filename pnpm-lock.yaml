@@ -400,6 +400,9 @@ importers:
       '@peerbit/pubsub':
         specifier: workspace:*
         version: link:../../transport/pubsub
+      '@peerbit/stream':
+        specifier: workspace:*
+        version: link:../../transport/stream
       '@peerbit/stream-interface':
         specifier: workspace:*
         version: link:../../transport/stream-interface
@@ -456,6 +459,12 @@ importers:
       '@peerbit/log-rust':
         specifier: workspace:*
         version: link:../../log/rust
+      '@peerbit/native-backbone':
+        specifier: workspace:*
+        version: link:../../utils/native-backbone
+      '@peerbit/network-rust':
+        specifier: workspace:*
+        version: link:../../transport/network-rust
 
   packages/clients/peerbit-react:
     dependencies:
@@ -1729,6 +1738,9 @@ importers:
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
+      peerbit:
+        specifier: workspace:*
+        version: link:../../../clients/peerbit
       uuid:
         specifier: ^10.0.0
         version: 10.0.0

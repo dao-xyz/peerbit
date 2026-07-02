@@ -83,6 +83,73 @@ describe("Create", function () {
 		await client.stop();
 	});
 
+	it("rust preset wires the native network chain", async () => {
+		const client = await Peerbit.create({
+			...createRustPeerbitOptions(),
+		});
+		try {
+			const runtime = client.nativeNetwork;
+			expect(runtime?.rustCore).to.exist;
+			expect(runtime?.wireSync).to.exist;
+			// one native core shared by all three DirectStream services
+			expect((client.services.pubsub as any).rustCore).to.equal(
+				runtime!.rustCore,
+			);
+			expect((client.services.blocks as any).rustCore).to.equal(
+				runtime!.rustCore,
+			);
+			expect((client.services.fanout as any).rustCore).to.equal(
+				runtime!.rustCore,
+			);
+			// the pubsub inbound decoder is the wire-sync session (receive fusion)
+			expect((client.services.pubsub as any).nativeWire).to.equal(
+				runtime!.wireSync,
+			);
+			// programs opened on this client inherit the native shared-log defaults
+			expect(client.sharedLogNativeDefaults?.nativeBackbone).to.exist;
+			expect(client.sharedLogNativeDefaults?.nativeGraph).to.equal(true);
+			expect(client.sharedLogNativeDefaults?.sync?.rawExchangeHeads).to.equal(
+				true,
+			);
+			expect(client.sharedLogNativeDefaults?.sync?.nativeWireSync).to.equal(
+				runtime!.wireSync,
+			);
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("rust preset network can be disabled", async () => {
+		const client = await Peerbit.create({
+			...createRustPeerbitOptions({ network: false }),
+		});
+		try {
+			expect(client.nativeNetwork).to.equal(undefined);
+			expect(client.sharedLogNativeDefaults).to.equal(undefined);
+			expect((client.services.pubsub as any).rustCore).to.equal(undefined);
+			expect((client.services.pubsub as any).nativeWire).to.equal(undefined);
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("throws when network options are combined with an external libp2p", async () => {
+		const external = await Peerbit.create();
+		try {
+			await expect(
+				Peerbit.create({
+					libp2p: external.libp2p,
+					...createRustPeerbitOptions(),
+				}),
+			).to.be.rejectedWith(
+				Error,
+				"The 'network' option requires Peerbit.create to build the libp2p services",
+			);
+		} finally {
+			await external.stop();
+		}
+	});
+
 	it("can create with privateKey", async () => {
 		const privateKey = await keys.generateKeyPair("Ed25519");
 		const client = await Peerbit.create({

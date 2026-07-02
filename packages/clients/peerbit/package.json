@@ -92,6 +92,7 @@
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/pubsub": "workspace:*",
+		"@peerbit/stream": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"@sqlite.org/sqlite-wasm": "^3.51.1-build1",
@@ -106,7 +107,9 @@
 	"optionalDependencies": {
 		"@peerbit/any-store-rust": "workspace:*",
 		"@peerbit/indexer-rust": "workspace:*",
-		"@peerbit/log-rust": "workspace:*"
+		"@peerbit/log-rust": "workspace:*",
+		"@peerbit/native-backbone": "workspace:*",
+		"@peerbit/network-rust": "workspace:*"
 	},
 	"devDependencies": {
 		"@types/libsodium-wrappers": "^0.7.14",
