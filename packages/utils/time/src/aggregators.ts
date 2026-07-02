@@ -168,7 +168,7 @@ export const debounceAccumulator = <K, T, V>(
 		has(key: K): boolean;
 	},
 	delay: number | (() => number),
-	options?: { leading?: boolean },
+	options?: { leading?: boolean; onError?(error: Error): void },
 ): {
 	add(value: T): Promise<void>;
 	delete(key: K): void;
