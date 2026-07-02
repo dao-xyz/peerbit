@@ -238,6 +238,21 @@ export class TopicControlPlane
 	public subscriptions: Map<string, { counter: number }>;
 	// Local topics requested via debounced subscribe, not yet applied in `subscriptions`.
 	private pendingSubscriptions: Set<string>;
+	/**
+	 * Per-shard batching of Subscribe{requestSubscribers} responses. When many
+	 * peers announce subscriptions in a burst (group subscribe), answering each
+	 * announcer with a routed unicast is quadratic in subscriber count and
+	 * melts the fanout route-resolution machinery (#983); a short window lets
+	 * one broadcast answer all concurrent announcers instead.
+	 */
+	private pendingSubscriberResponses: Map<
+		string,
+		{
+			targets: Set<string>;
+			topics: Set<string>;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	> = new Map();
 	public lastSubscriptionMessages: Map<
 		string,
 		Map<string, { session: bigint; timestamp: bigint }>
@@ -500,6 +515,10 @@ export class TopicControlPlane
 
 		this.subscriptions.clear();
 		this.pendingSubscriptions.clear();
+		for (const entry of this.pendingSubscriberResponses.values()) {
+			clearTimeout(entry.timer);
+		}
+		this.pendingSubscriberResponses.clear();
 		this.topics.clear();
 		this.peerToTopic.clear();
 		this.lastSubscriptionMessages.clear();
@@ -2050,6 +2069,68 @@ export class TopicControlPlane
 		);
 	}
 
+	/**
+	 * Batch Subscribe{requestSubscribers} responses per shard over a short
+	 * jittered window. A single announcer still gets a targeted unicast; when
+	 * several peers announce concurrently (group subscribe), one broadcast
+	 * answers them all — avoiding S(S-1) routed unicasts whose cold route
+	 * resolutions flood the shard tree (#983).
+	 */
+	private queueSubscriberResponse(
+		shardTopic: string,
+		targetHash: string,
+		topics: string[],
+	) {
+		let entry = this.pendingSubscriberResponses.get(shardTopic);
+		if (!entry) {
+			const created = {
+				targets: new Set<string>(),
+				topics: new Set<string>(),
+				timer: setTimeout(
+					() => {
+						this.pendingSubscriberResponses.delete(shardTopic);
+						void this.flushSubscriberResponses(shardTopic, created).catch(
+							logErrorIfStarted,
+						);
+					},
+					150 + Math.floor(Math.random() * 150),
+				),
+			};
+			entry = created;
+			this.pendingSubscriberResponses.set(shardTopic, entry);
+		}
+		entry.targets.add(targetHash);
+		for (const t of topics) entry.topics.add(t);
+	}
+
+	private async flushSubscriberResponses(
+		shardTopic: string,
+		entry: { targets: Set<string>; topics: Set<string> },
+	) {
+		if (!this.started) return;
+		// Re-filter: our subscriptions may have changed within the window.
+		const topics = this.getSubscriptionOverlap([...entry.topics]);
+		if (topics.length === 0) return;
+		const response = new Subscribe({
+			topics,
+			requestSubscribers: false,
+		});
+		const embedded = await this.createMessage(toUint8Array(response.bytes()), {
+			mode: new AnyWhere(),
+			priority: 1,
+			skipRecipientValidation: true,
+		} as any);
+		const payload = toUint8Array(embedded.bytes());
+		const [firstTarget] = entry.targets;
+		if (entry.targets.size === 1 && firstTarget) {
+			await this.sendFanoutUnicastOrBroadcast(shardTopic, firstTarget, payload);
+			return;
+		}
+		const st = this.fanoutChannels.get(shardTopic);
+		if (!st) return;
+		await st.channel.publishMaybe(payload);
+	}
+
 	private async sendFanoutUnicastOrBroadcast(
 		shardTopic: string,
 		targetHash: string,
@@ -2274,24 +2355,7 @@ export class TopicControlPlane
 			if (pubsubMessage.requestSubscribers) {
 				const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
 				if (overlap.length > 0) {
-					const response = new Subscribe({
-						topics: overlap,
-						requestSubscribers: false,
-					});
-					const embedded = await this.createMessage(
-						toUint8Array(response.bytes()),
-						{
-							mode: new AnyWhere(),
-							priority: 1,
-							skipRecipientValidation: true,
-						} as any,
-					);
-					const payload = toUint8Array(embedded.bytes());
-					await this.sendFanoutUnicastOrBroadcast(
-						shardTopic,
-						senderKey,
-						payload,
-					);
+					this.queueSubscriberResponse(shardTopic, senderKey, overlap);
 				}
 			}
 			return;
