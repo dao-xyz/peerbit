@@ -6,18 +6,59 @@ const DEFAULT_MAX_FROM_ENTRIES = 2048;
 const DEFAULT_MAX_TARGETS_PER_FROM = 10_000;
 const DEFAULT_MAX_RELAYS_PER_TARGET = 32;
 
-type RelayInfo = {
+export type RelayInfo = {
 	session: number;
 	hash: string;
 	updatedAt: number;
 	expireAt?: number;
 	distance: number;
 };
-type RouteInfo = {
+export type RouteInfo = {
 	remoteSession: number;
 	session: number;
 	list: RelayInfo[];
 };
+
+/**
+ * The routing-table surface DirectStream depends on. Implemented by the TS
+ * `Routes` class below and by the native (wasm) routing table from
+ * `@peerbit/network-rust` when DirectStream runs in rust-core mode.
+ */
+export interface RoutesLike {
+	/** Snapshot view: FROM -> TO -> route info. */
+	routes: Map<string, Map<string, RouteInfo>>;
+	routeMaxRetentionPeriod: number;
+	clear(): void;
+	add(
+		from: string,
+		neighbour: string,
+		target: string,
+		distance: number,
+		session: number,
+		remoteSession: number,
+	): "new" | "updated" | "restart";
+	remove(target: string): string[];
+	removeNeighbour(neighbour: string): void;
+	findNeighbor(from: string, target: string): RouteInfo | undefined;
+	getRouteHints(from: string, target: string): DirectStreamAckRouteHint[];
+	getBestRouteHint(
+		from: string,
+		target: string,
+	): DirectStreamAckRouteHint | undefined;
+	isReachable(from: string, target: string, maxDistance?: number): boolean;
+	hasTarget(target: string): boolean;
+	updateSession(remote: string, session?: number): boolean;
+	getSession(remote: string): number | undefined;
+	getDependent(peer: string): string[];
+	count(from?: string): number;
+	countAll(): number;
+	getFanout(
+		from: string,
+		tos: string[],
+		redundancy: number,
+	): Map<string, Map<string, { to: string; timestamp: number }>> | undefined;
+	getPrunable(neighbours: string[]): string[];
+}
 
 const sortRoutes = (routes: RelayInfo[]) => {
 	// sort by distance, if same distance make the routes without expire time first
