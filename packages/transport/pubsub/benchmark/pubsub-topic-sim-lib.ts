@@ -46,6 +46,10 @@ export type PubsubTopicSimParams = {
 	topic: string;
 	subscribeModel: "real" | "preseed";
 	subscriptionDebounceDelayMs: number;
+	relayFraction: number;
+	relayMaxChildren: number;
+	joinTimeoutMs: number;
+	minDeliveredPct: number;
 
 	warmupMs: number;
 	warmupMessages: number;
@@ -285,6 +289,17 @@ export const resolvePubsubTopicSimParams = (
 			0,
 			1_000_000_000,
 		),
+		relayFraction: Math.max(0, Math.min(1, Number(input.relayFraction ?? 0.25))),
+		relayMaxChildren: clampInt(
+			Number(input.relayMaxChildren ?? 32),
+			0,
+			1_000_000_000,
+		),
+		joinTimeoutMs: clampInt(Number(input.joinTimeoutMs ?? 0), 0, 1_000_000_000),
+		minDeliveredPct: Math.max(
+			0,
+			Math.min(100, Number(input.minDeliveredPct ?? 0)),
+		),
 
 		warmupMs: clampInt(Number(input.warmupMs ?? 0), 0, 1_000_000_000),
 		warmupMessages: clampInt(Number(input.warmupMessages ?? 0), 0, 1_000_000_000),
@@ -399,6 +414,18 @@ export const runPubsubTopicSim = async (
 		}, timeoutMs);
 	}
 
+	const simStart = Date.now();
+	const progressEnabled =
+		typeof process !== "undefined" &&
+		process.env?.PUBSUB_TOPIC_SIM_PROGRESS === "1";
+	const mark = (label: string) => {
+		if (!progressEnabled) return;
+		const mem = process.memoryUsage();
+		console.error(
+			`[topic-sim] ${label} t=${Date.now() - simStart}ms rss=${Math.round(mem.rss / 1048576)}MiB heapUsed=${Math.round(mem.heapUsed / 1048576)}MiB`,
+		);
+	};
+
 	const rng = mulberry32(params.seed);
 	const nodes = params.nodes;
 	const subscriberCount = clampInt(params.subscribers, 0, Math.max(0, nodes - 1));
@@ -444,8 +471,35 @@ export const runPubsubTopicSim = async (
 			fanout: SimFanoutTree;
 		}[] = [];
 
+	const dumpFanoutMetrics = (label: string) => {
+		if (!progressEnabled) return;
+		const agg = new Map<string, number>();
+		for (const p of peers) {
+			const bySuffix = (p.fanout as any).metricsBySuffixKey as
+				| Map<string, Record<string, unknown>>
+				| undefined;
+			if (!bySuffix) continue;
+			for (const m of bySuffix.values()) {
+				for (const [k, v] of Object.entries(m)) {
+					if (typeof v === "number" && v !== 0) {
+						agg.set(k, (agg.get(k) ?? 0) + v);
+					}
+				}
+			}
+		}
+		console.error(
+			`[topic-sim] fanout-metrics(${label}) ${JSON.stringify(
+				Object.fromEntries([...agg.entries()].sort((a, b) => b[1] - a[1])),
+			)}`,
+		);
+	};
+
 	try {
 		const basePort = 40_000;
+		const relayEvery =
+			params.relayFraction > 0
+				? Math.max(1, Math.round(1 / params.relayFraction))
+				: 0;
 		for (let i = 0; i < params.nodes; i++) {
 			const isRouter = routerIndices.has(i);
 			const port = basePort + i;
@@ -485,10 +539,23 @@ export const runPubsubTopicSim = async (
 							fanout,
 							topicRootControlPlane,
 							hostShards: isRouter,
-							// Make the shard overlay robust under subscriber churn by ensuring
-							// only stable "router" nodes can act as relays.
+							// Routers always relay; additionally promote a deterministic
+							// fraction of ordinary nodes to relays so the shard tree has
+							// enough aggregate child capacity for the subscriber count.
+							// (With relayFraction=0 only routers relay, which caps a shard
+							// tree at 64 + 3*24 children — any larger subscriber set is
+							// mathematically guaranteed to starve and time out joining.)
 							fanoutRootChannel: { maxChildren: 64 },
-							fanoutNodeChannel: { maxChildren: isRouter ? 24 : 0 },
+							fanoutNodeChannel: {
+								maxChildren: isRouter
+									? 24
+									: relayEvery > 0 && i % relayEvery === 0
+										? params.relayMaxChildren
+										: 0,
+							},
+							...(params.joinTimeoutMs > 0
+								? { fanoutJoin: { timeoutMs: params.joinTimeoutMs } }
+								: {}),
 						},
 					),
 				});
@@ -530,6 +597,7 @@ export const runPubsubTopicSim = async (
 
 			await waitForProtocolStreams(peers.map((p) => p.sub as any));
 			await waitForProtocolStreams(peers.map((p) => p.fanout as any));
+			mark("streams-ready");
 
 		const writer = peers[params.writerIndex]!.sub;
 			const subscriberIndices = pickDistinct(
@@ -547,6 +615,8 @@ export const runPubsubTopicSim = async (
 				}),
 			);
 			const subscribeDone = Date.now();
+			mark("subscribed");
+			dumpFanoutMetrics("subscribed");
 
 		if (params.warmupMs > 0) {
 			await delay(params.warmupMs, { signal: timeoutSignal });
@@ -586,6 +656,8 @@ export const runPubsubTopicSim = async (
 				});
 			}
 		}
+
+		mark("warmup-done");
 
 		// Delivery + latency tracking (unique deliveries per subscriber/seq).
 		const sendTimes = new Float64Array(params.messages);
@@ -782,6 +854,7 @@ export const runPubsubTopicSim = async (
 					} catch {
 						publishErrors += 1;
 					}
+					if (i % 10 === 9) mark(`published-${i + 1}`);
 
 				if (params.intervalMs > 0) {
 					await delay(params.intervalMs, { signal: timeoutSignal });
@@ -801,6 +874,8 @@ export const runPubsubTopicSim = async (
 			await delay(params.settleMs, { signal: timeoutSignal });
 		}
 		const publishDone = Date.now();
+		mark("settled");
+		dumpFanoutMetrics("settled");
 
 		// Aggregate stats
 		const expected = subscriberIndices.length * params.messages;
