@@ -39,15 +39,17 @@ Defaults: 2 warmup + 5 measured runs per leg, strictly sequential. Do not
 run anything else (builds, tests, other benchmarks) concurrently.
 
 Indicative shape of the results (one dev machine, defaults; absolute
-numbers vary): cold-sync ~2.4x entries/s for the native preset with the
-sender-side send loop at ~2% of wall on both legs (outbound send does not
-hide the receive win). Sustained singleton live-puts currently run slower
-on the native preset (~0.4x throughput, higher visibility lag) — the
-per-message fixed cost of the fused receive dominates for one-entry
-messages, which is what outbound send fusion / batching is expected to
-address. Above the stash cap the commit phase pays ~4-5x in MB/s versus
-just below it (eviction fallback + the synchronizer's retry duplicates)
-while still converging on every run.
+numbers vary): cold-sync well above 2x entries/s for the native preset
+with the sender-side send loop at ~2-3% of wall on both legs. Sustained
+singleton live-puts run several times faster on the native preset with the
+fused send: awaited puts coalesce into multi-entry raw frames serialized
+inside wasm, which amortizes the receiver's per-message fixed costs that
+previously made this leg ~0.4-0.9x of the default (one instrumented run on
+one dev machine: ~6x default throughput with ~7x lower p50 visibility
+latency; before send fusion the same machine measured ~0.9x). Above the
+stash cap the commit phase pays ~4-5x in MB/s versus just below it
+(eviction fallback + the synchronizer's retry duplicates) while still
+converging on every run.
 
 ```
 cd packages/programs/data/shared-log

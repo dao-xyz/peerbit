@@ -215,6 +215,44 @@ miss (never stashed / evicted): resolveRequest returns undefined
     A throwing resolveRequest hook also falls back to the decode path.
 ```
 
+### 2.5 Fused send path (raw exchange-heads outbound)
+
+The outbound mirror of 2.4 (`sync_send.rs` in the native-backbone module):
+
+```
+SharedLog send sites                      what stays in JS: hash strings +
+    │                                     per-head gid references (the plan)
+    ├─ bulk sync responses (SimpleSyncronizer, capability-gated per request
+    │  as before) and repair pushes
+    └─ live append gossip: per-peer raw capability is advertised ONCE via
+       SyncCapabilitiesMessage([0,10]) during the subscribe flow; silent
+       fire-and-forget appends to all-capable recipient sets coalesce per
+       recipient set until the end of the current event-loop turn
+       (setImmediate; caps: 256 entries / 128 KB per frame) — a lone put
+       flushes within one turn, an awaited-put burst ships as one
+       multi-entry raw frame
+    ▼
+NativePeerbitBackbone.encode_raw_exchange_sync_payload(topic, hashes, refs)
+    │ wasm: entry block bytes resolved from the native block store (local
+    │ appends and fused receives both commit there); the full
+    │ PubSubData → RequestV0 → DecryptedThing → RawExchangeHeadsMessage
+    │ payload is serialized in one pass into one exactly-sized buffer
+    │ (byte-identical to the TS serialization — pinned by golden + parity
+    │ specs). Block bytes never materialize as JS values.
+    ▼
+pubsub.publishPreEncodedData(payload, { topics }, { mode: SilentDelivery })
+    │ the pre-encoded payload becomes the DataMessage data as-is (the
+    │ regular publish path's PubSubData wrap copy is skipped); one TS
+    │ ed25519 sign per message (per-batch, not per-entry), then the normal
+    │ outbound scheduler
+    ▼
+fallbacks (any step unavailable → TS path, byte-identical wire):
+    no native encoder / block missing from the native store / no
+    publishPreEncodedData → TS RawExchangeHeadsMessage via rpc.send;
+    recipient never advertised raw capability → unchanged plain
+    ExchangeHeadsMessage path (mixed fleets, old peers)
+```
+
 ---
 
 ## 3. The stash handoff: design and bounds
@@ -271,7 +309,7 @@ stash-backed message and prepared join facts exist so validation probes
 | fanout tree | frame codec, parent-upgrade policy/gate decisions | channel state machine, timers, tracker/provider directories | peerbit_wire |
 | block exchange | codec, provider rules, hint/eager caches, native-store-served responses | store chain fallback, publish plumbing | peerbit_wire (+ peerbit_log_rust for serving) |
 | shared-log receive | wire stash → prepared raw receive → batch verify → index/graph/coordinates commit | RPC shell, high-level events only | native-backbone |
-| shared-log send | — (encoder groundwork only, see section 9) | TS serialization, one message per ≤ 512 KB batch | — |
+| shared-log send | full sync payload (PubSubData → RequestV0 → RawExchangeHeadsMessage) serialized from the native block store (`sync_send.rs`) | head/reference plan (strings), live-gossip coalescing, one DataMessage sign per ≤ 512 KB payload | native-backbone |
 | transports | — | js-libp2p (noise/yamux/tcp/ws/webrtc) | — |
 
 ---
@@ -286,7 +324,7 @@ turns them on together.
 | `nativeWire` | `DirectStreamOptions` (`@peerbit/stream`) | off | batched native decode+verify of inbound frames (section 2.2); per-frame TS fallback on decode failure / unsupported schemes |
 | `rustCore` | `DirectStreamOptions`; picked up by pubsub/fanout/blocks | off | native protocol cores (section 2.3); implies `nativeWire` via `rustCore.nativeWire` unless an explicit `nativeWire` is given (explicit wins); `false` additionally opts out of the test injection |
 | `PEERBIT_STREAM_RUST_CORE=1` | env, test-only | off | `resolveInjectedRustCore()` lets the unmodified stream/pubsub/blocks suites pick up a `globalThis`-installed core (the "both modes" re-runs) |
-| `sync.rawExchangeHeads` | `@peerbit/shared-log` open args | off | sender ships raw entry block bytes (`RawExchangeHeadsMessage [0,7]`, batched ≤ 512 KB) with no TS re-serialization |
+| `sync.rawExchangeHeads` | `@peerbit/shared-log` open args | off | sender ships raw entry block bytes (`RawExchangeHeadsMessage [0,7]`, batched ≤ 512 KB) with no TS re-serialization; also advertises the raw capability once per peer (`SyncCapabilitiesMessage [0,10]`) so live append gossip to all-capable recipients coalesces into raw frames, serialized in wasm when the native backbone is present (section 2.5) |
 | `sync.nativeWireSync` | `@peerbit/shared-log` open args | off | receive fusion (section 2.4); requires `nativeBackbone`; registers the program topic with the session, resolves via the RPC `resolveRequest` hook |
 | `network` | `Peerbit.create` (`CreateInstanceOptions`) | off | native network plane: `rustCore` factory (one core shared by pubsub/fanout/blocks), `wireSync` factory (per-node session keyed by public key hash, installed as the pubsub inbound decoder), `sharedLogDefaults`. Requires client-built services — rejected early (before any resource is acquired) when combined with an external libp2p instance |
 | `network.sharedLogDefaults` | `Peerbit.create` | true when `network` is present | advertises `nativeBackbone: {}`, `nativeGraph: { optional: true }` (degrades instead of aborting program open when the optional native module is absent) and `sync: { rawExchangeHeads: true, nativeWireSync }` to programs opened on the client. Explicit per-open options — including `false` — always win. Programs with a program-level `onChange` consumer (e.g. document stores) receive change events from the raw path as lazy entry views: entry bytes/decodes materialize only when the consumer reads them, and every materialization is counted (`sharedLog.rawReceive.jsEntryDecode`, stash `blockCopyOuts`). Programs with a `canAppend` hook run the lower-log batch join (hook fires per entry) instead of the native-validated commit |
@@ -351,9 +389,12 @@ back and forth):
    removable only by native transports (section 9).
 3. The small fixed RPC shell decode per message; the per-entry inner payload
    resolves from the stash with zero JS decode.
-4. Outbound send is not fused: shared-log still TS-serializes the exchange
-   message — one serialization per ≤ 512 KB batch
-   (`MAX_RAW_EXCHANGE_MESSAGE_SIZE`), not per entry, asserted in the E2E.
+4. Outbound (fused send, section 2.5): one wasm→JS egress copy of the
+   finished payload per ≤ 512 KB message — the DataMessage data handed to
+   the JS-owned socket (the mirror image of exception 2) — plus one TS
+   ed25519 DataMessage sign per message. Per message, not per entry; the
+   E2E asserts zero JS block-byte copies and zero TS message serializations
+   on the fused send path.
 
 ---
 
@@ -374,13 +415,14 @@ End-to-end (`benchmark/network-preset-e2e.ts`, two real nodes over TCP;
 indicative, one dev machine — see `packages/programs/data/shared-log/
 benchmark/README.md` for methodology and caveats):
 
-- cold-sync: ~2.4× entries/s for the native preset; the sender-side send
-  loop is ~2% of wall on both legs, so the unfused outbound path does not
-  hide the receive win at these sizes.
-- live-puts (sustained singleton puts): currently ~0.4× throughput with
-  higher visibility lag on the native preset — the per-message fixed cost of
-  the fused receive dominates for one-entry messages. This is the workload
-  send fusion / outbound batching is expected to address.
+- cold-sync: >2.4× entries/s for the native preset; the sender-side send
+  loop is ~2-3% of wall on both legs (and fused per section 2.5).
+- live-puts (sustained singleton puts): before send fusion the native
+  preset ran at ~0.4-0.9× the default throughput (machine-dependent) — the
+  per-message fixed cost of the fused receive dominates for one-entry
+  messages. With the fused send (live raw gossip coalescing into
+  multi-entry raw frames, section 2.5) the native preset is at parity or
+  better on this leg; see the benchmark README for current numbers.
 - stash-pressure: above the stash caps the commit phase pays ~4–5× in MB/s
   (eviction fallback + synchronizer retry duplicates) while converging on
   every run.
@@ -391,11 +433,6 @@ Never run these benchmarks concurrently with builds or tests.
 
 ## 10. Known deferred work
 
-- **Send fusion.** Outbound `RawExchangeHeadsMessage` construction still
-  TS-serializes (one message per ≤ 512 KB batch). The encoder groundwork
-  exists in `sync_payload.rs`; fusing it (serialize from the native log
-  block store straight into a `DataMessage` buffer) is the identified fix
-  for the live-puts regression above.
 - **Native document projection in raw receive.** The raw-receive path now
   dispatches program-level `onChange` with lazy entry views (see the flag
   matrix), so document stores take the raw path — but their per-entry
