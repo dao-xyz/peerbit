@@ -107,7 +107,11 @@ describe("Create", function () {
 			);
 			// programs opened on this client inherit the native shared-log defaults
 			expect(client.sharedLogNativeDefaults?.nativeBackbone).to.exist;
-			expect(client.sharedLogNativeDefaults?.nativeGraph).to.equal(true);
+			// nativeGraph is advertised as an optional default so a missing
+			// @peerbit/log-rust degrades gracefully instead of throwing on open.
+			expect(client.sharedLogNativeDefaults?.nativeGraph).to.deep.equal({
+				optional: true,
+			});
 			expect(client.sharedLogNativeDefaults?.sync?.rawExchangeHeads).to.equal(
 				true,
 			);
@@ -145,6 +149,39 @@ describe("Create", function () {
 				Error,
 				"The 'network' option requires Peerbit.create to build the libp2p services",
 			);
+		} finally {
+			await external.stop();
+		}
+	});
+
+	it("does not lock the directory when rejecting network + external libp2p", async () => {
+		// The incompatibility must be detected before any store/indexer/
+		// datastore is opened, otherwise the rejected call leaves the
+		// directory's level stores locked and a retry in the same process
+		// fails with LEVEL_LOCKED.
+		const clientDirectory = path.join(
+			"tmp",
+			"peerbit",
+			"tests",
+			"create-reject-no-lock-" + uuid(),
+		);
+		const external = await Peerbit.create();
+		try {
+			await expect(
+				Peerbit.create({
+					directory: clientDirectory,
+					libp2p: external.libp2p,
+					...createRustPeerbitOptions(),
+				}),
+			).to.be.rejectedWith(
+				Error,
+				"The 'network' option requires Peerbit.create to build the libp2p services",
+			);
+
+			// The corrected retry in the same process must succeed — the
+			// rejected call must not have left cache/index/libp2p stores open.
+			const retry = await Peerbit.create({ directory: clientDirectory });
+			await retry.stop();
 		} finally {
 			await external.stop();
 		}

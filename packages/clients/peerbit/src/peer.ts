@@ -126,7 +126,7 @@ export type SharedLogNativeDefaultsLike = {
 				documentIndex?: boolean;
 				coordinatePersistence?: unknown;
 		  };
-	nativeGraph?: boolean;
+	nativeGraph?: boolean | { optional?: boolean; heads?: boolean; graph?: unknown };
 	sync?: {
 		rawExchangeHeads?: boolean;
 		nativeWireSync?: NativeWireSyncSessionLike;
@@ -273,6 +273,21 @@ export class Peerbit implements ProgramClient {
 
 		const asRelay = (options as SimpleLibp2pOptions).relay ?? true;
 
+		// Validate incompatible options BEFORE acquiring any resources
+		// (cache store, indexer, datastore). Both inputs are known up front,
+		// so throwing here avoids leaking open handles / a locked directory
+		// that a later throw (after createCache/indexer/datastore.open) would
+		// leave behind — those are never cleaned up on the throw path.
+		if (
+			options.network &&
+			libp2pExtended &&
+			isLibp2pInstance(libp2pExtended)
+		) {
+			throw new Error(
+				"The 'network' option requires Peerbit.create to build the libp2p services; it cannot be combined with an external libp2p instance.",
+			);
+		}
+
 		const directory = options.directory;
 		const hasDir = directory != null;
 		const storageOptions = options.storage;
@@ -319,11 +334,8 @@ export class Peerbit implements ProgramClient {
 		let stopLibp2pOnClose = false;
 		const libp2pExternal = libp2pExtended && isLibp2pInstance(libp2pExtended);
 		const networkOptions = options.network;
-		if (networkOptions && libp2pExternal) {
-			throw new Error(
-				"The 'network' option requires Peerbit.create to build the libp2p services; it cannot be combined with an external libp2p instance.",
-			);
-		}
+		// The `network` + external-libp2p incompatibility is validated at the
+		// top of create() (before any resources are opened).
 		let nativeNetwork: NativeNetworkRuntime | undefined;
 		let sharedLogNativeDefaults: SharedLogNativeDefaultsLike | undefined;
 		if (!libp2pExternal) {
@@ -376,7 +388,14 @@ export class Peerbit implements ProgramClient {
 					if (networkOptions.sharedLogDefaults !== false) {
 						sharedLogNativeDefaults = {
 							nativeBackbone: {},
-							nativeGraph: true,
+							// Optional so a missing/unbuildable @peerbit/log-rust
+							// (npm --omit=optional) or a service-worker context
+							// degrades gracefully instead of throwing on every
+							// program open. When the native backbone loads, its
+							// graph is used regardless; this default only applies
+							// when the backbone is absent, where a hard `true`
+							// would abort Log.open.
+							nativeGraph: { optional: true },
 							sync: {
 								rawExchangeHeads: true,
 								nativeWireSync: wireSync,
