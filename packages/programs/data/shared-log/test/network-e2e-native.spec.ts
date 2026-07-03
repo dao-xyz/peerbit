@@ -140,6 +140,27 @@ describe("network e2e native preset", function () {
 			),
 		).to.be.greaterThanOrEqual(entryCount);
 
+		// the send path is fused too: the sync payload was serialized inside
+		// wasm from the native block store (no TS message serialization, no
+		// JS block-byte materialization on the way out)
+		expect(
+			sumEvents(
+				profileEvents1,
+				"sharedLog.rawSend.fused",
+				(event) => event.entries ?? 0,
+			),
+			"peer1 fused send entries",
+		).to.be.greaterThanOrEqual(entryCount);
+		for (const [label, events] of [
+			["peer1", profileEvents1],
+			["peer2", profileEvents2],
+		] as const) {
+			expect(
+				sumEvents(events, "sharedLog.rawSend.jsBlockBytes", () => 1),
+				label + " JS outbound block-byte copies",
+			).to.equal(0);
+		}
+
 		// wire-sync session counters: frames were stashed in wasm, consumed
 		// there, released, and no block bytes ever crossed back into JS
 		const counters2 = peer2.nativeNetwork!.wireSync!.counters!();
@@ -175,6 +196,109 @@ describe("network e2e native preset", function () {
 				label + " nativeFrames",
 			).to.be.greaterThan(0);
 		}
+	});
+
+	it("ships live appends as coalesced fused raw frames end to end", async () => {
+		const profileEvents1: SyncProfileEvent[] = [];
+		const profileEvents2: SyncProfileEvent[] = [];
+		const store = new EventStore<string, any>();
+		const db1 = await peer1.open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+				sync: {
+					profile: (event: SyncProfileEvent) => profileEvents1.push(event),
+				},
+			},
+		});
+		const db2 = await peer2.open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+				sync: {
+					profile: (event: SyncProfileEvent) => profileEvents2.push(event),
+				},
+			},
+		});
+
+		await peer2.dial(peer1.getMultiaddrs());
+		await db1.log.waitForReplicator(peer2.identity.publicKey);
+		await db2.log.waitForReplicator(peer1.identity.publicKey);
+		// live raw delivery requires the one-shot capability advertisement
+		await waitForResolved(() => {
+			expect(
+				(db1.log as any).peerSupportsRawExchangeHeads(
+					peer2.identity.publicKey.hashcode(),
+				),
+			).to.equal(true);
+		});
+
+		// sequential awaited puts (the live-puts workload)
+		const putCount = 32;
+		for (let index = 0; index < putCount; index++) {
+			await db1.add(`live-${index}`, { meta: { next: [] } });
+		}
+		// plus a same-turn burst that must coalesce into fewer frames
+		const burst = 16;
+		await Promise.all(
+			Array.from({ length: burst }, (_, index) =>
+				db1.add(`burst-${index}`, { meta: { next: [] } }),
+			),
+		);
+		await waitForResolved(
+			() => {
+				expect(db2.log.log.length).to.equal(putCount + burst);
+			},
+			{ timeout: 60_000, timeoutMessage: "native preset live puts" },
+		);
+
+		// send side: everything shipped fused (wasm-serialized payloads), no
+		// plain live sends, no JS block-byte materialization
+		expect(
+			sumEvents(
+				profileEvents1,
+				"sharedLog.rawSend.fused",
+				(event) => event.entries ?? 0,
+			),
+			"fused live entries",
+		).to.be.greaterThanOrEqual(putCount + burst);
+		expect(
+			sumEvents(
+				profileEvents1,
+				"sharedLog.rawSend.fused",
+				(event) => event.messages ?? 0,
+			),
+			"fused live messages coalesce",
+		).to.be.lessThan(putCount + burst);
+		expect(
+			sumEvents(profileEvents1, "sharedLog.liveSend.plain", () => 1),
+			"plain live sends",
+		).to.equal(0);
+		expect(
+			sumEvents(profileEvents1, "sharedLog.rawSend.jsBlockBytes", () => 1),
+			"JS outbound block-byte copies",
+		).to.equal(0);
+
+		// receive side: the live frames took the fused receive path
+		expect(
+			sumEvents(
+				profileEvents2,
+				"sharedLog.rawReceive.jsEntryDecode",
+				(event) => event.entries ?? 0,
+			),
+			"receiver jsEntryDecode entries",
+		).to.equal(0);
+		expect(
+			sumEvents(profileEvents2, "sharedLog.rawReceive.deserializeFallback", () => 1),
+			"receiver deserialize fallbacks",
+		).to.equal(0);
+		const counters2 = peer2.nativeNetwork!.wireSync!.counters!();
+		expect(counters2.stashed).to.be.greaterThan(0);
+		expect(counters2.blockCopyOuts).to.equal(0);
+		const wireCounters2 = wireCountersOf(peer2);
+		expect(wireCounters2.tsFrames).to.equal(0);
+		expect(wireCounters2.nativeFallbackFrames).to.equal(0);
+		expect(wireCounters2.tsSignatureVerifies).to.equal(0);
 	});
 
 	it("keeps a mixed pure-native and all-default pair in sync", async () => {

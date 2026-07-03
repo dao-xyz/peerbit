@@ -341,6 +341,32 @@ const attachPreparedRawShallowFacts = (
 export const EXCHANGE_HEADS_REPAIR_HINT = 1;
 
 /**
+ * Capability bit: the peer can receive `RawExchangeHeadsMessage` ([0, 7]).
+ * Advertised once per peer via {@link SyncCapabilitiesMessage} (and echoed by
+ * the per-request capability messages of the simple synchronizer), so live
+ * append gossip can pick the raw path without a per-request round trip.
+ */
+export const SYNC_CAPABILITY_RAW_EXCHANGE_HEADS = 1;
+
+/**
+ * One-shot capability advertisement, sent to a peer when it (or we) subscribe
+ * to the program topic and `sync.rawExchangeHeads` is enabled. Peers that do
+ * not know this message drop it as an unknown variant; peers that never
+ * advertise keep receiving the plain `ExchangeHeadsMessage` path.
+ */
+@variant([0, 10])
+export class SyncCapabilitiesMessage extends TransportMessage {
+	@field({ type: "u32" })
+	capabilities: number;
+
+	constructor(props?: { capabilities?: number }) {
+		super();
+		this.capabilities =
+			props?.capabilities ?? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS;
+	}
+}
+
+/**
  * This thing allows use to faster sync since we can provide
  * references that can be read concurrently to
  * the entry when doing Log.fromEntry or Log.fromEntryHash
@@ -1068,7 +1094,7 @@ export class ResponseIPrune extends TransportMessage {
 }
 
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
-const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
+export const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
 export const EXCHANGE_HEADS_RESOLVE_BATCH_SIZE = 256;
 
 export const createExchangeHeadsMessages = async function* (
@@ -1204,11 +1230,26 @@ export const createExchangeHeadsMessages = async function* (
 export const createRawExchangeHeadsMessages = async function* (
 	log: Log<any>,
 	heads: string[] | Set<string>,
+	profile?: SyncProfileFn,
 ): AsyncGenerator<RawExchangeHeadsMessage | ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: RawEntryWithRefs[] = [];
 	const visitedHeads = new Set<string>();
 	const headArray = Array.isArray(heads) ? heads : [...heads];
+	// This path materializes entry block bytes as JS values (log.blocks reads)
+	// and TS-serializes the message; the fused wasm send path replaces it.
+	// The event makes the remaining JS-side outbound block copies countable.
+	const emitJsBlockBytes = (heads: RawEntryWithRefs[], bytes: number) => {
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "sharedLog.rawSend.jsBlockBytes",
+				component: "shared-log",
+				entries: heads.length,
+				bytes,
+				messages: 1,
+			});
+		}
+	};
 
 	for (let offset = 0; offset < headArray.length; offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE) {
 		const headBatch = headArray.slice(
@@ -1272,6 +1313,7 @@ export const createRawExchangeHeadsMessages = async function* (
 			);
 			size += block.bytes.byteLength;
 			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
+				emitJsBlockBytes(current, size);
 				size = 0;
 				yield new RawExchangeHeadsMessage({ heads: current });
 				current = [];
@@ -1279,8 +1321,75 @@ export const createRawExchangeHeadsMessages = async function* (
 		}
 	}
 	if (current.length > 0) {
+		emitJsBlockBytes(current, size);
 		yield new RawExchangeHeadsMessage({ heads: current });
 	}
+};
+
+export type RawExchangeHeadSendPlan = {
+	hashes: string[];
+	gidRefrences: string[][];
+};
+
+/**
+ * The head/reference selection of {@link createRawExchangeHeadsMessages}
+ * without resolving any block bytes: same visited-head deduplication, same
+ * reference-gid collection, same batching of the native index lookups. Used
+ * by the fused send path, where the block bytes stay in the native store and
+ * the payload is serialized in wasm. Returns `undefined` when the log has no
+ * native reference rows (callers fall back to the TS message path).
+ */
+export const collectRawExchangeHeadSendPlan = (
+	log: Log<any>,
+	heads: string[] | Set<string>,
+): RawExchangeHeadSendPlan | undefined => {
+	const headArray = Array.isArray(heads) ? heads : [...heads];
+	const visitedHeads = new Set<string>();
+	const hashes: string[] = [];
+	const gidRefrences: string[][] = [];
+	for (
+		let offset = 0;
+		offset < headArray.length;
+		offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE
+	) {
+		const headBatch = headArray.slice(
+			offset,
+			offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+		);
+		const nativeReferenceRowsByPosition = getNativeReferenceRowsByHeadInput(
+			log,
+			headBatch,
+			visitedHeads,
+		);
+		if (!nativeReferenceRowsByPosition) {
+			return undefined;
+		}
+		for (let i = 0; i < headBatch.length; i++) {
+			const hash = headBatch[i]!;
+			if (visitedHeads.has(hash)) {
+				continue;
+			}
+			visitedHeads.add(hash);
+			const nativeReferenceRows = nativeReferenceRowsByPosition[i];
+			if (!nativeReferenceRows) {
+				continue;
+			}
+			const refs: string[] = [];
+			for (const [refHash, gid] of nativeReferenceRows) {
+				if (visitedHeads.has(refHash)) {
+					continue;
+				}
+				visitedHeads.add(refHash);
+				refs.push(gid);
+			}
+			if (refs.length > 1000) {
+				warn("Large refs count: ", refs.length);
+			}
+			hashes.push(hash);
+			gidRefrences.push(refs);
+		}
+	}
+	return { hashes, gidRefrences };
 };
 
 export const materializeRawExchangeHeadsMessage = (
