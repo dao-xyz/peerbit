@@ -166,44 +166,105 @@ pub fn parse_raw_exchange_rpc_request(data: &[u8]) -> WireResult<RawExchangeSync
     Ok(RawExchangeSyncPayload { heads, reserved })
 }
 
-/// Encode the full payload nesting (test/corpus helper; the send path stays in
-/// TS for now — see plan Section 3, integration point 2).
+/// One head of an outbound raw exchange sync payload, borrowed from wherever
+/// the caller keeps the entry block bytes (e.g. a native block store), so the
+/// fused send path never copies block bytes to address them.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncPayloadHeadRef<'a> {
+    pub hash: &'a str,
+    pub bytes: &'a [u8],
+    pub gid_refrences: &'a [String],
+}
+
+/// Encoded size of the inner `TransportMessage`/`RawExchangeHeadsMessage`.
+fn transport_message_len(heads: &[SyncPayloadHeadRef<'_>]) -> usize {
+    // variants [0] + [0, 7], head count, reserved
+    let mut len = 3 + 4 + 4;
+    for head in heads {
+        // RawEntryWithRefs variant + hash + bytes + gidRefrences
+        len += 1 + 4 + head.hash.len() + 4 + head.bytes.len() + 4;
+        for gid in head.gid_refrences {
+            len += 4 + gid.len();
+        }
+    }
+    len
+}
+
+/// Encoded size of the full payload produced by
+/// [`encode_raw_exchange_sync_payload_refs`].
+pub fn encoded_raw_exchange_sync_payload_len(
+    topics: &[String],
+    heads: &[SyncPayloadHeadRef<'_>],
+) -> usize {
+    // PubSubData variant + topics + strict + data length prefix
+    let mut len = 1 + 4 + 1 + 4;
+    for topic in topics {
+        len += 4 + topic.len();
+    }
+    // RPCMessage/RequestV0/respondTo/MaybeEncrypted/DecryptedThing variants +
+    // inner length prefix
+    len += 5 + 4;
+    len + transport_message_len(heads)
+}
+
+/// Encode the full outbound payload nesting (PubSubData → RequestV0 →
+/// DecryptedThing → RawExchangeHeadsMessage) in one pass into a single
+/// exactly-sized buffer. Byte-identical to the TS serialization (pinned by the
+/// golden corpus below); this is the fused send-path encoder (plan Section 3,
+/// integration point 2).
+pub fn encode_raw_exchange_sync_payload_refs(
+    topics: &[String],
+    strict: bool,
+    heads: &[SyncPayloadHeadRef<'_>],
+    reserved: [u8; 4],
+) -> Vec<u8> {
+    let total_len = encoded_raw_exchange_sync_payload_len(topics, heads);
+    let transport_len = transport_message_len(heads);
+    let mut payload = Writer::new();
+    payload.bytes.reserve_exact(total_len);
+    payload.u8(0); // PubSubData variant
+    payload.string_vec(topics);
+    payload.u8(u8::from(strict));
+    payload.u32_le((5 + 4 + transport_len) as u32); // PubSubData.data length
+    payload.u8(0); // RPCMessage variant
+    payload.u8(0); // RequestV0 variant
+    payload.u8(0); // respondTo: None
+    payload.u8(0); // MaybeEncrypted variant
+    payload.u8(0); // DecryptedThing variant
+    payload.u32_le(transport_len as u32); // DecryptedThing.data length
+    payload.u8(0); // TransportMessage variant
+    payload.u8(0); // RawExchangeHeadsMessage variant [0, 7]
+    payload.u8(7);
+    payload.u32_le(heads.len() as u32);
+    for head in heads {
+        payload.u8(1); // RawEntryWithRefs variant
+        payload.string(head.hash);
+        payload.u32_le(head.bytes.len() as u32);
+        payload.raw(head.bytes);
+        payload.string_vec(head.gid_refrences);
+    }
+    payload.raw(&reserved);
+    debug_assert_eq!(payload.bytes.len(), total_len);
+    payload.bytes
+}
+
+/// Encode the full payload nesting from owned heads (test/corpus helper and
+/// the golden pin for [`encode_raw_exchange_sync_payload_refs`]).
 pub fn encode_raw_exchange_sync_payload(
     topics: &[String],
     strict: bool,
     heads: &[(String, Vec<u8>, Vec<String>)],
     reserved: [u8; 4],
 ) -> Vec<u8> {
-    let mut transport = Writer::new();
-    transport.u8(0); // TransportMessage variant
-    transport.u8(0); // RawExchangeHeadsMessage variant [0, 7]
-    transport.u8(7);
-    transport.u32_le(heads.len() as u32);
-    for (hash, bytes, gid_refrences) in heads {
-        transport.u8(1); // RawEntryWithRefs variant
-        transport.string(hash);
-        transport.u32_le(bytes.len() as u32);
-        transport.raw(bytes);
-        transport.string_vec(gid_refrences);
-    }
-    transport.raw(&reserved);
-
-    let mut rpc = Writer::new();
-    rpc.u8(0); // RPCMessage variant
-    rpc.u8(0); // RequestV0 variant
-    rpc.u8(0); // respondTo: None
-    rpc.u8(0); // MaybeEncrypted variant
-    rpc.u8(0); // DecryptedThing variant
-    rpc.u32_le(transport.bytes.len() as u32);
-    rpc.raw(&transport.bytes);
-
-    let mut payload = Writer::new();
-    payload.u8(0); // PubSubData variant
-    payload.string_vec(topics);
-    payload.u8(u8::from(strict));
-    payload.u32_le(rpc.bytes.len() as u32);
-    payload.raw(&rpc.bytes);
-    payload.bytes
+    let head_refs: Vec<SyncPayloadHeadRef<'_>> = heads
+        .iter()
+        .map(|(hash, bytes, gid_refrences)| SyncPayloadHeadRef {
+            hash,
+            bytes,
+            gid_refrences,
+        })
+        .collect();
+    encode_raw_exchange_sync_payload_refs(topics, strict, &head_refs, reserved)
 }
 
 #[cfg(test)]
@@ -301,6 +362,62 @@ mod tests {
                     [parsed_head.bytes_offset..parsed_head.bytes_offset + parsed_head.bytes_length],
                 bytes.as_slice()
             );
+        }
+    }
+
+    #[test]
+    fn encoded_len_matches_encoder_output() {
+        for (topics, strict, heads, reserved) in [
+            (
+                vec!["topicA".to_string()],
+                true,
+                corpus_heads(),
+                [1, 0, 0, 0],
+            ),
+            (
+                vec!["a".to_string(), "b".to_string()],
+                false,
+                Vec::new(),
+                [0, 0, 0, 0],
+            ),
+            (
+                vec![String::new()],
+                true,
+                vec![(String::new(), Vec::new(), vec![String::new()])],
+                [255, 254, 253, 252],
+            ),
+        ] {
+            let head_refs: Vec<SyncPayloadHeadRef<'_>> = heads
+                .iter()
+                .map(|(hash, bytes, gid_refrences)| SyncPayloadHeadRef {
+                    hash,
+                    bytes,
+                    gid_refrences,
+                })
+                .collect();
+            let encoded =
+                encode_raw_exchange_sync_payload_refs(&topics, strict, &head_refs, reserved);
+            assert_eq!(
+                encoded.len(),
+                encoded_raw_exchange_sync_payload_len(&topics, &head_refs)
+            );
+            // The single-pass encoder parses back to the same content.
+            let pubsub = parse_pubsub_data(&encoded).unwrap();
+            assert_eq!(pubsub.topics, topics);
+            assert_eq!(pubsub.strict, strict);
+            let data = &encoded[pubsub.data_offset..pubsub.data_offset + pubsub.data_length];
+            let parsed = parse_raw_exchange_rpc_request(data).unwrap();
+            assert_eq!(parsed.reserved, reserved);
+            assert_eq!(parsed.heads.len(), heads.len());
+            for (parsed_head, (hash, bytes, gid_refrences)) in parsed.heads.iter().zip(&heads) {
+                assert_eq!(&parsed_head.hash, hash);
+                assert_eq!(&parsed_head.gid_refrences, gid_refrences);
+                assert_eq!(
+                    &data[parsed_head.bytes_offset
+                        ..parsed_head.bytes_offset + parsed_head.bytes_length],
+                    bytes.as_slice()
+                );
+            }
         }
     }
 
