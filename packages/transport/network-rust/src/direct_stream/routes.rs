@@ -527,7 +527,11 @@ impl Routes {
                     *existing = -1;
                     return false;
                 }
-                if session > *existing {
+                // TS reads the stored value as `remoteInfo.session || -1`, so a
+                // falsy stored session (exactly 0) is coerced to -1: any
+                // re-advertised session >= 0 (including 0) then counts as newer.
+                let existing_value = if *existing == 0 { -1 } else { *existing };
+                if session > existing_value {
                     *existing = session;
                     return true;
                 }
@@ -955,6 +959,21 @@ mod tests {
         assert!(r.update_session("t", Some(5)));
         assert!(!r.update_session("t", Some(4)));
         assert!(r.update_session("t", Some(6)));
+    }
+
+    #[test]
+    fn update_session_coerces_stored_zero_to_minus_one() {
+        // TS coerces a stored session of 0 via `remoteInfo.session || -1`,
+        // so a re-advertised session >= 0 (including 0) counts as newer and
+        // returns true. The raw `session > *existing` comparison would return
+        // false for stored 0 / incoming 0, diverging from TS.
+        let mut r = routes("me");
+        assert!(r.update_session("t", Some(0)));
+        assert_eq!(r.get_session("t"), Some(0));
+        // stored 0 is coerced to -1, so incoming 0 counts as newer
+        assert!(r.update_session("t", Some(0)));
+        assert!(r.update_session("t", Some(1)));
+        assert_eq!(r.get_session("t"), Some(1));
     }
 
     #[test]
