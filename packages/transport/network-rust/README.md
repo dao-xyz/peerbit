@@ -14,4 +14,12 @@ ed25519-dalek.
 the `nativeWire` option of `@peerbit/stream`'s `DirectStream` (default off;
 the TS path is unchanged when disabled).
 
+The crate also contains the native protocol cores (direct-stream state
+machine, topic control plane, fanout tree, block exchange);
+`createRustCoreStream()` implements the `rustCore` option of the
+DirectStream family. See [ARCHITECTURE.md](./ARCHITECTURE.md) for the
+as-built architecture of the whole native network plane, including the
+receive fusion hosted by `@peerbit/native-backbone` and the `peerbit/rust`
+client preset.
+
 Golden-vector parity tests against the TS implementation live in `test/`.
