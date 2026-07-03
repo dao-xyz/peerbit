@@ -1,5 +1,8 @@
 name: u64-iblt flake hunt
 on:
+  push:
+    branches:
+      - ci/u64-flake-hunt
   workflow_dispatch:
     inputs:
       grep:
