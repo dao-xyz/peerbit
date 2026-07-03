@@ -289,7 +289,7 @@ turns them on together.
 | `sync.rawExchangeHeads` | `@peerbit/shared-log` open args | off | sender ships raw entry block bytes (`RawExchangeHeadsMessage [0,7]`, batched ≤ 512 KB) with no TS re-serialization |
 | `sync.nativeWireSync` | `@peerbit/shared-log` open args | off | receive fusion (section 2.4); requires `nativeBackbone`; registers the program topic with the session, resolves via the RPC `resolveRequest` hook |
 | `network` | `Peerbit.create` (`CreateInstanceOptions`) | off | native network plane: `rustCore` factory (one core shared by pubsub/fanout/blocks), `wireSync` factory (per-node session keyed by public key hash, installed as the pubsub inbound decoder), `sharedLogDefaults`. Requires client-built services — rejected early (before any resource is acquired) when combined with an external libp2p instance |
-| `network.sharedLogDefaults` | `Peerbit.create` | true when `network` is present | advertises `nativeBackbone: {}`, `nativeGraph: { optional: true }` (degrades instead of aborting program open when the optional native module is absent) and `sync: { rawExchangeHeads: true, nativeWireSync }` to programs opened on the client. Explicit per-open options — including `false` — always win. The raw-sync defaults apply only to programs **without** a program-level `onChange` consumer (section 9, onChange gap) |
+| `network.sharedLogDefaults` | `Peerbit.create` | true when `network` is present | advertises `nativeBackbone: {}`, `nativeGraph: { optional: true }` (degrades instead of aborting program open when the optional native module is absent) and `sync: { rawExchangeHeads: true, nativeWireSync }` to programs opened on the client. Explicit per-open options — including `false` — always win. Programs with a program-level `onChange` consumer (e.g. document stores) receive change events from the raw path as lazy entry views: entry bytes/decodes materialize only when the consumer reads them, and every materialization is counted (`sharedLog.rawReceive.jsEntryDecode`, stash `blockCopyOuts`). Programs with a `canAppend` hook run the lower-log batch join (hook fires per entry) instead of the native-validated commit |
 | `network` in `createRustPeerbitOptions()` | `peerbit/rust` preset | **on** inside the preset; `network: false` opts out | composes the chain: `rustCore → createRustCoreStream()` (`@peerbit/network-rust`), `wireSync → createNativeWireSyncSession({ selfHash })` (`@peerbit/native-backbone`), `sharedLogDefaults`; each individually toggleable (`rustCore` / `wireSync` / `sharedLogDefaults`, default true) |
 | `storage.nativeLogBlocks` | `peerbit/rust` preset (predates this plane) | off | native log block store for blocks; with `rustCore` set, stored blocks are served via `getBlockResponsePayload` straight from wasm. Memory-only: an error is logged when a `directory` is configured alongside it, since blocks (including program manifests) do not survive a restart |
 
@@ -396,12 +396,15 @@ Never run these benchmarks concurrently with builds or tests.
   exists in `sync_payload.rs`; fusing it (serialize from the native log
   block store straight into a `DataMessage` buffer) is the identified fix
   for the live-puts regression above.
-- **onChange gap** (pre-existing, reproduced at base): the prepared
-  raw-receive path never dispatches program-level `onChange`, so the
-  client-advertised raw sync defaults are gated to programs without a
-  per-entry `onChange` consumer. Document stores keep the plain exchange
-  path (still native wire + native index commit). The real fix is tracked
-  separately.
+- **Native document projection in raw receive.** The raw-receive path now
+  dispatches program-level `onChange` with lazy entry views (see the flag
+  matrix), so document stores take the raw path — but their per-entry
+  consumer materializes payload bytes and decodes in JS. Committing the
+  document index inside the wasm raw-receive pipeline (composing
+  `documents.rs` with the prepared join commit) and synthesizing the change
+  set from prepared-join facts would remove that per-entry JS work; the
+  strict-native document append path already commits natively and is the
+  starting point.
 - **Module unification.** `peerbit_wire` ships compiled into two wasm
   modules (section 1). Collapsing to one module — or sharing a memory —
   would drop the duplicate code weight and let the fanout/blocks streams
