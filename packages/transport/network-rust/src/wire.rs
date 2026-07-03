@@ -19,7 +19,9 @@
 //! This module is intentionally `JsValue`-free so it can be exercised by host
 //! `cargo test` (constructing `JsValue`s aborts outside a JS runtime).
 
-use ed25519_dalek::{verify_batch, Signature, Signer, SigningKey, Verifier, VerifyingKey};
+#[cfg(test)]
+use ed25519_dalek::{verify_batch, Verifier};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 pub const ID_LENGTH: usize = 32;
@@ -743,9 +745,11 @@ struct FrameSignableContext {
 
 /// Decode every frame and verify signatures with the exact scheme
 /// `@peerbit/crypto` uses for the direct-stream hot path: plain Ed25519 over
-/// the (optionally sha256-prehashed) signable bytes. Ed25519 verifications
-/// are batched via `ed25519_dalek::verify_batch`, falling back to individual
-/// verification to attribute failures when the batch rejects.
+/// the (optionally sha256-prehashed) signable bytes. Every signature is
+/// verified serially with `verify_strict` — `verify_batch` (and the
+/// non-strict `verify`) can accept weak-key/small-order signatures that the
+/// TS verifier (libsodium) rejects, so they would diverge in the accept
+/// direction. See the acceptance loop below.
 ///
 /// `now_ms` feeds the header expiry check (`expires >= now`), mirroring
 /// `MessageHeader.verify()`.
@@ -849,28 +853,27 @@ pub fn decode_and_verify_frames(frames: &[&[u8]], now_ms: u64) -> Vec<FrameRecor
         return records;
     }
 
-    let messages: Vec<&[u8]> = pending
-        .iter()
-        .map(|entry| {
-            let context = contexts[entry.frame_index]
-                .as_ref()
-                .expect("pending signature without context");
-            if entry.use_digest {
-                context.digest.as_ref().expect("missing digest").as_slice()
-            } else {
-                context.signable.as_slice()
-            }
-        })
-        .collect();
-    let signatures: Vec<Signature> = pending.iter().map(|entry| entry.signature).collect();
-    let keys: Vec<VerifyingKey> = pending.iter().map(|entry| entry.key).collect();
-
-    if verify_batch(&messages, &signatures, &keys).is_err() {
-        // Attribute failures per signature.
-        for (entry, message) in pending.iter().zip(messages.iter()) {
-            if entry.key.verify(message, &entry.signature).is_err() {
-                records[entry.frame_index].verify = VerifyStatus::Failed;
-            }
+    // Verify each signature individually with `verify_strict`, matching the
+    // TS side (libsodium's `crypto_sign_verify_detached`). `verify_batch`
+    // and the non-strict `verify` both accept signatures libsodium rejects:
+    // for a weak (small-order) public key or R component there exist
+    // signatures valid for almost every message under the batch/cofactorless
+    // equation, but libsodium rejects small-order keys and R. A native
+    // accept is memoized as `_verified = true`, suppressing the authoritative
+    // TS re-check, so the accept sets must be identical. `verify_strict`
+    // performs both the scalar-canonicality and small-order malleability
+    // checks libsodium does.
+    for entry in &pending {
+        let context = contexts[entry.frame_index]
+            .as_ref()
+            .expect("pending signature without context");
+        let message = if entry.use_digest {
+            context.digest.as_ref().expect("missing digest").as_slice()
+        } else {
+            context.signable.as_slice()
+        };
+        if entry.key.verify_strict(message, &entry.signature).is_err() {
+            records[entry.frame_index].verify = VerifyStatus::Failed;
         }
     }
 
@@ -1355,6 +1358,65 @@ mod tests {
     fn expired_header_fails_verification() {
         let frames = build_test_corpus();
         let records = decode_and_verify_frames(&[frames[0].as_slice()], u64::MAX);
+        assert_eq!(records[0].verify, VerifyStatus::Failed);
+    }
+
+    #[test]
+    fn weak_key_signature_is_rejected_like_the_ts_verifier() {
+        // A small-order (weak) public key admits a signature valid for almost
+        // every message under both the batch equation and the non-strict
+        // cofactorless `verify`, but libsodium (the TS verifier) rejects
+        // small-order keys. The native accept set must match libsodium, so
+        // this frame must NOT verify.
+        //
+        // Construction: A = R = the identity point (compressed `01 00..00`,
+        // the smallest-order point, order 1), s = 0. Then for any message M
+        // with k = H(R || A || M): expected_R = sB - kA = -k*identity =
+        // identity = R, so the non-strict check (and the batch equation)
+        // accept regardless of M. `verify_strict`/libsodium reject because A
+        // and R are small-order.
+        let identity_point: [u8; 32] = {
+            let mut bytes = [0u8; 32];
+            bytes[0] = 1;
+            bytes
+        };
+        let mut signature_bytes = [0u8; 64];
+        signature_bytes[..32].copy_from_slice(&identity_point); // R = identity
+                                                                // s = 0 (already zeroed)
+
+        let mut message = WireMessage::Data {
+            header: corpus_header(9, Some(DeliveryMode::AnyWhere), Some(0), None, None),
+            data: Some(vec![1, 2, 3]),
+        };
+        message.header_mut().signatures = Some(vec![SignatureWithKey {
+            signature: signature_bytes.to_vec(),
+            public_key: PublicSignKey::Ed25519(identity_point),
+            prehash: PREHASH_NONE,
+        }]);
+        let frame = encode_frame(&message);
+
+        // Sanity: the non-strict serial verify and the batch equation both
+        // accept this crafted signature — this is the divergence the strict
+        // check guards against.
+        let decoded = decode_frame(&frame).unwrap();
+        let signable = signable_bytes_from_frame(&frame, &decoded);
+        let key = VerifyingKey::from_bytes(&identity_point).unwrap();
+        let signature = Signature::from_bytes(&signature_bytes);
+        assert!(key.is_weak(), "identity point must be a weak key");
+        assert!(
+            key.verify(&signable, &signature).is_ok(),
+            "non-strict verify should accept the weak-key signature"
+        );
+        assert!(
+            verify_batch(&[signable.as_slice()], &[signature], &[key]).is_ok(),
+            "batch verify should accept the weak-key signature"
+        );
+        // The strict check (what the native path now uses) rejects it,
+        // matching libsodium.
+        assert!(key.verify_strict(&signable, &signature).is_err());
+
+        let records = decode_and_verify_frames(&[frame.as_slice()], CORPUS_VERIFY_NOW_MS);
+        assert!(records[0].decode_ok);
         assert_eq!(records[0].verify, VerifyStatus::Failed);
     }
 
