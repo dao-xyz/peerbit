@@ -89,6 +89,29 @@ const preparedEntryBlockFromBytes = (
 	};
 };
 
+const preparedEntryBlockFromBytesSource = (
+	bytesSource: () => Uint8Array,
+	cid: string,
+): PreparedEntryBlock => {
+	let cidObject: ReturnType<typeof cidifyString> | undefined;
+	let bytesValue: Uint8Array | undefined;
+	return {
+		block: {
+			get bytes() {
+				return (bytesValue ??= bytesSource());
+			},
+			get cid() {
+				cidObject ??= cidifyString(cid);
+				return cidObject;
+			},
+			get value() {
+				return (bytesValue ??= bytesSource());
+			},
+		} as PreparedEntryBlock["block"],
+		cid,
+	};
+};
+
 interface Meta {
 	clock: Clock;
 	gid: string; // graph id
@@ -190,6 +213,31 @@ export abstract class Entry<T> {
 
 		entry.size = bytes.length;
 		preparedEntryBlocks.set(entry, preparedEntryBlockFromBytes(bytes, cid));
+		return cid;
+	}
+
+	/**
+	 * Like {@link Entry.prepareMultihashBytes} but defers pulling the block
+	 * bytes until a consumer actually reads them (block store put, storage
+	 * bytes). Callers that keep entry bytes in an external store (e.g. the
+	 * native wire stash) use this so entries handed to change consumers do
+	 * not copy bytes they may never touch.
+	 */
+	static prepareMultihashBytesLazy<T>(
+		entry: Entry<T>,
+		cid: string,
+		size: number,
+		bytesSource: () => Uint8Array,
+	): string {
+		if (entry.hash) {
+			throw new Error("Expected hash to be missing");
+		}
+
+		entry.size = size;
+		preparedEntryBlocks.set(
+			entry,
+			preparedEntryBlockFromBytesSource(bytesSource, cid),
+		);
 		return cid;
 	}
 
