@@ -2070,11 +2070,12 @@ export class TopicControlPlane
 	}
 
 	/**
-	 * Batch Subscribe{requestSubscribers} responses per shard over a short
-	 * jittered window. A single announcer still gets a targeted unicast; when
-	 * several peers announce concurrently (group subscribe), one broadcast
-	 * answers them all — avoiding S(S-1) routed unicasts whose cold route
-	 * resolutions flood the shard tree (#983).
+	 * Answer Subscribe{requestSubscribers} announces without letting bursts go
+	 * quadratic (#983). Leading edge: the first announcer is answered
+	 * immediately with a targeted unicast — a lone joiner sees no added
+	 * latency. Announcers arriving within the trailing window that this opens
+	 * are batched and answered with ONE broadcast, instead of S(S-1) routed
+	 * unicasts whose cold route resolutions flood the shard tree.
 	 */
 	private queueSubscriberResponse(
 		shardTopic: string,
@@ -2089,6 +2090,7 @@ export class TopicControlPlane
 				timer: setTimeout(
 					() => {
 						this.pendingSubscriberResponses.delete(shardTopic);
+						if (created.targets.size === 0) return;
 						void this.flushSubscriberResponses(shardTopic, created).catch(
 							logErrorIfStarted,
 						);
@@ -2096,8 +2098,13 @@ export class TopicControlPlane
 					150 + Math.floor(Math.random() * 150),
 				),
 			};
-			entry = created;
-			this.pendingSubscriberResponses.set(shardTopic, entry);
+			this.pendingSubscriberResponses.set(shardTopic, created);
+			// Leading edge: respond to the burst opener right away.
+			void this.flushSubscriberResponses(shardTopic, {
+				targets: new Set([targetHash]),
+				topics: new Set(topics),
+			}).catch(logErrorIfStarted);
+			return;
 		}
 		entry.targets.add(targetHash);
 		for (const t of topics) entry.topics.add(t);
