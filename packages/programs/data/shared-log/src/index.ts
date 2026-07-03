@@ -130,13 +130,19 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
+	MAX_RAW_EXCHANGE_MESSAGE_SIZE,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
+	type RawExchangeHeadSendPlan,
 	type RawReceiveHashSelection,
 	RequestIPrune,
 	ResponseIPrune,
+	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
 	StashBackedRawExchangeHeadsMessage,
+	SyncCapabilitiesMessage,
+	collectRawExchangeHeadSendPlan,
 	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
 	getExchangeHeadHash,
 	getPreparedRawExchangeGid,
 	getPreparedRawExchangeHashNumber,
@@ -1192,6 +1198,25 @@ const LEADER_SELECTION_CONTEXT_CACHE_TTL_MS = 50;
 const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
 const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
 
+// Live raw gossip micro-batching. Appended entries destined for the same
+// raw-capable recipient set coalesce until the end of the current event-loop
+// turn (queueMicrotask would only merge same-tick appends; a macrotask also
+// merges the awaited-put pattern where each append resolves through
+// microtasks) — so a lone put still flushes within one loop turn (sub-ms on
+// an idle loop) while a put burst ships as one multi-entry raw frame,
+// amortizing the receiver's per-message fixed costs. The entry/byte caps
+// bound the worst-case receiver stall per frame and keep frames within the
+// raw exchange message size the receive path is tuned for.
+const LIVE_RAW_GOSSIP_MAX_ENTRIES = 256;
+const LIVE_RAW_GOSSIP_MAX_BYTES = 128 * 1024;
+
+type LiveRawGossipBatch = {
+	to: string[];
+	hashes: string[];
+	gidRefrences: string[][];
+	bytes: number;
+};
+
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
 const REPAIR_SWEEP_ENTRY_BATCH_SIZE = 1_000;
@@ -1842,6 +1867,14 @@ export class SharedLog<
 		expiresAt: number;
 		context: LeaderSelectionContext;
 	};
+	// Sync capability bits advertised by peers (SyncCapabilitiesMessage), keyed
+	// by public key hash. Entries are dropped on unsubscribe/disconnect.
+	private _peerSyncCapabilities!: Map<string, number>;
+	// Pending live raw exchange-head gossip, coalesced per recipient set and
+	// flushed at the end of the current event-loop turn (or when a batch cap
+	// is hit). Only used when every recipient advertised raw capability.
+	private _liveRawGossipBatches!: Map<string, LiveRawGossipBatch>;
+	private _liveRawGossipFlushScheduled!: boolean;
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -1895,6 +1928,9 @@ export class SharedLog<
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._appendBackfillPendingByTarget = new Map();
 		this._topicSubscribersCache = new Map();
+		this._peerSyncCapabilities = new Map();
+		this._liveRawGossipBatches = new Map();
+		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 		this.uniqueReplicators = new Set();
@@ -2316,6 +2352,273 @@ export class SharedLog<
 		});
 	}
 
+	/** Live append gossip that stayed on the plain TS path (countable in tests). */
+	private emitPlainLiveSendProfile(message: ExchangeHeadsMessage<any>): void {
+		const profile = this._logProperties?.sync?.profile;
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "sharedLog.liveSend.plain",
+				component: "shared-log",
+				entries: message.heads.length,
+				messages: 1,
+			});
+		}
+	}
+
+	private peerSupportsRawExchangeHeads(peerHash: string): boolean {
+		return (
+			((this._peerSyncCapabilities.get(peerHash) ?? 0) &
+				SYNC_CAPABILITY_RAW_EXCHANGE_HEADS) !==
+			0
+		);
+	}
+
+	/**
+	 * Live append gossip may use the raw exchange-heads path only when we
+	 * opted into raw sync and every remote recipient advertised raw capability
+	 * (via {@link SyncCapabilitiesMessage}). Peers that never advertised —
+	 * older versions or raw sync disabled — keep receiving the unchanged plain
+	 * `ExchangeHeadsMessage` path.
+	 */
+	private canUseLiveRawGossip(
+		to: Iterable<string>,
+		selfHash: string,
+	): string[] | undefined {
+		if (this._logProperties?.sync?.rawExchangeHeads !== true) {
+			return undefined;
+		}
+		const remote: string[] = [];
+		for (const peer of to) {
+			if (peer === selfHash) {
+				continue;
+			}
+			if (!this.peerSupportsRawExchangeHeads(peer)) {
+				return undefined;
+			}
+			remote.push(peer);
+		}
+		return remote.length > 0 ? remote : undefined;
+	}
+
+	private queueLiveRawGossip(
+		hash: string,
+		gidRefrences: string[],
+		byteLength: number,
+		to: string[],
+	): void {
+		const key = to.length === 1 ? to[0]! : [...to].sort().join("\n");
+		let batch = this._liveRawGossipBatches.get(key);
+		if (!batch) {
+			batch = { to, hashes: [], gidRefrences: [], bytes: 0 };
+			this._liveRawGossipBatches.set(key, batch);
+		}
+		batch.hashes.push(hash);
+		batch.gidRefrences.push(gidRefrences);
+		batch.bytes += byteLength;
+		if (
+			batch.hashes.length >= LIVE_RAW_GOSSIP_MAX_ENTRIES ||
+			batch.bytes >= LIVE_RAW_GOSSIP_MAX_BYTES
+		) {
+			this._liveRawGossipBatches.delete(key);
+			void this.sendLiveRawGossipBatch(batch);
+			return;
+		}
+		this.scheduleLiveRawGossipFlush();
+	}
+
+	private scheduleLiveRawGossipFlush(): void {
+		if (this._liveRawGossipFlushScheduled) {
+			return;
+		}
+		this._liveRawGossipFlushScheduled = true;
+		const flush = () => {
+			this._liveRawGossipFlushScheduled = false;
+			this.flushLiveRawGossip();
+		};
+		// End-of-turn flush: setImmediate on node fires after the current
+		// turn's microtasks (so awaited sequential appends coalesce) but
+		// before the next turn's timers/IO (so a lone put is not delayed).
+		if (typeof setImmediate === "function") {
+			setImmediate(flush);
+		} else {
+			setTimeout(flush, 0);
+		}
+	}
+
+	private flushLiveRawGossip(): void {
+		if (this._liveRawGossipBatches.size === 0) {
+			return;
+		}
+		const batches = [...this._liveRawGossipBatches.values()];
+		this._liveRawGossipBatches.clear();
+		for (const batch of batches) {
+			void this.sendLiveRawGossipBatch(batch);
+		}
+	}
+
+	private async sendLiveRawGossipBatch(
+		batch: LiveRawGossipBatch,
+	): Promise<void> {
+		try {
+			const sentMessages = await this.sendFusedRawExchangeHeadsPlan(
+				{ hashes: batch.hashes, gidRefrences: batch.gidRefrences },
+				batch.to,
+			);
+			if (sentMessages !== undefined) {
+				return;
+			}
+			// TS fallback (no native payload encoder or blocks not natively
+			// stored): still one batched raw message per size cap.
+			for await (const message of createRawExchangeHeadsMessages(
+				this.log,
+				batch.hashes,
+				this._logProperties?.sync?.profile,
+			)) {
+				await this.rpc.send(message, {
+					mode: new SilentDelivery({ redundancy: 1, to: batch.to }),
+				});
+			}
+		} catch (error: any) {
+			if (this.closed) {
+				return;
+			}
+			logger.error(error);
+		}
+	}
+
+	/**
+	 * Fused raw exchange-heads send: the full sync payload — PubSubData →
+	 * RequestV0 → RawExchangeHeadsMessage including the entry block bytes — is
+	 * serialized inside the native-backbone wasm module straight from the
+	 * native block store and published pre-encoded, so entry block bytes never
+	 * materialize as JS values on the send path. Returns the number of
+	 * messages sent, or `undefined` when this path is unavailable (no native
+	 * encoder, blocks not natively stored, or no pre-encoded publish support)
+	 * so callers fall back to the TS message path.
+	 */
+	private async sendFusedRawExchangeHeadsPlan(
+		plan: RawExchangeHeadSendPlan,
+		to: string[] | Set<string>,
+		options?: { priority?: number; reserved?: Uint8Array },
+	): Promise<number | undefined> {
+		const backbone = this._nativeBackbone;
+		if (!backbone?.encodeRawExchangeSyncPayload) {
+			return undefined;
+		}
+		const pubsub = this.node.services.pubsub as unknown as {
+			publishPreEncodedData?: (
+				payload: Uint8Array,
+				properties: { topics: string[] },
+				options: {
+					mode: SilentDelivery;
+					priority?: number;
+				},
+			) => Promise<Uint8Array | undefined>;
+		};
+		if (typeof pubsub.publishPreEncodedData !== "function") {
+			return undefined;
+		}
+		if (plan.hashes.length === 0) {
+			return 0;
+		}
+		const byteLengths = backbone.syncSendBlockByteLengths?.(plan.hashes);
+		if (!byteLengths) {
+			return undefined;
+		}
+
+		const topic = this.rpc.topic;
+		const payloads: Uint8Array[] = [];
+		const encodeChunk = (from: number, until: number): boolean => {
+			const payload = backbone.encodeRawExchangeSyncPayload!({
+				topic,
+				hashes: from === 0 && until === plan.hashes.length
+					? plan.hashes
+					: plan.hashes.slice(from, until),
+				gidRefrences:
+					from === 0 && until === plan.gidRefrences.length
+						? plan.gidRefrences
+						: plan.gidRefrences.slice(from, until),
+				reserved: options?.reserved,
+			});
+			if (!payload) {
+				return false;
+			}
+			payloads.push(payload);
+			return true;
+		};
+		// Same greedy chunking rule as `createRawExchangeHeadsMessages`: close
+		// a message after the head that pushes it over the size cap.
+		let chunkStart = 0;
+		let size = 0;
+		let totalBytes = 0;
+		for (let i = 0; i < plan.hashes.length; i++) {
+			const length = byteLengths[i];
+			if (length === undefined) {
+				return undefined;
+			}
+			size += length;
+			totalBytes += length;
+			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
+				if (!encodeChunk(chunkStart, i + 1)) {
+					return undefined;
+				}
+				chunkStart = i + 1;
+				size = 0;
+			}
+		}
+		if (chunkStart < plan.hashes.length) {
+			if (!encodeChunk(chunkStart, plan.hashes.length)) {
+				return undefined;
+			}
+		}
+		// Every payload is encoded before anything is published, so a caller
+		// falling back on `undefined` never double-sends part of a plan.
+		const profile = this._logProperties?.sync?.profile;
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "sharedLog.rawSend.fused",
+				component: "shared-log",
+				entries: plan.hashes.length,
+				bytes: totalBytes,
+				messages: payloads.length,
+			});
+		}
+		for (const payload of payloads) {
+			await pubsub.publishPreEncodedData(
+				payload,
+				{ topics: [topic] },
+				{
+					mode: new SilentDelivery({ redundancy: 1, to: [...to] }),
+					priority: options?.priority,
+				},
+			);
+		}
+		return payloads.length;
+	}
+
+	/**
+	 * `RawExchangeHeadsSender` seam handed to the synchronizer for bulk sync
+	 * responses: resolves the head/reference plan like the TS raw path and
+	 * ships it fused when possible.
+	 */
+	private async trySendFusedRawExchangeHeads(
+		hashes: string[],
+		to: string[],
+		options?: { priority?: number; reserved?: Uint8Array },
+	): Promise<number | undefined> {
+		if (!this._nativeBackbone?.encodeRawExchangeSyncPayload) {
+			return undefined;
+		}
+		const plan = collectRawExchangeHeadSendPlan(this.log, hashes);
+		if (!plan) {
+			return undefined;
+		}
+		if (plan.hashes.length === 0) {
+			return 0;
+		}
+		return this.sendFusedRawExchangeHeadsPlan(plan, to, options);
+	}
+
 	private async _appendDeliverToReplicators(
 		entry: Entry<T>,
 		coordinates: NumberFromType<R>[],
@@ -2400,6 +2703,22 @@ export class SharedLog<
 					for (const peer of nativeDeliveryPlan.repairTargets) {
 						this.queueAppendBackfill(peer, entryReplicatedForRepair);
 					}
+					if (nativeDeliveryPlan.defaultSendSilent) {
+						const rawTargets = this.canUseLiveRawGossip(
+							nativeDeliveryPlan.sendTo,
+							selfHash,
+						);
+						if (rawTargets) {
+							this.queueLiveRawGossip(
+								entry.hash,
+								message.heads[0]?.gidRefrences ?? [],
+								entry.size ?? 0,
+								rawTargets,
+							);
+							continue;
+						}
+					}
+					this.emitPlainLiveSendProfile(message);
 					this.rpc
 						.send(message, {
 							mode: nativeDeliveryPlan.defaultSendSilent
@@ -2502,6 +2821,19 @@ export class SharedLog<
 					// forever. Best-effort fallback subscribers are not repair-worthy.
 					this.queueAppendBackfill(peer, entryReplicatedForRepair);
 				}
+				if (isLeader) {
+					const rawTargets = this.canUseLiveRawGossip(set, selfHash);
+					if (rawTargets) {
+						this.queueLiveRawGossip(
+							entry.hash,
+							message.heads[0]?.gidRefrences ?? [],
+							entry.size ?? 0,
+							rawTargets,
+						);
+						continue;
+					}
+				}
+				this.emitPlainLiveSendProfile(message);
 				this.rpc
 					.send(message, {
 						mode: isLeader
@@ -4276,6 +4608,33 @@ export class SharedLog<
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 	) {
 		const hashes = [...entries.keys()];
+		if (
+			this._logProperties?.sync?.rawExchangeHeads === true &&
+			this.peerSupportsRawExchangeHeads(target)
+		) {
+			const reserved = new Uint8Array(4);
+			reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+			const sentMessages = await this.trySendFusedRawExchangeHeads(
+				hashes,
+				[target],
+				{ priority: SYNC_MESSAGE_PRIORITY, reserved },
+			);
+			if (sentMessages !== undefined) {
+				return;
+			}
+			for await (const message of createRawExchangeHeadsMessages(
+				this.log,
+				hashes,
+				this._logProperties?.sync?.profile,
+			)) {
+				message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+				await this.rpc.send(message, {
+					priority: SYNC_MESSAGE_PRIORITY,
+					mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+				});
+			}
+			return;
+		}
 		for await (const message of createExchangeHeadsMessages(
 			this.log,
 			hashes,
@@ -8128,6 +8487,9 @@ export class SharedLog<
 		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
 		this._leaderSelectionContextCache = undefined;
+		this._peerSyncCapabilities = new Map();
+		this._liveRawGossipBatches = new Map();
+		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -8565,6 +8927,11 @@ export class SharedLog<
 			);
 		};
 
+		const sendRawExchangeHeads = (
+			hashes: string[],
+			to: string[],
+			sendOptions?: { priority?: number },
+		) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions);
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({
 				numbers: this.indexableDomain.numbers,
@@ -8579,6 +8946,7 @@ export class SharedLog<
 				sync: options?.sync,
 				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 					this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+				sendRawExchangeHeads,
 			});
 		} else {
 			if (
@@ -8595,6 +8963,7 @@ export class SharedLog<
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+					sendRawExchangeHeads,
 				});
 			} else {
 				if (this.domain.resolution === "u32") {
@@ -8616,6 +8985,7 @@ export class SharedLog<
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+					sendRawExchangeHeads,
 				}) as Syncronizer<R>;
 			}
 		}
@@ -9192,6 +9562,7 @@ export class SharedLog<
 		this.cancelReplicationInfoRequests(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this._replicatorLastActivityAt.delete(peerHash);
+		this._peerSyncCapabilities.delete(peerHash);
 		this._checkedPrune.cleanupPeer(peerHash);
 	}
 
@@ -10247,6 +10618,8 @@ export class SharedLog<
 		this._pendingIHave?.clear();
 		this.latestReplicationInfoMessage?.clear();
 		this._gidPeersHistory?.clear();
+		this._peerSyncCapabilities?.clear();
+		this._liveRawGossipBatches?.clear();
 		this._nativeSharedLogState?.clearGidPeers();
 		this._nativeBackbone?.clearGidPeers();
 		// Cancel any pending debounced timers so they can't fire after we've torn down
@@ -10279,6 +10652,11 @@ export class SharedLog<
 		// restart. Explicit `unreplicate()` still clears local state.
 		try {
 			if (!this.closed) {
+				// Ship any coalesced live gossip before the RPC child program
+				// closes; entries appended right before close should still be
+				// offered to their replicators (best effort, like the inline
+				// sends they replaced).
+				this.flushLiveRawGossip();
 				// Prevent any late debounced timers (rebalance/prune) from publishing
 				// replication info after we announce "segments: []". These races can leave
 				// stale segments on remotes after rapid open/close cycles.
@@ -10332,6 +10710,7 @@ export class SharedLog<
 		// RPC/subscription state (same reasoning as in `close()`).
 		try {
 			if (!this.closed) {
+				this.flushLiveRawGossip();
 				this._isReplicating = false;
 				this._isAdaptiveReplicating = false;
 				this.rebalanceParticipationDebounced?.close();
@@ -12613,6 +12992,14 @@ export class SharedLog<
 			} else if (msg instanceof ConfirmEntriesMessage) {
 				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
 				this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
+				return;
+			} else if (msg instanceof SyncCapabilitiesMessage) {
+				if (!context.from.equals(this.node.identity.publicKey)) {
+					this._peerSyncCapabilities.set(
+						context.from.hashcode(),
+						msg.capabilities,
+					);
+				}
 				return;
 			} else if (await this.syncronizer.onMessage(msg, context)) {
 				return; // the syncronizer has handled the message
@@ -16530,6 +16917,22 @@ export class SharedLog<
 		this._replicationInfoBlockedPeers.delete(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this.markReplicatorActivity(peerHash);
+
+		if (this._logProperties?.sync?.rawExchangeHeads === true) {
+			// One-shot capability advertisement so live append gossip can pick
+			// the raw exchange-heads path for this peer without a per-request
+			// round trip. Peers that do not know the message drop it.
+			this.rpc
+				.send(
+					new SyncCapabilitiesMessage({
+						capabilities: SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
+					}),
+					{
+						mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
+					},
+				)
+				.catch((e) => logger.error(e.toString()));
+		}
 
 		const replicationSegments = await this.getMyReplicationSegments();
 		if (replicationSegments.length > 0) {

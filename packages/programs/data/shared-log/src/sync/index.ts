@@ -117,6 +117,19 @@ export type SharedLogNativeWireSync = {
 	release(id: Uint8Array): boolean;
 };
 
+/**
+ * Fused raw exchange-heads sender provided by the shared log when the native
+ * backbone can serialize the sync payload in wasm (block bytes never
+ * materialize in JS). Resolves to the number of messages sent, or `undefined`
+ * when the fused path is unavailable for these hashes — the caller then falls
+ * back to the TS message path.
+ */
+export type RawExchangeHeadsSender = (
+	hashes: string[],
+	to: string[],
+	options?: { priority?: number },
+) => Promise<number | undefined>;
+
 export type HashSymbolInput = readonly bigint[] | BigUint64Array;
 
 export type HashSymbolResolver = (
@@ -159,6 +172,7 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 		peer: string,
 		maxAgeMs: number,
 	) => boolean;
+	sendRawExchangeHeads?: RawExchangeHeadsSender;
 };
 export type SynchronizerConstructor<R extends "u32" | "u64"> = new (
 	properties: SynchronizerComponents<R>,
