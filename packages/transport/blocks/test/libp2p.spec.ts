@@ -62,6 +62,43 @@ describe("transport", function () {
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
+	it("drops an undecodable data frame instead of throwing out of the listener", async () => {
+		session = await TestSession.disconnected(1, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await store(session, 0).start();
+
+		const db = store(session, 0) as DirectBlock;
+		const onMessageSpy = sinon.spy(
+			(db as any).remoteBlocks as RemoteBlocks,
+			"onMessage",
+		);
+		// A borsh BlockMessage with an unknown variant byte: the TS decoder
+		// throws (the native decoder likewise throws, e.g. on a non-UTF-8
+		// cid). The listener must swallow the throw and drop the frame rather
+		// than let it escape (an uncaughtException in Node).
+		const malformed = new Uint8Array([7, 7, 7]);
+		const event = new CustomEvent("data", {
+			detail: {
+				data: malformed,
+				header: { signatures: { publicKeys: [] } },
+			},
+		});
+		expect(() => (db as any).onDataFn(event)).to.not.throw();
+		expect(onMessageSpy.called).to.equal(false);
+
+		// A well-formed frame still dispatches to onMessage.
+		const ok = serialize(new BlockRequest("zb2rhbnwihVzMMEGAPf9EwTZ"));
+		const okEvent = new CustomEvent("data", {
+			detail: {
+				data: ok,
+				header: { signatures: { publicKeys: [] } },
+			},
+		});
+		(db as any).onDataFn(okEvent);
+		expect(onMessageSpy.called).to.equal(true);
+	});
+
 	it("read while join over relay", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) },

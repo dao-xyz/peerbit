@@ -151,15 +151,25 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		});
 
 		this.onDataFn = (data: CustomEvent<DataMessage>) => {
-			data.detail?.data?.length &&
-				data.detail?.data.length > 0 &&
-				this.remoteBlocks.onMessage(
-					this.decodeBlockMessage(data.detail.data!),
-					{
-						from: data.detail.header.signatures?.publicKeys[0]?.hashcode(),
-						transport: createRequestTransportContext(data.detail),
-					},
-				);
+			if (!(data.detail?.data?.length && data.detail.data.length > 0)) {
+				return;
+			}
+			let message: BlockMessage;
+			try {
+				message = this.decodeBlockMessage(data.detail.data!);
+			} catch {
+				// Drop undecodable frames instead of letting the throw escape
+				// the 'data' listener (an uncaughtException in Node). The TS
+				// borsh decoder tolerates malformed frames lossily and fails
+				// later inside handleFetchRequest, which is caught; the native
+				// decoder throws on e.g. non-UTF-8 cid bytes, so match the
+				// tolerant behaviour here.
+				return;
+			}
+			this.remoteBlocks.onMessage(message, {
+				from: data.detail.header.signatures?.publicKeys[0]?.hashcode(),
+				transport: createRequestTransportContext(data.detail),
+			});
 		};
 		this.onPeerConnectedFn = (evt: CustomEvent<PublicSignKey>) =>
 			this.remoteBlocks.onReachable(evt.detail);
