@@ -581,6 +581,14 @@ type NativePeerbitBackboneHandle = {
 	block_delete_many: (keys: string[]) => number;
 	block_entries: () => Array<[string, Uint8Array]>;
 	block_size: () => number;
+	sync_send_block_byte_lengths?: (hashes: string[]) => Uint32Array;
+	encode_raw_exchange_sync_payload?: (
+		topic: string,
+		strict: boolean,
+		hashes: string[],
+		gidRefrences: string[][],
+		reserved: Uint8Array,
+	) => Uint8Array | undefined;
 	clear: () => void;
 	clear_shared_log: () => void;
 	clear_entry_coordinates: () => void;
@@ -5392,6 +5400,7 @@ const iterableToArray = <T>(values?: Iterable<T>): T[] => {
 };
 
 const EMPTY_UINT8_ARRAY = new Uint8Array(0);
+const SYNC_SEND_DEFAULT_RESERVED = new Uint8Array(4);
 
 type NativeBackboneDocumentIndexArgs = readonly [
 	string,
@@ -5584,6 +5593,51 @@ export class NativePeerbitBackbone {
 
 	hasBlock(hash: string): boolean {
 		return this.native.has_block(hash);
+	}
+
+	/**
+	 * Byte lengths of natively stored entry blocks (`undefined` marks a
+	 * missing block), used by the fused send path to plan raw exchange-head
+	 * message chunking without materializing block bytes in JS.
+	 */
+	syncSendBlockByteLengths(
+		hashes: string[],
+	): Array<number | undefined> | undefined {
+		if (!this.native.sync_send_block_byte_lengths) {
+			return undefined;
+		}
+		const lengths = this.native.sync_send_block_byte_lengths(hashes);
+		const out = new Array<number | undefined>(lengths.length);
+		for (let i = 0; i < lengths.length; i++) {
+			const length = lengths[i]!;
+			out[i] = length === 0xffffffff ? undefined : length;
+		}
+		return out;
+	}
+
+	/**
+	 * Serialize one outbound raw exchange sync payload (the full
+	 * PubSubData → RequestV0 → DecryptedThing → RawExchangeHeadsMessage
+	 * nesting) from the native block store. Returns `undefined` when the
+	 * encoder is unavailable or any head's block is not natively stored.
+	 */
+	encodeRawExchangeSyncPayload(properties: {
+		topic: string;
+		strict?: boolean;
+		hashes: string[];
+		gidRefrences: string[][];
+		reserved?: Uint8Array;
+	}): Uint8Array | undefined {
+		if (!this.native.encode_raw_exchange_sync_payload) {
+			return undefined;
+		}
+		return this.native.encode_raw_exchange_sync_payload(
+			properties.topic,
+			properties.strict ?? true,
+			properties.hashes,
+			properties.gidRefrences,
+			properties.reserved ?? SYNC_SEND_DEFAULT_RESERVED,
+		);
 	}
 
 	prepareRawReceiveBatch(

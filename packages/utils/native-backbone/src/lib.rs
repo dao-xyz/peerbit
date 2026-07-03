@@ -15,6 +15,7 @@ mod js_interop;
 mod profile;
 mod raw_receive;
 mod shared_log_plan;
+mod sync_send;
 mod wire_sync;
 
 use crate::documents::{DocumentContextFields, DocumentPreviousSignerFact, ParsedProjectionPlan};
