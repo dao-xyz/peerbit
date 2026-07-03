@@ -603,14 +603,25 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	private shallowHeadValue?: ShallowEntry;
 	private keychain?: unknown;
 	private encodingValue?: Log<T>["encoding"];
+	private bytesValue?: Uint8Array;
 
 	constructor(
-		private readonly bytes: Uint8Array,
+		private readonly bytesSource: () => Uint8Array,
 		private readonly facts: PreparedRawEntryV0FactsSource,
 		private readonly factsIndex = 0,
+		private readonly onJsEntryDecode?: () => void,
 	) {
 		super();
 		this.size = preparedRawByteLength(facts, factsIndex);
+	}
+
+	/**
+	 * Lazy: stash-backed heads keep the block bytes in wasm memory; they are
+	 * copied out only when a consumer actually needs them (payload/signature
+	 * materialization, storage bytes).
+	 */
+	private get bytes(): Uint8Array {
+		return (this.bytesValue ??= this.bytesSource());
 	}
 
 	get meta(): Meta {
@@ -780,9 +791,15 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
 		const shallow = this.toShallow(true);
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
+		const self = this;
 		return {
 			hash: this.hash,
-			bytes: this.bytes,
+			// Lazy: stash-backed heads keep entry bytes in wasm memory and the
+			// native prepared-join commit never reads them in JS.
+			get bytes() {
+				return self.bytes;
+			},
 			byteLength: this.size,
 			meta: shallow.meta,
 			getShallowEntry: (isHead = true) => this.toShallow(isHead),
@@ -794,6 +811,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		if (this.materialized) {
 			return this.materialized;
 		}
+		this.onJsEntryDecode?.();
 		const entry = materializeRawExchangeEntry<T>({
 			hash: this.hash,
 			bytes: this.bytes,
@@ -818,19 +836,30 @@ class PreparedRawEntryWithRefs<T> {
 		private readonly head: RawEntryWithRefs,
 		private readonly facts: PreparedRawEntryV0FactsSource,
 		private readonly factsIndex = 0,
+		private readonly onJsEntryDecode?: () => void,
 	) {
 		this.gidRefrences = head.gidRefrences;
 	}
 
 	get entry(): Entry<T> {
 		if (!this.entryValue) {
+			const head = this.head;
 			const entry = new PreparedRawExchangeEntry<T>(
-				this.head.bytes,
+				() => head.bytes,
 				this.facts,
 				this.factsIndex,
+				this.onJsEntryDecode,
 			);
-			Entry.prepareMultihashBytes(entry, this.head.bytes, this.head.hash);
-			entry.hash = this.head.hash;
+			// Lazy block registration: stash-backed heads keep the bytes in
+			// wasm memory until a consumer (block store put, payload
+			// materialization) actually pulls them.
+			Entry.prepareMultihashBytesLazy(
+				entry,
+				head.hash,
+				preparedRawByteLength(this.facts, this.factsIndex),
+				() => head.bytes,
+			);
+			entry.hash = head.hash;
 			entry.size = preparedRawByteLength(this.facts, this.factsIndex);
 			if (this.keychain || this.encodingValue) {
 				entry.init({
@@ -1698,6 +1727,19 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			const hashesToWrap = selectedHashes;
 			const indexesToWrap = selectedIndexes;
 			const wrapStartedAt = syncProfileStart(profile);
+			// Lazy per-entry JS materialization (a change consumer reading
+			// payload/signatures) is counted on the existing counter so the
+			// fused no-consumer path stays assertable at zero.
+			const onJsEntryDecode = profile
+				? () =>
+						emitSyncProfileEvent(profile, {
+							name: "sharedLog.rawReceive.jsEntryDecode",
+							component: "shared-log",
+							entries: 1,
+							messages: 0,
+							details: { lazy: true },
+						})
+				: undefined;
 			let materializedHeads: EntryWithRefs<any>[];
 			try {
 				const rowFacts = preparedFacts!;
@@ -1708,6 +1750,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 						head,
 						facts,
 						factsIndex,
+						onJsEntryDecode,
 					);
 					preparedHead.initEntry({
 						keychain: log.keychain,
