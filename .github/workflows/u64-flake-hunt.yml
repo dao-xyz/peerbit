@@ -1,0 +1,102 @@
+name: u64-iblt flake hunt
+on:
+  workflow_dispatch:
+    inputs:
+      grep:
+        description: Mocha grep for the tests to loop
+        required: false
+        default: "^u64-iblt"
+      iterations:
+        description: Suite repetitions per job
+        required: false
+        default: "5"
+      jobs:
+        description: Parallel jobs (max 12)
+        required: false
+        default: "8"
+
+jobs:
+  plan:
+    name: Expand job matrix
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.expand.outputs.matrix }}
+    steps:
+      - id: expand
+        run: |
+          n=$(( ${{ github.event.inputs.jobs || '8' }} ))
+          [ "$n" -gt 12 ] && n=12
+          echo "matrix=[$(seq -s, 1 $n)]" >> "$GITHUB_OUTPUT"
+
+  hunt:
+    name: Loop u64-iblt suite (job ${{ matrix.job }})
+    needs: plan
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJson(needs.plan.outputs.matrix) }}
+    env:
+      NODE_OPTIONS: --no-warnings
+      WASM_PACK_VERSION: 0.13.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Cache wasm-pack
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: ${{ runner.os }}-wasm-pack-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install deps
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          ./scripts/ci/install-wasm-pack.sh
+          rustup target add wasm32-unknown-unknown
+          pnpm install --frozen-lockfile=false
+
+      - name: Build shared-log workspace
+        run: |
+          pnpm --filter @peerbit/shared-log... run build
+
+      - name: Loop tests
+        run: |
+          set -uo pipefail
+          mkdir -p hunt-results
+          failures=0
+          iters=${{ github.event.inputs.iterations || '5' }}
+          for i in $(seq 1 "$iters"); do
+            echo "=== job ${{ matrix.job }} iteration $i ==="
+            if PEERBIT_MOCHA_LOG_TEST_START=1 PEERBIT_MOCHA_LOG_INTERVAL_MS=10000 \
+              node ./node_modules/aegir/src/index.js run test \
+                --roots ./packages/programs/data/shared-log -- -t node --no-build \
+                --grep "${{ github.event.inputs.grep || '^u64-iblt' }}" \
+                > "hunt-results/job${{ matrix.job }}-iter-$i.log" 2>&1; then
+              echo "iteration $i: PASS"
+              rm "hunt-results/job${{ matrix.job }}-iter-$i.log"
+            else
+              echo "iteration $i: FAIL"
+              grep -B2 -A12 "failing" "hunt-results/job${{ matrix.job }}-iter-$i.log" | head -40 || true
+              failures=$((failures+1))
+            fi
+          done
+          echo "job ${{ matrix.job }} failures: $failures / $iters"
+          echo "$failures/$iters" > "hunt-results/job${{ matrix.job }}-count.txt"
+
+      - name: Upload failing logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: u64-hunt-${{ github.run_id }}-job${{ matrix.job }}
+          path: hunt-results
