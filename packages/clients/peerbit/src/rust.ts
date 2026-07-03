@@ -11,6 +11,7 @@ import {
 	createNativeLogBlockStore,
 	type NativeLogBlockStore,
 } from "@peerbit/log-rust";
+import { logger as loggerFn } from "@peerbit/logger";
 import { createNativeWireSyncSession } from "@peerbit/native-backbone";
 import { createRustCoreStream } from "@peerbit/network-rust";
 import type {
@@ -55,6 +56,8 @@ export type PeerbitRustOptions = {
 	network?: boolean | PeerbitRustNetworkOptions;
 };
 
+const logger = loggerFn("peerbit:client:rust");
+
 export type PeerbitRustCreateOptions = {
 	storage: StorageCreateOptions;
 	indexer: NonNullable<CreateInstanceOptions["indexer"]>;
@@ -67,6 +70,16 @@ class LazyNativeLogBlockStore implements AnyStore {
 
 	getNativeLogBlockStoreHandle(): unknown {
 		return this.store?.getNativeLogBlockStoreHandle();
+	}
+
+	/**
+	 * Forward the native block-serving path so `RemoteBlocks.handleFetchRequest`
+	 * serves stored blocks straight from wasm (no JS block-byte copy). Without
+	 * this forwarder the optional call resolves to undefined through
+	 * AnyBlockStore and every serve falls back to the JS byte-copy path.
+	 */
+	getBlockResponsePayload(cid: string): Uint8Array | undefined {
+		return this.store?.getBlockResponsePayload(cid);
 	}
 
 	status(): "opening" | "open" | "closing" | "closed" {
@@ -164,10 +177,21 @@ const createRustBlocksStoreFactory =
 		options: RustAnyStoreOptions | undefined,
 		nativeLogBlocks: boolean | undefined,
 	): StoreFactory =>
-	(directory) =>
-		nativeLogBlocks
-			? new LazyNativeLogBlockStore()
-			: createRustStore(directory, options);
+	(directory) => {
+		if (nativeLogBlocks) {
+			if (directory != null) {
+				// The native log block store keeps blocks in wasm memory only
+				// (no on-disk persistence), so the client `directory` is
+				// ignored for blocks. Blocks — including program manifests
+				// written via the client blocks service — are lost on restart.
+				logger.error(
+					`storage.nativeLogBlocks is set: blocks are stored in memory only and the directory '${directory}' is not persisted. Program manifests and cached blocks will not survive a restart.`,
+				);
+			}
+			return new LazyNativeLogBlockStore();
+		}
+		return createRustStore(directory, options);
+	};
 
 export const createRustStorageOptions = (
 	options: PeerbitRustStorageOptions = {},
