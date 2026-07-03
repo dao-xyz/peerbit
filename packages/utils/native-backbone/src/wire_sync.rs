@@ -34,8 +34,13 @@ use crate::NativePeerbitBackbone;
 
 /// Bounds for never-consumed stash entries (a message can be stashed at the
 /// wire level and then dropped before program dispatch, e.g. by the seen
-/// cache). FIFO-evicted; eviction only costs the fused fast path — the TS
-/// fallback still processes the message.
+/// cache). FIFO-evicted; eviction of a never-resolved entry only costs the
+/// fused fast path — the TS fallback still processes the message. Entries
+/// resolved for processing (`stashed_meta`) are pinned and excluded from
+/// eviction until `release`: after resolve there is no TS fallback (the RPC
+/// layer skipped the borsh decode), so evicting a pinned entry would drop the
+/// message's heads. Pinned entries are bounded by the message-processing
+/// concurrency of their consumers, not by these caps.
 pub(crate) const WIRE_SYNC_MAX_STASHED_MESSAGES: usize = 512;
 pub(crate) const WIRE_SYNC_MAX_STASHED_BYTES: usize = 64 * 1024 * 1024;
 
@@ -45,6 +50,9 @@ pub(crate) struct StashedSyncMessage {
     heads: Vec<SyncPayloadHead>,
     reserved: [u8; 4],
     payload_length: usize,
+    /// Pinned entries are mid-processing (resolved via `stashed_meta`, not
+    /// yet released); they are excluded from FIFO eviction.
+    pinned: bool,
 }
 
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +158,19 @@ impl WireSyncCore {
             return false;
         }
 
+        if self
+            .stash
+            .get(&meta.id)
+            .is_some_and(|existing| existing.pinned)
+        {
+            // Duplicate delivery of a message that is mid-processing: the id
+            // is part of the signed header, so the stashed frame is
+            // byte-identical. Keep the pinned entry (replacing it would reset
+            // the pin) and report the frame as stashed.
+            self.counters.stashed += 1;
+            return true;
+        }
+
         let heads = parsed
             .heads
             .into_iter()
@@ -168,6 +189,7 @@ impl WireSyncCore {
                 heads,
                 reserved: parsed.reserved,
                 payload_length: data_length,
+                pinned: false,
             },
         ) {
             self.stashed_bytes -= previous.frame.len();
@@ -193,6 +215,26 @@ impl WireSyncCore {
     pub(crate) fn get(&self, id: &[u8]) -> Option<&StashedSyncMessage> {
         let id: &[u8; ID_LENGTH] = id.try_into().ok()?;
         self.stash.get(id)
+    }
+
+    /// Pin a stashed entry while it is being processed: pinned entries are
+    /// taken out of the eviction order until `release` removes them, so the
+    /// block bytes an in-flight `StashBackedRawExchangeHeadsMessage` refers
+    /// to cannot be dropped by later `try_stash` calls. Returns `false` when
+    /// the id is not stashed.
+    pub(crate) fn pin(&mut self, id: &[u8]) -> bool {
+        let Ok(id) = <&[u8; ID_LENGTH]>::try_from(id) else {
+            return false;
+        };
+        match self.stash.get_mut(id) {
+            Some(entry) if entry.pinned => true,
+            Some(entry) => {
+                entry.pinned = true;
+                self.order.retain(|entry_id| entry_id != id);
+                true
+            }
+            None => false,
+        }
     }
 
     pub(crate) fn release(&mut self, id: &[u8]) -> bool {
@@ -315,13 +357,15 @@ impl NativeWireSyncSession {
 
     /// Stash facts for a message id: `[hashes, gidRefrences, byteLengths,
     /// reserved, payloadLength]`, or `undefined` when not stashed. Does not
-    /// consume the entry — call `release` when processing finishes.
+    /// consume the entry, but pins it: a resolved message has no TS decode
+    /// fallback anymore, so the entry must survive FIFO eviction until
+    /// `release` is called when processing finishes.
     pub fn stashed_meta(&mut self, id: &[u8]) -> JsValue {
-        if self.core.get(id).is_none() {
+        if !self.core.pin(id) {
             return JsValue::UNDEFINED;
         }
         self.core.counters.meta_reads += 1;
-        let stashed = self.core.get(id).expect("checked above");
+        let stashed = self.core.get(id).expect("pinned above");
         let hashes = Array::new();
         let gid_refrences = Array::new();
         let mut byte_lengths: Vec<u32> = Vec::with_capacity(stashed.heads.len());
@@ -597,6 +641,75 @@ mod tests {
         }
         assert_eq!(core.stash_len(), WIRE_SYNC_MAX_STASHED_MESSAGES);
         assert_eq!(core.counters.evicted, 3);
+    }
+
+    #[test]
+    fn pinned_entries_survive_fifo_eviction_until_release() {
+        // Regression: a message that was resolved for processing
+        // (stashed_meta pins it) must keep its block bytes available across
+        // the awaits of SharedLog.onMessage even when a burst of later
+        // frames overflows the FIFO caps — there is no TS fallback for a
+        // resolved message.
+        let mut core = WireSyncCore::new("self-hash".to_string());
+        core.register_topic("topic".to_string());
+        let (frame, data_offset, data_length) = sync_frame(0, "topic", silent_to_self(), &heads());
+        let mut buffer = Some(frame);
+        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core.pin(&[0u8; ID_LENGTH]));
+        assert!(!core.pin(&[9u8; ID_LENGTH]), "missing ids cannot be pinned");
+
+        // Flood far past the message cap; the pinned entry is oldest.
+        for index in 1..(WIRE_SYNC_MAX_STASHED_MESSAGES + 8) {
+            let (frame, data_offset, data_length) =
+                sync_frame(index as u8, "topic", silent_to_self(), &heads());
+            let mut frame = frame;
+            frame[2] = (index >> 8) as u8; // second byte of the 32-byte id
+            let mut buffer = Some(frame);
+            assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        }
+        assert!(core.counters.evicted > 0);
+        // Pinned entry survives (the cap counts it, so the stash holds the
+        // cap's worth of unpinned entries plus the pinned one).
+        let blocks = core.blocks(&[0u8; ID_LENGTH], None).unwrap();
+        assert_eq!(blocks, vec![vec![1, 2, 3], vec![4, 5]]);
+
+        assert!(core.release(&[0u8; ID_LENGTH]));
+        assert!(core.get(&[0u8; ID_LENGTH]).is_none());
+        assert!(!core.release(&[0u8; ID_LENGTH]));
+    }
+
+    #[test]
+    fn duplicate_of_pinned_entry_keeps_the_pinned_entry() {
+        // A duplicate delivery (redundancy >= 2) of a message that is
+        // mid-processing must not replace the pinned entry — replacing would
+        // reset the pin and re-expose the in-flight message to eviction.
+        let mut core = WireSyncCore::new("self-hash".to_string());
+        core.register_topic("topic".to_string());
+        let (frame, data_offset, data_length) = sync_frame(5, "topic", silent_to_self(), &heads());
+        let mut buffer = Some(frame.clone());
+        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core.pin(&[5u8; ID_LENGTH]));
+
+        let mut buffer = Some(frame);
+        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(
+            buffer.is_some(),
+            "duplicates of pinned entries keep their buffer"
+        );
+        assert_eq!(core.stash_len(), 1);
+
+        // Still pinned: flooding past the cap does not evict it.
+        for index in 0..WIRE_SYNC_MAX_STASHED_MESSAGES + 1 {
+            let (frame, data_offset, data_length) =
+                sync_frame(index as u8, "topic", silent_to_self(), &heads());
+            let mut frame = frame;
+            frame[2] = 0xff; // distinct id space from the pinned entry
+            frame[3] = (index >> 8) as u8;
+            let mut buffer = Some(frame);
+            assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        }
+        assert!(core.blocks(&[5u8; ID_LENGTH], None).is_some());
+        assert!(core.release(&[5u8; ID_LENGTH]));
     }
 
     #[test]
