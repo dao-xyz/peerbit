@@ -76,6 +76,19 @@ export { toUint8Array } from "./bytes.js";
 
 export const logger = loggerFn("peerbit:transport:topic-control-plane");
 const warn = logger.newScope("warn");
+
+const utf8Encoder = new TextEncoder();
+/**
+ * Offset of the `data` bytes inside a borsh-serialized `PubSubData`
+ * (variant byte + topics vec + strict bool + data length prefix).
+ */
+const preEncodedPubSubDataOffset = (topics: string[]): number => {
+	let offset = 1 + 4; // variant + topics vec length
+	for (const topic of topics) {
+		offset += 4 + utf8Encoder.encode(topic).byteLength;
+	}
+	return offset + 1 + 4; // strict + data length prefix
+};
 const logError = (e?: { message: string }) => {
 	logger.error(e?.message);
 };
@@ -1995,6 +2008,76 @@ export class TopicControlPlane
 		}
 
 		return embedded.id;
+	}
+
+	/**
+	 * Publish a pre-encoded `PubSubData` payload to explicit recipients.
+	 *
+	 * `payload` must be the exact borsh serialization of
+	 * `new PubSubData({ topics, data, strict: true })` — callers that encode
+	 * the payload elsewhere (e.g. the shared-log fused send path serializing
+	 * inside wasm) hand the finished bytes here so the wrapping `PubSubData`
+	 * copy of the regular `publish` path is skipped. Everything else matches
+	 * the explicit-recipient branch of {@link publish}: the payload becomes a
+	 * signed `DataMessage` delivered over DirectStream.
+	 */
+	async publishPreEncodedData(
+		payload: Uint8Array,
+		properties: {
+			topics: string[];
+		},
+		options: {
+			mode: SilentDelivery | AcknowledgeDelivery;
+		} & { client?: string } & PriorityOptions &
+			ResponsePriorityOptions &
+			ExpiresAtOptions &
+			IdOptions &
+			WithExtraSigners & { signal?: AbortSignal },
+	): Promise<Uint8Array | undefined> {
+		if (!this.started) throw new NotStartedError();
+		if (!options?.mode || !deliveryModeHasReceiver(options.mode)) {
+			throw new Error(
+				"publishPreEncodedData requires a delivery mode with explicit recipients",
+			);
+		}
+
+		const message = await this.createMessage(payload, {
+			...options,
+			skipRecipientValidation: this.dispatchEventOnSelfPublish,
+		});
+
+		this.dispatchEvent(
+			new CustomEvent("publish", {
+				detail: new PublishEvent({
+					client: options?.client,
+					data: new PubSubData({
+						topics: properties.topics,
+						data: payload.subarray(
+							preEncodedPubSubDataOffset(properties.topics),
+						),
+						strict: true,
+					}),
+					message,
+				}),
+			}),
+		);
+
+		const silentDelivery = options.mode instanceof SilentDelivery;
+		try {
+			await this.publishMessage(
+				this.publicKey,
+				message,
+				undefined,
+				undefined,
+				options?.signal,
+			);
+		} catch (error) {
+			if (error instanceof DeliveryError && silentDelivery !== false) {
+				return message.id;
+			}
+			throw error;
+		}
+		return message.id;
 	}
 
 	public onPeerSession(key: PublicSignKey, _session: number): void {
