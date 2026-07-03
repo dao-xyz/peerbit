@@ -115,12 +115,13 @@ describe("native network e2e", function () {
 
 			await peer2.open(target, { args: nativeOpenArgs() });
 
-			// documents consume per-entry change events, so the raw receive
-			// fusion is gated off for them: no topic registration expected
+			// the client preset raw-sync defaults apply to document stores:
+			// the program topic is registered on the wire-sync session and
+			// raw exchange-head payloads get stashed in wasm
 			const wireSync2 = peer2.nativeNetwork!.wireSync! as unknown as {
 				topicCount: number;
 			};
-			expect(wireSync2.topicCount).to.equal(0);
+			expect(wireSync2.topicCount).to.equal(1);
 
 			const documentPutSpy = sinon.spy(documentsOf(target).index, "put");
 			const decoderSpy = sinon.spy(
@@ -164,18 +165,18 @@ describe("native network e2e", function () {
 				{ timeout: 30_000, timeoutMessage: "native e2e live puts" },
 			);
 
-			// wire-sync session counters: no stashed block bytes ever crossed
-			// back into JS. (Documents consume per-entry change events, so the
-			// raw exchange-head defaults are gated off for them and nothing is
-			// expected to be stashed; the fused zero-JS sync leg is covered by
-			// the shared-log network e2e.)
-			for (const [label, client] of [
-				["peer1", peer1],
-				["peer2", peer2],
-			] as const) {
-				const counters = client.nativeNetwork!.wireSync!.counters!();
-				expect(counters.blockCopyOuts, label + " blockCopyOuts").to.equal(0);
-			}
+			// wire-sync session counters: document syncs ride the raw path
+			// (payloads stashed in wasm), and the per-entry change consumer
+			// (the document store's handleChanges) is what pulls entry bytes
+			// back into JS — counted as blockCopyOuts. The zero-copy invariant
+			// for programs without a per-entry consumer is covered by the
+			// shared-log network e2e.
+			const targetCounters = peer2.nativeNetwork!.wireSync!.counters!();
+			expect(targetCounters.stashed, "peer2 stashed").to.be.greaterThan(0);
+			expect(
+				targetCounters.blockCopyOuts,
+				"peer2 blockCopyOuts",
+			).to.be.greaterThan(0);
 
 			// DirectStream wire counters: every inbound frame was decoded and
 			// signature-verified natively; no frame fell back to the TS path

@@ -3433,4 +3433,266 @@ describe("raw exchange-head sync", () => {
 			await session.stop();
 		}
 	});
+
+	it("dispatches program onChange with lazy entries from the prepared raw receive", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const changes: any[] = [];
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					sync: { rawExchangeHeads: true },
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					onChange: (change) => {
+						changes.push(change);
+					},
+					sync: {
+						rawExchangeHeads: true,
+						profile: (event: any) => profileEvents.push(event),
+					},
+					timeUntilRoleMaturity: 0,
+				},
+			});
+
+			const entryCount = 3;
+			const hashes: string[] = [];
+			for (let i = 0; i < entryCount; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+			let message: RawExchangeHeadsMessage | undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated as RawExchangeHeadsMessage;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const nativePreparedJoinCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitPreparedRawReceiveJoinBatch",
+			);
+			const nativeVerifiedPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			const nativeVerifiedAllPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedAllPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			const entryAddedHashesSpy = sinon.spy(
+				target.log.syncronizer as any,
+				"onEntryAddedHashes",
+			);
+			try {
+				await target.log.onMessage(message!, {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				expect(target.log.log.length).to.equal(entryCount);
+				// the program-level change consumer observed every commit
+				const added = changes.flatMap((change) => change.added);
+				expect(changes.length).to.be.greaterThan(0);
+				expect(added.map((a: any) => a.entry.hash)).to.have.members(hashes);
+				expect(added.every((a: any) => a.head === true)).to.equal(true);
+				expect(changes.flatMap((change) => change.removed)).to.have.length(
+					0,
+				);
+				// the hash-only synchronizer sink was replaced by the change
+				// dispatch, not run in addition to it
+				expect(entryAddedHashesSpy.callCount).to.equal(0);
+				// the native prepared join commit still ran: the consumer does
+				// not force the join off the native path
+				expect(
+					nativePreparedJoinCommitSpy.callCount +
+						(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0) +
+						(nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0),
+				).to.equal(1);
+				// entries handed to the consumer are lazy views: nothing was
+				// borsh-decoded in JS yet
+				expect(
+					profileEvents.filter(
+						(event) =>
+							event.name === "sharedLog.rawReceive.jsEntryDecode" &&
+							event.details?.lazy === true,
+					),
+				).to.have.length(0);
+				// reading a payload materializes exactly that entry and counts it
+				await added[0]!.entry.getPayloadValue();
+				const lazyDecodes = profileEvents.filter(
+					(event) =>
+						event.name === "sharedLog.rawReceive.jsEntryDecode" &&
+						event.details?.lazy === true,
+				);
+				expect(lazyDecodes).to.have.length(1);
+				expect(lazyDecodes[0].entries).to.equal(1);
+			} finally {
+				entryAddedHashesSpy.restore();
+				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
+				nativeVerifiedPreparedJoinCommitSpy?.restore();
+				nativePreparedJoinCommitSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("runs the program canAppend hook on the raw receive path", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const changes: any[] = [];
+			let allowAppends = true;
+			const canAppendHashes: string[] = [];
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					sync: { rawExchangeHeads: true },
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					canAppend: (entry) => {
+						canAppendHashes.push(entry.hash);
+						return allowAppends;
+					},
+					onChange: (change) => {
+						changes.push(change);
+					},
+					sync: { rawExchangeHeads: true },
+					timeUntilRoleMaturity: 0,
+				},
+			});
+
+			const entryCount = 3;
+			const hashes: string[] = [];
+			for (let i = 0; i < entryCount; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+			const collectRawMessage = async (forHashes: string[]) => {
+				for await (const generated of createRawExchangeHeadsMessages(
+					source.log.log,
+					forHashes,
+				)) {
+					return generated as RawExchangeHeadsMessage;
+				}
+				throw new Error("Missing raw exchange heads message");
+			};
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const nativePreparedJoinCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitPreparedRawReceiveJoinBatch",
+			);
+			const nativeVerifiedPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			const nativeVerifiedAllPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedAllPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			try {
+				await target.log.onMessage(await collectRawMessage(hashes), {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				// the hook observed every entry and the entries committed
+				expect(canAppendHashes).to.have.members(hashes);
+				expect(target.log.log.length).to.equal(entryCount);
+				const added = changes.flatMap((change) => change.added);
+				expect(added.map((a: any) => a.entry.hash)).to.have.members(hashes);
+				// the native join commit (which cannot run the hook) was not used
+				expect(nativePreparedJoinCommitSpy.callCount).to.equal(0);
+				expect(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0).to.equal(
+					0,
+				);
+				expect(
+					nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0,
+				).to.equal(0);
+
+				// a rejecting hook keeps entries out of the log
+				allowAppends = false;
+				const rejectedHashes: string[] = [];
+				for (let i = 0; i < entryCount; i++) {
+					const { entry } = await source.add(uuid(), {
+						meta: { next: [] },
+					});
+					rejectedHashes.push(entry.hash);
+				}
+				await target.log.onMessage(await collectRawMessage(rejectedHashes), {
+					from: source.node.identity.publicKey,
+				} as any);
+				expect(target.log.log.length).to.equal(entryCount);
+				for (const hash of rejectedHashes) {
+					expect(canAppendHashes).to.include(hash);
+				}
+			} finally {
+				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
+				nativeVerifiedPreparedJoinCommitSpy?.restore();
+				nativePreparedJoinCommitSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
 });

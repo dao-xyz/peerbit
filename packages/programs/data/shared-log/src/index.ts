@@ -340,6 +340,7 @@ export type {
 	SyncProfileEvent,
 	SyncProfileFn,
 } from "./sync/index.js";
+export { ExchangeHeadsMessage, RawExchangeHeadsMessage };
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
@@ -1131,7 +1132,6 @@ const applySharedLogNativeDefaults = <
 		nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
 		nativeGraph?: LogProperties<any>["nativeGraph"];
 		sync?: SyncOptions<any>;
-		onChange?: unknown;
 	},
 >(
 	options: O | undefined,
@@ -1140,21 +1140,14 @@ const applySharedLogNativeDefaults = <
 	if (!defaults) {
 		return options;
 	}
-	// The prepared raw receive commits entries without dispatching the
-	// program-level change event (entries never materialize in JS), so the
-	// raw sync defaults only apply to programs that do not consume
-	// per-entry changes. Programs can still opt in explicitly.
-	const applySyncDefaults = options?.onChange == null;
 	const sync =
-		(applySyncDefaults && defaults.sync) || options?.sync
+		defaults.sync || options?.sync
 			? {
 					...options?.sync,
 					rawExchangeHeads:
-						options?.sync?.rawExchangeHeads ??
-						(applySyncDefaults ? defaults.sync?.rawExchangeHeads : undefined),
+						options?.sync?.rawExchangeHeads ?? defaults.sync?.rawExchangeHeads,
 					nativeWireSync:
-						options?.sync?.nativeWireSync ??
-						(applySyncDefaults ? defaults.sync?.nativeWireSync : undefined),
+						options?.sync?.nativeWireSync ?? defaults.sync?.nativeWireSync,
 				}
 			: undefined;
 	return {
@@ -10506,7 +10499,14 @@ export class SharedLog<
 				const rawPrepareVerifySetting =
 					this._logProperties?.sync
 						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+				// A program-level canAppend hook must observe every entry before
+				// it commits, so the native join commit (which validates and
+				// commits entirely in wasm) is not used for programs that
+				// register one; those joins run through the lower-log batch
+				// join where the hook fires per entry.
+				const programCanAppend = !!this._logProperties?.canAppend;
 				const canVerifyPreparedRawReceiveOnCommit =
+					!programCanAppend &&
 					!!this._nativeBackbone?.graph
 						.commitVerifiedPreparedRawReceiveJoinBatch;
 				const canDeferRawReceiveVerificationUntilNativeSelection =
@@ -10529,6 +10529,7 @@ export class SharedLog<
 					canDeferRawReceiveVerificationUntilNativeSelection;
 				const deferNativeBackboneSignatureVerificationUntilCommit =
 					deferNativeBackboneSignatureVerificationUntilSelection &&
+					!programCanAppend &&
 					!!this._nativeBackbone?.graph
 						.commitVerifiedPreparedRawReceiveJoinBatch;
 				let rawPreparedReceiveSelection:
@@ -11788,12 +11789,21 @@ export class SharedLog<
 					let nativePreparedCommittedHashes: Set<string> | undefined;
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
-						const nativeBackboneCommitValidation =
-							this.validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
-								allToMerge,
-								syncProfile,
-								{ decodedReplicaCounts: receiveReplicaCounts },
-							);
+						// Program-level hooks must observe the joined entries:
+						// a canAppend hook disables the native-validated commit
+						// (the lower-log join runs the hook per entry instead),
+						// and an onChange consumer disables the hash-only sink
+						// so the join dispatches the change event with lazy
+						// entry views.
+						const programCanAppend = !!this._logProperties?.canAppend;
+						const programOnChange = !!this._logProperties?.onChange;
+						const nativeBackboneCommitValidation = programCanAppend
+							? undefined
+							: this.validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
+									allToMerge,
+									syncProfile,
+									{ decodedReplicaCounts: receiveReplicaCounts },
+								);
 						let canAppendAlreadyValidated = false;
 						let fallbackCanAppendAlreadyValidated = false;
 						let nativeCommitVerifyHashes: string[] | undefined;
@@ -11834,9 +11844,11 @@ export class SharedLog<
 						}
 						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
 						const hashOnlyEntryAdded =
+							!programOnChange &&
 							!!this.syncronizer.onEntryAddedHash &&
 							this._pendingIHave.size === 0;
 						const batchHashOnlyEntryAdded =
+							!programOnChange &&
 							!!this.syncronizer.onEntryAddedHashes &&
 							this._pendingIHave.size === 0;
 						let mergeEntryByHash:
@@ -11977,6 +11989,13 @@ export class SharedLog<
 								: !!this._nativeBackbone?.graph
 										.commitPreparedRawReceiveJoinBatch);
 						const trustedLowerLog = this.log as unknown as TrustedLowerLog<T>;
+						// With a program-level onChange consumer the hash-only
+						// sink is not used: the lower-log join dispatches the
+						// change event (lazy entry views over the prepared raw
+						// facts) so per-entry consumers observe every commit.
+						const joinOnAppendHashes = programOnChange
+							? undefined
+							: onAppendHashes;
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
 							(await trustedLowerLog.joinPreparedAppendFactsBatch(
@@ -11985,7 +12004,7 @@ export class SharedLog<
 									__peerbitEntriesAlreadyMissing: true,
 									__peerbitCanAppendAlreadyValidated: true,
 									__peerbitDeferIndexWrite: true,
-									__peerbitOnAppendHashes: onAppendHashes,
+									__peerbitOnAppendHashes: joinOnAppendHashes,
 									__peerbitProfile: syncProfile,
 									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
@@ -12003,7 +12022,7 @@ export class SharedLog<
 								__peerbitCanAppendAlreadyValidated:
 									fallbackCanAppendAlreadyValidated,
 								__peerbitDeferIndexWrite: true,
-								__peerbitOnAppendHashes: onAppendHashes,
+								__peerbitOnAppendHashes: joinOnAppendHashes,
 								__peerbitProfile: syncProfile,
 							});
 						}
@@ -12016,6 +12035,7 @@ export class SharedLog<
 								details: {
 									hashOnlyEntryAdded,
 									batchHashOnlyEntryAdded,
+									programOnChange,
 									joinedPreparedFacts,
 									nativePreparedCoordinatesFinished,
 								},
