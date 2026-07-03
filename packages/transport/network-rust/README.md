@@ -23,3 +23,8 @@ receive fusion hosted by `@peerbit/native-backbone` and the `peerbit/rust`
 client preset.
 
 Golden-vector parity tests against the TS implementation live in `test/`.
+The codec-parity subset (wire, topic-control, fanout) also runs under
+headless Chromium via `npm run test:browser`; the session-based specs are
+node-only (they need TCP). A browser end-to-end smoke of rust-core mode
+lives in `packages/transport/stream/e2e/browser`
+(`npm run test:rust-core` there).
