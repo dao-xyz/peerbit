@@ -182,7 +182,19 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				const rpcMessage = deserialize(data.data, RPCMessage);
 				if (rpcMessage instanceof RequestV0) {
 					if (this._responseHandler) {
-						let request = this._resolveRequest?.(message);
+						let request: Q | undefined;
+						try {
+							request = this._resolveRequest?.(message);
+						} catch (error) {
+							// A throwing resolve hook must fall back to the
+							// normal decode path (the documented contract:
+							// "semantics never diverge"), not drop the message.
+							logger.error(
+								"resolveRequest hook threw; falling back to decode: " +
+									(error instanceof Error ? error.message : String(error)),
+							);
+							request = undefined;
+						}
 						if (request === undefined) {
 							const maybeEncrypted = rpcMessage.request;
 							const decrypted = await maybeEncrypted.decrypt(
