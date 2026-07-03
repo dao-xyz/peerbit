@@ -193,7 +193,14 @@ impl<V> FifoCache<V> {
                 self.map.remove(&key);
                 let was_deleted = self.deleted.remove(&key);
                 if !was_deleted {
-                    self.current_size -= 1;
+                    // saturating: the TS cache lets `currentSize` drift below
+                    // the live-entry count when a lazily-deleted key is
+                    // re-added (add() un-deletes without restoring the count),
+                    // and can even go negative. usize cannot go negative, so
+                    // saturate at 0 — matching TS's benign `currentSize > max`
+                    // stays-false effect instead of wrapping to usize::MAX
+                    // (which would evict every entry forever).
+                    self.current_size = self.current_size.saturating_sub(1);
                 }
                 if let Some(sink) = sink.as_mut() {
                     sink.push(key);
@@ -233,7 +240,11 @@ impl<V> FifoCache<V> {
     fn del(&mut self, key: &str) {
         if self.map.contains_key(key) && !self.deleted.contains(key) {
             self.deleted.insert(key.to_string());
-            self.current_size -= 1;
+            // saturating: see the note in trim(). A del/add/del cycle on the
+            // same key (add un-deletes without restoring the count) would
+            // otherwise drive this usize below 0 and wrap to usize::MAX,
+            // permanently breaking the cache.
+            self.current_size = self.current_size.saturating_sub(1);
         }
     }
 
@@ -532,5 +543,31 @@ mod tests {
         assert!(!index.contains("a"));
         assert!(index.add("b", NOW).is_empty());
         assert!(index.add("c", NOW).is_empty());
+    }
+
+    #[test]
+    fn add_del_readd_del_does_not_break_the_cache() {
+        // Regression: two providers answer the same BlockRequest, so the same
+        // cid is consumed (del) after being re-added by the second response.
+        // add() un-deletes the key without restoring current_size, so a
+        // second del of a now-live entry used to drive the usize below zero
+        // and wrap to usize::MAX — after which every trim() evicted the whole
+        // cache forever. current_size must stay bounded and the cache must
+        // keep serving.
+        let mut index = EagerBlockIndex::new(1, 10_000);
+        assert!(index.add("c", NOW).is_empty());
+        index.del("c"); // consumed by a read (size -> 0)
+        index.add("c", NOW); // second (duplicate) response re-adds it
+        index.del("c"); // consumed again — this used to underflow-wrap
+        assert!(!index.contains("c"));
+
+        // The cache is still usable: a freshly added entry is served rather
+        // than being evicted instantly (the wrap symptom was current_size >
+        // max on every trim, wiping the cache on the next add).
+        assert!(
+            index.add("d", NOW).is_empty(),
+            "add must not trigger a mass eviction after the del/add/del cycle"
+        );
+        assert!(index.contains("d"), "freshly added entry must be served");
     }
 }
