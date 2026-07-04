@@ -3,7 +3,7 @@ name: Post Release Automation
 on:
   workflow_run:
     workflows:
-      - Run Release Please
+      - Release
     types:
       - completed
 
@@ -117,7 +117,7 @@ jobs:
 
             ---
 
-            _This PR was opened by the **Post Release Automation** workflow after [Run Release Please](${{ github.event.workflow_run.html_url }})._
+            _This PR was opened by the **Post Release Automation** workflow after [Release](${{ github.event.workflow_run.html_url }})._
           branch: chore/bootstrap-5-rollout-server-v${{ steps.server.outputs.version }}
           delete-branch: false
           add-paths: |
