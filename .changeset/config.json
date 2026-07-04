@@ -1,0 +1,27 @@
+{
+	"$schema": "https://unpkg.com/@changesets/config@3.1.4/schema.json",
+	"changelog": ["@changesets/changelog-github", { "repo": "dao-xyz/peerbit" }],
+	"commit": false,
+	"fixed": [],
+	"linked": [],
+	"access": "public",
+	"baseBranch": "master",
+	"updateInternalDependencies": "patch",
+	"ignore": [
+		"@peerbit/test-lib",
+		"@peerbit/any-store-canonical-e2e",
+		"@peerbit/document-canonical-e2e",
+		"@peerbit/document-react-canonical-e2e",
+		"@peerbit/document-react-party",
+		"@peerbit/document-react-party-shared",
+		"@peerbit/react-e2e-browser",
+		"@peerbit/shared-log-canonical-e2e",
+		"docs",
+		"document-react-party-app",
+		"frontend",
+		"peerbit-org",
+		"stream-browser-test",
+		"stream-browser-test-vite",
+		"vite-plugin-test"
+	]
+}
