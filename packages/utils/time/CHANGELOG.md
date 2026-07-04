@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.0.1](https://github.com/dao-xyz/peerbit/compare/time-v3.0.0...time-v3.0.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **pubsub:** log debounced subscribe errors instead of crashing the process ([580612a](https://github.com/dao-xyz/peerbit/commit/580612a3c69758434f50fa14f8d0608a555878bc))
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/time-v2.3.0...time-v3.0.0) (2026-03-04)
 
 

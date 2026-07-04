@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.1](https://github.com/dao-xyz/peerbit/compare/indexer-rust-v1.0.0...indexer-rust-v1.0.1) (2026-07-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/indexer-interface bumped to 3.0.5
+  * devDependencies
+    * @peerbit/indexer-tests bumped to 3.0.5
+
 ## 1.0.0 (2026-05-26)
 
 

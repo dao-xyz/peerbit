@@ -188,6 +188,32 @@
   * dependencies
     * @peerbit/stream bumped from 4.0.2 to 4.0.3
 
+## [5.2.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.11...pubsub-v5.2.12) (2026-07-04)
+
+
+### Bug Fixes
+
+* **pubsub:** answer first subscriber announce immediately, batch only the burst ([3c56f90](https://github.com/dao-xyz/peerbit/commit/3c56f90bf8e783d70fe13e649dcf4d7ac83fd408))
+* **pubsub:** answer first subscriber announce immediately, batch only the burst ([921e8ef](https://github.com/dao-xyz/peerbit/commit/921e8ef082f23753b330f347e887c4db30ca32ce))
+* **pubsub:** eliminate fanout route-resolution storm under group subscribe ([e7e07a8](https://github.com/dao-xyz/peerbit/commit/e7e07a8a57e9bd50404af2b0c909362521e4c7af))
+* **pubsub:** eliminate fanout route-resolution storm under group subscribe ([3bae731](https://github.com/dao-xyz/peerbit/commit/3bae73165db3000e900b75e8790827581dbe4fd5))
+* **pubsub:** fanout join efficiency and silent-loss gap detection ([20ce261](https://github.com/dao-xyz/peerbit/commit/20ce261ad9fa23beaf18edf31912670b94ca7db3))
+* **pubsub:** fanout join efficiency and silent-loss gap detection ([cea6c18](https://github.com/dao-xyz/peerbit/commit/cea6c1887d1876413d219fb5a122eeec38798834))
+* **pubsub:** log debounced subscribe errors instead of crashing the process ([580612a](https://github.com/dao-xyz/peerbit/commit/580612a3c69758434f50fa14f8d0608a555878bc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/pubsub-interface bumped to 5.1.5
+    * @peerbit/stream bumped to 5.0.18
+    * @peerbit/stream-interface bumped to 6.0.11
+    * @peerbit/time bumped to 3.0.1
+  * devDependencies
+    * @peerbit/libp2p-test-utils bumped to 3.0.6
+
 ## [5.2.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.10...pubsub-v5.2.11) (2026-05-26)
 
 

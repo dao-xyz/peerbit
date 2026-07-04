@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.35](https://github.com/dao-xyz/peerbit/compare/program-react-v0.4.34...program-react-v0.4.35) (2026-07-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @peerbit/crypto bumped to 3.1.2
+    * @peerbit/program bumped to 6.0.32
+
 ## [0.4.34](https://github.com/dao-xyz/peerbit/compare/program-react-v0.4.33...program-react-v0.4.34) (2026-05-28)
 
 

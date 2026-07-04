@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.0.1](https://github.com/dao-xyz/peerbit/compare/cache-v3.0.0...cache-v3.0.1) (2026-07-04)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * devDependencies
+    * @peerbit/time bumped to 3.0.1
+
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/cache-v2.2.0...cache-v3.0.0) (2026-03-04)
 
 
