@@ -1,0 +1,90 @@
+# peerbit_transport — the NATIVE rust-libp2p node transport for Peerbit.
+#
+# This crate owns the rust-libp2p connection layer (sockets / noise / yamux /
+# identify / circuit-relay-v2 client) and mounts the frozen /peerbit/* protocol
+# multicodecs. It is DELIBERATELY NOT a wasm crate: `crate-type = ["rlib"]`
+# only, no `cdylib`, and its `package.json` build never invokes wasm-pack. That
+# is what keeps the heavy libp2p 0.56 dependency tree OUT of the wasm pipeline
+# and out of every default CI partition (see the package README + ci.yml).
+#
+# There is no root Cargo workspace in this repo (each rust crate is standalone),
+# so `cargo` run against a sibling crate never compiles this one — peerbit_wire's
+# builds never see the libp2p tree. This crate is compiled in exactly one CI
+# place: the `test_native` job's opt-in cargo step.
+[package]
+name = "peerbit_transport"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Native rust-libp2p node transport for the Peerbit fleet (connection layer + identity bridge + /peerbit/* protocol mounting over the frozen peerbit_wire codec)"
+
+[lib]
+crate-type = ["rlib"]
+
+# Standalone interop test-runner / sidecar entrypoint (the live rust-dials-js
+# harness). Kept as a bin so the CI interop step can `cargo run --bin`.
+[[bin]]
+name = "interop_dial_js"
+path = "src/bin/interop_dial_js.rs"
+
+[dependencies]
+# REUSE the frozen wire codec + JsValue-free DirectStream cores from the
+# already-merged @peerbit/network-rust crate as a path dependency — the exact
+# pattern packages/utils/native-backbone uses. peerbit_wire is `rlib`-typed and
+# its `wire` / `direct_stream::{lanes,routes,seen_cache,decisions}` modules are
+# JsValue-free, so this native crate calls decode_frame / encode_frame /
+# decode_and_verify_frames / LaneScheduler DIRECTLY. Byte-parity with the js
+# fleet is inherited by construction — the codec is NOT re-implemented here.
+peerbit_wire = { path = "../network-rust" }
+
+# rust-libp2p 0.56.0 — the exact feature set the feasibility spike proved live
+# against js-libp2p 3.3.4. Mirrors the Peerbit NODE transport stack:
+#   node = webSockets + circuitRelayTransport(client) + tcp,
+#   muxer = yamux (only), encrypter = noise (only), identify, ed25519 identity.
+# `dns` is MANDATORY alongside `websocket` in 0.56.0 (the SwarmBuilder
+# `with_websocket` phase references a DNS-wrapped TCP + `WebsocketErrorInner::Dns`
+# that are `#[cfg(feature = "dns")]`-gated; building `websocket` without `dns`
+# fails to compile — E0599 no variant `Dns`). Peerbit's /ws listen addr makes
+# websocket mandatory, hence dns is mandatory. (Spike Cargo.toml:32-37.)
+libp2p = { version = "0.56.0", features = [
+    "tokio",
+    "tcp",
+    "websocket",
+    "dns",
+    "noise",
+    "yamux",
+    "identify",
+    "relay",
+    "macros",
+    "ed25519",
+] }
+
+# libp2p-stream 0.4.0-alpha is the DirectStream binding point
+# (Control::open_stream / accept, one per /peerbit/* multicodec). It is STILL
+# ALPHA (API-churn risk flagged in FEASIBILITY.md open-Q3); the budgeted
+# fallback is a hand-rolled NetworkBehaviour over the same three multicodecs.
+libp2p-stream = "0.4.0-alpha"
+
+futures = "0.3"
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "time",
+    "io-util",
+    "sync",
+    "net",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unsigned-varint = "0.8"
+anyhow = "1"
+
+# Ed25519 signing + SHA-256 for the interop harness's signed DataMessage. Same
+# crates + versions peerbit_wire uses, so the produced signatures are exactly
+# what its verifier (and the js/libsodium verifier) accept — no scheme drift.
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["fast"] }
+sha2 = "0.10.8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
