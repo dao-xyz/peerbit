@@ -89,9 +89,15 @@ jobs:
         with:
           version: pnpm run version-packages
           # Build, publish every unpublished version (from-package), then create
-          # the pkg@version git tags and push them. `changeset tag` reads the
-          # current package.json versions and creates one tag per package.
-          publish: pnpm run build && pnpm run release && pnpm exec changeset tag && git push --follow-tags
+          # the pkg@version git tags and push them.
+          #
+          # This MUST be a single `pnpm run <script>`. changesets/action runs the
+          # publish command WITHOUT a shell, so an inline `a && b && c` chain here
+          # is passed as literal arguments to the first command — only the build
+          # runs, the actual publish + tagging are silently skipped, and the step
+          # still exits 0. Keeping the chain inside the release:publish npm script
+          # makes pnpm run it in a shell (exactly like version-packages above).
+          publish: pnpm run release:publish
           commit: "chore: version packages"
           title: "chore: version packages"
           createGithubReleases: false
