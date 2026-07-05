@@ -833,6 +833,8 @@ export type FanoutTreeChannelMetrics = {
 	routeProxyQueries: number;
 	routeProxyTimeouts: number;
 	routeProxyFanout: number;
+	routeProxyCoalesced: number;
+	routeProxyRejected: number;
 };
 
 export interface FanoutTreeEvents extends StreamEvents {
@@ -854,6 +856,10 @@ export interface FanoutTreeEvents extends StreamEvents {
 const CONTROL_PRIORITY = 10;
 const DATA_PRIORITY = 1;
 const ROUTE_PROXY_TIMEOUT_MS = 10_000;
+// Backstop bounds for the route-proxy machinery under query storms (#983):
+// each pending entry retains a live timer closure and a Set of child hashes.
+const ROUTE_PROXY_MAX_PENDING = 2_048;
+const ROUTE_PROXY_MAX_WAITERS = 512;
 const ROUTE_CACHE_MAX_ENTRIES_HARD_CAP = 100_000;
 const PEER_HINT_MAX_ENTRIES_HARD_CAP = 100_000;
 // Best-effort address cache for join candidates learned via trackers/redirects.
@@ -1164,6 +1170,17 @@ type ChannelState = {
 			downstreamReqId: number;
 			timer: ReturnType<typeof setTimeout>;
 			expectedReplies: Set<string>;
+			targetHash: string;
+			direction: "up" | "down";
+			/**
+			 * Additional requesters coalesced onto this in-flight search; all are
+			 * answered from its single result. Without this, S concurrent lookups
+			 * for the same cold target each launch an independent subtree flood.
+			 */
+			waiters?: Array<
+				| { requester: string; downstreamReqId: number }
+				| { localResolve: (route?: string[]) => void }
+			>;
 			/**
 			 * Optional local completion callback (used when the root resolves a route token
 			 * for itself by fanning out queries to children).
@@ -1171,6 +1188,8 @@ type ChannelState = {
 			localResolve?: (route?: string[]) => void;
 		}
 	>;
+	/** `${direction}:${targetHash}` -> in-flight proxyReqId, for coalescing. */
+	routeProxyByTarget: Map<string, number>;
 
 	bootstrapOverride?: Multiaddr[];
 	bootstrapDialTimeoutMs: number;
@@ -1310,6 +1329,8 @@ const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
 	routeProxyQueries: 0,
 	routeProxyTimeouts: 0,
 	routeProxyFanout: 0,
+	routeProxyCoalesced: 0,
+	routeProxyRejected: 0,
 });
 
 const isDataId = (id: Uint8Array) =>
@@ -2328,6 +2349,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			pendingRouteQuery: new Map(),
 			pendingUnicastAck: new Map(),
 			pendingRouteProxy: new Map(),
+			routeProxyByTarget: new Map(),
 			bootstrapOverride: undefined,
 			bootstrapDialTimeoutMs: 10_000,
 			bootstrapMaxPeers: 0,
@@ -2539,10 +2561,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		ch.parentProbeRejectBackoffMsByHash.clear();
 		ch.pendingRouteQuery.clear();
 		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel detached"));
-		for (const pending of ch.pendingRouteProxy.values()) {
-			clearTimeout(pending.timer);
-		}
-		ch.pendingRouteProxy.clear();
+		this.clearRouteProxies(ch);
 	}
 
 	private onPeerDisconnectedFromUnderlay(peerHash: string) {
@@ -2632,10 +2651,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 		ch.pendingRouteQuery.clear();
 		this.abortPendingUnicastAcks(ch, new AbortError("fanout channel closed"));
-		for (const pending of ch.pendingRouteProxy.values()) {
-			clearTimeout(pending.timer);
-		}
-		ch.pendingRouteProxy.clear();
+		this.clearRouteProxies(ch);
 
 		ch.parent = undefined;
 		ch.children.clear();
@@ -2833,7 +2849,9 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			};
 		}
 
-		const route = this.getCachedRoute(ch, targetHash);
+		// Speculative probe: a miss here says nothing about cache quality (the
+		// caller falls through to resolveRouteToken, which counts its own miss).
+		const route = this.getCachedRoute(ch, targetHash, { recordMiss: false });
 		if (!route) return undefined;
 		const entry = ch.routeByPeer.get(targetHash);
 		const updatedAt = entry?.updatedAt ?? Date.now();
@@ -2961,23 +2979,25 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	private getCachedRoute(
 		ch: ChannelState,
 		targetHash: string,
+		opts?: { recordMiss?: boolean },
 	): string[] | undefined {
+		const recordMiss = opts?.recordMiss !== false;
 		this.pruneRouteCache(ch);
 		const entry = ch.routeByPeer.get(targetHash);
 		if (!entry) {
-			ch.metrics.routeCacheMisses += 1;
+			if (recordMiss) ch.metrics.routeCacheMisses += 1;
 			return undefined;
 		}
 		const now = Date.now();
 		if (ch.routeCacheTtlMs > 0 && now - entry.updatedAt > ch.routeCacheTtlMs) {
 			ch.routeByPeer.delete(targetHash);
-			ch.metrics.routeCacheMisses += 1;
+			if (recordMiss) ch.metrics.routeCacheMisses += 1;
 			ch.metrics.routeCacheExpirations += 1;
 			return undefined;
 		}
 		if (!this.isRouteValidForChannel(ch, entry.route)) {
 			ch.routeByPeer.delete(targetHash);
-			ch.metrics.routeCacheMisses += 1;
+			if (recordMiss) ch.metrics.routeCacheMisses += 1;
 			return undefined;
 		}
 		// LRU touch
@@ -3017,15 +3037,89 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const proxy = ch.pendingRouteProxy.get(proxyReqId);
 		if (!proxy) return;
 		ch.pendingRouteProxy.delete(proxyReqId);
+		const targetKey = `${proxy.direction}:${proxy.targetHash}`;
+		if (ch.routeProxyByTarget.get(targetKey) === proxyReqId) {
+			ch.routeProxyByTarget.delete(targetKey);
+		}
 		clearTimeout(proxy.timer);
+		const reply = (requester: string, downstreamReqId: number): void => {
+			void this._sendControl(
+				requester,
+				encodeRouteReply(ch.id.key, downstreamReqId, route),
+			).catch(() => {});
+		};
 		if (proxy.localResolve) {
 			proxy.localResolve(route);
-			return;
+		} else {
+			reply(proxy.requester, proxy.downstreamReqId);
 		}
-		void this._sendControl(
-			proxy.requester,
-			encodeRouteReply(ch.id.key, proxy.downstreamReqId, route),
-		).catch(() => {});
+		if (proxy.waiters) {
+			for (const w of proxy.waiters) {
+				if ("localResolve" in w) {
+					w.localResolve(route);
+				} else {
+					reply(w.requester, w.downstreamReqId);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Coalesce onto an in-flight same-target/same-direction proxy search, if one
+	 * exists. Returns true when the requester was attached as a waiter (or
+	 * answered empty on waiter overflow) and no new search should start.
+	 */
+	private coalesceRouteProxy(
+		ch: ChannelState,
+		targetHash: string,
+		direction: "up" | "down",
+		waiter:
+			| { requester: string; downstreamReqId: number }
+			| { localResolve: (route?: string[]) => void },
+	): boolean {
+		const targetKey = `${direction}:${targetHash}`;
+		const existingId = ch.routeProxyByTarget.get(targetKey);
+		if (existingId == null) return false;
+		const existing = ch.pendingRouteProxy.get(existingId);
+		if (!existing) {
+			ch.routeProxyByTarget.delete(targetKey);
+			return false;
+		}
+		if ((existing.waiters?.length ?? 0) >= ROUTE_PROXY_MAX_WAITERS) {
+			ch.metrics.routeProxyRejected += 1;
+			if ("localResolve" in waiter) {
+				waiter.localResolve(undefined);
+			} else {
+				void this._sendControl(
+					waiter.requester,
+					encodeRouteReply(ch.id.key, waiter.downstreamReqId),
+				).catch(() => {});
+			}
+			return true;
+		}
+		(existing.waiters ??= []).push(waiter);
+		ch.metrics.routeProxyCoalesced += 1;
+		return true;
+	}
+
+	/**
+	 * Drop all in-flight route-proxy state for a channel (detach/kick/close).
+	 * Local resolvers are settled with `undefined` so root-origin
+	 * `resolveRouteToken()` callers never hang; remote requesters time out on
+	 * their own deadlines, as before.
+	 */
+	private clearRouteProxies(ch: ChannelState) {
+		for (const pending of ch.pendingRouteProxy.values()) {
+			clearTimeout(pending.timer);
+			pending.localResolve?.(undefined);
+			if (pending.waiters) {
+				for (const w of pending.waiters) {
+					if ("localResolve" in w) w.localResolve(undefined);
+				}
+			}
+		}
+		ch.pendingRouteProxy.clear();
+		ch.routeProxyByTarget.clear();
 	}
 
 	private proxyRouteQuery(
@@ -3036,6 +3130,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		candidates: string[],
 		timeoutMs = ROUTE_PROXY_TIMEOUT_MS,
 	) {
+		// Direction matters for coalescing correctness: an upstream lookup and the
+		// root's downstream flood for the same target may legitimately transit the
+		// same node concurrently (e.g. the target lives in the requester's own
+		// branch), and merging them would make them wait on each other.
+		const direction: "up" | "down" =
+			candidates.length === 1 && candidates[0] === ch.parent ? "up" : "down";
+		if (
+			this.coalesceRouteProxy(ch, targetHash, direction, {
+				requester,
+				downstreamReqId,
+			})
+		) {
+			return;
+		}
+
 		const unique: string[] = [];
 		const seen = new Set<string>();
 		for (const candidate of candidates) {
@@ -3047,6 +3156,15 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		}
 
 		if (unique.length === 0) {
+			void this._sendControl(
+				requester,
+				encodeRouteReply(ch.id.key, downstreamReqId),
+			).catch(() => {});
+			return;
+		}
+
+		if (ch.pendingRouteProxy.size >= ROUTE_PROXY_MAX_PENDING) {
+			ch.metrics.routeProxyRejected += 1;
 			void this._sendControl(
 				requester,
 				encodeRouteReply(ch.id.key, downstreamReqId),
@@ -3069,7 +3187,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			downstreamReqId,
 			timer,
 			expectedReplies: new Set(unique),
+			targetHash,
+			direction,
 		});
+		ch.routeProxyByTarget.set(`${direction}:${targetHash}`, proxyReqId);
 
 		void this._sendControlMany(
 			unique,
@@ -3111,13 +3232,46 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			const timeoutMs = Math.max(1, Math.floor(options?.timeoutMs ?? 3_000));
 			return await new Promise<string[] | undefined>((resolve, reject) => {
 				let settled = false;
+				let proxyReqId: number | undefined;
 				const onAbort = () => {
 					if (settled) return;
 					settled = true;
-					ch.pendingRouteProxy.delete(proxyReqId);
-					clearTimeout(timer);
+					clearTimeout(backstop);
+					if (proxyReqId != null) {
+						// Tear the search down only if nobody else coalesced onto it;
+						// otherwise let it finish for the waiters (our localResolve
+						// is a no-op once settled).
+						const entry = ch.pendingRouteProxy.get(proxyReqId);
+						if (entry && (!entry.waiters || entry.waiters.length === 0)) {
+							this.completeRouteProxy(ch, proxyReqId);
+						}
+					}
 					reject(new AbortError());
 				};
+				const localResolve = (route?: string[]) => {
+					if (settled) return;
+					settled = true;
+					clearTimeout(backstop);
+					if (options?.signal) {
+						options.signal.removeEventListener("abort", onAbort);
+					}
+					if (this.isRouteValidForChannel(ch, route)) {
+						this.cacheRoute(ch, route!);
+						resolve([...route!]);
+						return;
+					}
+					resolve(undefined);
+				};
+				// Per-caller timeout: when coalesced, the shared in-flight search
+				// may outlive this caller's own deadline.
+				const backstop = setTimeout(() => localResolve(undefined), timeoutMs);
+				if (options?.signal) {
+					options.signal.addEventListener("abort", onAbort, { once: true });
+				}
+
+				if (this.coalesceRouteProxy(ch, targetHash, "down", { localResolve })) {
+					return;
+				}
 
 				const unique: string[] = [];
 				const seen = new Set<string>();
@@ -3130,49 +3284,41 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 				}
 
 				if (unique.length === 0) {
-					resolve(undefined);
+					localResolve(undefined);
+					return;
+				}
+
+				if (ch.pendingRouteProxy.size >= ROUTE_PROXY_MAX_PENDING) {
+					ch.metrics.routeProxyRejected += 1;
+					localResolve(undefined);
 					return;
 				}
 
 				ch.metrics.routeProxyQueries += 1;
 				ch.metrics.routeProxyFanout += unique.length;
 
-				const proxyReqId = this.nextReqId(ch);
+				proxyReqId = this.nextReqId(ch);
 				const timer = setTimeout(() => {
 					ch.metrics.routeProxyTimeouts += 1;
-					this.completeRouteProxy(ch, proxyReqId);
+					this.completeRouteProxy(ch, proxyReqId!);
 				}, timeoutMs);
-
-				if (options?.signal) {
-					options.signal.addEventListener("abort", onAbort, { once: true });
-				}
 
 				ch.pendingRouteProxy.set(proxyReqId, {
 					requester: this.publicKeyHash,
 					downstreamReqId: 0,
 					timer,
 					expectedReplies: new Set(unique),
-					localResolve: (route?: string[]) => {
-						if (settled) return;
-						settled = true;
-						clearTimeout(timer);
-						if (options?.signal) {
-							options.signal.removeEventListener("abort", onAbort);
-						}
-						if (this.isRouteValidForChannel(ch, route)) {
-							this.cacheRoute(ch, route!);
-							resolve([...route!]);
-							return;
-						}
-						resolve(undefined);
-					},
+					targetHash,
+					direction: "down",
+					localResolve,
 				});
+				ch.routeProxyByTarget.set(`down:${targetHash}`, proxyReqId);
 
 				void this._sendControlMany(
 					unique,
 					encodeRouteQuery(ch.id.key, proxyReqId, targetHash),
 				).catch(() => {
-					this.completeRouteProxy(ch, proxyReqId);
+					this.completeRouteProxy(ch, proxyReqId!);
 				});
 			});
 		}
@@ -5662,10 +5808,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 						nextParentUpgradeCheckAt = 0;
 						resetParentUpgradeActiveGuardBackoff();
 						ch.pendingRouteQuery.clear();
-						for (const pending of ch.pendingRouteProxy.values()) {
-							clearTimeout(pending.timer);
-						}
-						ch.pendingRouteProxy.clear();
+						this.clearRouteProxies(ch);
 						void this.kickChildren(ch).catch(() => {});
 						await delay(retryMs, { signal });
 						continue;
@@ -8694,6 +8837,10 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (!nextHop || !ch.children.has(nextHop)) return true;
 					const stream = this.peers.get(nextHop);
 					if (!stream) return true;
+					// A validated source route is passing through: learn it (and the
+					// reply route) so subsequent unicasts skip route discovery.
+					this.cacheRoute(ch, route);
+					if (replyRoute) this.cacheRoute(ch, replyRoute);
 					void stream
 						.waitForWrite(
 							message.bytes(),
@@ -8744,6 +8891,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					if (!nextHop || !ch.children.has(nextHop)) return true;
 					const stream = this.peers.get(nextHop);
 					if (!stream) return true;
+					this.cacheRoute(ch, route);
+					if (replyRoute) this.cacheRoute(ch, replyRoute);
 					void stream
 						.waitForWrite(
 							message.bytes(),
@@ -8791,10 +8940,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					ch,
 					new AbortError("fanout channel kicked"),
 				);
-				for (const pending of ch.pendingRouteProxy.values()) {
-					clearTimeout(pending.timer);
-				}
-				ch.pendingRouteProxy.clear();
+				this.clearRouteProxies(ch);
 				void this.kickChildren(ch).catch(() => {});
 				this.dispatchEvent(
 					new CustomEvent("fanout:kicked", {

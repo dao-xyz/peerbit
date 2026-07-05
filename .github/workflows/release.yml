@@ -6,7 +6,7 @@ on:
           - packages/**
           - package.json
           - scripts/**
-          - .release-please.json
+          - .changeset/**
           - .github/workflows/release.yml
     workflow_dispatch:
       inputs:
@@ -23,9 +23,16 @@ permissions:
   issues: write
   pull-requests: write
 
-name: Run Release Please
+name: Release
 jobs:
-  release-please:
+  # Stable release flow. On push to master, changesets/action opens/updates a
+  # "Version Packages" PR that accumulates the pending .changeset/*.md files.
+  # Merging that PR consumes the changesets, bumps versions + CHANGELOGs, and
+  # this same job then builds, publishes the unpublished versions to npm, and
+  # creates the git tags. A manual workflow_dispatch with publish_mode=stable
+  # re-runs the build + from-package publish as an escape hatch.
+  release:
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable') }}
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -35,51 +42,109 @@ jobs:
       id-token: write
       pull-requests: write
     steps:
-      - uses: googleapis/release-please-action@v4
-        id: release
-        if: ${{ github.event_name == 'push' }}
-        with:
-          token: ${{secrets.GITHUB_TOKEN}}
-          manifest-file: .release-please-manifest.json
-          config-file: .release-please.json
-
-    # The logic below handles the npm publication:
       - name: Checkout Repository
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Setup Node
         uses: actions/setup-node@v4
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         with:
           node-version: lts/*
           registry-url: 'https://registry.npmjs.org'
       - uses: pnpm/action-setup@v4
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
+        with:
+          run_install: false
+
+    # The publish command builds, so the wasm toolchain must be installed before
+    # the changesets action runs (several packages ship wasm-pack artifacts).
+      - name: Install deps
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          rustup target add wasm32-unknown-unknown
+          pnpm install --frozen-lockfile=false
+
+    # changesets/action opens the Version Packages PR (when changesets are
+    # pending) and, once that PR is merged, runs the publish command below.
+    #
+    # NOTE: secrets.GITHUB_TOKEN cannot trigger downstream workflows (CI) on the
+    # Version Packages PR it opens. If you want CI to run on that PR, create a
+    # bot Personal Access Token secret (e.g. RELEASE_PR_TOKEN with repo +
+    # workflow scopes) and pass it as `token:` below instead of GITHUB_TOKEN.
+    #
+    # createGithubReleases is disabled deliberately. changesets tags packages as
+    # `<name>@<version>` (e.g. peerbit@5.2.21, @peerbit/crypto@3.2.0), whereas
+    # release-please used `<component>-v<version>` (peerbit-v5.2.20). The new
+    # namespace does not overlap the legacy one, so the first release run sees
+    # every current package as "untagged" and establishes a fresh `@`-format tag
+    # baseline. If GitHub Releases were left on, the action would parse those
+    # baseline `New tag:` lines and create a GitHub Release per package built
+    # from its release-please-formatted CHANGELOG (which has no `## <version>`
+    # heading changesets can locate), producing release bodies that are the whole
+    # changelog. Publishing correctness (npm from-package + git tags) is
+    # unaffected; only the redundant GitHub Release objects are dropped. Re-enable
+    # once the CHANGELOGs are migrated to the changesets `## <version>` format.
+      - name: Create Release PR or Publish
+        if: ${{ github.event_name == 'push' }}
+        uses: changesets/action@v1
+        with:
+          version: pnpm run version-packages
+          # Build, publish every unpublished version (from-package), then create
+          # the pkg@version git tags and push them. `changeset tag` reads the
+          # current package.json versions and creates one tag per package.
+          publish: pnpm run build && pnpm run release && pnpm exec changeset tag && git push --follow-tags
+          commit: "chore: version packages"
+          title: "chore: version packages"
+          createGithubReleases: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    # Manual stable escape hatch: build and publish anything whose package.json
+    # version is not yet on npm, without going through the Version Packages PR.
+      - name: Build Packages
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable' }}
+        run: pnpm run build
+      - name: Publish to NPM
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm run --if-present release
+
+  # Release candidate flow, unchanged in behavior: manual dispatch only, builds
+  # and runs `aegir release-rc` to publish prerelease versions to npm.
+  release-rc:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'rc' }}
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: 'https://registry.npmjs.org'
+      - uses: pnpm/action-setup@v4
         with:
           run_install: false
 
       - name: Install deps
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
       - name: Build Packages
-        if: ${{ github.event_name == 'workflow_dispatch' || steps.release.outputs.releases_created == 'true' }}
         run: pnpm run build
 
-    # Release Please has already incremented versions and published tags, so we just
-    # need to publish all unpublished versions to NPM here
-    # See: https://github.com/lerna/lerna/tree/main/commands/publish#bump-from-package
-      - name: Publish to NPM
-        if: ${{ (github.event_name == 'push' && steps.release.outputs.releases_created == 'true') || (github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable') }}
-        env:
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-        run: pnpm run --if-present release
       - name: Publish RC to NPM
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'rc' }}
         env:
           NPM_CONFIG_GIT_CHECKS: "false"
-          NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm run --if-present release:rc

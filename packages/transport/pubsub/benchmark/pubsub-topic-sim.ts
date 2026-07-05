@@ -42,6 +42,10 @@ const parseArgs = (argv: string[]) => {
 				"  --topic NAME                  topic name (default: concert)",
 				"  --subscribeModel real|preseed (default: preseed)",
 				"  --subscriptionDebounceDelayMs MS (default: 0)",
+				"  --relayFraction F             fraction of non-router nodes promoted to relays (default: 0.25)",
+				"  --relayMaxChildren N          maxChildren for promoted relays (default: 32)",
+				"  --joinTimeoutMs MS            fanout join timeout override (default: 0 = library default)",
+				"  --minDeliveredPct P           fail (exit 2) if deliveredPct < P (default: 0 = no assert)",
 				"  --warmupMs MS                 warmup delay before measuring (default: 0)",
 				"  --warmupMessages N            warmup messages before measuring (default: 0)",
 				"  --settleMs MS                 time to wait for delivery after publish (default: 200)",
@@ -90,6 +94,10 @@ const parseArgs = (argv: string[]) => {
 		topic: String(get("--topic") ?? "concert"),
 		subscribeModel: (String(get("--subscribeModel") ?? "preseed") as any) ?? "preseed",
 		subscriptionDebounceDelayMs: Number(get("--subscriptionDebounceDelayMs") ?? 0),
+		relayFraction: Number(get("--relayFraction") ?? 0.25),
+		relayMaxChildren: Number(get("--relayMaxChildren") ?? 32),
+		joinTimeoutMs: Number(get("--joinTimeoutMs") ?? 0),
+		minDeliveredPct: Number(get("--minDeliveredPct") ?? 0),
 		warmupMs: Number(get("--warmupMs") ?? 0),
 		warmupMessages: Number(get("--warmupMessages") ?? 0),
 		settleMs: Number(get("--settleMs") ?? 200),
@@ -116,7 +124,22 @@ const main = async () => {
 	const params = parseArgs(process.argv.slice(2));
 	const result = await runPubsubTopicSim(params);
 	console.log(formatPubsubTopicSimResult(result));
+	if (
+		params.minDeliveredPct > 0 &&
+		result.deliveredPct < params.minDeliveredPct
+	) {
+		console.error(
+			`ASSERT FAILED: deliveredPct ${result.deliveredPct.toFixed(2)} < ${params.minDeliveredPct}`,
+		);
+		process.exit(2);
+	}
 };
+
+// Backstop: report stray rejections with context instead of Node's bare crash.
+process.on("unhandledRejection", (reason: any) => {
+	console.error(`UNHANDLED REJECTION: ${reason?.message ?? reason}`);
+	process.exit(1);
+});
 
 try {
 	await main();
