@@ -3082,13 +3082,30 @@ const isNotFoundError = (error: unknown): boolean => {
 	return maybeError?.code === "ENOENT" || maybeError?.name === "NotFoundError";
 };
 
+// Non-literal specifiers keep browser bundlers (esbuild statically resolves
+// literal dynamic imports and hard-fails on node builtins) from following
+// these node-only imports; they are only reached on node runtimes.
 let nodeFsModule: Promise<NativeBackboneNodeFs> | undefined;
-const importNodeFs = (): Promise<NativeBackboneNodeFs> =>
-	(nodeFsModule ??= import("node:fs/promises"));
+const importNodeFs = (): Promise<NativeBackboneNodeFs> => {
+	if (!nodeFsModule) {
+		const fsPromises = "node:fs/promises";
+		nodeFsModule = import(
+			/* @vite-ignore */ fsPromises
+		) as Promise<NativeBackboneNodeFs>;
+	}
+	return nodeFsModule;
+};
 
 let nodePathJoin: Promise<(...parts: string[]) => string> | undefined;
-const importNodePathJoin = (): Promise<(...parts: string[]) => string> =>
-	(nodePathJoin ??= import("node:path").then((mod) => mod.join));
+const importNodePathJoin = (): Promise<(...parts: string[]) => string> => {
+	if (!nodePathJoin) {
+		const pathModule = "node:path";
+		nodePathJoin = (
+			import(/* @vite-ignore */ pathModule) as Promise<typeof import("path")>
+		).then((mod) => mod.join);
+	}
+	return nodePathJoin;
+};
 
 const validateCoordinatePersistenceName = (name: string): string => {
 	if (
