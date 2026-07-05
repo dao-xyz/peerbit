@@ -1,3 +1,8 @@
+mod error;
+mod time;
+
+pub use error::LogError;
+
 use ed25519_dalek::{verify_batch, Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use indexmap::{IndexMap, IndexSet};
 use js_sys::{Array, BigUint64Array, Uint32Array, Uint8Array};
