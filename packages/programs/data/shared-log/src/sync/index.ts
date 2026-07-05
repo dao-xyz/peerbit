@@ -15,6 +15,11 @@ export type SyncPriorityFn<R extends "u32" | "u64"> = (
 	entry: EntryReplicated<R>,
 ) => number;
 
+export type SyncEntryCoordinates<R extends "u32" | "u64"> = Pick<
+	EntryReplicated<R>,
+	"assignedToRangeBoundary" | "hash" | "hashNumber"
+>;
+
 export type SyncOptions<R extends "u32" | "u64"> = {
 	/**
 	 * Orders entries inside a sync batch; higher numbers are selected first.
@@ -40,6 +45,22 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	maxSimpleCoordinatesPerMessage?: number;
 
 	/**
+	 * Experimental sync path for peers known to support raw exchange-head
+	 * responses. When enabled, simple sync requests advertise raw-head support
+	 * and capable responders can avoid full Entry materialization before sending.
+	 */
+	rawExchangeHeads?: boolean;
+
+	/**
+	 * Experimental receive-side raw-head parsing mode for native backbone. When
+	 * enabled, signature verification happens while raw entries are decoded
+	 * instead of during the later native commit step. When unset, shared-log may
+	 * enable this automatically for retained native receive paths where planning
+	 * already indicates that the local peer is replicating.
+	 */
+	rawExchangeHeadsVerifySignaturesDuringPrepare?: boolean;
+
+	/**
 	 * Maximum number of hashes tracked per convergent repair session target.
 	 * Large sessions still dispatch all entries, but only this many are tracked
 	 * for deterministic completion metadata.
@@ -60,6 +81,32 @@ export type SyncOptions<R extends "u32" | "u64"> = {
 	profile?: SyncProfileFn;
 };
 
+export type HashSymbolInput = readonly bigint[] | BigUint64Array;
+
+export type HashSymbolResolver = (
+	symbols: HashSymbolInput,
+) =>
+	| ReadonlyMap<bigint, Iterable<string>>
+	| undefined
+	| Promise<ReadonlyMap<bigint, Iterable<string>> | undefined>;
+
+export type HashSymbolHashListResolver = (
+	symbols: HashSymbolInput,
+) =>
+	| Iterable<string>
+	| undefined
+	| Promise<Iterable<string> | undefined>;
+
+export type HashSymbolRangeResolver = (range: {
+	start1: bigint | number;
+	end1: bigint | number;
+	start2: bigint | number;
+	end2: bigint | number;
+}) =>
+	| Iterable<bigint | number>
+	| undefined
+	| Promise<Iterable<bigint | number> | undefined>;
+
 export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	rpc: RPC<TransportMessage, TransportMessage>;
 	rangeIndex: Index<ReplicationRangeIndexable<R>, any>;
@@ -67,6 +114,9 @@ export type SynchronizerComponents<R extends "u32" | "u64"> = {
 	log: Log<any>;
 	coordinateToHash: Cache<string>;
 	numbers: Numbers<R>;
+	resolveHashesForSymbols?: HashSymbolResolver;
+	resolveHashListForSymbols?: HashSymbolHashListResolver;
+	resolveHashNumbersInRange?: HashSymbolRangeResolver;
 	sync?: SyncOptions<R>;
 	isEntryRecentlyKnownByPeer?: (
 		hash: string,
@@ -102,7 +152,7 @@ export type RepairSession = {
 
 export interface Syncronizer<R extends "u32" | "u64"> {
 	startRepairSession(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 		mode?: RepairSessionMode;
 		timeoutMs?: number;
@@ -110,7 +160,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 	}): RepairSession;
 
 	onMaybeMissingEntries(properties: {
-		entries: Map<string, EntryReplicated<R>>;
+		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
 	}): Promise<void> | void;
 
@@ -124,7 +174,15 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 		from: PublicSignKey;
 	}): Promise<void> | void;
 
+	onReceivedEntryHashes?(properties: {
+		hashes: string[];
+		from: PublicSignKey;
+	}): Promise<void> | void;
+
+	onEntryAddedHashes?(hashes: string[]): void;
+	onEntryAddedHash?(hash: string): void;
 	onEntryAdded(entry: Entry<any>): void;
+	onEntryRemovedHashes?(hashes: string[]): void;
 	onEntryRemoved(hash: string): void;
 	onPeerDisconnected(key: PublicSignKey | string): void;
 

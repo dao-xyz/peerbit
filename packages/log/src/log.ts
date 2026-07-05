@@ -6,6 +6,7 @@ import {
 	cidifyString,
 } from "@peerbit/blocks-interface";
 import {
+	Ed25519Keypair,
 	type Identity,
 	SignatureWithKey,
 	X25519Keypair,
@@ -26,21 +27,206 @@ import {
 	EntryIndex,
 	type MaybeResolveOptions,
 	type NativeLogGraph,
+	type PreparedAppendIndexFacts,
 	type ResultsIterator,
 	type ReturnTypeFromResolveOptions,
 } from "./entry-index.js";
-import { ShallowEntry } from "./entry-shallow.js";
+import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
 import { type EncryptionTemplateMaybeEncrypted, EntryV0 } from "./entry-v0.js";
 import { type EntryWithRefs } from "./entry-with-refs.js";
-import { type CanAppend, Entry, type ShallowOrFullEntry } from "./entry.js";
+import {
+	type CanAppend,
+	Entry,
+	type PreparedAppendChain,
+	type PreparedAppendCommitOnlyChain,
+	type PreparedAppendFacts,
+	type PreparedEntryBlock,
+	type PreparedNativeLogEntry,
+	type ShallowOrFullEntry,
+} from "./entry.js";
 import { findUniques } from "./find-uniques.js";
+import { logger as baseLogger } from "./logger.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
 import type { Payload } from "./payload.js";
+import { canUseOptionalNativeModuleImports } from "./runtime.js";
 import { Trim, type TrimOptions } from "./trim.js";
 
 const { LastWriteWins } = Sorting;
+const warn = baseLogger.newScope("warn");
+
+type BlocksWithPutMany = Blocks & {
+	putMany?: (blocks: PreparedEntryBlock[]) => Promise<string[]> | string[];
+	rmMany?: (cids: string[]) => Promise<number | void> | number | void;
+};
+
+type BlocksWithPutKnownMany = Blocks & {
+	putKnownMany: (
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	) => Promise<string[]> | string[];
+};
+
+type BlocksWithPutKnownManyColumns = Blocks & {
+	putKnownManyColumns: (
+		cids: string[],
+		bytes: Uint8Array[],
+	) => Promise<string[]> | string[];
+};
+
+type BlocksWithPutKnown = Blocks & {
+	putKnown: (cid: string, bytes: Uint8Array) => Promise<string> | string;
+};
+
+const hasPutMany = (storage: Blocks): storage is BlocksWithPutMany =>
+	typeof (storage as BlocksWithPutMany).putMany === "function";
+
+const hasPutKnown = (storage: Blocks): storage is BlocksWithPutKnown =>
+	typeof (storage as BlocksWithPutKnown).putKnown === "function";
+
+const hasPutKnownMany = (storage: Blocks): storage is BlocksWithPutKnownMany =>
+	typeof (storage as BlocksWithPutKnownMany).putKnownMany === "function";
+
+const hasPutKnownManyColumns = (
+	storage: Blocks,
+): storage is BlocksWithPutKnownManyColumns =>
+	typeof (storage as BlocksWithPutKnownManyColumns).putKnownManyColumns ===
+	"function";
+
+type MaybePromise<T> = T | Promise<T>;
+
+type InternalProfileValue = string | number | boolean | undefined;
+type InternalProfileEvent = {
+	name: string;
+	component?: string;
+	durationMs?: number;
+	entries?: number;
+	bytes?: number;
+	messages?: number;
+	count?: number;
+	details?: Record<string, InternalProfileValue>;
+};
+type InternalProfileSink = (event: InternalProfileEvent) => void;
+type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
+
+const internalProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
+const internalProfileStart = (sink: InternalProfileSink | undefined) =>
+	sink ? internalProfileNow() : 0;
+const emitInternalProfileDuration = (
+	sink: InternalProfileSink | undefined,
+	startedAt: number,
+	event: Omit<InternalProfileEvent, "durationMs">,
+) => {
+	if (!sink) {
+		return;
+	}
+	sink({
+		...event,
+		durationMs: internalProfileNow() - startedAt,
+	});
+};
+const EMPTY_NEXT_HASHES: string[] = [];
+const EMPTY_NEXT_ENTRIES: Sorting.SortableEntry[] = [];
+const normalizedUniqueStrings = (values: string[]): string[] =>
+	values.length <= 1 ? values : [...new Set(values)];
+
+type PreparedCommitOnlyAppendResult<T> = {
+	entry: Entry<T>;
+	materializeEntry: () => Entry<T>;
+	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
+	appendFacts: PreparedAppendFacts;
+	shallowEntry: ShallowEntry;
+	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: {
+		created: bigint;
+		modified: bigint;
+		head: string;
+		gid: string;
+		size: number;
+	};
+};
+
+type PreparedCommitOnlyAppendBatchResult<T> = {
+	entries: Entry<T>[];
+	materializeEntries: Array<() => Entry<T>>;
+	removed: ShallowOrFullEntry<T>[];
+	removedHashes?: string[];
+	appendFacts: PreparedAppendFacts[];
+	documentTrimmedHeadsProcessed?: boolean[];
+};
+
+type PreparedIndependentAppendBatch = {
+	blocks: PreparedEntryBlock[];
+	prepared?: {
+		shallowEntries: ShallowEntry[];
+		nativeEntries?: PreparedNativeLogEntry[];
+	};
+};
+
+type PreparedJoinNativeCommitInput = {
+	entries: PreparedAppendJoinFacts[];
+	hashes: string[];
+	headFlags: boolean[];
+	headFlagsBytes: Uint8Array;
+	trustedMissing: boolean;
+	validatePlan?: boolean;
+};
+
+type PreparedJoinCommittedInput = {
+	entries: PreparedAppendJoinFacts[];
+	hashes: string[];
+	headFlags: boolean[];
+	nativePreparedCommitted: boolean;
+};
+
+export type PreparedAppendJoinFacts = PreparedAppendIndexFacts & {
+	bytes: Uint8Array;
+	byteLength: number;
+	materializeEntry?: () => Entry<any>;
+};
+
+type NativePreparedNoNextCommit = {
+	bytes?: Uint8Array;
+	getBytes?: (hash: string) => Uint8Array | undefined;
+	cid?: string;
+	hash?: string;
+	gid?: string;
+	next?: string[];
+	byteLength: number;
+	metaBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
+	trimmedEntries?: PreparedNativeLogEntry[];
+	trimmedEntryHashes?: string[];
+	documentTrimmedHeadsProcessed?: boolean;
+	documentPreviousContext?: PreparedCommitOnlyAppendResult<unknown>["documentPreviousContext"];
+};
+
+type NativeNoNextCommitInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	type: EntryType;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	resolveTrimmedEntries?: boolean;
+	trimLengthTo?: number;
+};
+
+type NativeCommitInput = NativeNoNextCommitInput & {
+	next: string[];
+};
+
+const isPromiseLike = <T>(value: Promise<T> | T): value is Promise<T> =>
+	typeof (value as { then?: unknown })?.then === "function";
+
+const mapMaybePromise = <T, R>(
+	value: MaybePromise<T>,
+	fn: (value: T) => MaybePromise<R>,
+): MaybePromise<R> => (isPromiseLike(value) ? value.then(fn) : fn(value));
 
 const getErrorName = (error: unknown) =>
 	typeof (error as { name?: unknown })?.name === "string"
@@ -89,12 +275,18 @@ export type MemoryProperties = {
 	indexer?: Indices;
 };
 
+export type NativeGraphOptions = {
+	heads?: boolean;
+	optional?: boolean;
+	graph?: NativeLogGraph;
+};
+
 export type LogProperties<T> = {
 	keychain?: CryptoKeychain;
 	encoding?: Encoding<T>;
 	clock?: LamportClock;
 	appendDurability?: AppendDurability;
-	nativeGraph?: boolean | { heads?: boolean };
+	nativeGraph?: boolean | NativeGraphOptions;
 	sortFn?: Sorting.SortFn;
 	trim?: TrimOptions;
 	canAppend?: CanAppend<T>;
@@ -133,10 +325,62 @@ export type AppendOptions<T> = {
 	canAppend?: CanAppend<T>;
 };
 
+type TrustedAppendOptions<T> = AppendOptions<T> & {
+	__peerbitCanAppendAlreadyValidated?: boolean;
+};
+
+const canAppendAlreadyValidated = (options?: unknown): boolean =>
+	(options as { __peerbitCanAppendAlreadyValidated?: unknown } | undefined)
+		?.__peerbitCanAppendAlreadyValidated === true;
+
+const withCanAppendAlreadyValidated = <T>(
+	options: AppendOptions<T> = {},
+): TrustedAppendOptions<T> =>
+	canAppendAlreadyValidated(options)
+		? (options as TrustedAppendOptions<T>)
+		: {
+				...options,
+				__peerbitCanAppendAlreadyValidated: true,
+			};
+
+export type { PreparedAppendFacts } from "./entry.js";
+
 type OnChange<T> = (
 	change: Change<T>,
 	reference?: undefined,
 ) => void | Promise<void>;
+
+export type JoinOptions<T> = {
+	verifySignatures?: boolean;
+	trim?: TrimOptions;
+	timeout?: number;
+	onChange?: OnChange<T>;
+	reset?: boolean;
+};
+
+type TrustedJoinOptions<T> = JoinOptions<T> & {
+	__peerbitBatchIndependent?: boolean;
+	__peerbitEntriesAlreadyMissing?: boolean;
+	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnAppendHashes?: InternalAppendHashesSink;
+	__peerbitDeferIndexWrite?: boolean;
+	__peerbitProfile?: InternalProfileSink;
+};
+
+type TrustedPreparedAppendFactsBatchJoinOptions = {
+	__peerbitEntriesAlreadyMissing?: boolean;
+	__peerbitCanAppendAlreadyValidated?: boolean;
+	__peerbitOnAppendHashes?: InternalAppendHashesSink;
+	__peerbitDeferIndexWrite?: boolean;
+	__peerbitProfile?: InternalProfileSink;
+	__peerbitNativePreparedJoinCommit?: (
+		input: PreparedJoinNativeCommitInput,
+	) => MaybePromise<boolean>;
+	__peerbitNativePreparedJoinCommitValidatesPlan?: boolean;
+	__peerbitOnPreparedJoinCommitted?: (
+		input: PreparedJoinCommittedInput,
+	) => MaybePromise<void>;
+};
 
 export type JoinableEntry = {
 	meta: {
@@ -158,6 +402,11 @@ export const ENTRY_JOIN_SHAPE = {
 type PendingDelete<T> = {
 	entry: ShallowOrFullEntry<T>;
 	fn: () => Promise<ShallowEntry | undefined>;
+};
+
+type EntryWithMetaBytes = {
+	getMetaBytes?: () => Uint8Array | undefined;
+	getHashDigestBytes?: () => Uint8Array | undefined;
 };
 
 @variant(0)
@@ -191,9 +440,11 @@ export class Log<T> {
 	private _appendDurability!: AppendDurability;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 	private _sortFn!: Sorting.SortFn;
+	private _hasCustomCanAppend = false;
 
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
+		this._closeController = new AbortController();
 	}
 
 	async open(store: Blocks, identity: Identity, options: LogOptions<T> = {}) {
@@ -245,29 +496,47 @@ export class Log<T> {
 			throw new Error("Id not set");
 		}
 
+		const nativeGraphOption = options.nativeGraph;
 		const nativeGraph =
-			options.nativeGraph &&
+			nativeGraphOption &&
 			(await (async () => {
+				const nativeGraphOptions =
+					typeof nativeGraphOption === "object" ? nativeGraphOption : undefined;
+				if (nativeGraphOptions?.graph) {
+					const headsRequested = nativeGraphOptions.heads !== false;
+					return {
+						graph: nativeGraphOptions.graph,
+						useHeads: headsRequested && this._sortFn === LastWriteWins,
+					};
+				}
+				if (!canUseOptionalNativeModuleImports()) {
+					if (nativeGraphOptions?.optional === true) {
+						return undefined;
+					}
+					throw new Error(
+						"Log nativeGraph is unavailable in service worker contexts",
+					);
+				}
 				let createLogGraphIndex: () => Promise<NativeLogGraph>;
 				try {
 					({ createLogGraphIndex } = (await import(
-						["@peerbit", "log-rust"].join("/")
+						/* @vite-ignore */ ["@peerbit", "log-rust"].join("/")
 					)) as {
 						createLogGraphIndex: () => Promise<NativeLogGraph>;
 					});
+					const headsRequested = nativeGraphOptions?.heads !== false;
+					return {
+						graph: await createLogGraphIndex(),
+						useHeads: headsRequested && this._sortFn === LastWriteWins,
+					};
 				} catch {
+					if (nativeGraphOptions?.optional === true) {
+						return undefined;
+					}
 					throw new Error(
 						"Log nativeGraph requires @peerbit/log-rust to be installed and built",
 					);
 				}
-				const headsRequested =
-					typeof options.nativeGraph === "object"
-						? options.nativeGraph.heads !== false
-						: true;
-				return {
-					graph: await createLogGraphIndex(),
-					useHeads: headsRequested && this._sortFn === LastWriteWins,
-				};
 			})());
 
 		this._entryIndex = new EntryIndex({
@@ -293,12 +562,58 @@ export class Log<T> {
 		this._trim = new Trim(
 			{
 				index: this._entryIndex,
-				deleteNode: async (node: ShallowEntry) => {
-					const resolved = await this.get(node.hash);
-					await this._entryIndex.delete(node.hash);
+				deleteNode: async (
+					node: ShallowEntry,
+					options?: { resolveDeletedEntry?: boolean },
+				) => {
+					const shouldResolve = options?.resolveDeletedEntry !== false;
+					const resolved = shouldResolve
+						? await this.get(node.hash)
+						: undefined;
+					const deleted = await this._entryIndex.delete(node.hash, node);
 					await this._storage.rm(node.hash);
-					return resolved;
+					if (!deleted) {
+						return resolved;
+					}
+					return shouldResolve ? resolved : deleted;
 				},
+				deleteNodes: this._entryIndex.canDeleteMany()
+					? (
+							nodes: ShallowEntry[],
+							options?: {
+								resolveDeletedEntry?: boolean;
+								skipNextHeadUpdates?: boolean;
+							},
+						): MaybePromise<(Entry<T> | ShallowEntry)[]> => {
+							if (nodes.length === 0) {
+								return [];
+							}
+							const shouldResolve = options?.resolveDeletedEntry !== false;
+							if (!shouldResolve) {
+								return this._entryIndex.deleteManyMaybe(nodes, {
+									skipNextHeadUpdates: options?.skipNextHeadUpdates,
+								});
+							}
+							return (async () => {
+								const resolvedByHash = new Map<string, Entry<T>>();
+								const resolved = await this._entryIndex.getMany(
+									nodes.map((node) => node.hash),
+									{ type: "full", ignoreMissing: true },
+								);
+								for (const entry of resolved) {
+									if (entry) {
+										resolvedByHash.set(entry.hash, entry);
+									}
+								}
+								const deleted = await this._entryIndex.deleteMany(nodes, {
+									skipNextHeadUpdates: options?.skipNextHeadUpdates,
+								});
+								return deleted
+									.map((node) => resolvedByHash.get(node.hash))
+									.filter((entry): entry is Entry<T> => !!entry);
+							})();
+						}
+					: undefined,
 				sortFn: this._sortFn,
 				getLength: () => this.length,
 			},
@@ -313,6 +628,7 @@ export class Log<T> {
 			}
 			return true;
 		};
+		this._hasCustomCanAppend = !!options?.canAppend;
 
 		this._onChange = options?.onChange;
 		this._closed = false;
@@ -366,6 +682,11 @@ export class Log<T> {
 	has(cid: string) {
 		return this._entryIndex.has(cid);
 	}
+
+	hasMany(cids: Iterable<string>) {
+		return this._entryIndex.hasMany(cids);
+	}
+
 	/**
 	 * Get all entries sorted. Don't use this method anywhere where performance matters
 	 */
@@ -546,25 +867,1894 @@ export class Log<T> {
 		data: T,
 		options: AppendOptions<T> = {},
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
-		// Update the clock (find the latest clock)
-		if (options.meta?.next) {
-			for (const n of options.meta.next) {
-				if (!n.hash)
-					throw new Error(
-						"Expecting nexts to already be saved. missing hash for one or more entries",
+		const nexts = await this.getNextsForAppend(options);
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChain = this.entryIndex.properties.nativeGraph
+			? await this.createNativePlainAppendChain(
+					[data],
+					options,
+					nexts,
+					deferBlockStore,
+				)
+			: undefined;
+		let entry: Entry<T>;
+		if (nativeAppendChain) {
+			entry = nativeAppendChain.entries[0]!;
+			try {
+				await this.joinMissingNexts(entry, nexts);
+				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+					await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
+				}
+				await this.putAppendEntries(
+					[entry],
+					options,
+					nexts.map((next) => next.hash),
+					nativeAppendChain,
+				);
+			} catch (error) {
+				if (nativeAppendChain.nativeGraphUpdated) {
+					this.rollbackNativeAppendGraph([entry]);
+				}
+				if (nativeAppendChain.nativeBlocksCommitted) {
+					await this.rollbackNativeAppendBlocks([entry]);
+				}
+				throw error;
+			}
+		} else {
+			entry = await this.createAppendEntry(data, options, nexts);
+			await this.joinMissingNexts(entry, nexts);
+			await this.putAppendEntry(entry, options);
+		}
+
+		const pendingDeletes: (
+			| PendingDelete<T>
+			| { entry: ShallowOrFullEntry<T>; fn: undefined }
+		)[] = await this.processEntry(entry);
+
+		entry.init({ encoding: this._encoding, keychain: this._keychain });
+
+		const trimmed = await this.trimIfConfigured(options?.trim);
+
+		if (trimmed) {
+			for (const entry of trimmed) {
+				pendingDeletes.push({ entry, fn: undefined });
+			}
+		}
+		const removed = pendingDeletes.map((x) => x.entry);
+		const changes: Change<T> = {
+			added: [{ head: true, entry }],
+			removed,
+		};
+
+		await (options?.onChange || this._onChange)?.(changes);
+		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
+		return { entry, removed };
+	}
+
+	// Internal trusted local append path for callers that already handled validation
+	// and want to apply change observers themselves.
+	private async appendLocallyPrepared(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+	): Promise<{
+		entry: Entry<T>;
+		removed: ShallowOrFullEntry<T>[];
+		change: Change<T>;
+		appendFacts: PreparedAppendFacts;
+	}> {
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.meta?.type === EntryType.CUT
+		) {
+			throw new Error(
+				"appendLocallyPrepared only supports trusted plain local appends",
+			);
+		}
+
+		const appendOptions = withCanAppendAlreadyValidated(options);
+		const nextsResult = this.getNextsForAppend(appendOptions);
+		const nexts = isPromiseLike(nextsResult) ? await nextsResult : nextsResult;
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChain = this.entryIndex.properties.nativeGraph
+			? await this.createNativePlainAppendChain(
+					[data],
+					appendOptions,
+					nexts,
+					deferBlockStore,
+					properties?.payloadData ? [properties.payloadData] : undefined,
+				)
+			: undefined;
+		let entry: Entry<T>;
+		if (nativeAppendChain) {
+			entry = nativeAppendChain.entries[0]!;
+			try {
+				if (!properties?.skipMissingNextJoin) {
+					await this.joinMissingNexts(entry, nexts);
+				}
+				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+					await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
+				}
+				await this.putAppendEntries(
+					[entry],
+					appendOptions,
+					nexts.map((next) => next.hash),
+					nativeAppendChain,
+				);
+			} catch (error) {
+				if (nativeAppendChain.nativeGraphUpdated) {
+					this.rollbackNativeAppendGraph([entry]);
+				}
+				if (nativeAppendChain.nativeBlocksCommitted) {
+					await this.rollbackNativeAppendBlocks([entry]);
+				}
+				throw error;
+			}
+		} else {
+			if (data == null && properties?.payloadData) {
+				throw new Error(
+					"appendLocallyPrepared payload-only path requires native append support",
+				);
+			}
+			entry = await this.createAppendEntry(data, appendOptions, nexts);
+			if (!properties?.skipMissingNextJoin) {
+				await this.joinMissingNexts(entry, nexts);
+			}
+			await this.putAppendEntry(entry, appendOptions);
+		}
+
+		entry.init({ encoding: this._encoding, keychain: this._keychain });
+
+		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
+			resolveDeletedEntries: properties?.resolveTrimmedEntries,
+		});
+		const removed = trimmed ?? [];
+		const change: Change<T> = {
+			added: [{ head: true, entry }],
+			removed,
+		};
+		const appendFacts = this.createPreparedAppendFacts(
+			[entry],
+			nativeAppendChain,
+		)[0]!;
+
+		return { entry, removed, change, appendFacts };
+	}
+
+	// Internal trusted local append path for callers that can consume compact
+	// append facts before a public Entry object is needed.
+	private appendLocallyPreparedCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.meta?.type === EntryType.CUT
+		) {
+			throw new Error(
+				"appendLocallyPreparedCommitOnly only supports trusted plain local appends",
+			);
+		}
+
+		const appendOptions = withCanAppendAlreadyValidated(options);
+		const nextsResult = this.getNextsForAppend(appendOptions);
+		return mapMaybePromise(nextsResult, (nexts) =>
+			this.appendLocallyPreparedCommitOnlyWithNexts(
+				data,
+				appendOptions,
+				nexts,
+				properties,
+				this.getNativeCommitOnlyTrimLengthTo(
+					appendOptions.trim,
+					properties?.resolveTrimmedEntries,
+				),
+			),
+		);
+	}
+
+	private appendLocallyPreparedNativeNoNextCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: NativeNoNextCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		const directResult = this.appendLocallyPreparedNativeKnownNoNextCommitOnly(
+			data,
+			options,
+			properties,
+			prepare,
+		);
+		if (directResult !== undefined) {
+			return directResult;
+		}
+		return this.appendLocallyPreparedNativeCommitOnly(
+			data,
+			options,
+			properties,
+			prepare,
+		);
+	}
+
+	private appendLocallyPreparedNativeKnownNoNextCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: NativeNoNextCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		if (options.meta?.next == null || options.meta.next.length !== 0) {
+			return undefined;
+		}
+		const resolvedTrim = options.trim ?? this._trim.options;
+		const supportsNativeTrim =
+			!resolvedTrim ||
+			(resolvedTrim.type === "length" &&
+				!resolvedTrim.filter?.canTrim &&
+				properties.resolveTrimmedEntries === false);
+		if (!supportsNativeTrim) {
+			return undefined;
+		}
+		const nativeTrimLengthTo = this.getNativeCommitOnlyTrimLengthTo(
+			options.trim,
+			properties.resolveTrimmedEntries,
+		);
+		if (!options.meta?.gidSeed) {
+			const directResult =
+				this.appendLocallyPreparedNativeKnownNoNextDirectCommitOnly(
+					data,
+					options,
+					properties,
+					prepare,
+					nativeTrimLengthTo,
+				);
+			if (directResult !== undefined) {
+				return directResult;
+			}
+		}
+		return this.appendLocallyPreparedNativeCommitOnly(
+			data,
+			options,
+			properties,
+			prepare,
+			true,
+		);
+	}
+
+	private appendLocallyPreparedNativeKnownNoNextDirectCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: NativeNoNextCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+		nativeTrimLengthTo?: number,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.encryption ||
+			options.signers ||
+			options.identity ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			options.meta?.next == null ||
+			options.meta.next.length !== 0 ||
+			options.meta?.gidSeed ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated(options))
+		) {
+			return undefined;
+		}
+		const identity = this._identity;
+		if (!(identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		const payloadData =
+			properties.payloadData ??
+			(data == null ? undefined : this._encoding.encoder(data));
+		if (!payloadData || !hasPutMany(this._storage)) {
+			return undefined;
+		}
+
+		const resolvedGid = EntryV0.createGid() as string;
+		const timestamp = this._hlc.now();
+		const entryType = options.meta?.type ?? EntryType.APPEND;
+		const preparedValue = prepare({
+			clockId: identity.publicKey.bytes,
+			privateKey: identity.privateKey.privateKey,
+			publicKey: identity.publicKey.publicKey,
+			wallTime: timestamp.wallTime,
+			logical: timestamp.logical,
+			gid: resolvedGid,
+			type: entryType,
+			metaData: options.meta?.data,
+			payloadData,
+			resolveTrimmedEntries: properties.resolveTrimmedEntries,
+			trimLengthTo: nativeTrimLengthTo,
+		});
+		return mapMaybePromise(preparedValue, (prepared) => {
+			if (!prepared) {
+				return undefined;
+			}
+			const hash = prepared.cid ?? prepared.hash;
+			if (!hash) {
+				return undefined;
+			}
+			const shouldRetainMaterializationBytes =
+				properties.retainMaterializationBytes === true ||
+				!!(options.trim ?? this._trim.options);
+			let retainedMaterializationBytes: Uint8Array | undefined;
+			const retainMaterializationBytes = () => {
+				if (
+					retainedMaterializationBytes ||
+					!shouldRetainMaterializationBytes ||
+					prepared.bytes
+				) {
+					return;
+				}
+				const bytes =
+					prepared.getBytes?.(hash) ??
+					(this._storage.get(hash) as Uint8Array | undefined);
+				if (
+					bytes &&
+					typeof (bytes as { then?: unknown }).then !== "function"
+				) {
+					retainedMaterializationBytes = bytes;
+				}
+			};
+			const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
+			const effectiveGid = prepared.gid ?? resolvedGid;
+			let clock: Clock | undefined;
+			const getClock = () =>
+				(clock ??= new Clock({
+					id: identity.publicKey.bytes,
+					timestamp,
+				}));
+			let shallowEntry: ShallowEntry | undefined;
+			const getShallowEntry = () =>
+				(shallowEntry ??= new ShallowEntry({
+					hash,
+					payloadSize: payloadData.byteLength,
+					head: true,
+					meta: new ShallowMeta({
+						gid: effectiveGid,
+						data: options.meta?.data,
+						clock: getClock(),
+						next: effectiveNextHashes,
+						type: entryType,
+					}),
+				}));
+			const appendFacts: PreparedAppendFacts = {
+				hash,
+				gid: effectiveGid,
+				next: effectiveNextHashes,
+				wallTime: timestamp.wallTime,
+				logical: timestamp.logical,
+				clockId: identity.publicKey.bytes,
+				type: entryType,
+				metaData: options.meta?.data,
+				payloadSize: payloadData.byteLength,
+				metaBytes: prepared.metaBytes,
+				hashDigestBytes: prepared.hashDigestBytes,
+			};
+			let materializedEntry: Entry<T> | undefined;
+			const materializeEntry = () => {
+				if (materializedEntry) {
+					return materializedEntry;
+				}
+				const bytes =
+					prepared.bytes ??
+					retainedMaterializationBytes ??
+					prepared.getBytes?.(hash) ??
+					(this._storage.get(hash) as Uint8Array | undefined);
+				if (
+					!bytes ||
+					typeof (bytes as { then?: unknown }).then === "function"
+				) {
+					throw new Error("Missing synchronous native append block bytes");
+				}
+				const entry = deserialize(bytes, Entry) as Entry<T>;
+				entry.hash = hash;
+				entry.size = prepared.byteLength;
+				entry.createdLocally = true;
+				Entry.prepareShallowEntry(entry, getShallowEntry());
+				entry.init({ encoding: this._encoding, keychain: this._keychain });
+				materializedEntry = entry;
+				return entry;
+			};
+			const finish = (): PreparedCommitOnlyAppendResult<T> => {
+				retainMaterializationBytes();
+				return {
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed: [],
+					appendFacts,
+					get shallowEntry() {
+						return getShallowEntry();
+					},
+					documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
+					documentPreviousContext: prepared.documentPreviousContext,
+				};
+			};
+			const finishTrim = ():
+				| PreparedCommitOnlyAppendResult<T>
+				| Promise<PreparedCommitOnlyAppendResult<T>> => {
+				retainMaterializationBytes();
+				if (prepared.trimmedEntryHashes) {
+					if (prepared.trimmedEntryHashes.length === 0) {
+						return finish();
+					}
+					if (
+						properties.resolveTrimmedEntries === false ||
+						prepared.documentTrimmedHeadsProcessed === true
+					) {
+						const trimmedEntryHashes =
+							prepared.trimmedEntryHashes.length === 1
+								? prepared.trimmedEntryHashes
+								: [...new Set(prepared.trimmedEntryHashes)];
+						const consumedNoReturn =
+							this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+								trimmedEntryHashes,
+								{
+									skipNextHeadUpdates: true,
+									deleteBlocks: false,
+								},
+							);
+						if (consumedNoReturn !== undefined) {
+							return mapMaybePromise(consumedNoReturn, () => ({
+								get entry() {
+									return materializeEntry();
+								},
+								materializeEntry,
+								removed: [],
+								removedHashes: trimmedEntryHashes,
+								appendFacts,
+								get shallowEntry() {
+									return getShallowEntry();
+								},
+								documentTrimmedHeadsProcessed:
+									prepared.documentTrimmedHeadsProcessed,
+								documentPreviousContext: prepared.documentPreviousContext,
+							}));
+						}
+					}
+					const consumedResult =
+						this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
+							prepared.trimmedEntryHashes,
+							{
+								skipNextHeadUpdates: true,
+								deleteBlocks: false,
+							},
+						);
+					return mapMaybePromise(consumedResult, (removed) => ({
+						get entry() {
+							return materializeEntry();
+						},
+						materializeEntry,
+						removed,
+						removedHashes: prepared.trimmedEntryHashes,
+						appendFacts,
+						get shallowEntry() {
+							return getShallowEntry();
+						},
+						documentTrimmedHeadsProcessed:
+							prepared.documentTrimmedHeadsProcessed,
+						documentPreviousContext: prepared.documentPreviousContext,
+					}));
+				}
+				if (!prepared.trimmedEntries) {
+					return finish();
+				}
+				const trimmedEntries = this.entryIndex.nativeLogEntriesToShallowEntries(
+					prepared.trimmedEntries,
+				);
+				const consumedResult = this.entryIndex.consumeNativeTrimmedEntriesMaybe(
+					trimmedEntries,
+					{
+						skipNextHeadUpdates: true,
+						deleteBlocks: false,
+					},
+				);
+				return mapMaybePromise(consumedResult, (removed) => ({
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					appendFacts,
+					get shallowEntry() {
+						return getShallowEntry();
+					},
+					documentTrimmedHeadsProcessed: prepared.documentTrimmedHeadsProcessed,
+					documentPreviousContext: prepared.documentPreviousContext,
+				}));
+			};
+			const finishBlocks = ():
+				| PreparedCommitOnlyAppendResult<T>
+				| Promise<PreparedCommitOnlyAppendResult<T>> => {
+				if (!prepared.bytes) {
+					return finishTrim();
+				}
+				return mapMaybePromise(
+					this.putPreparedAppendBlocks([
+						Entry.preparedBlockFromBytes(prepared.bytes, hash),
+					]),
+					finishTrim,
+				);
+			};
+			const rollback = (error: unknown): never | Promise<never> => {
+				this.rollbackNativeAppendGraphHashes([hash]);
+				return this.rollbackNativeAppendBlocksHashes([hash]).then(() => {
+					throw error;
+				});
+			};
+			try {
+				const putResult = this.entryIndex.putNativeCommittedAppendFacts({
+					hash,
+					unique: true,
+					externalNextHashes: effectiveNextHashes,
+					getShallowEntry,
+					isHead: true,
+				});
+				const result = mapMaybePromise(putResult, finishBlocks);
+				return isPromiseLike(result) ? result.catch(rollback) : result;
+			} catch (error) {
+				return rollback(error);
+			}
+		});
+	}
+
+	private appendLocallyPreparedNativeCommitOnly(
+		data: T,
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadData?: Uint8Array;
+			resolveTrimmedEntries?: boolean;
+			skipMissingNextJoin?: boolean;
+			knownNoNext?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			input: NativeCommitInput,
+		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
+		knownNoNext = false,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		const resolvedTrim = options.trim ?? this._trim.options;
+		const supportsNativeTrim =
+			!resolvedTrim ||
+			(resolvedTrim.type === "length" &&
+				!resolvedTrim.filter?.canTrim &&
+				properties.resolveTrimmedEntries === false);
+		const nativeTrimLengthTo = this.getNativeCommitOnlyTrimLengthTo(
+			options.trim,
+			properties.resolveTrimmedEntries,
+		);
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.encryption ||
+			options.signers ||
+			options.identity ||
+			options.meta?.timestamp ||
+			!supportsNativeTrim ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated(options))
+		) {
+			return undefined;
+		}
+		const identity = this._identity;
+		if (!(identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		const payloadData =
+			properties.payloadData ??
+			(data == null ? undefined : this._encoding.encoder(data));
+		if (!payloadData || !hasPutMany(this._storage)) {
+			return undefined;
+		}
+
+		const appendOptions = withCanAppendAlreadyValidated(options);
+		const knownNoNextAppend = knownNoNext || properties.knownNoNext === true;
+		const nextsResult = knownNoNextAppend
+			? EMPTY_NEXT_ENTRIES
+			: this.getNextsForAppend(appendOptions);
+		return mapMaybePromise(nextsResult, (nexts) => {
+			if (nexts.length > 0 && properties.skipMissingNextJoin !== true) {
+				return undefined;
+			}
+
+			const nextHashes: string[] = knownNoNextAppend ? EMPTY_NEXT_HASHES : [];
+			let nextGid: string | undefined;
+			if (nexts.length > 0) {
+				if ((appendOptions.meta as { gid?: string } | undefined)?.gid) {
+					return undefined;
+				}
+				for (const next of nexts) {
+					if (!next.hash) {
+						return undefined;
+					}
+					nextHashes.push(next.hash);
+					nextGid =
+						nextGid == null || next.meta.gid < nextGid
+							? next.meta.gid
+							: nextGid;
+				}
+			}
+
+			const gid = nextGid ?? EntryV0.createGid(appendOptions.meta?.gidSeed);
+			return mapMaybePromise(gid, (resolvedGid) => {
+				const clock = new Clock({
+					id: identity.publicKey.bytes,
+					timestamp: this._hlc.now(),
+				});
+				const entryType = appendOptions.meta?.type ?? EntryType.APPEND;
+				const preparedValue = prepare({
+					clockId: identity.publicKey.bytes,
+					privateKey: identity.privateKey.privateKey,
+					publicKey: identity.publicKey.publicKey,
+					wallTime: clock.timestamp.wallTime,
+					logical: clock.timestamp.logical,
+					gid: resolvedGid,
+					next: nextHashes,
+					type: entryType,
+					metaData: appendOptions.meta?.data,
+					payloadData,
+					resolveTrimmedEntries: properties.resolveTrimmedEntries,
+					trimLengthTo: nativeTrimLengthTo,
+				});
+				return mapMaybePromise(preparedValue, (prepared) => {
+					if (!prepared) {
+						return undefined;
+					}
+					const hash = prepared.cid ?? prepared.hash;
+					if (!hash) {
+						return undefined;
+					}
+					const shouldRetainMaterializationBytes =
+						properties.retainMaterializationBytes === true || !!resolvedTrim;
+					let retainedMaterializationBytes: Uint8Array | undefined;
+					const retainMaterializationBytes = () => {
+						if (
+							retainedMaterializationBytes ||
+							!shouldRetainMaterializationBytes ||
+							prepared.bytes
+						) {
+							return;
+						}
+						const bytes =
+							prepared.getBytes?.(hash) ??
+							(this._storage.get(hash) as Uint8Array | undefined);
+						if (
+							bytes &&
+							typeof (bytes as { then?: unknown }).then !== "function"
+						) {
+							retainedMaterializationBytes = bytes;
+						}
+					};
+					const effectiveNextHashes = prepared.next ?? nextHashes;
+					const effectiveGid = prepared.gid ?? resolvedGid;
+					const shallowEntry = new ShallowEntry({
+						hash,
+						payloadSize: payloadData.byteLength,
+						head: true,
+						meta: new ShallowMeta({
+							gid: effectiveGid,
+							data: appendOptions.meta?.data,
+							clock,
+							next: effectiveNextHashes,
+							type: entryType,
+						}),
+					});
+					const appendFacts: PreparedAppendFacts = {
+						hash,
+						gid: effectiveGid,
+						next: effectiveNextHashes,
+						wallTime: clock.timestamp.wallTime,
+						logical: clock.timestamp.logical,
+						clockId: clock.id,
+						type: entryType,
+						metaData: appendOptions.meta?.data,
+						payloadSize: payloadData.byteLength,
+						metaBytes: prepared.metaBytes,
+						hashDigestBytes: prepared.hashDigestBytes,
+					};
+					let materializedEntry: Entry<T> | undefined;
+					const materializeEntry = () => {
+						if (materializedEntry) {
+							return materializedEntry;
+						}
+						const bytes =
+							prepared.bytes ??
+							retainedMaterializationBytes ??
+							prepared.getBytes?.(hash) ??
+							(this._storage.get(hash) as Uint8Array | undefined);
+						if (
+							!bytes ||
+							typeof (bytes as { then?: unknown }).then === "function"
+						) {
+							throw new Error("Missing synchronous native append block bytes");
+						}
+						const entry = deserialize(bytes, Entry) as Entry<T>;
+						entry.hash = hash;
+						entry.size = prepared.byteLength;
+						entry.createdLocally = true;
+						Entry.prepareShallowEntry(entry, shallowEntry);
+						entry.init({ encoding: this._encoding, keychain: this._keychain });
+						materializedEntry = entry;
+						return entry;
+					};
+					const finish = (): PreparedCommitOnlyAppendResult<T> => {
+						retainMaterializationBytes();
+						return {
+							get entry() {
+								return materializeEntry();
+							},
+							materializeEntry,
+							removed: [],
+							appendFacts,
+							shallowEntry,
+							documentTrimmedHeadsProcessed:
+								prepared.documentTrimmedHeadsProcessed,
+							documentPreviousContext: prepared.documentPreviousContext,
+						};
+					};
+					const finishBlocks = ():
+						| PreparedCommitOnlyAppendResult<T>
+						| Promise<PreparedCommitOnlyAppendResult<T>> => {
+						if (!prepared.bytes) {
+							return finishTrim();
+						}
+						return mapMaybePromise(
+							this.putPreparedAppendBlocks([
+								Entry.preparedBlockFromBytes(prepared.bytes, hash),
+							]),
+							finishTrim,
+						);
+					};
+					const finishTrim = ():
+						| PreparedCommitOnlyAppendResult<T>
+						| Promise<PreparedCommitOnlyAppendResult<T>> => {
+						retainMaterializationBytes();
+						if (prepared.trimmedEntryHashes) {
+							if (prepared.trimmedEntryHashes.length === 0) {
+								return finish();
+							}
+							if (
+								properties.resolveTrimmedEntries === false ||
+								prepared.documentTrimmedHeadsProcessed === true
+							) {
+								const trimmedEntryHashes =
+									prepared.trimmedEntryHashes.length === 1
+										? prepared.trimmedEntryHashes
+										: [...new Set(prepared.trimmedEntryHashes)];
+								const consumedNoReturn =
+									this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+										trimmedEntryHashes,
+										{
+											skipNextHeadUpdates: true,
+											deleteBlocks: false,
+										},
+									);
+								if (consumedNoReturn !== undefined) {
+									return mapMaybePromise(consumedNoReturn, () => ({
+										get entry() {
+											return materializeEntry();
+										},
+										materializeEntry,
+										removed: [],
+										removedHashes: trimmedEntryHashes,
+										appendFacts,
+										shallowEntry,
+										documentTrimmedHeadsProcessed:
+											prepared.documentTrimmedHeadsProcessed,
+										documentPreviousContext: prepared.documentPreviousContext,
+									}));
+								}
+							}
+							const consumedResult =
+								this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
+									prepared.trimmedEntryHashes,
+									{
+										skipNextHeadUpdates: true,
+										deleteBlocks: false,
+									},
+								);
+							return mapMaybePromise(consumedResult, (removed) => ({
+								get entry() {
+									return materializeEntry();
+								},
+								materializeEntry,
+								removed,
+								appendFacts,
+								shallowEntry,
+								documentTrimmedHeadsProcessed:
+									prepared.documentTrimmedHeadsProcessed,
+								documentPreviousContext: prepared.documentPreviousContext,
+							}));
+						}
+						if (!prepared.trimmedEntries) {
+							return finish();
+						}
+						const trimmedEntries =
+							this.entryIndex.nativeLogEntriesToShallowEntries(
+								prepared.trimmedEntries,
+							);
+						const consumedResult =
+							this.entryIndex.consumeNativeTrimmedEntriesMaybe(trimmedEntries, {
+								skipNextHeadUpdates: true,
+								deleteBlocks: false,
+							});
+						return mapMaybePromise(consumedResult, (removed) => ({
+							get entry() {
+								return materializeEntry();
+							},
+							materializeEntry,
+							removed,
+							appendFacts,
+							shallowEntry,
+							documentTrimmedHeadsProcessed:
+								prepared.documentTrimmedHeadsProcessed,
+							documentPreviousContext: prepared.documentPreviousContext,
+						}));
+					};
+					const rollback = (error: unknown): never | Promise<never> => {
+						this.rollbackNativeAppendGraphHashes([hash]);
+						return this.rollbackNativeAppendBlocksHashes([hash]).then(() => {
+							throw error;
+						});
+					};
+					try {
+						const putResult = this.entryIndex.putNativeCommittedAppendFacts({
+							hash,
+							unique: true,
+							externalNextHashes: nextHashes,
+							shallowEntry,
+							isHead: true,
+						});
+						const result = mapMaybePromise(putResult, finishBlocks);
+						return isPromiseLike(result) ? result.catch(rollback) : result;
+					} catch (error) {
+						return rollback(error);
+					}
+				});
+			});
+		});
+	}
+
+	private appendLocallyPreparedCommitOnlyWithNexts(
+		data: T,
+		appendOptions: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+		nativeTrimLengthTo?: number,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChainResult = this.createNativePlainAppendCommitOnly(
+			[data],
+			appendOptions,
+			nexts,
+			deferBlockStore,
+			properties?.payloadData ? [properties.payloadData] : undefined,
+			properties?.includeMaterializationBytes,
+			properties?.includeAppendFactsBytes,
+			nativeTrimLengthTo,
+		);
+		return mapMaybePromise(nativeAppendChainResult, (nativeAppendChain) =>
+			this.finishLocallyPreparedCommitOnlyAppend(
+				nativeAppendChain,
+				appendOptions,
+				nexts,
+				deferBlockStore,
+				properties,
+			),
+		);
+	}
+
+	private finishLocallyPreparedCommitOnlyAppend(
+		nativeAppendChain: PreparedAppendCommitOnlyChain<T> | undefined,
+		appendOptions: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		deferBlockStore: boolean,
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+		},
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		if (!nativeAppendChain) {
+			return undefined;
+		}
+
+		const appendFacts = nativeAppendChain.appendFacts[0]!;
+		const shallowEntry = nativeAppendChain.shallowEntries[0]!;
+		let materializedEntry: Entry<T> | undefined;
+		const materializeEntry = () => {
+			const entry = materializedEntry ?? nativeAppendChain.materializeEntry(0);
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+			materializedEntry = entry;
+			return entry;
+		};
+		const finishTrim = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+			if (nativeAppendChain.trimmedNativeEntryHashes) {
+				const trimmedEntryHashes = [
+					...new Set(nativeAppendChain.trimmedNativeEntryHashes),
+				];
+				if (
+					properties?.resolveTrimmedEntries === false &&
+					nativeAppendChain.trimmedNativeBlocksDeleted === true
+				) {
+					const consumedNoReturn =
+						this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+							trimmedEntryHashes,
+							{
+								skipNextHeadUpdates: true,
+								deleteBlocks: false,
+							},
+						);
+					if (consumedNoReturn !== undefined) {
+						return mapMaybePromise(consumedNoReturn, () => ({
+							get entry() {
+								return materializeEntry();
+							},
+							materializeEntry,
+							removed: [],
+							removedHashes: trimmedEntryHashes,
+							appendFacts,
+							shallowEntry,
+						}));
+					}
+				}
+				const consumedResult =
+					this.entryIndex.consumeNativeTrimmedEntryHashesMaybe(
+						trimmedEntryHashes,
+						{
+							skipNextHeadUpdates: true,
+							deleteBlocks:
+								nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+						},
 					);
+				return mapMaybePromise(consumedResult, (removed) => ({
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					removedHashes: trimmedEntryHashes,
+					appendFacts,
+					shallowEntry,
+				}));
+			}
+			if (nativeAppendChain.trimmedNativeEntries) {
+				const trimmedEntries = this.entryIndex.nativeLogEntriesToShallowEntries(
+					nativeAppendChain.trimmedNativeEntries,
+				);
+				const consumedResult = this.entryIndex.consumeNativeTrimmedEntriesMaybe(
+					trimmedEntries,
+					{
+						skipNextHeadUpdates: true,
+						deleteBlocks: nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+					},
+				);
+				return mapMaybePromise(consumedResult, (removed) => ({
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					appendFacts,
+					shallowEntry,
+				}));
+			}
+			const trimmedResult = this.trimIfConfigured(appendOptions.trim, {
+				resolveDeletedEntries: properties?.resolveTrimmedEntries,
+			});
+			return mapMaybePromise(trimmedResult, (trimmed) => {
+				const removed = trimmed ?? [];
+				return {
+					get entry() {
+						return materializeEntry();
+					},
+					materializeEntry,
+					removed,
+					appendFacts,
+					shallowEntry,
+				};
+			});
+		};
+		const finishFacts = (): MaybePromise<PreparedCommitOnlyAppendResult<T>> => {
+			const putFactsResult = this.entryIndex.putNativeCommittedAppendFacts({
+				hash: appendFacts.hash,
+				unique: true,
+				externalNextHashes: nexts.map((next) => next.hash),
+				shallowEntry,
+				isHead: true,
+			});
+			return mapMaybePromise(putFactsResult, finishTrim);
+		};
+		const finishBlocks = (): MaybePromise<
+			PreparedCommitOnlyAppendResult<T>
+		> => {
+			if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+				return mapMaybePromise(
+					this.putPreparedAppendBlocks(nativeAppendChain.blocks),
+					finishFacts,
+				);
+			}
+			return finishFacts();
+		};
+		const rollback = (error: unknown): never | Promise<never> => {
+			if (nativeAppendChain.nativeGraphUpdated) {
+				this.rollbackNativeAppendGraphHashes([appendFacts.hash]);
+			}
+			if (nativeAppendChain.nativeBlocksCommitted) {
+				return this.rollbackNativeAppendBlocksHashes([appendFacts.hash]).then(
+					() => {
+						throw error;
+					},
+				);
+			}
+			throw error;
+		};
+		try {
+			let result: MaybePromise<PreparedCommitOnlyAppendResult<T>>;
+			if (!properties?.skipMissingNextJoin && nexts.length > 0) {
+				result = mapMaybePromise(
+					this.joinMissingNexts(materializeEntry(), nexts),
+					finishBlocks,
+				);
+			} else {
+				result = finishBlocks();
+			}
+			return isPromiseLike(result) ? result.catch(rollback) : result;
+		} catch (error) {
+			return rollback(error);
+		}
+	}
+
+	private async appendLocallyPreparedManyIndependent(
+		data: T[],
+		options: AppendOptions<T> = {},
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+			payloadDatas?: Uint8Array[];
+			nexts?: Sorting.SortableEntry[][];
+		},
+	): Promise<
+		| {
+				entries: Entry<T>[];
+				removed: ShallowOrFullEntry<T>[];
+				change: Change<T>;
+				appendFacts: PreparedAppendFacts[];
+		  }
+		| undefined
+	> {
+		if (data.length === 0) {
+			return {
+				entries: [],
+				removed: [],
+				change: { added: [], removed: [] },
+				appendFacts: [],
+			};
+		}
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.meta?.type === EntryType.CUT
+		) {
+			throw new Error(
+				"appendLocallyPreparedManyIndependent only supports trusted plain local appends",
+			);
+		}
+
+		const appendOptions = withCanAppendAlreadyValidated(options);
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendBatch = await this.createNativePlainAppendEntriesBatch(
+			data,
+			appendOptions,
+			deferBlockStore,
+			properties?.payloadDatas,
+			properties?.nexts,
+		);
+		if (!nativeAppendBatch) {
+			return undefined;
+		}
+
+		const entries = nativeAppendBatch.entries;
+		const externalNextHashes =
+			properties?.nexts?.flatMap((nexts) => nexts.map((next) => next.hash)) ??
+			[];
+		try {
+			if (deferBlockStore && !nativeAppendBatch.nativeBlocksCommitted) {
+				await this.putAppendEntryBlocks(entries, nativeAppendBatch.blocks);
+			}
+			await this.putAppendEntries(
+				entries,
+				appendOptions,
+				externalNextHashes,
+				nativeAppendBatch,
+				entries.map(() => true),
+			);
+		} catch (error) {
+			if (nativeAppendBatch.nativeGraphUpdated) {
+				this.rollbackNativeAppendGraph(entries);
+			}
+			if (nativeAppendBatch.nativeBlocksCommitted) {
+				await this.rollbackNativeAppendBlocks(entries);
+			}
+			throw error;
+		}
+
+		for (const entry of entries) {
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+		}
+
+		const trimmed = await this.trimIfConfigured(appendOptions.trim, {
+			resolveDeletedEntries: properties?.resolveTrimmedEntries,
+		});
+		const removed = trimmed ?? [];
+		const change: Change<T> = {
+			added: entries.map((entry) => ({ head: true, entry })),
+			removed,
+		};
+		const appendFacts = this.createPreparedAppendFacts(
+			entries,
+			nativeAppendBatch,
+		);
+
+		return { entries, removed, change, appendFacts };
+	}
+
+	private appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
+		data: T[],
+		options: AppendOptions<T> = {},
+		properties: {
+			payloadDatas: Uint8Array[];
+			resolveTrimmedEntries?: boolean;
+			allowPreparedNexts?: boolean;
+			retainMaterializationBytes?: boolean;
+		},
+		prepare: (
+			inputs: NativeNoNextCommitInput[],
+		) => MaybePromise<Array<NativePreparedNoNextCommit | undefined> | undefined>,
+	): MaybePromise<PreparedCommitOnlyAppendBatchResult<T> | undefined> {
+		if (data.length === 0) {
+			return {
+				entries: [],
+				materializeEntries: [],
+				removed: [],
+				appendFacts: [],
+			};
+		}
+		if (data.length !== properties.payloadDatas.length) {
+			throw new Error("Mismatched native batch payload count");
+		}
+		const resolvedTrim = options.trim ?? this._trim.options;
+		const supportsNativeTrim =
+			!resolvedTrim ||
+			(resolvedTrim.type === "length" &&
+				!resolvedTrim.filter?.canTrim &&
+				properties.resolveTrimmedEntries === false);
+		if (
+			options.canAppend ||
+			options.onChange ||
+			options.encryption ||
+			options.signers ||
+			options.identity ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			(options.meta?.next != null && options.meta.next.length !== 0) ||
+			options.meta?.gidSeed ||
+			!supportsNativeTrim ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidated(options))
+		) {
+			return undefined;
+		}
+		const identity = this._identity;
+		if (!(identity instanceof Ed25519Keypair) || !hasPutMany(this._storage)) {
+			return undefined;
+		}
+		const nativeTrimLengthTo = this.getNativeCommitOnlyTrimLengthTo(
+			options.trim,
+			properties.resolveTrimmedEntries,
+		);
+		const entryType = options.meta?.type ?? EntryType.APPEND;
+		const rows = properties.payloadDatas.map((payloadData) => {
+			const gid = EntryV0.createGid() as string;
+			const timestamp = this._hlc.now();
+			return {
+				gid,
+				timestamp,
+				payloadData,
+				input: {
+					clockId: identity.publicKey.bytes,
+					privateKey: identity.privateKey.privateKey,
+					publicKey: identity.publicKey.publicKey,
+					wallTime: timestamp.wallTime,
+					logical: timestamp.logical,
+					gid,
+					type: entryType,
+					metaData: options.meta?.data,
+					payloadData,
+					resolveTrimmedEntries: properties.resolveTrimmedEntries,
+					trimLengthTo: nativeTrimLengthTo,
+				} satisfies NativeNoNextCommitInput,
+			};
+		});
+		const preparedValue = prepare(rows.map((row) => row.input));
+		return mapMaybePromise(preparedValue, (preparedRows) => {
+			if (!preparedRows || preparedRows.length !== rows.length) {
+				return undefined;
+			}
+			const appendFacts: PreparedAppendFacts[] = [];
+			const materializeEntries: Array<() => Entry<T>> = [];
+			const retainMaterializationBytesFns: Array<() => void> = [];
+			const indexRows: Parameters<
+				EntryIndex<T>["putNativeCommittedAppendFactsBatch"]
+			>[0] = [];
+			const trimmedEntryHashes: string[] = [];
+			const documentTrimmedHeadsProcessed: boolean[] = [];
+			for (let index = 0; index < rows.length; index++) {
+				const row = rows[index]!;
+				const prepared = preparedRows[index];
+				if (!prepared) {
+					return undefined;
+				}
+				const hash = prepared.cid ?? prepared.hash;
+				if (!hash) {
+					return undefined;
+				}
+				const shouldRetainMaterializationBytes =
+					properties.retainMaterializationBytes === true || !!resolvedTrim;
+				let retainedMaterializationBytes: Uint8Array | undefined;
+				const retainMaterializationBytes = () => {
+					if (
+						retainedMaterializationBytes ||
+						!shouldRetainMaterializationBytes ||
+						prepared.bytes
+					) {
+						return;
+					}
+					const bytes =
+						prepared.getBytes?.(hash) ??
+						(this._storage.get(hash) as Uint8Array | undefined);
+					if (
+						bytes &&
+						typeof (bytes as { then?: unknown }).then !== "function"
+					) {
+						retainedMaterializationBytes = bytes;
+					}
+				};
+				const effectiveNextHashes = prepared.next ?? EMPTY_NEXT_HASHES;
+				if (
+					effectiveNextHashes.length !== 0 &&
+					properties.allowPreparedNexts !== true
+				) {
+					return undefined;
+				}
+				const effectiveGid = prepared.gid ?? row.gid;
+				let clock: Clock | undefined;
+				const getClock = () =>
+					(clock ??= new Clock({
+						id: identity.publicKey.bytes,
+						timestamp: row.timestamp,
+					}));
+				let shallowEntry: ShallowEntry | undefined;
+				const getShallowEntry = () =>
+					(shallowEntry ??= new ShallowEntry({
+						hash,
+						payloadSize: row.payloadData.byteLength,
+						head: true,
+						meta: new ShallowMeta({
+							gid: effectiveGid,
+							data: options.meta?.data,
+							clock: getClock(),
+							next: effectiveNextHashes,
+							type: entryType,
+						}),
+					}));
+				const facts: PreparedAppendFacts = {
+					hash,
+					gid: effectiveGid,
+					next: effectiveNextHashes,
+					wallTime: row.timestamp.wallTime,
+					logical: row.timestamp.logical,
+					clockId: identity.publicKey.bytes,
+					type: entryType,
+					metaData: options.meta?.data,
+					payloadSize: row.payloadData.byteLength,
+					metaBytes: prepared.metaBytes,
+					hashDigestBytes: prepared.hashDigestBytes,
+				};
+				let materializedEntry: Entry<T> | undefined;
+				const materializeEntry = () => {
+					if (materializedEntry) {
+						return materializedEntry;
+					}
+					const bytes =
+						prepared.bytes ??
+						retainedMaterializationBytes ??
+						prepared.getBytes?.(hash) ??
+						(this._storage.get(hash) as Uint8Array | undefined);
+					if (
+						!bytes ||
+						typeof (bytes as { then?: unknown }).then === "function"
+					) {
+						throw new Error("Missing synchronous native append block bytes");
+					}
+					const entry = deserialize(bytes, Entry) as Entry<T>;
+					entry.hash = hash;
+					entry.size = prepared.byteLength;
+					entry.createdLocally = true;
+					Entry.prepareShallowEntry(entry, getShallowEntry());
+					entry.init({ encoding: this._encoding, keychain: this._keychain });
+					materializedEntry = entry;
+					return entry;
+				};
+				appendFacts.push(facts);
+				materializeEntries.push(materializeEntry);
+				retainMaterializationBytesFns.push(retainMaterializationBytes);
+				indexRows.push({
+					hash,
+					unique: true,
+					externalNextHashes: effectiveNextHashes,
+					getShallowEntry,
+					isHead: true,
+				});
+				if (prepared.trimmedEntryHashes?.length) {
+					trimmedEntryHashes.push(...prepared.trimmedEntryHashes);
+				}
+				documentTrimmedHeadsProcessed.push(
+					prepared.documentTrimmedHeadsProcessed === true,
+				);
+			}
+			const rollback = (error: unknown): never | Promise<never> => {
+				this.rollbackNativeAppendGraphHashes(
+					appendFacts.map((facts) => facts.hash),
+				);
+				return this.rollbackNativeAppendBlocksHashes(
+					appendFacts.map((facts) => facts.hash),
+				).then(() => {
+					throw error;
+				});
+			};
+			const finish = (): PreparedCommitOnlyAppendBatchResult<T> => {
+				for (const retainMaterializationBytes of retainMaterializationBytesFns) {
+					retainMaterializationBytes();
+				}
+				let entries: Entry<T>[] | undefined;
+				return {
+					get entries() {
+						return (entries ??= materializeEntries.map((materializeEntry) =>
+							materializeEntry(),
+						));
+					},
+					materializeEntries,
+					removed: [],
+					removedHashes:
+						trimmedEntryHashes.length > 0
+							? normalizedUniqueStrings(trimmedEntryHashes)
+							: undefined,
+					appendFacts,
+					documentTrimmedHeadsProcessed,
+				};
+			};
+			const finishTrim = ():
+				| PreparedCommitOnlyAppendBatchResult<T>
+				| Promise<PreparedCommitOnlyAppendBatchResult<T>>
+				| undefined => {
+				if (trimmedEntryHashes.length === 0) {
+					return finish();
+				}
+				if (
+					properties.resolveTrimmedEntries !== false &&
+					!documentTrimmedHeadsProcessed.every(Boolean)
+				) {
+					return undefined;
+				}
+				const uniqueTrimmedHashes = normalizedUniqueStrings(trimmedEntryHashes);
+				const consumedNoReturn =
+					this.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+						uniqueTrimmedHashes,
+						{
+							skipNextHeadUpdates: true,
+							deleteBlocks: false,
+						},
+					);
+				if (consumedNoReturn === undefined) {
+					return undefined;
+				}
+				return mapMaybePromise(consumedNoReturn, finish);
+			};
+			try {
+				const putResult =
+					this.entryIndex.putNativeCommittedAppendFactsBatch(indexRows);
+				const result = mapMaybePromise(putResult, finishTrim);
+				return isPromiseLike(result) ? result.catch(rollback) : result;
+			} catch (error) {
+				return rollback(error);
+			}
+		});
+	}
+
+	private createPreparedAppendFacts(
+		entries: Entry<T>[],
+		prepared?: PreparedAppendChain<T>,
+	): PreparedAppendFacts[] {
+		if (prepared?.appendFacts?.length === entries.length) {
+			return prepared.appendFacts;
+		}
+		return entries.map((entry, index) => {
+			const shallowEntry = prepared?.shallowEntries[index];
+			if (shallowEntry) {
+				return {
+					hash: shallowEntry.hash,
+					gid: shallowEntry.meta.gid,
+					next: shallowEntry.meta.next,
+					wallTime: shallowEntry.meta.clock.timestamp.wallTime,
+					logical: shallowEntry.meta.clock.timestamp.logical,
+					clockId: shallowEntry.meta.clock.id,
+					type: shallowEntry.meta.type,
+					metaData: shallowEntry.meta.data,
+					payloadSize: shallowEntry.payloadSize,
+					metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+					hashDigestBytes: (entry as EntryWithMetaBytes).getHashDigestBytes?.(),
+				};
+			}
+			return {
+				hash: entry.hash,
+				gid: entry.meta.gid,
+				next: entry.meta.next,
+				wallTime: entry.meta.clock.timestamp.wallTime,
+				logical: entry.meta.clock.timestamp.logical,
+				clockId: entry.meta.clock.id,
+				type: entry.meta.type,
+				metaData: entry.meta.data,
+				payloadSize: entry.payload.byteLength,
+				metaBytes: (entry as EntryWithMetaBytes).getMetaBytes?.(),
+				hashDigestBytes: (entry as EntryWithMetaBytes).getHashDigestBytes?.(),
+			};
+		});
+	}
+
+	async appendMany(
+		data: T[],
+		options: AppendOptions<T> = {},
+	): Promise<{ entries: Entry<T>[]; removed: ShallowOrFullEntry<T>[] }> {
+		if (data.length === 0) {
+			return { entries: [], removed: [] };
+		}
+		if (options.meta?.type === EntryType.CUT) {
+			throw new Error("appendMany does not support CUT entries");
+		}
+
+		let nexts = await this.getNextsForAppend(options);
+		const initialNexts = nexts;
+		const entries: Entry<T>[] = [];
+		const pendingDeletes: (
+			| PendingDelete<T>
+			| { entry: ShallowOrFullEntry<T>; fn: undefined }
+		)[] = [];
+		const deferBlockStore = hasPutMany(this._storage);
+		const nativeAppendChain = await this.createNativePlainAppendChain(
+			data,
+			options,
+			nexts,
+			deferBlockStore,
+		);
+
+		if (nativeAppendChain) {
+			entries.push(...nativeAppendChain.entries);
+			nexts = [entries[entries.length - 1]!];
+		} else {
+			for (const item of data) {
+				const entry = await this.createAppendEntry(item, options, nexts, {
+					deferStore: deferBlockStore,
+				});
+				entries.push(entry);
+				nexts = [entry];
 			}
 		}
 
-		/* await this.load({ reload: false }); */
+		try {
+			await this.joinMissingNexts(entries[0]!, initialNexts);
+			if (deferBlockStore && !nativeAppendChain?.nativeBlocksCommitted) {
+				await this.putAppendEntryBlocks(entries, nativeAppendChain?.blocks);
+			}
+			await this.putAppendEntries(
+				entries,
+				options,
+				initialNexts.map((entry) => entry.hash),
+				nativeAppendChain,
+			);
+		} catch (error) {
+			if (nativeAppendChain?.nativeGraphUpdated) {
+				this.rollbackNativeAppendGraph(entries);
+			}
+			if (nativeAppendChain?.nativeBlocksCommitted) {
+				await this.rollbackNativeAppendBlocks(entries);
+			}
+			throw error;
+		}
 
-		const nexts: Sorting.SortableEntry[] =
+		for (const entry of entries) {
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+		}
+
+		const trimmed = await this.trimIfConfigured(options?.trim);
+		if (trimmed) {
+			for (const entry of trimmed) {
+				pendingDeletes.push({ entry, fn: undefined });
+			}
+		}
+
+		const removed = pendingDeletes.map((x) => x.entry);
+		const changes: Change<T> = {
+			added: entries.map((entry, index) => ({
+				head: index === entries.length - 1,
+				entry,
+			})),
+			removed,
+		};
+
+		await (options?.onChange || this._onChange)?.(changes);
+		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
+		return { entries, removed };
+	}
+
+	private createNativePlainAppendChain(
+		data: T[],
+		options: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		deferBlockStore: boolean,
+		payloadDatas?: Uint8Array[],
+	): Promise<PreparedAppendChain<T> | undefined> {
+		const canAppendAlreadyValidatedForOptions =
+			canAppendAlreadyValidated(options);
+		if (
+			!deferBlockStore ||
+			options.encryption ||
+			options.signers ||
+			options.canAppend ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidatedForOptions) ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT
+		) {
+			return Promise.resolve(undefined);
+		}
+
+		const nativeGraph =
+			!this.entryIndex.properties.onGidRemoved &&
+			(this.entryIndex.properties.nativeGraph?.graph
+				.prepareEntryV0PlainChainCommit ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainEntryCommit ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainChainAndPut ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainEntryAndPut)
+				? this.entryIndex.properties.nativeGraph.graph
+				: undefined;
+		return EntryV0.createPlainAppendChainBatch<T>({
+			data,
+			meta: {
+				clocks: () =>
+					data.map(
+						() =>
+							new Clock({
+								id: this._identity.publicKey.bytes,
+								timestamp: this._hlc.now(),
+							}),
+					),
+				type: options.meta?.type,
+				gidSeed: options.meta?.gidSeed,
+				data: options.meta?.data,
+				next: nexts,
+			},
+			encoding: this._encoding,
+			payloadDatas,
+			identity: options.identity || this._identity,
+			deferStore: deferBlockStore,
+			cachePreparedEntries: false,
+			nativeGraph,
+			nativeBlockStore: this._storage,
+		});
+	}
+
+	private createNativePlainAppendCommitOnly(
+		data: T[],
+		options: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		deferBlockStore: boolean,
+		payloadDatas?: Uint8Array[],
+		includeMaterializationBytes?: boolean,
+		includeAppendFactsBytes?: boolean,
+		nativeTrimLengthTo?: number,
+	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		const canAppendAlreadyValidatedForOptions =
+			canAppendAlreadyValidated(options);
+		if (
+			data.length !== 1 ||
+			!deferBlockStore ||
+			options.encryption ||
+			options.signers ||
+			options.canAppend ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidatedForOptions) ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT
+		) {
+			return undefined;
+		}
+
+		const nativeGraph =
+			!this.entryIndex.properties.onGidRemoved &&
+			(this.entryIndex.properties.nativeGraph?.graph
+				.prepareEntryV0PlainEntryCommit ||
+				this.entryIndex.properties.nativeGraph?.graph
+					.prepareEntryV0PlainEntryAndPut)
+				? this.entryIndex.properties.nativeGraph.graph
+				: undefined;
+		if (!nativeGraph) {
+			return undefined;
+		}
+		return EntryV0.createPlainAppendChainCommitOnly<T>({
+			data,
+			meta: {
+				clocks: () => [
+					new Clock({
+						id: this._identity.publicKey.bytes,
+						timestamp: this._hlc.now(),
+					}),
+				],
+				type: options.meta?.type,
+				gidSeed: options.meta?.gidSeed,
+				data: options.meta?.data,
+				next: nexts,
+			},
+			encoding: this._encoding,
+			payloadDatas,
+			identity: options.identity || this._identity,
+			deferStore: deferBlockStore,
+			nativeGraph,
+			nativeBlockStore: this._storage,
+			includeMaterializationBytes,
+			includeAppendFactsBytes,
+			nativeTrimLengthTo,
+		});
+	}
+
+	private async createNativePlainAppendEntriesBatch(
+		data: T[],
+		options: AppendOptions<T>,
+		deferBlockStore: boolean,
+		payloadDatas?: Uint8Array[],
+		nexts?: Sorting.SortableEntry[][],
+	): Promise<PreparedAppendChain<T> | undefined> {
+		const canAppendAlreadyValidatedForOptions =
+			canAppendAlreadyValidated(options);
+		if (
+			!deferBlockStore ||
+			data.length === 0 ||
+			options.encryption ||
+			options.signers ||
+			options.canAppend ||
+			(this._hasCustomCanAppend && !canAppendAlreadyValidatedForOptions) ||
+			options.meta?.timestamp ||
+			options.meta?.type === EntryType.CUT ||
+			options.meta?.gidSeed ||
 			options.meta?.next ||
-			(await this.entryIndex
-				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
-				.all());
+			(nexts && nexts.length !== data.length) ||
+			(payloadDatas && payloadDatas.length !== data.length)
+		) {
+			return undefined;
+		}
 
-		// Calculate max time for log/graph
+		const nativeGraph =
+			!this.entryIndex.properties.onGidRemoved &&
+			this.entryIndex.properties.nativeGraph?.graph
+				? this.entryIndex.properties.nativeGraph.graph
+				: undefined;
+
+		const generatedGids = EntryV0.createGids(data.length);
+		const gids = generatedGids.map((generatedGid, index) => {
+			const entryNexts = nexts?.[index];
+			if (!entryNexts || entryNexts.length === 0) {
+				return generatedGid;
+			}
+			let gid = entryNexts[0]!.meta.gid;
+			for (let i = 1; i < entryNexts.length; i++) {
+				const nextGid = entryNexts[i]!.meta.gid;
+				if (nextGid < gid) {
+					gid = nextGid;
+				}
+			}
+			return gid;
+		});
+		const clockId = this._identity.publicKey.bytes;
+		const clocks = this._hlc.nowBatch(data.length).map(
+			(timestamp) =>
+				new Clock({
+					id: clockId,
+					timestamp,
+				}),
+		);
+		const metaDatas = data.map(() => options.meta?.data);
+		const directBatch = nativeGraph?.prepareEntryV0PlainEntriesCommit
+			? await EntryV0.createPlainAppendEntriesBatch<T>({
+					data,
+					payloadDatas,
+					meta: {
+						clocks: () => clocks,
+						gids,
+						nexts,
+						type: options.meta?.type,
+						datas: metaDatas,
+					},
+					encoding: this._encoding,
+					identity: options.identity || this._identity,
+					deferStore: deferBlockStore,
+					cachePreparedEntries: false,
+					nativeGraph,
+					nativeBlockStore: this._storage,
+				})
+			: undefined;
+		if (directBatch) {
+			return directBatch;
+		}
+
+		const entries: Entry<T>[] = [];
+		const blocks: PreparedEntryBlock[] = [];
+		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
+			[];
+		let nativeGraphUpdated = false;
+		let nativeBlocksCommitted = true;
+		for (let i = 0; i < data.length; i++) {
+			const entryNexts = nexts?.[i] ?? [];
+			const prepared = await EntryV0.createPlainAppendChainBatch<T>({
+				data: [data[i]!],
+				payloadDatas: payloadDatas ? [payloadDatas[i]!] : undefined,
+				meta: {
+					clocks: () => [clocks[i]!],
+					gid: entryNexts.length === 0 ? gids[i]! : undefined,
+					type: options.meta?.type,
+					data: metaDatas[i],
+					next: entryNexts,
+				},
+				encoding: this._encoding,
+				identity: options.identity || this._identity,
+				deferStore: deferBlockStore,
+				cachePreparedEntries: false,
+				nativeGraph,
+				nativeBlockStore: this._storage,
+			});
+			if (!prepared) {
+				return undefined;
+			}
+			entries.push(prepared.entries[0]!);
+			if (prepared.blocks) {
+				blocks.push(...prepared.blocks);
+			}
+			shallowEntries.push(...prepared.shallowEntries);
+			if (prepared.nativeEntries) {
+				nativeEntries.push(...prepared.nativeEntries);
+			}
+			nativeGraphUpdated ||= prepared.nativeGraphUpdated === true;
+			nativeBlocksCommitted &&= prepared.nativeBlocksCommitted === true;
+		}
+
+		if (!nativeBlocksCommitted && blocks.length !== entries.length) {
+			return undefined;
+		}
+		return {
+			entries,
+			blocks: blocks.length > 0 ? blocks : undefined,
+			shallowEntries,
+			nativeEntries,
+			nativeGraphUpdated,
+			nativeBlocksCommitted,
+		};
+	}
+
+	private rollbackNativeAppendGraph(entries: Entry<T>[]) {
+		this.rollbackNativeAppendGraphHashes(entries.map((entry) => entry.hash));
+	}
+
+	private rollbackNativeAppendGraphHashes(hashes: string[]) {
+		const graph = this.entryIndex.properties.nativeGraph?.graph;
+		if (!graph) {
+			return;
+		}
+		for (let i = hashes.length - 1; i >= 0; i--) {
+			graph.delete(hashes[i]!);
+		}
+	}
+
+	private async rollbackNativeAppendBlocks(entries: Entry<T>[]) {
+		await this.rollbackNativeAppendBlocksHashes(
+			entries.map((entry) => entry.hash),
+		);
+	}
+
+	private async rollbackNativeAppendBlocksHashes(hashes: string[]) {
+		const storage = this._storage as BlocksWithPutMany;
+		if (typeof storage.rmMany === "function") {
+			await storage.rmMany(hashes);
+			return;
+		}
+		await Promise.all(hashes.map((hash) => this._storage.rm(hash)));
+	}
+
+	private validateExplicitNexts(options: AppendOptions<T>) {
+		if (!options.meta?.next) {
+			return;
+		}
+		for (const n of options.meta.next) {
+			if (!n.hash) {
+				throw new Error(
+					"Expecting nexts to already be saved. missing hash for one or more entries",
+				);
+			}
+		}
+	}
+
+	private getNextsForAppend(
+		options: AppendOptions<T>,
+	): MaybePromise<Sorting.SortableEntry[]> {
+		this.validateExplicitNexts(options);
+		return (
+			options.meta?.next ||
+			this.entryIndex.getHeadsForAppend() ||
+			this.entryIndex
+				.getHeads(undefined, { type: "shape", shape: Sorting.ENTRY_SORT_SHAPE })
+				.all()
+		);
+	}
+
+	private async createAppendEntry(
+		data: T,
+		options: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		storeOptions?: {
+			deferStore?: boolean;
+		},
+	): Promise<Entry<T>> {
 		const clock = new Clock({
 			id: this._identity.publicKey.bytes,
 			timestamp: options?.meta?.timestamp || this._hlc.now(),
@@ -582,7 +2772,6 @@ export class Log<T> {
 				data: options.meta?.data,
 				next: nexts,
 			},
-
 			encoding: this._encoding,
 			encryption: options.encryption
 				? {
@@ -592,33 +2781,47 @@ export class Log<T> {
 						},
 					}
 				: undefined,
-			canAppend: options.canAppend || this._canAppend,
+			canAppend:
+				canAppendAlreadyValidated(options)
+					? undefined
+					: options.canAppend ||
+						(this._hasCustomCanAppend ? this._canAppend : undefined),
+			deferStore: storeOptions?.deferStore,
 		});
 
 		if (!entry.hash) {
 			throw new Error("Unexpected");
 		}
+		return entry;
+	}
 
-		if (entry.meta.type !== EntryType.CUT) {
-			for (const e of nexts) {
-				if (!(await this.has(e.hash))) {
-					let entry: Entry<any>;
-					if (e instanceof Entry) {
-						entry = e;
-					} else {
-						let resolved = await this.entryIndex.get(e.hash);
-						if (!resolved) {
-							// eslint-disable-next-line no-console
-							console.warn("Unexpected missing entry when joining", e.hash);
-							continue;
-						}
-						entry = resolved;
-					}
-					await this.join([entry]);
-				}
-			}
+	private async joinMissingNexts(
+		entry: Entry<T>,
+		nexts: Sorting.SortableEntry[],
+	) {
+		if (entry.meta.type === EntryType.CUT) {
+			return;
 		}
+		for (const e of nexts) {
+			if (await this.has(e.hash)) {
+				continue;
+			}
+			let nextEntry: Entry<any>;
+			if (e instanceof Entry) {
+				nextEntry = e;
+			} else {
+				const resolved = await this.entryIndex.get(e.hash);
+				if (!resolved) {
+					warn("Unexpected missing entry when joining", e.hash);
+					continue;
+				}
+				nextEntry = resolved;
+			}
+			await this.join([nextEntry]);
+		}
+	}
 
+	private async putAppendEntry(entry: Entry<T>, options: AppendOptions<T>) {
 		await this.entryIndex.put(entry, {
 			unique: true,
 			isHead: true,
@@ -629,30 +2832,250 @@ export class Log<T> {
 					? options.durability === "buffered"
 					: this._appendDurability === "buffered"),
 		});
+	}
 
-		const pendingDeletes: (
-			| PendingDelete<T>
-			| { entry: Entry<T>; fn: undefined }
-		)[] = await this.processEntry(entry);
+	private async putAppendEntries(
+		entries: Entry<T>[],
+		options: AppendOptions<T>,
+		externalNextHashes: string[],
+		preparedAppendChain?: PreparedAppendChain<T>,
+		heads?: boolean[],
+	) {
+		const prepared =
+			preparedAppendChain &&
+			entries.length === preparedAppendChain.entries.length
+				? {
+						shallowEntries: preparedAppendChain.shallowEntries,
+						nativeEntries: preparedAppendChain.nativeEntries,
+						nativeGraphUpdated: preparedAppendChain.nativeGraphUpdated,
+						nativeBlocksCommitted: preparedAppendChain.nativeBlocksCommitted,
+					}
+				: undefined;
+		if (
+			entries.length === 1 &&
+			prepared?.nativeGraphUpdated === true &&
+			!this.entryIndex.properties.onGidRemoved
+		) {
+			await this.entryIndex.putNativeCommittedAppend(entries[0]!, {
+				unique: true,
+				externalNextHashes,
+				shallowEntry: prepared.shallowEntries[0],
+				isHead: heads?.[0] ?? true,
+			});
+			return;
+		}
 
-		entry.init({ encoding: this._encoding, keychain: this._keychain });
+		await this.entryIndex.putAppendBatch(entries, {
+			unique: true,
+			externalNextHashes,
+			heads,
+			prepared,
+			deferIndexWrite:
+				options.deferIndexWrite ??
+				(options.durability
+					? options.durability === "buffered"
+					: this._appendDurability === "buffered"),
+		});
+	}
 
-		const trimmed = await this.trim(options?.trim);
+	private async putAppendEntryBlocks(
+		entries: Entry<T>[],
+		preparedBlocks?: PreparedEntryBlock[],
+	) {
+		const blocks =
+			preparedBlocks && preparedBlocks.length === entries.length
+				? preparedBlocks
+				: entries.map((entry) => {
+						const prepared = Entry.takePreparedBlock(entry);
+						if (!prepared) {
+							throw new Error("Missing prepared entry block");
+						}
+						return prepared;
+					});
 
-		if (trimmed) {
-			for (const entry of trimmed) {
-				pendingDeletes.push({ entry, fn: undefined });
+		if (blocks.length === 1 && hasPutKnown(this._storage)) {
+			const block = blocks[0]!;
+			const cidResult = this._storage.putKnown(block.cid, block.block.bytes);
+			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
+			if (cid !== block.cid) {
+				throw new Error("Unexpected block cid");
+			}
+			return;
+		}
+		if (hasPutKnownManyColumns(this._storage)) {
+			const cids = new Array<string>(blocks.length);
+			const bytes = new Array<Uint8Array>(blocks.length);
+			for (let i = 0; i < blocks.length; i++) {
+				const block = blocks[i]!;
+				cids[i] = block.cid;
+				bytes[i] = block.block.bytes;
+			}
+			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
+			const result = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (result.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < result.length; i++) {
+				if (result[i] !== cids[i]) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
+		if (hasPutKnownMany(this._storage)) {
+			const cidsResult = this._storage.putKnownMany(
+				blocks.map((block) => [block.cid, block.block.bytes] as const),
+			);
+			const cids = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (cids.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < cids.length; i++) {
+				if (cids[i] !== blocks[i]!.cid) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
+		const cids = await (this._storage as BlocksWithPutMany).putMany!(blocks);
+		if (cids.length !== blocks.length) {
+			throw new Error("Unexpected block batch result length");
+		}
+		for (let i = 0; i < cids.length; i++) {
+			if (cids[i] !== blocks[i].cid) {
+				throw new Error("Unexpected block batch cid");
 			}
 		}
-		const removed = pendingDeletes.map((x) => x.entry);
-		const changes: Change<T> = {
-			added: [{ head: true, entry }],
-			removed,
-		};
+	}
 
-		await (options?.onChange || this._onChange)?.(changes);
-		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
-		return { entry, removed };
+	private async putKnownEntryBytesBatch(
+		blocks: Array<{ cid: string; bytes: Uint8Array }>,
+	) {
+		if (blocks.length === 0) {
+			return;
+		}
+		if (blocks.length === 1 && hasPutKnown(this._storage)) {
+			const block = blocks[0]!;
+			const cidResult = this._storage.putKnown(block.cid, block.bytes);
+			const cid = isPromiseLike(cidResult) ? await cidResult : cidResult;
+			if (cid !== block.cid) {
+				throw new Error("Unexpected block cid");
+			}
+			return;
+		}
+		if (hasPutKnownManyColumns(this._storage)) {
+			const cids = new Array<string>(blocks.length);
+			const bytes = new Array<Uint8Array>(blocks.length);
+			for (let i = 0; i < blocks.length; i++) {
+				const block = blocks[i]!;
+				cids[i] = block.cid;
+				bytes[i] = block.bytes;
+			}
+			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
+			const result = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (result.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < result.length; i++) {
+				if (result[i] !== cids[i]) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
+		if (hasPutKnownMany(this._storage)) {
+			const cidsResult = this._storage.putKnownMany(
+				blocks.map((block) => [block.cid, block.bytes] as const),
+			);
+			const cids = isPromiseLike(cidsResult) ? await cidsResult : cidsResult;
+			if (cids.length !== blocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < cids.length; i++) {
+				if (cids[i] !== blocks[i]!.cid) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+			return;
+		}
+		const preparedBlocks = blocks.map((block) =>
+			Entry.preparedBlockFromBytes(block.bytes, block.cid),
+		);
+		const cids = await (this._storage as BlocksWithPutMany).putMany!(
+			preparedBlocks,
+		);
+		if (cids.length !== blocks.length) {
+			throw new Error("Unexpected block batch result length");
+		}
+		for (let i = 0; i < cids.length; i++) {
+			if (cids[i] !== blocks[i]!.cid) {
+				throw new Error("Unexpected block batch cid");
+			}
+		}
+	}
+
+	private putPreparedAppendBlocks(
+		preparedBlocks?: PreparedEntryBlock[],
+	): MaybePromise<void> {
+		if (!preparedBlocks || preparedBlocks.length === 0) {
+			throw new Error("Missing prepared entry block");
+		}
+		if (preparedBlocks.length === 1 && hasPutKnown(this._storage)) {
+			const block = preparedBlocks[0]!;
+			const cidResult = this._storage.putKnown(block.cid, block.block.bytes);
+			const checkCid = (cid: string) => {
+				if (cid !== block.cid) {
+					throw new Error("Unexpected block cid");
+				}
+			};
+			if (isPromiseLike(cidResult)) {
+				return cidResult.then(checkCid);
+			}
+			checkCid(cidResult);
+			return;
+		}
+		const checkCids = (cids: string[]) => {
+			if (cids.length !== preparedBlocks.length) {
+				throw new Error("Unexpected block batch result length");
+			}
+			for (let i = 0; i < cids.length; i++) {
+				if (cids[i] !== preparedBlocks[i]!.cid) {
+					throw new Error("Unexpected block batch cid");
+				}
+			}
+		};
+		if (hasPutKnownManyColumns(this._storage)) {
+			const cids = new Array<string>(preparedBlocks.length);
+			const bytes = new Array<Uint8Array>(preparedBlocks.length);
+			for (let i = 0; i < preparedBlocks.length; i++) {
+				const block = preparedBlocks[i]!;
+				cids[i] = block.cid;
+				bytes[i] = block.block.bytes;
+			}
+			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
+			if (isPromiseLike(cidsResult)) {
+				return cidsResult.then(checkCids);
+			}
+			checkCids(cidsResult);
+			return;
+		}
+		if (hasPutKnownMany(this._storage)) {
+			const cidsResult = this._storage.putKnownMany(
+				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),
+			);
+			if (isPromiseLike(cidsResult)) {
+				return cidsResult.then(checkCids);
+			}
+			checkCids(cidsResult);
+			return;
+		}
+		const cidsResult = (this._storage as BlocksWithPutMany).putMany!(
+			preparedBlocks,
+		);
+		if (isPromiseLike(cidsResult)) {
+			return cidsResult.then(checkCids);
+		}
+		checkCids(cidsResult);
 	}
 
 	async remove(
@@ -700,8 +3123,40 @@ export class Log<T> {
 		return change;
 	}
 
-	async trim(option: TrimOptions | undefined = this._trim.options) {
-		return this._trim.trim(option);
+	async trim(
+		option: TrimOptions | undefined = this._trim.options,
+		properties?: { resolveDeletedEntries?: boolean },
+	) {
+		return this._trim.trim(option, properties);
+	}
+
+	private trimIfConfigured(
+		option?: TrimOptions,
+		properties?: { resolveDeletedEntries?: boolean },
+	): MaybePromise<ShallowOrFullEntry<T>[] | undefined> {
+		const resolved = option ?? this._trim.options;
+		return resolved ? this.trim(resolved, properties) : undefined;
+	}
+
+	private getNativeCommitOnlyTrimLengthTo(
+		option: TrimOptions | undefined,
+		resolveDeletedEntries: boolean | undefined,
+	): number | undefined {
+		const resolved = option ?? this._trim.options;
+		if (
+			!resolved ||
+			resolved.type !== "length" ||
+			resolved.filter?.canTrim ||
+			resolveDeletedEntries !== false
+		) {
+			return;
+		}
+
+		const from = resolved.from ?? resolved.to;
+		if (this.length + 1 < from) {
+			return;
+		}
+		return resolved.to;
 	}
 
 	async join(
@@ -709,13 +3164,14 @@ export class Log<T> {
 			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
 			| Log<T>
 			| ResultsIterator<Entry<any>>,
-		options?: {
-			verifySignatures?: boolean;
-			trim?: TrimOptions;
-			timeout?: number;
-			onChange?: OnChange<T>;
-			reset?: boolean;
-		},
+		options?: JoinOptions<T>,
+	): Promise<void>;
+	async join(
+		entriesOrLog:
+			| (string | Entry<T> | ShallowEntry | EntryWithRefs<T>)[]
+			| Log<T>
+			| ResultsIterator<Entry<any>>,
+		options?: TrustedJoinOptions<T>,
 	): Promise<void> {
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
@@ -749,19 +3205,20 @@ export class Log<T> {
 			for (const element of entries) references.set(element.hash, element);
 		} else if (Array.isArray(entriesOrLog)) {
 			if (entriesOrLog.length === 0) return;
-			const existingHashes = options?.reset
-				? new Set<string>()
-				: await this.entryIndex.hasMany(
-						entriesOrLog.map((element) =>
-							typeof element === "string"
-								? element
-								: element instanceof Entry
-									? element.hash
-									: element instanceof ShallowEntry
+			const existingHashes =
+				options?.reset || options?.__peerbitEntriesAlreadyMissing === true
+					? new Set<string>()
+					: await this.entryIndex.hasMany(
+							entriesOrLog.map((element) =>
+								typeof element === "string"
+									? element
+									: element instanceof Entry
 										? element.hash
-										: element.entry.hash,
-						),
-					);
+										: element instanceof ShallowEntry
+											? element.hash
+											: element.entry.hash,
+							),
+						);
 
 			entries = [];
 			for (const element of entriesOrLog) {
@@ -844,11 +3301,34 @@ export class Log<T> {
 			entries = all;
 		}
 
+		const profile = options?.__peerbitProfile;
+		const headsStartedAt = internalProfileStart(profile);
 		const heads: Map<string, boolean> = new Map();
 		for (const entry of entries) {
 			if (heads.has(entry.hash)) continue;
 			heads.set(entry.hash, true);
-			for (const next of await entry.getNext()) heads.set(next, false);
+			const nexts =
+				options?.__peerbitBatchIndependent === true
+					? entry.meta.next
+					: await entry.getNext();
+			for (const next of nexts) heads.set(next, false);
+		}
+		emitInternalProfileDuration(profile, headsStartedAt, {
+			name: "log.join.prepareHeads",
+			component: "log",
+			entries: entries.length,
+			count: heads.size,
+			messages: 1,
+			details: {
+				batchIndependent: options?.__peerbitBatchIndependent === true,
+			},
+		});
+
+		if (
+			options?.__peerbitBatchIndependent === true &&
+			(await this.tryJoinIndependentAppendBatch(entries, heads, options))
+		) {
+			return;
 		}
 
 		for (const entry of entries) {
@@ -875,6 +3355,515 @@ export class Log<T> {
 			});
 			await p;
 		}
+	}
+
+	// Internal trusted receive path for callers that can supply prepared append facts.
+	private async joinPreparedAppendFactsBatch(
+		entries: PreparedAppendJoinFacts[],
+		options?: TrustedPreparedAppendFactsBatchJoinOptions,
+	): Promise<boolean> {
+		if (
+			entries.length === 0 ||
+			!canAppendAlreadyValidated(options) ||
+			entries.some((entry) => this._joining.has(entry.hash))
+		) {
+			return false;
+		}
+
+		const resolvedOptions = options!;
+		const profile = resolvedOptions.__peerbitProfile;
+		const prepareStartedAt = internalProfileStart(profile);
+		const entryHashes = new Array<string>(entries.length);
+		let hasAnyNext = false;
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			if (!entry.hash || !entry.bytes || entry.meta.type !== EntryType.APPEND) {
+				return false;
+			}
+			entryHashes[i] = entry.hash;
+			if (entry.meta.next.length > 0) {
+				hasAnyNext = true;
+			}
+		}
+		const batchHashes = new Set(entryHashes);
+		let heads: Map<string, boolean> | undefined;
+		if (hasAnyNext) {
+			heads = new Map();
+			for (const entry of entries) {
+				if (heads.has(entry.hash)) {
+					continue;
+				}
+				heads.set(entry.hash, true);
+				for (const next of entry.meta.next) {
+					heads.set(next, false);
+				}
+			}
+		}
+		emitInternalProfileDuration(profile, prepareStartedAt, {
+			name: "log.joinPreparedFacts.prepare",
+			component: "log",
+			entries: entries.length,
+			count: heads?.size ?? entries.length,
+			messages: 1,
+		});
+
+		const nativeCommitValidatesPlan =
+			resolvedOptions.__peerbitNativePreparedJoinCommitValidatesPlan === true &&
+			!!resolvedOptions.__peerbitNativePreparedJoinCommit;
+		const headFlags: boolean[] = [];
+		const headFlagsBytes = new Uint8Array(entries.length);
+		const pushHeadFlag = (index: number, isHead: boolean) => {
+			headFlags.push(isHead);
+			headFlagsBytes[index] = isHead ? 1 : 0;
+		};
+		if (nativeCommitValidatesPlan) {
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i]!;
+				pushHeadFlag(i, heads?.get(entry.hash) ?? true);
+			}
+			emitInternalProfileDuration(profile, internalProfileStart(profile), {
+				name: "log.joinPreparedFacts.plan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { nativeCommitValidatesPlan: true },
+			});
+			emitInternalProfileDuration(profile, internalProfileStart(profile), {
+				name: "log.joinPreparedFacts.validatePlan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { nativeCommitValidatesPlan: true },
+			});
+		} else {
+			const planStartedAt = internalProfileStart(profile);
+			const joinPlans = await this.entryIndex.planJoinBatch(
+				entries,
+				false,
+				profile,
+			);
+			emitInternalProfileDuration(profile, planStartedAt, {
+				name: "log.joinPreparedFacts.plan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+			const validatePlanStartedAt = internalProfileStart(profile);
+			for (let i = 0; i < entries.length; i++) {
+				const entry = entries[i]!;
+				const joinPlan = joinPlans[i]!;
+				if (
+					joinPlan.skip ||
+					joinPlan.coveredByCut ||
+					!joinPlan.cutChecked ||
+					joinPlan.missingParents.some((hash) => !batchHashes.has(hash))
+				) {
+					return false;
+				}
+				pushHeadFlag(i, heads?.get(entry.hash) ?? true);
+			}
+			emitInternalProfileDuration(profile, validatePlanStartedAt, {
+				name: "log.joinPreparedFacts.validatePlan",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+		}
+
+		let nativeValidatedCommitRejected = false;
+		const batchPromise = (async () => {
+			const clockStartedAt = internalProfileStart(profile);
+			for (const entry of entries) {
+				this._hlc.update(entry.meta.clock.timestamp);
+			}
+			emitInternalProfileDuration(profile, clockStartedAt, {
+				name: "log.joinPreparedFacts.clock",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+
+			const trustedMissing =
+				resolvedOptions.__peerbitEntriesAlreadyMissing === true &&
+				batchHashes.size === entries.length;
+			let nativePreparedCommitted = false;
+			if (resolvedOptions.__peerbitNativePreparedJoinCommit) {
+				const nativeCommitStartedAt = internalProfileStart(profile);
+				nativePreparedCommitted =
+					(await resolvedOptions.__peerbitNativePreparedJoinCommit({
+						entries,
+						hashes: entryHashes,
+						headFlags,
+						headFlagsBytes,
+						trustedMissing,
+						validatePlan: nativeCommitValidatesPlan,
+					})) === true;
+				emitInternalProfileDuration(profile, nativeCommitStartedAt, {
+					name: "log.joinPreparedFacts.nativePreparedCommit",
+					component: "log",
+					entries: entries.length,
+					messages: 1,
+					details: { nativePreparedCommitted },
+				});
+			}
+			if (nativeCommitValidatesPlan && !nativePreparedCommitted) {
+				nativeValidatedCommitRejected = true;
+				return;
+			}
+			const blocksStartedAt = internalProfileStart(profile);
+			if (!nativePreparedCommitted) {
+				await this.putKnownEntryBytesBatch(
+					entries.map((entry) => ({
+						cid: entry.hash,
+						bytes: entry.bytes,
+					})),
+				);
+			}
+			emitInternalProfileDuration(profile, blocksStartedAt, {
+				name: "log.joinPreparedFacts.blocks",
+				component: "log",
+				entries: entries.length,
+				bytes: entries.reduce((sum, entry) => sum + entry.byteLength, 0),
+				messages: 1,
+				details: { nativePreparedCommitted },
+			});
+
+			const indexStartedAt = internalProfileStart(profile);
+			let nativeCommittedFactsIndexed = false;
+			if (
+				nativePreparedCommitted &&
+				resolvedOptions.__peerbitDeferIndexWrite === true
+			) {
+				const indexBatchHashes = entries.length > 1 ? batchHashes : undefined;
+				const indexRows = entries.map((entry, index) => {
+					const isHead = headFlags[index] ?? true;
+					const externalNextHashes = indexBatchHashes
+						? entry.meta.next.filter((next) => !indexBatchHashes.has(next))
+						: entry.meta.next;
+					return {
+						hash: entry.hash,
+						unique: trustedMissing,
+						externalNextHashes,
+						getShallowEntry: () => {
+							const shallowEntry =
+								entry.shallowEntry ?? entry.getShallowEntry?.(isHead);
+							if (!shallowEntry) {
+								throw new Error("Missing prepared append shallow entry");
+							}
+							shallowEntry.head = isHead;
+							entry.shallowEntry = shallowEntry;
+							return shallowEntry;
+						},
+						isHead,
+					};
+				});
+				await this.entryIndex.putNativeCommittedAppendFactsBatch(indexRows);
+				nativeCommittedFactsIndexed = true;
+			} else {
+				const externalNextHashes =
+					entries.length === 1 ? entries[0]!.meta.next : undefined;
+				await this.entryIndex.putAppendFactsBatch(entries, {
+					unique: trustedMissing,
+					externalNextHashes,
+					heads: headFlags,
+					deferIndexWrite: resolvedOptions.__peerbitDeferIndexWrite,
+					nativeGraphUpdated: nativePreparedCommitted,
+					profile,
+				});
+			}
+			emitInternalProfileDuration(profile, indexStartedAt, {
+				name: "log.joinPreparedFacts.entryIndex",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { trustedMissing, nativeCommittedFactsIndexed },
+			});
+
+			if (resolvedOptions.__peerbitOnPreparedJoinCommitted) {
+				const committedStartedAt = internalProfileStart(profile);
+				await resolvedOptions.__peerbitOnPreparedJoinCommitted({
+					entries,
+					hashes: entryHashes,
+					headFlags,
+					nativePreparedCommitted,
+				});
+				emitInternalProfileDuration(profile, committedStartedAt, {
+					name: "log.joinPreparedFacts.committed",
+					component: "log",
+					entries: entries.length,
+					messages: 1,
+					details: { nativePreparedCommitted },
+				});
+			}
+
+			const changeStartedAt = internalProfileStart(profile);
+			if (resolvedOptions.__peerbitOnAppendHashes) {
+				await resolvedOptions.__peerbitOnAppendHashes(
+					entries.map((entry) => entry.hash),
+				);
+			} else {
+				const change: Change<T> = {
+					added: entries.map((entry, index) => {
+						const materializeEntry = entry.materializeEntry;
+						if (!materializeEntry) {
+							throw new Error("Missing prepared append materializer");
+						}
+						return {
+							head: headFlags[index]!,
+							entry: materializeEntry() as Entry<T>,
+						};
+					}),
+					removed: [],
+				};
+				await this._onChange?.(change);
+			}
+			emitInternalProfileDuration(profile, changeStartedAt, {
+				name: "log.joinPreparedFacts.change",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { hashOnly: !!resolvedOptions.__peerbitOnAppendHashes },
+			});
+		})().finally(() => {
+			for (const entry of entries) {
+				this._joining.delete(entry.hash);
+			}
+		});
+
+		for (const entry of entries) {
+			this._joining.set(entry.hash, batchPromise);
+		}
+		await batchPromise;
+		if (nativeValidatedCommitRejected) {
+			return false;
+		}
+		return true;
+	}
+
+	private async tryJoinIndependentAppendBatch(
+		entries: Entry<T>[],
+		heads: Map<string, boolean>,
+		options: TrustedJoinOptions<T>,
+	): Promise<boolean> {
+		if (
+			entries.length < 2 ||
+			options.reset ||
+			options.trim ||
+			options.verifySignatures ||
+			entries.some((entry) => this._joining.has(entry.hash))
+		) {
+			return false;
+		}
+
+		const profile = options.__peerbitProfile;
+		const prepareStartedAt = internalProfileStart(profile);
+		const batchHashes = new Set(entries.map((entry) => entry.hash));
+		const headFlags: boolean[] = [];
+		for (const entry of entries) {
+			if (!entry.hash || !Entry.hasPreparedBlock(entry)) {
+				return false;
+			}
+			entry.init(this);
+			if (entry.meta.type !== EntryType.APPEND) {
+				return false;
+			}
+		}
+		emitInternalProfileDuration(profile, prepareStartedAt, {
+			name: "log.joinIndependent.prepare",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
+
+		const planStartedAt = internalProfileStart(profile);
+		const joinPlans = await this.entryIndex.planJoinBatch(
+			entries,
+			false,
+			profile,
+		);
+		emitInternalProfileDuration(profile, planStartedAt, {
+			name: "log.joinIndependent.plan",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
+		const validatePlanStartedAt = internalProfileStart(profile);
+		for (let i = 0; i < entries.length; i++) {
+			const entry = entries[i]!;
+			const joinPlan = joinPlans[i]!;
+			if (
+				joinPlan.skip ||
+				joinPlan.coveredByCut ||
+				!joinPlan.cutChecked ||
+				joinPlan.missingParents.some((hash) => !batchHashes.has(hash))
+			) {
+				return false;
+			}
+			headFlags.push(heads.get(entry.hash) ?? true);
+		}
+		emitInternalProfileDuration(profile, validatePlanStartedAt, {
+			name: "log.joinIndependent.validatePlan",
+			component: "log",
+			entries: entries.length,
+			messages: 1,
+		});
+
+		if (!canAppendAlreadyValidated(options)) {
+			const canAppendStartedAt = internalProfileStart(profile);
+			for (const entry of entries) {
+				if (this._canAppend && !(await this._canAppend(entry))) {
+					return false;
+				}
+			}
+			emitInternalProfileDuration(profile, canAppendStartedAt, {
+				name: "log.joinIndependent.canAppend",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+		}
+
+		const preparedBatch = this.takePreparedIndependentAppendBatch(
+			entries,
+			headFlags,
+		);
+		if (!preparedBatch) {
+			return false;
+		}
+
+		const batchPromise = (async () => {
+			const clockStartedAt = internalProfileStart(profile);
+			for (const entry of entries) {
+				this._hlc.update(entry.meta.clock.timestamp);
+			}
+			emitInternalProfileDuration(profile, clockStartedAt, {
+				name: "log.joinIndependent.clock",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+			});
+
+			const blocksStartedAt = internalProfileStart(profile);
+			await this.putAppendEntryBlocks(entries, preparedBatch.blocks);
+			emitInternalProfileDuration(profile, blocksStartedAt, {
+				name: "log.joinIndependent.blocks",
+				component: "log",
+				entries: entries.length,
+				bytes: entries.reduce((sum, entry) => sum + (entry.size ?? 0), 0),
+				messages: 1,
+			});
+			const indexStartedAt = internalProfileStart(profile);
+			const trustedMissing =
+				options.__peerbitEntriesAlreadyMissing === true &&
+				batchHashes.size === entries.length;
+			await this.entryIndex.putAppendBatch(entries, {
+				unique: trustedMissing,
+				heads: headFlags,
+				prepared: preparedBatch.prepared,
+				deferIndexWrite: options.__peerbitDeferIndexWrite,
+				profile,
+			});
+			emitInternalProfileDuration(profile, indexStartedAt, {
+				name: "log.joinIndependent.entryIndex",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: { trustedMissing },
+			});
+
+			const changeStartedAt = internalProfileStart(profile);
+			if (options.__peerbitOnAppendHashes && !options.onChange) {
+				await options.__peerbitOnAppendHashes(
+					entries.map((entry) => entry.hash),
+				);
+			} else {
+				const change: Change<T> = {
+					added: entries.map((entry, index) => ({
+						head: headFlags[index]!,
+						entry,
+					})),
+					removed: [],
+				};
+				await options.onChange?.(change);
+				await this._onChange?.(change);
+			}
+			emitInternalProfileDuration(profile, changeStartedAt, {
+				name: "log.joinIndependent.change",
+				component: "log",
+				entries: entries.length,
+				messages: 1,
+				details: {
+					hashOnly: !!options.__peerbitOnAppendHashes && !options.onChange,
+				},
+			});
+		})().finally(() => {
+			for (const entry of entries) {
+				this._joining.delete(entry.hash);
+			}
+		});
+
+		for (const entry of entries) {
+			this._joining.set(entry.hash, batchPromise);
+		}
+		await batchPromise;
+		return true;
+	}
+
+	private takePreparedIndependentAppendBatch(
+		entries: Entry<T>[],
+		headFlags: boolean[],
+	): PreparedIndependentAppendBatch | undefined {
+		if (!entries.every((entry) => Entry.hasPreparedBlock(entry))) {
+			return;
+		}
+		const hasPreparedShallowEntries = entries.every((entry) =>
+			Entry.hasPreparedShallowEntry(entry),
+		);
+		const hasPreparedNativeEntries =
+			hasPreparedShallowEntries &&
+			entries.every((entry) => Entry.hasPreparedNativeLogEntry(entry));
+
+		const blocks = entries.map((entry) => {
+			const prepared = Entry.takePreparedBlock(entry);
+			if (!prepared) {
+				throw new Error("Missing prepared entry block");
+			}
+			return prepared;
+		});
+		if (!hasPreparedShallowEntries) {
+			return { blocks };
+		}
+
+		const shallowEntries = entries.map((entry, index) => {
+			const shallowEntry = Entry.takePreparedShallowEntry(
+				entry,
+				headFlags[index] ?? true,
+			);
+			if (!shallowEntry) {
+				throw new Error("Missing prepared shallow entry");
+			}
+			return shallowEntry;
+		});
+		const nativeEntries = hasPreparedNativeEntries
+			? entries.map((entry, index) => {
+					const nativeEntry = Entry.takePreparedNativeLogEntry(
+						entry,
+						headFlags[index] ?? true,
+					);
+					if (!nativeEntry) {
+						throw new Error("Missing prepared native log entry");
+					}
+					return nativeEntry;
+				})
+			: undefined;
+
+		return {
+			blocks,
+			prepared: {
+				shallowEntries,
+				nativeEntries,
+			},
+		};
 	}
 
 	/**
@@ -909,10 +3898,8 @@ export class Log<T> {
 			throw new Error("Unexpected");
 		}
 
-		if (
-			(await this.entryIndex.getShallow(entry.hash)) != null &&
-			!options.reset
-		) {
+		const joinPlan = await this.entryIndex.planJoin(entry, options.reset);
+		if (joinPlan.skip) {
 			return false;
 		}
 
@@ -924,10 +3911,14 @@ export class Log<T> {
 			}
 		}
 
-		const headsWithGid: JoinableEntry[] = await this.entryIndex
-			.getHeads(entry.meta.gid, { type: "shape", shape: ENTRY_JOIN_SHAPE })
-			.all();
-		if (headsWithGid) {
+		if (joinPlan.coveredByCut) {
+			return false;
+		}
+
+		if (!joinPlan.cutChecked) {
+			const headsWithGid: JoinableEntry[] = await this.entryIndex.getJoinHeads(
+				entry.meta.gid,
+			);
 			for (const v of headsWithGid) {
 				// TODO second argument should be a time compare instead? what about next nexts?
 				// and check the cut entry is newer than the current 'entry'
@@ -946,29 +3937,57 @@ export class Log<T> {
 				options.remote && typeof options.remote === "object"
 					? options.remote
 					: undefined;
+			const parents: Array<{ hash: string; entry?: Entry<T> }> = [];
+			const unresolvedParentHashes: string[] = [];
 
-			for (const a of entry.meta.next) {
+			for (const a of joinPlan.missingParents) {
 				const prev = this._joining.get(a);
 				if (prev) {
 					await prev;
 					continue;
 				}
-				if ((await this.entryIndex.getShallow(a)) != null && !options.reset) {
+
+				const referenced = options.references?.get(a);
+				parents.push({ hash: a, entry: referenced });
+				if (!referenced) {
+					unresolvedParentHashes.push(a);
+				}
+			}
+
+			const localParents =
+				unresolvedParentHashes.length > 0
+					? await this.entryIndex.getMany(unresolvedParentHashes, {
+							type: "full",
+							ignoreMissing: true,
+						})
+					: [];
+			const localParentByHash = new Map<string, Entry<T>>();
+			for (const parent of localParents) {
+				if (parent) {
+					localParentByHash.set(parent.hash, parent);
+				}
+			}
+
+			for (const parent of parents) {
+				const a = parent.hash;
+				const prev = this._joining.get(a);
+				if (prev) {
+					await prev;
 					continue;
 				}
 
-				const from = await options.resolveRemoteFrom?.(a, remote?.signal);
-				let nested: Entry<T>;
+				let nested = parent.entry ?? localParentByHash.get(a);
 				try {
-					nested =
-						options.references?.get(a) ??
-						(await Entry.fromMultihash<T>(this._storage, a, {
+					if (!nested) {
+						const from = await options.resolveRemoteFrom?.(a, remote?.signal);
+						nested = await Entry.fromMultihash<T>(this._storage, a, {
 							remote: {
 								timeout: remote?.timeout,
 								signal: remote?.signal,
 								...(from && from.length > 0 ? { from } : {}),
 							},
-						}));
+						});
+					}
 				} catch (error) {
 					if (isRecoverableJoinResolveError(error)) {
 						return false;
@@ -1003,9 +4022,9 @@ export class Log<T> {
 
 		const pendingDeletes: (
 			| PendingDelete<T>
-			| { entry: Entry<T>; fn: undefined }
+			| { entry: ShallowOrFullEntry<T>; fn: undefined }
 		)[] = await this.processEntry(entry);
-		const trimmed = await this.trim(options.trim);
+		const trimmed = await this.trimIfConfigured(options.trim);
 
 		if (trimmed) {
 			for (const removedEntry of trimmed) {
@@ -1064,7 +4083,22 @@ export class Log<T> {
 			| { hash: string; meta: { next: string[] } }[],
 		skipFirst = false,
 	) {
-		const stack = Array.isArray(from) ? [...from] : [from];
+		const entries = Array.isArray(from) ? [...from] : [from];
+		const nativeDeletePlan = this.entryIndex.planDeleteRecursively(
+			entries,
+			skipFirst,
+		);
+		if (nativeDeletePlan) {
+			const toDelete: PendingDelete<T>[] = [];
+			for (const hash of nativeDeletePlan) {
+				const deleteFn = await this.prepareDelete(hash);
+				deleteFn.entry &&
+					toDelete.push({ entry: deleteFn.entry, fn: deleteFn.fn });
+			}
+			return toDelete;
+		}
+
+		const stack = entries;
 		const promises: (Promise<void> | void)[] = [];
 		let counter = 0;
 		const toDelete: PendingDelete<T>[] = [];
@@ -1079,8 +4113,7 @@ export class Log<T> {
 			}
 
 			for (const next of entry.meta.next) {
-				const nextFromNext = this.entryIndex.getHasNext(next);
-				const entriesThatHasNext = await nextFromNext.all();
+				const entriesThatHasNext = await this.entryIndex.getJoinChildren(next);
 
 				// if there are no entries which is not of "CUT" type, we can safely delete the next entry
 				// figureately speaking, these means where are cutting all branches to a stem, so we can delete the stem as well
@@ -1163,8 +4196,8 @@ export class Log<T> {
 	async close() {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-		this._closeController.abort();
-		await this._entryIndex.flushPendingWrites();
+		this._closeController?.abort();
+		await this._entryIndex?.flushPendingWrites();
 		await this._indexer?.stop?.();
 		this._indexer = undefined as any;
 		this._loadedOnce = false;
@@ -1174,7 +4207,7 @@ export class Log<T> {
 		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
 		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
 		this._closeController.abort();
-		await this.entryIndex?.clear();
+		await this._entryIndex?.clear();
 		await this._indexer?.drop();
 		await this._indexer?.stop?.();
 	}

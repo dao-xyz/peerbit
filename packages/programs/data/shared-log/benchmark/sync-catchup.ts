@@ -3,33 +3,80 @@
 // Run with:
 //   cd packages/programs/data/shared-log
 //   CATCHUP_COUNT=5000 CATCHUP_TIMEOUT=60000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
+//   CATCHUP_SETUPS=u32-simple-native-graph,u32-simple-raw CATCHUP_COUNT=1000 node --loader ts-node/esm ./benchmark/sync-catchup.ts
+//   CATCHUP_SETUPS=u32-simple-raw-native-backbone-coordinate-wal CATCHUP_COUNT=10000 CATCHUP_PROFILE=1 BENCH_JSON=1 node --loader ts-node/esm ./benchmark/sync-catchup.ts
+//   CATCHUP_PROFILE=1 CATCHUP_POLL_INTERVAL=10 CATCHUP_SETUPS=u32-simple-raw CATCHUP_COUNT=1000 BENCH_JSON=1 node --loader ts-node/esm ./benchmark/sync-catchup.ts
 //
 // Notes:
 // - This is an integration benchmark (network + sync + indexing). It is more variable than pure
 //   algorithmic benches; prefer running it a few times and comparing medians.
 // - For CI regression tracking, consider smaller `CATCHUP_COUNT` values and low run counts.
 import { keys } from "@libp2p/crypto";
+import {
+	NativeBackboneCoordinatePersistence,
+	NativeBackboneMemoryCoordinatePersistenceStore,
+} from "@peerbit/native-backbone";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { performance } from "node:perf_hooks";
 import { v4 as uuid } from "uuid";
+import {
+	ExchangeHeadsMessage,
+	RawExchangeHeadsMessage,
+} from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { RatelessIBLTSynchronizer } from "../src/sync/rateless-iblt.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
+import type { SyncProfileEvent } from "../src/sync/index.js";
 import type { TestSetupConfig } from "../test/utils.js";
 import { EventStore } from "../test/utils/stores/event-store.js";
 
 const entryCount = Number.parseInt(process.env.CATCHUP_COUNT || "5000", 10);
 const timeoutMs = Number.parseInt(process.env.CATCHUP_TIMEOUT || "60000", 10);
 const runs = Number.parseInt(process.env.CATCHUP_RUNS || "1", 10);
+const pollIntervalMs = Number.parseInt(
+	process.env.CATCHUP_POLL_INTERVAL || "250",
+	10,
+);
+const captureProfile = process.env.CATCHUP_PROFILE === "1";
 
-export const testSetups: TestSetupConfig<any>[] = [
+type CatchupSetup = TestSetupConfig<any> & {
+	nativeGraph?: boolean;
+	rawExchangeHeads?: boolean;
+	nativeBackboneCoordinateWal?: boolean;
+};
+
+const allSetups: CatchupSetup[] = [
 	{
 		domain: createReplicationDomainHash("u32"),
 		type: "u32",
 		syncronizer: SimpleSyncronizer,
 		name: "u32-simple",
+	},
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple-native-graph",
+		nativeGraph: true,
+	},
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple-raw",
+		nativeGraph: true,
+		rawExchangeHeads: true,
+	},
+	{
+		domain: createReplicationDomainHash("u32"),
+		type: "u32",
+		syncronizer: SimpleSyncronizer,
+		name: "u32-simple-raw-native-backbone-coordinate-wal",
+		nativeGraph: true,
+		rawExchangeHeads: true,
+		nativeBackboneCoordinateWal: true,
 	},
 	{
 		domain: createReplicationDomainHash("u64"),
@@ -38,6 +85,21 @@ export const testSetups: TestSetupConfig<any>[] = [
 		name: "u64-iblt",
 	},
 ];
+
+const selectedSetupNames = process.env.CATCHUP_SETUPS?.split(",")
+	.map((x) => x.trim())
+	.filter(Boolean);
+const defaultSetupNames = ["u32-simple", "u64-iblt"];
+const testSetups =
+	selectedSetupNames && selectedSetupNames.length > 0
+		? selectedSetupNames.map((name) => {
+				const setup = allSetups.find((candidate) => candidate.name === name);
+				if (!setup) {
+					throw new Error(`Unknown catchup setup '${name}'`);
+				}
+				return setup;
+			})
+		: allSetups.filter((setup) => defaultSetupNames.includes(setup.name));
 
 const fixedKeys = [
 	{
@@ -68,16 +130,132 @@ const fixedKeys = [
 	},
 ];
 
-const runOnce = async (setup: TestSetupConfig<any>) => {
+const wrapSendCounters = (db: EventStore<string, any>) => {
+	const counters = {
+		exchangeHeads: 0,
+		rawExchangeHeads: 0,
+	};
+	const send = db.log.rpc.send.bind(db.log.rpc);
+	db.log.rpc.send = async (message, options) => {
+		if (message instanceof RawExchangeHeadsMessage) {
+			counters.rawExchangeHeads += 1;
+		} else if (message instanceof ExchangeHeadsMessage) {
+			counters.exchangeHeads += 1;
+		}
+		return send(message, options);
+	};
+	return counters;
+};
+
+type CatchupProfileSummary = {
+	name: string;
+	count: number;
+	totalMs: number;
+	maxMs: number;
+	entries: number;
+	bytes: number;
+	messages: number;
+};
+
+const summarizeProfileEvents = (
+	events: SyncProfileEvent[],
+): CatchupProfileSummary[] => {
+	const summaries = new Map<string, CatchupProfileSummary>();
+	for (const event of events) {
+		let summary = summaries.get(event.name);
+		if (!summary) {
+			summary = {
+				name: event.name,
+				count: 0,
+				totalMs: 0,
+				maxMs: 0,
+				entries: 0,
+				bytes: 0,
+				messages: 0,
+			};
+			summaries.set(event.name, summary);
+		}
+		const durationMs = event.durationMs ?? 0;
+		summary.count += 1;
+		summary.totalMs += durationMs;
+		summary.maxMs = Math.max(summary.maxMs, durationMs);
+		summary.entries += event.entries ?? 0;
+		summary.bytes += event.bytes ?? 0;
+		summary.messages += event.messages ?? 0;
+	}
+	return [...summaries.values()].sort((a, b) => b.totalMs - a.totalMs);
+};
+
+const mergeProfileSummaries = (
+	target: Map<string, CatchupProfileSummary>,
+	summaries: CatchupProfileSummary[],
+) => {
+	for (const summary of summaries) {
+		let merged = target.get(summary.name);
+		if (!merged) {
+			merged = {
+				name: summary.name,
+				count: 0,
+				totalMs: 0,
+				maxMs: 0,
+				entries: 0,
+				bytes: 0,
+				messages: 0,
+			};
+			target.set(summary.name, merged);
+		}
+		merged.count += summary.count;
+		merged.totalMs += summary.totalMs;
+		merged.maxMs = Math.max(merged.maxMs, summary.maxMs);
+		merged.entries += summary.entries;
+		merged.bytes += summary.bytes;
+		merged.messages += summary.messages;
+	}
+};
+
+const runOnce = async (setup: CatchupSetup) => {
 	const session = await TestSession.disconnected(2, fixedKeys);
 	const store = new EventStore<string, any>();
+	const profileEvents: SyncProfileEvent[] = [];
+	const createNativeBackboneOptions = () =>
+		setup.nativeBackboneCoordinateWal
+			? {
+					optional: false,
+					coordinatePersistence: new NativeBackboneCoordinatePersistence(
+						new NativeBackboneMemoryCoordinatePersistenceStore(),
+					),
+				}
+			: undefined;
+	const syncOptions =
+		setup.rawExchangeHeads || captureProfile
+			? {
+					rawExchangeHeads: setup.rawExchangeHeads || undefined,
+					profile: captureProfile
+						? (event: SyncProfileEvent) => profileEvents.push(event)
+						: undefined,
+				}
+			: undefined;
 
 	const db1 = await session.peers[0].open(store.clone(), {
-		args: { replicate: { factor: 1 }, setup },
+		args: {
+			replicate: { factor: 1 },
+			setup,
+			nativeGraph: setup.nativeGraph,
+			nativeBackbone: createNativeBackboneOptions(),
+			sync: syncOptions,
+		},
 	});
 	const db2 = await session.peers[1].open(store.clone(), {
-		args: { replicate: { factor: 1 }, setup },
+		args: {
+			replicate: { factor: 1 },
+			setup,
+			nativeGraph: setup.nativeGraph,
+			nativeBackbone: createNativeBackboneOptions(),
+			sync: syncOptions,
+		},
 	});
+	const db1Counters = wrapSendCounters(db1);
+	const db2Counters = wrapSendCounters(db2);
 
 	for (let i = 0; i < entryCount; i++) {
 		await db1.add(uuid(), { meta: { next: [] } });
@@ -94,13 +272,19 @@ const runOnce = async (setup: TestSetupConfig<any>) => {
 		() => {
 			expect(db2.log.log.length).to.equal(entryCount);
 		},
-		{ timeout: timeoutMs, delayInterval: 250 },
+		{ timeout: timeoutMs, delayInterval: pollIntervalMs },
 	);
 	const dt = performance.now() - t0;
 
 	await session.stop();
 
-	return dt;
+	return {
+		dt,
+		exchangeHeads: db1Counters.exchangeHeads + db2Counters.exchangeHeads,
+		rawExchangeHeads:
+			db1Counters.rawExchangeHeads + db2Counters.rawExchangeHeads,
+		profile: summarizeProfileEvents(profileEvents),
+	};
 };
 
 const tasks: Array<{
@@ -109,12 +293,22 @@ const tasks: Array<{
 	hz: number;
 	rme: null;
 	samples: number;
+	exchangeHeads: number;
+	rawExchangeHeads: number;
+	profile?: CatchupProfileSummary[];
 }> = [];
 
 for (const setup of testSetups) {
 	const samples: number[] = [];
+	let exchangeHeads = 0;
+	let rawExchangeHeads = 0;
+	const profileSummaries = new Map<string, CatchupProfileSummary>();
 	for (let i = 0; i < runs; i++) {
-		samples.push(await runOnce(setup));
+		const result = await runOnce(setup);
+		samples.push(result.dt);
+		exchangeHeads += result.exchangeHeads;
+		rawExchangeHeads += result.rawExchangeHeads;
+		mergeProfileSummaries(profileSummaries, result.profile);
 	}
 	const mean_ms = samples.reduce((acc, x) => acc + x, 0) / samples.length;
 	tasks.push({
@@ -123,6 +317,11 @@ for (const setup of testSetups) {
 		hz: mean_ms > 0 ? 1000 / mean_ms : 0,
 		rme: null,
 		samples: samples.length,
+		exchangeHeads,
+		rawExchangeHeads,
+		profile: captureProfile
+			? [...profileSummaries.values()].sort((a, b) => b.totalMs - a.totalMs)
+			: undefined,
 	});
 }
 
@@ -132,7 +331,13 @@ if (process.env.BENCH_JSON === "1") {
 			{
 				name: "shared-log-sync-catchup",
 				tasks,
-				meta: { entryCount, timeoutMs, runs },
+				meta: {
+					entryCount,
+					timeoutMs,
+					pollIntervalMs,
+					runs,
+					setups: testSetups.map((setup) => setup.name),
+				},
 			},
 			null,
 			2,
@@ -140,4 +345,10 @@ if (process.env.BENCH_JSON === "1") {
 	);
 } else {
 	console.table(tasks);
+	if (captureProfile) {
+		for (const task of tasks) {
+			console.log(`\n${task.name} profile`);
+			console.table(task.profile);
+		}
+	}
 }

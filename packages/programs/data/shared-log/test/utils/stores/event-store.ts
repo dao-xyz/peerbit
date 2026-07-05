@@ -11,10 +11,10 @@ import type {
 import { Program } from "@peerbit/program";
 import type { RequestContext } from "@peerbit/rpc";
 import {
-	AbsoluteReplicas,
 	type ReplicationLimitsOptions,
 	type ReplicationOptions,
 	type SharedAppendOptions,
+	type SharedLogOptions,
 	type SharedLogFanoutOptions,
 	SharedLog,
 } from "../../../src/index.js";
@@ -78,6 +78,9 @@ export type Args<
 	setup?: TestSetupConfig<R>;
 	sync?: SyncOptions<R>;
 	domain?: ReplicationDomainConstructor<D>;
+	nativeGraph?: boolean;
+	nativeBackbone?: SharedLogOptions<Operation<T>, D, R>["nativeBackbone"];
+	nativeRangePlanner?: SharedLogOptions<Operation<T>, D, R>["nativeRangePlanner"];
 };
 @variant("event_store")
 export class EventStore<
@@ -117,16 +120,21 @@ export class EventStore<
 			throw new Error("Cannot have both domain and setup.domain");
 		}
 
+		const canAppend =
+			this._canAppend || properties?.canAppend
+				? (entry: Entry<Operation<T>>) => {
+						const a = this._canAppend ? this._canAppend(entry) : true;
+						if (!a) {
+							return false;
+						}
+						return properties?.canAppend ? properties.canAppend(entry) : true;
+					}
+				: undefined;
+
 		await this.log.open({
 			compatibility: properties?.compatibility,
 			onChange: properties?.onChange,
-			canAppend: (entry) => {
-				const a = this._canAppend ? this._canAppend(entry) : true;
-				if (!a) {
-					return false;
-				}
-				return properties?.canAppend ? properties.canAppend(entry) : true;
-			},
+			canAppend,
 			canReplicate: properties?.canReplicate,
 			replicate: properties?.replicate,
 			trim: properties?.trim,
@@ -146,6 +154,9 @@ export class EventStore<
 			domain: (properties?.domain ?? (properties?.setup as any)?.domain) as any,
 			syncronizer: properties?.setup?.syncronizer as SynchronizerConstructor<R>,
 			sync: properties?.sync,
+			nativeGraph: properties?.nativeGraph,
+			nativeBackbone: properties?.nativeBackbone,
+			nativeRangePlanner: properties?.nativeRangePlanner,
 
 			// staticArgs was unused; keep open args explicit in tests
 		});
@@ -160,6 +171,16 @@ export class EventStore<
 				op: "ADD",
 				value: data,
 			},
+			options,
+		);
+	}
+
+	addMany(data: T[], options?: SharedAppendOptions<Operation<T>>) {
+		return this.log.appendMany(
+			data.map((value) => ({
+				op: "ADD",
+				value,
+			})),
 			options,
 		);
 	}

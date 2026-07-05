@@ -1,6 +1,8 @@
-import { field, vec } from "@dao-xyz/borsh";
+import { field, serialize, variant, vec } from "@dao-xyz/borsh";
 import {
 	And,
+	BoolQuery,
+	ByteMatchQuery,
 	Compare,
 	IntegerCompare,
 	Nested,
@@ -10,6 +12,7 @@ import {
 	StringMatch,
 	StringMatchMethod,
 	id,
+	toId,
 } from "@peerbit/indexer-interface";
 import { tests } from "@peerbit/indexer-tests";
 import { expect } from "chai";
@@ -62,6 +65,90 @@ class BridgeMetricDocument {
 	}
 }
 
+class BridgeContext {
+	@field({ type: "string" })
+	head: string;
+
+	constructor(head: string) {
+		this.head = head;
+	}
+}
+
+class BridgeDocumentWithContext {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "string" })
+	title: string;
+
+	@field({ type: BridgeContext })
+	__context: BridgeContext;
+
+	constructor(value: BridgeDocument, context: BridgeContext) {
+		this.id = value.id;
+		this.tag = value.tag;
+		this.title = value.title;
+		this.__context = context;
+	}
+}
+
+class BridgeBytesDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: Uint8Array })
+	payload: Uint8Array;
+
+	constructor(id: string, payload: Uint8Array) {
+		this.id = id;
+		this.payload = payload;
+	}
+}
+
+class BridgeCoordinateDocument {
+	@id({ type: "string" })
+	hash: string;
+
+	@field({ type: "u64" })
+	hashNumber: bigint;
+
+	@field({ type: "string" })
+	gid: string;
+
+	@field({ type: vec("u64") })
+	coordinates: bigint[];
+
+	@field({ type: "u64" })
+	wallTime: bigint;
+
+	@field({ type: "bool" })
+	assignedToRangeBoundary: boolean;
+
+	@field({ type: Uint8Array })
+	_meta: Uint8Array;
+
+	constructor(
+		hash: string,
+		hashNumber: bigint,
+		gid: string,
+		coordinates: bigint[],
+		wallTime: bigint,
+		assignedToRangeBoundary: boolean,
+		meta: Uint8Array,
+	) {
+		this.hash = hash;
+		this.hashNumber = hashNumber;
+		this.gid = gid;
+		this.coordinates = coordinates;
+		this.wallTime = wallTime;
+		this.assignedToRangeBoundary = assignedToRangeBoundary;
+		this._meta = meta;
+	}
+}
+
 class BridgeNestedItem {
 	@field({ type: "string" })
 	tag: string;
@@ -83,6 +170,34 @@ class BridgeNestedDocument {
 	items: BridgeNestedItem[];
 
 	constructor(id: string, items: BridgeNestedItem[]) {
+		this.id = id;
+		this.items = items;
+	}
+}
+
+@variant("bridge_variant_item")
+class BridgeVariantNestedItem {
+	@field({ type: "string" })
+	tag: string;
+
+	@field({ type: "u32" })
+	score: number;
+
+	constructor(tag: string, score: number) {
+		this.tag = tag;
+		this.score = score;
+	}
+}
+
+@variant("bridge_variant_document")
+class BridgeVariantNestedDocument {
+	@id({ type: "string" })
+	id: string;
+
+	@field({ type: vec(BridgeVariantNestedItem) })
+	items: BridgeVariantNestedItem[];
+
+	constructor(id: string, items: BridgeVariantNestedItem[]) {
 		this.id = id;
 		this.items = items;
 	}
@@ -136,6 +251,103 @@ describe("all", () => {
 });
 
 describe("native planner bridge", () => {
+	it("hands compiled borsh schema ir to native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeNestedDocument });
+		const { nativeSchemaIrStats: stats } = index as unknown as {
+			nativeSchemaIrStats?: {
+				rootFields: number;
+				nodeCount: number;
+				genericNodes: number;
+			};
+		};
+
+		expect(stats).to.deep.equal({
+			rootFields: 2,
+			nodeCount: 6,
+			genericNodes: 0,
+		});
+
+		await indices.drop();
+	});
+
+	it("indexes borsh-encoded document bytes in native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeNestedDocument });
+		(index as unknown as { fieldEncoder: () => never }).fieldEncoder = () => {
+			throw new Error("TypeScript field encoder should not run");
+		};
+		await index.put(
+			new BridgeNestedDocument("a", [
+				new BridgeNestedItem("left", 1),
+				new BridgeNestedItem("right", 3),
+			]),
+		);
+		await index.put(
+			new BridgeNestedDocument("b", [new BridgeNestedItem("left", 4)]),
+		);
+
+		const results = await index
+			.iterate({
+				query: new Nested({
+					path: "items",
+					query: [
+						new StringMatch({ key: "tag", value: "left" }),
+						new IntegerCompare({
+							key: "score",
+							compare: Compare.Greater,
+							value: 2,
+						}),
+					],
+				}),
+			})
+			.all();
+
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
+		await indices.drop();
+	});
+
+	it("indexes borsh variant-prefixed document bytes in native rust", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeVariantNestedDocument });
+		(index as unknown as { fieldEncoder: () => never }).fieldEncoder = () => {
+			throw new Error("TypeScript field encoder should not run");
+		};
+		await index.put(
+			new BridgeVariantNestedDocument("a", [
+				new BridgeVariantNestedItem("left", 1),
+				new BridgeVariantNestedItem("right", 3),
+			]),
+		);
+		await index.put(
+			new BridgeVariantNestedDocument("b", [
+				new BridgeVariantNestedItem("left", 4),
+			]),
+		);
+
+		const results = await index
+			.iterate({
+				query: new Nested({
+					path: "items",
+					query: [
+						new StringMatch({ key: "tag", value: "left" }),
+						new IntegerCompare({
+							key: "score",
+							compare: Compare.Greater,
+							value: 2,
+						}),
+					],
+				}),
+			})
+			.all();
+
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
+		await indices.drop();
+	});
+
 	it("does not expose the previous typescript query fallback evaluator", async () => {
 		const indices = create();
 		await indices.start();
@@ -173,6 +385,1080 @@ describe("native planner bridge", () => {
 			.all();
 
 		expect(results.map((result) => result.value.id)).to.deep.equal(["a"]);
+		await indices.drop();
+	});
+
+	it("applies puts in a native batch", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const batchIndex = index as typeof index & {
+			putBatch: (values: BridgeDocument[]) => Promise<void>;
+		};
+
+		await batchIndex.putBatch([
+			new BridgeDocument("a", "peerbit", "native index"),
+			new BridgeDocument("b", "peerbit", "batch put"),
+			new BridgeDocument("c", "other", "separate"),
+		]);
+
+		const results = await index
+			.iterate({
+				query: new StringMatch({
+					key: "tag",
+					value: "peerbit",
+					method: StringMatchMethod.exact,
+				}),
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			})
+			.all();
+		expect(results.map((result) => result.value.id)).to.deep.equal(["a", "b"]);
+
+		await indices.drop();
+	});
+
+	it("coalesces a put and matching deletes through the native index", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const coalescedIndex = index as typeof index & {
+			putAndDelete: (
+				value: BridgeDocument,
+				deleteOptions: { query: StringMatch },
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await index.put(new BridgeDocument("a", "stale", "old"));
+		await index.put(new BridgeDocument("b", "keep", "current"));
+		const deleted = await coalescedIndex.putAndDelete(
+			new BridgeDocument("c", "fresh", "new"),
+			{ query: new StringMatch({ key: "tag", value: "stale" }) },
+		);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const results = await index
+			.iterate({
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			})
+			.all();
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b", "c"]);
+
+		await indices.drop();
+	});
+
+	it("coalesces a put and exact id deletes through the native index", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const coalescedIndex = index as typeof index & {
+			putAndDeleteIds: (
+				value: BridgeDocument,
+				deleteIds: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await index.put(new BridgeDocument("a", "stale", "old"));
+		await index.put(new BridgeDocument("b", "keep", "current"));
+		const deleted = await coalescedIndex.putAndDeleteIds(
+			new BridgeDocument("c", "fresh", "new"),
+			["a"],
+		);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const results = await index
+			.iterate({
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			})
+			.all();
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b", "c"]);
+
+		await indices.drop();
+	});
+
+	it("deletes exact ids through the native index", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const exactDeleteIndex = index as typeof index & {
+			delIds: (deleteIds: string[]) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await index.put(new BridgeDocument("a", "stale", "old"));
+		await index.put(new BridgeDocument("b", "keep", "current"));
+		const deleted = await exactDeleteIndex.delIds(["a"]);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const results = await index.iterate().all();
+		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
+	it("indexes shared-log coordinate fields through the typed native path", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateAndDeleteIds: (
+				value: BridgeCoordinateDocument,
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteIds?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+			putSharedLogCoordinateFieldsAndDeleteIds: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteIds?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+		const meta = new Uint8Array([1, 2, 3]);
+		const first = new BridgeCoordinateDocument(
+			"a",
+			10n,
+			"gid-a",
+			[4n, 8n],
+			12n,
+			true,
+			meta,
+		);
+		await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds({
+			hash: first.hash,
+			hashNumber: first.hashNumber,
+			gid: first.gid,
+			coordinates: first.coordinates,
+			wallTime: first.wallTime,
+			assignedToRangeBoundary: first.assignedToRangeBoundary,
+			metaBytes: first._meta,
+		});
+
+		const matches = await index
+			.iterate({
+				query: new And([
+					new StringMatch({ key: "gid", value: "gid-a" }),
+					new IntegerCompare({
+						key: "coordinates",
+						compare: Compare.Equal,
+						value: 8n,
+					}),
+					new BoolQuery({
+						key: "assignedToRangeBoundary",
+						value: true,
+					}),
+					new ByteMatchQuery({ key: "_meta", value: meta }),
+				]),
+			})
+			.all();
+		expect(matches.map((entry) => entry.value.hash)).to.deep.equal(["a"]);
+
+		const second = new BridgeCoordinateDocument(
+			"b",
+			11n,
+			"gid-b",
+			[16n],
+			13n,
+			false,
+			new Uint8Array([4]),
+		);
+		const deleted = await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds(
+			{
+				hash: second.hash,
+				hashNumber: second.hashNumber,
+				gid: second.gid,
+				coordinates: second.coordinates,
+				wallTime: second.wallTime,
+				assignedToRangeBoundary: second.assignedToRangeBoundary,
+				metaBytes: second._meta,
+			},
+			["a"],
+		);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
+	it("indexes shared-log coordinate fields through the hash-delete native path", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteHashes: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteHashes?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes({
+			hash: "a",
+			hashNumber: 10n,
+			gid: "gid-a",
+			coordinates: [4n],
+			wallTime: 12n,
+			assignedToRangeBoundary: true,
+			metaBytes: new Uint8Array([1, 2, 3]),
+		});
+		const deleted =
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashes(
+				{
+					hash: "b",
+					hashNumber: 11n,
+					gid: "gid-b",
+					coordinates: [8n],
+					wallTime: 13n,
+					assignedToRangeBoundary: false,
+					metaBytes: new Uint8Array([4]),
+				},
+				["a"],
+			);
+
+		expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
+		it("indexes shared-log coordinate fields through the no-return hash-delete native path", async () => {
+			const indices = create();
+			await indices.start();
+			const index = await indices.init({ schema: BridgeCoordinateDocument });
+			const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteHashesNoReturn: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteHashes?: string[],
+			) => Promise<void> | void;
+		};
+
+		await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn({
+			hash: "a",
+			hashNumber: 10n,
+			gid: "gid-a",
+			coordinates: [4n],
+			wallTime: 12n,
+			assignedToRangeBoundary: true,
+			metaBytes: new Uint8Array([1, 2, 3]),
+		});
+		const result =
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn(
+				{
+					hash: "b",
+					hashNumber: 11n,
+					gid: "gid-b",
+					coordinates: [8n],
+					wallTime: 13n,
+					assignedToRangeBoundary: false,
+					metaBytes: new Uint8Array([4]),
+				},
+				["a"],
+			);
+
+		expect(result).equal(undefined);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+			await indices.drop();
+		});
+
+		it("indexes shared-log coordinate fields through the encoded no-return native path", async () => {
+			const indices = create();
+			await indices.start();
+			const index = await indices.init({ schema: BridgeCoordinateDocument });
+			const coordinateIndex = index as typeof index & {
+				putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn: (
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					},
+					deleteHashes?: string[],
+				) => Promise<void> | void;
+			};
+
+			await coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn(
+				{
+					hash: "a",
+					hashNumber: 10n,
+					gid: "gid-a",
+					coordinates: [4n],
+					wallTime: 12n,
+					assignedToRangeBoundary: true,
+					metaBytes: new Uint8Array([1, 2, 3]),
+				},
+			);
+			const result =
+				await coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn(
+					{
+						hash: "b",
+						hashNumber: 11n,
+						gid: "gid-b",
+						coordinates: [8n],
+						wallTime: 13n,
+						assignedToRangeBoundary: false,
+						metaBytes: new Uint8Array([4]),
+					},
+					["a"],
+				);
+
+			expect(result).equal(undefined);
+			const remaining = await index.iterate().all();
+			expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+			expect(remaining[0].value).to.be.instanceOf(BridgeCoordinateDocument);
+
+			await indices.drop();
+		});
+
+		it("indexes shared-log coordinate fields through the no-return hash-delete native batch path", async () => {
+			const indices = create();
+			await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn: (
+				values: Array<{
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					};
+					deleteHashes?: string[];
+				}>,
+			) => Promise<void> | void;
+		};
+
+		const result =
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatchNoReturn(
+				[
+					{
+						fields: {
+							hash: "a",
+							hashNumber: 10n,
+							gid: "gid-a",
+							coordinates: [4n],
+							wallTime: 12n,
+							assignedToRangeBoundary: true,
+							metaBytes: new Uint8Array([1, 2, 3]),
+						},
+					},
+					{
+						fields: {
+							hash: "b",
+							hashNumber: 11n,
+							gid: "gid-b",
+							coordinates: [8n],
+							wallTime: 13n,
+							assignedToRangeBoundary: false,
+							metaBytes: new Uint8Array([4]),
+						},
+						deleteHashes: ["a"],
+					},
+				],
+			);
+
+		expect(result).equal(undefined);
+		const remaining = await index.iterate().all();
+		expect(remaining.map((entry) => entry.value.hash)).to.deep.equal(["b"]);
+
+		await indices.drop();
+	});
+
+	it("skips durable coordinate encoding for transient shared-log coordinate puts", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeCoordinateDocument });
+		const coordinateIndex = index as typeof index & {
+			putSharedLogCoordinateFieldsAndDeleteIds: (
+				fields: {
+					hash: string;
+					hashNumber: bigint;
+					gid: string;
+					coordinates: bigint[];
+					wallTime: bigint;
+					assignedToRangeBoundary: boolean;
+					metaBytes: Uint8Array;
+				},
+				deleteIds?: string[],
+			) => Promise<ReturnType<typeof toId>[]>;
+			putSharedLogCoordinateFieldsAndDeleteIdsBatch: (
+				values: Array<{
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					};
+					deleteIds?: string[];
+				}>,
+			) => Promise<ReturnType<typeof toId>[]>;
+			putSharedLogCoordinateFieldsAndDeleteHashesBatch: (
+				values: Array<{
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					};
+					deleteHashes?: string[];
+				}>,
+			) => Promise<ReturnType<typeof toId>[]>;
+		};
+		const indexInternal = index as any;
+		const originalEncode =
+			indexInternal.encodeSharedLogCoordinatePersistenceValue.bind(index);
+		let encodeCalls = 0;
+		indexInternal.encodeSharedLogCoordinatePersistenceValue = (...args: any[]) => {
+			encodeCalls++;
+			return originalEncode(...args);
+		};
+		try {
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds({
+				hash: "a",
+				hashNumber: 10n,
+				gid: "gid-a",
+				coordinates: [4n, 8n],
+				wallTime: 12n,
+				assignedToRangeBoundary: true,
+				metaBytes: new Uint8Array([1, 2, 3]),
+			});
+
+			const deleted =
+				await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIdsBatch([
+					{
+						fields: {
+							hash: "b",
+							hashNumber: 11n,
+							gid: "gid-b",
+							coordinates: [16n],
+							wallTime: 13n,
+							assignedToRangeBoundary: false,
+							metaBytes: new Uint8Array([4]),
+						},
+						deleteIds: ["a"],
+					},
+				]);
+
+			expect(deleted.map((id) => id.primitive)).to.deep.equal(["a"]);
+			const hashBatchDeleted =
+				await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesBatch([
+					{
+						fields: {
+							hash: "c",
+							hashNumber: 12n,
+							gid: "gid-c",
+							coordinates: [32n],
+							wallTime: 14n,
+							assignedToRangeBoundary: false,
+							metaBytes: new Uint8Array([5]),
+						},
+						deleteHashes: ["b"],
+					},
+				]);
+			expect(hashBatchDeleted.map((id) => id.primitive)).to.deep.equal(["b"]);
+			expect(encodeCalls).to.equal(0);
+		} finally {
+			indexInternal.encodeSharedLogCoordinatePersistenceValue = originalEncode;
+			await indices.drop();
+		}
+	});
+
+	it("accepts contextual document puts through the native index hook", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContext: (
+				value: BridgeDocument,
+				id: ReturnType<typeof toId>,
+				context: BridgeContext,
+				options?: {
+					replace?: boolean;
+					encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+				},
+			) => Promise<void>;
+		};
+		(index as unknown as { fieldEncoder: () => never }).fieldEncoder = () => {
+			throw new Error("TypeScript field encoder should not run");
+		};
+		const document = new BridgeDocument("a", "peerbit", "native index");
+		const context = new BridgeContext("head-a");
+
+		await contextualIndex.putWithContext(
+			document,
+			toId("a"),
+			context,
+			{
+				replace: false,
+				encodedValueParts: {
+					prefix: serialize(document),
+					suffix: serialize(context),
+				},
+			},
+		);
+
+		const result = await index.get(toId("a"));
+		expect(result?.value.__context.head).equal("head-a");
+		expect(result?.value.title).equal("native index");
+
+		const indexed = await index
+			.iterate({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			})
+			.all();
+		expect(indexed.map((entry) => entry.value.__context.head)).to.deep.equal([
+			"head-a",
+		]);
+
+		await indices.drop();
+	});
+
+	it("wraps already context-mutated document puts in the index schema", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContext: (
+				value: BridgeDocument & { __context?: BridgeContext },
+				id: ReturnType<typeof toId>,
+				context: BridgeContext,
+				options?: {
+					replace?: boolean;
+					encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+				},
+			) => Promise<void>;
+		};
+		const document = new BridgeDocument("a", "peerbit", "native index") as
+			BridgeDocument & { __context?: BridgeContext };
+		const context = new BridgeContext("head-a");
+		document.__context = context;
+
+		await contextualIndex.putWithContext(document, toId("a"), context, {
+			replace: false,
+			encodedValueParts: {
+				prefix: serialize(document),
+				suffix: serialize(context),
+			},
+		});
+
+		const indexed = await index
+			.iterate({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			})
+			.all();
+		expect(indexed.map((entry) => entry.value.__context.head)).to.deep.equal([
+			"head-a",
+		]);
+		expect(indexed.map((entry) => entry.value.title)).to.deep.equal([
+			"native index",
+		]);
+
+		await indices.drop();
+	});
+
+	it("stores contextual encoded document puts without reading JS document fields", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContext: (
+				value: BridgeDocument,
+				id: ReturnType<typeof toId>,
+				context: BridgeContext,
+				options?: {
+					replace?: boolean;
+					encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+				},
+			) => Promise<void>;
+		};
+		const encodedDocument = new BridgeDocument("a", "peerbit", "stored bytes");
+		const context = new BridgeContext("head-a");
+		const unreadableDocument = Object.create(
+			BridgeDocument.prototype,
+		) as BridgeDocument;
+		Object.defineProperties(unreadableDocument, {
+			id: { value: "a", enumerable: true },
+			tag: {
+				get() {
+					throw new Error("encoded contextual put should not read tag");
+				},
+				enumerable: true,
+			},
+			title: {
+				get() {
+					throw new Error("encoded contextual put should not read title");
+				},
+				enumerable: true,
+			},
+		});
+
+		await contextualIndex.putWithContext(
+			unreadableDocument,
+			toId("a"),
+			context,
+			{
+				encodedValueParts: {
+					prefix: serialize(encodedDocument),
+					suffix: serialize(context),
+				},
+			},
+		);
+
+		const result = await index.get(toId("a"));
+		expect(result?.value.__context.head).equal("head-a");
+		expect(result?.value.title).equal("stored bytes");
+		const byHeadId = (
+			index as typeof index & {
+				getIdByContextHead: (head: string) => ReturnType<typeof toId> | undefined;
+			}
+		).getIdByContextHead("head-a");
+		expect(byHeadId?.primitive).equal("a");
+
+		const indexed = await index
+			.iterate({
+				query: new StringMatch({ key: "tag", value: "peerbit" }),
+			})
+			.all();
+		expect(indexed.map((entry) => entry.value.title)).to.deep.equal([
+			"stored bytes",
+		]);
+
+		await indices.drop();
+	});
+
+	it("batch resolves contextual documents by head through the native index hook", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			putWithContextBatch: (
+				values: Array<{
+					value: BridgeDocument;
+					id: ReturnType<typeof toId>;
+					context: BridgeContext;
+					options?: {
+						replace?: boolean;
+						encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+					};
+				}>,
+			) => Promise<void>;
+			getByContextHeadBatch: (
+				heads: string[],
+			) => Array<
+				| { id: ReturnType<typeof toId>; value: BridgeDocumentWithContext }
+				| undefined
+			>;
+		};
+		const first = new BridgeDocument("a", "peerbit", "first");
+		const second = new BridgeDocument("b", "peerbit", "second");
+		const firstContext = new BridgeContext("head-a");
+		const secondContext = new BridgeContext("head-b");
+		await contextualIndex.putWithContextBatch([
+			{
+				value: first,
+				id: toId("a"),
+				context: firstContext,
+				options: {
+					encodedValueParts: {
+						prefix: serialize(first),
+						suffix: serialize(firstContext),
+					},
+				},
+			},
+			{
+				value: second,
+				id: toId("b"),
+				context: secondContext,
+				options: {
+					encodedValueParts: {
+						prefix: serialize(second),
+						suffix: serialize(secondContext),
+					},
+				},
+			},
+		]);
+
+		const resolved = contextualIndex.getByContextHeadBatch([
+			"head-b",
+			"missing",
+			"head-a",
+		]);
+		expect(resolved.map((entry) => entry?.id.primitive)).to.deep.equal([
+			"b",
+			undefined,
+			"a",
+		]);
+
+		await indices.drop();
+	});
+
+	it("coalesces native-backbone primary contextual encoded batches", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			attachNativeBackboneDocumentIndex: (backbone: unknown) => boolean;
+			putWithContextBatch: (
+				values: Array<{
+					value: BridgeDocument;
+					id: ReturnType<typeof toId>;
+					context: BridgeContext;
+					options?: {
+						replace?: boolean;
+						encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+					};
+				}>,
+			) => Promise<void>;
+		};
+		let batchCalls = 0;
+		let singleCalls = 0;
+		let batchKeys: string[] = [];
+		const backbone = {
+			documentIndexLength: 0,
+			configureDocumentSchemaIr: () => ({
+				rootFields: 0,
+				nodeCount: 0,
+				genericNodes: 0,
+			}),
+			setDocumentContextHeadField: () => {},
+			setDocumentContextFields: () => {},
+			clearDocumentIndex: () => {},
+			putDocumentEncodedPartsStored: () => {
+				singleCalls++;
+			},
+			putDocumentEncodedPartsStoredBatch: (
+				values: Array<{ key: string }>,
+			) => {
+				batchCalls++;
+				batchKeys = values.map((value) => value.key);
+			},
+			documentEntry: () => undefined,
+			documentQuery: () => [],
+			documentQueryPage: () => [],
+			documentCount: () => 0,
+			documentSum: () => ["none", "0"] as const,
+			deleteDocument: () => false,
+		};
+		expect(contextualIndex.attachNativeBackboneDocumentIndex(backbone)).equal(
+			true,
+		);
+
+		const first = new BridgeDocument("a", "peerbit", "first");
+		const second = new BridgeDocument("b", "peerbit", "second");
+		const firstContext = new BridgeContext("head-a");
+		const secondContext = new BridgeContext("head-b");
+		await contextualIndex.putWithContextBatch([
+			{
+				value: first,
+				id: toId("a"),
+				context: firstContext,
+				options: {
+					encodedValueParts: {
+						prefix: serialize(first),
+						suffix: serialize(firstContext),
+					},
+				},
+			},
+			{
+				value: second,
+				id: toId("b"),
+				context: secondContext,
+				options: {
+					encodedValueParts: {
+						prefix: serialize(second),
+						suffix: serialize(secondContext),
+					},
+				},
+			},
+		]);
+
+		expect(batchCalls).equal(1);
+		expect(singleCalls).equal(0);
+		expect(batchKeys).to.deep.equal(["string:a", "string:b"]);
+
+		await indices.drop();
+	});
+
+	it("coalesces stored contextual encoded batches through the native backbone hook", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocumentWithContext });
+		const contextualIndex = index as typeof index & {
+			attachNativeBackboneDocumentIndex: (backbone: unknown) => boolean;
+			putStoredContextualEncodedValueBatch: (
+				values: Array<{
+					id: ReturnType<typeof toId>;
+					encodedValueParts: { prefix: Uint8Array; suffix: Uint8Array };
+				}>,
+			) => Promise<boolean>;
+		};
+		let batchCalls = 0;
+		let singleCalls = 0;
+		let batchKeys: string[] = [];
+		const backbone = {
+			documentIndexLength: 0,
+			configureDocumentSchemaIr: () => ({
+				rootFields: 0,
+				nodeCount: 0,
+				genericNodes: 0,
+			}),
+			setDocumentContextHeadField: () => {},
+			setDocumentContextFields: () => {},
+			clearDocumentIndex: () => {},
+			putDocumentEncodedPartsStored: () => {
+				singleCalls++;
+			},
+			putDocumentEncodedPartsStoredBatch: (
+				values: Array<{ key: string }>,
+			) => {
+				batchCalls++;
+				batchKeys = values.map((value) => value.key);
+			},
+			documentEntry: () => undefined,
+			documentQuery: () => [],
+			documentQueryPage: () => [],
+			documentCount: () => 0,
+			documentSum: () => ["none", "0"] as const,
+			deleteDocument: () => false,
+		};
+		expect(contextualIndex.attachNativeBackboneDocumentIndex(backbone)).equal(
+			true,
+		);
+
+		const first = new BridgeDocument("a", "peerbit", "first");
+		const second = new BridgeDocument("b", "peerbit", "second");
+		const stored = await contextualIndex.putStoredContextualEncodedValueBatch([
+			{
+				id: toId("a"),
+				encodedValueParts: {
+					prefix: serialize(first),
+					suffix: serialize(new BridgeContext("head-a")),
+				},
+			},
+			{
+				id: toId("b"),
+				encodedValueParts: {
+					prefix: serialize(second),
+					suffix: serialize(new BridgeContext("head-b")),
+				},
+			},
+		]);
+
+		expect(stored).equal(true);
+		expect(batchCalls).equal(1);
+		expect(singleCalls).equal(0);
+		expect(batchKeys).to.deep.equal(["string:a", "string:b"]);
+
+		await indices.drop();
+	});
+
+	it("coalesces native-backbone exact deletes with result flags", async () => {
+		const directory = createPersistenceDirectory();
+		const indices = create(directory);
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocumentWithContext });
+			const contextualIndex = index as typeof index & {
+				attachNativeBackboneDocumentIndex: (backbone: unknown) => boolean;
+				delIds: (
+					deleteIds: Array<ReturnType<typeof toId> | string>,
+				) => ReturnType<typeof toId>[] | Promise<ReturnType<typeof toId>[]>;
+			};
+			let existsCalls = 0;
+			let batchCalls = 0;
+			let fallbackCalls = 0;
+			let existsKeys: string[] = [];
+			let batchKeys: string[] = [];
+			const backbone = {
+				documentIndexLength: 0,
+				configureDocumentSchemaIr: () => ({
+					rootFields: 0,
+					nodeCount: 0,
+					genericNodes: 0,
+				}),
+				setDocumentContextHeadField: () => {},
+				setDocumentContextFields: () => {},
+				clearDocumentIndex: () => {},
+				putDocumentEncodedPartsStored: () => {},
+				documentEntry: () => {
+					fallbackCalls++;
+					return undefined;
+				},
+				documentKeysExist: (keys: string[]) => {
+					existsCalls++;
+					existsKeys = [...keys];
+					return Uint8Array.from([1, 0, 1]);
+				},
+				documentQuery: () => [],
+				documentQueryPage: () => [],
+				documentCount: () => 0,
+				documentSum: () => ["none", "0"] as const,
+				deleteDocument: () => {
+					fallbackCalls++;
+					return false;
+				},
+				deleteDocumentsResult: (keys: string[]) => {
+					batchCalls++;
+					batchKeys = [...keys];
+					return Uint8Array.from([1, 0, 1]);
+				},
+			};
+			expect(contextualIndex.attachNativeBackboneDocumentIndex(backbone)).equal(
+				true,
+			);
+
+			const deleted = await contextualIndex.delIds(["a", "missing", "b"]);
+
+			expect(existsCalls).equal(1);
+			expect(batchCalls).equal(1);
+			expect(fallbackCalls).equal(0);
+			expect(existsKeys).to.deep.equal([
+				"string:a",
+				"string:missing",
+				"string:b",
+			]);
+			expect(batchKeys).to.deep.equal([
+				"string:a",
+				"string:missing",
+				"string:b",
+			]);
+			expect(deleted.map((id) => id.primitive)).to.deep.equal(["a", "b"]);
+		} finally {
+			await indices.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("keeps exact byte matching for large byte arrays without indexing every byte by default", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeBytesDocument });
+		const payload = new Uint8Array(300).fill(7);
+		await index.put(new BridgeBytesDocument("large", payload));
+
+		const exactMatches = await index
+			.iterate({
+				query: new ByteMatchQuery({
+					key: "payload",
+					value: payload,
+				}),
+			})
+			.all();
+		expect(exactMatches.map((result) => result.value.id)).to.deep.equal([
+			"large",
+		]);
+
+		const byteElementMatches = await index
+			.iterate({
+				query: new IntegerCompare({
+					key: "payload",
+					compare: Compare.Equal,
+					value: 7,
+				}),
+			})
+			.all();
+		expect(byteElementMatches).to.be.empty;
+
+		await indices.drop();
+	});
+
+	it("can opt into per-byte indexing for large byte arrays", async () => {
+		const indices = create(undefined, {
+			byteElementIndexLimit: Number.POSITIVE_INFINITY,
+		});
+		await indices.start();
+		const index = await indices.init({ schema: BridgeBytesDocument });
+		const payload = new Uint8Array(300).fill(7);
+		await index.put(new BridgeBytesDocument("large", payload));
+
+		const byteElementMatches = await index
+			.iterate({
+				query: new IntegerCompare({
+					key: "payload",
+					compare: Compare.Equal,
+					value: 7,
+				}),
+			})
+			.all();
+		expect(byteElementMatches.map((result) => result.value.id)).to.deep.equal([
+			"large",
+		]);
+
+		await indices.drop();
+	});
+
+	it("can opt out of per-byte indexing while keeping exact byte matching", async () => {
+		const indices = create(undefined, { byteElementIndexLimit: 0 });
+		await indices.start();
+		const index = await indices.init({ schema: BridgeBytesDocument });
+		const payload = new Uint8Array([7]);
+		await index.put(new BridgeBytesDocument("small", payload));
+
+		const exactMatches = await index
+			.iterate({
+				query: new ByteMatchQuery({
+					key: "payload",
+					value: payload,
+				}),
+			})
+			.all();
+		expect(exactMatches.map((result) => result.value.id)).to.deep.equal([
+			"small",
+		]);
+
+		const byteElementMatches = await index
+			.iterate({
+				query: new IntegerCompare({
+					key: "payload",
+					compare: Compare.Equal,
+					value: 7,
+				}),
+			})
+			.all();
+		expect(byteElementMatches).to.be.empty;
+
 		await indices.drop();
 	});
 
@@ -397,6 +1683,197 @@ describe("native planner bridge", () => {
 		}
 	});
 
+	it("replays durable contextual encoded puts from prepared bytes", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const reader = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocumentWithContext });
+			const contextualWriter = writerIndex as typeof writerIndex & {
+				putWithContext: (
+					value: BridgeDocument & { __context?: BridgeContext },
+					id: ReturnType<typeof toId>,
+					context: BridgeContext,
+					options?: {
+						replace?: boolean;
+						encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+					},
+				) => Promise<void>;
+			};
+			(writerIndex as unknown as { fieldEncoder: () => never }).fieldEncoder =
+				() => {
+					throw new Error("TypeScript field encoder should not run");
+				};
+
+			const encodedDocument = new BridgeDocument(
+				"a",
+				"peerbit",
+				"prepared durable",
+			);
+			const context = new BridgeContext("head-a");
+			const journalValue = Object.create(
+				BridgeDocumentWithContext.prototype,
+			) as BridgeDocument & { __context?: BridgeContext };
+			Object.defineProperties(journalValue, {
+				id: { value: "a", enumerable: true },
+				tag: {
+					get() {
+						throw new Error("journal should use prepared bytes");
+					},
+					enumerable: true,
+				},
+				title: {
+					get() {
+						throw new Error("journal should use prepared bytes");
+					},
+					enumerable: true,
+				},
+				__context: { value: context, enumerable: true },
+			});
+
+			await contextualWriter.putWithContext(journalValue, toId("a"), context, {
+				replace: false,
+				encodedValueParts: {
+					prefix: serialize(encodedDocument),
+					suffix: serialize(context),
+				},
+			});
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocumentWithContext });
+			const result = await readerIndex.get(toId("a"));
+			expect(result?.value.title).equal("prepared durable");
+			expect(result?.value.__context.head).equal("head-a");
+
+			const indexed = await readerIndex
+				.iterate({
+					query: new StringMatch({ key: "tag", value: "peerbit" }),
+				})
+				.all();
+			expect(indexed.map((entry) => entry.value.__context.head)).to.deep.equal([
+				"head-a",
+			]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable contextual encoded put batches from prepared bytes", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		const reader = create(directory, {
+			persistence: { compactAfterOperations: 1000 },
+		});
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocumentWithContext });
+			const contextualWriter = writerIndex as typeof writerIndex & {
+				putWithContextBatch: (
+					values: Array<{
+						value: BridgeDocument & { __context?: BridgeContext };
+						id: ReturnType<typeof toId>;
+						context: BridgeContext;
+						options?: {
+							replace?: boolean;
+							encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+						};
+					}>,
+				) => Promise<void>;
+			};
+			(writerIndex as unknown as { fieldEncoder: () => never }).fieldEncoder =
+				() => {
+					throw new Error("TypeScript field encoder should not run");
+				};
+
+			const createJournalValue = (id: string, context: BridgeContext) => {
+				const value = Object.create(
+					BridgeDocumentWithContext.prototype,
+				) as BridgeDocument & { __context?: BridgeContext };
+				Object.defineProperties(value, {
+					id: { value: id, enumerable: true },
+					tag: {
+						get() {
+							throw new Error("journal batch should use prepared bytes");
+						},
+						enumerable: true,
+					},
+					title: {
+						get() {
+							throw new Error("journal batch should use prepared bytes");
+						},
+						enumerable: true,
+					},
+					__context: { value: context, enumerable: true },
+				});
+				return value;
+			};
+
+			const firstContext = new BridgeContext("head-a");
+			const secondContext = new BridgeContext("head-b");
+			await contextualWriter.putWithContextBatch([
+				{
+					value: createJournalValue("a", firstContext),
+					id: toId("a"),
+					context: firstContext,
+					options: {
+						replace: false,
+						encodedValueParts: {
+							prefix: serialize(
+								new BridgeDocument("a", "peerbit", "first durable batch"),
+							),
+							suffix: serialize(firstContext),
+						},
+					},
+				},
+				{
+					value: createJournalValue("b", secondContext),
+					id: toId("b"),
+					context: secondContext,
+					options: {
+						replace: false,
+						encodedValueParts: {
+							prefix: serialize(
+								new BridgeDocument("b", "peerbit", "second durable batch"),
+							),
+							suffix: serialize(secondContext),
+						},
+					},
+				},
+			]);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocumentWithContext });
+			const result = await readerIndex
+				.iterate({
+					query: new StringMatch({ key: "tag", value: "peerbit" }),
+					sort: new Sort({ key: "title" }),
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.title)).to.deep.equal([
+				"first durable batch",
+				"second durable batch",
+			]);
+			expect(result.map((entry) => entry.value.__context.head)).to.deep.equal([
+				"head-a",
+				"head-b",
+			]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("replays durable deletes before the writer is stopped", async () => {
 		const directory = createPersistenceDirectory();
 		const writer = create(directory);
@@ -415,6 +1892,234 @@ describe("native planner bridge", () => {
 			const result = await readerIndex.iterate().all();
 
 			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable coalesced put and deletes before the writer is stopped", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const coalescedIndex = writerIndex as typeof writerIndex & {
+				putAndDelete: (
+					value: BridgeDocument,
+					deleteOptions: { query: StringMatch },
+				) => Promise<ReturnType<typeof toId>[]>;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			await coalescedIndex.putAndDelete(
+				new BridgeDocument("c", "fresh", "new"),
+				{ query: new StringMatch({ key: "tag", value: "stale" }) },
+			);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex
+				.iterate({
+					sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b", "c"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable coalesced put and exact id deletes before the writer is stopped", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const coalescedIndex = writerIndex as typeof writerIndex & {
+				putAndDeleteIds: (
+					value: BridgeDocument,
+					deleteIds: string[],
+				) => Promise<ReturnType<typeof toId>[]>;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			await coalescedIndex.putAndDeleteIds(
+				new BridgeDocument("c", "fresh", "new"),
+				["a"],
+			);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex
+				.iterate({
+					sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b", "c"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable exact id deletes before the writer is stopped", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const exactDeleteIndex = writerIndex as typeof writerIndex & {
+				delIds: (deleteIds: string[]) => Promise<ReturnType<typeof toId>[]>;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			await exactDeleteIndex.delIds(["a"]);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex.iterate().all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable exact id deletes without returning deleted entries", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const exactDeleteIndex = writerIndex as typeof writerIndex & {
+				delIdsNoReturn: (deleteIds: string[]) => Promise<void> | void;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			const deleted = await exactDeleteIndex.delIdsNoReturn(["a"]);
+			expect(deleted).equal(undefined);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex.iterate().all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("counts durable exact id deletes without returning deleted entries", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeDocument });
+			const exactDeleteIndex = writerIndex as typeof writerIndex & {
+				delIdsCount: (deleteIds: string[]) => Promise<number> | number;
+			};
+			await writerIndex.put(new BridgeDocument("a", "stale", "delete me"));
+			await writerIndex.put(new BridgeDocument("b", "other", "keep me"));
+			const deleted = await exactDeleteIndex.delIdsCount(["a", "missing"]);
+			expect(deleted).equal(1);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeDocument });
+			const result = await readerIndex.iterate().all();
+
+			expect(result.map((entry) => entry.value.id)).to.deep.equal(["b"]);
+		} finally {
+			await writer.drop();
+			await reader.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
+	it("replays durable shared-log coordinate fields from the typed native path", async () => {
+		const directory = createPersistenceDirectory();
+		const writer = create(directory);
+		const reader = create(directory);
+		try {
+			await writer.start();
+			const writerIndex = await writer.init({ schema: BridgeCoordinateDocument });
+			const writerIndexInternal = writerIndex as any;
+			const originalAppendPut = writerIndexInternal.appendPut.bind(writerIndex);
+			const originalAppendPutAndDeletes =
+				writerIndexInternal.appendPutAndDeletes.bind(writerIndex);
+			let appendPutCalls = 0;
+			let appendPutAndDeletesCalls = 0;
+			writerIndexInternal.appendPut = (...args: any[]) => {
+				appendPutCalls++;
+				return originalAppendPut(...args);
+			};
+			writerIndexInternal.appendPutAndDeletes = (...args: any[]) => {
+				appendPutAndDeletesCalls++;
+				return originalAppendPutAndDeletes(...args);
+			};
+			const coordinateIndex = writerIndex as typeof writerIndex & {
+				putSharedLogCoordinateFieldsAndDeleteIds: (
+					fields: {
+						hash: string;
+						hashNumber: bigint;
+						gid: string;
+						coordinates: bigint[];
+						wallTime: bigint;
+						assignedToRangeBoundary: boolean;
+						metaBytes: Uint8Array;
+					},
+					deleteIds?: string[],
+				) => Promise<ReturnType<typeof toId>[]>;
+			};
+			const value = new BridgeCoordinateDocument(
+				"a",
+				10n,
+				"gid-a",
+				[4n, 8n],
+				12n,
+				true,
+				new Uint8Array([1, 2, 3]),
+			);
+			await coordinateIndex.putSharedLogCoordinateFieldsAndDeleteIds({
+				hash: value.hash,
+				hashNumber: value.hashNumber,
+				gid: value.gid,
+				coordinates: value.coordinates,
+				wallTime: value.wallTime,
+				assignedToRangeBoundary: value.assignedToRangeBoundary,
+				metaBytes: value._meta,
+			});
+			expect(appendPutCalls).to.equal(1);
+			expect(appendPutAndDeletesCalls).to.equal(0);
+
+			await reader.start();
+			const readerIndex = await reader.init({ schema: BridgeCoordinateDocument });
+			const result = await readerIndex
+				.iterate({
+					query: new IntegerCompare({
+						key: "coordinates",
+						compare: Compare.Equal,
+						value: 8n,
+					}),
+				})
+				.all();
+
+			expect(result.map((entry) => entry.value.hash)).to.deep.equal(["a"]);
 		} finally {
 			await writer.drop();
 			await reader.drop();

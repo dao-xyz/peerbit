@@ -19,10 +19,29 @@ export type SnapshotFile = {
 	read<T extends Record<string, any>>(schema: AbstractType<T>): Promise<T[]>;
 	appendPut<T extends Record<string, any>>(
 		key: string,
-		value: T,
+		value: T | undefined,
+		schema: AbstractType<T>,
+		encodedValue?: EncodedValue,
+	): Promise<void>;
+	appendPutBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value?: T;
+			encodedValue?: EncodedValue;
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void>;
+	appendPutAndDeleteBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value?: T;
+			encodedValue?: EncodedValue;
+			deleteKeys?: string[];
+		}>,
 		schema: AbstractType<T>,
 	): Promise<void>;
 	appendDelete(key: string): Promise<void>;
+	appendDeleteBatch(keys: string[]): Promise<void>;
 	compact<T extends Record<string, any>>(
 		values: T[],
 		schema: AbstractType<T>,
@@ -31,6 +50,13 @@ export type SnapshotFile = {
 	remove(): Promise<void>;
 	persisted: true;
 };
+
+export type EncodedValue =
+	| Uint8Array
+	| {
+			prefix: Uint8Array;
+			suffix: Uint8Array;
+	  };
 
 export type PersistenceDurability = "normal" | "strict";
 
@@ -113,6 +139,27 @@ const writeBytes = (
 	offset = setUint32(output, offset, bytes.byteLength);
 	output.set(bytes, offset);
 	return offset + bytes.byteLength;
+};
+
+const encodedValueLength = (value: EncodedValue): number =>
+	value instanceof Uint8Array
+		? value.byteLength
+		: value.prefix.byteLength + value.suffix.byteLength;
+
+const writeEncodedValue = (
+	output: Uint8Array,
+	offset: number,
+	value: EncodedValue,
+): number => {
+	offset = setUint32(output, offset, encodedValueLength(value));
+	if (value instanceof Uint8Array) {
+		output.set(value, offset);
+		return offset + value.byteLength;
+	}
+	output.set(value.prefix, offset);
+	offset += value.prefix.byteLength;
+	output.set(value.suffix, offset);
+	return offset + value.suffix.byteLength;
 };
 
 const readBytes = (
@@ -239,22 +286,55 @@ const encodeJournalPayload = <T extends Record<string, any>>(
 	key: string,
 	schema?: AbstractType<T>,
 	value?: T,
+	encodedValue?: EncodedValue,
 ): Uint8Array => {
 	const keyBytes = encodeString(key);
-	const valueBytes = value && schema ? serialize(value) : new Uint8Array();
+	const valueBytes =
+		encodedValue ?? (value && schema ? serialize(value) : new Uint8Array());
 	const output = new Uint8Array(
 		1 +
 			4 +
 			keyBytes.byteLength +
-			(operation === JournalOperation.Put ? 4 + valueBytes.byteLength : 0),
+			(operation === JournalOperation.Put
+				? 4 + encodedValueLength(valueBytes)
+				: 0),
 	);
 	let offset = 0;
 	output[offset++] = operation;
 	offset = writeBytes(output, offset, keyBytes);
 	if (operation === JournalOperation.Put) {
-		offset = writeBytes(output, offset, valueBytes);
+		offset = writeEncodedValue(output, offset, valueBytes);
 	}
 	return output;
+};
+
+const encodePutAndDeleteRecords = <T extends Record<string, any>>(
+	values: Array<{
+		key: string;
+		value?: T;
+		encodedValue?: EncodedValue;
+		deleteKeys?: string[];
+	}>,
+	schema: AbstractType<T>,
+): Uint8Array[] => {
+	const payloads: Uint8Array[] = [];
+	for (const entry of values) {
+		payloads.push(
+			encodeJournalPayload(
+				JournalOperation.Put,
+				entry.key,
+				schema,
+				entry.value,
+				entry.encodedValue,
+			),
+		);
+		for (const deleteKey of entry.deleteKeys ?? []) {
+			payloads.push(
+				encodeJournalPayload(JournalOperation.Delete, deleteKey),
+			);
+		}
+	}
+	return payloads;
 };
 
 const encodeJournalRecord = (payload: Uint8Array): Uint8Array => {
@@ -388,14 +468,62 @@ class NativeSnapshotFile implements SnapshotFile {
 
 	async appendPut<T extends Record<string, any>>(
 		key: string,
-		value: T,
+		value: T | undefined,
+		schema: AbstractType<T>,
+		encodedValue?: EncodedValue,
+	): Promise<void> {
+		await this.appendRecord(
+			encodeJournalPayload(
+				JournalOperation.Put,
+				key,
+				schema,
+				value,
+				encodedValue,
+			),
+		);
+	}
+
+	async appendPutBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value?: T;
+			encodedValue?: EncodedValue;
+		}>,
 		schema: AbstractType<T>,
 	): Promise<void> {
-		await this.appendRecord(encodeJournalPayload(JournalOperation.Put, key, schema, value));
+		await this.appendRecords(
+			values.map((entry) =>
+				encodeJournalPayload(
+					JournalOperation.Put,
+					entry.key,
+					schema,
+					entry.value,
+					entry.encodedValue,
+				),
+			),
+		);
+	}
+
+	async appendPutAndDeleteBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value?: T;
+			encodedValue?: EncodedValue;
+			deleteKeys?: string[];
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void> {
+		await this.appendRecords(encodePutAndDeleteRecords(values, schema));
 	}
 
 	async appendDelete(key: string): Promise<void> {
 		await this.appendRecord(encodeJournalPayload(JournalOperation.Delete, key));
+	}
+
+	async appendDeleteBatch(keys: string[]): Promise<void> {
+		await this.appendRecords(
+			keys.map((key) => encodeJournalPayload(JournalOperation.Delete, key)),
+		);
 	}
 
 	async compact<T extends Record<string, any>>(
@@ -492,16 +620,25 @@ class NativeSnapshotFile implements SnapshotFile {
 	}
 
 	private async appendRecord(payload: Uint8Array): Promise<void> {
+		await this.appendRecords([payload]);
+	}
+
+	private async appendRecords(payloads: Uint8Array[]): Promise<void> {
+		if (payloads.length === 0) {
+			return;
+		}
 		const handle = await this.getJournalHandle();
 		if (!this.journalInitialized) {
 			this.writeAllSync(handle, JOURNAL_MAGIC);
 			this.journalInitialized = true;
 		}
-		this.writeAllSync(handle, encodeJournalRecord(payload));
+		for (const payload of payloads) {
+			this.writeAllSync(handle, encodeJournalRecord(payload));
+		}
 		if (this.durability === "strict") {
 			this.fs.fsyncSync(handle);
 		}
-		this.operations++;
+		this.operations += payloads.length;
 	}
 
 	private async getJournalHandle(): Promise<number> {
@@ -593,14 +730,62 @@ class OpfsSnapshotFile implements SnapshotFile {
 
 	async appendPut<T extends Record<string, any>>(
 		key: string,
-		value: T,
+		value: T | undefined,
+		schema: AbstractType<T>,
+		encodedValue?: EncodedValue,
+	): Promise<void> {
+		await this.appendRecord(
+			encodeJournalPayload(
+				JournalOperation.Put,
+				key,
+				schema,
+				value,
+				encodedValue,
+			),
+		);
+	}
+
+	async appendPutBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value?: T;
+			encodedValue?: EncodedValue;
+		}>,
 		schema: AbstractType<T>,
 	): Promise<void> {
-		await this.appendRecord(encodeJournalPayload(JournalOperation.Put, key, schema, value));
+		await this.appendRecords(
+			values.map((entry) =>
+				encodeJournalPayload(
+					JournalOperation.Put,
+					entry.key,
+					schema,
+					entry.value,
+					entry.encodedValue,
+				),
+			),
+		);
+	}
+
+	async appendPutAndDeleteBatch<T extends Record<string, any>>(
+		values: Array<{
+			key: string;
+			value?: T;
+			encodedValue?: EncodedValue;
+			deleteKeys?: string[];
+		}>,
+		schema: AbstractType<T>,
+	): Promise<void> {
+		await this.appendRecords(encodePutAndDeleteRecords(values, schema));
 	}
 
 	async appendDelete(key: string): Promise<void> {
 		await this.appendRecord(encodeJournalPayload(JournalOperation.Delete, key));
+	}
+
+	async appendDeleteBatch(keys: string[]): Promise<void> {
+		await this.appendRecords(
+			keys.map((key) => encodeJournalPayload(JournalOperation.Delete, key)),
+		);
 	}
 
 	async compact<T extends Record<string, any>>(
@@ -708,11 +893,18 @@ class OpfsSnapshotFile implements SnapshotFile {
 	}
 
 	private async appendRecord(payload: Uint8Array): Promise<void> {
+		await this.appendRecords([payload]);
+	}
+
+	private async appendRecords(payloads: Uint8Array[]): Promise<void> {
+		if (payloads.length === 0) {
+			return;
+		}
 		const directory = await this.getDirectory(true);
 		const fileHandle = (await directory.getFileHandle(this.journalFileName, {
 			create: true,
 		})) as SyncFileHandle;
-		const record = encodeJournalRecord(payload);
+		const records = payloads.map(encodeJournalRecord);
 
 		if (fileHandle.createSyncAccessHandle) {
 			const access = await fileHandle.createSyncAccessHandle();
@@ -724,19 +916,22 @@ class OpfsSnapshotFile implements SnapshotFile {
 					access.write(JOURNAL_MAGIC, { at: offset });
 					offset += JOURNAL_MAGIC.byteLength;
 				}
-				access.write(record, { at: offset });
+				for (const record of records) {
+					access.write(record, { at: offset });
+					offset += record.byteLength;
+				}
 				if (this.durability === "strict") {
 					access.flush();
 				}
 			} finally {
 				access.close();
 			}
-			this.operations++;
+			this.operations += payloads.length;
 			return;
 		}
 
-		if (await this.tryAppendWithWritableStream(fileHandle, record)) {
-			this.operations++;
+		if (await this.tryAppendWithWritableStream(fileHandle, records)) {
+			this.operations += payloads.length;
 			return;
 		}
 
@@ -745,15 +940,15 @@ class OpfsSnapshotFile implements SnapshotFile {
 			this.journalFileName,
 			concatBytes([
 				existing.byteLength === 0 ? JOURNAL_MAGIC : existing,
-				record,
+				...records,
 			]),
 		);
-		this.operations++;
+		this.operations += payloads.length;
 	}
 
 	private async tryAppendWithWritableStream(
 		fileHandle: FileSystemFileHandle,
-		record: Uint8Array,
+		records: Uint8Array[],
 	): Promise<boolean> {
 		let writable: FileSystemWritableFileStream | undefined;
 		try {
@@ -768,7 +963,10 @@ class OpfsSnapshotFile implements SnapshotFile {
 				});
 				offset += JOURNAL_MAGIC.byteLength;
 			}
-			await writable.write({ type: "write", position: offset, data: record });
+			for (const record of records) {
+				await writable.write({ type: "write", position: offset, data: record });
+				offset += record.byteLength;
+			}
 			await writable.close();
 			return true;
 		} catch (error: any) {

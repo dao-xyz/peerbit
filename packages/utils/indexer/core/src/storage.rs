@@ -24,6 +24,14 @@ impl MemoryByteStorage {
             entries: IndexMap::new(),
         }
     }
+
+    pub fn reserve(&mut self, additional: usize) {
+        self.entries.reserve(additional);
+    }
+
+    pub fn put_return_previous(&mut self, key: String, value: Vec<u8>) -> Option<Vec<u8>> {
+        self.entries.insert(key, value)
+    }
 }
 
 impl ByteStorage for MemoryByteStorage {

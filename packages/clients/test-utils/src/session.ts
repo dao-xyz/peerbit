@@ -1,6 +1,6 @@
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { DirectBlock } from "@peerbit/blocks";
-import { createStore } from "@peerbit/any-store";
+import { createStore, type AnyStore } from "@peerbit/any-store";
 import { keychain } from "@peerbit/keychain";
 import { DefaultCryptoKeychain } from "@peerbit/keychain";
 import { PreHash, SignatureWithKey } from "@peerbit/crypto";
@@ -32,6 +32,11 @@ type CreateOptions = {
 	libp2p?: Libp2pCreateOptions;
 	directory?: string;
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
+	storage?: {
+		storeFactory?: (directory?: string) => AnyStore;
+		blocksStoreFactory?: (directory?: string) => AnyStore;
+		keychainStoreFactory?: (directory?: string) => AnyStore;
+	};
 };
 
 type FanoutCapableServices = ProgramClient["services"] & {
@@ -70,6 +75,7 @@ export type InMemoryPeerbitSessionOptions = {
 	 * a sqlite3 instance. Override if you need program/indexer behavior in a test.
 	 */
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
+	storage?: CreateOptions["storage"];
 };
 
 class NoopIndices implements Indices {
@@ -734,6 +740,8 @@ export class TestSession {
 				const blocksDirectory = o?.directory
 					? path.join(o.directory, "/blocks").toString()
 					: undefined;
+				const blocksStoreFactory =
+					o?.storage?.blocksStoreFactory ?? o?.storage?.storeFactory;
 
 				const libp2pOptions: Libp2pCreateOptions = {
 					...(o?.libp2p ?? {}),
@@ -781,7 +789,8 @@ export class TestSession {
 				services: {
 					blocks: (c: any) =>
 						new DirectBlock(c, {
-							directory: blocksDirectory,
+							directory: blocksStoreFactory ? undefined : blocksDirectory,
+							localStore: blocksStoreFactory?.(blocksDirectory),
 						}),
 					pubsub: (c: any) =>
 						new TopicControlPlane(c, {
@@ -816,11 +825,13 @@ export class TestSession {
 								libp2p: x,
 								directory: options[ix]?.directory,
 								indexer: options[ix]?.indexer,
+								storage: options[ix]?.storage,
 							})
 						: Peerbit.create({
 								libp2p: x,
 								directory: options?.directory,
 								indexer: options?.indexer,
+								storage: options?.storage,
 							}),
 				),
 			)) as Peerbit[],
@@ -843,6 +854,11 @@ export class TestSession {
 		const mockCrypto = opts.mockCrypto !== false;
 		const indexer = opts.indexer ?? (() => new NoopIndices());
 		const seed = Math.max(0, Math.floor(opts.seed ?? 1));
+		const blocksDirectory = opts.directory
+			? path.join(opts.directory, "/blocks")
+			: undefined;
+		const blocksStoreFactory =
+			opts.storage?.blocksStoreFactory ?? opts.storage?.storeFactory;
 
 		const perPeer = new Map<
 			string,
@@ -877,7 +893,8 @@ export class TestSession {
 					new SimDirectBlock(
 						c,
 						{
-							directory: opts.directory ? path.join(opts.directory, "/blocks") : undefined,
+							directory: blocksStoreFactory ? undefined : blocksDirectory,
+							localStore: blocksStoreFactory?.(blocksDirectory),
 							canRelayMessage: true,
 						},
 						mockCrypto,
@@ -909,6 +926,7 @@ export class TestSession {
 					libp2p: x as any,
 					directory: opts.directory,
 					indexer,
+					storage: opts.storage,
 				}),
 			),
 		)) as Peerbit[];

@@ -115,6 +115,13 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 		this._index.set(id.primitive, { id, value });
 	}
 
+	putBatch(values: T[]): void {
+		for (const value of values) {
+			const id = types.toId(types.extractFieldValue(value, this.indexByArr));
+			this._index.set(id.primitive, { id, value });
+		}
+	}
+
 	async del(query: types.DeleteOptions): Promise<types.IdKey[]> {
 		if (this.isClosing()) {
 			return [];

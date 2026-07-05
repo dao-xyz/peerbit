@@ -91,6 +91,23 @@ export class Cache<T = undefined> {
 		this.trim(time);
 	}
 
+	addMany(entries: Iterable<readonly [key: Key, value?: T, size?: number]>): void {
+		const time = Date.now();
+		let changed = false;
+		for (const [key, value, size = 1] of entries) {
+			this.deleted.delete(key);
+			if (!this._map.has(key)) {
+				this.list.push(key);
+				this.currentSize += size;
+			}
+			this._map.set(key, { time, value: value ?? null, size });
+			changed = true;
+		}
+		if (changed) {
+			this.trim(time);
+		}
+	}
+
 	clear(): void {
 		this.list = Yallist.create();
 		this._map = new Map();

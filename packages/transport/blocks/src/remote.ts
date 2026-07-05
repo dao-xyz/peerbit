@@ -24,7 +24,6 @@ import { AbortError } from "@peerbit/time";
 import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
 import PQueue from "p-queue";
-import { AnyBlockStore } from "./any-blockstore.js";
 import type { BlockStore } from "./interface.js";
 
 export const logger = loggerFn("peerbit:transport:blocks");
@@ -88,6 +87,8 @@ export class RemoteBlocks implements IBlocks {
 
 	private _loadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<string, InFlightRead>;
+	private _deferredStoredNotificationCids?: Set<string>;
+	private _deferredStoredNotificationTimer?: ReturnType<typeof setTimeout>;
 	_open = false;
 	private _events: TypedEventEmitter<{
 		"peer:reachable": CustomEvent<PublicSignKey>;
@@ -97,7 +98,7 @@ export class RemoteBlocks implements IBlocks {
 
 	constructor(
 		readonly options: {
-			local: AnyBlockStore;
+			local: BlockStore;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
 			publicKey: PublicSignKey;
@@ -234,6 +235,10 @@ export class RemoteBlocks implements IBlocks {
 		};
 	}
 
+	getNativeLogBlockStoreHandle(): unknown {
+		return this.localStore.getNativeLogBlockStoreHandle?.();
+	}
+
 	private normalizeProviderHints(
 		providers: string[] | undefined,
 		limit = this.maxProviderHintsPerCid || 8,
@@ -316,16 +321,145 @@ export class RemoteBlocks implements IBlocks {
 			throw new Error("Local store not set");
 		}
 		const cid = await this.localStore!.put(bytes);
+		await this.notifyPut(cid);
+		return cid;
+	}
+
+	async putMany(
+		blocks: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
+	): Promise<string[]> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		const cids = await this.localStore.putMany(blocks);
+		await this.notifyPuts(cids);
+		return cids;
+	}
+
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		const storedCid = await this.localStore.putKnown(cid, bytes);
+		await this.notifyPut(storedCid);
+		return storedCid;
+	}
+
+	async putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): Promise<string[]> {
+		if (!this.localStore) {
+			throw new Error("Local store not set");
+		}
+		const cids = await this.localStore.putKnownMany(blocks);
+		await this.notifyPuts(cids);
+		return cids;
+	}
+
+	hasNotifyStoredHook(): boolean {
+		return !!this.options.onPut;
+	}
+
+	notifyStored(cid: string): Promise<void> | void {
+		return this.notifyPut(cid);
+	}
+
+	notifyStoredMany(cids: string[]): Promise<void> | void {
+		return this.notifyPuts(cids);
+	}
+
+	notifyStoredDeferred(cid: string): void {
+		this.notifyStoredManyDeferred([cid]);
+	}
+
+	notifyStoredManyDeferred(cids: string[]): void {
+		if (!this.options.onPut || cids.length === 0) {
+			return;
+		}
+		let pending = this._deferredStoredNotificationCids;
+		if (!pending) {
+			pending = new Set();
+			this._deferredStoredNotificationCids = pending;
+		}
+		for (const cid of cids) {
+			if (cid) {
+				pending.add(cid);
+			}
+		}
+		if (pending.size === 0 || this._deferredStoredNotificationTimer) {
+			return;
+		}
+		this._deferredStoredNotificationTimer = setTimeout(() => {
+			this._deferredStoredNotificationTimer = undefined;
+			const flushed = this.flushDeferredStoredNotifications();
+			if (flushed && typeof flushed.catch === "function") {
+				flushed.catch((): void => undefined);
+			}
+		}, 0);
+	}
+
+	private flushDeferredStoredNotifications(): Promise<void> | void {
+		const pending = this._deferredStoredNotificationCids;
+		if (!pending || pending.size === 0) {
+			return;
+		}
+		this._deferredStoredNotificationCids = undefined;
+		const waits: Promise<void>[] = [];
+		for (const cid of pending) {
+			try {
+				const result = this.notifyStored(cid);
+				if (result && typeof result.then === "function") {
+					waits.push(result);
+				}
+			} catch {
+				// ignore best-effort hooks
+			}
+		}
+		if (waits.length > 0) {
+			return Promise.all(waits).then((): void => undefined);
+		}
+	}
+
+	private notifyPut(cid: string): Promise<void> | void {
+		const onPut = this.options.onPut;
+		if (!onPut) {
+			return;
+		}
 		try {
-			await this.options.onPut?.(cid);
+			const result = onPut(cid);
+			if (result && typeof result.then === "function") {
+				return result.catch((): void => undefined);
+			}
 		} catch {
 			// ignore best-effort hooks
 		}
-		return cid;
+	}
+
+	private notifyPuts(cids: string[]): Promise<void> | void {
+		const onPut = this.options.onPut;
+		if (!onPut || cids.length === 0) {
+			return;
+		}
+		if (cids.length === 1) {
+			return this.notifyPut(cids[0]!);
+		}
+		return Promise.all(
+			cids.map(async (cid) => {
+				try {
+					await onPut(cid);
+				} catch {
+					// ignore best-effort hooks
+				}
+			}),
+		).then((): void => undefined);
 	}
 
 	async has(cid: string) {
 		return this.localStore.has(cid);
+	}
+
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		return this.localStore.hasMany(cids);
 	}
 
 	async get(
@@ -351,6 +485,16 @@ export class RemoteBlocks implements IBlocks {
 		return value;
 	}
 
+	async getMany(
+		cids: string[],
+		options?: GetOptions | undefined,
+	): Promise<Array<Uint8Array | undefined>> {
+		if (!options?.remote) {
+			return this.localStore.getMany(cids, options);
+		}
+		return Promise.all(cids.map((cid) => this.get(cid, options)));
+	}
+
 	hintProviders(cid: string, providers: string[]) {
 		const cidString = stringifyCid(cid);
 		this.rememberProviderHints(cidString, providers);
@@ -361,6 +505,10 @@ export class RemoteBlocks implements IBlocks {
 
 	async rm(cid: string) {
 		await this.localStore?.rm(cid);
+	}
+
+	async rmMany(cids: string[]) {
+		await this.localStore?.rmMany(cids);
 	}
 
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
@@ -459,7 +607,7 @@ export class RemoteBlocks implements IBlocks {
 		cidObject: CID,
 		options: RemoteReadOptions = {},
 	): Promise<Uint8Array | undefined> {
-		const codec = (codecCodes as any)[cidObject.code];
+		const codec = codecCodes[cidObject.code as keyof typeof codecCodes];
 
 		const tryDecode = async (bytes: Uint8Array) => {
 			const value = await checkDecodeBlock(cidObject, bytes, {
@@ -756,6 +904,11 @@ export class RemoteBlocks implements IBlocks {
 
 		// Wait for processing request
 		this.closeController.abort();
+		if (this._deferredStoredNotificationTimer) {
+			clearTimeout(this._deferredStoredNotificationTimer);
+			this._deferredStoredNotificationTimer = undefined;
+		}
+		await this.flushDeferredStoredNotifications();
 		this._loadFetchQueue.clear();
 		await this._loadFetchQueue.onIdle(); // wait for pending
 		await this.localStore?.stop();

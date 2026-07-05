@@ -1,5 +1,28 @@
 import { expect } from "chai";
-import { createLogGraphIndex, type NativeLogEntry } from "../src/index.js";
+import {
+	benchmarkEntryV0StorageVerifyModes,
+	benchmarkPlainEntryV0Crypto,
+} from "../src/benchmark.js";
+import {
+	encodeEntryV0SignableBatchForTest,
+	encodeEntryV0StorageBatchWithCidsForTest,
+	signEd25519ForTest,
+} from "../src/testing.js";
+import {
+	type NativeLogEntry,
+	calculateRawCidV1,
+	calculateRawCidV1Batch,
+	createLogGraphIndex,
+	createNativeLogBlockStore,
+	encodeEntryV0Signable,
+	encodeEntryV0Storage,
+	encodeEntryV0StorageWithCid,
+	prepareEntryV0PlainChain,
+	prepareRawEntryV0Batch,
+	verifyEd25519Batch,
+	verifyEntryV0Ed25519Batch,
+	verifyEntryV0Ed25519StorageBatch,
+} from "../src/index.js";
 
 const APPEND = 0;
 const CUT = 1;
@@ -19,6 +42,37 @@ const entry = (
 	payloadSize: 1,
 	clock: { timestamp: { wallTime, logical: 0 } },
 });
+
+const absoluteReplicaData = (value: number) =>
+	new Uint8Array([
+		0,
+		value & 0xff,
+		(value >>> 8) & 0xff,
+		(value >>> 16) & 0xff,
+		(value >>> 24) & 0xff,
+	]);
+
+const bytes = (length: number, offset = 0) =>
+	Uint8Array.from({ length }, (_, index) => (index + offset) & 0xff);
+
+const fromHex = (hex: string) =>
+	Uint8Array.from(
+		hex.match(/.{2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+	);
+
+const TS_BORSH_ENTRY_V0_FIXTURE = {
+	withMeta: {
+		signable:
+			"0000005e0000000000210000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20210015cd5b070000000007000000050000006769642d6102000000060000006e6578742d61060000006e6578742d62000103000000090807000009000000000400000001020304000000000000",
+		storage:
+			"0000005e0000000000210000000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20210015cd5b070000000007000000050000006769642d6102000000060000006e6578742d61060000006e6578742d62000103000000090807000009000000000400000001020304000000000100010000000000670000000040000000606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f00404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f0000",
+		cid: "zb2rhXpjPn9fDgku56mickZTNbZDfiWmZRy5WDnHjAeLB8Yqa",
+	},
+	noMeta: {
+		signable:
+			"000000490000000000210000000b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b00b168de3a00000000000000000b0000006769642d6e6f2d6d65746100000000000000000a00000000050000000504030201000000000000",
+	},
+};
 
 describe("native log graph index", () => {
 	it("tracks heads and next adjacency", async () => {
@@ -44,6 +98,50 @@ describe("native log graph index", () => {
 		expect(index.countHasNext("a")).to.equal(0);
 	});
 
+	it("tracks heads and next adjacency in native batches", async () => {
+		const index = await createLogGraphIndex();
+		index.putBatch([
+			entry("a", "g", [], 1n),
+			entry("b", "g", ["a"], 2n),
+			entry("c", "g", ["b"], 3n),
+		]);
+
+		expect(index.heads()).to.deep.equal(["c"]);
+		expect(index.children("a")).to.deep.equal(["b"]);
+		expect(index.children("b")).to.deep.equal(["c"]);
+		expect(index.payloadSizeSum()).to.equal(3);
+	});
+
+	it("returns oldest entries by clock order", async () => {
+		const index = await createLogGraphIndex();
+		index.putBatch([
+			entry("b", "g", [], 2n),
+			entry("a", "g", [], 1n),
+			entry("c", "g", [], 1n),
+		]);
+
+		expect(index.oldestEntries(2).map((entry) => entry.hash)).to.deep.equal([
+			"a",
+			"c",
+		]);
+	});
+
+	it("tracks heads and next adjacency in native append chains", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("root", "g", [], 1n));
+		index.putAppendChain([
+			entry("a", "g", ["root"], 2n),
+			entry("b", "g", ["a"], 3n),
+			entry("c", "g", ["b"], 4n),
+		]);
+
+		expect(index.heads()).to.deep.equal(["c"]);
+		expect(index.children("root")).to.deep.equal(["a"]);
+		expect(index.children("a")).to.deep.equal(["b"]);
+		expect(index.children("b")).to.deep.equal(["c"]);
+		expect(index.payloadSizeSum()).to.equal(4);
+	});
+
 	it("filters heads by gid and clock order", async () => {
 		const index = await createLogGraphIndex();
 		index.put(entry("b", "one", [], 2n));
@@ -53,6 +151,98 @@ describe("native log graph index", () => {
 		expect(index.heads()).to.deep.equal(["a", "b", "c"]);
 		expect(index.heads("one")).to.deep.equal(["a", "b"]);
 		expect(index.heads("two")).to.deep.equal(["c"]);
+		expect(index.hasHead()).equal(true);
+		expect(index.hasHead("one")).equal(true);
+		expect(index.hasHead("two")).equal(true);
+		expect(index.hasHead("missing")).equal(false);
+		expect(index.hasAnyHead(["missing", "two"])).equal(true);
+		expect(index.hasAnyHead(["missing"])).equal(false);
+		expect(
+			index.hasAnyHeadBatch([["missing", "two"], ["missing"], []]),
+		).to.deep.equal([true, false, false]);
+	});
+
+	it("returns sortable head metadata for append planning", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("b", "one", [], 2n));
+		index.put(entry("a", "one", [], 1n));
+		index.put(entry("c", "two", [], 3n));
+
+		expect(index.headEntries("one")).to.deep.equal([
+			{
+				hash: "a",
+				meta: {
+					gid: "one",
+					clock: { timestamp: { wallTime: 1n, logical: 0 } },
+				},
+			},
+			{
+				hash: "b",
+				meta: {
+					gid: "one",
+					clock: { timestamp: { wallTime: 2n, logical: 0 } },
+				},
+			},
+		]);
+
+		expect(index.joinHeadEntries("one")).to.deep.equal([
+			{
+				hash: "a",
+				meta: {
+					gid: "one",
+					type: APPEND,
+					next: [],
+					clock: { timestamp: { wallTime: 1n, logical: 0 } },
+				},
+			},
+			{
+				hash: "b",
+				meta: {
+					gid: "one",
+					type: APPEND,
+					next: [],
+					clock: { timestamp: { wallTime: 2n, logical: 0 } },
+				},
+			},
+		]);
+	});
+
+	it("returns shaped head metadata", async () => {
+		const index = await createLogGraphIndex();
+		index.put({
+			...entry("a", "one", [], 1n),
+			data: absoluteReplicaData(9),
+		});
+
+		const heads = index.headDataEntries("one");
+		expect(heads).to.have.length(1);
+		expect(heads[0]!.hash).equal("a");
+		expect([...(heads[0]!.meta.data ?? [])]).to.deep.equal([0, 9, 0, 0, 0]);
+	});
+
+	it("computes max u32 from shaped head metadata", async () => {
+		const index = await createLogGraphIndex();
+		index.put({
+			...entry("a", "one", [], 1n),
+			data: absoluteReplicaData(2),
+		});
+		index.put({
+			...entry("b", "one", [], 2n),
+			data: absoluteReplicaData(5),
+		});
+		index.put({
+			...entry("c", "two", [], 3n),
+			data: absoluteReplicaData(9),
+		});
+
+		expect(index.maxHeadDataU32("one")).equal(5);
+		expect(index.maxHeadDataU32("two")).equal(9);
+		expect(index.maxHeadDataU32("missing")).equal(undefined);
+		expect(index.maxHeadDataU32Batch(["one", "two", "missing"])).to.deep.equal([
+			5,
+			9,
+			undefined,
+		]);
 	});
 
 	it("does not demote nexts for cut entries", async () => {
@@ -75,5 +265,1124 @@ describe("native log graph index", () => {
 
 		index.put(entry("c", "other", ["a"], 2n));
 		expect(index.shadowedGids("new", ["a"], "b")).to.deep.equal([]);
+	});
+
+	it("batches membership checks", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("a", "g", [], 1n));
+		index.put({ ...entry("c", "g", [], 3n), data: absoluteReplicaData(4) });
+
+		expect([...index.hasMany(["missing", "a", "c"])]).to.deep.equal(["a", "c"]);
+		expect(index.entryMetadataBatch(["missing", "a", "c"])).to.deep.equal([
+			undefined,
+			{
+				hash: "a",
+				gid: "g",
+				data: undefined,
+			},
+			{
+				hash: "c",
+				gid: "g",
+				data: absoluteReplicaData(4),
+				replicas: 4,
+			},
+		]);
+		expect(index.entryMetadataHintsBatch(["missing", "a", "c"])).to.deep.equal(
+			[
+				undefined,
+				{
+					hash: "a",
+					gid: "g",
+					data: undefined,
+				},
+				{
+					hash: "c",
+					gid: "g",
+					data: undefined,
+					replicas: 4,
+				},
+			],
+		);
+	});
+
+	it("sums payload sizes", async () => {
+		const index = await createLogGraphIndex();
+		index.put({ ...entry("a", "g", [], 1n), payloadSize: 7 });
+		index.put({ ...entry("b", "g", [], 2n), payloadSize: 9 });
+
+		expect(index.payloadSizeSum()).to.equal(16);
+
+		index.delete("a");
+		expect(index.payloadSizeSum()).to.equal(9);
+	});
+
+	it("returns child join entries for cut recursion", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("a", "g", [], 1n));
+		index.put(entry("b", "g", ["a"], 2n));
+		index.put(entry("cut", "g", ["a"], 3n, CUT));
+
+		expect(
+			index.childJoinEntries("a").map((entry) => [entry.hash, entry.meta.type]),
+		).to.deep.equal([
+			["b", APPEND],
+			["cut", CUT],
+		]);
+	});
+
+	it("plans unique reference gids for exchange heads", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("root", "root-gid", [], 1n));
+		index.put(entry("same-gid-parent", "root-gid", [], 2n));
+		index.put(entry("side", "side-gid", [], 3n));
+		index.put(entry("branch", "branch-gid", ["root", "side"], 4n));
+		index.put(entry("head", "head-gid", ["branch", "same-gid-parent"], 5n));
+
+		expect(index.uniqueReferenceGids("head")).to.deep.equal([
+			"branch-gid",
+			"root-gid",
+			"side-gid",
+		]);
+		expect(
+			index.uniqueReferenceGidRowsBatch(["head", "missing"]),
+		).to.deep.equal([
+			[
+				["branch", "branch-gid"],
+				["same-gid-parent", "root-gid"],
+				["side", "side-gid"],
+			],
+			undefined,
+		]);
+		expect(index.uniqueReferenceGidRowsFlatBatch(["head", "root"])).to.deep.equal(
+			[
+				[0, "branch", "branch-gid"],
+				[0, "same-gid-parent", "root-gid"],
+				[0, "side", "side-gid"],
+			],
+		);
+		expect(index.uniqueReferenceGidRowsFlatBatch(["head", "missing"])).to.equal(
+			undefined,
+		);
+		expect(index.uniqueReferenceGids("missing")).to.equal(undefined);
+
+		index.put(entry("cut", "cut-gid", ["head"], 6n, CUT));
+		expect(index.uniqueReferenceGids("cut")).to.deep.equal([]);
+		expect(index.uniqueReferenceGidRowsFlatBatch(["cut"])).to.deep.equal([]);
+
+		index.put(entry("incomplete", "incomplete-gid", ["not-indexed"], 7n));
+		expect(index.uniqueReferenceGids("incomplete")).to.equal(undefined);
+	});
+
+	it("plans recursive cut deletes", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("root", "g", [], 1n));
+		index.put(entry("child", "g", ["root"], 2n));
+		index.put(entry("cut", "g", ["child"], 3n, CUT));
+
+		expect(index.planDeleteRecursively(["cut"], true)).to.deep.equal([
+			"child",
+			"root",
+		]);
+
+		const branched = await createLogGraphIndex();
+		branched.put(entry("root", "g", [], 1n));
+		branched.put(entry("child", "g", ["root"], 2n));
+		branched.put(entry("sibling", "g", ["root"], 3n));
+		branched.put(entry("cut", "g", ["child"], 4n, CUT));
+
+		expect(branched.planDeleteRecursively(["cut"], true)).to.deep.equal([
+			"child",
+		]);
+	});
+
+	it("plans joins with missing parents", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("a", "g", [], 1n));
+
+		expect(index.planJoin("b", ["a", "missing"], APPEND)).to.deep.equal({
+			skip: false,
+			missingParents: ["missing"],
+			cutChecked: false,
+			coveredByCut: false,
+		});
+		expect(index.planJoin("a", [], APPEND)).to.deep.equal({
+			skip: true,
+			missingParents: [],
+			cutChecked: false,
+			coveredByCut: false,
+		});
+		expect(index.planJoin("a", [], APPEND, true)).to.deep.equal({
+			skip: false,
+			missingParents: [],
+			cutChecked: false,
+			coveredByCut: false,
+		});
+		expect(index.planJoin("cut", ["missing"], CUT)).to.deep.equal({
+			skip: false,
+			missingParents: [],
+			cutChecked: false,
+			coveredByCut: false,
+		});
+	});
+
+	it("plans cut-covered joins", async () => {
+		const index = await createLogGraphIndex();
+		index.put(entry("cut", "g", ["old"], 2n, CUT));
+
+		expect(
+			index.planJoin("old", ["missing"], APPEND, false, {
+				gid: "g",
+				wallTime: 1n,
+				logical: 0,
+			}),
+		).to.deep.equal({
+			skip: false,
+			missingParents: [],
+			cutChecked: true,
+			coveredByCut: true,
+		});
+		expect(
+			index.planJoin("new", ["missing"], APPEND, false, {
+				gid: "g",
+				wallTime: 3n,
+				logical: 0,
+			}),
+		).to.deep.equal({
+			skip: false,
+			missingParents: ["missing"],
+			cutChecked: true,
+			coveredByCut: false,
+		});
+	});
+});
+
+describe("native EntryV0 encoding", () => {
+	it("signs Ed25519 bytes with the expected RFC 8032 test vector", async () => {
+		const signature = await signEd25519ForTest({
+			privateKey: fromHex(
+				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			),
+			publicKey: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			data: new Uint8Array(),
+		});
+		expect([...signature]).to.deep.equal([
+			...fromHex(
+				"e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+			),
+		]);
+	});
+
+	it("batch-verifies Ed25519 signatures", async () => {
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const signature = await signEd25519ForTest({
+			privateKey: fromHex(
+				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			),
+			publicKey,
+			data: new Uint8Array(),
+		});
+
+		expect(
+			await verifyEd25519Batch([
+				{
+					signature,
+					publicKey,
+					message: new Uint8Array(),
+				},
+				{
+					signature,
+					publicKey,
+					message: new Uint8Array([1]),
+				},
+			]),
+		).to.deep.equal([true, false]);
+	});
+
+	it("batch-verifies EntryV0 Ed25519 signatures from entry fields", async () => {
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const input = {
+			clockId: bytes(33, 1),
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "gid-a",
+			next: ["next-a", "next-b"],
+			type: APPEND,
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: new Uint8Array([1, 2, 3, 4]),
+		};
+		const signature = await signEd25519ForTest({
+			privateKey,
+			publicKey,
+			data: await encodeEntryV0Signable(input),
+		});
+
+		expect(
+			await verifyEntryV0Ed25519Batch([
+				{
+					...input,
+					signature,
+					publicKey,
+				},
+				{
+					...input,
+					payloadData: new Uint8Array([4, 3, 2, 1]),
+					signature,
+					publicKey,
+				},
+			]),
+		).to.deep.equal([true, false]);
+	});
+
+	it("batch-verifies EntryV0 Ed25519 signatures from storage bytes", async () => {
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const input = {
+			clockId: bytes(33, 1),
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "gid-a",
+			next: ["next-a", "next-b"],
+			type: APPEND,
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: new Uint8Array([1, 2, 3, 4]),
+		};
+		const signature = await signEd25519ForTest({
+			privateKey,
+			publicKey,
+			data: await encodeEntryV0Signable(input),
+		});
+		const storage = await encodeEntryV0Storage({
+			...input,
+			signature,
+			signaturePublicKey: publicKey,
+		});
+		const tampered = await encodeEntryV0Storage({
+			...input,
+			payloadData: new Uint8Array([4, 3, 2, 1]),
+			signature,
+			signaturePublicKey: publicKey,
+		});
+
+		expect(
+			await verifyEntryV0Ed25519StorageBatch([storage, tampered]),
+		).to.deep.equal([true, false]);
+	});
+
+	it("exposes Ed25519 and CID primitive timing counters over EntryV0 signable bytes", async () => {
+		const result = await benchmarkPlainEntryV0Crypto({
+			clockId: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			privateKey: fromHex(
+				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			),
+			publicKey: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			iterations: 3,
+			payloadData: bytes(32, 7),
+		});
+
+		expect(result.signableBytes).to.be.greaterThan(0);
+		expect(result.storageBytes).to.be.greaterThan(result.signableBytes);
+		expect(result.cidLenTotal).to.be.greaterThan(0);
+		expect(Number.isFinite(result.checksum)).to.equal(true);
+	});
+
+	it("exposes EntryV0 storage verification mode timing counters", async () => {
+		const result = await benchmarkEntryV0StorageVerifyModes({
+			clockId: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			privateKey: fromHex(
+				"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			),
+			publicKey: fromHex(
+				"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			),
+			iterations: 3,
+			payloadData: bytes(32, 7),
+		});
+
+		expect(result.batchOk).to.equal(true);
+		expect(result.serialOk).to.equal(true);
+		expect(result.storageOk).to.equal(true);
+		expect(result.storageBytesTotal).to.be.greaterThan(0);
+		expect(Number.isFinite(result.checksum)).to.equal(true);
+	});
+
+	it("matches TS/Borsh signable, storage, and raw CID bytes", async () => {
+		const clockId = bytes(33, 1);
+		const publicKeyBytes = bytes(32, 64);
+		const signatureBytes = bytes(64, 96);
+		const metaData = new Uint8Array([9, 8, 7]);
+		const payloadData = new Uint8Array([1, 2, 3, 4]);
+		const wallTime = 123456789n;
+		const logical = 7;
+		const gid = "gid-a";
+		const next = ["next-a", "next-b"];
+
+		const nativeSignable = await encodeEntryV0Signable({
+			clockId,
+			wallTime,
+			logical,
+			gid,
+			next,
+			type: APPEND,
+			metaData,
+			payloadData,
+		});
+
+		expect([...nativeSignable]).to.deep.equal([
+			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.signable),
+		]);
+
+		const nativeStorage = await encodeEntryV0Storage({
+			clockId,
+			wallTime,
+			logical,
+			gid,
+			next,
+			type: APPEND,
+			metaData,
+			payloadData,
+			signature: signatureBytes,
+			signaturePublicKey: publicKeyBytes,
+			prehash: 0,
+		});
+
+		expect([...nativeStorage]).to.deep.equal([
+			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.storage),
+		]);
+		expect(await calculateRawCidV1(nativeStorage)).to.equal(
+			TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+		);
+		expect(
+			await calculateRawCidV1Batch([nativeStorage, bytes(16, 2)]),
+		).to.deep.equal([
+			TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+			await calculateRawCidV1(bytes(16, 2)),
+		]);
+		expect(
+			await encodeEntryV0StorageWithCid({
+				clockId,
+				wallTime,
+				logical,
+				gid,
+				next,
+				type: APPEND,
+				metaData,
+				payloadData,
+				signature: signatureBytes,
+				signaturePublicKey: publicKeyBytes,
+				prehash: 0,
+			}),
+		).to.deep.equal({
+			bytes: nativeStorage,
+			cid: TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+		});
+		const [rawFacts] = await prepareRawEntryV0Batch([nativeStorage]);
+		expect(rawFacts).to.include({
+			cid: TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid,
+			byteLength: nativeStorage.byteLength,
+			wallTime,
+			logical,
+			gid,
+			type: APPEND,
+			signatureVerified: false,
+		});
+		expect([...rawFacts!.clockId]).to.deep.equal([...clockId]);
+		expect(rawFacts!.next).to.deep.equal(next);
+		expect(rawFacts!.metaBytes.byteLength).to.be.greaterThan(0);
+		expect([...rawFacts!.metaData!]).to.deep.equal([...metaData]);
+		expect(rawFacts!.payloadByteLength).to.equal(payloadData.byteLength);
+		expect(rawFacts!.hashDigestBytes.byteLength).to.equal(32);
+	});
+
+	it("matches TS/Borsh encoding without optional entry metadata", async () => {
+		const clockId = bytes(33, 11);
+		const payloadData = new Uint8Array([5, 4, 3, 2, 1]);
+		const wallTime = 987654321n;
+		const gid = "gid-no-meta";
+
+		expect([
+			...(await encodeEntryV0Signable({
+				clockId,
+				wallTime,
+				gid,
+				payloadData,
+			})),
+		]).to.deep.equal([...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.noMeta.signable)]);
+	});
+
+	it("batches independent TS/Borsh-compatible encodes", async () => {
+		const withMeta = {
+			clockId: bytes(33, 1),
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "gid-a",
+			next: ["next-a", "next-b"],
+			type: APPEND,
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: new Uint8Array([1, 2, 3, 4]),
+		};
+		const noMeta = {
+			clockId: bytes(33, 11),
+			wallTime: 987654321n,
+			gid: "gid-no-meta",
+			payloadData: new Uint8Array([5, 4, 3, 2, 1]),
+		};
+
+		const signables = await encodeEntryV0SignableBatchForTest([withMeta, noMeta]);
+		expect(signables.map((bytes) => [...bytes])).to.deep.equal([
+			[...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.signable)],
+			[...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.noMeta.signable)],
+		]);
+
+		const storage = await encodeEntryV0StorageBatchWithCidsForTest([
+			{
+				...withMeta,
+				signature: bytes(64, 96),
+				signaturePublicKey: bytes(32, 64),
+				prehash: 0,
+			},
+		]);
+		expect(storage).to.have.length(1);
+		expect([...storage[0]!.bytes]).to.deep.equal([
+			...fromHex(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.storage),
+		]);
+		expect(storage[0]!.cid).to.equal(TS_BORSH_ENTRY_V0_FIXTURE.withMeta.cid);
+	});
+
+	it("prepares a hash-linked plain entry chain natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const chain = await prepareEntryV0PlainChain({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			wallTimes: [11n, 12n, 13n],
+			gid: "chain-gid",
+			initialNext: ["root"],
+			payloadDatas: [
+				new Uint8Array([1]),
+				new Uint8Array([2]),
+				new Uint8Array([3]),
+			],
+		});
+
+		expect(chain).to.have.length(3);
+		expect(chain[0]!.next).to.deep.equal(["root"]);
+		expect(chain[1]!.next).to.deep.equal([chain[0]!.cid]);
+		expect(chain[2]!.next).to.deep.equal([chain[1]!.cid]);
+		for (const prepared of chain) {
+			expect(prepared.cid).to.equal(await calculateRawCidV1(prepared.bytes));
+			expect(prepared.signature).to.have.length(64);
+			expect(prepared.metaBytes!.byteLength).greaterThan(0);
+			expect(prepared.payloadBytes!.byteLength).greaterThan(0);
+			expect(prepared.signatureBytes!.byteLength).greaterThan(0);
+		}
+	});
+
+	it("commits prepared plain entry blocks and graph rows natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		index.put(entry("root", "chain-gid", [], 10n));
+
+		const chain = await index.prepareEntryV0PlainChainCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTimes: [11n, 12n, 13n],
+				gid: "chain-gid",
+				initialNext: ["root"],
+				payloadDatas: [
+					new Uint8Array([1]),
+					new Uint8Array([2]),
+					new Uint8Array([3]),
+				],
+			},
+			blockStore,
+		);
+
+		expect(chain).to.have.length(3);
+		expect(index.heads()).to.deep.equal([chain![2]!.cid]);
+		expect(index.children("root")).to.deep.equal([chain![0]!.cid]);
+		expect(await blockStore.hasMany([chain![1]!.cid, "missing"])).to.deep.equal(
+			[true, false],
+		);
+		for (const prepared of chain!) {
+			expect(prepared.bytes).equal(undefined);
+			const stored = await blockStore.get(prepared.cid);
+			expect(stored?.byteLength).equal(prepared.byteLength);
+			expect(await calculateRawCidV1(stored!)).equal(prepared.cid);
+		}
+		expect(await blockStore.size()).to.equal(
+			chain!.reduce((sum, prepared) => sum + prepared.byteLength, 0),
+		);
+	});
+
+	it("commits storage-only prepared plain entries natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		index.put(entry("root", "chain-gid", [], 10n));
+
+		const prepared = await index.prepareEntryV0PlainEntryCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 11n,
+				gid: "chain-gid",
+				next: ["root"],
+				payloadData: new Uint8Array([1]),
+				includeMaterializationBytes: false,
+			},
+			blockStore,
+		);
+
+		expect(prepared).to.exist;
+		expect(prepared!.bytes).to.be.instanceOf(Uint8Array);
+		expect(prepared!.metaBytes).equal(undefined);
+		expect(prepared!.payloadBytes).equal(undefined);
+		expect(prepared!.signatureBytes).equal(undefined);
+		expect(prepared!.hashDigestBytes).equal(undefined);
+		expect(index.heads()).to.deep.equal([prepared!.cid]);
+		expect(index.children("root")).to.deep.equal([prepared!.cid]);
+		expect(await blockStore.has(prepared!.cid)).equal(true);
+		expect(await calculateRawCidV1(prepared!.bytes!)).equal(prepared!.cid);
+		expect(await blockStore.size()).to.equal(prepared!.byteLength);
+	});
+
+	it("commits facts-only prepared plain entries natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		index.put(entry("root", "chain-gid", [], 10n));
+
+		const prepared = await index.prepareEntryV0PlainEntryCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTime: 11n,
+				gid: "chain-gid",
+				next: ["root"],
+				metaData: new Uint8Array([9]),
+				payloadData: new Uint8Array([1]),
+				includeMaterializationBytes: false,
+				includeAppendFactsBytes: true,
+			},
+			blockStore,
+		);
+
+		expect(prepared).to.exist;
+		expect(prepared!.bytes).equal(undefined);
+		expect(prepared!.metaBytes).to.be.instanceOf(Uint8Array);
+		expect(prepared!.payloadBytes).equal(undefined);
+		expect(prepared!.signatureBytes).equal(undefined);
+		expect(prepared!.hashDigestBytes).to.be.instanceOf(Uint8Array);
+		expect(index.heads()).to.deep.equal([prepared!.cid]);
+		expect(index.children("root")).to.deep.equal([prepared!.cid]);
+		const stored = blockStore.get(prepared!.cid);
+		expect(stored?.byteLength).equal(prepared!.byteLength);
+		expect(await calculateRawCidV1(stored!)).equal(prepared!.cid);
+		expect(blockStore.size()).to.equal(prepared!.byteLength);
+	});
+
+	it("commits facts-only prepared plain entries and trim facts natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		};
+
+		const first = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 11n,
+				gid: "gid-a",
+				payloadData: new Uint8Array([1]),
+			},
+			blockStore,
+		);
+		await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 12n,
+				gid: "gid-b",
+				payloadData: new Uint8Array([2]),
+			},
+			blockStore,
+		);
+
+		const third = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 13n,
+				gid: "gid-c",
+				payloadData: new Uint8Array([3]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+
+		expect(third?.trimmedEntries?.map((entry) => entry.hash)).to.deep.equal([
+			first!.cid,
+		]);
+		expect(index.has(first!.cid)).equal(false);
+		expect(blockStore.has(first!.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(blockStore.has(third!.cid)).equal(true);
+	});
+
+	it("commits facts-only prepared plain entries and trim hashes natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+			resolveTrimmedEntries: false,
+		};
+
+		const first = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 11n,
+				gid: "gid-a",
+				payloadData: new Uint8Array([1]),
+			},
+			blockStore,
+		);
+		await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 12n,
+				gid: "gid-b",
+				payloadData: new Uint8Array([2]),
+			},
+			blockStore,
+		);
+
+		const third = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 13n,
+				gid: "gid-c",
+				payloadData: new Uint8Array([3]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+
+		expect(third?.trimmedEntries).equal(undefined);
+		expect(third?.trimmedEntryHashes).to.deep.equal([first!.cid]);
+		expect(index.has(first!.cid)).equal(false);
+		expect(blockStore.has(first!.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(blockStore.has(third!.cid)).equal(true);
+	});
+
+	it("commits storage-only prepared plain entries and trim facts natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+		};
+
+		const first = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 11n,
+				gid: "gid-a",
+				payloadData: new Uint8Array([1]),
+			},
+			blockStore,
+		);
+		await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 12n,
+				gid: "gid-b",
+				payloadData: new Uint8Array([2]),
+			},
+			blockStore,
+		);
+
+		const third = await index.prepareEntryV0PlainEntryCommit(
+			{
+				...common,
+				wallTime: 13n,
+				gid: "gid-c",
+				payloadData: new Uint8Array([3]),
+				trimLengthTo: 2,
+			},
+			blockStore,
+		);
+
+		expect(third?.trimmedEntries?.map((entry) => entry.hash)).to.deep.equal([
+			first!.cid,
+		]);
+		expect(index.has(first!.cid)).equal(false);
+		expect(blockStore.has(first!.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(third!.metaBytes).equal(undefined);
+		expect(third!.bytes).to.be.instanceOf(Uint8Array);
+	});
+
+	it("commits storage facts prepared plain entries and trim facts natively without native block store", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const common = {
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: true,
+		};
+
+		const first = index.prepareEntryV0PlainEntryAndPut({
+			...common,
+			wallTime: 11n,
+			gid: "gid-a",
+			payloadData: new Uint8Array([1]),
+		});
+		index.prepareEntryV0PlainEntryAndPut({
+			...common,
+			wallTime: 12n,
+			gid: "gid-b",
+			payloadData: new Uint8Array([2]),
+		});
+
+		const third = index.prepareEntryV0PlainEntryAndPut({
+			...common,
+			wallTime: 13n,
+			gid: "gid-c",
+			payloadData: new Uint8Array([3]),
+			trimLengthTo: 2,
+		});
+
+		expect(third.trimmedEntries?.map((entry) => entry.hash)).to.deep.equal([
+			first.cid,
+		]);
+		expect(index.has(first.cid)).equal(false);
+		expect(index.length).equal(2);
+		expect(third.bytes).to.be.instanceOf(Uint8Array);
+		expect(third.metaBytes).to.be.instanceOf(Uint8Array);
+		expect(third.hashDigestBytes).to.be.instanceOf(Uint8Array);
+	});
+
+	it("stores native log blocks by known cid", async () => {
+		const blockStore = await createNativeLogBlockStore();
+		const bytes = new Uint8Array([5, 4, 3]);
+		const cid = await calculateRawCidV1(bytes);
+
+		const storedCid = blockStore.putKnown(cid, bytes);
+
+		expect(storedCid).equal(cid);
+		expect((storedCid as { then?: unknown }).then).equal(undefined);
+		expect(blockStore.has(cid)).equal(true);
+		expect(blockStore.get(cid)).to.deep.equal(bytes);
+		expect(blockStore.size()).equal(bytes.byteLength);
+	});
+
+	it("commits independent prepared plain entry batches natively", async () => {
+		const privateKey = fromHex(
+			"9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+		);
+		const publicKey = fromHex(
+			"d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+		);
+		const index = await createLogGraphIndex();
+		const blockStore = await createNativeLogBlockStore();
+
+		const entries = await index.prepareEntryV0PlainEntriesCommit(
+			{
+				clockId: publicKey,
+				privateKey,
+				publicKey,
+				wallTimes: [11n, 12n, 13n],
+				gids: ["gid-a", "gid-b", "gid-c"],
+				payloadDatas: [
+					new Uint8Array([1]),
+					new Uint8Array([2]),
+					new Uint8Array([3]),
+				],
+			},
+			blockStore,
+		);
+
+		expect(entries).to.have.length(3);
+		expect(index.heads().sort()).to.deep.equal(
+			entries!.map((entry) => entry.cid).sort(),
+		);
+		expect(index.heads("gid-a")).to.deep.equal([entries![0]!.cid]);
+		expect(index.heads("gid-b")).to.deep.equal([entries![1]!.cid]);
+		expect(index.heads("gid-c")).to.deep.equal([entries![2]!.cid]);
+		expect(await blockStore.size()).to.equal(
+			entries!.reduce((sum, prepared) => sum + prepared.byteLength, 0),
+		);
+		for (const prepared of entries!) {
+			const stored = await blockStore.get(prepared.cid);
+			expect(stored?.byteLength).equal(prepared.byteLength);
+			expect(await calculateRawCidV1(stored!)).equal(prepared.cid);
+		}
+	});
+});
+
+const isNode = Boolean(
+	(globalThis as { process?: { versions?: { node?: string } } }).process
+		?.versions?.node,
+);
+
+type LiveTsLogModules = {
+	createEntry: (properties: any) => Promise<any>;
+	EntryV0: any;
+	LamportClock: new (properties: { id: Uint8Array; timestamp?: any }) => any;
+	Timestamp: new (properties: { wallTime: bigint; logical?: number }) => any;
+	serialize: (value: unknown) => Uint8Array;
+	Ed25519Keypair: { create: () => Promise<any> };
+	calculateRawCid: (bytes: Uint8Array) => Promise<{ cid: string }>;
+};
+
+let liveTsLog: LiveTsLogModules | undefined;
+
+const loadLiveTsLog = async (): Promise<LiveTsLogModules> => {
+	if (!liveTsLog) {
+		// Variable specifiers keep these out of the browser bundles; the live
+		// parity tests below only run in node. @peerbit/log is imported via a
+		// relative dist path (like shared-log-rust's parity tests) because a
+		// package dependency on it would be circular: @peerbit/log already
+		// depends on this package.
+		const logPath = "../../../dist/src/index.js";
+		const borshPath = "@dao-xyz/borsh";
+		const cryptoPath = "@peerbit/crypto";
+		const blocksPath = "@peerbit/blocks-interface";
+		const [log, borsh, crypto, blocks] = await Promise.all([
+			import(logPath),
+			import(borshPath),
+			import(cryptoPath),
+			import(blocksPath),
+		]);
+		liveTsLog = {
+			createEntry: log.createEntry,
+			EntryV0: log.EntryV0,
+			LamportClock: log.LamportClock,
+			Timestamp: log.Timestamp,
+			serialize: borsh.serialize,
+			Ed25519Keypair: crypto.Ed25519Keypair,
+			calculateRawCid: blocks.calculateRawCid,
+		};
+	}
+	return liveTsLog;
+};
+
+const toHex = (data: Uint8Array) =>
+	[...data].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+// Creates an entry through the real @peerbit/log TypeScript path and asserts
+// the native signable bytes, storage bytes, and CID match the TypeScript/Borsh
+// serialization byte-for-byte.
+const expectLiveTsEntryParity = async (properties: {
+	wallTime: bigint;
+	logical?: number;
+	gid?: string;
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	next?: any[];
+}) => {
+	const mods = await loadLiveTsLog();
+	const identity = await mods.Ed25519Keypair.create();
+	const clock = new mods.LamportClock({
+		id: identity.publicKey.bytes,
+		timestamp: new mods.Timestamp({
+			wallTime: properties.wallTime,
+			logical: properties.logical,
+		}),
+	});
+	const entry = await mods.createEntry({
+		store: {} as any,
+		data: properties.payloadData,
+		meta: {
+			clock,
+			type: properties.type,
+			data: properties.metaData,
+			...(properties.next ? { next: properties.next } : { gid: properties.gid }),
+		},
+		deferStore: true,
+		identity,
+	});
+
+	const meta = entry.meta;
+	const nativeInput = {
+		clockId: meta.clock.id,
+		wallTime: meta.clock.timestamp.wallTime,
+		logical: meta.clock.timestamp.logical,
+		gid: meta.gid,
+		next: meta.next,
+		type: meta.type,
+		metaData: properties.metaData,
+		payloadData: properties.payloadData,
+	};
+
+	const tsSignable = mods.serialize(mods.EntryV0.toSignable(entry));
+	const nativeSignable = await encodeEntryV0Signable(nativeInput);
+	expect(toHex(nativeSignable)).to.equal(toHex(tsSignable));
+
+	const signatures = entry.signatures;
+	expect(signatures).to.have.length(1);
+	const signature = signatures[0]!;
+	const trimmed = new mods.EntryV0({
+		meta: entry._meta,
+		payload: entry._payload,
+		signatures: entry._signatures,
+	});
+	const tsStorage = mods.serialize(trimmed);
+	const nativeStorage = await encodeEntryV0StorageWithCid({
+		...nativeInput,
+		signature: signature.signature,
+		signaturePublicKey: signature.publicKey.publicKey,
+		prehash: signature.prehash,
+	});
+	expect(toHex(nativeStorage.bytes)).to.equal(toHex(tsStorage));
+	expect(nativeStorage.cid).to.equal(
+		(await mods.calculateRawCid(tsStorage)).cid,
+	);
+	expect(nativeStorage.cid).to.equal(entry.hash);
+	return entry;
+};
+
+(isNode ? describe : describe.skip)("native EntryV0 live TS parity", () => {
+	it("matches the live TS encoder for a minimal empty-payload entry", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: 1n,
+			gid: "live-gid-empty",
+			payloadData: new Uint8Array(0),
+		});
+	});
+
+	it("matches the live TS encoder with metadata and a logical clock", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: 123456789n,
+			logical: 7,
+			gid: "live-gid-meta",
+			metaData: new Uint8Array([9, 8, 7]),
+			payloadData: bytes(16, 1),
+		});
+	});
+
+	it("matches the live TS encoder for a cut entry with a kilobyte payload", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: BigInt(Date.now()) * 1_000_000n,
+			gid: "live-gid-cut",
+			type: CUT,
+			payloadData: bytes(1024, 5),
+		});
+	});
+
+	it("matches the live TS encoder for a large payload", async () => {
+		await expectLiveTsEntryParity({
+			wallTime: 987654321n,
+			logical: 4242,
+			gid: "live-gid-large",
+			metaData: bytes(33, 2),
+			payloadData: bytes(70_000, 3),
+		});
+	});
+
+	it("matches the live TS encoder for chained entries with next links", async () => {
+		const parentA = await expectLiveTsEntryParity({
+			wallTime: 1n,
+			gid: "live-gid-parent-b",
+			payloadData: new Uint8Array([1]),
+		});
+		const parentB = await expectLiveTsEntryParity({
+			wallTime: 2n,
+			gid: "live-gid-parent-a",
+			payloadData: new Uint8Array([2]),
+		});
+
+		const child = await expectLiveTsEntryParity({
+			wallTime: 3n,
+			logical: 1,
+			type: APPEND,
+			metaData: new Uint8Array([4, 2]),
+			payloadData: bytes(8, 11),
+			next: [parentA, parentB],
+		});
+
+		// gid is inherited from the smallest parent gid and next carries both
+		// parent hashes, mirroring the TypeScript append path.
+		expect(child.meta.gid).to.equal("live-gid-parent-a");
+		expect(child.meta.next).to.deep.equal([parentA.hash, parentB.hash]);
 	});
 });

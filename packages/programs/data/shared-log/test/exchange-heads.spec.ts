@@ -1,0 +1,326 @@
+import { AnyBlockStore } from "@peerbit/blocks";
+import { Ed25519Keypair } from "@peerbit/crypto";
+import { Log } from "@peerbit/log";
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { expect } from "chai";
+import sinon from "sinon";
+import {
+	EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+	RawExchangeHeadsMessage,
+	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
+	materializeRawExchangeHeadsMessage,
+} from "../src/exchange-heads.js";
+import { TransportMessage } from "../src/message.js";
+
+describe("exchange heads", () => {
+	let store: AnyBlockStore;
+	let signKey: Ed25519Keypair;
+
+	before(async () => {
+		store = new AnyBlockStore();
+		signKey = await Ed25519Keypair.create();
+		await store.start();
+	});
+
+	after(async () => {
+		await store.stop();
+	});
+
+	it("uses native graph reference gids for single-head messages", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+		const { entry: head } = await log.append(new Uint8Array([3]), {
+			meta: { next: [left, right] },
+		});
+		const expectedReferenceGids = [left, right]
+			.filter((entry) => entry.meta.gid !== head.meta.gid)
+			.map((entry) => entry.meta.gid);
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const uniqueReferenceGidsSpy = sinon.spy(
+			nativeGraph,
+			"uniqueReferenceGids",
+		);
+		const getShallowSpy = sinon.spy(log.entryIndex, "getShallow");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, [head])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]!.heads).to.have.length(1);
+			expect(messages[0]!.heads[0]!.entry.hash).equal(head.hash);
+			expect(messages[0]!.heads[0]!.gidRefrences).to.deep.equal(
+				expectedReferenceGids,
+			);
+			expect(uniqueReferenceGidsSpy.calledOnceWithExactly(head.hash)).to.be
+				.true;
+			expect(getShallowSpy.callCount).equal(0);
+		} finally {
+			getShallowSpy.restore();
+			uniqueReferenceGidsSpy.restore();
+			await log.close();
+		}
+	});
+
+	it("resolves multiple hash heads in one entry-index batch", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		const getSpy = sinon.spy(log, "get");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, [
+				left.hash,
+				right.hash,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]!.heads.map((head) => head.entry.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(getManySpy.calledOnce).to.equal(true);
+			expect(getManySpy.firstCall.args[0]).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(getSpy.callCount).to.equal(0);
+		} finally {
+			getSpy.restore();
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("deduplicates hash heads before full entry resolution", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, [
+				left.hash,
+				left.hash,
+				right.hash,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]!.heads.map((head) => head.entry.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(getManySpy.calledOnce).to.equal(true);
+			expect(getManySpy.firstCall.args[0]).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+		} finally {
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("creates raw hash heads without full entry resolution", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: left } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: right } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		const getSpy = sinon.spy(log, "get");
+		try {
+			const messages = [];
+			for await (const message of createRawExchangeHeadsMessages(log, [
+				left.hash,
+				right.hash,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]).to.be.instanceOf(RawExchangeHeadsMessage);
+			const raw = messages[0] as RawExchangeHeadsMessage;
+			expect(raw.heads.map((head) => head.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+			expect(raw.heads.every((head) => head.bytes.byteLength > 0)).to.equal(
+				true,
+			);
+			expect(getManySpy.callCount).to.equal(0);
+			expect(getSpy.callCount).to.equal(0);
+
+			const roundTrip = deserialize(serialize(raw), TransportMessage);
+			expect(roundTrip).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const materialized = materializeRawExchangeHeadsMessage(
+				roundTrip as RawExchangeHeadsMessage,
+				log,
+			);
+			expect(materialized.heads.map((head) => head.entry.hash)).to.deep.equal([
+				left.hash,
+				right.hash,
+			]);
+		} finally {
+			getSpy.restore();
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("resolves large hash head responses in bounded entry-index batches", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const heads = [];
+		for (let i = 0; i < EXCHANGE_HEADS_RESOLVE_BATCH_SIZE + 2; i++) {
+			const { entry } = await log.append(new Uint8Array([i % 256]), {
+				meta: { next: [], gidSeed: new Uint8Array([i % 256, i >>> 8]) },
+			});
+			heads.push(entry.hash);
+		}
+
+		const getManySpy = sinon.spy(log.entryIndex, "getMany");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, heads)) {
+				messages.push(message);
+			}
+
+			expect(messages.flatMap((message) => message.heads)).to.have.length(
+				heads.length,
+			);
+			expect(getManySpy.callCount).to.equal(2);
+			expect(getManySpy.firstCall.args[0]).to.have.length(
+				EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+			);
+			expect(getManySpy.secondCall.args[0]).to.have.length(2);
+		} finally {
+			getManySpy.restore();
+			await log.close();
+		}
+	});
+
+	it("uses native graph reference gids for multi-head messages", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			nativeGraph: true,
+		});
+
+		const { entry: leftRoot } = await log.append(new Uint8Array([1]), {
+			meta: { next: [], gidSeed: new Uint8Array([1]) },
+		});
+		const { entry: leftSide } = await log.append(new Uint8Array([2]), {
+			meta: { next: [], gidSeed: new Uint8Array([2]) },
+		});
+		const { entry: rightRoot } = await log.append(new Uint8Array([3]), {
+			meta: { next: [], gidSeed: new Uint8Array([3]) },
+		});
+		const { entry: rightSide } = await log.append(new Uint8Array([4]), {
+			meta: { next: [], gidSeed: new Uint8Array([4]) },
+		});
+		const { entry: leftHead } = await log.append(new Uint8Array([5]), {
+			meta: { next: [leftRoot, leftSide] },
+		});
+		const { entry: rightHead } = await log.append(new Uint8Array([6]), {
+			meta: { next: [rightRoot, rightSide] },
+		});
+
+		const nativeGraph = log.entryIndex.properties.nativeGraph!.graph;
+		const expectedLeftReferences =
+			nativeGraph.uniqueReferenceGids(leftHead.hash) ?? [];
+		const expectedRightReferences =
+			nativeGraph.uniqueReferenceGids(rightHead.hash) ?? [];
+		expect(expectedLeftReferences).to.not.be.empty;
+		expect(expectedRightReferences).to.not.be.empty;
+		const uniqueReferenceGidRowsFlatBatchSpy = sinon.spy(
+			nativeGraph,
+			"uniqueReferenceGidRowsFlatBatch",
+		);
+		const getShallowSpy = sinon.spy(log.entryIndex, "getShallow");
+		try {
+			const messages = [];
+			for await (const message of createExchangeHeadsMessages(log, [
+				leftHead,
+				rightHead,
+			])) {
+				messages.push(message);
+			}
+
+			expect(messages).to.have.length(1);
+			expect(messages[0]!.heads).to.have.length(2);
+			expect(messages[0]!.heads.map((head) => head.entry.hash)).to.deep.equal([
+				leftHead.hash,
+				rightHead.hash,
+			]);
+			expect(messages[0]!.heads[0]!.gidRefrences).to.deep.equal(
+				expectedLeftReferences,
+			);
+			expect(messages[0]!.heads[1]!.gidRefrences).to.deep.equal(
+				expectedRightReferences,
+			);
+			expect(
+				uniqueReferenceGidRowsFlatBatchSpy.calledOnceWithExactly([
+					leftHead.hash,
+					rightHead.hash,
+				]),
+			).to.equal(true);
+			expect(getShallowSpy.callCount).equal(0);
+		} finally {
+			getShallowSpy.restore();
+			uniqueReferenceGidRowsFlatBatchSpy.restore();
+			await log.close();
+		}
+	});
+});

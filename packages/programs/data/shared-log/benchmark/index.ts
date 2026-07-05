@@ -1,14 +1,17 @@
 import { deserialize, field, option, serialize, variant } from "@dao-xyz/borsh";
+import { createStore as createRustStore } from "@peerbit/any-store-rust";
 import { type ProgramClient } from "@peerbit/program";
 import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import crypto from "crypto";
+import { performance } from "node:perf_hooks";
 import { Bench } from "tinybench";
 import { v4 as uuid } from "uuid";
 import { type Args, SharedLog } from "../src/index.js";
 
-// Run with "node --loader ts-node/esm ./benchmark/index.ts"
-// put x 5,843 ops/sec ±4.50% (367 runs sampled)
+// Run with:
+//   SHARED_LOG_STORE=both pnpm --filter @peerbit/shared-log run benchmark:append-storage
+//   SHARED_LOG_BATCH_ENTRIES=1000 SHARED_LOG_STORE=both pnpm --filter @peerbit/shared-log run benchmark:append-storage
 
 @variant("document")
 class Document {
@@ -53,40 +56,116 @@ class TestStore extends Program<Args<Document, any>> {
 	}
 }
 
+type StoreMode = "level" | "rust";
+
+const storeMode = (process.env.SHARED_LOG_STORE ?? "level") as StoreMode | "both";
+const modes: StoreMode[] =
+	storeMode === "both" ? ["level", "rust"] : [storeMode === "rust" ? "rust" : "level"];
 const peersCount = 1;
-const session = await TestSession.connected(peersCount);
+const bytes = crypto.randomBytes(1200);
+const rows = [];
+const batchEntries = Number(process.env.SHARED_LOG_BATCH_ENTRIES ?? 0);
 
-const store = new TestStore({
-	logs: new SharedLog<Document, any>({
-		id: new Uint8Array(32),
-	}),
-});
+const createDocument = (index = 0) =>
+	new Document({
+		id: uuid(),
+		name: "hello",
+		number: BigInt(index),
+		bytes,
+	});
 
-const client: ProgramClient = session.peers[0];
-await client.open<TestStore>(store, {
-	args: {
+const openStore = async (
+	mode: StoreMode,
+	args: Args<Document, any> = {
 		replicate: {
 			factor: 1,
 		},
 		trim: { type: "length" as const, to: 100 },
 	},
-});
-
-const suite = new Bench({ name: "put" });
-
-const bytes = crypto.randomBytes(1200);
-
-suite.add("put", async () => {
-	const doc = new Document({
-		id: uuid(),
-		name: "hello",
-		number: 1n,
-		bytes,
+) => {
+	const session = await TestSession.connected(peersCount, {
+		storage:
+			mode === "rust"
+				? {
+						storeFactory: createRustStore,
+					}
+				: undefined,
 	});
-	await store.logs.append(doc, { meta: { next: [] } });
-});
 
-await suite.run();
-console.table(suite.table());
-await store.drop();
-await session.stop();
+	const store = new TestStore({
+		logs: new SharedLog<Document, any>({
+			id: new Uint8Array(32),
+		}),
+	});
+
+	const client: ProgramClient = session.peers[0];
+	await client.open<TestStore>(store, { args });
+	return { session, store };
+};
+
+for (const mode of modes) {
+	const { session, store } = await openStore(mode);
+
+	const suite = new Bench({ name: `${mode} put` });
+
+	suite.add(`${mode} put`, async () => {
+		await store.logs.append(createDocument(), { meta: { next: [] } });
+	});
+
+	await suite.run();
+	rows.push(...suite.table());
+	await store.drop();
+	await session.stop();
+}
+
+if (batchEntries > 0) {
+	const batchRows = [];
+	for (const mode of modes) {
+		{
+			const { session, store } = await openStore(mode, { replicate: false });
+			const started = performance.now();
+			for (let i = 0; i < batchEntries; i++) {
+				await store.logs.append(createDocument(i), {
+					replicate: false,
+					target: "none",
+				});
+			}
+			const elapsed = performance.now() - started;
+			batchRows.push({
+				mode,
+				name: "shared-log append loop auto-next",
+				entries: batchEntries,
+				elapsedMs: Math.round(elapsed),
+				opsPerSecond: Math.round((batchEntries / elapsed) * 1000),
+			});
+			await store.drop();
+			await session.stop();
+		}
+		{
+			const { session, store } = await openStore(mode, { replicate: false });
+			const started = performance.now();
+			await store.logs.appendMany(
+				Array.from({ length: batchEntries }, (_, index) =>
+					createDocument(index),
+				),
+				{
+					replicate: false,
+					target: "none",
+				},
+			);
+			const elapsed = performance.now() - started;
+			batchRows.push({
+				mode,
+				name: "shared-log appendMany auto-next",
+				entries: batchEntries,
+				elapsedMs: Math.round(elapsed),
+				opsPerSecond: Math.round((batchEntries / elapsed) * 1000),
+			});
+			await store.drop();
+			await session.stop();
+		}
+	}
+	console.table(batchRows);
+}
+
+console.table(rows);

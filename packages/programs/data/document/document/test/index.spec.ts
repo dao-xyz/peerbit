@@ -11,7 +11,7 @@ import {
 	AccessError,
 	Ed25519Keypair,
 	Ed25519PublicKey,
-	type PublicSignKey,
+	PublicSignKey,
 	equals,
 	randomBytes,
 	toBase64,
@@ -31,6 +31,7 @@ import {
 	SearchRequest,
 	SearchRequestIndexed,
 } from "@peerbit/document-interface";
+import { create as createSimpleIndexer } from "@peerbit/indexer-simple";
 import {
 	ByteMatchQuery,
 	Compare,
@@ -42,7 +43,20 @@ import {
 	id,
 	toId,
 } from "@peerbit/indexer-interface";
-import { Entry, Log, createEntry } from "@peerbit/log";
+import {
+	Entry,
+	EntryType,
+	EntryV0,
+	Log,
+	Timestamp,
+	createEntry,
+} from "@peerbit/log";
+import {
+	NativeBackboneBufferedCoordinatePersistenceStore,
+	NativeBackboneCoordinatePersistence,
+	NativeBackboneMemoryCoordinatePersistenceStore,
+	createNativePeerbitBackbone,
+} from "@peerbit/native-backbone";
 import { ClosedError, Program } from "@peerbit/program";
 import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
@@ -59,26 +73,26 @@ import { TestSession } from "@peerbit/test-utils";
 import { waitFor as _waitForFn, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer, { type DeferredPromise } from "p-defer";
+import { Peerbit } from "peerbit";
+import { createRustPeerbitOptions } from "peerbit/rust";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
-
-const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
-	(
-		peer.services as TestSession["peers"][number]["services"] & {
-			fanout: Pick<FanoutTree, "publicKeyHash">;
-		}
-	).fanout;
 import { createDocumentDomain } from "../src/domain.js";
 import type { DocumentsChange } from "../src/events.js";
+import { policy, transform } from "../src/index.js";
 import MostCommonQueryPredictor from "../src/most-common-query-predictor.js";
 import {
+	DeleteOperation,
 	Operation,
 	PutOperation,
 	PutWithKeyOperation,
+	isDeleteOperation,
 } from "../src/operation.js";
+import { getCanPerformPolicyDescriptor } from "../src/policy.js";
 import {
 	type CountEstimate,
 	Documents,
+	NativeDocumentModeError,
 	type SetupOptions,
 } from "../src/program.js";
 import {
@@ -87,7 +101,85 @@ import {
 	type LateResultsEvent,
 	type UpdateReason,
 } from "../src/search.js";
+import { getDocumentTransformDescriptor } from "../src/transform.js";
 import { Document, TestStore } from "./data.js";
+
+const nativeFieldHash = (field: string): number => {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < field.length; i++) {
+		hash = Math.imul(hash ^ field.charCodeAt(i), 0x01000193);
+	}
+	return hash >>> 0;
+};
+
+const nativeFieldPathHash = (path: string[]): number =>
+	nativeFieldHash(JSON.stringify(path));
+
+const getDocumentTestFanout = (peer: TestSession["peers"][number]) =>
+	(
+		peer.services as TestSession["peers"][number]["services"] & {
+			fanout: Pick<FanoutTree, "publicKeyHash">;
+		}
+	).fanout;
+
+const MemoryCoordinatePersistenceStore =
+	NativeBackboneMemoryCoordinatePersistenceStore;
+type MemoryCoordinatePersistenceStore =
+	NativeBackboneMemoryCoordinatePersistenceStore;
+
+const nativeBackboneDocumentIndexOptions = () => ({
+	optional: false,
+	documentIndex: true,
+	coordinatePersistence: {
+		store: new MemoryCoordinatePersistenceStore(),
+		buffered: true,
+		flushOnAppend: false,
+	},
+});
+
+@variant("strict_native_alias_document")
+class StrictNativeAliasDocument {
+	@field({ type: "string" })
+	slug: string;
+
+	@field({ type: option("string") })
+	name?: string;
+
+	constructor(properties?: Partial<StrictNativeAliasDocument>) {
+		this.slug = properties?.slug || "";
+		this.name = properties?.name;
+	}
+}
+
+@variant("strict_native_alias_store")
+class StrictNativeAliasStore extends Program<
+	Partial<SetupOptions<StrictNativeAliasDocument>>
+> {
+	@field({ type: Uint8Array })
+	id: Uint8Array;
+
+	@field({ type: Documents })
+	docs: Documents<StrictNativeAliasDocument>;
+
+	constructor() {
+		super();
+		this.id = randomBytes(32);
+		this.docs = new Documents<StrictNativeAliasDocument>();
+	}
+
+	async open(
+		options?: Partial<SetupOptions<StrictNativeAliasDocument>>,
+	): Promise<void> {
+		await this.docs.open({
+			...options,
+			type: StrictNativeAliasDocument,
+			index: {
+				...options?.index,
+				idProperty: "slug",
+			},
+		});
+	}
+}
 
 describe("index", () => {
 	let session: TestSession;
@@ -96,15 +188,15 @@ describe("index", () => {
 		describe("basic", () => {
 			let store: TestStore | undefined = undefined;
 
-				before(async () => {
-					session = await TestSession.connected(2);
-				});
-				afterEach(async function () {
-					// Closing a large document index (many persisted blocks + index flush) can take
-					// longer than Mocha's default 60s under CI load.
-					this.timeout(180_000);
-					await store?.close();
-				});
+			before(async () => {
+				session = await TestSession.connected(2);
+			});
+			afterEach(async function () {
+				// Closing a large document index (many persisted blocks + index flush) can take
+				// longer than Mocha's default 60s under CI load.
+				this.timeout(180_000);
+				await store?.close();
+			});
 
 			after(async () => {
 				await session.stop();
@@ -165,6 +257,10012 @@ describe("index", () => {
 				expect(changes[2].removed[0].id).equal(doc.id);
 				expect(changes[2].removed[0].__context.size).to.exist;
 				expect(changes[2].removed[0].__indexed).to.exist;
+			});
+
+			it("uses the validated local append path for plain puts", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const validatedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyValidated",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPrepared",
+				);
+				const preparedPayloadAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayload",
+				);
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const localLookupSpy = sinon.spy(
+					store.docs as any,
+					"getLocalIndexedContext",
+				);
+				const commitPlanSpy = sinon.spy(
+					store.docs as any,
+					"createPlainPutCommitPlan",
+				);
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+				const documentCommitSpy = sinon.spy(
+					store.docs as any,
+					"createDocumentAppendCommitFacts",
+				);
+				const documentIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putIdentityWithContext",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
+				const documentPutSpy = sinon.spy(store.docs.index, "putWithContext");
+				const backendIndex = store.docs.index.index as any;
+				const originalBackendPutWithContext = backendIndex.putWithContext;
+				const originalBackendPut = backendIndex.put;
+				const WrappedIndexedType = store.docs.index.wrappedIndexedType;
+				const backendContextPutSpy = sinon.spy(
+					async (
+						value: Document,
+						id: unknown,
+						context: Context,
+						options: unknown,
+					) =>
+						originalBackendPut.call(
+							backendIndex,
+							new WrappedIndexedType(value, context),
+							id,
+							options,
+						),
+				);
+				backendIndex.putWithContext = backendContextPutSpy;
+				const blockPutManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putMany",
+				);
+				const blockPutKnownSpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putKnown",
+				);
+				const blockPutKnownManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putKnownMany",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "fast" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(preparedPayloadAppendSpy.callCount).equal(0);
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(validatedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(0);
+					expect(localLookupSpy.callCount).equal(0);
+					expect(commitPlanSpy.callCount).equal(1);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect(documentCommitSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(1);
+					expect(documentIdentityPutSpy.callCount).equal(1);
+					expect(documentPutSpy.callCount).equal(0);
+					expect(backendContextPutSpy.callCount).equal(1);
+					expect(blockPutManySpy.callCount).equal(0);
+					expect(blockPutKnownSpy.callCount).equal(1);
+					expect(blockPutKnownManySpy.callCount).equal(0);
+					const encodedDocument = serialize(doc);
+					const expectedPayloadData = new Uint8Array(
+						6 + encodedDocument.byteLength,
+					);
+					expectedPayloadData[0] = 0;
+					expectedPayloadData[1] = 3;
+					new DataView(
+						expectedPayloadData.buffer,
+						expectedPayloadData.byteOffset,
+						expectedPayloadData.byteLength,
+					).setUint32(2, encodedDocument.byteLength, true);
+					expectedPayloadData.set(encodedDocument, 6);
+					expect(preparedPayloadCommitOnlySpy.getCall(0).args[0]).to.deep.equal(
+						expectedPayloadData,
+					);
+					const commitPlan = await commitPlanSpy.getCall(0).returnValue;
+					expect(commitPlan.payloadData).to.deep.equal(expectedPayloadData);
+					expect(commitPlan.operation).equal(undefined);
+					const nativeInput = nativeCommitSpy.getCall(0).args[0];
+					expect(nativeInput.documentBytes).to.deep.equal(encodedDocument);
+					expect(nativeInput.operationPayloadBytes).to.deep.equal(
+						expectedPayloadData,
+					);
+					expect(nativeInput.operation).equal(undefined);
+					expect(nativeInput.key.primitive).equal(doc.id);
+					expect(nativeInput.next).to.be.empty;
+					const documentCommit = await documentCommitSpy.getCall(0).returnValue;
+					expect(documentCommit.operationPayloadBytes).to.deep.equal(
+						expectedPayloadData,
+					);
+					const backendOptions = backendContextPutSpy.getCall(0).args[3] as
+						| {
+								encodedValue?: Uint8Array;
+								encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+						  }
+						| undefined;
+					const backendContext = backendContextPutSpy.getCall(0)
+						.args[2] as Context;
+					const appendResult =
+						await preparedPayloadCommitOnlySpy.getCall(0).returnValue;
+					if (!appendResult) {
+						throw new Error("Expected commit-only append result");
+					}
+					const appendCommit = appendResult.appendCommit;
+					expect(appendCommit.hash).equal(put.entry.hash);
+					expect(appendCommit.gid).equal(put.entry.meta.gid);
+					expect(appendCommit.wallTime).equal(
+						put.entry.meta.clock.timestamp.wallTime,
+					);
+					expect(appendCommit.payloadSize).equal(put.entry.payload.byteLength);
+					expect(backendContext.head).equal(appendCommit.hash);
+					expect(backendContext.gid).equal(appendCommit.gid);
+					expect(backendContext.modified).equal(appendCommit.wallTime);
+					expect(backendContext.size).equal(appendCommit.payloadSize);
+					expect(backendOptions?.encodedValue).equal(undefined);
+					expect(backendOptions?.encodedValueParts?.prefix).to.deep.equal(
+						encodedDocument,
+					);
+					expect(backendOptions?.encodedValueParts?.suffix).instanceOf(
+						Uint8Array,
+					);
+					expect(backendOptions?.encodedValueParts?.suffix).to.deep.equal(
+						serialize(backendContext),
+					);
+					expect(documentCommit.contextBytes).to.deep.equal(
+						backendOptions?.encodedValueParts?.suffix,
+					);
+					expect(documentCommit.contextualEncodedValueParts).to.deep.equal(
+						backendOptions?.encodedValueParts,
+					);
+					expect(
+						backendOptions!.encodedValueParts!.suffix.byteLength,
+					).greaterThan(0);
+					expect((await store.docs.get(doc.id))?.name).equal("fast");
+					expect(changes).to.have.length(1);
+					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
+				} finally {
+					if (originalBackendPutWithContext) {
+						backendIndex.putWithContext = originalBackendPutWithContext;
+					} else {
+						delete backendIndex.putWithContext;
+					}
+					localLookupSpy.restore();
+					commitPlanSpy.restore();
+					nativeCommitSpy.restore();
+					documentCommitSpy.restore();
+					documentPutSpy.restore();
+					documentStoredIdentityPutSpy.restore();
+					documentIdentityPutSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+					preparedPayloadAppendSpy.restore();
+					preparedAppendSpy.restore();
+					blockPutKnownManySpy.restore();
+					blockPutKnownSpy.restore();
+					blockPutManySpy.restore();
+					validatedAppendSpy.restore();
+					appendSpy.restore();
+				}
+			});
+
+			it("uses the independent native prepared batch path for unique putMany", async () => {
+				const rustOptions = createRustPeerbitOptions();
+				const rustSession = await TestSession.connected(1, {
+					storage: rustOptions.storage,
+				});
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const sharedBatchAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedManyIndependent",
+				);
+				const sharedPayloadBatchAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadsManyIndependent",
+				);
+				const lowerBatchAppendSpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedManyIndependent",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const documentBatchIndexSpy = sinon.spy(
+					store.docs.index,
+					"_putManyIdentityWithContext",
+				);
+				const documentGenericBatchIndexSpy = sinon.spy(
+					store.docs.index,
+					"putManyWithContext",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					store.docs.index,
+					"putWithContext",
+				);
+				const nativeBatchCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppendMany",
+				);
+				const nativeState = (store.docs.log as any)._nativeSharedLogState;
+				const nativeLocalPlanSpy = sinon.spy(
+					nativeState,
+					"planLocalAppendForGid",
+				);
+				const nativeBatchPlanSpy = sinon.spy(
+					nativeState,
+					"planAppendForGidsBatch",
+				);
+
+				try {
+					const docs = [
+						new Document({ id: uuid(), name: "batch-1" }),
+						new Document({ id: uuid(), name: "batch-2" }),
+						new Document({ id: uuid(), name: "batch-3" }),
+					];
+					const appended = await store.docs.putMany(docs, {
+						unique: true,
+						target: "none",
+					});
+
+					expect(sharedBatchAppendSpy.callCount).equal(1);
+					expect(sharedPayloadBatchAppendSpy.callCount).equal(1);
+					expect(lowerBatchAppendSpy.callCount).equal(1);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeBatchCommitSpy.callCount).equal(1);
+					expect(documentBatchIndexSpy.callCount).equal(1);
+					expect(documentGenericBatchIndexSpy.callCount).equal(1);
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(nativeBatchPlanSpy.callCount).equal(1);
+					expect(nativeLocalPlanSpy.callCount).equal(0);
+					expect(appended.entries).to.have.length(3);
+					expect(
+						new Set(appended.entries.map((entry) => entry.meta.gid)).size,
+					).equal(3);
+					expect(
+						appended.entries.every((entry) => entry.meta.next.length === 0),
+					).equal(true);
+					expect(await appended.entries[0]!.verifySignatures()).equal(true);
+					const nativeBatchInput = nativeBatchCommitSpy.getCall(0).args[0];
+					expect(nativeBatchInput.puts).to.have.length(docs.length);
+					for (let i = 0; i < docs.length; i++) {
+						const encodedDocument = serialize(docs[i]!);
+						expect(nativeBatchInput.puts[i].documentBytes).to.deep.equal(
+							encodedDocument,
+						);
+						const expectedPayloadData = new Uint8Array(
+							6 + encodedDocument.byteLength,
+						);
+						expectedPayloadData[0] = 0;
+						expectedPayloadData[1] = 3;
+						new DataView(
+							expectedPayloadData.buffer,
+							expectedPayloadData.byteOffset,
+							expectedPayloadData.byteLength,
+						).setUint32(2, encodedDocument.byteLength, true);
+						expectedPayloadData.set(encodedDocument, 6);
+						expect(
+							nativeBatchInput.puts[i].operationPayloadBytes,
+						).to.deep.equal(expectedPayloadData);
+					}
+					const reloaded = await Entry.fromMultihash<Operation>(
+						store.docs.log.log.blocks,
+						appended.entries[0]!.hash,
+					);
+					reloaded.init({
+						encoding: store.docs.log.log.encoding,
+						keychain: store.docs.log.log.keychain,
+					});
+					const payload = await reloaded.getPayloadValue();
+					expect(payload).instanceOf(PutOperation);
+					expect(
+						store.docs.index.valueEncoding.decoder(
+							(payload as PutOperation).data,
+						).id,
+					).equal(docs[0]!.id);
+					expect(changes).to.have.length(1);
+					expect(changes[0].added.map((doc) => doc.id)).to.deep.equal(
+						docs.map((doc) => doc.id),
+					);
+					for (const doc of docs) {
+						expect((await store.docs.get(doc.id))?.name).equal(doc.name);
+					}
+				} finally {
+					nativeBatchPlanSpy.restore();
+					nativeLocalPlanSpy.restore();
+					nativeBatchCommitSpy.restore();
+					documentIndexPutSpy.restore();
+					documentGenericBatchIndexSpy.restore();
+					documentBatchIndexSpy.restore();
+					appendSpy.restore();
+					preparedAppendSpy.restore();
+					lowerBatchAppendSpy.restore();
+					sharedPayloadBatchAppendSpy.restore();
+					sharedBatchAppendSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("batches rust index writes for unique putMany", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const backendIndex = store.docs.index.index as any;
+				const documentBackendBatchSpy = sinon.spy(
+					backendIndex,
+					"putWithContextBatch",
+				);
+				const nativeEncodedPartsBatchSpy = sinon.spy(
+					backendIndex.native,
+					"put_encoded_parts_batch",
+				);
+				const nativeStoredEncodedPartsBatchSpy = sinon.spy(
+					backendIndex.native,
+					"put_encoded_parts_stored_batch",
+				);
+				const encodeContextualPartsSpy = sinon.spy(
+					store.docs.index as any,
+					"encodeContextualIndexedValueParts",
+				);
+				const coordinateIndex = store.docs.log.entryCoordinatesIndex as any;
+				const coordinateBatchSpy = sinon.spy(
+					coordinateIndex,
+					"putSharedLogCoordinateFieldsAndDeleteHashesBatch",
+				);
+				const legacyCoordinateBatchSpy = sinon.spy(
+					coordinateIndex,
+					"putSharedLogCoordinatesAndDeleteIdsBatch",
+				);
+				const coordinatePutSpy = sinon.spy(coordinateIndex, "put");
+
+				try {
+					const docs = [
+						new Document({ id: uuid(), name: "rust-batch-1" }),
+						new Document({ id: uuid(), name: "rust-batch-2" }),
+						new Document({ id: uuid(), name: "rust-batch-3" }),
+					];
+					const appended = await store.docs.putMany(docs, {
+						unique: true,
+						target: "none",
+					});
+
+					expect(appended.entries).to.have.length(3);
+					expect(documentBackendBatchSpy.callCount).equal(1);
+					const batchValues = documentBackendBatchSpy.getCall(0)
+						.args[0] as Array<{
+						context: Context;
+						options?: {
+							encodedValue?: Uint8Array;
+							encodedValueParts?: { prefix: Uint8Array; suffix: Uint8Array };
+						};
+					}>;
+					expect(batchValues).to.have.length(3);
+					for (let i = 0; i < docs.length; i++) {
+						const encodedDocument = serialize(docs[i]!);
+						expect(batchValues[i]!.options?.encodedValue).equal(undefined);
+						expect(
+							batchValues[i]!.options?.encodedValueParts?.prefix,
+						).to.deep.equal(encodedDocument);
+						expect(
+							batchValues[i]!.options?.encodedValueParts?.suffix,
+						).instanceOf(Uint8Array);
+						expect(
+							batchValues[i]!.options?.encodedValueParts?.suffix,
+						).to.deep.equal(serialize(batchValues[i]!.context));
+						expect(
+							batchValues[i]!.options!.encodedValueParts!.suffix.byteLength,
+						).greaterThan(0);
+					}
+					expect(encodeContextualPartsSpy.callCount).equal(0);
+					expect(nativeEncodedPartsBatchSpy.callCount).equal(0);
+					expect(nativeStoredEncodedPartsBatchSpy.callCount).equal(1);
+					expect(coordinateBatchSpy.callCount).equal(0);
+					expect(legacyCoordinateBatchSpy.callCount).equal(0);
+					expect(coordinatePutSpy.callCount).equal(0);
+					expect(changes).to.have.length(1);
+					expect(changes[0].added.map((doc) => doc.id)).to.deep.equal(
+						docs.map((doc) => doc.id),
+					);
+				} finally {
+					coordinatePutSpy.restore();
+					legacyCoordinateBatchSpy.restore();
+					coordinateBatchSpy.restore();
+					encodeContextualPartsSpy.restore();
+					nativeStoredEncodedPartsBatchSpy.restore();
+					nativeEncodedPartsBatchSpy.restore();
+					documentBackendBatchSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses native shared-log planning for replicated target-none puts", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						timeUntilRoleMaturity: 0,
+					},
+				});
+				const nativeState = (store.docs.log as any)._nativeSharedLogState;
+				expect(nativeState).to.exist;
+				const nativePlanSpy = sinon.spy(
+					nativeState,
+					"planLocalAppendForGidCompact",
+				);
+				const planEntryLeadersSpy = sinon.spy(
+					store.docs.log as any,
+					"planEntryLeaders",
+				);
+
+				try {
+					await store.docs.put(new Document({ id: uuid(), name: "native" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(nativePlanSpy.callCount).equal(1);
+					expect(planEntryLeadersSpy.callCount).equal(0);
+				} finally {
+					planEntryLeadersSpy.restore();
+					nativePlanSpy.restore();
+				}
+			});
+
+			it("uses commit-only local puts when coordinate persistence is deferred", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+					},
+				});
+				const sharedCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const lowerCommitOnlySpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedCommitOnly",
+				);
+				const lowerPreparedSpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPrepared",
+				);
+				const lowerTrimSpy = sinon.spy(store.docs.log.log, "trim");
+				const deleteCoordinatesSpy = sinon.spy(
+					store.docs.log as any,
+					"deleteCoordinatesForHashes",
+				);
+				const initSpy = sinon.spy(EntryV0.prototype, "init");
+
+				try {
+					const doc = new Document({ id: uuid(), name: "local" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(sharedCommitOnlySpy.callCount).equal(1);
+					expect(lowerCommitOnlySpy.callCount).equal(1);
+					expect(lowerPreparedSpy.callCount).equal(0);
+					expect(lowerTrimSpy.callCount).equal(0);
+					expect(deleteCoordinatesSpy.callCount).equal(0);
+					expect(initSpy.callCount).equal(0);
+
+					expect(put.entry.hash).to.be.a("string");
+					expect(initSpy.callCount).greaterThan(0);
+					expect((await store.docs.get(doc.id))?.name).equal("local");
+				} finally {
+					initSpy.restore();
+					deleteCoordinatesSpy.restore();
+					lowerTrimSpy.restore();
+					lowerPreparedSpy.restore();
+					lowerCommitOnlySpy.restore();
+					sharedCommitOnlySpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses the native backbone no-next put path when enabled", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				expect(sharedLog._nativeBackbone).to.exist;
+				expect(sharedLog._nativeSharedLogState).equal(undefined);
+				expect(sharedLog._nativeRangePlanner).equal(undefined);
+				const backboneCommitSpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedNativeNoNextCommitOnly",
+				);
+				const lowerCommitOnlySpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedCommitOnly",
+				);
+				const nativeCreateSpy = sinon.spy(
+					store.docs.log.log as any,
+					"createNativePlainAppendCommitOnly",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "backbone" });
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneCommitSpy.callCount).equal(1);
+					expect(lowerCommitOnlySpy.callCount).equal(0);
+					expect(nativeCreateSpy.callCount).equal(0);
+					expect((await store.docs.get(doc.id))?.name).equal("backbone");
+				} finally {
+					nativeCreateSpy.restore();
+					lowerCommitOnlySpy.restore();
+					backboneCommitSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses the native backbone no-next put path with length trim", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				const backboneCommitSpy = sinon.spy(
+					store.docs.log.log as any,
+					"appendLocallyPreparedNativeNoNextCommitOnly",
+				);
+				const nativeCreateSpy = sinon.spy(
+					store.docs.log.log as any,
+					"createNativePlainAppendCommitOnly",
+				);
+
+				try {
+					const docs = [
+						new Document({ id: uuid(), name: "backbone-trim-1" }),
+						new Document({ id: uuid(), name: "backbone-trim-2" }),
+						new Document({ id: uuid(), name: "backbone-trim-3" }),
+					];
+					for (const doc of docs) {
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+					}
+
+					expect(backboneCommitSpy.callCount).equal(3);
+					expect(nativeCreateSpy.callCount).equal(0);
+					expect(store.docs.log.log.length).equal(1);
+					expect(await store.docs.get(docs[0]!.id)).equal(undefined);
+					expect((await store.docs.get(docs[2]!.id))?.name).equal(
+						"backbone-trim-3",
+					);
+				} finally {
+					nativeCreateSpy.restore();
+					backboneCommitSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses native backbone graph with remote blocks for replicated puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const remotePutKnownSpy = sinon.spy(sharedLog.remoteBlocks, "putKnown");
+				const backbone = sharedLog._nativeBackbone;
+				const backbonePlanSpy = sinon.spy(backbone, "planAppendForGid");
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendIndex = store.docs.index.index as any;
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
+				const documentIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putIdentityWithContext",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "backbone-remote" });
+					const put = await store.docs.put(doc, { unique: true });
+
+					expect(sharedLog.remoteBlocks.localStore).equal(backbone.blocks);
+					expect(remotePutKnownSpy.callCount).equal(1);
+					expect(backbonePlanSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(documentIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(1);
+					expect(backboneDocumentPutSpy.callCount).equal(1);
+					expect(backbone.documentValueLength).equal(1);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backendIndex.getSize()).equal(1);
+					expect(
+						backbone.documentExactStringFirstKey(
+							nativeFieldPathHash(["id"]),
+							doc.id,
+						),
+					).equal(`string:${doc.id}`);
+					expect(backbone.hasLogEntry(put.entry.hash)).equal(true);
+					expect(backbone.hasBlock(put.entry.hash)).equal(true);
+					expect(backbone.getEntryCoordinateHashes()).to.include(
+						put.entry.hash,
+					);
+					const storedBlock = await sharedLog.remoteBlocks.get(put.entry.hash);
+					expect(storedBlock).instanceOf(Uint8Array);
+					expect((await store.docs.get(doc.id))?.name).equal("backbone-remote");
+				} finally {
+					documentIdentityPutSpy.restore();
+					documentStoredIdentityPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
+					backbonePlanSpy.restore();
+					remotePutKnownSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses the native backbone committed storage transaction for local replicated no-next puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
+				const backboneDocumentHeadLookupSpy = sinon.spy(
+					backbone,
+					"documentExactStringFirstKey",
+				);
+				const backboneDocumentQueryPageSpy = sinon.spy(
+					backbone,
+					"documentQueryPage",
+				);
+				const backendIndex = store.docs.index.index as any;
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
+				const documentTransactionSpy = sinon.spy(
+					store.docs as any,
+					"createNativeDocumentAppendTransaction",
+				);
+
+				try {
+					const first = new Document({
+						id: uuid(),
+						name: "backbone-storage-1",
+					});
+					const second = new Document({
+						id: uuid(),
+						name: "backbone-storage-2",
+					});
+					await store.docs.put(first, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(second, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(2);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backendIndex.getSize()).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(
+						backboneCompactStorageTransactionSpy.secondCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0].next,
+					).to.deep.equal([]);
+					const firstEntryHash =
+						backboneCompactStorageTransactionSpy.firstCall.returnValue.entry
+							.hash;
+					expect(
+						backboneCompactStorageTransactionSpy.secondCall.args[0]
+							.documentIndex.deleteTrimmedHeads,
+					).equal(true);
+					expect(
+						backboneCompactStorageTransactionSpy.secondCall.returnValue
+							.documentTrimmedHeadsProcessed,
+					).equal(true);
+					const secondTransaction =
+						documentTransactionSpy.secondCall?.returnValue;
+					expect(secondTransaction?.coordinateFields?.hash).equal(
+						secondTransaction?.append.hash,
+					);
+					expect(secondTransaction?.coordinateFields?.gid).equal(
+						secondTransaction?.append.gid,
+					);
+					expect(
+						secondTransaction?.coordinateFields?.coordinates,
+					).to.have.length.greaterThan(0);
+					expect(
+						backboneDocumentHeadLookupSpy.calledWith(
+							nativeFieldPathHash(["__context", "head"]),
+							firstEntryHash,
+						),
+					).equal(false);
+					expect(backbone.documentValueLength).equal(1);
+					expect(
+						backbone.documentExactStringFirstKey(
+							nativeFieldPathHash(["id"]),
+							first.id,
+						),
+					).equal(undefined);
+					expect(
+						backbone.documentExactStringFirstKey(
+							nativeFieldPathHash(["id"]),
+							second.id,
+						),
+					).equal(`string:${second.id}`);
+					const iterator = store.docs.index.iterate({
+						query: [
+							new StringMatch({
+								key: "name",
+								value: "backbone-storage-2",
+							}),
+						],
+					});
+					const queried = await iterator.next(1);
+					await iterator.close();
+					expect(queried[0]?.id).equal(second.id);
+					expect(backboneDocumentQueryPageSpy.callCount).greaterThan(0);
+					expect(await store.docs.get(first.id)).equal(undefined);
+					expect((await store.docs.get(second.id))?.name).equal(
+						"backbone-storage-2",
+					);
+				} finally {
+					documentTransactionSpy.restore();
+					documentStoredIdentityPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
+					backboneDocumentQueryPageSpy.restore();
+					backboneDocumentHeadLookupSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("does not wait for best-effort block notification on native committed puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				let notifyStoredStub: sinon.SinonStub | undefined;
+				let knownNoNextCommitSpy: sinon.SinonSpy | undefined;
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						},
+					});
+					const notifyDeferred = pDefer<void>();
+					const sharedLog = store.docs.log as any;
+					knownNoNextCommitSpy = sinon.spy(
+						store.docs.log.log as any,
+						"appendLocallyPreparedNativeKnownNoNextCommitOnly",
+					);
+					notifyStoredStub = sinon
+						.stub(sharedLog.remoteBlocks, "notifyStored")
+						.returns(notifyDeferred.promise);
+
+					const id = uuid();
+					const putPromise = store.docs.put(
+						new Document({
+							id,
+							name: "backbone-notify-deferred",
+						}),
+						{
+							unique: true,
+							target: "none",
+						},
+					);
+					const completedBeforeNotify = await Promise.race([
+						putPromise.then(() => true),
+						delay(50).then(() => false),
+					]);
+					notifyDeferred.resolve();
+					await putPromise;
+
+					expect(completedBeforeNotify).equal(true);
+					expect(knownNoNextCommitSpy.callCount).equal(1);
+					// Stored-block provider announcements are deferred and batched
+					// (see notifyStoredDeferred in @peerbit/blocks): the put must not
+					// wait for them, but exactly one notification must still follow.
+					await waitForResolved(() =>
+						expect(notifyStoredStub!.callCount).equal(1),
+					);
+					expect((await store.docs.get(id))?.name).equal(
+						"backbone-notify-deferred",
+					);
+				} finally {
+					knownNoNextCommitSpy?.restore();
+					notifyStoredStub?.restore();
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
+			it("skips block provider notification for local-only native committed puts", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				let notifyStoredSpy: sinon.SinonSpy | undefined;
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						},
+					});
+					const sharedLog = store.docs.log as any;
+					notifyStoredSpy = sinon.spy(sharedLog.remoteBlocks, "notifyStored");
+
+					const id = uuid();
+					await store.docs.put(
+						new Document({
+							id,
+							name: "backbone-local-only-no-provider-announce",
+						}),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(notifyStoredSpy.callCount).equal(0);
+					expect((await store.docs.get(id))?.name).equal(
+						"backbone-local-only-no-provider-announce",
+					);
+				} finally {
+					notifyStoredSpy?.restore();
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
+			it("uses the native backbone committed storage transaction for update puts with next", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedStorageAppendTransaction",
+				);
+				const backboneNoNextStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
+				const backboneCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistBackboneCoordinateFieldsNativeTransaction",
+				);
+				const genericCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistPreparedCoordinateNativeTransaction",
+				);
+				const backendIndex = store.docs.index.index as any;
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentStoredIdentityPutSpy = sinon.spy(
+					store.docs.index,
+					"_putStoredIdentityWithContext",
+				);
+
+				try {
+					const id = uuid();
+					const first = await store.docs.put(
+						new Document({ id, name: "backbone-storage-1" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+					const second = await store.docs.put(
+						new Document({ id, name: "backbone-storage-2" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(backboneNoNextStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backendIndex.getSize()).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(backboneStorageTransactionSpy.firstCall.args[0].documentIndex)
+						.to.exist;
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0].next,
+					).to.deep.equal([]);
+					expect(
+						backboneStorageTransactionSpy.firstCall.args[0].next,
+					).to.deep.equal([first.entry.hash]);
+					expect(backboneCoordinatePersistSpy.callCount).equal(2);
+					expect(genericCoordinatePersistSpy.callCount).equal(0);
+					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+					expect((await store.docs.get(id))?.name).equal("backbone-storage-2");
+				} finally {
+					documentStoredIdentityPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
+					genericCoordinatePersistSpy.restore();
+					backboneCoordinatePersistSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
+					backboneNoNextStorageTransactionSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses native backbone storage transactions without shared-log native state", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeRangePlanner: false,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
+				const genericCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistPreparedCoordinateNativeTransaction",
+				);
+				const backboneCoordinatePersistSpy = sinon.spy(
+					sharedLog,
+					"persistBackboneCoordinateFieldsNativeTransaction",
+				);
+
+				try {
+					expect(sharedLog._nativeSharedLogState).equal(undefined);
+					expect(sharedLog._residentEntryCoordinatesByHash).to.be.instanceOf(
+						Map,
+					);
+
+					const id = uuid();
+					await store.docs.put(new Document({ id, name: "backbone-only" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(genericCoordinatePersistSpy.callCount).equal(0);
+					expect(backboneCoordinatePersistSpy.callCount).equal(1);
+					expect(sharedLog._residentEntryCoordinatesByHash.size).equal(1);
+					expect((await store.docs.get(id))?.name).equal("backbone-only");
+				} finally {
+					backboneCoordinatePersistSpy.restore();
+					genericCoordinatePersistSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("handles native backbone update trims without resolving deleted blocks", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				try {
+					const id = uuid();
+					await store.docs.put(new Document({ id, name: "trimmed-1" }), {
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(new Document({ id, name: "trimmed-2" }), {
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(new Document({ id, name: "trimmed-3" }), {
+						replicate: false,
+						target: "none",
+					});
+
+					expect((await store.docs.get(id))?.name).equal("trimmed-3");
+				} finally {
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("commits transform.pick document indexes in the native backbone transaction", async () => {
+				@variant("native_backbone_pick_indexable")
+				class BackbonePickIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: option("string") })
+					name?: string;
+
+					constructor(properties?: Partial<BackbonePickIndexable>) {
+						this.id = properties?.id || "";
+						this.name = properties?.name;
+					}
+				}
+
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const localStore = new TestStore<BackbonePickIndexable>({
+					docs: new Documents<Document, BackbonePickIndexable>(),
+				});
+				store = localStore as any;
+				await rustSession.peers[0].open(localStore, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						index: {
+							type: BackbonePickIndexable,
+							transform: transform.pick<Document, BackbonePickIndexable>([
+								"id",
+								"name",
+							]),
+						},
+					},
+				});
+				const sharedLog = localStore.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
+				const backendIndex = localStore.docs.index.index as any;
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					localStore.docs.index,
+					"putWithContext",
+				);
+				try {
+					const doc = new Document({ id: uuid(), name: "backbone-pick" });
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backbone.documentValueLength).equal(1);
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.name).equal("backbone-pick");
+					expect((indexed as any)?.tags).equal(undefined);
+					const iterator = localStore.docs.index.iterate({
+						query: [
+							new StringMatch({
+								key: "name",
+								value: "backbone-pick",
+							}),
+						],
+					});
+					const queried = await iterator.next(1);
+					await iterator.close();
+					expect(queried[0]?.id).equal(doc.id);
+				} finally {
+					documentIndexPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await localStore.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("commits transform.project context indexes in the native backbone transaction", async () => {
+				@variant("native_backbone_project_context_indexable")
+				class BackboneProjectContextIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					created: bigint;
+
+					@field({ type: option(Uint8Array) })
+					signer?: Uint8Array;
+
+					constructor(properties?: Partial<BackboneProjectContextIndexable>) {
+						this.id = properties?.id || "";
+						this.created = properties?.created || 0n;
+						this.signer = properties?.signer;
+					}
+				}
+
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const localStore = new TestStore<BackboneProjectContextIndexable>({
+					docs: new Documents<Document, BackboneProjectContextIndexable>(),
+				});
+				store = localStore as any;
+				await rustSession.peers[0].open(localStore, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						log: { trim: { type: "length", to: 100 } },
+						index: {
+							type: BackboneProjectContextIndexable,
+							transform: transform.project<
+								Document,
+								BackboneProjectContextIndexable
+							>({
+								id: transform.field("id"),
+								created: transform.context("created"),
+								signer: transform.entryFirstSignerPublicKey(),
+							}),
+						},
+					},
+				});
+				const sharedLog = localStore.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const backboneCompactStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendIndex = localStore.docs.index.index as any;
+				const backendPutSpy = sinon.spy(backendIndex, "put");
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					localStore.docs.index,
+					"putWithContext",
+				);
+				const documentIndexTransformSpy = sinon.spy(
+					localStore.docs.index,
+					"transformer",
+				);
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "backbone-project-context",
+					});
+					const put = await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(documentIndexTransformSpy.callCount).equal(0);
+					expect(backendPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backbone.documentValueLength).equal(1);
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.created).equal(
+						put.entry.meta.clock.timestamp.wallTime,
+					);
+					expect(
+						equals(
+							indexed?.signer,
+							rustSession.peers[0].identity.publicKey.bytes,
+						),
+					).equal(true);
+				} finally {
+					documentIndexTransformSpy.restore();
+					documentIndexPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backendPutSpy.restore();
+					backboneDocumentPutSpy.restore();
+					backboneCompactStorageTransactionSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await localStore.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("commits local transform.project field/context indexes without JS transform", async () => {
+				@variant("native_backbone_project_field_context_indexable")
+				class BackboneProjectFieldContextIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					created: bigint;
+
+					@field({ type: option(Uint8Array) })
+					data?: Uint8Array;
+
+					constructor(
+						properties?: Partial<BackboneProjectFieldContextIndexable>,
+					) {
+						this.id = properties?.id || "";
+						this.created = properties?.created || 0n;
+						this.data = properties?.data;
+					}
+				}
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const localStore = new TestStore<BackboneProjectFieldContextIndexable>({
+					docs: new Documents<Document, BackboneProjectFieldContextIndexable>(),
+				});
+				store = localStore as any;
+				await rustSession.peers[0].open(localStore, {
+					args: {
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						index: {
+							type: BackboneProjectFieldContextIndexable,
+							transform: transform.project<
+								Document,
+								BackboneProjectFieldContextIndexable
+							>({
+								id: transform.field("id"),
+								created: transform.context("created"),
+								data: transform.field("data"),
+							}),
+						},
+					},
+				});
+				const sharedLog = localStore.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				// Local-only puts with coordinate persistence commit through the
+				// durable compact storage transaction (see "uses the native backbone
+				// storage transaction for strict native local puts with coordinate
+				// persistence"), not the plain graph entry commit.
+				const backboneCompactCommitSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+				);
+				const registerProjectionPlanSpy = sinon.spy(
+					(backbone as any).native,
+					"register_document_projection_plan",
+				);
+				const backboneDocumentPutSpy = sinon.spy(
+					backbone,
+					"putDocumentEncodedPartsStored",
+				);
+				const backendIndex = localStore.docs.index.index as any;
+				const backendStoredContextPutSpy = sinon.spy(
+					backendIndex,
+					"putStoredContextualEncodedValue",
+				);
+				const documentIndexPutSpy = sinon.spy(
+					localStore.docs.index,
+					"putWithContext",
+				);
+				const documentPreparedNativePutSpy = sinon.spy(
+					localStore.docs.index as any,
+					"_putPreparedNativeBackboneDocumentIndexWithContext",
+				);
+				const documentIndexTransformSpy = sinon.spy(
+					localStore.docs.index,
+					"transformer",
+				);
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "backbone-project-field-context",
+						data: new Uint8Array([1, 2, 3]),
+					});
+					const second = new Document({
+						id: uuid(),
+						name: "backbone-project-field-context-2",
+						data: new Uint8Array([4, 5, 6]),
+					});
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					await localStore.docs.put(second, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneCompactCommitSpy.callCount).equal(2);
+					expect(backboneCompactCommitSpy.firstCall.args[0].documentIndex).to
+						.exist;
+					expect(registerProjectionPlanSpy.callCount).equal(1);
+					expect(documentPreparedNativePutSpy.callCount).equal(0);
+					expect(documentIndexPutSpy.callCount).equal(0);
+					expect(documentIndexTransformSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backboneDocumentPutSpy.callCount).equal(0);
+					expect(backendIndex.native.len()).equal(0);
+					expect(backbone.documentValueLength).equal(2);
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(equals(indexed?.data, doc.data)).equal(true);
+					const indexedSecond = await localStore.docs.index.get(second.id, {
+						resolve: false,
+					});
+					expect(indexedSecond?.id).equal(second.id);
+					expect(equals(indexedSecond?.data, second.data)).equal(true);
+				} finally {
+					documentIndexTransformSpy.restore();
+					documentPreparedNativePutSpy.restore();
+					documentIndexPutSpy.restore();
+					backendStoredContextPutSpy.restore();
+					backboneDocumentPutSpy.restore();
+					registerProjectionPlanSpy.restore();
+					backboneCompactCommitSpy.restore();
+					await localStore.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("flushes native backbone coordinate WAL without generic coordinate index writes", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const coordinateStore = new MemoryCoordinatePersistenceStore();
+				const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+					coordinateStore,
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							coordinatePersistence,
+						},
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+				const backboneStorageTransactionSpy = sinon.spy(
+					backbone,
+					"preparePlainCommittedNoNextStorageAppendTransaction",
+				);
+				const coordinateIndexPutSpy = sinon.spy(
+					coordinateIndex,
+					"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+				);
+				const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "backbone-coordinate-wal",
+					});
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(backboneStorageTransactionSpy.callCount).equal(1);
+					expect(coordinateIndexPutSpy.callCount).equal(0);
+					expect(flushSpy.callCount).equal(1);
+					expect(
+						coordinateStore.files.get("coordinates.wal")?.byteLength,
+					).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+					expect(backbone.coordinatePendingJournalLength).to.equal(0);
+					expect(
+						backbone.getEntryCoordinateFields()[0]?.metaBytes.byteLength,
+					).to.be.greaterThan(0);
+					expect((await store.docs.get(doc.id))?.name).equal(
+						"backbone-coordinate-wal",
+					);
+				} finally {
+					flushSpy.restore();
+					coordinateIndexPutSpy.restore();
+					backboneStorageTransactionSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("flushes buffered native backbone coordinate WAL on close", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const coordinateStore = new MemoryCoordinatePersistenceStore();
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				let flushSpy: sinon.SinonSpy | undefined;
+				let coordinateIndexPutSpy: sinon.SinonSpy | undefined;
+				let backendStoredContextPutSpy: sinon.SinonSpy | undefined;
+				let documentStoredIdentityPutSpy: sinon.SinonSpy | undefined;
+				let backboneStorageTransactionSpy: sinon.SinonSpy | undefined;
+				let backboneCompactStorageTransactionSpy: sinon.SinonSpy | undefined;
+				try {
+					await rustSession.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence: {
+									store: coordinateStore,
+									buffered: true,
+									flushOnAppend: false,
+								},
+							},
+						},
+					});
+					const doc = new Document({
+						id: uuid(),
+						name: "buffered-backbone-coordinate-wal",
+					});
+					const coordinatePersistence = (store.docs.log as any)
+						._nativeBackboneCoordinatePersistence;
+					flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+					const sharedLog = store.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+					coordinateIndexPutSpy = sinon.spy(
+						coordinateIndex,
+						"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+					);
+					const backendIndex = store.docs.index.index as any;
+					backendStoredContextPutSpy = sinon.spy(
+						backendIndex,
+						"putStoredContextualEncodedValue",
+					);
+					documentStoredIdentityPutSpy = sinon.spy(
+						store.docs.index,
+						"_putStoredIdentityWithContext",
+					);
+					backboneStorageTransactionSpy = sinon.spy(
+						backbone,
+						"preparePlainCommittedNoNextStorageAppendTransaction",
+					);
+					backboneCompactStorageTransactionSpy = sinon.spy(
+						backbone,
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+					);
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const coordinateHashes = backbone.getEntryCoordinateHashes();
+
+					expect(backboneStorageTransactionSpy.callCount).equal(0);
+					expect(backboneCompactStorageTransactionSpy.callCount).equal(1);
+					expect(
+						backboneCompactStorageTransactionSpy.firstCall.args[0]
+							.documentIndex,
+					).to.exist;
+					expect(coordinateIndexPutSpy.callCount).equal(0);
+					expect(documentStoredIdentityPutSpy.callCount).equal(0);
+					expect(backendStoredContextPutSpy.callCount).equal(0);
+					expect(backbone.documentValueLength).equal(1);
+					expect(flushSpy.callCount).equal(0);
+					expect(backbone.coordinatePendingJournalLength).to.be.greaterThan(0);
+					expect(coordinateStore.files.has("coordinates.wal")).equal(false);
+					await store.close();
+					store = undefined;
+
+					expect(flushSpy.callCount).equal(1);
+					expect(
+						coordinateStore.files.get("coordinates.wal")?.byteLength,
+					).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+					expect(backbone.coordinatePendingJournalLength).to.equal(0);
+					const identity = rustSession.peers[0].identity as Ed25519Keypair;
+					const restoredBackbone = await createNativePeerbitBackbone({
+						clockId: identity.publicKey.bytes,
+						privateKey: identity.privateKey.privateKey,
+						publicKey: identity.publicKey.publicKey,
+					});
+					await new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+					).hydrate(restoredBackbone);
+					expect(restoredBackbone.getEntryCoordinateHashes()).to.deep.equal(
+						coordinateHashes,
+					);
+				} finally {
+					documentStoredIdentityPutSpy?.restore();
+					backendStoredContextPutSpy?.restore();
+					coordinateIndexPutSpy?.restore();
+					backboneCompactStorageTransactionSpy?.restore();
+					backboneStorageTransactionSpy?.restore();
+					flushSpy?.restore();
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
+			it("flushes buffered native backbone coordinate WAL by threshold policy", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				const cases = [
+					{
+						name: "byte-threshold",
+						options: { flushMaxPendingBytes: 1 },
+					},
+					{
+						name: "interval-threshold",
+						options: { flushIntervalMs: 0 },
+					},
+				];
+				try {
+					for (const testCase of cases) {
+						const coordinateStore = new MemoryCoordinatePersistenceStore();
+						const bufferedCoordinateStore =
+							new NativeBackboneBufferedCoordinatePersistenceStore(
+								coordinateStore,
+								{ maxBufferedBytes: 1 },
+							);
+						const coordinatePersistence =
+							new NativeBackboneCoordinatePersistence(bufferedCoordinateStore, {
+								flushOnAppend: false,
+								...testCase.options,
+							});
+						store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+						await rustSession.peers[0].open(store, {
+							args: {
+								replicate: { factor: 1 },
+								nativeGraph: true,
+								nativeBackbone: {
+									optional: false,
+									coordinatePersistence,
+								},
+							},
+						});
+						const flushSpy = sinon.spy(coordinatePersistence, "flushJournal");
+						const doc = new Document({
+							id: uuid(),
+							name: `buffered-backbone-coordinate-wal-${testCase.name}`,
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const backbone = (store.docs.log as any)._nativeBackbone;
+
+						expect(flushSpy.callCount).equal(1);
+						expect(backbone.coordinatePendingJournalLength).to.equal(0);
+						expect(
+							coordinateStore.files.get("coordinates.wal")?.byteLength,
+						).to.be.greaterThan(backbone.coordinateJournalHeader().byteLength);
+
+						await store.close();
+						store = undefined;
+					}
+				} finally {
+					if (store) {
+						await store.close();
+						store = undefined;
+					}
+					await rustSession.stop();
+				}
+			});
+
+			it("restores native backbone coordinates if storage transaction coordinate persistence fails", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
+					},
+				});
+				const sharedLog = store.docs.log as any;
+				const backbone = sharedLog._nativeBackbone;
+				const coordinateIndex = sharedLog.entryCoordinatesIndex as any;
+
+				try {
+					const id = uuid();
+					const first = await store.docs.put(
+						new Document({ id, name: "backbone-storage-1" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+					const persistStub = sinon
+						.stub(
+							coordinateIndex,
+							"putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn",
+						)
+						.callsFake(() => {
+							throw new Error("coordinate persistence failed");
+						});
+
+					try {
+						await expect(
+							store.docs.put(new Document({ id, name: "backbone-storage-2" }), {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith("coordinate persistence failed");
+						expect(backbone.getEntryCoordinateHashes()).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect((await store.docs.get(id))?.name).equal(
+							"backbone-storage-1",
+						);
+					} finally {
+						persistStub.restore();
+					}
+				} finally {
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("removes trimmed prepared puts from the document index by head", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+
+				const firstId = uuid();
+				const first = await store.docs.put(
+					new Document({ id: firstId, name: "trimmed" }),
+					{
+						unique: true,
+						replicate: false,
+						target: "none",
+					},
+				);
+
+				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
+				const entryIndexGetSpy = sinon.spy(
+					store.docs.log.log.entryIndex,
+					"get",
+				);
+				const entryIndexBackend = store.docs.log.log.entryIndex.properties
+					.index as any;
+				const entryIndexDelIdsSpy = sinon.spy(entryIndexBackend, "delIds");
+				const entryIndexDelSpy = sinon.spy(entryIndexBackend, "del");
+
+				try {
+					await store.docs.put(
+						new Document({ id: uuid(), name: "remaining" }),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(lowerLogGetSpy.withArgs(first.entry.hash).callCount).equal(0);
+					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
+						0,
+					);
+					expect(
+						entryIndexDelIdsSpy.callCount + entryIndexDelSpy.callCount,
+					).equal(0);
+					expect(entryIndexDelSpy.callCount).equal(0);
+					expect(await store.docs.get(firstId)).to.be.undefined;
+					expect(changes).to.have.length(2);
+					expect(changes[1].removed.map((doc) => doc.id)).to.deep.equal([
+						firstId,
+					]);
+				} finally {
+					entryIndexDelSpy.restore();
+					entryIndexDelIdsSpy.restore();
+					entryIndexGetSpy.restore();
+					lowerLogGetSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("removes unobserved trimmed native puts through synchronous head cleanup", async () => {
+				const rustSession = await TestSession.connected(
+					1,
+					createRustPeerbitOptions(),
+				);
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await rustSession.peers[0].open(store, {
+					args: {
+						replicate: false,
+						log: {
+							trim: { type: "length", to: 1 },
+						},
+					},
+				});
+
+				const firstId = uuid();
+				const first = await store.docs.put(
+					new Document({ id: firstId, name: "trimmed" }),
+					{
+						unique: true,
+						replicate: false,
+						target: "none",
+					},
+				);
+
+				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
+				const entryIndexGetSpy = sinon.spy(
+					store.docs.log.log.entryIndex,
+					"get",
+				);
+				const headKeySpy = sinon.spy(
+					store.docs.index,
+					"tryGetIdentityIndexedKeyByHead",
+				);
+				const delManyMaybeSpy = sinon.spy(store.docs.index, "delManyMaybe");
+
+				try {
+					await store.docs.put(
+						new Document({ id: uuid(), name: "remaining" }),
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(
+						headKeySpy.withArgs(first.entry.hash).callCount,
+						"head key cleanup lookup",
+					).equal(1);
+					expect(delManyMaybeSpy.callCount, "document index delete").equal(1);
+					expect(lowerLogGetSpy.withArgs(first.entry.hash).callCount).equal(0);
+					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
+						0,
+					);
+					expect(await store.docs.get(firstId)).to.be.undefined;
+				} finally {
+					delManyMaybeSpy.restore();
+					headKeySpy.restore();
+					entryIndexGetSpy.restore();
+					lowerLogGetSpy.restore();
+					await store.close();
+					store = undefined;
+					await rustSession.stop();
+				}
+			});
+
+			it("uses the validated local append path for document updates", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+				const validatedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyValidated",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPrepared",
+				);
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const localLookupSpy = sinon.spy(
+					store.docs as any,
+					"getLocalIndexedContext",
+				);
+				const lowerLogGetSpy = sinon.spy(store.docs.log.log, "get");
+				const blockPutManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putMany",
+				);
+				const blockPutKnownSpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putKnown",
+				);
+				const blockPutKnownManySpy = sinon.spy(
+					store.docs.log.log.blocks as any,
+					"putKnownMany",
+				);
+
+				try {
+					const id = uuid();
+					const first = await store.docs.put(
+						new Document({ id, name: "first" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+					const second = await store.docs.put(
+						new Document({ id, name: "second" }),
+						{
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(2);
+					expect(validatedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(0);
+					expect(localLookupSpy.callCount).equal(2);
+					expect(lowerLogGetSpy.callCount).equal(0);
+					expect(blockPutManySpy.callCount).equal(0);
+					expect(blockPutKnownSpy.callCount).equal(2);
+					expect(blockPutKnownManySpy.callCount).equal(0);
+					expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+					expect((await store.docs.get(id))?.name).equal("second");
+				} finally {
+					localLookupSpy.restore();
+					lowerLogGetSpy.restore();
+					blockPutKnownManySpy.restore();
+					blockPutKnownSpy.restore();
+					blockPutManySpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+					preparedAppendSpy.restore();
+					validatedAppendSpy.restore();
+					appendSpy.restore();
+				}
+			});
+
+			describe("native-describable transforms", () => {
+				@variant("native_transform_pick_indexable")
+				class NativeTransformPickIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: option("string") })
+					name?: string;
+
+					constructor(properties?: Partial<NativeTransformPickIndexable>) {
+						this.id = properties?.id || "";
+						this.name = properties?.name;
+					}
+				}
+
+				@variant("native_transform_project_indexable")
+				class NativeTransformProjectIndexable {
+					@field({ type: "string" })
+					id: string;
+
+					@field({ type: "u64" })
+					created: bigint;
+
+					@field({ type: option(Uint8Array) })
+					signer?: Uint8Array;
+
+					constructor(properties?: Partial<NativeTransformProjectIndexable>) {
+						this.id = properties?.id || "";
+						this.created = properties?.created || 0n;
+						this.signer = properties?.signer;
+					}
+				}
+
+				it("brands transform descriptors as non-enumerable metadata", () => {
+					const transformer = transform.pick<
+						Document,
+						NativeTransformPickIndexable
+					>(["id", "name"]);
+					const descriptor = getDocumentTransformDescriptor(transformer);
+					expect(descriptor).to.deep.equal({
+						kind: "pick",
+						fields: ["id", "name"],
+					});
+					const descriptorSymbol = Object.getOwnPropertySymbols(
+						transformer,
+					).find(
+						(symbol) =>
+							(transformer as unknown as Record<symbol, unknown>)[symbol] ===
+							descriptor,
+					);
+					expect(descriptorSymbol).to.exist;
+					expect(
+						Object.getOwnPropertyDescriptor(transformer, descriptorSymbol!)
+							?.enumerable,
+					).equal(false);
+				});
+
+				it("indexes transform.pick the same as an equivalent JS transformer", async () => {
+					const localStore = new TestStore<NativeTransformPickIndexable>({
+						docs: new Documents<Document, NativeTransformPickIndexable>(),
+					});
+					store = localStore as any;
+					await session.peers[0].open(localStore, {
+						args: {
+							replicate: false,
+							index: {
+								type: NativeTransformPickIndexable,
+								transform: transform.pick<
+									Document,
+									NativeTransformPickIndexable
+								>(["id", "name"]),
+							},
+						},
+					});
+
+					const doc = new Document({ id: uuid(), name: "picked" });
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.name).equal("picked");
+				});
+
+				it("projects context and entry signer facts", async () => {
+					const localStore = new TestStore<NativeTransformProjectIndexable>({
+						docs: new Documents<Document, NativeTransformProjectIndexable>(),
+					});
+					store = localStore as any;
+					await session.peers[0].open(localStore, {
+						args: {
+							replicate: false,
+							index: {
+								type: NativeTransformProjectIndexable,
+								transform: transform.project<
+									Document,
+									NativeTransformProjectIndexable
+								>({
+									id: transform.field("id"),
+									created: transform.context("created"),
+									signer: transform.entryFirstSignerPublicKey(),
+								}),
+							},
+						},
+					});
+
+					const doc = new Document({ id: uuid(), name: "projected" });
+					await localStore.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					const indexed = await localStore.docs.index.get(doc.id, {
+						resolve: false,
+					});
+					expect(indexed?.id).equal(doc.id);
+					expect(indexed?.created).to.be.a("bigint");
+					expect(
+						equals(indexed?.signer, session.peers[0].identity.publicKey.bytes),
+					).equal(true);
+				});
+			});
+
+			describe("document backend mode", () => {
+				it("keeps auto mode on compatibility fallback for arbitrary canPerform", async () => {
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await session.peers[0].open(store, {
+						args: {
+							mode: "auto",
+							replicate: false,
+							canPerform: () => true,
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "auto" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeCommitSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal("auto");
+					} finally {
+						nativeCommitSpy.restore();
+					}
+				});
+
+				it("forces compatibility mode even when native backbone is configured", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "compat",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					const nativeBatchCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const nativeDeleteBackendSpy = sinon.spy(
+						store.docs as any,
+						"delNativeDocumentBackend",
+					);
+					const strictNativeDeleteAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "compat" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(
+							(store.docs as any)._nativeBackboneDocumentIndexEnabled,
+						).equal(false);
+						expect(nativeCommitSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal("compat");
+						await store.docs.putMany(
+							[
+								new Document({
+									id: uuid(),
+									name: "compat-batch-1",
+								}),
+								new Document({
+									id: uuid(),
+									name: "compat-batch-2",
+								}),
+							],
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						expect(nativeCommitSpy.callCount).equal(0);
+						expect(nativeBatchCommitSpy.callCount).equal(0);
+						await store.docs.del(doc.id, {
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeDeleteBackendSpy.callCount).equal(0);
+						expect(strictNativeDeleteAppendSpy.callCount).equal(0);
+						expect(await store.docs.get(doc.id)).equal(undefined);
+					} finally {
+						strictNativeDeleteAppendSpy.restore();
+						nativeDeleteBackendSpy.restore();
+						nativeBatchCommitSpy.restore();
+						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native mode when the document index cannot attach to the native backbone", async () => {
+					const simpleSession = await TestSession.connected(1, {
+						indexer: createSimpleIndexer,
+					});
+					const localStore = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					store = localStore;
+					try {
+						await expect(
+							simpleSession.peers[0].open(localStore, {
+								args: {
+									mode: "native",
+									replicate: false,
+									nativeGraph: true,
+									nativeBackbone: nativeBackboneDocumentIndexOptions(),
+									canPerform: policy.allowAll<Document>(),
+									index: {
+										type: Document,
+										transform: transform.identity<Document>(),
+									},
+								},
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"requires an attached native backbone document index",
+						);
+					} finally {
+						await simpleSession.stop();
+					}
+				});
+
+				it("keeps auto mode compatible when the document index cannot attach to the native backbone", async () => {
+					const simpleSession = await TestSession.connected(1, {
+						indexer: createSimpleIndexer,
+					});
+					const localStore = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					store = localStore;
+					try {
+						await simpleSession.peers[0].open(localStore, {
+							args: {
+								mode: "auto",
+								replicate: false,
+								nativeGraph: true,
+								nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.allowAll<Document>(),
+								index: {
+									type: Document,
+									transform: transform.identity<Document>(),
+								},
+							},
+						});
+						expect(
+							(localStore.docs as any)._nativeBackboneDocumentIndexEnabled,
+						).equal(false);
+						expect((localStore.docs.log as any)._nativeBackbone).to.exist;
+
+						const doc = new Document({
+							id: uuid(),
+							name: "auto-simple-native-backbone",
+						});
+						await localStore.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect((await localStore.docs.get(doc.id))?.name).equal(
+							"auto-simple-native-backbone",
+						);
+					} finally {
+						await simpleSession.stop();
+					}
+				});
+
+				it("keeps auto mode on compatibility path for explicit append options", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "auto",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const cases = [
+							{
+								name: "durability",
+								options: { durability: "strict" as const },
+							},
+							{
+								name: "defer-index-write",
+								options: { deferIndexWrite: false },
+							},
+							{
+								name: "metadata",
+								options: { meta: { data: new Uint8Array([1]) } },
+							},
+							{
+								name: "gid-seed",
+								options: { meta: { gidSeed: new Uint8Array([1]) } },
+							},
+							{
+								name: "check-remote",
+								options: { checkRemote: true },
+							},
+							{
+								name: "replicas",
+								options: { replicas: 1 },
+							},
+						];
+						for (const testCase of cases) {
+							const doc = new Document({
+								id: uuid(),
+								name: `auto-${testCase.name}`,
+							});
+							await store.docs.put(doc, {
+								unique: true,
+								replicate: false,
+								target: "none",
+								...testCase.options,
+							});
+							expect((await store.docs.get(doc.id))?.name).equal(
+								`auto-${testCase.name}`,
+							);
+						}
+						expect(nativeCommitSpy.callCount).equal(0);
+					} finally {
+						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native-backed auto putMany when safe while keeping auto delete compatible", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "auto",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const nativeDeleteBackendSpy = sinon.spy(
+						store.docs as any,
+						"delNativeDocumentBackend",
+					);
+					try {
+						const first = new Document({
+							id: uuid(),
+							name: "auto-native-batch-1",
+						});
+						const second = new Document({
+							id: uuid(),
+							name: "auto-native-batch-2",
+						});
+						const appended = await store.docs.putMany([first, second], {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(appended.entries).to.have.length(2);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchCommitSpy.callCount).equal(1);
+						expect((await store.docs.get(first.id))?.name).equal(first.name);
+						expect((await store.docs.get(second.id))?.name).equal(second.name);
+
+						await store.docs.del(first.id, {
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeDeleteBackendSpy.callCount).equal(0);
+						expect(await store.docs.get(first.id)).equal(undefined);
+						expect((await store.docs.get(second.id))?.name).equal(second.name);
+					} finally {
+						nativeDeleteBackendSpy.restore();
+						nativeBatchCommitSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native mode for descriptor-backed plain local puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "native" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeCommitSpy.callCount).equal(1);
+						expect((await store.docs.get(doc.id))?.name).equal("native");
+					} finally {
+						nativeCommitSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports declarative idProperty in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const aliasStore = new StrictNativeAliasStore();
+					await rustSession.peers[0].open(aliasStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<StrictNativeAliasDocument>(),
+							index: {
+								type: StrictNativeAliasDocument,
+								transform: transform.identity<StrictNativeAliasDocument>(),
+							},
+						},
+					});
+					const nativeCommitSpy = sinon.spy(
+						aliasStore.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					const genericAppendSpy = sinon.spy(aliasStore.docs.log, "append");
+					try {
+						await aliasStore.docs.put(
+							new StrictNativeAliasDocument({
+								slug: "native-slug",
+								name: "native-id-property",
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+
+						expect(nativeCommitSpy.callCount).equal(1);
+						expect(genericAppendSpy.callCount).equal(0);
+						expect((await aliasStore.docs.get("native-slug"))?.name).equal(
+							"native-id-property",
+						);
+					} finally {
+						genericAppendSpy.restore();
+						nativeCommitSpy.restore();
+						await aliasStore.close();
+						await rustSession.stop();
+					}
+				});
+
+				it("routes strict native puts through the native backend without generic append fallback", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const compatPlanSpy = sinon.spy(
+						store.docs as any,
+						"createPlainPutCommitPlan",
+					);
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					const strictNativeAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericPayloadAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-backend",
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(nativeCommitSpy.callCount).equal(1);
+						expect(strictNativeAppendSpy.callCount).equal(1);
+						expect(genericPayloadAppendSpy.callCount).equal(0);
+						expect(compatPlanSpy.callCount).equal(0);
+						expect(fallbackAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-backend",
+						);
+					} finally {
+						genericPayloadAppendSpy.restore();
+						strictNativeAppendSpy.restore();
+						nativeCommitSpy.restore();
+						compatPlanSpy.restore();
+						fallbackAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native put entries lazy until the public result is read", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareShallowSpy = sinon.spy(Entry, "prepareShallowEntry");
+					try {
+						const result = await store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "lazy-native-entry",
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const hash = result.entry.hash;
+						expect(hash).to.be.a("string");
+						expect(prepareShallowSpy.callCount).equal(1);
+						expect(result.entry.hash).equal(hash);
+						expect(prepareShallowSpy.callCount).equal(1);
+					} finally {
+						prepareShallowSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native putMany entries lazy until the public result is read", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareShallowSpy = sinon.spy(Entry, "prepareShallowEntry");
+					try {
+						const result = await store.docs.putMany(
+							[
+								new Document({
+									id: uuid(),
+									name: "lazy-native-entry-1",
+								}),
+								new Document({
+									id: uuid(),
+									name: "lazy-native-entry-2",
+								}),
+							],
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const hashes = result.entries.map((entry) => entry.hash);
+						expect(hashes).to.have.length(2);
+						expect(prepareShallowSpy.callCount).equal(2);
+						expect(result.entries.map((entry) => entry.hash)).to.deep.equal(
+							hashes,
+						);
+						expect(prepareShallowSpy.callCount).equal(2);
+					} finally {
+						prepareShallowSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native update entries lazy until the public result is read", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareShallowSpy = sinon.spy(Entry, "prepareShallowEntry");
+					const latestPlainPayloadStorageTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_transaction",
+					);
+					const latestEncodedStorageTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"prepare_plain_committed_storage_append_document_index_latest_compact_transaction",
+					);
+					try {
+						const id = uuid();
+						const putOptions = {
+							replicate: false,
+							target: "none" as const,
+						};
+						const first = await store.docs.put(
+							new Document({
+								id,
+								name: "lazy-native-update-1",
+							}),
+							putOptions,
+						);
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const second = await store.docs.put(
+							new Document({
+								id,
+								name: "lazy-native-update-2",
+							}),
+							putOptions,
+						);
+						expect(latestPlainPayloadStorageTransactionSpy.callCount).equal(2);
+						expect(latestEncodedStorageTransactionSpy.callCount).equal(0);
+						expect(prepareShallowSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal(
+							"lazy-native-update-2",
+						);
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const hash = second.entry.hash;
+						expect(hash).to.be.a("string");
+						expect(second.entry.meta.next).to.have.length(1);
+						expect(prepareShallowSpy.callCount).equal(1);
+						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(prepareShallowSpy.callCount).equal(2);
+					} finally {
+						latestEncodedStorageTransactionSpy.restore();
+						latestPlainPayloadStorageTransactionSpy.restore();
+						prepareShallowSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native update puts with native previous-head joins", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const compatPlanSpy = sinon.spy(
+						store.docs as any,
+						"createPlainPutCommitPlan",
+					);
+					const storageTransactionSpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+					);
+						const latestStorageTransactionSpy = sinon.spy(
+							((store.docs.log as any)._nativeBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_transaction",
+						);
+							const latestPlainPayloadStorageTransactionSpy =
+								sinon.spy(
+									((store.docs.log as any)._nativeBackbone as any)
+										.native,
+									"prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_transaction",
+								);
+							const latestEncodedStorageTransactionSpy = sinon.spy(
+								((store.docs.log as any)._nativeBackbone as any).native,
+								"prepare_plain_committed_storage_append_document_index_latest_compact_transaction",
+							);
+						let indexGetSpy: { restore(): void; callCount: number } | undefined;
+						try {
+						const id = uuid();
+						const first = await store.docs.put(
+							new Document({ id, name: "native-update-1" }),
+						);
+						indexGetSpy = sinon.spy((store.docs as any)._index.index, "get");
+							const second = await store.docs.put(
+								new Document({ id, name: "native-update-2" }),
+							);
+								expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+								expect(latestStorageTransactionSpy.callCount).equal(0);
+								expect(latestPlainPayloadStorageTransactionSpy.callCount).equal(2);
+								expect(latestEncodedStorageTransactionSpy.callCount).equal(0);
+								expect(storageTransactionSpy.callCount).equal(2);
+							expect(indexGetSpy?.callCount).equal(0);
+							expect(compatPlanSpy.callCount).equal(0);
+						expect(fallbackAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal("native-update-2");
+							} finally {
+								indexGetSpy?.restore();
+								latestEncodedStorageTransactionSpy.restore();
+								latestPlainPayloadStorageTransactionSpy.restore();
+								latestStorageTransactionSpy.restore();
+							storageTransactionSpy.restore();
+							compatPlanSpy.restore();
+						fallbackAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("skips JS trim fallback for strict native update trims", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					const removedHashesSpy = sinon.spy(
+						store.docs as any,
+						"tryHandlePreparedPlainPutCommitRemovedHashesFromHeads",
+					);
+					const removedEntriesSpy = sinon.spy(
+						store.docs as any,
+						"tryHandlePreparedPlainPutCommitRemovedFromHeads",
+					);
+					try {
+						const id = uuid();
+						await store.docs.put(new Document({ id, name: "native-trim-1" }));
+						await store.docs.put(new Document({ id, name: "native-trim-2" }));
+						expect(removedHashesSpy.callCount).equal(0);
+						expect(removedEntriesSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal("native-trim-2");
+					} finally {
+						removedEntriesSpy.restore();
+						removedHashesSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native same-signer update policies", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const fallbackAppendSpy = sinon.spy(store.docs.log, "append");
+					const nativeCommitSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppend",
+					);
+					const latestStorageTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"prepare_plain_committed_storage_append_document_index_latest_transaction",
+					);
+						const requiredPreviousSignerTransactionSpy = sinon.spy(
+							((store.docs.log as any)._nativeBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_transaction",
+						);
+						const requiredPreviousSignerCompactTransactionSpy = sinon.spy(
+							((store.docs.log as any)._nativeBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_transaction",
+						);
+						const knownContextStorageTransactionSpy = sinon.spy(
+							((store.docs.log as any)._nativeBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_transaction",
+					);
+					const previousSignerWithContextBatchSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"document_context_previous_signature_public_key_batch",
+					);
+					const previousSignerSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"document_previous_signature_public_key",
+					);
+					const signerBatchSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"graph_entry_signature_public_key_batch",
+					);
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					try {
+						const id = uuid();
+						const first = await store.docs.put(
+							new Document({ id, name: "native-same-signer-1" }),
+							);
+							requiredPreviousSignerTransactionSpy.resetHistory();
+							requiredPreviousSignerCompactTransactionSpy.resetHistory();
+							knownContextStorageTransactionSpy.resetHistory();
+							previousSignerWithContextBatchSpy.resetHistory();
+							previousSignerSpy.resetHistory();
+						signerBatchSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						resolveEntrySpy.resetHistory();
+						const second = await store.docs.put(
+							new Document({ id, name: "native-same-signer-2" }),
+							);
+							expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+							expect(nativeCommitSpy.callCount).equal(2);
+							expect(latestStorageTransactionSpy.callCount).equal(0);
+							expect(requiredPreviousSignerTransactionSpy.callCount).equal(0);
+							expect(
+								requiredPreviousSignerCompactTransactionSpy.callCount,
+							).equal(1);
+							expect(knownContextStorageTransactionSpy.callCount).equal(0);
+							expect(previousSignerWithContextBatchSpy.callCount).equal(0);
+							expect(previousSignerSpy.callCount).equal(0);
+						expect(signerBatchSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(0);
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect(fallbackAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal(
+							"native-same-signer-2",
+						);
+						} finally {
+							resolveEntrySpy.restore();
+							contextBatchSpy.restore();
+							signerBatchSpy.restore();
+							previousSignerSpy.restore();
+							previousSignerWithContextBatchSpy.restore();
+							knownContextStorageTransactionSpy.restore();
+							requiredPreviousSignerCompactTransactionSpy.restore();
+							requiredPreviousSignerTransactionSpy.restore();
+							latestStorageTransactionSpy.restore();
+							nativeCommitSpy.restore();
+						fallbackAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native same-signer update entries lazy until the public result is read", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(
+								policy.sameSignersAsPrevious<Document>(),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareShallowSpy = sinon.spy(Entry, "prepareShallowEntry");
+					const requiredPreviousSignerCompactTransactionSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_transaction",
+					);
+					try {
+						const id = uuid();
+						const putOptions = {
+							replicate: false,
+							target: "none" as const,
+						};
+						const first = await store.docs.put(
+							new Document({
+								id,
+								name: "lazy-native-same-signer-1",
+							}),
+							putOptions,
+						);
+						expect(prepareShallowSpy.callCount).equal(0);
+						requiredPreviousSignerCompactTransactionSpy.resetHistory();
+
+						const second = await store.docs.put(
+							new Document({
+								id,
+								name: "lazy-native-same-signer-2",
+							}),
+							putOptions,
+						);
+						expect(
+							requiredPreviousSignerCompactTransactionSpy.callCount,
+						).equal(1);
+						expect(prepareShallowSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal(
+							"lazy-native-same-signer-2",
+						);
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const hash = second.entry.hash;
+						expect(hash).to.be.a("string");
+						expect(second.entry.meta.next).to.have.length(1);
+						expect(prepareShallowSpy.callCount).equal(1);
+						expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+						expect(prepareShallowSpy.callCount).equal(2);
+					} finally {
+						requiredPreviousSignerCompactTransactionSpy.restore();
+						prepareShallowSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native same-signer policies native after the previous block is trimmed", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const previousSignerSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"document_previous_signature_public_key",
+					);
+					try {
+						const id = uuid();
+						const first = await store.docs.put(
+							new Document({ id, name: "native-same-signer-trim-1" }),
+						);
+						((store.docs.log as any)._nativeBackbone as any).blocks.rm(
+							first.entry.hash,
+						);
+						resolveEntrySpy.resetHistory();
+						previousSignerSpy.resetHistory();
+						await store.docs.put(
+							new Document({ id, name: "native-same-signer-trim-2" }),
+						);
+						expect(previousSignerSpy.callCount).equal(0);
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal(
+							"native-same-signer-trim-2",
+						);
+					} finally {
+						previousSignerSpy.restore();
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native same-signer policies native after reopen with persisted signer facts", async () => {
+					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+					const directory = `./tmp/document-store/native-same-signer-reopen-${uuid()}`;
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							documentIndex: true,
+							coordinatePersistence: new NativeBackboneCoordinatePersistence(
+								coordinateStore,
+								{ flushOnAppend: false },
+							),
+						},
+						canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					let peer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					let firstStore: TestStore | undefined;
+					let reopenedStore: TestStore | undefined;
+					try {
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						firstStore = new TestStore({
+							docs: new Documents<Document>(),
+						});
+						store = firstStore;
+						await peer.open(firstStore, {
+							args: openArgs(),
+						});
+						const id = uuid();
+						const first = await firstStore.docs.put(
+							new Document({ id, name: "native-same-signer-reopen-1" }),
+						);
+						const firstBackbone = (firstStore.docs.log as any)._nativeBackbone;
+						const firstSignerFact =
+							firstBackbone.documentPreviousSignaturePublicKey(`string:${id}`);
+						expect(firstSignerFact?.exists).equal(true);
+						expect(firstSignerFact?.publicKey).instanceOf(Uint8Array);
+
+						const clone = firstStore.clone();
+						await firstStore.close();
+						firstStore = undefined;
+						store = undefined;
+						await peer.stop();
+						peer = undefined;
+						expect(coordinateStore.files.has("coordinates.wal")).equal(true);
+						expect(coordinateStore.files.has("document-signers.wal")).equal(
+							true,
+						);
+
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						reopenedStore = await peer.open(clone, {
+							args: openArgs(),
+						});
+						store = reopenedStore;
+						const reopenedBackbone = (reopenedStore.docs.log as any)
+							._nativeBackbone;
+						expect(reopenedBackbone.hasBlock(first.entry.hash)).equal(false);
+						expect(reopenedBackbone.coordinateIndexLength).equal(1);
+						expect(
+							reopenedBackbone.hasCoordinateIndexHash(first.entry.hash),
+						).equal(true);
+						expect((await reopenedStore.docs.get(id))?.name).equal(
+							"native-same-signer-reopen-1",
+						);
+						const reopenedSignerFact =
+							reopenedBackbone.documentPreviousSignaturePublicKey(
+								`string:${id}`,
+							);
+						expect(reopenedSignerFact?.exists).equal(true);
+						expect(reopenedSignerFact?.publicKey).instanceOf(Uint8Array);
+
+						const resolveEntrySpy = sinon.spy(
+							reopenedStore.docs as any,
+							"_resolveEntry",
+						);
+						try {
+							const second = await reopenedStore.docs.put(
+								new Document({ id, name: "native-same-signer-reopen-2" }),
+							);
+							expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+							expect(resolveEntrySpy.callCount).equal(0);
+							expect((await reopenedStore.docs.get(id))?.name).equal(
+								"native-same-signer-reopen-2",
+							);
+						} finally {
+							resolveEntrySpy.restore();
+						}
+					} finally {
+						await reopenedStore?.close();
+						await firstStore?.close();
+						store = undefined;
+						await peer?.stop();
+						await rm(directory, { recursive: true, force: true });
+					}
+				});
+
+				it("validates strict native same-signer receives from persisted document signer facts after reopen", async () => {
+					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+					const sourceDirectory = `./tmp/document-store/native-same-signer-receive-source-${uuid()}`;
+					const targetDirectory = `./tmp/document-store/native-same-signer-receive-target-${uuid()}`;
+					const sourceCoordinateStore = new MemoryCoordinatePersistenceStore();
+					const targetCoordinateStore = new MemoryCoordinatePersistenceStore();
+					const openArgs = (
+						coordinateStore: MemoryCoordinatePersistenceStore,
+						replicate: false | { factor: number } = { factor: 1 },
+					) => ({
+						mode: "native" as const,
+						replicate,
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							documentIndex: true,
+							coordinatePersistence: new NativeBackboneCoordinatePersistence(
+								coordinateStore,
+								{ flushOnAppend: false },
+							),
+						},
+						canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					let target: TestStore | undefined = source.clone();
+					let reopenedTarget: TestStore | undefined;
+					let sourcePeer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					let targetPeer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					try {
+						sourcePeer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory: sourceDirectory,
+						});
+						targetPeer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory: targetDirectory,
+						});
+						await sourcePeer.open(source, {
+							args: openArgs(sourceCoordinateStore),
+						});
+						await targetPeer.open(target!, {
+							args: openArgs(targetCoordinateStore),
+						});
+						await waitForResolved(() =>
+							sourcePeer!.dial(targetPeer!.getMultiaddrs()[0]!),
+						);
+
+						const id = uuid();
+						await source.docs.put(
+							new Document({
+								id,
+								name: "native-same-signer-receive-reopen-1",
+							}),
+						);
+						await waitForResolved(async () =>
+							expect(
+								(
+									await target!.docs.get(id, {
+										local: true,
+										remote: false,
+									})
+								)?.name,
+							).equal("native-same-signer-receive-reopen-1"),
+						);
+
+						const clone = target.clone();
+						await target.close();
+						target = undefined;
+						await targetPeer.stop();
+						targetPeer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory: targetDirectory,
+						});
+
+							reopenedTarget = await targetPeer.open(clone, {
+								args: openArgs(targetCoordinateStore, false),
+							});
+						expect(targetCoordinateStore.files.has("document-signers.wal")).equal(
+							true,
+						);
+						const reopenedBackbone = (reopenedTarget.docs.log as any)
+							._nativeBackbone;
+						const reopenedSignerFact =
+							reopenedBackbone.documentPreviousSignaturePublicKey(
+								`string:${id}`,
+							);
+						expect(reopenedSignerFact?.exists).equal(true);
+						expect(reopenedSignerFact?.publicKey).instanceOf(Uint8Array);
+
+						const lowerNativeGraph = reopenedTarget.docs.log.log.entryIndex
+							.properties.nativeGraph!.graph as {
+							entrySignaturePublicKeysBatch: (
+								hashes: Iterable<string>,
+							) => Array<Uint8Array | undefined> | undefined;
+						};
+						const previousSignerLookupStub = sinon
+							.stub(lowerNativeGraph, "entrySignaturePublicKeysBatch")
+							.callsFake((hashes: Iterable<string>) =>
+								Array.from(hashes, () => undefined),
+							);
+						const resolveEntrySpy = sinon.spy(
+							reopenedTarget.docs as any,
+							"_resolveEntry",
+						);
+						try {
+							const second = await source.docs.put(
+								new Document({
+									id,
+									name: "native-same-signer-receive-reopen-2",
+								}),
+							);
+							expect(
+								await (reopenedTarget.docs as any).canAppend(second.entry),
+							).equal(
+								true,
+								"replayed update should validate from persisted document signer facts",
+							);
+							expect(previousSignerLookupStub.callCount).greaterThan(0);
+							expect(resolveEntrySpy.callCount).equal(0);
+						} finally {
+							resolveEntrySpy.restore();
+							previousSignerLookupStub.restore();
+						}
+					} finally {
+						await reopenedTarget?.close();
+						await target?.close();
+						await source.close();
+						await targetPeer?.stop();
+						await sourcePeer?.stop();
+						await rm(sourceDirectory, { recursive: true, force: true });
+						await rm(targetDirectory, { recursive: true, force: true });
+					}
+				});
+
+				it("keeps strict native same-signer projected putMany native after reopen", async () => {
+					@variant("strict_native_same_signer_batch_reopen_project_indexable")
+					class StrictNativeSameSignerBatchReopenProjectIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						@field({ type: "u64" })
+						created: bigint;
+
+						@field({ type: "string" })
+						head: string;
+
+						@field({ type: option(Uint8Array) })
+						signer?: Uint8Array;
+
+						constructor(
+							properties?: Partial<StrictNativeSameSignerBatchReopenProjectIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+							this.created = properties?.created || 0n;
+							this.head = properties?.head || "";
+							this.signer = properties?.signer;
+						}
+					}
+
+					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+					const directory = `./tmp/document-store/native-same-signer-batch-reopen-${uuid()}`;
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							documentIndex: true,
+							coordinatePersistence: new NativeBackboneCoordinatePersistence(
+								coordinateStore,
+								{ flushOnAppend: false },
+							),
+						},
+						canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+						index: {
+							type: StrictNativeSameSignerBatchReopenProjectIndexable,
+							transform: transform.project<
+								Document,
+								StrictNativeSameSignerBatchReopenProjectIndexable
+							>({
+								id: transform.field("id"),
+								name: transform.field("name"),
+								created: transform.context("created"),
+								head: transform.context("head"),
+								signer: transform.entryFirstSignerPublicKey(),
+							}),
+						},
+					});
+					let peer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					let firstStore:
+						| TestStore<StrictNativeSameSignerBatchReopenProjectIndexable>
+						| undefined;
+					let reopenedStore:
+						| TestStore<StrictNativeSameSignerBatchReopenProjectIndexable>
+						| undefined;
+					try {
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						firstStore =
+							new TestStore<StrictNativeSameSignerBatchReopenProjectIndexable>(
+								{
+									docs: new Documents<
+										Document,
+										StrictNativeSameSignerBatchReopenProjectIndexable
+									>(),
+								},
+							);
+						store = firstStore as any;
+						await peer.open(firstStore, { args: openArgs() });
+
+						const first = await firstStore.docs.put(
+							new Document({ id: "same-batch-reopen-1", name: "before-1" }),
+							{ target: "none" },
+						);
+						const second = await firstStore.docs.put(
+							new Document({ id: "same-batch-reopen-2", name: "before-2" }),
+							{ target: "none" },
+						);
+						const firstHash = first.entry.hash;
+						const secondHash = second.entry.hash;
+						const firstCreated = first.entry.meta.clock.timestamp.wallTime;
+						const secondCreated = second.entry.meta.clock.timestamp.wallTime;
+						const clone = firstStore.clone();
+						await firstStore.close();
+						firstStore = undefined;
+						store = undefined;
+						await peer.stop();
+						peer = undefined;
+						expect(coordinateStore.files.has("coordinates.wal")).equal(true);
+						expect(coordinateStore.files.has("document-values.wal")).equal(true);
+						expect(coordinateStore.files.has("document-signers.wal")).equal(
+							true,
+						);
+
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						reopenedStore = await peer.open(clone, { args: openArgs() });
+						store = reopenedStore as any;
+						const reopenedBackbone = (reopenedStore.docs.log as any)
+							._nativeBackbone;
+						expect(reopenedBackbone.coordinateIndexLength).equal(2);
+						expect(reopenedBackbone.documentValueLength).equal(2);
+						expect(
+							Array.from(
+								reopenedBackbone.documentKeysExist([
+								"string:same-batch-reopen-1",
+								"string:same-batch-reopen-2",
+								]),
+							),
+						).to.deep.equal([1, 1]);
+
+						const nativeBatchSpy = sinon.spy(
+							reopenedStore.docs as any,
+							"commitNativeDocumentAppendMany",
+						);
+						const requiredProjectedBatchSpy = sinon.spy(
+							(reopenedBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_compact_batch_transaction",
+						);
+						const valuePrefixRequiredBatchSpy = sinon.spy(
+							(reopenedBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_batch_transaction",
+						);
+						const contextBatchSpy = sinon.spy(
+							reopenedStore.docs.index.index as any,
+							"getContextByIdBatch",
+						);
+						const resolveEntrySpy = sinon.spy(
+							reopenedStore.docs as any,
+							"_resolveEntry",
+						);
+						try {
+							const appended = await reopenedStore.docs.putMany(
+								[
+									new Document({
+										id: "same-batch-reopen-1",
+										name: "after-1",
+									}),
+									new Document({
+										id: "same-batch-reopen-2",
+										name: "after-2",
+									}),
+								],
+								{ target: "none" },
+							);
+
+							expect(appended.entries[0].meta.next).to.deep.equal([firstHash]);
+							expect(appended.entries[1].meta.next).to.deep.equal([secondHash]);
+							expect(nativeBatchSpy.callCount).equal(1);
+							expect(requiredProjectedBatchSpy.callCount).equal(1);
+							expect(valuePrefixRequiredBatchSpy.callCount).equal(0);
+							expect(contextBatchSpy.callCount).equal(0);
+							expect(resolveEntrySpy.callCount).equal(0);
+							const firstIndexed = await reopenedStore.docs.index.get(
+								"same-batch-reopen-1",
+								{ resolve: false },
+							);
+							const secondIndexed = await reopenedStore.docs.index.get(
+								"same-batch-reopen-2",
+								{ resolve: false },
+							);
+							expect(firstIndexed?.name).equal("after-1");
+							expect(secondIndexed?.name).equal("after-2");
+							expect(firstIndexed?.created).equal(firstCreated);
+							expect(secondIndexed?.created).equal(secondCreated);
+							expect(firstIndexed?.head).equal(appended.entries[0].hash);
+							expect(secondIndexed?.head).equal(appended.entries[1].hash);
+							expect(
+								equals(
+									firstIndexed?.signer,
+									peer.identity.publicKey.bytes,
+								),
+							).equal(true);
+							expect(
+								equals(
+									secondIndexed?.signer,
+									peer.identity.publicKey.bytes,
+								),
+							).equal(true);
+						} finally {
+							resolveEntrySpy.restore();
+							contextBatchSpy.restore();
+							valuePrefixRequiredBatchSpy.restore();
+							requiredProjectedBatchSpy.restore();
+							nativeBatchSpy.restore();
+						}
+					} finally {
+						await reopenedStore?.close();
+						await firstStore?.close();
+						store = undefined;
+						await peer?.stop();
+						await rm(directory, { recursive: true, force: true });
+					}
+				});
+
+				it("validates strict native same-signer replay without resolving or decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const nativeSignerBatchSpy = sinon.spy(
+						store.docs as any,
+						"getNativeEntrySignerPublicKeys",
+					);
+					let nativeSignerBatchRestored = false;
+					try {
+						const id = uuid();
+						await store.docs.put(
+							new Document({ id, name: "native-same-signer-replay-1" }),
+						);
+						const second = await store.docs.put(
+							new Document({ id, name: "native-same-signer-replay-2" }),
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							store.docs.log.log.blocks,
+							second.entry.hash,
+						);
+						expect(Entry.getPreparedStorageBytes(replayEntry)).to.be.instanceOf(
+							Uint8Array,
+						);
+						const getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						const decoderSpy = sinon.spy(
+							store.docs.index.valueEncoding,
+							"decoder",
+						);
+						resolveEntrySpy.resetHistory();
+						nativeSignerBatchSpy.resetHistory();
+
+						expect(await (store.docs as any).canAppend(replayEntry)).equal(
+							true,
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(nativeSignerBatchSpy.callCount).equal(1);
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect(getPayloadValueSpy.callCount).equal(0);
+
+						nativeSignerBatchSpy.restore();
+						nativeSignerBatchRestored = true;
+							const missingNativeSignerStub = sinon
+								.stub(store.docs as any, "getNativeEntrySignerPublicKeys")
+								.returns([undefined]);
+							try {
+								expect(await (store.docs as any).canAppend(replayEntry)).equal(
+									true,
+								);
+								expect(decoderSpy.callCount).equal(0);
+								expect(resolveEntrySpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
+						} finally {
+							missingNativeSignerStub.restore();
+						}
+						decoderSpy.restore();
+						getPayloadValueSpy.restore();
+					} finally {
+						if (!nativeSignerBatchRestored) {
+							nativeSignerBatchSpy.restore();
+						}
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native replay ids without decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					const backbone = (store.docs.log as any)._nativeBackbone as any;
+					const originalDocumentContext = backbone.documentContext;
+					const nativeContextSpy = sinon.spy(
+						backbone.native,
+						"document_context",
+					);
+					const nativeIndex = (store.docs.index as any).index as {
+						getContextById?: (...args: any[]) => any;
+					};
+					const contextLookupSpy = nativeIndex.getContextById
+						? sinon.spy(nativeIndex, "getContextById")
+						: undefined;
+					try {
+						const put = await store.docs.put(
+							new Document({ id: uuid(), name: "native-replay-id" }),
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							store.docs.log.log.blocks,
+							put.entry.hash,
+						);
+						const getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						try {
+							decoderSpy.resetHistory();
+							expect(await (store.docs as any).canAppend(replayEntry)).equal(
+								true,
+							);
+							expect(decoderSpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
+							expect(nativeContextSpy.callCount).greaterThan(0);
+							expect(contextLookupSpy?.callCount ?? 0).equal(0);
+							nativeContextSpy.resetHistory();
+							contextLookupSpy?.resetHistory();
+							backbone.documentContext = undefined;
+							expect(await (store.docs as any).canAppend(replayEntry)).equal(
+								false,
+							);
+							expect(nativeContextSpy.callCount).equal(0);
+							expect(contextLookupSpy?.callCount ?? 0).equal(0);
+						} finally {
+							backbone.documentContext = originalDocumentContext;
+							getPayloadValueSpy.restore();
+						}
+					} finally {
+						contextLookupSpy?.restore();
+						nativeContextSpy.restore();
+						decoderSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native signedByPublicKey replay against the entry signer", async () => {
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const target = source.clone();
+					const allowedSigner = rustSession.peers[0].identity.publicKey;
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.signedByPublicKey<Document>(allowedSigner),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					store = target;
+					let getPayloadValueSpy: sinon.SinonStub | undefined;
+					let decoderSpy: sinon.SinonStub | undefined;
+					try {
+						const put = await source.docs.put(
+							new Document({
+								id: uuid(),
+								name: "native-replay-signed-by-public-key",
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							source.docs.log.log.blocks,
+							put.entry.hash,
+						);
+						getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						decoderSpy = sinon
+							.stub(target.docs.index.valueEncoding, "decoder")
+							.callsFake(() => {
+								throw new Error("Unexpected document decode");
+							});
+
+						expect(await (target.docs as any).canAppend(replayEntry)).equal(
+							true,
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(getPayloadValueSpy.callCount).equal(0);
+					} finally {
+						getPayloadValueSpy?.restore();
+						decoderSpy?.restore();
+						await target.close();
+						await source.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native signedByPublicKey replay for a non-matching entry signer", async () => {
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const target = source.clone();
+					await rustSession.peers[0].open(source, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					await rustSession.peers[1].open(target, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.signedByPublicKey<Document>(
+								rustSession.peers[1].identity.publicKey,
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					store = target;
+					let getPayloadValueSpy: sinon.SinonStub | undefined;
+					let decoderSpy: sinon.SinonStub | undefined;
+					try {
+						const put = await source.docs.put(
+							new Document({
+								id: uuid(),
+								name: "native-replay-wrong-public-key",
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							source.docs.log.log.blocks,
+							put.entry.hash,
+						);
+						getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						decoderSpy = sinon
+							.stub(target.docs.index.valueEncoding, "decoder")
+							.callsFake(() => {
+								throw new Error("Unexpected document decode");
+							});
+
+						expect(await (target.docs as any).canAppend(replayEntry)).equal(
+							false,
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(getPayloadValueSpy.callCount).equal(0);
+					} finally {
+						getPayloadValueSpy?.restore();
+						decoderSpy?.restore();
+						await target.close();
+						await source.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native put replay when native id extraction fails without decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon
+						.stub(store.docs.index.valueEncoding, "decoder")
+						.callsFake(() => {
+							throw new Error("Unexpected document decode");
+						});
+					try {
+						const malformedPutEntry = await createEntry({
+							data: new PutOperation({ data: randomBytes(32) }),
+							identity: store.node.identity,
+							store: store.docs.log.log.blocks,
+							canAppend: () => true,
+							encoding: store.docs.log.log.encoding,
+						});
+						const getPayloadValueSpy = sinon
+							.stub(malformedPutEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						try {
+							expect(
+								await (store.docs as any).canAppend(malformedPutEntry),
+							).equal(false);
+							expect(decoderSpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
+						} finally {
+							getPayloadValueSpy.restore();
+						}
+					} finally {
+						decoderSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native signedByField replay without decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(policy.signedByField<Document>("data")),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					const nativeContextSpy = sinon.spy(
+						((store.docs.log as any)._nativeBackbone as any).native,
+						"document_context",
+					);
+					const nativeIndex = (store.docs.index as any).index as {
+						getContextById?: (...args: any[]) => any;
+					};
+					const contextLookupSpy = nativeIndex.getContextById
+						? sinon.spy(nativeIndex, "getContextById")
+						: undefined;
+					try {
+						const put = await store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "native-replay-signed-by-field",
+								data: rustSession.peers[0].identity.publicKey.bytes,
+							}),
+						);
+						const replayEntry = await Entry.fromMultihash<Operation>(
+							store.docs.log.log.blocks,
+							put.entry.hash,
+						);
+						const getPayloadValueSpy = sinon
+							.stub(replayEntry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						try {
+							decoderSpy.resetHistory();
+							expect(await (store.docs as any).canAppend(replayEntry)).equal(
+								true,
+							);
+							expect(decoderSpy.callCount).equal(0);
+							expect(getPayloadValueSpy.callCount).equal(0);
+							expect(nativeContextSpy.callCount).greaterThan(0);
+							expect(contextLookupSpy?.callCount ?? 0).equal(0);
+						} finally {
+							getPayloadValueSpy.restore();
+						}
+					} finally {
+						contextLookupSpy?.restore();
+						nativeContextSpy.restore();
+						decoderSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("reuses cached native projection plans for strict native update puts", async () => {
+					@variant("strict_native_project_update_indexable")
+					class StrictNativeProjectUpdateIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						@field({ type: "u64" })
+						created: bigint;
+
+						constructor(
+							properties?: Partial<StrictNativeProjectUpdateIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+							this.created = properties?.created || 0n;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<StrictNativeProjectUpdateIndexable>({
+						docs: new Documents<Document, StrictNativeProjectUpdateIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeProjectUpdateIndexable,
+								transform: transform.project<
+									Document,
+									StrictNativeProjectUpdateIndexable
+								>({
+									id: transform.field("id"),
+									name: transform.field("name"),
+									created: transform.context("created"),
+								}),
+							},
+						},
+					});
+					const sharedLog = localStore.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const native = (backbone as any).native;
+					const registerProjectionPlanSpy = sinon.spy(
+						native,
+						"register_document_projection_plan",
+					);
+						const latestCachedStorageTransactionSpy = sinon.spy(
+							native,
+							"prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction",
+						);
+						const latestCachedCompactPlainPayloadStorageTransactionSpy =
+							sinon.spy(
+								native,
+								"prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_transaction",
+							);
+						const latestInlineStorageTransactionSpy = sinon.spy(
+							native,
+							"prepare_plain_committed_storage_append_document_index_latest_transaction",
+					);
+						const latestCachedGraphTransactionSpy = sinon.spy(
+							native,
+							"prepare_plain_entry_commit_latest_facts_document_index_cached_plan_trim_hashes",
+						);
+						const prepareNativeProjection =
+							(localStore.docs.index as any).prepareNativeBackboneDocumentIndexCommitWithAppendFacts.bind(
+								localStore.docs.index,
+							) as any;
+						const nativeProjectionSetContextSpy = sinon.spy();
+						const prepareNativeProjectionStub = sinon
+							.stub(
+								localStore.docs.index as any,
+								"prepareNativeBackboneDocumentIndexCommitWithAppendFacts",
+							)
+							.callsFake((...args: any[]) => {
+								const prepared = prepareNativeProjection(...args);
+								if (prepared?.setContext) {
+									const setContext = prepared.setContext.bind(prepared);
+									prepared.setContext = (context: any) => {
+										nativeProjectionSetContextSpy(context);
+										return setContext(context);
+									};
+								}
+								return prepared;
+							});
+						const documentIndexTransformSpy = sinon.spy(
+							localStore.docs.index,
+							"transformer",
+					);
+
+					try {
+						const id = uuid();
+						const first = await localStore.docs.put(
+							new Document({ id, name: "native-project-update-1" }),
+						);
+						const second = await localStore.docs.put(
+							new Document({ id, name: "native-project-update-2" }),
+						);
+							expect(second.entry.meta.next).to.deep.equal([first.entry.hash]);
+							expect(registerProjectionPlanSpy.callCount).equal(1);
+							expect(latestCachedGraphTransactionSpy.callCount).equal(0);
+							expect(latestCachedStorageTransactionSpy.callCount).equal(0);
+							expect(
+								latestCachedCompactPlainPayloadStorageTransactionSpy.callCount,
+							).equal(2);
+							expect(latestInlineStorageTransactionSpy.callCount).equal(0);
+							expect(nativeProjectionSetContextSpy.callCount).equal(0);
+							expect(documentIndexTransformSpy.callCount).equal(0);
+							const indexed = await localStore.docs.index.get(id, {
+								resolve: false,
+						});
+						expect(indexed?.name).equal("native-project-update-2");
+						} finally {
+							documentIndexTransformSpy.restore();
+							prepareNativeProjectionStub.restore();
+							latestCachedGraphTransactionSpy.restore();
+							latestInlineStorageTransactionSpy.restore();
+							latestCachedCompactPlainPayloadStorageTransactionSpy.restore();
+							latestCachedStorageTransactionSpy.restore();
+							registerProjectionPlanSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("defaults strict native puts to local native append options", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const strictPayloadCommitOnlySpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					try {
+						const doc = new Document({ id: uuid(), name: "native-defaults" });
+						await store.docs.put(doc, {
+							unique: true,
+						});
+						expect(strictPayloadCommitOnlySpy.callCount).equal(1);
+						expect(strictPayloadCommitOnlySpy.firstCall.args[1]).to.include({
+							replicate: false,
+							target: "none",
+						});
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-defaults",
+						);
+					} finally {
+						strictPayloadCommitOnlySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses the native backbone storage transaction for strict native local puts with coordinate persistence", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+						{ flushOnAppend: false },
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence,
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sharedLog = store.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const storageTransactionSpy = sinon.spy(
+						sharedLog,
+						"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+					);
+						const compactStorageTransactionSpy = sinon.spy(
+							backbone,
+							"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction",
+						);
+						const plainPutPayloadTransactionSpy = sinon.spy(
+							(backbone as any).native,
+							"prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_transaction",
+						);
+						const encodedDocumentTransactionSpy = sinon.spy(
+							(backbone as any).native,
+							"prepare_plain_committed_no_next_storage_append_document_index_compact_transaction",
+						);
+						const graphFactsSpy = sinon.spy(
+							backbone.graph,
+							"prepareEntryV0PlainEntryCommit",
+						);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-coordinate-persisted",
+						});
+						await store.docs.put(doc, { unique: true });
+						expect(storageTransactionSpy.callCount).equal(1);
+						expect(compactStorageTransactionSpy.callCount).equal(1);
+							expect(
+								compactStorageTransactionSpy.firstCall.args[0].documentIndex
+									.usePlainPutPayload,
+							).equal(true);
+							expect(plainPutPayloadTransactionSpy.callCount).equal(1);
+							expect(encodedDocumentTransactionSpy.callCount).equal(0);
+							expect(graphFactsSpy.callCount).equal(0);
+							expect((await store.docs.get(doc.id))?.name).equal(
+								"native-coordinate-persisted",
+							);
+						} finally {
+							graphFactsSpy.restore();
+							encodedDocumentTransactionSpy.restore();
+							plainPutPayloadTransactionSpy.restore();
+							compactStorageTransactionSpy.restore();
+							storageTransactionSpy.restore();
+							await rustSession.stop();
+					}
+				});
+
+				it("uses plain put payload bytes for strict native projection storage transactions", async () => {
+					@variant("strict_native_coordinate_pick_indexable")
+					class StrictNativeCoordinatePickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeCoordinatePickIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+						{ flushOnAppend: false },
+					);
+					const localStore = new TestStore<StrictNativeCoordinatePickIndexable>(
+						{
+							docs: new Documents<
+								Document,
+								StrictNativeCoordinatePickIndexable
+							>(),
+						},
+					);
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence,
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeCoordinatePickIndexable,
+								transform: transform.project<
+									Document,
+									StrictNativeCoordinatePickIndexable
+								>({
+									id: transform.field("id"),
+									name: transform.field("name"),
+								}),
+							},
+						},
+					});
+					const sharedLog = localStore.docs.log as any;
+					const backbone = sharedLog._nativeBackbone;
+					const plainPutPayloadTransactionSpy = sinon.spy(
+						(backbone as any).native,
+						"prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_transaction",
+					);
+					const encodedDocumentTransactionSpy = sinon.spy(
+						(backbone as any).native,
+						"prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_transaction",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-coordinate-projection",
+						});
+						await localStore.docs.put(doc, { unique: true });
+						expect(plainPutPayloadTransactionSpy.callCount).equal(1);
+						expect(encodedDocumentTransactionSpy.callCount).equal(0);
+						const indexed = await localStore.docs.index.get(doc.id, {
+							resolve: false,
+						});
+						expect(indexed?.name).equal("native-coordinate-projection");
+					} finally {
+						encodedDocumentTransactionSpy.restore();
+						plainPutPayloadTransactionSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("projects strict native context head inside the native append transaction", async () => {
+					@variant("strict_native_head_project_indexable")
+					class StrictNativeHeadProjectIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						@field({ type: "string" })
+						head: string;
+
+						constructor(properties?: Partial<StrictNativeHeadProjectIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+							this.head = properties?.head || "";
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<StrictNativeHeadProjectIndexable>(
+						{
+							docs: new Documents<
+								Document,
+								StrictNativeHeadProjectIndexable
+							>(),
+						},
+					);
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeHeadProjectIndexable,
+								transform: transform.project<
+									Document,
+									StrictNativeHeadProjectIndexable
+								>({
+									id: transform.field("id"),
+									name: transform.field("name"),
+									head: transform.context("head"),
+								}),
+							},
+						},
+					});
+					const changes: DocumentsChange<
+						Document,
+						StrictNativeHeadProjectIndexable
+					>[] = [];
+					localStore.docs.events.addEventListener("change", (event) => {
+						changes.push(event.detail);
+					});
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-head-projection",
+						});
+						const put = await localStore.docs.put(doc, { unique: true });
+						const indexed = await localStore.docs.index.get(doc.id, {
+							resolve: false,
+						});
+						expect(indexed?.name).equal("native-head-projection");
+						expect(indexed?.head).equal(put.entry.hash);
+						expect(changes).to.have.length(1);
+						expect(
+							(changes[0]!.added[0] as any).__indexed.head,
+						).equal(put.entry.hash);
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("covers strict native single-put runtime matrix without compatibility fallback", async function () {
+					this.timeout(120_000);
+
+					@variant("strict_native_matrix_indexable")
+					class StrictNativeMatrixIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(properties?: Partial<StrictNativeMatrixIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const cases = [
+						{
+							name: "coordinate WAL identity",
+							project: false,
+						},
+						{
+							name: "coordinate WAL projection",
+							project: true,
+						},
+					];
+					try {
+						for (const testCase of cases) {
+							const coordinatePersistence =
+								new NativeBackboneCoordinatePersistence(
+									new MemoryCoordinatePersistenceStore(),
+									{ flushOnAppend: false },
+								);
+							const localStore = new TestStore<any>({
+								docs: new Documents<Document, any>(),
+							});
+							store = localStore as any;
+							await rustSession.peers[0].open(localStore, {
+								args: {
+									mode: "native",
+									replicate: false,
+									nativeGraph: true,
+									nativeBackbone: {
+										optional: false,
+										documentIndex: true,
+										...(coordinatePersistence ? { coordinatePersistence } : {}),
+									},
+									canPerform: policy.allowAll<Document>(),
+									index: testCase.project
+										? {
+												type: StrictNativeMatrixIndexable,
+												transform: transform.project<
+													Document,
+													StrictNativeMatrixIndexable
+												>({
+													id: transform.field("id"),
+													name: transform.field("name"),
+												}),
+											}
+										: {
+												type: Document,
+												transform: transform.identity<Document>(),
+											},
+								},
+							});
+							const sharedLog = localStore.docs.log as any;
+							const fallbackAppendSpy = sinon.spy(
+								localStore.docs.log,
+								"append",
+							);
+							const compatPlanSpy = sinon.spy(
+								localStore.docs as any,
+								"createPlainPutCommitPlan",
+							);
+							const storageTransactionSpy = sinon.spy(
+								sharedLog,
+								"appendLocallyPreparedPayloadNativeBackboneStorageTransaction",
+							);
+							const transformSpy = sinon.spy(
+								localStore.docs.index,
+								"transformer",
+							);
+							try {
+								const id = uuid();
+								const first = await localStore.docs.put(
+									new Document({
+										id,
+										name: `${testCase.name} first`,
+									}),
+									{ unique: true },
+								);
+								const second = await localStore.docs.put(
+									new Document({
+										id,
+										name: `${testCase.name} second`,
+									}),
+									{ target: "none" },
+								);
+
+								expect(second.entry.meta.next).to.deep.equal([
+									first.entry.hash,
+								]);
+								expect(fallbackAppendSpy.callCount).equal(0);
+								expect(compatPlanSpy.callCount).equal(0);
+								expect(storageTransactionSpy.callCount).greaterThan(0);
+								expect((await localStore.docs.get(id))?.name).equal(
+									`${testCase.name} second`,
+								);
+								if (testCase.project) {
+									expect(transformSpy.callCount).equal(0);
+									const indexed = await localStore.docs.index.get(id, {
+										resolve: false,
+									});
+									expect(indexed?.id).equal(id);
+									expect(indexed?.name).equal(`${testCase.name} second`);
+									expect((indexed as any)?.data).equal(undefined);
+								}
+							} finally {
+								transformSpy.restore();
+								storageTransactionSpy.restore();
+								compatPlanSpy.restore();
+								fallbackAppendSpy.restore();
+								await localStore.close();
+								store = undefined;
+							}
+						}
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("allows strict native mode to use open-level replication", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinatePersistence = new NativeBackboneCoordinatePersistence(
+						coordinateStore,
+						{ flushOnAppend: false },
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: {
+								optional: false,
+								documentIndex: true,
+								coordinatePersistence,
+							},
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const strictPayloadCommitOnlySpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericPayloadCommitOnlySpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-defaults",
+						});
+						await store.docs.put(doc, { unique: true });
+						expect(strictPayloadCommitOnlySpy.callCount).equal(1);
+						expect(genericPayloadCommitOnlySpy.callCount).equal(0);
+						const appendOptions = strictPayloadCommitOnlySpy.firstCall.args[1]!;
+						expect(appendOptions).to.include({
+							target: "none",
+						});
+						expect(appendOptions.replicate).equal(undefined);
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-replicated-defaults",
+						);
+						expect(
+							(store.docs.log as any)._residentEntryCoordinatesByHash.size,
+						).greaterThan(0);
+					} finally {
+						genericPayloadCommitOnlySpy.restore();
+						strictPayloadCommitOnlySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("indexes strict native replicated puts through encoded-only native context on receive", async () => {
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const documentPutSpy = sinon.spy(target.docs.index, "put");
+					const documentPreparedNativePutSpy = sinon.spy(
+						target.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						target.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
+					const backendIndex = target.docs.index.index as any;
+					const backendStoredContextPutSpy = sinon.spy(
+						backendIndex,
+						"putStoredContextualEncodedValue",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-stored-context",
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPreparedNativePutSpy.callCount).equal(0);
+						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
+						const storedContextCalls =
+							documentPreparedNativeStoredPutSpy.callCount;
+						await source.docs.put(
+							new Document({
+								id: doc.id,
+								name: "native-replicated-stored-context-updated",
+							}),
+							{ unique: true },
+						);
+						await waitForResolved(() =>
+							expect(
+								documentPreparedNativeStoredPutSpy.callCount,
+							).greaterThan(storedContextCalls),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(
+							(
+								await target.docs.get(doc.id, {
+									local: true,
+									remote: false,
+								})
+							)?.name,
+						).equal("native-replicated-stored-context-updated");
+						expect(documentPutSpy.callCount).equal(0);
+					} finally {
+						backendStoredContextPutSpy.restore();
+						decoderSpy.restore();
+						documentPreparedNativeStoredPutSpy.restore();
+						documentPreparedNativePutSpy.restore();
+						documentPutSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native context lookup for strict native encoded change handling", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const backendIndex = store.docs.index.index as any;
+					const contextLookupSpy = backendIndex.getContextById
+						? sinon.spy(backendIndex, "getContextById")
+						: undefined;
+					const contextLookupBatchSpy = backendIndex.getContextByIdBatch
+						? sinon.spy(backendIndex, "getContextByIdBatch")
+						: undefined;
+					const nativeContextSpy = sinon.spy(
+						store.docs as any,
+						"getNativeIndexedContext",
+					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						store.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-handle-changes-context",
+						});
+						const prepared = (store.docs as any).preparePlainPut(doc);
+						const operation = new PutOperation({
+							data: prepared.encodedDocument,
+						});
+						const put = await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						contextLookupSpy?.resetHistory();
+						contextLookupBatchSpy?.resetHistory();
+						nativeContextSpy.resetHistory();
+						documentPreparedNativeStoredPutSpy.resetHistory();
+						decoderSpy.resetHistory();
+
+						await (store.docs as any).handleChanges({
+							added: [{ head: true, entry: put.entry }],
+							removed: [],
+						}, {
+							document: doc,
+							operation,
+							key: prepared.key,
+						});
+
+						expect(nativeContextSpy.callCount).greaterThan(0);
+						expect(contextLookupSpy?.callCount ?? 0).equal(0);
+						expect(contextLookupBatchSpy?.callCount ?? 0).equal(0);
+						expect(decoderSpy.callCount).equal(0);
+						expect(
+							documentPreparedNativeStoredPutSpy.callCount,
+						).greaterThan(0);
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-handle-changes-context",
+						);
+					} finally {
+						decoderSpy.restore();
+						documentPreparedNativeStoredPutSpy.restore();
+						nativeContextSpy.restore();
+						contextLookupBatchSpy?.restore();
+						contextLookupSpy?.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native context lookup for strict native change events", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const backendIndex = store.docs.index.index as any;
+					const contextLookupSpy = backendIndex.getContextById
+						? sinon.spy(backendIndex, "getContextById")
+						: undefined;
+					const contextLookupBatchSpy = backendIndex.getContextByIdBatch
+						? sinon.spy(backendIndex, "getContextByIdBatch")
+						: undefined;
+					const nativeContextSpy = sinon.spy(
+						store.docs as any,
+						"getNativeIndexedContext",
+					);
+					const documentPreparedNativePutSpy = sinon.spy(
+						store.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const documentPutSpy = sinon.spy(store.docs.index, "put");
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					const changes: DocumentsChange<Document, Document>[] = [];
+					const listener = (event: CustomEvent) => {
+						changes.push(event.detail);
+					};
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-change-event-context",
+						});
+						const prepared = (store.docs as any).preparePlainPut(doc);
+						const operation = new PutOperation({
+							data: prepared.encodedDocument,
+						});
+						const put = await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						store.docs.events.addEventListener("change", listener);
+						contextLookupSpy?.resetHistory();
+						contextLookupBatchSpy?.resetHistory();
+						nativeContextSpy.resetHistory();
+						documentPreparedNativePutSpy.resetHistory();
+						documentPutSpy.resetHistory();
+						decoderSpy.resetHistory();
+
+						await (store.docs as any).handleChanges(
+							{
+								added: [{ head: true, entry: put.entry }],
+								removed: [],
+							},
+							{
+								document: doc,
+								operation,
+								key: prepared.key,
+							},
+						);
+
+						expect(nativeContextSpy.callCount).greaterThan(0);
+						expect(contextLookupSpy?.callCount ?? 0).equal(0);
+						expect(contextLookupBatchSpy?.callCount ?? 0).equal(0);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPutSpy.callCount).equal(0);
+						expect(documentPreparedNativePutSpy.callCount).greaterThan(0);
+						expect(changes).to.have.length(1);
+						expect(changes[0]!.added[0]!.name).equal(
+							"native-change-event-context",
+						);
+					} finally {
+						store.docs.events.removeEventListener("change", listener);
+						decoderSpy.restore();
+						documentPutSpy.restore();
+						documentPreparedNativePutSpy.restore();
+						nativeContextSpy.restore();
+						contextLookupBatchSpy?.restore();
+						contextLookupSpy?.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native id extraction for strict native removed put collection", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					const nativeIdSpy = sinon.spy(
+						store.docs as any,
+						"getNativeDocumentIdFromPutOperation",
+					);
+					const delManySpy = sinon.spy(store.docs.index, "delMany");
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-removed-put-event",
+						});
+						const prepared = (store.docs as any).preparePlainPut(doc);
+						const operation = new PutOperation({
+							data: prepared.encodedDocument,
+						});
+						const put = await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(put.entry).to.exist;
+						const documentsChanged: DocumentsChange<Document, Document> = {
+							added: [],
+							removed: [],
+						};
+						decoderSpy.resetHistory();
+						nativeIdSpy.resetHistory();
+						delManySpy.resetHistory();
+
+						await (store.docs as any).collectRemovedDocumentChange(
+							operation,
+							new Set(),
+							documentsChanged,
+						);
+
+						expect(nativeIdSpy.callCount).greaterThan(0);
+						expect(decoderSpy.callCount).equal(0);
+						expect(delManySpy.callCount).equal(1);
+						expect(documentsChanged.removed).to.have.length(1);
+						expect(documentsChanged.removed[0]!.name).equal(
+							"native-removed-put-event",
+						);
+						expect(await store.docs.get(doc.id)).equal(undefined);
+					} finally {
+						delManySpy.restore();
+						nativeIdSpy.restore();
+						decoderSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native operation reader for strict native removed entry fallback cleanup", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const decoderSpy = sinon.spy(
+						store.docs.index.valueEncoding,
+						"decoder",
+					);
+					const nativeIdSpy = sinon.spy(
+						store.docs as any,
+						"getNativeDocumentIdFromPutOperation",
+					);
+					const operationReaderSpy = sinon.spy(
+						store.docs as any,
+						"getAppendOperation",
+					);
+					const collectByHeadStub = sinon
+						.stub(
+							store.docs as any,
+							"collectRemovedDocumentChangesFromIndexedHeads",
+						)
+						.resolves(new Set());
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-removed-entry-fallback",
+						});
+						const put = await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const payloadStub = sinon
+							.stub(put.entry, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						const documentsChanged: DocumentsChange<Document, Document> = {
+							added: [],
+							removed: [],
+						};
+						try {
+							decoderSpy.resetHistory();
+							nativeIdSpy.resetHistory();
+							operationReaderSpy.resetHistory();
+
+							await (store.docs as any).handlePreparedPlainPutCommitRemoved(
+								[put.entry],
+								new Set(),
+								documentsChanged,
+							);
+
+							expect(operationReaderSpy.callCount).greaterThan(0);
+							expect(nativeIdSpy.callCount).greaterThan(0);
+							expect(payloadStub.callCount).equal(0);
+							expect(decoderSpy.callCount).equal(0);
+							expect(documentsChanged.removed).to.have.length(1);
+							expect(documentsChanged.removed[0]!.name).equal(
+								"native-removed-entry-fallback",
+							);
+							expect(await store.docs.get(doc.id)).equal(undefined);
+						} finally {
+							payloadStub.restore();
+						}
+					} finally {
+						collectByHeadStub.restore();
+						operationReaderSpy.restore();
+						nativeIdSpy.restore();
+						decoderSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("indexes strict native replicated descriptor transforms through encoded-only native context on receive", async () => {
+					@variant("strict_native_replicated_pick_indexable")
+					class StrictNativeReplicatedPickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedPickIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore<StrictNativeReplicatedPickIndexable>({
+						docs: new Documents<
+							Document,
+							StrictNativeReplicatedPickIndexable
+						>(),
+					});
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: StrictNativeReplicatedPickIndexable,
+							transform: transform.pick<
+								Document,
+								StrictNativeReplicatedPickIndexable
+							>(["id", "name"]),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const documentPutSpy = sinon.spy(target.docs.index, "put");
+					const documentPreparedNativePutSpy = sinon.spy(
+						target.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						target.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
+					const documentTransformSpy = sinon.spy(
+						target.docs.index,
+						"transformer",
+					);
+					const backendIndex = target.docs.index.index as any;
+					const backendStoredContextPutSpy = sinon.spy(
+						backendIndex,
+						"putStoredContextualEncodedValue",
+					);
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-pick",
+							data: new Uint8Array([1, 2, 3]),
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPreparedNativePutSpy.callCount).equal(0);
+						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+						expect(documentTransformSpy.callCount).equal(0);
+						expect(backendStoredContextPutSpy.callCount).greaterThan(0);
+						const indexed = await target.docs.index.get(doc.id, {
+							local: true,
+							remote: false,
+							resolve: false,
+						});
+						expect(indexed?.id).equal(doc.id);
+						expect(indexed?.name).equal("native-replicated-pick");
+						expect((indexed as any)?.data).equal(undefined);
+						expect(documentPutSpy.callCount).equal(0);
+					} finally {
+						backendStoredContextPutSpy.restore();
+						documentTransformSpy.restore();
+						decoderSpy.restore();
+						documentPreparedNativeStoredPutSpy.restore();
+						documentPreparedNativePutSpy.restore();
+						documentPutSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+					});
+
+					it("indexes strict native replicated projected transforms through encoded-only native context on receive", async () => {
+						@variant("strict_native_replicated_project_indexable")
+						class StrictNativeReplicatedProjectIndexable {
+							@field({ type: "string" })
+							id: string;
+
+							@field({ type: option("string") })
+							name?: string;
+
+							@field({ type: "u64" })
+							created: bigint;
+
+							@field({ type: "string" })
+							head: string;
+
+							@field({ type: option(Uint8Array) })
+							signer?: Uint8Array;
+
+							constructor(
+								properties?: Partial<StrictNativeReplicatedProjectIndexable>,
+							) {
+								this.id = properties?.id || "";
+								this.name = properties?.name;
+								this.created = properties?.created || 0n;
+								this.head = properties?.head || "";
+								this.signer = properties?.signer;
+							}
+						}
+
+						const rustSession = await TestSession.connected(
+							2,
+							createRustPeerbitOptions(),
+						);
+						const source = new TestStore<StrictNativeReplicatedProjectIndexable>({
+							docs: new Documents<
+								Document,
+								StrictNativeReplicatedProjectIndexable
+							>(),
+						});
+						const target = source.clone();
+						const openArgs = () => ({
+							mode: "native" as const,
+							replicate: { factor: 1 },
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeReplicatedProjectIndexable,
+								transform: transform.project<
+									Document,
+									StrictNativeReplicatedProjectIndexable
+								>({
+									id: transform.field("id"),
+									name: transform.field("name"),
+									created: transform.context("created"),
+									head: transform.context("head"),
+									signer: transform.entryFirstSignerPublicKey(),
+								}),
+							},
+						});
+						await rustSession.peers[0].open(source, { args: openArgs() });
+						await rustSession.peers[1].open(target, { args: openArgs() });
+						const documentPutSpy = sinon.spy(target.docs.index, "put");
+						const documentPreparedNativePutSpy = sinon.spy(
+							target.docs.index as any,
+							"_putPreparedNativeBackboneDocumentIndexWithContext",
+						);
+						const documentPreparedNativeStoredPutSpy = sinon.spy(
+							target.docs.index as any,
+							"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+						);
+						const decoderSpy = sinon.spy(
+							target.docs.index.valueEncoding,
+							"decoder",
+						);
+						const documentTransformSpy = sinon.spy(
+							target.docs.index,
+							"transformer",
+						);
+						const backendIndex = target.docs.index.index as any;
+						const backendStoredContextPutSpy = sinon.spy(
+							backendIndex,
+							"putStoredContextualEncodedValue",
+						);
+						try {
+							const doc = new Document({
+								id: uuid(),
+								name: "native-replicated-project",
+								data: new Uint8Array([4, 5, 6]),
+							});
+							const put = await source.docs.put(doc, { unique: true });
+
+							await waitForResolved(async () =>
+								expect(await target.docs.index.getSize()).equal(1),
+							);
+							expect(decoderSpy.callCount).equal(0);
+							expect(documentPreparedNativePutSpy.callCount).equal(0);
+							expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+							expect(documentTransformSpy.callCount).equal(0);
+							expect(backendStoredContextPutSpy.callCount).greaterThan(0);
+							const indexed = await target.docs.index.get(doc.id, {
+								local: true,
+								remote: false,
+								resolve: false,
+							});
+							expect(indexed?.id).equal(doc.id);
+							expect(indexed?.name).equal("native-replicated-project");
+							expect(indexed?.created).equal(
+								put.entry.meta.clock.timestamp.wallTime,
+							);
+							expect(indexed?.head).equal(put.entry.hash);
+							expect(
+								equals(
+									indexed?.signer,
+									rustSession.peers[0].identity.publicKey.bytes,
+								),
+							).equal(true);
+							expect((indexed as any)?.data).equal(undefined);
+							expect(documentPutSpy.callCount).equal(0);
+						} finally {
+							backendStoredContextPutSpy.restore();
+							documentTransformSpy.restore();
+							decoderSpy.restore();
+							documentPreparedNativeStoredPutSpy.restore();
+							documentPreparedNativePutSpy.restore();
+							documentPutSpy.restore();
+							await target.close();
+							await source.close();
+							await rustSession.stop();
+						}
+						});
+
+						it("restores strict native projected receive indexes from native document WAL after reopen", async () => {
+							@variant("strict_native_replicated_project_receive_wal_indexable")
+							class StrictNativeReplicatedProjectReceiveWalIndexable {
+								@field({ type: "string" })
+								id: string;
+
+								@field({ type: option("string") })
+								name?: string;
+
+								@field({ type: "u64" })
+								created: bigint;
+
+								@field({ type: "string" })
+								head: string;
+
+								@field({ type: option(Uint8Array) })
+								signer?: Uint8Array;
+
+								constructor(
+									properties?: Partial<StrictNativeReplicatedProjectReceiveWalIndexable>,
+								) {
+									this.id = properties?.id || "";
+									this.name = properties?.name;
+									this.created = properties?.created || 0n;
+									this.head = properties?.head || "";
+									this.signer = properties?.signer;
+								}
+							}
+
+							const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+							const sourceDirectory = `./tmp/document-store/native-project-receive-wal-source-${uuid()}`;
+							const targetDirectory = `./tmp/document-store/native-project-receive-wal-target-${uuid()}`;
+							const sourceCoordinateStore = new MemoryCoordinatePersistenceStore();
+							const targetCoordinateStore = new MemoryCoordinatePersistenceStore();
+							const openArgs = (
+								coordinateStore: MemoryCoordinatePersistenceStore,
+								replicate: false | { factor: number } = { factor: 1 },
+							) => ({
+								mode: "native" as const,
+								replicate,
+								nativeGraph: true,
+								nativeBackbone: {
+									optional: false,
+									documentIndex: true,
+									coordinatePersistence: new NativeBackboneCoordinatePersistence(
+										coordinateStore,
+										{ flushOnAppend: false },
+									),
+								},
+								canPerform: policy.allowAll<Document>(),
+								index: {
+									type: StrictNativeReplicatedProjectReceiveWalIndexable,
+									transform: transform.project<
+										Document,
+										StrictNativeReplicatedProjectReceiveWalIndexable
+									>({
+										id: transform.field("id"),
+										name: transform.field("name"),
+										created: transform.context("created"),
+										head: transform.context("head"),
+										signer: transform.entryFirstSignerPublicKey(),
+									}),
+								},
+							});
+							const source = new TestStore<StrictNativeReplicatedProjectReceiveWalIndexable>(
+								{
+									docs: new Documents<
+										Document,
+										StrictNativeReplicatedProjectReceiveWalIndexable
+									>(),
+								},
+							);
+							let target:
+								| TestStore<StrictNativeReplicatedProjectReceiveWalIndexable>
+								| undefined = source.clone();
+							let reopenedTarget:
+								| TestStore<StrictNativeReplicatedProjectReceiveWalIndexable>
+								| undefined;
+							let sourcePeer:
+								| Awaited<ReturnType<typeof Peerbit.create>>
+								| undefined;
+							let targetPeer:
+								| Awaited<ReturnType<typeof Peerbit.create>>
+								| undefined;
+							try {
+								sourcePeer = await Peerbit.create({
+									...createRustPeerbitOptions(),
+									directory: sourceDirectory,
+								});
+								targetPeer = await Peerbit.create({
+									...createRustPeerbitOptions(),
+									directory: targetDirectory,
+								});
+								await sourcePeer.open(source, {
+									args: openArgs(sourceCoordinateStore),
+								});
+								await targetPeer.open(target, {
+									args: openArgs(targetCoordinateStore),
+								});
+								await waitForResolved(() =>
+									sourcePeer!.dial(targetPeer!.getMultiaddrs()[0]!),
+								);
+
+								const doc = new Document({
+									id: uuid(),
+									name: "native-project-receive-wal",
+									data: new Uint8Array([7, 8, 9]),
+								});
+								const put = await source.docs.put(doc, { unique: true });
+
+								await waitForResolved(async () =>
+									expect(await target!.docs.index.getSize()).equal(1),
+								);
+								const receivedIndexed = await target.docs.index.get(doc.id, {
+									local: true,
+									remote: false,
+									resolve: false,
+								});
+								expect(receivedIndexed?.head).equal(put.entry.hash);
+
+								const clone = target.clone();
+								await target.close();
+								target = undefined;
+								await targetPeer.stop();
+								targetPeer = undefined;
+								expect(targetCoordinateStore.files.has("document-values.wal")).equal(
+									true,
+								);
+
+								targetPeer = await Peerbit.create({
+									...createRustPeerbitOptions(),
+									directory: targetDirectory,
+								});
+								reopenedTarget = await targetPeer.open(clone, {
+									args: openArgs(targetCoordinateStore, false),
+								});
+								const reopenedBackbone = (reopenedTarget.docs.log as any)
+									._nativeBackbone;
+								expect(reopenedBackbone.documentValueLength).equal(1);
+								expect(reopenedBackbone.documentIndexLength).equal(1);
+								expect(
+									reopenedBackbone.documentKeysExist([`string:${doc.id}`])[0],
+								).equal(1);
+								const reopenedIndexed = await reopenedTarget.docs.index.get(
+									doc.id,
+									{
+										local: true,
+										remote: false,
+										resolve: false,
+									},
+								);
+								expect(reopenedIndexed?.id).equal(doc.id);
+								expect(reopenedIndexed?.name).equal("native-project-receive-wal");
+								expect(reopenedIndexed?.created).equal(
+									put.entry.meta.clock.timestamp.wallTime,
+								);
+								expect(reopenedIndexed?.head).equal(put.entry.hash);
+								expect(
+									equals(
+										reopenedIndexed?.signer,
+										sourcePeer.identity.publicKey.bytes,
+									),
+								).equal(true);
+								expect((reopenedIndexed as any)?.data).equal(undefined);
+							} finally {
+								await reopenedTarget?.close();
+								await target?.close();
+								await source.close();
+								await targetPeer?.stop();
+								await sourcePeer?.stop();
+								await rm(sourceDirectory, { recursive: true, force: true });
+								await rm(targetDirectory, { recursive: true, force: true });
+							}
+						});
+
+						it("indexes strict native replicated fixed byte ids through encoded-only native context on receive", async () => {
+						@variant("strict_native_replicated_fixed_byte_id_document")
+						class StrictNativeReplicatedFixedByteIdDocument {
+						@id({ type: fixedArray("u8", 32) })
+						id: Uint8Array;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedFixedByteIdDocument>,
+						) {
+							this.id = properties?.id || new Uint8Array(32);
+							this.name = properties?.name;
+						}
+					}
+
+					@variant("strict_native_replicated_fixed_byte_id_store")
+					class StrictNativeReplicatedFixedByteIdStore extends Program<
+						Partial<SetupOptions<StrictNativeReplicatedFixedByteIdDocument>>
+					> {
+						@field({ type: Documents })
+						docs: Documents<StrictNativeReplicatedFixedByteIdDocument>;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedFixedByteIdStore>,
+						) {
+							super();
+							this.docs =
+								properties?.docs ||
+								new Documents<StrictNativeReplicatedFixedByteIdDocument>();
+						}
+
+						async open(
+							options?: Partial<
+								SetupOptions<StrictNativeReplicatedFixedByteIdDocument>
+							>,
+						): Promise<void> {
+							await this.docs.open({
+								...options,
+								type: StrictNativeReplicatedFixedByteIdDocument,
+								index: {
+									...options?.index,
+									type: StrictNativeReplicatedFixedByteIdDocument,
+									transform:
+										transform.identity<StrictNativeReplicatedFixedByteIdDocument>(),
+								},
+							});
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new StrictNativeReplicatedFixedByteIdStore();
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform:
+							policy.allowAll<StrictNativeReplicatedFixedByteIdDocument>(),
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
+					const documentPreparedNativeStoredPutSpy = sinon.spy(
+						target.docs.index as any,
+						"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+					);
+					try {
+						const id = randomBytes(32);
+						const doc = new StrictNativeReplicatedFixedByteIdDocument({
+							id,
+							name: "native-fixed-byte-id",
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+						const resolved = await target.docs.get(id, {
+							local: true,
+							remote: false,
+						});
+						expect(resolved?.name).equal("native-fixed-byte-id");
+						expect(equals(resolved?.id, id)).equal(true);
+					} finally {
+						documentPreparedNativeStoredPutSpy.restore();
+						decoderSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
+					it("validates strict native replicated PublicSignKey ownership without document decode on receive", async () => {
+					@variant("strict_native_replicated_public_key_owner_document")
+					class StrictNativeReplicatedPublicKeyOwnerDocument {
+						@id({ type: "string" })
+						id: string;
+
+						@field({ type: PublicSignKey })
+						owner: PublicSignKey;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedPublicKeyOwnerDocument>,
+						) {
+							this.id = properties?.id || uuid();
+							this.owner =
+								properties?.owner ||
+								new Ed25519PublicKey({ publicKey: new Uint8Array(32) });
+							this.name = properties?.name;
+						}
+					}
+
+					@variant("strict_native_replicated_public_key_owner_store")
+					class StrictNativeReplicatedPublicKeyOwnerStore extends Program<
+						Partial<SetupOptions<StrictNativeReplicatedPublicKeyOwnerDocument>>
+					> {
+						@field({ type: Documents })
+						docs: Documents<StrictNativeReplicatedPublicKeyOwnerDocument>;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedPublicKeyOwnerStore>,
+						) {
+							super();
+							this.docs =
+								properties?.docs ||
+								new Documents<StrictNativeReplicatedPublicKeyOwnerDocument>();
+						}
+
+						async open(
+							options?: Partial<
+								SetupOptions<StrictNativeReplicatedPublicKeyOwnerDocument>
+							>,
+						): Promise<void> {
+							await this.docs.open({
+								...options,
+								type: StrictNativeReplicatedPublicKeyOwnerDocument,
+								index: {
+									...options?.index,
+									type: StrictNativeReplicatedPublicKeyOwnerDocument,
+									transform:
+										transform.identity<StrictNativeReplicatedPublicKeyOwnerDocument>(),
+								},
+							});
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new StrictNativeReplicatedPublicKeyOwnerStore();
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.or(
+							policy.put(
+								policy.signedByField<StrictNativeReplicatedPublicKeyOwnerDocument>(
+									"owner",
+								),
+							),
+							policy.delete(
+								policy.and(
+									policy.signedByPublicKey<StrictNativeReplicatedPublicKeyOwnerDocument>(
+										rustSession.peers[0].identity.publicKey,
+									),
+									policy.deleteSignedByExistingField<StrictNativeReplicatedPublicKeyOwnerDocument>(
+										"owner",
+									),
+								),
+							),
+						),
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					const decoderSpy = sinon.spy(
+						target.docs.index.valueEncoding,
+						"decoder",
+					);
+					const nativeIndexedFieldSpy = sinon.spy(
+						target.docs.index,
+						"getNativeIndexedFieldValue",
+					);
+					try {
+						const doc = new StrictNativeReplicatedPublicKeyOwnerDocument({
+							id: uuid(),
+							owner: rustSession.peers[0].identity.publicKey,
+							name: "native-public-key-owner",
+						});
+						await source.docs.put(doc, { unique: true });
+
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(1),
+						);
+						expect(decoderSpy.callCount).equal(0);
+						await source.docs.del(doc.id);
+						await waitForResolved(async () =>
+							expect(await target.docs.index.getSize()).equal(0),
+						);
+						expect(nativeIndexedFieldSpy.callCount).greaterThan(0);
+						expect(decoderSpy.callCount).equal(0);
+						const resolved = await target.docs.get(doc.id, {
+							local: true,
+							remote: false,
+						});
+						expect(resolved).to.not.exist;
+					} finally {
+						nativeIndexedFieldSpy.restore();
+						decoderSpy.restore();
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+						}
+					});
+
+					it("rejects strict native replicated signedByField ownership mismatch without document decode", async () => {
+						const rustSession = await TestSession.connected(
+							2,
+							createRustPeerbitOptions(),
+						);
+						const source = new TestStore({
+							docs: new Documents<Document>(),
+						});
+						const target = source.clone();
+						await rustSession.peers[0].open(source, {
+							args: {
+								mode: "native",
+								replicate: { factor: 1 },
+								nativeGraph: true,
+								nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.allowAll<Document>(),
+								index: {
+									type: Document,
+									transform: transform.identity<Document>(),
+								},
+							},
+						});
+						await rustSession.peers[1].open(target, {
+							args: {
+								mode: "native",
+								replicate: { factor: 1 },
+								nativeGraph: true,
+								nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.put(policy.signedByField<Document>("data")),
+								index: {
+									type: Document,
+									transform: transform.identity<Document>(),
+								},
+							},
+						});
+						const decoderStub = sinon
+							.stub(target.docs.index.valueEncoding, "decoder")
+							.callsFake(() => {
+								throw new Error("Unexpected document decode");
+							});
+						const documentPreparedNativeStoredPutSpy = sinon.spy(
+							target.docs.index as any,
+							"_putPreparedNativeBackboneDocumentIndexStoredWithContext",
+						);
+						try {
+							const accepted = await source.docs.put(
+								new Document({
+									id: uuid(),
+									name: "native-replicated-signed-field-accepted",
+									data: rustSession.peers[0].identity.publicKey.bytes,
+								}),
+								{ unique: true },
+							);
+							await waitForResolved(async () =>
+								expect(await target.docs.index.getSize()).equal(1),
+							);
+							expect(decoderStub.callCount).equal(0);
+							expect(documentPreparedNativeStoredPutSpy.callCount).greaterThan(0);
+							const storedPutCallsAfterAccepted =
+								documentPreparedNativeStoredPutSpy.callCount;
+							const rejected = await source.docs.put(
+								new Document({
+									id: uuid(),
+									name: "native-replicated-signed-field-rejected",
+									data: rustSession.peers[1].identity.publicKey.bytes,
+								}),
+								{ unique: true },
+							);
+							expect(await (target.docs as any).canAppend(rejected.entry)).equal(
+								false,
+							);
+							expect(await (target.docs as any).canAppend(accepted.entry)).equal(
+								true,
+							);
+							expect(decoderStub.callCount).equal(0);
+							expect(documentPreparedNativeStoredPutSpy.callCount).equal(
+								storedPutCallsAfterAccepted,
+							);
+						} finally {
+							documentPreparedNativeStoredPutSpy.restore();
+							decoderStub.restore();
+							await target.close();
+							await source.close();
+							await rustSession.stop();
+						}
+					});
+
+					it("keeps already-local strict native put options by reference", () => {
+					const docs = new Documents<Document>();
+					const nativeDocs = docs as any;
+					nativeDocs._mode = "native";
+					const localOptions = {
+						unique: true,
+						replicate: false,
+						target: "none" as const,
+					};
+					expect(nativeDocs.normalizeNativeModePutOptions(localOptions)).equal(
+						localOptions,
+					);
+					const defaultOptions = { unique: true };
+					const normalized =
+						nativeDocs.normalizeNativeModePutOptions(defaultOptions);
+					expect(normalized).not.equal(defaultOptions);
+					expect(
+						nativeDocs.normalizeNativeModePutOptions({ unique: true }),
+					).equal(normalized);
+					expect(normalized).to.include({
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const emptyNormalized = nativeDocs.normalizeNativeModePutOptions({});
+					expect(nativeDocs.normalizeNativeModePutOptions(undefined)).equal(
+						emptyNormalized,
+					);
+					expect(emptyNormalized).to.include({
+						replicate: false,
+						target: "none",
+					});
+					nativeDocs._nativeModeReplicatedOpen = true;
+					const replicatedDefaultOptions = { unique: true };
+					const replicatedNormalized = nativeDocs.normalizeNativeModePutOptions(
+						replicatedDefaultOptions,
+					);
+					expect(replicatedNormalized).not.equal(replicatedDefaultOptions);
+					expect(replicatedNormalized).to.include({
+						unique: true,
+						target: "none",
+					});
+					expect(replicatedNormalized).not.to.have.property("replicate");
+				});
+
+				it("does not repeat native policy eligibility checks for strict native puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const originalEvaluator = (store.docs as any)
+						._optionCanPerformNativeFastPath;
+					const nativePolicySpy = sinon.spy(() => true);
+					(store.docs as any)._optionCanPerformNativeFastPath = nativePolicySpy;
+					try {
+						await store.docs.put(
+							new Document({ id: uuid(), name: "native-policy-once" }),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						expect(nativePolicySpy.callCount).equal(1);
+					} finally {
+						(store.docs as any)._optionCanPerformNativeFastPath =
+							originalEvaluator;
+						await rustSession.stop();
+					}
+				});
+
+				it("does not persist previous-signer facts for strict native allowAll puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					try {
+						await rustSession.peers[0].open(store, {
+							args: {
+								mode: "native",
+								replicate: false,
+								nativeGraph: true,
+								nativeBackbone: {
+									optional: false,
+									documentIndex: true,
+									coordinatePersistence:
+										new NativeBackboneCoordinatePersistence(
+											coordinateStore,
+											{ flushOnAppend: false },
+										),
+								},
+								canPerform: policy.allowAll<Document>(),
+								index: {
+									type: Document,
+									transform: transform.identity<Document>(),
+								},
+							},
+						});
+						const id = uuid();
+						const put = await store.docs.put(
+							new Document({ id, name: "native-allow-all-no-signer-fact" }),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						const backbone = (store.docs.log as any)._nativeBackbone;
+						expect(
+							backbone.documentPreviousSignaturePublicKey(`string:${id}`)
+								?.exists,
+						).equal(true);
+						backbone.blocks.rm(put.entry.hash);
+						expect(
+							backbone.documentPreviousSignaturePublicKey(`string:${id}`)
+								?.publicKey,
+						).equal(undefined);
+						await store.close();
+						store = undefined;
+						expect(coordinateStore.files.has("coordinates.wal")).equal(true);
+						expect(coordinateStore.files.has("document-signers.wal")).equal(
+							false,
+						);
+					} finally {
+						await store?.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("restores strict native document index from native document WAL without indexer mirror", async () => {
+					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+					const directory = `./tmp/document-store/native-document-index-wal-${uuid()}`;
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							documentIndex: true,
+							coordinatePersistence: new NativeBackboneCoordinatePersistence(
+								coordinateStore,
+								{ flushOnAppend: false },
+							),
+						},
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					let peer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					let firstStore: TestStore | undefined;
+					let reopenedStore: TestStore | undefined;
+					try {
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						firstStore = new TestStore({
+							docs: new Documents<Document>(),
+						});
+						store = firstStore;
+						await peer.open(firstStore, { args: openArgs() });
+
+						const persistSpy = sinon.spy(
+							firstStore.docs.index.index as any,
+							"persistStoredContextualEncodedValue",
+						);
+						const id = uuid();
+						try {
+							await firstStore.docs.put(
+								new Document({ id, name: "native-document-index-wal" }),
+								{
+									unique: true,
+									replicate: false,
+									target: "none",
+								},
+							);
+							expect(persistSpy.callCount).equal(0);
+						} finally {
+							persistSpy.restore();
+						}
+
+						const firstBackbone = (firstStore.docs.log as any)._nativeBackbone;
+						expect(firstBackbone.documentValueLength).equal(1);
+						const clone = firstStore.clone();
+						await firstStore.close();
+						firstStore = undefined;
+						store = undefined;
+						await peer.stop();
+						peer = undefined;
+						expect(coordinateStore.files.has("document-values.wal")).equal(true);
+
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						reopenedStore = await peer.open(clone, { args: openArgs() });
+						store = reopenedStore;
+						const reopenedBackbone = (reopenedStore.docs.log as any)
+							._nativeBackbone;
+						expect(reopenedBackbone.documentValueLength).equal(1);
+						expect(reopenedBackbone.documentIndexLength).equal(1);
+						expect(
+							reopenedBackbone.documentKeysExist([`string:${id}`])[0],
+						).equal(1);
+						expect((await reopenedStore.docs.get(id))?.name).equal(
+							"native-document-index-wal",
+						);
+					} finally {
+						await reopenedStore?.close();
+						await firstStore?.close();
+						store = undefined;
+						await peer?.stop();
+						await rm(directory, { recursive: true, force: true });
+					}
+				});
+
+				it("restores strict native projected document index from native document WAL without indexer mirror", async () => {
+					@variant("strict_native_document_index_wal_project_indexable")
+					class StrictNativeDocumentIndexWalProjectIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						@field({ type: "u64" })
+						created: bigint;
+
+						@field({ type: "string" })
+						head: string;
+
+						@field({ type: option(Uint8Array) })
+						signer?: Uint8Array;
+
+						constructor(
+							properties?: Partial<StrictNativeDocumentIndexWalProjectIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+							this.created = properties?.created || 0n;
+							this.head = properties?.head || "";
+							this.signer = properties?.signer;
+						}
+					}
+
+					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+					const directory = `./tmp/document-store/native-document-index-project-wal-${uuid()}`;
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							documentIndex: true,
+							coordinatePersistence: new NativeBackboneCoordinatePersistence(
+								coordinateStore,
+								{ flushOnAppend: false },
+							),
+						},
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: StrictNativeDocumentIndexWalProjectIndexable,
+							transform: transform.project<
+								Document,
+								StrictNativeDocumentIndexWalProjectIndexable
+							>({
+								id: transform.field("id"),
+								name: transform.field("name"),
+								created: transform.context("created"),
+								head: transform.context("head"),
+								signer: transform.entryFirstSignerPublicKey(),
+							}),
+						},
+					});
+					let peer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					let firstStore:
+						| TestStore<StrictNativeDocumentIndexWalProjectIndexable>
+						| undefined;
+					let reopenedStore:
+						| TestStore<StrictNativeDocumentIndexWalProjectIndexable>
+						| undefined;
+					try {
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						firstStore =
+							new TestStore<StrictNativeDocumentIndexWalProjectIndexable>({
+								docs: new Documents<
+									Document,
+									StrictNativeDocumentIndexWalProjectIndexable
+								>(),
+							});
+						store = firstStore as any;
+						await peer.open(firstStore, { args: openArgs() });
+
+						const persistSpy = sinon.spy(
+							firstStore.docs.index.index as any,
+							"persistStoredContextualEncodedValue",
+						);
+						const transformerSpy = sinon.spy(firstStore.docs.index, "transformer");
+						const id = uuid();
+						let created: bigint;
+						let head: string;
+						try {
+							const put = await firstStore.docs.put(
+								new Document({ id, name: "native-document-index-project-wal" }),
+								{
+									unique: true,
+									replicate: false,
+									target: "none",
+								},
+							);
+							created = put.entry.meta.clock.timestamp.wallTime;
+							head = put.entry.hash;
+							expect(persistSpy.callCount).equal(0);
+							expect(transformerSpy.callCount).equal(0);
+						} finally {
+							transformerSpy.restore();
+							persistSpy.restore();
+						}
+
+						const firstBackbone = (firstStore.docs.log as any)._nativeBackbone;
+						expect(firstBackbone.documentValueLength).equal(1);
+						const clone = firstStore.clone();
+						await firstStore.close();
+						firstStore = undefined;
+						store = undefined;
+						await peer.stop();
+						peer = undefined;
+						expect(coordinateStore.files.has("document-values.wal")).equal(true);
+
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						reopenedStore = await peer.open(clone, { args: openArgs() });
+						store = reopenedStore as any;
+						const reopenedBackbone = (reopenedStore.docs.log as any)
+							._nativeBackbone;
+						expect(reopenedBackbone.documentValueLength).equal(1);
+						expect(reopenedBackbone.documentIndexLength).equal(1);
+						expect(
+							reopenedBackbone.documentKeysExist([`string:${id}`])[0],
+						).equal(1);
+						const reopenedIndexed = await reopenedStore.docs.index.get(id, {
+							resolve: false,
+						});
+						expect(reopenedIndexed?.id).equal(id);
+						expect(reopenedIndexed?.name).equal(
+							"native-document-index-project-wal",
+						);
+						expect(reopenedIndexed?.created).equal(created!);
+						expect(reopenedIndexed?.head).equal(head!);
+						expect(
+							equals(reopenedIndexed?.signer, peer.identity.publicKey.bytes),
+						).equal(true);
+						expect((reopenedIndexed as any)?.bytes).equal(undefined);
+					} finally {
+						await reopenedStore?.close();
+						await firstStore?.close();
+						store = undefined;
+						await peer?.stop();
+						await rm(directory, { recursive: true, force: true });
+					}
+				});
+
+				it("uses hash-only native trim facts for strict native puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					const hashTrimSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntryHashesMaybe",
+					);
+					const hashTrimNoReturnSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntryHashesNoReturnMaybe",
+					);
+					const entryTrimSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntriesMaybe",
+					);
+					const removedHeadsSpy = sinon.spy(
+						store.docs as any,
+						"tryHandlePreparedPlainPutCommitRemovedFromHeads",
+					);
+					const transactionSpy = sinon.spy(
+						store.docs as any,
+						"createNativeDocumentAppendTransaction",
+					);
+					try {
+						const first = new Document({ id: uuid(), name: "trimmed" });
+						const second = new Document({ id: uuid(), name: "kept" });
+						await store.docs.put(first, { unique: true });
+						await store.docs.put(second, { unique: true });
+						const secondTransaction = transactionSpy.secondCall?.returnValue;
+						expect(hashTrimNoReturnSpy.callCount).greaterThan(0);
+						expect(hashTrimSpy.callCount).equal(0);
+						expect(entryTrimSpy.callCount).equal(0);
+						expect(removedHeadsSpy.callCount).equal(0);
+						expect(secondTransaction?.removed).to.deep.equal([]);
+						expect(secondTransaction?.removedHashes).to.have.length(1);
+						expect(await store.docs.get(first.id)).equal(undefined);
+						expect((await store.docs.get(second.id))?.name).equal("kept");
+					} finally {
+						transactionSpy.restore();
+						removedHeadsSpy.restore();
+						entryTrimSpy.restore();
+						hashTrimNoReturnSpy.restore();
+						hashTrimSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native head keys for strict native descriptor trim change cleanup", async () => {
+					@variant("strict_native_trim_pick_indexable")
+					class StrictNativeTrimPickIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						constructor(properties?: Partial<StrictNativeTrimPickIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<StrictNativeTrimPickIndexable>({
+						docs: new Documents<Document, StrictNativeTrimPickIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: StrictNativeTrimPickIndexable,
+								transform: transform.pick<
+									Document,
+									StrictNativeTrimPickIndexable
+								>(["id", "name"]),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					const changes: DocumentsChange<
+						Document,
+						StrictNativeTrimPickIndexable
+					>[] = [];
+					localStore.docs.events.addEventListener("change", (event) => {
+						changes.push(event.detail);
+					});
+					const entryIndexGetSpy = sinon.spy(
+						localStore.docs.log.log.entryIndex,
+						"get",
+					);
+					const documentDelSpy = sinon.spy(localStore.docs.index, "del");
+					const backendIndex = localStore.docs.index.index as any;
+					const getIdByHeadSpy = sinon.spy(backendIndex, "getIdByContextHead");
+					const delIdsNoReturnSpy = sinon.spy(backendIndex, "delIdsNoReturn");
+					try {
+						const firstDoc = new Document({
+							id: uuid(),
+							name: "trim-pick-1",
+						});
+						const first = await localStore.docs.put(firstDoc, {
+							unique: true,
+						});
+						getIdByHeadSpy.resetHistory();
+						delIdsNoReturnSpy.resetHistory();
+						entryIndexGetSpy.resetHistory();
+
+						const second = new Document({
+							id: uuid(),
+							name: "trim-pick-2",
+						});
+						await localStore.docs.put(second, { unique: true });
+
+						expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
+							0,
+						);
+						expect(
+							getIdByHeadSpy.withArgs(first.entry.hash).callCount,
+						).greaterThan(0);
+						expect(documentDelSpy.callCount).equal(0);
+						expect(delIdsNoReturnSpy.callCount).greaterThan(0);
+						expect(await localStore.docs.get(firstDoc.id)).equal(undefined);
+						expect(changes).to.have.length(2);
+						expect(changes[1]?.removed.map((doc) => doc.id)).to.deep.equal([
+							firstDoc.id,
+						]);
+					} finally {
+						delIdsNoReturnSpy.restore();
+						getIdByHeadSpy.restore();
+						documentDelSpy.restore();
+						entryIndexGetSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("honors strict native length trim hysteresis", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1, from: 3 },
+							},
+						},
+					});
+					const hashTrimNoReturnSpy = sinon.spy(
+						store.docs.log.log.entryIndex as any,
+						"consumeNativeTrimmedEntryHashesNoReturnMaybe",
+					);
+					const jsTrimSpy = sinon.spy(store.docs.log.log, "trim");
+					try {
+						const first = new Document({ id: uuid(), name: "trim-from-1" });
+						const second = new Document({ id: uuid(), name: "trim-from-2" });
+						const third = new Document({ id: uuid(), name: "trim-from-3" });
+						await store.docs.put(first, { unique: true });
+						await store.docs.put(second, { unique: true });
+						expect(store.docs.log.log.length).equal(2);
+						expect(hashTrimNoReturnSpy.callCount).equal(0);
+						await store.docs.put(third, { unique: true });
+						expect(jsTrimSpy.callCount).equal(0);
+						expect(hashTrimNoReturnSpy.callCount).greaterThan(0);
+						expect(store.docs.log.log.length).equal(1);
+						expect(await store.docs.get(first.id)).equal(undefined);
+						expect(await store.docs.get(second.id)).equal(undefined);
+						expect((await store.docs.get(third.id))?.name).equal("trim-from-3");
+					} finally {
+						jsTrimSpy.restore();
+						hashTrimNoReturnSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects arbitrary canPerform in strict native mode", async () => {
+					const docs = new Documents<Document>();
+					await expect(
+						docs.open({
+							type: Document,
+							mode: "native",
+							replicate: false,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: () => true,
+						}),
+					).to.be.rejectedWith(NativeDocumentModeError, "arbitrary canPerform");
+				});
+
+				it("rejects open-level JS hooks in strict native mode", async () => {
+					for (const testCase of [
+						{
+							name: "canReplicate",
+							options: { canReplicate: () => true },
+							message: "custom canReplicate",
+						},
+						{
+							name: "optional nativeBackbone",
+							options: { nativeBackbone: { documentIndex: true } },
+							message: "optional nativeBackbone",
+						},
+						{
+							name: "explicit optional nativeBackbone",
+							options: {
+								nativeBackbone: {
+									optional: true,
+									documentIndex: true,
+								},
+							},
+							message: "optional nativeBackbone",
+						},
+						{
+							name: "missing coordinatePersistence",
+							options: {
+								nativeBackbone: {
+									optional: false,
+									documentIndex: true,
+								},
+							},
+							message: "missing nativeBackbone.coordinatePersistence",
+						},
+						{
+							name: "disabled native heads",
+							options: {
+								nativeBackbone: {
+									...nativeBackboneDocumentIndexOptions(),
+									heads: false,
+								},
+							},
+							message: "disabled native heads",
+						},
+						{
+							name: "canOpen",
+							options: { canOpen: () => true },
+							message: "custom canOpen",
+						},
+						{
+							name: "id",
+							options: { id: (doc: Document) => doc.id },
+							message: "custom id",
+						},
+						{
+							name: "canRead",
+							options: {
+								index: {
+									canRead: () => true,
+								},
+							},
+							message: "custom canRead",
+						},
+						{
+							name: "canSearch",
+							options: {
+								index: {
+									canSearch: () => true,
+								},
+							},
+							message: "custom canSearch",
+						},
+						{
+							name: "prefetch",
+							options: {
+								index: {
+									prefetch: true,
+								},
+							},
+							message: "index prefetch",
+						},
+						{
+							name: "query cache",
+							options: {
+								index: {
+									cache: {
+										query: {
+											strategy: "auto" as const,
+											maxSize: 10,
+											maxTotalSize: 10,
+										},
+									},
+								},
+							},
+							message: "index query cache",
+						},
+						{
+							name: "arbitrary transform",
+							options: {
+								index: {
+									transform: (doc: Document) => ({ id: doc.id }),
+								},
+							},
+							message: "arbitrary index transform",
+						},
+						{
+							name: "legacy compatibility",
+							options: { compatibility: 7 as const },
+							message: "legacy compatibility",
+						},
+						{
+							name: "strictHistory",
+							options: { strictHistory: true },
+							message: "strict history",
+						},
+						{
+							name: "appendDurability",
+							options: { appendDurability: "strict" as const },
+							message: "custom append durability",
+						},
+						{
+							name: "custom domain",
+							options: { domain: (() => undefined) as any },
+							message: "custom domain",
+						},
+						{
+							name: "keep",
+							options: { keep: "self" as const },
+							message: "custom keep",
+						},
+						{
+							name: "fanout",
+							options: { fanout: { root: "root" } },
+							message: "fanout",
+						},
+						{
+							name: "syncronizer",
+							options: { syncronizer: class CustomSyncronizer {} as any },
+							message: "custom syncronizer",
+						},
+						{
+							name: "sync priority",
+							options: { sync: { priority: () => 0 } },
+							message: "custom sync priority",
+						},
+						{
+							name: "sync profile",
+							options: { sync: { profile: () => undefined } },
+							message: "custom sync profile",
+						},
+						{
+							name: "trim filter",
+							options: {
+								log: {
+									trim: {
+										type: "length" as const,
+										to: 1,
+										filter: { canTrim: () => true },
+									},
+								},
+							},
+							message: "unsupported log trim",
+						},
+						{
+							name: "byte trim",
+							options: {
+								log: { trim: { type: "bytelength" as const, to: 1024 } },
+							},
+							message: "unsupported log trim",
+						},
+					]) {
+						const docs = new Documents<Document>();
+						await expect(
+							docs.open({
+								type: Document,
+								mode: "native",
+								replicate: false,
+								nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.allowAll<Document>(),
+								...testCase.options,
+							}),
+							testCase.name,
+						).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
+					}
+				});
+
+				it("rejects constructor-level immutable documents in strict native mode", async () => {
+					const docs = new Documents<Document>({ immutable: true });
+					await expect(
+						docs.open({
+							type: Document,
+							mode: "native",
+							replicate: false,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+						}),
+					).to.be.rejectedWith(NativeDocumentModeError, "immutable documents");
+				});
+
+				it("allows data-only sync config in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							sync: {
+								maxConvergentTrackedHashes: 16,
+								maxSimpleCoordinatesPerMessage: 16,
+								maxSimpleEntries: 16,
+								maxSimpleHashesPerMessage: 16,
+								rawExchangeHeads: true,
+								rawExchangeHeadsVerifySignaturesDuringPrepare: true,
+								repairSweepTargetBufferSize: 16,
+							},
+						},
+					});
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-sync-config",
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect((await store.docs.get(doc.id))?.name).equal(
+							"native-sync-config",
+						);
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects unsupported per-put options in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+						},
+					});
+					const strictPayloadCommitOnlySpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					try {
+						for (const testCase of [
+							{
+								name: "canAppend",
+								options: { canAppend: () => true },
+								message: "per-call canAppend",
+							},
+							{
+								name: "onChange",
+								options: { onChange: () => undefined },
+								message: "per-call onChange",
+							},
+							{
+								name: "signers",
+								options: { signers: [() => undefined] },
+								message: "custom signers",
+							},
+							{
+								name: "identity",
+								options: { identity: {} },
+								message: "custom identity",
+							},
+							{
+								name: "encryption",
+								options: { encryption: {} },
+								message: "encryption",
+							},
+							{
+								name: "trim",
+								options: { trim: { type: "length" as const, to: 1 } },
+								message: "per-call trim",
+							},
+							{
+								name: "durability",
+								options: { durability: "strict" as const },
+								message: "per-call durability",
+							},
+							{
+								name: "deferIndexWrite",
+								options: { deferIndexWrite: false },
+								message: "per-call index write deferral",
+							},
+							{
+								name: "entry type",
+								options: { meta: { type: EntryType.CUT } },
+								message: "custom entry type",
+							},
+							{
+								name: "metadata",
+								options: { meta: { data: new Uint8Array([1]) } },
+								message: "custom metadata",
+							},
+							{
+								name: "next",
+								options: { meta: { next: [] } },
+								message: "custom next",
+							},
+							{
+								name: "timestamp",
+								options: {
+									meta: {
+										timestamp: new Timestamp({ wallTime: 1n }),
+									},
+								},
+								message: "custom timestamp",
+							},
+							{
+								name: "gid seed",
+								options: { meta: { gidSeed: new Uint8Array(32) } },
+								message: "custom gid seed",
+							},
+							{
+								name: "replicated put",
+								options: { replicate: true },
+								message: "replicated put",
+							},
+							{
+								name: "target",
+								options: { target: "replicators" as const },
+								message: "non-local target",
+							},
+							{
+								name: "delivery",
+								options: { delivery: true },
+								message: "delivery",
+							},
+							{
+								name: "checkRemote",
+								options: { checkRemote: true },
+								message: "remote existing-head check",
+							},
+							{
+								name: "replicas",
+								options: { replicas: 0 },
+								message: "per-call replicas",
+							},
+						]) {
+							await expect(
+								store.docs.put(
+									new Document({ id: uuid(), name: `bad-${testCase.name}` }),
+									{
+										unique: true,
+										replicate: false,
+										target: "none",
+										...(testCase.options as any),
+									},
+								),
+								testCase.name,
+							).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
+						}
+						expect(strictPayloadCommitOnlySpy.callCount).equal(0);
+					} finally {
+						strictPayloadCommitOnlySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native backend putMany in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const documentBatchIndexSpy = sinon.spy(
+						store.docs.index,
+						"_putManyIdentityWithContext",
+					);
+					const documentGenericBatchIndexSpy = sinon.spy(
+						store.docs.index,
+						"putManyWithContext",
+					);
+					const storedIdentityBatchSpy = sinon.spy(
+						store.docs.index as any,
+						"_putManyPreparedNativeBackboneDocumentIndexStored",
+					);
+					const nativeBackboneBatchTransactionSpy = sinon.spy(
+						(store.docs.log as any)._nativeBackbone as any,
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
+					);
+					try {
+						const docs = [
+							new Document({ id: uuid(), name: "batch-1" }),
+							new Document({ id: uuid(), name: "batch-2" }),
+						];
+						const appended = await store.docs.putMany(docs, {
+							unique: true,
+							target: "none",
+						});
+
+						expect(appended.entries).to.have.length(docs.length);
+						expect(appended.removed).to.have.length(0);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(documentBatchIndexSpy.callCount).equal(0);
+						expect(documentGenericBatchIndexSpy.callCount).equal(0);
+						expect(storedIdentityBatchSpy.callCount).equal(1);
+						expect(nativeBackboneBatchTransactionSpy.callCount).equal(1);
+						expect(
+							nativeBackboneBatchTransactionSpy.firstCall.args[0].entries,
+						).to.have.length(docs.length);
+						for (const doc of docs) {
+							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
+						}
+					} finally {
+						nativeBackboneBatchTransactionSpy.restore();
+						storedIdentityBatchSpy.restore();
+						documentGenericBatchIndexSpy.restore();
+						documentBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native putMany entries materializable after trim", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+							log: {
+								trim: { type: "length", to: 1 },
+							},
+						},
+					});
+					try {
+						const firstDoc = new Document({
+							id: uuid(),
+							name: "trim-batch-1",
+						});
+						const secondDoc = new Document({
+							id: uuid(),
+							name: "trim-batch-2",
+						});
+						const first = await store.docs.putMany([firstDoc], {
+							unique: true,
+						});
+						const second = await store.docs.putMany([secondDoc], {
+							unique: true,
+						});
+						expect(await store.docs.get(firstDoc.id)).equal(undefined);
+						expect((await store.docs.get(secondDoc.id))?.name).equal(
+							"trim-batch-2",
+						);
+						expect(first.entries[0].hash).to.be.a("string");
+						expect(second.entries[0].hash).to.be.a("string");
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("handles duplicate strict native putMany ids through native single puts", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const batchSupportStub = sinon
+						.stub(
+							store.docs.index as any,
+							"canUseNativeBackboneContextualBatch",
+						)
+						.returns(false);
+					const strictAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericAppendSpy = sinon.spy(store.docs.log as any, "append");
+					try {
+						const id = uuid();
+						const appended = await store.docs.putMany(
+							[
+								new Document({ id, name: "duplicate-1" }),
+								new Document({ id, name: "duplicate-2" }),
+							],
+							{ target: "none" },
+						);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[1]!.meta.next).to.deep.equal([
+							appended.entries[0]!.hash,
+						]);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(batchSupportStub.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(0);
+						expect(strictAppendSpy.callCount).equal(2);
+						expect(genericAppendSpy.callCount).equal(0);
+						expect((await store.docs.get(id))?.name).equal("duplicate-2");
+					} finally {
+						genericAppendSpy.restore();
+						strictAppendSpy.restore();
+						batchSupportStub.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native backend putMany for fresh non-unique ids in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					try {
+						const docs = [
+							new Document({ id: uuid(), name: "fresh-1" }),
+							new Document({ id: uuid(), name: "fresh-2" }),
+						];
+						const appended = await store.docs.putMany(docs, {
+							target: "none",
+						});
+
+						expect(appended.entries).to.have.length(docs.length);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(contextBatchSpy.callCount).equal(0);
+						for (const doc of docs) {
+							expect((await store.docs.get(doc.id))?.name).equal(doc.name);
+						}
+					} finally {
+						contextBatchSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native backend putMany for non-unique updates in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const documentBatchIndexSpy = sinon.spy(
+						store.docs.index,
+						"_putManyIdentityWithContext",
+					);
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					const latestBatchTransactionSpy = sinon.spy(
+						(store.docs.log as any)._nativeBackbone as any,
+						"preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction",
+					);
+					try {
+						const first = await store.docs.put(
+							new Document({ id: "update-1", name: "before-1" }),
+							{ target: "none" },
+						);
+						const second = await store.docs.put(
+							new Document({ id: "update-2", name: "before-2" }),
+							{ target: "none" },
+						);
+						nativeBatchSpy.resetHistory();
+						documentBatchIndexSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						latestBatchTransactionSpy.resetHistory();
+
+						const appended = await store.docs.putMany(
+							[
+								new Document({ id: "update-1", name: "after-1" }),
+								new Document({ id: "update-2", name: "after-2" }),
+							],
+							{ target: "none" },
+						);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[0].meta.next).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect(appended.entries[1].meta.next).to.deep.equal([
+							second.entry.hash,
+						]);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(documentBatchIndexSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(0);
+						expect(latestBatchTransactionSpy.callCount).equal(1);
+						expect((await store.docs.get("update-1"))?.name).equal("after-1");
+						expect((await store.docs.get("update-2"))?.name).equal("after-2");
+					} finally {
+						latestBatchTransactionSpy.restore();
+						contextBatchSpy.restore();
+						documentBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+					it("uses native backend putMany for same-signer updates in strict native mode", async () => {
+						@variant("strict_native_same_signer_batch_project_indexable")
+						class StrictNativeSameSignerBatchProjectIndexable {
+							@field({ type: "string" })
+							id: string;
+
+							@field({ type: option("string") })
+							name?: string;
+
+							@field({ type: "u64" })
+							created: bigint;
+
+							@field({ type: "string" })
+							head: string;
+
+							@field({ type: option(Uint8Array) })
+							signer?: Uint8Array;
+
+							constructor(
+								properties?: Partial<StrictNativeSameSignerBatchProjectIndexable>,
+							) {
+								this.id = properties?.id || "";
+								this.name = properties?.name;
+								this.created = properties?.created || 0n;
+								this.head = properties?.head || "";
+								this.signer = properties?.signer;
+							}
+						}
+
+						const rustSession = await TestSession.connected(
+							1,
+							createRustPeerbitOptions(),
+						);
+						const localStore =
+							new TestStore<StrictNativeSameSignerBatchProjectIndexable>({
+								docs: new Documents<
+									Document,
+									StrictNativeSameSignerBatchProjectIndexable
+								>(),
+							});
+						store = localStore as any;
+						await rustSession.peers[0].open(localStore, {
+							args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+								nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.put(policy.sameSignersAsPrevious<Document>()),
+								index: {
+									type: StrictNativeSameSignerBatchProjectIndexable,
+									transform: transform.project<
+										Document,
+										StrictNativeSameSignerBatchProjectIndexable
+									>({
+										id: transform.field("id"),
+										name: transform.field("name"),
+										created: transform.context("created"),
+										head: transform.context("head"),
+										signer: transform.entryFirstSignerPublicKey(),
+									}),
+								},
+							},
+						});
+					const sequentialSpy = sinon.spy(
+						localStore.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						localStore.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const contextBatchSpy = sinon.spy(
+						localStore.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					const nativeContextSignerBatchSpy = sinon.spy(
+						((localStore.docs.log as any)._nativeBackbone as any).native,
+						"document_context_previous_signature_public_key_batch",
+					);
+						const requiredPreviousSignerBatchSpy = sinon.spy(
+							((localStore.docs.log as any)._nativeBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_compact_batch_transaction",
+						);
+						const valuePrefixRequiredPreviousSignerBatchSpy = sinon.spy(
+							((localStore.docs.log as any)._nativeBackbone as any).native,
+							"prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_batch_transaction",
+						);
+						const signerBatchSpy = sinon.spy(
+							((localStore.docs.log as any)._nativeBackbone as any).native,
+							"graph_entry_signature_public_key_batch",
+					);
+					const resolveEntrySpy = sinon.spy(
+						localStore.docs as any,
+						"_resolveEntry",
+					);
+					try {
+						const first = await localStore.docs.put(
+							new Document({ id: "same-batch-1", name: "before-1" }),
+							{ target: "none" },
+						);
+						const second = await localStore.docs.put(
+							new Document({ id: "same-batch-2", name: "before-2" }),
+							{ target: "none" },
+						);
+						((localStore.docs.log as any)._nativeBackbone as any).blocks.rm(
+							first.entry.hash,
+						);
+						((localStore.docs.log as any)._nativeBackbone as any).blocks.rm(
+							second.entry.hash,
+						);
+						nativeBatchSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						nativeContextSignerBatchSpy.resetHistory();
+						requiredPreviousSignerBatchSpy.resetHistory();
+						signerBatchSpy.resetHistory();
+						resolveEntrySpy.resetHistory();
+
+						const appended = await localStore.docs.putMany(
+							[
+								new Document({ id: "same-batch-1", name: "after-1" }),
+								new Document({ id: "same-batch-2", name: "after-2" }),
+							],
+							{ target: "none" },
+						);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[0].meta.next).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect(appended.entries[1].meta.next).to.deep.equal([
+							second.entry.hash,
+						]);
+							expect(sequentialSpy.callCount).equal(0);
+							expect(nativeBatchSpy.callCount).equal(1);
+							expect(requiredPreviousSignerBatchSpy.callCount).equal(1);
+							expect(valuePrefixRequiredPreviousSignerBatchSpy.callCount).equal(0);
+							expect(nativeContextSignerBatchSpy.callCount).equal(0);
+							expect(contextBatchSpy.callCount).equal(0);
+							expect(signerBatchSpy.callCount).equal(0);
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect((await localStore.docs.get("same-batch-1"))?.name).equal(
+							"after-1",
+						);
+							expect((await localStore.docs.get("same-batch-2"))?.name).equal(
+								"after-2",
+							);
+							const firstIndexed = await localStore.docs.index.get("same-batch-1", {
+								resolve: false,
+							});
+							const secondIndexed = await localStore.docs.index.get(
+								"same-batch-2",
+								{
+									resolve: false,
+								},
+							);
+							expect(firstIndexed?.created).equal(
+								first.entry.meta.clock.timestamp.wallTime,
+							);
+							expect(secondIndexed?.created).equal(
+								second.entry.meta.clock.timestamp.wallTime,
+							);
+							expect(firstIndexed?.head).equal(appended.entries[0].hash);
+							expect(secondIndexed?.head).equal(appended.entries[1].hash);
+							expect(
+								equals(
+									firstIndexed?.signer,
+									rustSession.peers[0].identity.publicKey.bytes,
+								),
+							).equal(true);
+							expect(
+								equals(
+									secondIndexed?.signer,
+									rustSession.peers[0].identity.publicKey.bytes,
+								),
+							).equal(true);
+						} finally {
+							resolveEntrySpy.restore();
+							signerBatchSpy.restore();
+							valuePrefixRequiredPreviousSignerBatchSpy.restore();
+							requiredPreviousSignerBatchSpy.restore();
+							nativeContextSignerBatchSpy.restore();
+						contextBatchSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native putMany policy updates when native context facts are unavailable", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.put(
+								policy.and(
+									policy.allowAll<Document>(),
+									policy.sameSignersAsPrevious<Document>(),
+								),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const backbone = (store.docs.log as any)._nativeBackbone as any;
+					const originalBatchLookup =
+						backbone.documentContextsAndPreviousSignaturePublicKeys;
+					const originalPreviousLookup =
+						backbone.documentPreviousSignaturePublicKey;
+					const contextBatchSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					try {
+						await store.docs.put(
+							new Document({
+								id: "same-missing-native-context-1",
+								name: "before-1",
+							}),
+							{ target: "none" },
+						);
+						await store.docs.put(
+							new Document({
+								id: "same-missing-native-context-2",
+								name: "before-2",
+							}),
+							{ target: "none" },
+						);
+						nativeBatchSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						backbone.documentContextsAndPreviousSignaturePublicKeys =
+							undefined;
+						backbone.documentPreviousSignaturePublicKey = undefined;
+
+						await expect(
+							store.docs.putMany(
+								[
+									new Document({
+										id: "same-missing-native-context-1",
+										name: "after-1",
+									}),
+									new Document({
+										id: "same-missing-native-context-2",
+										name: "after-2",
+									}),
+								],
+								{ target: "none" },
+							),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"requires native document context/signature batch facts",
+						);
+						expect(nativeBatchSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(0);
+					} finally {
+						backbone.documentPreviousSignaturePublicKey = originalPreviousLookup;
+						backbone.documentContextsAndPreviousSignaturePublicKeys =
+							originalBatchLookup;
+						nativeBatchSpy.restore();
+						contextBatchSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+					it("uses native backend putMany with descriptor context projections in strict native mode", async () => {
+						@variant("strict_native_batch_project_indexable")
+						class StrictNativeBatchProjectIndexable {
+							@field({ type: "string" })
+							id: string;
+
+							@field({ type: option("string") })
+							name?: string;
+
+							@field({ type: "u64" })
+							created: bigint;
+
+							@field({ type: "string" })
+							head: string;
+
+							@field({ type: option(Uint8Array) })
+							signer?: Uint8Array;
+
+							constructor(properties?: Partial<StrictNativeBatchProjectIndexable>) {
+								this.id = properties?.id || "";
+								this.name = properties?.name;
+								this.created = properties?.created || 0n;
+								this.head = properties?.head || "";
+								this.signer = properties?.signer;
+							}
+						}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+						);
+						const localStore = new TestStore<StrictNativeBatchProjectIndexable>(
+							{
+								docs: new Documents<
+									Document,
+									StrictNativeBatchProjectIndexable
+								>(),
+							},
+						);
+						store = localStore as any;
+						await rustSession.peers[0].open(localStore, {
+							args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.allowAll<Document>(),
+								index: {
+									type: StrictNativeBatchProjectIndexable,
+									transform: transform.project<
+										Document,
+										StrictNativeBatchProjectIndexable
+									>({
+										id: transform.field("id"),
+										name: transform.field("name"),
+										created: transform.context("created"),
+										head: transform.context("head"),
+										signer: transform.entryFirstSignerPublicKey(),
+									}),
+								},
+							},
+						});
+					const sequentialSpy = sinon.spy(
+						localStore.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						localStore.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const preparedBatchIndexSpy = sinon.spy(
+						localStore.docs.index as any,
+						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const storedBatchIndexSpy = sinon.spy(
+						localStore.docs.index as any,
+						"_putManyPreparedNativeBackboneDocumentIndexStored",
+					);
+					const genericBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"putManyWithContext",
+					);
+					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
+					const nativeBackboneBatchTransactionSpy = sinon.spy(
+						(localStore.docs.log as any)._nativeBackbone as any,
+						"preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction",
+					);
+					try {
+						const docs = [
+							new Document({ id: uuid(), name: "batch-pick-1" }),
+							new Document({ id: uuid(), name: "batch-pick-2" }),
+						];
+						const appended = await localStore.docs.putMany(docs, {
+							unique: true,
+							target: "none",
+						});
+
+						expect(appended.entries).to.have.length(docs.length);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(storedBatchIndexSpy.callCount).equal(1);
+						expect(preparedBatchIndexSpy.callCount).equal(0);
+						expect(genericBatchIndexSpy.callCount).equal(0);
+						expect(transformSpy.callCount).equal(0);
+						expect(nativeBackboneBatchTransactionSpy.callCount).equal(1);
+							expect(
+								nativeBackboneBatchTransactionSpy.firstCall.args[0].entries.every(
+									(entry: any) => !!entry.documentIndex.projection,
+								),
+							).equal(true);
+							for (let i = 0; i < docs.length; i++) {
+								const doc = docs[i]!;
+								const entry = appended.entries[i]!;
+								const indexed = await localStore.docs.index.get(doc.id, {
+									resolve: false,
+								});
+								expect(indexed?.id).equal(doc.id);
+								expect(indexed?.name).equal(doc.name);
+								expect(indexed?.created).equal(
+									entry.meta.clock.timestamp.wallTime,
+								);
+								expect(indexed?.head).equal(entry.hash);
+								expect(
+									equals(
+										indexed?.signer,
+										rustSession.peers[0].identity.publicKey.bytes,
+									),
+								).equal(true);
+								expect((indexed as any)?.data).equal(undefined);
+							}
+						} finally {
+							nativeBackboneBatchTransactionSpy.restore();
+							transformSpy.restore();
+							genericBatchIndexSpy.restore();
+						storedBatchIndexSpy.restore();
+						preparedBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+					it("uses native backend putMany with descriptor context projections for non-unique updates in strict native mode", async () => {
+						@variant("strict_native_batch_update_project_indexable")
+						class StrictNativeBatchUpdateProjectIndexable {
+							@field({ type: "string" })
+							id: string;
+
+							@field({ type: option("string") })
+							name?: string;
+
+							@field({ type: "u64" })
+							created: bigint;
+
+							@field({ type: "string" })
+							head: string;
+
+							@field({ type: option(Uint8Array) })
+							signer?: Uint8Array;
+
+							constructor(
+								properties?: Partial<StrictNativeBatchUpdateProjectIndexable>,
+							) {
+								this.id = properties?.id || "";
+								this.name = properties?.name;
+								this.created = properties?.created || 0n;
+								this.head = properties?.head || "";
+								this.signer = properties?.signer;
+							}
+						}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+						);
+						const localStore =
+							new TestStore<StrictNativeBatchUpdateProjectIndexable>({
+								docs: new Documents<
+									Document,
+									StrictNativeBatchUpdateProjectIndexable
+								>(),
+							});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+								canPerform: policy.allowAll<Document>(),
+								index: {
+									type: StrictNativeBatchUpdateProjectIndexable,
+									transform: transform.project<
+										Document,
+										StrictNativeBatchUpdateProjectIndexable
+									>({
+										id: transform.field("id"),
+										name: transform.field("name"),
+										created: transform.context("created"),
+										head: transform.context("head"),
+										signer: transform.entryFirstSignerPublicKey(),
+									}),
+								},
+							},
+					});
+					const sequentialSpy = sinon.spy(
+						localStore.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						localStore.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					const preparedBatchIndexSpy = sinon.spy(
+						localStore.docs.index as any,
+						"_putManyPreparedNativeBackboneDocumentIndexWithContext",
+					);
+					const storedBatchIndexSpy = sinon.spy(
+						localStore.docs.index as any,
+						"_putManyPreparedNativeBackboneDocumentIndexStored",
+					);
+					const genericBatchIndexSpy = sinon.spy(
+						localStore.docs.index,
+						"putManyWithContext",
+					);
+					const contextBatchSpy = sinon.spy(
+						localStore.docs.index.index as any,
+						"getContextByIdBatch",
+					);
+					const transformSpy = sinon.spy(localStore.docs.index, "transformer");
+						const latestBatchTransactionSpy = sinon.spy(
+							(localStore.docs.log as any)._nativeBackbone as any,
+							"preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction",
+						);
+						try {
+							const first = await localStore.docs.put(
+								new Document({ id: "project-update-1", name: "before-1" }),
+								{ target: "none" },
+							);
+							const second = await localStore.docs.put(
+								new Document({ id: "project-update-2", name: "before-2" }),
+								{ target: "none" },
+							);
+							nativeBatchSpy.resetHistory();
+							preparedBatchIndexSpy.resetHistory();
+							storedBatchIndexSpy.resetHistory();
+						contextBatchSpy.resetHistory();
+						transformSpy.resetHistory();
+						latestBatchTransactionSpy.resetHistory();
+
+							const appended = await localStore.docs.putMany(
+								[
+									new Document({
+										id: "project-update-1",
+										name: "after-1",
+									}),
+									new Document({
+										id: "project-update-2",
+										name: "after-2",
+									}),
+								],
+								{ target: "none" },
+							);
+
+						expect(appended.entries).to.have.length(2);
+						expect(appended.entries[0].meta.next).to.deep.equal([
+							first.entry.hash,
+						]);
+						expect(appended.entries[1].meta.next).to.deep.equal([
+							second.entry.hash,
+						]);
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(1);
+						expect(storedBatchIndexSpy.callCount).equal(1);
+						expect(preparedBatchIndexSpy.callCount).equal(0);
+						expect(genericBatchIndexSpy.callCount).equal(0);
+						expect(contextBatchSpy.callCount).equal(0);
+							expect(transformSpy.callCount).equal(0);
+							expect(latestBatchTransactionSpy.callCount).equal(1);
+							const firstIndexed = await localStore.docs.index.get(
+								"project-update-1",
+								{ resolve: false },
+							);
+							const secondIndexed = await localStore.docs.index.get(
+								"project-update-2",
+								{ resolve: false },
+							);
+							expect(firstIndexed?.name).equal("after-1");
+							expect(secondIndexed?.name).equal("after-2");
+							expect(firstIndexed?.created).equal(
+								first.entry.meta.clock.timestamp.wallTime,
+							);
+							expect(secondIndexed?.created).equal(
+								second.entry.meta.clock.timestamp.wallTime,
+							);
+							expect(firstIndexed?.head).equal(appended.entries[0].hash);
+							expect(secondIndexed?.head).equal(appended.entries[1].hash);
+							expect(
+								equals(
+									firstIndexed?.signer,
+									rustSession.peers[0].identity.publicKey.bytes,
+								),
+							).equal(true);
+							expect(
+								equals(
+									secondIndexed?.signer,
+									rustSession.peers[0].identity.publicKey.bytes,
+								),
+							).equal(true);
+							expect((firstIndexed as any)?.data).equal(undefined);
+						} finally {
+						latestBatchTransactionSpy.restore();
+						transformSpy.restore();
+						contextBatchSpy.restore();
+						genericBatchIndexSpy.restore();
+						storedBatchIndexSpy.restore();
+						preparedBatchIndexSpy.restore();
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await localStore.close();
+						store = undefined;
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native deletes through the native backend boundary", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sharedAppendSpy = sinon.spy(store.docs.log, "append");
+					const trustedAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyValidated",
+					);
+					const nativeDeleteAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericPayloadAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const nativeIndex = (store.docs.index as any).index as {
+						delIds?: (...args: any[]) => any;
+						delIdsNoReturn?: (...args: any[]) => any;
+						getContextById?: (...args: any[]) => any;
+					};
+					const backbone = (store.docs.log as any)._nativeBackbone as {
+							native: {
+								document_context: (...args: any[]) => unknown;
+								prepare_plain_committed_storage_append_document_delete_transaction: (
+									...args: any[]
+								) => unknown;
+								document_context_previous_signature_public_key_batch: (
+									...args: any[]
+								) => unknown;
+							document_previous_signature_public_key: (
+								...args: any[]
+							) => unknown;
+						};
+						deleteDocuments: (...args: any[]) => number;
+					};
+					expect(nativeIndex.delIdsNoReturn).to.be.a("function");
+					expect(backbone.deleteDocuments).to.be.a("function");
+					const delIdsNoReturnSpy = sinon.spy(nativeIndex, "delIdsNoReturn");
+					const delIdsSpy = sinon.spy(nativeIndex, "delIds");
+						const deleteDocumentsSpy = sinon.spy(backbone, "deleteDocuments");
+						const nativeDocumentDeleteTransactionSpy = sinon.spy(
+							backbone.native,
+							"prepare_plain_committed_storage_append_document_delete_transaction",
+						);
+						const nativeContextSpy = sinon.spy(
+							backbone.native,
+							"document_context",
+					);
+					const previousSignatureBatchSpy = sinon.spy(
+						backbone.native,
+						"document_context_previous_signature_public_key_batch",
+					);
+					const previousSignatureSpy = sinon.spy(
+						backbone.native,
+						"document_previous_signature_public_key",
+					);
+					const contextLookupSpy = nativeIndex.getContextById
+						? sinon.spy(nativeIndex, "getContextById")
+						: undefined;
+					try {
+						const doc = new Document({ id: uuid(), name: "native-delete" });
+						const put = await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const putHash = put.entry.hash;
+						sharedAppendSpy.resetHistory();
+						nativeDeleteAppendSpy.resetHistory();
+						resolveEntrySpy.resetHistory();
+						nativeContextSpy.resetHistory();
+						previousSignatureBatchSpy.resetHistory();
+						previousSignatureSpy.resetHistory();
+						contextLookupSpy?.resetHistory();
+
+						const deleted = await store.docs.del(doc.id, {
+							replicate: false,
+							target: "none",
+						});
+
+						expect(deleted.entry.meta.type).equal(EntryType.CUT);
+						expect(deleted.entry.meta.next).to.deep.equal([putHash]);
+						expect(await store.docs.get(doc.id)).equal(undefined);
+						expect(nativeDeleteAppendSpy.callCount).equal(1);
+						expect(genericPayloadAppendSpy.callCount).equal(0);
+						expect(trustedAppendSpy.callCount).equal(0);
+						expect(sharedAppendSpy.callCount).equal(0);
+							expect(resolveEntrySpy.callCount).equal(0);
+							expect(contextLookupSpy?.callCount ?? 0).equal(0);
+							expect(nativeContextSpy.callCount).greaterThan(0);
+							expect(previousSignatureBatchSpy.callCount).equal(0);
+							expect(previousSignatureSpy.callCount).equal(0);
+							expect(nativeDocumentDeleteTransactionSpy.callCount).equal(1);
+							expect(delIdsNoReturnSpy.callCount).equal(0);
+							expect(delIdsSpy.callCount).equal(0);
+							expect(deleteDocumentsSpy.callCount).equal(0);
+						} finally {
+							contextLookupSpy?.restore();
+							previousSignatureSpy.restore();
+							previousSignatureBatchSpy.restore();
+							nativeContextSpy.restore();
+							nativeDocumentDeleteTransactionSpy.restore();
+							deleteDocumentsSpy.restore();
+						delIdsSpy.restore();
+						delIdsNoReturnSpy.restore();
+						resolveEntrySpy.restore();
+						genericPayloadAppendSpy.restore();
+						nativeDeleteAppendSpy.restore();
+						trustedAppendSpy.restore();
+						sharedAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native delete entries lazy until the public result is read", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareShallowSpy = sinon.spy(Entry, "prepareShallowEntry");
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "lazy-native-delete-entry",
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const deleted = await store.docs.del(doc.id, {
+							replicate: false,
+							target: "none",
+						});
+						expect(prepareShallowSpy.callCount).equal(0);
+
+						const hash = deleted.entry.hash;
+						expect(hash).to.be.a("string");
+						expect(deleted.entry.meta.type).equal(EntryType.CUT);
+						expect(prepareShallowSpy.callCount).equal(1);
+						expect(deleted.entry.hash).equal(hash);
+						expect(prepareShallowSpy.callCount).equal(1);
+					} finally {
+						prepareShallowSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native deletes when native document context lookup is unavailable", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const backbone = (store.docs.log as any)._nativeBackbone as any;
+					const originalContextLookup = backbone.documentContext;
+					const nativeDeleteAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const nativeIndex = (store.docs.index as any).index as {
+						getContextById?: (...args: any[]) => any;
+					};
+					const contextLookupSpy = nativeIndex.getContextById
+						? sinon.spy(nativeIndex, "getContextById")
+						: undefined;
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-delete-missing-context",
+						});
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						nativeDeleteAppendSpy.resetHistory();
+						contextLookupSpy?.resetHistory();
+						backbone.documentContext = undefined;
+						await expect(
+							store.docs.del(doc.id, {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"requires native document context lookup",
+						);
+						expect(nativeDeleteAppendSpy.callCount).equal(0);
+						expect(contextLookupSpy?.callCount ?? 0).equal(0);
+					} finally {
+						backbone.documentContext = originalContextLookup;
+						contextLookupSpy?.restore();
+						nativeDeleteAppendSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("removes strict native replicated deletes through exact native delete on receive", async () => {
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: Document,
+							transform: transform.identity<Document>(),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-delete",
+						});
+						await source.docs.put(doc, { unique: true });
+						await waitForResolved(async () =>
+							expect(
+								(
+									await target.docs.get(doc.id, {
+										local: true,
+										remote: false,
+									})
+								)?.name,
+							).equal("native-replicated-delete"),
+						);
+
+						const documentDelSpy = sinon.spy(target.docs.index, "del");
+						const backendIndex = target.docs.index.index as any;
+						const delIdsNoReturnSpy = sinon.spy(backendIndex, "delIdsNoReturn");
+						const delIdsSpy = sinon.spy(backendIndex, "delIds");
+						try {
+							await source.docs.del(doc.id);
+							await waitForResolved(async () =>
+								expect(
+									await target.docs.get(doc.id, {
+										local: true,
+										remote: false,
+									}),
+								).equal(undefined),
+							);
+							expect(documentDelSpy.callCount).equal(0);
+							expect(delIdsNoReturnSpy.callCount).greaterThan(0);
+							expect(delIdsSpy.callCount).equal(0);
+						} finally {
+							delIdsSpy.restore();
+							delIdsNoReturnSpy.restore();
+							documentDelSpy.restore();
+						}
+					} finally {
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
+				it("removes strict native replicated projected indexes through exact native delete on receive", async () => {
+					@variant("strict_native_replicated_delete_project_indexable")
+					class StrictNativeReplicatedDeleteProjectIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option("string") })
+						name?: string;
+
+						@field({ type: "u64" })
+						created: bigint;
+
+						@field({ type: "string" })
+						head: string;
+
+						@field({ type: option(Uint8Array) })
+						signer?: Uint8Array;
+
+						constructor(
+							properties?: Partial<StrictNativeReplicatedDeleteProjectIndexable>,
+						) {
+							this.id = properties?.id || "";
+							this.name = properties?.name;
+							this.created = properties?.created || 0n;
+							this.head = properties?.head || "";
+							this.signer = properties?.signer;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						2,
+						createRustPeerbitOptions(),
+					);
+					const source = new TestStore<StrictNativeReplicatedDeleteProjectIndexable>(
+						{
+							docs: new Documents<
+								Document,
+								StrictNativeReplicatedDeleteProjectIndexable
+							>(),
+						},
+					);
+					const target = source.clone();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: { factor: 1 },
+						nativeGraph: true,
+						nativeBackbone: nativeBackboneDocumentIndexOptions(),
+						canPerform: policy.allowAll<Document>(),
+						index: {
+							type: StrictNativeReplicatedDeleteProjectIndexable,
+							transform: transform.project<
+								Document,
+								StrictNativeReplicatedDeleteProjectIndexable
+							>({
+								id: transform.field("id"),
+								name: transform.field("name"),
+								created: transform.context("created"),
+								head: transform.context("head"),
+								signer: transform.entryFirstSignerPublicKey(),
+							}),
+						},
+					});
+					await rustSession.peers[0].open(source, { args: openArgs() });
+					await rustSession.peers[1].open(target, { args: openArgs() });
+					try {
+						const doc = new Document({
+							id: uuid(),
+							name: "native-replicated-project-delete",
+						});
+						const put = await source.docs.put(doc, { unique: true });
+						await waitForResolved(async () => {
+							const indexed = await target.docs.index.get(doc.id, {
+								local: true,
+								remote: false,
+								resolve: false,
+							});
+							expect(indexed?.name).equal("native-replicated-project-delete");
+							expect(indexed?.head).equal(put.entry.hash);
+						});
+
+						const documentDelSpy = sinon.spy(target.docs.index, "del");
+						const transformSpy = sinon.spy(target.docs.index, "transformer");
+						const decoderSpy = sinon.spy(target.docs.index.valueEncoding, "decoder");
+						const backendIndex = target.docs.index.index as any;
+						const delIdsNoReturnSpy = sinon.spy(backendIndex, "delIdsNoReturn");
+						const delIdsSpy = sinon.spy(backendIndex, "delIds");
+						const backbone = (target.docs.log as any)._nativeBackbone as {
+							deleteDocuments?: (...args: any[]) => unknown;
+						};
+						const deleteDocumentsSpy = backbone.deleteDocuments
+							? sinon.spy(backbone, "deleteDocuments")
+							: undefined;
+						try {
+							await source.docs.del(doc.id);
+							await waitForResolved(async () => {
+								expect(
+									await target.docs.index.get(doc.id, {
+										local: true,
+										remote: false,
+										resolve: false,
+									}),
+								).equal(undefined);
+								expect(
+									await target.docs.get(doc.id, {
+										local: true,
+										remote: false,
+									}),
+								).equal(undefined);
+							});
+							expect(documentDelSpy.callCount).equal(0);
+							expect(delIdsNoReturnSpy.callCount).greaterThan(0);
+							expect(delIdsSpy.callCount).equal(0);
+							expect(deleteDocumentsSpy?.callCount ?? 0).greaterThan(0);
+							expect(transformSpy.callCount).equal(0);
+							expect(decoderSpy.callCount).equal(0);
+						} finally {
+							deleteDocumentsSpy?.restore();
+							delIdsSpy.restore();
+							delIdsNoReturnSpy.restore();
+							decoderSpy.restore();
+							transformSpy.restore();
+							documentDelSpy.restore();
+						}
+					} finally {
+						await target.close();
+						await source.close();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native delete replay that does not point at the native context head", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const logGetSpy = sinon.spy(store.docs.log.log, "get");
+					try {
+						const id = uuid();
+						const first = await store.docs.put(
+							new Document({ id, name: "native-delete-replay-1" }),
+						);
+						await store.docs.put(
+							new Document({ id, name: "native-delete-replay-2" }),
+						);
+						const staleDelete = await createEntry({
+							data: new DeleteOperation({
+								key: toId(id),
+							}),
+							identity: store.node.identity,
+							store: store.docs.log.log.blocks,
+							canAppend: () => true,
+							encoding: store.docs.log.log.encoding,
+							meta: {
+								type: EntryType.CUT,
+								next: [first.entry],
+							},
+						});
+						logGetSpy.resetHistory();
+
+						expect(await (store.docs as any).canAppend(staleDelete)).equal(
+							false,
+						);
+						expect(logGetSpy.callCount).equal(0);
+					} finally {
+						logGetSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("validates strict native delete ownership replay without resolving or decoding documents", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.or(
+								policy.put(policy.allowAll<Document>()),
+								policy.deleteSignedByExistingField<Document>("data"),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const identityDocumentSpy = sinon.spy(
+						store.docs as any,
+						"getLocalIdentityDocumentByHead",
+					);
+					const indexedPolicyDocumentSpy = sinon.spy(
+						store.docs as any,
+						"getLocalIndexedDocumentForNativeDeletePolicy",
+					);
+					const nativeFieldValueSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getNativeIndexedFieldValue",
+					);
+					let getPayloadValueSpy: sinon.SinonStub | undefined;
+					let decoderSpy: sinon.SinonStub | undefined;
+					try {
+						const id = uuid();
+						const put = await store.docs.put(
+							new Document({
+								id,
+								name: "native-delete-owner-replay",
+								data: rustSession.peers[0].identity.publicKey.bytes,
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						const replayDelete = await createEntry({
+							data: new DeleteOperation({
+								key: toId(id),
+							}),
+							identity: store.node.identity,
+							store: store.docs.log.log.blocks,
+							canAppend: () => true,
+							encoding: store.docs.log.log.encoding,
+							meta: {
+								type: EntryType.CUT,
+								next: [put.entry],
+							},
+						});
+						getPayloadValueSpy = sinon
+							.stub(replayDelete, "getPayloadValue")
+							.callsFake(async () => {
+								throw new Error("Unexpected payload materialization");
+							});
+						decoderSpy = sinon
+							.stub(store.docs.index.valueEncoding, "decoder")
+							.callsFake(() => {
+								throw new Error("Unexpected document decode");
+							});
+						resolveEntrySpy.resetHistory();
+						identityDocumentSpy.resetHistory();
+						indexedPolicyDocumentSpy.resetHistory();
+						nativeFieldValueSpy.resetHistory();
+						decoderSpy.resetHistory();
+
+						expect(await (store.docs as any).canAppend(replayDelete)).equal(
+							true,
+						);
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect(identityDocumentSpy.callCount).equal(0);
+						expect(indexedPolicyDocumentSpy.callCount).equal(0);
+						expect(nativeFieldValueSpy.callCount).equal(1);
+						expect(decoderSpy.callCount).equal(0);
+						expect(getPayloadValueSpy.callCount).equal(0);
+					} finally {
+						getPayloadValueSpy?.restore();
+						decoderSpy?.restore();
+						nativeFieldValueSpy.restore();
+						indexedPolicyDocumentSpy.restore();
+						identityDocumentSpy.restore();
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects strict native delete append fallback", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					try {
+						const doc = new Document({ id: uuid(), name: "delete-no-native" });
+						await store.docs.put(doc, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						const strictCommitOnlyStub = sinon
+							.stub(
+								store.docs.log as any,
+								"appendStrictNativeDocumentPayloadCommitOnly",
+							)
+							.returns(undefined as any);
+						const genericPayloadAppendSpy = sinon.spy(
+							store.docs.log as any,
+							"appendLocallyPreparedPayloadCommitOnly",
+						);
+						try {
+							await expect(
+								store.docs.del(doc.id, {
+									replicate: false,
+									target: "none",
+								}),
+							).to.be.rejectedWith(
+								NativeDocumentModeError,
+								"native delete append support",
+							);
+							expect(genericPayloadAppendSpy.callCount).equal(0);
+						} finally {
+							genericPayloadAppendSpy.restore();
+							strictCommitOnlyStub.restore();
+						}
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("supports strict native delete ownership descriptor policies", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.or(
+								policy.put(policy.allowAll<Document>()),
+								policy.deleteSignedByExistingField<Document>("data"),
+							),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(store.docs as any, "_resolveEntry");
+					const identityDocumentSpy = sinon.spy(
+						store.docs as any,
+						"getLocalIdentityDocumentByHead",
+					);
+					const indexedPolicyDocumentSpy = sinon.spy(
+						store.docs as any,
+						"getLocalIndexedDocumentForNativeDeletePolicy",
+					);
+					const nativeFieldValueSpy = sinon.spy(
+						store.docs.index.index as any,
+						"getNativeIndexedFieldValue",
+					);
+					try {
+						const owned = new Document({
+							id: uuid(),
+							name: "owned-native-delete",
+							data: rustSession.peers[0].identity.publicKey.bytes,
+						});
+						const foreign = new Document({
+							id: uuid(),
+							name: "foreign-native-delete",
+							data: randomBytes(32),
+						});
+						await store.docs.put(owned, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						await store.docs.put(foreign, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						resolveEntrySpy.resetHistory();
+
+						await store.docs.del(owned.id, {
+							replicate: false,
+							target: "none",
+						});
+						await expect(
+							store.docs.del(foreign.id, {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"canPerform policy rejected this delete",
+						);
+
+						expect(await store.docs.get(owned.id)).equal(undefined);
+						expect((await store.docs.get(foreign.id))?.name).equal(
+							"foreign-native-delete",
+						);
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect(identityDocumentSpy.callCount).equal(0);
+						expect(indexedPolicyDocumentSpy.callCount).equal(0);
+						expect(nativeFieldValueSpy.callCount).equal(2);
+					} finally {
+						nativeFieldValueSpy.restore();
+						indexedPolicyDocumentSpy.restore();
+						identityDocumentSpy.restore();
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("uses native indexed field values for strict native delete ownership policies", async () => {
+					@variant("strict_native_delete_owner_indexable")
+					class DeleteOwnerIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option(Uint8Array) })
+						data?: Uint8Array;
+
+						constructor(properties?: Partial<DeleteOwnerIndexable>) {
+							this.id = properties?.id || "";
+							this.data = properties?.data;
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<DeleteOwnerIndexable>({
+						docs: new Documents<Document, DeleteOwnerIndexable>(),
+					});
+					store = localStore as any;
+					await rustSession.peers[0].open(localStore, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.or(
+								policy.put(policy.allowAll<Document>()),
+								policy.deleteSignedByExistingField<Document>("data"),
+							),
+							index: {
+								type: DeleteOwnerIndexable,
+								transform: transform.pick<Document, DeleteOwnerIndexable>([
+									"id",
+									"data",
+								]),
+							},
+						},
+					});
+					const resolveEntrySpy = sinon.spy(
+						localStore.docs as any,
+						"_resolveEntry",
+					);
+					const indexedPolicyDocumentSpy = sinon.spy(
+						localStore.docs as any,
+						"getLocalIndexedDocumentForNativeDeletePolicy",
+					);
+					const nativeFieldValueSpy = sinon.spy(
+						localStore.docs.index.index as any,
+						"getNativeIndexedFieldValue",
+					);
+					try {
+						const owned = new Document({
+							id: uuid(),
+							name: "owned-indexed-native-delete",
+							data: rustSession.peers[0].identity.publicKey.bytes,
+						});
+						const foreign = new Document({
+							id: uuid(),
+							name: "foreign-indexed-native-delete",
+							data: randomBytes(32),
+						});
+						await localStore.docs.put(owned, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						await localStore.docs.put(foreign, {
+							unique: true,
+							replicate: false,
+							target: "none",
+						});
+						resolveEntrySpy.resetHistory();
+						indexedPolicyDocumentSpy.resetHistory();
+						nativeFieldValueSpy.resetHistory();
+
+						await localStore.docs.del(owned.id, {
+							replicate: false,
+							target: "none",
+						});
+						await expect(
+							localStore.docs.del(foreign.id, {
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"canPerform policy rejected this delete",
+						);
+
+						expect(resolveEntrySpy.callCount).equal(0);
+						expect(indexedPolicyDocumentSpy.callCount).equal(0);
+						expect(nativeFieldValueSpy.callCount).equal(2);
+					} finally {
+						nativeFieldValueSpy.restore();
+						indexedPolicyDocumentSpy.restore();
+						resolveEntrySpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("keeps strict native delete ownership native after reopen with persisted document-index facts", async () => {
+					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
+
+					@variant("strict_native_delete_owner_reopen_indexable")
+					class DeleteOwnerReopenIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: option(Uint8Array) })
+						data?: Uint8Array;
+
+						constructor(properties?: Partial<DeleteOwnerReopenIndexable>) {
+							this.id = properties?.id || "";
+							this.data = properties?.data;
+						}
+					}
+
+					const directory = `./tmp/document-store/native-delete-owner-reopen-${uuid()}`;
+					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const openArgs = () => ({
+						mode: "native" as const,
+						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: {
+							optional: false,
+							documentIndex: true,
+							coordinatePersistence: new NativeBackboneCoordinatePersistence(
+								coordinateStore,
+								{ flushOnAppend: false },
+							),
+						},
+						canPerform: policy.or(
+							policy.put(policy.allowAll<Document>()),
+							policy.deleteSignedByExistingField<Document>("data"),
+						),
+						index: {
+							type: DeleteOwnerReopenIndexable,
+							transform: transform.pick<Document, DeleteOwnerReopenIndexable>([
+								"id",
+								"data",
+							]),
+						},
+					});
+					let peer: Awaited<ReturnType<typeof Peerbit.create>> | undefined;
+					let firstStore: TestStore<DeleteOwnerReopenIndexable> | undefined;
+					let reopenedStore:
+						| TestStore<DeleteOwnerReopenIndexable>
+						| undefined;
+					let deletedStore:
+						| TestStore<DeleteOwnerReopenIndexable>
+						| undefined;
+					try {
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						firstStore = new TestStore<DeleteOwnerReopenIndexable>({
+							docs: new Documents<Document, DeleteOwnerReopenIndexable>(),
+						});
+						store = firstStore as any;
+						await peer.open(firstStore, { args: openArgs() });
+
+						const id = uuid();
+						const signerBytes = peer.identity.publicKey.bytes;
+						await firstStore.docs.put(
+							new Document({
+								id,
+								name: "native-delete-owner-reopen-1",
+								data: signerBytes,
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						);
+						const clone = firstStore.clone();
+						await firstStore.close();
+						firstStore = undefined;
+						store = undefined;
+						await peer.stop();
+						peer = undefined;
+
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						reopenedStore = await peer.open(clone, { args: openArgs() });
+						store = reopenedStore as any;
+						const reopenedBackbone = (reopenedStore.docs.log as any)
+							._nativeBackbone;
+						expect(reopenedBackbone.documentIndexLength).equal(1);
+						expect(
+							reopenedBackbone.documentKeysExist([`string:${id}`])[0],
+						).equal(1);
+						const reopenedIndexed = await reopenedStore.docs.index.get(id, {
+							resolve: false,
+						});
+						expect(reopenedIndexed?.id).equal(id);
+						expect(equals(reopenedIndexed?.data, signerBytes)).equal(true);
+
+						const resolveEntrySpy = sinon.spy(
+							reopenedStore.docs as any,
+							"_resolveEntry",
+						);
+						const indexedPolicyDocumentSpy = sinon.spy(
+							reopenedStore.docs as any,
+							"getLocalIndexedDocumentForNativeDeletePolicy",
+						);
+						const nativeFieldValueSpy = sinon.spy(
+							reopenedStore.docs.index.index as any,
+							"getNativeIndexedFieldValue",
+						);
+						try {
+							await reopenedStore.docs.del(id, {
+								replicate: false,
+								target: "none",
+							});
+
+							expect(
+								await reopenedStore.docs.index.get(id, { resolve: false }),
+							).equal(undefined);
+							expect(resolveEntrySpy.callCount).equal(0);
+							expect(indexedPolicyDocumentSpy.callCount).equal(0);
+							expect(nativeFieldValueSpy.callCount).equal(1);
+						} finally {
+							nativeFieldValueSpy.restore();
+							indexedPolicyDocumentSpy.restore();
+							resolveEntrySpy.restore();
+						}
+
+						const deletedClone = reopenedStore.clone();
+						await reopenedStore.close();
+						reopenedStore = undefined;
+						store = undefined;
+						await peer.stop();
+						peer = undefined;
+
+						peer = await Peerbit.create({
+							...createRustPeerbitOptions(),
+							directory,
+						});
+						deletedStore = await peer.open(deletedClone, { args: openArgs() });
+						store = deletedStore as any;
+						const deletedBackbone = (deletedStore.docs.log as any)
+							._nativeBackbone;
+						expect(deletedBackbone.documentValueLength).equal(0);
+						expect(deletedBackbone.documentIndexLength).equal(0);
+						expect(
+							deletedBackbone.documentKeysExist([`string:${id}`])[0],
+						).equal(0);
+						expect(
+							await deletedStore.docs.index.get(id, { resolve: false }),
+						).equal(undefined);
+						expect(await deletedStore.docs.get(id)).equal(undefined);
+					} finally {
+						await deletedStore?.close();
+						await reopenedStore?.close();
+						await firstStore?.close();
+						store = undefined;
+						await peer?.stop();
+						await rm(directory, { recursive: true, force: true });
+					}
+				});
+
+				it("rejects strict native delete ownership policies when the native transform omits the field", async () => {
+					@variant("strict_native_delete_owner_name_indexable")
+					class DeleteOwnerNameIndexable {
+						@field({ type: "string" })
+						id: string;
+
+						@field({ type: "string" })
+						name: string;
+
+						constructor(properties?: Partial<DeleteOwnerNameIndexable>) {
+							this.id = properties?.id || "";
+							this.name = properties?.name || "";
+						}
+					}
+
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					const localStore = new TestStore<DeleteOwnerNameIndexable>({
+						docs: new Documents<Document, DeleteOwnerNameIndexable>(),
+					});
+					store = localStore as any;
+					try {
+						await expect(
+							rustSession.peers[0].open(localStore, {
+								args: {
+									mode: "native",
+									replicate: false,
+									nativeGraph: true,
+									nativeBackbone: nativeBackboneDocumentIndexOptions(),
+									canPerform: policy.or(
+										policy.put(policy.allowAll<Document>()),
+										policy.deleteSignedByExistingField<Document>("data"),
+									),
+									index: {
+										type: DeleteOwnerNameIndexable,
+										transform: transform.pick<
+											Document,
+											DeleteOwnerNameIndexable
+										>(["id", "name"]),
+									},
+								},
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"read delete policy field: data",
+						);
+					} finally {
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects unsupported putMany options in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const sequentialSpy = sinon.spy(
+						store.docs as any,
+						"putManySequential",
+					);
+					const nativeBatchSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendMany",
+					);
+					try {
+						for (const testCase of [
+							{
+								name: "canAppend",
+								options: { canAppend: async () => true },
+								message: "per-call canAppend",
+							},
+							{
+								name: "onChange",
+								options: { onChange: () => undefined },
+								message: "per-call onChange",
+							},
+							{
+								name: "replicas",
+								options: { replicas: 0 },
+								message: "per-call replicas",
+							},
+							{
+								name: "delivery",
+								options: { delivery: true },
+								message: "delivery",
+							},
+						]) {
+							await expect(
+								store.docs.putMany(
+									[
+										new Document({
+											id: uuid(),
+											name: `custom-${testCase.name}`,
+										}),
+									],
+									{
+										target: "none",
+										...(testCase.options as any),
+									},
+								),
+								testCase.name,
+							).to.be.rejectedWith(NativeDocumentModeError, testCase.message);
+						}
+						expect(sequentialSpy.callCount).equal(0);
+						expect(nativeBatchSpy.callCount).equal(0);
+					} finally {
+						nativeBatchSpy.restore();
+						sequentialSpy.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects payload append fallback in strict native mode", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const commitOnlyStub = sinon
+						.stub(
+							store.docs.log as any,
+							"appendStrictNativeDocumentPayloadCommitOnly",
+						)
+						.returns(undefined as any);
+					const genericPayloadAppendSpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					const fallbackSpy = sinon.spy(
+						store.docs as any,
+						"commitNativeDocumentAppendPayloadFallback",
+					);
+					try {
+						await expect(
+							store.docs.put(new Document({ id: uuid(), name: "no-native" }), {
+								unique: true,
+								replicate: false,
+								target: "none",
+							}),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"native payload commit-only append",
+						);
+						expect(genericPayloadAppendSpy.callCount).equal(0);
+						expect(fallbackSpy.callCount).equal(0);
+					} finally {
+						fallbackSpy.restore();
+						genericPayloadAppendSpy.restore();
+						commitOnlyStub.restore();
+						await rustSession.stop();
+					}
+				});
+
+				it("rejects missing native document-index commit support before append", async () => {
+					const rustSession = await TestSession.connected(
+						1,
+						createRustPeerbitOptions(),
+					);
+					store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+					await rustSession.peers[0].open(store, {
+						args: {
+							mode: "native",
+							replicate: false,
+							nativeGraph: true,
+							nativeBackbone: nativeBackboneDocumentIndexOptions(),
+							canPerform: policy.allowAll<Document>(),
+							index: {
+								type: Document,
+								transform: transform.identity<Document>(),
+							},
+						},
+					});
+					const prepareImmediateStub = sinon
+						.stub(store.docs as any, "prepareNativeBackboneDocumentIndexCommit")
+						.returns(undefined);
+					const prepareWithAppendFactsStub = sinon
+						.stub(
+							store.docs as any,
+							"createNativeBackboneDocumentIndexAppendFactsPreparer",
+						)
+						.returns(undefined);
+					const strictCommitOnlySpy = sinon.spy(
+						store.docs.log as any,
+						"appendStrictNativeDocumentPayloadCommitOnly",
+					);
+					const genericCommitOnlySpy = sinon.spy(
+						store.docs.log as any,
+						"appendLocallyPreparedPayloadCommitOnly",
+					);
+					try {
+						await expect(
+							store.docs.put(
+								new Document({ id: uuid(), name: "no-index-commit" }),
+								{
+									unique: true,
+									replicate: false,
+									target: "none",
+								},
+							),
+						).to.be.rejectedWith(
+							NativeDocumentModeError,
+							"native document-index commit",
+						);
+						expect(strictCommitOnlySpy.callCount).equal(0);
+						expect(genericCommitOnlySpy.callCount).equal(0);
+					} finally {
+						genericCommitOnlySpy.restore();
+						strictCommitOnlySpy.restore();
+						prepareWithAppendFactsStub.restore();
+						prepareImmediateStub.restore();
+						await rustSession.stop();
+					}
+				});
+			});
+
+			it("uses the plain put fast path for policy.allowAll canPerform", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.allowAll<Document>();
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor).to.deep.equal({ kind: "allowAll" });
+				const descriptorSymbol = Object.getOwnPropertySymbols(canPerform).find(
+					(symbol) =>
+						(canPerform as unknown as Record<symbol, unknown>)[symbol] ===
+						descriptor,
+				);
+				expect(descriptorSymbol).to.exist;
+				expect(
+					Object.getOwnPropertyDescriptor(canPerform, descriptorSymbol!)
+						?.enumerable,
+				).equal(false);
+
+				const changes: DocumentsChange<Document, Document>[] = [];
+				store.docs.events.addEventListener("change", (evt) => {
+					changes.push(evt.detail);
+				});
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "policy" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect((await store.docs.get(doc.id))?.name).equal("policy");
+					expect(changes).to.have.length(1);
+					expect(changes[0].added).to.have.length(1);
+					expect(changes[0].added[0]).equal(doc);
+					expect(changes[0].added[0].__context.head).equal(put.entry.hash);
+					expect(changes[0].added[0].__indexed).to.exist;
+					expect(changes[0].removed).to.be.empty;
+				} finally {
+					nativeCommitSpy.restore();
+					appendSpy.restore();
+					preparedAppendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("uses the plain put fast path for matching policy.signedByPublicKey canPerform", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.signedByPublicKey<Document>(
+					session.peers[0].identity.publicKey,
+				);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor?.kind).equal("signedByPublicKey");
+				expect(
+					equals(
+						descriptor?.kind === "signedByPublicKey"
+							? descriptor.publicKey
+							: undefined,
+						session.peers[0].identity.publicKey.bytes,
+					),
+				).equal(true);
+
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "signed" });
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect((await store.docs.get(doc.id))?.name).equal("signed");
+				} finally {
+					nativeCommitSpy.restore();
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("uses the plain put fast path for composed put policies", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.and(
+					policy.allowAll<Document>(),
+					policy.or(
+						policy.delete(
+							policy.signedByPublicKey<Document>(
+								session.peers[1].identity.publicKey,
+							),
+						),
+						policy.put(
+							policy.signedByPublicKey<Document>(
+								session.peers[0].identity.publicKey,
+							),
+						),
+					),
+				);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor?.kind).equal("and");
+
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+
+				try {
+					const doc = new Document({ id: uuid(), name: "composed" });
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect((await store.docs.get(doc.id))?.name).equal("composed");
+				} finally {
+					nativeCommitSpy.restore();
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("uses the plain put fast path for matching policy.signedByField canPerform", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.put(policy.signedByField<Document>("data"));
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor?.kind).equal("put");
+
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeCommitSpy = sinon.spy(
+					store.docs as any,
+					"commitNativeDocumentAppend",
+				);
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "field-signed",
+						data: session.peers[0].identity.publicKey.bytes,
+					});
+					const nativeFastPath = (store.docs as any)
+						._optionCanPerformNativeFastPath as (document: Document) => boolean;
+					expect(nativeFastPath).to.be.a("function");
+					expect(nativeFastPath(doc)).equal(true);
+					expect(
+						nativeFastPath(
+							new Document({
+								id: uuid(),
+								data: session.peers[1].identity.publicKey.bytes,
+							}),
+						),
+					).equal(false);
+					(store.docs as any)._optionCanPerformNativePolicy = undefined;
+					await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(1);
+					expect(appendSpy.callCount).equal(0);
+					expect(nativeCommitSpy.callCount).equal(1);
+					expect((await store.docs.get(doc.id))?.name).equal("field-signed");
+				} finally {
+					nativeCommitSpy.restore();
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("evaluates policy.allowAll during canAppend validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.allowAll<Document>(),
+					},
+				});
+				const canPerform = (store.docs as any)._optionCanPerform;
+				const canPerformSpy = sinon.spy(canPerform);
+				(store.docs as any)._optionCanPerform = canPerformSpy;
+
+				try {
+					const doc = new Document({ id: uuid(), name: "replay" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const allowed = await (store.docs as any).canAppend(put.entry, {
+						document: doc,
+						operation: new PutOperation({ data: serialize(doc) }),
+					});
+
+					expect(allowed).equal(true);
+					expect(canPerformSpy.callCount).equal(1);
+					const canPerformInput = canPerformSpy.getCall(0).args[0] as any;
+					expect(canPerformInput.type).equal("put");
+					expect(canPerformInput.value.id).equal(doc.id);
+				} finally {
+					(store.docs as any)._optionCanPerform = canPerform;
+				}
+			});
+
+			it("evaluates policy.signedByPublicKey during canAppend validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.signedByPublicKey<Document>(
+							session.peers[0].identity.publicKey,
+						),
+					},
+				});
+				const canPerform = (store.docs as any)._optionCanPerform;
+				const canPerformSpy = sinon.spy(canPerform);
+				(store.docs as any)._optionCanPerform = canPerformSpy;
+
+				try {
+					const doc = new Document({ id: uuid(), name: "signed-replay" });
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const allowed = await (store.docs as any).canAppend(put.entry, {
+						document: doc,
+						operation: new PutOperation({ data: serialize(doc) }),
+					});
+
+					expect(allowed).equal(true);
+					expect(canPerformSpy.callCount).equal(1);
+					const canPerformInput = canPerformSpy.getCall(0).args[0] as any;
+					expect(canPerformInput.type).equal("put");
+					expect(canPerformInput.value.id).equal(doc.id);
+				} finally {
+					(store.docs as any)._optionCanPerform = canPerform;
+				}
+			});
+
+			it("evaluates policy.signedByField during canAppend validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.put(policy.signedByField<Document>("data")),
+					},
+				});
+				const canPerform = (store.docs as any)._optionCanPerform;
+				const canPerformSpy = sinon.spy(canPerform);
+				(store.docs as any)._optionCanPerform = canPerformSpy;
+
+				try {
+					const doc = new Document({
+						id: uuid(),
+						name: "field-replay",
+						data: session.peers[0].identity.publicKey.bytes,
+					});
+					const put = await store.docs.put(doc, {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					const allowed = await (store.docs as any).canAppend(put.entry, {
+						document: doc,
+						operation: new PutOperation({ data: serialize(doc) }),
+					});
+
+					expect(allowed).equal(true);
+					expect(canPerformSpy.callCount).equal(1);
+					const canPerformInput = canPerformSpy.getCall(0).args[0] as any;
+					expect(canPerformInput.type).equal("put");
+					expect(canPerformInput.value.id).equal(doc.id);
+				} finally {
+					(store.docs as any)._optionCanPerform = canPerform;
+				}
+			});
+
+			it("allows delete ownership through policy.deleteSignedByExistingField", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.or(
+							policy.put(policy.allowAll<Document>()),
+							policy.deleteSignedByExistingField<Document>("data"),
+						),
+					},
+				});
+
+				const doc = new Document({
+					id: uuid(),
+					name: "owned-delete",
+					data: session.peers[0].identity.publicKey.bytes,
+				});
+				await store.docs.put(doc, {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+
+				await store.docs.del(doc.id, {
+					replicate: false,
+					target: "none",
+				});
+
+				expect(await store.docs.get(doc.id)).equal(undefined);
+			});
+
+			it("validates direct-head delete canAppend without loading the previous entry", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+					},
+				});
+
+				const doc = new Document({
+					id: uuid(),
+					name: "direct-delete-can-append",
+				});
+				const put = await store.docs.put(doc, {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+				const logGetSpy = sinon.spy(store.docs.log.log, "get");
+				try {
+					const operation = new DeleteOperation({
+						key: toId(doc.id),
+					});
+					const fakeDeleteEntry = {
+						hash: "direct-delete-can-append-entry",
+						meta: {
+							next: [put.entry.hash],
+						},
+						init: () => undefined,
+						getPayloadValue: async () => operation,
+					};
+
+					const result = await (store.docs as any)._canAppend(fakeDeleteEntry);
+					expect(isDeleteOperation(result)).equal(true);
+					expect(logGetSpy.callCount).equal(0);
+				} finally {
+					logGetSpy.restore();
+				}
+			});
+
+			it("validates direct-head put canAppend without loading the previous entry", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						strictHistory: true,
+					},
+				});
+
+				const id = uuid();
+				const first = await store.docs.put(new Document({ id, name: "v1" }), {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+				const nextDoc = new Document({ id, name: "v2" });
+				const operation = new PutOperation({ data: serialize(nextDoc) });
+				const entryIndexGetSpy = sinon.spy(
+					store.docs.log.log.entryIndex,
+					"get",
+				);
+				try {
+					const fakePutEntry = {
+						hash: "direct-put-can-append-entry",
+						meta: {
+							next: [first.entry.hash],
+							clock: {
+								timestamp: {
+									wallTime: first.entry.meta.clock.timestamp.wallTime + 1n,
+								},
+							},
+						},
+						init: () => undefined,
+						getPayloadValue: async () => operation,
+					};
+
+					const result = await (store.docs as any)._canAppend(fakePutEntry);
+					expect(result).equal(operation);
+					expect(entryIndexGetSpy.callCount).equal(0);
+				} finally {
+					entryIndexGetSpy.restore();
+				}
+			});
+
+			it("rejects delete ownership when policy.deleteSignedByExistingField does not match", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.or(
+							policy.put(policy.allowAll<Document>()),
+							policy.deleteSignedByExistingField<Document>("data"),
+						),
+					},
+				});
+
+				const doc = new Document({
+					id: uuid(),
+					name: "foreign-delete",
+					data: session.peers[1].identity.publicKey.bytes,
+				});
+				await store.docs.put(doc, {
+					unique: true,
+					replicate: false,
+					target: "none",
+				});
+
+				await expect(
+					store.docs.del(doc.id, {
+						replicate: false,
+						target: "none",
+					}),
+				).to.be.rejectedWith("Not allowed to append");
+			});
+
+			it("allows same-signer update policies through compatibility validation", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = policy.put(policy.sameSignersAsPrevious<Document>());
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const descriptor = getCanPerformPolicyDescriptor(canPerform);
+				expect(descriptor?.kind).equal("put");
+
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					const id = uuid();
+					await store.docs.put(new Document({ id, name: "first" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+					await store.docs.put(new Document({ id, name: "second" }), {
+						replicate: false,
+						target: "none",
+					});
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(2);
+					expect((await store.docs.get(id))?.name).equal("second");
+				} finally {
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("rejects non-matching policy.signedByPublicKey canPerform on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.signedByPublicKey<Document>(
+							session.peers[1].identity.publicKey,
+						),
+					},
+				});
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await expect(
+						store.docs.put(new Document({ id: uuid(), name: "wrong-key" }), {
+							unique: true,
+							replicate: false,
+							target: "none",
+						}),
+					).to.be.rejectedWith("Not allowed to append");
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+				} finally {
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("rejects non-matching policy.signedByField canPerform on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.put(policy.signedByField<Document>("data")),
+					},
+				});
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await expect(
+						store.docs.put(
+							new Document({
+								id: uuid(),
+								name: "wrong-field",
+								data: session.peers[1].identity.publicKey.bytes,
+							}),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						),
+					).to.be.rejectedWith("Not allowed to append");
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+				} finally {
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("rejects non-matching composed put policy on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform: policy.put(
+							policy.signedByPublicKey<Document>(
+								session.peers[1].identity.publicKey,
+							),
+						),
+					},
+				});
+				const preparedPayloadCommitOnlySpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedPayloadCommitOnly",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await expect(
+						store.docs.put(
+							new Document({ id: uuid(), name: "wrong-put-key" }),
+							{
+								unique: true,
+								replicate: false,
+								target: "none",
+							},
+						),
+					).to.be.rejectedWith("Not allowed to append");
+
+					expect(preparedPayloadCommitOnlySpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+				} finally {
+					appendSpy.restore();
+					preparedPayloadCommitOnlySpy.restore();
+				}
+			});
+
+			it("keeps custom canPerform puts on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = sinon.stub().returns(true);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const validatedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyValidated",
+				);
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+				const nativeTransactionSpy = sinon.spy(
+					store.docs.log as any,
+					"finishPreparedPayloadNativeAppendTransaction",
+				);
+
+				try {
+					await store.docs.put(new Document({ id: uuid(), name: "compat" }), {
+						unique: true,
+						replicate: false,
+						target: "none",
+					});
+
+					expect(validatedAppendSpy.callCount).equal(0);
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+					expect(nativeTransactionSpy.callCount).equal(0);
+					expect(canPerform.callCount).equal(1);
+				} finally {
+					nativeTransactionSpy.restore();
+					preparedAppendSpy.restore();
+					validatedAppendSpy.restore();
+					appendSpy.restore();
+				}
+			});
+
+			it("keeps arbitrary canPerform vetoes on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = sinon.stub().returns(false);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const preparedAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPrepared",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await expect(
+						store.docs.put(new Document({ id: uuid(), name: "deny" }), {
+							unique: true,
+							replicate: false,
+							target: "none",
+						}),
+					).to.be.rejectedWith("Not allowed to append");
+
+					expect(preparedAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(1);
+					expect(canPerform.callCount).equal(1);
+				} finally {
+					appendSpy.restore();
+					preparedAppendSpy.restore();
+				}
+			});
+
+			it("keeps custom canPerform putMany on the compatibility path", async () => {
+				store = new TestStore({
+					docs: new Documents<Document>(),
+				});
+				const canPerform = sinon.stub().returns(true);
+				await session.peers[0].open(store, {
+					args: {
+						replicate: false,
+						canPerform,
+					},
+				});
+				const batchAppendSpy = sinon.spy(
+					store.docs.log as any,
+					"appendLocallyPreparedManyIndependent",
+				);
+				const appendSpy = sinon.spy(store.docs.log, "append");
+
+				try {
+					await store.docs.putMany(
+						[
+							new Document({ id: uuid(), name: "compat-1" }),
+							new Document({ id: uuid(), name: "compat-2" }),
+						],
+						{
+							unique: true,
+							replicate: false,
+							target: "none",
+						},
+					);
+
+					expect(batchAppendSpy.callCount).equal(0);
+					expect(appendSpy.callCount).equal(2);
+					expect(canPerform.callCount).equal(2);
+				} finally {
+					appendSpy.restore();
+					batchAppendSpy.restore();
+				}
 			});
 
 			it("replication degree", async () => {
@@ -430,8 +10528,9 @@ describe("index", () => {
 				});
 
 				let largeMessagesSent: number = 0;
-				for (const peer of (session.peers[0].services.pubsub as TopicControlPlane)
-					.peers) {
+				for (const peer of (
+					session.peers[0].services.pubsub as TopicControlPlane
+				).peers) {
 					const writeFn = peer[1].write.bind(peer[1]);
 					peer[1].write = (message, priority) => {
 						if (message.length >= 1e6) {
@@ -625,13 +10724,13 @@ describe("index", () => {
 					},
 				});
 
-					let newId = uuid();
-					let getImmediatePromise = store.docs.index.get(toId(newId), {
-						waitFor: 1,
-					});
-					// Use a generous waitFor under workspace-wide test parallelism, but
-					// still assert we do not wait all the way until the timeout.
-					let getPromise = store.docs.index.get(toId(newId), { waitFor: 10e3 });
+				let newId = uuid();
+				let getImmediatePromise = store.docs.index.get(toId(newId), {
+					waitFor: 1,
+				});
+				// Use a generous waitFor under workspace-wide test parallelism, but
+				// still assert we do not wait all the way until the timeout.
+				let getPromise = store.docs.index.get(toId(newId), { waitFor: 10e3 });
 
 				let t0 = +new Date();
 				await delay(1e3);
@@ -641,13 +10740,13 @@ describe("index", () => {
 					name: "Hello world",
 				});
 
-					await store.docs.put(doc);
-					expect(await getImmediatePromise).to.be.undefined; // not yet available
-					expect(await getPromise).to.exist;
+				await store.docs.put(doc);
+				expect(await getImmediatePromise).to.be.undefined; // not yet available
+				expect(await getPromise).to.exist;
 
-					// Should resolve shortly after the put (not wait for the full waitFor).
-					expect(+new Date() - t0).to.be.lessThan(6000);
-				});
+				// Should resolve shortly after the put (not wait for the full waitFor).
+				expect(+new Date() - t0).to.be.lessThan(6000);
+			});
 
 			it("get document that is to be joined", async () => {
 				session = await TestSession.connected(2);
@@ -666,13 +10765,13 @@ describe("index", () => {
 					},
 				});
 
-					let newId = uuid();
-					let getImmediatePromise = store2.docs.index.get(toId(newId), {
-						waitFor: 1,
-					});
-					// Use a generous waitFor under workspace-wide test parallelism, but
-					// still assert we do not wait all the way until the timeout.
-					let getPromise = store2.docs.index.get(toId(newId), { waitFor: 10e3 });
+				let newId = uuid();
+				let getImmediatePromise = store2.docs.index.get(toId(newId), {
+					waitFor: 1,
+				});
+				// Use a generous waitFor under workspace-wide test parallelism, but
+				// still assert we do not wait all the way until the timeout.
+				let getPromise = store2.docs.index.get(toId(newId), { waitFor: 10e3 });
 
 				let t0 = +new Date();
 				await delay(1e3);
@@ -682,13 +10781,13 @@ describe("index", () => {
 					name: "Hello world",
 				});
 
-					await store.docs.put(doc);
-					expect(await getImmediatePromise).to.be.undefined; // not yet available
-					expect(await getPromise).to.exist;
+				await store.docs.put(doc);
+				expect(await getImmediatePromise).to.be.undefined; // not yet available
+				expect(await getPromise).to.exist;
 
-					// Should resolve shortly after the put (not wait for the full waitFor).
-					expect(+new Date() - t0).to.be.lessThan(6000);
-				});
+				// Should resolve shortly after the put (not wait for the full waitFor).
+				expect(+new Date() - t0).to.be.lessThan(6000);
+			});
 
 			it("get waitFor document late even if local fetch is slow", async () => {
 				session = await TestSession.connected(1);
@@ -809,127 +10908,151 @@ describe("index", () => {
 				await session.stop();
 			});
 
-				it("drops when no longer replicating as observer", async () => {
-					const COUNT = 10;
-					const replicationHandoffWait = {
-						timeout: 60_000,
-						delayInterval: 500,
-					} as const;
-					await Promise.all([
-						store.docs.log.waitForReplicator(session.peers[1].identity.publicKey, {
+			it("drops when no longer replicating as observer", async () => {
+				const COUNT = 10;
+				const replicationHandoffWait = {
+					timeout: 60_000,
+					delayInterval: 500,
+				} as const;
+				await Promise.all([
+					store.docs.log.waitForReplicator(
+						session.peers[1].identity.publicKey,
+						{
 							timeout: replicationHandoffWait.timeout,
-						}),
-						store2.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: replicationHandoffWait.timeout,
-						}),
-					]);
-					await store.docs.log.replicate({
-						factor: 1,
-					});
-					for (let i = 0; i < COUNT; i++) {
-						await store.docs.put(
-							new Document({
-								id: uuid(),
-								name: "Hello world",
-							}),
-						);
-					}
-
-					await waitForResolved(
-						async () => expect(await store2.docs.index.getSize()).equal(COUNT),
-						replicationHandoffWait,
-					);
-
-					store3 = await session.peers[2].open<TestStore>(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
-							},
 						},
-					});
-
-					await Promise.all([
-						store.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
+					),
+					store2.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey,
+						{
 							timeout: replicationHandoffWait.timeout,
-						}),
-						store2.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
-							timeout: replicationHandoffWait.timeout,
-						}),
-						store3.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: replicationHandoffWait.timeout,
-						}),
-					]);
-
-					await store2.docs.log.replicate(false);
-					await waitForResolved(
-						async () => {
-							expect(store3.docs.log.log.length).equal(COUNT);
-							expect(await store3.docs.index.getSize()).equal(COUNT);
-							expect(await store2.docs.index.getSize()).equal(0);
 						},
-						replicationHandoffWait,
+					),
+				]);
+				await store.docs.log.replicate({
+					factor: 1,
+				});
+				for (let i = 0; i < COUNT; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: "Hello world",
+						}),
 					);
+				}
+
+				await waitForResolved(
+					async () => expect(await store2.docs.index.getSize()).equal(COUNT),
+					replicationHandoffWait,
+				);
+
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
 				});
 
-				it("drops when no longer replicating with factor 0", async () => {
-					const COUNT = 10;
-					const replicationHandoffWait = {
-						timeout: 60_000,
-						delayInterval: 500,
-					} as const;
-					await Promise.all([
-						store.docs.log.waitForReplicator(session.peers[1].identity.publicKey, {
+				await Promise.all([
+					store.docs.log.waitForReplicator(
+						session.peers[2].identity.publicKey,
+						{
 							timeout: replicationHandoffWait.timeout,
-						}),
-						store2.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: replicationHandoffWait.timeout,
-						}),
-					]);
-					await store.docs.log.replicate({
-						factor: 1,
-					});
-					for (let i = 0; i < COUNT; i++) {
-						await store.docs.put(
-							new Document({
-								id: uuid(),
-								name: "Hello world",
-							}),
-						);
-					}
-
-					await waitForResolved(
-						async () => expect(await store2.docs.index.getSize()).equal(COUNT),
-						replicationHandoffWait,
-					);
-
-					store3 = await session.peers[2].open<TestStore>(store.clone(), {
-						args: {
-							replicate: {
-								factor: 1,
-							},
 						},
-					});
-					await Promise.all([
-						store.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
+					),
+					store2.docs.log.waitForReplicator(
+						session.peers[2].identity.publicKey,
+						{
 							timeout: replicationHandoffWait.timeout,
-						}),
-						store2.docs.log.waitForReplicator(session.peers[2].identity.publicKey, {
-							timeout: replicationHandoffWait.timeout,
-						}),
-						store3.docs.log.waitForReplicator(session.peers[0].identity.publicKey, {
-							timeout: replicationHandoffWait.timeout,
-						}),
-					]);
-					await store2.docs.log.replicate({ factor: 0 });
-					await waitForResolved(
-						async () => {
-							expect(store3.docs.log.log.length).equal(COUNT);
-							expect(await store3.docs.index.getSize()).equal(COUNT);
-							expect(await store2.docs.index.getSize()).equal(0);
 						},
-						replicationHandoffWait,
-					);
+					),
+					store3.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey,
+						{
+							timeout: replicationHandoffWait.timeout,
+						},
+					),
+				]);
+
+				await store2.docs.log.replicate(false);
+				await waitForResolved(async () => {
+					expect(store3.docs.log.log.length).equal(COUNT);
+					expect(await store3.docs.index.getSize()).equal(COUNT);
+					expect(await store2.docs.index.getSize()).equal(0);
+				}, replicationHandoffWait);
+			});
+
+			it("drops when no longer replicating with factor 0", async () => {
+				const COUNT = 10;
+				const replicationHandoffWait = {
+					timeout: 60_000,
+					delayInterval: 500,
+				} as const;
+				await Promise.all([
+					store.docs.log.waitForReplicator(
+						session.peers[1].identity.publicKey,
+						{
+							timeout: replicationHandoffWait.timeout,
+						},
+					),
+					store2.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey,
+						{
+							timeout: replicationHandoffWait.timeout,
+						},
+					),
+				]);
+				await store.docs.log.replicate({
+					factor: 1,
 				});
+				for (let i = 0; i < COUNT; i++) {
+					await store.docs.put(
+						new Document({
+							id: uuid(),
+							name: "Hello world",
+						}),
+					);
+				}
+
+				await waitForResolved(
+					async () => expect(await store2.docs.index.getSize()).equal(COUNT),
+					replicationHandoffWait,
+				);
+
+				store3 = await session.peers[2].open<TestStore>(store.clone(), {
+					args: {
+						replicate: {
+							factor: 1,
+						},
+					},
+				});
+				await Promise.all([
+					store.docs.log.waitForReplicator(
+						session.peers[2].identity.publicKey,
+						{
+							timeout: replicationHandoffWait.timeout,
+						},
+					),
+					store2.docs.log.waitForReplicator(
+						session.peers[2].identity.publicKey,
+						{
+							timeout: replicationHandoffWait.timeout,
+						},
+					),
+					store3.docs.log.waitForReplicator(
+						session.peers[0].identity.publicKey,
+						{
+							timeout: replicationHandoffWait.timeout,
+						},
+					),
+				]);
+				await store2.docs.log.replicate({ factor: 0 });
+				await waitForResolved(async () => {
+					expect(store3.docs.log.log.length).equal(COUNT);
+					expect(await store3.docs.index.getSize()).equal(COUNT);
+					expect(await store2.docs.index.getSize()).equal(0);
+				}, replicationHandoffWait);
+			});
 
 			it("can query after waitFor as non-replicator", async () => {
 				await store2.close();
@@ -2556,7 +12679,9 @@ describe("index", () => {
 						async () => {
 							const logLengths = stores.map((x) => x.docs.log.log.length);
 							const replicatorCounts = await Promise.all(
-								stores.map(async (x) => (await x.docs.log.getReplicators()).size),
+								stores.map(
+									async (x) => (await x.docs.log.getReplicators()).size,
+								),
 							);
 
 							for (const [index, store] of stores.entries()) {
@@ -2679,11 +12804,13 @@ describe("index", () => {
 							throw new Error("Did not find a partial cover pair");
 						}
 
-						const forcedHash = forcedRemote.store.node.identity.publicKey.hashcode();
+						const forcedHash =
+							forcedRemote.store.node.identity.publicKey.hashcode();
 						const originalGetCover = searcher.store.docs.log.getCover.bind(
 							searcher.store.docs.log,
 						);
-						(searcher.store.docs.log.getCover as typeof searcher.store.docs.log.getCover) = (async (
+						(searcher.store.docs.log
+							.getCover as typeof searcher.store.docs.log.getCover) = (async (
 							properties,
 							options,
 						) => {
@@ -2704,9 +12831,9 @@ describe("index", () => {
 							);
 							expect(collected).to.have.length(count);
 						} finally {
-							(
-								searcher.store.docs.log.getCover as typeof searcher.store.docs.log.getCover
-							) = originalGetCover as typeof searcher.store.docs.log.getCover;
+							(searcher.store.docs.log
+								.getCover as typeof searcher.store.docs.log.getCover) =
+								originalGetCover as typeof searcher.store.docs.log.getCover;
 						}
 					} finally {
 						await Promise.allSettled(stores.map((opened) => opened.close()));
@@ -3715,11 +13842,11 @@ describe("index", () => {
 						expect(store.docs.index.hasPending).to.be.false;
 					});
 
-						it("can query joining first replicator", async () => {
-							const { observer, writer } = await writerObserverSetup();
+					it("can query joining first replicator", async () => {
+						const { observer, writer } = await writerObserverSetup();
 
-							await writer.docs.put(new Document({ id: "1" }));
-							let onMissedResults: number[] = [];
+						await writer.docs.put(new Document({ id: "1" }));
+						let onMissedResults: number[] = [];
 
 						const iterator = observer.docs.index.iterate(
 							{},
@@ -3740,24 +13867,24 @@ describe("index", () => {
 						expect(first).to.have.length(0);
 						expect(iterator.done()).to.be.false;
 
-							await session.connect(); // connect the nodes!
+						await session.connect(); // connect the nodes!
 
-							await observer.docs.index.waitFor(writer.node.identity.publicKey);
-							expect(iterator.done()).to.be.false;
-							// Under full-suite load, the join and first remote query can take longer to converge.
-							const second = await waitForResolved(
-								async () => {
-									const next = await iterator.next(1);
-									expect(next).to.have.length(1);
-									return next;
-								},
-								{ timeout: 30_000, delayInterval: 250 },
-							);
+						await observer.docs.index.waitFor(writer.node.identity.publicKey);
+						expect(iterator.done()).to.be.false;
+						// Under full-suite load, the join and first remote query can take longer to converge.
+						await waitForResolved(
+							async () => {
+								const next = await iterator.next(1);
+								expect(next).to.have.length(1);
+								return next;
+							},
+							{ timeout: 30_000, delayInterval: 250 },
+						);
 
-							expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
+						expect(onMissedResults).to.deep.equal([1]); // we should have missed one result
 
-							expect(observer.docs.index.hasPending).to.be.false;
-							expect(writer.docs.index.hasPending).to.be.false;
+						expect(observer.docs.index.hasPending).to.be.false;
+						expect(writer.docs.index.hasPending).to.be.false;
 					});
 
 					it("remote search queries connected peers while replicator metadata is self-only", async function () {
@@ -3773,8 +13900,9 @@ describe("index", () => {
 						const writerHash = writer.node.identity.publicKey.hashcode();
 						await waitForResolved(
 							async () => {
-								const peers = (session.peers[0].services.pubsub as TopicControlPlane)
-									.peers;
+								const peers = (
+									session.peers[0].services.pubsub as TopicControlPlane
+								).peers;
 								expect(peers.has(writerHash)).to.equal(true);
 							},
 							{ timeout: 30_000, delayInterval: 100 },
@@ -3789,17 +13917,17 @@ describe("index", () => {
 
 						(observer.docs.log.getCover as typeof observer.docs.log.getCover) =
 							(async () => [selfHash]) as typeof observer.docs.log.getCover;
-						(
-							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-						) = (async () => {
-							const replicators = await originalGetReplicators();
-							for (const hash of [...replicators.keys()]) {
-								if (hash !== selfHash) {
-									replicators.delete(hash);
+						(observer.docs.log
+							.getReplicators as typeof observer.docs.log.getReplicators) =
+							(async () => {
+								const replicators = await originalGetReplicators();
+								for (const hash of [...replicators.keys()]) {
+									if (hash !== selfHash) {
+										replicators.delete(hash);
+									}
 								}
-							}
-							return replicators;
-						}) as typeof observer.docs.log.getReplicators;
+								return replicators;
+							}) as typeof observer.docs.log.getReplicators;
 
 						try {
 							const result = await observer.docs.index.get(toId(document.id), {
@@ -3807,11 +13935,12 @@ describe("index", () => {
 							});
 							expect(result?.id).to.equal(document.id);
 						} finally {
-							(observer.docs.log.getCover as typeof observer.docs.log.getCover) =
+							(observer.docs.log
+								.getCover as typeof observer.docs.log.getCover) =
 								originalGetCover as typeof observer.docs.log.getCover;
-							(
-								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							(observer.docs.log
+								.getReplicators as typeof observer.docs.log.getReplicators) =
+								originalGetReplicators as typeof observer.docs.log.getReplicators;
 						}
 					});
 
@@ -4041,8 +14170,9 @@ describe("index", () => {
 
 						const writer2Hash = writer2.node.identity.publicKey.hashcode();
 						let writer2CollectCount = 0;
-						const originalRequest =
-							observer.docs.index._query.request.bind(observer.docs.index._query);
+						const originalRequest = observer.docs.index._query.request.bind(
+							observer.docs.index._query,
+						);
 
 						observer.docs.index._query.request = async (request, options) => {
 							if (
@@ -4125,19 +14255,19 @@ describe("index", () => {
 
 						const originalGetReplicators =
 							observer.docs.log.getReplicators.bind(observer.docs.log);
-						(
-							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-						) = (async () => {
-							throw new Error("closed");
-						}) as typeof observer.docs.log.getReplicators;
+						(observer.docs.log
+							.getReplicators as typeof observer.docs.log.getReplicators) =
+							(async () => {
+								throw new Error("closed");
+							}) as typeof observer.docs.log.getReplicators;
 
 						try {
 							expect(await iterator.pending()).to.equal(0);
 							expect(await iterator.next(1)).to.deep.equal([]);
 						} finally {
-							(
-								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							(observer.docs.log
+								.getReplicators as typeof observer.docs.log.getReplicators) =
+								originalGetReplicators as typeof observer.docs.log.getReplicators;
 							await iterator.close();
 							await observer.close();
 							await writer2.close();
@@ -4191,18 +14321,18 @@ describe("index", () => {
 
 						const originalGetReplicators =
 							observer.docs.log.getReplicators.bind(observer.docs.log);
-						(
-							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-						) = (async () => {
-							throw new Error("unexpected refresh failure");
-						}) as typeof observer.docs.log.getReplicators;
+						(observer.docs.log
+							.getReplicators as typeof observer.docs.log.getReplicators) =
+							(async () => {
+								throw new Error("unexpected refresh failure");
+							}) as typeof observer.docs.log.getReplicators;
 
 						try {
 							expect(await iterator.pending()).to.equal(0);
 						} finally {
-							(
-								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							(observer.docs.log
+								.getReplicators as typeof observer.docs.log.getReplicators) =
+								originalGetReplicators as typeof observer.docs.log.getReplicators;
 							await iterator.close();
 							await observer.close();
 							await writer2.close();
@@ -4251,13 +14381,13 @@ describe("index", () => {
 						const writer1Hash = writer1.node.identity.publicKey.hashcode();
 						const originalGetReplicators =
 							observer.docs.log.getReplicators.bind(observer.docs.log);
-						(
-							observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-						) = (async () => {
-							const replicators = await originalGetReplicators();
-							replicators.delete(writer1Hash);
-							return replicators;
-						}) as typeof observer.docs.log.getReplicators;
+						(observer.docs.log
+							.getReplicators as typeof observer.docs.log.getReplicators) =
+							(async () => {
+								const replicators = await originalGetReplicators();
+								replicators.delete(writer1Hash);
+								return replicators;
+							}) as typeof observer.docs.log.getReplicators;
 
 						const lateResults: number[] = [];
 						const iterator = observer.docs.index.iterate(
@@ -4296,9 +14426,9 @@ describe("index", () => {
 							expect(fourth.map((x) => x.id)).to.deep.equal(["1"]);
 							expect(lateResults).to.deep.equal([1]);
 						} finally {
-							(
-								observer.docs.log.getReplicators as typeof observer.docs.log.getReplicators
-							) = originalGetReplicators as typeof observer.docs.log.getReplicators;
+							(observer.docs.log
+								.getReplicators as typeof observer.docs.log.getReplicators) =
+								originalGetReplicators as typeof observer.docs.log.getReplicators;
 							await iterator.close();
 							await observer.close();
 							await writer1.close();
@@ -4361,12 +14491,14 @@ describe("index", () => {
 						expect(first.map((x) => x.id)).to.deep.equal(["2"]);
 
 						const writer1Hash = writer1.node.identity.publicKey.hashcode();
-						const originalQueryCommence = observer.docs.index["queryCommence"].bind(
-							observer.docs.index,
-						);
+						const originalQueryCommence = observer.docs.index[
+							"queryCommence"
+						].bind(observer.docs.index);
 						observer.docs.index["queryCommence"] = async (request, options) => {
 							const remoteFrom =
-								typeof options?.remote === "object" ? options.remote.from : undefined;
+								typeof options?.remote === "object"
+									? options.remote.from
+									: undefined;
 							if (remoteFrom?.includes(writer1Hash)) {
 								throw new ClosedError();
 							}
@@ -4379,7 +14511,7 @@ describe("index", () => {
 							expect(await iterator.next(1)).to.deep.equal([]);
 						} finally {
 							observer.docs.index["queryCommence"] =
-								originalQueryCommence as typeof observer.docs.index["queryCommence"];
+								originalQueryCommence as (typeof observer.docs.index)["queryCommence"];
 							await iterator.close();
 							await observer.close();
 							await writer1.close();
@@ -4442,12 +14574,14 @@ describe("index", () => {
 						expect(first.map((x) => x.id)).to.deep.equal(["2"]);
 
 						const writer1Hash = writer1.node.identity.publicKey.hashcode();
-						const originalQueryCommence = observer.docs.index["queryCommence"].bind(
-							observer.docs.index,
-						);
+						const originalQueryCommence = observer.docs.index[
+							"queryCommence"
+						].bind(observer.docs.index);
 						observer.docs.index["queryCommence"] = async (request, options) => {
 							const remoteFrom =
-								typeof options?.remote === "object" ? options.remote.from : undefined;
+								typeof options?.remote === "object"
+									? options.remote.from
+									: undefined;
 							if (remoteFrom?.includes(writer1Hash)) {
 								throw new Error("unexpected late-join failure");
 							}
@@ -4459,7 +14593,7 @@ describe("index", () => {
 							expect(await iterator.pending()).to.equal(0);
 						} finally {
 							observer.docs.index["queryCommence"] =
-								originalQueryCommence as typeof observer.docs.index["queryCommence"];
+								originalQueryCommence as (typeof observer.docs.index)["queryCommence"];
 							await iterator.close();
 							await observer.close();
 							await writer1.close();
@@ -4524,7 +14658,7 @@ describe("index", () => {
 						let t2 = +new Date();
 						expect(t2 - t0).to.lessThan(waitForMax + upperDelta); // +some delta
 						expect(t2 - t0).to.be.greaterThanOrEqual(waitForMax - delta); // -some delta
-						});
+					});
 
 					describe("policy", () => {
 						it("blocking wait for any", async () => {
@@ -4589,251 +14723,262 @@ describe("index", () => {
 							expect(t1 - t0).to.be.lessThan(500); // Should return quickly, not wait for timeout
 						});
 
-							it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
-								session = await TestSession.connected(1);
+						it("uses wait timeout as remote rpc timeout when timeout is omitted", async () => {
+							session = await TestSession.connected(1);
 
-								const store = await session.peers[0].open(
-									new TestStore({
-										docs: new Documents<Document>(),
-									}),
-									{
-										args: {
-											replicate: false,
-										},
+							const store = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: false,
 									},
-								);
+								},
+							);
 
-								const wantedTimeout = 12_345;
-								let observedTimeout: number | undefined = undefined;
-								const requestFn = store.docs.index._query.request.bind(
-									store.docs.index._query,
-								);
-								store.docs.index._query.request = async (request, options) => {
-									if (
-										request instanceof SearchRequest ||
-										request instanceof SearchRequestIndexed ||
-										request instanceof IterationRequest
-									) {
-										observedTimeout = options?.timeout;
-										return [];
-									}
-									return requestFn(request, options);
-								};
-
-								await store.docs.index["queryCommence"](
-									new SearchRequest({ fetch: 1 }),
-									{
-										local: false,
-										remote: {
-											from: ["missing-peer"],
-											wait: {
-												timeout: wantedTimeout,
-											},
-										},
-									},
-								);
-
-								expect(observedTimeout).to.equal(wantedTimeout);
-							});
-
-							it("does not retry when initial fetch has no missing responses", async () => {
-								session = await TestSession.connected(1);
-
-								const store = await session.peers[0].open(
-									new TestStore({
-										docs: new Documents<Document>(),
-									}),
-									{
-										args: {
-											replicate: false,
-										},
-									},
-								);
-
-								const observedRemoteFrom: (string[] | undefined)[] = [];
-								const queryCommenceFn =
-									store.docs.index["queryCommence"].bind(store.docs.index);
-								store.docs.index["queryCommence"] = async (...args: any[]) => {
-									const options = args[1];
-									observedRemoteFrom.push(options?.remote?.from);
-									// Simulate a successful empty fetch without triggering onMissingResponses.
+							const wantedTimeout = 12_345;
+							let observedTimeout: number | undefined = undefined;
+							const requestFn = store.docs.index._query.request.bind(
+								store.docs.index._query,
+							);
+							store.docs.index._query.request = async (request, options) => {
+								if (
+									request instanceof SearchRequest ||
+									request instanceof SearchRequestIndexed ||
+									request instanceof IterationRequest
+								) {
+									observedTimeout = options?.timeout;
 									return [];
-								};
+								}
+								return requestFn(request, options);
+							};
 
-								const iterator = store.docs.index.iterate(
-									{},
-									{
-										local: false,
-										remote: {
-											wait: { timeout: 5_000, behavior: "keep-open" },
+							await store.docs.index["queryCommence"](
+								new SearchRequest({ fetch: 1 }),
+								{
+									local: false,
+									remote: {
+										from: ["missing-peer"],
+										wait: {
+											timeout: wantedTimeout,
 										},
 									},
-								);
+								},
+							);
 
-								const first = await iterator.next(1);
-								expect(first).to.have.length(0);
-								expect(iterator.done()).to.equal(false);
-								expect(observedRemoteFrom).to.deep.equal([undefined]);
+							expect(observedTimeout).to.equal(wantedTimeout);
+						});
 
-								const second = await iterator.next(1);
-								expect(second).to.have.length(0);
-								expect(iterator.done()).to.equal(false);
-								expect(observedRemoteFrom).to.deep.equal([undefined]);
+						it("does not retry when initial fetch has no missing responses", async () => {
+							session = await TestSession.connected(1);
 
-								store.docs.index["queryCommence"] = queryCommenceFn;
-								await iterator.close();
-							});
-
-							it("retries missing shard groups before closing the iterator", async () => {
-								session = await TestSession.connected(1);
-
-								const store = await session.peers[0].open(
-									new TestStore({
-										docs: new Documents<Document>(),
-									}),
-									{
-										args: {
-											replicate: false,
-										},
+							const store = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: false,
 									},
-								);
+								},
+							);
 
-								const missingPeer = "missing-peer";
-								const observedRemoteFrom: (string[] | undefined)[] = [];
-								const queryCommenceFn =
-									store.docs.index["queryCommence"].bind(store.docs.index);
-								store.docs.index["queryCommence"] = async (...args: any[]) => {
-									const options = args[1];
-									observedRemoteFrom.push(options?.remote?.from);
-									if (observedRemoteFrom.length === 1) {
-										const error = new MissingResponsesError("missing shards");
-										(error as MissingResponsesError & { missingGroups?: string[][] })
-											.missingGroups = [[missingPeer]];
-										await options?.onMissingResponses?.(error);
-										return [];
-									}
-									return (queryCommenceFn as any)(...args);
-								};
+							const observedRemoteFrom: (string[] | undefined)[] = [];
+							const queryCommenceFn = store.docs.index["queryCommence"].bind(
+								store.docs.index,
+							);
+							store.docs.index["queryCommence"] = async (...args: any[]) => {
+								const options = args[1];
+								observedRemoteFrom.push(options?.remote?.from);
+								// Simulate a successful empty fetch without triggering onMissingResponses.
+								return [];
+							};
 
-								const iterator = store.docs.index.iterate(
-									{},
-									{
-										local: false,
-										remote: {
-											wait: { timeout: 5_000, behavior: "keep-open" },
-										},
+							const iterator = store.docs.index.iterate(
+								{},
+								{
+									local: false,
+									remote: {
+										wait: { timeout: 5_000, behavior: "keep-open" },
 									},
-								);
+								},
+							);
 
-								const first = await iterator.next(1);
-								expect(first).to.have.length(0);
-								expect(iterator.done()).to.equal(false);
-								expect(observedRemoteFrom[0]).to.equal(undefined);
+							const first = await iterator.next(1);
+							expect(first).to.have.length(0);
+							expect(iterator.done()).to.equal(false);
+							expect(observedRemoteFrom).to.deep.equal([undefined]);
 
-								const second = await iterator.next(1);
-								expect(second).to.have.length(0);
-								expect(iterator.done()).to.equal(false);
-								expect(observedRemoteFrom).to.have.length(2);
-								expect(observedRemoteFrom[1]).to.deep.equal([missingPeer]);
+							const second = await iterator.next(1);
+							expect(second).to.have.length(0);
+							expect(iterator.done()).to.equal(false);
+							expect(observedRemoteFrom).to.deep.equal([undefined]);
 
-								await iterator.close();
-							});
+							store.docs.index["queryCommence"] = queryCommenceFn;
+							await iterator.close();
+						});
 
-							it("does not retry missing shard groups for one-shot queries", async () => {
-								session = await TestSession.connected(1);
+						it("retries missing shard groups before closing the iterator", async () => {
+							session = await TestSession.connected(1);
 
-								const store = await session.peers[0].open(
-									new TestStore({
-										docs: new Documents<Document>(),
-									}),
-									{
-										args: {
-											replicate: false,
-										},
+							const store = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: false,
 									},
-								);
+								},
+							);
 
-								const missingPeer = "missing-peer";
-								const observedRemoteFrom: (string[] | undefined)[] = [];
-								store.docs.index["queryCommence"] = async (...args: any[]) => {
-									const options = args[1];
-									observedRemoteFrom.push(options?.remote?.from);
+							const missingPeer = "missing-peer";
+							const observedRemoteFrom: (string[] | undefined)[] = [];
+							const queryCommenceFn = store.docs.index["queryCommence"].bind(
+								store.docs.index,
+							);
+							store.docs.index["queryCommence"] = async (...args: any[]) => {
+								const options = args[1];
+								observedRemoteFrom.push(options?.remote?.from);
+								if (observedRemoteFrom.length === 1) {
 									const error = new MissingResponsesError("missing shards");
-									(error as MissingResponsesError & { missingGroups?: string[][] })
-										.missingGroups = [[missingPeer]];
+									(
+										error as MissingResponsesError & {
+											missingGroups?: string[][];
+										}
+									).missingGroups = [[missingPeer]];
 									await options?.onMissingResponses?.(error);
 									return [];
-								};
+								}
+								return (queryCommenceFn as any)(...args);
+							};
 
-								const results = await store.docs.index.search(
-									{},
-									{
-										local: false,
-										remote: {
-											wait: { timeout: 5_000, behavior: "keep-open" },
-										},
+							const iterator = store.docs.index.iterate(
+								{},
+								{
+									local: false,
+									remote: {
+										wait: { timeout: 5_000, behavior: "keep-open" },
 									},
-								);
+								},
+							);
 
-								expect(results).to.deep.equal([]);
-								expect(observedRemoteFrom).to.deep.equal([undefined]);
-							});
+							const first = await iterator.next(1);
+							expect(first).to.have.length(0);
+							expect(iterator.done()).to.equal(false);
+							expect(observedRemoteFrom[0]).to.equal(undefined);
 
-							it("caps missing-shard retries to configured budget", async () => {
-								session = await TestSession.connected(1);
+							const second = await iterator.next(1);
+							expect(second).to.have.length(0);
+							expect(iterator.done()).to.equal(false);
+							expect(observedRemoteFrom).to.have.length(2);
+							expect(observedRemoteFrom[1]).to.deep.equal([missingPeer]);
 
-								const store = await session.peers[0].open(
-									new TestStore({
-										docs: new Documents<Document>(),
-									}),
-									{
-										args: {
-											replicate: false,
-										},
+							await iterator.close();
+						});
+
+						it("does not retry missing shard groups for one-shot queries", async () => {
+							session = await TestSession.connected(1);
+
+							const store = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: false,
 									},
-								);
+								},
+							);
 
-								const missingPeer = "missing-peer";
-								const observedRemoteFrom: (string[] | undefined)[] = [];
-								let missingCallbacks = 0;
-								store.docs.index["queryCommence"] = async (...args: any[]) => {
-									const options = args[1];
-									observedRemoteFrom.push(options?.remote?.from);
-									missingCallbacks++;
-									const error = new MissingResponsesError("missing shards");
-									(error as MissingResponsesError & { missingGroups?: string[][] })
-										.missingGroups = [[missingPeer]];
-									await options?.onMissingResponses?.(error);
-									return [];
-								};
+							const missingPeer = "missing-peer";
+							const observedRemoteFrom: (string[] | undefined)[] = [];
+							store.docs.index["queryCommence"] = async (...args: any[]) => {
+								const options = args[1];
+								observedRemoteFrom.push(options?.remote?.from);
+								const error = new MissingResponsesError("missing shards");
+								(
+									error as MissingResponsesError & {
+										missingGroups?: string[][];
+									}
+								).missingGroups = [[missingPeer]];
+								await options?.onMissingResponses?.(error);
+								return [];
+							};
 
-								const iterator = store.docs.index.iterate(
-									{},
-									{
-										local: false,
-										remote: {
-											wait: { timeout: 5_000, behavior: "keep-open" },
-										},
+							const results = await store.docs.index.search(
+								{},
+								{
+									local: false,
+									remote: {
+										wait: { timeout: 5_000, behavior: "keep-open" },
 									},
-								);
+								},
+							);
 
-								await iterator.next(1); // initial
-								await iterator.next(1); // retry 1
-								await iterator.next(1); // retry 2 (max)
-								await iterator.next(1); // no additional retry beyond cap
+							expect(results).to.deep.equal([]);
+							expect(observedRemoteFrom).to.deep.equal([undefined]);
+						});
 
-								expect(observedRemoteFrom).to.deep.equal([
-									undefined,
-									[missingPeer],
-									[missingPeer],
-								]);
-								expect(missingCallbacks).to.equal(3);
-								expect(iterator.done()).to.equal(false);
+						it("caps missing-shard retries to configured budget", async () => {
+							session = await TestSession.connected(1);
 
-								await iterator.close();
-							});
+							const store = await session.peers[0].open(
+								new TestStore({
+									docs: new Documents<Document>(),
+								}),
+								{
+									args: {
+										replicate: false,
+									},
+								},
+							);
+
+							const missingPeer = "missing-peer";
+							const observedRemoteFrom: (string[] | undefined)[] = [];
+							let missingCallbacks = 0;
+							store.docs.index["queryCommence"] = async (...args: any[]) => {
+								const options = args[1];
+								observedRemoteFrom.push(options?.remote?.from);
+								missingCallbacks++;
+								const error = new MissingResponsesError("missing shards");
+								(
+									error as MissingResponsesError & {
+										missingGroups?: string[][];
+									}
+								).missingGroups = [[missingPeer]];
+								await options?.onMissingResponses?.(error);
+								return [];
+							};
+
+							const iterator = store.docs.index.iterate(
+								{},
+								{
+									local: false,
+									remote: {
+										wait: { timeout: 5_000, behavior: "keep-open" },
+									},
+								},
+							);
+
+							await iterator.next(1); // initial
+							await iterator.next(1); // retry 1
+							await iterator.next(1); // retry 2 (max)
+							await iterator.next(1); // no additional retry beyond cap
+
+							expect(observedRemoteFrom).to.deep.equal([
+								undefined,
+								[missingPeer],
+								[missingPeer],
+							]);
+							expect(missingCallbacks).to.equal(3);
+							expect(iterator.done()).to.equal(false);
+
+							await iterator.close();
 						});
 					});
+				});
 
 				describe("scope", () => {
 					describe("eager", () => {
@@ -4873,21 +15018,21 @@ describe("index", () => {
 							await store2.docs.put(new Document({ id: "1" }));
 
 							let joined = false;
-								store.docs.log.events.addEventListener(
-									"replicator:join",
-									async () => {
-										expect(
-											(
-												await store.docs.index
-													.iterate(
-														{},
-														{
-															local: false,
-															remote: { reach: { eager: true } },
-														},
-													)
-													.all()
-											).length,
+							store.docs.log.events.addEventListener(
+								"replicator:join",
+								async () => {
+									expect(
+										(
+											await store.docs.index
+												.iterate(
+													{},
+													{
+														local: false,
+														remote: { reach: { eager: true } },
+													},
+												)
+												.all()
+										).length,
 									).to.equal(1);
 									joined = true;
 								},
@@ -5636,7 +15781,9 @@ describe("index", () => {
 						expect(initial).to.have.length(0);
 						await waitForResolved(
 							() =>
-								expect(replicator.docs.index.countIteratorsInProgress).to.equal(1),
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(
+									1,
+								),
 							{ timeout: 10_000 },
 						);
 
@@ -5645,7 +15792,9 @@ describe("index", () => {
 
 						await waitForResolved(
 							() =>
-								expect(replicator.docs.index.countIteratorsInProgress).to.equal(0),
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(
+									0,
+								),
 							{ timeout: 10_000 },
 						);
 					} finally {
@@ -5964,17 +16113,17 @@ describe("index", () => {
 					}
 				});
 
-					it("outOfOrder mode=queue buffers late items for next()", async function () {
-						// This test can run under heavy full-suite load where push iterators may briefly yield
-						// empty batches. We explicitly drain in-order items before inserting the late one,
-						// and we bound waiting on the outOfOrder handler to avoid hanging the entire suite.
-						this.timeout(80_000);
+				it("outOfOrder mode=queue buffers late items for next()", async function () {
+					// This test can run under heavy full-suite load where push iterators may briefly yield
+					// empty batches. We explicitly drain in-order items before inserting the late one,
+					// and we bound waiting on the outOfOrder handler to avoid hanging the entire suite.
+					this.timeout(80_000);
 
-						session = await TestSession.disconnected(3);
-						await session.connect([
-							[session.peers[0], session.peers[1]],
-							[session.peers[1], session.peers[2]],
-						]);
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
+					]);
 
 					const base = new TestStore({ docs: new Documents<Document>() });
 					const replicator = await session.peers[1].open(base, {
@@ -6022,52 +16171,52 @@ describe("index", () => {
 							},
 							updates: { push: true, merge: true },
 						},
+					);
+
+					try {
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+						// Drain in-order items so the iterator establishes a frontier beyond "1".
+						// If we insert "1" before that frontier exists, it may no longer be considered "late"
+						// and the outOfOrder handler would never fire (leading to a timeout).
+						const seen = new Set<string>();
+						const start = Date.now();
+						while (
+							Date.now() - start < 10_000 &&
+							(!seen.has("2") || !seen.has("3"))
+						) {
+							const batch = await iterator.next(10);
+							for (const doc of batch) {
+								seen.add(doc.id);
+							}
+							if (!seen.has("2") || !seen.has("3")) {
+								await delay(50);
+							}
+						}
+						expect([...seen]).to.include("2");
+						expect([...seen]).to.include("3");
+
+						await waitForResolved(
+							async () => expect(await iterator.pending()).to.equal(0),
+							{ timeout: 10_000, delayInterval: 50 },
 						);
 
-						try {
-							await writer.docs.put(new Document({ id: "2" }));
-							await writer.docs.put(new Document({ id: "3" }));
-							// Drain in-order items so the iterator establishes a frontier beyond "1".
-							// If we insert "1" before that frontier exists, it may no longer be considered "late"
-							// and the outOfOrder handler would never fire (leading to a timeout).
-							const seen = new Set<string>();
-							const start = Date.now();
-							while (
-								Date.now() - start < 10_000 &&
-								(!seen.has("2") || !seen.has("3"))
-							) {
-								const batch = await iterator.next(10);
-								for (const doc of batch) {
-									seen.add(doc.id);
-								}
-								if (!seen.has("2") || !seen.has("3")) {
-									await delay(50);
-								}
-							}
-							expect([...seen]).to.include("2");
-							expect([...seen]).to.include("3");
+						await writer.docs.put(new Document({ id: "1" }));
 
-							await waitForResolved(
-								async () => expect(await iterator.pending()).to.equal(0),
-								{ timeout: 10_000, delayInterval: 50 },
-							);
-
-							await writer.docs.put(new Document({ id: "1" }));
-
-							// Avoid hanging the entire suite if outOfOrder delivery never happens.
-							await Promise.race([
-								latePromise.promise,
-								delay(20_000).then(() => {
-									throw new Error(
-										"Timed out waiting for outOfOrder(queue) handler",
-									);
-								}),
-							]);
-							expect(collected?.length).to.equal(1);
-							expect(lateEvt?.items?.length).to.equal(1);
-							const item = lateEvt!.items![0];
-							expect(item.value?.id ?? item.indexed.id).to.equal("1");
-							expect(item.value?.__context).to.exist;
+						// Avoid hanging the entire suite if outOfOrder delivery never happens.
+						await Promise.race([
+							latePromise.promise,
+							delay(20_000).then(() => {
+								throw new Error(
+									"Timed out waiting for outOfOrder(queue) handler",
+								);
+							}),
+						]);
+						expect(collected?.length).to.equal(1);
+						expect(lateEvt?.items?.length).to.equal(1);
+						const item = lateEvt!.items![0];
+						expect(item.value?.id ?? item.indexed.id).to.equal("1");
+						expect(item.value?.__context).to.exist;
 						expect(item.value?.__indexed).to.exist;
 						expect(collected?.[0]?.value?.__context).to.exist;
 						expect(collected?.[0]?.value?.__indexed).to.exist;
@@ -6126,29 +16275,29 @@ describe("index", () => {
 						},
 					);
 
-						try {
-							// two in-order items that should remain pending
-							await writer.docs.put(new Document({ id: "2" }));
-							await writer.docs.put(new Document({ id: "3" }));
-							// establish frontier with in-order fetch (leave one buffered)
-							// In push-update mode this can briefly return an empty batch under load.
-							const firstBatch = await waitForResolved(
-								async () => {
-									const batch = await iterator.next(1);
-									if (batch.length !== 1) {
-										throw new Error(
-											`Expected 1 frontier item, got ${batch.length}`,
-										);
-									}
-									return batch;
-								},
-								{ timeout: 10_000, delayInterval: 50 },
-							);
-							expect(firstBatch.map((x) => x.id)).to.deep.equal(["2"]);
-							// one late item that will be dropped
-							await writer.docs.put(new Document({ id: "1" }));
+					try {
+						// two in-order items that should remain pending
+						await writer.docs.put(new Document({ id: "2" }));
+						await writer.docs.put(new Document({ id: "3" }));
+						// establish frontier with in-order fetch (leave one buffered)
+						// In push-update mode this can briefly return an empty batch under load.
+						const firstBatch = await waitForResolved(
+							async () => {
+								const batch = await iterator.next(1);
+								if (batch.length !== 1) {
+									throw new Error(
+										`Expected 1 frontier item, got ${batch.length}`,
+									);
+								}
+								return batch;
+							},
+							{ timeout: 10_000, delayInterval: 50 },
+						);
+						expect(firstBatch.map((x) => x.id)).to.deep.equal(["2"]);
+						// one late item that will be dropped
+						await writer.docs.put(new Document({ id: "1" }));
 
-							// Late-drop callback timing can vary; avoid hanging the test on callback delivery.
+						// Late-drop callback timing can vary; avoid hanging the test on callback delivery.
 						await Promise.race([latePromise.promise, delay(5_000)]);
 
 						const pendingBefore = await iterator.pending();
@@ -6178,13 +16327,13 @@ describe("index", () => {
 					}
 				});
 
-					it("outOfOrder queue emits normalized late items", async function () {
-						this.timeout(120_000);
+				it("outOfOrder queue emits normalized late items", async function () {
+					this.timeout(120_000);
 
-						session = await TestSession.disconnected(3);
-						await session.connect([
-							[session.peers[0], session.peers[1]],
-							[session.peers[1], session.peers[2]],
+					session = await TestSession.disconnected(3);
+					await session.connect([
+						[session.peers[0], session.peers[1]],
+						[session.peers[1], session.peers[2]],
 					]);
 
 					const base = new TestStore({ docs: new Documents<Document>() });
@@ -6228,43 +16377,43 @@ describe("index", () => {
 						},
 					);
 
-						try {
-							await writer.docs.put(new Document({ id: "2" }));
-							// Establish frontier deterministically. Under load, push-update mode may
-							// briefly return empty batches.
-							const firstBatch = await waitForResolved(
-								async () => {
-									const batch = await iterator.next(10);
-									if (batch.length !== 1) {
-										throw new Error(
-											`Expected 1 frontier item, got ${batch.length}`,
-										);
-									}
-									if (batch[0].id !== "2") {
-										throw new Error(
-											`Expected frontier id=2, got id=${batch[0].id}`,
-										);
-									}
-									return batch;
-								},
-								{ timeout: 30_000, delayInterval: 100 },
-							);
-							expect(firstBatch.map((x) => x.id)).to.deep.equal(["2"]);
-
-							await writer.docs.put(new Document({ id: "1" }));
-
-							await Promise.race([
-								latePromise.promise,
-								delay(30_000).then(() => {
+					try {
+						await writer.docs.put(new Document({ id: "2" }));
+						// Establish frontier deterministically. Under load, push-update mode may
+						// briefly return empty batches.
+						const firstBatch = await waitForResolved(
+							async () => {
+								const batch = await iterator.next(10);
+								if (batch.length !== 1) {
 									throw new Error(
-										"Timed out waiting for outOfOrder queue late-results event",
+										`Expected 1 frontier item, got ${batch.length}`,
 									);
-								}),
-							]);
-							expect(lateEvt?.items).to.exist;
-							expect(lateEvt?.items?.length).to.equal(1);
-							const item = lateEvt!.items![0];
-							expect(item.value?.id ?? item.indexed.id).to.equal("1");
+								}
+								if (batch[0].id !== "2") {
+									throw new Error(
+										`Expected frontier id=2, got id=${batch[0].id}`,
+									);
+								}
+								return batch;
+							},
+							{ timeout: 30_000, delayInterval: 100 },
+						);
+						expect(firstBatch.map((x) => x.id)).to.deep.equal(["2"]);
+
+						await writer.docs.put(new Document({ id: "1" }));
+
+						await Promise.race([
+							latePromise.promise,
+							delay(30_000).then(() => {
+								throw new Error(
+									"Timed out waiting for outOfOrder queue late-results event",
+								);
+							}),
+						]);
+						expect(lateEvt?.items).to.exist;
+						expect(lateEvt?.items?.length).to.equal(1);
+						const item = lateEvt!.items![0];
+						expect(item.value?.id ?? item.indexed.id).to.equal("1");
 						expect(item.value?.__context).to.exist;
 						expect(item.value?.__indexed).to.exist;
 
@@ -6685,15 +16834,20 @@ describe("index", () => {
 						expect(initial).to.have.length(0);
 						await waitForResolved(
 							() =>
-								expect(replicator.docs.index.countIteratorsInProgress).to.equal(1),
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(
+									1,
+								),
 							{ timeout: 10_000 },
 						);
 
-						replicator.docs.index._query.send = async (request: any, options: any) => {
+						replicator.docs.index._query.send = async (
+							request: any,
+							options: any,
+						) => {
 							if (request instanceof PredictedSearchRequest) {
-								const predictedRequest =
-									request as PredictedSearchRequest<any>;
-								const predictedResults = predictedRequest.results as Results<any>;
+								const predictedRequest = request as PredictedSearchRequest<any>;
+								const predictedResults =
+									predictedRequest.results as Results<any>;
 								predictedBatchSizes.push(predictedResults.results.length);
 								if (!blockedFirstPush) {
 									blockedFirstPush = true;
@@ -6707,7 +16861,9 @@ describe("index", () => {
 						const firstPut = replicator.docs.put(new Document({ id: firstId }));
 						await firstPushStarted.promise;
 
-						const secondPut = replicator.docs.put(new Document({ id: secondId }));
+						const secondPut = replicator.docs.put(
+							new Document({ id: secondId }),
+						);
 						await waitForResolved(
 							() => {
 								const queued = [
@@ -6735,7 +16891,10 @@ describe("index", () => {
 						);
 
 						const batch = await iterator.next(2);
-						expect(batch.map((doc) => doc.id)).to.deep.equal([firstId, secondId]);
+						expect(batch.map((doc) => doc.id)).to.deep.equal([
+							firstId,
+							secondId,
+						]);
 						expect(predictedBatchSizes).to.deep.equal([1, 1]);
 					} finally {
 						releaseFirstPush.resolve();
@@ -6873,7 +17032,9 @@ describe("index", () => {
 						expect(iterator.done()).to.be.false;
 						await waitForResolved(
 							() =>
-								expect(replicator.docs.index.countIteratorsInProgress).to.equal(1),
+								expect(replicator.docs.index.countIteratorsInProgress).to.equal(
+									1,
+								),
 							{ timeout: 3e4 },
 						);
 
@@ -7044,7 +17205,10 @@ describe("index", () => {
 					const queryCommenceStub = sinon
 						.stub(store.docs.index as any, "queryCommence")
 						.callsFake(async (_query: any, options: any) => {
-							await options?.onResponse?.(results, store.node.identity.publicKey);
+							await options?.onResponse?.(
+								results,
+								store.node.identity.publicKey,
+							);
 							return [results];
 						});
 					const resolveStub = sinon
@@ -7068,8 +17232,8 @@ describe("index", () => {
 					}
 				});
 
-					it("returns documents even if indexed representation arrives first", async () => {
-						session = await TestSession.connected(1);
+				it("returns documents even if indexed representation arrives first", async () => {
+					session = await TestSession.connected(1);
 
 					const store = new TestStore<Indexable>({
 						docs: new Documents<Document, Indexable>(),
@@ -7135,110 +17299,110 @@ describe("index", () => {
 						expect(observed).to.exist;
 						expect(observed!.every((entry) => entry instanceof Document)).to.be
 							.true;
-						} finally {
-							processQueryStub.restore();
-							await iterator?.close();
-							await session.stop();
-						}
+					} finally {
+						processQueryStub.restore();
+						await iterator?.close();
+						await session.stop();
+					}
+				});
+
+				it("wrapPushResults returns indexed values when resolve=true cannot resolve pushed matches", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
 					});
 
-					it("wrapPushResults returns indexed values when resolve=true cannot resolve pushed matches", async () => {
-						session = await TestSession.connected(1);
-
-						const store = new TestStore<Indexable>({
-							docs: new Documents<Document, Indexable>(),
-						});
-
-						await session.peers[0].open(store, {
-							args: {
-								replicate: { factor: 1 },
-								index: {
-									type: Indexable,
-									transform: (doc) => new Indexable(doc),
-									includeIndexed: true,
-								},
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+								includeIndexed: true,
 							},
-						});
-
-						const doc = new Document({ id: "fallback-wrap", name: "theta" });
-						await store.docs.put(doc);
-						const context = (doc as any).__context;
-						const indexed = Object.assign(new Indexable(doc), {
-							__context: context,
-						});
-						const resolveStub = sinon
-							.stub(store.docs.index as any, "resolveDocument")
-							.resolves(undefined);
-
-						try {
-							const results = await (store.docs.index as any).wrapPushResults(
-								[indexed],
-								true,
-							);
-							expect(results).to.have.length(1);
-							expect(results[0]).to.be.instanceOf(ResultIndexedValue);
-							expect((results[0] as ResultIndexedValue<Indexable>).indexed).to.equal(
-								indexed,
-							);
-							expect((results[0] as ResultIndexedValue<Indexable>).entries).to.have.length(
-								1,
-							);
-						} finally {
-							resolveStub.restore();
-							await session.stop();
-						}
+						},
 					});
 
-					it("drainQueuedResults keeps unresolved queued indexed matches as indexed results", async () => {
-						session = await TestSession.connected(1);
+					const doc = new Document({ id: "fallback-wrap", name: "theta" });
+					await store.docs.put(doc);
+					const context = (doc as any).__context;
+					const indexed = Object.assign(new Indexable(doc), {
+						__context: context,
+					});
+					const resolveStub = sinon
+						.stub(store.docs.index as any, "resolveDocument")
+						.resolves(undefined);
 
-						const store = new TestStore<Indexable>({
-							docs: new Documents<Document, Indexable>(),
-						});
+					try {
+						const results = await (store.docs.index as any).wrapPushResults(
+							[indexed],
+							true,
+						);
+						expect(results).to.have.length(1);
+						expect(results[0]).to.be.instanceOf(ResultIndexedValue);
+						expect(
+							(results[0] as ResultIndexedValue<Indexable>).indexed,
+						).to.equal(indexed);
+						expect(
+							(results[0] as ResultIndexedValue<Indexable>).entries,
+						).to.have.length(1);
+					} finally {
+						resolveStub.restore();
+						await session.stop();
+					}
+				});
 
-						await session.peers[0].open(store, {
-							args: {
-								replicate: { factor: 1 },
-								index: {
-									type: Indexable,
-									transform: (doc) => new Indexable(doc),
-									includeIndexed: true,
-								},
+				it("drainQueuedResults keeps unresolved queued indexed matches as indexed results", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+								includeIndexed: true,
 							},
-						});
-
-						const doc = new Document({ id: "fallback-queue", name: "lambda" });
-						await store.docs.put(doc);
-						const context = (doc as any).__context;
-						const indexed = Object.assign(new Indexable(doc), {
-							__context: context,
-						});
-						const resolveStub = sinon
-							.stub(store.docs.index as any, "resolveDocument")
-							.resolves(undefined);
-						const queue = [{ id: doc.id, value: indexed }];
-
-						try {
-							const results = await (store.docs.index as any).drainQueuedResults(
-								queue,
-								true,
-							);
-							expect(queue).to.have.length(0);
-							expect(results).to.have.length(1);
-							expect(results[0]).to.be.instanceOf(ResultIndexedValue);
-							expect(
-								(results[0] as ResultIndexedValue<Indexable>).indexed,
-							).to.be.instanceOf(Indexable);
-							expect((results[0] as ResultIndexedValue<Indexable>).entries).to.have.length(
-								1,
-							);
-						} finally {
-							resolveStub.restore();
-							await session.stop();
-						}
+						},
 					});
+
+					const doc = new Document({ id: "fallback-queue", name: "lambda" });
+					await store.docs.put(doc);
+					const context = (doc as any).__context;
+					const indexed = Object.assign(new Indexable(doc), {
+						__context: context,
+					});
+					const resolveStub = sinon
+						.stub(store.docs.index as any, "resolveDocument")
+						.resolves(undefined);
+					const queue = [{ id: doc.id, value: indexed }];
+
+					try {
+						const results = await (store.docs.index as any).drainQueuedResults(
+							queue,
+							true,
+						);
+						expect(queue).to.have.length(0);
+						expect(results).to.have.length(1);
+						expect(results[0]).to.be.instanceOf(ResultIndexedValue);
+						expect(
+							(results[0] as ResultIndexedValue<Indexable>).indexed,
+						).to.be.instanceOf(Indexable);
+						expect(
+							(results[0] as ResultIndexedValue<Indexable>).entries,
+						).to.have.length(1);
+					} finally {
+						resolveStub.restore();
+						await session.stop();
+					}
 				});
 			});
+		});
 
 		it("get first entry", async () => {
 			session = await TestSession.connected(1);
@@ -8334,10 +18498,7 @@ describe("index", () => {
 			});
 
 			it("uses indexed requests for replicated resolved remote get", async () => {
-				const processQuerySpy = sinon.spy(
-					stores[0].docs.index,
-					"processQuery",
-				);
+				const processQuerySpy = sinon.spy(stores[0].docs.index, "processQuery");
 				try {
 					const getRemote = await stores[1].docs.index.get("1", {
 						remote: { replicate: true },
@@ -8382,16 +18543,18 @@ describe("index", () => {
 						stores[0].node.identity.publicKey,
 					),
 				]);
-				await waitForResolved(() =>
-					expect(stores[1].docs.log.log.length).to.eq(
-						stores[0].docs.log.log.length,
-					),
+				await waitForResolved(
+					() =>
+						expect(stores[1].docs.log.log.length).to.eq(
+							stores[0].docs.log.log.length,
+						),
 					localReadyWait,
 				);
-				await waitForResolved(async () =>
-					expect(await stores[1].docs.index.getSize()).to.eq(
-						await stores[0].docs.index.getSize(),
-					),
+				await waitForResolved(
+					async () =>
+						expect(await stores[1].docs.index.getSize()).to.eq(
+							await stores[0].docs.index.getSize(),
+						),
 					localReadyWait,
 				);
 
@@ -8682,66 +18845,66 @@ describe("index", () => {
 				expect(counters[2]).equal(0);
 			});
 
-				it("non-local", async () => {
-					stores[0].docs.log.getCover = async () => [
-						stores[1].node.identity.publicKey.hashcode(),
-						stores[2].node.identity.publicKey.hashcode(),
-					];
+			it("non-local", async () => {
+				stores[0].docs.log.getCover = async () => [
+					stores[1].node.identity.publicKey.hashcode(),
+					stores[2].node.identity.publicKey.hashcode(),
+				];
+				await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
+					local: false,
+				});
+				expect(counters[0]).equal(0);
+				expect(counters[1]).equal(1);
+				expect(counters[2]).equal(1);
+			});
+
+			it("economy: happy path does one distributed fetch with no retry callback", async () => {
+				stores[0].docs.log.getCover = async () => [
+					stores[1].node.identity.publicKey.hashcode(),
+					stores[2].node.identity.publicKey.hashcode(),
+				];
+
+				// Explicitly pin random selection for deterministic request-count assertions.
+				const randomFn = Math.random;
+				Math.random = () => 0;
+				const queryCommenceFn = stores[0].docs.index["queryCommence"].bind(
+					stores[0].docs.index,
+				);
+				let queryCommenceCalls = 0;
+				let missingResponseCallbacks = 0;
+				stores[0].docs.index["queryCommence"] = async (...args: any[]) => {
+					queryCommenceCalls++;
+					const options = args[1];
+					return (queryCommenceFn as any)(
+						args[0],
+						{
+							...options,
+							onMissingResponses: async (error: MissingResponsesError) => {
+								missingResponseCallbacks++;
+								await options?.onMissingResponses?.(error);
+							},
+						},
+						args[2],
+					);
+				};
+				try {
 					await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
 						local: false,
+						remote: { timeout: 1_000 },
 					});
+					expect(queryCommenceCalls).equal(1);
 					expect(counters[0]).equal(0);
 					expect(counters[1]).equal(1);
 					expect(counters[2]).equal(1);
-				});
+					expect(missingResponseCallbacks).equal(0);
+				} finally {
+					stores[0].docs.index["queryCommence"] = queryCommenceFn;
+					Math.random = randomFn;
+				}
+			});
 
-				it("economy: happy path does one distributed fetch with no retry callback", async () => {
-					stores[0].docs.log.getCover = async () => [
-						stores[1].node.identity.publicKey.hashcode(),
-						stores[2].node.identity.publicKey.hashcode(),
-					];
-
-					// Explicitly pin random selection for deterministic request-count assertions.
-					const randomFn = Math.random;
-					Math.random = () => 0;
-					const queryCommenceFn = stores[0].docs.index["queryCommence"].bind(
-						stores[0].docs.index,
-					);
-					let queryCommenceCalls = 0;
-					let missingResponseCallbacks = 0;
-					stores[0].docs.index["queryCommence"] = async (...args: any[]) => {
-						queryCommenceCalls++;
-						const options = args[1];
-						return (queryCommenceFn as any)(
-							args[0],
-							{
-								...options,
-								onMissingResponses: async (error: MissingResponsesError) => {
-									missingResponseCallbacks++;
-									await options?.onMissingResponses?.(error);
-								},
-							},
-							args[2],
-						);
-					};
-					try {
-						await stores[0].docs.index.search(new SearchRequest({ query: [] }), {
-							local: false,
-							remote: { timeout: 1_000 },
-						});
-						expect(queryCommenceCalls).equal(1);
-						expect(counters[0]).equal(0);
-						expect(counters[1]).equal(1);
-						expect(counters[2]).equal(1);
-						expect(missingResponseCallbacks).equal(0);
-					} finally {
-						stores[0].docs.index["queryCommence"] = queryCommenceFn;
-						Math.random = randomFn;
-					}
-				});
-
-				describe("errors", () => {
-					let fns: any[];
+			describe("errors", () => {
+				let fns: any[];
 
 				beforeEach(() => {
 					fns = stores.map((x) => x.docs.index.processQuery.bind(x.docs.index));
@@ -9070,19 +19233,19 @@ describe("index", () => {
 					}
 				}
 
-					let expectedDocCountAfterDelete = count * 0.75;
+				let expectedDocCountAfterDelete = count * 0.75;
 
-					// Under CI and workspace-wide test parallelism, replication can take a
-					// while to kick in (especially with deletes/pruning), so use a more
-					// forgiving timeout to avoid flakes.
-					await waitForResolved(
-						() => expect(store2.docs.log.log.length).to.be.greaterThan(0),
-						{ timeout: 30 * 1000 },
-					);
-					await waitForResolved(
-						() => expect(store1.docs.log.log.length).to.be.lessThan(count),
-						{ timeout: 30 * 1000 },
-					);
+				// Under CI and workspace-wide test parallelism, replication can take a
+				// while to kick in (especially with deletes/pruning), so use a more
+				// forgiving timeout to avoid flakes.
+				await waitForResolved(
+					() => expect(store2.docs.log.log.length).to.be.greaterThan(0),
+					{ timeout: 30 * 1000 },
+				);
+				await waitForResolved(
+					() => expect(store1.docs.log.log.length).to.be.lessThan(count),
+					{ timeout: 30 * 1000 },
+				);
 
 				await waitForResolved(async () => {
 					const approxCount1 = await store1.docs.count({

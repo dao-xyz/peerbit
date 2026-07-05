@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineConfig } from "vite";
 
-const ROOT = path.resolve(__dirname, "..");
+const ROOT = path.resolve(__dirname, "../../../../../../../..");
+const PARTY_ROOT = path.resolve(__dirname, "..");
 const PUBLIC_DIR = path.resolve(__dirname, "public");
 
 if (!fs.existsSync(PUBLIC_DIR)) {
@@ -23,9 +24,9 @@ export default defineConfig({
 	},
 	server: {
 		host: "0.0.0.0",
-		port: Number(process.env.PORT ?? 5255),
+		port: Number(process.env.PARTY_PORT ?? process.env.PORT ?? 5255),
 		fs: {
-			allow: [__dirname, ROOT],
+			allow: [__dirname, PARTY_ROOT, ROOT],
 		},
 	},
 });

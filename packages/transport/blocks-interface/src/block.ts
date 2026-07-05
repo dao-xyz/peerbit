@@ -47,7 +47,8 @@ export const checkDecodeBlock = async (
 ): Promise<Block<any, any, any, any>> => {
 	const cidObject =
 		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
-	const codec = options.codec || (codecCodes as any)[cidObject.code];
+	const codec =
+		options.codec || codecCodes[cidObject.code as keyof typeof codecCodes];
 	if (codec?.code === raw.code) {
 		const hasher = options?.hasher || defaultHasher;
 		const digest = await hasher.digest(bytes);

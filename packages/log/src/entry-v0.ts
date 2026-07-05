@@ -1,4 +1,5 @@
 import {
+	deserialize,
 	field,
 	fixedArray,
 	option,
@@ -6,10 +7,11 @@ import {
 	variant,
 	vec,
 } from "@dao-xyz/borsh";
-import { type Blocks } from "@peerbit/blocks-interface";
+import { type Blocks, calculateRawCid } from "@peerbit/blocks-interface";
 import {
 	AccessError,
 	DecryptedThing,
+	Ed25519Keypair,
 	Ed25519PublicKey,
 	type Identity,
 	MaybeEncrypted,
@@ -28,14 +30,499 @@ import { LamportClock as Clock, HLC, Timestamp } from "./clock.js";
 import { type Encoding, NO_ENCODING } from "./encoding.js";
 import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
-import { type CanAppend, Entry } from "./entry.js";
+import {
+	type CanAppend,
+	Entry,
+	type PreparedAppendChain,
+	type PreparedAppendCommitOnlyChain,
+	type PreparedNativeLogEntry,
+} from "./entry.js";
 import type { SortableEntry } from "./log-sorting.js";
 import { logger as baseLogger } from "./logger.js";
 import { Payload } from "./payload.js";
+import { canUseOptionalNativeModuleImports } from "./runtime.js";
 import { equals } from "./utils.js";
 
 const log = baseLogger.newScope("entry-v0");
 const traceLogger = log.trace as typeof log & { enabled?: boolean };
+const RANDOM_GID_BYTES = 32;
+const RANDOM_GID_POOL_SIZE = 64;
+const NATIVE_RAW_CID_BATCH_MIN_BYTES = 1 << 20;
+let randomGidPool: string[] = [];
+
+const createRandomGid = (): string => {
+	if (randomGidPool.length === 0) {
+		const bytes = randomBytes(RANDOM_GID_BYTES * RANDOM_GID_POOL_SIZE);
+		randomGidPool = new Array<string>(RANDOM_GID_POOL_SIZE);
+		for (let i = 0; i < RANDOM_GID_POOL_SIZE; i++) {
+			const offset = i * RANDOM_GID_BYTES;
+			randomGidPool[i] = toBase64(
+				bytes.subarray(offset, offset + RANDOM_GID_BYTES),
+			);
+		}
+	}
+	return randomGidPool.pop()!;
+};
+
+type NativePlainChainInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTimes: Array<bigint | number | string>;
+	logicals?: number[];
+	gid: string;
+	initialNext?: string[];
+	type?: number;
+	metaDatas?: Array<Uint8Array | undefined>;
+	payloadDatas: Uint8Array[];
+};
+
+type NativePlainEntryInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTime: bigint | number | string;
+	logical?: number;
+	gid: string;
+	next?: string[];
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	includeMaterializationBytes?: boolean;
+	includeAppendFactsBytes?: boolean;
+	trimLengthTo?: number;
+	resolveTrimmedEntries?: boolean;
+};
+
+type NativePlainEntriesInput = {
+	clockId: Uint8Array;
+	privateKey: Uint8Array;
+	publicKey: Uint8Array;
+	wallTimes: Array<bigint | number | string>;
+	logicals?: number[];
+	gids: string[];
+	nexts?: string[][];
+	type?: number;
+	metaDatas?: Array<Uint8Array | undefined>;
+	payloadDatas: Uint8Array[];
+};
+
+type NativePreparedPlainEntry = {
+	bytes?: Uint8Array;
+	cid: string;
+	byteLength: number;
+	signature?: Uint8Array;
+	next: string[];
+	metaBytes?: Uint8Array;
+	payloadBytes?: Uint8Array;
+	signatureBytes?: Uint8Array;
+	hashDigestBytes?: Uint8Array;
+	trimmedEntries?: PreparedNativeLogEntry[];
+	trimmedEntryHashes?: string[];
+};
+
+export type PreparedRawEntryV0Facts = {
+	cid: string;
+	hashDigestBytes: Uint8Array;
+	byteLength: number;
+	clockId: Uint8Array;
+	wallTime: bigint;
+	logical: number;
+	gid: string;
+	next: string[];
+	type: EntryType;
+	metaBytes: Uint8Array;
+	metaData?: Uint8Array;
+	payloadByteLength: number;
+	signatureVerified: boolean;
+	requestedReplicas?: number;
+	hashNumber?: string;
+};
+
+type MaybePromise<T> = T | Promise<T>;
+
+type PlainAppendChainCommitOnlyProperties<T> = {
+	data: T[];
+	payloadDatas?: Uint8Array[];
+	meta?: {
+		clocks: () => Clock[];
+		gid?: string;
+		type?: EntryType;
+		gidSeed?: Uint8Array;
+		data?: Uint8Array;
+		next?: SortableEntry[];
+	};
+	encoding: Encoding<T>;
+	identity: Identity;
+	deferStore: boolean;
+	nativeGraph?: NativeEntryV0Graph;
+	nativeBlockStore?: unknown;
+	includeMaterializationBytes?: boolean;
+	includeAppendFactsBytes?: boolean;
+	nativeTrimLengthTo?: number;
+};
+
+type NativeEntryV0Graph = {
+	prepareEntryV0PlainChainAndPut?(
+		input: NativePlainChainInput,
+	): MaybePromise<NativePreparedPlainEntry[]>;
+	prepareEntryV0PlainEntryAndPut?(
+		input: NativePlainEntryInput,
+	): MaybePromise<NativePreparedPlainEntry>;
+	prepareEntryV0PlainChainCommit?(
+		input: NativePlainChainInput,
+		blockStore: unknown,
+	): MaybePromise<NativePreparedPlainEntry[] | undefined>;
+	prepareEntryV0PlainEntryCommit?(
+		input: NativePlainEntryInput,
+		blockStore: unknown,
+	): MaybePromise<NativePreparedPlainEntry | undefined>;
+	prepareEntryV0PlainEntriesCommit?(
+		input: NativePlainEntriesInput,
+		blockStore: unknown,
+	): MaybePromise<NativePreparedPlainEntry[] | undefined>;
+};
+
+type NativeEntryV0Encoder = {
+	encodeEntryV0Signable(input: {
+		clockId: Uint8Array;
+		wallTime: bigint;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+	}): Promise<Uint8Array>;
+	encodeEntryV0Storage(input: {
+		clockId: Uint8Array;
+		wallTime: bigint;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		signature: Uint8Array;
+		signaturePublicKey: Uint8Array;
+		prehash?: number;
+	}): Promise<Uint8Array>;
+	encodeEntryV0StorageWithCid?(input: {
+		clockId: Uint8Array;
+		wallTime: bigint;
+		logical?: number;
+		gid: string;
+		next?: string[];
+		type?: number;
+		metaData?: Uint8Array;
+		payloadData: Uint8Array;
+		signature: Uint8Array;
+		signaturePublicKey: Uint8Array;
+		prehash?: number;
+	}): Promise<{ bytes: Uint8Array; cid: string }>;
+	prepareEntryV0PlainChain?(
+		input: NativePlainChainInput,
+	): Promise<NativePreparedPlainEntry[]>;
+	prepareEntryV0PlainEntry?(
+		input: NativePlainEntryInput,
+	): Promise<NativePreparedPlainEntry>;
+	calculateRawCidV1(bytes: Uint8Array): Promise<string>;
+	calculateRawCidV1Batch?(blocks: Uint8Array[]): Promise<string[]>;
+	entryV0PlainPayloadDataFromStorage?(
+		bytes: Uint8Array,
+	): Promise<Uint8Array>;
+	prepareRawEntryV0Batch?(
+		blocks: Uint8Array[],
+	): Promise<PreparedRawEntryV0Facts[]>;
+	verifyEd25519Batch?(
+		inputs: Ed25519VerifyBatchInput[],
+	): Promise<boolean[]>;
+	verifyEntryV0Ed25519Batch?(
+		inputs: EntryV0Ed25519VerifyInput[],
+	): Promise<boolean[]>;
+	verifyEntryV0Ed25519StorageBatch?(
+		blocks: Uint8Array[],
+	): Promise<boolean[]>;
+};
+
+let nativeEntryV0EncoderPromise:
+	| Promise<NativeEntryV0Encoder | undefined>
+	| undefined;
+let nativeEntryV0EncoderLoaded = false;
+let nativeEntryV0Encoder: NativeEntryV0Encoder | undefined;
+
+const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
+	!!value && typeof (value as Promise<T>).then === "function";
+
+const getSynchronousBlockBytes = (
+	store: unknown,
+	cid: string,
+): Uint8Array | undefined => {
+	const value = (
+		store as { get?: (cid: string) => unknown } | undefined
+	)?.get?.(cid);
+	return value instanceof Uint8Array ? value : undefined;
+};
+
+const nativeEntryV0EncoderFromModule = (mod: {
+	encodeEntryV0Signable?: NativeEntryV0Encoder["encodeEntryV0Signable"];
+	encodeEntryV0Storage?: NativeEntryV0Encoder["encodeEntryV0Storage"];
+	encodeEntryV0StorageWithCid?: NativeEntryV0Encoder["encodeEntryV0StorageWithCid"];
+	prepareEntryV0PlainChain?: NativeEntryV0Encoder["prepareEntryV0PlainChain"];
+	prepareEntryV0PlainEntry?: NativeEntryV0Encoder["prepareEntryV0PlainEntry"];
+	calculateRawCidV1?: NativeEntryV0Encoder["calculateRawCidV1"];
+	calculateRawCidV1Batch?: NativeEntryV0Encoder["calculateRawCidV1Batch"];
+	entryV0PlainPayloadDataFromStorage?: NativeEntryV0Encoder[
+		"entryV0PlainPayloadDataFromStorage"
+	];
+	prepareRawEntryV0Batch?: NativeEntryV0Encoder["prepareRawEntryV0Batch"];
+	verifyEd25519Batch?: NativeEntryV0Encoder["verifyEd25519Batch"];
+	verifyEntryV0Ed25519Batch?: NativeEntryV0Encoder["verifyEntryV0Ed25519Batch"];
+	verifyEntryV0Ed25519StorageBatch?: NativeEntryV0Encoder["verifyEntryV0Ed25519StorageBatch"];
+}): NativeEntryV0Encoder | undefined => {
+	if (
+		!mod.encodeEntryV0Signable ||
+		!mod.encodeEntryV0Storage ||
+		!mod.calculateRawCidV1
+	) {
+		return undefined;
+	}
+	return {
+		encodeEntryV0Signable: mod.encodeEntryV0Signable,
+		encodeEntryV0Storage: mod.encodeEntryV0Storage,
+		encodeEntryV0StorageWithCid: mod.encodeEntryV0StorageWithCid,
+		prepareEntryV0PlainChain: mod.prepareEntryV0PlainChain,
+		prepareEntryV0PlainEntry: mod.prepareEntryV0PlainEntry,
+		calculateRawCidV1: mod.calculateRawCidV1,
+		calculateRawCidV1Batch: mod.calculateRawCidV1Batch,
+		entryV0PlainPayloadDataFromStorage:
+			mod.entryV0PlainPayloadDataFromStorage,
+		prepareRawEntryV0Batch: mod.prepareRawEntryV0Batch,
+		verifyEd25519Batch: mod.verifyEd25519Batch,
+		verifyEntryV0Ed25519Batch: mod.verifyEntryV0Ed25519Batch,
+		verifyEntryV0Ed25519StorageBatch: mod.verifyEntryV0Ed25519StorageBatch,
+	};
+};
+
+const loadNativeEntryV0Encoder = ():
+	| NativeEntryV0Encoder
+	| undefined
+	| Promise<NativeEntryV0Encoder | undefined> => {
+	if (nativeEntryV0EncoderLoaded) {
+		return nativeEntryV0Encoder;
+	}
+	if (!canUseOptionalNativeModuleImports()) {
+		nativeEntryV0EncoderLoaded = true;
+		return undefined;
+	}
+	if (!nativeEntryV0EncoderPromise) {
+		try {
+			nativeEntryV0EncoderPromise = import(
+				/* @vite-ignore */ ["@peerbit", "log-rust"].join("/")
+			)
+				.then((mod) => {
+					nativeEntryV0Encoder = nativeEntryV0EncoderFromModule(mod);
+					nativeEntryV0EncoderLoaded = true;
+					return nativeEntryV0Encoder;
+				})
+				.catch(() => {
+					nativeEntryV0Encoder = undefined;
+					nativeEntryV0EncoderLoaded = true;
+					return undefined;
+				});
+		} catch {
+			nativeEntryV0Encoder = undefined;
+			nativeEntryV0EncoderLoaded = true;
+			return undefined;
+		}
+	}
+	return nativeEntryV0EncoderPromise;
+};
+
+export const calculateRawCidV1Batch = async (
+	blocks: Uint8Array[],
+): Promise<string[]> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const totalBytes = blocks.reduce((sum, block) => sum + block.byteLength, 0);
+	if (totalBytes < NATIVE_RAW_CID_BATCH_MIN_BYTES) {
+		// Small raw-head messages are faster through the JS hasher because they
+		// avoid copying every block into wasm.
+		return Promise.all(
+			blocks.map(async (bytes) => (await calculateRawCid(bytes)).cid),
+		);
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	if (resolvedNativeEncoder?.calculateRawCidV1Batch) {
+		return resolvedNativeEncoder.calculateRawCidV1Batch(blocks);
+	}
+	return Promise.all(
+		blocks.map(async (bytes) => (await calculateRawCid(bytes)).cid),
+	);
+};
+
+export const prepareRawEntryV0Batch = async (
+	blocks: Uint8Array[],
+): Promise<PreparedRawEntryV0Facts[] | undefined> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.prepareRawEntryV0Batch?.(blocks);
+};
+
+export const entryV0PlainPayloadDataFromStorage = async (
+	bytes: Uint8Array,
+): Promise<Uint8Array | undefined> => {
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.entryV0PlainPayloadDataFromStorage?.(bytes);
+};
+
+export type Ed25519VerifyBatchInput = {
+	signature: Uint8Array;
+	publicKey: Uint8Array;
+	message: Uint8Array;
+};
+
+export type EntryV0Ed25519VerifyInput = {
+	clockId: Uint8Array;
+	wallTime: bigint;
+	logical?: number;
+	gid: string;
+	next?: string[];
+	type?: number;
+	metaData?: Uint8Array;
+	payloadData: Uint8Array;
+	signature: Uint8Array;
+	publicKey: Uint8Array;
+};
+
+export const verifyEd25519Batch = async (
+	inputs: Ed25519VerifyBatchInput[],
+): Promise<boolean[] | undefined> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.verifyEd25519Batch?.(inputs);
+};
+
+export const verifyEntryV0Ed25519Batch = async (
+	inputs: EntryV0Ed25519VerifyInput[],
+): Promise<boolean[] | undefined> => {
+	if (inputs.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.verifyEntryV0Ed25519Batch?.(inputs);
+};
+
+export const verifyEntryV0Ed25519StorageBatch = async (
+	blocks: Uint8Array[],
+): Promise<boolean[] | undefined> => {
+	if (blocks.length === 0) {
+		return [];
+	}
+	const nativeEncoder = loadNativeEntryV0Encoder();
+	const resolvedNativeEncoder = isPromiseLike(nativeEncoder)
+		? await nativeEncoder
+		: nativeEncoder;
+	return resolvedNativeEncoder?.verifyEntryV0Ed25519StorageBatch?.(blocks);
+};
+
+export const verifyEntryV0Ed25519BatchFromEntries = async (
+	entries: Entry<any>[],
+): Promise<boolean[] | undefined> => {
+	if (entries.length === 0) {
+		return [];
+	}
+	const preparedStorageBytes: Uint8Array[] = [];
+	let allHavePreparedStorageBytes = true;
+	for (const entry of entries) {
+		const bytes = Entry.getPreparedStorageBytes(entry);
+		if (!bytes) {
+			allHavePreparedStorageBytes = false;
+			break;
+		}
+		preparedStorageBytes.push(bytes);
+	}
+	if (allHavePreparedStorageBytes) {
+		try {
+			const verified =
+				await verifyEntryV0Ed25519StorageBatch(preparedStorageBytes);
+			if (verified) {
+				return verified;
+			}
+		} catch {
+			// Fall through to field extraction for encrypted or non-Ed25519 entries.
+		}
+	}
+	const inputs: EntryV0Ed25519VerifyInput[] = [];
+	for (const entry of entries) {
+		if (!(entry instanceof EntryV0)) {
+			return undefined;
+		}
+		const rawEntry = entry as EntryV0<any> & {
+			_meta: unknown;
+			_payload: unknown;
+		};
+		if (
+			!(rawEntry._meta instanceof DecryptedThing) ||
+			!(rawEntry._payload instanceof DecryptedThing)
+		) {
+			return undefined;
+		}
+		let signatures: SignatureWithKey[];
+		let meta: Meta;
+		let payload: Payload<any>;
+		try {
+			signatures = entry.signatures;
+			meta = entry.meta;
+			payload = entry.payload;
+		} catch {
+			return undefined;
+		}
+		if (signatures.length !== 1) {
+			return undefined;
+		}
+		const signature = signatures[0]!;
+		if (
+			!(signature.publicKey instanceof Ed25519PublicKey) ||
+			signature.prehash !== 0
+		) {
+			return undefined;
+		}
+		inputs.push({
+			clockId: meta.clock.id,
+			wallTime: meta.clock.timestamp.wallTime,
+			logical: meta.clock.timestamp.logical,
+			gid: meta.gid,
+			next: meta.next,
+			type: meta.type,
+			metaData: meta.data,
+			payloadData: payload.data,
+			signature: signature.signature,
+			publicKey: signature.publicKey.publicKey,
+		});
+	}
+	return verifyEntryV0Ed25519Batch(inputs);
+};
 
 export type MaybeEncryptionPublicKey =
 	| X25519PublicKey
@@ -178,6 +665,7 @@ export class EntryV0<T>
 
 	private _keychain?: CryptoKeychain;
 	private _encoding?: Encoding<T>;
+	private _hashDigestBytes?: Uint8Array;
 
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
@@ -227,6 +715,18 @@ export class EntryV0<T>
 	async getMeta(): Promise<Meta> {
 		await this._meta.decrypt(this._keychain);
 		return this.meta;
+	}
+
+	getMetaBytes(): Uint8Array | undefined {
+		try {
+			return this._meta.decrypted._data;
+		} catch {
+			return undefined;
+		}
+	}
+
+	getHashDigestBytes(): Uint8Array | undefined {
+		return this._hashDigestBytes;
 	}
 
 	async getClock(): Promise<Clock> {
@@ -395,7 +895,916 @@ export class EntryV0<T>
 	}
 
 	static createGid(seed?: Uint8Array): Promise<string> | string {
-		return seed ? sha256Base64(seed) : toBase64(randomBytes(32));
+		return seed ? sha256Base64(seed) : createRandomGid();
+	}
+
+	static createGids(count: number): string[] {
+		if (count === 0) {
+			return [];
+		}
+		const bytes = randomBytes(count * RANDOM_GID_BYTES);
+		const gids = new Array<string>(count);
+		for (let i = 0; i < count; i++) {
+			const offset = i * RANDOM_GID_BYTES;
+			gids[i] = toBase64(
+				bytes.subarray(offset, offset + RANDOM_GID_BYTES),
+			);
+		}
+		return gids;
+	}
+
+	static async createPlainAppendChain<T>(properties: {
+		data: T[];
+		payloadDatas?: Uint8Array[];
+		meta?: {
+			clocks: () => Clock[];
+			gid?: string;
+			type?: EntryType;
+			gidSeed?: Uint8Array;
+			data?: Uint8Array;
+			next?: SortableEntry[];
+		};
+		encoding: Encoding<T>;
+		identity: Identity;
+		deferStore: boolean;
+		cachePreparedEntries?: boolean;
+		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
+	}): Promise<Entry<T>[] | undefined> {
+		return (await EntryV0.createPlainAppendChainBatch(properties))?.entries;
+	}
+
+	static async createPlainAppendEntriesBatch<T>(properties: {
+		data: T[];
+		payloadDatas?: Uint8Array[];
+		meta: {
+			clocks: () => Clock[];
+			gids: string[];
+			nexts?: SortableEntry[][];
+			type?: EntryType;
+			datas?: Array<Uint8Array | undefined>;
+		};
+		encoding: Encoding<T>;
+		identity: Identity;
+		deferStore: boolean;
+		cachePreparedEntries?: boolean;
+		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
+	}): Promise<PreparedAppendChain<T> | undefined> {
+		if (!properties.deferStore) {
+			return undefined;
+		}
+		if (!(properties.identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		const nativeCommit =
+			properties.nativeGraph?.prepareEntryV0PlainEntriesCommit;
+		if (!nativeCommit) {
+			return undefined;
+		}
+		if (
+			properties.meta.gids.length !== properties.data.length ||
+			(properties.meta.nexts &&
+				properties.meta.nexts.length !== properties.data.length) ||
+			(properties.payloadDatas &&
+				properties.payloadDatas.length !== properties.data.length)
+		) {
+			throw new Error("Expected one gid and next list per entry");
+		}
+
+		const clocks = properties.meta.clocks();
+		if (clocks.length !== properties.data.length) {
+			throw new Error("Expected one clock per entry");
+		}
+		for (let i = 0; i < clocks.length; i++) {
+			for (const next of properties.meta.nexts?.[i] ?? []) {
+				if (
+					Timestamp.compare(next.meta.clock.timestamp, clocks[i]!.timestamp) >=
+					0
+				) {
+					throw new Error(
+						"Expecting next(s) to happen before entry, got: " +
+							next.meta.clock.timestamp +
+							" > " +
+							clocks[i]!.timestamp,
+					);
+				}
+			}
+		}
+
+		const payloadDatas =
+			properties.payloadDatas ??
+			properties.data.map((data) => properties.encoding.encoder(data));
+		const input: NativePlainEntriesInput = {
+			clockId: properties.identity.publicKey.bytes,
+			privateKey: properties.identity.privateKey.privateKey,
+			publicKey: properties.identity.publicKey.publicKey,
+			wallTimes: clocks.map((clock) => clock.timestamp.wallTime),
+			logicals: clocks.map((clock) => clock.timestamp.logical),
+			gids: properties.meta.gids,
+			nexts: properties.meta.nexts?.map((nexts) =>
+				nexts.map((next) => next.hash),
+			),
+			type: properties.meta.type,
+			metaDatas: properties.meta.datas,
+			payloadDatas,
+		};
+		const preparedValue = nativeCommit.call(
+			properties.nativeGraph,
+			input,
+			properties.nativeBlockStore,
+		);
+		const prepared = isPromiseLike(preparedValue)
+			? await preparedValue
+			: preparedValue;
+		if (!prepared) {
+			return undefined;
+		}
+		if (prepared.length !== properties.data.length) {
+			throw new Error("Unexpected prepared entry batch length");
+		}
+
+		const entries: PreparedAppendChain<T>["entries"] = [];
+		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> = [];
+		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
+			[];
+		const entryType = properties.meta.type ?? EntryType.APPEND;
+		for (let index = 0; index < prepared.length; index++) {
+			const preparedEntry = prepared[index]!;
+			const clock = clocks[index]!;
+			const entryGid = properties.meta.gids[index]!;
+			const metaData = properties.meta.datas?.[index];
+			const meta = new Meta({
+				clock,
+				gid: entryGid,
+				type: entryType,
+				data: metaData,
+				next: preparedEntry.next,
+			});
+			const payloadSize = payloadDatas[index]!.byteLength;
+			const payload =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new Payload<T>({
+							data: payloadDatas[index]!,
+							value: properties.data[index],
+							encoding: properties.encoding,
+						});
+			const signature =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new SignatureWithKey({
+							signature: preparedEntry.signature!,
+							publicKey: properties.identity.publicKey,
+							prehash: 0,
+						});
+			const entry = new EntryV0<T>({
+				meta: new DecryptedThing({
+					data: preparedEntry.metaBytes,
+					value: meta,
+				}),
+				payload: new DecryptedThing({
+					data: preparedEntry.payloadBytes,
+					value: payload,
+				}),
+				signatures: new Signatures({
+					signatures: [
+						new DecryptedThing({
+							data: preparedEntry.signatureBytes,
+							value: signature,
+						}),
+					],
+				}),
+				createdLocally: true,
+			});
+			if (properties.cachePreparedEntries === false) {
+				entry.hash = preparedEntry.cid;
+				entry.size = preparedEntry.byteLength;
+			} else {
+				if (!preparedEntry.bytes) {
+					throw new Error("Missing prepared entry bytes");
+				}
+				entry.hash = Entry.prepareMultihashBytes(
+					entry,
+					preparedEntry.bytes,
+					preparedEntry.cid,
+				);
+			}
+			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+			const shallowEntry = new ShallowEntry({
+				hash: entry.hash,
+				payloadSize,
+				head: true,
+				meta: new ShallowMeta({
+					gid: entryGid,
+					data: metaData,
+					clock,
+					next: preparedEntry.next,
+					type: entryType,
+				}),
+			});
+			const nativeEntry =
+				properties.cachePreparedEntries === false
+					? undefined
+					: {
+							hash: entry.hash,
+							gid: entryGid,
+							next: preparedEntry.next,
+							type: entryType,
+							head: true,
+							payloadSize,
+							data: metaData,
+							clock: {
+								timestamp: {
+									wallTime: clock.timestamp.wallTime,
+									logical: clock.timestamp.logical,
+								},
+							},
+						};
+			if (properties.cachePreparedEntries !== false) {
+				Entry.prepareShallowEntry(entry, shallowEntry);
+				Entry.prepareNativeLogEntry(entry, nativeEntry!);
+				entry.init({ encoding: properties.encoding });
+			}
+			entries.push(entry);
+			shallowEntries.push(shallowEntry);
+			appendFacts.push({
+				hash: entry.hash,
+				gid: entryGid,
+				next: preparedEntry.next,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				clockId: clock.id,
+				type: entryType,
+				metaData,
+				payloadSize,
+				metaBytes: preparedEntry.metaBytes,
+				hashDigestBytes: preparedEntry.hashDigestBytes,
+			});
+			if (nativeEntry) {
+				nativeEntries.push(nativeEntry);
+			}
+		}
+
+		return {
+			entries,
+			shallowEntries,
+			appendFacts,
+			nativeEntries,
+			nativeGraphUpdated: true,
+			nativeBlocksCommitted: true,
+		};
+	}
+
+	static createPlainAppendChainCommitOnly<T>(
+		properties: PlainAppendChainCommitOnlyProperties<T>,
+	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		if (!properties.deferStore || properties.data.length !== 1) {
+			return undefined;
+		}
+		if (!(properties.identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		if (
+			!properties.nativeGraph?.prepareEntryV0PlainEntryCommit &&
+			!properties.nativeGraph?.prepareEntryV0PlainEntryAndPut
+		) {
+			return undefined;
+		}
+
+		const nexts = properties.meta?.next ?? [];
+		const nextHashes: string[] = [];
+		let gid: string | null = null;
+		if (nexts.length > 0) {
+			if (properties.meta?.gid) {
+				throw new Error(
+					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided",
+				);
+			}
+			for (const next of nexts) {
+				if (!next.hash) {
+					throw new Error("Expecting hash to be defined to next entries");
+				}
+				nextHashes.push(next.hash);
+				gid =
+					gid == null
+						? next.meta.gid
+						: next.meta.gid < (gid as string)
+							? next.meta.gid
+							: gid;
+			}
+		} else if (properties.meta?.gid) {
+			gid = properties.meta.gid;
+		} else {
+			const createdGid = EntryV0.createGid(properties.meta?.gidSeed);
+			return isPromiseLike(createdGid)
+				? createdGid.then((resolvedGid) =>
+						EntryV0.finishPlainAppendChainCommitOnly(
+							properties,
+							nexts,
+							nextHashes,
+							resolvedGid,
+						),
+					)
+				: EntryV0.finishPlainAppendChainCommitOnly(
+						properties,
+						nexts,
+						nextHashes,
+						createdGid,
+					);
+		}
+
+		return EntryV0.finishPlainAppendChainCommitOnly(
+			properties,
+			nexts,
+			nextHashes,
+			gid!,
+		);
+	}
+
+	private static finishPlainAppendChainCommitOnly<T>(
+		properties: PlainAppendChainCommitOnlyProperties<T>,
+		nexts: SortableEntry[],
+		nextHashes: string[],
+		gid: string,
+	): MaybePromise<PreparedAppendCommitOnlyChain<T> | undefined> {
+		if (
+			!properties.nativeGraph ||
+			!(properties.identity instanceof Ed25519Keypair)
+		) {
+			return undefined;
+		}
+		const nativeGraph = properties.nativeGraph;
+		const identity = properties.identity;
+		const clocks = properties.meta?.clocks();
+		if (!clocks || clocks.length !== 1) {
+			throw new Error("Expected one clock per entry");
+		}
+		const clock = clocks[0]!;
+		for (const next of nexts) {
+			if (Timestamp.compare(next.meta.clock.timestamp, clock.timestamp) >= 0) {
+				throw new Error(
+					"Expecting next(s) to happen before entry, got: " +
+						next.meta.clock.timestamp +
+						" > " +
+						clock.timestamp,
+				);
+			}
+		}
+
+		const payloadData =
+			properties.payloadDatas?.[0] ??
+			properties.encoding.encoder(properties.data[0]!);
+		const entryType = properties.meta?.type ?? EntryType.APPEND;
+		const singleInput: NativePlainEntryInput = {
+			clockId: identity.publicKey.bytes,
+			privateKey: identity.privateKey.privateKey,
+			publicKey: identity.publicKey.publicKey,
+			wallTime: clock.timestamp.wallTime,
+			logical: clock.timestamp.logical,
+			gid: gid!,
+			next: nextHashes,
+			type: entryType,
+			metaData: properties.meta?.data,
+			payloadData,
+			includeMaterializationBytes: properties.includeMaterializationBytes,
+			includeAppendFactsBytes: properties.includeAppendFactsBytes,
+			trimLengthTo: properties.nativeTrimLengthTo,
+			resolveTrimmedEntries:
+				properties.nativeTrimLengthTo == null ? undefined : false,
+		};
+		let nativeBlocksCommitted = false;
+		let nativeGraphUpdated = false;
+		const finishWithPreparedEntry = (
+			preparedEntry: NativePreparedPlainEntry | undefined,
+		): PreparedAppendCommitOnlyChain<T> | undefined => {
+			if (!preparedEntry) {
+				return undefined;
+			}
+
+			const payloadSize = payloadData.byteLength;
+			const shallowEntry = new ShallowEntry({
+				hash: preparedEntry.cid,
+				payloadSize,
+				head: true,
+				meta: new ShallowMeta({
+					gid: gid!,
+					data: properties.meta?.data,
+					clock,
+					next: preparedEntry.next,
+					type: entryType,
+				}),
+			});
+			const appendFacts = {
+				hash: preparedEntry.cid,
+				gid: gid!,
+				next: preparedEntry.next,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				clockId: clock.id,
+				type: entryType,
+				metaData: properties.meta?.data,
+				payloadSize,
+				metaBytes: preparedEntry.metaBytes,
+				hashDigestBytes: preparedEntry.hashDigestBytes,
+			};
+			let materialized: Entry<T> | undefined;
+			const materializeEntry = (index = 0): Entry<T> => {
+				if (index !== 0) {
+					throw new Error("Prepared commit-only append only has one entry");
+				}
+				if (materialized) {
+					return materialized;
+				}
+				const payload = new Payload<T>({
+					data: payloadData,
+					value: properties.data[0],
+					encoding: properties.encoding,
+				});
+				if (
+					!preparedEntry.metaBytes ||
+					!preparedEntry.payloadBytes ||
+					!preparedEntry.signature ||
+					!preparedEntry.signatureBytes
+				) {
+					const bytes =
+						preparedEntry.bytes ??
+						getSynchronousBlockBytes(
+							properties.nativeBlockStore,
+							preparedEntry.cid,
+						);
+					if (!bytes) {
+						throw new Error("Missing prepared entry bytes");
+					}
+					const entry = deserialize(bytes, Entry) as EntryV0<T>;
+					entry.hash = preparedEntry.cid;
+					entry.size = preparedEntry.byteLength;
+					entry.createdLocally = true;
+					entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+					Entry.prepareShallowEntry(entry, shallowEntry);
+					entry.init({ encoding: properties.encoding });
+					materialized = entry;
+					return entry;
+				}
+				const signature = new SignatureWithKey({
+					signature: preparedEntry.signature,
+					publicKey: properties.identity.publicKey,
+					prehash: 0,
+				});
+				const meta = new Meta({
+					clock,
+					gid: gid!,
+					type: entryType,
+					data: properties.meta?.data,
+					next: preparedEntry.next,
+				});
+				const entry = new EntryV0<T>({
+					meta: new DecryptedThing({
+						data: preparedEntry.metaBytes,
+						value: meta,
+					}),
+					payload: new DecryptedThing({
+						data: preparedEntry.payloadBytes,
+						value: payload,
+					}),
+					signatures: new Signatures({
+						signatures: [
+							new DecryptedThing({
+								data: preparedEntry.signatureBytes,
+								value: signature,
+							}),
+						],
+					}),
+					createdLocally: true,
+				});
+				entry.hash = preparedEntry.cid;
+				entry.size = preparedEntry.byteLength;
+				entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+				Entry.prepareShallowEntry(entry, shallowEntry);
+				entry.init({ encoding: properties.encoding });
+				materialized = entry;
+				return entry;
+			};
+			const preparedBlock =
+				preparedEntry.bytes && !nativeBlocksCommitted
+					? Entry.preparedBlockFromBytes(preparedEntry.bytes, preparedEntry.cid)
+					: undefined;
+
+			return {
+				materializeEntry,
+				materializeEntries: () => [materializeEntry(0)],
+				blocks: preparedBlock ? [preparedBlock] : undefined,
+				shallowEntries: [shallowEntry],
+				appendFacts: [appendFacts],
+				trimmedNativeEntries: preparedEntry.trimmedEntries,
+				trimmedNativeEntryHashes: preparedEntry.trimmedEntryHashes,
+				trimmedNativeBlocksDeleted: nativeBlocksCommitted,
+				nativeGraphUpdated,
+				nativeBlocksCommitted,
+			};
+		};
+		const prepareAndPutFallback = ():
+			| PreparedAppendCommitOnlyChain<T>
+			| undefined
+			| Promise<PreparedAppendCommitOnlyChain<T> | undefined> => {
+			const nativePrepareAndPut = nativeGraph.prepareEntryV0PlainEntryAndPut;
+			const preparedEntryValue = nativePrepareAndPut
+				? nativePrepareAndPut.call(nativeGraph, {
+						...singleInput,
+					})
+				: undefined;
+			if (isPromiseLike(preparedEntryValue)) {
+				return preparedEntryValue.then((preparedEntry) => {
+					nativeGraphUpdated = !!preparedEntry && !!nativePrepareAndPut;
+					return finishWithPreparedEntry(preparedEntry);
+				});
+			}
+			nativeGraphUpdated = !!preparedEntryValue && !!nativePrepareAndPut;
+			return finishWithPreparedEntry(preparedEntryValue);
+		};
+		const nativeCommit = nativeGraph.prepareEntryV0PlainEntryCommit;
+		if (nativeCommit) {
+			const preparedEntryValue = nativeCommit.call(
+				nativeGraph,
+				singleInput,
+				properties.nativeBlockStore,
+			);
+			if (isPromiseLike(preparedEntryValue)) {
+				return preparedEntryValue.then((preparedEntry) => {
+					if (preparedEntry) {
+						nativeBlocksCommitted = true;
+						nativeGraphUpdated = true;
+						return finishWithPreparedEntry(preparedEntry);
+					}
+					return prepareAndPutFallback();
+				});
+			}
+			if (preparedEntryValue) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+				return finishWithPreparedEntry(preparedEntryValue);
+			}
+		}
+		return prepareAndPutFallback();
+	}
+
+	static async createPlainAppendChainBatch<T>(properties: {
+		data: T[];
+		payloadDatas?: Uint8Array[];
+		meta?: {
+			clocks: () => Clock[];
+			gid?: string;
+			type?: EntryType;
+			gidSeed?: Uint8Array;
+			data?: Uint8Array;
+			next?: SortableEntry[];
+		};
+		encoding: Encoding<T>;
+		identity: Identity;
+		deferStore: boolean;
+		cachePreparedEntries?: boolean;
+		nativeGraph?: NativeEntryV0Graph;
+		nativeBlockStore?: unknown;
+	}): Promise<PreparedAppendChain<T> | undefined> {
+		if (!properties.deferStore) {
+			return undefined;
+		}
+		if (!(properties.identity instanceof Ed25519Keypair)) {
+			return undefined;
+		}
+		const nativeEncoderValue = loadNativeEntryV0Encoder();
+		const nativeEncoder = isPromiseLike(nativeEncoderValue)
+			? await nativeEncoderValue
+			: nativeEncoderValue;
+		if (!nativeEncoder?.prepareEntryV0PlainChain) {
+			return undefined;
+		}
+
+		const nexts = properties.meta?.next ?? [];
+		const nextHashes: string[] = [];
+		let gid: string | null = null;
+		if (nexts.length > 0) {
+			if (properties.meta?.gid) {
+				throw new Error(
+					"Expecting '.meta.gid' property to be undefined if '.meta.next' is provided",
+				);
+			}
+			for (const next of nexts) {
+				if (!next.hash) {
+					throw new Error("Expecting hash to be defined to next entries");
+				}
+				nextHashes.push(next.hash);
+				gid =
+					gid == null
+						? next.meta.gid
+						: next.meta.gid < (gid as string)
+							? next.meta.gid
+							: gid;
+			}
+		} else {
+			if (properties.meta?.gid) {
+				gid = properties.meta.gid;
+			} else {
+				const createdGid = EntryV0.createGid(properties.meta?.gidSeed);
+				gid = isPromiseLike(createdGid) ? await createdGid : createdGid;
+			}
+		}
+
+		const clocks = properties.meta?.clocks();
+		if (!clocks || clocks.length !== properties.data.length) {
+			throw new Error("Expected one clock per entry");
+		}
+		for (const next of nexts) {
+			if (
+				Timestamp.compare(next.meta.clock.timestamp, clocks[0]!.timestamp) >= 0
+			) {
+				throw new Error(
+					"Expecting next(s) to happen before entry, got: " +
+						next.meta.clock.timestamp +
+						" > " +
+						clocks[0]!.timestamp,
+				);
+			}
+		}
+		for (let i = 1; i < clocks.length; i++) {
+			if (
+				Timestamp.compare(clocks[i - 1]!.timestamp, clocks[i]!.timestamp) >= 0
+			) {
+				throw new Error(
+					"Expecting generated clocks to increase across appendMany",
+				);
+			}
+		}
+
+		const entryType = properties.meta?.type ?? EntryType.APPEND;
+		const clockId = properties.identity.publicKey.bytes;
+		const privateKey = properties.identity.privateKey.privateKey;
+		const publicKey = properties.identity.publicKey.publicKey;
+		let nativeBlocksCommitted = false;
+		let nativeGraphUpdated = false;
+		let prepared: NativePreparedPlainEntry[] | undefined;
+		let payloadDatas: Uint8Array[] | undefined;
+		if (properties.data.length === 1) {
+			const clock = clocks[0]!;
+			const payloadData =
+				properties.payloadDatas?.[0] ??
+				properties.encoding.encoder(properties.data[0]!);
+			const singleInput: NativePlainEntryInput = {
+				clockId,
+				privateKey,
+				publicKey,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				gid: gid!,
+				next: nextHashes,
+				type: entryType,
+				metaData: properties.meta?.data,
+				payloadData,
+			};
+			const nativeCommit =
+				properties.nativeGraph?.prepareEntryV0PlainEntryCommit;
+			const preparedEntryValue = nativeCommit
+				? nativeCommit.call(
+						properties.nativeGraph,
+						singleInput,
+						properties.nativeBlockStore,
+					)
+				: undefined;
+			const preparedEntry = isPromiseLike(preparedEntryValue)
+				? await preparedEntryValue
+				: preparedEntryValue;
+			if (preparedEntry) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+				prepared = [preparedEntry];
+				payloadDatas = [payloadData];
+			} else {
+				const nativePrepareAndPut =
+					properties.nativeGraph?.prepareEntryV0PlainEntryAndPut;
+				const scalarPreparedEntryValue = nativePrepareAndPut
+					? nativePrepareAndPut.call(properties.nativeGraph, singleInput)
+					: nativeEncoder.prepareEntryV0PlainEntry?.(singleInput);
+				const scalarPreparedEntry = isPromiseLike(scalarPreparedEntryValue)
+					? await scalarPreparedEntryValue
+					: scalarPreparedEntryValue;
+				if (scalarPreparedEntry) {
+					nativeGraphUpdated = !!nativePrepareAndPut;
+					prepared = [scalarPreparedEntry];
+					payloadDatas = [payloadData];
+				}
+			}
+		}
+
+		if (!prepared) {
+			const wallTimes = new Array<bigint | number | string>(
+				properties.data.length,
+			);
+			const logicals = new Array<number>(properties.data.length);
+			const metaDatas = new Array<Uint8Array | undefined>(
+				properties.data.length,
+			);
+			if (
+				properties.payloadDatas &&
+				properties.payloadDatas.length !== properties.data.length
+			) {
+				throw new Error("Expected one payload data value per entry");
+			}
+			payloadDatas = properties.payloadDatas
+				? [...properties.payloadDatas]
+				: new Array<Uint8Array>(properties.data.length);
+			for (let i = 0; i < properties.data.length; i++) {
+				const clock = clocks[i]!;
+				wallTimes[i] = clock.timestamp.wallTime;
+				logicals[i] = clock.timestamp.logical;
+				metaDatas[i] = properties.meta?.data;
+				payloadDatas[i] ??= properties.encoding.encoder(properties.data[i]!);
+			}
+			const nativePlainChainInput: NativePlainChainInput = {
+				clockId,
+				privateKey,
+				publicKey,
+				wallTimes,
+				logicals,
+				gid: gid!,
+				initialNext: nextHashes,
+				type: entryType,
+				metaDatas,
+				payloadDatas,
+			};
+			const nativeCommit =
+				properties.nativeGraph?.prepareEntryV0PlainChainCommit;
+			const preparedValue = nativeCommit
+				? nativeCommit.call(
+						properties.nativeGraph,
+						nativePlainChainInput,
+						properties.nativeBlockStore,
+					)
+				: undefined;
+			prepared = isPromiseLike(preparedValue)
+				? await preparedValue
+				: preparedValue;
+			if (prepared) {
+				nativeBlocksCommitted = true;
+				nativeGraphUpdated = true;
+			} else {
+				const nativePrepareAndPut =
+					properties.nativeGraph?.prepareEntryV0PlainChainAndPut;
+				const preparedFallbackValue = nativePrepareAndPut
+					? nativePrepareAndPut.call(
+							properties.nativeGraph,
+							nativePlainChainInput,
+						)
+					: nativeEncoder.prepareEntryV0PlainChain(nativePlainChainInput);
+				prepared = isPromiseLike(preparedFallbackValue)
+					? await preparedFallbackValue
+					: preparedFallbackValue;
+				nativeGraphUpdated = !!nativePrepareAndPut;
+			}
+		}
+
+		const entries: PreparedAppendChain<T>["entries"] = [];
+		const blocks: NonNullable<PreparedAppendChain<T>["blocks"]> = [];
+		const shallowEntries: PreparedAppendChain<T>["shallowEntries"] = [];
+		const appendFacts: NonNullable<PreparedAppendChain<T>["appendFacts"]> = [];
+		const nativeEntries: NonNullable<PreparedAppendChain<T>["nativeEntries"]> =
+			[];
+		if (!payloadDatas) {
+			throw new Error("Expected payload data for prepared append chain");
+		}
+
+		for (let index = 0; index < prepared.length; index++) {
+			const preparedEntry = prepared[index]!;
+			const clock = clocks[index]!;
+			const meta = new Meta({
+				clock,
+				gid: gid!,
+				type: entryType,
+				data: properties.meta?.data,
+				next: preparedEntry.next,
+			});
+			const payloadSize = payloadDatas[index]!.byteLength;
+			const payload =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new Payload<T>({
+							data: payloadDatas[index]!,
+							value: properties.data[index],
+							encoding: properties.encoding,
+						});
+			const signature =
+				properties.cachePreparedEntries === false
+					? undefined
+					: new SignatureWithKey({
+							signature: preparedEntry.signature!,
+							publicKey: properties.identity.publicKey,
+							prehash: 0,
+						});
+			const entry = new EntryV0<T>({
+				meta: new DecryptedThing({
+					data: preparedEntry.metaBytes,
+					value: meta,
+				}),
+				payload: new DecryptedThing({
+					data: preparedEntry.payloadBytes,
+					value: payload,
+				}),
+				signatures: new Signatures({
+					signatures: [
+						new DecryptedThing({
+							data: preparedEntry.signatureBytes,
+							value: signature,
+						}),
+					],
+				}),
+				createdLocally: true,
+			});
+			const preparedBlock =
+				preparedEntry.bytes && !nativeBlocksCommitted
+					? Entry.preparedBlockFromBytes(preparedEntry.bytes, preparedEntry.cid)
+					: undefined;
+			if (properties.cachePreparedEntries === false) {
+				entry.hash = preparedEntry.cid;
+				entry.size = preparedEntry.byteLength;
+			} else {
+				if (!preparedEntry.bytes) {
+					throw new Error("Missing prepared entry bytes");
+				}
+				entry.hash = Entry.prepareMultihashBytes(
+					entry,
+					preparedEntry.bytes,
+					preparedEntry.cid,
+				);
+			}
+			entry._hashDigestBytes = preparedEntry.hashDigestBytes;
+			const shallowEntry = new ShallowEntry({
+				hash: entry.hash,
+				payloadSize,
+				head: index === prepared.length - 1,
+				meta: new ShallowMeta({
+					gid: gid!,
+					data: properties.meta?.data,
+					clock,
+					next: preparedEntry.next,
+					type: entryType,
+				}),
+			});
+			const nativeEntry =
+				nativeGraphUpdated && properties.cachePreparedEntries === false
+					? undefined
+					: {
+							hash: entry.hash,
+							gid: gid!,
+							next: preparedEntry.next,
+							type: entryType,
+							head: index === prepared.length - 1,
+							payloadSize,
+							data: properties.meta?.data,
+							clock: {
+								timestamp: {
+									wallTime: clock.timestamp.wallTime,
+									logical: clock.timestamp.logical,
+								},
+							},
+						};
+			if (properties.cachePreparedEntries !== false) {
+				Entry.prepareShallowEntry(entry, shallowEntry);
+				Entry.prepareNativeLogEntry(entry, nativeEntry!);
+			}
+			if (properties.cachePreparedEntries !== false) {
+				entry.init({ encoding: properties.encoding });
+			}
+			entries.push(entry);
+			if (preparedBlock) {
+				blocks.push(preparedBlock);
+			}
+			shallowEntries.push(shallowEntry);
+			appendFacts.push({
+				hash: entry.hash,
+				gid: gid!,
+				next: preparedEntry.next,
+				wallTime: clock.timestamp.wallTime,
+				logical: clock.timestamp.logical,
+				clockId: clock.id,
+				type: entryType,
+				metaData: properties.meta?.data,
+				payloadSize,
+				metaBytes: preparedEntry.metaBytes,
+				hashDigestBytes: preparedEntry.hashDigestBytes,
+			});
+			if (nativeEntry) {
+				nativeEntries.push(nativeEntry);
+			}
+		}
+		return {
+			entries,
+			blocks: blocks.length > 0 ? blocks : undefined,
+			shallowEntries,
+			appendFacts,
+			nativeEntries,
+			nativeGraphUpdated,
+			nativeBlocksCommitted,
+		};
 	}
 
 	static async create<T>(properties: {
@@ -412,6 +1821,7 @@ export class EntryV0<T>
 		encoding?: Encoding<T>;
 		canAppend?: CanAppend<T>;
 		encryption?: EntryEncryption;
+		deferStore?: boolean;
 		identity: Identity;
 		signers?: ((
 			data: Uint8Array,
@@ -505,12 +1915,13 @@ export class EntryV0<T>
 				properties.meta?.gid ||
 				(await EntryV0.createGid(properties.meta?.gidSeed));
 		}
+		const entryType = properties.meta?.type ?? EntryType.APPEND;
 
 		const metadataEncrypted = await maybeEncrypt(
 			new Meta({
 				clock,
 				gid: gid!,
-				type: properties.meta?.type ?? EntryType.APPEND,
+				type: entryType,
 				data: properties.meta?.data,
 				next: nextHashes,
 			}),
@@ -523,6 +1934,21 @@ export class EntryV0<T>
 			properties.encryption?.keypair,
 			properties.encryption?.receiver.payload,
 		);
+		const nativeEncoder = properties.encryption
+			? undefined
+			: await loadNativeEntryV0Encoder();
+		const nativePlainInput = nativeEncoder
+			? {
+					clockId: clock.id,
+					wallTime: clock.timestamp.wallTime,
+					logical: clock.timestamp.logical,
+					gid: gid!,
+					next: nextHashes,
+					type: entryType,
+					metaData: properties.meta?.data,
+					payloadData: payloadToSave.data,
+				}
+			: undefined;
 
 		// Sign id, encrypted payload, clock, nexts, refs
 		const entry: EntryV0<T> = new EntryV0<T>({
@@ -532,14 +1958,17 @@ export class EntryV0<T>
 			createdLocally: true,
 		});
 
-		const signers = properties.signers || [
-			properties.identity.sign.bind(properties.identity),
-		];
-
-		const signableBytes = entry.getSignableBytes();
-		let signatures = await Promise.all(
-			signers.map((signer) => signer(signableBytes)),
-		);
+		const signableBytes =
+			nativeEncoder && nativePlainInput
+				? await nativeEncoder.encodeEntryV0Signable(nativePlainInput)
+				: entry.getSignableBytes();
+		let signatures = properties.signers
+			? properties.signers.length === 1
+				? [await properties.signers[0]!(signableBytes)]
+				: await Promise.all(
+						properties.signers.map((signer) => signer(signableBytes)),
+					)
+			: [await properties.identity.sign(signableBytes)];
 		signatures = signatures.sort((a, b) => compare(a.signature, b.signature));
 
 		const encryptedSignatures: MaybeEncrypted<SignatureWithKey>[] = [];
@@ -569,8 +1998,54 @@ export class EntryV0<T>
 			throw new AccessError("Not allowed to append");
 		}
 
+		let nativeStorage:
+			| {
+					bytes: Uint8Array;
+					cid: string;
+			  }
+			| undefined;
+		if (
+			nativeEncoder &&
+			nativePlainInput &&
+			!properties.canAppend &&
+			signatures.length === 1 &&
+			signatures[0]!.publicKey instanceof Ed25519PublicKey
+		) {
+			const storageInput = {
+				...nativePlainInput,
+				signature: signatures[0]!.signature,
+				signaturePublicKey: signatures[0]!.publicKey.publicKey,
+				prehash: signatures[0]!.prehash,
+			};
+			nativeStorage = nativeEncoder.encodeEntryV0StorageWithCid
+				? await nativeEncoder.encodeEntryV0StorageWithCid(storageInput)
+				: await (async () => {
+						const storageBytes =
+							await nativeEncoder.encodeEntryV0Storage(storageInput);
+						return {
+							bytes: storageBytes,
+							cid: await nativeEncoder.calculateRawCidV1(storageBytes),
+						};
+					})();
+		}
+
 		// Append hash
-		entry.hash = await Entry.toMultihash(properties.store, entry);
+		entry.hash = properties.deferStore
+			? nativeStorage
+				? Entry.prepareMultihashBytes(
+						entry,
+						nativeStorage.bytes,
+						nativeStorage.cid,
+					)
+				: await Entry.prepareMultihash(entry)
+			: nativeStorage
+				? await Entry.toMultihashBytes(
+						properties.store,
+						entry,
+						nativeStorage.bytes,
+						nativeStorage.cid,
+					)
+				: await Entry.toMultihash(properties.store, entry);
 
 		entry.init({ encoding: properties.encoding });
 

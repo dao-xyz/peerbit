@@ -26,9 +26,11 @@ import { type EntryWithRefs } from "../exchange-heads.js";
 import { TransportMessage } from "../message.js";
 import { type EntryReplicated } from "../ranges.js";
 import type {
+	HashSymbolRangeResolver,
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
+	SyncEntryCoordinates,
 	SyncableKey,
 	SynchronizerComponents,
 	Syncronizer,
@@ -600,40 +602,59 @@ const buildEncoderOrDecoderFromRange = async <
 	entryIndex: Index<EntryReplicated<D>>,
 	type: T,
 	profile?: SyncProfileFn,
+	resolveHashNumbersInRange?: HashSymbolRangeResolver,
 ): Promise<E | false> => {
 	await ribltReady;
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
 
 	const rangeQueryStartedAt = syncProfileStart(profile);
-	const entries = await entryIndex
-		.iterate(
-			{
-				// Range sync for IBLT is done in hashNumber space.
-				query: matchEntriesByHashNumberInRangeQuery({
-					end1: ranges.end1,
-					start1: ranges.start1,
-					end2: ranges.end2,
-					start2: ranges.start2,
-				}),
-			},
-			{
-				shape: {
-					hash: true,
-					hashNumber: true,
+	let hashNumbers: Array<bigint | number> | BigUint64Array | undefined;
+	let source = "index";
+	const resolved = await resolveHashNumbersInRange?.({
+		end1: ranges.end1,
+		start1: ranges.start1,
+		end2: ranges.end2,
+		start2: ranges.start2,
+	});
+	if (resolved) {
+		source = "native";
+		hashNumbers =
+			typeof BigUint64Array !== "undefined" &&
+			resolved instanceof BigUint64Array
+				? resolved
+				: [...resolved];
+	} else {
+		const entries = await entryIndex
+			.iterate(
+				{
+					// Range sync for IBLT is done in hashNumber space.
+					query: matchEntriesByHashNumberInRangeQuery({
+						end1: ranges.end1,
+						start1: ranges.start1,
+						end2: ranges.end2,
+						start2: ranges.start2,
+					}),
 				},
-			},
-		)
-		.all();
+				{
+					shape: {
+						hash: true,
+						hashNumber: true,
+					},
+				},
+			)
+			.all();
+		hashNumbers = entries.map((entry) => entry.value.hashNumber);
+	}
 	if (profile) {
 		emitSyncProfileDuration(profile, rangeQueryStartedAt, {
 			name: "rateless.rangeQuery",
-			entries: entries.length,
-			details: { type },
+			entries: hashNumbers.length,
+			details: { type, source },
 		});
 	}
 
-	if (entries.length === 0) {
+	if (hashNumbers.length === 0) {
 		return false;
 	}
 
@@ -642,21 +663,21 @@ const buildEncoderOrDecoderFromRange = async <
 		typeof BigUint64Array !== "undefined" &&
 		typeof (encoder as RibltSymbolAdder).add_symbols === "function"
 	) {
-		const symbols = new BigUint64Array(entries.length);
-		for (let i = 0; i < entries.length; i++) {
-			symbols[i] = coerceBigInt(entries[i].value.hashNumber);
-		}
+		const symbols =
+			hashNumbers instanceof BigUint64Array
+				? hashNumbers
+				: BigUint64Array.from(hashNumbers, coerceBigInt);
 		addSymbolsToRiblt(encoder as RibltSymbolAdder, symbols);
 	} else {
-		for (const entry of entries) {
-			encoder.add_symbol(coerceBigInt(entry.value.hashNumber));
+		for (const hashNumber of hashNumbers) {
+			encoder.add_symbol(coerceBigInt(hashNumber));
 		}
 	}
 	if (profile) {
 		emitSyncProfileDuration(profile, addSymbolsStartedAt, {
 			name: "rateless.rangeAddSymbols",
-			entries: entries.length,
-			symbols: entries.length,
+			entries: hashNumbers.length,
+			symbols: hashNumbers.length,
 			details: { type },
 		});
 	}
@@ -694,7 +715,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	outgoingSyncProcesses: Map<
 		string,
 		{
-			outgoing: Map<string, EntryReplicated<D>>;
+			outgoingHashes: string[];
 			encoder: EncoderWrapper;
 			timeout: ReturnType<typeof setTimeout>;
 			refresh: () => void;
@@ -729,7 +750,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			.sort((a, b) => a - b);
 	}
 
-	private getPrioritizedEntries(entries: Map<string, EntryReplicated<D>>) {
+	private getPrioritizedEntries(entries: Map<string, SyncEntryCoordinates<D>>) {
 		const priorityFn = this.properties.sync?.priority;
 		if (!priorityFn) {
 			return [...entries.values()];
@@ -737,12 +758,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		let index = 0;
 		const scored: {
-			entry: EntryReplicated<D>;
+			entry: SyncEntryCoordinates<D>;
 			index: number;
 			priority: number;
 		}[] = [];
 		for (const entry of entries.values()) {
-			const priorityValue = priorityFn(entry);
+			const priorityValue = priorityFn(entry as EntryReplicated<D>);
 			scored.push({
 				entry,
 				index,
@@ -755,7 +776,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	}
 
 	startRepairSession(properties: {
-		entries: Map<string, EntryReplicated<D>>;
+		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
 		mode?: RepairSessionMode;
 		timeoutMs?: number;
@@ -788,7 +809,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			const id = `rateless-repair-${++this.repairSessionCounter}`;
 			const startedAt = Date.now();
 			const prioritized = this.getPrioritizedEntries(properties.entries);
-			const trackedEntries = new Map<string, EntryReplicated<D>>();
+			const trackedEntries = new Map<string, SyncEntryCoordinates<D>>();
 			for (const entry of prioritized.slice(0, trackedLimit)) {
 				trackedEntries.set(entry.hash, entry);
 			}
@@ -943,6 +964,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.properties.entryIndex,
 			"encoder",
 			profile,
+			this.properties.resolveHashNumbersInRange,
 		)) as EncoderWrapper | false;
 		if (!encoder) {
 			if (profile) {
@@ -998,7 +1020,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	}
 
 	async onMaybeMissingEntries(properties: {
-		entries: Map<string, EntryReplicated<D>>;
+		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
 	}): Promise<void> {
 		const profile = this.properties.sync?.profile;
@@ -1011,9 +1033,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		// - For large sets, use IBLT, but still allow simple sync for special-case entries
 		//   such as those assigned to range boundaries.
 
-		let entriesToSyncNaively: Map<string, EntryReplicated<D>> = new Map();
 		let minSyncIbltSize = 333; // TODO: make configurable
 		let maxSyncWithSimpleMethod = 1e3;
+		const priorityFn = this.properties.sync?.priority;
+		const maxSimpleEntries = this.properties.sync?.maxSimpleEntries;
 
 		// Small batch => use simple synchronizer entirely
 		if (properties.entries.size <= minSyncIbltSize) {
@@ -1044,17 +1067,11 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		}
 
 		const selectStartedAt = syncProfileStart(profile);
-		const nonBoundaryEntries: EntryReplicated<D>[] = [];
-		for (const entry of properties.entries.values()) {
-			if (entry.assignedToRangeBoundary) {
-				entriesToSyncNaively.set(entry.hash, entry);
-			} else {
-				nonBoundaryEntries.push(entry);
-			}
-		}
-
-		const priorityFn = this.properties.sync?.priority;
-		const maxSimpleEntries = this.properties.sync?.maxSimpleEntries;
+		const naiveHashes: string[] = [];
+		const naiveHashSet = new Set<string>();
+		let naiveEntriesForPriority:
+			| Map<string, SyncEntryCoordinates<D>>
+			| undefined;
 		const maxAdditionalNaive =
 			priorityFn &&
 			typeof maxSimpleEntries === "number" &&
@@ -1062,22 +1079,44 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			maxSimpleEntries > 0
 				? Math.max(
 						0,
-						Math.min(
-							Math.floor(maxSimpleEntries),
-							maxSyncWithSimpleMethod - entriesToSyncNaively.size,
-						),
+						Math.min(Math.floor(maxSimpleEntries), maxSyncWithSimpleMethod),
 					)
 				: 0;
+		const collectPriorityEntries = priorityFn != null && maxAdditionalNaive > 0;
+		const nonBoundaryEntries: SyncEntryCoordinates<D>[] = [];
+		let allCoordinatesToSyncWithIblt: bigint[] = [];
+		const addNaiveEntry = (entry: SyncEntryCoordinates<D>) => {
+			if (naiveHashSet.has(entry.hash)) {
+				return;
+			}
+			naiveHashSet.add(entry.hash);
+			naiveHashes.push(entry.hash);
+			if (priorityFn) {
+				naiveEntriesForPriority ??= new Map();
+				naiveEntriesForPriority.set(entry.hash, entry);
+			}
+		};
 
-		if (priorityFn && maxAdditionalNaive > 0 && nonBoundaryEntries.length > 0) {
+		for (const entry of properties.entries.values()) {
+			const coordinate = coerceBigInt(entry.hashNumber);
+			if (entry.assignedToRangeBoundary) {
+				addNaiveEntry(entry);
+			} else if (collectPriorityEntries) {
+				nonBoundaryEntries.push(entry);
+			} else {
+				allCoordinatesToSyncWithIblt.push(coordinate);
+			}
+		}
+
+		if (collectPriorityEntries && nonBoundaryEntries.length > 0) {
 			let index = 0;
 			const scored: {
-				entry: EntryReplicated<D>;
+				entry: SyncEntryCoordinates<D>;
 				index: number;
 				priority: number;
 			}[] = [];
 			for (const entry of nonBoundaryEntries) {
-				const priorityValue = priorityFn(entry);
+				const priorityValue = priorityFn(entry as EntryReplicated<D>);
 				scored.push({
 					entry,
 					index,
@@ -1086,30 +1125,42 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				index += 1;
 			}
 			scored.sort((a, b) => b.priority - a.priority || a.index - b.index);
-			for (const { entry } of scored.slice(0, maxAdditionalNaive)) {
-				entriesToSyncNaively.set(entry.hash, entry);
+			const additionalLimit = Math.max(
+				0,
+				Math.min(
+					maxAdditionalNaive,
+					maxSyncWithSimpleMethod - naiveHashes.length,
+				),
+			);
+			for (const { entry } of scored.slice(0, additionalLimit)) {
+				addNaiveEntry(entry);
+			}
+			allCoordinatesToSyncWithIblt = [];
+			for (const entry of properties.entries.values()) {
+				if (!naiveHashSet.has(entry.hash)) {
+					allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
+				}
 			}
 		}
 
-		let allCoordinatesToSyncWithIblt: bigint[] = [];
-		for (const entry of nonBoundaryEntries) {
-			if (entriesToSyncNaively.has(entry.hash)) {
-				continue;
-			}
-			allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
-		}
-
-		if (entriesToSyncNaively.size > 0) {
+		if (naiveHashes.length > 0) {
 			// If there are special-case entries, sync them simply in parallel
-			await this.simple.onMaybeMissingEntries({
-				entries: entriesToSyncNaively,
-				targets: properties.targets,
-			});
+			if (priorityFn && naiveEntriesForPriority) {
+				await this.simple.onMaybeMissingEntries({
+					entries: naiveEntriesForPriority,
+					targets: properties.targets,
+				});
+			} else {
+				await this.simple.onMaybeMissingHashes({
+					hashes: naiveHashes,
+					targets: properties.targets,
+				});
+			}
 		}
 
 		if (
 			allCoordinatesToSyncWithIblt.length === 0 ||
-			entriesToSyncNaively.size > maxSyncWithSimpleMethod
+			naiveHashes.length > maxSyncWithSimpleMethod
 		) {
 			// Fallback: if nothing left for IBLT (or simple set is too large), include all in IBLT
 			allCoordinatesToSyncWithIblt = [];
@@ -1125,7 +1176,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				symbols: allCoordinatesToSyncWithIblt.length,
 				targets: properties.targets.length,
 				details: {
-					naiveEntries: entriesToSyncNaively.size,
+					naiveEntries: naiveHashes.length,
 					priority: priorityFn != null,
 				},
 			});
@@ -1149,6 +1200,12 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			return;
 		}
 
+		const outgoingHashes =
+			priorityFn == null
+				? [...properties.entries.keys()]
+				: this.getPrioritizedEntries(properties.entries).map(
+						(entry) => entry.hash,
+					);
 		await ribltReady;
 
 		// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
@@ -1244,7 +1301,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				return symbols;
 			},
 			free: clear,
-			outgoing: properties.entries,
+			outgoingHashes,
 		};
 
 		this.outgoingSyncProcesses.set(syncId, obj);
@@ -1294,7 +1351,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				details: {
 					mode: "rateless",
 					ibltEntries: allCoordinatesToSyncWithIblt.length,
-					naiveEntries: entriesToSyncNaively.size,
+					naiveEntries: naiveHashes.length,
 				},
 			});
 		}
@@ -1618,8 +1675,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (!p) {
 				return true;
 			}
-			await this.simple.onMaybeMissingEntries({
-				entries: p.outgoing,
+			await this.simple.onMaybeMissingHashes({
+				hashes: p.outgoingHashes,
 				targets: [context.from!.hashcode()],
 			});
 			return true;
@@ -1634,14 +1691,36 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return this.simple.onReceivedEntries(properties);
 	}
 
+	onReceivedEntryHashes(properties: {
+		hashes: string[];
+		from: PublicSignKey;
+	}): Promise<void> | void {
+		return this.simple.onReceivedEntryHashes(properties);
+	}
+
 	onEntryAdded(entry: Entry<any>): void {
 		this.invalidateLocalRangeEncoderCache();
 		return this.simple.onEntryAdded(entry);
 	}
 
+	onEntryAddedHash(hash: string): void {
+		this.invalidateLocalRangeEncoderCache();
+		return this.simple.onEntryAddedHash(hash);
+	}
+
+	onEntryAddedHashes(hashes: string[]): void {
+		this.invalidateLocalRangeEncoderCache();
+		return this.simple.onEntryAddedHashes(hashes);
+	}
+
 	onEntryRemoved(hash: string) {
 		this.invalidateLocalRangeEncoderCache();
 		return this.simple.onEntryRemoved(hash);
+	}
+
+	onEntryRemovedHashes(hashes: string[]): void {
+		this.invalidateLocalRangeEncoderCache();
+		return this.simple.onEntryRemovedHashes(hashes);
 	}
 
 	onPeerDisconnected(key: PublicSignKey | string) {
