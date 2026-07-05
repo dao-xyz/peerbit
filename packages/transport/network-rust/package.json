@@ -1,0 +1,81 @@
+{
+	"name": "@peerbit/network-rust",
+	"version": "0.0.0",
+	"description": "Native wire codec and batched signature verification for the Peerbit direct-stream envelope",
+	"sideEffects": [
+		"./dist/wasm/peerbit_wire.js"
+	],
+	"type": "module",
+	"types": "./dist/src/index.d.ts",
+	"typesVersions": {
+		"*": {
+			"*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			],
+			"src/*": [
+				"*",
+				"dist/*",
+				"dist/src/*",
+				"dist/src/*/index"
+			]
+		}
+	},
+	"files": [
+		"src",
+		"dist",
+		"!dist/test",
+		"!**/*.tsbuildinfo"
+	],
+	"exports": {
+		".": {
+			"types": "./dist/src/index.d.ts",
+			"import": "./dist/src/index.js"
+		}
+	},
+	"eslintConfig": {
+		"extends": "peerbit",
+		"parserOptions": {
+			"project": true,
+			"sourceType": "module"
+		},
+		"ignorePatterns": [
+			"!.aegir.js",
+			"test/ts-use",
+			"*.d.ts"
+		]
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"scripts": {
+		"benchmark": "npm run build && node ./dist/benchmark/index.js",
+		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
+		"build": "aegir build --no-bundle && wasm-pack build --target web --out-dir dist/wasm --out-name peerbit_wire && shx rm -rf ./dist/wasm/.gitignore ./dist/wasm/package.json && shx rm -rf ./wasm && shx cp -r ./dist/wasm ./wasm",
+		"test": "cargo test && npm run build && aegir test -t node",
+		"test:stream-rust-core": "npm run build && PEERBIT_STREAM_RUST_CORE=1 aegir test -t node",
+		"test:browser": "npm run build && aegir test -t browser --no-build -f dist/test/parity.spec.js -f dist/test/topic-control.spec.js -f dist/test/fanout-codec.spec.js",
+		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\"",
+		"test:cov": "aegir test -t node --cov"
+	},
+	"dependencies": {
+		"@peerbit/time": "workspace:*",
+		"p-defer": "^4.0.0"
+	},
+	"devDependencies": {
+		"@dao-xyz/borsh": "^6.0.0",
+		"@peerbit/blocks": "workspace:*",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/libp2p-test-utils": "workspace:*",
+		"@peerbit/log-rust": "workspace:*",
+		"@peerbit/pubsub": "workspace:*",
+		"@peerbit/pubsub-interface": "workspace:*",
+		"@peerbit/stream": "workspace:*",
+		"@peerbit/stream-interface": "workspace:*",
+		"uint8arraylist": "^2.4.8"
+	},
+	"author": "dao.xyz",
+	"license": "MIT"
+}

@@ -3377,7 +3377,14 @@ export class Log<T> {
 		let hasAnyNext = false;
 		for (let i = 0; i < entries.length; i++) {
 			const entry = entries[i]!;
-			if (!entry.hash || !entry.bytes || entry.meta.type !== EntryType.APPEND) {
+			// byteLength stands in for the bytes presence check: prepared facts
+			// carry both, and probing `bytes` would force stash-backed heads to
+			// materialize block bytes the native commit never reads.
+			if (
+				!entry.hash ||
+				entry.byteLength == null ||
+				entry.meta.type !== EntryType.APPEND
+			) {
 				return false;
 			}
 			entryHashes[i] = entry.hash;

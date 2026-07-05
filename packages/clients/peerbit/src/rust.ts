@@ -11,8 +11,12 @@ import {
 	createNativeLogBlockStore,
 	type NativeLogBlockStore,
 } from "@peerbit/log-rust";
+import { logger as loggerFn } from "@peerbit/logger";
+import { createNativeWireSyncSession } from "@peerbit/native-backbone";
+import { createRustCoreStream } from "@peerbit/network-rust";
 import type {
 	CreateInstanceOptions,
+	NativeNetworkCreateOptions,
 	StorageCreateOptions,
 	StoreFactory,
 } from "./peer.js";
@@ -24,14 +28,40 @@ export type PeerbitRustStorageOptions = {
 	keychain?: RustAnyStoreOptions;
 };
 
+export type PeerbitRustNetworkOptions = {
+	/**
+	 * Run the DirectStream engine and the protocol codecs (topic control,
+	 * fanout tree, block exchange) on the native core of
+	 * `@peerbit/network-rust`. Default true.
+	 */
+	rustCore?: boolean;
+	/**
+	 * Decode+verify inbound pubsub frames in the native-backbone wasm module
+	 * and stash shared-log raw exchange-head payloads there for the fused
+	 * receive (no JS entry decode, no JS block-byte copies). Default true.
+	 */
+	wireSync?: boolean;
+	/**
+	 * Advertise native shared-log defaults (native backbone data plane,
+	 * native graph, raw exchange-heads sync + the wire-sync session) to
+	 * programs opened on this client. Default true.
+	 */
+	sharedLogDefaults?: boolean;
+};
+
 export type PeerbitRustOptions = {
 	storage?: PeerbitRustStorageOptions;
 	indexer?: RustIndexerOptions;
+	/** Native network plane; `false` keeps the js-libp2p wire path. */
+	network?: boolean | PeerbitRustNetworkOptions;
 };
+
+const logger = loggerFn("peerbit:client:rust");
 
 export type PeerbitRustCreateOptions = {
 	storage: StorageCreateOptions;
 	indexer: NonNullable<CreateInstanceOptions["indexer"]>;
+	network?: NativeNetworkCreateOptions;
 };
 
 class LazyNativeLogBlockStore implements AnyStore {
@@ -40,6 +70,16 @@ class LazyNativeLogBlockStore implements AnyStore {
 
 	getNativeLogBlockStoreHandle(): unknown {
 		return this.store?.getNativeLogBlockStoreHandle();
+	}
+
+	/**
+	 * Forward the native block-serving path so `RemoteBlocks.handleFetchRequest`
+	 * serves stored blocks straight from wasm (no JS block-byte copy). Without
+	 * this forwarder the optional call resolves to undefined through
+	 * AnyBlockStore and every serve falls back to the JS byte-copy path.
+	 */
+	getBlockResponsePayload(cid: string): Uint8Array | undefined {
+		return this.store?.getBlockResponsePayload(cid);
 	}
 
 	status(): "opening" | "open" | "closing" | "closed" {
@@ -137,10 +177,21 @@ const createRustBlocksStoreFactory =
 		options: RustAnyStoreOptions | undefined,
 		nativeLogBlocks: boolean | undefined,
 	): StoreFactory =>
-	(directory) =>
-		nativeLogBlocks
-			? new LazyNativeLogBlockStore()
-			: createRustStore(directory, options);
+	(directory) => {
+		if (nativeLogBlocks) {
+			if (directory != null) {
+				// The native log block store keeps blocks in wasm memory only
+				// (no on-disk persistence), so the client `directory` is
+				// ignored for blocks. Blocks — including program manifests
+				// written via the client blocks service — are lost on restart.
+				logger.error(
+					`storage.nativeLogBlocks is set: blocks are stored in memory only and the directory '${directory}' is not persisted. Program manifests and cached blocks will not survive a restart.`,
+				);
+			}
+			return new LazyNativeLogBlockStore();
+		}
+		return createRustStore(directory, options);
+	};
 
 export const createRustStorageOptions = (
 	options: PeerbitRustStorageOptions = {},
@@ -155,9 +206,28 @@ export const createRustStorageOptions = (
 	),
 });
 
+export const createRustNetworkOptions = (
+	options: PeerbitRustNetworkOptions = {},
+): NativeNetworkCreateOptions => ({
+	rustCore:
+		options.rustCore === false ? undefined : () => createRustCoreStream(),
+	wireSync:
+		options.wireSync === false
+			? undefined
+			: (selfHash) => createNativeWireSyncSession({ selfHash }),
+	sharedLogDefaults: options.sharedLogDefaults,
+});
+
 export const createRustPeerbitOptions = (
 	options: PeerbitRustOptions = {},
 ): PeerbitRustCreateOptions => ({
 	storage: createRustStorageOptions(options.storage),
 	indexer: (directory) => createRustIndexer(directory, options.indexer),
+	...(options.network === false
+		? {}
+		: {
+				network: createRustNetworkOptions(
+					options.network === true ? {} : options.network,
+				),
+			}),
 });

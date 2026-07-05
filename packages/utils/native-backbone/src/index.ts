@@ -310,6 +310,36 @@ type NativePeerbitBackboneHandle = {
 		NativeBackboneRawReceivePreparedFactsColumns,
 		NativeBackboneRawReceiveSelectionRow | undefined,
 	];
+	prepare_stashed_raw_receive_expected_compact_columns_batch?: (
+		session: NativeWireSyncSessionHandle,
+		id: Uint8Array,
+		indexes: Uint32Array,
+		hashes: string[],
+		verifySignatures: boolean,
+	) => NativeBackboneRawReceivePreparedFactsColumns | undefined;
+	prepare_stashed_raw_receive_expected_compact_columns_and_selection_batch?: (
+		session: NativeWireSyncSessionHandle,
+		id: Uint8Array,
+		indexes: Uint32Array,
+		hashes: string[],
+		minReplicas: number,
+		maxReplicas: number | undefined,
+		roleAgeMs: number,
+		now: string,
+		peerFilter: string[] | undefined,
+		expandPeerFilter: boolean,
+		selfHash: string,
+		includeSelf: boolean,
+		fullReplicaFallback: boolean,
+		includeStrictFullReplica: boolean,
+		fromHash: string,
+	) =>
+		| [
+				NativeBackboneRawReceivePreparedFactsColumns,
+				NativeBackboneRawReceiveSelectionRow | undefined,
+		  ]
+		| undefined;
+	raw_receive_block_bytes?: (hash: string) => Uint8Array | undefined;
 	plan_prepared_raw_receive_groups?: (
 		hashes: string[],
 		minReplicas: number,
@@ -551,6 +581,14 @@ type NativePeerbitBackboneHandle = {
 	block_delete_many: (keys: string[]) => number;
 	block_entries: () => Array<[string, Uint8Array]>;
 	block_size: () => number;
+	sync_send_block_byte_lengths?: (hashes: string[]) => Uint32Array;
+	encode_raw_exchange_sync_payload?: (
+		topic: string,
+		strict: boolean,
+		hashes: string[],
+		gidRefrences: string[][],
+		reserved: Uint8Array,
+	) => Uint8Array | undefined;
 	clear: () => void;
 	clear_shared_log: () => void;
 	clear_entry_coordinates: () => void;
@@ -2041,6 +2079,29 @@ const nativeBackboneHeadFlagsToBytes = (
 		? headFlags
 		: new Uint8Array(headFlags.map((head) => (head ? 1 : 0)));
 
+type NativeWireSyncSessionHandle = {
+	free: () => void;
+	register_topic: (topic: string) => void;
+	unregister_topic: (topic: string) => boolean;
+	topic_count: () => number;
+	decode_and_verify_batch: (
+		frames: Uint8Array[],
+		nowMs: number,
+	) => Uint32Array;
+	stashed_meta: (
+		id: Uint8Array,
+	) =>
+		| [string[], string[][], Uint32Array, Uint8Array, number]
+		| undefined;
+	stashed_blocks: (
+		id: Uint8Array,
+		indexes?: Uint32Array,
+	) => Uint8Array[] | undefined;
+	release: (id: Uint8Array) => boolean;
+	stash_len: () => number;
+	counters: () => Uint32Array;
+};
+
 type WasmModule = {
 	default: (input?: unknown) => Promise<unknown>;
 	initSync: (input?: unknown) => unknown;
@@ -2050,6 +2111,7 @@ type WasmModule = {
 		privateKey: Uint8Array,
 		publicKey: Uint8Array,
 	) => NativePeerbitBackboneHandle;
+	NativeWireSyncSession: new (selfHash: string) => NativeWireSyncSessionHandle;
 };
 
 let wasmModulePromise: Promise<WasmModule> | undefined;
@@ -2089,6 +2151,112 @@ const loadWasm = async (): Promise<WasmModule> => {
 	}
 
 	return wasm;
+};
+
+export type NativeBackboneWireSyncStashedMeta = {
+	hashes: string[];
+	gidRefrences: string[][];
+	byteLengths: Uint32Array;
+	reserved: Uint8Array;
+	payloadLength: number;
+};
+
+export type NativeBackboneWireSyncCounters = {
+	stashed: number;
+	evicted: number;
+	metaReads: number;
+	blockCopyOuts: number;
+	released: number;
+};
+
+/**
+ * Per-node receive-fusion session (`NativeWireSyncSession` in the wasm
+ * module). `decodeAndVerifyBatch` is a drop-in for the `nativeWire` option of
+ * `@peerbit/stream`'s DirectStream; frames carrying shared-log raw
+ * exchange-head payloads for registered topics are kept in wasm memory and
+ * consumed by `NativePeerbitBackbone.prepareStashedRawReceive*` without a
+ * second boundary copy. Shared-log programs register their RPC topic on open
+ * and release stash entries once a message is processed.
+ */
+export class NativeBackboneWireSyncSession {
+	/** Raw wasm handle; consumed by `NativePeerbitBackbone.prepareStashedRawReceive*`. */
+	readonly handle: NativeWireSyncSessionHandle;
+
+	private constructor(handle: NativeWireSyncSessionHandle) {
+		this.handle = handle;
+	}
+
+	static async create(options: {
+		selfHash: string;
+	}): Promise<NativeBackboneWireSyncSession> {
+		const wasm = await loadWasm();
+		return new NativeBackboneWireSyncSession(
+			new wasm.NativeWireSyncSession(options.selfHash),
+		);
+	}
+
+	registerTopic(topic: string): void {
+		this.handle.register_topic(topic);
+	}
+
+	unregisterTopic(topic: string): boolean {
+		return this.handle.unregister_topic(topic);
+	}
+
+	get topicCount(): number {
+		return this.handle.topic_count();
+	}
+
+	decodeAndVerifyBatch(frames: Uint8Array[], nowMs: number): Uint32Array {
+		return this.handle.decode_and_verify_batch(frames, nowMs);
+	}
+
+	stashedMeta(id: Uint8Array): NativeBackboneWireSyncStashedMeta | undefined {
+		const row = this.handle.stashed_meta(id);
+		if (!row) {
+			return undefined;
+		}
+		const [hashes, gidRefrences, byteLengths, reserved, payloadLength] = row;
+		return { hashes, gidRefrences, byteLengths, reserved, payloadLength };
+	}
+
+	stashedBlocks(
+		id: Uint8Array,
+		indexes?: Uint32Array,
+	): Uint8Array[] | undefined {
+		return this.handle.stashed_blocks(id, indexes) ?? undefined;
+	}
+
+	release(id: Uint8Array): boolean {
+		return this.handle.release(id);
+	}
+
+	get stashLength(): number {
+		return this.handle.stash_len();
+	}
+
+	counters(): NativeBackboneWireSyncCounters {
+		const [stashed, evicted, metaReads, blockCopyOuts, released] =
+			this.handle.counters();
+		return {
+			stashed: stashed!,
+			evicted: evicted!,
+			metaReads: metaReads!,
+			blockCopyOuts: blockCopyOuts!,
+			released: released!,
+		};
+	}
+}
+
+export const createNativeWireSyncSession = NativeBackboneWireSyncSession.create;
+
+/**
+ * Structural session parameter for `prepareStashedRawReceive*` so callers can
+ * hold the session behind their own type-only surface. The handle must come
+ * from a `NativeBackboneWireSyncSession` of the same wasm module instance.
+ */
+export type NativeBackboneWireSyncSessionLike = {
+	handle: unknown;
 };
 
 type NativeBackboneLeaderSample = {
@@ -5232,6 +5400,7 @@ const iterableToArray = <T>(values?: Iterable<T>): T[] => {
 };
 
 const EMPTY_UINT8_ARRAY = new Uint8Array(0);
+const SYNC_SEND_DEFAULT_RESERVED = new Uint8Array(4);
 
 type NativeBackboneDocumentIndexArgs = readonly [
 	string,
@@ -5426,6 +5595,51 @@ export class NativePeerbitBackbone {
 		return this.native.has_block(hash);
 	}
 
+	/**
+	 * Byte lengths of natively stored entry blocks (`undefined` marks a
+	 * missing block), used by the fused send path to plan raw exchange-head
+	 * message chunking without materializing block bytes in JS.
+	 */
+	syncSendBlockByteLengths(
+		hashes: string[],
+	): Array<number | undefined> | undefined {
+		if (!this.native.sync_send_block_byte_lengths) {
+			return undefined;
+		}
+		const lengths = this.native.sync_send_block_byte_lengths(hashes);
+		const out = new Array<number | undefined>(lengths.length);
+		for (let i = 0; i < lengths.length; i++) {
+			const length = lengths[i]!;
+			out[i] = length === 0xffffffff ? undefined : length;
+		}
+		return out;
+	}
+
+	/**
+	 * Serialize one outbound raw exchange sync payload (the full
+	 * PubSubData → RequestV0 → DecryptedThing → RawExchangeHeadsMessage
+	 * nesting) from the native block store. Returns `undefined` when the
+	 * encoder is unavailable or any head's block is not natively stored.
+	 */
+	encodeRawExchangeSyncPayload(properties: {
+		topic: string;
+		strict?: boolean;
+		hashes: string[];
+		gidRefrences: string[][];
+		reserved?: Uint8Array;
+	}): Uint8Array | undefined {
+		if (!this.native.encode_raw_exchange_sync_payload) {
+			return undefined;
+		}
+		return this.native.encode_raw_exchange_sync_payload(
+			properties.topic,
+			properties.strict ?? true,
+			properties.hashes,
+			properties.gidRefrences,
+			properties.reserved ?? SYNC_SEND_DEFAULT_RESERVED,
+		);
+	}
+
 	prepareRawReceiveBatch(
 		blocks: Uint8Array[],
 	): NativeBackboneRawReceivePreparedFacts[] {
@@ -5578,6 +5792,88 @@ export class NativePeerbitBackbone {
 				? rawReceiveSelectionFromRow(this.resolution, selectionRow)
 				: undefined,
 		};
+	}
+
+	/**
+	 * Stash-backed twin of `prepareRawReceiveExpectedColumnsBatch`: the entry
+	 * block bytes come from the wire-sync stash inside wasm memory instead of
+	 * a JS blocks array, so no bytes cross the JS/wasm boundary. Returns
+	 * undefined when the stash entry is gone (callers fall back to the
+	 * blocks-based path).
+	 */
+	prepareStashedRawReceiveExpectedColumnsBatch(
+		session: NativeBackboneWireSyncSessionLike,
+		id: Uint8Array,
+		indexes: Uint32Array,
+		hashes: string[],
+		options?: { verifySignatures?: boolean },
+	): NativeBackboneRawReceivePreparedFactsColumns | undefined {
+		if (indexes.length !== hashes.length) {
+			throw new Error("Expected equal raw receive index and hash lengths");
+		}
+		return this.native.prepare_stashed_raw_receive_expected_compact_columns_batch?.(
+			session.handle as NativeWireSyncSessionHandle,
+			id,
+			indexes,
+			hashes,
+			options?.verifySignatures !== false,
+		);
+	}
+
+	/** Stash-backed twin of `prepareRawReceiveExpectedColumnsAndSelectionBatch`. */
+	prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
+		session: NativeBackboneWireSyncSessionLike,
+		id: Uint8Array,
+		indexes: Uint32Array,
+		hashes: string[],
+		options: {
+			verifySignatures?: boolean;
+			minReplicas: number;
+			maxReplicas?: number;
+			leaderOptions: NativeBackboneFindLeaderOptions;
+			fromHash: string;
+		},
+	): NativeBackbonePreparedRawReceiveColumnsAndSelection | undefined {
+		if (indexes.length !== hashes.length) {
+			throw new Error("Expected equal raw receive index and hash lengths");
+		}
+		if (
+			options.verifySignatures !== false ||
+			!this.native
+				.prepare_stashed_raw_receive_expected_compact_columns_and_selection_batch
+		) {
+			return undefined;
+		}
+		const row =
+			this.native.prepare_stashed_raw_receive_expected_compact_columns_and_selection_batch(
+				session.handle as NativeWireSyncSessionHandle,
+				id,
+				indexes,
+				hashes,
+				options.minReplicas,
+				options.maxReplicas,
+				...findLeaderArguments(options.leaderOptions),
+				options.fromHash,
+			);
+		if (!row) {
+			return undefined;
+		}
+		const [columns, selectionRow] = row;
+		return {
+			columns,
+			selection: selectionRow
+				? rawReceiveSelectionFromRow(this.resolution, selectionRow)
+				: undefined,
+		};
+	}
+
+	/**
+	 * Raw entry block bytes for a hash from the pending prepared-receive
+	 * entries or the committed block store — the fallback for lazily
+	 * materialized stash-backed heads whose stash entry was already released.
+	 */
+	rawReceiveBlockBytes(hash: string): Uint8Array | undefined {
+		return this.native.raw_receive_block_bytes?.(hash);
 	}
 
 	clearPreparedRawReceiveEntries(hashes: Iterable<string>): number {

@@ -1,6 +1,7 @@
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import { Routes } from "../src/routes.js";
+import { resolveInjectedRustCore } from "../src/rust-core.js";
 
 const me = "me";
 const a = "a";
@@ -145,6 +146,43 @@ describe("routes", () => {
 			const entry = routes.routes.get(me)!.get(b)!;
 			expect(entry.list.length).to.equal(2);
 			expect(entry.list.find((x) => x.hash === b)?.distance).to.equal(-1);
+		});
+	});
+
+	describe("remoteSession", () => {
+		// `add` compares the incoming remoteSession against
+		// `prev.remoteSession || -1`: a stored remote session of exactly 0
+		// is coerced to -1, so a re-add with remoteSession 0 reports
+		// "restart" rather than "updated". Exercised through the RoutesLike
+		// contract so the rust-core suite re-run pins the native routing
+		// table to the same outcomes.
+		const createRoutes = () =>
+			resolveInjectedRustCore()?.createRoutes({
+				me,
+				routeMaxRetentionPeriod: 10_000,
+			}) ?? new Routes(me);
+
+		it("re-add with remoteSession 0 counts as restart", () => {
+			const routes = createRoutes();
+			expect(routes.add(me, a, b, 0, 100, 0)).to.equal("new");
+			expect(routes.add(me, a, b, 0, 100, 0)).to.equal("restart");
+			// the merge keeps the stored value at max(0, -1) = 0, so it
+			// keeps reporting restart
+			expect(routes.add(me, a, b, 0, 100, 0)).to.equal("restart");
+		});
+
+		it("merges a lower remoteSession against the coerced -1", () => {
+			const routes = createRoutes();
+			routes.add(me, a, b, 0, 100, 0);
+			expect(routes.add(me, a, b, 0, 100, -5)).to.equal("updated");
+			expect(routes.findNeighbor(me, b)?.remoteSession).to.equal(-1);
+		});
+
+		it("re-add with a non-zero remoteSession is an update", () => {
+			const routes = createRoutes();
+			expect(routes.add(me, a, b, 0, 100, 5)).to.equal("new");
+			expect(routes.add(me, a, b, 0, 100, 5)).to.equal("updated");
+			expect(routes.add(me, a, b, 0, 100, 6)).to.equal("restart");
 		});
 	});
 

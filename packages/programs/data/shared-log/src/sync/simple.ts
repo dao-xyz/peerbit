@@ -23,6 +23,7 @@ import type { EntryReplicated } from "../ranges.js";
 import type {
 	HashSymbolResolver,
 	HashSymbolHashListResolver,
+	RawExchangeHeadsSender,
 	RepairSession,
 	RepairSessionMode,
 	RepairSessionResult,
@@ -302,6 +303,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		peer: string,
 		maxAgeMs: number,
 	) => boolean;
+	private sendRawExchangeHeads?: RawExchangeHeadsSender;
 	private recentlySentExchangeHeads: Map<string, Map<string, number>>;
 	private repairSessionCounter: number;
 	private repairSessions: Map<string, RepairSessionState>;
@@ -324,6 +326,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			peer: string,
 			maxAgeMs: number,
 		) => boolean;
+		sendRawExchangeHeads?: RawExchangeHeadsSender;
 	}) {
 		this.syncInFlightQueue = new Map();
 		this.syncInFlightQueueInverted = new Map();
@@ -336,6 +339,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.resolveHashListForSymbols = properties.resolveHashListForSymbols;
 		this.syncOptions = properties.sync;
 		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
+		this.sendRawExchangeHeads = properties.sendRawExchangeHeads;
 		this.recentlySentExchangeHeads = new Map();
 		this.repairSessionCounter = 0;
 		this.repairSessions = new Map();
@@ -799,6 +803,42 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
+	/**
+	 * Ship exchange heads to one peer: the fused native raw path when the
+	 * peer advertised raw capability and the shared log provided a fused
+	 * sender, otherwise the TS message path (raw or plain by capability).
+	 * Returns the number of messages sent and whether the fused path ran.
+	 */
+	private async shipExchangeHeads(
+		hashes: string[],
+		to: PublicSignKey,
+		canReceiveRaw: boolean,
+	): Promise<{ messages: number; fused: boolean }> {
+		if (canReceiveRaw && this.sendRawExchangeHeads) {
+			const sentMessages = await this.sendRawExchangeHeads(hashes, [
+				to.hashcode(),
+			]);
+			if (sentMessages !== undefined) {
+				return { messages: sentMessages, fused: true };
+			}
+		}
+		let messages = 0;
+		const messageGenerator = canReceiveRaw
+			? createRawExchangeHeadsMessages(
+					this.log,
+					hashes,
+					this.syncOptions?.profile,
+				)
+			: createExchangeHeadsMessages(this.log, hashes);
+		for await (const message of messageGenerator) {
+			messages += 1;
+			await this.rpc.send(message, {
+				mode: new SilentDelivery({ to: [to], redundancy: 1 }),
+			});
+		}
+		return { messages, fused: false };
+	}
+
 	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
@@ -818,16 +858,13 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const startedAt = syncProfileStart(profile);
 			const hashes = this.filterRecentlySentExchangeHeads(msg.hashes, from);
 			let messages = 0;
-			const createMessages = canReceiveRawExchangeHeads(msg)
-				? createRawExchangeHeadsMessages
-				: createExchangeHeadsMessages;
+			let fused = false;
 			try {
-				for await (const message of createMessages(this.log, hashes)) {
-					messages += 1;
-					await this.rpc.send(message, {
-						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					});
-				}
+				({ messages, fused } = await this.shipExchangeHeads(
+					hashes,
+					context.from!,
+					canReceiveRawExchangeHeads(msg),
+				));
 			} finally {
 				if (profile) {
 					emitSyncProfileDuration(profile, startedAt, {
@@ -835,7 +872,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						entries: hashes.length,
 						messages,
 						targets: 1,
-						details: { source: "responseMaybeSync" },
+						details: { source: "responseMaybeSync", fused },
 					});
 				}
 			}
@@ -864,17 +901,14 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			const exchangeStartedAt = syncProfileStart(profile);
 			const hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
 			let messages = 0;
-			const createMessages = canReceiveRawExchangeHeads(msg)
-				? createRawExchangeHeadsMessages
-				: createExchangeHeadsMessages;
+			let fused = false;
 			try {
-				for await (const message of createMessages(this.log, hashesToSend)) {
-					messages += 1;
-					await this.rpc.send(message, {
-						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-						// dont set priority 1 here because this will block other messages that should higher priority
-					});
-				}
+				// dont set priority 1 here because this will block other messages that should higher priority
+				({ messages, fused } = await this.shipExchangeHeads(
+					hashesToSend,
+					context.from!,
+					canReceiveRawExchangeHeads(msg),
+				));
 			} finally {
 				if (profile) {
 					emitSyncProfileDuration(profile, exchangeStartedAt, {
@@ -882,7 +916,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						entries: hashesToSend.length,
 						messages,
 						targets: 1,
-						details: { source: "requestMaybeSyncCoordinate" },
+						details: { source: "requestMaybeSyncCoordinate", fused },
 					});
 				}
 			}

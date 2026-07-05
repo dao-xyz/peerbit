@@ -341,6 +341,32 @@ const attachPreparedRawShallowFacts = (
 export const EXCHANGE_HEADS_REPAIR_HINT = 1;
 
 /**
+ * Capability bit: the peer can receive `RawExchangeHeadsMessage` ([0, 7]).
+ * Advertised once per peer via {@link SyncCapabilitiesMessage} (and echoed by
+ * the per-request capability messages of the simple synchronizer), so live
+ * append gossip can pick the raw path without a per-request round trip.
+ */
+export const SYNC_CAPABILITY_RAW_EXCHANGE_HEADS = 1;
+
+/**
+ * One-shot capability advertisement, sent to a peer when it (or we) subscribe
+ * to the program topic and `sync.rawExchangeHeads` is enabled. Peers that do
+ * not know this message drop it as an unknown variant; peers that never
+ * advertise keep receiving the plain `ExchangeHeadsMessage` path.
+ */
+@variant([0, 10])
+export class SyncCapabilitiesMessage extends TransportMessage {
+	@field({ type: "u32" })
+	capabilities: number;
+
+	constructor(props?: { capabilities?: number }) {
+		super();
+		this.capabilities =
+			props?.capabilities ?? SYNC_CAPABILITY_RAW_EXCHANGE_HEADS;
+	}
+}
+
+/**
  * This thing allows use to faster sync since we can provide
  * references that can be read concurrently to
  * the entry when doing Log.fromEntry or Log.fromEntryHash
@@ -415,6 +441,142 @@ export class RawExchangeHeadsMessage extends TransportMessage {
 	}
 }
 
+/**
+ * The stash surface a {@link StashBackedRawExchangeHeadsMessage} consumes:
+ * entry block bytes kept in native (wasm) memory by the wire-level decoder,
+ * keyed by the enclosing DataMessage id.
+ */
+export type RawExchangeHeadsStash = {
+	stashedBlocks(
+		id: Uint8Array,
+		indexes?: Uint32Array,
+	): Uint8Array[] | undefined;
+	release(id: Uint8Array): boolean;
+};
+
+/**
+ * A head of a stash-backed raw exchange message: hash/refs/length come from
+ * stash metadata; `bytes` materializes lazily (and is counted) because the
+ * fused receive path never needs the block bytes in JS.
+ */
+export class StashBackedRawEntryWithRefs {
+	private bytesValue?: Uint8Array;
+
+	constructor(
+		private readonly message: StashBackedRawExchangeHeadsMessage,
+		readonly stashIndex: number,
+		readonly hash: string,
+		readonly gidRefrences: string[],
+		readonly byteLength: number,
+	) {}
+
+	get bytes(): Uint8Array {
+		return (this.bytesValue ??= this.message.materializeHeadBytes(
+			this.stashIndex,
+			this.hash,
+		));
+	}
+}
+
+/**
+ * A raw exchange-heads message resolved from the native wire stash instead of
+ * a TS borsh decode: JS holds only head facts while the entry block bytes stay
+ * in wasm memory until `prepareStashedRawReceive*` consumes them there — or a
+ * fallback path materializes them per head.
+ */
+export class StashBackedRawExchangeHeadsMessage extends RawExchangeHeadsMessage {
+	readonly messageId: Uint8Array;
+	/** Wasm-to-JS head byte materializations (0 on the fully fused path). */
+	bytesMaterializedCount = 0;
+	private released = false;
+	private readonly stash: RawExchangeHeadsStash;
+	private readonly resolveReleasedBlock?: (
+		hash: string,
+	) => Uint8Array | undefined;
+
+	constructor(properties: {
+		messageId: Uint8Array;
+		hashes: string[];
+		gidRefrences: string[][];
+		byteLengths: Uint32Array;
+		reserved: Uint8Array;
+		stash: RawExchangeHeadsStash;
+		resolveReleasedBlock?: (hash: string) => Uint8Array | undefined;
+	}) {
+		const heads = new Array<RawEntryWithRefs>(properties.hashes.length);
+		super({ heads, reserved: properties.reserved });
+		this.messageId = properties.messageId;
+		this.stash = properties.stash;
+		this.resolveReleasedBlock = properties.resolveReleasedBlock;
+		for (let i = 0; i < properties.hashes.length; i++) {
+			heads[i] = new StashBackedRawEntryWithRefs(
+				this,
+				i,
+				properties.hashes[i]!,
+				properties.gidRefrences[i] ?? [],
+				properties.byteLengths[i]!,
+			) as unknown as RawEntryWithRefs;
+		}
+	}
+
+	materializeHeadBytes(index: number, hash: string): Uint8Array {
+		if (!this.released) {
+			const bytes = this.stash.stashedBlocks(
+				this.messageId,
+				Uint32Array.of(index),
+			)?.[0];
+			if (bytes) {
+				this.bytesMaterializedCount++;
+				return bytes;
+			}
+		}
+		const bytes = this.resolveReleasedBlock?.(hash);
+		if (bytes) {
+			this.bytesMaterializedCount++;
+			return bytes;
+		}
+		throw new Error(
+			"Stashed raw exchange head bytes are no longer available: " + hash,
+		);
+	}
+
+	release(): boolean {
+		if (this.released) {
+			return false;
+		}
+		this.released = true;
+		return this.stash.release(this.messageId);
+	}
+}
+
+export const isStashBackedRawExchangeHeadsMessage = (
+	message: TransportMessage,
+): message is StashBackedRawExchangeHeadsMessage =>
+	message instanceof StashBackedRawExchangeHeadsMessage;
+
+export const getRawExchangeHeadByteLength = (head: RawEntryWithRefs): number =>
+	head instanceof StashBackedRawEntryWithRefs
+		? head.byteLength
+		: head.bytes.byteLength;
+
+/**
+ * Stash indexes for a subset of a stash-backed message's heads (in subset
+ * order), or undefined when any head is not stash-backed.
+ */
+export const getRawExchangeHeadStashIndexes = (
+	heads: RawEntryWithRefs[],
+): Uint32Array | undefined => {
+	const indexes = new Uint32Array(heads.length);
+	for (let i = 0; i < heads.length; i++) {
+		const head = heads[i]!;
+		if (!(head instanceof StashBackedRawEntryWithRefs)) {
+			return undefined;
+		}
+		indexes[i] = head.stashIndex;
+	}
+	return indexes;
+};
+
 export type RawReceiveHashSelection =
 	| Iterable<string>
 	| {
@@ -467,14 +629,25 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 	private shallowHeadValue?: ShallowEntry;
 	private keychain?: unknown;
 	private encodingValue?: Log<T>["encoding"];
+	private bytesValue?: Uint8Array;
 
 	constructor(
-		private readonly bytes: Uint8Array,
+		private readonly bytesSource: () => Uint8Array,
 		private readonly facts: PreparedRawEntryV0FactsSource,
 		private readonly factsIndex = 0,
+		private readonly onJsEntryDecode?: () => void,
 	) {
 		super();
 		this.size = preparedRawByteLength(facts, factsIndex);
+	}
+
+	/**
+	 * Lazy: stash-backed heads keep the block bytes in wasm memory; they are
+	 * copied out only when a consumer actually needs them (payload/signature
+	 * materialization, storage bytes).
+	 */
+	private get bytes(): Uint8Array {
+		return (this.bytesValue ??= this.bytesSource());
 	}
 
 	get meta(): Meta {
@@ -644,9 +817,15 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
 		const shallow = this.toShallow(true);
+		// eslint-disable-next-line @typescript-eslint/no-this-alias
+		const self = this;
 		return {
 			hash: this.hash,
-			bytes: this.bytes,
+			// Lazy: stash-backed heads keep entry bytes in wasm memory and the
+			// native prepared-join commit never reads them in JS.
+			get bytes() {
+				return self.bytes;
+			},
 			byteLength: this.size,
 			meta: shallow.meta,
 			getShallowEntry: (isHead = true) => this.toShallow(isHead),
@@ -658,6 +837,7 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		if (this.materialized) {
 			return this.materialized;
 		}
+		this.onJsEntryDecode?.();
 		const entry = materializeRawExchangeEntry<T>({
 			hash: this.hash,
 			bytes: this.bytes,
@@ -682,19 +862,30 @@ class PreparedRawEntryWithRefs<T> {
 		private readonly head: RawEntryWithRefs,
 		private readonly facts: PreparedRawEntryV0FactsSource,
 		private readonly factsIndex = 0,
+		private readonly onJsEntryDecode?: () => void,
 	) {
 		this.gidRefrences = head.gidRefrences;
 	}
 
 	get entry(): Entry<T> {
 		if (!this.entryValue) {
+			const head = this.head;
 			const entry = new PreparedRawExchangeEntry<T>(
-				this.head.bytes,
+				() => head.bytes,
 				this.facts,
 				this.factsIndex,
+				this.onJsEntryDecode,
 			);
-			Entry.prepareMultihashBytes(entry, this.head.bytes, this.head.hash);
-			entry.hash = this.head.hash;
+			// Lazy block registration: stash-backed heads keep the bytes in
+			// wasm memory until a consumer (block store put, payload
+			// materialization) actually pulls them.
+			Entry.prepareMultihashBytesLazy(
+				entry,
+				head.hash,
+				preparedRawByteLength(this.facts, this.factsIndex),
+				() => head.bytes,
+			);
+			entry.hash = head.hash;
 			entry.size = preparedRawByteLength(this.facts, this.factsIndex);
 			if (this.keychain || this.encodingValue) {
 				entry.init({
@@ -775,9 +966,14 @@ class PreparedRawEntryWithRefs<T> {
 
 	toPreparedAppendJoinFacts(): PreparedAppendJoinFacts {
 		const shallow = this.toShallow(true);
+		const head = this.head;
 		return {
-			hash: this.head.hash,
-			bytes: this.head.bytes,
+			hash: head.hash,
+			// Lazy: stash-backed heads keep entry bytes in wasm memory and the
+			// native prepared-join commit never reads them in JS.
+			get bytes() {
+				return head.bytes;
+			},
 			byteLength: preparedRawByteLength(this.facts, this.factsIndex),
 			meta: shallow.meta,
 			getShallowEntry: (isHead = true) => this.toShallow(isHead),
@@ -898,7 +1094,7 @@ export class ResponseIPrune extends TransportMessage {
 }
 
 const MAX_EXCHANGE_MESSAGE_SIZE = 1e5; // 100kb. Too large size might not be faster (even if we can do 5mb)
-const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
+export const MAX_RAW_EXCHANGE_MESSAGE_SIZE = 512 * 1024;
 export const EXCHANGE_HEADS_RESOLVE_BATCH_SIZE = 256;
 
 export const createExchangeHeadsMessages = async function* (
@@ -1034,11 +1230,26 @@ export const createExchangeHeadsMessages = async function* (
 export const createRawExchangeHeadsMessages = async function* (
 	log: Log<any>,
 	heads: string[] | Set<string>,
+	profile?: SyncProfileFn,
 ): AsyncGenerator<RawExchangeHeadsMessage | ExchangeHeadsMessage<any>, void, void> {
 	let size = 0;
 	let current: RawEntryWithRefs[] = [];
 	const visitedHeads = new Set<string>();
 	const headArray = Array.isArray(heads) ? heads : [...heads];
+	// This path materializes entry block bytes as JS values (log.blocks reads)
+	// and TS-serializes the message; the fused wasm send path replaces it.
+	// The event makes the remaining JS-side outbound block copies countable.
+	const emitJsBlockBytes = (heads: RawEntryWithRefs[], bytes: number) => {
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "sharedLog.rawSend.jsBlockBytes",
+				component: "shared-log",
+				entries: heads.length,
+				bytes,
+				messages: 1,
+			});
+		}
+	};
 
 	for (let offset = 0; offset < headArray.length; offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE) {
 		const headBatch = headArray.slice(
@@ -1102,6 +1313,7 @@ export const createRawExchangeHeadsMessages = async function* (
 			);
 			size += block.bytes.byteLength;
 			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
+				emitJsBlockBytes(current, size);
 				size = 0;
 				yield new RawExchangeHeadsMessage({ heads: current });
 				current = [];
@@ -1109,8 +1321,75 @@ export const createRawExchangeHeadsMessages = async function* (
 		}
 	}
 	if (current.length > 0) {
+		emitJsBlockBytes(current, size);
 		yield new RawExchangeHeadsMessage({ heads: current });
 	}
+};
+
+export type RawExchangeHeadSendPlan = {
+	hashes: string[];
+	gidRefrences: string[][];
+};
+
+/**
+ * The head/reference selection of {@link createRawExchangeHeadsMessages}
+ * without resolving any block bytes: same visited-head deduplication, same
+ * reference-gid collection, same batching of the native index lookups. Used
+ * by the fused send path, where the block bytes stay in the native store and
+ * the payload is serialized in wasm. Returns `undefined` when the log has no
+ * native reference rows (callers fall back to the TS message path).
+ */
+export const collectRawExchangeHeadSendPlan = (
+	log: Log<any>,
+	heads: string[] | Set<string>,
+): RawExchangeHeadSendPlan | undefined => {
+	const headArray = Array.isArray(heads) ? heads : [...heads];
+	const visitedHeads = new Set<string>();
+	const hashes: string[] = [];
+	const gidRefrences: string[][] = [];
+	for (
+		let offset = 0;
+		offset < headArray.length;
+		offset += EXCHANGE_HEADS_RESOLVE_BATCH_SIZE
+	) {
+		const headBatch = headArray.slice(
+			offset,
+			offset + EXCHANGE_HEADS_RESOLVE_BATCH_SIZE,
+		);
+		const nativeReferenceRowsByPosition = getNativeReferenceRowsByHeadInput(
+			log,
+			headBatch,
+			visitedHeads,
+		);
+		if (!nativeReferenceRowsByPosition) {
+			return undefined;
+		}
+		for (let i = 0; i < headBatch.length; i++) {
+			const hash = headBatch[i]!;
+			if (visitedHeads.has(hash)) {
+				continue;
+			}
+			visitedHeads.add(hash);
+			const nativeReferenceRows = nativeReferenceRowsByPosition[i];
+			if (!nativeReferenceRows) {
+				continue;
+			}
+			const refs: string[] = [];
+			for (const [refHash, gid] of nativeReferenceRows) {
+				if (visitedHeads.has(refHash)) {
+					continue;
+				}
+				visitedHeads.add(refHash);
+				refs.push(gid);
+			}
+			if (refs.length > 1000) {
+				warn("Large refs count: ", refs.length);
+			}
+			hashes.push(hash);
+			gidRefrences.push(refs);
+		}
+	}
+	return { hashes, gidRefrences };
 };
 
 export const materializeRawExchangeHeadsMessage = (
@@ -1184,13 +1463,23 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		deferNativeBackboneSignatureVerificationUntilSelection?: boolean;
 		deferNativeBackboneSignatureVerificationUntilCommit?: boolean;
 		prepareNativeBackboneExpectedColumnsAndSelection?: (properties: {
-			blocks: Uint8Array[];
+			/** Lazy so the fused (stash-backed) path never builds JS block arrays. */
+			blocks: () => Uint8Array[];
 			hashes: string[];
 			verifySignatures: boolean;
 		}) =>
 			| { columns: PreparedRawEntryV0FactsColumns }
 			| undefined
 			| Promise<{ columns: PreparedRawEntryV0FactsColumns } | undefined>;
+		/**
+		 * Stash-backed expected-columns prepare (blocks stay in wasm memory).
+		 * Tried before the blocks-based nativeBackbone variants; undefined
+		 * falls through to them.
+		 */
+		prepareNativeBackboneExpectedColumns?: (properties: {
+			hashes: string[];
+			verifySignatures: boolean;
+		}) => PreparedRawEntryV0FactsColumns | undefined;
 		tryPreparedRawReceiveFastDrop?: (properties: {
 			heads: RawEntryWithRefs[];
 			hashes: string[];
@@ -1204,16 +1493,18 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			| Promise<RawReceiveHashSelection | undefined>;
 	},
 ): Promise<ExchangeHeadsMessage<any> | undefined> => {
-	const blocks = new Array<Uint8Array>(message.heads.length);
 	const hashes = new Array<string>(message.heads.length);
 	let rawBytes = 0;
 	for (let i = 0; i < message.heads.length; i++) {
 		const head = message.heads[i]!;
-		const bytes = head.bytes;
-		blocks[i] = bytes;
 		hashes[i] = head.hash;
-		rawBytes += bytes.byteLength;
+		rawBytes += getRawExchangeHeadByteLength(head);
 	}
+	// Built lazily: the fused (stash-backed) prepare paths keep the entry
+	// block bytes in wasm memory and never need a JS blocks array.
+	let blocksValue: Uint8Array[] | undefined;
+	const blocks = () =>
+		(blocksValue ??= message.heads.map((head) => head.bytes));
 	const nativePrepareStartedAt = syncProfileStart(profile);
 	let preparedFacts: PreparedRawEntryV0Facts[] | undefined;
 	let preparedColumns: PreparedRawEntryV0FactsColumns | undefined;
@@ -1247,21 +1538,29 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 					verifySignatures: verifySignaturesInPrepare,
 				});
 			preparedColumns = preparedColumnsAndSelection?.columns;
+			preparedColumns ??= options.prepareNativeBackboneExpectedColumns?.({
+				hashes,
+				verifySignatures: verifySignaturesInPrepare,
+			});
 			preparedColumns ??=
 				options.nativeBackbone.prepareRawReceiveExpectedColumnsBatch?.(
-					blocks,
+					blocks(),
 					hashes,
 					{ verifySignatures: verifySignaturesInPrepare },
 				);
 			hashesVerifiedByNative = !!preparedColumns;
 			preparedColumns ??=
-				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(blocks, hashes, {
-					verifySignatures: verifySignaturesInPrepare,
-				});
+				options.nativeBackbone.prepareRawReceiveColumnsBatch?.(
+					blocks(),
+					hashes,
+					{
+						verifySignatures: verifySignaturesInPrepare,
+					},
+				);
 			if (preparedColumns) {
 				nativePrepareSource = "backbone-columns";
 			} else {
-				preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks);
+				preparedFacts = options.nativeBackbone.prepareRawReceiveBatch(blocks());
 				nativePrepareSource = "backbone";
 			}
 		} catch {
@@ -1280,7 +1579,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		}
 	}
 	if (!preparedColumns && !preparedFacts) {
-		preparedFacts = await prepareRawEntryV0Batch(blocks)
+		preparedFacts = await prepareRawEntryV0Batch(blocks())
 			.then((facts) => {
 				nativePrepareSource = "log";
 				return facts;
@@ -1537,6 +1836,19 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 			const hashesToWrap = selectedHashes;
 			const indexesToWrap = selectedIndexes;
 			const wrapStartedAt = syncProfileStart(profile);
+			// Lazy per-entry JS materialization (a change consumer reading
+			// payload/signatures) is counted on the existing counter so the
+			// fused no-consumer path stays assertable at zero.
+			const onJsEntryDecode = profile
+				? () =>
+						emitSyncProfileEvent(profile, {
+							name: "sharedLog.rawReceive.jsEntryDecode",
+							component: "shared-log",
+							entries: 1,
+							messages: 0,
+							details: { lazy: true },
+						})
+				: undefined;
 			let materializedHeads: EntryWithRefs<any>[];
 			try {
 				const rowFacts = preparedFacts!;
@@ -1547,6 +1859,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 						head,
 						facts,
 						factsIndex,
+						onJsEntryDecode,
 					);
 					preparedHead.initEntry({
 						keychain: log.keychain,
@@ -1585,7 +1898,7 @@ export const materializeVerifiedRawExchangeHeadsMessage = async (
 		details: { native: false },
 	});
 	const hashStartedAt = syncProfileStart(profile);
-	const calculatedHashes = await calculateRawCidV1Batch(blocks);
+	const calculatedHashes = await calculateRawCidV1Batch(blocks());
 	emitSyncProfileDuration(profile, hashStartedAt, {
 		name: "sharedLog.rawReceive.calculateHashes",
 		component: "shared-log",

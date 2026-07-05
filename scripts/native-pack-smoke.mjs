@@ -60,6 +60,55 @@ assert(read, "expected the wasm block store to return the stored block");
 assert.deepEqual([...read], [...bytes]);
 console.log("@peerbit/native-backbone tarball smoke OK");
 `,
+	"@peerbit/network-rust": `
+import { strict as assert } from "node:assert";
+import {
+	createNativeWire,
+	createRustCoreStream,
+	readNativeWireFrameRecord,
+} from "@peerbit/network-rust";
+
+const wire = await createNativeWire();
+const frames = wire.testCorpusFrames();
+assert(frames.length > 0, "expected the wasm module to emit corpus frames");
+const records = wire.decodeAndVerifyBatch(frames, Date.now());
+const first = readNativeWireFrameRecord(records, 0);
+assert.equal(first.decodeOk, true);
+assert.equal(first.verifyStatus, 1); // ed25519 signature verified in wasm
+assert.deepEqual([...wire.reencodeFrame(frames[0])], [...frames[0]]);
+
+// The grown package: the full DirectStream core plus the protocol ports.
+const core = await createRustCoreStream();
+assert(core.nativeWire, "expected the core to expose the native wire module");
+
+const routes = core.createRoutes({ me: "me", routeMaxRetentionPeriod: 1000 });
+routes.updateSession("target", 0);
+routes.add("me", "n1", "target", 1, 0, 0);
+assert.equal(routes.findNeighbor("me", "target")?.list[0]?.hash, "n1");
+assert.equal(routes.isReachable("me", "target"), true);
+assert.equal(routes.hasTarget("target"), true);
+
+const seen = core.createSeenCache({ max: 100, ttl: 1000 });
+assert.equal(seen.modify(frames[0], 0), 0);
+assert.equal(seen.modify(frames[0], 0), 1);
+
+const blockRequest = core.blockExchange.encodeBlockRequest(
+	"zb2rhe5P4gXftAwvA4eXQ5HJwsER2owDyS9sKaQRRVQPn93bA",
+);
+const decodedBlock = core.blockExchange.decodeBlockMessage(blockRequest);
+assert.equal(decodedBlock.type, "request");
+
+const subscribe = core.topicControl.encodeSubscribe(["topic-a"], true);
+const decodedSubscribe = core.topicControl.decodePubSubMessage(subscribe);
+assert.equal(decodedSubscribe.type, "subscribe");
+assert.deepEqual(decodedSubscribe.topics, ["topic-a"]);
+
+const channelKey = new Uint8Array(32).fill(7);
+const joinReq = core.fanout.encodeJoinReq(channelKey, 42, 1);
+const decodedJoin = core.fanout.decodeJoinReq(joinReq);
+assert.equal(decodedJoin?.reqId, 42);
+console.log("@peerbit/network-rust tarball smoke OK");
+`,
 };
 
 const run = (cmd, args, options = {}) =>

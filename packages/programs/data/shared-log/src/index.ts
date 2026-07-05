@@ -130,12 +130,19 @@ import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
+	MAX_RAW_EXCHANGE_MESSAGE_SIZE,
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
+	type RawExchangeHeadSendPlan,
 	type RawReceiveHashSelection,
 	RequestIPrune,
 	ResponseIPrune,
+	SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
+	StashBackedRawExchangeHeadsMessage,
+	SyncCapabilitiesMessage,
+	collectRawExchangeHeadSendPlan,
 	createExchangeHeadsMessages,
+	createRawExchangeHeadsMessages,
 	getExchangeHeadHash,
 	getPreparedRawExchangeGid,
 	getPreparedRawExchangeHashNumber,
@@ -147,8 +154,11 @@ import {
 	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
 	getPreparedRawExchangeTimestamp,
+	getRawExchangeHeadByteLength,
+	getRawExchangeHeadStashIndexes,
 	initExchangeHeadEntry,
 	isPreparedRawEntryWithRefs,
+	isStashBackedRawExchangeHeadsMessage,
 	materializeVerifiedRawExchangeHeadsMessage,
 } from "./exchange-heads.js";
 import { FanoutEnvelope } from "./fanout-envelope.js";
@@ -219,6 +229,7 @@ import {
 } from "./replication.js";
 import { Observer, Replicator } from "./role.js";
 import type {
+	SharedLogNativeWireSync,
 	SyncEntryCoordinates,
 	SyncOptions,
 	SyncProfileFn,
@@ -329,6 +340,13 @@ export {
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
+export type {
+	SharedLogNativeWireSync,
+	SyncOptions,
+	SyncProfileEvent,
+	SyncProfileFn,
+} from "./sync/index.js";
+export { ExchangeHeadsMessage, RawExchangeHeadsMessage };
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
@@ -1098,6 +1116,54 @@ export type SharedLogOptions<
 	fanout?: SharedLogFanoutOptions;
 };
 
+/**
+ * Native defaults a client can advertise for shared-log programs opened on
+ * it (the peerbit client's native network preset sets these; see
+ * `peerbit/rust`). They fill in open options the caller left undefined;
+ * explicit per-open options (including `false`) always win. Without the
+ * property on the client, behavior is unchanged.
+ */
+export type SharedLogNativeDefaults = {
+	nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
+	nativeGraph?: LogProperties<any>["nativeGraph"];
+	sync?: Pick<SyncOptions<any>, "rawExchangeHeads" | "nativeWireSync">;
+};
+
+type NodeWithSharedLogNativeDefaults = {
+	sharedLogNativeDefaults?: SharedLogNativeDefaults;
+};
+
+const applySharedLogNativeDefaults = <
+	O extends {
+		nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
+		nativeGraph?: LogProperties<any>["nativeGraph"];
+		sync?: SyncOptions<any>;
+	},
+>(
+	options: O | undefined,
+	defaults: SharedLogNativeDefaults | undefined,
+): O | undefined => {
+	if (!defaults) {
+		return options;
+	}
+	const sync =
+		defaults.sync || options?.sync
+			? {
+					...options?.sync,
+					rawExchangeHeads:
+						options?.sync?.rawExchangeHeads ?? defaults.sync?.rawExchangeHeads,
+					nativeWireSync:
+						options?.sync?.nativeWireSync ?? defaults.sync?.nativeWireSync,
+				}
+			: undefined;
+	return {
+		...options,
+		nativeBackbone: options?.nativeBackbone ?? defaults.nativeBackbone,
+		nativeGraph: options?.nativeGraph ?? defaults.nativeGraph,
+		sync,
+	} as O;
+};
+
 export const DEFAULT_MIN_REPLICAS = 2;
 export const WAIT_FOR_REPLICATOR_TIMEOUT = 20000;
 export const WAIT_FOR_ROLE_MATURITY = 5000;
@@ -1124,6 +1190,25 @@ const TOPIC_SUBSCRIBERS_CACHE_TTL_MS = 250;
 const LEADER_SELECTION_CONTEXT_CACHE_TTL_MS = 50;
 const ADAPTIVE_REBALANCE_IDLE_INTERVAL_MULTIPLIER = 5;
 const ADAPTIVE_REBALANCE_MIN_IDLE_AFTER_LOCAL_APPEND_MS = 10_000;
+
+// Live raw gossip micro-batching. Appended entries destined for the same
+// raw-capable recipient set coalesce until the end of the current event-loop
+// turn (queueMicrotask would only merge same-tick appends; a macrotask also
+// merges the awaited-put pattern where each append resolves through
+// microtasks) — so a lone put still flushes within one loop turn (sub-ms on
+// an idle loop) while a put burst ships as one multi-entry raw frame,
+// amortizing the receiver's per-message fixed costs. The entry/byte caps
+// bound the worst-case receiver stall per frame and keep frames within the
+// raw exchange message size the receive path is tuned for.
+const LIVE_RAW_GOSSIP_MAX_ENTRIES = 256;
+const LIVE_RAW_GOSSIP_MAX_BYTES = 128 * 1024;
+
+type LiveRawGossipBatch = {
+	to: string[];
+	hashes: string[];
+	gidRefrences: string[][];
+	bytes: number;
+};
 
 const DEFAULT_DISTRIBUTION_DEBOUNCE_TIME = 500;
 const RECENT_REPAIR_DISPATCH_TTL_MS = 5_000;
@@ -1615,6 +1700,7 @@ export class SharedLog<
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
 	private _nativeBackbone?: NativePeerbitBackbone;
+	private _wireSyncSession?: SharedLogNativeWireSync;
 	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
 	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
 	private _defaultAppendReplicaMetadataCache?: {
@@ -1774,6 +1860,14 @@ export class SharedLog<
 		expiresAt: number;
 		context: LeaderSelectionContext;
 	};
+	// Sync capability bits advertised by peers (SyncCapabilitiesMessage), keyed
+	// by public key hash. Entries are dropped on unsubscribe/disconnect.
+	private _peerSyncCapabilities!: Map<string, number>;
+	// Pending live raw exchange-head gossip, coalesced per recipient set and
+	// flushed at the end of the current event-loop turn (or when a batch cap
+	// is hit). Only used when every recipient advertised raw capability.
+	private _liveRawGossipBatches!: Map<string, LiveRawGossipBatch>;
+	private _liveRawGossipFlushScheduled!: boolean;
 
 	// regular distribution checks
 	private distributeQueue?: PQueue;
@@ -1827,6 +1921,9 @@ export class SharedLog<
 		this._joinAuthoritativeRepairPeersByDelay = new Map();
 		this._appendBackfillPendingByTarget = new Map();
 		this._topicSubscribersCache = new Map();
+		this._peerSyncCapabilities = new Map();
+		this._liveRawGossipBatches = new Map();
+		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 		this.uniqueReplicators = new Set();
@@ -2248,6 +2345,273 @@ export class SharedLog<
 		});
 	}
 
+	/** Live append gossip that stayed on the plain TS path (countable in tests). */
+	private emitPlainLiveSendProfile(message: ExchangeHeadsMessage<any>): void {
+		const profile = this._logProperties?.sync?.profile;
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "sharedLog.liveSend.plain",
+				component: "shared-log",
+				entries: message.heads.length,
+				messages: 1,
+			});
+		}
+	}
+
+	private peerSupportsRawExchangeHeads(peerHash: string): boolean {
+		return (
+			((this._peerSyncCapabilities.get(peerHash) ?? 0) &
+				SYNC_CAPABILITY_RAW_EXCHANGE_HEADS) !==
+			0
+		);
+	}
+
+	/**
+	 * Live append gossip may use the raw exchange-heads path only when we
+	 * opted into raw sync and every remote recipient advertised raw capability
+	 * (via {@link SyncCapabilitiesMessage}). Peers that never advertised —
+	 * older versions or raw sync disabled — keep receiving the unchanged plain
+	 * `ExchangeHeadsMessage` path.
+	 */
+	private canUseLiveRawGossip(
+		to: Iterable<string>,
+		selfHash: string,
+	): string[] | undefined {
+		if (this._logProperties?.sync?.rawExchangeHeads !== true) {
+			return undefined;
+		}
+		const remote: string[] = [];
+		for (const peer of to) {
+			if (peer === selfHash) {
+				continue;
+			}
+			if (!this.peerSupportsRawExchangeHeads(peer)) {
+				return undefined;
+			}
+			remote.push(peer);
+		}
+		return remote.length > 0 ? remote : undefined;
+	}
+
+	private queueLiveRawGossip(
+		hash: string,
+		gidRefrences: string[],
+		byteLength: number,
+		to: string[],
+	): void {
+		const key = to.length === 1 ? to[0]! : [...to].sort().join("\n");
+		let batch = this._liveRawGossipBatches.get(key);
+		if (!batch) {
+			batch = { to, hashes: [], gidRefrences: [], bytes: 0 };
+			this._liveRawGossipBatches.set(key, batch);
+		}
+		batch.hashes.push(hash);
+		batch.gidRefrences.push(gidRefrences);
+		batch.bytes += byteLength;
+		if (
+			batch.hashes.length >= LIVE_RAW_GOSSIP_MAX_ENTRIES ||
+			batch.bytes >= LIVE_RAW_GOSSIP_MAX_BYTES
+		) {
+			this._liveRawGossipBatches.delete(key);
+			void this.sendLiveRawGossipBatch(batch);
+			return;
+		}
+		this.scheduleLiveRawGossipFlush();
+	}
+
+	private scheduleLiveRawGossipFlush(): void {
+		if (this._liveRawGossipFlushScheduled) {
+			return;
+		}
+		this._liveRawGossipFlushScheduled = true;
+		const flush = () => {
+			this._liveRawGossipFlushScheduled = false;
+			this.flushLiveRawGossip();
+		};
+		// End-of-turn flush: setImmediate on node fires after the current
+		// turn's microtasks (so awaited sequential appends coalesce) but
+		// before the next turn's timers/IO (so a lone put is not delayed).
+		if (typeof setImmediate === "function") {
+			setImmediate(flush);
+		} else {
+			setTimeout(flush, 0);
+		}
+	}
+
+	private flushLiveRawGossip(): void {
+		if (this._liveRawGossipBatches.size === 0) {
+			return;
+		}
+		const batches = [...this._liveRawGossipBatches.values()];
+		this._liveRawGossipBatches.clear();
+		for (const batch of batches) {
+			void this.sendLiveRawGossipBatch(batch);
+		}
+	}
+
+	private async sendLiveRawGossipBatch(
+		batch: LiveRawGossipBatch,
+	): Promise<void> {
+		try {
+			const sentMessages = await this.sendFusedRawExchangeHeadsPlan(
+				{ hashes: batch.hashes, gidRefrences: batch.gidRefrences },
+				batch.to,
+			);
+			if (sentMessages !== undefined) {
+				return;
+			}
+			// TS fallback (no native payload encoder or blocks not natively
+			// stored): still one batched raw message per size cap.
+			for await (const message of createRawExchangeHeadsMessages(
+				this.log,
+				batch.hashes,
+				this._logProperties?.sync?.profile,
+			)) {
+				await this.rpc.send(message, {
+					mode: new SilentDelivery({ redundancy: 1, to: batch.to }),
+				});
+			}
+		} catch (error: any) {
+			if (this.closed) {
+				return;
+			}
+			logger.error(error);
+		}
+	}
+
+	/**
+	 * Fused raw exchange-heads send: the full sync payload — PubSubData →
+	 * RequestV0 → RawExchangeHeadsMessage including the entry block bytes — is
+	 * serialized inside the native-backbone wasm module straight from the
+	 * native block store and published pre-encoded, so entry block bytes never
+	 * materialize as JS values on the send path. Returns the number of
+	 * messages sent, or `undefined` when this path is unavailable (no native
+	 * encoder, blocks not natively stored, or no pre-encoded publish support)
+	 * so callers fall back to the TS message path.
+	 */
+	private async sendFusedRawExchangeHeadsPlan(
+		plan: RawExchangeHeadSendPlan,
+		to: string[] | Set<string>,
+		options?: { priority?: number; reserved?: Uint8Array },
+	): Promise<number | undefined> {
+		const backbone = this._nativeBackbone;
+		if (!backbone?.encodeRawExchangeSyncPayload) {
+			return undefined;
+		}
+		const pubsub = this.node.services.pubsub as unknown as {
+			publishPreEncodedData?: (
+				payload: Uint8Array,
+				properties: { topics: string[] },
+				options: {
+					mode: SilentDelivery;
+					priority?: number;
+				},
+			) => Promise<Uint8Array | undefined>;
+		};
+		if (typeof pubsub.publishPreEncodedData !== "function") {
+			return undefined;
+		}
+		if (plan.hashes.length === 0) {
+			return 0;
+		}
+		const byteLengths = backbone.syncSendBlockByteLengths?.(plan.hashes);
+		if (!byteLengths) {
+			return undefined;
+		}
+
+		const topic = this.rpc.topic;
+		const payloads: Uint8Array[] = [];
+		const encodeChunk = (from: number, until: number): boolean => {
+			const payload = backbone.encodeRawExchangeSyncPayload!({
+				topic,
+				hashes: from === 0 && until === plan.hashes.length
+					? plan.hashes
+					: plan.hashes.slice(from, until),
+				gidRefrences:
+					from === 0 && until === plan.gidRefrences.length
+						? plan.gidRefrences
+						: plan.gidRefrences.slice(from, until),
+				reserved: options?.reserved,
+			});
+			if (!payload) {
+				return false;
+			}
+			payloads.push(payload);
+			return true;
+		};
+		// Same greedy chunking rule as `createRawExchangeHeadsMessages`: close
+		// a message after the head that pushes it over the size cap.
+		let chunkStart = 0;
+		let size = 0;
+		let totalBytes = 0;
+		for (let i = 0; i < plan.hashes.length; i++) {
+			const length = byteLengths[i];
+			if (length === undefined) {
+				return undefined;
+			}
+			size += length;
+			totalBytes += length;
+			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
+				if (!encodeChunk(chunkStart, i + 1)) {
+					return undefined;
+				}
+				chunkStart = i + 1;
+				size = 0;
+			}
+		}
+		if (chunkStart < plan.hashes.length) {
+			if (!encodeChunk(chunkStart, plan.hashes.length)) {
+				return undefined;
+			}
+		}
+		// Every payload is encoded before anything is published, so a caller
+		// falling back on `undefined` never double-sends part of a plan.
+		const profile = this._logProperties?.sync?.profile;
+		if (profile) {
+			emitSyncProfileEvent(profile, {
+				name: "sharedLog.rawSend.fused",
+				component: "shared-log",
+				entries: plan.hashes.length,
+				bytes: totalBytes,
+				messages: payloads.length,
+			});
+		}
+		for (const payload of payloads) {
+			await pubsub.publishPreEncodedData(
+				payload,
+				{ topics: [topic] },
+				{
+					mode: new SilentDelivery({ redundancy: 1, to: [...to] }),
+					priority: options?.priority,
+				},
+			);
+		}
+		return payloads.length;
+	}
+
+	/**
+	 * `RawExchangeHeadsSender` seam handed to the synchronizer for bulk sync
+	 * responses: resolves the head/reference plan like the TS raw path and
+	 * ships it fused when possible.
+	 */
+	private async trySendFusedRawExchangeHeads(
+		hashes: string[],
+		to: string[],
+		options?: { priority?: number; reserved?: Uint8Array },
+	): Promise<number | undefined> {
+		if (!this._nativeBackbone?.encodeRawExchangeSyncPayload) {
+			return undefined;
+		}
+		const plan = collectRawExchangeHeadSendPlan(this.log, hashes);
+		if (!plan) {
+			return undefined;
+		}
+		if (plan.hashes.length === 0) {
+			return 0;
+		}
+		return this.sendFusedRawExchangeHeadsPlan(plan, to, options);
+	}
+
 	private async _appendDeliverToReplicators(
 		entry: Entry<T>,
 		coordinates: NumberFromType<R>[],
@@ -2332,6 +2696,22 @@ export class SharedLog<
 					for (const peer of nativeDeliveryPlan.repairTargets) {
 						this.queueAppendBackfill(peer, entryReplicatedForRepair);
 					}
+					if (nativeDeliveryPlan.defaultSendSilent) {
+						const rawTargets = this.canUseLiveRawGossip(
+							nativeDeliveryPlan.sendTo,
+							selfHash,
+						);
+						if (rawTargets) {
+							this.queueLiveRawGossip(
+								entry.hash,
+								message.heads[0]?.gidRefrences ?? [],
+								entry.size ?? 0,
+								rawTargets,
+							);
+							continue;
+						}
+					}
+					this.emitPlainLiveSendProfile(message);
 					this.rpc
 						.send(message, {
 							mode: nativeDeliveryPlan.defaultSendSilent
@@ -2434,6 +2814,19 @@ export class SharedLog<
 					// forever. Best-effort fallback subscribers are not repair-worthy.
 					this.queueAppendBackfill(peer, entryReplicatedForRepair);
 				}
+				if (isLeader) {
+					const rawTargets = this.canUseLiveRawGossip(set, selfHash);
+					if (rawTargets) {
+						this.queueLiveRawGossip(
+							entry.hash,
+							message.heads[0]?.gidRefrences ?? [],
+							entry.size ?? 0,
+							rawTargets,
+						);
+						continue;
+					}
+				}
+				this.emitPlainLiveSendProfile(message);
 				this.rpc
 					.send(message, {
 						mode: isLeader
@@ -4208,6 +4601,33 @@ export class SharedLog<
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 	) {
 		const hashes = [...entries.keys()];
+		if (
+			this._logProperties?.sync?.rawExchangeHeads === true &&
+			this.peerSupportsRawExchangeHeads(target)
+		) {
+			const reserved = new Uint8Array(4);
+			reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+			const sentMessages = await this.trySendFusedRawExchangeHeads(
+				hashes,
+				[target],
+				{ priority: SYNC_MESSAGE_PRIORITY, reserved },
+			);
+			if (sentMessages !== undefined) {
+				return;
+			}
+			for await (const message of createRawExchangeHeadsMessages(
+				this.log,
+				hashes,
+				this._logProperties?.sync?.profile,
+			)) {
+				message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
+				await this.rpc.send(message, {
+					priority: SYNC_MESSAGE_PRIORITY,
+					mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+				});
+			}
+			return;
+		}
 		for await (const message of createExchangeHeadsMessages(
 			this.log,
 			hashes,
@@ -8002,6 +8422,11 @@ export class SharedLog<
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
+		options = applySharedLogNativeDefaults(
+			options,
+			(this.node as unknown as NodeWithSharedLogNativeDefaults)
+				.sharedLogNativeDefaults,
+		);
 		this.replicas = {
 			min:
 				options?.replicas?.min != null
@@ -8055,6 +8480,9 @@ export class SharedLog<
 		this._repairMetrics = createRepairMetrics();
 		this._topicSubscribersCache = new Map();
 		this._leaderSelectionContextCache = undefined;
+		this._peerSyncCapabilities = new Map();
+		this._liveRawGossipBatches = new Map();
+		this._liveRawGossipFlushScheduled = false;
 		this.coordinateToHash = new Cache<string>({ max: 1e6, ttl: 1e4 });
 		this.recentlyRebalanced = new Cache<string>({ max: 1e4, ttl: 1e5 });
 
@@ -8190,6 +8618,16 @@ export class SharedLog<
 			await this.hydrateNativeBackboneSharedLog(this._nativeBackbone);
 		} else if (deferStandaloneNativeRangePlanner) {
 			await this.openNativeRangePlanner(options?.nativeRangePlanner);
+		}
+		// Receive fusion: register this program's RPC topic so the native wire
+		// decoder stashes raw exchange-head payloads addressed to it. Only
+		// useful together with the native backbone (the stashed prepare runs in
+		// the same wasm module); without it the regular decode path is used.
+		this._wireSyncSession = undefined;
+		const wireSyncSession = options?.sync?.nativeWireSync;
+		if (wireSyncSession && this._nativeBackbone) {
+			this._wireSyncSession = wireSyncSession;
+			wireSyncSession.registerTopic(this.topic);
 		}
 		const localBlocks = this._nativeBackbone
 			? this._nativeBackbone.blocks
@@ -8482,6 +8920,11 @@ export class SharedLog<
 			);
 		};
 
+		const sendRawExchangeHeads = (
+			hashes: string[],
+			to: string[],
+			sendOptions?: { priority?: number },
+		) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions);
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({
 				numbers: this.indexableDomain.numbers,
@@ -8496,6 +8939,7 @@ export class SharedLog<
 				sync: options?.sync,
 				isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 					this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+				sendRawExchangeHeads,
 			});
 		} else {
 			if (
@@ -8512,6 +8956,7 @@ export class SharedLog<
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+					sendRawExchangeHeads,
 				});
 			} else {
 				if (this.domain.resolution === "u32") {
@@ -8533,6 +8978,7 @@ export class SharedLog<
 					sync: options?.sync,
 					isEntryRecentlyKnownByPeer: (hash, peer, maxAgeMs) =>
 						this.isEntryRecentlyKnownByPeer(hash, peer, maxAgeMs),
+					sendRawExchangeHeads,
 				}) as Syncronizer<R>;
 			}
 		}
@@ -8547,6 +8993,8 @@ export class SharedLog<
 				queryType: TransportMessage,
 				responseType: TransportMessage,
 				responseHandler: (query, context) => this.onMessage(query, context),
+				resolveRequest: (message) =>
+					this.resolveStashedRawExchangeHeadsMessage(message),
 				topic: this.topic,
 			}),
 			this.node.services.pubsub.addEventListener(
@@ -9107,6 +9555,7 @@ export class SharedLog<
 		this.cancelReplicationInfoRequests(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this._replicatorLastActivityAt.delete(peerHash);
+		this._peerSyncCapabilities.delete(peerHash);
 		this._checkedPrune.cleanupPeer(peerHash);
 	}
 
@@ -10069,6 +10518,10 @@ export class SharedLog<
 		if (!this._entryCoordinatesIndex && !this._replicationRangeIndex) {
 			return;
 		}
+		if (this._wireSyncSession) {
+			this._wireSyncSession.unregisterTopic(this.topic);
+			this._wireSyncSession = undefined;
+		}
 		await this.closeNativeBackboneCoordinatePersistence();
 		await this.syncronizer?.close();
 
@@ -10158,6 +10611,8 @@ export class SharedLog<
 		this._pendingIHave?.clear();
 		this.latestReplicationInfoMessage?.clear();
 		this._gidPeersHistory?.clear();
+		this._peerSyncCapabilities?.clear();
+		this._liveRawGossipBatches?.clear();
 		this._nativeSharedLogState?.clearGidPeers();
 		this._nativeBackbone?.clearGidPeers();
 		// Cancel any pending debounced timers so they can't fire after we've torn down
@@ -10190,6 +10645,11 @@ export class SharedLog<
 		// restart. Explicit `unreplicate()` still clears local state.
 		try {
 			if (!this.closed) {
+				// Ship any coalesced live gossip before the RPC child program
+				// closes; entries appended right before close should still be
+				// offered to their replicators (best effort, like the inline
+				// sends they replaced).
+				this.flushLiveRawGossip();
 				// Prevent any late debounced timers (rebalance/prune) from publishing
 				// replication info after we announce "segments: []". These races can leave
 				// stale segments on remotes after rapid open/close cycles.
@@ -10243,6 +10703,7 @@ export class SharedLog<
 		// RPC/subscription state (same reasoning as in `close()`).
 		try {
 			if (!this.closed) {
+				this.flushLiveRawGossip();
 				this._isReplicating = false;
 				this._isAdaptiveReplicating = false;
 				this.rebalanceParticipationDebounced?.close();
@@ -10290,11 +10751,54 @@ export class SharedLog<
 		return this.log.recover();
 	}
 
+	/**
+	 * Receive-fusion resolver passed to the RPC controller: when the native
+	 * wire decoder stashed this message's raw exchange-head payload (keyed by
+	 * the DataMessage id), build the message from stash metadata instead of
+	 * borsh-decoding the entries in JS. The block bytes stay in wasm memory
+	 * for the stashed prepare pipeline.
+	 */
+	private resolveStashedRawExchangeHeadsMessage(
+		message: DataMessage,
+	): StashBackedRawExchangeHeadsMessage | undefined {
+		const session = this._wireSyncSession;
+		const backbone = this._nativeBackbone;
+		if (!session || !backbone) {
+			return undefined;
+		}
+		const meta = session.stashedMeta(message.header.id);
+		if (!meta) {
+			return undefined;
+		}
+		const syncProfile = this._logProperties?.sync?.profile;
+		if (syncProfile) {
+			emitSyncProfileEvent(syncProfile, {
+				name: "sharedLog.rawReceive.wireStashResolve",
+				component: "shared-log",
+				entries: meta.hashes.length,
+				bytes: meta.payloadLength,
+				messages: 1,
+			});
+		}
+		return new StashBackedRawExchangeHeadsMessage({
+			messageId: message.header.id,
+			hashes: meta.hashes,
+			gidRefrences: meta.gidRefrences,
+			byteLengths: meta.byteLengths,
+			reserved: meta.reserved,
+			stash: session,
+			resolveReleasedBlock: (hash) => backbone.rawReceiveBlockBytes(hash),
+		});
+	}
+
 	// Callback for receiving a message from the network
 	async onMessage(
 		msg: TransportMessage,
 		context: RequestContext,
 	): Promise<void> {
+		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
+			? msg
+			: undefined;
 		try {
 			if (!context.from) {
 				throw new Error("Missing from in update role message");
@@ -10315,6 +10819,18 @@ export class SharedLog<
 			if (msg instanceof RawExchangeHeadsMessage) {
 				const rawFrom = context.from!;
 				const fromIsSelf = rawFrom.equals(this.node.identity.publicKey);
+				if (syncProfile && !stashBackedRawMessage) {
+					// Per-message JS-side entry decode: the heads were
+					// borsh-decoded in TS (regular RPC path) instead of being
+					// resolved from the native wire stash. Zero on the fused
+					// hot path.
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.jsEntryDecode",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 				const rawExistingStartedAt = syncProfileStart(syncProfile);
 				const rawExistingHashes = await this.log.hasMany(
 					msg.heads.map((head) => head.hash),
@@ -10335,7 +10851,7 @@ export class SharedLog<
 						rawConfirmedHashes.add(head.hash);
 					} else {
 						rawMissingHeads.push(head);
-						rawMissingBytes += head.bytes.byteLength;
+						rawMissingBytes += getRawExchangeHeadByteLength(head);
 					}
 				}
 				if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
@@ -10362,7 +10878,14 @@ export class SharedLog<
 				const rawPrepareVerifySetting =
 					this._logProperties?.sync
 						?.rawExchangeHeadsVerifySignaturesDuringPrepare;
+				// A program-level canAppend hook must observe every entry before
+				// it commits, so the native join commit (which validates and
+				// commits entirely in wasm) is not used for programs that
+				// register one; those joins run through the lower-log batch
+				// join where the hook fires per entry.
+				const programCanAppend = !!this._logProperties?.canAppend;
 				const canVerifyPreparedRawReceiveOnCommit =
+					!programCanAppend &&
 					!!this._nativeBackbone?.graph
 						.commitVerifiedPreparedRawReceiveJoinBatch;
 				const canDeferRawReceiveVerificationUntilNativeSelection =
@@ -10385,6 +10908,7 @@ export class SharedLog<
 					canDeferRawReceiveVerificationUntilNativeSelection;
 				const deferNativeBackboneSignatureVerificationUntilCommit =
 					deferNativeBackboneSignatureVerificationUntilSelection &&
+					!programCanAppend &&
 					!!this._nativeBackbone?.graph
 						.commitVerifiedPreparedRawReceiveJoinBatch;
 				let rawPreparedReceiveSelection:
@@ -10407,6 +10931,40 @@ export class SharedLog<
 						await rawPreparedReceiveSelection;
 					return rawPreparedReceiveSelectionValue;
 				};
+				// Receive fusion: when this message was resolved from the wire
+				// stash, the prepared receive reads entry block bytes straight
+				// out of wasm memory (indexed into the stashed frame) instead
+				// of copying a JS blocks array across the boundary.
+				const rawStashIndexes = stashBackedRawMessage
+					? getRawExchangeHeadStashIndexes(rawMissingHeads)
+					: undefined;
+				const prepareNativeBackboneExpectedColumns =
+					stashBackedRawMessage && rawStashIndexes
+						? ({
+								hashes,
+								verifySignatures,
+							}: {
+								hashes: string[];
+								verifySignatures: boolean;
+							}) => {
+								const backbone = this._nativeBackbone;
+								const wireSession = this._wireSyncSession;
+								if (!backbone || !wireSession) {
+									return undefined;
+								}
+								try {
+									return backbone.prepareStashedRawReceiveExpectedColumnsBatch(
+										wireSession,
+										stashBackedRawMessage.messageId,
+										rawStashIndexes,
+										hashes,
+										{ verifySignatures },
+									);
+								} catch {
+									return undefined;
+								}
+							}
+						: undefined;
 				const prepareNativeBackboneExpectedColumnsAndSelection =
 					rawIsRepairHint
 						? undefined
@@ -10415,15 +10973,13 @@ export class SharedLog<
 								hashes,
 								verifySignatures,
 							}: {
-								blocks: Uint8Array[];
+								blocks: () => Uint8Array[];
 								hashes: string[];
 								verifySignatures: boolean;
 							}) => {
 								if (
 									verifySignatures ||
-									!canDeferRawReceiveVerificationUntilNativeSelection ||
-									!this._nativeBackbone
-										?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+									!canDeferRawReceiveVerificationUntilNativeSelection
 								) {
 									return undefined;
 								}
@@ -10435,20 +10991,48 @@ export class SharedLog<
 									};
 									const leaderSelectionContext =
 										await this.createLeaderSelectionContext();
-									const prepared =
-										this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
-											blocks,
-											hashes,
-											{
-												verifySignatures: false,
-												...replicaOptions,
-												leaderOptions:
-													this.createNativeLeaderOptions(
-														leaderSelectionContext,
-													),
-												fromHash: rawFrom.hashcode(),
-											},
-										);
+									const prepareOptions = {
+										verifySignatures: false as const,
+										...replicaOptions,
+										leaderOptions:
+											this.createNativeLeaderOptions(
+												leaderSelectionContext,
+											),
+										fromHash: rawFrom.hashcode(),
+									};
+									let prepared:
+										| ReturnType<
+												NativePeerbitBackbone["prepareRawReceiveExpectedColumnsAndSelectionBatch"]
+										  >
+										| undefined;
+									const wireSession = this._wireSyncSession;
+									if (
+										stashBackedRawMessage &&
+										rawStashIndexes &&
+										wireSession &&
+										this._nativeBackbone
+									) {
+										prepared =
+											this._nativeBackbone.prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
+												wireSession,
+												stashBackedRawMessage.messageId,
+												rawStashIndexes,
+												hashes,
+												prepareOptions,
+											);
+									}
+									if (
+										!prepared &&
+										this._nativeBackbone
+											?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+									) {
+										prepared =
+											this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+												blocks(),
+												hashes,
+												prepareOptions,
+											);
+									}
 									if (!prepared) {
 										return undefined;
 									}
@@ -10481,6 +11065,8 @@ export class SharedLog<
 								deferNativeBackboneSignatureVerificationUntilCommit,
 							prepareNativeBackboneExpectedColumnsAndSelection:
 								prepareNativeBackboneExpectedColumnsAndSelection,
+							prepareNativeBackboneExpectedColumns:
+								prepareNativeBackboneExpectedColumns,
 							tryPreparedRawReceiveFastDrop: rawIsRepairHint
 								? undefined
 								: async ({ heads, hashes }) =>
@@ -10538,6 +11124,17 @@ export class SharedLog<
 				 * I have received heads from someone else.
 				 * I can use them to load associated logs and join/sync them with the data stores I own
 				 */
+
+				if (syncProfile && !rawMaterializedKnownMissing) {
+					// Entries arrived as fully TS-decoded `Entry` objects (the
+					// non-raw exchange path). Zero on the fused hot path.
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.jsEntryDecode",
+						component: "shared-log",
+						entries: msg.heads.length,
+						messages: 1,
+					});
+				}
 
 				const { heads } = msg;
 				const headHashes =
@@ -11571,12 +12168,21 @@ export class SharedLog<
 					let nativePreparedCommittedHashes: Set<string> | undefined;
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
-						const nativeBackboneCommitValidation =
-							this.validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
-								allToMerge,
-								syncProfile,
-								{ decodedReplicaCounts: receiveReplicaCounts },
-							);
+						// Program-level hooks must observe the joined entries:
+						// a canAppend hook disables the native-validated commit
+						// (the lower-log join runs the hook per entry instead),
+						// and an onChange consumer disables the hash-only sink
+						// so the join dispatches the change event with lazy
+						// entry views.
+						const programCanAppend = !!this._logProperties?.canAppend;
+						const programOnChange = !!this._logProperties?.onChange;
+						const nativeBackboneCommitValidation = programCanAppend
+							? undefined
+							: this.validatePreparedRawReceiveHeadsMetadataWithNativeBackbone(
+									allToMerge,
+									syncProfile,
+									{ decodedReplicaCounts: receiveReplicaCounts },
+								);
 						let canAppendAlreadyValidated = false;
 						let fallbackCanAppendAlreadyValidated = false;
 						let nativeCommitVerifyHashes: string[] | undefined;
@@ -11617,9 +12223,11 @@ export class SharedLog<
 						}
 						const lowerLogJoinStartedAt = syncProfileStart(syncProfile);
 						const hashOnlyEntryAdded =
+							!programOnChange &&
 							!!this.syncronizer.onEntryAddedHash &&
 							this._pendingIHave.size === 0;
 						const batchHashOnlyEntryAdded =
+							!programOnChange &&
 							!!this.syncronizer.onEntryAddedHashes &&
 							this._pendingIHave.size === 0;
 						let mergeEntryByHash:
@@ -11760,6 +12368,13 @@ export class SharedLog<
 								: !!this._nativeBackbone?.graph
 										.commitPreparedRawReceiveJoinBatch);
 						const trustedLowerLog = this.log as unknown as TrustedLowerLog<T>;
+						// With a program-level onChange consumer the hash-only
+						// sink is not used: the lower-log join dispatches the
+						// change event (lazy entry views over the prepared raw
+						// facts) so per-entry consumers observe every commit.
+						const joinOnAppendHashes = programOnChange
+							? undefined
+							: onAppendHashes;
 						const joinedPreparedFacts =
 							canUsePreparedAppendFacts &&
 							(await trustedLowerLog.joinPreparedAppendFactsBatch(
@@ -11768,7 +12383,7 @@ export class SharedLog<
 									__peerbitEntriesAlreadyMissing: true,
 									__peerbitCanAppendAlreadyValidated: true,
 									__peerbitDeferIndexWrite: true,
-									__peerbitOnAppendHashes: onAppendHashes,
+									__peerbitOnAppendHashes: joinOnAppendHashes,
 									__peerbitProfile: syncProfile,
 									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
@@ -11786,7 +12401,7 @@ export class SharedLog<
 								__peerbitCanAppendAlreadyValidated:
 									fallbackCanAppendAlreadyValidated,
 								__peerbitDeferIndexWrite: true,
-								__peerbitOnAppendHashes: onAppendHashes,
+								__peerbitOnAppendHashes: joinOnAppendHashes,
 								__peerbitProfile: syncProfile,
 							});
 						}
@@ -11799,6 +12414,7 @@ export class SharedLog<
 								details: {
 									hashOnlyEntryAdded,
 									batchHashOnlyEntryAdded,
+									programOnChange,
 									joinedPreparedFacts,
 									nativePreparedCoordinatesFinished,
 								},
@@ -12397,6 +13013,14 @@ export class SharedLog<
 				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
 				this.clearRepairFrontierHashes(context.from.hashcode(), msg.hashes);
 				return;
+			} else if (msg instanceof SyncCapabilitiesMessage) {
+				if (!context.from.equals(this.node.identity.publicKey)) {
+					this._peerSyncCapabilities.set(
+						context.from.hashcode(),
+						msg.capabilities,
+					);
+				}
+				return;
 			} else if (await this.syncronizer.onMessage(msg, context)) {
 				return; // the syncronizer has handled the message
 			} else if (msg instanceof BlocksMessage) {
@@ -12569,6 +13193,22 @@ export class SharedLog<
 				return;
 			}
 			logger.error(e);
+		} finally {
+			if (stashBackedRawMessage && stashBackedRawMessage.release()) {
+				const syncProfile = this._logProperties?.sync?.profile;
+				if (syncProfile) {
+					emitSyncProfileEvent(syncProfile, {
+						name: "sharedLog.rawReceive.wireStashRelease",
+						component: "shared-log",
+						entries: stashBackedRawMessage.heads.length,
+						messages: 1,
+						details: {
+							bytesMaterialized:
+								stashBackedRawMessage.bytesMaterializedCount,
+						},
+					});
+				}
+			}
 		}
 	}
 
@@ -16297,6 +16937,22 @@ export class SharedLog<
 		this._replicationInfoBlockedPeers.delete(peerHash);
 		this._replicatorLivenessFailures.delete(peerHash);
 		this.markReplicatorActivity(peerHash);
+
+		if (this._logProperties?.sync?.rawExchangeHeads === true) {
+			// One-shot capability advertisement so live append gossip can pick
+			// the raw exchange-heads path for this peer without a per-request
+			// round trip. Peers that do not know the message drop it.
+			this.rpc
+				.send(
+					new SyncCapabilitiesMessage({
+						capabilities: SYNC_CAPABILITY_RAW_EXCHANGE_HEADS,
+					}),
+					{
+						mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
+					},
+				)
+				.catch((e) => logger.error(e.toString()));
+		}
 
 		const replicationSegments = await this.getMyReplicationSegments();
 		if (replicationSegments.length > 0) {

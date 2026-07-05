@@ -44,6 +44,7 @@ class RPCTest extends Program {
 	responders: PublicSignKey[];
 
 	delay: number | undefined;
+	resolveRequestHook: ((message: any) => Body | undefined) | undefined;
 
 	constructor(responders: PeerId[]) {
 		super();
@@ -57,6 +58,7 @@ class RPCTest extends Program {
 			topic: "topic",
 			responseType: Body,
 			queryType: Body,
+			resolveRequest: this.resolveRequestHook,
 			responseHandler: this.responders.find((x) =>
 				this.node.identity.publicKey.equals(x),
 			)
@@ -163,6 +165,39 @@ describe("rpc", () => {
 			expect(from.hashcode()).equal(
 				responder.node.identity.publicKey.hashcode(),
 			);
+		});
+
+		it("falls back to the decode path when resolveRequest throws", async () => {
+			// A throwing resolveRequest hook must not drop the message; it
+			// falls back to the normal decrypt + deserialize path so the
+			// responder still answers.
+			let hookInvoked = 0;
+			// Replace the beforeEach-opened pair with a responder whose
+			// resolveRequest hook throws.
+			await reader.close();
+			await responder.close();
+			responder = new RPCTest([session.peers[0].peerId]);
+			responder.query = new RPC();
+			responder.resolveRequestHook = () => {
+				hookInvoked++;
+				throw new Error("resolve hook boom");
+			};
+			await session.peers[0].open(responder);
+
+			reader = deserialize(serialize(responder), RPCTest);
+			await session.peers[1].open(reader);
+			await reader.waitFor(session.peers[0].peerId);
+			await responder.waitFor(session.peers[1].peerId);
+
+			const results = await reader.query.request(
+				new Body({ arr: new Uint8Array([9, 8, 7]) }),
+				{ amount: 1 },
+			);
+			await waitForResolved(() => expect(results).to.have.length(1));
+			expect(results[0].response.arr).to.deep.equal(
+				new Uint8Array([9, 8, 7]),
+			);
+			expect(hookInvoked).to.be.greaterThan(0);
 		});
 
 		it("inherits response transport hints from request envelope", async () => {

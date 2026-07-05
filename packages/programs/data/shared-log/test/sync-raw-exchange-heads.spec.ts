@@ -1,10 +1,15 @@
+import { serialize } from "@dao-xyz/borsh";
 import { keys } from "@libp2p/crypto";
+import { DecryptedThing, getKeypairFromPrivateKey } from "@peerbit/crypto";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import { Entry } from "@peerbit/log";
 import {
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
+	createNativeWireSyncSession,
 } from "@peerbit/native-backbone";
+import { PubSubData } from "@peerbit/pubsub-interface";
+import { RequestV0 } from "@peerbit/rpc";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -16,9 +21,11 @@ import {
 	RawEntryWithRefs,
 	RawExchangeHeadsMessage,
 	RequestIPrune,
+	collectRawExchangeHeadSendPlan,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
+import type { SyncProfileEvent } from "../src/sync/index.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { groupByGid, tryGroupByGidSync } from "../src/utils.js";
 import { EventStore } from "./utils/stores/event-store.js";
@@ -3239,6 +3246,797 @@ describe("raw exchange-head sync", () => {
 				}),
 				{ from: db2.node.identity.publicKey } as any,
 			);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	const fusedReceiverPrivateKeyRaw = new Uint8Array([
+		237, 55, 205, 86, 40, 44, 73, 169, 196, 118, 36, 69, 214, 122, 28, 157,
+		208, 163, 15, 215, 104, 193, 151, 177, 62, 231, 253, 120, 122, 222, 174,
+		242, 120, 50, 165, 97, 8, 235, 97, 186, 148, 251, 100, 168, 49, 10, 119,
+		71, 246, 246, 174, 163, 198, 54, 224, 6, 174, 212, 159, 187, 2, 137, 47,
+		192,
+	]);
+
+	const setupFusedSyncSession = async (options: { wireOnPubsub: boolean }) => {
+		// The wire-sync session needs the receiver's public key hash before the
+		// node exists, so the receiver uses a fixed identity.
+		const receiverPrivateKey = keys.privateKeyFromRaw(
+			fusedReceiverPrivateKeyRaw,
+		);
+		const receiverSelfHash =
+			getKeypairFromPrivateKey(receiverPrivateKey).publicKey.hashcode();
+		const wireSync = await createNativeWireSyncSession({
+			selfHash: receiverSelfHash,
+		});
+		const session = await TestSession.disconnected(2, [
+			{
+				indexer: (directory) => createRustIndexer(directory),
+			},
+			{
+				libp2p: { privateKey: receiverPrivateKey },
+				indexer: (directory) => createRustIndexer(directory),
+				...(options.wireOnPubsub ? { nativeWire: wireSync } : {}),
+			},
+		]);
+		const setup = {
+			domain: createReplicationDomainHash("u32"),
+			type: "u32" as const,
+			syncronizer: SimpleSyncronizer,
+			name: "u32-simple-raw",
+		};
+		const profileEvents: SyncProfileEvent[] = [];
+		const store = new EventStore<string, any>();
+		const db1 = await session.peers[0].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				setup,
+				nativeGraph: true,
+				sync: { rawExchangeHeads: true },
+			},
+		});
+		const db2 = await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				sync: {
+					rawExchangeHeads: true,
+					nativeWireSync: wireSync,
+					profile: (event: SyncProfileEvent) => profileEvents.push(event),
+				},
+			},
+		});
+		return { session, wireSync, profileEvents, db1, db2 };
+	};
+
+	const syncFusedEntries = async (
+		session: TestSession,
+		db1: EventStore<string, any>,
+		db2: EventStore<string, any>,
+		entryCount: number,
+	) => {
+		const hashes: string[] = [];
+		for (let i = 0; i < entryCount; i++) {
+			const { entry } = await db1.add(uuid(), { meta: { next: [] } });
+			hashes.push(entry.hash);
+		}
+		await waitForResolved(() =>
+			session.peers[0].dial(session.peers[1].getMultiaddrs()),
+		);
+		await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+			hashes,
+			db1.node.identity.publicKey,
+			{ skipCheck: true },
+		);
+		await waitForResolved(
+			() => {
+				expect(db2.log.log.length).to.equal(entryCount);
+			},
+			{ timeout: 30_000, delayInterval: 100 },
+		);
+		return hashes;
+	};
+
+	it("fuses wire-stashed raw exchange heads into the native receive without JS entry decode or copies", async () => {
+		const { session, wireSync, profileEvents, db1, db2 } =
+			await setupFusedSyncSession({ wireOnPubsub: true });
+		try {
+			const backbone = (db2.log as any)._nativeBackbone;
+			expect(backbone).to.exist;
+			const stashedColumnsSpy = sinon.spy(
+				backbone,
+				"prepareStashedRawReceiveExpectedColumnsBatch",
+			);
+			const stashedSelectionSpy = sinon.spy(
+				backbone,
+				"prepareStashedRawReceiveExpectedColumnsAndSelectionBatch",
+			);
+			const blocksSelectionSpy = sinon.spy(
+				backbone,
+				"prepareRawReceiveExpectedColumnsAndSelectionBatch",
+			);
+			const blocksExpectedColumnsSpy = sinon.spy(
+				backbone,
+				"prepareRawReceiveExpectedColumnsBatch",
+			);
+			const blocksColumnsSpy = sinon.spy(
+				backbone,
+				"prepareRawReceiveColumnsBatch",
+			);
+			const blocksBatchSpy = sinon.spy(backbone, "prepareRawReceiveBatch");
+
+			const entryCount = 10;
+			await syncFusedEntries(session, db1, db2, entryCount);
+
+			// The messages were resolved from the wire stash: no TS borsh
+			// decode of the RawEntryWithRefs heads happened for them.
+			const resolveEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawReceive.wireStashResolve",
+			);
+			expect(resolveEvents.length).to.be.greaterThan(0);
+			expect(
+				resolveEvents.reduce((sum, event) => sum + (event.entries ?? 0), 0),
+			).to.equal(entryCount);
+
+			// The prepared receive consumed the stashed blocks inside wasm
+			// memory; no JS blocks array crossed the boundary.
+			expect(
+				stashedColumnsSpy.callCount + stashedSelectionSpy.callCount,
+			).to.be.greaterThan(0);
+			expect(blocksSelectionSpy.callCount).to.equal(0);
+			expect(blocksExpectedColumnsSpy.callCount).to.equal(0);
+			expect(blocksColumnsSpy.callCount).to.equal(0);
+			expect(blocksBatchSpy.callCount).to.equal(0);
+
+			// No stashed head bytes were ever copied out to JS.
+			const releaseEvents = profileEvents.filter(
+				(event) => event.name === "sharedLog.rawReceive.wireStashRelease",
+			);
+			expect(releaseEvents.length).to.equal(resolveEvents.length);
+			expect(
+				releaseEvents.reduce(
+					(sum, event) =>
+						sum + ((event.details?.bytesMaterialized as number) ?? 0),
+					0,
+				),
+			).to.equal(0);
+
+			const counters = wireSync.counters();
+			expect(counters.stashed).to.be.greaterThan(0);
+			expect(counters.blockCopyOuts).to.equal(0);
+			expect(counters.released).to.equal(resolveEvents.length);
+			expect(counters.evicted).to.equal(0);
+			expect(wireSync.stashLength).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("falls back to the regular decode when the wire stash is empty", async () => {
+		// Registration is active but the pubsub DirectStream decodes with the
+		// plain TS path, so nothing is ever stashed and every message takes
+		// the regular borsh decode route.
+		const { session, wireSync, profileEvents, db1, db2 } =
+			await setupFusedSyncSession({ wireOnPubsub: false });
+		try {
+			const entryCount = 10;
+			await syncFusedEntries(session, db1, db2, entryCount);
+
+			expect(
+				profileEvents.filter(
+					(event) => event.name === "sharedLog.rawReceive.wireStashResolve",
+				),
+			).to.have.length(0);
+			const counters = wireSync.counters();
+			expect(counters.stashed).to.equal(0);
+			expect(wireSync.stashLength).to.equal(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("dispatches program onChange with lazy entries from the prepared raw receive", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const profileEvents: any[] = [];
+			const changes: any[] = [];
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					sync: { rawExchangeHeads: true },
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					onChange: (change) => {
+						changes.push(change);
+					},
+					sync: {
+						rawExchangeHeads: true,
+						profile: (event: any) => profileEvents.push(event),
+					},
+					timeUntilRoleMaturity: 0,
+				},
+			});
+
+			const entryCount = 3;
+			const hashes: string[] = [];
+			for (let i = 0; i < entryCount; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+			let message: RawExchangeHeadsMessage | undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				hashes,
+			)) {
+				message = generated as RawExchangeHeadsMessage;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const nativePreparedJoinCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitPreparedRawReceiveJoinBatch",
+			);
+			const nativeVerifiedPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			const nativeVerifiedAllPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedAllPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			const entryAddedHashesSpy = sinon.spy(
+				target.log.syncronizer as any,
+				"onEntryAddedHashes",
+			);
+			try {
+				await target.log.onMessage(message!, {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				expect(target.log.log.length).to.equal(entryCount);
+				// the program-level change consumer observed every commit
+				const added = changes.flatMap((change) => change.added);
+				expect(changes.length).to.be.greaterThan(0);
+				expect(added.map((a: any) => a.entry.hash)).to.have.members(hashes);
+				expect(added.every((a: any) => a.head === true)).to.equal(true);
+				expect(changes.flatMap((change) => change.removed)).to.have.length(
+					0,
+				);
+				// the hash-only synchronizer sink was replaced by the change
+				// dispatch, not run in addition to it
+				expect(entryAddedHashesSpy.callCount).to.equal(0);
+				// the native prepared join commit still ran: the consumer does
+				// not force the join off the native path
+				expect(
+					nativePreparedJoinCommitSpy.callCount +
+						(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0) +
+						(nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0),
+				).to.equal(1);
+				// entries handed to the consumer are lazy views: nothing was
+				// borsh-decoded in JS yet
+				expect(
+					profileEvents.filter(
+						(event) =>
+							event.name === "sharedLog.rawReceive.jsEntryDecode" &&
+							event.details?.lazy === true,
+					),
+				).to.have.length(0);
+				// reading a payload materializes exactly that entry and counts it
+				await added[0]!.entry.getPayloadValue();
+				const lazyDecodes = profileEvents.filter(
+					(event) =>
+						event.name === "sharedLog.rawReceive.jsEntryDecode" &&
+						event.details?.lazy === true,
+				);
+				expect(lazyDecodes).to.have.length(1);
+				expect(lazyDecodes[0].entries).to.equal(1);
+			} finally {
+				entryAddedHashesSpy.restore();
+				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
+				nativeVerifiedPreparedJoinCommitSpy?.restore();
+				nativePreparedJoinCommitSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("runs the program canAppend hook on the raw receive path", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const changes: any[] = [];
+			let allowAppends = true;
+			const canAppendHashes: string[] = [];
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: false,
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					sync: { rawExchangeHeads: true },
+					keep: () => true,
+					timeUntilRoleMaturity: 0,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					canAppend: (entry) => {
+						canAppendHashes.push(entry.hash);
+						return allowAppends;
+					},
+					onChange: (change) => {
+						changes.push(change);
+					},
+					sync: { rawExchangeHeads: true },
+					timeUntilRoleMaturity: 0,
+				},
+			});
+
+			const entryCount = 3;
+			const hashes: string[] = [];
+			for (let i = 0; i < entryCount; i++) {
+				const { entry } = await source.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+			const collectRawMessage = async (forHashes: string[]) => {
+				for await (const generated of createRawExchangeHeadsMessages(
+					source.log.log,
+					forHashes,
+				)) {
+					return generated as RawExchangeHeadsMessage;
+				}
+				throw new Error("Missing raw exchange heads message");
+			};
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const nativePreparedJoinCommitSpy = sinon.spy(
+				backbone.graph,
+				"commitPreparedRawReceiveJoinBatch",
+			);
+			const nativeVerifiedPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			const nativeVerifiedAllPreparedJoinCommitSpy =
+				backbone.graph.commitVerifiedAllPreparedRawReceiveJoinBatch
+					? sinon.spy(
+							backbone.graph,
+							"commitVerifiedAllPreparedRawReceiveJoinBatch",
+						)
+					: undefined;
+			try {
+				await target.log.onMessage(await collectRawMessage(hashes), {
+					from: source.node.identity.publicKey,
+				} as any);
+
+				// the hook observed every entry and the entries committed
+				expect(canAppendHashes).to.have.members(hashes);
+				expect(target.log.log.length).to.equal(entryCount);
+				const added = changes.flatMap((change) => change.added);
+				expect(added.map((a: any) => a.entry.hash)).to.have.members(hashes);
+				// the native join commit (which cannot run the hook) was not used
+				expect(nativePreparedJoinCommitSpy.callCount).to.equal(0);
+				expect(nativeVerifiedPreparedJoinCommitSpy?.callCount ?? 0).to.equal(
+					0,
+				);
+				expect(
+					nativeVerifiedAllPreparedJoinCommitSpy?.callCount ?? 0,
+				).to.equal(0);
+
+				// a rejecting hook keeps entries out of the log
+				allowAppends = false;
+				const rejectedHashes: string[] = [];
+				for (let i = 0; i < entryCount; i++) {
+					const { entry } = await source.add(uuid(), {
+						meta: { next: [] },
+					});
+					rejectedHashes.push(entry.hash);
+				}
+				await target.log.onMessage(await collectRawMessage(rejectedHashes), {
+					from: source.node.identity.publicKey,
+				} as any);
+				expect(target.log.log.length).to.equal(entryCount);
+				for (const hash of rejectedHashes) {
+					expect(canAppendHashes).to.include(hash);
+				}
+			} finally {
+				nativeVerifiedAllPreparedJoinCommitSpy?.restore();
+				nativeVerifiedPreparedJoinCommitSpy?.restore();
+				nativePreparedJoinCommitSpy.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("encodes the fused sync payload byte-identical to the TS serialization", async () => {
+		const session = await TestSession.disconnected(1, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		try {
+			const store = await session.peers[0].open(new EventStore<string, any>(), {
+				args: {
+					replicate: { factor: 1 },
+					setup: {
+						domain: createReplicationDomainHash("u32"),
+						type: "u32" as const,
+						syncronizer: SimpleSyncronizer,
+						name: "u32-simple-raw",
+					},
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					sync: { rawExchangeHeads: true },
+				} as any,
+			});
+			const hashes: string[] = [];
+			for (let i = 0; i < 5; i++) {
+				const { entry } = await store.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			// The TS path: borsh message built from JS block bytes, wrapped by
+			// the RPC seal and PubSubData exactly like `rpc.send` would.
+			let tsMessage: RawExchangeHeadsMessage | undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				store.log.log,
+				hashes,
+			)) {
+				expect(tsMessage).to.equal(undefined);
+				tsMessage = generated as RawExchangeHeadsMessage;
+			}
+			expect(tsMessage).to.be.instanceOf(RawExchangeHeadsMessage);
+			const topic = store.log.rpc.topic;
+			const tsPayload = serialize(
+				new PubSubData({
+					topics: [topic],
+					strict: true,
+					data: serialize(
+						new RequestV0({
+							request: new DecryptedThing<Uint8Array>({
+								data: serialize(tsMessage!),
+							}),
+						}),
+					),
+				}),
+			);
+
+			// The fused path: the same payload serialized inside wasm from the
+			// native block store.
+			const backbone = (store.log as any)._nativeBackbone;
+			expect(backbone).to.exist;
+			const plan = collectRawExchangeHeadSendPlan(store.log.log, hashes)!;
+			expect(plan.hashes).to.deep.equal(
+				tsMessage!.heads.map((head) => head.hash),
+			);
+			expect(plan.gidRefrences).to.deep.equal(
+				tsMessage!.heads.map((head) => head.gidRefrences),
+			);
+			const byteLengths = backbone.syncSendBlockByteLengths(plan.hashes);
+			expect(byteLengths).to.deep.equal(
+				tsMessage!.heads.map((head) => head.bytes.byteLength),
+			);
+			const fusedPayload = backbone.encodeRawExchangeSyncPayload({
+				topic,
+				hashes: plan.hashes,
+				gidRefrences: plan.gidRefrences,
+			});
+			expect(fusedPayload).to.exist;
+			expect(
+				Buffer.from(fusedPayload!).equals(Buffer.from(tsPayload)),
+			).to.equal(true);
+
+			// Missing native blocks make the encoder decline (callers fall back).
+			expect(
+				backbone.encodeRawExchangeSyncPayload({
+					topic,
+					hashes: ["missing-hash"],
+					gidRefrences: [[]],
+				}),
+			).to.equal(undefined);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("fuses raw exchange-heads sync responses through the native payload encoder", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const senderEvents: SyncProfileEvent[] = [];
+			const openArgs = (events?: SyncProfileEvent[]) => ({
+				replicate: { factor: 1 },
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				timeUntilRoleMaturity: 0,
+				sync: {
+					rawExchangeHeads: true,
+					profile: events
+						? (event: SyncProfileEvent) => events.push(event)
+						: undefined,
+				},
+			});
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: openArgs(senderEvents) as any,
+			});
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: openArgs() as any,
+			});
+
+			let tsRawMessages = 0;
+			const send1 = db1.log.rpc.send.bind(db1.log.rpc);
+			db1.log.rpc.send = async (message, options) => {
+				if (message instanceof RawExchangeHeadsMessage) {
+					tsRawMessages += 1;
+				}
+				return send1(message, options);
+			};
+
+			const entryCount = 10;
+			const hashes: string[] = [];
+			for (let i = 0; i < entryCount; i++) {
+				const { entry } = await db1.add(uuid(), { meta: { next: [] } });
+				hashes.push(entry.hash);
+			}
+
+			await waitForResolved(() =>
+				session.peers[0].dial(session.peers[1].getMultiaddrs()),
+			);
+			await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+				hashes,
+				db1.node.identity.publicKey,
+				{ skipCheck: true },
+			);
+			await waitForResolved(
+				() => {
+					expect(db2.log.log.length).to.equal(entryCount);
+				},
+				{ timeout: 30_000, delayInterval: 100 },
+			);
+
+			// The response was serialized inside wasm and published pre-encoded:
+			// no TS RawExchangeHeadsMessage and no JS block-byte materialization
+			// on the send path.
+			expect(tsRawMessages).to.equal(0);
+			const fusedEvents = senderEvents.filter(
+				(event) => event.name === "sharedLog.rawSend.fused",
+			);
+			expect(
+				fusedEvents.reduce((sum, event) => sum + (event.entries ?? 0), 0),
+			).to.equal(entryCount);
+			expect(
+				senderEvents.filter(
+					(event) => event.name === "sharedLog.rawSend.jsBlockBytes",
+				),
+			).to.have.length(0);
+			const exchangeEvents = senderEvents.filter(
+				(event) => event.name === "simple.exchangeHeads",
+			);
+			expect(exchangeEvents.length).to.be.greaterThan(0);
+			expect(
+				exchangeEvents.every((event) => event.details?.fused === true),
+			).to.equal(true);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("advertises raw capability and coalesces live appends into fused raw frames", async () => {
+		const session = await TestSession.connected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const senderEvents: SyncProfileEvent[] = [];
+			const openArgs = (events?: SyncProfileEvent[]) => ({
+				replicate: { factor: 1 },
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				timeUntilRoleMaturity: 0,
+				sync: {
+					rawExchangeHeads: true,
+					profile: events
+						? (event: SyncProfileEvent) => events.push(event)
+						: undefined,
+				},
+			});
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: openArgs(senderEvents) as any,
+			});
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: openArgs() as any,
+			});
+
+			await db1.log.waitForReplicator(db2.node.identity.publicKey);
+			await db2.log.waitForReplicator(db1.node.identity.publicKey);
+			// One-shot capability advertisement from the subscribe flow: the
+			// live raw path needs no per-request round trip.
+			const peer2Hash = db2.node.identity.publicKey.hashcode();
+			await waitForResolved(() => {
+				expect(
+					(db1.log as any).peerSupportsRawExchangeHeads(peer2Hash),
+				).to.equal(true);
+			});
+
+			// A lone put flushes without waiting for more puts.
+			await db1.add(uuid(), { meta: { next: [] } });
+			await waitForResolved(() => {
+				expect(db2.log.log.length).to.equal(1);
+			});
+
+			// A same-turn burst coalesces into fewer raw frames than entries.
+			const burst = 8;
+			await Promise.all(
+				Array.from({ length: burst }, () =>
+					db1.add(uuid(), { meta: { next: [] } }),
+				),
+			);
+			await waitForResolved(() => {
+				expect(db2.log.log.length).to.equal(1 + burst);
+			});
+
+			const fusedEvents = senderEvents.filter(
+				(event) => event.name === "sharedLog.rawSend.fused",
+			);
+			const fusedEntries = fusedEvents.reduce(
+				(sum, event) => sum + (event.entries ?? 0),
+				0,
+			);
+			const fusedMessages = fusedEvents.reduce(
+				(sum, event) => sum + (event.messages ?? 0),
+				0,
+			);
+			expect(fusedEntries).to.equal(1 + burst);
+			expect(fusedMessages).to.be.lessThan(1 + burst);
+			// Nothing took the plain live path and no entry block bytes
+			// surfaced as JS values on the send path.
+			expect(
+				senderEvents.filter(
+					(event) => event.name === "sharedLog.liveSend.plain",
+				),
+			).to.have.length(0);
+			expect(
+				senderEvents.filter(
+					(event) => event.name === "sharedLog.rawSend.jsBlockBytes",
+				),
+			).to.have.length(0);
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("keeps the plain live path for peers that never advertised raw capability", async () => {
+		const session = await TestSession.connected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const senderEvents: SyncProfileEvent[] = [];
+			const db1 = await session.peers[0].open(store.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					setup,
+					nativeGraph: true,
+					nativeBackbone: { optional: false },
+					timeUntilRoleMaturity: 0,
+					sync: {
+						rawExchangeHeads: true,
+						profile: (event: SyncProfileEvent) => senderEvents.push(event),
+					},
+				} as any,
+			});
+			// The receiver never opts into raw sync, so it never advertises.
+			const db2 = await session.peers[1].open(store.clone(), {
+				args: {
+					replicate: { factor: 1 },
+					setup,
+					timeUntilRoleMaturity: 0,
+				} as any,
+			});
+
+			await db1.log.waitForReplicator(db2.node.identity.publicKey);
+			await db2.log.waitForReplicator(db1.node.identity.publicKey);
+
+			let plainLiveMessages = 0;
+			const send1 = db1.log.rpc.send.bind(db1.log.rpc);
+			db1.log.rpc.send = async (message, options) => {
+				if (message instanceof ExchangeHeadsMessage) {
+					plainLiveMessages += 1;
+				}
+				return send1(message, options);
+			};
+
+			const entryCount = 4;
+			for (let i = 0; i < entryCount; i++) {
+				await db1.add(uuid(), { meta: { next: [] } });
+			}
+			await waitForResolved(() => {
+				expect(db2.log.log.length).to.equal(entryCount);
+			});
+
+			expect(plainLiveMessages).to.equal(entryCount);
+			expect(
+				senderEvents.filter(
+					(event) => event.name === "sharedLog.rawSend.fused",
+				),
+			).to.have.length(0);
+			expect(
+				(db1.log as any).peerSupportsRawExchangeHeads(
+					db2.node.identity.publicKey.hashcode(),
+				),
+			).to.equal(false);
 		} finally {
 			await session.stop();
 		}

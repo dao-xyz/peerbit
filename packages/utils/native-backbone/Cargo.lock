@@ -314,6 +314,7 @@ dependencies = [
  "ed25519-dalek",
  "indexmap",
  "js-sys",
+ "peerbit_wire",
  "sha2",
  "wasm-bindgen",
 ]
@@ -326,6 +327,7 @@ dependencies = [
  "peerbit_indexer_core",
  "peerbit_log_rust",
  "peerbit_shared_log_rust",
+ "peerbit_wire",
  "wasm-bindgen",
 ]
 
@@ -333,6 +335,17 @@ dependencies = [
 name = "peerbit_shared_log_rust"
 version = "0.0.0"
 dependencies = [
+ "indexmap",
+ "js-sys",
+ "sha2",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "peerbit_wire"
+version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
  "indexmap",
  "js-sys",
  "sha2",
