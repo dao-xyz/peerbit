@@ -7,7 +7,8 @@
 "@peerbit/blocks": minor
 "@peerbit/rpc": minor
 "peerbit": minor
-"@peerbit/log": patch
+"@peerbit/log": minor
+"@peerbit/test-utils": minor
 ---
 
 Native network plane: Rust/WASM-backed stream, pubsub, and block-exchange path.
@@ -52,9 +53,8 @@ Additive public API on existing packages:
   it is absent or throws.
 - `peerbit` — new `NativeNetworkRuntime` client wiring (`nativeNetwork` option)
   for selecting the native network preset.
-
-Internal changes:
-
-- `@peerbit/log` — lazily materializes prepared entry-block bytes so the native
-  commit path does not force stash-backed heads to build block bytes it never
-  reads (no public API change).
+- `@peerbit/log` — new `Entry.prepareMultihashBytesLazy` static that defers
+  materializing prepared entry-block bytes, so the native commit path does not
+  force stash-backed heads to build block bytes it never reads.
+- `@peerbit/test-utils` — new optional `nativeWire` option on the test session
+  `CreateOptions`, threaded into the DirectStream setup for native-path tests.
