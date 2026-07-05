@@ -19,13 +19,20 @@
 //! hand-built frames so "the engine runs and routes natively" is provable with
 //! `cargo test` alone, no network.
 
+/// The DATA-PLANE slice: a native node takes a received, verified entry and
+/// appends it to a native log + commits it to a native index, no JS/wasm. This
+/// is the next layer up from the receive engine below — see the module docs.
+pub mod data_plane;
+
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 
 use peerbit_wire::direct_stream::decisions;
 use peerbit_wire::direct_stream::lanes::LaneScheduler;
 use peerbit_wire::direct_stream::seen_cache::{SeenCache, KEY_KIND_MESSAGE_ID};
-use peerbit_wire::topic_control::{decode_pubsub_message, encode_pubsub_data, DecodedPubSubMessage};
+use peerbit_wire::topic_control::{
+    decode_pubsub_message, encode_pubsub_data, DecodedPubSubMessage,
+};
 use peerbit_wire::wire::{
     encode_frame, encode_signable, DeliveryMode, FrameRecord, MessageHeader, PublicSignKey,
     SignatureWithKey, VerifyStatus, WireMessage, ID_LENGTH, PREHASH_SHA_256, VARIANT_ACK,
@@ -91,7 +98,10 @@ pub fn build_signed_pubsub_data(
     }]);
 
     let envelope = encode_frame(&message);
-    debug_assert_eq!(envelope[0], VARIANT_DATA, "first byte is the DataMessage tag");
+    debug_assert_eq!(
+        envelope[0], VARIANT_DATA,
+        "first byte is the DataMessage tag"
+    );
     envelope
 }
 
@@ -265,7 +275,8 @@ impl NativeReceiveEngine {
                 // Order the outbound ack through the native lane scheduler
                 // (lane 0 = control/ack priority). The token proves the
                 // scheduler accepted it; the bin drains shift() to send.
-                let ack_envelope = build_signed_ack(ack_signing_seed_placeholder(), acked_id, seen_counter);
+                let ack_envelope =
+                    build_signed_ack(ack_signing_seed_placeholder(), acked_id, seen_counter);
                 let _ = self.scheduler.push(0, ack_envelope.len() as u64);
                 ack = Some(AckDecision {
                     acked_id,
@@ -357,7 +368,8 @@ mod tests {
             DeliveryMode::AnyWhere,
             [1u8; 32],
         );
-        let records = peerbit_wire::wire::decode_and_verify_frames(&[env.as_slice()], 1_700_000_000_500);
+        let records =
+            peerbit_wire::wire::decode_and_verify_frames(&[env.as_slice()], 1_700_000_000_500);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].verify, VerifyStatus::Verified);
         assert_eq!(records[0].variant, VARIANT_DATA);
@@ -379,7 +391,8 @@ mod tests {
         // Corrupt a payload byte near the end (inside the signed region).
         let last = env.len() - 1;
         env[last] ^= 0xff;
-        let records = peerbit_wire::wire::decode_and_verify_frames(&[env.as_slice()], 1_700_000_000_500);
+        let records =
+            peerbit_wire::wire::decode_and_verify_frames(&[env.as_slice()], 1_700_000_000_500);
         assert_eq!(records[0].verify, VerifyStatus::Failed);
     }
 
@@ -441,7 +454,10 @@ mod tests {
         let second = engine.process_inbound_frame(&env, 1_700_000_000_501);
         assert_eq!(second.seen_before, 1, "seen once before");
         // AnyWhere (non-acknowledged) mode: seen_before > 0 => ignore.
-        assert!(second.ignored, "duplicate is ignored by the native decision");
+        assert!(
+            second.ignored,
+            "duplicate is ignored by the native decision"
+        );
         assert!(second.ack.is_none(), "no second ack for a duplicate");
     }
 
@@ -451,7 +467,8 @@ mod tests {
         // native or js — accepts it).
         let seed = [5u8; 32];
         let ack = build_signed_ack(seed, [7u8; 32], 0);
-        let records = peerbit_wire::wire::decode_and_verify_frames(&[ack.as_slice()], 1_700_000_000_500);
+        let records =
+            peerbit_wire::wire::decode_and_verify_frames(&[ack.as_slice()], 1_700_000_000_500);
         assert_eq!(records[0].verify, VerifyStatus::Verified);
         assert_eq!(records[0].variant, VARIANT_ACK);
     }

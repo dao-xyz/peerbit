@@ -31,6 +31,20 @@ crate-type = ["rlib"]
 name = "native_node_spike"
 path = "src/bin/native_node_spike.rs"
 
+# The DATA-PLANE slice proof: a native node is handed a received signed EntryV0,
+# recognizes + ingests + verifies it, commits it to a native block store + graph
+# + document index, and a native index query returns it — all in-process, no JS.
+[[bin]]
+name = "data_plane_demo"
+path = "src/bin/data_plane_demo.rs"
+
+# STRETCH: the data-plane slice over the REAL transport. An entry appended on
+# node A flows over TCP+Noise+Yamux through node B's native receive engine and
+# lands in node B's native log + index; a native index query on B returns it.
+[[bin]]
+name = "data_plane_network_demo"
+path = "src/bin/data_plane_network_demo.rs"
+
 [dependencies]
 # The Phase-1 native transport (rust-libp2p 0.56 swarm + /peerbit/* mounts +
 # FrameCodec + NodeIdentity). rlib-typed, no cdylib — heavy libp2p tree stays
@@ -41,6 +55,23 @@ peerbit_transport = { path = "../../packages/transport/transport-rust" }
 # (seen_cache/decisions/routes/lanes) and the topic_control plane codec. We call
 # these DIRECTLY on socket-borrowed slices — the whole point of the native node.
 peerbit_wire = { path = "../../packages/transport/network-rust" }
+
+# DATA-PLANE PRIMITIVES (bottom-up next layer). Both are bound as PATH rlibs, the
+# same pattern used for peerbit_transport/peerbit_wire above — they stay out of
+# pnpm-workspace, add no package.json, no cdylib, and cannot enter wasm/CI.
+#
+#   * peerbit_log_rust — the native block store (`NativeLogBlockStore`), the raw
+#     entry-ingest primitive (`prepare_raw_entry_v0_..._verify_profiled`, which
+#     CID-checks + Ed25519-verifies a received EntryV0 storage block) and the
+#     native head/graph index (`LogGraphIndex`). It pulls js-sys/wasm-bindgen as
+#     ORDINARY crates (like peerbit_wire already does) — they link natively; we
+#     only ever call its JsValue-free-callable surface, never a path that touches
+#     a js_sys typed array at runtime.
+#   * peerbit_indexer_core — the pure-Rust document index (`NativeQueryIndex`,
+#     `DocumentFields`, `Query`). rlib-only, borsh+indexmap+roaring, ZERO
+#     js-sys/wasm-bindgen.
+peerbit_log_rust = { path = "../../packages/log/rust" }
+peerbit_indexer_core = { path = "../../packages/utils/indexer/core" }
 
 # rust-libp2p — the SAME version/features peerbit_transport pins, so the swarm
 # types line up. We only need the SwarmEvent loop + libp2p-stream Control here.

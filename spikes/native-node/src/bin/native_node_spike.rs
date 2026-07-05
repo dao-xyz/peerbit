@@ -311,18 +311,19 @@ async fn dialer_round_trip(
 
     // Build a REAL signed PubSubData DataMessage via peerbit_wire. AnyWhere so
     // the first sighting acks (non-acknowledged mode, recipient acks once).
-    let envelope = build_signed_pubsub_data(
-        seed,
-        &topics,
-        &payload,
-        DeliveryMode::AnyWhere,
-        message_id,
-    );
+    let envelope =
+        build_signed_pubsub_data(seed, &topics, &payload, DeliveryMode::AnyWhere, message_id);
     let framed = FrameCodec::frame_envelope(&envelope)?;
     let sent_bytes = envelope.len();
-    stream.write_all(&framed).await.context("dialer write frame")?;
+    stream
+        .write_all(&framed)
+        .await
+        .context("dialer write frame")?;
     stream.flush().await.context("dialer flush")?;
-    tracing::info!(bytes = sent_bytes, "dialer: signed PubSubData DataMessage sent");
+    tracing::info!(
+        bytes = sent_bytes,
+        "dialer: signed PubSubData DataMessage sent"
+    );
 
     // Read the listener's signed ACK and verify it natively.
     let ack_env = read_frame(&mut stream).await.context("dialer read ack")?;
@@ -352,32 +353,56 @@ fn print_and_assert(listener: &ListenerTrace, dialer: &DialerTrace) -> Result<()
     println!("engine    : peerbit_wire rlib  (decode/verify/dedup/decision/schedule)");
     println!("boundary  : NONE  (no #[wasm_bindgen], no js-sys, no napi, no sidecar)\n");
 
-    println!("DIALER  -> sent signed PubSubData DataMessage: {} bytes", dialer.sent_bytes);
+    println!(
+        "DIALER  -> sent signed PubSubData DataMessage: {} bytes",
+        dialer.sent_bytes
+    );
     println!("LISTENER decode_and_verify : {:?}", listener.verify);
     println!("LISTENER seen_before(dedup): {}", listener.seen_before);
     println!("LISTENER ignored?          : {}", listener.ignored);
-    println!("LISTENER topic_control     : topics={:?} payload={:?}",
-        listener.topics, String::from_utf8_lossy(&listener.payload));
-    println!("LISTENER ack decision      : acked_id={} seen_counter={}",
-        hex32(&listener.acked_id), listener.ack_seen_counter);
+    println!(
+        "LISTENER topic_control     : topics={:?} payload={:?}",
+        listener.topics,
+        String::from_utf8_lossy(&listener.payload)
+    );
+    println!(
+        "LISTENER ack decision      : acked_id={} seen_counter={}",
+        hex32(&listener.acked_id),
+        listener.ack_seen_counter
+    );
     println!("LISTENER lane token        : {:?}", listener.outbound_token);
-    println!("DIALER  <- ack verify      : {:?} (variant {})", dialer.ack_verify, dialer.ack_variant);
+    println!(
+        "DIALER  <- ack verify      : {:?} (variant {})",
+        dialer.ack_verify, dialer.ack_variant
+    );
 
     // --- Assertions ---------------------------------------------------------
     if listener.verify != VerifyStatus::Verified {
-        bail!("listener did not natively VERIFY the inbound message: {:?}", listener.verify);
+        bail!(
+            "listener did not natively VERIFY the inbound message: {:?}",
+            listener.verify
+        );
     }
     if listener.variant != 0 {
-        bail!("listener inbound was not a DataMessage (variant {})", listener.variant);
+        bail!(
+            "listener inbound was not a DataMessage (variant {})",
+            listener.variant
+        );
     }
     if listener.seen_before != 0 {
-        bail!("first sighting should have seen_before=0, got {}", listener.seen_before);
+        bail!(
+            "first sighting should have seen_before=0, got {}",
+            listener.seen_before
+        );
     }
     if listener.ignored {
         bail!("first sighting should NOT be ignored");
     }
     if listener.topics != vec!["spike/native-node".to_string()] {
-        bail!("topic_control decode produced wrong topics: {:?}", listener.topics);
+        bail!(
+            "topic_control decode produced wrong topics: {:?}",
+            listener.topics
+        );
     }
     if listener.payload != b"real signed message through the full native stack" {
         bail!("topic_control decode produced wrong payload");
@@ -386,14 +411,20 @@ fn print_and_assert(listener: &ListenerTrace, dialer: &DialerTrace) -> Result<()
         bail!("lane scheduler did not order the outbound ack");
     }
     if dialer.ack_verify != VerifyStatus::Verified {
-        bail!("dialer did not natively VERIFY the ack: {:?}", dialer.ack_verify);
+        bail!(
+            "dialer did not natively VERIFY the ack: {:?}",
+            dialer.ack_verify
+        );
     }
     if dialer.ack_variant != VARIANT_ACK {
         bail!("ack was not an AckMessage (variant {})", dialer.ack_variant);
     }
     if listener.acked_id != dialer.ack_acked_id {
-        bail!("acked id mismatch: listener acked {:?} but dialer sent {:?}",
-            hex32(&listener.acked_id), hex32(&dialer.ack_acked_id));
+        bail!(
+            "acked id mismatch: listener acked {:?} but dialer sent {:?}",
+            hex32(&listener.acked_id),
+            hex32(&dialer.ack_acked_id)
+        );
     }
 
     println!("\n=== NATIVE-STACK PROOF: PASS ===");
