@@ -1,0 +1,19 @@
+{
+  "name": "peerbit-rust-libp2p-poc-js-listener",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GOAL 2 js-libp2p listener matching the Peerbit node transport spec (TCP+noise+yamux+identify).",
+  "scripts": {
+    "start": "node listener.mjs"
+  },
+  "dependencies": {
+    "libp2p": "^3.1.7",
+    "@libp2p/tcp": "^11.0.14",
+    "@chainsafe/libp2p-noise": "^17.0.0",
+    "@chainsafe/libp2p-yamux": "^8.0.1",
+    "@libp2p/identify": "^4.0.0",
+    "@libp2p/crypto": "^5.1.14",
+    "it-length-prefixed-stream": "^2.0.0"
+  }
+}

@@ -1,0 +1,6 @@
+/target
+js/node_modules
+js/package-lock.json
+# Cargo.lock IS committed on purpose: this is a binary spike, so the lockfile
+# records the exact dependency tree that compiled and ran (libp2p 0.56.0 stack,
+# libp2p-stream 0.4.0-alpha) for a human reproducing the result.

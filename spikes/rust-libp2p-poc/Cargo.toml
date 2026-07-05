@@ -1,0 +1,57 @@
+# THROWAWAY FEASIBILITY SPIKE — not a workspace member, not built by CI.
+# See spikes/README.md. This crate is intentionally standalone: there is no
+# root Cargo.toml [workspace] in the peerbit repo (verified), and this path is
+# not listed in pnpm-workspace.yaml, so `cargo`/`pnpm` at the repo root never
+# touch it. Build/run it explicitly from inside this directory.
+[package]
+name = "peerbit-rust-libp2p-poc"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Feasibility spike: rust-libp2p node swarm interoperating with the Peerbit js-libp2p fleet"
+
+[[bin]]
+name = "goal1_two_peers"
+path = "src/goal1_two_peers.rs"
+
+[[bin]]
+name = "goal2_dial_js"
+path = "src/goal2_dial_js.rs"
+
+[dependencies]
+# rust-libp2p 0.56.0 — latest as of July 2026 (tokio-only, QUIC stable).
+# Feature set chosen to mirror the Peerbit NODE transport stack exactly:
+#   node = webSockets + circuitRelayTransport(client) + tcp, muxer=yamux, encrypter=noise, identify.
+# We enable tcp + websocket + noise + yamux + identify + relay (client) here; that is
+# the shared interop path with js-libp2p v3.x (tcp/ws + noise + yamux). See INTEROP notes.
+libp2p = { version = "0.56.0", features = [
+    "tokio",
+    "tcp",
+    "websocket",
+    # `dns` is REQUIRED alongside `websocket`: the SwarmBuilder `with_websocket`
+    # phase in 0.56.0 references a DNS-wrapped TCP + `WebsocketErrorInner::Dns`
+    # that are `#[cfg(feature = "dns")]`-gated. Building `websocket` without
+    # `dns` fails to compile (E0599 no variant `Dns`). Interop finding: a rust
+    # node that needs the Peerbit /ws listen addr must enable dns+websocket.
+    "dns",
+    "noise",
+    "yamux",
+    "identify",
+    "relay",
+    "macros",
+    "ed25519",
+] }
+
+# libp2p-stream 0.4.0-alpha is the DirectStream binding point (Control::open_stream /
+# IncomingStreams). It is STILL ALPHA (API-churn risk flagged in the INTEROP research).
+# If this dep proves unstable, the fallback is a hand-rolled NetworkBehaviour that
+# implements the same substream open/accept over the three /peerbit/* multicodecs.
+libp2p-stream = "0.4.0-alpha"
+
+futures = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "io-util", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unsigned-varint = "0.8"
+anyhow = "1"
