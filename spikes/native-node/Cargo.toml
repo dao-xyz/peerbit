@@ -1,0 +1,81 @@
+# peerbit_node_spike — a FEASIBILITY spike proving the fully-native Peerbit node.
+#
+# GOAL: a single native process where rust-libp2p (via peerbit_transport) binds
+# DIRECTLY to the JsValue-free engine cores (peerbit_wire's wire codec +
+# direct_stream routing/seen-cache/decisions + topic_control plane codec) — NO
+# JS, NO wasm boundary anywhere on the message path.
+#
+# ISOLATION (a maintainer hard rule): this crate lives under `spikes/` (NOT a
+# pnpm workspace member — see pnpm-workspace.yaml, which does not glob spikes/),
+# there is NO root Cargo workspace in this repo (each rust crate is standalone),
+# and it is `crate-type = rlib` only with a bin — so `wasm-pack` never sees it,
+# it never enters any default CI partition, and it cannot break the wasm build.
+# It depends on the two sibling crates as PATH rlibs, exactly the pattern
+# peerbit_transport already uses to depend on peerbit_wire.
+[package]
+name = "peerbit_node_spike"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Feasibility spike: a fully-native Peerbit node binding rust-libp2p directly to the JsValue-free peerbit_wire engine cores (no JS, no wasm)."
+
+[lib]
+crate-type = ["rlib"]
+
+# The two-native-node in-process proof: two peerbit_transport swarms connect over
+# TCP+Noise+Yamux and pass a real signed PubSubData DataMessage through the FULL
+# native stack (socket -> decode_and_verify -> seen-cache dedup -> topic_control
+# decode -> relay/ack decision -> signed ACK back).
+[[bin]]
+name = "native_node_spike"
+path = "src/bin/native_node_spike.rs"
+
+[dependencies]
+# The Phase-1 native transport (rust-libp2p 0.56 swarm + /peerbit/* mounts +
+# FrameCodec + NodeIdentity). rlib-typed, no cdylib — heavy libp2p tree stays
+# out of wasm.
+peerbit_transport = { path = "../../packages/transport/transport-rust" }
+
+# The frozen JsValue-free engine cores: wire codec, direct_stream
+# (seen_cache/decisions/routes/lanes) and the topic_control plane codec. We call
+# these DIRECTLY on socket-borrowed slices — the whole point of the native node.
+peerbit_wire = { path = "../../packages/transport/network-rust" }
+
+# rust-libp2p — the SAME version/features peerbit_transport pins, so the swarm
+# types line up. We only need the SwarmEvent loop + libp2p-stream Control here.
+libp2p = { version = "0.56.0", features = [
+    "tokio",
+    "tcp",
+    "websocket",
+    "dns",
+    "noise",
+    "yamux",
+    "identify",
+    "relay",
+    "macros",
+    "ed25519",
+] }
+libp2p-stream = "0.4.0-alpha"
+
+futures = "0.3"
+tokio = { version = "1", features = [
+    "macros",
+    "rt-multi-thread",
+    "time",
+    "io-util",
+    "sync",
+    "net",
+] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+
+# Ed25519 signing + SHA-256 — the SAME crates+versions peerbit_wire signs/
+# verifies with, so a signature we build here is byte-for-byte acceptable to
+# peerbit_wire::decode_and_verify_frames (and to the js/libsodium verifier).
+ed25519-dalek = { version = "2.1.1", default-features = false, features = ["fast"] }
+sha2 = "0.10.8"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
