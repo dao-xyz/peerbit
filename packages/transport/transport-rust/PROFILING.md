@@ -126,7 +126,7 @@ one memcpy (~a few hundred µs) against a fixed ~40 µs verify, so even the
 absolute worst legal frame keeps the copy well under the cost of the crypto — and
 such frames are rare bulk blocks, not the hot path.
 
-## Verdict — the copy is SMALL; choose the rule-compliant sidecar
+## Verdict — the copy is immaterial; napi is not justified; the perf case is weak
 
 **The socket→wasm ingress copy is immaterial.** It is ≤ 0.8 % of the wasm
 receive cost and ≤ 2.9 % of the total native-transport benefit, at every payload
@@ -136,20 +136,29 @@ verification**, not memory-bound on the copy.
 
 Consequences for the Phase-2 decision:
 
-- **A sidecar captures essentially all of the win.** The native speedup comes
-  from running the codec in native code, which a sidecar does too. The boundary
-  copy a sidecar re-adds costs 0.23–2.47 µs/frame — the same ≤ 0.8 % that napi
-  would save. napi's zero-copy therefore buys **under 1 % of per-message cost**,
-  which does **not** justify breaking the in-process/no-zero-copy rule.
-- **Recommendation: build Phase 2 as the out-of-process sidecar.** It is
-  rule-compliant, keeps the heavy libp2p 0.56 tree out of the node process, and
-  forfeits a sub-1 % micro-optimization. If the codec is ever moved off the
-  Ed25519-verify-per-frame model (batch-amortized or pre-verified bulk paths),
-  re-run this harness — that is the only regime where the copy could matter.
-- **The native transport track should be justified on its strategic goal** —
-  owning the connection layer (native tcp/ws/noise/yamux/relay, no js-libp2p on
-  node) and the throughput from native codec execution — **not on zero-copy.**
-  The 1.35×–2.25× codec speedup is available to *both* napi and sidecar.
+- **napi's zero-copy is NOT worth breaking the no-napi rule.** The one thing napi
+  uniquely removes is the socket→wasm ingress copy, and that copy is under 1 % of
+  per-message cost at every payload and batch size measured. This conclusion is
+  decision-grade and independently reproduced.
+- **The sidecar's real cost is NOT measured here — do not over-read it.** Path B
+  in this harness decodes in a single process with *zero* boundary; it is the
+  **napi/in-process upper bound**, not a sidecar. A sidecar re-adds a *process
+  boundary* whose cost — IPC of frame bytes one way plus the decoded records array
+  back — this harness does not model. Equating that to the tiny M1 ingress copy
+  only holds under shared memory, and even then the records-return trip is
+  unaccounted. Before committing to a sidecar at high message rates, run a
+  shared-memory round-trip micro-bench to close this gap.
+- **The 1.35×–2.25× "native speedup" is a wasm→native codec-codegen gap, not a
+  transport property.** ~97 % of the A−B delta is native code being faster than
+  wasm at Ed25519/SHA-256/borsh — a lever available to napi, a sidecar, *or* the
+  existing in-process native-backbone independent of who owns the transport.
+- **So the native-transport track's *performance* case is weak.** The copy is
+  immaterial and the codec speedup is obtainable other ways. If pursued, it should
+  be justified on its **strategic goal** — owning the connection layer (native
+  tcp/ws/noise/yamux/relay, removing js-libp2p from node) and the architectural
+  purity of a JS-free node path — not on a measured perf win. Recommended
+  mechanism if pursued: the rule-compliant sidecar (keeps the libp2p 0.56 tree out
+  of the node process), pending the round-trip micro-bench above.
 
 ## Reproducing
 
