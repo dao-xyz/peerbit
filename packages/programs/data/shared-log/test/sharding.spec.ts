@@ -1171,7 +1171,9 @@ testSetups.forEach((setup) => {
 			(setup.name === "u32-simple" ? it : it.skip)(
 				"reproduces bounded prune convergence under delayed join traffic",
 				async function () {
-					this.timeout(8 * 60 * 1000);
+					// Budget for the liveness window under active chaos (300s) plus the
+					// post-chaos quiesce, bounded-convergence, and sustained-hold phases.
+					this.timeout(10 * 60 * 1000);
 					await resetSession();
 
 					const chaosSeed = getDeterministicTestSeed(
@@ -1359,11 +1361,76 @@ testSetups.forEach((setup) => {
 								"expected delayed checked-prune traffic to leave at least one peer temporarily over the upper bound",
 							).to.equal(true);
 
+							// Phase 1 — prune liveness while every checked-prune handshake
+							// leg is still delayed by 20-45s: each peer must shed its join
+							// backlog below the upper bound at least once. Instantaneous
+							// lengths legitimately oscillate above the bound for as long as
+							// the chaos is active: authoritative repair re-seeds already
+							// pruned entries in bulk (its roleAge-0 leader view runs ahead of
+							// the mature view that pruning uses while segment updates are
+							// delayed), and every re-seeded entry needs another delayed prune
+							// round trip to drain. Asserting an instantaneous upper bound here
+							// races those waves — the historical "got 95" CI flake — so track
+							// a cumulative per-peer minimum instead, which is monotone and
+							// immune to sampling between waves.
+							const minLengths = [db1, db2, db3].map(
+								(db) => db.log.log.length,
+							);
+							await waitForResolved(
+								() => {
+									[db1, db2, db3].forEach((db, index) => {
+										minLengths[index] = Math.min(
+											minLengths[index],
+											db.log.log.length,
+										);
+									});
+									for (const min of minLengths) {
+										expect(min).lessThanOrEqual(entryCount * 0.9);
+									}
+								},
+								{ timeout: 300_000, delayInterval: 250 },
+							);
+
+							// Phase 2 — sustained convergence once the delays stop: the
+							// delayed traffic must not have wedged any checked-prune state
+							// permanently (the regression this spec pins: timed-out background
+							// prunes that never recover, leaving prunable heads idle). With
+							// the handshake no longer delayed, the steady state must reach the
+							// bound and hold it, not merely dip into it.
+							await cleanupChaos();
 							await waitForDistributionQuiesced(db1, db2, db3);
-							await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
-							expect(
-								await countIdleUnderReplicatedEntries(2, db1, db2, db3),
-							).equal(0);
+							await waitForResolved(
+								async () => {
+									await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
+									expect(
+										await countIdleUnderReplicatedEntries(2, db1, db2, db3),
+									).equal(0);
+								},
+								{ timeout: 120_000, delayInterval: 500 },
+							);
+							await waitForResolved(
+								async () => {
+									for (let i = 0; i < 5; i++) {
+										for (const db of [db1, db2, db3]) {
+											expect(db.log.log.length).to.be.within(
+												entryCount * 0.5,
+												entryCount * 0.9,
+											);
+										}
+										await delay(1_000);
+									}
+									expect(
+										await countIdleUnderReplicatedEntries(2, db1, db2, db3),
+									).equal(0);
+								},
+								{ timeout: 120_000, delayInterval: 1_000 },
+							);
+							await printShardingPruneDiagnostics(
+								"delayed-join-traffic-steady-state",
+								db1,
+								db2,
+								db3,
+							);
 						} catch (error) {
 							await printShardingPruneDiagnostics(
 								"delayed-join-traffic",

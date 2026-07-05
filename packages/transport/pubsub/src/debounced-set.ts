@@ -7,6 +7,7 @@ type CounterWithKey = {
 export const debouncedAccumulatorSetCounter = (
 	fn: (args: Map<string, CounterWithKey>) => any,
 	delay: number,
+	onError?: (error: Error) => void,
 ) => {
 	return debounceAccumulator<
 		string,
@@ -49,6 +50,10 @@ export const debouncedAccumulatorSetCounter = (
 		delay,
 		{
 			leading: false, // for the purposes of pubsub use, we don't want leading
+			// Without an explicit handler, debounceFixedInterval rethrows inside an
+			// un-awaited setTimeout-driven invoke, turning any flush error into a
+			// process-killing unhandledRejection.
+			onError,
 		},
 	);
 };

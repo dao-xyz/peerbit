@@ -257,6 +257,21 @@ export class TopicControlPlane
 	public subscriptions: Map<string, { counter: number }>;
 	// Local topics requested via debounced subscribe, not yet applied in `subscriptions`.
 	private pendingSubscriptions: Set<string>;
+	/**
+	 * Per-shard batching of Subscribe{requestSubscribers} responses. When many
+	 * peers announce subscriptions in a burst (group subscribe), answering each
+	 * announcer with a routed unicast is quadratic in subscriber count and
+	 * melts the fanout route-resolution machinery (#983); a short window lets
+	 * one broadcast answer all concurrent announcers instead.
+	 */
+	private pendingSubscriberResponses: Map<
+		string,
+		{
+			targets: Set<string>;
+			topics: Set<string>;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	> = new Map();
 	public lastSubscriptionMessages: Map<
 		string,
 		Map<string, { session: bigint; timestamp: bigint }>
@@ -422,12 +437,18 @@ export class TopicControlPlane
 		this.debounceSubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._subscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
+			(error) =>
+				logger.error(`Debounced subscribe failed: ${error?.message ?? error}`),
 		);
 		// NOTE: Unsubscribe should update local state immediately and batch only the
 		// best-effort network announcements to avoid teardown stalls (program close).
 		this.debounceUnsubscribeAggregator = debouncedAccumulatorSetCounter(
 			(set) => this._announceUnsubscribe([...set.values()]),
 			props?.subscriptionDebounceDelay ?? 50,
+			(error) =>
+				logger.error(
+					`Debounced unsubscribe announce failed: ${error?.message ?? error}`,
+				),
 		);
 	}
 
@@ -526,6 +547,10 @@ export class TopicControlPlane
 
 		this.subscriptions.clear();
 		this.pendingSubscriptions.clear();
+		for (const entry of this.pendingSubscriberResponses.values()) {
+			clearTimeout(entry.timer);
+		}
+		this.pendingSubscriberResponses.clear();
 		this.topics.clear();
 		this.peerToTopic.clear();
 		this.lastSubscriptionMessages.clear();
@@ -2302,6 +2327,78 @@ export class TopicControlPlane
 		);
 	}
 
+	/**
+	 * Answer Subscribe{requestSubscribers} announces without letting bursts go
+	 * quadratic (#983). Leading edge: the first announcer is answered
+	 * immediately with a targeted unicast — a lone joiner sees no added
+	 * latency. Announcers arriving within the trailing window that this opens
+	 * are batched and answered with ONE broadcast, instead of S(S-1) routed
+	 * unicasts whose cold route resolutions flood the shard tree.
+	 */
+	private queueSubscriberResponse(
+		shardTopic: string,
+		targetHash: string,
+		topics: string[],
+	) {
+		let entry = this.pendingSubscriberResponses.get(shardTopic);
+		if (!entry) {
+			const created = {
+				targets: new Set<string>(),
+				topics: new Set<string>(),
+				timer: setTimeout(
+					() => {
+						this.pendingSubscriberResponses.delete(shardTopic);
+						if (created.targets.size === 0) return;
+						void this.flushSubscriberResponses(shardTopic, created).catch(
+							logErrorIfStarted,
+						);
+					},
+					150 + Math.floor(Math.random() * 150),
+				),
+			};
+			this.pendingSubscriberResponses.set(shardTopic, created);
+			// Leading edge: respond to the burst opener right away.
+			void this.flushSubscriberResponses(shardTopic, {
+				targets: new Set([targetHash]),
+				topics: new Set(topics),
+			}).catch(logErrorIfStarted);
+			return;
+		}
+		entry.targets.add(targetHash);
+		for (const t of topics) entry.topics.add(t);
+	}
+
+	private async flushSubscriberResponses(
+		shardTopic: string,
+		entry: { targets: Set<string>; topics: Set<string> },
+	) {
+		if (!this.started) return;
+		// Re-filter: our subscriptions may have changed within the window.
+		const topics = this.getSubscriptionOverlap([...entry.topics]);
+		if (topics.length === 0) return;
+		const response = new Subscribe({
+			topics,
+			requestSubscribers: false,
+		});
+		const embedded = await this.createMessage(
+			this.encodePubSubMessage(response),
+			{
+				mode: new AnyWhere(),
+				priority: 1,
+				skipRecipientValidation: true,
+			} as any,
+		);
+		const payload = toUint8Array(embedded.bytes());
+		const [firstTarget] = entry.targets;
+		if (entry.targets.size === 1 && firstTarget) {
+			await this.sendFanoutUnicastOrBroadcast(shardTopic, firstTarget, payload);
+			return;
+		}
+		const st = this.fanoutChannels.get(shardTopic);
+		if (!st) return;
+		await st.channel.publishMaybe(payload);
+	}
+
 	private async sendFanoutUnicastOrBroadcast(
 		shardTopic: string,
 		targetHash: string,
@@ -2526,24 +2623,7 @@ export class TopicControlPlane
 			if (pubsubMessage.requestSubscribers) {
 				const overlap = this.getSubscriptionOverlap(pubsubMessage.topics);
 				if (overlap.length > 0) {
-					const response = new Subscribe({
-						topics: overlap,
-						requestSubscribers: false,
-					});
-					const embedded = await this.createMessage(
-						this.encodePubSubMessage(response),
-						{
-							mode: new AnyWhere(),
-							priority: 1,
-							skipRecipientValidation: true,
-						} as any,
-					);
-					const payload = toUint8Array(embedded.bytes());
-					await this.sendFanoutUnicastOrBroadcast(
-						shardTopic,
-						senderKey,
-						payload,
-					);
+					this.queueSubscriberResponse(shardTopic, senderKey, overlap);
 				}
 			}
 			return;
