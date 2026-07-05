@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/document-rust",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"description": "Rust-backed document helpers for Peerbit",
 	"sideEffects": [
 		"./dist/wasm/document_rust.js"

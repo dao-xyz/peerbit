@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/log-rust",
-	"version": "1.0.0",
+	"version": "1.1.0",
 	"description": "Rust-backed log graph index for Peerbit",
 	"sideEffects": [
 		"./dist/wasm/log_rust.js"

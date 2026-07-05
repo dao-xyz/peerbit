@@ -1,3895 +1,3671 @@
 # Changelog
 
-### Dependencies
+## 13.2.0
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.0 to 1.0.1
-    * @peerbit/log bumped from 1.0.0 to 1.0.1
-    * @peerbit/rpc bumped from 1.0.0 to 1.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.0 to ^1.0.1
+### Minor Changes
 
-### Dependencies
+- Native performance stack: Rust/WASM-backed log append and sync kernel.
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.1 to 1.0.2
-    * @peerbit/rpc bumped from 1.0.1 to 1.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.1 to ^1.0.2
+  Adds an optional native execution path that offloads hot log, sync, and
+  document code paths to Rust/WASM backends while keeping the existing
+  JavaScript implementations as the default. The change is fully additive —
+  no wire-format, storage-format, or existing public API changes — so nodes
+  running the JS path and nodes running the native path remain interoperable.
 
-### Dependencies
+  New packages:
+  - `@peerbit/native-backbone` — shared native (Rust/WASM) runtime backbone
+    used by the log/shared-log/document native paths.
+  - `@peerbit/shared-log-rust` — Rust-backed shared-log sync/replication kernel.
+  - `@peerbit/document-rust` — Rust-backed document indexing/transform helpers.
+  - `@peerbit/any-store-rust` — Rust-backed `any-store` batch storage backend.
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.2 to 1.0.3
-    * @peerbit/rpc bumped from 1.0.2 to 1.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.2 to ^1.0.3
+  Additive public API on existing packages:
+  - `@peerbit/log-rust` — large additive native-entry API surface (batch
+    Ed25519 verification, EntryV0 encode/prepare helpers, `NativeLogBlockStore`,
+    raw-CID batch helpers, native head/join entry types).
+  - `@peerbit/log` — new exported entry types (`CanAppend`, `PreparedAppendFacts`,
+    `PreparedNativeLogEntry`, `ShallowOrFullEntry`) and optional native
+    prepare/append options plus batched block hooks (`putMany`/`rmMany`).
+  - `@peerbit/shared-log` — new optional native-backbone options (deferred/
+    batched signature verification, native prepare hooks) on the existing
+    public option types.
+  - `@peerbit/document` — new `policy` and `transform` public exports.
+  - `peerbit` — new `./rust` subpath export wiring the native client path;
+    optional native package dependencies.
+  - `@peerbit/blocks-interface` — new optional batch methods on the `Blocks`
+    interface (`putMany`, `putKnown`, `putKnownMany`, `hasMany`, `getMany`).
+  - `@peerbit/blocks` — `DirectBlock` now implements the batch block methods
+    (`putMany`, `putKnown`, `putKnownMany`, `getMany`).
+  - `@peerbit/cache` — new `addMany` batch-insert method on `Cache`.
+  - `@peerbit/test-utils` — new optional `storage` factory options on the
+    test session for pluggable block/keychain/indexer stores.
 
-### Dependencies
+  Internal changes:
+  - `@peerbit/crypto` — `DecryptedThing.getValue` now memoizes the deserialized
+    value and treats `undefined` correctly.
+  - `@peerbit/indexer-rust` — internal storage/planner refactor (no public API
+    change).
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.1 to 1.0.2
-    * @peerbit/log bumped from 1.0.3 to 1.0.4
-    * @peerbit/rpc bumped from 1.0.3 to 1.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.3 to ^1.0.4
+- [#988](https://github.com/dao-xyz/peerbit/pull/988) [`8f5bac1`](https://github.com/dao-xyz/peerbit/commit/8f5bac19d936ec5a9a0d0b926d8d9ddab2a41270) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Native network plane: Rust/WASM-backed stream, pubsub, and block-exchange path.
 
-### Dependencies
+  Adds an optional native execution path that offloads the hot network code
+  paths (direct-stream routing, fanout-tree/topic control, block exchange, and
+  fused send/receive) to a Rust/WASM backbone while keeping the existing
+  JavaScript implementations as the default. The native path is opt-in and
+  defaults off; with it disabled every flag-off TS path, wire format, protocol
+  id, and observable behavior is byte- and semantics-identical, so JS-path and
+  native-path nodes remain interoperable.
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.5 to 1.0.6
-    * @peerbit/rpc bumped from 1.0.5 to 1.0.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.5 to ^1.0.6
+  New package:
+  - `@peerbit/network-rust` — Rust/WASM network backbone (`peerbit_wire` crate):
+    native direct-stream, fanout-tree, topic-control, and block-exchange kernels
+    with their TS bindings, consumed via the new `rustCore` option on the
+    transport packages.
 
-### Dependencies
+  Additive public API on existing packages:
+  - `@peerbit/native-backbone` — new `NativeBackboneWireSyncSession` receive-fusion
+    session plus wire-sync counter/meta types and native raw-receive / sync-send
+    wire helpers.
+  - `@peerbit/shared-log` — new fused send/receive path and sync capability
+    handshake: exported `SyncCapabilitiesMessage` and `RawExchangeHeadsMessage`,
+    a `SharedLogNativeDefaults` type, and additive `nativeBackbone` / `nativeGraph`
+    / raw-exchange `sync` options. Also routes `onChange` dispatch through the
+    fused receive path.
+  - `@peerbit/pubsub` — rust-core `TopicControlPlane` and `FanoutTree` via a new
+    `FanoutWireCodec` seam (`fanoutWire` / `fanoutParentUpgrade` exports); the
+    native directory adoption and `subscribeShouldReplace` route through the
+    native core when `rustCore` is enabled.
+  - `@peerbit/stream` — new `rustCore` option and exported `RustCoreStream` /
+    `PushableLanes` types, plus public `routes` and `wireCounters` surface for the
+    native lane scheduler and out-of-band envelope verification.
+  - `@peerbit/blocks` — `DirectBlock` gains an optional `rustCore` option and a
+    `getBlockResponsePayload` hook so block exchange can run through the native
+    core.
+  - `@peerbit/rpc` — new optional `resolveRequest` hook that lets a caller supply
+    a pre-resolved request (used by the native path), falling back to decode when
+    it is absent or throws.
+  - `peerbit` — new `NativeNetworkRuntime` client wiring (`nativeNetwork` option)
+    for selecting the native network preset.
+  - `@peerbit/log` — new `Entry.prepareMultihashBytesLazy` static that defers
+    materializing prepared entry-block bytes, so the native commit path does not
+    force stash-backed heads to build block bytes it never reads.
+  - `@peerbit/test-utils` — new optional `nativeWire` option on the test session
+    `CreateOptions`, threaded into the DirectStream setup for native-path tests.
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.3 to 1.0.4
-    * @peerbit/log bumped from 1.0.6 to 1.0.7
-    * @peerbit/rpc bumped from 1.0.6 to 1.0.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.6 to ^1.0.7
+### Patch Changes
 
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.7 to 1.0.8
-    * @peerbit/rpc bumped from 1.0.7 to 1.0.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.7 to ^1.0.8
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.8 to 1.0.9
-    * @peerbit/rpc bumped from 1.0.8 to 1.0.9
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.8 to ^1.0.9
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/rpc bumped from 1.0.9 to 1.0.10
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.10 to 1.0.11
-    * @peerbit/rpc bumped from 1.0.11 to 1.0.12
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.10 to ^1.0.11
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 1.0.11 to 1.0.12
-    * @peerbit/rpc bumped from 1.0.12 to 1.0.13
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.0.0 to 2.1.0
-    * @peerbit/log bumped from 1.0.14 to 1.0.15
-    * @peerbit/rpc bumped from 2.0.0 to 2.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.2.0 to 2.2.1
-    * @peerbit/log bumped from 2.0.0 to 2.0.1
-    * @peerbit/rpc bumped from 2.1.0 to 2.1.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.16 to ^1.0.17
+- Updated dependencies [[`8f5bac1`](https://github.com/dao-xyz/peerbit/commit/8f5bac19d936ec5a9a0d0b926d8d9ddab2a41270)]:
+  - @peerbit/log@6.2.0
+  - @peerbit/blocks-interface@2.1.0
+  - @peerbit/blocks@4.2.0
+  - @peerbit/cache@3.1.0
+  - @peerbit/crypto@3.1.2
+  - @peerbit/pubsub@5.3.0
+  - @peerbit/rpc@6.1.0
+  - @peerbit/program@6.0.32
+  - @peerbit/pubsub-interface@5.1.5
+  - @peerbit/stream-interface@6.0.11
+  - @peerbit/any-store@2.2.10
+  - @peerbit/indexer-interface@3.0.5
+  - @peerbit/indexer-sqlite3@3.0.8
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.2.1 to 2.2.2
-    * @peerbit/log bumped from 2.0.1 to 2.0.2
-    * @peerbit/rpc bumped from 2.1.1 to 2.1.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.17 to ^1.0.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.0 to 1.0.1
+    - @peerbit/log bumped from 1.0.0 to 1.0.1
+    - @peerbit/rpc bumped from 1.0.0 to 1.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.0 to ^1.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.0.2 to 2.0.3
-    * @peerbit/rpc bumped from 2.1.2 to 2.1.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.18 to ^1.0.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.1 to 1.0.2
+    - @peerbit/rpc bumped from 1.0.1 to 1.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.1 to ^1.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.2.3 to 2.2.4
-    * @peerbit/log bumped from 2.0.4 to 2.0.5
-    * @peerbit/rpc bumped from 2.1.4 to 2.1.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.20 to ^1.0.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.2 to 1.0.3
+    - @peerbit/rpc bumped from 1.0.2 to 1.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.2 to ^1.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.2.4 to 2.2.5
-    * @peerbit/log bumped from 2.0.5 to 2.0.6
-    * @peerbit/rpc bumped from 2.1.5 to 2.1.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.21 to ^1.0.22
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.1 to 1.0.2
+    - @peerbit/log bumped from 1.0.3 to 1.0.4
+    - @peerbit/rpc bumped from 1.0.3 to 1.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.3 to ^1.0.4
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.0.6 to 2.0.7
-    * @peerbit/rpc bumped from 2.1.6 to 2.1.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.22 to ^1.0.23
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.5 to 1.0.6
+    - @peerbit/rpc bumped from 1.0.5 to 1.0.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.5 to ^1.0.6
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.1.1 to 2.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.3 to 1.0.4
+    - @peerbit/log bumped from 1.0.6 to 1.0.7
+    - @peerbit/rpc bumped from 1.0.6 to 1.0.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.6 to ^1.0.7
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.3.1 to 2.3.2
-    * @peerbit/log bumped from 2.1.3 to 2.1.4
-    * @peerbit/rpc bumped from 2.1.10 to 2.1.11
-    * @peerbit/time bumped from 1.0.3 to 1.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.26 to ^1.0.27
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.7 to 1.0.8
+    - @peerbit/rpc bumped from 1.0.7 to 1.0.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.7 to ^1.0.8
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.1.4 to 2.1.5
-    * @peerbit/rpc bumped from 2.1.11 to 2.1.12
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.27 to ^1.0.28
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.8 to 1.0.9
+    - @peerbit/rpc bumped from 1.0.8 to 1.0.9
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.8 to ^1.0.9
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.1.5 to 2.1.6
-    * @peerbit/rpc bumped from 2.1.12 to 2.1.13
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.28 to ^1.0.29
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/rpc bumped from 1.0.9 to 1.0.10
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.1.6 to 2.1.7
-    * @peerbit/rpc bumped from 2.1.13 to 2.1.14
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.29 to ^1.0.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.10 to 1.0.11
+    - @peerbit/rpc bumped from 1.0.11 to 1.0.12
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.10 to ^1.0.11
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.4.0 to 2.4.1
-    * @peerbit/log bumped from 2.1.8 to 2.1.9
-    * @peerbit/rpc bumped from 2.1.15 to 2.1.16
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.31 to ^1.0.32
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 1.0.11 to 1.0.12
+    - @peerbit/rpc bumped from 1.0.12 to 1.0.13
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.11 to ^1.0.12
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.4.1 to 2.4.2
-    * @peerbit/log bumped from 2.1.9 to 2.1.10
-    * @peerbit/rpc bumped from 2.1.16 to 2.1.17
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.32 to ^1.0.33
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.0.0 to 2.1.0
+    - @peerbit/log bumped from 1.0.14 to 1.0.15
+    - @peerbit/rpc bumped from 2.0.0 to 2.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.14 to ^1.0.15
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.0 to 3.0.1
-    * @peerbit/log bumped from 3.0.0 to 3.0.1
-    * @peerbit/rpc bumped from 3.0.0 to 3.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.0 to ^2.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.2.0 to 2.2.1
+    - @peerbit/log bumped from 2.0.0 to 2.0.1
+    - @peerbit/rpc bumped from 2.1.0 to 2.1.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.16 to ^1.0.17
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.2 to 3.0.3
-    * @peerbit/log bumped from 3.0.2 to 3.0.3
-    * @peerbit/rpc bumped from 3.0.2 to 3.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.2 to ^2.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.2.1 to 2.2.2
+    - @peerbit/log bumped from 2.0.1 to 2.0.2
+    - @peerbit/rpc bumped from 2.1.1 to 2.1.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.17 to ^1.0.18
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.3 to 3.0.4
-    * @peerbit/log bumped from 3.0.3 to 3.0.4
-    * @peerbit/rpc bumped from 3.0.3 to 3.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.3 to ^2.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.0.2 to 2.0.3
+    - @peerbit/rpc bumped from 2.1.2 to 2.1.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.18 to ^1.0.19
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 3.0.4 to 3.0.5
-    * @peerbit/rpc bumped from 3.0.4 to 3.0.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.4 to ^2.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.2.3 to 2.2.4
+    - @peerbit/log bumped from 2.0.4 to 2.0.5
+    - @peerbit/rpc bumped from 2.1.4 to 2.1.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.20 to ^1.0.21
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 3.0.7 to 3.0.8
-    * @peerbit/rpc bumped from 3.0.7 to 3.0.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.2.4 to 2.2.5
+    - @peerbit/log bumped from 2.0.5 to 2.0.6
+    - @peerbit/rpc bumped from 2.1.5 to 2.1.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.21 to ^1.0.22
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.9 to 3.0.10
-    * @peerbit/log bumped from 3.0.11 to 3.0.12
-    * @peerbit/rpc bumped from 3.0.11 to 3.0.12
-    * @peerbit/time bumped from 2.0.3 to 2.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.0.6 to 2.0.7
+    - @peerbit/rpc bumped from 2.1.6 to 2.1.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.22 to ^1.0.23
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.15 to 3.0.16
-    * @peerbit/log bumped from 3.0.18 to 3.0.19
-    * @peerbit/rpc bumped from 3.0.18 to 3.0.19
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.18 to ^2.0.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.1.1 to 2.1.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.16 to 3.0.17
-    * @peerbit/log bumped from 3.0.19 to 3.0.20
-    * @peerbit/rpc bumped from 3.0.19 to 3.0.20
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.19 to ^2.0.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.3.1 to 2.3.2
+    - @peerbit/log bumped from 2.1.3 to 2.1.4
+    - @peerbit/rpc bumped from 2.1.10 to 2.1.11
+    - @peerbit/time bumped from 1.0.3 to 1.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.26 to ^1.0.27
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.17 to 3.0.18
-    * @peerbit/log bumped from 3.0.21 to 3.0.22
-    * @peerbit/rpc bumped from 3.0.20 to 3.0.21
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.20 to ^2.0.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.1.4 to 2.1.5
+    - @peerbit/rpc bumped from 2.1.11 to 2.1.12
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.27 to ^1.0.28
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.18 to 3.0.19
-    * @peerbit/log bumped from 3.0.22 to 3.0.23
-    * @peerbit/rpc bumped from 3.0.21 to 3.0.22
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.21 to ^2.0.22
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.1.5 to 2.1.6
+    - @peerbit/rpc bumped from 2.1.12 to 2.1.13
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.28 to ^1.0.29
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 3.0.24 to 3.0.25
-    * @peerbit/rpc bumped from 3.0.23 to 3.0.24
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.23 to ^2.0.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.1.6 to 2.1.7
+    - @peerbit/rpc bumped from 2.1.13 to 2.1.14
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.29 to ^1.0.30
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.0 to 4.0.1
-    * @peerbit/log bumped from 3.0.27 to 3.0.28
-    * @peerbit/rpc bumped from 4.0.0 to 4.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.26 to ^2.0.27
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.4.0 to 2.4.1
+    - @peerbit/log bumped from 2.1.8 to 2.1.9
+    - @peerbit/rpc bumped from 2.1.15 to 2.1.16
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.31 to ^1.0.32
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.2 to 4.0.3
-    * @peerbit/log bumped from 3.0.29 to 3.0.30
-    * @peerbit/rpc bumped from 4.0.2 to 4.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.28 to ^2.0.29
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.4.1 to 2.4.2
+    - @peerbit/log bumped from 2.1.9 to 2.1.10
+    - @peerbit/rpc bumped from 2.1.16 to 2.1.17
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.32 to ^1.0.33
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.3 to 4.0.4
-    * @peerbit/log bumped from 3.0.30 to 3.0.31
-    * @peerbit/rpc bumped from 4.0.3 to 4.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.29 to ^2.0.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.0 to 3.0.1
+    - @peerbit/log bumped from 3.0.0 to 3.0.1
+    - @peerbit/rpc bumped from 3.0.0 to 3.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.0 to ^2.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.4 to 4.0.5
-    * @peerbit/log bumped from 3.0.31 to 3.0.32
-    * @peerbit/rpc bumped from 4.0.4 to 4.0.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.30 to ^2.0.31
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.2 to 3.0.3
+    - @peerbit/log bumped from 3.0.2 to 3.0.3
+    - @peerbit/rpc bumped from 3.0.2 to 3.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.2 to ^2.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.5 to 4.0.6
-    * @peerbit/log bumped from 3.0.32 to 3.0.33
-    * @peerbit/rpc bumped from 4.0.5 to 4.0.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.3 to 3.0.4
+    - @peerbit/log bumped from 3.0.3 to 3.0.4
+    - @peerbit/rpc bumped from 3.0.3 to 3.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.3 to ^2.0.4
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 3.0.4 to 3.0.5
+    - @peerbit/rpc bumped from 3.0.4 to 3.0.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.4 to ^2.0.5
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 3.0.7 to 3.0.8
+    - @peerbit/rpc bumped from 3.0.7 to 3.0.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.7 to ^2.0.8
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.9 to 3.0.10
+    - @peerbit/log bumped from 3.0.11 to 3.0.12
+    - @peerbit/rpc bumped from 3.0.11 to 3.0.12
+    - @peerbit/time bumped from 2.0.3 to 2.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.11 to ^2.0.12
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.15 to 3.0.16
+    - @peerbit/log bumped from 3.0.18 to 3.0.19
+    - @peerbit/rpc bumped from 3.0.18 to 3.0.19
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.18 to ^2.0.19
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.16 to 3.0.17
+    - @peerbit/log bumped from 3.0.19 to 3.0.20
+    - @peerbit/rpc bumped from 3.0.19 to 3.0.20
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.19 to ^2.0.20
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.17 to 3.0.18
+    - @peerbit/log bumped from 3.0.21 to 3.0.22
+    - @peerbit/rpc bumped from 3.0.20 to 3.0.21
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.20 to ^2.0.21
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.18 to 3.0.19
+    - @peerbit/log bumped from 3.0.22 to 3.0.23
+    - @peerbit/rpc bumped from 3.0.21 to 3.0.22
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.21 to ^2.0.22
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 3.0.24 to 3.0.25
+    - @peerbit/rpc bumped from 3.0.23 to 3.0.24
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.23 to ^2.0.24
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.0 to 4.0.1
+    - @peerbit/log bumped from 3.0.27 to 3.0.28
+    - @peerbit/rpc bumped from 4.0.0 to 4.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.26 to ^2.0.27
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.2 to 4.0.3
+    - @peerbit/log bumped from 3.0.29 to 3.0.30
+    - @peerbit/rpc bumped from 4.0.2 to 4.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.28 to ^2.0.29
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.3 to 4.0.4
+    - @peerbit/log bumped from 3.0.30 to 3.0.31
+    - @peerbit/rpc bumped from 4.0.3 to 4.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.29 to ^2.0.30
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.4 to 4.0.5
+    - @peerbit/log bumped from 3.0.31 to 3.0.32
+    - @peerbit/rpc bumped from 4.0.4 to 4.0.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.30 to ^2.0.31
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.5 to 4.0.6
+    - @peerbit/log bumped from 3.0.32 to 3.0.33
+    - @peerbit/rpc bumped from 4.0.5 to 4.0.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.31 to ^2.0.32
 
 ## [13.1.18](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.17...shared-log-v13.1.18) (2026-05-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.1.1
-    * @peerbit/program bumped to 6.0.31
-    * @peerbit/rpc bumped to 6.0.35
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.35
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.1.1
+    - @peerbit/program bumped to 6.0.31
+    - @peerbit/rpc bumped to 6.0.35
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.35
 
 ## [13.1.17](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.16...shared-log-v13.1.17) (2026-05-26)
 
-
 ### Bug Fixes
 
-* **shared-log:** dedupe sync coordinate aliases ([61a4b8d](https://github.com/dao-xyz/peerbit/commit/61a4b8d232cfb05b6a884062c80518dafe2afb46))
-* **shared-log:** dedupe sync coordinate aliases ([359ccc3](https://github.com/dao-xyz/peerbit/commit/359ccc3366cbe5d1e34657bac605c8e1eb6ffdaa))
-* **shared-log:** keep checked prune live through slow handoff ([fac9bb5](https://github.com/dao-xyz/peerbit/commit/fac9bb55f4b5b45c9c8d1249d90e32c59846b36d))
-* **shared-log:** keep checked prune live through slow handoff ([524e7ae](https://github.com/dao-xyz/peerbit/commit/524e7aee067d1b55fdb839db21707b46c44c77c1))
-* **shared-log:** prioritize foreground traffic over sync ([3521b8c](https://github.com/dao-xyz/peerbit/commit/3521b8c0ee7f7fe89afe16d4025360f0afa45bad))
-* **shared-log:** prioritize foreground traffic over sync ([f0ecd02](https://github.com/dao-xyz/peerbit/commit/f0ecd028ef0db60cc2101f73823beed3d92b62c6))
-* **shared-log:** stabilize part 7 replication churn ([6339e80](https://github.com/dao-xyz/peerbit/commit/6339e8039231e5fa87f3a57c59b631face8926ae))
-* **shared-log:** stabilize part 7 replication churn ([64f4691](https://github.com/dao-xyz/peerbit/commit/64f4691cf98f7e6576273cd3736a5b5f12dd9f1e))
-
+- **shared-log:** dedupe sync coordinate aliases ([61a4b8d](https://github.com/dao-xyz/peerbit/commit/61a4b8d232cfb05b6a884062c80518dafe2afb46))
+- **shared-log:** dedupe sync coordinate aliases ([359ccc3](https://github.com/dao-xyz/peerbit/commit/359ccc3366cbe5d1e34657bac605c8e1eb6ffdaa))
+- **shared-log:** keep checked prune live through slow handoff ([fac9bb5](https://github.com/dao-xyz/peerbit/commit/fac9bb55f4b5b45c9c8d1249d90e32c59846b36d))
+- **shared-log:** keep checked prune live through slow handoff ([524e7ae](https://github.com/dao-xyz/peerbit/commit/524e7aee067d1b55fdb839db21707b46c44c77c1))
+- **shared-log:** prioritize foreground traffic over sync ([3521b8c](https://github.com/dao-xyz/peerbit/commit/3521b8c0ee7f7fe89afe16d4025360f0afa45bad))
+- **shared-log:** prioritize foreground traffic over sync ([f0ecd02](https://github.com/dao-xyz/peerbit/commit/f0ecd028ef0db60cc2101f73823beed3d92b62c6))
+- **shared-log:** stabilize part 7 replication churn ([6339e80](https://github.com/dao-xyz/peerbit/commit/6339e8039231e5fa87f3a57c59b631face8926ae))
+- **shared-log:** stabilize part 7 replication churn ([64f4691](https://github.com/dao-xyz/peerbit/commit/64f4691cf98f7e6576273cd3736a5b5f12dd9f1e))
 
 ### Refactors
 
-* **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
-* **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
-* **shared-log:** coordinate checked prune sessions ([583107a](https://github.com/dao-xyz/peerbit/commit/583107aa616138958258e088514e1644624a5756))
-* **shared-log:** coordinate checked prune sessions ([2194576](https://github.com/dao-xyz/peerbit/commit/21945768db8d637e17bb84367981cf001e3425e2))
-* **shared-log:** extract checked prune coordinator ([5569f12](https://github.com/dao-xyz/peerbit/commit/5569f120356b9ea76f147243ab81e0117ed06092))
-
+- **shared-log:** centralize priority semantics ([bd05005](https://github.com/dao-xyz/peerbit/commit/bd05005a50b0e0d98cb12a03d3227f7d6d2ed277))
+- **shared-log:** centralize priority semantics ([041c962](https://github.com/dao-xyz/peerbit/commit/041c962be235749d35ca198592341623e9d649b5))
+- **shared-log:** coordinate checked prune sessions ([583107a](https://github.com/dao-xyz/peerbit/commit/583107aa616138958258e088514e1644624a5756))
+- **shared-log:** coordinate checked prune sessions ([2194576](https://github.com/dao-xyz/peerbit/commit/21945768db8d637e17bb84367981cf001e3425e2))
+- **shared-log:** extract checked prune coordinator ([5569f12](https://github.com/dao-xyz/peerbit/commit/5569f120356b9ea76f147243ab81e0117ed06092))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.9
-    * @peerbit/blocks-interface bumped to 2.0.12
-    * @peerbit/indexer-interface bumped to 3.0.4
-    * @peerbit/indexer-sqlite3 bumped to 3.0.7
-    * @peerbit/log bumped to 6.1.0
-    * @peerbit/program bumped to 6.0.30
-    * @peerbit/pubsub bumped to 5.2.11
-    * @peerbit/pubsub-interface bumped to 5.1.4
-    * @peerbit/rpc bumped to 6.0.34
-    * @peerbit/stream-interface bumped to 6.0.10
-  * devDependencies
-    * @peerbit/indexer-rust bumped to 1.0.0
-    * @peerbit/test-utils bumped to 3.0.34
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.9
+    - @peerbit/blocks-interface bumped to 2.0.12
+    - @peerbit/indexer-interface bumped to 3.0.4
+    - @peerbit/indexer-sqlite3 bumped to 3.0.7
+    - @peerbit/log bumped to 6.1.0
+    - @peerbit/program bumped to 6.0.30
+    - @peerbit/pubsub bumped to 5.2.11
+    - @peerbit/pubsub-interface bumped to 5.1.4
+    - @peerbit/rpc bumped to 6.0.34
+    - @peerbit/stream-interface bumped to 6.0.10
+  - devDependencies
+    - @peerbit/indexer-rust bumped to 1.0.0
+    - @peerbit/test-utils bumped to 3.0.34
 
 ## [13.1.16](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.15...shared-log-v13.1.16) (2026-05-05)
 
-
 ### Bug Fixes
 
-* improve remote reads under contention ([db27286](https://github.com/dao-xyz/peerbit/commit/db27286a7b91a9ec9d53babb7cd48e2c9e58d0b9))
-* prevent stream priority stalls under backpressure ([c0a7308](https://github.com/dao-xyz/peerbit/commit/c0a7308237573f6128de99c2a12eb1ee07a84ba5))
-* **shared-log:** preserve churn repair frontier ([e1c061f](https://github.com/dao-xyz/peerbit/commit/e1c061fd9df283f559bac0785eb7301794d1a208))
-
+- improve remote reads under contention ([db27286](https://github.com/dao-xyz/peerbit/commit/db27286a7b91a9ec9d53babb7cd48e2c9e58d0b9))
+- prevent stream priority stalls under backpressure ([c0a7308](https://github.com/dao-xyz/peerbit/commit/c0a7308237573f6128de99c2a12eb1ee07a84ba5))
+- **shared-log:** preserve churn repair frontier ([e1c061f](https://github.com/dao-xyz/peerbit/commit/e1c061fd9df283f559bac0785eb7301794d1a208))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.8
-    * @peerbit/log bumped to 6.0.35
-    * @peerbit/program bumped to 6.0.29
-    * @peerbit/pubsub bumped to 5.2.10
-    * @peerbit/rpc bumped to 6.0.33
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.33
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.8
+    - @peerbit/log bumped to 6.0.35
+    - @peerbit/program bumped to 6.0.29
+    - @peerbit/pubsub bumped to 5.2.10
+    - @peerbit/rpc bumped to 6.0.33
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.33
 
 ## [13.1.15](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.14...shared-log-v13.1.15) (2026-05-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.7
-    * @peerbit/log bumped to 6.0.34
-    * @peerbit/program bumped to 6.0.28
-    * @peerbit/pubsub bumped to 5.2.9
-    * @peerbit/rpc bumped to 6.0.32
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.32
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.7
+    - @peerbit/log bumped to 6.0.34
+    - @peerbit/program bumped to 6.0.28
+    - @peerbit/pubsub bumped to 5.2.9
+    - @peerbit/rpc bumped to 6.0.32
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.32
 
 ## [13.1.14](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.13...shared-log-v13.1.14) (2026-05-04)
 
-
 ### Bug Fixes
 
-* **shared-log:** cancel stale checked prune on local leadership ([e5e5ce9](https://github.com/dao-xyz/peerbit/commit/e5e5ce9c9765fee1751583943f061e9159cbb908))
-* **shared-log:** cancel stale checked prune on local leadership ([36b6d25](https://github.com/dao-xyz/peerbit/commit/36b6d2525d15f7a8f2ad2ca38c641979ad8bd09e))
+- **shared-log:** cancel stale checked prune on local leadership ([e5e5ce9](https://github.com/dao-xyz/peerbit/commit/e5e5ce9c9765fee1751583943f061e9159cbb908))
+- **shared-log:** cancel stale checked prune on local leadership ([36b6d25](https://github.com/dao-xyz/peerbit/commit/36b6d2525d15f7a8f2ad2ca38c641979ad8bd09e))
 
 ## [13.1.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.12...shared-log-v13.1.13) (2026-05-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.6
-    * @peerbit/log bumped to 6.0.33
-    * @peerbit/program bumped to 6.0.27
-    * @peerbit/pubsub bumped to 5.2.8
-    * @peerbit/rpc bumped to 6.0.31
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.31
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.6
+    - @peerbit/log bumped to 6.0.33
+    - @peerbit/program bumped to 6.0.27
+    - @peerbit/pubsub bumped to 5.2.8
+    - @peerbit/rpc bumped to 6.0.31
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.31
 
 ## [13.1.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.11...shared-log-v13.1.12) (2026-05-02)
 
-
 ### Bug Fixes
 
-* stabilize file-share large transfer paths ([#762](https://github.com/dao-xyz/peerbit/issues/762)) ([66116f4](https://github.com/dao-xyz/peerbit/commit/66116f432279f4ed5e9b32abab041fa89ad3e22e))
-
+- stabilize file-share large transfer paths ([#762](https://github.com/dao-xyz/peerbit/issues/762)) ([66116f4](https://github.com/dao-xyz/peerbit/commit/66116f432279f4ed5e9b32abab041fa89ad3e22e))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.5
-    * @peerbit/log bumped to 6.0.32
-    * @peerbit/program bumped to 6.0.26
-    * @peerbit/pubsub bumped to 5.2.7
-    * @peerbit/rpc bumped to 6.0.30
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.5
+    - @peerbit/log bumped to 6.0.32
+    - @peerbit/program bumped to 6.0.26
+    - @peerbit/pubsub bumped to 5.2.7
+    - @peerbit/rpc bumped to 6.0.30
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.30
 
 ## [13.1.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.10...shared-log-v13.1.11) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.4
-    * @peerbit/blocks-interface bumped to 2.0.11
-    * @peerbit/log bumped to 6.0.31
-    * @peerbit/program bumped to 6.0.25
-    * @peerbit/pubsub bumped to 5.2.6
-    * @peerbit/pubsub-interface bumped to 5.1.3
-    * @peerbit/rpc bumped to 6.0.29
-    * @peerbit/stream-interface bumped to 6.0.9
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.29
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.4
+    - @peerbit/blocks-interface bumped to 2.0.11
+    - @peerbit/log bumped to 6.0.31
+    - @peerbit/program bumped to 6.0.25
+    - @peerbit/pubsub bumped to 5.2.6
+    - @peerbit/pubsub-interface bumped to 5.1.3
+    - @peerbit/rpc bumped to 6.0.29
+    - @peerbit/stream-interface bumped to 6.0.9
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.29
 
 ## [13.1.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.9...shared-log-v13.1.10) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.30
 
 ## [13.1.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.8...shared-log-v13.1.9) (2026-05-01)
 
-
 ### Bug Fixes
 
-* **document:** classify remote results by shape ([6afe1c2](https://github.com/dao-xyz/peerbit/commit/6afe1c2e5814a4f2e47f11b30360fb7bb1905f09))
-* **shared-log:** prune stale heads after topology changes ([89e20a2](https://github.com/dao-xyz/peerbit/commit/89e20a2e0b4050aefdf15c77b499e76b9f600618))
+- **document:** classify remote results by shape ([6afe1c2](https://github.com/dao-xyz/peerbit/commit/6afe1c2e5814a4f2e47f11b30360fb7bb1905f09))
+- **shared-log:** prune stale heads after topology changes ([89e20a2](https://github.com/dao-xyz/peerbit/commit/89e20a2e0b4050aefdf15c77b499e76b9f600618))
 
 ## [13.1.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.7...shared-log-v13.1.8) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.29
-    * @peerbit/program bumped to 6.0.24
-    * @peerbit/pubsub bumped to 5.2.5
-    * @peerbit/rpc bumped to 6.0.28
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.28
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.29
+    - @peerbit/program bumped to 6.0.24
+    - @peerbit/pubsub bumped to 5.2.5
+    - @peerbit/rpc bumped to 6.0.28
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.28
 
 ## [13.1.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.6...shared-log-v13.1.7) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.28
-    * @peerbit/program bumped to 6.0.23
-    * @peerbit/pubsub bumped to 5.2.4
-    * @peerbit/rpc bumped to 6.0.27
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.27
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.28
+    - @peerbit/program bumped to 6.0.23
+    - @peerbit/pubsub bumped to 5.2.4
+    - @peerbit/rpc bumped to 6.0.27
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.27
 
 ## [13.1.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.5...shared-log-v13.1.6) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.3
-    * @peerbit/blocks-interface bumped to 2.0.10
-    * @peerbit/log bumped to 6.0.27
-    * @peerbit/program bumped to 6.0.22
-    * @peerbit/pubsub bumped to 5.2.3
-    * @peerbit/pubsub-interface bumped to 5.1.2
-    * @peerbit/rpc bumped to 6.0.26
-    * @peerbit/stream-interface bumped to 6.0.8
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.26
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.3
+    - @peerbit/blocks-interface bumped to 2.0.10
+    - @peerbit/log bumped to 6.0.27
+    - @peerbit/program bumped to 6.0.22
+    - @peerbit/pubsub bumped to 5.2.3
+    - @peerbit/pubsub-interface bumped to 5.1.2
+    - @peerbit/rpc bumped to 6.0.26
+    - @peerbit/stream-interface bumped to 6.0.8
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.26
 
 ## [13.1.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.4...shared-log-v13.1.5) (2026-04-30)
 
-
 ### Bug Fixes
 
-* **shared-log:** widen underfilled leader filters ([#748](https://github.com/dao-xyz/peerbit/issues/748)) ([dd690f7](https://github.com/dao-xyz/peerbit/commit/dd690f7386eb69928ecb11faa817e58b36256d4b))
-
+- **shared-log:** widen underfilled leader filters ([#748](https://github.com/dao-xyz/peerbit/issues/748)) ([dd690f7](https://github.com/dao-xyz/peerbit/commit/dd690f7386eb69928ecb11faa817e58b36256d4b))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.26
-    * @peerbit/program bumped to 6.0.21
-    * @peerbit/pubsub bumped to 5.2.2
-    * @peerbit/rpc bumped to 6.0.25
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.25
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.26
+    - @peerbit/program bumped to 6.0.21
+    - @peerbit/pubsub bumped to 5.2.2
+    - @peerbit/rpc bumped to 6.0.25
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.25
 
 ## [13.1.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.3...shared-log-v13.1.4) (2026-04-29)
 
-
 ### Bug Fixes
 
-* **shared-log:** merge direct peers into subscriber discovery ([68c178e](https://github.com/dao-xyz/peerbit/commit/68c178e90dc77c306d7f5a719f705f267d4db936))
-* **shared-log:** merge direct peers into subscriber discovery ([cc5d363](https://github.com/dao-xyz/peerbit/commit/cc5d3636485658028bdb4ab7ef66e9de05253037))
-
+- **shared-log:** merge direct peers into subscriber discovery ([68c178e](https://github.com/dao-xyz/peerbit/commit/68c178e90dc77c306d7f5a719f705f267d4db936))
+- **shared-log:** merge direct peers into subscriber discovery ([cc5d363](https://github.com/dao-xyz/peerbit/commit/cc5d3636485658028bdb4ab7ef66e9de05253037))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.2
-    * @peerbit/blocks-interface bumped to 2.0.9
-    * @peerbit/log bumped to 6.0.25
-    * @peerbit/program bumped to 6.0.20
-    * @peerbit/pubsub bumped to 5.2.1
-    * @peerbit/rpc bumped to 6.0.24
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.2
+    - @peerbit/blocks-interface bumped to 2.0.9
+    - @peerbit/log bumped to 6.0.25
+    - @peerbit/program bumped to 6.0.20
+    - @peerbit/pubsub bumped to 5.2.1
+    - @peerbit/rpc bumped to 6.0.24
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.24
 
 ## [13.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.2...shared-log-v13.1.3) (2026-04-28)
 
-
 ### Bug Fixes
 
-* **blocks:** widen in-flight provider hints ([a4416b7](https://github.com/dao-xyz/peerbit/commit/a4416b752783bb4dd199f72d263916416e49c39f))
-
+- **blocks:** widen in-flight provider hints ([a4416b7](https://github.com/dao-xyz/peerbit/commit/a4416b752783bb4dd199f72d263916416e49c39f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.1
-    * @peerbit/log bumped to 6.0.24
-    * @peerbit/program bumped to 6.0.19
-    * @peerbit/rpc bumped to 6.0.23
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.23
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.1
+    - @peerbit/log bumped to 6.0.24
+    - @peerbit/program bumped to 6.0.19
+    - @peerbit/rpc bumped to 6.0.23
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.23
 
 ## [13.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.1...shared-log-v13.1.2) (2026-04-27)
 
-
 ### Bug Fixes
 
-* **shared-log:** preserve adaptive replication coverage ([e1e44d8](https://github.com/dao-xyz/peerbit/commit/e1e44d83bf988a09e39eb621afc2c1e5312608d6))
-* **shared-log:** recover memory-limited adaptive replicas ([0cd22cf](https://github.com/dao-xyz/peerbit/commit/0cd22cf9ab2f8b58a02c61d128733c01412989a5))
-
+- **shared-log:** preserve adaptive replication coverage ([e1e44d8](https://github.com/dao-xyz/peerbit/commit/e1e44d83bf988a09e39eb621afc2c1e5312608d6))
+- **shared-log:** recover memory-limited adaptive replicas ([0cd22cf](https://github.com/dao-xyz/peerbit/commit/0cd22cf9ab2f8b58a02c61d128733c01412989a5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.23
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.23
 
 ## [13.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.1.0...shared-log-v13.1.1) (2026-04-25)
 
-
 ### Bug Fixes
 
-* **shared-log:** self-heal late-join backfill ([b7828a6](https://github.com/dao-xyz/peerbit/commit/b7828a68619d87b557e3e341e09f682a5fc366e0))
+- **shared-log:** self-heal late-join backfill ([b7828a6](https://github.com/dao-xyz/peerbit/commit/b7828a68619d87b557e3e341e09f682a5fc366e0))
 
 ## [13.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.24...shared-log-v13.1.0) (2026-04-14)
 
-
 ### Features
 
-* **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
-* **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
-
+- **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
+- **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
 
 ### Bug Fixes
 
-* **shared-log:** suppress late maybe-sync after assumeSynced join ([d922e1c](https://github.com/dao-xyz/peerbit/commit/d922e1c5033cf2986bd40fbd881a26ddddf81b8f))
-
+- **shared-log:** suppress late maybe-sync after assumeSynced join ([d922e1c](https://github.com/dao-xyz/peerbit/commit/d922e1c5033cf2986bd40fbd881a26ddddf81b8f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/blocks bumped to 4.1.0
-    * @peerbit/log bumped to 6.0.22
-    * @peerbit/program bumped to 6.0.18
-    * @peerbit/pubsub bumped to 5.2.0
-    * @peerbit/rpc bumped to 6.0.22
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.22
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/blocks bumped to 4.1.0
+    - @peerbit/log bumped to 6.0.22
+    - @peerbit/program bumped to 6.0.18
+    - @peerbit/pubsub bumped to 5.2.0
+    - @peerbit/rpc bumped to 6.0.22
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.22
 
 ## [13.0.24](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.23...shared-log-v13.0.24) (2026-04-12)
 
-
 ### Refactors
 
-* **shared-log:** centralize subscriber cache invalidation ([#720](https://github.com/dao-xyz/peerbit/issues/720)) ([f734c9a](https://github.com/dao-xyz/peerbit/commit/f734c9a551a5414ab506ab6b047c7e5cc8b44d00))
+- **shared-log:** centralize subscriber cache invalidation ([#720](https://github.com/dao-xyz/peerbit/issues/720)) ([f734c9a](https://github.com/dao-xyz/peerbit/commit/f734c9a551a5414ab506ab6b047c7e5cc8b44d00))
 
 ## [13.0.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.22...shared-log-v13.0.23) (2026-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.21
-    * @peerbit/program bumped to 6.0.17
-    * @peerbit/pubsub bumped to 5.1.6
-    * @peerbit/rpc bumped to 6.0.21
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.21
+    - @peerbit/program bumped to 6.0.17
+    - @peerbit/pubsub bumped to 5.1.6
+    - @peerbit/rpc bumped to 6.0.21
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.21
 
 ## [13.0.22](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.21...shared-log-v13.0.22) (2026-03-30)
 
-
 ### Bug Fixes
 
-* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
-
+- **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped to 2.2.9
-    * @peerbit/blocks bumped to 4.0.11
-    * @peerbit/blocks-interface bumped to 2.0.8
-    * @peerbit/crypto bumped to 3.1.1
-    * @peerbit/indexer-interface bumped to 3.0.3
-    * @peerbit/indexer-sqlite3 bumped to 3.0.6
-    * @peerbit/log bumped to 6.0.20
-    * @peerbit/logger bumped to 2.0.1
-    * @peerbit/program bumped to 6.0.16
-    * @peerbit/pubsub bumped to 5.1.5
-    * @peerbit/pubsub-interface bumped to 5.1.1
-    * @peerbit/rpc bumped to 6.0.20
-    * @peerbit/stream-interface bumped to 6.0.7
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped to 2.2.9
+    - @peerbit/blocks bumped to 4.0.11
+    - @peerbit/blocks-interface bumped to 2.0.8
+    - @peerbit/crypto bumped to 3.1.1
+    - @peerbit/indexer-interface bumped to 3.0.3
+    - @peerbit/indexer-sqlite3 bumped to 3.0.6
+    - @peerbit/log bumped to 6.0.20
+    - @peerbit/logger bumped to 2.0.1
+    - @peerbit/program bumped to 6.0.16
+    - @peerbit/pubsub bumped to 5.1.5
+    - @peerbit/pubsub-interface bumped to 5.1.1
+    - @peerbit/rpc bumped to 6.0.20
+    - @peerbit/stream-interface bumped to 6.0.7
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.20
 
 ## [13.0.21](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.20...shared-log-v13.0.21) (2026-03-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.19
-    * @peerbit/program bumped to 6.0.15
-    * @peerbit/rpc bumped to 6.0.19
-    * @peerbit/pubsub bumped to 5.1.4
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.19
+    - @peerbit/program bumped to 6.0.15
+    - @peerbit/rpc bumped to 6.0.19
+    - @peerbit/pubsub bumped to 5.1.4
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.19
 
 ## [13.0.20](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.19...shared-log-v13.0.20) (2026-03-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.18
-    * @peerbit/program bumped to 6.0.14
-    * @peerbit/rpc bumped to 6.0.18
-    * @peerbit/pubsub bumped to 5.1.3
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.18
+    - @peerbit/program bumped to 6.0.14
+    - @peerbit/rpc bumped to 6.0.18
+    - @peerbit/pubsub bumped to 5.1.3
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.18
 
 ## [13.0.19](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.18...shared-log-v13.0.19) (2026-03-27)
 
-
 ### Bug Fixes
 
-* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
-
+- **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
 
 ### Refactors
 
-* remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
-
+- remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.17
-    * @peerbit/program bumped to 6.0.13
-    * @peerbit/rpc bumped to 6.0.17
-    * @peerbit/any-store bumped to 2.2.8
-    * @peerbit/blocks bumped to 4.0.10
-    * @peerbit/blocks-interface bumped to 2.0.7
-    * @peerbit/indexer-sqlite3 bumped to 3.0.5
-    * @peerbit/pubsub bumped to 5.1.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.17
+    - @peerbit/program bumped to 6.0.13
+    - @peerbit/rpc bumped to 6.0.17
+    - @peerbit/any-store bumped to 2.2.8
+    - @peerbit/blocks bumped to 4.0.10
+    - @peerbit/blocks-interface bumped to 2.0.7
+    - @peerbit/indexer-sqlite3 bumped to 3.0.5
+    - @peerbit/pubsub bumped to 5.1.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.17
 
 ## [13.0.18](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.17...shared-log-v13.0.18) (2026-03-22)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.16
-    * @peerbit/program bumped to 6.0.12
-    * @peerbit/rpc bumped to 6.0.16
-    * @peerbit/blocks bumped to 4.0.9
-    * @peerbit/pubsub bumped to 5.1.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.16
+    - @peerbit/program bumped to 6.0.12
+    - @peerbit/rpc bumped to 6.0.16
+    - @peerbit/blocks bumped to 4.0.9
+    - @peerbit/pubsub bumped to 5.1.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.16
 
 ## [13.0.17](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.16...shared-log-v13.0.17) (2026-03-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.15
-    * @peerbit/program bumped to 6.0.11
-    * @peerbit/rpc bumped to 6.0.15
-    * @peerbit/indexer-sqlite3 bumped to 3.0.4
-    * @peerbit/pubsub bumped to 5.1.0
-    * @peerbit/pubsub-interface bumped to 5.1.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.15
+    - @peerbit/program bumped to 6.0.11
+    - @peerbit/rpc bumped to 6.0.15
+    - @peerbit/indexer-sqlite3 bumped to 3.0.4
+    - @peerbit/pubsub bumped to 5.1.0
+    - @peerbit/pubsub-interface bumped to 5.1.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.15
 
 ## [13.0.16](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.15...shared-log-v13.0.16) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.14
-    * @peerbit/program bumped to 6.0.10
-    * @peerbit/rpc bumped to 6.0.14
-    * @peerbit/blocks bumped to 4.0.8
-    * @peerbit/blocks-interface bumped to 2.0.6
-    * @peerbit/pubsub bumped to 5.0.8
-    * @peerbit/pubsub-interface bumped to 5.0.7
-    * @peerbit/stream-interface bumped to 6.0.6
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.14
+    - @peerbit/program bumped to 6.0.10
+    - @peerbit/rpc bumped to 6.0.14
+    - @peerbit/blocks bumped to 4.0.8
+    - @peerbit/blocks-interface bumped to 2.0.6
+    - @peerbit/pubsub bumped to 5.0.8
+    - @peerbit/pubsub-interface bumped to 5.0.7
+    - @peerbit/stream-interface bumped to 6.0.6
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.14
 
 ## [13.0.15](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.14...shared-log-v13.0.15) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.13
-    * @peerbit/program bumped to 6.0.9
-    * @peerbit/rpc bumped to 6.0.13
-    * @peerbit/any-store bumped to 2.2.7
-    * @peerbit/blocks bumped to 4.0.7
-    * @peerbit/blocks-interface bumped to 2.0.5
-    * @peerbit/crypto bumped to 3.1.0
-    * @peerbit/indexer-interface bumped to 3.0.2
-    * @peerbit/indexer-sqlite3 bumped to 3.0.3
-    * @peerbit/pubsub bumped to 5.0.7
-    * @peerbit/pubsub-interface bumped to 5.0.6
-    * @peerbit/stream-interface bumped to 6.0.5
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.13
+    - @peerbit/program bumped to 6.0.9
+    - @peerbit/rpc bumped to 6.0.13
+    - @peerbit/any-store bumped to 2.2.7
+    - @peerbit/blocks bumped to 4.0.7
+    - @peerbit/blocks-interface bumped to 2.0.5
+    - @peerbit/crypto bumped to 3.1.0
+    - @peerbit/indexer-interface bumped to 3.0.2
+    - @peerbit/indexer-sqlite3 bumped to 3.0.3
+    - @peerbit/pubsub bumped to 5.0.7
+    - @peerbit/pubsub-interface bumped to 5.0.6
+    - @peerbit/stream-interface bumped to 6.0.5
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.13
 
 ## [13.0.14](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.13...shared-log-v13.0.14) (2026-03-17)
 
-
 ### Bug Fixes
 
-* **shared-log:** keep visible replicators during liveness churn ([f9d52c7](https://github.com/dao-xyz/peerbit/commit/f9d52c7a9376f5567794c6d6f2b16135fcd30e2b))
-* **shared-log:** keep visible replicators during liveness churn ([f0e5012](https://github.com/dao-xyz/peerbit/commit/f0e501276e2f03092ffa066e56485ffde7e08658))
+- **shared-log:** keep visible replicators during liveness churn ([f9d52c7](https://github.com/dao-xyz/peerbit/commit/f9d52c7a9376f5567794c6d6f2b16135fcd30e2b))
+- **shared-log:** keep visible replicators during liveness churn ([f0e5012](https://github.com/dao-xyz/peerbit/commit/f0e501276e2f03092ffa066e56485ffde7e08658))
 
 ## [13.0.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.12...shared-log-v13.0.13) (2026-03-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.12
-    * @peerbit/rpc bumped to 6.0.12
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.12
+    - @peerbit/rpc bumped to 6.0.12
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.12
 
 ## [13.0.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.11...shared-log-v13.0.12) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.11
-    * @peerbit/program bumped to 6.0.8
-    * @peerbit/rpc bumped to 6.0.11
-    * @peerbit/blocks bumped to 4.0.6
-    * @peerbit/blocks-interface bumped to 2.0.4
-    * @peerbit/pubsub bumped to 5.0.6
-    * @peerbit/pubsub-interface bumped to 5.0.5
-    * @peerbit/stream-interface bumped to 6.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.11
+    - @peerbit/program bumped to 6.0.8
+    - @peerbit/rpc bumped to 6.0.11
+    - @peerbit/blocks bumped to 4.0.6
+    - @peerbit/blocks-interface bumped to 2.0.4
+    - @peerbit/pubsub bumped to 5.0.6
+    - @peerbit/pubsub-interface bumped to 5.0.5
+    - @peerbit/stream-interface bumped to 6.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.11
 
 ## [13.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.10...shared-log-v13.0.11) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.10
-    * @peerbit/program bumped to 6.0.7
-    * @peerbit/rpc bumped to 6.0.10
-    * @peerbit/any-store bumped to 2.2.6
-    * @peerbit/blocks bumped to 4.0.5
-    * @peerbit/blocks-interface bumped to 2.0.3
-    * @peerbit/crypto bumped to 3.0.1
-    * @peerbit/indexer-interface bumped to 3.0.1
-    * @peerbit/indexer-sqlite3 bumped to 3.0.2
-    * @peerbit/pubsub bumped to 5.0.5
-    * @peerbit/pubsub-interface bumped to 5.0.4
-    * @peerbit/stream-interface bumped to 6.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.10
+    - @peerbit/program bumped to 6.0.7
+    - @peerbit/rpc bumped to 6.0.10
+    - @peerbit/any-store bumped to 2.2.6
+    - @peerbit/blocks bumped to 4.0.5
+    - @peerbit/blocks-interface bumped to 2.0.3
+    - @peerbit/crypto bumped to 3.0.1
+    - @peerbit/indexer-interface bumped to 3.0.1
+    - @peerbit/indexer-sqlite3 bumped to 3.0.2
+    - @peerbit/pubsub bumped to 5.0.5
+    - @peerbit/pubsub-interface bumped to 5.0.4
+    - @peerbit/stream-interface bumped to 6.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.10
 
 ## [13.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.9...shared-log-v13.0.10) (2026-03-15)
 
-
 ### Bug Fixes
 
-* stabilize relay liveness and prioritize ACK control traffic ([#661](https://github.com/dao-xyz/peerbit/issues/661)) ([590af40](https://github.com/dao-xyz/peerbit/commit/590af40823c12c2137d6b94bc65eb12438866190))
-
+- stabilize relay liveness and prioritize ACK control traffic ([#661](https://github.com/dao-xyz/peerbit/issues/661)) ([590af40](https://github.com/dao-xyz/peerbit/commit/590af40823c12c2137d6b94bc65eb12438866190))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.9
-    * @peerbit/program bumped to 6.0.6
-    * @peerbit/rpc bumped to 6.0.9
-    * @peerbit/blocks bumped to 4.0.4
-    * @peerbit/blocks-interface bumped to 2.0.2
-    * @peerbit/pubsub bumped to 5.0.4
-    * @peerbit/pubsub-interface bumped to 5.0.3
-    * @peerbit/stream-interface bumped to 6.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.9
+    - @peerbit/program bumped to 6.0.6
+    - @peerbit/rpc bumped to 6.0.9
+    - @peerbit/blocks bumped to 4.0.4
+    - @peerbit/blocks-interface bumped to 2.0.2
+    - @peerbit/pubsub bumped to 5.0.4
+    - @peerbit/pubsub-interface bumped to 5.0.3
+    - @peerbit/stream-interface bumped to 6.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.9
 
 ## [13.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.8...shared-log-v13.0.9) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.8
-    * @peerbit/rpc bumped to 6.0.8
-    * @peerbit/indexer-sqlite3 bumped to 3.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.8
+    - @peerbit/rpc bumped to 6.0.8
+    - @peerbit/indexer-sqlite3 bumped to 3.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.8
 
 ## [13.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.7...shared-log-v13.0.8) (2026-03-09)
 
-
 ### Bug Fixes
 
-* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
-
+- **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.7
-    * @peerbit/program bumped to 6.0.5
-    * @peerbit/rpc bumped to 6.0.7
-    * @peerbit/pubsub bumped to 5.0.3
-    * @peerbit/pubsub-interface bumped to 5.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.7
+    - @peerbit/program bumped to 6.0.5
+    - @peerbit/rpc bumped to 6.0.7
+    - @peerbit/pubsub bumped to 5.0.3
+    - @peerbit/pubsub-interface bumped to 5.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.7
 
 ## [13.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.6...shared-log-v13.0.7) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.6
-    * @peerbit/program bumped to 6.0.4
-    * @peerbit/rpc bumped to 6.0.6
-    * @peerbit/blocks bumped to 4.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.6
+    - @peerbit/program bumped to 6.0.4
+    - @peerbit/rpc bumped to 6.0.6
+    - @peerbit/blocks bumped to 4.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.6
 
 ## [13.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.5...shared-log-v13.0.6) (2026-03-08)
 
-
 ### Bug Fixes
 
-* recover file-share block fetches after refresh churn ([5d63b4f](https://github.com/dao-xyz/peerbit/commit/5d63b4f3c619c1965572ee8bc8d11e0a1c0d0360))
-* **shared-log:** widen block retry provider fallbacks ([f0f53b3](https://github.com/dao-xyz/peerbit/commit/f0f53b3753c53e828197c31f0d155dcb28dc5ffc))
-
+- recover file-share block fetches after refresh churn ([5d63b4f](https://github.com/dao-xyz/peerbit/commit/5d63b4f3c619c1965572ee8bc8d11e0a1c0d0360))
+- **shared-log:** widen block retry provider fallbacks ([f0f53b3](https://github.com/dao-xyz/peerbit/commit/f0f53b3753c53e828197c31f0d155dcb28dc5ffc))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.5
-    * @peerbit/program bumped to 6.0.3
-    * @peerbit/rpc bumped to 6.0.5
-    * @peerbit/blocks bumped to 4.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.5
+    - @peerbit/program bumped to 6.0.3
+    - @peerbit/rpc bumped to 6.0.5
+    - @peerbit/blocks bumped to 4.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.5
 
 ## [13.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.4...shared-log-v13.0.5) (2026-03-08)
 
-
 ### Bug Fixes
 
-* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
-
+- **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
 
 ### Refactors
 
-* **stream:** add request transport context ([e7625b2](https://github.com/dao-xyz/peerbit/commit/e7625b281ec919c18c2ba28724a8eee02a3b3081))
-* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
-
+- **stream:** add request transport context ([e7625b2](https://github.com/dao-xyz/peerbit/commit/e7625b281ec919c18c2ba28724a8eee02a3b3081))
+- **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.4
-    * @peerbit/program bumped to 6.0.2
-    * @peerbit/rpc bumped to 6.0.4
-    * @peerbit/blocks bumped to 4.0.1
-    * @peerbit/blocks-interface bumped to 2.0.1
-    * @peerbit/pubsub bumped to 5.0.2
-    * @peerbit/pubsub-interface bumped to 5.0.1
-    * @peerbit/stream-interface bumped to 6.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.4
+    - @peerbit/program bumped to 6.0.2
+    - @peerbit/rpc bumped to 6.0.4
+    - @peerbit/blocks bumped to 4.0.1
+    - @peerbit/blocks-interface bumped to 2.0.1
+    - @peerbit/pubsub bumped to 5.0.2
+    - @peerbit/pubsub-interface bumped to 5.0.1
+    - @peerbit/stream-interface bumped to 6.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.4
 
 ## [13.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.3...shared-log-v13.0.4) (2026-03-07)
 
-
 ### Bug Fixes
 
-* **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
-* **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
-* **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
-* **shared-log:** target block responses over rpc ([10d008a](https://github.com/dao-xyz/peerbit/commit/10d008a2d6948227c257c8b4fba251ed0d5ce936))
-* **shared-log:** target block responses over RPC ([e16fd7f](https://github.com/dao-xyz/peerbit/commit/e16fd7fefdb1b3a053ff39ac6f75ef11069f9a08))
-
+- **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
+- **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
+- **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
+- **shared-log:** target block responses over rpc ([10d008a](https://github.com/dao-xyz/peerbit/commit/10d008a2d6948227c257c8b4fba251ed0d5ce936))
+- **shared-log:** target block responses over RPC ([e16fd7f](https://github.com/dao-xyz/peerbit/commit/e16fd7fefdb1b3a053ff39ac6f75ef11069f9a08))
 
 ### Refactors
 
-* **rpc:** normalize targeted send options ([8c4e39b](https://github.com/dao-xyz/peerbit/commit/8c4e39bdc7da1f3a92dfa2f779b87c0b5f60f8b8))
-
+- **rpc:** normalize targeted send options ([8c4e39b](https://github.com/dao-xyz/peerbit/commit/8c4e39bdc7da1f3a92dfa2f779b87c0b5f60f8b8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.3
-    * @peerbit/program bumped to 6.0.1
-    * @peerbit/rpc bumped to 6.0.3
-    * @peerbit/pubsub bumped to 5.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.3
+    - @peerbit/program bumped to 6.0.1
+    - @peerbit/rpc bumped to 6.0.3
+    - @peerbit/pubsub bumped to 5.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.3
 
 ## [13.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.2...shared-log-v13.0.3) (2026-03-05)
 
-
 ### Bug Fixes
 
-* **shared-log:** evict stale replicators on abrupt churn ([893c3b8](https://github.com/dao-xyz/peerbit/commit/893c3b89b0c778ef575486005d8985b86df028dc))
-* **shared-log:** ping replicators for liveness ([9def613](https://github.com/dao-xyz/peerbit/commit/9def613ab2ec1fe105bff4fac181437fc4880eb0))
-* **shared-log:** probe replicator liveness on idle peers ([2c6ff5f](https://github.com/dao-xyz/peerbit/commit/2c6ff5fc0b71316ba050163bc72d8808d4178a84))
-* **shared-log:** soften liveness eviction ([8de888f](https://github.com/dao-xyz/peerbit/commit/8de888f20c7ca86ebe69d97f64f3a2e5049ff6b7))
-* **shared-log:** split mixed maybe-sync batches by type ([adc743a](https://github.com/dao-xyz/peerbit/commit/adc743a0b73cc8d67748606acbfbba900fdf1621))
-* **shared-log:** unicast ping for replicator liveness sweep ([a54459d](https://github.com/dao-xyz/peerbit/commit/a54459d2d8a60cb4a0ee04f999b068f3538634c0))
-
+- **shared-log:** evict stale replicators on abrupt churn ([893c3b8](https://github.com/dao-xyz/peerbit/commit/893c3b89b0c778ef575486005d8985b86df028dc))
+- **shared-log:** ping replicators for liveness ([9def613](https://github.com/dao-xyz/peerbit/commit/9def613ab2ec1fe105bff4fac181437fc4880eb0))
+- **shared-log:** probe replicator liveness on idle peers ([2c6ff5f](https://github.com/dao-xyz/peerbit/commit/2c6ff5fc0b71316ba050163bc72d8808d4178a84))
+- **shared-log:** soften liveness eviction ([8de888f](https://github.com/dao-xyz/peerbit/commit/8de888f20c7ca86ebe69d97f64f3a2e5049ff6b7))
+- **shared-log:** split mixed maybe-sync batches by type ([adc743a](https://github.com/dao-xyz/peerbit/commit/adc743a0b73cc8d67748606acbfbba900fdf1621))
+- **shared-log:** unicast ping for replicator liveness sweep ([a54459d](https://github.com/dao-xyz/peerbit/commit/a54459d2d8a60cb4a0ee04f999b068f3538634c0))
 
 ### Documentation
 
-* **shared-log:** explain ping probe rationale ([47679a2](https://github.com/dao-xyz/peerbit/commit/47679a24f627867226cee1fbda73a2348990ef0b))
+- **shared-log:** explain ping probe rationale ([47679a2](https://github.com/dao-xyz/peerbit/commit/47679a24f627867226cee1fbda73a2348990ef0b))
 
 ## [13.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.1...shared-log-v13.0.2) (2026-03-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.2
-    * @peerbit/rpc bumped to 6.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.2
+    - @peerbit/rpc bumped to 6.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.2
 
 ## [13.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v13.0.0...shared-log-v13.0.1) (2026-03-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.1
-    * @peerbit/rpc bumped to 6.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.1
+    - @peerbit/rpc bumped to 6.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.1
 
 ## [13.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.5...shared-log-v13.0.0) (2026-03-04)
 
-
 ### ⚠ BREAKING CHANGES
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
 
 ### Features
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
-
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
 
 ### Bug Fixes
 
-* **pubsub:** treat pending subscriptions as local interest ([#602](https://github.com/dao-xyz/peerbit/issues/602)) ([14881a0](https://github.com/dao-xyz/peerbit/commit/14881a07efffc5dd0da404afa25dada687cb5492))
-* **shared-log:** harden churn rebalance repair ([5e642f8](https://github.com/dao-xyz/peerbit/commit/5e642f85017093b3c44bf3182ca2b1d5d1c13893))
-* **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
-* **shared-log:** harden wait-for-replicator error handling ([#612](https://github.com/dao-xyz/peerbit/issues/612)) ([c6403d3](https://github.com/dao-xyz/peerbit/commit/c6403d3d1378413bafebdbd731e4ce55810eeb44))
-* **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
-
+- **pubsub:** treat pending subscriptions as local interest ([#602](https://github.com/dao-xyz/peerbit/issues/602)) ([14881a0](https://github.com/dao-xyz/peerbit/commit/14881a07efffc5dd0da404afa25dada687cb5492))
+- **shared-log:** harden churn rebalance repair ([5e642f8](https://github.com/dao-xyz/peerbit/commit/5e642f85017093b3c44bf3182ca2b1d5d1c13893))
+- **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
+- **shared-log:** harden wait-for-replicator error handling ([#612](https://github.com/dao-xyz/peerbit/issues/612)) ([c6403d3](https://github.com/dao-xyz/peerbit/commit/c6403d3d1378413bafebdbd731e4ce55810eeb44))
+- **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
 
 ### Documentation
 
-* **shared-log:** clarify rateless maybe-sync is best-effort ([af60ab4](https://github.com/dao-xyz/peerbit/commit/af60ab44768ba4d553500a18ae9f053936892ed5))
-
+- **shared-log:** clarify rateless maybe-sync is best-effort ([af60ab4](https://github.com/dao-xyz/peerbit/commit/af60ab44768ba4d553500a18ae9f053936892ed5))
 
 ### Refactors
 
-* **shared-log:** drop legacy delivery aliases and use timeout ([f44918f](https://github.com/dao-xyz/peerbit/commit/f44918f09b8f1f2fc95d9a24e6959dfb36580312))
-
+- **shared-log:** drop legacy delivery aliases and use timeout ([f44918f](https://github.com/dao-xyz/peerbit/commit/f44918f09b8f1f2fc95d9a24e6959dfb36580312))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.0
-    * @peerbit/program bumped to 6.0.0
-    * @peerbit/rpc bumped to 6.0.0
-    * @peerbit/any-store bumped to 2.2.5
-    * @peerbit/blocks bumped to 4.0.0
-    * @peerbit/blocks-interface bumped to 2.0.0
-    * @peerbit/cache bumped to 3.0.0
-    * @peerbit/crypto bumped to 3.0.0
-    * @peerbit/indexer-interface bumped to 3.0.0
-    * @peerbit/indexer-sqlite3 bumped to 3.0.0
-    * @peerbit/pubsub bumped to 5.0.0
-    * @peerbit/pubsub-interface bumped to 5.0.0
-    * @peerbit/stream-interface bumped to 6.0.0
-    * @peerbit/time bumped to 3.0.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.0
+    - @peerbit/program bumped to 6.0.0
+    - @peerbit/rpc bumped to 6.0.0
+    - @peerbit/any-store bumped to 2.2.5
+    - @peerbit/blocks bumped to 4.0.0
+    - @peerbit/blocks-interface bumped to 2.0.0
+    - @peerbit/cache bumped to 3.0.0
+    - @peerbit/crypto bumped to 3.0.0
+    - @peerbit/indexer-interface bumped to 3.0.0
+    - @peerbit/indexer-sqlite3 bumped to 3.0.0
+    - @peerbit/pubsub bumped to 5.0.0
+    - @peerbit/pubsub-interface bumped to 5.0.0
+    - @peerbit/stream-interface bumped to 6.0.0
+    - @peerbit/time bumped to 3.0.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.0
 
 ## [12.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.4...shared-log-v12.3.5) (2026-01-27)
 
-
 ### Bug Fixes
 
-* **shared-log:** make waitForReplicators robust ([ad0f88c](https://github.com/dao-xyz/peerbit/commit/ad0f88c881aeea42f5fc07968648823ebad7a4a4))
+- **shared-log:** make waitForReplicators robust ([ad0f88c](https://github.com/dao-xyz/peerbit/commit/ad0f88c881aeea42f5fc07968648823ebad7a4a4))
 
 ## [12.3.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.3...shared-log-v12.3.4) (2026-01-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.10
-    * @peerbit/program bumped to 5.6.3
-    * @peerbit/rpc bumped to 5.4.20
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.10
+    - @peerbit/program bumped to 5.6.3
+    - @peerbit/rpc bumped to 5.4.20
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.19
 
 ## [12.3.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.2...shared-log-v12.3.3) (2026-01-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/rpc bumped to 5.4.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/rpc bumped to 5.4.19
 
 ## [12.3.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.1...shared-log-v12.3.2) (2026-01-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.9
-    * @peerbit/program bumped to 5.6.2
-    * @peerbit/rpc bumped to 5.4.18
-    * @peerbit/blocks bumped to 3.1.8
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.9
+    - @peerbit/program bumped to 5.6.2
+    - @peerbit/rpc bumped to 5.4.18
+    - @peerbit/blocks bumped to 3.1.8
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.18
 
 ## [12.3.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.3.0...shared-log-v12.3.1) (2026-01-23)
 
-
 ### Bug Fixes
 
-* **shared-log:** increase waitForReplicator timeout ([52eac7b](https://github.com/dao-xyz/peerbit/commit/52eac7b76b653a97aec2704f3ce38a454c75030f))
-* **shared-log:** increase waitForReplicator timeout ([11ea82e](https://github.com/dao-xyz/peerbit/commit/11ea82e83d0f12d59f249bfe0198b09587ae267e))
-
+- **shared-log:** increase waitForReplicator timeout ([52eac7b](https://github.com/dao-xyz/peerbit/commit/52eac7b76b653a97aec2704f3ce38a454c75030f))
+- **shared-log:** increase waitForReplicator timeout ([11ea82e](https://github.com/dao-xyz/peerbit/commit/11ea82e83d0f12d59f249bfe0198b09587ae267e))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.8
-    * @peerbit/rpc bumped to 5.4.17
-    * @peerbit/indexer-sqlite3 bumped to 2.1.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.8
+    - @peerbit/rpc bumped to 5.4.17
+    - @peerbit/indexer-sqlite3 bumped to 2.1.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.17
 
 ## [12.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.2.0...shared-log-v12.3.0) (2026-01-22)
 
-
 ### Features
 
-* **shared-log:** add sync prioritization options ([fee5046](https://github.com/dao-xyz/peerbit/commit/fee504636bd9900dda876499170087444c2b763a))
-* **shared-log:** make waitForReplicator request loop configurable ([e0f68cd](https://github.com/dao-xyz/peerbit/commit/e0f68cd4def66b8a296ddbfd3ac42124a7b39c75))
-
+- **shared-log:** add sync prioritization options ([fee5046](https://github.com/dao-xyz/peerbit/commit/fee504636bd9900dda876499170087444c2b763a))
+- **shared-log:** make waitForReplicator request loop configurable ([e0f68cd](https://github.com/dao-xyz/peerbit/commit/e0f68cd4def66b8a296ddbfd3ac42124a7b39c75))
 
 ### Bug Fixes
 
-* **document:** forward shared-log sync options ([874976b](https://github.com/dao-xyz/peerbit/commit/874976b7c668b1dea86d7a88d3393bddf3448fd2))
-* **shared-log:** apply replication segments without waitFor ([83bec78](https://github.com/dao-xyz/peerbit/commit/83bec7834299d877bdae85623daeeb01bcd6940c))
-* **shared-log:** cover selection for wrapped start ([36ad887](https://github.com/dao-xyz/peerbit/commit/36ad887b15756ae6c51eb27bf604d874eab66212))
-* **shared-log:** cover wrap + rebalance removals ([0536b98](https://github.com/dao-xyz/peerbit/commit/0536b981e9031f50b8b87c7c7a12c33f05eb5b1f))
-* **shared-log:** ignore no-op replication resets ([d31c0ff](https://github.com/dao-xyz/peerbit/commit/d31c0ff885f7f5cf71fcd5507005cea5f15bbfce))
-* **shared-log:** include last peer in cover set ([4a1b137](https://github.com/dao-xyz/peerbit/commit/4a1b13733f5e47bb68913fe96cb6e05bdbb942fa))
-* **shared-log:** include peer on cover tie ([e6e0217](https://github.com/dao-xyz/peerbit/commit/e6e02177b1cdacefce8d236596ee6f47883e0df1))
-* **shared-log:** keep requesting replication info ([74bcd55](https://github.com/dao-xyz/peerbit/commit/74bcd552a0348042f41f45b2315708b97b8e8242))
-* **shared-log:** prevent cover wrap loops ([19a7e13](https://github.com/dao-xyz/peerbit/commit/19a7e13a48fd45d55bbd4658bbba2fa8a44acb42))
-* **shared-log:** reachableOnly uses pubsub subscribers ([afdd8c0](https://github.com/dao-xyz/peerbit/commit/afdd8c0fb7eb5059a545530625dde0ab3dfe435e))
-* **shared-log:** request replication info for joins ([ac7de22](https://github.com/dao-xyz/peerbit/commit/ac7de22c5cf831fc8cf3a2b59a24b157dbcdf4e2))
-* **shared-log:** restore cover selection semantics ([fd6d8e7](https://github.com/dao-xyz/peerbit/commit/fd6d8e77b7cf04d7b9a1c6f59065a50944f9d9bb))
-* **shared-log:** stabilize prune + reachableOnly ([55a0ebf](https://github.com/dao-xyz/peerbit/commit/55a0ebf221a5d9d5f10c0d60ebd4c2fc8d628c08))
-
+- **document:** forward shared-log sync options ([874976b](https://github.com/dao-xyz/peerbit/commit/874976b7c668b1dea86d7a88d3393bddf3448fd2))
+- **shared-log:** apply replication segments without waitFor ([83bec78](https://github.com/dao-xyz/peerbit/commit/83bec7834299d877bdae85623daeeb01bcd6940c))
+- **shared-log:** cover selection for wrapped start ([36ad887](https://github.com/dao-xyz/peerbit/commit/36ad887b15756ae6c51eb27bf604d874eab66212))
+- **shared-log:** cover wrap + rebalance removals ([0536b98](https://github.com/dao-xyz/peerbit/commit/0536b981e9031f50b8b87c7c7a12c33f05eb5b1f))
+- **shared-log:** ignore no-op replication resets ([d31c0ff](https://github.com/dao-xyz/peerbit/commit/d31c0ff885f7f5cf71fcd5507005cea5f15bbfce))
+- **shared-log:** include last peer in cover set ([4a1b137](https://github.com/dao-xyz/peerbit/commit/4a1b13733f5e47bb68913fe96cb6e05bdbb942fa))
+- **shared-log:** include peer on cover tie ([e6e0217](https://github.com/dao-xyz/peerbit/commit/e6e02177b1cdacefce8d236596ee6f47883e0df1))
+- **shared-log:** keep requesting replication info ([74bcd55](https://github.com/dao-xyz/peerbit/commit/74bcd552a0348042f41f45b2315708b97b8e8242))
+- **shared-log:** prevent cover wrap loops ([19a7e13](https://github.com/dao-xyz/peerbit/commit/19a7e13a48fd45d55bbd4658bbba2fa8a44acb42))
+- **shared-log:** reachableOnly uses pubsub subscribers ([afdd8c0](https://github.com/dao-xyz/peerbit/commit/afdd8c0fb7eb5059a545530625dde0ab3dfe435e))
+- **shared-log:** request replication info for joins ([ac7de22](https://github.com/dao-xyz/peerbit/commit/ac7de22c5cf831fc8cf3a2b59a24b157dbcdf4e2))
+- **shared-log:** restore cover selection semantics ([fd6d8e7](https://github.com/dao-xyz/peerbit/commit/fd6d8e77b7cf04d7b9a1c6f59065a50944f9d9bb))
+- **shared-log:** stabilize prune + reachableOnly ([55a0ebf](https://github.com/dao-xyz/peerbit/commit/55a0ebf221a5d9d5f10c0d60ebd4c2fc8d628c08))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.7
-    * @peerbit/program bumped to 5.6.1
-    * @peerbit/rpc bumped to 5.4.16
-    * @peerbit/blocks bumped to 3.1.7
-    * @peerbit/blocks-interface bumped to 1.5.2
-    * @peerbit/indexer-sqlite3 bumped to 2.1.1
-    * @peerbit/pubsub bumped to 4.1.4
-    * @peerbit/pubsub-interface bumped to 4.1.2
-    * @peerbit/stream-interface bumped to 5.4.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.7
+    - @peerbit/program bumped to 5.6.1
+    - @peerbit/rpc bumped to 5.4.16
+    - @peerbit/blocks bumped to 3.1.7
+    - @peerbit/blocks-interface bumped to 1.5.2
+    - @peerbit/indexer-sqlite3 bumped to 2.1.1
+    - @peerbit/pubsub bumped to 4.1.4
+    - @peerbit/pubsub-interface bumped to 4.1.2
+    - @peerbit/stream-interface bumped to 5.4.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.16
 
 ## [12.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.3...shared-log-v12.2.0) (2026-01-17)
 
-
 ### Features
 
-* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
-
+- **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.6
-    * @peerbit/program bumped to 5.6.0
-    * @peerbit/riblt bumped to 1.2.0
-    * @peerbit/rpc bumped to 5.4.15
-    * @peerbit/indexer-sqlite3 bumped to 2.1.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.6
+    - @peerbit/program bumped to 5.6.0
+    - @peerbit/riblt bumped to 1.2.0
+    - @peerbit/rpc bumped to 5.4.15
+    - @peerbit/indexer-sqlite3 bumped to 2.1.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.15
 
 ## [12.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.2...shared-log-v12.1.3) (2026-01-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.5
-    * @peerbit/program bumped to 5.5.2
-    * @peerbit/rpc bumped to 5.4.14
-    * @peerbit/blocks bumped to 3.1.6
-    * @peerbit/pubsub bumped to 4.1.3
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.5
+    - @peerbit/program bumped to 5.5.2
+    - @peerbit/rpc bumped to 5.4.14
+    - @peerbit/blocks bumped to 3.1.6
+    - @peerbit/pubsub bumped to 4.1.3
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.14
 
 ## [12.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.1...shared-log-v12.1.2) (2026-01-02)
 
-
 ### Bug Fixes
 
-* settle append delivery to current replicators ([63c6b11](https://github.com/dao-xyz/peerbit/commit/63c6b1195e7116876e1f357a7112b9f1b33d4658))
-
+- settle append delivery to current replicators ([63c6b11](https://github.com/dao-xyz/peerbit/commit/63c6b1195e7116876e1f357a7112b9f1b33d4658))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.4
-    * @peerbit/rpc bumped to 5.4.13
-    * @peerbit/indexer-sqlite3 bumped to 2.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.4
+    - @peerbit/rpc bumped to 5.4.13
+    - @peerbit/indexer-sqlite3 bumped to 2.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.13
 
 ## [12.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.1.0...shared-log-v12.1.1) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.3
-    * @peerbit/program bumped to 5.5.1
-    * @peerbit/rpc bumped to 5.4.12
-    * @peerbit/any-store bumped to 2.2.4
-    * @peerbit/blocks bumped to 3.1.5
-    * @peerbit/blocks-interface bumped to 1.5.1
-    * @peerbit/crypto bumped to 2.4.1
-    * @peerbit/indexer-interface bumped to 2.1.1
-    * @peerbit/indexer-sqlite3 bumped to 2.0.1
-    * @peerbit/pubsub bumped to 4.1.2
-    * @peerbit/pubsub-interface bumped to 4.1.1
-    * @peerbit/stream-interface bumped to 5.3.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.3
+    - @peerbit/program bumped to 5.5.1
+    - @peerbit/rpc bumped to 5.4.12
+    - @peerbit/any-store bumped to 2.2.4
+    - @peerbit/blocks bumped to 3.1.5
+    - @peerbit/blocks-interface bumped to 1.5.1
+    - @peerbit/crypto bumped to 2.4.1
+    - @peerbit/indexer-interface bumped to 2.1.1
+    - @peerbit/indexer-sqlite3 bumped to 2.0.1
+    - @peerbit/pubsub bumped to 4.1.2
+    - @peerbit/pubsub-interface bumped to 4.1.1
+    - @peerbit/stream-interface bumped to 5.3.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.12
 
 ## [12.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.0.1...shared-log-v12.1.0) (2025-12-30)
 
-
 ### Features
 
-* delivery options for ops ([921fd05](https://github.com/dao-xyz/peerbit/commit/921fd052b452e3d67583f54f2b815eebda6181e1))
-
+- delivery options for ops ([921fd05](https://github.com/dao-xyz/peerbit/commit/921fd052b452e3d67583f54f2b815eebda6181e1))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.2
-    * @peerbit/rpc bumped to 5.4.11
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.2
+    - @peerbit/rpc bumped to 5.4.11
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.11
 
 ## [12.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v12.0.0...shared-log-v12.0.1) (2025-12-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.1
-    * @peerbit/program bumped to 5.5.0
-    * @peerbit/rpc bumped to 5.4.10
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.1
+    - @peerbit/program bumped to 5.5.0
+    - @peerbit/rpc bumped to 5.4.10
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.10
 
 ## [12.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.9...shared-log-v12.0.0) (2025-12-23)
 
-
 ### ⚠ BREAKING CHANGES
 
-* use variants for inline types and and enfore variants for indexed types
+- use variants for inline types and and enfore variants for indexed types
 
 ### Features
 
-* use variants for inline types and and enfore variants for indexed types ([6d4235f](https://github.com/dao-xyz/peerbit/commit/6d4235fc512eed95cb8cd2f71d72b21eba8ff434))
-
+- use variants for inline types and and enfore variants for indexed types ([6d4235f](https://github.com/dao-xyz/peerbit/commit/6d4235fc512eed95cb8cd2f71d72b21eba8ff434))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.0
-    * @peerbit/program bumped to 5.4.5
-    * @peerbit/rpc bumped to 5.4.9
-    * @peerbit/any-store bumped to 2.2.3
-    * @peerbit/blocks bumped to 3.1.4
-    * @peerbit/indexer-sqlite3 bumped to 2.0.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.0
+    - @peerbit/program bumped to 5.4.5
+    - @peerbit/rpc bumped to 5.4.9
+    - @peerbit/any-store bumped to 2.2.3
+    - @peerbit/blocks bumped to 3.1.4
+    - @peerbit/indexer-sqlite3 bumped to 2.0.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.9
 
 ## [11.6.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.8...shared-log-v11.6.9) (2025-12-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.8
-    * @peerbit/rpc bumped to 5.4.8
-    * @peerbit/indexer-sqlite3 bumped to 1.3.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.8
+    - @peerbit/rpc bumped to 5.4.8
+    - @peerbit/indexer-sqlite3 bumped to 1.3.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.8
 
 ## [11.6.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.7...shared-log-v11.6.8) (2025-12-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.7
-    * @peerbit/rpc bumped to 5.4.7
-    * @peerbit/indexer-sqlite3 bumped to 1.3.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.7
+    - @peerbit/rpc bumped to 5.4.7
+    - @peerbit/indexer-sqlite3 bumped to 1.3.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.7
 
 ## [11.6.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.6...shared-log-v11.6.7) (2025-12-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.6
-    * @peerbit/program bumped to 5.4.4
-    * @peerbit/rpc bumped to 5.4.6
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.6
+    - @peerbit/program bumped to 5.4.4
+    - @peerbit/rpc bumped to 5.4.6
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.6
 
 ## [11.6.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.5...shared-log-v11.6.6) (2025-12-16)
 
-
 ### Bug Fixes
 
-* handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
+- handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
 
 ## [11.6.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.4...shared-log-v11.6.5) (2025-12-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.5
-    * @peerbit/program bumped to 5.4.3
-    * @peerbit/rpc bumped to 5.4.5
-    * @peerbit/any-store bumped to 2.2.2
-    * @peerbit/blocks bumped to 3.1.3
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.5
+    - @peerbit/program bumped to 5.4.3
+    - @peerbit/rpc bumped to 5.4.5
+    - @peerbit/any-store bumped to 2.2.2
+    - @peerbit/blocks bumped to 3.1.3
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.5
 
 ## [11.6.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.3...shared-log-v11.6.4) (2025-12-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.4
-    * @peerbit/program bumped to 5.4.2
-    * @peerbit/rpc bumped to 5.4.4
-    * @peerbit/blocks bumped to 3.1.2
-    * @peerbit/pubsub bumped to 4.1.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.4
+    - @peerbit/program bumped to 5.4.2
+    - @peerbit/rpc bumped to 5.4.4
+    - @peerbit/blocks bumped to 3.1.2
+    - @peerbit/pubsub bumped to 4.1.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.4
 
 ## [11.6.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.2...shared-log-v11.6.3) (2025-11-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.3
-    * @peerbit/program bumped to 5.4.1
-    * @peerbit/rpc bumped to 5.4.3
-    * @peerbit/any-store bumped to 2.2.1
-    * @peerbit/blocks bumped to 3.1.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.3
+    - @peerbit/program bumped to 5.4.1
+    - @peerbit/rpc bumped to 5.4.3
+    - @peerbit/any-store bumped to 2.2.1
+    - @peerbit/blocks bumped to 3.1.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.3
 
 ## [11.6.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.1...shared-log-v11.6.2) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.2
-    * @peerbit/program bumped to 5.4.0
-    * @peerbit/rpc bumped to 5.4.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.2
+    - @peerbit/program bumped to 5.4.0
+    - @peerbit/rpc bumped to 5.4.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.2
 
 ## [11.6.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.6.0...shared-log-v11.6.1) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.1
-    * @peerbit/program bumped to 1.1.0
-    * @peerbit/rpc bumped to 5.4.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.1
+    - @peerbit/program bumped to 1.1.0
+    - @peerbit/rpc bumped to 5.4.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.1
 
 ## [11.6.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.8...shared-log-v11.6.0) (2025-11-25)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
 
 ### Bug Fixes
 
-* flaky timer ([1338dc3](https://github.com/dao-xyz/peerbit/commit/1338dc3dd75463a99ed2b66bf142da96d0152000))
-* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
-
+- flaky timer ([1338dc3](https://github.com/dao-xyz/peerbit/commit/1338dc3dd75463a99ed2b66bf142da96d0152000))
+- use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.0
-    * @peerbit/logger bumped to 2.0.0
-    * @peerbit/program bumped to 1.0.0
-    * @peerbit/riblt bumped to 1.1.0
-    * @peerbit/rpc bumped to 5.4.0
-    * @peerbit/any-store bumped to 2.2.0
-    * @peerbit/blocks bumped to 3.1.0
-    * @peerbit/blocks-interface bumped to 1.5.0
-    * @peerbit/cache bumped to 2.2.0
-    * @peerbit/crypto bumped to 2.4.0
-    * @peerbit/indexer-interface bumped to 2.1.0
-    * @peerbit/indexer-sqlite3 bumped to 1.3.0
-    * @peerbit/pubsub bumped to 4.1.0
-    * @peerbit/pubsub-interface bumped to 4.1.0
-    * @peerbit/stream-interface bumped to 5.3.0
-    * @peerbit/time bumped to 2.3.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.3.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.0
+    - @peerbit/logger bumped to 2.0.0
+    - @peerbit/program bumped to 1.0.0
+    - @peerbit/riblt bumped to 1.1.0
+    - @peerbit/rpc bumped to 5.4.0
+    - @peerbit/any-store bumped to 2.2.0
+    - @peerbit/blocks bumped to 3.1.0
+    - @peerbit/blocks-interface bumped to 1.5.0
+    - @peerbit/cache bumped to 2.2.0
+    - @peerbit/crypto bumped to 2.4.0
+    - @peerbit/indexer-interface bumped to 2.1.0
+    - @peerbit/indexer-sqlite3 bumped to 1.3.0
+    - @peerbit/pubsub bumped to 4.1.0
+    - @peerbit/pubsub-interface bumped to 4.1.0
+    - @peerbit/stream-interface bumped to 5.3.0
+    - @peerbit/time bumped to 2.3.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.3.0
 
 ## [11.5.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.7...shared-log-v11.5.8) (2025-10-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.1.11
-    * @peerbit/program bumped to 5.3.6
-    * @peerbit/rpc bumped to 5.3.29
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.2.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.1.11
+    - @peerbit/program bumped to 5.3.6
+    - @peerbit/rpc bumped to 5.3.29
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.2.11
 
 ## [11.5.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.6...shared-log-v11.5.7) (2025-10-03)
 
-
 ### Bug Fixes
 
-* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
-
+- restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.1.10
-    * @peerbit/program bumped to 5.3.5
-    * @peerbit/rpc bumped to 5.3.28
-    * @peerbit/any-store bumped to 2.1.16
-    * @peerbit/blocks bumped to 3.0.15
-    * @peerbit/blocks-interface bumped to 1.4.14
-    * @peerbit/crypto bumped to 2.3.13
-    * @peerbit/indexer-interface bumped to 2.0.14
-    * @peerbit/indexer-sqlite3 bumped to 1.2.30
-    * @peerbit/pubsub bumped to 4.0.18
-    * @peerbit/pubsub-interface bumped to 4.0.9
-    * @peerbit/stream-interface bumped to 5.2.10
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.2.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.1.10
+    - @peerbit/program bumped to 5.3.5
+    - @peerbit/rpc bumped to 5.3.28
+    - @peerbit/any-store bumped to 2.1.16
+    - @peerbit/blocks bumped to 3.0.15
+    - @peerbit/blocks-interface bumped to 1.4.14
+    - @peerbit/crypto bumped to 2.3.13
+    - @peerbit/indexer-interface bumped to 2.0.14
+    - @peerbit/indexer-sqlite3 bumped to 1.2.30
+    - @peerbit/pubsub bumped to 4.0.18
+    - @peerbit/pubsub-interface bumped to 4.0.9
+    - @peerbit/stream-interface bumped to 5.2.10
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.2.10
 
 ## [11.5.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.5...shared-log-v11.5.6) (2025-10-03)
 
-
 ### Bug Fixes
 
-* add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
-* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
-* domain default any ([a5aea70](https://github.com/dao-xyz/peerbit/commit/a5aea702064f5cfd8ba1ce5779130b3a68e43ce8))
-* iblt fallback sync naive ([a6d3538](https://github.com/dao-xyz/peerbit/commit/a6d3538f8b0e80e93bca81acedab2ff29f2d923b))
-* listener leak ([37b3a70](https://github.com/dao-xyz/peerbit/commit/37b3a70f75933d881bcc0875c32983fde033d39d))
-* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
-
+- add missing deps ([38c7cb2](https://github.com/dao-xyz/peerbit/commit/38c7cb28183835a49ffe648d55e25a3951534143))
+- add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+- domain default any ([a5aea70](https://github.com/dao-xyz/peerbit/commit/a5aea702064f5cfd8ba1ce5779130b3a68e43ce8))
+- iblt fallback sync naive ([a6d3538](https://github.com/dao-xyz/peerbit/commit/a6d3538f8b0e80e93bca81acedab2ff29f2d923b))
+- listener leak ([37b3a70](https://github.com/dao-xyz/peerbit/commit/37b3a70f75933d881bcc0875c32983fde033d39d))
+- pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.1.9
-    * @peerbit/program bumped to 5.3.4
-    * @peerbit/riblt bumped to 1.0.8
-    * @peerbit/rpc bumped to 5.3.27
-    * @peerbit/any-store bumped to 2.1.15
-    * @peerbit/blocks bumped to 3.0.14
-    * @peerbit/blocks-interface bumped to 1.4.13
-    * @peerbit/cache bumped to 2.1.5
-    * @peerbit/crypto bumped to 2.3.12
-    * @peerbit/indexer-interface bumped to 2.0.13
-    * @peerbit/indexer-sqlite3 bumped to 1.2.29
-    * @peerbit/pubsub bumped to 4.0.17
-    * @peerbit/pubsub-interface bumped to 4.0.8
-    * @peerbit/stream-interface bumped to 5.2.9
-  * devDependencies
-    * @peerbit/test-utils bumped to 2.2.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.1.9
+    - @peerbit/program bumped to 5.3.4
+    - @peerbit/riblt bumped to 1.0.8
+    - @peerbit/rpc bumped to 5.3.27
+    - @peerbit/any-store bumped to 2.1.15
+    - @peerbit/blocks bumped to 3.0.14
+    - @peerbit/blocks-interface bumped to 1.4.13
+    - @peerbit/cache bumped to 2.1.5
+    - @peerbit/crypto bumped to 2.3.12
+    - @peerbit/indexer-interface bumped to 2.0.13
+    - @peerbit/indexer-sqlite3 bumped to 1.2.29
+    - @peerbit/pubsub bumped to 4.0.17
+    - @peerbit/pubsub-interface bumped to 4.0.8
+    - @peerbit/stream-interface bumped to 5.2.9
+  - devDependencies
+    - @peerbit/test-utils bumped to 2.2.9
 
 ## [11.5.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.4...shared-log-v11.5.5) (2025-09-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.7 to 4.1.8
-    * @peerbit/rpc bumped from 5.3.25 to 5.3.26
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.7 to ^2.2.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.7 to 4.1.8
+    - @peerbit/rpc bumped from 5.3.25 to 5.3.26
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.7 to ^2.2.8
 
 ## [11.5.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.3...shared-log-v11.5.4) (2025-09-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.6 to 4.1.7
-    * @peerbit/rpc bumped from 5.3.24 to 5.3.25
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.6 to ^2.2.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.6 to 4.1.7
+    - @peerbit/rpc bumped from 5.3.24 to 5.3.25
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.6 to ^2.2.7
 
 ## [11.5.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.2...shared-log-v11.5.3) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.3.2 to 5.3.3
-    * @peerbit/log bumped from 4.1.5 to 4.1.6
-    * @peerbit/rpc bumped from 5.3.23 to 5.3.24
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.5 to ^2.2.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.3.2 to 5.3.3
+    - @peerbit/log bumped from 4.1.5 to 4.1.6
+    - @peerbit/rpc bumped from 5.3.23 to 5.3.24
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.5 to ^2.2.6
 
 ## [11.5.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.1...shared-log-v11.5.2) (2025-09-24)
 
-
 ### Bug Fixes
 
-* correctly handle end condition ([363f6a8](https://github.com/dao-xyz/peerbit/commit/363f6a883b866c1cc0397445d1ca58cb3c17f993))
-
+- correctly handle end condition ([363f6a8](https://github.com/dao-xyz/peerbit/commit/363f6a883b866c1cc0397445d1ca58cb3c17f993))
 
 ### Refactors
 
-* streamline message processing in RatelessIBLTSynchronizer and better handling for InvalidDegree error ([0fddff8](https://github.com/dao-xyz/peerbit/commit/0fddff89119fe8f826b1831ed7e358ef7c257b4b))
-
+- streamline message processing in RatelessIBLTSynchronizer and better handling for InvalidDegree error ([0fddff8](https://github.com/dao-xyz/peerbit/commit/0fddff89119fe8f826b1831ed7e358ef7c257b4b))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/riblt bumped from 1.0.6 to 1.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/riblt bumped from 1.0.6 to 1.0.7
 
 ## [11.5.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.5.0...shared-log-v11.5.1) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.3.1 to 5.3.2
-    * @peerbit/log bumped from 4.1.4 to 4.1.5
-    * @peerbit/rpc bumped from 5.3.22 to 5.3.23
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.4 to ^2.2.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.3.1 to 5.3.2
+    - @peerbit/log bumped from 4.1.4 to 4.1.5
+    - @peerbit/rpc bumped from 5.3.22 to 5.3.23
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.4 to ^2.2.5
 
 ## [11.5.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.4.3...shared-log-v11.5.0) (2025-09-24)
 
-
 ### Features
 
-* improve waitForReplicator functionality to support eager options ([b17572b](https://github.com/dao-xyz/peerbit/commit/b17572bae447104d60b47dc19dde356f168bb9f3))
-
+- improve waitForReplicator functionality to support eager options ([b17572b](https://github.com/dao-xyz/peerbit/commit/b17572bae447104d60b47dc19dde356f168bb9f3))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.3.0 to 5.3.1
-    * @peerbit/log bumped from 4.1.3 to 4.1.4
-    * @peerbit/rpc bumped from 5.3.21 to 5.3.22
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.3 to ^2.2.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.3.0 to 5.3.1
+    - @peerbit/log bumped from 4.1.3 to 4.1.4
+    - @peerbit/rpc bumped from 5.3.21 to 5.3.22
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.3 to ^2.2.4
 
 ## [11.4.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.4.2...shared-log-v11.4.3) (2025-09-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.2 to 4.1.3
-    * @peerbit/rpc bumped from 5.3.20 to 5.3.21
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.2 to ^2.2.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.2 to 4.1.3
+    - @peerbit/rpc bumped from 5.3.20 to 5.3.21
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.2 to ^2.2.3
 
 ## [11.4.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.4.1...shared-log-v11.4.2) (2025-09-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.1 to 4.1.2
-    * @peerbit/rpc bumped from 5.3.19 to 5.3.20
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.1 to ^2.2.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.1 to 4.1.2
+    - @peerbit/rpc bumped from 5.3.19 to 5.3.20
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.1 to ^2.2.2
 
 ## [11.4.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.4.0...shared-log-v11.4.1) (2025-09-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.0 to 4.1.1
-    * @peerbit/rpc bumped from 5.3.18 to 5.3.19
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.2.0 to ^2.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.0 to 4.1.1
+    - @peerbit/rpc bumped from 5.3.18 to 5.3.19
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.2.0 to ^2.2.1
 
 ## [11.4.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.8...shared-log-v11.4.0) (2025-09-16)
 
-
 ### Features
 
-* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
-
+- make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.17 to 5.3.0
-    * @peerbit/log bumped from 4.0.72 to 4.1.0
-    * @peerbit/rpc bumped from 5.3.17 to 5.3.18
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.60 to ^2.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.17 to 5.3.0
+    - @peerbit/log bumped from 4.0.72 to 4.1.0
+    - @peerbit/rpc bumped from 5.3.17 to 5.3.18
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.60 to ^2.2.0
 
 ## [11.3.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.7...shared-log-v11.3.8) (2025-09-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.71 to 4.0.72
-    * @peerbit/rpc bumped from 5.3.16 to 5.3.17
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.59 to ^2.1.60
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.71 to 4.0.72
+    - @peerbit/rpc bumped from 5.3.16 to 5.3.17
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.59 to ^2.1.60
 
 ## [11.3.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.6...shared-log-v11.3.7) (2025-09-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.70 to 4.0.71
-    * @peerbit/rpc bumped from 5.3.15 to 5.3.16
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.58 to ^2.1.59
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.70 to 4.0.71
+    - @peerbit/rpc bumped from 5.3.15 to 5.3.16
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.58 to ^2.1.59
 
 ## [11.3.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.5...shared-log-v11.3.6) (2025-09-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.16 to 5.2.17
-    * @peerbit/log bumped from 4.0.69 to 4.0.70
-    * @peerbit/rpc bumped from 5.3.14 to 5.3.15
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.57 to ^2.1.58
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.16 to 5.2.17
+    - @peerbit/log bumped from 4.0.69 to 4.0.70
+    - @peerbit/rpc bumped from 5.3.14 to 5.3.15
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.57 to ^2.1.58
 
 ## [11.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.4...shared-log-v11.3.5) (2025-09-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/logger bumped from 1.0.3 to 1.0.4
-    * @peerbit/program bumped from 5.2.15 to 5.2.16
-    * @peerbit/log bumped from 4.0.68 to 4.0.69
-    * @peerbit/rpc bumped from 5.3.13 to 5.3.14
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.56 to ^2.1.57
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/logger bumped from 1.0.3 to 1.0.4
+    - @peerbit/program bumped from 5.2.15 to 5.2.16
+    - @peerbit/log bumped from 4.0.68 to 4.0.69
+    - @peerbit/rpc bumped from 5.3.13 to 5.3.14
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.56 to ^2.1.57
 
 ## [11.3.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.3...shared-log-v11.3.4) (2025-08-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.67 to 4.0.68
-    * @peerbit/rpc bumped from 5.3.12 to 5.3.13
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.55 to ^2.1.56
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.67 to 4.0.68
+    - @peerbit/rpc bumped from 5.3.12 to 5.3.13
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.55 to ^2.1.56
 
 ## [11.3.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.2...shared-log-v11.3.3) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.66 to 4.0.67
-    * @peerbit/rpc bumped from 5.3.11 to 5.3.12
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.54 to ^2.1.55
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.66 to 4.0.67
+    - @peerbit/rpc bumped from 5.3.11 to 5.3.12
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.54 to ^2.1.55
 
 ## [11.3.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.1...shared-log-v11.3.2) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.14 to 5.2.15
-    * @peerbit/log bumped from 4.0.65 to 4.0.66
-    * @peerbit/rpc bumped from 5.3.10 to 5.3.11
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.53 to ^2.1.54
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.14 to 5.2.15
+    - @peerbit/log bumped from 4.0.65 to 4.0.66
+    - @peerbit/rpc bumped from 5.3.10 to 5.3.11
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.53 to ^2.1.54
 
 ## [11.3.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.3.0...shared-log-v11.3.1) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.64 to 4.0.65
-    * @peerbit/rpc bumped from 5.3.9 to 5.3.10
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.52 to ^2.1.53
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.64 to 4.0.65
+    - @peerbit/rpc bumped from 5.3.9 to 5.3.10
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.52 to ^2.1.53
 
 ## [11.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.9...shared-log-v11.3.0) (2025-08-12)
 
-
 ### Features
 
-* getCover reachableOnly option ([5ff4c5b](https://github.com/dao-xyz/peerbit/commit/5ff4c5b750357595e8b9c6bd2434e38ab5de7ca1))
+- getCover reachableOnly option ([5ff4c5b](https://github.com/dao-xyz/peerbit/commit/5ff4c5b750357595e8b9c6bd2434e38ab5de7ca1))
 
 ## [11.2.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.8...shared-log-v11.2.9) (2025-08-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.13 to 5.2.14
-    * @peerbit/log bumped from 4.0.63 to 4.0.64
-    * @peerbit/rpc bumped from 5.3.8 to 5.3.9
-    * @peerbit/time bumped from 2.1.0 to 2.2.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.51 to ^2.1.52
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.13 to 5.2.14
+    - @peerbit/log bumped from 4.0.63 to 4.0.64
+    - @peerbit/rpc bumped from 5.3.8 to 5.3.9
+    - @peerbit/time bumped from 2.1.0 to 2.2.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.51 to ^2.1.52
 
 ## [11.2.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.7...shared-log-v11.2.8) (2025-06-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.62 to 4.0.63
-    * @peerbit/rpc bumped from 5.3.7 to 5.3.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.50 to ^2.1.51
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.62 to 4.0.63
+    - @peerbit/rpc bumped from 5.3.7 to 5.3.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.50 to ^2.1.51
 
 ## [11.2.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.6...shared-log-v11.2.7) (2025-06-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.61 to 4.0.62
-    * @peerbit/rpc bumped from 5.3.6 to 5.3.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.49 to ^2.1.50
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.61 to 4.0.62
+    - @peerbit/rpc bumped from 5.3.6 to 5.3.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.49 to ^2.1.50
 
 ## [11.2.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.5...shared-log-v11.2.6) (2025-06-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.12 to 5.2.13
-    * @peerbit/log bumped from 4.0.60 to 4.0.61
-    * @peerbit/rpc bumped from 5.3.5 to 5.3.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.48 to ^2.1.49
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.12 to 5.2.13
+    - @peerbit/log bumped from 4.0.60 to 4.0.61
+    - @peerbit/rpc bumped from 5.3.5 to 5.3.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.48 to ^2.1.49
 
 ## [11.2.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.4...shared-log-v11.2.5) (2025-06-04)
 
-
 ### Documentation
 
-* rm comment ([dca68d7](https://github.com/dao-xyz/peerbit/commit/dca68d764d9f60a88cd14d1fc59bef498a14910f))
-
+- rm comment ([dca68d7](https://github.com/dao-xyz/peerbit/commit/dca68d764d9f60a88cd14d1fc59bef498a14910f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.11 to 5.2.12
-    * @peerbit/log bumped from 4.0.59 to 4.0.60
-    * @peerbit/rpc bumped from 5.3.4 to 5.3.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.47 to ^2.1.48
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.11 to 5.2.12
+    - @peerbit/log bumped from 4.0.59 to 4.0.60
+    - @peerbit/rpc bumped from 5.3.4 to 5.3.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.47 to ^2.1.48
 
 ## [11.2.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.3...shared-log-v11.2.4) (2025-06-04)
 
-
 ### Bug Fixes
 
-* waitForReplicator add AbortSignal ([f646907](https://github.com/dao-xyz/peerbit/commit/f646907292750df4331149a9f912847f46031d75))
-* waitForReplicator event based ([94e2bf6](https://github.com/dao-xyz/peerbit/commit/94e2bf6ce1816c96321aead431919ecc453d6cb8))
-
+- waitForReplicator add AbortSignal ([f646907](https://github.com/dao-xyz/peerbit/commit/f646907292750df4331149a9f912847f46031d75))
+- waitForReplicator event based ([94e2bf6](https://github.com/dao-xyz/peerbit/commit/94e2bf6ce1816c96321aead431919ecc453d6cb8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.58 to 4.0.59
-    * @peerbit/rpc bumped from 5.3.3 to 5.3.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.46 to ^2.1.47
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.58 to 4.0.59
+    - @peerbit/rpc bumped from 5.3.3 to 5.3.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.46 to ^2.1.47
 
 ## [11.2.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.2...shared-log-v11.2.3) (2025-05-16)
 
-
 ### Bug Fixes
 
-* waitForReplicators wait for self maturity ([2292bf0](https://github.com/dao-xyz/peerbit/commit/2292bf052020e5b2dd638a2df61d75d2f2bd6b3b))
+- waitForReplicators wait for self maturity ([2292bf0](https://github.com/dao-xyz/peerbit/commit/2292bf052020e5b2dd638a2df61d75d2f2bd6b3b))
 
 ## [11.2.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.1...shared-log-v11.2.2) (2025-05-14)
 
-
 ### Bug Fixes
 
-* don't deliver when missing to in set on append ([902158c](https://github.com/dao-xyz/peerbit/commit/902158c54b7dcbd15e23fff7c0815de1a5c11cc4))
+- don't deliver when missing to in set on append ([902158c](https://github.com/dao-xyz/peerbit/commit/902158c54b7dcbd15e23fff7c0815de1a5c11cc4))
 
 ## [11.2.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.2.0...shared-log-v11.2.1) (2025-05-13)
 
-
 ### Bug Fixes
 
-* waitForReplicators wait for remote peers if not replicating by default ([719b001](https://github.com/dao-xyz/peerbit/commit/719b0011c7ae5973ebfc33121b521564bbf806ae))
+- waitForReplicators wait for remote peers if not replicating by default ([719b001](https://github.com/dao-xyz/peerbit/commit/719b0011c7ae5973ebfc33121b521564bbf806ae))
 
 ## [11.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.5...shared-log-v11.2.0) (2025-05-08)
 
-
 ### Features
 
-* rn 'sync' to 'keep', and filter entries using keep before pruning ([56eb14d](https://github.com/dao-xyz/peerbit/commit/56eb14dd9d95133cbb6f5ab587bfed5565b51713))
+- rn 'sync' to 'keep', and filter entries using keep before pruning ([56eb14d](https://github.com/dao-xyz/peerbit/commit/56eb14dd9d95133cbb6f5ab587bfed5565b51713))
 
 ## [11.1.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.4...shared-log-v11.1.5) (2025-05-05)
 
-
 ### Bug Fixes
 
-* waitForReplicators, reject early if no peers ([6c5db3c](https://github.com/dao-xyz/peerbit/commit/6c5db3ce99d15e318a28d9bcc7737cf4f793a63b))
+- waitForReplicators, reject early if no peers ([6c5db3c](https://github.com/dao-xyz/peerbit/commit/6c5db3ce99d15e318a28d9bcc7737cf4f793a63b))
 
 ## [11.1.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.3...shared-log-v11.1.4) (2025-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.10 to 5.2.11
-    * @peerbit/log bumped from 4.0.57 to 4.0.58
-    * @peerbit/rpc bumped from 5.3.2 to 5.3.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.45 to ^2.1.46
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.10 to 5.2.11
+    - @peerbit/log bumped from 4.0.57 to 4.0.58
+    - @peerbit/rpc bumped from 5.3.2 to 5.3.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.45 to ^2.1.46
 
 ## [11.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.2...shared-log-v11.1.3) (2025-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.9 to 5.2.10
-    * @peerbit/log bumped from 4.0.56 to 4.0.57
-    * @peerbit/rpc bumped from 5.3.1 to 5.3.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.44 to ^2.1.45
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.9 to 5.2.10
+    - @peerbit/log bumped from 4.0.56 to 4.0.57
+    - @peerbit/rpc bumped from 5.3.1 to 5.3.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.44 to ^2.1.45
 
 ## [11.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.1...shared-log-v11.1.2) (2025-04-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.8 to 5.2.9
-    * @peerbit/log bumped from 4.0.55 to 4.0.56
-    * @peerbit/rpc bumped from 5.3.0 to 5.3.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.43 to ^2.1.44
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.8 to 5.2.9
+    - @peerbit/log bumped from 4.0.55 to 4.0.56
+    - @peerbit/rpc bumped from 5.3.0 to 5.3.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.43 to ^2.1.44
 
 ## [11.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.1.0...shared-log-v11.1.1) (2025-04-28)
 
-
 ### Bug Fixes
 
-* correctly handle default case for resume ([2f92713](https://github.com/dao-xyz/peerbit/commit/2f9271312ac79c045917eb50ec4cc1670cf6ce19))
+- correctly handle default case for resume ([2f92713](https://github.com/dao-xyz/peerbit/commit/2f9271312ac79c045917eb50ec4cc1670cf6ce19))
 
 ## [11.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.8...shared-log-v11.1.0) (2025-04-28)
 
-
 ### Features
 
-* add 'default' fallback property for resumable replication ([249b71a](https://github.com/dao-xyz/peerbit/commit/249b71ae9c256ce0ea92f0212a24dc4b493b21ff))
-
+- add 'default' fallback property for resumable replication ([249b71a](https://github.com/dao-xyz/peerbit/commit/249b71ae9c256ce0ea92f0212a24dc4b493b21ff))
 
 ### Bug Fixes
 
-* rpc event timestamp type ([d8644b4](https://github.com/dao-xyz/peerbit/commit/d8644b43c8fac4ed64c1afe37ee391e98d1e7dae))
-
+- rpc event timestamp type ([d8644b4](https://github.com/dao-xyz/peerbit/commit/d8644b43c8fac4ed64c1afe37ee391e98d1e7dae))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.7 to 5.2.8
-    * @peerbit/log bumped from 4.0.54 to 4.0.55
-    * @peerbit/rpc bumped from 5.2.9 to 5.3.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.42 to ^2.1.43
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.7 to 5.2.8
+    - @peerbit/log bumped from 4.0.54 to 4.0.55
+    - @peerbit/rpc bumped from 5.2.9 to 5.3.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.42 to ^2.1.43
 
 ## [11.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.7...shared-log-v11.0.8) (2025-04-23)
 
-
 ### Bug Fixes
 
-* getCoverage handle edge case when self is unmature and replicating full width ([3a4b77c](https://github.com/dao-xyz/peerbit/commit/3a4b77c98d8629379864b2a0c8560235c429dc74))
+- getCoverage handle edge case when self is unmature and replicating full width ([3a4b77c](https://github.com/dao-xyz/peerbit/commit/3a4b77c98d8629379864b2a0c8560235c429dc74))
 
 ## [11.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.6...shared-log-v11.0.7) (2025-04-22)
 
-
 ### Bug Fixes
 
-* waitForReplicators coverage threshold ([6c5c73e](https://github.com/dao-xyz/peerbit/commit/6c5c73eeddacb0df4fc9f243694e372a895240e7))
+- waitForReplicators coverage threshold ([6c5c73e](https://github.com/dao-xyz/peerbit/commit/6c5c73eeddacb0df4fc9f243694e372a895240e7))
 
 ## [11.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.5...shared-log-v11.0.6) (2025-04-19)
 
-
 ### Bug Fixes
 
-* add method for waiting for coverage ([d8e5bfb](https://github.com/dao-xyz/peerbit/commit/d8e5bfb9165c91433b323566971da970767b6ce5))
-
+- add method for waiting for coverage ([d8e5bfb](https://github.com/dao-xyz/peerbit/commit/d8e5bfb9165c91433b323566971da970767b6ce5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.6 to 5.2.7
-    * @peerbit/log bumped from 4.0.53 to 4.0.54
-    * @peerbit/rpc bumped from 5.2.8 to 5.2.9
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.41 to ^2.1.42
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.6 to 5.2.7
+    - @peerbit/log bumped from 4.0.53 to 4.0.54
+    - @peerbit/rpc bumped from 5.2.8 to 5.2.9
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.41 to ^2.1.42
 
 ## [11.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.4...shared-log-v11.0.5) (2025-04-17)
 
-
 ### Bug Fixes
 
-* return true for failing sync process so that MoreSymbols message get ignored ([cd90eb0](https://github.com/dao-xyz/peerbit/commit/cd90eb08865324a6efac85a5b043ab05e58f2f36))
-
+- return true for failing sync process so that MoreSymbols message get ignored ([cd90eb0](https://github.com/dao-xyz/peerbit/commit/cd90eb08865324a6efac85a5b043ab05e58f2f36))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.5 to 5.2.6
-    * @peerbit/log bumped from 4.0.52 to 4.0.53
-    * @peerbit/rpc bumped from 5.2.7 to 5.2.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.40 to ^2.1.41
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.5 to 5.2.6
+    - @peerbit/log bumped from 4.0.52 to 4.0.53
+    - @peerbit/rpc bumped from 5.2.7 to 5.2.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.40 to ^2.1.41
 
 ## [11.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.3...shared-log-v11.0.4) (2025-04-14)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.4 to 5.2.5
-    * @peerbit/log bumped from 4.0.51 to 4.0.52
-    * @peerbit/rpc bumped from 5.2.6 to 5.2.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.39 to ^2.1.40
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.4 to 5.2.5
+    - @peerbit/log bumped from 4.0.51 to 4.0.52
+    - @peerbit/rpc bumped from 5.2.6 to 5.2.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.39 to ^2.1.40
 
 ## [11.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.2...shared-log-v11.0.3) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.3 to 5.2.4
-    * @peerbit/log bumped from 4.0.50 to 4.0.51
-    * @peerbit/rpc bumped from 5.2.5 to 5.2.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.38 to ^2.1.39
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.3 to 5.2.4
+    - @peerbit/log bumped from 4.0.50 to 4.0.51
+    - @peerbit/rpc bumped from 5.2.5 to 5.2.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.38 to ^2.1.39
 
 ## [11.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.1...shared-log-v11.0.2) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.2 to 5.2.3
-    * @peerbit/log bumped from 4.0.49 to 4.0.50
-    * @peerbit/rpc bumped from 5.2.4 to 5.2.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.37 to ^2.1.38
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.2 to 5.2.3
+    - @peerbit/log bumped from 4.0.49 to 4.0.50
+    - @peerbit/rpc bumped from 5.2.4 to 5.2.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.37 to ^2.1.38
 
 ## [11.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v11.0.0...shared-log-v11.0.1) (2025-04-03)
 
-
 ### Bug Fixes
 
-* refactor debounce logic ([03882df](https://github.com/dao-xyz/peerbit/commit/03882dfbfae4112405db8929ccdc1a2a15aaff1b))
-
+- refactor debounce logic ([03882df](https://github.com/dao-xyz/peerbit/commit/03882dfbfae4112405db8929ccdc1a2a15aaff1b))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.1 to 5.2.2
-    * @peerbit/log bumped from 4.0.48 to 4.0.49
-    * @peerbit/rpc bumped from 5.2.3 to 5.2.4
-    * @peerbit/time bumped from 2.0.8 to 2.1.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.36 to ^2.1.37
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.1 to 5.2.2
+    - @peerbit/log bumped from 4.0.48 to 4.0.49
+    - @peerbit/rpc bumped from 5.2.3 to 5.2.4
+    - @peerbit/time bumped from 2.0.8 to 2.1.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.36 to ^2.1.37
 
 ## [11.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.12...shared-log-v11.0.0) (2025-03-31)
 
-
 ### ⚠ BREAKING CHANGES
 
-* iblt sync using hash instead of gid
+- iblt sync using hash instead of gid
 
 ### Bug Fixes
 
-* iblt sync using hash instead of gid ([fbb4e31](https://github.com/dao-xyz/peerbit/commit/fbb4e318f46e4968e21765a8f7e271bb61c244cb))
+- iblt sync using hash instead of gid ([fbb4e31](https://github.com/dao-xyz/peerbit/commit/fbb4e318f46e4968e21765a8f7e271bb61c244cb))
 
 ## [10.4.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.11...shared-log-v10.4.12) (2025-03-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.2.0 to 5.2.1
-    * @peerbit/log bumped from 4.0.47 to 4.0.48
-    * @peerbit/rpc bumped from 5.2.2 to 5.2.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.35 to ^2.1.36
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.2.0 to 5.2.1
+    - @peerbit/log bumped from 4.0.47 to 4.0.48
+    - @peerbit/rpc bumped from 5.2.2 to 5.2.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.35 to ^2.1.36
 
 ## [10.4.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.10...shared-log-v10.4.11) (2025-03-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.10 to 5.2.0
-    * @peerbit/log bumped from 4.0.46 to 4.0.47
-    * @peerbit/rpc bumped from 5.2.1 to 5.2.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.34 to ^2.1.35
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.10 to 5.2.0
+    - @peerbit/log bumped from 4.0.46 to 4.0.47
+    - @peerbit/rpc bumped from 5.2.1 to 5.2.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.34 to ^2.1.35
 
 ## [10.4.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.9...shared-log-v10.4.10) (2025-03-29)
 
-
 ### Bug Fixes
 
-* open indexer once on client ([48b4568](https://github.com/dao-xyz/peerbit/commit/48b45685e09dda68dce0cb0e03e88096a4a36609))
-
+- open indexer once on client ([48b4568](https://github.com/dao-xyz/peerbit/commit/48b45685e09dda68dce0cb0e03e88096a4a36609))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.9 to 5.1.10
-    * @peerbit/log bumped from 4.0.45 to 4.0.46
-    * @peerbit/rpc bumped from 5.2.0 to 5.2.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.33 to ^2.1.34
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.9 to 5.1.10
+    - @peerbit/log bumped from 4.0.45 to 4.0.46
+    - @peerbit/rpc bumped from 5.2.0 to 5.2.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.33 to ^2.1.34
 
 ## [10.4.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.8...shared-log-v10.4.9) (2025-03-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.8 to 5.1.9
-    * @peerbit/log bumped from 4.0.44 to 4.0.45
-    * @peerbit/rpc bumped from 5.1.2 to 5.2.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.32 to ^2.1.33
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.8 to 5.1.9
+    - @peerbit/log bumped from 4.0.44 to 4.0.45
+    - @peerbit/rpc bumped from 5.1.2 to 5.2.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.32 to ^2.1.33
 
 ## [10.4.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.7...shared-log-v10.4.8) (2025-03-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/rpc bumped from 5.1.1 to 5.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/rpc bumped from 5.1.1 to 5.1.2
 
 ## [10.4.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.6...shared-log-v10.4.7) (2025-03-28)
 
-
 ### Bug Fixes
 
-* simple sync if riblt fails ([4682419](https://github.com/dao-xyz/peerbit/commit/4682419f724528ddf88b589fe181b115cf27e43f))
-
+- simple sync if riblt fails ([4682419](https://github.com/dao-xyz/peerbit/commit/4682419f724528ddf88b589fe181b115cf27e43f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/rpc bumped from 5.1.0 to 5.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/rpc bumped from 5.1.0 to 5.1.1
 
 ## [10.4.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.5...shared-log-v10.4.6) (2025-03-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/rpc bumped from 5.0.42 to 5.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/rpc bumped from 5.0.42 to 5.1.0
 
 ## [10.4.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.4...shared-log-v10.4.5) (2025-03-21)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.43 to 4.0.44
-    * @peerbit/rpc bumped from 5.0.41 to 5.0.42
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.31 to ^2.1.32
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.43 to 4.0.44
+    - @peerbit/rpc bumped from 5.0.41 to 5.0.42
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.31 to ^2.1.32
 
 ## [10.4.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.3...shared-log-v10.4.4) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.7 to 5.1.8
-    * @peerbit/log bumped from 4.0.42 to 4.0.43
-    * @peerbit/rpc bumped from 5.0.40 to 5.0.41
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.30 to ^2.1.31
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.7 to 5.1.8
+    - @peerbit/log bumped from 4.0.42 to 4.0.43
+    - @peerbit/rpc bumped from 5.0.40 to 5.0.41
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.30 to ^2.1.31
 
 ## [10.4.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.2...shared-log-v10.4.3) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.6 to 5.1.7
-    * @peerbit/log bumped from 4.0.41 to 4.0.42
-    * @peerbit/rpc bumped from 5.0.39 to 5.0.40
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.29 to ^2.1.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.6 to 5.1.7
+    - @peerbit/log bumped from 4.0.41 to 4.0.42
+    - @peerbit/rpc bumped from 5.0.39 to 5.0.40
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.29 to ^2.1.30
 
 ## [10.4.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.1...shared-log-v10.4.2) (2025-03-10)
 
-
 ### Bug Fixes
 
-* allow passing range as args for getCover ([109adba](https://github.com/dao-xyz/peerbit/commit/109adba7040a982f4adc9da9df551c23817003b0))
+- allow passing range as args for getCover ([109adba](https://github.com/dao-xyz/peerbit/commit/109adba7040a982f4adc9da9df551c23817003b0))
 
 ## [10.4.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.4.0...shared-log-v10.4.1) (2025-03-10)
 
-
 ### Bug Fixes
 
-* prevent invalid approximative head count calculation for large replication ranges ([6f22b3e](https://github.com/dao-xyz/peerbit/commit/6f22b3ec844ded2fa2a7bef1f7f88fe51b1813f8))
-
+- prevent invalid approximative head count calculation for large replication ranges ([6f22b3e](https://github.com/dao-xyz/peerbit/commit/6f22b3ec844ded2fa2a7bef1f7f88fe51b1813f8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.40 to 4.0.41
-    * @peerbit/rpc bumped from 5.0.38 to 5.0.39
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.28 to ^2.1.29
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.40 to 4.0.41
+    - @peerbit/rpc bumped from 5.0.38 to 5.0.39
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.28 to ^2.1.29
 
 ## [10.4.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.23...shared-log-v10.4.0) (2025-03-10)
 
-
 ### Features
 
-* add approximative count heads  method ([857e90b](https://github.com/dao-xyz/peerbit/commit/857e90bb278cd77e5b14dec4c87603f0648e6e3a))
-
+- add approximative count heads method ([857e90b](https://github.com/dao-xyz/peerbit/commit/857e90bb278cd77e5b14dec4c87603f0648e6e3a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.39 to 4.0.40
-    * @peerbit/rpc bumped from 5.0.37 to 5.0.38
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.27 to ^2.1.28
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.39 to 4.0.40
+    - @peerbit/rpc bumped from 5.0.37 to 5.0.38
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.27 to ^2.1.28
 
 ## [10.3.23](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.22...shared-log-v10.3.23) (2025-03-08)
 
-
 ### Bug Fixes
 
-* return on closed in afterOpen ([bf9c70f](https://github.com/dao-xyz/peerbit/commit/bf9c70f69e9354151dc232ad2a909c3d81698b5a))
+- return on closed in afterOpen ([bf9c70f](https://github.com/dao-xyz/peerbit/commit/bf9c70f69e9354151dc232ad2a909c3d81698b5a))
 
 ## [10.3.22](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.21...shared-log-v10.3.22) (2025-03-07)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.38 to 4.0.39
-    * @peerbit/rpc bumped from 5.0.36 to 5.0.37
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.26 to ^2.1.27
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.38 to 4.0.39
+    - @peerbit/rpc bumped from 5.0.36 to 5.0.37
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.26 to ^2.1.27
 
 ## [10.3.21](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.20...shared-log-v10.3.21) (2025-02-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.37 to 4.0.38
-    * @peerbit/rpc bumped from 5.0.35 to 5.0.36
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.25 to ^2.1.26
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.37 to 4.0.38
+    - @peerbit/rpc bumped from 5.0.35 to 5.0.36
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.25 to ^2.1.26
 
 ## [10.3.20](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.19...shared-log-v10.3.20) (2025-02-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.36 to 4.0.37
-    * @peerbit/rpc bumped from 5.0.34 to 5.0.35
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.24 to ^2.1.25
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.36 to 4.0.37
+    - @peerbit/rpc bumped from 5.0.34 to 5.0.35
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.24 to ^2.1.25
 
 ## [10.3.19](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.18...shared-log-v10.3.19) (2025-02-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.5 to 5.1.6
-    * @peerbit/log bumped from 4.0.35 to 4.0.36
-    * @peerbit/rpc bumped from 5.0.33 to 5.0.34
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.23 to ^2.1.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.5 to 5.1.6
+    - @peerbit/log bumped from 4.0.35 to 4.0.36
+    - @peerbit/rpc bumped from 5.0.33 to 5.0.34
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.23 to ^2.1.24
 
 ## [10.3.18](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.17...shared-log-v10.3.18) (2025-02-25)
 
-
 ### Bug Fixes
 
-* replicate entries while dynamically replicating ([078a794](https://github.com/dao-xyz/peerbit/commit/078a79440b8b1a15e991fb7a86bfbe9b802a4afb))
+- replicate entries while dynamically replicating ([078a794](https://github.com/dao-xyz/peerbit/commit/078a79440b8b1a15e991fb7a86bfbe9b802a4afb))
 
 ## [10.3.17](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.16...shared-log-v10.3.17) (2025-02-23)
 
-
 ### Bug Fixes
 
-* InvalidDegree error log correctly ([baf4bd8](https://github.com/dao-xyz/peerbit/commit/baf4bd8fad2cae2abb3d0d9583b5fd0fa9133c77))
-
+- InvalidDegree error log correctly ([baf4bd8](https://github.com/dao-xyz/peerbit/commit/baf4bd8fad2cae2abb3d0d9583b5fd0fa9133c77))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.34 to 4.0.35
-    * @peerbit/rpc bumped from 5.0.32 to 5.0.33
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.22 to ^2.1.23
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.34 to 4.0.35
+    - @peerbit/rpc bumped from 5.0.32 to 5.0.33
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.22 to ^2.1.23
 
 ## [10.3.16](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.15...shared-log-v10.3.16) (2025-02-21)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.4 to 5.1.5
-    * @peerbit/log bumped from 4.0.33 to 4.0.34
-    * @peerbit/rpc bumped from 5.0.31 to 5.0.32
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.21 to ^2.1.22
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.4 to 5.1.5
+    - @peerbit/log bumped from 4.0.33 to 4.0.34
+    - @peerbit/rpc bumped from 5.0.31 to 5.0.32
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.21 to ^2.1.22
 
 ## [10.3.15](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.14...shared-log-v10.3.15) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.32 to 4.0.33
-    * @peerbit/rpc bumped from 5.0.30 to 5.0.31
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.20 to ^2.1.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.32 to 4.0.33
+    - @peerbit/rpc bumped from 5.0.30 to 5.0.31
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.20 to ^2.1.21
 
 ## [10.3.14](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.13...shared-log-v10.3.14) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.3 to 5.1.4
-    * @peerbit/log bumped from 4.0.31 to 4.0.32
-    * @peerbit/rpc bumped from 5.0.29 to 5.0.30
-    * @peerbit/time bumped from 2.0.7 to 2.0.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.19 to ^2.1.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.3 to 5.1.4
+    - @peerbit/log bumped from 4.0.31 to 4.0.32
+    - @peerbit/rpc bumped from 5.0.29 to 5.0.30
+    - @peerbit/time bumped from 2.0.7 to 2.0.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.19 to ^2.1.20
 
 ## [10.3.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.12...shared-log-v10.3.13) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/riblt bumped from 1.0.5 to 1.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/riblt bumped from 1.0.5 to 1.0.6
 
 ## [10.3.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.11...shared-log-v10.3.12) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/riblt bumped from 1.0.4 to 1.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/riblt bumped from 1.0.4 to 1.0.5
 
 ## [10.3.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.10...shared-log-v10.3.11) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.2 to 5.1.3
-    * @peerbit/log bumped from 4.0.30 to 4.0.31
-    * @peerbit/rpc bumped from 5.0.28 to 5.0.29
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.18 to ^2.1.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.2 to 5.1.3
+    - @peerbit/log bumped from 4.0.30 to 4.0.31
+    - @peerbit/rpc bumped from 5.0.28 to 5.0.29
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.18 to ^2.1.19
 
 ## [10.3.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.9...shared-log-v10.3.10) (2025-02-18)
 
-
 ### Bug Fixes
 
-* add start and end parameter for calculating coverage ([d8eb9b0](https://github.com/dao-xyz/peerbit/commit/d8eb9b03f5d1c3a6dd01fac12433844044e30a23))
+- add start and end parameter for calculating coverage ([d8eb9b0](https://github.com/dao-xyz/peerbit/commit/d8eb9b03f5d1c3a6dd01fac12433844044e30a23))
 
 ## [10.3.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.8...shared-log-v10.3.9) (2025-02-17)
 
-
 ### Bug Fixes
 
-* add calculateCoverage method ([03f5b18](https://github.com/dao-xyz/peerbit/commit/03f5b189ddcdbdbf170adf82325f54c3f465ae25))
-* catch Invalid Degree error ([91b73bd](https://github.com/dao-xyz/peerbit/commit/91b73bdf5882c4e80970ebc666947403c809c2e2))
+- add calculateCoverage method ([03f5b18](https://github.com/dao-xyz/peerbit/commit/03f5b189ddcdbdbf170adf82325f54c3f465ae25))
+- catch Invalid Degree error ([91b73bd](https://github.com/dao-xyz/peerbit/commit/91b73bdf5882c4e80970ebc666947403c809c2e2))
 
 ## [10.3.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.7...shared-log-v10.3.8) (2025-02-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.1 to 5.1.2
-    * @peerbit/log bumped from 4.0.29 to 4.0.30
-    * @peerbit/rpc bumped from 5.0.27 to 5.0.28
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.17 to ^2.1.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.1 to 5.1.2
+    - @peerbit/log bumped from 4.0.29 to 4.0.30
+    - @peerbit/rpc bumped from 5.0.27 to 5.0.28
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.17 to ^2.1.18
 
 ## [10.3.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.6...shared-log-v10.3.7) (2025-02-09)
 
-
 ### Bug Fixes
 
-* prevent pruneOfflineReplicators to throw errors on program closing before resolving ([837e7f1](https://github.com/dao-xyz/peerbit/commit/837e7f19fccc69250d5fe9f4476e21c71384251b))
+- prevent pruneOfflineReplicators to throw errors on program closing before resolving ([837e7f1](https://github.com/dao-xyz/peerbit/commit/837e7f19fccc69250d5fe9f4476e21c71384251b))
 
 ## [10.3.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.5...shared-log-v10.3.6) (2025-02-07)
 
-
 ### Bug Fixes
 
-* handle no-op for removeReplicationRanges ([5d427a8](https://github.com/dao-xyz/peerbit/commit/5d427a8f179476797bf475d9ca2c6f45d2b91fac))
+- handle no-op for removeReplicationRanges ([5d427a8](https://github.com/dao-xyz/peerbit/commit/5d427a8f179476797bf475d9ca2c6f45d2b91fac))
 
 ## [10.3.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.4...shared-log-v10.3.5) (2025-02-06)
 
-
 ### Bug Fixes
 
-* don't block open when waiting for old replicators ([da51255](https://github.com/dao-xyz/peerbit/commit/da51255210f5fbe3337860222fe03ec4a08b3fba))
-
+- don't block open when waiting for old replicators ([da51255](https://github.com/dao-xyz/peerbit/commit/da51255210f5fbe3337860222fe03ec4a08b3fba))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.28 to 4.0.29
-    * @peerbit/rpc bumped from 5.0.26 to 5.0.27
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.16 to ^2.1.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.28 to 4.0.29
+    - @peerbit/rpc bumped from 5.0.26 to 5.0.27
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.16 to ^2.1.17
 
 ## [10.3.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.3...shared-log-v10.3.4) (2025-02-02)
 
-
 ### Bug Fixes
 
-* persist separate replication segments when can not merge ([2ec6eb5](https://github.com/dao-xyz/peerbit/commit/2ec6eb5047ce2679dc16cdc3bd0eb17c42dc5abe))
+- persist separate replication segments when can not merge ([2ec6eb5](https://github.com/dao-xyz/peerbit/commit/2ec6eb5047ce2679dc16cdc3bd0eb17c42dc5abe))
 
 ## [10.3.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.2...shared-log-v10.3.3) (2025-02-01)
 
-
 ### Bug Fixes
 
-* correctly merge overlapping segments ([6b5241d](https://github.com/dao-xyz/peerbit/commit/6b5241de467f57de5acd9573b9e9f103721eb3fe))
+- correctly merge overlapping segments ([6b5241d](https://github.com/dao-xyz/peerbit/commit/6b5241de467f57de5acd9573b9e9f103721eb3fe))
 
 ## [10.3.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.1...shared-log-v10.3.2) (2025-01-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.27 to 4.0.28
-    * @peerbit/rpc bumped from 5.0.25 to 5.0.26
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.15 to ^2.1.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.27 to 4.0.28
+    - @peerbit/rpc bumped from 5.0.25 to 5.0.26
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.15 to ^2.1.16
 
 ## [10.3.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.3.0...shared-log-v10.3.1) (2025-01-23)
 
-
 ### Bug Fixes
 
-* don't rebalance on strict range maturity ([038d05b](https://github.com/dao-xyz/peerbit/commit/038d05bdd7f82faf23634ae854c829fb010b9c8e))
-* don't throw on Invalid degree error ([f130f6a](https://github.com/dao-xyz/peerbit/commit/f130f6a185677b46509a068b7191a0eccbac9c25))
-
+- don't rebalance on strict range maturity ([038d05b](https://github.com/dao-xyz/peerbit/commit/038d05bdd7f82faf23634ae854c829fb010b9c8e))
+- don't throw on Invalid degree error ([f130f6a](https://github.com/dao-xyz/peerbit/commit/f130f6a185677b46509a068b7191a0eccbac9c25))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.26 to 4.0.27
-    * @peerbit/rpc bumped from 5.0.24 to 5.0.25
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.14 to ^2.1.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.26 to 4.0.27
+    - @peerbit/rpc bumped from 5.0.24 to 5.0.25
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.14 to ^2.1.15
 
 ## [10.3.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.2.0...shared-log-v10.3.0) (2025-01-17)
 
-
 ### Features
 
-* add options for caching early blocks ([3f42f1b](https://github.com/dao-xyz/peerbit/commit/3f42f1bda75ab7d0f5e726765c80deb0faeb5adc))
-
+- add options for caching early blocks ([3f42f1b](https://github.com/dao-xyz/peerbit/commit/3f42f1bda75ab7d0f5e726765c80deb0faeb5adc))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.1.0 to 5.1.1
-    * @peerbit/log bumped from 4.0.25 to 4.0.26
-    * @peerbit/rpc bumped from 5.0.23 to 5.0.24
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.13 to ^2.1.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.1.0 to 5.1.1
+    - @peerbit/log bumped from 4.0.25 to 4.0.26
+    - @peerbit/rpc bumped from 5.0.23 to 5.0.24
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.13 to ^2.1.14
 
 ## [10.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.1.0...shared-log-v10.2.0) (2025-01-14)
 
-
 ### Features
 
-* replicate: 'resume' ([9af6cc5](https://github.com/dao-xyz/peerbit/commit/9af6cc58c0848e0e8f9f9e02e6eda8ceacce8201))
+- replicate: 'resume' ([9af6cc5](https://github.com/dao-xyz/peerbit/commit/9af6cc58c0848e0e8f9f9e02e6eda8ceacce8201))
 
 ## [10.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.6...shared-log-v10.1.0) (2025-01-12)
 
-
 ### Features
 
-* add replaction segment merging functionality ([630a761](https://github.com/dao-xyz/peerbit/commit/630a761a0a8ccda29090ee6dd62110051c7e701a))
-
+- add replaction segment merging functionality ([630a761](https://github.com/dao-xyz/peerbit/commit/630a761a0a8ccda29090ee6dd62110051c7e701a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.24 to 4.0.25
-    * @peerbit/rpc bumped from 5.0.22 to 5.0.23
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.12 to ^2.1.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.24 to 4.0.25
+    - @peerbit/rpc bumped from 5.0.22 to 5.0.23
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.12 to ^2.1.13
 
 ## [10.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.5...shared-log-v10.0.6) (2024-12-30)
 
-
 ### Bug Fixes
 
-* remove wasm init call ([96db150](https://github.com/dao-xyz/peerbit/commit/96db1508398a415a9ca2afc9d7d3a01fd2d620a2))
-
+- remove wasm init call ([96db150](https://github.com/dao-xyz/peerbit/commit/96db1508398a415a9ca2afc9d7d3a01fd2d620a2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.23 to 4.0.24
-    * @peerbit/rpc bumped from 5.0.21 to 5.0.22
-    * @peerbit/riblt bumped from 1.0.3 to 1.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.11 to ^2.1.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.23 to 4.0.24
+    - @peerbit/rpc bumped from 5.0.21 to 5.0.22
+    - @peerbit/riblt bumped from 1.0.3 to 1.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.11 to ^2.1.12
 
 ## [10.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.4...shared-log-v10.0.5) (2024-12-30)
 
-
 ### Bug Fixes
 
-* more sparse handling of RequestIPrune ([39e9da6](https://github.com/dao-xyz/peerbit/commit/39e9da6d397ea3edaa019167f774509213e31bc9))
-* reduce priority for exchange heads message ([5e48036](https://github.com/dao-xyz/peerbit/commit/5e480364d4b5a4b1f77154f2c83c40f352ed1b4a))
+- more sparse handling of RequestIPrune ([39e9da6](https://github.com/dao-xyz/peerbit/commit/39e9da6d397ea3edaa019167f774509213e31bc9))
+- reduce priority for exchange heads message ([5e48036](https://github.com/dao-xyz/peerbit/commit/5e480364d4b5a4b1f77154f2c83c40f352ed1b4a))
 
 ## [10.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.3...shared-log-v10.0.4) (2024-12-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.22 to 4.0.23
-    * @peerbit/rpc bumped from 5.0.20 to 5.0.21
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.10 to ^2.1.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.22 to 4.0.23
+    - @peerbit/rpc bumped from 5.0.20 to 5.0.21
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.10 to ^2.1.11
 
 ## [10.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.2...shared-log-v10.0.3) (2024-12-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/riblt bumped from 1.0.2 to 1.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/riblt bumped from 1.0.2 to 1.0.3
 
 ## [10.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.1...shared-log-v10.0.2) (2024-12-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/riblt bumped from 1.0.1 to 1.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/riblt bumped from 1.0.1 to 1.0.2
 
 ## [10.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v10.0.0...shared-log-v10.0.1) (2024-12-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/riblt bumped from 1.0.0 to 1.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/riblt bumped from 1.0.0 to 1.0.1
 
 ## [10.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.13...shared-log-v10.0.0) (2024-12-28)
 
-
 ### ⚠ BREAKING CHANGES
 
-* rateless-iblt-sync protocol
+- rateless-iblt-sync protocol
 
 ### Features
 
-* rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
-
+- rateless-iblt-sync protocol ([43c3c9c](https://github.com/dao-xyz/peerbit/commit/43c3c9c0c250a2bc8787ae8bb0f125637fec364b))
 
 ### Bug Fixes
 
-* Merge branch 'master' into rateless ([01d5af7](https://github.com/dao-xyz/peerbit/commit/01d5af70d493c782a21e80733ec34007d33f843a))
-
+- Merge branch 'master' into rateless ([01d5af7](https://github.com/dao-xyz/peerbit/commit/01d5af70d493c782a21e80733ec34007d33f843a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.8 to 5.1.0
-    * @peerbit/log bumped from 4.0.21 to 4.0.22
-    * @peerbit/rpc bumped from 5.0.19 to 5.0.20
-    * @peerbit/riblt bumped from 0.0.1 to 1.0.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.9 to ^2.1.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.8 to 5.1.0
+    - @peerbit/log bumped from 4.0.21 to 4.0.22
+    - @peerbit/rpc bumped from 5.0.19 to 5.0.20
+    - @peerbit/riblt bumped from 0.0.1 to 1.0.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.9 to ^2.1.10
 
 ## [9.2.13](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.12...shared-log-v9.2.13) (2024-11-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.20 to 4.0.21
-    * @peerbit/rpc bumped from 5.0.18 to 5.0.19
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.8 to ^2.1.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.20 to 4.0.21
+    - @peerbit/rpc bumped from 5.0.18 to 5.0.19
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.8 to ^2.1.9
 
 ## [9.2.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.11...shared-log-v9.2.12) (2024-11-07)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.19 to 4.0.20
-    * @peerbit/rpc bumped from 5.0.17 to 5.0.18
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.7 to ^2.1.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.19 to 4.0.20
+    - @peerbit/rpc bumped from 5.0.17 to 5.0.18
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.7 to ^2.1.8
 
 ## [9.2.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.10...shared-log-v9.2.11) (2024-10-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.7 to 5.0.8
-    * @peerbit/log bumped from 4.0.18 to 4.0.19
-    * @peerbit/rpc bumped from 5.0.16 to 5.0.17
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.6 to ^2.1.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.7 to 5.0.8
+    - @peerbit/log bumped from 4.0.18 to 4.0.19
+    - @peerbit/rpc bumped from 5.0.16 to 5.0.17
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.6 to ^2.1.7
 
 ## [9.2.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.9...shared-log-v9.2.10) (2024-10-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.17 to 4.0.18
-    * @peerbit/rpc bumped from 5.0.15 to 5.0.16
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.5 to ^2.1.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.17 to 4.0.18
+    - @peerbit/rpc bumped from 5.0.15 to 5.0.16
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.5 to ^2.1.6
 
 ## [9.2.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.8...shared-log-v9.2.9) (2024-10-28)
 
-
 ### Bug Fixes
 
-* correctly handle unreplicated content where new participants join with non-covering segments ([56ea8ee](https://github.com/dao-xyz/peerbit/commit/56ea8eeb88e83c9998d3ff2ce4d17a5c4911074e))
-
+- correctly handle unreplicated content where new participants join with non-covering segments ([56ea8ee](https://github.com/dao-xyz/peerbit/commit/56ea8eeb88e83c9998d3ff2ce4d17a5c4911074e))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.6 to 5.0.7
-    * @peerbit/log bumped from 4.0.16 to 4.0.17
-    * @peerbit/rpc bumped from 5.0.14 to 5.0.15
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.4 to ^2.1.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.6 to 5.0.7
+    - @peerbit/log bumped from 4.0.16 to 4.0.17
+    - @peerbit/rpc bumped from 5.0.14 to 5.0.15
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.4 to ^2.1.5
 
 ## [9.2.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.7...shared-log-v9.2.8) (2024-10-21)
 
-
 ### Bug Fixes
 
-* remove gid parent cache feature when exchanging heads ([5614dfb](https://github.com/dao-xyz/peerbit/commit/5614dfb0f292e2c5c71a07037cf95af05f9ab537))
-
+- remove gid parent cache feature when exchanging heads ([5614dfb](https://github.com/dao-xyz/peerbit/commit/5614dfb0f292e2c5c71a07037cf95af05f9ab537))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.5 to 5.0.6
-    * @peerbit/log bumped from 4.0.15 to 4.0.16
-    * @peerbit/rpc bumped from 5.0.13 to 5.0.14
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.3 to ^2.1.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.5 to 5.0.6
+    - @peerbit/log bumped from 4.0.15 to 4.0.16
+    - @peerbit/rpc bumped from 5.0.13 to 5.0.14
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.3 to ^2.1.4
 
 ## [9.2.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.6...shared-log-v9.2.7) (2024-10-19)
 
-
 ### Bug Fixes
 
-* re-check remote replicators on restart ([958fad7](https://github.com/dao-xyz/peerbit/commit/958fad7e7c5ef760275cbcfbbe6b1710f4f9448a))
-
+- re-check remote replicators on restart ([958fad7](https://github.com/dao-xyz/peerbit/commit/958fad7e7c5ef760275cbcfbbe6b1710f4f9448a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.4 to 5.0.5
-    * @peerbit/log bumped from 4.0.14 to 4.0.15
-    * @peerbit/rpc bumped from 5.0.12 to 5.0.13
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.2 to ^2.1.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.4 to 5.0.5
+    - @peerbit/log bumped from 4.0.14 to 4.0.15
+    - @peerbit/rpc bumped from 5.0.12 to 5.0.13
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.2 to ^2.1.3
 
 ## [9.2.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.5...shared-log-v9.2.6) (2024-10-19)
 
-
 ### Bug Fixes
 
-* dont throw on empty addReplicationRange updates ([01f2c90](https://github.com/dao-xyz/peerbit/commit/01f2c909265bd47444d63d8b926002ef78b50cef))
+- dont throw on empty addReplicationRange updates ([01f2c90](https://github.com/dao-xyz/peerbit/commit/01f2c909265bd47444d63d8b926002ef78b50cef))
 
 ## [9.2.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.4...shared-log-v9.2.5) (2024-10-19)
 
-
 ### Bug Fixes
 
-* export ReplicationRangeIndexable ([514afbe](https://github.com/dao-xyz/peerbit/commit/514afbe46bfcc719afc76145d0089574711f7e13))
-
+- export ReplicationRangeIndexable ([514afbe](https://github.com/dao-xyz/peerbit/commit/514afbe46bfcc719afc76145d0089574711f7e13))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.13 to 4.0.14
-    * @peerbit/rpc bumped from 5.0.11 to 5.0.12
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.1 to ^2.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.13 to 4.0.14
+    - @peerbit/rpc bumped from 5.0.11 to 5.0.12
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.1 to ^2.1.2
 
 ## [9.2.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.3...shared-log-v9.2.4) (2024-10-16)
 
-
 ### Bug Fixes
 
-* rn reload to reset ([8e56194](https://github.com/dao-xyz/peerbit/commit/8e56194fee25611071c38ec633cf47160a172bd6))
-
+- rn reload to reset ([8e56194](https://github.com/dao-xyz/peerbit/commit/8e56194fee25611071c38ec633cf47160a172bd6))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.12 to 4.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.12 to 4.0.13
 
 ## [9.2.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.2...shared-log-v9.2.3) (2024-10-13)
 
-
 ### Bug Fixes
 
-* add option to reset cache when rebalancing all ([21532c7](https://github.com/dao-xyz/peerbit/commit/21532c780b332777d5231611592501f1e285056f))
-* clear cache when rebalancing after each iteration ([30a09f9](https://github.com/dao-xyz/peerbit/commit/30a09f9263aa87ad42869484dde18fbd7a411b40))
-* make sure replicator join and leave events are emitted correctly ([a2cffec](https://github.com/dao-xyz/peerbit/commit/a2cffecc4c59906468c8cdb79dd0b9b4e67945d3))
-* update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
-
+- add option to reset cache when rebalancing all ([21532c7](https://github.com/dao-xyz/peerbit/commit/21532c780b332777d5231611592501f1e285056f))
+- clear cache when rebalancing after each iteration ([30a09f9](https://github.com/dao-xyz/peerbit/commit/30a09f9263aa87ad42869484dde18fbd7a411b40))
+- make sure replicator join and leave events are emitted correctly ([a2cffec](https://github.com/dao-xyz/peerbit/commit/a2cffecc4c59906468c8cdb79dd0b9b4e67945d3))
+- update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.3 to 5.0.4
-    * @peerbit/log bumped from 4.0.11 to 4.0.12
-    * @peerbit/rpc bumped from 5.0.10 to 5.0.11
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.1.0 to ^2.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.3 to 5.0.4
+    - @peerbit/log bumped from 4.0.11 to 4.0.12
+    - @peerbit/rpc bumped from 5.0.10 to 5.0.11
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.1.0 to ^2.1.1
 
 ## [9.2.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.1...shared-log-v9.2.2) (2024-10-12)
 
-
 ### Bug Fixes
 
-* limit memory consumption when exchanging heads ([29dd1b8](https://github.com/dao-xyz/peerbit/commit/29dd1b871003ed14cd09ac9ab0dbbea69d121dc9))
+- limit memory consumption when exchanging heads ([29dd1b8](https://github.com/dao-xyz/peerbit/commit/29dd1b871003ed14cd09ac9ab0dbbea69d121dc9))
 
 ## [9.2.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.2.0...shared-log-v9.2.1) (2024-10-11)
 
-
 ### Bug Fixes
 
-* reduce batch sizes when rebalancing ([0b8baa8](https://github.com/dao-xyz/peerbit/commit/0b8baa87b7e0d2f145b276944ff869bbfd1e02ea))
+- reduce batch sizes when rebalancing ([0b8baa8](https://github.com/dao-xyz/peerbit/commit/0b8baa87b7e0d2f145b276944ff869bbfd1e02ea))
 
 ## [9.2.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.2...shared-log-v9.2.0) (2024-10-11)
 
-
 ### Features
 
-* efficient replication rebalancing with head indexes ([41bb417](https://github.com/dao-xyz/peerbit/commit/41bb417dbe2e817ca5504131ea768a9ad2e655c0))
-
+- efficient replication rebalancing with head indexes ([41bb417](https://github.com/dao-xyz/peerbit/commit/41bb417dbe2e817ca5504131ea768a9ad2e655c0))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.2 to 5.0.3
-    * @peerbit/log bumped from 4.0.10 to 4.0.11
-    * @peerbit/rpc bumped from 5.0.9 to 5.0.10
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.43 to ^2.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.2 to 5.0.3
+    - @peerbit/log bumped from 4.0.10 to 4.0.11
+    - @peerbit/rpc bumped from 5.0.9 to 5.0.10
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.43 to ^2.1.0
 
 ## [9.1.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.1...shared-log-v9.1.2) (2024-09-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.9 to 4.0.10
-    * @peerbit/rpc bumped from 5.0.8 to 5.0.9
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.42 to ^2.0.43
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.9 to 4.0.10
+    - @peerbit/rpc bumped from 5.0.8 to 5.0.9
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.42 to ^2.0.43
 
 ## [9.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.1.0...shared-log-v9.1.1) (2024-09-01)
 
-
 ### Bug Fixes
 
-* add eager option for searching remote ([57b8640](https://github.com/dao-xyz/peerbit/commit/57b8640ee53a25d81695f7175ca6747aa9dfe58a))
-
+- add eager option for searching remote ([57b8640](https://github.com/dao-xyz/peerbit/commit/57b8640ee53a25d81695f7175ca6747aa9dfe58a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.1 to 5.0.2
-    * @peerbit/log bumped from 4.0.8 to 4.0.9
-    * @peerbit/rpc bumped from 5.0.7 to 5.0.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.41 to ^2.0.42
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.1 to 5.0.2
+    - @peerbit/log bumped from 4.0.8 to 4.0.9
+    - @peerbit/rpc bumped from 5.0.7 to 5.0.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.41 to ^2.0.42
 
 ## [9.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.10...shared-log-v9.1.0) (2024-08-25)
 
-
 ### Features
 
-* allow custom replication domains ([8466830](https://github.com/dao-xyz/peerbit/commit/846683037d6c93110b635310b0b904ff986017bf))
-
+- allow custom replication domains ([8466830](https://github.com/dao-xyz/peerbit/commit/846683037d6c93110b635310b0b904ff986017bf))
 
 ### Bug Fixes
 
-* add method for join + replicate ([b9b1e73](https://github.com/dao-xyz/peerbit/commit/b9b1e73ce9c1fd3a3f7cb50c454a3896858a0d3f))
-* add null check ([4f6c376](https://github.com/dao-xyz/peerbit/commit/4f6c376b07aa5cbc2edba69f3f6c780ba9b1fe33))
-* make replication range depuplication to also consider covering ranges ([bcbdc56](https://github.com/dao-xyz/peerbit/commit/bcbdc56b0b5c0d929a52a96e300787a8877f5411))
-
+- add method for join + replicate ([b9b1e73](https://github.com/dao-xyz/peerbit/commit/b9b1e73ce9c1fd3a3f7cb50c454a3896858a0d3f))
+- add null check ([4f6c376](https://github.com/dao-xyz/peerbit/commit/4f6c376b07aa5cbc2edba69f3f6c780ba9b1fe33))
+- make replication range depuplication to also consider covering ranges ([bcbdc56](https://github.com/dao-xyz/peerbit/commit/bcbdc56b0b5c0d929a52a96e300787a8877f5411))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.7 to 4.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.7 to 4.0.8
 
 ## [9.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.9...shared-log-v9.0.10) (2024-08-15)
 
-
 ### Bug Fixes
 
-* correctly override canAppend on append ([31bca3b](https://github.com/dao-xyz/peerbit/commit/31bca3b4be04f10546c75b6a991a8d970411c24f))
-* dont pre-calculate total participation ([42268a2](https://github.com/dao-xyz/peerbit/commit/42268a21271075d9e36397d88cb6858a178bd5e7))
+- correctly override canAppend on append ([31bca3b](https://github.com/dao-xyz/peerbit/commit/31bca3b4be04f10546c75b6a991a8d970411c24f))
+- dont pre-calculate total participation ([42268a2](https://github.com/dao-xyz/peerbit/commit/42268a21271075d9e36397d88cb6858a178bd5e7))
 
 ## [9.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.8...shared-log-v9.0.9) (2024-08-12)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.6 to 4.0.7
-    * @peerbit/rpc bumped from 5.0.6 to 5.0.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.40 to ^2.0.41
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.6 to 4.0.7
+    - @peerbit/rpc bumped from 5.0.6 to 5.0.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.40 to ^2.0.41
 
 ## [9.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.7...shared-log-v9.0.8) (2024-08-12)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.5 to 4.0.6
-    * @peerbit/rpc bumped from 5.0.5 to 5.0.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.39 to ^2.0.40
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.5 to 4.0.6
+    - @peerbit/rpc bumped from 5.0.5 to 5.0.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.39 to ^2.0.40
 
 ## [9.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.6...shared-log-v9.0.7) (2024-08-12)
 
-
 ### Bug Fixes
 
-* add compatibility get api ([5b477ce](https://github.com/dao-xyz/peerbit/commit/5b477ceff7ab490c95bbf60063748ff2f61ed7bb))
-* add compatibility with v6 ([2360045](https://github.com/dao-xyz/peerbit/commit/23600457e8765f173773dcffff9a8e2ca90b18e1))
-* backward compatibility for replication roles ([5d729be](https://github.com/dao-xyz/peerbit/commit/5d729be81022e0a49699969aabe1287322033d79))
-* rename compatibility property ([06ea243](https://github.com/dao-xyz/peerbit/commit/06ea243f0ca2acd5827b7118590105bee11d28cf))
+- add compatibility get api ([5b477ce](https://github.com/dao-xyz/peerbit/commit/5b477ceff7ab490c95bbf60063748ff2f61ed7bb))
+- add compatibility with v6 ([2360045](https://github.com/dao-xyz/peerbit/commit/23600457e8765f173773dcffff9a8e2ca90b18e1))
+- backward compatibility for replication roles ([5d729be](https://github.com/dao-xyz/peerbit/commit/5d729be81022e0a49699969aabe1287322033d79))
+- rename compatibility property ([06ea243](https://github.com/dao-xyz/peerbit/commit/06ea243f0ca2acd5827b7118590105bee11d28cf))
 
 ## [9.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.5...shared-log-v9.0.6) (2024-08-11)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.4 to 4.0.5
-    * @peerbit/rpc bumped from 5.0.4 to 5.0.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.38 to ^2.0.39
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.4 to 4.0.5
+    - @peerbit/rpc bumped from 5.0.4 to 5.0.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.38 to ^2.0.39
 
 ## [9.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.4...shared-log-v9.0.5) (2024-07-31)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.3 to 4.0.4
-    * @peerbit/rpc bumped from 5.0.3 to 5.0.4
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.37 to ^2.0.38
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.3 to 4.0.4
+    - @peerbit/rpc bumped from 5.0.3 to 5.0.4
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.37 to ^2.0.38
 
 ## [9.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.3...shared-log-v9.0.4) (2024-07-28)
 
-
 ### Bug Fixes
 
-* disable self-replicating when not allowed ([2b760c3](https://github.com/dao-xyz/peerbit/commit/2b760c3660f9556cee1e5a29ae378c028f64972a))
+- disable self-replicating when not allowed ([2b760c3](https://github.com/dao-xyz/peerbit/commit/2b760c3660f9556cee1e5a29ae378c028f64972a))
 
 ## [9.0.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.2...shared-log-v9.0.3) (2024-07-28)
 
-
 ### Bug Fixes
 
-* custom Error for doing operations when closed ([bf3e3ed](https://github.com/dao-xyz/peerbit/commit/bf3e3ed6059ccbbcaf21b818f6dab3571c76e67c))
-
+- custom Error for doing operations when closed ([bf3e3ed](https://github.com/dao-xyz/peerbit/commit/bf3e3ed6059ccbbcaf21b818f6dab3571c76e67c))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 5.0.0 to 5.0.1
-    * @peerbit/log bumped from 4.0.2 to 4.0.3
-    * @peerbit/rpc bumped from 5.0.2 to 5.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.36 to ^2.0.37
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 5.0.0 to 5.0.1
+    - @peerbit/log bumped from 4.0.2 to 4.0.3
+    - @peerbit/rpc bumped from 5.0.2 to 5.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.36 to ^2.0.37
 
 ## [9.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.1...shared-log-v9.0.2) (2024-07-21)
 
-
 ### Bug Fixes
 
-* revert to not used cached total participation value ([3f7bbdd](https://github.com/dao-xyz/peerbit/commit/3f7bbddcc005fd26a96b1abc3df5f81be5372199))
-
+- revert to not used cached total participation value ([3f7bbdd](https://github.com/dao-xyz/peerbit/commit/3f7bbddcc005fd26a96b1abc3df5f81be5372199))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.1 to 4.0.2
-    * @peerbit/rpc bumped from 5.0.1 to 5.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.35 to ^2.0.36
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.1 to 4.0.2
+    - @peerbit/rpc bumped from 5.0.1 to 5.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.35 to ^2.0.36
 
 ## [9.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v9.0.0...shared-log-v9.0.1) (2024-07-21)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.0 to 4.0.1
-    * @peerbit/rpc bumped from 5.0.0 to 5.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.34 to ^2.0.35
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.0 to 4.0.1
+    - @peerbit/rpc bumped from 5.0.0 to 5.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.34 to ^2.0.35
 
 ## [9.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.7...shared-log-v9.0.0) (2024-07-20)
 
-
 ### ⚠ BREAKING CHANGES
 
-* support for indexer
+- support for indexer
 
 ### Bug Fixes
 
-* correctly handle canReplicate false when opening dbs ([4b88aa6](https://github.com/dao-xyz/peerbit/commit/4b88aa64b3d88567e529d9c122c3bf05d746b986))
-* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
-* getDefaultMinRoleAge() evaluates to 0 if not replicating ([dd99cb1](https://github.com/dao-xyz/peerbit/commit/dd99cb1675b727c4ddd6418c0dfe81626b44ab7f))
-* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
-* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
-* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
-* update cache parameters ([8c52a86](https://github.com/dao-xyz/peerbit/commit/8c52a86a8285ed2939530e78e78647fd7a4484d3))
-
+- correctly handle canReplicate false when opening dbs ([4b88aa6](https://github.com/dao-xyz/peerbit/commit/4b88aa64b3d88567e529d9c122c3bf05d746b986))
+- fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+- getDefaultMinRoleAge() evaluates to 0 if not replicating ([dd99cb1](https://github.com/dao-xyz/peerbit/commit/dd99cb1675b727c4ddd6418c0dfe81626b44ab7f))
+- peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+- support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+- update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+- update cache parameters ([8c52a86](https://github.com/dao-xyz/peerbit/commit/8c52a86a8285ed2939530e78e78647fd7a4484d3))
 
 ### Refactors
 
-* onChange and canAppend refactor ([04e5e4c](https://github.com/dao-xyz/peerbit/commit/04e5e4c789f22043fc0dc5e11862952989e00726))
-
+- onChange and canAppend refactor ([04e5e4c](https://github.com/dao-xyz/peerbit/commit/04e5e4c789f22043fc0dc5e11862952989e00726))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/logger bumped from 1.0.2 to 1.0.3
-    * @peerbit/program bumped from 4.0.7 to 5.0.0
-    * @peerbit/log bumped from 3.0.34 to 4.0.0
-    * @peerbit/rpc bumped from 4.0.7 to 5.0.0
-    * @peerbit/time bumped from 2.0.6 to 2.0.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/logger bumped from 1.0.2 to 1.0.3
+    - @peerbit/program bumped from 4.0.7 to 5.0.0
+    - @peerbit/log bumped from 3.0.34 to 4.0.0
+    - @peerbit/rpc bumped from 4.0.7 to 5.0.0
+    - @peerbit/time bumped from 2.0.6 to 2.0.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.33 to ^2.0.34
 
 ## [8.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.6...shared-log-v8.0.7) (2024-02-26)
 
-
 ### Bug Fixes
 
-* ignore abort errors when waiting for replicator ([6e52d0d](https://github.com/dao-xyz/peerbit/commit/6e52d0dfb4cde6877694eac889a71a20b14791b4))
-
+- ignore abort errors when waiting for replicator ([6e52d0d](https://github.com/dao-xyz/peerbit/commit/6e52d0dfb4cde6877694eac889a71a20b14791b4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.6 to 4.0.7
-    * @peerbit/log bumped from 3.0.33 to 3.0.34
-    * @peerbit/rpc bumped from 4.0.6 to 4.0.7
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.6 to 4.0.7
+    - @peerbit/log bumped from 3.0.33 to 3.0.34
+    - @peerbit/rpc bumped from 4.0.6 to 4.0.7
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.32 to ^2.0.33
 
 ## [8.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v8.0.1...shared-log-v8.0.2) (2024-02-02)
 
-
 ### Bug Fixes
 
-* add option to control distribution debounce time ([437043e](https://github.com/dao-xyz/peerbit/commit/437043ea96d1782544451df9137065dc9516e608))
-* distribute sync requests with lower priority ([29ec5b5](https://github.com/dao-xyz/peerbit/commit/29ec5b59d7075ec0bf4324186dd0279b86690a45))
-* make distribute timeout dependent on log length ([dbe1834](https://github.com/dao-xyz/peerbit/commit/dbe1834886e0c5b852b4285f4ad17b3e9f45c59d))
-* set higher priority for meta messages ([1c1793f](https://github.com/dao-xyz/peerbit/commit/1c1793fccb665f6d31cfff0ab5583f72932f95b6))
-
+- add option to control distribution debounce time ([437043e](https://github.com/dao-xyz/peerbit/commit/437043ea96d1782544451df9137065dc9516e608))
+- distribute sync requests with lower priority ([29ec5b5](https://github.com/dao-xyz/peerbit/commit/29ec5b59d7075ec0bf4324186dd0279b86690a45))
+- make distribute timeout dependent on log length ([dbe1834](https://github.com/dao-xyz/peerbit/commit/dbe1834886e0c5b852b4285f4ad17b3e9f45c59d))
+- set higher priority for meta messages ([1c1793f](https://github.com/dao-xyz/peerbit/commit/1c1793fccb665f6d31cfff0ab5583f72932f95b6))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 4.0.1 to 4.0.2
-    * @peerbit/log bumped from 3.0.28 to 3.0.29
-    * @peerbit/rpc bumped from 4.0.1 to 4.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.27 to ^2.0.28
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 4.0.1 to 4.0.2
+    - @peerbit/log bumped from 3.0.28 to 3.0.29
+    - @peerbit/rpc bumped from 4.0.1 to 4.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.27 to ^2.0.28
 
 ## [8.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.11...shared-log-v8.0.0) (2024-02-01)
 
-
 ### ⚠ BREAKING CHANGES
 
-* discrete message prioritization protocol
-* rename node "memory" property to "storage"
-* rename limit "memory" property to "storage"
+- discrete message prioritization protocol
+- rename node "memory" property to "storage"
+- rename limit "memory" property to "storage"
 
 ### Features
 
-* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
-
+- discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
 
 ### Bug Fixes
 
-* reduce MAX_EXCHANGE_MESSAGE_SIZE to 100kb ([7dbb6f9](https://github.com/dao-xyz/peerbit/commit/7dbb6f9a4e60bfd662fbeb5e063f328f258b7804))
-* rename limit "memory" property to "storage" ([5c147eb](https://github.com/dao-xyz/peerbit/commit/5c147eb088dd38ce1ed8b4a258f99c465a6ea306))
-* rename node "memory" property to "storage" ([815f30c](https://github.com/dao-xyz/peerbit/commit/815f30c9250768acfd384e0249f9c5133bf1c7e1))
-
+- reduce MAX_EXCHANGE_MESSAGE_SIZE to 100kb ([7dbb6f9](https://github.com/dao-xyz/peerbit/commit/7dbb6f9a4e60bfd662fbeb5e063f328f258b7804))
+- rename limit "memory" property to "storage" ([5c147eb](https://github.com/dao-xyz/peerbit/commit/5c147eb088dd38ce1ed8b4a258f99c465a6ea306))
+- rename node "memory" property to "storage" ([815f30c](https://github.com/dao-xyz/peerbit/commit/815f30c9250768acfd384e0249f9c5133bf1c7e1))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.20 to 4.0.0
-    * @peerbit/log bumped from 3.0.26 to 3.0.27
-    * @peerbit/rpc bumped from 3.0.25 to 4.0.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.25 to ^2.0.26
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.20 to 4.0.0
+    - @peerbit/log bumped from 3.0.26 to 3.0.27
+    - @peerbit/rpc bumped from 3.0.25 to 4.0.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.25 to ^2.0.26
 
 ## [7.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.10...shared-log-v7.0.11) (2024-01-30)
 
-
 ### Bug Fixes
 
-* clear sync in flight after join ([4d19d4b](https://github.com/dao-xyz/peerbit/commit/4d19d4b0a04bfe2858a5fd78607e179259d2c56d))
-* getDefaultMinRoleAge to be used both for replicator union and samples ([ac26950](https://github.com/dao-xyz/peerbit/commit/ac269505b700a24a643c042e3e1776d6d037da79))
-* improve search node aggregation to find a smaller set ([aa0c46a](https://github.com/dao-xyz/peerbit/commit/aa0c46af1976217c2d86f71e6be65a828cdf5a9e))
-* make getDefaultMinRoleAge adaptive ([5a8ac1d](https://github.com/dao-xyz/peerbit/commit/5a8ac1d760f586ec3984d5f8a6f7f4b12647e279))
-* make union include nodes who have entries you are waiting for ([a661408](https://github.com/dao-xyz/peerbit/commit/a6614087093892fab2dcd463c8a22188dc5d95c2))
-* wait for maturity when waiting for replicator ([61c2c23](https://github.com/dao-xyz/peerbit/commit/61c2c2333ca72dfff749165b328c817820d8cda5))
-
+- clear sync in flight after join ([4d19d4b](https://github.com/dao-xyz/peerbit/commit/4d19d4b0a04bfe2858a5fd78607e179259d2c56d))
+- getDefaultMinRoleAge to be used both for replicator union and samples ([ac26950](https://github.com/dao-xyz/peerbit/commit/ac269505b700a24a643c042e3e1776d6d037da79))
+- improve search node aggregation to find a smaller set ([aa0c46a](https://github.com/dao-xyz/peerbit/commit/aa0c46af1976217c2d86f71e6be65a828cdf5a9e))
+- make getDefaultMinRoleAge adaptive ([5a8ac1d](https://github.com/dao-xyz/peerbit/commit/5a8ac1d760f586ec3984d5f8a6f7f4b12647e279))
+- make union include nodes who have entries you are waiting for ([a661408](https://github.com/dao-xyz/peerbit/commit/a6614087093892fab2dcd463c8a22188dc5d95c2))
+- wait for maturity when waiting for replicator ([61c2c23](https://github.com/dao-xyz/peerbit/commit/61c2c2333ca72dfff749165b328c817820d8cda5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 3.0.25 to 3.0.26
-    * @peerbit/rpc bumped from 3.0.24 to 3.0.25
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.24 to ^2.0.25
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 3.0.25 to 3.0.26
+    - @peerbit/rpc bumped from 3.0.24 to 3.0.25
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.24 to ^2.0.25
 
 ## [7.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.8...shared-log-v7.0.9) (2024-01-27)
 
-
 ### Bug Fixes
 
-* dont use waitFor in modifyReplicators to ensure ordering ([81794c2](https://github.com/dao-xyz/peerbit/commit/81794c2bddb6cf81b4089c2753798e9ed4f16671))
-* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
-
+- dont use waitFor in modifyReplicators to ensure ordering ([81794c2](https://github.com/dao-xyz/peerbit/commit/81794c2bddb6cf81b4089c2753798e9ed4f16671))
+- use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.19 to 3.0.20
-    * @peerbit/log bumped from 3.0.23 to 3.0.24
-    * @peerbit/rpc bumped from 3.0.22 to 3.0.23
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.22 to ^2.0.23
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.19 to 3.0.20
+    - @peerbit/log bumped from 3.0.23 to 3.0.24
+    - @peerbit/rpc bumped from 3.0.22 to 3.0.23
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.22 to ^2.0.23
 
 ## [7.0.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.7...shared-log-v7.0.8) (2024-01-26)
 
-
 ### Bug Fixes
 
-* make sure entries are not requested if already have them ([ee1902b](https://github.com/dao-xyz/peerbit/commit/ee1902b2ad50d0ced2e22e0a8a436544c7a1bf22))
+- make sure entries are not requested if already have them ([ee1902b](https://github.com/dao-xyz/peerbit/commit/ee1902b2ad50d0ced2e22e0a8a436544c7a1bf22))
 
 ## [7.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.4...shared-log-v7.0.5) (2024-01-25)
 
-
 ### Bug Fixes
 
-* make sure union calculation respects boundaries and skips unmature nodes ([1daf279](https://github.com/dao-xyz/peerbit/commit/1daf2799526d1c53b6c4e901f9b3de268d2873b0))
-
+- make sure union calculation respects boundaries and skips unmature nodes ([1daf279](https://github.com/dao-xyz/peerbit/commit/1daf2799526d1c53b6c4e901f9b3de268d2873b0))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 3.0.20 to 3.0.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 3.0.20 to 3.0.21
 
 ## [7.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.1...shared-log-v7.0.2) (2024-01-22)
 
-
 ### Bug Fixes
 
-* make geteReplicatorUnion respect if canReplicate is false for this node ([69eac97](https://github.com/dao-xyz/peerbit/commit/69eac97f4370ce26e18835c1eea52c5936a25f28))
-* start replicate with factor 0 only if limited ([1eb0770](https://github.com/dao-xyz/peerbit/commit/1eb07700f6b89677dc196e95921d7615f2b1c667))
-* start replicating with a factor of 0 when adaptive ([7927230](https://github.com/dao-xyz/peerbit/commit/7927230cb42167d336ac25c42a75a336d8bdea6a))
-
+- make geteReplicatorUnion respect if canReplicate is false for this node ([69eac97](https://github.com/dao-xyz/peerbit/commit/69eac97f4370ce26e18835c1eea52c5936a25f28))
+- start replicate with factor 0 only if limited ([1eb0770](https://github.com/dao-xyz/peerbit/commit/1eb07700f6b89677dc196e95921d7615f2b1c667))
+- start replicating with a factor of 0 when adaptive ([7927230](https://github.com/dao-xyz/peerbit/commit/7927230cb42167d336ac25c42a75a336d8bdea6a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.14 to 3.0.15
-    * @peerbit/log bumped from 3.0.17 to 3.0.18
-    * @peerbit/rpc bumped from 3.0.17 to 3.0.18
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.17 to ^2.0.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.14 to 3.0.15
+    - @peerbit/log bumped from 3.0.17 to 3.0.18
+    - @peerbit/rpc bumped from 3.0.17 to 3.0.18
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.17 to ^2.0.18
 
 ## [7.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v7.0.0...shared-log-v7.0.1) (2024-01-21)
 
-
 ### Bug Fixes
 
-* deduplicate heads exchange when there are many replicators ([81d9d21](https://github.com/dao-xyz/peerbit/commit/81d9d212d96ab8509f63dccb7612669449d4118b))
-* make sure manually synced entries don't get pruned ([8ee3773](https://github.com/dao-xyz/peerbit/commit/8ee3773d75dde2ff9577c4dc5ce7eb2ffd057634))
-
+- deduplicate heads exchange when there are many replicators ([81d9d21](https://github.com/dao-xyz/peerbit/commit/81d9d212d96ab8509f63dccb7612669449d4118b))
+- make sure manually synced entries don't get pruned ([8ee3773](https://github.com/dao-xyz/peerbit/commit/8ee3773d75dde2ff9577c4dc5ce7eb2ffd057634))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 3.0.16 to 3.0.17
-    * @peerbit/rpc bumped from 3.0.16 to 3.0.17
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.16 to ^2.0.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 3.0.16 to 3.0.17
+    - @peerbit/rpc bumped from 3.0.16 to 3.0.17
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.16 to ^2.0.17
 
 ## [7.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.1.1...shared-log-v7.0.0) (2024-01-20)
 
-
 ### ⚠ BREAKING CHANGES
 
-* request missing hashes before exchanging heads
+- request missing hashes before exchanging heads
 
 ### Features
 
-* request missing hashes before exchanging heads ([908e5a5](https://github.com/dao-xyz/peerbit/commit/908e5a5aaeaa310277aefe76328852ab99ec6e0a))
-
+- request missing hashes before exchanging heads ([908e5a5](https://github.com/dao-xyz/peerbit/commit/908e5a5aaeaa310277aefe76328852ab99ec6e0a))
 
 ### Bug Fixes
 
-* improve perf and change default window size ([80f271b](https://github.com/dao-xyz/peerbit/commit/80f271bccb30eda84d7f42e210379894efdb3622))
-
+- improve perf and change default window size ([80f271b](https://github.com/dao-xyz/peerbit/commit/80f271bccb30eda84d7f42e210379894efdb3622))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.13 to 3.0.14
-    * @peerbit/log bumped from 3.0.15 to 3.0.16
-    * @peerbit/rpc bumped from 3.0.15 to 3.0.16
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.15 to ^2.0.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.13 to 3.0.14
+    - @peerbit/log bumped from 3.0.15 to 3.0.16
+    - @peerbit/rpc bumped from 3.0.15 to 3.0.16
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.15 to ^2.0.16
 
 ## [6.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.1.0...shared-log-v6.1.1) (2024-01-19)
 
-
 ### Bug Fixes
 
-* CPUUsage monitor optional ([cde096f](https://github.com/dao-xyz/peerbit/commit/cde096fa46e929692fadfb4206e37b7f8b3597b9))
-* make sliding window forget old items ([934d11c](https://github.com/dao-xyz/peerbit/commit/934d11cd3967d8086c39664e2e38a5109b07d69c))
-* relax test memory underflow constraints ([aca5465](https://github.com/dao-xyz/peerbit/commit/aca5465e7fc3a73dd6f9a0e12c6953d0f5ddbd3d))
+- CPUUsage monitor optional ([cde096f](https://github.com/dao-xyz/peerbit/commit/cde096fa46e929692fadfb4206e37b7f8b3597b9))
+- make sliding window forget old items ([934d11c](https://github.com/dao-xyz/peerbit/commit/934d11cd3967d8086c39664e2e38a5109b07d69c))
+- relax test memory underflow constraints ([aca5465](https://github.com/dao-xyz/peerbit/commit/aca5465e7fc3a73dd6f9a0e12c6953d0f5ddbd3d))
 
 ## [6.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.0.1...shared-log-v6.1.0) (2024-01-19)
 
-
 ### Features
 
-* limit replication by cpu usage ([b933ee4](https://github.com/dao-xyz/peerbit/commit/b933ee40c7fb33c37c94f2cfa6e283742693efb3))
-
+- limit replication by cpu usage ([b933ee4](https://github.com/dao-xyz/peerbit/commit/b933ee40c7fb33c37c94f2cfa6e283742693efb3))
 
 ### Bug Fixes
 
-* rm import ([662b9dd](https://github.com/dao-xyz/peerbit/commit/662b9dd12698de40d9ac003d3056f707954920f0))
-
+- rm import ([662b9dd](https://github.com/dao-xyz/peerbit/commit/662b9dd12698de40d9ac003d3056f707954920f0))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.12 to 3.0.13
-    * @peerbit/log bumped from 3.0.14 to 3.0.15
-    * @peerbit/rpc bumped from 3.0.14 to 3.0.15
-    * @peerbit/time bumped from 2.0.5 to 2.0.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.14 to ^2.0.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.12 to 3.0.13
+    - @peerbit/log bumped from 3.0.14 to 3.0.15
+    - @peerbit/rpc bumped from 3.0.14 to 3.0.15
+    - @peerbit/time bumped from 2.0.5 to 2.0.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.14 to ^2.0.15
 
 ## [6.0.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v6.0.0...shared-log-v6.0.1) (2024-01-18)
 
-
 ### Bug Fixes
 
-* add replication test for large heads ([6abfdbb](https://github.com/dao-xyz/peerbit/commit/6abfdbbfd49c8ed2121f2cb3b84faef0fcfeb361))
-* reset size counter correctly when building messages ([7f70351](https://github.com/dao-xyz/peerbit/commit/7f70351c2506fd827e5e1b910c1664f3c8e358f0))
-
+- add replication test for large heads ([6abfdbb](https://github.com/dao-xyz/peerbit/commit/6abfdbbfd49c8ed2121f2cb3b84faef0fcfeb361))
+- reset size counter correctly when building messages ([7f70351](https://github.com/dao-xyz/peerbit/commit/7f70351c2506fd827e5e1b910c1664f3c8e358f0))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.11 to 3.0.12
-    * @peerbit/log bumped from 3.0.13 to 3.0.14
-    * @peerbit/rpc bumped from 3.0.13 to 3.0.14
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.13 to ^2.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.11 to 3.0.12
+    - @peerbit/log bumped from 3.0.13 to 3.0.14
+    - @peerbit/rpc bumped from 3.0.13 to 3.0.14
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.13 to ^2.0.14
 
 ## [6.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v5.0.1...shared-log-v6.0.0) (2024-01-17)
 
-
 ### ⚠ BREAKING CHANGES
 
-* make sure that old leaders get new heads
+- make sure that old leaders get new heads
 
 ### Bug Fixes
 
-* adjust pid parameters ([37bac7f](https://github.com/dao-xyz/peerbit/commit/37bac7f9cb57eb46b1d3ebc6a3099aebe064e52d))
-* adjut beta ([e5a4d64](https://github.com/dao-xyz/peerbit/commit/e5a4d64d8d5caddc36f37e847f873db4c565acb1))
-* distribute on interval ([79c9219](https://github.com/dao-xyz/peerbit/commit/79c9219df3575c1fb65930f807066198bac7653e))
-* increase timeout ([863a536](https://github.com/dao-xyz/peerbit/commit/863a536dc398d6fa7eaeb57d63470cdbd28c86ce))
-* make convergence test easier ([84c8034](https://github.com/dao-xyz/peerbit/commit/84c8034803ccd793e350203fa7bd4aa75a3dcce8))
-* make sure that old leaders get new heads ([3c58469](https://github.com/dao-xyz/peerbit/commit/3c584694e51a8c59b7f4b1cee6f9085b3c065113))
-* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
-
+- adjust pid parameters ([37bac7f](https://github.com/dao-xyz/peerbit/commit/37bac7f9cb57eb46b1d3ebc6a3099aebe064e52d))
+- adjut beta ([e5a4d64](https://github.com/dao-xyz/peerbit/commit/e5a4d64d8d5caddc36f37e847f873db4c565acb1))
+- distribute on interval ([79c9219](https://github.com/dao-xyz/peerbit/commit/79c9219df3575c1fb65930f807066198bac7653e))
+- increase timeout ([863a536](https://github.com/dao-xyz/peerbit/commit/863a536dc398d6fa7eaeb57d63470cdbd28c86ce))
+- make convergence test easier ([84c8034](https://github.com/dao-xyz/peerbit/commit/84c8034803ccd793e350203fa7bd4aa75a3dcce8))
+- make sure that old leaders get new heads ([3c58469](https://github.com/dao-xyz/peerbit/commit/3c584694e51a8c59b7f4b1cee6f9085b3c065113))
+- update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.10 to 3.0.11
-    * @peerbit/log bumped from 3.0.12 to 3.0.13
-    * @peerbit/rpc bumped from 3.0.12 to 3.0.13
-    * @peerbit/time bumped from 2.0.4 to 2.0.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.10 to 3.0.11
+    - @peerbit/log bumped from 3.0.12 to 3.0.13
+    - @peerbit/rpc bumped from 3.0.12 to 3.0.13
+    - @peerbit/time bumped from 2.0.4 to 2.0.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.12 to ^2.0.13
 
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.1.0...shared-log-v5.0.0) (2024-01-15)
 
-
 ### ⚠ BREAKING CHANGES
 
-* force replicators to provide segment offset by default
+- force replicators to provide segment offset by default
 
 ### Bug Fixes
 
-* force replicators to provide segment offset by default ([1577762](https://github.com/dao-xyz/peerbit/commit/15777623c54a7f6d994329db3d30f8d87e6567c8))
-
+- force replicators to provide segment offset by default ([1577762](https://github.com/dao-xyz/peerbit/commit/15777623c54a7f6d994329db3d30f8d87e6567c8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.8 to 3.0.9
-    * @peerbit/log bumped from 3.0.10 to 3.0.11
-    * @peerbit/rpc bumped from 3.0.10 to 3.0.11
-    * @peerbit/time bumped from 2.0.2 to 2.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.10 to ^2.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.8 to 3.0.9
+    - @peerbit/log bumped from 3.0.10 to 3.0.11
+    - @peerbit/rpc bumped from 3.0.10 to 3.0.11
+    - @peerbit/time bumped from 2.0.2 to 2.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.10 to ^2.0.11
 
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.12...shared-log-v4.1.0) (2024-01-12)
 
-
 ### Features
 
-* add option for targeting observers when appending ([0b994e7](https://github.com/dao-xyz/peerbit/commit/0b994e74094ad73b1e544915672e8cf469aca926))
+- add option for targeting observers when appending ([0b994e7](https://github.com/dao-xyz/peerbit/commit/0b994e74094ad73b1e544915672e8cf469aca926))
 
 ## [4.0.12](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.11...shared-log-v4.0.12) (2024-01-12)
 
-
 ### Bug Fixes
 
-* clear gidPeerHistory on unsubscription ([4a33030](https://github.com/dao-xyz/peerbit/commit/4a3303017389ddf05ca51d37eebd978a95477814))
+- clear gidPeerHistory on unsubscription ([4a33030](https://github.com/dao-xyz/peerbit/commit/4a3303017389ddf05ca51d37eebd978a95477814))
 
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.10...shared-log-v4.0.11) (2024-01-12)
 
-
 ### Bug Fixes
 
-* prevent block on distribute ([63c02e0](https://github.com/dao-xyz/peerbit/commit/63c02e05412b2c4f66688733e7a8d855ac025f4a))
+- prevent block on distribute ([63c02e0](https://github.com/dao-xyz/peerbit/commit/63c02e05412b2c4f66688733e7a8d855ac025f4a))
 
 ## [4.0.10](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.9...shared-log-v4.0.10) (2024-01-12)
 
-
 ### Bug Fixes
 
-* bump timeout ([33a87b4](https://github.com/dao-xyz/peerbit/commit/33a87b4fcb62ad93ee57419750d87d7db4a29847))
-* load log before open ([d0d0e60](https://github.com/dao-xyz/peerbit/commit/d0d0e6090be1625c77ee99a7bab1c3e6bdebe114))
-
+- bump timeout ([33a87b4](https://github.com/dao-xyz/peerbit/commit/33a87b4fcb62ad93ee57419750d87d7db4a29847))
+- load log before open ([d0d0e60](https://github.com/dao-xyz/peerbit/commit/d0d0e6090be1625c77ee99a7bab1c3e6bdebe114))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.7 to 3.0.8
-    * @peerbit/log bumped from 3.0.9 to 3.0.10
-    * @peerbit/rpc bumped from 3.0.9 to 3.0.10
-    * @peerbit/time bumped from 2.0.1 to 2.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.9 to ^2.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.7 to 3.0.8
+    - @peerbit/log bumped from 3.0.9 to 3.0.10
+    - @peerbit/rpc bumped from 3.0.9 to 3.0.10
+    - @peerbit/time bumped from 2.0.1 to 2.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.9 to ^2.0.10
 
 ## [4.0.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.8...shared-log-v4.0.9) (2024-01-10)
 
-
 ### Bug Fixes
 
-* add extra delay ([6cb5322](https://github.com/dao-xyz/peerbit/commit/6cb5322cab6dee79b7175ed0079ee2159d1aef30))
-* comment ([e750a96](https://github.com/dao-xyz/peerbit/commit/e750a9678282a3cc39322e166a1e8b0e7b9165c7))
-
+- add extra delay ([6cb5322](https://github.com/dao-xyz/peerbit/commit/6cb5322cab6dee79b7175ed0079ee2159d1aef30))
+- comment ([e750a96](https://github.com/dao-xyz/peerbit/commit/e750a9678282a3cc39322e166a1e8b0e7b9165c7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.6 to 3.0.7
-    * @peerbit/log bumped from 3.0.8 to 3.0.9
-    * @peerbit/rpc bumped from 3.0.8 to 3.0.9
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.8 to ^2.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.6 to 3.0.7
+    - @peerbit/log bumped from 3.0.8 to 3.0.9
+    - @peerbit/rpc bumped from 3.0.8 to 3.0.9
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.8 to ^2.0.9
 
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.6...shared-log-v4.0.7) (2024-01-08)
 
-
 ### Bug Fixes
 
-* improve adaptive replication performance ([e4576b8](https://github.com/dao-xyz/peerbit/commit/e4576b8c0fdcfe1497217a9b1bcaf1cba65065f5))
-* only prune peers from gidPeerHistory when they are to prune ([4b23eca](https://github.com/dao-xyz/peerbit/commit/4b23eca3edfa8420eb25b6be43cf73ad984de42e))
-* refactor tests ([30a7366](https://github.com/dao-xyz/peerbit/commit/30a736614d534a0dbcccaf4887e783e27c766c36))
-* rm log ([49b9b98](https://github.com/dao-xyz/peerbit/commit/49b9b988cceb5a0185cc9e157c273f39582024c4))
-
+- improve adaptive replication performance ([e4576b8](https://github.com/dao-xyz/peerbit/commit/e4576b8c0fdcfe1497217a9b1bcaf1cba65065f5))
+- only prune peers from gidPeerHistory when they are to prune ([4b23eca](https://github.com/dao-xyz/peerbit/commit/4b23eca3edfa8420eb25b6be43cf73ad984de42e))
+- refactor tests ([30a7366](https://github.com/dao-xyz/peerbit/commit/30a736614d534a0dbcccaf4887e783e27c766c36))
+- rm log ([49b9b98](https://github.com/dao-xyz/peerbit/commit/49b9b988cceb5a0185cc9e157c273f39582024c4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.5 to 3.0.6
-    * @peerbit/log bumped from 3.0.6 to 3.0.7
-    * @peerbit/rpc bumped from 3.0.6 to 3.0.7
-    * @peerbit/time bumped from 2.0.0 to 2.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.6 to ^2.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.5 to 3.0.6
+    - @peerbit/log bumped from 3.0.6 to 3.0.7
+    - @peerbit/rpc bumped from 3.0.6 to 3.0.7
+    - @peerbit/time bumped from 2.0.0 to 2.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.6 to ^2.0.7
 
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.5...shared-log-v4.0.6) (2024-01-03)
 
-
 ### Bug Fixes
 
-* add can wait for replicator as observer test ([a387df2](https://github.com/dao-xyz/peerbit/commit/a387df2c553dcd4bb85c7b19d3a4decb7f318ad6))
-* initialize remoteBlocks before handling subscription changes ([0f7a530](https://github.com/dao-xyz/peerbit/commit/0f7a5306a95417b70db1b66a0810ecde90f4f17c))
-
+- add can wait for replicator as observer test ([a387df2](https://github.com/dao-xyz/peerbit/commit/a387df2c553dcd4bb85c7b19d3a4decb7f318ad6))
+- initialize remoteBlocks before handling subscription changes ([0f7a530](https://github.com/dao-xyz/peerbit/commit/0f7a5306a95417b70db1b66a0810ecde90f4f17c))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.4 to 3.0.5
-    * @peerbit/log bumped from 3.0.5 to 3.0.6
-    * @peerbit/rpc bumped from 3.0.5 to 3.0.6
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.5 to ^2.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.4 to 3.0.5
+    - @peerbit/log bumped from 3.0.5 to 3.0.6
+    - @peerbit/rpc bumped from 3.0.5 to 3.0.6
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.5 to ^2.0.6
 
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/shared-log-v4.0.1...shared-log-v4.0.2) (2024-01-01)
 
-
 ### Bug Fixes
 
-* calculate total participation only when participation changes ([dddf804](https://github.com/dao-xyz/peerbit/commit/dddf8040acfb6e421762b895d269c035d3fe7291))
-* refactor ReplicationController ([e9b59ba](https://github.com/dao-xyz/peerbit/commit/e9b59ba3e16813e93f1262bf165430e7e1b6ed81))
-
+- calculate total participation only when participation changes ([dddf804](https://github.com/dao-xyz/peerbit/commit/dddf8040acfb6e421762b895d269c035d3fe7291))
+- refactor ReplicationController ([e9b59ba](https://github.com/dao-xyz/peerbit/commit/e9b59ba3e16813e93f1262bf165430e7e1b6ed81))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 3.0.1 to 3.0.2
-    * @peerbit/log bumped from 3.0.1 to 3.0.2
-    * @peerbit/rpc bumped from 3.0.1 to 3.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^2.0.1 to ^2.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 3.0.1 to 3.0.2
+    - @peerbit/log bumped from 3.0.1 to 3.0.2
+    - @peerbit/rpc bumped from 3.0.1 to 3.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^2.0.1 to ^2.0.2
 
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.10...shared-log-v4.0.0) (2023-12-31)
 
-
 ### ⚠ BREAKING CHANGES
 
-* adaptive replications settings based on memory constraints
-* modularize keychain
-* dynamic sharding and block scopes
-* lazy stream routing protocol
-* File storage abstraction
+- adaptive replications settings based on memory constraints
+- modularize keychain
+- dynamic sharding and block scopes
+- lazy stream routing protocol
+- File storage abstraction
 
 ### Features
 
-* adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
-* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
-* dynamic sharding and block scopes ([97ad692](https://github.com/dao-xyz/peerbit/commit/97ad692d671bffad34b03239c79ae14b0f5f3153))
-* File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
-* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
-* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
-
+- adaptive replications settings based on memory constraints ([07ced3e](https://github.com/dao-xyz/peerbit/commit/07ced3e2ec1d83f0fcf0f751b231e3cde241f71f))
+- add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+- dynamic sharding and block scopes ([97ad692](https://github.com/dao-xyz/peerbit/commit/97ad692d671bffad34b03239c79ae14b0f5f3153))
+- File storage abstraction ([65e0024](https://github.com/dao-xyz/peerbit/commit/65e0024216812498a00ac7922fcf30e25a357d86))
+- lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+- modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
 
 ### Bug Fixes
 
-* add timeout ([12a203a](https://github.com/dao-xyz/peerbit/commit/12a203aa194a96fe02ca08e90c6861346dfe5926))
-* allow update role while closed ([cafe432](https://github.com/dao-xyz/peerbit/commit/cafe432edfe722b9b7004d0436b09253756f0b21))
-* correctly handle role updates on pruning ([380468e](https://github.com/dao-xyz/peerbit/commit/380468e8bbf90f1a24566c2ef56c0f570d41a8d6))
-* debug error ([fa8c045](https://github.com/dao-xyz/peerbit/commit/fa8c045788b33d629411f76434b4de7b76fea753))
-* dont load log on updateRole when closed ([110517f](https://github.com/dao-xyz/peerbit/commit/110517fb426e2ef6916b96a6147a5e85d3f3747c))
-* improve assertion ([eae57b5](https://github.com/dao-xyz/peerbit/commit/eae57b5ea7dc6b3e044417fd517294e459190d04))
-* improve assertion ([ab72362](https://github.com/dao-xyz/peerbit/commit/ab7236211bec09ad310cd0db863d5c8377e08f8a))
-* improve assertion ([7c22c83](https://github.com/dao-xyz/peerbit/commit/7c22c83967242a58e58f737b2a0848cdde3ad2e6))
-* improve assertions ([6cbceb4](https://github.com/dao-xyz/peerbit/commit/6cbceb4ed68b79c5ba9dc97faf3c459353ac980b))
-* improve waitForIsLeader performance ([08469c0](https://github.com/dao-xyz/peerbit/commit/08469c0a57d2c6236fd6e2ac8587c43610ed08ea))
-* increase 'wait for replicator' timeout ([8b2673d](https://github.com/dao-xyz/peerbit/commit/8b2673d0a75269c28fa31365a57569f51a81b64a))
-* increase timeout ([b389cd3](https://github.com/dao-xyz/peerbit/commit/b389cd3f9cc842e3b1c211530385306c04b6c130))
-* refactor ([018b344](https://github.com/dao-xyz/peerbit/commit/018b344553befc65ccea821ce83d553bbfba87f6))
-* remove event listeners first on close ([6b107e4](https://github.com/dao-xyz/peerbit/commit/6b107e42428a20d01cbf03eb192b8656ecc139bc))
-* rm distribute override ([4f3df49](https://github.com/dao-xyz/peerbit/commit/4f3df492b50c848da81807e0498cc70a5ad0fb25))
-* rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
-* update compare limit ([fd727e0](https://github.com/dao-xyz/peerbit/commit/fd727e0f5033ef2a932cb8a9544800d8edc21d49))
-* update error function ([ba1e907](https://github.com/dao-xyz/peerbit/commit/ba1e907daa132762696378d71d445d016faf5d8d))
-* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
-* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
-* update test limits ([72617fa](https://github.com/dao-xyz/peerbit/commit/72617fa9cfde84cdab6f0f5cf046178d48e4406d))
-
+- add timeout ([12a203a](https://github.com/dao-xyz/peerbit/commit/12a203aa194a96fe02ca08e90c6861346dfe5926))
+- allow update role while closed ([cafe432](https://github.com/dao-xyz/peerbit/commit/cafe432edfe722b9b7004d0436b09253756f0b21))
+- correctly handle role updates on pruning ([380468e](https://github.com/dao-xyz/peerbit/commit/380468e8bbf90f1a24566c2ef56c0f570d41a8d6))
+- debug error ([fa8c045](https://github.com/dao-xyz/peerbit/commit/fa8c045788b33d629411f76434b4de7b76fea753))
+- dont load log on updateRole when closed ([110517f](https://github.com/dao-xyz/peerbit/commit/110517fb426e2ef6916b96a6147a5e85d3f3747c))
+- improve assertion ([eae57b5](https://github.com/dao-xyz/peerbit/commit/eae57b5ea7dc6b3e044417fd517294e459190d04))
+- improve assertion ([ab72362](https://github.com/dao-xyz/peerbit/commit/ab7236211bec09ad310cd0db863d5c8377e08f8a))
+- improve assertion ([7c22c83](https://github.com/dao-xyz/peerbit/commit/7c22c83967242a58e58f737b2a0848cdde3ad2e6))
+- improve assertions ([6cbceb4](https://github.com/dao-xyz/peerbit/commit/6cbceb4ed68b79c5ba9dc97faf3c459353ac980b))
+- improve waitForIsLeader performance ([08469c0](https://github.com/dao-xyz/peerbit/commit/08469c0a57d2c6236fd6e2ac8587c43610ed08ea))
+- increase 'wait for replicator' timeout ([8b2673d](https://github.com/dao-xyz/peerbit/commit/8b2673d0a75269c28fa31365a57569f51a81b64a))
+- increase timeout ([b389cd3](https://github.com/dao-xyz/peerbit/commit/b389cd3f9cc842e3b1c211530385306c04b6c130))
+- refactor ([018b344](https://github.com/dao-xyz/peerbit/commit/018b344553befc65ccea821ce83d553bbfba87f6))
+- remove event listeners first on close ([6b107e4](https://github.com/dao-xyz/peerbit/commit/6b107e42428a20d01cbf03eb192b8656ecc139bc))
+- rm distribute override ([4f3df49](https://github.com/dao-xyz/peerbit/commit/4f3df492b50c848da81807e0498cc70a5ad0fb25))
+- rm unused imports ([89837fe](https://github.com/dao-xyz/peerbit/commit/89837fe869ad14e322c74389cdd6a35f4622c4c7))
+- update compare limit ([fd727e0](https://github.com/dao-xyz/peerbit/commit/fd727e0f5033ef2a932cb8a9544800d8edc21d49))
+- update error function ([ba1e907](https://github.com/dao-xyz/peerbit/commit/ba1e907daa132762696378d71d445d016faf5d8d))
+- update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+- update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
+- update test limits ([72617fa](https://github.com/dao-xyz/peerbit/commit/72617fa9cfde84cdab6f0f5cf046178d48e4406d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/logger bumped from 1.0.1 to 1.0.2
-    * @peerbit/program bumped from 2.4.2 to 3.0.0
-    * @peerbit/log bumped from 2.1.10 to 3.0.0
-    * @peerbit/rpc bumped from 2.1.17 to 3.0.0
-    * @peerbit/time bumped from 1.0.4 to 2.0.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/logger bumped from 1.0.1 to 1.0.2
+    - @peerbit/program bumped from 2.4.2 to 3.0.0
+    - @peerbit/log bumped from 2.1.10 to 3.0.0
+    - @peerbit/rpc bumped from 2.1.17 to 3.0.0
+    - @peerbit/time bumped from 1.0.4 to 2.0.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.33 to ^2.0.0
 
 ## [3.1.8](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.7...shared-log-v3.1.8) (2023-09-21)
 
-
 ### Bug Fixes
 
-* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
-
+- cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.3.2 to 2.4.0
-    * @peerbit/log bumped from 2.1.7 to 2.1.8
-    * @peerbit/rpc bumped from 2.1.14 to 2.1.15
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.30 to ^1.0.31
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.3.2 to 2.4.0
+    - @peerbit/log bumped from 2.1.7 to 2.1.8
+    - @peerbit/rpc bumped from 2.1.14 to 2.1.15
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.30 to ^1.0.31
 
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.2...shared-log-v3.1.3) (2023-09-07)
 
-
 ### Bug Fixes
 
-* rm type casting when calling decodeReplicas ([0616d30](https://github.com/dao-xyz/peerbit/commit/0616d30cd16734bbfa6b0751fbde46bea3b408aa))
-
+- rm type casting when calling decodeReplicas ([0616d30](https://github.com/dao-xyz/peerbit/commit/0616d30cd16734bbfa6b0751fbde46bea3b408aa))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 2.1.2 to 2.1.3
-    * @peerbit/rpc bumped from 2.1.9 to 2.1.10
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.25 to ^1.0.26
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 2.1.2 to 2.1.3
+    - @peerbit/rpc bumped from 2.1.9 to 2.1.10
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.25 to ^1.0.26
 
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.1.0...shared-log-v3.1.1) (2023-09-06)
 
-
 ### Bug Fixes
 
-* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
-
+- handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.3.0 to 2.3.1
-    * @peerbit/log bumped from 2.1.0 to 2.1.1
-    * @peerbit/rpc bumped from 2.1.8 to 2.1.9
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.24 to ^1.0.25
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.3.0 to 2.3.1
+    - @peerbit/log bumped from 2.1.0 to 2.1.1
+    - @peerbit/rpc bumped from 2.1.8 to 2.1.9
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.24 to ^1.0.25
 
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.0.7...shared-log-v3.1.0) (2023-09-06)
 
-
 ### Features
 
-* support recovery of heads ([968b780](https://github.com/dao-xyz/peerbit/commit/968b780f315454f8e18d81f37f3e8a5c885b272d))
-
+- support recovery of heads ([968b780](https://github.com/dao-xyz/peerbit/commit/968b780f315454f8e18d81f37f3e8a5c885b272d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.2.5 to 2.3.0
-    * @peerbit/log bumped from 2.0.7 to 2.1.0
-    * @peerbit/rpc bumped from 2.1.7 to 2.1.8
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.23 to ^1.0.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.2.5 to 2.3.0
+    - @peerbit/log bumped from 2.0.7 to 2.1.0
+    - @peerbit/rpc bumped from 2.1.7 to 2.1.8
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.23 to ^1.0.24
 
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/shared-log-v3.0.3...shared-log-v3.0.4) (2023-09-02)
 
-
 ### Bug Fixes
 
-* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
-
+- trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.2.2 to 2.2.3
-    * @peerbit/log bumped from 2.0.3 to 2.0.4
-    * @peerbit/rpc bumped from 2.1.3 to 2.1.4
-    * @peerbit/time bumped from 1.0.2 to 1.0.3
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.19 to ^1.0.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.2.2 to 2.2.3
+    - @peerbit/log bumped from 2.0.3 to 2.0.4
+    - @peerbit/rpc bumped from 2.1.3 to 2.1.4
+    - @peerbit/time bumped from 1.0.2 to 1.0.3
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.19 to ^1.0.20
 
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v2.0.1...shared-log-v3.0.0) (2023-08-06)
 
-
 ### ⚠ BREAKING CHANGES
 
-* canPerform callback that allows peers to filter allowed operations
-* replication degree on commit level
+- canPerform callback that allows peers to filter allowed operations
+- replication degree on commit level
 
 ### Features
 
-* allow updating role while open ([4fe384d](https://github.com/dao-xyz/peerbit/commit/4fe384d079d2bc3afeb2294d024eb8b49009ea00))
-* canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
-* replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
-* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
-
+- allow updating role while open ([4fe384d](https://github.com/dao-xyz/peerbit/commit/4fe384d079d2bc3afeb2294d024eb8b49009ea00))
+- canPerform callback that allows peers to filter allowed operations ([923908d](https://github.com/dao-xyz/peerbit/commit/923908d22d2c1aeceba62cb598deab6c417ba669))
+- replication degree on commit level ([cba04ef](https://github.com/dao-xyz/peerbit/commit/cba04efe955b67df73256b23ecb5a13ba6b76ee5))
+- support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
 
 ### Bug Fixes
 
-* add replication re-organization checks ([03954ba](https://github.com/dao-xyz/peerbit/commit/03954badc55c4e36e3459cc13be7b711b61e1cb5))
-* cache resolving parents with unique gids ([128a2ea](https://github.com/dao-xyz/peerbit/commit/128a2ea426843bf3326340cf25508a8cec82cb8a))
-* export append options ([44b7a2e](https://github.com/dao-xyz/peerbit/commit/44b7a2ecbf69d8915d6797a5abdb2b7b25596b08))
-* make sure pendingDeletes are not interfering with reopens ([b8f3bb4](https://github.com/dao-xyz/peerbit/commit/b8f3bb4b2c6edbb75c655bb7f4972d654f85bbf9))
-* remove pending IHave response handlers after timeout ([1a65fb8](https://github.com/dao-xyz/peerbit/commit/1a65fb8aaf31ef253a74eff5135cfdb481892f96))
-* rename replication types ([42ade4f](https://github.com/dao-xyz/peerbit/commit/42ade4fe45a5139c72019de8b982589a83731954))
-* simplify QueryContext ([86ae518](https://github.com/dao-xyz/peerbit/commit/86ae5187bf6cc8a894a6b7f160415ceb6b3cb64d))
-* simplify tests ([a73b33f](https://github.com/dao-xyz/peerbit/commit/a73b33f53b83bf12e89d4c02a473b7abe7777a9d))
-* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
-* update error message ([8c90343](https://github.com/dao-xyz/peerbit/commit/8c90343236011d835b7739c8da7c69b1ee3d0582))
-* verify remote signatures by default ([ce96816](https://github.com/dao-xyz/peerbit/commit/ce968166d9d1b168cc5087052427ba9de33b4d2a))
-* wait for replicating entry before notifying peers ([2b79612](https://github.com/dao-xyz/peerbit/commit/2b79612766437fd51e48dcad0b7c624b6e322145))
-
+- add replication re-organization checks ([03954ba](https://github.com/dao-xyz/peerbit/commit/03954badc55c4e36e3459cc13be7b711b61e1cb5))
+- cache resolving parents with unique gids ([128a2ea](https://github.com/dao-xyz/peerbit/commit/128a2ea426843bf3326340cf25508a8cec82cb8a))
+- export append options ([44b7a2e](https://github.com/dao-xyz/peerbit/commit/44b7a2ecbf69d8915d6797a5abdb2b7b25596b08))
+- make sure pendingDeletes are not interfering with reopens ([b8f3bb4](https://github.com/dao-xyz/peerbit/commit/b8f3bb4b2c6edbb75c655bb7f4972d654f85bbf9))
+- remove pending IHave response handlers after timeout ([1a65fb8](https://github.com/dao-xyz/peerbit/commit/1a65fb8aaf31ef253a74eff5135cfdb481892f96))
+- rename replication types ([42ade4f](https://github.com/dao-xyz/peerbit/commit/42ade4fe45a5139c72019de8b982589a83731954))
+- simplify QueryContext ([86ae518](https://github.com/dao-xyz/peerbit/commit/86ae5187bf6cc8a894a6b7f160415ceb6b3cb64d))
+- simplify tests ([a73b33f](https://github.com/dao-xyz/peerbit/commit/a73b33f53b83bf12e89d4c02a473b7abe7777a9d))
+- typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
+- update error message ([8c90343](https://github.com/dao-xyz/peerbit/commit/8c90343236011d835b7739c8da7c69b1ee3d0582))
+- verify remote signatures by default ([ce96816](https://github.com/dao-xyz/peerbit/commit/ce968166d9d1b168cc5087052427ba9de33b4d2a))
+- wait for replicating entry before notifying peers ([2b79612](https://github.com/dao-xyz/peerbit/commit/2b79612766437fd51e48dcad0b7c624b6e322145))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 2.1.0 to 2.2.0
-    * @peerbit/log bumped from 1.0.15 to 2.0.0
-    * @peerbit/rpc bumped from 2.0.1 to 2.1.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 2.1.0 to 2.2.0
+    - @peerbit/log bumped from 1.0.15 to 2.0.0
+    - @peerbit/rpc bumped from 2.0.1 to 2.1.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.15 to ^1.0.16
 
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.9...shared-log-v2.0.0) (2023-07-18)
 
-
 ### ⚠ BREAKING CHANGES
 
-* remove ComposableProgram type
+- remove ComposableProgram type
 
 ### Features
 
-* remove ComposableProgram type ([4ccf6c2](https://github.com/dao-xyz/peerbit/commit/4ccf6c2ce07d7edfe1608e9bd5adfa03cf587dd4))
-
+- remove ComposableProgram type ([4ccf6c2](https://github.com/dao-xyz/peerbit/commit/4ccf6c2ce07d7edfe1608e9bd5adfa03cf587dd4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.6 to 2.0.0
-    * @peerbit/log bumped from 1.0.13 to 1.0.14
-    * @peerbit/rpc bumped from 1.0.14 to 2.0.0
-    * @peerbit/time bumped from 1.0.1 to 1.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.13 to ^1.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.6 to 2.0.0
+    - @peerbit/log bumped from 1.0.13 to 1.0.14
+    - @peerbit/rpc bumped from 1.0.14 to 2.0.0
+    - @peerbit/time bumped from 1.0.1 to 1.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.13 to ^1.0.14
 
 ## [1.1.9](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.8...shared-log-v1.1.9) (2023-07-04)
 
-
 ### Bug Fixes
 
-* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
-
+- rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/logger bumped from 1.0.0 to 1.0.1
-    * @peerbit/program bumped from 1.0.5 to 1.0.6
-    * @peerbit/log bumped from 1.0.12 to 1.0.13
-    * @peerbit/rpc bumped from 1.0.13 to 1.0.14
-    * @peerbit/time bumped from 1.0.0 to 1.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.12 to ^1.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/logger bumped from 1.0.0 to 1.0.1
+    - @peerbit/program bumped from 1.0.5 to 1.0.6
+    - @peerbit/log bumped from 1.0.12 to 1.0.13
+    - @peerbit/rpc bumped from 1.0.13 to 1.0.14
+    - @peerbit/time bumped from 1.0.0 to 1.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.12 to ^1.0.13
 
 ## [1.1.6](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.1.5...shared-log-v1.1.6) (2023-07-03)
 
-
 ### Bug Fixes
 
-* check super drop before dropping log ([2218b00](https://github.com/dao-xyz/peerbit/commit/2218b0041973aa1311477fb96f661ec94804e723))
-
+- check super drop before dropping log ([2218b00](https://github.com/dao-xyz/peerbit/commit/2218b0041973aa1311477fb96f661ec94804e723))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.4 to 1.0.5
-    * @peerbit/log bumped from 1.0.9 to 1.0.10
-    * @peerbit/rpc bumped from 1.0.10 to 1.0.11
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.9 to ^1.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.4 to 1.0.5
+    - @peerbit/log bumped from 1.0.9 to 1.0.10
+    - @peerbit/rpc bumped from 1.0.10 to 1.0.11
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.9 to ^1.0.10
 
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.0.5...shared-log-v1.1.0) (2023-06-29)
 
-
 ### Features
 
-* include age in replicator info ([2adf246](https://github.com/dao-xyz/peerbit/commit/2adf246637ea42c7ce4b21db6cd48a8e9d24faf3))
+- include age in replicator info ([2adf246](https://github.com/dao-xyz/peerbit/commit/2adf246637ea42c7ce4b21db6cd48a8e9d24faf3))
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/shared-log-v1.0.4...shared-log-v1.0.5) (2023-06-29)
 
-
 ### Bug Fixes
 
-* rn SubscriptionType to Role ([c92c83f](https://github.com/dao-xyz/peerbit/commit/c92c83f8a991995744401c56018d2a800d9b235e))
-
+- rn SubscriptionType to Role ([c92c83f](https://github.com/dao-xyz/peerbit/commit/c92c83f8a991995744401c56018d2a800d9b235e))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.2 to 1.0.3
-    * @peerbit/log bumped from 1.0.4 to 1.0.5
-    * @peerbit/rpc bumped from 1.0.4 to 1.0.5
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.4 to ^1.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.2 to 1.0.3
+    - @peerbit/log bumped from 1.0.4 to 1.0.5
+    - @peerbit/rpc bumped from 1.0.4 to 1.0.5
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.4 to ^1.0.5
 
 ## 1.0.0 (2023-06-28)
 
-
 ### ⚠ BREAKING CHANGES
 
-* rename org on utility modules
-* Uint8array as default encoding for logs
-* client abstraction
+- rename org on utility modules
+- Uint8array as default encoding for logs
+- client abstraction
 
 ### Features
 
-* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
-* Uint8array as default encoding for logs ([f87f594](https://github.com/dao-xyz/peerbit/commit/f87f5940e1ae0406c4b2a715449b68079f50df5c))
-
+- client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+- Uint8array as default encoding for logs ([f87f594](https://github.com/dao-xyz/peerbit/commit/f87f5940e1ae0406c4b2a715449b68079f50df5c))
 
 ### Bug Fixes
 
-* remove uneccessary interface module ([1a24f62](https://github.com/dao-xyz/peerbit/commit/1a24f62f77fe6777628512fbb719bd78ad9080af))
-* rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
-
+- remove uneccessary interface module ([1a24f62](https://github.com/dao-xyz/peerbit/commit/1a24f62f77fe6777628512fbb719bd78ad9080af))
+- rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/program bumped from 1.0.4 to 1.0.0
-    * @peerbit/log bumped from 1.0.4 to 1.0.0
-    * @peerbit/rpc bumped from 1.0.4 to 1.0.0
-  * devDependencies
-    * @peerbit/test-utils bumped from ^1.0.4 to ^1.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/program bumped from 1.0.4 to 1.0.0
+    - @peerbit/log bumped from 1.0.4 to 1.0.0
+    - @peerbit/rpc bumped from 1.0.4 to 1.0.0
+  - devDependencies
+    - @peerbit/test-utils bumped from ^1.0.4 to ^1.0.0
