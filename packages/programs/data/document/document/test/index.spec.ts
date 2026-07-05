@@ -13775,6 +13775,81 @@ describe("index", () => {
 				// TODO session timeouts?
 			});
 
+			describe("local-remote merge recency", () => {
+				let session: TestSession;
+
+				afterEach(async () => {
+					await session.stop();
+				});
+
+				it("prefers newer remote version over stale buffered local version of the same document", async () => {
+					session = await TestSession.connected(2);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const writer = await session.peers[0].open(store, {
+						args: { replicate: { factor: 1 } },
+					});
+					const reader = await session.peers[1].open(store.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(writer.node.identity.publicKey);
+
+					const id = "same-id";
+
+					// The reader holds a stale local head for the document (kept local,
+					// not announced), while the writer holds a newer version of the same
+					// id that has not replicated to the reader yet
+					await reader.docs.put(new Document({ id, name: "v1" }), {
+						target: "none",
+						replicate: false,
+					});
+					await delay(10); // ensure v2 gets a strictly later timestamp
+					await writer.docs.put(new Document({ id, name: "v2" }));
+					await writer.docs.put(new Document({ id: "other", name: "same" }));
+
+					// Local-first read with remote fallback: the stale local (v1) result
+					// must not shadow the newer remote (v2) result for the same id
+					const results = await reader.docs.index
+						.iterate(
+							{},
+							{
+								local: true,
+								remote: { timeout: 5e3 },
+							},
+						)
+						.all();
+
+					expect(results).to.have.length(2);
+					const byId = new Map(results.map((x) => [x.id, x]));
+					expect(byId.get(id)?.name).to.equal("v2");
+					expect(byId.get("other")?.name).to.equal("same");
+
+					// The reverse direction must keep dedupe semantics: an older remote
+					// version must not replace a newer buffered local version
+					await delay(10); // ensure v3 gets a strictly later timestamp
+					await reader.docs.put(new Document({ id, name: "v3" }), {
+						target: "none",
+						replicate: false,
+					});
+					const afterLocalUpdate = await reader.docs.index
+						.iterate(
+							{},
+							{
+								local: true,
+								remote: { timeout: 5e3 },
+							},
+						)
+						.all();
+					expect(afterLocalUpdate).to.have.length(2);
+					const byIdAfter = new Map(afterLocalUpdate.map((x) => [x.id, x]));
+					expect(byIdAfter.get(id)?.name).to.equal("v3");
+				});
+			});
+
 			describe("remote", () => {
 				describe("wait", () => {
 					let session: TestSession;
