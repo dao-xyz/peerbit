@@ -28,6 +28,14 @@ crate-type = ["rlib"]
 name = "interop_dial_js"
 path = "src/bin/interop_dial_js.rs"
 
+# Native circuit-relay-v2 relay node — Path B of the RELAY A/B (RELAY-PROFILING.md)
+# and the subject of its interop gate: proves a rust-libp2p relay forwards
+# traffic between two js-libp2p circuit-relay CLIENTS. Bench/interop-only; never
+# built into the wasm pipeline and not part of any default CI partition.
+[[bin]]
+name = "relay_node"
+path = "src/bin/relay_node.rs"
+
 # Path B of the native-transport receive profiling (Measurement 2): decode +
 # Ed25519 batch-verify the shared corpus in place off Rust-owned buffers with
 # NO ingress copy / NO JS. Paired with benchmark/wire-receive-profile.ts

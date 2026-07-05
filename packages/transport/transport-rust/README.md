@@ -69,6 +69,22 @@ node js/listener.mjs                          # prints DIAL_ME=/ip4/.../tcp/<por
 cargo run --bin interop_dial_js -- <DIAL_ME>
 ```
 
+## Relay profiling — native relay vs the js relay (RELAY-PROFILING.md)
+
+A separate, additive track profiles the **relay** workload, which is unlike the
+receive path: a circuit-relay-v2 relay forwards opaque bytes between peers and
+**never decodes the `/peerbit/*` payloads**, so the Ed25519 verify that dominates
+receive is absent — relaying is an I/O + concurrency workload. `src/relay.rs` +
+`src/bin/relay_node.rs` add a native circuit-relay-v2 **server**; the js harness
+(`js/relay-*.mjs`, `scripts/run-relay-{gate,sweep}.sh`) first PROVES the native
+relay forwards traffic between two js-libp2p circuit-relay clients (the interop
+gate — PASS), then A/B-scales it against the js `circuitRelayServer`. Headline:
+interop holds, and the native relay uses **~2× less CPU per GB** and escapes the
+js single-event-loop **one-core ceiling** (js pins at ~1.0 core from ~10
+concurrent circuits; native stays at ~0.48) — a scaling/headroom win for
+relay-heavy nodes, not a latency win. Full methodology, tables, and verdict in
+`RELAY-PROFILING.md`.
+
 ## CI strategy — zero cost to every default job
 
 This is the **only** place the heavy libp2p 0.56 tree compiles:

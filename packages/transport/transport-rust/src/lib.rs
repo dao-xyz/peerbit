@@ -37,6 +37,7 @@
 pub mod framing;
 pub mod identity;
 pub mod protocol;
+pub mod relay;
 pub mod swarm;
 
 pub use framing::{FrameCodec, FramingError, MAX_DATA_LENGTH_IN, MAX_DATA_LENGTH_OUT};
@@ -44,5 +45,8 @@ pub use identity::{IdentityError, NodeIdentity};
 pub use protocol::{
     PeerbitProtocol, DIRECT_BLOCK_PROTOCOL, FANOUT_TREE_PROTOCOL, PEERBIT_PROTOCOLS,
     TOPIC_CONTROL_PROTOCOL,
+};
+pub use relay::{
+    build_relay_swarm, relay_config, RelayBehaviour, RelayBehaviourEvent, RelaySwarmError,
 };
 pub use swarm::{build_node_swarm, NodeBehaviour, NodeBehaviourEvent, SwarmError};
