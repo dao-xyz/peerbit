@@ -172,6 +172,29 @@ async function isPublished({ name, version }) {
 	throw new Error(`Failed to query npm for ${name}@${version}\n${combinedOutput}`);
 }
 
+async function verifyPublished(pkg) {
+	// `pnpm publish` can exit 0 without the version actually landing on the
+	// registry — most notably the FIRST publish of a brand-new scoped package
+	// when the npm token / org lacks permission to create it. A silent
+	// non-publish must fail the release loudly, not leave a green run that
+	// shipped nothing. Re-query with a short backoff to tolerate registry
+	// propagation delay.
+	const delaysMs = [0, 2000, 4000, 8000, 15000];
+	for (const delay of delaysMs) {
+		if (delay) {
+			await new Promise((r) => setTimeout(r, delay));
+		}
+		if (await isPublished(pkg)) {
+			return;
+		}
+	}
+	throw new Error(
+		`${pkg.name}@${pkg.version}: publish command exited 0 but the version never appeared on the registry. ` +
+			`For a brand-new package this usually means the npm token/org cannot create it — check the token scope ` +
+			`(needs @peerbit scope-level publish, not just per-package access) and the org's new-package permissions.`,
+	);
+}
+
 async function publishPackage(pkg) {
 	const alreadyPublished = await isPublished(pkg);
 	if (alreadyPublished) {
@@ -188,6 +211,9 @@ async function publishPackage(pkg) {
 	}
 	console.log(`publish ${pkg.name}@${pkg.version}`);
 	await run(pnpmCmd, publishArgs, pkg.dir);
+	if (!dryRun) {
+		await verifyPublished(pkg);
+	}
 }
 
 const workspacePackages = await loadWorkspacePackages();

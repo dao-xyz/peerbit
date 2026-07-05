@@ -46,6 +46,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The changesets action pushes via the git CLI, which uses the
+          # credentials persisted here — so this must be the bot PAT (see the
+          # RELEASE_PR_TOKEN note below) for the version-branch push to be able
+          # to trigger CI on the Version Packages PR.
+          token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -67,9 +72,11 @@ jobs:
     # pending) and, once that PR is merged, runs the publish command below.
     #
     # NOTE: secrets.GITHUB_TOKEN cannot trigger downstream workflows (CI) on the
-    # Version Packages PR it opens. If you want CI to run on that PR, create a
-    # bot Personal Access Token secret (e.g. RELEASE_PR_TOKEN with repo +
-    # workflow scopes) and pass it as `token:` below instead of GITHUB_TOKEN.
+    # Version Packages PR it opens, so the PR is opened with RELEASE_PR_TOKEN —
+    # a peerbit-org bot PAT with repo + workflow scopes. Both the checkout token
+    # above (git pushes: version branch, release tags) and the action token
+    # below fall back to the default GITHUB_TOKEN if the secret is removed, in
+    # which case everything still works except CI on the Version Packages PR.
     #
     # createGithubReleases is disabled deliberately. changesets tags packages as
     # `<name>@<version>` (e.g. peerbit@5.2.21, @peerbit/crypto@3.2.0), whereas
@@ -87,16 +94,25 @@ jobs:
         if: ${{ github.event_name == 'push' }}
         uses: changesets/action@v1
         with:
+          github-token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
           version: pnpm run version-packages
           # Build, publish every unpublished version (from-package), then create
-          # the pkg@version git tags and push them. `changeset tag` reads the
-          # current package.json versions and creates one tag per package.
-          publish: pnpm run build && pnpm run release && pnpm exec changeset tag && git push --follow-tags
+          # the pkg@version git tags and push them.
+          #
+          # This MUST be a single `pnpm run <script>`. changesets/action runs the
+          # publish command WITHOUT a shell, so an inline `a && b && c` chain here
+          # is passed as literal arguments to the first command — only the build
+          # runs, the actual publish + tagging are silently skipped, and the step
+          # still exits 0. Keeping the chain inside the release:publish npm script
+          # makes pnpm run it in a shell (exactly like version-packages above).
+          publish: pnpm run release:publish
           commit: "chore: version packages"
           title: "chore: version packages"
           createGithubReleases: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Older changesets/action builds read the token from the environment
+          # rather than the github-token input; set both to stay robust.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     # Manual stable escape hatch: build and publish anything whose package.json
