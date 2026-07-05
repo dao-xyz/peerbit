@@ -36,6 +36,7 @@ import {
 	type FanoutTreeChannelOptions,
 	type FanoutTreeJoinOptions,
 } from "@peerbit/pubsub";
+import type { RustCoreStream } from "@peerbit/stream";
 import type { Libp2p } from "libp2p";
 import sodium from "libsodium-wrappers";
 import path from "path-browserify";
@@ -53,11 +54,17 @@ export const logger = loggerFn("peerbit:client");
 export type OptionalCreateOptions = {
 	libp2pExternal?: boolean;
 };
+export type NativeNetworkRuntime = {
+	rustCore?: RustCoreStream;
+	wireSync?: NativeWireSyncSessionLike;
+};
 export type CreateOptions = {
 	directory?: string;
 	storage: AnyStore;
 	indexer: Indices;
 	identity: Ed25519Keypair;
+	nativeNetwork?: NativeNetworkRuntime;
+	sharedLogNativeDefaults?: SharedLogNativeDefaultsLike;
 } & OptionalCreateOptions;
 type Libp2pOptions = {
 	libp2p?: Libp2pExtended | (PartialLibp2pCreateOptions & { peerId?: never });
@@ -69,10 +76,99 @@ export type StorageCreateOptions = {
 	blocksStoreFactory?: StoreFactory;
 	keychainStoreFactory?: StoreFactory;
 };
+/**
+ * Per-node wire-sync session surface (implemented by
+ * `NativeBackboneWireSyncSession` in `@peerbit/native-backbone`). One object
+ * serves two seams: `decodeAndVerifyBatch` is the `nativeWire` inbound
+ * decoder of the pubsub DirectStream, and the stash accessors implement the
+ * `SharedLogNativeWireSync` receive-fusion surface shared-log consumes.
+ */
+export type NativeWireSyncSessionLike = {
+	/** Raw wasm session handle consumed by `prepareStashedRawReceive*`. */
+	handle: unknown;
+	decodeAndVerifyBatch(frames: Uint8Array[], nowMs: number): Uint32Array;
+	registerTopic(topic: string): void;
+	unregisterTopic(topic: string): boolean;
+	stashedMeta(id: Uint8Array):
+		| {
+				hashes: string[];
+				gidRefrences: string[][];
+				byteLengths: Uint32Array;
+				reserved: Uint8Array;
+				payloadLength: number;
+		  }
+		| undefined;
+	stashedBlocks(
+		id: Uint8Array,
+		indexes?: Uint32Array,
+	): Uint8Array[] | undefined;
+	release(id: Uint8Array): boolean;
+	counters?(): {
+		stashed: number;
+		evicted: number;
+		metaReads: number;
+		blockCopyOuts: number;
+		released: number;
+	};
+};
+
+/**
+ * Native shared-log defaults advertised to programs opened on this client
+ * (the `SharedLogNativeDefaults` hook of `@peerbit/shared-log`). Structural
+ * copy so the client does not depend on the shared-log package.
+ */
+export type SharedLogNativeDefaultsLike = {
+	nativeBackbone?:
+		| false
+		| {
+				optional?: boolean;
+				heads?: boolean;
+				documentIndex?: boolean;
+				coordinatePersistence?: unknown;
+		  };
+	nativeGraph?: boolean | { optional?: boolean; heads?: boolean; graph?: unknown };
+	sync?: {
+		rawExchangeHeads?: boolean;
+		nativeWireSync?: NativeWireSyncSessionLike;
+	};
+};
+
+/**
+ * Native network plane for a client-built libp2p stack (services must be
+ * constructed by `Peerbit.create`, so this cannot be combined with an
+ * external libp2p instance). All parts are opt-in; `peerbit/rust` provides
+ * the preset that fills them in.
+ */
+export type NativeNetworkCreateOptions = {
+	/**
+	 * Native DirectStream core factory (`createRustCoreStream` of
+	 * `@peerbit/network-rust`). One core is shared by the pubsub, fanout and
+	 * blocks services: routing/dedup/lane decisions and the protocol codecs
+	 * run in wasm, including the batched inbound decode+verify.
+	 */
+	rustCore?: () => Promise<RustCoreStream>;
+	/**
+	 * Per-node receive-fusion session factory
+	 * (`createNativeWireSyncSession` of `@peerbit/native-backbone`), keyed by
+	 * the node's public key hash. Installed as the pubsub DirectStream's
+	 * inbound decoder so shared-log raw exchange-head payloads stay in wasm
+	 * memory, and advertised to shared-log programs for the stashed receive.
+	 */
+	wireSync?: (selfHash: string) => Promise<NativeWireSyncSessionLike>;
+	/**
+	 * Advertise native shared-log defaults (native backbone data plane,
+	 * native graph, raw exchange-heads sync and the wire-sync session) to
+	 * programs opened on this client. Explicit per-open options still win.
+	 * Defaults to true when this options object is present.
+	 */
+	sharedLogDefaults?: boolean;
+};
+
 export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
 	storage?: StorageCreateOptions;
+	network?: NativeNetworkCreateOptions;
 } & OptionalCreateOptions;
 
 export type DialReadiness =
@@ -126,6 +222,14 @@ export class Peerbit implements ProgramClient {
 	private _storage: AnyStore;
 	private _indexer: Indices;
 	private _libp2pExternal?: boolean = false;
+	private _nativeNetwork?: NativeNetworkRuntime;
+
+	/**
+	 * Native shared-log defaults advertised to programs opened on this
+	 * client; read by `@peerbit/shared-log` (`SharedLogNativeDefaults`).
+	 * Set by `CreateInstanceOptions.network` (the `peerbit/rust` preset).
+	 */
+	public readonly sharedLogNativeDefaults?: SharedLogNativeDefaultsLike;
 
 	// Libp2p peerid in Identity form
 	private _identity: Ed25519Keypair;
@@ -152,6 +256,13 @@ export class Peerbit implements ProgramClient {
 		this._storage = options.storage;
 		this._libp2pExternal = options.libp2pExternal;
 		this._indexer = options.indexer;
+		this._nativeNetwork = options.nativeNetwork;
+		this.sharedLogNativeDefaults = options.sharedLogNativeDefaults;
+	}
+
+	/** Native network runtime enabled by `CreateInstanceOptions.network`. */
+	get nativeNetwork(): NativeNetworkRuntime | undefined {
+		return this._nativeNetwork;
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
@@ -161,6 +272,21 @@ export class Peerbit implements ProgramClient {
 			.libp2p as Libp2pExtended;
 
 		const asRelay = (options as SimpleLibp2pOptions).relay ?? true;
+
+		// Validate incompatible options BEFORE acquiring any resources
+		// (cache store, indexer, datastore). Both inputs are known up front,
+		// so throwing here avoids leaking open handles / a locked directory
+		// that a later throw (after createCache/indexer/datastore.open) would
+		// leave behind — those are never cleaned up on the throw path.
+		if (
+			options.network &&
+			libp2pExtended &&
+			isLibp2pInstance(libp2pExtended)
+		) {
+			throw new Error(
+				"The 'network' option requires Peerbit.create to build the libp2p services; it cannot be combined with an external libp2p instance.",
+			);
+		}
 
 		const directory = options.directory;
 		const hasDir = directory != null;
@@ -207,6 +333,11 @@ export class Peerbit implements ProgramClient {
 
 		let stopLibp2pOnClose = false;
 		const libp2pExternal = libp2pExtended && isLibp2pInstance(libp2pExtended);
+		const networkOptions = options.network;
+		// The `network` + external-libp2p incompatibility is validated at the
+		// top of create() (before any resources are opened).
+		let nativeNetwork: NativeNetworkRuntime | undefined;
+		let sharedLogNativeDefaults: SharedLogNativeDefaultsLike | undefined;
 		if (!libp2pExternal) {
 			const extendedOptions: ClientCreateOptions | undefined =
 				libp2pExtended as any as ClientCreateOptions;
@@ -237,6 +368,42 @@ export class Peerbit implements ProgramClient {
 					: undefined;
 				}
 
+				if (networkOptions) {
+					// The wire-sync session is keyed by the node's public key
+					// hash, so the identity must exist before the services are
+					// built (libp2p would otherwise generate it during start).
+					if (!privateKey && networkOptions.wireSync) {
+						privateKey = await keys.generateKeyPair("Ed25519");
+					}
+					const rustCore = await networkOptions.rustCore?.();
+					let wireSync: NativeWireSyncSessionLike | undefined;
+					if (networkOptions.wireSync && privateKey) {
+						const selfHash = getKeypairFromPrivateKey(privateKey)
+							.publicKey.hashcode();
+						wireSync = await networkOptions.wireSync(selfHash);
+					}
+					if (rustCore || wireSync) {
+						nativeNetwork = { rustCore, wireSync };
+					}
+					if (networkOptions.sharedLogDefaults !== false) {
+						sharedLogNativeDefaults = {
+							nativeBackbone: {},
+							// Optional so a missing/unbuildable @peerbit/log-rust
+							// (npm --omit=optional) or a service-worker context
+							// degrades gracefully instead of throwing on every
+							// program open. When the native backbone loads, its
+							// graph is used regardless; this default only applies
+							// when the backbone is absent, where a hard `true`
+							// would abort Log.open.
+							nativeGraph: { optional: true },
+							sync: {
+								rawExchangeHeads: true,
+								nativeWireSync: wireSync,
+							},
+						};
+					}
+				}
+
 				const topicRootControlPlane = new TopicRootControlPlane();
 
 				// Keep a single FanoutTree instance per peer so pubsub sharding + provider
@@ -248,6 +415,7 @@ export class Peerbit implements ProgramClient {
 						new FanoutTree(c, {
 							connectionManager: false,
 							topicRootControlPlane,
+							rustCore: nativeNetwork?.rustCore,
 						}));
 				const getOrCreateFanout = (c: any) => {
 					if (!fanoutInstance) {
@@ -330,6 +498,7 @@ export class Peerbit implements ProgramClient {
 							canRelayMessage: asRelay,
 							directory: blocksStoreFactory ? undefined : blocksDirectory,
 							localStore: blocksStoreFactory?.(blocksDirectory),
+							rustCore: nativeNetwork?.rustCore,
 							resolveProviders,
 							onPut: async (cid) => {
 								// Best-effort directory announce for "get without remote.from" workflows.
@@ -350,6 +519,11 @@ export class Peerbit implements ProgramClient {
 							canRelayMessage: asRelay,
 							topicRootControlPlane,
 							fanout: getOrCreateFanout(c),
+							rustCore: nativeNetwork?.rustCore,
+							// The wire-sync session decodes+verifies inbound
+							// frames natively and stashes shared-log raw
+							// exchange-head payloads for the fused receive.
+							nativeWire: nativeNetwork?.wireSync,
 						}),
 					...extendedOptions?.services,
 				};
@@ -417,6 +591,8 @@ export class Peerbit implements ProgramClient {
 			libp2pExternal: !stopLibp2pOnClose,
 			identity,
 			indexer,
+			nativeNetwork,
+			sharedLogNativeDefaults,
 		});
 		return peer;
 	}

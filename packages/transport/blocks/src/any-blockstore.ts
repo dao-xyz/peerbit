@@ -29,6 +29,7 @@ type ImmutableBlockStore = AnyStore & {
 
 type NativeLogBlockStoreCarrier = {
 	getNativeLogBlockStoreHandle?: () => unknown;
+	getBlockResponsePayload?: (cid: string) => Uint8Array | undefined;
 };
 
 type BlockGetOptions = GetOptions & {
@@ -49,6 +50,12 @@ export class AnyBlockStore implements Blocks {
 	getNativeLogBlockStoreHandle(): unknown {
 		return (this._store as NativeLogBlockStoreCarrier)
 			.getNativeLogBlockStoreHandle?.();
+	}
+
+	getBlockResponsePayload(cid: string): Uint8Array | undefined {
+		return (this._store as NativeLogBlockStoreCarrier).getBlockResponsePayload?.(
+			cid,
+		);
 	}
 
 	private async decodeStoredBytes(

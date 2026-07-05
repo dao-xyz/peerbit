@@ -3,11 +3,22 @@
 // Run from packages/programs/data/shared-log:
 //   RECEIVE_PRUNE_COUNTS=100,1000,5000 RECEIVE_PRUNE_WARMUP_RUNS=1 RECEIVE_PRUNE_RUNS=1 BENCH_JSON=1 pnpm run benchmark:receive-prune
 //   RECEIVE_PRUNE_SCENARIOS=raw-receive-native,raw-receive-native-backbone,raw-receive-native-coordinate-wal,raw-receive-native-backbone-replicating,raw-receive-native-coordinate-wal-replicating,raw-receive-native-coordinate-wal-replicating-defer-verify,raw-receive-native-coordinate-wal-half,raw-receive-native-coordinate-wal-verify-prepare,raw-receive-native-backbone-select-all,raw-receive-native-coordinate-wal-select-all,raw-receive-native-backbone-select-half,raw-receive-native-coordinate-wal-select-half,raw-receive-native-backbone-drop,raw-receive-native-backbone-drop-verify-prepare,request-prune-native-confirm,request-prune-native-backbone-confirm RECEIVE_PRUNE_COUNTS=1000 pnpm run benchmark:receive-prune
+import { deserialize, serialize } from "@dao-xyz/borsh";
+import { DecryptedThing, PreHash } from "@peerbit/crypto";
 import { create as createRustIndexer } from "@peerbit/indexer-rust";
 import {
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
+	createNativeWireSyncSession,
 } from "@peerbit/native-backbone";
+import { PubSubData, PubSubMessage } from "@peerbit/pubsub-interface";
+import { RPCMessage, RequestV0 } from "@peerbit/rpc";
+import {
+	DataMessage,
+	Message,
+	MessageHeader,
+	SilentDelivery,
+} from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
 import { performance } from "node:perf_hooks";
 import { v4 as uuid } from "uuid";
@@ -16,6 +27,7 @@ import {
 	RequestIPrune,
 	createRawExchangeHeadsMessages,
 } from "../src/exchange-heads.js";
+import { TransportMessage } from "../src/message.js";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 import type { SyncProfileEvent } from "../src/sync/index.js";
@@ -45,6 +57,8 @@ type Scenario =
 	| "raw-receive-native-backbone-drop-verify-prepare"
 	| "raw-receive-native-coordinate-wal-drop"
 	| "raw-receive-native-coordinate-wal-drop-verify-prepare"
+	| "raw-receive-native-backbone-wire"
+	| "raw-receive-native-backbone-wire-fused"
 	| "request-prune-native-confirm"
 	| "request-prune-native-backbone-confirm"
 	| "request-prune-native-backbone-coordinate-wal-confirm"
@@ -153,6 +167,8 @@ const parseScenarios = (value: string | undefined): Scenario[] => {
 			scenario !== "raw-receive-native-backbone-drop-verify-prepare" &&
 			scenario !== "raw-receive-native-coordinate-wal-drop" &&
 			scenario !== "raw-receive-native-coordinate-wal-drop-verify-prepare" &&
+			scenario !== "raw-receive-native-backbone-wire" &&
+			scenario !== "raw-receive-native-backbone-wire-fused" &&
 			scenario !== "request-prune-native-confirm" &&
 			scenario !== "request-prune-native-backbone-confirm" &&
 			scenario !== "request-prune-native-backbone-coordinate-wal-confirm" &&
@@ -267,6 +283,7 @@ const createOpenArgs = (
 		keepEvery?: number;
 		nativeSelectEvery?: number;
 		keepHashes?: Set<string>;
+		nativeWireSync?: WireSyncSession;
 	},
 ) => {
 	const nativeBackbone =
@@ -303,10 +320,17 @@ const createOpenArgs = (
 						rawExchangeHeadsVerifySignaturesDuringPrepare:
 							options.verifySignaturesDuringPrepare,
 					}),
+			...(options?.nativeWireSync
+				? { nativeWireSync: options.nativeWireSync }
+				: {}),
 			profile: (event: SyncProfileEvent) => profileEvents.push(event),
 		},
 	};
 };
+
+type WireSyncSession = Awaited<
+	ReturnType<typeof createNativeWireSyncSession>
+>;
 
 type RawReceiveBenchEntry = { hash: string; gid: string };
 
@@ -404,6 +428,18 @@ const runRawReceive = async (
 		drop?: boolean;
 		keepEvery?: number;
 		nativeSelectEvery?: number;
+		/**
+		 * Feed each message through its full wire representation: a signed
+		 * DataMessage frame decoded+verified by the native wire module, then
+		 * the payload decode the RPC receive path performs.
+		 */
+		wire?: boolean;
+		/**
+		 * Receive fusion: the wire decode stashes the payload in wasm memory
+		 * and the message resolves from stash metadata — no TS decode of the
+		 * entries and no JS blocks copy into wasm.
+		 */
+		wireFused?: boolean;
 	},
 ): Promise<BenchRow> => {
 	const session = await TestSession.disconnected(2, {
@@ -412,6 +448,12 @@ const runRawReceive = async (
 	const profileEvents: SyncProfileEvent[] = [];
 	const keepHashes = options?.keepEvery ? new Set<string>() : undefined;
 	try {
+		const wireSession =
+			options?.wire || options?.wireFused
+				? await createNativeWireSyncSession({
+						selfHash: session.peers[1].identity.publicKey.hashcode(),
+					})
+				: undefined;
 		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
 			args: createOpenArgs([]),
 		});
@@ -419,6 +461,9 @@ const runRawReceive = async (
 			args: createOpenArgs(profileEvents, {
 				...options,
 				keepHashes,
+				// The unfused wire leg keeps a topicless session: identical
+				// native decode+verify, nothing ever stashed.
+				nativeWireSync: options?.wireFused ? wireSession : undefined,
 			}),
 		});
 		const entryInfos = await appendIndependentEntryInfos(db1, count);
@@ -441,11 +486,79 @@ const runRawReceive = async (
 		}
 		const messages = await createRawMessages(db1, hashes);
 
+		let frames: Uint8Array[] | undefined;
+		if (wireSession) {
+			const topic = db2.log.topic;
+			const receiverHash = db2.node.identity.publicKey.hashcode();
+			const sign = (bytes: Uint8Array) =>
+				db1.node.identity.sign(bytes, PreHash.SHA_256);
+			frames = [];
+			for (const message of messages) {
+				const requestBytes = serialize(
+					new RequestV0({
+						request: new DecryptedThing<Uint8Array>({
+							data: serialize(message),
+						}),
+					}),
+				);
+				const pubsubBytes = serialize(
+					new PubSubData({ topics: [topic], data: requestBytes, strict: true }),
+				);
+				const dataMessage = await new DataMessage({
+					header: new MessageHeader({
+						session: 0,
+						mode: new SilentDelivery({ to: [receiverHash], redundancy: 1 }),
+					}),
+					data: pubsubBytes,
+				}).sign(sign);
+				const bytes = dataMessage.bytes();
+				frames.push(bytes instanceof Uint8Array ? bytes : bytes.subarray());
+			}
+		}
+
 		const started = performance.now();
-		for (const message of messages) {
-			await db2.log.onMessage(message, {
-				from: db1.node.identity.publicKey,
-			} as any);
+		if (wireSession && frames) {
+			for (const frame of frames) {
+				const records = wireSession.decodeAndVerifyBatch([frame], Date.now());
+				if ((records[0]! & 0x01) === 0) {
+					throw new Error("Wire frame decode failed");
+				}
+				// Shared with both legs: the envelope + payload shell decodes
+				// the stream/pubsub/rpc layers perform either way.
+				const envelope = deserialize(frame, Message) as DataMessage;
+				const pubsubMessage = deserialize(
+					envelope.data!,
+					PubSubMessage,
+				) as PubSubData;
+				const rpcMessage = deserialize(
+					pubsubMessage.data,
+					RPCMessage,
+				) as RequestV0;
+				let received: RawExchangeHeadsMessage;
+				if (options?.wireFused) {
+					const resolved = (
+						db2.log as any
+					).resolveStashedRawExchangeHeadsMessage(envelope);
+					if (!resolved) {
+						throw new Error("Expected a fused wire stash resolve");
+					}
+					received = resolved;
+				} else {
+					const decrypted = await rpcMessage.request.decrypt();
+					received = decrypted.getValue(
+						TransportMessage,
+					) as RawExchangeHeadsMessage;
+				}
+				await db2.log.onMessage(received, {
+					from: db1.node.identity.publicKey,
+				} as any);
+			}
+		} else {
+			for (const message of messages) {
+				await db2.log.onMessage(message, {
+					from: db1.node.identity.publicKey,
+				} as any);
+			}
 		}
 		const elapsed = performance.now() - started;
 
@@ -498,7 +611,11 @@ const runRawReceive = async (
 
 		return {
 			scenario:
-				options?.coordinateWal &&
+				options?.wireFused
+					? "raw-receive-native-backbone-wire-fused"
+				: options?.wire
+					? "raw-receive-native-backbone-wire"
+				: options?.coordinateWal &&
 				options.drop &&
 				options.verifySignaturesDuringPrepare === true
 					? "raw-receive-native-coordinate-wal-drop-verify-prepare"
@@ -852,6 +969,19 @@ const runScenario = async (
 			coordinateWal: true,
 			drop: true,
 			verifySignaturesDuringPrepare: true,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-wire") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			wire: true,
+		});
+	}
+	if (scenario === "raw-receive-native-backbone-wire-fused") {
+		return runRawReceive(count, run, {
+			nativeBackbone: true,
+			wire: true,
+			wireFused: true,
 		});
 	}
 	if (scenario === "request-prune-native-confirm") {

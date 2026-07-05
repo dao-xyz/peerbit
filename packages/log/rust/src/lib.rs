@@ -1150,6 +1150,17 @@ impl NativeLogBlockStore {
     }
 }
 
+/// Serialize a `/peerbit/direct-block` `BlockResponse` payload for a block
+/// held in the native store. The stored bytes are copied straight into the
+/// borsh payload (codec owned by `peerbit_wire::block_exchange`), so serving
+/// a natively stored block never materializes the block bytes as a JS value.
+#[wasm_bindgen]
+pub fn block_response_payload(store: &NativeLogBlockStore, cid: &str) -> Option<Vec<u8>> {
+    store
+        .get_ref(cid)
+        .map(|bytes| peerbit_wire::block_exchange::encode_block_response(cid, bytes))
+}
+
 impl NativeLogIndex {
     pub fn max_head_data_u32_values(&self, gids: &[String]) -> Vec<Option<u32>> {
         self.inner.max_head_data_u32_batch(gids)

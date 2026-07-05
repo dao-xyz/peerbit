@@ -6,15 +6,25 @@ import { webRTC } from "@libp2p/webrtc";
 import { webSockets } from "@libp2p/websockets";
 import { multiaddr } from "@multiformats/multiaddr";
 import { ready } from "@peerbit/crypto";
+import { createRustCoreStream } from "@peerbit/network-rust";
 import { createLibp2p } from "libp2p";
 import { useEffect, useReducer } from "react";
 import { TestDirectStream } from "./../../shared/utils.js";
 
 await ready;
 
+// Opt-in native (wasm) DirectStream core: `?rustCore=1` loads the
+// @peerbit/network-rust module before the node starts, so the browser peer
+// runs the rust-core routing table, seen-cache, lanes and wire codec. The
+// default path (no query param) is unchanged.
+const rustCore =
+	new URLSearchParams(window.location.search).get("rustCore") === "1"
+		? await createRustCoreStream()
+		: undefined;
+
 const client = await createLibp2p<{ stream: TestDirectStream; identify: any }>({
 	services: {
-		stream: (c) => new TestDirectStream(c),
+		stream: (c) => new TestDirectStream(c, rustCore ? { rustCore } : undefined),
 		identify: identify(),
 	},
 	connectionGater: {
@@ -39,9 +49,7 @@ let receivedData = 0;
 (globalThis as any).streamClient = client;
 (globalThis as any).sendTestData = () =>
 	client.services.stream.publish(new Uint8Array([1, 2, 3, 4]));
-(globalThis as any).sendPayload = async (
-	totalBytes: number,
-) => {
+(globalThis as any).sendPayload = async (totalBytes: number) => {
 	let remaining = totalBytes;
 	const chunkSize = 32 * 1024;
 
@@ -54,6 +62,9 @@ let receivedData = 0;
 	}
 };
 (globalThis as any).getReceivedData = () => receivedData;
+(globalThis as any).rustCoreActive = rustCore !== undefined;
+(globalThis as any).getNativeWireFrames = () =>
+	client.services.stream.wireCounters.nativeFrames;
 
 export const App = () => {
 	const queryParameters = new URLSearchParams(window.location.search);

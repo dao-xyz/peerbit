@@ -13,6 +13,7 @@
 		"@libp2p/circuit-relay-v2": "^4.1.7",
 		"@libp2p/identify": "^4.0.14",
 		"@libp2p/webrtc": "^6.0.15",
+		"@peerbit/network-rust": "workspace:*",
 		"@peerbit/stream": "workspace:*",
 		"libp2p": "^3.1.7",
 		"react": "^19.2.0",

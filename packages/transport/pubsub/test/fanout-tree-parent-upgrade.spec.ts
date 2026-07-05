@@ -1,6 +1,10 @@
 import { expect } from "chai";
 import { FanoutTree } from "../src/index.js";
 import {
+	type FanoutWireCodec,
+	tsFanoutWireCodec,
+} from "../src/fanout-tree-codec.js";
+import {
 	evaluateParentUpgradeGate,
 	type ParentUpgradeGateOptions,
 	type ParentUpgradeGateState,
@@ -171,6 +175,7 @@ type ImproveContext = {
 		reason?: number,
 	) => Promise<void>;
 	_sendControl: (to: string, payload: Uint8Array) => Promise<void>;
+	codec: FanoutWireCodec;
 };
 
 type ImproveTrackerFeedback = {
@@ -426,6 +431,7 @@ const createParentUpgradeReservationContext = (random: () => number) => ({
 	...parentUpgradeReservationHelpers,
 	random,
 	pruneDisconnectedChildren: () => {},
+	codec: tsFanoutWireCodec,
 });
 
 type ParentUpgradeGateChannel = ParentUpgradeGateState;
@@ -662,6 +668,7 @@ const runMaybeImproveParent = async (args: {
 			});
 		},
 		_sendControl: async () => {},
+		codec: tsFanoutWireCodec,
 	};
 	const optionOverrides = args.options ?? {};
 

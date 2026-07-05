@@ -462,6 +462,10 @@ jobs:
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
+      - name: Install Playwright browser
+        # For the browser legs below (aegir -t browser + the rust-core
+        # stream smoke); --only-shell matches the e2e partitions above.
+        run: pnpm exec playwright install --only-shell chromium
       - uses: actions/download-artifact@v4
         with:
           name: workspace-dist-${{ github.sha }}
@@ -493,5 +497,21 @@ jobs:
           pnpm exec aegir test -t node
       - name: Test @peerbit/document-rust
         run: pnpm --filter @peerbit/document-rust run test
+      - name: Test @peerbit/network-rust
+        run: pnpm --filter @peerbit/network-rust run test
+      - name: Test @peerbit/stream suite in rust-core mode
+        run: pnpm --filter @peerbit/network-rust run test:stream-rust-core
+      - name: Test @peerbit/network-rust in the browser
+        # Runs the browser-compatible subset (wire/topic-control/fanout codec
+        # parity) under headless Chromium, proving the wasm module loads and
+        # matches the TS implementations in a real browser. The session-based
+        # specs stay node-only (TestSession needs TCP).
+        run: pnpm --filter @peerbit/network-rust run test:browser
+      - name: Browser rust-core stream smoke
+        # Two browser peers with the native DirectStream core exchange data
+        # through a TS-core node relay (webrtc via circuit relay); asserts
+        # the native wire counters moved, i.e. frames were decoded and
+        # signature-verified in wasm inside the browser.
+        run: pnpm --filter stream-browser-test run test:rust-core
       - name: Packed tarball smoke test
         run: node ./scripts/native-pack-smoke.mjs

@@ -1,7 +1,7 @@
 import {
-	type ConnectionManagerArguments,
 	DirectStream,
 	type DirectStreamComponents,
+	type DirectStreamOptions,
 } from "@peerbit/stream";
 
 export class TestDirectStream extends DirectStream {
@@ -9,8 +9,7 @@ export class TestDirectStream extends DirectStream {
 		components: DirectStreamComponents,
 		options: {
 			id?: string;
-			connectionManager?: ConnectionManagerArguments;
-		} = {},
+		} & DirectStreamOptions = {},
 	) {
 		super(components, [options.id || "/browser-test/0.0.0"], {
 			canRelayMessage: true,

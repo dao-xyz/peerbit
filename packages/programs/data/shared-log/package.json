@@ -56,6 +56,7 @@
 		"benchmark:append-storage": "node --loader ts-node/esm ./benchmark/index.ts",
 		"benchmark:join-backfill-repair": "node --loader ts-node/esm ./benchmark/join-backfill-repair.ts",
 		"benchmark:native-graph": "node --loader ts-node/esm ./benchmark/native-graph.ts",
+		"benchmark:network-preset-e2e": "node --loader ts-node/esm ./benchmark/network-preset-e2e.ts",
 		"benchmark:receive-prune": "node --loader ts-node/esm ./benchmark/receive-prune.ts",
 		"benchmark:sync-catchup": "node --loader ts-node/esm ./benchmark/sync-catchup.ts",
 		"benchmark:sync-phase-profile": "node --loader ts-node/esm ./benchmark/sync-phase-profile.ts",
@@ -103,6 +104,7 @@
 		"@peerbit/test-utils": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/pidusage": "^2.0.5",
+		"peerbit": "workspace:*",
 		"uuid": "^10.0.0"
 	},
 	"repository": {

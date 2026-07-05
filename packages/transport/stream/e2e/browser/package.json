@@ -19,6 +19,7 @@
 	},
 	"scripts": {
 		"test": "playwright test",
+		"test:rust-core": "playwright test tests/stream-rust-core.browser.test.ts",
 		"lint": "aegir lint",
 		"build": "echo 'No build step for stream-browser-test'",
 		"test:cov": "playwright test"

@@ -20,6 +20,13 @@ export interface BlockStore extends IBlockStore {
 	hasMany(cids: string[]): MaybePromise<boolean[]>;
 	rmMany(cids: string[]): MaybePromise<number | void>;
 	getNativeLogBlockStoreHandle?(): unknown;
+	/**
+	 * Serialize a `BlockResponse` payload for a natively stored block without
+	 * materializing the block bytes as a JS value. Only implemented by stores
+	 * backed by the native log block store; `undefined` when the block is not
+	 * held natively.
+	 */
+	getBlockResponsePayload?(cid: string): Uint8Array | undefined;
 	start(): Promise<void>;
 	stop(): Promise<void>;
 	status(): StoreStatus;
