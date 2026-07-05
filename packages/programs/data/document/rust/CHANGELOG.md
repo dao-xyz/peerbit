@@ -1,8 +1,8 @@
-# Changelog
+# @peerbit/document-rust
 
-## 1.0.1
+## 0.1.0
 
-### Patch Changes
+### Minor Changes
 
 - Native performance stack: Rust/WASM-backed log append and sync kernel.
 
@@ -45,21 +45,3 @@
     value and treats `undefined` correctly.
   - `@peerbit/indexer-rust` — internal storage/planner refactor (no public API
     change).
-
-- Updated dependencies []:
-  - @peerbit/indexer-interface@3.0.5
-
-## 1.0.0 (2026-05-26)
-
-### Bug Fixes
-
-- **indexer-rust:** honor closed lifecycle contract ([0c3fc07](https://github.com/dao-xyz/peerbit/commit/0c3fc0775d63275aa280fde208fe8090e1af5e37))
-- **indexer-sqlite3:** prevent crashes during and after shutdown ([00a3185](https://github.com/dao-xyz/peerbit/commit/00a318585e7ec5441859c874f55e46f6b2d2d959))
-
-### Dependencies
-
-- The following workspace dependencies were updated
-  - dependencies
-    - @peerbit/indexer-interface bumped to 3.0.4
-  - devDependencies
-    - @peerbit/indexer-tests bumped to 3.0.4

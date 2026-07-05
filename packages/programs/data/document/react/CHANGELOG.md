@@ -1,1106 +1,1025 @@
 # @peerbit/document-react
 
-## [1.0.44](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.43...document-react-v1.0.44) (2026-05-28)
+## 1.0.45
 
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/document@13.1.0
+  - @peerbit/react@1.1.24
+  - @peerbit/indexer-interface@3.0.5
+
+## [1.0.44](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.43...document-react-v1.0.44) (2026-05-28)
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.44
-    * @peerbit/react bumped to 1.1.23
-  * devDependencies
-    * @peerbit/program bumped to 6.0.31
-    * @peerbit/test-utils bumped to 3.0.35
-    * @peerbit/shared-log bumped to 13.1.18
-    * peerbit bumped to 5.2.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.44
+    - @peerbit/react bumped to 1.1.23
+  - devDependencies
+    - @peerbit/program bumped to 6.0.31
+    - @peerbit/test-utils bumped to 3.0.35
+    - @peerbit/shared-log bumped to 13.1.18
+    - peerbit bumped to 5.2.20
 
 ## [1.0.43](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.42...document-react-v1.0.43) (2026-05-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.43
-    * @peerbit/indexer-interface bumped to 3.0.4
-    * @peerbit/react bumped to 1.1.22
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.12
-    * @peerbit/indexer-simple bumped to 1.2.7
-    * @peerbit/program bumped to 6.0.30
-    * @peerbit/test-utils bumped to 3.0.34
-    * @peerbit/shared-log bumped to 13.1.17
-    * peerbit bumped to 5.2.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.43
+    - @peerbit/indexer-interface bumped to 3.0.4
+    - @peerbit/react bumped to 1.1.22
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.12
+    - @peerbit/indexer-simple bumped to 1.2.7
+    - @peerbit/program bumped to 6.0.30
+    - @peerbit/test-utils bumped to 3.0.34
+    - @peerbit/shared-log bumped to 13.1.17
+    - peerbit bumped to 5.2.19
 
 ## [1.0.42](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.41...document-react-v1.0.42) (2026-05-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.42
-    * @peerbit/react bumped to 1.1.21
-  * devDependencies
-    * @peerbit/program bumped to 6.0.29
-    * @peerbit/test-utils bumped to 3.0.33
-    * @peerbit/shared-log bumped to 13.1.16
-    * peerbit bumped to 5.2.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.42
+    - @peerbit/react bumped to 1.1.21
+  - devDependencies
+    - @peerbit/program bumped to 6.0.29
+    - @peerbit/test-utils bumped to 3.0.33
+    - @peerbit/shared-log bumped to 13.1.16
+    - peerbit bumped to 5.2.18
 
 ## [1.0.41](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.40...document-react-v1.0.41) (2026-05-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.41
-    * @peerbit/react bumped to 1.1.20
-  * devDependencies
-    * @peerbit/program bumped to 6.0.28
-    * @peerbit/test-utils bumped to 3.0.32
-    * @peerbit/shared-log bumped to 13.1.15
-    * peerbit bumped to 5.2.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.41
+    - @peerbit/react bumped to 1.1.20
+  - devDependencies
+    - @peerbit/program bumped to 6.0.28
+    - @peerbit/test-utils bumped to 3.0.32
+    - @peerbit/shared-log bumped to 13.1.15
+    - peerbit bumped to 5.2.17
 
 ## [1.0.40](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.39...document-react-v1.0.40) (2026-05-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.40
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.1.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.40
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.1.14
 
 ## [1.0.39](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.38...document-react-v1.0.39) (2026-05-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.39
-    * @peerbit/react bumped to 1.1.19
-  * devDependencies
-    * @peerbit/program bumped to 6.0.27
-    * @peerbit/test-utils bumped to 3.0.31
-    * @peerbit/shared-log bumped to 13.1.13
-    * peerbit bumped to 5.2.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.39
+    - @peerbit/react bumped to 1.1.19
+  - devDependencies
+    - @peerbit/program bumped to 6.0.27
+    - @peerbit/test-utils bumped to 3.0.31
+    - @peerbit/shared-log bumped to 13.1.13
+    - peerbit bumped to 5.2.16
 
 ## [1.0.38](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.37...document-react-v1.0.38) (2026-05-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.38
-    * @peerbit/react bumped to 1.1.18
-  * devDependencies
-    * @peerbit/program bumped to 6.0.26
-    * @peerbit/test-utils bumped to 3.0.30
-    * @peerbit/shared-log bumped to 13.1.12
-    * peerbit bumped to 5.2.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.38
+    - @peerbit/react bumped to 1.1.18
+  - devDependencies
+    - @peerbit/program bumped to 6.0.26
+    - @peerbit/test-utils bumped to 3.0.30
+    - @peerbit/shared-log bumped to 13.1.12
+    - peerbit bumped to 5.2.15
 
 ## [1.0.37](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.36...document-react-v1.0.37) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.37
-    * @peerbit/react bumped to 1.1.17
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.11
-    * @peerbit/program bumped to 6.0.25
-    * @peerbit/test-utils bumped to 3.0.29
-    * @peerbit/shared-log bumped to 13.1.11
-    * peerbit bumped to 5.2.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.37
+    - @peerbit/react bumped to 1.1.17
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.11
+    - @peerbit/program bumped to 6.0.25
+    - @peerbit/test-utils bumped to 3.0.29
+    - @peerbit/shared-log bumped to 13.1.11
+    - peerbit bumped to 5.2.14
 
 ## [1.0.36](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.35...document-react-v1.0.36) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.36
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.1.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.36
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.1.10
 
 ## [1.0.35](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.34...document-react-v1.0.35) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.35
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.1.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.35
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.1.9
 
 ## [1.0.34](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.33...document-react-v1.0.34) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.34
-    * @peerbit/react bumped to 1.1.16
-  * devDependencies
-    * @peerbit/program bumped to 6.0.24
-    * @peerbit/test-utils bumped to 3.0.28
-    * @peerbit/shared-log bumped to 13.1.8
-    * peerbit bumped to 5.2.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.34
+    - @peerbit/react bumped to 1.1.16
+  - devDependencies
+    - @peerbit/program bumped to 6.0.24
+    - @peerbit/test-utils bumped to 3.0.28
+    - @peerbit/shared-log bumped to 13.1.8
+    - peerbit bumped to 5.2.13
 
 ## [1.0.33](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.32...document-react-v1.0.33) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.33
-    * @peerbit/react bumped to 1.1.15
-  * devDependencies
-    * @peerbit/program bumped to 6.0.23
-    * @peerbit/test-utils bumped to 3.0.27
-    * @peerbit/shared-log bumped to 13.1.7
-    * peerbit bumped to 5.2.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.33
+    - @peerbit/react bumped to 1.1.15
+  - devDependencies
+    - @peerbit/program bumped to 6.0.23
+    - @peerbit/test-utils bumped to 3.0.27
+    - @peerbit/shared-log bumped to 13.1.7
+    - peerbit bumped to 5.2.12
 
 ## [1.0.32](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.31...document-react-v1.0.32) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.32
-    * @peerbit/react bumped to 1.1.14
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.10
-    * @peerbit/program bumped to 6.0.22
-    * @peerbit/test-utils bumped to 3.0.26
-    * @peerbit/shared-log bumped to 13.1.6
-    * peerbit bumped to 5.2.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.32
+    - @peerbit/react bumped to 1.1.14
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.10
+    - @peerbit/program bumped to 6.0.22
+    - @peerbit/test-utils bumped to 3.0.26
+    - @peerbit/shared-log bumped to 13.1.6
+    - peerbit bumped to 5.2.11
 
 ## [1.0.31](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.30...document-react-v1.0.31) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.31
-    * @peerbit/react bumped to 1.1.13
-  * devDependencies
-    * @peerbit/program bumped to 6.0.21
-    * @peerbit/test-utils bumped to 3.0.25
-    * @peerbit/shared-log bumped to 13.1.5
-    * peerbit bumped to 5.2.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.31
+    - @peerbit/react bumped to 1.1.13
+  - devDependencies
+    - @peerbit/program bumped to 6.0.21
+    - @peerbit/test-utils bumped to 3.0.25
+    - @peerbit/shared-log bumped to 13.1.5
+    - peerbit bumped to 5.2.10
 
 ## [1.0.30](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.29...document-react-v1.0.30) (2026-04-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.30
-    * @peerbit/react bumped to 1.1.12
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.9
-    * @peerbit/program bumped to 6.0.20
-    * @peerbit/test-utils bumped to 3.0.24
-    * @peerbit/shared-log bumped to 13.1.4
-    * peerbit bumped to 5.2.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.30
+    - @peerbit/react bumped to 1.1.12
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.9
+    - @peerbit/program bumped to 6.0.20
+    - @peerbit/test-utils bumped to 3.0.24
+    - @peerbit/shared-log bumped to 13.1.4
+    - peerbit bumped to 5.2.9
 
 ## [1.0.29](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.28...document-react-v1.0.29) (2026-04-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.29
-    * @peerbit/react bumped to 1.1.11
-  * devDependencies
-    * @peerbit/program bumped to 6.0.19
-    * @peerbit/test-utils bumped to 3.0.23
-    * @peerbit/shared-log bumped to 13.1.3
-    * peerbit bumped to 5.2.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.29
+    - @peerbit/react bumped to 1.1.11
+  - devDependencies
+    - @peerbit/program bumped to 6.0.19
+    - @peerbit/test-utils bumped to 3.0.23
+    - @peerbit/shared-log bumped to 13.1.3
+    - peerbit bumped to 5.2.8
 
 ## [1.0.28](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.27...document-react-v1.0.28) (2026-04-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.28
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.28
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.1.2
 
 ## [1.0.27](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.26...document-react-v1.0.27) (2026-04-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.27
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.27
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.1.1
 
 ## [1.0.26](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.25...document-react-v1.0.26) (2026-04-14)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.26
-    * @peerbit/react bumped to 1.1.10
-  * devDependencies
-    * @peerbit/program bumped to 6.0.18
-    * @peerbit/test-utils bumped to 3.0.22
-    * @peerbit/shared-log bumped to 13.1.0
-    * peerbit bumped to 5.2.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.26
+    - @peerbit/react bumped to 1.1.10
+  - devDependencies
+    - @peerbit/program bumped to 6.0.18
+    - @peerbit/test-utils bumped to 3.0.22
+    - @peerbit/shared-log bumped to 13.1.0
+    - peerbit bumped to 5.2.7
 
 ## [1.0.25](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.24...document-react-v1.0.25) (2026-04-12)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.25
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.0.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.25
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.0.24
 
 ## [1.0.24](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.23...document-react-v1.0.24) (2026-04-06)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.24
 
 ## [1.0.23](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.22...document-react-v1.0.23) (2026-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.23
-    * @peerbit/react bumped to 1.1.9
-  * devDependencies
-    * @peerbit/program bumped to 6.0.17
-    * @peerbit/test-utils bumped to 3.0.21
-    * @peerbit/shared-log bumped to 13.0.23
-    * peerbit bumped to 5.2.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.23
+    - @peerbit/react bumped to 1.1.9
+  - devDependencies
+    - @peerbit/program bumped to 6.0.17
+    - @peerbit/test-utils bumped to 3.0.21
+    - @peerbit/shared-log bumped to 13.0.23
+    - peerbit bumped to 5.2.6
 
 ## [1.0.22](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.21...document-react-v1.0.22) (2026-03-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.22
-    * @peerbit/indexer-interface bumped to 3.0.3
-    * @peerbit/react bumped to 1.1.8
-    * @peerbit/logger bumped to 2.0.1
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.8
-    * @peerbit/indexer-simple bumped to 1.2.6
-    * @peerbit/program bumped to 6.0.16
-    * @peerbit/test-utils bumped to 3.0.20
-    * @peerbit/shared-log bumped to 13.0.22
-    * peerbit bumped to 5.2.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.22
+    - @peerbit/indexer-interface bumped to 3.0.3
+    - @peerbit/react bumped to 1.1.8
+    - @peerbit/logger bumped to 2.0.1
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.8
+    - @peerbit/indexer-simple bumped to 1.2.6
+    - @peerbit/program bumped to 6.0.16
+    - @peerbit/test-utils bumped to 3.0.20
+    - @peerbit/shared-log bumped to 13.0.22
+    - peerbit bumped to 5.2.5
 
 ## [1.0.21](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.20...document-react-v1.0.21) (2026-03-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.21
-    * @peerbit/react bumped to 1.1.7
-  * devDependencies
-    * @peerbit/program bumped to 6.0.15
-    * @peerbit/test-utils bumped to 3.0.19
-    * @peerbit/shared-log bumped to 13.0.21
-    * peerbit bumped to 5.2.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.21
+    - @peerbit/react bumped to 1.1.7
+  - devDependencies
+    - @peerbit/program bumped to 6.0.15
+    - @peerbit/test-utils bumped to 3.0.19
+    - @peerbit/shared-log bumped to 13.0.21
+    - peerbit bumped to 5.2.4
 
 ## [1.0.20](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.19...document-react-v1.0.20) (2026-03-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.20
-    * @peerbit/react bumped to 1.1.6
-  * devDependencies
-    * @peerbit/program bumped to 6.0.14
-    * @peerbit/test-utils bumped to 3.0.18
-    * @peerbit/shared-log bumped to 13.0.20
-    * peerbit bumped to 5.2.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.20
+    - @peerbit/react bumped to 1.1.6
+  - devDependencies
+    - @peerbit/program bumped to 6.0.14
+    - @peerbit/test-utils bumped to 3.0.18
+    - @peerbit/shared-log bumped to 13.0.20
+    - peerbit bumped to 5.2.3
 
 ## [1.0.19](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.18...document-react-v1.0.19) (2026-03-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.19
-    * @peerbit/react bumped to 1.1.5
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.7
-    * @peerbit/program bumped to 6.0.13
-    * @peerbit/test-utils bumped to 3.0.17
-    * @peerbit/shared-log bumped to 13.0.19
-    * peerbit bumped to 5.2.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.19
+    - @peerbit/react bumped to 1.1.5
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.7
+    - @peerbit/program bumped to 6.0.13
+    - @peerbit/test-utils bumped to 3.0.17
+    - @peerbit/shared-log bumped to 13.0.19
+    - peerbit bumped to 5.2.2
 
 ## [1.0.18](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.17...document-react-v1.0.18) (2026-03-22)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.18
-    * @peerbit/react bumped to 1.1.4
-  * devDependencies
-    * @peerbit/program bumped to 6.0.12
-    * @peerbit/test-utils bumped to 3.0.16
-    * @peerbit/shared-log bumped to 13.0.18
-    * peerbit bumped to 5.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.18
+    - @peerbit/react bumped to 1.1.4
+  - devDependencies
+    - @peerbit/program bumped to 6.0.12
+    - @peerbit/test-utils bumped to 3.0.16
+    - @peerbit/shared-log bumped to 13.0.18
+    - peerbit bumped to 5.2.1
 
 ## [1.0.17](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.16...document-react-v1.0.17) (2026-03-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.17
-    * @peerbit/react bumped to 1.1.3
-  * devDependencies
-    * @peerbit/program bumped to 6.0.11
-    * @peerbit/test-utils bumped to 3.0.15
-    * @peerbit/shared-log bumped to 13.0.17
-    * peerbit bumped to 5.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.17
+    - @peerbit/react bumped to 1.1.3
+  - devDependencies
+    - @peerbit/program bumped to 6.0.11
+    - @peerbit/test-utils bumped to 3.0.15
+    - @peerbit/shared-log bumped to 13.0.17
+    - peerbit bumped to 5.2.0
 
 ## [1.0.16](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.15...document-react-v1.0.16) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.16
-    * @peerbit/react bumped to 1.1.2
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.6
-    * @peerbit/program bumped to 6.0.10
-    * @peerbit/test-utils bumped to 3.0.14
-    * @peerbit/shared-log bumped to 13.0.16
-    * peerbit bumped to 5.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.16
+    - @peerbit/react bumped to 1.1.2
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.6
+    - @peerbit/program bumped to 6.0.10
+    - @peerbit/test-utils bumped to 3.0.14
+    - @peerbit/shared-log bumped to 13.0.16
+    - peerbit bumped to 5.1.2
 
 ## [1.0.15](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.14...document-react-v1.0.15) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.15
-    * @peerbit/indexer-interface bumped to 3.0.2
-    * @peerbit/react bumped to 1.1.1
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.5
-    * @peerbit/indexer-simple bumped to 1.2.5
-    * @peerbit/program bumped to 6.0.9
-    * @peerbit/test-utils bumped to 3.0.13
-    * @peerbit/shared-log bumped to 13.0.15
-    * peerbit bumped to 5.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.15
+    - @peerbit/indexer-interface bumped to 3.0.2
+    - @peerbit/react bumped to 1.1.1
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.5
+    - @peerbit/indexer-simple bumped to 1.2.5
+    - @peerbit/program bumped to 6.0.9
+    - @peerbit/test-utils bumped to 3.0.13
+    - @peerbit/shared-log bumped to 13.0.15
+    - peerbit bumped to 5.1.1
 
 ## [1.0.14](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.13...document-react-v1.0.14) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.14
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.14
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.0.14
 
 ## [1.0.13](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.12...document-react-v1.0.13) (2026-03-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.13
-    * @peerbit/react bumped to 1.1.0
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.12
-    * @peerbit/shared-log bumped to 13.0.13
-    * peerbit bumped to 5.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.13
+    - @peerbit/react bumped to 1.1.0
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.12
+    - @peerbit/shared-log bumped to 13.0.13
+    - peerbit bumped to 5.1.0
 
 ## [1.0.12](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.11...document-react-v1.0.12) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.12
-    * @peerbit/react bumped to 1.0.11
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.4
-    * @peerbit/program bumped to 6.0.8
-    * @peerbit/test-utils bumped to 3.0.11
-    * @peerbit/shared-log bumped to 13.0.12
-    * peerbit bumped to 5.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.12
+    - @peerbit/react bumped to 1.0.11
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.4
+    - @peerbit/program bumped to 6.0.8
+    - @peerbit/test-utils bumped to 3.0.11
+    - @peerbit/shared-log bumped to 13.0.12
+    - peerbit bumped to 5.0.11
 
 ## [1.0.11](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.10...document-react-v1.0.11) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.11
-    * @peerbit/indexer-interface bumped to 3.0.1
-    * @peerbit/react bumped to 1.0.10
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.3
-    * @peerbit/indexer-simple bumped to 1.2.4
-    * @peerbit/program bumped to 6.0.7
-    * @peerbit/test-utils bumped to 3.0.10
-    * @peerbit/shared-log bumped to 13.0.11
-    * peerbit bumped to 5.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.11
+    - @peerbit/indexer-interface bumped to 3.0.1
+    - @peerbit/react bumped to 1.0.10
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.3
+    - @peerbit/indexer-simple bumped to 1.2.4
+    - @peerbit/program bumped to 6.0.7
+    - @peerbit/test-utils bumped to 3.0.10
+    - @peerbit/shared-log bumped to 13.0.11
+    - peerbit bumped to 5.0.10
 
 ## [1.0.10](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.9...document-react-v1.0.10) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.10
-    * @peerbit/react bumped to 1.0.9
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.2
-    * @peerbit/program bumped to 6.0.6
-    * @peerbit/test-utils bumped to 3.0.9
-    * @peerbit/shared-log bumped to 13.0.10
-    * peerbit bumped to 5.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.10
+    - @peerbit/react bumped to 1.0.9
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.2
+    - @peerbit/program bumped to 6.0.6
+    - @peerbit/test-utils bumped to 3.0.9
+    - @peerbit/shared-log bumped to 13.0.10
+    - peerbit bumped to 5.0.9
 
 ## [1.0.9](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.8...document-react-v1.0.9) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.9
-    * @peerbit/react bumped to 1.0.8
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.8
-    * @peerbit/shared-log bumped to 13.0.9
-    * peerbit bumped to 5.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.9
+    - @peerbit/react bumped to 1.0.8
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.8
+    - @peerbit/shared-log bumped to 13.0.9
+    - peerbit bumped to 5.0.8
 
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.7...document-react-v1.0.8) (2026-03-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.8
-    * @peerbit/react bumped to 1.0.7
-  * devDependencies
-    * @peerbit/program bumped to 6.0.5
-    * @peerbit/test-utils bumped to 3.0.7
-    * @peerbit/shared-log bumped to 13.0.8
-    * peerbit bumped to 5.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.8
+    - @peerbit/react bumped to 1.0.7
+  - devDependencies
+    - @peerbit/program bumped to 6.0.5
+    - @peerbit/test-utils bumped to 3.0.7
+    - @peerbit/shared-log bumped to 13.0.8
+    - peerbit bumped to 5.0.7
 
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.6...document-react-v1.0.7) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.7
-    * @peerbit/react bumped to 1.0.6
-  * devDependencies
-    * @peerbit/program bumped to 6.0.4
-    * @peerbit/test-utils bumped to 3.0.6
-    * @peerbit/shared-log bumped to 13.0.7
-    * peerbit bumped to 5.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.7
+    - @peerbit/react bumped to 1.0.6
+  - devDependencies
+    - @peerbit/program bumped to 6.0.4
+    - @peerbit/test-utils bumped to 3.0.6
+    - @peerbit/shared-log bumped to 13.0.7
+    - peerbit bumped to 5.0.6
 
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.5...document-react-v1.0.6) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.6
-    * @peerbit/react bumped to 1.0.5
-  * devDependencies
-    * @peerbit/program bumped to 6.0.3
-    * @peerbit/test-utils bumped to 3.0.5
-    * @peerbit/shared-log bumped to 13.0.6
-    * peerbit bumped to 5.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.6
+    - @peerbit/react bumped to 1.0.5
+  - devDependencies
+    - @peerbit/program bumped to 6.0.3
+    - @peerbit/test-utils bumped to 3.0.5
+    - @peerbit/shared-log bumped to 13.0.6
+    - peerbit bumped to 5.0.5
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.4...document-react-v1.0.5) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.5
-    * @peerbit/react bumped to 1.0.4
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.1
-    * @peerbit/program bumped to 6.0.2
-    * @peerbit/test-utils bumped to 3.0.4
-    * @peerbit/shared-log bumped to 13.0.5
-    * peerbit bumped to 5.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.5
+    - @peerbit/react bumped to 1.0.4
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.1
+    - @peerbit/program bumped to 6.0.2
+    - @peerbit/test-utils bumped to 3.0.4
+    - @peerbit/shared-log bumped to 13.0.5
+    - peerbit bumped to 5.0.4
 
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.3...document-react-v1.0.4) (2026-03-07)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.4
-    * @peerbit/react bumped to 1.0.3
-  * devDependencies
-    * @peerbit/program bumped to 6.0.1
-    * @peerbit/test-utils bumped to 3.0.3
-    * @peerbit/shared-log bumped to 13.0.4
-    * peerbit bumped to 5.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.4
+    - @peerbit/react bumped to 1.0.3
+  - devDependencies
+    - @peerbit/program bumped to 6.0.1
+    - @peerbit/test-utils bumped to 3.0.3
+    - @peerbit/shared-log bumped to 13.0.4
+    - peerbit bumped to 5.0.3
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.2...document-react-v1.0.3) (2026-03-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.3
-  * devDependencies
-    * @peerbit/shared-log bumped to 13.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.3
+  - devDependencies
+    - @peerbit/shared-log bumped to 13.0.3
 
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.1...document-react-v1.0.2) (2026-03-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.2
-    * @peerbit/react bumped to 1.0.2
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.2
-    * @peerbit/shared-log bumped to 13.0.2
-    * peerbit bumped to 5.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.2
+    - @peerbit/react bumped to 1.0.2
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.2
+    - @peerbit/shared-log bumped to 13.0.2
+    - peerbit bumped to 5.0.2
 
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/document-react-v1.0.0...document-react-v1.0.1) (2026-03-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.1
-    * @peerbit/react bumped to 1.0.1
-  * devDependencies
-    * @peerbit/test-utils bumped to 3.0.1
-    * @peerbit/shared-log bumped to 13.0.1
-    * peerbit bumped to 5.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.1
+    - @peerbit/react bumped to 1.0.1
+  - devDependencies
+    - @peerbit/test-utils bumped to 3.0.1
+    - @peerbit/shared-log bumped to 13.0.1
+    - peerbit bumped to 5.0.1
 
 ## [1.0.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.6...document-react-v1.0.0) (2026-03-04)
 
-
 ### ⚠ BREAKING CHANGES
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
 
 ### Features
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
-
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 13.0.0
-    * @peerbit/indexer-interface bumped to 3.0.0
-    * @peerbit/react bumped to 1.0.0
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 2.0.0
-    * @peerbit/indexer-simple bumped to 1.2.3
-    * @peerbit/program bumped to 6.0.0
-    * @peerbit/test-utils bumped to 3.0.0
-    * @peerbit/shared-log bumped to 13.0.0
-    * peerbit bumped to 5.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 13.0.0
+    - @peerbit/indexer-interface bumped to 3.0.0
+    - @peerbit/react bumped to 1.0.0
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 2.0.0
+    - @peerbit/indexer-simple bumped to 1.2.3
+    - @peerbit/program bumped to 6.0.0
+    - @peerbit/test-utils bumped to 3.0.0
+    - @peerbit/shared-log bumped to 13.0.0
+    - peerbit bumped to 5.0.0
 
 ## [0.6.6](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.5...document-react-v0.6.6) (2026-01-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.3.5
-  * devDependencies
-    * @peerbit/shared-log bumped to 12.3.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.3.5
+  - devDependencies
+    - @peerbit/shared-log bumped to 12.3.5
 
 ## [0.6.5](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.4...document-react-v0.6.5) (2026-01-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.3.4
-    * @peerbit/react bumped to 0.2.3
-  * devDependencies
-    * @peerbit/program bumped to 5.6.3
-    * @peerbit/shared-log bumped to 12.3.4
-    * peerbit bumped to 4.4.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.3.4
+    - @peerbit/react bumped to 0.2.3
+  - devDependencies
+    - @peerbit/program bumped to 5.6.3
+    - @peerbit/shared-log bumped to 12.3.4
+    - peerbit bumped to 4.4.19
 
 ## [0.6.4](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.3...document-react-v0.6.4) (2026-01-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.3.3
-  * devDependencies
-    * @peerbit/shared-log bumped to 12.3.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.3.3
+  - devDependencies
+    - @peerbit/shared-log bumped to 12.3.3
 
 ## [0.6.3](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.2...document-react-v0.6.3) (2026-01-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.3.2
-    * @peerbit/react bumped to 0.2.2
-  * devDependencies
-    * @peerbit/program bumped to 5.6.2
-    * @peerbit/shared-log bumped to 12.3.2
-    * peerbit bumped to 4.4.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.3.2
+    - @peerbit/react bumped to 0.2.2
+  - devDependencies
+    - @peerbit/program bumped to 5.6.2
+    - @peerbit/shared-log bumped to 12.3.2
+    - peerbit bumped to 4.4.18
 
 ## [0.6.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.1...document-react-v0.6.2) (2026-01-23)
 
-
 ### Bug Fixes
 
-* **ci:** avoid Vite ENOTEMPTY by skipping party wrapper build ([2ed894b](https://github.com/dao-xyz/peerbit/commit/2ed894b84ef6e5b8fd276645909432d2f9dc7cb9))
-* **ci:** skip document-react-party wrapper build ([f91ea5b](https://github.com/dao-xyz/peerbit/commit/f91ea5bf2748c0495adc28658d78fb4394e1fb2a))
-
+- **ci:** avoid Vite ENOTEMPTY by skipping party wrapper build ([2ed894b](https://github.com/dao-xyz/peerbit/commit/2ed894b84ef6e5b8fd276645909432d2f9dc7cb9))
+- **ci:** skip document-react-party wrapper build ([f91ea5b](https://github.com/dao-xyz/peerbit/commit/f91ea5bf2748c0495adc28658d78fb4394e1fb2a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.3.1
-    * @peerbit/react bumped to 0.2.1
-  * devDependencies
-    * @peerbit/shared-log bumped to 12.3.1
-    * peerbit bumped to 4.4.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.3.1
+    - @peerbit/react bumped to 0.2.1
+  - devDependencies
+    - @peerbit/shared-log bumped to 12.3.1
+    - peerbit bumped to 4.4.17
 
 ## [0.6.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.6.0...document-react-v0.6.1) (2026-01-22)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.3.0
-    * @peerbit/react bumped to 0.2.0
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 1.5.2
-    * @peerbit/program bumped to 5.6.1
-    * @peerbit/shared-log bumped to 12.3.0
-    * peerbit bumped to 4.4.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.3.0
+    - @peerbit/react bumped to 0.2.0
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 1.5.2
+    - @peerbit/program bumped to 5.6.1
+    - @peerbit/shared-log bumped to 12.3.0
+    - peerbit bumped to 4.4.16
 
 ## [0.6.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.2...document-react-v0.6.0) (2026-01-17)
 
-
 ### Features
 
-* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
-
+- **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
 
 ### Bug Fixes
 
-* **document:** align DocumentsLike.count return types ([61c6690](https://github.com/dao-xyz/peerbit/commit/61c66907404b9b5402b0fafca58bd0fb69dd61c8))
-
+- **document:** align DocumentsLike.count return types ([61c6690](https://github.com/dao-xyz/peerbit/commit/61c66907404b9b5402b0fafca58bd0fb69dd61c8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.2.0
-    * @peerbit/react bumped to 0.1.0
-  * devDependencies
-    * @peerbit/program bumped to 5.6.0
-    * @peerbit/shared-log bumped to 12.2.0
-    * peerbit bumped to 4.4.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.2.0
+    - @peerbit/react bumped to 0.1.0
+  - devDependencies
+    - @peerbit/program bumped to 5.6.0
+    - @peerbit/shared-log bumped to 12.2.0
+    - peerbit bumped to 4.4.15
 
 ## [0.5.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.1...document-react-v0.5.2) (2026-01-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.1.2
-    * @peerbit/react bumped to 0.0.49
-  * devDependencies
-    * @peerbit/program bumped to 5.5.2
-    * peerbit bumped to 4.4.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.1.2
+    - @peerbit/react bumped to 0.0.49
+  - devDependencies
+    - @peerbit/program bumped to 5.5.2
+    - peerbit bumped to 4.4.14
 
 ## [0.5.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.5.0...document-react-v0.5.1) (2026-01-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.1.1
-    * @peerbit/react bumped to 0.0.48
-  * devDependencies
-    * peerbit bumped to 4.4.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.1.1
+    - @peerbit/react bumped to 0.0.48
+  - devDependencies
+    - peerbit bumped to 4.4.13
 
 ## [0.5.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.11...document-react-v0.5.0) (2025-12-30)
 
-
 ### Features
 
-* improve count approximation using 95% confidence interval errorMargin ([19db639](https://github.com/dao-xyz/peerbit/commit/19db63946be124dac591524ea5010d64d1a524c6))
-
+- improve count approximation using 95% confidence interval errorMargin ([19db639](https://github.com/dao-xyz/peerbit/commit/19db63946be124dac591524ea5010d64d1a524c6))
 
 ### Bug Fixes
 
-* force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
-
+- force libsodium 0.7.15 tmp ([663c997](https://github.com/dao-xyz/peerbit/commit/663c997100237cebcfc28bd782cd4057ab22e8d6))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.1.0
-    * @peerbit/indexer-interface bumped to 2.1.1
-    * @peerbit/react bumped to 0.0.47
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 1.5.1
-    * @peerbit/program bumped to 5.5.1
-    * peerbit bumped to 4.4.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.1.0
+    - @peerbit/indexer-interface bumped to 2.1.1
+    - @peerbit/react bumped to 0.0.47
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 1.5.1
+    - @peerbit/program bumped to 5.5.1
+    - peerbit bumped to 4.4.12
 
 ## [0.4.11](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.10...document-react-v0.4.11) (2025-12-30)
 
-
 ### Bug Fixes
 
-* effects on local, remote options ([ae6ca41](https://github.com/dao-xyz/peerbit/commit/ae6ca41321b81fc595064eb145ca3faa0e93fa2b))
+- effects on local, remote options ([ae6ca41](https://github.com/dao-xyz/peerbit/commit/ae6ca41321b81fc595064eb145ca3faa0e93fa2b))
 
 ## [0.4.10](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.9...document-react-v0.4.10) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.0.2
-    * @peerbit/react bumped to 0.0.46
-  * devDependencies
-    * peerbit bumped to 4.4.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.0.2
+    - @peerbit/react bumped to 0.0.46
+  - devDependencies
+    - peerbit bumped to 4.4.11
 
 ## [0.4.9](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.8...document-react-v0.4.9) (2025-12-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.0.1
-    * @peerbit/react bumped to 0.0.45
-  * devDependencies
-    * @peerbit/program bumped to 5.5.0
-    * peerbit bumped to 4.4.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.0.1
+    - @peerbit/react bumped to 0.0.45
+  - devDependencies
+    - @peerbit/program bumped to 5.5.0
+    - peerbit bumped to 4.4.10
 
 ## [0.4.8](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.7...document-react-v0.4.8) (2025-12-23)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 12.0.0
-    * @peerbit/react bumped to 0.0.44
-  * devDependencies
-    * @peerbit/program bumped to 5.4.5
-    * peerbit bumped to 4.4.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 12.0.0
+    - @peerbit/react bumped to 0.0.44
+  - devDependencies
+    - @peerbit/program bumped to 5.4.5
+    - peerbit bumped to 4.4.9
 
 ## [0.4.7](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.6...document-react-v0.4.7) (2025-12-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.7
-    * @peerbit/react bumped to 0.0.43
-  * devDependencies
-    * peerbit bumped to 4.4.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.7
+    - @peerbit/react bumped to 0.0.43
+  - devDependencies
+    - peerbit bumped to 4.4.8
 
 ## [0.4.6](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.5...document-react-v0.4.6) (2025-12-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.6
-    * @peerbit/react bumped to 0.0.42
-  * devDependencies
-    * peerbit bumped to 4.4.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.6
+    - @peerbit/react bumped to 0.0.42
+  - devDependencies
+    - peerbit bumped to 4.4.7
 
 ## [0.4.5](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.4...document-react-v0.4.5) (2025-12-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.5
-    * @peerbit/react bumped to 0.0.41
-  * devDependencies
-    * @peerbit/program bumped to 5.4.4
-    * peerbit bumped to 4.4.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.5
+    - @peerbit/react bumped to 0.0.41
+  - devDependencies
+    - @peerbit/program bumped to 5.4.4
+    - peerbit bumped to 4.4.6
 
 ## [0.4.4](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.3...document-react-v0.4.4) (2025-12-16)
 
-
 ### Bug Fixes
 
-* handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
-
+- handle lifecycle errors and abort signals in getCover method ([ef15683](https://github.com/dao-xyz/peerbit/commit/ef1568368416615f9fc63942093dcc5ff4540db7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.4
 
 ## [0.4.3](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.2...document-react-v0.4.3) (2025-12-15)
 
-
 ### Bug Fixes
 
-* correct reverse option handling ([740b97d](https://github.com/dao-xyz/peerbit/commit/740b97df72b4a19a891c47a2bb1cade65df3a2c1))
-
+- correct reverse option handling ([740b97d](https://github.com/dao-xyz/peerbit/commit/740b97df72b4a19a891c47a2bb1cade65df3a2c1))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.3
 
 ## [0.4.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.1...document-react-v0.4.2) (2025-12-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.2
 
 ## [0.4.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.4.0...document-react-v0.4.1) (2025-12-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.1
 
 ## [0.4.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.3.1...document-react-v0.4.0) (2025-12-03)
 
-
 ### Features
 
-* improve later result handling with outOfOrder block ([ca0f6dd](https://github.com/dao-xyz/peerbit/commit/ca0f6dd155ae58a35c375eeebc5f6d0ea40f3165))
-
+- improve later result handling with outOfOrder block ([ca0f6dd](https://github.com/dao-xyz/peerbit/commit/ca0f6dd155ae58a35c375eeebc5f6d0ea40f3165))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.2.0
 
 ## [0.3.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.3.0...document-react-v0.3.1) (2025-12-02)
 
-
 ### Bug Fixes
 
-* missing events deps ([f0be11a](https://github.com/dao-xyz/peerbit/commit/f0be11a0ca26a48aa3991f686e1ca36660e6cb09))
-
+- missing events deps ([f0be11a](https://github.com/dao-xyz/peerbit/commit/f0be11a0ca26a48aa3991f686e1ca36660e6cb09))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.1.1
-    * @peerbit/react bumped to 0.0.40
-  * devDependencies
-    * @peerbit/program bumped to 5.4.3
-    * peerbit bumped to 4.4.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.1.1
+    - @peerbit/react bumped to 0.0.40
+  - devDependencies
+    - @peerbit/program bumped to 5.4.3
+    - peerbit bumped to 4.4.5
 
 ## [0.3.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.2.0...document-react-v0.3.0) (2025-12-01)
 
-
 ### Features
 
-* applyResults handler for custom ([48f8fda](https://github.com/dao-xyz/peerbit/commit/48f8fdaa718f9721ec08668d03f115808eff70c8))
-
+- applyResults handler for custom ([48f8fda](https://github.com/dao-xyz/peerbit/commit/48f8fdaa718f9721ec08668d03f115808eff70c8))
 
 ### Bug Fixes
 
-* rm "useDefineForClassFields" property ([298c1bf](https://github.com/dao-xyz/peerbit/commit/298c1bff734804cb8143ab802cb942265cde7db4))
-
+- rm "useDefineForClassFields" property ([298c1bf](https://github.com/dao-xyz/peerbit/commit/298c1bff734804cb8143ab802cb942265cde7db4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.1.0
-    * @peerbit/react bumped to 0.0.39
-  * devDependencies
-    * @peerbit/program bumped to 5.4.2
-    * peerbit bumped to 4.4.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.1.0
+    - @peerbit/react bumped to 0.0.39
+  - devDependencies
+    - @peerbit/program bumped to 5.4.2
+    - peerbit bumped to 4.4.4
 
 ## [0.2.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.1.4...document-react-v0.2.0) (2025-11-26)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-* unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+- unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
 
 ### Bug Fixes
 
-* add public folder ([6684716](https://github.com/dao-xyz/peerbit/commit/6684716c109afcc76f5a3736f99545e7291dc20f))
-* configs for new packages ([55ce97a](https://github.com/dao-xyz/peerbit/commit/55ce97a99a6f472f1df0a1c7a2f84f58a41362cc))
-* gitignore ([ebf8d86](https://github.com/dao-xyz/peerbit/commit/ebf8d86ba954e7e4de06e9418d3375e82ca19533))
-* relase config and restore versions ([04ba9f6](https://github.com/dao-xyz/peerbit/commit/04ba9f6942a8aed24fc8c7f26637599c0595d621))
-* update deps ([9d4bb63](https://github.com/dao-xyz/peerbit/commit/9d4bb6388339404fad1f1bb39100f096d6d9fbf3))
-
+- add public folder ([6684716](https://github.com/dao-xyz/peerbit/commit/6684716c109afcc76f5a3736f99545e7291dc20f))
+- configs for new packages ([55ce97a](https://github.com/dao-xyz/peerbit/commit/55ce97a99a6f472f1df0a1c7a2f84f58a41362cc))
+- gitignore ([ebf8d86](https://github.com/dao-xyz/peerbit/commit/ebf8d86ba954e7e4de06e9418d3375e82ca19533))
+- relase config and restore versions ([04ba9f6](https://github.com/dao-xyz/peerbit/commit/04ba9f6942a8aed24fc8c7f26637599c0595d621))
+- update deps ([9d4bb63](https://github.com/dao-xyz/peerbit/commit/9d4bb6388339404fad1f1bb39100f096d6d9fbf3))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 11.0.0
-    * @peerbit/react bumped to 0.0.38
-  * devDependencies
-    * @peerbit/program bumped to 5.4.1
-    * peerbit bumped to 4.4.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 11.0.0
+    - @peerbit/react bumped to 0.0.38
+  - devDependencies
+    - @peerbit/program bumped to 5.4.1
+    - peerbit bumped to 4.4.3
 
 ## [0.1.3](https://github.com/dao-xyz/peerbit/compare/document-react-v0.1.2...document-react-v0.1.3) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/react bumped to 0.0.37
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/react bumped to 0.0.37
 
 ## [0.1.2](https://github.com/dao-xyz/peerbit/compare/document-react-v0.1.1...document-react-v0.1.2) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 10.1.2
-    * @peerbit/react bumped to 0.0.36
-  * devDependencies
-    * @peerbit/program bumped to 5.4.0
-    * peerbit bumped to 4.4.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 10.1.2
+    - @peerbit/react bumped to 0.0.36
+  - devDependencies
+    - @peerbit/program bumped to 5.4.0
+    - peerbit bumped to 4.4.2
 
 ## [0.1.1](https://github.com/dao-xyz/peerbit/compare/document-react-v0.1.0...document-react-v0.1.1) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 10.1.1
-    * @peerbit/react bumped to 0.0.35
-  * devDependencies
-    * @peerbit/program bumped to 1.1.0
-    * peerbit bumped to 4.4.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 10.1.1
+    - @peerbit/react bumped to 0.0.35
+  - devDependencies
+    - @peerbit/program bumped to 1.1.0
+    - peerbit bumped to 4.4.1
 
 ## [0.1.0](https://github.com/dao-xyz/peerbit/compare/document-react-v0.0.33...document-react-v0.1.0) (2025-11-25)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-* unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
+- unify asset bundling into dist/assets for asset generating packages ([5d6612c](https://github.com/dao-xyz/peerbit/commit/5d6612c726f5eebbf5e05cc082a1fca16831e9e2))
 
 ### Bug Fixes
 
-* add public folder ([6684716](https://github.com/dao-xyz/peerbit/commit/6684716c109afcc76f5a3736f99545e7291dc20f))
-* configs for new packages ([55ce97a](https://github.com/dao-xyz/peerbit/commit/55ce97a99a6f472f1df0a1c7a2f84f58a41362cc))
-* gitignore ([ebf8d86](https://github.com/dao-xyz/peerbit/commit/ebf8d86ba954e7e4de06e9418d3375e82ca19533))
-* update deps ([9d4bb63](https://github.com/dao-xyz/peerbit/commit/9d4bb6388339404fad1f1bb39100f096d6d9fbf3))
-
+- add public folder ([6684716](https://github.com/dao-xyz/peerbit/commit/6684716c109afcc76f5a3736f99545e7291dc20f))
+- configs for new packages ([55ce97a](https://github.com/dao-xyz/peerbit/commit/55ce97a99a6f472f1df0a1c7a2f84f58a41362cc))
+- gitignore ([ebf8d86](https://github.com/dao-xyz/peerbit/commit/ebf8d86ba954e7e4de06e9418d3375e82ca19533))
+- update deps ([9d4bb63](https://github.com/dao-xyz/peerbit/commit/9d4bb6388339404fad1f1bb39100f096d6d9fbf3))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/document bumped to 10.1.0
-    * @peerbit/indexer-interface bumped to 2.1.0
-    * @peerbit/react bumped to 0.0.34
-    * @peerbit/logger bumped to 2.0.0
-  * devDependencies
-    * @peerbit/blocks-interface bumped to 1.5.0
-    * @peerbit/program bumped to 1.0.0
-    * peerbit bumped to 4.4.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/document bumped to 10.1.0
+    - @peerbit/indexer-interface bumped to 2.1.0
+    - @peerbit/react bumped to 0.0.34
+    - @peerbit/logger bumped to 2.0.0
+  - devDependencies
+    - @peerbit/blocks-interface bumped to 1.5.0
+    - @peerbit/program bumped to 1.0.0
+    - peerbit bumped to 4.4.0
 
 ## 0.0.33
 

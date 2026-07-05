@@ -1,1543 +1,1446 @@
 # Changelog
 
-### Dependencies
+## 5.3.0
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.3 to 1.0.4
-    * @peerbit/logger bumped from 0.0.7 to 1.0.0
-    * @peerbit/uint8arrays bumped from 0.0.4 to 1.0.0
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+### Minor Changes
 
-### Dependencies
+- [#988](https://github.com/dao-xyz/peerbit/pull/988) [`8f5bac1`](https://github.com/dao-xyz/peerbit/commit/8f5bac19d936ec5a9a0d0b926d8d9ddab2a41270) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Native network plane: Rust/WASM-backed stream, pubsub, and block-exchange path.
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.0 to 1.0.1
-    * @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
+  Adds an optional native execution path that offloads the hot network code
+  paths (direct-stream routing, fanout-tree/topic control, block exchange, and
+  fused send/receive) to a Rust/WASM backbone while keeping the existing
+  JavaScript implementations as the default. The native path is opt-in and
+  defaults off; with it disabled every flag-off TS path, wire format, protocol
+  id, and observable behavior is byte- and semantics-identical, so JS-path and
+  native-path nodes remain interoperable.
 
-### Dependencies
+  New package:
+  - `@peerbit/network-rust` — Rust/WASM network backbone (`peerbit_wire` crate):
+    native direct-stream, fanout-tree, topic-control, and block-exchange kernels
+    with their TS bindings, consumed via the new `rustCore` option on the
+    transport packages.
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.1 to 1.0.2
-    * @peerbit/uint8arrays bumped from 2.0.0 to 3.0.0
+  Additive public API on existing packages:
+  - `@peerbit/native-backbone` — new `NativeBackboneWireSyncSession` receive-fusion
+    session plus wire-sync counter/meta types and native raw-receive / sync-send
+    wire helpers.
+  - `@peerbit/shared-log` — new fused send/receive path and sync capability
+    handshake: exported `SyncCapabilitiesMessage` and `RawExchangeHeadsMessage`,
+    a `SharedLogNativeDefaults` type, and additive `nativeBackbone` / `nativeGraph`
+    / raw-exchange `sync` options. Also routes `onChange` dispatch through the
+    fused receive path.
+  - `@peerbit/pubsub` — rust-core `TopicControlPlane` and `FanoutTree` via a new
+    `FanoutWireCodec` seam (`fanoutWire` / `fanoutParentUpgrade` exports); the
+    native directory adoption and `subscribeShouldReplace` route through the
+    native core when `rustCore` is enabled.
+  - `@peerbit/stream` — new `rustCore` option and exported `RustCoreStream` /
+    `PushableLanes` types, plus public `routes` and `wireCounters` surface for the
+    native lane scheduler and out-of-band envelope verification.
+  - `@peerbit/blocks` — `DirectBlock` gains an optional `rustCore` option and a
+    `getBlockResponsePayload` hook so block exchange can run through the native
+    core.
+  - `@peerbit/rpc` — new optional `resolveRequest` hook that lets a caller supply
+    a pre-resolved request (used by the native path), falling back to decode when
+    it is absent or throws.
+  - `peerbit` — new `NativeNetworkRuntime` client wiring (`nativeNetwork` option)
+    for selecting the native network preset.
+  - `@peerbit/log` — new `Entry.prepareMultihashBytesLazy` static that defers
+    materializing prepared entry-block bytes, so the native commit path does not
+    force stash-backed heads to build block bytes it never reads.
+  - `@peerbit/test-utils` — new optional `nativeWire` option on the test session
+    `CreateOptions`, threaded into the DirectStream setup for native-path tests.
 
-### Dependencies
+### Patch Changes
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.2 to 1.0.3
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.3 to 1.0.4
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.6 to 1.0.7
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.8 to 1.0.9
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.11 to 1.0.12
-
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.13 to 1.0.14
+- Updated dependencies [[`8f5bac1`](https://github.com/dao-xyz/peerbit/commit/8f5bac19d936ec5a9a0d0b926d8d9ddab2a41270)]:
+  - @peerbit/crypto@3.1.2
+  - @peerbit/stream@5.1.0
+  - @peerbit/pubsub-interface@5.1.5
+  - @peerbit/stream-interface@6.0.11
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.14 to 1.0.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.3 to 1.0.4
+    - @peerbit/logger bumped from 0.0.7 to 1.0.0
+    - @peerbit/uint8arrays bumped from 0.0.4 to 1.0.0
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.15 to 1.0.16
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.6 to 1.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.0 to 1.0.1
+    - @peerbit/uint8arrays bumped from 1.0.0 to 2.0.0
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.16 to 1.0.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.1 to 1.0.2
+    - @peerbit/uint8arrays bumped from 2.0.0 to 3.0.0
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.17 to 1.0.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.2 to 1.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.19 to 1.0.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.3 to 1.0.4
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.0 to 2.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.6 to 1.0.7
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.1 to 2.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.8 to 1.0.9
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.2 to 2.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.11 to 1.0.12
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.5 to 2.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.13 to 1.0.14
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.0 to 3.0.1
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.1 to 2.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.14 to 1.0.15
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.1 to 3.0.2
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.15 to 1.0.16
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.6 to 1.0.7
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.2 to 3.0.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.3 to 2.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.16 to 1.0.17
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.5 to 3.0.6
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.5 to 2.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.17 to 1.0.18
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.6 to 3.0.7
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.6 to 2.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.19 to 1.0.20
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.7 to 3.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.0 to 2.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.1.0 to 3.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.1 to 2.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.1.1 to 3.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.2 to 2.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.0 to 4.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.5 to 2.0.6
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.2 to 4.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.0 to 3.0.1
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.1 to 2.0.2
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.1 to 3.0.2
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.2 to 2.0.3
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.2 to 3.0.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.3 to 2.0.4
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.5 to 3.0.6
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.5 to 2.0.6
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.6 to 3.0.7
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.6 to 2.1.0
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.7 to 3.0.8
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.1.0 to 3.1.1
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.1.1 to 3.1.2
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.0 to 4.0.1
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.2 to 4.0.3
 
 ## [5.2.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.10...pubsub-v5.2.11) (2026-05-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.1.4
-    * @peerbit/stream bumped to 5.0.17
-    * @peerbit/stream-interface bumped to 6.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.1.4
+    - @peerbit/stream bumped to 5.0.17
+    - @peerbit/stream-interface bumped to 6.0.10
 
 ## [5.2.10](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.9...pubsub-v5.2.10) (2026-05-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.16
 
 ## [5.2.9](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.8...pubsub-v5.2.9) (2026-05-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.15
 
 ## [5.2.8](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.7...pubsub-v5.2.8) (2026-05-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.14
 
 ## [5.2.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.6...pubsub-v5.2.7) (2026-05-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.13
 
 ## [5.2.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.5...pubsub-v5.2.6) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.1.3
-    * @peerbit/stream bumped to 5.0.12
-    * @peerbit/stream-interface bumped to 6.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.1.3
+    - @peerbit/stream bumped to 5.0.12
+    - @peerbit/stream-interface bumped to 6.0.9
 
 ## [5.2.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.4...pubsub-v5.2.5) (2026-04-30)
 
-
 ### Bug Fixes
 
-* **pubsub:** classify fanout attachment timeout ([f81e673](https://github.com/dao-xyz/peerbit/commit/f81e6739d41f9809000e4273ef24cd1938ca4ce3))
+- **pubsub:** classify fanout attachment timeout ([f81e673](https://github.com/dao-xyz/peerbit/commit/f81e6739d41f9809000e4273ef24cd1938ca4ce3))
 
 ## [5.2.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.3...pubsub-v5.2.4) (2026-04-30)
 
-
 ### Bug Fixes
 
-* **pubsub:** normalize byte sources across package boundaries ([#751](https://github.com/dao-xyz/peerbit/issues/751)) ([9092c6c](https://github.com/dao-xyz/peerbit/commit/9092c6c36485358911af43eec51587d56134a80d))
+- **pubsub:** normalize byte sources across package boundaries ([#751](https://github.com/dao-xyz/peerbit/issues/751)) ([9092c6c](https://github.com/dao-xyz/peerbit/commit/9092c6c36485358911af43eec51587d56134a80d))
 
 ## [5.2.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.2...pubsub-v5.2.3) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.1.2
-    * @peerbit/stream bumped to 5.0.11
-    * @peerbit/stream-interface bumped to 6.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.1.2
+    - @peerbit/stream bumped to 5.0.11
+    - @peerbit/stream-interface bumped to 6.0.8
 
 ## [5.2.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.1...pubsub-v5.2.2) (2026-04-30)
 
-
 ### Bug Fixes
 
-* **shared-log:** widen underfilled leader filters ([#748](https://github.com/dao-xyz/peerbit/issues/748)) ([dd690f7](https://github.com/dao-xyz/peerbit/commit/dd690f7386eb69928ecb11faa817e58b36256d4b))
+- **shared-log:** widen underfilled leader filters ([#748](https://github.com/dao-xyz/peerbit/issues/748)) ([dd690f7](https://github.com/dao-xyz/peerbit/commit/dd690f7386eb69928ecb11faa817e58b36256d4b))
 
 ## [5.2.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.2.0...pubsub-v5.2.1) (2026-04-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.10
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 3.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.10
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 3.0.5
 
 ## [5.2.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.6...pubsub-v5.2.0) (2026-04-14)
 
-
 ### Features
 
-* **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
-* **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
+- **blocks:** wake pending gets from provider watches ([ffc0f93](https://github.com/dao-xyz/peerbit/commit/ffc0f9322056d466034c467ebf82a0b08cdd5c93))
+- **blocks:** wake pending reads from provider watches ([0720fe5](https://github.com/dao-xyz/peerbit/commit/0720fe5f0c810f0aa256cd97794b171448b2bdcb))
 
 ## [5.1.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.5...pubsub-v5.1.6) (2026-04-03)
 
-
 ### Bug Fixes
 
-* **pubsub:** tolerate closed channels in maybe publish ([3277917](https://github.com/dao-xyz/peerbit/commit/3277917bb10a419c7d04886737c071d07baf7817))
-* **pubsub:** tolerate closed channels in maybe publish ([a195954](https://github.com/dao-xyz/peerbit/commit/a1959545b8cff0377c816500747be566a9879e16))
+- **pubsub:** tolerate closed channels in maybe publish ([3277917](https://github.com/dao-xyz/peerbit/commit/3277917bb10a419c7d04886737c071d07baf7817))
+- **pubsub:** tolerate closed channels in maybe publish ([a195954](https://github.com/dao-xyz/peerbit/commit/a1959545b8cff0377c816500747be566a9879e16))
 
 ## [5.1.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.4...pubsub-v5.1.5) (2026-03-30)
 
-
 ### Bug Fixes
 
-* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
-
+- **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.1
-    * @peerbit/logger bumped to 2.0.1
-    * @peerbit/pubsub-interface bumped to 5.1.1
-    * @peerbit/stream bumped to 5.0.9
-    * @peerbit/stream-interface bumped to 6.0.7
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 3.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.1
+    - @peerbit/logger bumped to 2.0.1
+    - @peerbit/pubsub-interface bumped to 5.1.1
+    - @peerbit/stream bumped to 5.0.9
+    - @peerbit/stream-interface bumped to 6.0.7
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 3.0.4
 
 ## [5.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.3...pubsub-v5.1.4) (2026-03-29)
 
-
 ### Bug Fixes
 
-* **pubsub:** avoid missed attachment races ([7a5582c](https://github.com/dao-xyz/peerbit/commit/7a5582cd9b63417cd7cdf22e28cc0b8179683d11))
-* **pubsub:** avoid missed attachment races ([d7eadd7](https://github.com/dao-xyz/peerbit/commit/d7eadd70e996c5b714bb84166d4666905da5f9e3))
+- **pubsub:** avoid missed attachment races ([7a5582c](https://github.com/dao-xyz/peerbit/commit/7a5582cd9b63417cd7cdf22e28cc0b8179683d11))
+- **pubsub:** avoid missed attachment races ([d7eadd7](https://github.com/dao-xyz/peerbit/commit/d7eadd70e996c5b714bb84166d4666905da5f9e3))
 
 ## [5.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.2...pubsub-v5.1.3) (2026-03-27)
 
-
 ### Bug Fixes
 
-* **pubsub:** host shard roots before advertising them ([9b9155a](https://github.com/dao-xyz/peerbit/commit/9b9155aec0df5e4a67ba56b4018ef7ca025e932c))
-* **pubsub:** host shard roots before advertising them ([4b86411](https://github.com/dao-xyz/peerbit/commit/4b8641187e79e84df72e997ae3b83755ad835e58))
+- **pubsub:** host shard roots before advertising them ([9b9155a](https://github.com/dao-xyz/peerbit/commit/9b9155aec0df5e4a67ba56b4018ef7ca025e932c))
+- **pubsub:** host shard roots before advertising them ([4b86411](https://github.com/dao-xyz/peerbit/commit/4b8641187e79e84df72e997ae3b83755ad835e58))
 
 ## [5.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.1...pubsub-v5.1.2) (2026-03-27)
 
-
 ### Bug Fixes
 
-* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
-
+- **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.8
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 3.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.8
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 3.0.3
 
 ## [5.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.1.0...pubsub-v5.1.1) (2026-03-22)
 
-
 ### Bug Fixes
 
-* **program:** emit joins for snapshot-discovered peers ([0c0603d](https://github.com/dao-xyz/peerbit/commit/0c0603d4f0eb9877e32c5de37b43f52ddf259aaf))
-* **pubsub:** resolve rebase conflict with shard root queries ([9c8dae8](https://github.com/dao-xyz/peerbit/commit/9c8dae88240ea87373ebf44463555710e0f41818))
-* **stream:** add publishMaybe for tolerated delivery errors ([5366f65](https://github.com/dao-xyz/peerbit/commit/5366f65c99d8091ca93fe23c582579dd2f928335))
-* **stream:** add publishMaybe for tolerated delivery errors ([4933cf2](https://github.com/dao-xyz/peerbit/commit/4933cf21f149f2ee4f93dd1a0b770dca0f65139d))
-
+- **program:** emit joins for snapshot-discovered peers ([0c0603d](https://github.com/dao-xyz/peerbit/commit/0c0603d4f0eb9877e32c5de37b43f52ddf259aaf))
+- **pubsub:** resolve rebase conflict with shard root queries ([9c8dae8](https://github.com/dao-xyz/peerbit/commit/9c8dae88240ea87373ebf44463555710e0f41818))
+- **stream:** add publishMaybe for tolerated delivery errors ([5366f65](https://github.com/dao-xyz/peerbit/commit/5366f65c99d8091ca93fe23c582579dd2f928335))
+- **stream:** add publishMaybe for tolerated delivery errors ([4933cf2](https://github.com/dao-xyz/peerbit/commit/4933cf21f149f2ee4f93dd1a0b770dca0f65139d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 5.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 5.0.7
 
 ## [5.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.8...pubsub-v5.1.0) (2026-03-18)
 
-
 ### Features
 
-* **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
-
+- **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.1.0
 
 ## [5.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.7...pubsub-v5.0.8) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.0.7
-    * @peerbit/stream bumped to 5.0.6
-    * @peerbit/stream-interface bumped to 6.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.0.7
+    - @peerbit/stream bumped to 5.0.6
+    - @peerbit/stream-interface bumped to 6.0.6
 
 ## [5.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.6...pubsub-v5.0.7) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.0
-    * @peerbit/pubsub-interface bumped to 5.0.6
-    * @peerbit/stream bumped to 5.0.5
-    * @peerbit/stream-interface bumped to 6.0.5
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 3.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.0
+    - @peerbit/pubsub-interface bumped to 5.0.6
+    - @peerbit/stream bumped to 5.0.5
+    - @peerbit/stream-interface bumped to 6.0.5
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 3.0.2
 
 ## [5.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.5...pubsub-v5.0.6) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.0.5
-    * @peerbit/stream bumped to 5.0.4
-    * @peerbit/stream-interface bumped to 6.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.0.5
+    - @peerbit/stream bumped to 5.0.4
+    - @peerbit/stream-interface bumped to 6.0.4
 
 ## [5.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.4...pubsub-v5.0.5) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.1
-    * @peerbit/pubsub-interface bumped to 5.0.4
-    * @peerbit/stream bumped to 5.0.3
-    * @peerbit/stream-interface bumped to 6.0.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 3.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.1
+    - @peerbit/pubsub-interface bumped to 5.0.4
+    - @peerbit/stream bumped to 5.0.3
+    - @peerbit/stream-interface bumped to 6.0.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 3.0.1
 
 ## [5.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.3...pubsub-v5.0.4) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.0.3
-    * @peerbit/stream bumped to 5.0.2
-    * @peerbit/stream-interface bumped to 6.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.0.3
+    - @peerbit/stream bumped to 5.0.2
+    - @peerbit/stream-interface bumped to 6.0.2
 
 ## [5.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.2...pubsub-v5.0.3) (2026-03-09)
 
-
 ### Bug Fixes
 
-* **pubsub-bench:** unblock scale fanout sims ([#650](https://github.com/dao-xyz/peerbit/issues/650)) ([40dcd79](https://github.com/dao-xyz/peerbit/commit/40dcd79b92947def70dd13afcd3bf5cceb8e6045))
-* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
-
+- **pubsub-bench:** unblock scale fanout sims ([#650](https://github.com/dao-xyz/peerbit/issues/650)) ([40dcd79](https://github.com/dao-xyz/peerbit/commit/40dcd79b92947def70dd13afcd3bf5cceb8e6045))
+- **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.0.2
 
 ## [5.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.1...pubsub-v5.0.2) (2026-03-08)
 
-
 ### Bug Fixes
 
-* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
-
+- **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
 
 ### Refactors
 
-* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
-
+- **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 5.0.1
-    * @peerbit/stream bumped to 5.0.1
-    * @peerbit/stream-interface bumped to 6.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 5.0.1
+    - @peerbit/stream bumped to 5.0.1
+    - @peerbit/stream-interface bumped to 6.0.1
 
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v5.0.0...pubsub-v5.0.1) (2026-03-07)
 
-
 ### Bug Fixes
 
-* **pubsub:** clean up relay-only subscriber state ([c89b0fa](https://github.com/dao-xyz/peerbit/commit/c89b0fa245ca8383f2615a1f3bdb27159579abd2))
-* **pubsub:** clean up relay-only subscriber state ([5b9e861](https://github.com/dao-xyz/peerbit/commit/5b9e861fb599399ec9724cc4e9c0736691515117))
-* **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
-* **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
-* **pubsub:** ignore duplicate peer session resets ([1f25cea](https://github.com/dao-xyz/peerbit/commit/1f25cea7c91317399f39f71a3cab72a36050a8f8))
-* **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
-* **pubsub:** retry hosting auto-selected shard roots ([9523b54](https://github.com/dao-xyz/peerbit/commit/9523b544d4556cfc5acf48f8ef4555223a85b8ee))
+- **pubsub:** clean up relay-only subscriber state ([c89b0fa](https://github.com/dao-xyz/peerbit/commit/c89b0fa245ca8383f2615a1f3bdb27159579abd2))
+- **pubsub:** clean up relay-only subscriber state ([5b9e861](https://github.com/dao-xyz/peerbit/commit/5b9e861fb599399ec9724cc4e9c0736691515117))
+- **pubsub:** handle session reset follow-up issues ([d7e845a](https://github.com/dao-xyz/peerbit/commit/d7e845ad2f42d11b75c4e929d7bebfcb790f789e))
+- **pubsub:** ignore duplicate peer session resets ([89efa1b](https://github.com/dao-xyz/peerbit/commit/89efa1b4c77090769288798ae16ded068b507570))
+- **pubsub:** ignore duplicate peer session resets ([1f25cea](https://github.com/dao-xyz/peerbit/commit/1f25cea7c91317399f39f71a3cab72a36050a8f8))
+- **pubsub:** retry hosting auto-selected shard roots ([90c22a0](https://github.com/dao-xyz/peerbit/commit/90c22a0dc3ff95099ec20899a8a4c96523f8151b))
+- **pubsub:** retry hosting auto-selected shard roots ([9523b54](https://github.com/dao-xyz/peerbit/commit/9523b544d4556cfc5acf48f8ef4555223a85b8ee))
 
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.4...pubsub-v5.0.0) (2026-03-04)
 
-
 ### ⚠ BREAKING CHANGES
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
 
 ### Features
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
-* **pubsub:** add typed unsubscribe reason metadata ([280983c](https://github.com/dao-xyz/peerbit/commit/280983c37da68590740de7c142adf01db04f8d71))
-* **pubsub:** add typed unsubscribe reasons ([82ac0a1](https://github.com/dao-xyz/peerbit/commit/82ac0a1c5e3174d745517bb908e79009342a2497))
-* **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
-
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+- **pubsub:** add typed unsubscribe reason metadata ([280983c](https://github.com/dao-xyz/peerbit/commit/280983c37da68590740de7c142adf01db04f8d71))
+- **pubsub:** add typed unsubscribe reasons ([82ac0a1](https://github.com/dao-xyz/peerbit/commit/82ac0a1c5e3174d745517bb908e79009342a2497))
+- **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
 
 ### Bug Fixes
 
-* **pubsub:** treat pending subscriptions as local interest ([#602](https://github.com/dao-xyz/peerbit/issues/602)) ([14881a0](https://github.com/dao-xyz/peerbit/commit/14881a07efffc5dd0da404afa25dada687cb5492))
-* **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
-* **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
-
+- **pubsub:** treat pending subscriptions as local interest ([#602](https://github.com/dao-xyz/peerbit/issues/602)) ([14881a0](https://github.com/dao-xyz/peerbit/commit/14881a07efffc5dd0da404afa25dada687cb5492))
+- **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
+- **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.0
-    * @peerbit/pubsub-interface bumped to 5.0.0
-    * @peerbit/stream bumped to 5.0.0
-    * @peerbit/stream-interface bumped to 6.0.0
-    * @peerbit/time bumped to 3.0.0
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 3.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.0
+    - @peerbit/pubsub-interface bumped to 5.0.0
+    - @peerbit/stream bumped to 5.0.0
+    - @peerbit/stream-interface bumped to 6.0.0
+    - @peerbit/time bumped to 3.0.0
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 3.0.0
 
 ## [4.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.3...pubsub-v4.1.4) (2026-01-22)
 
-
 ### Bug Fixes
 
-* **pubsub:** cleanup waitForSubscribers abort/timeout ([ff789fe](https://github.com/dao-xyz/peerbit/commit/ff789fe7b2ba5f3cdb75a53ced4da0351e77f657))
-
+- **pubsub:** cleanup waitForSubscribers abort/timeout ([ff789fe](https://github.com/dao-xyz/peerbit/commit/ff789fe7b2ba5f3cdb75a53ced4da0351e77f657))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/pubsub-interface bumped to 4.1.2
-    * @peerbit/stream bumped to 4.6.0
-    * @peerbit/stream-interface bumped to 5.4.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/pubsub-interface bumped to 4.1.2
+    - @peerbit/stream bumped to 4.6.0
+    - @peerbit/stream-interface bumped to 5.4.0
 
 ## [4.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.2...pubsub-v4.1.3) (2026-01-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 4.5.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 4.5.3
 
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.1...pubsub-v4.1.2) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.1
-    * @peerbit/pubsub-interface bumped to 4.1.1
-    * @peerbit/stream bumped to 4.5.2
-    * @peerbit/stream-interface bumped to 5.3.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.1
+    - @peerbit/pubsub-interface bumped to 4.1.1
+    - @peerbit/stream bumped to 4.5.2
+    - @peerbit/stream-interface bumped to 5.3.1
 
 ## [4.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.1.0...pubsub-v4.1.1) (2025-12-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped to 4.5.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped to 4.5.1
 
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.18...pubsub-v4.1.0) (2025-11-25)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
 
 ### Bug Fixes
 
-* use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
-
+- use libp2p based logger ([5ffd22b](https://github.com/dao-xyz/peerbit/commit/5ffd22b2ddcfcc133fe025fcfb399461ef2fe266))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.0
-    * @peerbit/logger bumped to 2.0.0
-    * @peerbit/pubsub-interface bumped to 4.1.0
-    * @peerbit/stream bumped to 4.5.0
-    * @peerbit/stream-interface bumped to 5.3.0
-    * @peerbit/time bumped to 2.3.0
-    * @peerbit/any-store-interface bumped to 1.1.0
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 2.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.0
+    - @peerbit/logger bumped to 2.0.0
+    - @peerbit/pubsub-interface bumped to 4.1.0
+    - @peerbit/stream bumped to 4.5.0
+    - @peerbit/stream-interface bumped to 5.3.0
+    - @peerbit/time bumped to 2.3.0
+    - @peerbit/any-store-interface bumped to 1.1.0
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 2.2.0
 
 ## [4.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.17...pubsub-v4.0.18) (2025-10-03)
 
-
 ### Bug Fixes
 
-* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
-
+- restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.13
-    * @peerbit/pubsub-interface bumped to 4.0.9
-    * @peerbit/stream bumped to 4.4.7
-    * @peerbit/stream-interface bumped to 5.2.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.13
+    - @peerbit/pubsub-interface bumped to 4.0.9
+    - @peerbit/stream bumped to 4.4.7
+    - @peerbit/stream-interface bumped to 5.2.10
 
 ## [4.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.16...pubsub-v4.0.17) (2025-10-03)
 
-
 ### Bug Fixes
 
-* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
-* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
-* migrate to libp2p v3 ([6f8f7b0](https://github.com/dao-xyz/peerbit/commit/6f8f7b0b286d43c4363e02b7e4ca88d22c04c2b3))
-* pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
-
+- add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+- handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+- migrate to libp2p v3 ([6f8f7b0](https://github.com/dao-xyz/peerbit/commit/6f8f7b0b286d43c4363e02b7e4ca88d22c04c2b3))
+- pnpm package manager ([a6e95de](https://github.com/dao-xyz/peerbit/commit/a6e95de9a4fb418acd73f68639bec66fe6747856))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.12
-    * @peerbit/pubsub-interface bumped to 4.0.8
-    * @peerbit/stream bumped to 4.4.6
-    * @peerbit/stream-interface bumped to 5.2.9
-    * @peerbit/any-store-interface bumped to 1.0.1
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped to 2.1.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.12
+    - @peerbit/pubsub-interface bumped to 4.0.8
+    - @peerbit/stream bumped to 4.4.6
+    - @peerbit/stream-interface bumped to 5.2.9
+    - @peerbit/any-store-interface bumped to 1.0.1
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped to 2.1.21
 
 ## [4.0.16](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.15...pubsub-v4.0.16) (2025-09-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.4.4 to 4.4.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.4.4 to 4.4.5
 
 ## [4.0.15](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.14...pubsub-v4.0.15) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.4.3 to 4.4.4
-    * @peerbit/pubsub-interface bumped from ^4.0.6 to ^4.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.4.3 to 4.4.4
+    - @peerbit/pubsub-interface bumped from ^4.0.6 to ^4.0.7
 
 ## [4.0.14](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.13...pubsub-v4.0.14) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.4.2 to 4.4.3
-    * @peerbit/pubsub-interface bumped from ^4.0.5 to ^4.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.4.2 to 4.4.3
+    - @peerbit/pubsub-interface bumped from ^4.0.5 to ^4.0.6
 
 ## [4.0.13](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.12...pubsub-v4.0.13) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.4.1 to 4.4.2
-    * @peerbit/pubsub-interface bumped from ^4.0.4 to ^4.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.4.1 to 4.4.2
+    - @peerbit/pubsub-interface bumped from ^4.0.4 to ^4.0.5
 
 ## [4.0.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.11...pubsub-v4.0.12) (2025-09-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.4.0 to 4.4.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.4.0 to 4.4.1
 
 ## [4.0.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.10...pubsub-v4.0.11) (2025-09-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.10 to 4.4.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.10 to 4.4.0
 
 ## [4.0.10](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.9...pubsub-v4.0.10) (2025-09-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.9 to 4.3.10
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.19 to 2.1.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.9 to 4.3.10
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.19 to 2.1.20
 
 ## [4.0.9](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.8...pubsub-v4.0.9) (2025-09-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.8 to 4.3.9
-    * @peerbit/logger bumped from 1.0.3 to 1.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.8 to 4.3.9
+    - @peerbit/logger bumped from 1.0.3 to 1.0.4
 
 ## [4.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.7...pubsub-v4.0.8) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.7 to 4.3.8
-    * @peerbit/pubsub-interface bumped from ^4.0.3 to ^4.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.7 to 4.3.8
+    - @peerbit/pubsub-interface bumped from ^4.0.3 to ^4.0.4
 
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.6...pubsub-v4.0.7) (2025-08-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.6 to 4.3.7
-    * @peerbit/pubsub-interface bumped from ^4.0.2 to ^4.0.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.18 to 2.1.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.6 to 4.3.7
+    - @peerbit/pubsub-interface bumped from ^4.0.2 to ^4.0.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.18 to 2.1.19
 
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.5...pubsub-v4.0.6) (2025-06-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.5 to 4.3.6
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.17 to 2.1.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.5 to 4.3.6
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.17 to 2.1.18
 
 ## [4.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.4...pubsub-v4.0.5) (2025-06-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.4 to 4.3.5
-    * @peerbit/pubsub-interface bumped from ^4.0.1 to ^4.0.2
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.16 to 2.1.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.4 to 4.3.5
+    - @peerbit/pubsub-interface bumped from ^4.0.1 to ^4.0.2
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.16 to 2.1.17
 
 ## [4.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.3...pubsub-v4.0.4) (2025-04-30)
 
-
 ### Bug Fixes
 
-* correctly handle debounced unsubscription event when multiple topics ([3ef611f](https://github.com/dao-xyz/peerbit/commit/3ef611f3520d7c25030f8559f4bf3c803e9ac14b))
+- correctly handle debounced unsubscription event when multiple topics ([3ef611f](https://github.com/dao-xyz/peerbit/commit/3ef611f3520d7c25030f8559f4bf3c803e9ac14b))
 
 ## [4.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.2...pubsub-v4.0.3) (2025-04-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.3 to 4.3.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.3 to 4.3.4
 
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.1...pubsub-v4.0.2) (2025-04-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.2 to 4.3.3
-    * @peerbit/pubsub-interface bumped from ^4.0.0 to ^4.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.2 to 4.3.3
+    - @peerbit/pubsub-interface bumped from ^4.0.0 to ^4.0.1
 
 ## [4.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-v4.0.0...pubsub-v4.0.1) (2025-04-14)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.1 to 4.3.2
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.15 to 2.1.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.1 to 4.3.2
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.15 to 2.1.16
 
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.1.0...pubsub-v4.0.0) (2025-04-03)
 
-
 ### ⚠ BREAKING CHANGES
 
-* debounce subscription and unsubscription
+- debounce subscription and unsubscription
 
 ### Bug Fixes
 
-* debounce subscription and unsubscription ([19917a6](https://github.com/dao-xyz/peerbit/commit/19917a6e8313083963bd0f878818cdab46c7d813))
-* reduce default debounce time ([c5f9b43](https://github.com/dao-xyz/peerbit/commit/c5f9b43e124e9189d089dabe5dba113ab68e172e))
-
+- debounce subscription and unsubscription ([19917a6](https://github.com/dao-xyz/peerbit/commit/19917a6e8313083963bd0f878818cdab46c7d813))
+- reduce default debounce time ([c5f9b43](https://github.com/dao-xyz/peerbit/commit/c5f9b43e124e9189d089dabe5dba113ab68e172e))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.3.0 to 4.3.1
-    * @peerbit/pubsub-interface bumped from ^3.2.0 to ^4.0.0
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.14 to 2.1.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.3.0 to 4.3.1
+    - @peerbit/pubsub-interface bumped from ^3.2.0 to ^4.0.0
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.14 to 2.1.15
 
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.23...pubsub-v3.1.0) (2025-03-28)
 
-
 ### Features
 
-* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
-
+- support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.6 to 4.3.0
-    * @peerbit/pubsub-interface bumped from ^3.1.5 to ^3.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.6 to 4.3.0
+    - @peerbit/pubsub-interface bumped from ^3.1.5 to ^3.2.0
 
 ## [3.0.23](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.22...pubsub-v3.0.23) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.5 to 4.2.6
-    * @peerbit/pubsub-interface bumped from ^3.1.4 to ^3.1.5
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.13 to 2.1.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.5 to 4.2.6
+    - @peerbit/pubsub-interface bumped from ^3.1.4 to ^3.1.5
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.13 to 2.1.14
 
 ## [3.0.22](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.21...pubsub-v3.0.22) (2025-02-23)
 
-
 ### Bug Fixes
 
-* don't throw on deliveryError when non directly publishing ([2bf70ff](https://github.com/dao-xyz/peerbit/commit/2bf70ffea65b5d3bede0e9ea981d552d291d5765))
-
+- don't throw on deliveryError when non directly publishing ([2bf70ff](https://github.com/dao-xyz/peerbit/commit/2bf70ffea65b5d3bede0e9ea981d552d291d5765))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.4 to 4.2.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.4 to 4.2.5
 
 ## [3.0.21](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.20...pubsub-v3.0.21) (2025-02-21)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.3 to 4.2.4
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.12 to 2.1.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.3 to 4.2.4
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.12 to 2.1.13
 
 ## [3.0.20](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.19...pubsub-v3.0.20) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.2 to 4.2.3
-    * @peerbit/pubsub-interface bumped from ^3.1.3 to ^3.1.4
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.11 to 2.1.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.2 to 4.2.3
+    - @peerbit/pubsub-interface bumped from ^3.1.3 to ^3.1.4
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.11 to 2.1.12
 
 ## [3.0.19](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.18...pubsub-v3.0.19) (2025-02-20)
 
-
 ### Bug Fixes
 
-* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
-
+- prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.1 to 4.2.2
-    * @peerbit/pubsub-interface bumped from ^3.1.2 to ^3.1.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.10 to 2.1.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.1 to 4.2.2
+    - @peerbit/pubsub-interface bumped from ^3.1.2 to ^3.1.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.10 to 2.1.11
 
 ## [3.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.17...pubsub-v3.0.18) (2025-02-09)
 
-
 ### Bug Fixes
 
-* throw Abort and Timeout errors when waitForSubscribers rejects ([06e2bd8](https://github.com/dao-xyz/peerbit/commit/06e2bd8151ff6b54c190d45f81db5e3f9c8683cf))
-
+- throw Abort and Timeout errors when waitForSubscribers rejects ([06e2bd8](https://github.com/dao-xyz/peerbit/commit/06e2bd8151ff6b54c190d45f81db5e3f9c8683cf))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.2.0 to 4.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.2.0 to 4.2.1
 
 ## [3.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.16...pubsub-v3.0.17) (2025-02-06)
 
-
 ### Bug Fixes
 
-* waitForSubscribers abortable ([cba571d](https://github.com/dao-xyz/peerbit/commit/cba571d8072106d3f2060a6fba3583efb536a7e2))
+- waitForSubscribers abortable ([cba571d](https://github.com/dao-xyz/peerbit/commit/cba571d8072106d3f2060a6fba3583efb536a7e2))
 
 ## [3.0.16](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.15...pubsub-v3.0.16) (2025-01-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.1.4 to 4.2.0
-    * @peerbit/pubsub-interface bumped from ^3.1.1 to ^3.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.1.4 to 4.2.0
+    - @peerbit/pubsub-interface bumped from ^3.1.1 to ^3.1.2
 
 ## [3.0.15](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.14...pubsub-v3.0.15) (2024-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.1.3 to 4.1.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.1.3 to 4.1.4
 
 ## [3.0.14](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.13...pubsub-v3.0.14) (2024-12-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.1.2 to 4.1.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.9 to 2.1.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.1.2 to 4.1.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.9 to 2.1.10
 
 ## [3.0.13](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.12...pubsub-v3.0.13) (2024-10-28)
 
-
 ### Bug Fixes
 
-* update libp2p ([c679a0d](https://github.com/dao-xyz/peerbit/commit/c679a0df22e2c2927421f16ff7ddd061e514a28a))
-
+- update libp2p ([c679a0d](https://github.com/dao-xyz/peerbit/commit/c679a0df22e2c2927421f16ff7ddd061e514a28a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.1.1 to 4.1.2
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.8 to 2.1.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.1.1 to 4.1.2
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.8 to 2.1.9
 
 ## [3.0.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.11...pubsub-v3.0.12) (2024-10-28)
 
-
 ### Bug Fixes
 
-* update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
-
+- update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.1.0 to 4.1.1
-    * @peerbit/pubsub-interface bumped from ^3.1.0 to ^3.1.1
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.7 to 2.1.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.1.0 to 4.1.1
+    - @peerbit/pubsub-interface bumped from ^3.1.0 to ^3.1.1
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.7 to 2.1.8
 
 ## [3.0.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.10...pubsub-v3.0.11) (2024-10-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.10 to 4.1.0
-    * @peerbit/pubsub-interface bumped from ^3.0.6 to ^3.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.10 to 4.1.0
+    - @peerbit/pubsub-interface bumped from ^3.0.6 to ^3.1.0
 
 ## [3.0.10](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.9...pubsub-v3.0.10) (2024-10-13)
 
-
 ### Bug Fixes
 
-* update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
-
+- update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.9 to 4.0.10
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.6 to 2.1.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.9 to 4.0.10
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.6 to 2.1.7
 
 ## [3.0.9](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.8...pubsub-v3.0.9) (2024-10-11)
 
-
 ### Bug Fixes
 
-* update libp2p ([946a904](https://github.com/dao-xyz/peerbit/commit/946a904ea6cade2bf3de47f014a3fb96ed99e727))
-
+- update libp2p ([946a904](https://github.com/dao-xyz/peerbit/commit/946a904ea6cade2bf3de47f014a3fb96ed99e727))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.8 to 4.0.9
-    * @peerbit/pubsub-interface bumped from ^3.0.5 to ^3.0.6
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.5 to 2.1.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.8 to 4.0.9
+    - @peerbit/pubsub-interface bumped from ^3.0.5 to ^3.0.6
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.5 to 2.1.6
 
 ## [3.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.7...pubsub-v3.0.8) (2024-09-01)
 
-
 ### Bug Fixes
 
-* bump libp2p ([b064d22](https://github.com/dao-xyz/peerbit/commit/b064d228eaf7da2ef9da3dff95616dc00a31d9de))
-
+- bump libp2p ([b064d22](https://github.com/dao-xyz/peerbit/commit/b064d228eaf7da2ef9da3dff95616dc00a31d9de))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.7 to 4.0.8
-    * @peerbit/pubsub-interface bumped from ^3.0.4 to ^3.0.5
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.4 to 2.1.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.7 to 4.0.8
+    - @peerbit/pubsub-interface bumped from ^3.0.4 to ^3.0.5
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.4 to 2.1.5
 
 ## [3.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.6...pubsub-v3.0.7) (2024-07-31)
 
-
 ### Bug Fixes
 
-* add missing dependency ([baf2750](https://github.com/dao-xyz/peerbit/commit/baf275084398b6919627662c454113d69c10b52c))
-
+- add missing dependency ([baf2750](https://github.com/dao-xyz/peerbit/commit/baf275084398b6919627662c454113d69c10b52c))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.6 to 4.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.6 to 4.0.7
 
 ## [3.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.5...pubsub-v3.0.6) (2024-07-20)
 
-
 ### Bug Fixes
 
-* flaky test ([d8775d3](https://github.com/dao-xyz/peerbit/commit/d8775d3303947910e8b11f2d298bfaf852a07615))
-* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
-* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
-* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
-
+- flaky test ([d8775d3](https://github.com/dao-xyz/peerbit/commit/d8775d3303947910e8b11f2d298bfaf852a07615))
+- fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+- peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+- update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.5 to 4.0.6
-    * @peerbit/logger bumped from 1.0.2 to 1.0.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.5 to 4.0.6
+    - @peerbit/logger bumped from 1.0.2 to 1.0.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.3 to 2.1.4
 
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.4...pubsub-v3.0.5) (2024-02-26)
 
-
 ### Bug Fixes
 
-* don't throw when failing to deliver silently and mode was upgraded ([eec77e0](https://github.com/dao-xyz/peerbit/commit/eec77e0d246b01f96b5cbc198a7442e31cf9b285))
-
+- don't throw when failing to deliver silently and mode was upgraded ([eec77e0](https://github.com/dao-xyz/peerbit/commit/eec77e0d246b01f96b5cbc198a7442e31cf9b285))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.4 to 4.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.4 to 4.0.5
 
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.3...pubsub-v3.0.4) (2024-02-10)
 
-
 ### Bug Fixes
 
-* update libp2p ([46bfe1b](https://github.com/dao-xyz/peerbit/commit/46bfe1bf513c5932eee8428f9390509978e09f43))
-
+- update libp2p ([46bfe1b](https://github.com/dao-xyz/peerbit/commit/46bfe1bf513c5932eee8428f9390509978e09f43))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.3 to 4.0.4
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.2 to 2.1.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.3 to 4.0.4
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.2 to 2.1.3
 
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v3.0.1...pubsub-v3.0.2) (2024-02-02)
 
-
 ### Bug Fixes
 
-* add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
-* increase priority of pubsub meta data messages ([2d28912](https://github.com/dao-xyz/peerbit/commit/2d28912f1a4767669f43aaf3f889afe7e7d6d52d))
-
+- add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
+- increase priority of pubsub meta data messages ([2d28912](https://github.com/dao-xyz/peerbit/commit/2d28912f1a4767669f43aaf3f889afe7e7d6d52d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 4.0.1 to 4.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 4.0.1 to 4.0.2
 
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.21...pubsub-v3.0.0) (2024-02-01)
 
-
 ### ⚠ BREAKING CHANGES
 
-* discrete message prioritization protocol
+- discrete message prioritization protocol
 
 ### Features
 
-* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
-
+- discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.1.2 to 4.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.1.2 to 4.0.0
 
 ## [2.0.19](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.18...pubsub-v2.0.19) (2024-01-27)
 
-
 ### Bug Fixes
 
-* dontThrowIfDeliveryError for reachable response ([719a8a1](https://github.com/dao-xyz/peerbit/commit/719a8a138795b926b5f8a60b14148d229c3f3ff1))
-* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
-
+- dontThrowIfDeliveryError for reachable response ([719a8a1](https://github.com/dao-xyz/peerbit/commit/719a8a138795b926b5f8a60b14148d229c3f3ff1))
+- use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.11 to 3.1.0
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.1 to 2.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.11 to 3.1.0
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.1 to 2.1.2
 
 ## [2.0.18](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.17...pubsub-v2.0.18) (2024-01-26)
 
-
 ### Bug Fixes
 
-* dont throw when failing to deliver GetSubscribers response ([6c583bd](https://github.com/dao-xyz/peerbit/commit/6c583bd1f8b3d5558b945a209fdd30a4c26dd212))
-
+- dont throw when failing to deliver GetSubscribers response ([6c583bd](https://github.com/dao-xyz/peerbit/commit/6c583bd1f8b3d5558b945a209fdd30a4c26dd212))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.10 to 3.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.10 to 3.0.11
 
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.16...pubsub-v2.0.17) (2024-01-26)
 
-
 ### Bug Fixes
 
-* update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
-
+- update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.9 to 3.0.10
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.1.0 to 2.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.9 to 3.0.10
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.1.0 to 2.1.1
 
 ## [2.0.16](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.15...pubsub-v2.0.16) (2024-01-22)
 
-
 ### Bug Fixes
 
-* make sure subscriptions are recovered after a neighbour connection drop ([67acb52](https://github.com/dao-xyz/peerbit/commit/67acb525511ab9ba1e688ece6fb73550877d74de))
-* prevent deadlock on suback ([8a6c7c2](https://github.com/dao-xyz/peerbit/commit/8a6c7c2253d6f002a15963a5214fef697468b916))
-
+- make sure subscriptions are recovered after a neighbour connection drop ([67acb52](https://github.com/dao-xyz/peerbit/commit/67acb525511ab9ba1e688ece6fb73550877d74de))
+- prevent deadlock on suback ([8a6c7c2](https://github.com/dao-xyz/peerbit/commit/8a6c7c2253d6f002a15963a5214fef697468b916))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.8 to 3.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.8 to 3.0.9
 
 ## [2.0.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.11...pubsub-v2.0.12) (2024-01-18)
 
-
 ### Bug Fixes
 
-* don't log NotStarted errors when relaying ([057762a](https://github.com/dao-xyz/peerbit/commit/057762a72873d9a26a615a8631607254b891cf94))
-
+- don't log NotStarted errors when relaying ([057762a](https://github.com/dao-xyz/peerbit/commit/057762a72873d9a26a615a8631607254b891cf94))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.4 to 3.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.4 to 3.0.5
 
 ## [2.0.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.10...pubsub-v2.0.11) (2024-01-17)
 
-
 ### Bug Fixes
 
-* use NotStartedError ([5a15540](https://github.com/dao-xyz/peerbit/commit/5a155406ab5782f84dfc73ccec78333528f566f4))
-
+- use NotStartedError ([5a15540](https://github.com/dao-xyz/peerbit/commit/5a155406ab5782f84dfc73ccec78333528f566f4))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 3.0.3 to 3.0.4
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.4 to 2.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 3.0.3 to 3.0.4
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.4 to 2.0.5
 
 ## [2.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.6...pubsub-v2.0.7) (2024-01-10)
 
-
 ### Bug Fixes
 
-* reset subscription on remote session updates ([3eea1c4](https://github.com/dao-xyz/peerbit/commit/3eea1c453232bfb27e1e72a5b59042f6790290b3))
-
+- reset subscription on remote session updates ([3eea1c4](https://github.com/dao-xyz/peerbit/commit/3eea1c453232bfb27e1e72a5b59042f6790290b3))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.6 to 3.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.6 to 3.0.0
 
 ## [2.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.4...pubsub-v2.0.5) (2024-01-08)
 
-
 ### Bug Fixes
 
-* remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
-
+- remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.4 to 2.0.5
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 2.0.0 to 2.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.4 to 2.0.5
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 2.0.0 to 2.0.1
 
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-v2.0.3...pubsub-v2.0.4) (2024-01-03)
 
-
 ### Bug Fixes
 
-* request subscribers in the Subscribe message ([53c81b0](https://github.com/dao-xyz/peerbit/commit/53c81b0c38181c3e58e2171caa2b1d124474f3aa))
-
+- request subscribers in the Subscribe message ([53c81b0](https://github.com/dao-xyz/peerbit/commit/53c81b0c38181c3e58e2171caa2b1d124474f3aa))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 2.0.3 to 2.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 2.0.3 to 2.0.4
 
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.13...pubsub-v2.0.0) (2023-12-31)
 
-
 ### ⚠ BREAKING CHANGES
 
-* modularize keychain
-* refactor delivery modes
-* simplify subscribe/unsubscribe messages
-* lazy stream routing protocol
+- modularize keychain
+- refactor delivery modes
+- simplify subscribe/unsubscribe messages
+- lazy stream routing protocol
 
 ### Features
 
-* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
-* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
-* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
-* refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
-* replace emitSelf property with publish event ([2230c75](https://github.com/dao-xyz/peerbit/commit/2230c75adf2d513b302101e69e0f8f1139ab4595))
-
+- add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+- lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+- modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
+- refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
+- replace emitSelf property with publish event ([2230c75](https://github.com/dao-xyz/peerbit/commit/2230c75adf2d513b302101e69e0f8f1139ab4595))
 
 ### Bug Fixes
 
-* correctly handle routing when doing ack delivery ([a22021c](https://github.com/dao-xyz/peerbit/commit/a22021c85bd6c7cb9f831f9a8fa54161c1095dc5))
-* correctly ignore already seen messages ([3bf4fec](https://github.com/dao-xyz/peerbit/commit/3bf4fec81da428874259b0b1fe0344b76fd867f0))
-* make sure my subscriptions are returned on Subscription message ([2b0c1f8](https://github.com/dao-xyz/peerbit/commit/2b0c1f86c9cc5490efb2708891cc4ed9bfa31eac))
-* remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
-* set seekTimeout ([07c80ee](https://github.com/dao-xyz/peerbit/commit/07c80eec08e5e48f09a4244011560545ea8f9c6a))
-* simplify subscribe/unsubscribe messages ([47577fe](https://github.com/dao-xyz/peerbit/commit/47577fed7dd943d748ded3d00a6e54fefeb2cff5))
-* test add delay ([410be43](https://github.com/dao-xyz/peerbit/commit/410be43bcec5de21051d39713a26aa23dbd0ff45))
-* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
-* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
-* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
-
+- correctly handle routing when doing ack delivery ([a22021c](https://github.com/dao-xyz/peerbit/commit/a22021c85bd6c7cb9f831f9a8fa54161c1095dc5))
+- correctly ignore already seen messages ([3bf4fec](https://github.com/dao-xyz/peerbit/commit/3bf4fec81da428874259b0b1fe0344b76fd867f0))
+- make sure my subscriptions are returned on Subscription message ([2b0c1f8](https://github.com/dao-xyz/peerbit/commit/2b0c1f86c9cc5490efb2708891cc4ed9bfa31eac))
+- remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
+- set seekTimeout ([07c80ee](https://github.com/dao-xyz/peerbit/commit/07c80eec08e5e48f09a4244011560545ea8f9c6a))
+- simplify subscribe/unsubscribe messages ([47577fe](https://github.com/dao-xyz/peerbit/commit/47577fed7dd943d748ded3d00a6e54fefeb2cff5))
+- test add delay ([410be43](https://github.com/dao-xyz/peerbit/commit/410be43bcec5de21051d39713a26aa23dbd0ff45))
+- update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+- update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+- update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.20 to 2.0.0
-    * @peerbit/logger bumped from 1.0.1 to 1.0.2
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.20 to 2.0.0
+    - @peerbit/logger bumped from 1.0.1 to 1.0.2
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.8 to 2.0.0
 
 ## [1.1.12](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.11...pubsub-v1.1.12) (2023-09-21)
 
-
 ### Bug Fixes
 
-* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
-
+- cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.18 to 1.0.19
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.7 to 1.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.18 to 1.0.19
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.7 to 1.0.8
 
 ## [1.1.11](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.10...pubsub-v1.1.11) (2023-09-15)
 
-
 ### Bug Fixes
 
-* force publisher to only stream to subscribers by default ([5228808](https://github.com/dao-xyz/peerbit/commit/52288082b345a88169ad73968a04c5138dd026a9))
+- force publisher to only stream to subscribers by default ([5228808](https://github.com/dao-xyz/peerbit/commit/52288082b345a88169ad73968a04c5138dd026a9))
 
 ## [1.1.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.4...pubsub-v1.1.5) (2023-09-06)
 
-
 ### Bug Fixes
 
-* update to 0.46.9 ([f6bf439](https://github.com/dao-xyz/peerbit/commit/f6bf4398e4caf7472cdfa4296990d0518c295e4c))
-
+- update to 0.46.9 ([f6bf439](https://github.com/dao-xyz/peerbit/commit/f6bf4398e4caf7472cdfa4296990d0518c295e4c))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.12 to 1.0.13
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.5 to 1.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.12 to 1.0.13
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.5 to 1.0.6
 
 ## [1.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.2...pubsub-v1.1.3) (2023-09-03)
 
-
 ### Bug Fixes
 
-* downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
-
+- downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.10 to 1.0.11
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.10 to 1.0.11
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.5
 
 ## [1.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.1.1...pubsub-v1.1.2) (2023-09-02)
 
-
 ### Bug Fixes
 
-* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
-
+- trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.9 to 1.0.10
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.9 to 1.0.10
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.3 to 1.0.4
 
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.0.7...pubsub-v1.1.0) (2023-08-06)
 
-
 ### Features
 
-* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
-
+- support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
 
 ### Bug Fixes
 
-* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
-
+- typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.7 to 1.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.7 to 1.0.8
 
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.0.5...pubsub-v1.0.6) (2023-07-18)
 
-
 ### Bug Fixes
 
-* refactor ([751a3f3](https://github.com/dao-xyz/peerbit/commit/751a3f365f405b332a227203f65d4b3e278ca49d))
-
+- refactor ([751a3f3](https://github.com/dao-xyz/peerbit/commit/751a3f365f405b332a227203f65d4b3e278ca49d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.5 to 1.0.6
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.1 to 1.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.5 to 1.0.6
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.1 to 1.0.2
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-v1.0.4...pubsub-v1.0.5) (2023-07-04)
 
-
 ### Bug Fixes
 
-* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
-
+- rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.4 to 1.0.5
-    * @peerbit/logger bumped from 1.0.0 to 1.0.1
-    * @peerbit/uint8arrays bumped from 3.0.0 to 3.0.1
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.0 to 1.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.4 to 1.0.5
+    - @peerbit/logger bumped from 1.0.0 to 1.0.1
+    - @peerbit/uint8arrays bumped from 3.0.0 to 3.0.1
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.0 to 1.0.1
 
 ## 1.0.0 (2023-06-28)
 
-
 ### ⚠ BREAKING CHANGES
 
-* rename org on utility modules
-* reuse pubsub message id on rpc messages
-* client abstraction
+- rename org on utility modules
+- reuse pubsub message id on rpc messages
+- client abstraction
 
 ### Features
 
-* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
-* reuse pubsub message id on rpc messages ([57bede7](https://github.com/dao-xyz/peerbit/commit/57bede71cd822c71b439bd8011b6f25bff1da5cb))
-
+- client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+- reuse pubsub message id on rpc messages ([57bede7](https://github.com/dao-xyz/peerbit/commit/57bede71cd822c71b439bd8011b6f25bff1da5cb))
 
 ### Bug Fixes
 
-* rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
-
+- rename org on utility modules ([0e09c8a](https://github.com/dao-xyz/peerbit/commit/0e09c8a29487205e02e45cc7f1e214450f96cb38))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.4 to 1.0.0
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.4 to 1.0.0
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.4 to 1.0.0
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-sub-v1.0.0-alpha1...libp2p-direct-sub-v1.0.3) (2023-06-14)
 
-
 ### Bug Fixes
 
-* update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
-* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
-
+- update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
+- update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 1.0.2 to 1.0.3
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 1.0.2 to 1.0.3
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 1.0.2 to 1.0.3
 
 ## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/libp2p-direct-sub-v1.0.0-alpha1...libp2p-direct-sub-v1.0.0-alpha1) (2023-06-14)
 
-
 ### Bug Fixes
 
-* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+- update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
 
 ## 1.0.0-alpha1 (2023-06-14)
 
-
 ### ⚠ BREAKING CHANGES
 
-* simplified identity handling
+- simplified identity handling
 
 ### Features
 
-* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
-
+- simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream bumped from 0.5.3 to 1.0.0-alpha1
-  * devDependencies
-    * @peerbit/libp2p-test-utils bumped from 0.5.3 to 1.0.0-alpha1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream bumped from 0.5.3 to 1.0.0-alpha1
+  - devDependencies
+    - @peerbit/libp2p-test-utils bumped from 0.5.3 to 1.0.0-alpha1
 
 ## @peerbit/pubsub [0.5.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/pubsub@0.5.2...@peerbit/pubsub@0.5.3) (2023-06-07)
 
-
 ### Bug Fixes
 
-* add release cfg ([de76654](https://github.com/dao-xyz/peerbit/commit/de766548f8106804d319e8b51e9607f2a3f60726))
-
-
-
-
+- add release cfg ([de76654](https://github.com/dao-xyz/peerbit/commit/de766548f8106804d319e8b51e9607f2a3f60726))
 
 ### Dependencies
 
-* **@peerbit/stream:** upgraded to 0.5.3
-* **@peerbit/logger:** upgraded to 0.0.7
-* **@peerbit/uint8arrays:** upgraded to 0.0.4
-* **@peerbit/libp2p-test-utils:** upgraded to 0.5.3
+- **@peerbit/stream:** upgraded to 0.5.3
+- **@peerbit/logger:** upgraded to 0.0.7
+- **@peerbit/uint8arrays:** upgraded to 0.0.4
+- **@peerbit/libp2p-test-utils:** upgraded to 0.5.3

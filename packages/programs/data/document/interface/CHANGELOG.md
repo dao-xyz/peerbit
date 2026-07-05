@@ -1,1287 +1,1153 @@
 # Changelog
 
-## [3.2.42](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.41...document-interface-v3.2.42) (2026-05-28)
+## 3.2.43
 
+### Patch Changes
+
+- Updated dependencies [[`8f5bac1`](https://github.com/dao-xyz/peerbit/commit/8f5bac19d936ec5a9a0d0b926d8d9ddab2a41270)]:
+  - @peerbit/log@6.2.0
+  - @peerbit/crypto@3.1.2
+  - @peerbit/indexer-interface@3.0.5
+
+## [3.2.42](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.41...document-interface-v3.2.42) (2026-05-28)
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.1.1
 
 ## [3.2.41](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.40...document-interface-v3.2.41) (2026-05-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped to 3.0.4
-    * @peerbit/log bumped to 6.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped to 3.0.4
+    - @peerbit/log bumped to 6.1.0
 
 ## [3.2.40](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.39...document-interface-v3.2.40) (2026-05-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.35
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.35
 
 ## [3.2.39](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.38...document-interface-v3.2.39) (2026-05-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.34
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.34
 
 ## [3.2.38](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.37...document-interface-v3.2.38) (2026-05-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.33
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.33
 
 ## [3.2.37](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.36...document-interface-v3.2.37) (2026-05-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.32
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.32
 
 ## [3.2.36](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.35...document-interface-v3.2.36) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.31
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.31
 
 ## [3.2.35](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.34...document-interface-v3.2.35) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.30
 
 ## [3.2.34](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.33...document-interface-v3.2.34) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.29
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.29
 
 ## [3.2.33](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.32...document-interface-v3.2.33) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.28
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.28
 
 ## [3.2.32](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.31...document-interface-v3.2.32) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.27
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.27
 
 ## [3.2.31](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.30...document-interface-v3.2.31) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.26
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.26
 
 ## [3.2.30](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.29...document-interface-v3.2.30) (2026-04-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.25
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.25
 
 ## [3.2.29](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.28...document-interface-v3.2.29) (2026-04-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.24
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.24
 
 ## [3.2.28](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.27...document-interface-v3.2.28) (2026-04-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.23
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.23
 
 ## [3.2.27](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.26...document-interface-v3.2.27) (2026-04-14)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.22
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.22
 
 ## [3.2.26](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.25...document-interface-v3.2.26) (2026-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.21
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.21
 
 ## [3.2.25](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.24...document-interface-v3.2.25) (2026-03-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.1
-    * @peerbit/indexer-interface bumped to 3.0.3
-    * @peerbit/log bumped to 6.0.20
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.1
+    - @peerbit/indexer-interface bumped to 3.0.3
+    - @peerbit/log bumped to 6.0.20
 
 ## [3.2.24](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.23...document-interface-v3.2.24) (2026-03-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.19
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.19
 
 ## [3.2.23](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.22...document-interface-v3.2.23) (2026-03-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.18
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.18
 
 ## [3.2.22](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.21...document-interface-v3.2.22) (2026-03-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.17
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.17
 
 ## [3.2.21](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.20...document-interface-v3.2.21) (2026-03-22)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.16
 
 ## [3.2.20](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.19...document-interface-v3.2.20) (2026-03-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.15
 
 ## [3.2.19](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.18...document-interface-v3.2.19) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.14
 
 ## [3.2.18](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.17...document-interface-v3.2.18) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.0
-    * @peerbit/indexer-interface bumped to 3.0.2
-    * @peerbit/log bumped to 6.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.0
+    - @peerbit/indexer-interface bumped to 3.0.2
+    - @peerbit/log bumped to 6.0.13
 
 ## [3.2.17](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.16...document-interface-v3.2.17) (2026-03-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.12
 
 ## [3.2.16](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.15...document-interface-v3.2.16) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.11
 
 ## [3.2.15](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.14...document-interface-v3.2.15) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.1
-    * @peerbit/indexer-interface bumped to 3.0.1
-    * @peerbit/log bumped to 6.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.1
+    - @peerbit/indexer-interface bumped to 3.0.1
+    - @peerbit/log bumped to 6.0.10
 
 ## [3.2.14](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.13...document-interface-v3.2.14) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.9
 
 ## [3.2.13](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.12...document-interface-v3.2.13) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.8
 
 ## [3.2.12](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.11...document-interface-v3.2.12) (2026-03-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.7
 
 ## [3.2.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.10...document-interface-v3.2.11) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.6
 
 ## [3.2.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.9...document-interface-v3.2.10) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.5
 
 ## [3.2.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.8...document-interface-v3.2.9) (2026-03-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.4
 
 ## [3.2.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.7...document-interface-v3.2.8) (2026-03-07)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.3
 
 ## [3.2.7](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.6...document-interface-v3.2.7) (2026-03-05)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.2
 
 ## [3.2.6](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.5...document-interface-v3.2.6) (2026-03-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 6.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 6.0.1
 
 ## [3.2.5](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.4...document-interface-v3.2.5) (2026-03-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.0
-    * @peerbit/indexer-interface bumped to 3.0.0
-    * @peerbit/log bumped to 6.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.0
+    - @peerbit/indexer-interface bumped to 3.0.0
+    - @peerbit/log bumped to 6.0.0
 
 ## [3.2.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.3...document-interface-v3.2.4) (2026-01-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.10
 
 ## [3.2.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.2...document-interface-v3.2.3) (2026-01-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.9
 
 ## [3.2.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.1...document-interface-v3.2.2) (2026-01-23)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.8
 
 ## [3.2.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.2.0...document-interface-v3.2.1) (2026-01-22)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.7
 
 ## [3.2.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.14...document-interface-v3.2.0) (2026-01-17)
 
-
 ### Features
 
-* **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
-
+- **canonical:** add proxy packages and e2e suites ([ad5b802](https://github.com/dao-xyz/peerbit/commit/ad5b802fd57546cc1757852d449e7616e32ff097))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.6
 
 ## [3.1.14](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.13...document-interface-v3.1.14) (2026-01-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.5
 
 ## [3.1.13](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.12...document-interface-v3.1.13) (2026-01-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.4
 
 ## [3.1.12](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.11...document-interface-v3.1.12) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.1
-    * @peerbit/indexer-interface bumped to 2.1.1
-    * @peerbit/log bumped to 5.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.1
+    - @peerbit/indexer-interface bumped to 2.1.1
+    - @peerbit/log bumped to 5.0.3
 
 ## [3.1.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.10...document-interface-v3.1.11) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.2
 
 ## [3.1.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.9...document-interface-v3.1.10) (2025-12-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.1
 
 ## [3.1.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.8...document-interface-v3.1.9) (2025-12-23)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 5.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 5.0.0
 
 ## [3.1.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.7...document-interface-v3.1.8) (2025-12-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.8
 
 ## [3.1.7](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.6...document-interface-v3.1.7) (2025-12-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.7
 
 ## [3.1.6](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.5...document-interface-v3.1.6) (2025-12-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.6
 
 ## [3.1.5](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.4...document-interface-v3.1.5) (2025-12-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.5
 
 ## [3.1.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.3...document-interface-v3.1.4) (2025-12-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.4
 
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.2...document-interface-v3.1.3) (2025-11-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.3
 
 ## [3.1.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.1...document-interface-v3.1.2) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.2
 
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.1.0...document-interface-v3.1.1) (2025-11-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.2.1
 
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.0.3...document-interface-v3.1.0) (2025-11-25)
 
-
 ### Features
 
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.0
-    * @peerbit/indexer-interface bumped to 2.1.0
-    * @peerbit/log bumped to 4.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.0
+    - @peerbit/indexer-interface bumped to 2.1.0
+    - @peerbit/log bumped to 4.2.0
 
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.0.2...document-interface-v3.0.3) (2025-10-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped to 4.1.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped to 4.1.11
 
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.0.1...document-interface-v3.0.2) (2025-10-03)
 
-
 ### Bug Fixes
 
-* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
-
+- restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.13
-    * @peerbit/indexer-interface bumped to 2.0.14
-    * @peerbit/log bumped to 4.1.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.13
+    - @peerbit/indexer-interface bumped to 2.0.14
+    - @peerbit/log bumped to 4.1.10
 
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v3.0.0...document-interface-v3.0.1) (2025-10-03)
 
-
 ### Bug Fixes
 
-* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
-
+- add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.12
-    * @peerbit/indexer-interface bumped to 2.0.13
-    * @peerbit/log bumped to 4.1.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.12
+    - @peerbit/indexer-interface bumped to 2.0.13
+    - @peerbit/log bumped to 4.1.9
 
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.24...document-interface-v3.0.0) (2025-10-01)
 
-
 ### ⚠ BREAKING CHANGES
 
-* Add IteationRequest to support iterating and concurrently subscribe to mutations
+- Add IteationRequest to support iterating and concurrently subscribe to mutations
 
 ### Features
 
-* Add IteationRequest to support iterating and concurrently subscribe to mutations ([b578bb4](https://github.com/dao-xyz/peerbit/commit/b578bb499c16a0601eb070f3ae4886a66a5f824f))
+- Add IteationRequest to support iterating and concurrently subscribe to mutations ([b578bb4](https://github.com/dao-xyz/peerbit/commit/b578bb499c16a0601eb070f3ae4886a66a5f824f))
 
 ## [2.2.24](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.23...document-interface-v2.2.24) (2025-09-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.7 to 4.1.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.7 to 4.1.8
 
 ## [2.2.23](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.22...document-interface-v2.2.23) (2025-09-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.6 to 4.1.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.6 to 4.1.7
 
 ## [2.2.22](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.21...document-interface-v2.2.22) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.5 to 4.1.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.5 to 4.1.6
 
 ## [2.2.21](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.20...document-interface-v2.2.21) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.4 to 4.1.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.4 to 4.1.5
 
 ## [2.2.20](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.19...document-interface-v2.2.20) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.3 to 4.1.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.3 to 4.1.4
 
 ## [2.2.19](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.18...document-interface-v2.2.19) (2025-09-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.2 to 4.1.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.2 to 4.1.3
 
 ## [2.2.18](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.17...document-interface-v2.2.18) (2025-09-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.1 to 4.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.1 to 4.1.2
 
 ## [2.2.17](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.16...document-interface-v2.2.17) (2025-09-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.1.0 to 4.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.1.0 to 4.1.1
 
 ## [2.2.16](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.15...document-interface-v2.2.16) (2025-09-16)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.72 to 4.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.72 to 4.1.0
 
 ## [2.2.15](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.14...document-interface-v2.2.15) (2025-09-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.71 to 4.0.72
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.71 to 4.0.72
 
 ## [2.2.14](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.13...document-interface-v2.2.14) (2025-09-14)
 
-
 ### Bug Fixes
 
-* add NotFoundError class and update error handling in Documents class for deleting non existing documents ([9d9c80b](https://github.com/dao-xyz/peerbit/commit/9d9c80b179596d37bf3a19fe2acab65154e4de77))
+- add NotFoundError class and update error handling in Documents class for deleting non existing documents ([9d9c80b](https://github.com/dao-xyz/peerbit/commit/9d9c80b179596d37bf3a19fe2acab65154e4de77))
 
 ## [2.2.13](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.12...document-interface-v2.2.13) (2025-09-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.70 to 4.0.71
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.70 to 4.0.71
 
 ## [2.2.12](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.11...document-interface-v2.2.12) (2025-09-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.69 to 4.0.70
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.69 to 4.0.70
 
 ## [2.2.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.10...document-interface-v2.2.11) (2025-09-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.68 to 4.0.69
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.68 to 4.0.69
 
 ## [2.2.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.9...document-interface-v2.2.10) (2025-08-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.67 to 4.0.68
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.67 to 4.0.68
 
 ## [2.2.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.8...document-interface-v2.2.9) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.66 to 4.0.67
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.66 to 4.0.67
 
 ## [2.2.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.7...document-interface-v2.2.8) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.10 to ^2.3.11
-    * @peerbit/indexer-interface bumped from ^2.0.11 to ^2.0.12
-    * @peerbit/log bumped from 4.0.65 to 4.0.66
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.10 to ^2.3.11
+    - @peerbit/indexer-interface bumped from ^2.0.11 to ^2.0.12
+    - @peerbit/log bumped from 4.0.65 to 4.0.66
 
 ## [2.2.7](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.6...document-interface-v2.2.7) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.64 to 4.0.65
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.64 to 4.0.65
 
 ## [2.2.6](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.5...document-interface-v2.2.6) (2025-08-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.9 to ^2.3.10
-    * @peerbit/indexer-interface bumped from ^2.0.10 to ^2.0.11
-    * @peerbit/log bumped from 4.0.63 to 4.0.64
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.9 to ^2.3.10
+    - @peerbit/indexer-interface bumped from ^2.0.10 to ^2.0.11
+    - @peerbit/log bumped from 4.0.63 to 4.0.64
 
 ## [2.2.5](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.4...document-interface-v2.2.5) (2025-06-18)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.62 to 4.0.63
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.62 to 4.0.63
 
 ## [2.2.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.3...document-interface-v2.2.4) (2025-06-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.61 to 4.0.62
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.61 to 4.0.62
 
 ## [2.2.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.2...document-interface-v2.2.3) (2025-06-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.60 to 4.0.61
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.60 to 4.0.61
 
 ## [2.2.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.1...document-interface-v2.2.2) (2025-06-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.8 to ^2.3.9
-    * @peerbit/indexer-interface bumped from ^2.0.9 to ^2.0.10
-    * @peerbit/log bumped from 4.0.59 to 4.0.60
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.8 to ^2.3.9
+    - @peerbit/indexer-interface bumped from ^2.0.9 to ^2.0.10
+    - @peerbit/log bumped from 4.0.59 to 4.0.60
 
 ## [2.2.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.2.0...document-interface-v2.2.1) (2025-06-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.58 to 4.0.59
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.58 to 4.0.59
 
 ## [2.2.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.4...document-interface-v2.2.0) (2025-05-25)
 
-
 ### Features
 
-* 'includeIndexed' property ([7ca5c48](https://github.com/dao-xyz/peerbit/commit/7ca5c48bc77022e498d8ed9f7a7f73aa17700e3e))
+- 'includeIndexed' property ([7ca5c48](https://github.com/dao-xyz/peerbit/commit/7ca5c48bc77022e498d8ed9f7a7f73aa17700e3e))
 
 ## [2.1.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.3...document-interface-v2.1.4) (2025-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.57 to 4.0.58
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.57 to 4.0.58
 
 ## [2.1.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.2...document-interface-v2.1.3) (2025-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.56 to 4.0.57
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.56 to 4.0.57
 
 ## [2.1.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.1...document-interface-v2.1.2) (2025-04-28)
 
-
 ### Bug Fixes
 
-* PredictedSearchRequest more generic ([d6033fb](https://github.com/dao-xyz/peerbit/commit/d6033fb40aa7984c7ebc36d1a5bb1644a59c7d59))
-
+- PredictedSearchRequest more generic ([d6033fb](https://github.com/dao-xyz/peerbit/commit/d6033fb40aa7984c7ebc36d1a5bb1644a59c7d59))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.55 to 4.0.56
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.55 to 4.0.56
 
 ## [2.1.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.1.0...document-interface-v2.1.1) (2025-04-28)
 
-
 ### Bug Fixes
 
-* esm imports ([f5a378c](https://github.com/dao-xyz/peerbit/commit/f5a378c96c3f99c35673ff0a0cc0234c9210dbe6))
+- esm imports ([f5a378c](https://github.com/dao-xyz/peerbit/commit/f5a378c96c3f99c35673ff0a0cc0234c9210dbe6))
 
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.28...document-interface-v2.1.0) (2025-04-28)
 
-
 ### Features
 
-* PredictedSearchRequest ([48778a8](https://github.com/dao-xyz/peerbit/commit/48778a8dfea6cfe855fef9d5152d30f3db9e98a3))
-
+- PredictedSearchRequest ([48778a8](https://github.com/dao-xyz/peerbit/commit/48778a8dfea6cfe855fef9d5152d30f3db9e98a3))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.54 to 4.0.55
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.54 to 4.0.55
 
 ## [2.0.28](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.27...document-interface-v2.0.28) (2025-04-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.7 to ^2.3.8
-    * @peerbit/indexer-interface bumped from ^2.0.8 to ^2.0.9
-    * @peerbit/log bumped from 4.0.53 to 4.0.54
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.7 to ^2.3.8
+    - @peerbit/indexer-interface bumped from ^2.0.8 to ^2.0.9
+    - @peerbit/log bumped from 4.0.53 to 4.0.54
 
 ## [2.0.27](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.26...document-interface-v2.0.27) (2025-04-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.52 to 4.0.53
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.52 to 4.0.53
 
 ## [2.0.26](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.25...document-interface-v2.0.26) (2025-04-14)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.51 to 4.0.52
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.51 to 4.0.52
 
 ## [2.0.25](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.24...document-interface-v2.0.25) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.50 to 4.0.51
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.50 to 4.0.51
 
 ## [2.0.24](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.23...document-interface-v2.0.24) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.49 to 4.0.50
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.49 to 4.0.50
 
 ## [2.0.23](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.22...document-interface-v2.0.23) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.6 to ^2.3.7
-    * @peerbit/indexer-interface bumped from ^2.0.7 to ^2.0.8
-    * @peerbit/log bumped from 4.0.48 to 4.0.49
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.6 to ^2.3.7
+    - @peerbit/indexer-interface bumped from ^2.0.7 to ^2.0.8
+    - @peerbit/log bumped from 4.0.48 to 4.0.49
 
 ## [2.0.22](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.21...document-interface-v2.0.22) (2025-03-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.47 to 4.0.48
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.47 to 4.0.48
 
 ## [2.0.21](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.20...document-interface-v2.0.21) (2025-03-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.46 to 4.0.47
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.46 to 4.0.47
 
 ## [2.0.20](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.19...document-interface-v2.0.20) (2025-03-29)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.45 to 4.0.46
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.45 to 4.0.46
 
 ## [2.0.19](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.18...document-interface-v2.0.19) (2025-03-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.44 to 4.0.45
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.44 to 4.0.45
 
 ## [2.0.18](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.17...document-interface-v2.0.18) (2025-03-21)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.43 to 4.0.44
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.43 to 4.0.44
 
 ## [2.0.17](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.16...document-interface-v2.0.17) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.42 to 4.0.43
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.42 to 4.0.43
 
 ## [2.0.16](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.15...document-interface-v2.0.16) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.5 to ^2.3.6
-    * @peerbit/indexer-interface bumped from ^2.0.6 to ^2.0.7
-    * @peerbit/log bumped from 4.0.41 to 4.0.42
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.5 to ^2.3.6
+    - @peerbit/indexer-interface bumped from ^2.0.6 to ^2.0.7
+    - @peerbit/log bumped from 4.0.41 to 4.0.42
 
 ## [2.0.15](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.14...document-interface-v2.0.15) (2025-03-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.40 to 4.0.41
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.40 to 4.0.41
 
 ## [2.0.14](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.13...document-interface-v2.0.14) (2025-03-10)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.39 to 4.0.40
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.39 to 4.0.40
 
 ## [2.0.13](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.12...document-interface-v2.0.13) (2025-03-09)
 
-
 ### Bug Fixes
 
-* make Context to take same shape as IndexedContext ([5226a66](https://github.com/dao-xyz/peerbit/commit/5226a66c77c3f3e02804f4ba619dc2df7fae46b6))
+- make Context to take same shape as IndexedContext ([5226a66](https://github.com/dao-xyz/peerbit/commit/5226a66c77c3f3e02804f4ba619dc2df7fae46b6))
 
 ## [2.0.12](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.11...document-interface-v2.0.12) (2025-03-07)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.38 to 4.0.39
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.38 to 4.0.39
 
 ## [2.0.11](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.10...document-interface-v2.0.11) (2025-02-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.37 to 4.0.38
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.37 to 4.0.38
 
 ## [2.0.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.9...document-interface-v2.0.10) (2025-02-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.36 to 4.0.37
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.36 to 4.0.37
 
 ## [2.0.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.8...document-interface-v2.0.9) (2025-02-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.35 to 4.0.36
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.35 to 4.0.36
 
 ## [2.0.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.7...document-interface-v2.0.8) (2025-02-23)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.34 to 4.0.35
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.34 to 4.0.35
 
 ## [2.0.7](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.6...document-interface-v2.0.7) (2025-02-21)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.33 to 4.0.34
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.33 to 4.0.34
 
 ## [2.0.6](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.5...document-interface-v2.0.6) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.32 to 4.0.33
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.32 to 4.0.33
 
 ## [2.0.5](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.4...document-interface-v2.0.5) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.4 to ^2.3.5
-    * @peerbit/indexer-interface bumped from ^2.0.5 to ^2.0.6
-    * @peerbit/log bumped from 4.0.31 to 4.0.32
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.4 to ^2.3.5
+    - @peerbit/indexer-interface bumped from ^2.0.5 to ^2.0.6
+    - @peerbit/log bumped from 4.0.31 to 4.0.32
 
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.3...document-interface-v2.0.4) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.3 to ^2.3.4
-    * @peerbit/indexer-interface bumped from ^2.0.4 to ^2.0.5
-    * @peerbit/log bumped from 4.0.30 to 4.0.31
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.3 to ^2.3.4
+    - @peerbit/indexer-interface bumped from ^2.0.4 to ^2.0.5
+    - @peerbit/log bumped from 4.0.30 to 4.0.31
 
 ## [2.0.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.2...document-interface-v2.0.3) (2025-02-09)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.29 to 4.0.30
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.29 to 4.0.30
 
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.1...document-interface-v2.0.2) (2025-02-06)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.28 to 4.0.29
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.28 to 4.0.29
 
 ## [2.0.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v2.0.0...document-interface-v2.0.1) (2025-01-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/log bumped from 4.0.27 to 4.0.28
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/log bumped from 4.0.27 to 4.0.28
 
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.10...document-interface-v2.0.0) (2025-01-23)
 
-
 ### ⚠ BREAKING CHANGES
 
-* add support for querying indexed values
+- add support for querying indexed values
 
 ### Features
 
-* add support for querying indexed values ([36fe71c](https://github.com/dao-xyz/peerbit/commit/36fe71c047869a74add052612eb641966409354f))
-
+- add support for querying indexed values ([36fe71c](https://github.com/dao-xyz/peerbit/commit/36fe71c047869a74add052612eb641966409354f))
 
 ### Bug Fixes
 
-* add dependency peerbit/log ([a4ac71a](https://github.com/dao-xyz/peerbit/commit/a4ac71a85b2078eaf66b672d05b0818c91cb8baf))
-
+- add dependency peerbit/log ([a4ac71a](https://github.com/dao-xyz/peerbit/commit/a4ac71a85b2078eaf66b672d05b0818c91cb8baf))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^2.0.3 to ^2.0.4
-    * @peerbit/log bumped from 4.0.26 to 4.0.27
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^2.0.3 to ^2.0.4
+    - @peerbit/log bumped from 4.0.26 to 4.0.27
 
 ## [1.0.10](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.9...document-interface-v1.0.10) (2025-01-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.2 to ^2.3.3
-    * @peerbit/indexer-interface bumped from ^2.0.2 to ^2.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.2 to ^2.3.3
+    - @peerbit/indexer-interface bumped from ^2.0.2 to ^2.0.3
 
 ## [1.0.9](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.8...document-interface-v1.0.9) (2024-12-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^2.0.1 to ^2.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^2.0.1 to ^2.0.2
 
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.7...document-interface-v1.0.8) (2024-11-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^2.0.0 to ^2.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^2.0.0 to ^2.0.1
 
 ## [1.0.7](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.6...document-interface-v1.0.7) (2024-11-07)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^1.1.1 to ^2.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^1.1.1 to ^2.0.0
 
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.5...document-interface-v1.0.6) (2024-10-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^1.1.0 to ^1.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^1.1.0 to ^1.1.1
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.4...document-interface-v1.0.5) (2024-10-11)
 
-
 ### Bug Fixes
 
-* update for new iterator types ([c4f93a1](https://github.com/dao-xyz/peerbit/commit/c4f93a16a6456af8320995b189ae2f161d413814))
-
+- update for new iterator types ([c4f93a1](https://github.com/dao-xyz/peerbit/commit/c4f93a16a6456af8320995b189ae2f161d413814))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.1 to ^2.3.2
-    * @peerbit/indexer-interface bumped from ^1.0.3 to ^1.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.1 to ^2.3.2
+    - @peerbit/indexer-interface bumped from ^1.0.3 to ^1.1.0
 
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.3...document-interface-v1.0.4) (2024-09-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.0 to ^2.3.1
-    * @peerbit/indexer-interface bumped from ^1.0.2 to ^1.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.0 to ^2.3.1
+    - @peerbit/indexer-interface bumped from ^1.0.2 to ^1.0.3
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.2...document-interface-v1.0.3) (2024-08-13)
 
-
 ### Bug Fixes
 
-* make indexed context to have size property but broadcasted type  not ([d66695a](https://github.com/dao-xyz/peerbit/commit/d66695a8f217810692400b90cdca68410c26702b))
+- make indexed context to have size property but broadcasted type not ([d66695a](https://github.com/dao-xyz/peerbit/commit/d66695a8f217810692400b90cdca68410c26702b))
 
 ## [1.0.2](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.1...document-interface-v1.0.2) (2024-08-12)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^1.0.1 to ^1.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^1.0.1 to ^1.0.2
 
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/document-interface-v1.0.0...document-interface-v1.0.1) (2024-08-12)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/indexer-interface bumped from ^1.0.0 to ^1.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/indexer-interface bumped from ^1.0.0 to ^1.0.1
 
 ## 1.0.0 (2024-07-20)
 
-
 ### ⚠ BREAKING CHANGES
 
-* support for indexer
-* search index abstraction
+- support for indexer
+- search index abstraction
 
 ### Features
 
-* search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
-
+- search index abstraction ([ecc71e7](https://github.com/dao-xyz/peerbit/commit/ecc71e700289f8d0598402c7c22565863264fb9a))
 
 ### Bug Fixes
 
-* add size parameter ([dea95e6](https://github.com/dao-xyz/peerbit/commit/dea95e6a01e4ec086fc667cc2a50f61dacb7b737))
-* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
-* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
-* support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
-* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
-
+- add size parameter ([dea95e6](https://github.com/dao-xyz/peerbit/commit/dea95e6a01e4ec086fc667cc2a50f61dacb7b737))
+- fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+- peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+- support for indexer ([8fbf266](https://github.com/dao-xyz/peerbit/commit/8fbf26684139f4c9e4522dde3abccbadf7d2e827))
+- update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.2.0 to ^2.3.0
-    * @peerbit/indexer-interface bumped from ^0.0.1 to ^1.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.2.0 to ^2.3.0
+    - @peerbit/indexer-interface bumped from ^0.0.1 to ^1.0.0

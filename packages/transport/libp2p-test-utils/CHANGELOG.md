@@ -1,451 +1,404 @@
 # Changelog
 
-### Dependencies
+## 3.0.6
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 0.0.24 to 1.0.0
+### Patch Changes
 
-### Dependencies
-
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 1.0.1 to 1.0.2
+- Updated dependencies []:
+  - @peerbit/crypto@3.1.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 1.0.3 to 1.0.4
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 0.0.24 to 1.0.0
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.0 to 2.0.1
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 1.0.1 to 1.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.1 to 2.0.2
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 1.0.3 to 1.0.4
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.2 to 2.0.3
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.0 to 2.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.3 to 2.0.4
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.1 to 2.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.4 to 2.0.5
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.2 to 2.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.5 to 2.0.6
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.3 to 2.0.4
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.4 to 2.0.5
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.5 to 2.0.6
 
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.4...libp2p-test-utils-v3.0.5) (2026-04-29)
 
-
 ### Bug Fixes
 
-* **test-utils:** release in-memory streams on close ([ee77cb6](https://github.com/dao-xyz/peerbit/commit/ee77cb629dd54921c56781cc489af019158dd86f))
+- **test-utils:** release in-memory streams on close ([ee77cb6](https://github.com/dao-xyz/peerbit/commit/ee77cb629dd54921c56781cc489af019158dd86f))
 
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.3...libp2p-test-utils-v3.0.4) (2026-03-30)
 
-
 ### Bug Fixes
 
-* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
-
+- **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.1
 
 ## [3.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.2...libp2p-test-utils-v3.0.3) (2026-03-27)
 
-
 ### Bug Fixes
 
-* **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
-
+- **pubsub:** resolve shard roots through dialed peers ([3131c0a](https://github.com/dao-xyz/peerbit/commit/3131c0ac0e98ee8366a9bcea2ba4f1b435697ad2))
 
 ### Refactors
 
-* remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
+- remove typed service any-casts ([ece47a1](https://github.com/dao-xyz/peerbit/commit/ece47a1d7bce849e034b95a7714d193e1eaff5f4))
 
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.1...libp2p-test-utils-v3.0.2) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.0
 
 ## [3.0.1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v3.0.0...libp2p-test-utils-v3.0.1) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.1
 
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.2.0...libp2p-test-utils-v3.0.0) (2026-03-04)
 
-
 ### ⚠ BREAKING CHANGES
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
 
 ### Features
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
-
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.0
-  * devDependencies
-    * @peerbit/time bumped to 3.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.0
+  - devDependencies
+    - @peerbit/time bumped to 3.0.0
 
 ## [2.2.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.21...libp2p-test-utils-v2.2.0) (2025-11-25)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped to 2.3.0
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped to 2.3.0
 
 ## [2.1.21](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.20...libp2p-test-utils-v2.1.21) (2025-10-03)
 
-
 ### Bug Fixes
 
-* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
-* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
-* migrate to libp2p v3 ([6f8f7b0](https://github.com/dao-xyz/peerbit/commit/6f8f7b0b286d43c4363e02b7e4ca88d22c04c2b3))
-* migrate to libp2p v3 ([9a8bbf9](https://github.com/dao-xyz/peerbit/commit/9a8bbf9d494064908194e8ee17643089c8273a80))
+- add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+- handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
+- migrate to libp2p v3 ([6f8f7b0](https://github.com/dao-xyz/peerbit/commit/6f8f7b0b286d43c4363e02b7e4ca88d22c04c2b3))
+- migrate to libp2p v3 ([9a8bbf9](https://github.com/dao-xyz/peerbit/commit/9a8bbf9d494064908194e8ee17643089c8273a80))
 
 ## [2.1.20](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.19...libp2p-test-utils-v2.1.20) (2025-09-09)
 
-
 ### Bug Fixes
 
-* bump libp2p ([48b50ce](https://github.com/dao-xyz/peerbit/commit/48b50ce26c19c12fcda0b099587e801d196dce54))
+- bump libp2p ([48b50ce](https://github.com/dao-xyz/peerbit/commit/48b50ce26c19c12fcda0b099587e801d196dce54))
 
 ## [2.1.19](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.18...libp2p-test-utils-v2.1.19) (2025-08-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.1.0 to 2.2.0
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.1.0 to 2.2.0
 
 ## [2.1.18](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.17...libp2p-test-utils-v2.1.18) (2025-06-17)
 
-
 ### Bug Fixes
 
-* correctly stop libp2p when closing the client when libp2p client was provided externally ([0d629e5](https://github.com/dao-xyz/peerbit/commit/0d629e534621b8d47ed9a2b808392f631ddbed10))
+- correctly stop libp2p when closing the client when libp2p client was provided externally ([0d629e5](https://github.com/dao-xyz/peerbit/commit/0d629e534621b8d47ed9a2b808392f631ddbed10))
 
 ## [2.1.17](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.16...libp2p-test-utils-v2.1.17) (2025-06-04)
 
-
 ### Bug Fixes
 
-* bump libp2p ([9ef01e7](https://github.com/dao-xyz/peerbit/commit/9ef01e7055c08e1a4fc0fe284d96d8ed6eaf3074))
+- bump libp2p ([9ef01e7](https://github.com/dao-xyz/peerbit/commit/9ef01e7055c08e1a4fc0fe284d96d8ed6eaf3074))
 
 ## [2.1.16](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.15...libp2p-test-utils-v2.1.16) (2025-04-14)
 
-
 ### Bug Fixes
 
-* update libp2p ([c842f92](https://github.com/dao-xyz/peerbit/commit/c842f9282c6697dd864b731d7c333abcaf16023d))
+- update libp2p ([c842f92](https://github.com/dao-xyz/peerbit/commit/c842f9282c6697dd864b731d7c333abcaf16023d))
 
 ## [2.1.15](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.14...libp2p-test-utils-v2.1.15) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.8 to 2.1.0
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.8 to 2.1.0
 
 ## [2.1.14](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.13...libp2p-test-utils-v2.1.14) (2025-03-13)
 
-
 ### Bug Fixes
 
-* bump libp2p ([a1dd3d8](https://github.com/dao-xyz/peerbit/commit/a1dd3d8306448e2ee97dd9a224ff7d9aafa149da))
+- bump libp2p ([a1dd3d8](https://github.com/dao-xyz/peerbit/commit/a1dd3d8306448e2ee97dd9a224ff7d9aafa149da))
 
 ## [2.1.13](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.12...libp2p-test-utils-v2.1.13) (2025-02-21)
 
-
 ### Bug Fixes
 
-* bump libp2p ([41cc3d3](https://github.com/dao-xyz/peerbit/commit/41cc3d3bc98f0bac7c56f6489d9c706dcb2e98c5))
+- bump libp2p ([41cc3d3](https://github.com/dao-xyz/peerbit/commit/41cc3d3bc98f0bac7c56f6489d9c706dcb2e98c5))
 
 ## [2.1.12](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.11...libp2p-test-utils-v2.1.12) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.7 to 2.0.8
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.7 to 2.0.8
 
 ## [2.1.11](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.10...libp2p-test-utils-v2.1.11) (2025-02-20)
 
-
 ### Bug Fixes
 
-* update libp2p ([8911d7f](https://github.com/dao-xyz/peerbit/commit/8911d7fb8d4329f32bbaf9d6872a2761ffb1d80e))
+- update libp2p ([8911d7f](https://github.com/dao-xyz/peerbit/commit/8911d7fb8d4329f32bbaf9d6872a2761ffb1d80e))
 
 ## [2.1.10](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.9...libp2p-test-utils-v2.1.10) (2024-12-28)
 
-
 ### Bug Fixes
 
-* update libp2p ([f8eac56](https://github.com/dao-xyz/peerbit/commit/f8eac5696203905e14ebe4415d4853a4973e7db0))
+- update libp2p ([f8eac56](https://github.com/dao-xyz/peerbit/commit/f8eac5696203905e14ebe4415d4853a4973e7db0))
 
 ## [2.1.9](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.8...libp2p-test-utils-v2.1.9) (2024-10-28)
 
-
 ### Bug Fixes
 
-* update libp2p ([c679a0d](https://github.com/dao-xyz/peerbit/commit/c679a0df22e2c2927421f16ff7ddd061e514a28a))
+- update libp2p ([c679a0d](https://github.com/dao-xyz/peerbit/commit/c679a0df22e2c2927421f16ff7ddd061e514a28a))
 
 ## [2.1.8](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.7...libp2p-test-utils-v2.1.8) (2024-10-28)
 
-
 ### Bug Fixes
 
-* update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
+- update libp2p ([c577601](https://github.com/dao-xyz/peerbit/commit/c577601f95d1db6de37a40c5367806ad6dbe15f7))
 
 ## [2.1.7](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.6...libp2p-test-utils-v2.1.7) (2024-10-13)
 
-
 ### Bug Fixes
 
-* update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
+- update libp2p ([e5a3d3f](https://github.com/dao-xyz/peerbit/commit/e5a3d3f138e3ede880e4691a0ebb977e12d8fe98))
 
 ## [2.1.6](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.5...libp2p-test-utils-v2.1.6) (2024-10-11)
 
-
 ### Bug Fixes
 
-* update libp2p ([946a904](https://github.com/dao-xyz/peerbit/commit/946a904ea6cade2bf3de47f014a3fb96ed99e727))
+- update libp2p ([946a904](https://github.com/dao-xyz/peerbit/commit/946a904ea6cade2bf3de47f014a3fb96ed99e727))
 
 ## [2.1.5](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.4...libp2p-test-utils-v2.1.5) (2024-09-01)
 
-
 ### Bug Fixes
 
-* bump libp2p ([b064d22](https://github.com/dao-xyz/peerbit/commit/b064d228eaf7da2ef9da3dff95616dc00a31d9de))
+- bump libp2p ([b064d22](https://github.com/dao-xyz/peerbit/commit/b064d228eaf7da2ef9da3dff95616dc00a31d9de))
 
 ## [2.1.4](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.3...libp2p-test-utils-v2.1.4) (2024-07-20)
 
-
 ### Bug Fixes
 
-* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
-* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
-* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
-
+- fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+- peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+- update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 2.0.6 to 2.0.7
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 2.0.6 to 2.0.7
 
 ## [2.1.3](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.2...libp2p-test-utils-v2.1.3) (2024-02-10)
 
-
 ### Bug Fixes
 
-* update libp2p ([46bfe1b](https://github.com/dao-xyz/peerbit/commit/46bfe1bf513c5932eee8428f9390509978e09f43))
+- update libp2p ([46bfe1b](https://github.com/dao-xyz/peerbit/commit/46bfe1bf513c5932eee8428f9390509978e09f43))
 
 ## [2.1.2](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.1...libp2p-test-utils-v2.1.2) (2024-01-27)
 
-
 ### Bug Fixes
 
-* use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
+- use yamux only ([dfd1652](https://github.com/dao-xyz/peerbit/commit/dfd16520fdd02fa21334cad3b6a5c0e5b33d2040))
 
 ## [2.1.1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.1.0...libp2p-test-utils-v2.1.1) (2024-01-26)
 
-
 ### Bug Fixes
 
-* update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
+- update libp2p ([52b8b0f](https://github.com/dao-xyz/peerbit/commit/52b8b0f8a7468848e80fdcc990ccc5bc71932480))
 
 ## [2.1.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v2.0.6...libp2p-test-utils-v2.1.0) (2024-01-20)
 
-
 ### Features
 
-* connectLine utility ([2b27cab](https://github.com/dao-xyz/peerbit/commit/2b27cabf4f479ddbf39bb37816288b9f943c5e9c))
+- connectLine utility ([2b27cab](https://github.com/dao-xyz/peerbit/commit/2b27cabf4f479ddbf39bb37816288b9f943c5e9c))
 
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.8...libp2p-test-utils-v2.0.0) (2023-12-31)
 
-
 ### ⚠ BREAKING CHANGES
 
-* modularize keychain
-* lazy stream routing protocol
+- modularize keychain
+- lazy stream routing protocol
 
 ### Features
 
-* add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
-* add peer id option ([bda2378](https://github.com/dao-xyz/peerbit/commit/bda23789522b38e80aae30fb607f4e0fed41073c))
-* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
-* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
-
+- add connection pruner in pubsub ([8b4c095](https://github.com/dao-xyz/peerbit/commit/8b4c095b6073ebb454be3370420d372ab77dcaf9))
+- add peer id option ([bda2378](https://github.com/dao-xyz/peerbit/commit/bda23789522b38e80aae30fb607f4e0fed41073c))
+- lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+- modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
 
 ### Bug Fixes
 
-* remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
-* update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
-* update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
-* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
-
+- remove level dep ([422822a](https://github.com/dao-xyz/peerbit/commit/422822a8c6a7b6f2ed0ceea53680833b4f81b758))
+- update libp2p ([d555de1](https://github.com/dao-xyz/peerbit/commit/d555de1e3c3f306277cb1cdc22b69a9c3ffd3f86))
+- update libp2p dep ([f69c01a](https://github.com/dao-xyz/peerbit/commit/f69c01aeae10c6712eed0154fc3094c0af0108c2))
+- update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 1.0.4 to 2.0.0
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 1.0.4 to 2.0.0
 
 ## [1.0.8](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.7...libp2p-test-utils-v1.0.8) (2023-09-21)
 
-
 ### Bug Fixes
 
-* cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
+- cleanup test code ([9fa9266](https://github.com/dao-xyz/peerbit/commit/9fa9266eb423083b5e81b7a492ef3c6ca990366f))
 
 ## [1.0.6](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.5...libp2p-test-utils-v1.0.6) (2023-09-06)
 
-
 ### Bug Fixes
 
-* update to 0.46.9 ([f6bf439](https://github.com/dao-xyz/peerbit/commit/f6bf4398e4caf7472cdfa4296990d0518c295e4c))
+- update to 0.46.9 ([f6bf439](https://github.com/dao-xyz/peerbit/commit/f6bf4398e4caf7472cdfa4296990d0518c295e4c))
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.4...libp2p-test-utils-v1.0.5) (2023-09-03)
 
-
 ### Bug Fixes
 
-* downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
+- downgrade to libp2p 0.46.6 ([bd7418e](https://github.com/dao-xyz/peerbit/commit/bd7418e0f36867ea5995abde98ecfd3880ccfaaf))
 
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.3...libp2p-test-utils-v1.0.4) (2023-09-02)
 
-
 ### Bug Fixes
 
-* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
-
+- trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 1.0.2 to 1.0.3
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 1.0.2 to 1.0.3
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.2...libp2p-test-utils-v1.0.3) (2023-08-18)
 
-
 ### Bug Fixes
 
-* update @dao-xyz/noise with corrected shared key computation ([b015674](https://github.com/dao-xyz/peerbit/commit/b015674fee599caa3ae75129ffb29f36a5163dcd))
+- update @dao-xyz/noise with corrected shared key computation ([b015674](https://github.com/dao-xyz/peerbit/commit/b015674fee599caa3ae75129ffb29f36a5163dcd))
 
 ## [1.0.1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.0...libp2p-test-utils-v1.0.1) (2023-07-04)
 
-
 ### Bug Fixes
 
-* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
-
+- rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * devDependencies
-    * @peerbit/time bumped from 1.0.0 to 1.0.1
+- The following workspace dependencies were updated
+  - devDependencies
+    - @peerbit/time bumped from 1.0.0 to 1.0.1
 
 ## 1.0.0 (2023-06-28)
 
-
 ### ⚠ BREAKING CHANGES
 
-* client abstraction
+- client abstraction
 
 ### Features
 
-* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+- client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.0-alpha1...libp2p-test-utils-v1.0.3) (2023-06-14)
 
-
 ### Bug Fixes
 
-* update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
-* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+- update invalid versions from prerelease release-please ([e2f6411](https://github.com/dao-xyz/peerbit/commit/e2f6411d46edf6d36723ca1ea81d1e55a09d3cd4))
+- update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
 
 ## [1.0.0-alpha1](https://github.com/dao-xyz/peerbit/compare/libp2p-test-utils-v1.0.0-alpha1...libp2p-test-utils-v1.0.0-alpha1) (2023-06-14)
 
-
 ### Bug Fixes
 
-* update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
+- update to libp2p 0.45.9 ([0420543](https://github.com/dao-xyz/peerbit/commit/0420543084d82ab08084894f24c1dff340ba6c9b))
 
 ## 1.0.0-alpha1 (2023-06-14)
 
-
 ### ⚠ BREAKING CHANGES
 
-* simplified identity handling
+- simplified identity handling
 
 ### Features
 
-* simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
+- simplified identity handling ([1ae2416](https://github.com/dao-xyz/peerbit/commit/1ae24168a5c8629b8f9d1c57eceed6abd4a15020))
 
 ## @peerbit/libp2p-test-utils [0.5.3](https://github.com/dao-xyz/peerbit/compare/@peerbit/libp2p-test-utils@0.5.2...@peerbit/libp2p-test-utils@0.5.3) (2023-06-07)
 
-
 ### Bug Fixes
 
-* add release cfg ([de76654](https://github.com/dao-xyz/peerbit/commit/de766548f8106804d319e8b51e9607f2a3f60726))
-
-
-
-
+- add release cfg ([de76654](https://github.com/dao-xyz/peerbit/commit/de766548f8106804d319e8b51e9607f2a3f60726))
 
 ### Dependencies
 
-* **@peerbit/time:** upgraded to 0.0.24
+- **@peerbit/time:** upgraded to 0.0.24

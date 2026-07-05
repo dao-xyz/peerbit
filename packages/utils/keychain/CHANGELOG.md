@@ -1,434 +1,406 @@
 # Changelog
 
-### Dependencies
+## 1.2.10
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.0.0 to ^2.1.0
-    * @peerbit/any-store bumped from ^1.0.1 to ^1.0.2
+### Patch Changes
 
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.2 to ^1.0.3
+- Updated dependencies []:
+  - @peerbit/crypto@3.1.2
+  - @peerbit/any-store@2.2.10
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.3 to ^1.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.0.0 to ^2.1.0
+    - @peerbit/any-store bumped from ^1.0.1 to ^1.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.0 to ^2.1.1
-    * @peerbit/any-store bumped from ^1.0.4 to ^1.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.2 to ^1.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.1 to ^2.1.2
-    * @peerbit/any-store bumped from ^1.0.5 to ^1.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.3 to ^1.0.4
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.2 to ^2.1.3
-    * @peerbit/any-store bumped from ^1.0.6 to ^1.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.0 to ^2.1.1
+    - @peerbit/any-store bumped from ^1.0.4 to ^1.0.5
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.3 to ^2.1.4
-    * @peerbit/any-store bumped from ^1.0.7 to ^1.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.1 to ^2.1.2
+    - @peerbit/any-store bumped from ^1.0.5 to ^1.0.6
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.4 to ^2.1.5
-    * @peerbit/any-store bumped from ^1.0.8 to ^1.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.2 to ^2.1.3
+    - @peerbit/any-store bumped from ^1.0.6 to ^1.0.7
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.5 to ^2.1.6
-    * @peerbit/any-store bumped from ^1.0.9 to ^1.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.3 to ^2.1.4
+    - @peerbit/any-store bumped from ^1.0.7 to ^1.0.8
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.10 to ^1.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.4 to ^2.1.5
+    - @peerbit/any-store bumped from ^1.0.8 to ^1.0.9
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.11 to ^1.0.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.5 to ^2.1.6
+    - @peerbit/any-store bumped from ^1.0.9 to ^1.0.10
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
-    * @peerbit/any-store bumped from ^1.0.12 to ^1.0.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.10 to ^1.0.11
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.13 to ^1.0.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.11 to ^1.0.12
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.14 to ^1.0.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.6 to ^2.1.7
+    - @peerbit/any-store bumped from ^1.0.12 to ^1.0.13
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.15 to ^2.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.13 to ^1.0.14
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^2.0.0 to ^2.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.14 to ^1.0.15
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
-    * @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.15 to ^2.0.0
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^2.0.0 to ^2.0.1
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.1.7 to ^2.2.0
+    - @peerbit/any-store bumped from ^2.0.1 to ^2.0.2
 
 ## [1.2.9](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.8...keychain-v1.2.9) (2026-03-30)
 
-
 ### Bug Fixes
 
-* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
-
+- **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped to 2.2.9
-    * @peerbit/crypto bumped to 3.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped to 2.2.9
+    - @peerbit/crypto bumped to 3.1.1
 
 ## [1.2.8](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.7...keychain-v1.2.8) (2026-03-27)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped to 2.2.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped to 2.2.8
 
 ## [1.2.7](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.6...keychain-v1.2.7) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.0
-    * @peerbit/any-store bumped to 2.2.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.0
+    - @peerbit/any-store bumped to 2.2.7
 
 ## [1.2.6](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.5...keychain-v1.2.6) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.1
-    * @peerbit/any-store bumped to 2.2.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.1
+    - @peerbit/any-store bumped to 2.2.6
 
 ## [1.2.5](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.4...keychain-v1.2.5) (2026-03-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.0
-    * @peerbit/any-store bumped to 2.2.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.0
+    - @peerbit/any-store bumped to 2.2.5
 
 ## [1.2.4](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.3...keychain-v1.2.4) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.1
-    * @peerbit/any-store bumped to 2.2.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.1
+    - @peerbit/any-store bumped to 2.2.4
 
 ## [1.2.3](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.2...keychain-v1.2.3) (2025-12-23)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped to 2.2.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped to 2.2.3
 
 ## [1.2.2](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.1...keychain-v1.2.2) (2025-12-02)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped to 2.2.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped to 2.2.2
 
 ## [1.2.1](https://github.com/dao-xyz/peerbit/compare/keychain-v1.2.0...keychain-v1.2.1) (2025-11-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped to 2.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped to 2.2.1
 
 ## [1.2.0](https://github.com/dao-xyz/peerbit/compare/keychain-v1.1.2...keychain-v1.2.0) (2025-11-25)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.0
-    * @peerbit/any-store bumped to 2.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.0
+    - @peerbit/any-store bumped to 2.2.0
 
 ## [1.1.2](https://github.com/dao-xyz/peerbit/compare/keychain-v1.1.1...keychain-v1.1.2) (2025-10-03)
 
-
 ### Bug Fixes
 
-* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
-
+- restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.13
-    * @peerbit/any-store bumped to 2.1.16
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.13
+    - @peerbit/any-store bumped to 2.1.16
 
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/keychain-v1.1.0...keychain-v1.1.1) (2025-10-03)
 
-
 ### Bug Fixes
 
-* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
-* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
-
+- add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+- handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.12
-    * @peerbit/any-store bumped to 2.1.15
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.12
+    - @peerbit/any-store bumped to 2.1.15
 
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.32...keychain-v1.1.0) (2025-09-16)
 
-
 ### Features
 
-* make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
+- make keychain libp2p compatible ([00aecf1](https://github.com/dao-xyz/peerbit/commit/00aecf1be807368b11800948cbc92ca03f8eb5c4))
 
 ## [1.0.32](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.31...keychain-v1.0.32) (2025-09-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^2.1.13 to ^2.1.14
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^2.1.13 to ^2.1.14
 
 ## [1.0.31](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.30...keychain-v1.0.31) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.10 to ^2.3.11
-    * @peerbit/any-store bumped from ^2.1.12 to ^2.1.13
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.10 to ^2.3.11
+    - @peerbit/any-store bumped from ^2.1.12 to ^2.1.13
 
 ## [1.0.30](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.29...keychain-v1.0.30) (2025-08-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.9 to ^2.3.10
-    * @peerbit/any-store bumped from ^2.1.11 to ^2.1.12
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.9 to ^2.3.10
+    - @peerbit/any-store bumped from ^2.1.11 to ^2.1.12
 
 ## [1.0.29](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.28...keychain-v1.0.29) (2025-06-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.8 to ^2.3.9
-    * @peerbit/any-store bumped from ^2.1.10 to ^2.1.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.8 to ^2.3.9
+    - @peerbit/any-store bumped from ^2.1.10 to ^2.1.11
 
 ## [1.0.28](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.27...keychain-v1.0.28) (2025-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^2.1.9 to ^2.1.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^2.1.9 to ^2.1.10
 
 ## [1.0.27](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.26...keychain-v1.0.27) (2025-04-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.7 to ^2.3.8
-    * @peerbit/any-store bumped from ^2.1.8 to ^2.1.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.7 to ^2.3.8
+    - @peerbit/any-store bumped from ^2.1.8 to ^2.1.9
 
 ## [1.0.26](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.25...keychain-v1.0.26) (2025-04-03)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.6 to ^2.3.7
-    * @peerbit/any-store bumped from ^2.1.7 to ^2.1.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.6 to ^2.3.7
+    - @peerbit/any-store bumped from ^2.1.7 to ^2.1.8
 
 ## [1.0.25](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.24...keychain-v1.0.25) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.5 to ^2.3.6
-    * @peerbit/any-store bumped from ^2.1.6 to ^2.1.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.5 to ^2.3.6
+    - @peerbit/any-store bumped from ^2.1.6 to ^2.1.7
 
 ## [1.0.24](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.23...keychain-v1.0.24) (2025-02-25)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^2.1.5 to ^2.1.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^2.1.5 to ^2.1.6
 
 ## [1.0.23](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.22...keychain-v1.0.23) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.4 to ^2.3.5
-    * @peerbit/any-store bumped from ^2.1.4 to ^2.1.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.4 to ^2.3.5
+    - @peerbit/any-store bumped from ^2.1.4 to ^2.1.5
 
 ## [1.0.22](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.21...keychain-v1.0.22) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.3 to ^2.3.4
-    * @peerbit/any-store bumped from ^2.1.3 to ^2.1.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.3 to ^2.3.4
+    - @peerbit/any-store bumped from ^2.1.3 to ^2.1.4
 
 ## [1.0.21](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.20...keychain-v1.0.21) (2025-01-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.2 to ^2.3.3
-    * @peerbit/any-store bumped from ^2.1.2 to ^2.1.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.2 to ^2.3.3
+    - @peerbit/any-store bumped from ^2.1.2 to ^2.1.3
 
 ## [1.0.20](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.19...keychain-v1.0.20) (2024-10-11)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.1 to ^2.3.2
-    * @peerbit/any-store bumped from ^2.1.1 to ^2.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.1 to ^2.3.2
+    - @peerbit/any-store bumped from ^2.1.1 to ^2.1.2
 
 ## [1.0.19](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.18...keychain-v1.0.19) (2024-09-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.3.0 to ^2.3.1
-    * @peerbit/any-store bumped from ^2.1.0 to ^2.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.3.0 to ^2.3.1
+    - @peerbit/any-store bumped from ^2.1.0 to ^2.1.1
 
 ## [1.0.18](https://github.com/dao-xyz/peerbit/compare/keychain-v1.0.17...keychain-v1.0.18) (2024-07-20)
 
-
 ### Bug Fixes
 
-* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
-* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
-
+- fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+- peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from ^2.2.0 to ^2.3.0
-    * @peerbit/any-store bumped from ^2.0.2 to ^2.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from ^2.2.0 to ^2.3.0
+    - @peerbit/any-store bumped from ^2.0.2 to ^2.1.0
 
 ## 1.0.0 (2023-12-31)
 
-
 ### ⚠ BREAKING CHANGES
 
-* modularize keychain
+- modularize keychain
 
 ### Features
 
-* modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
-
+- modularize keychain ([c10f10e](https://github.com/dao-xyz/peerbit/commit/c10f10e0beb58e38fa95d465962f43ab1aee75ef))
 
 ### Bug Fixes
 
-* correctly add keychain to release config ([80333ba](https://github.com/dao-xyz/peerbit/commit/80333ba06c5479440c41ed2f3d86c80edf7bd383))
-* remove unused dep ([11fda05](https://github.com/dao-xyz/peerbit/commit/11fda059bcce4771c5b5e8ab7aa0bf1d5cacb115))
-
+- correctly add keychain to release config ([80333ba](https://github.com/dao-xyz/peerbit/commit/80333ba06c5479440c41ed2f3d86c80edf7bd383))
+- remove unused dep ([11fda05](https://github.com/dao-xyz/peerbit/commit/11fda059bcce4771c5b5e8ab7aa0bf1d5cacb115))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/any-store bumped from ^1.0.0 to ^1.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/any-store bumped from ^1.0.0 to ^1.0.1

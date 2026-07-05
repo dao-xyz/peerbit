@@ -1,758 +1,688 @@
 # Changelog
 
-### Dependencies
+## 5.1.5
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.0 to 1.0.1
-    * @peerbit/stream-interface bumped from ^1.0.0 to ^1.0.1
+### Patch Changes
 
-### Dependencies
-
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.1 to 1.0.2
-    * @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
+- Updated dependencies []:
+  - @peerbit/crypto@3.1.2
+  - @peerbit/stream-interface@6.0.11
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.6 to 1.0.7
-    * @peerbit/stream-interface bumped from ^1.0.7 to ^1.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.0 to 1.0.1
+    - @peerbit/stream-interface bumped from ^1.0.0 to ^1.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.8 to 1.0.9
-    * @peerbit/stream-interface bumped from ^1.0.9 to ^1.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.1 to 1.0.2
+    - @peerbit/stream-interface bumped from ^1.0.1 to ^1.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.9 to 1.0.10
-    * @peerbit/stream-interface bumped from ^1.0.10 to ^1.0.11
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.6 to 1.0.7
+    - @peerbit/stream-interface bumped from ^1.0.7 to ^1.0.8
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.0.0 to 2.1.0
-    * @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.8 to 1.0.9
+    - @peerbit/stream-interface bumped from ^1.0.9 to ^1.0.10
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.1 to 2.1.2
-    * @peerbit/stream-interface bumped from ^3.0.0 to ^3.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.9 to 1.0.10
+    - @peerbit/stream-interface bumped from ^1.0.10 to ^1.0.11
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.2 to 2.1.3
-    * @peerbit/stream-interface bumped from ^3.0.1 to ^3.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.0.0 to 2.1.0
+    - @peerbit/stream-interface bumped from ^2.0.0 to ^2.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.3 to 2.1.4
-    * @peerbit/stream-interface bumped from ^3.0.2 to ^3.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.1 to 2.1.2
+    - @peerbit/stream-interface bumped from ^3.0.0 to ^3.0.1
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^3.0.4 to ^3.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.2 to 2.1.3
+    - @peerbit/stream-interface bumped from ^3.0.1 to ^3.0.2
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.5 to 2.1.6
-    * @peerbit/stream-interface bumped from ^3.0.5 to ^3.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.3 to 2.1.4
+    - @peerbit/stream-interface bumped from ^3.0.2 to ^3.0.3
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^3.0.6 to ^3.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^3.0.4 to ^3.0.5
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.6 to 2.1.7
-    * @peerbit/stream-interface bumped from ^3.0.7 to ^3.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.5 to 2.1.6
+    - @peerbit/stream-interface bumped from ^3.0.5 to ^3.0.6
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^3.0.8 to ^3.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^3.0.6 to ^3.0.7
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.6 to 2.1.7
+    - @peerbit/stream-interface bumped from ^3.0.7 to ^3.0.8
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.7 to 2.2.0
-    * @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^3.0.8 to ^3.0.9
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^4.0.0 to ^5.0.0
+
+### Dependencies
+
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.7 to 2.2.0
+    - @peerbit/stream-interface bumped from ^5.0.1 to ^5.0.2
 
 ## [5.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.1.3...pubsub-interface-v5.1.4) (2026-05-26)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.10
 
 ## [5.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.1.2...pubsub-interface-v5.1.3) (2026-05-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.9
 
 ## [5.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.1.1...pubsub-interface-v5.1.2) (2026-04-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.8
 
 ## [5.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.1.0...pubsub-interface-v5.1.1) (2026-03-30)
 
-
 ### Bug Fixes
 
-* **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
-
+- **packages:** normalize npm metadata for released modules ([#702](https://github.com/dao-xyz/peerbit/issues/702)) ([bc77b1d](https://github.com/dao-xyz/peerbit/commit/bc77b1d196f86d3783050903e85bef720d703cf2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.1
-    * @peerbit/stream-interface bumped to 6.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.1
+    - @peerbit/stream-interface bumped to 6.0.7
 
 ## [5.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.7...pubsub-interface-v5.1.0) (2026-03-18)
 
-
 ### Features
 
-* **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
+- **pubsub:** resolve shard roots through dialed peers ([#683](https://github.com/dao-xyz/peerbit/issues/683)) ([881a0a3](https://github.com/dao-xyz/peerbit/commit/881a0a312b3b5b29f0226f154176c58e8152169f))
 
 ## [5.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.6...pubsub-interface-v5.0.7) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.6
 
 ## [5.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.5...pubsub-interface-v5.0.6) (2026-03-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.1.0
-    * @peerbit/stream-interface bumped to 6.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.1.0
+    - @peerbit/stream-interface bumped to 6.0.5
 
 ## [5.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.4...pubsub-interface-v5.0.5) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.4
 
 ## [5.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.3...pubsub-interface-v5.0.4) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.1
-    * @peerbit/stream-interface bumped to 6.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.1
+    - @peerbit/stream-interface bumped to 6.0.3
 
 ## [5.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.2...pubsub-interface-v5.0.3) (2026-03-15)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.2
 
 ## [5.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.1...pubsub-interface-v5.0.2) (2026-03-09)
 
-
 ### Bug Fixes
 
-* **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
+- **pubsub:** propagate relay child loss quickly ([#649](https://github.com/dao-xyz/peerbit/issues/649)) ([887f8e3](https://github.com/dao-xyz/peerbit/commit/887f8e3ea8872a85929e3e0fd2d7382e0e2bd911))
 
 ## [5.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v5.0.0...pubsub-interface-v5.0.1) (2026-03-08)
 
-
 ### Bug Fixes
 
-* **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
-
+- **stream:** bound outbound queue backpressure ([73058b3](https://github.com/dao-xyz/peerbit/commit/73058b37117a02242079becc1bd900bf8d889b82))
 
 ### Refactors
 
-* **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
-
+- **stream:** inherit response transport hints from requests ([cc853c0](https://github.com/dao-xyz/peerbit/commit/cc853c087fd31a7f7b5964f8b05722f500a8d2f2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 6.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 6.0.1
 
 ## [5.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.1.2...pubsub-interface-v5.0.0) (2026-03-04)
 
-
 ### ⚠ BREAKING CHANGES
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582))
 
 ### Features
 
-* fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
-* **pubsub:** add typed unsubscribe reason metadata ([280983c](https://github.com/dao-xyz/peerbit/commit/280983c37da68590740de7c142adf01db04f8d71))
-* **pubsub:** add typed unsubscribe reasons ([82ac0a1](https://github.com/dao-xyz/peerbit/commit/82ac0a1c5e3174d745517bb908e79009342a2497))
-* **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
-
+- fanout tree protocol + large-network sims + interactive sandbox ([#582](https://github.com/dao-xyz/peerbit/issues/582)) ([3f16953](https://github.com/dao-xyz/peerbit/commit/3f16953f1048e6f6dda7229fb30de6d3e7e0476b))
+- **pubsub:** add typed unsubscribe reason metadata ([280983c](https://github.com/dao-xyz/peerbit/commit/280983c37da68590740de7c142adf01db04f8d71))
+- **pubsub:** add typed unsubscribe reasons ([82ac0a1](https://github.com/dao-xyz/peerbit/commit/82ac0a1c5e3174d745517bb908e79009342a2497))
+- **transport:** unify directstream and fanout route hints ([#614](https://github.com/dao-xyz/peerbit/issues/614)) ([4783d05](https://github.com/dao-xyz/peerbit/commit/4783d057edb7122426d63b323d2bd35195f36416))
 
 ### Bug Fixes
 
-* **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
-* **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
-
+- **shared-log:** harden rebalance repair under churn ([42e98ce](https://github.com/dao-xyz/peerbit/commit/42e98ce55439678bd7dce42efd51ef4b6d97eddb))
+- **shared-log:** stabilize repair retries and fanout/test CI ([012387d](https://github.com/dao-xyz/peerbit/commit/012387df987ab0117cdb6fe6b8e43a47d4ae4d6a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 3.0.0
-    * @peerbit/stream-interface bumped to 6.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 3.0.0
+    - @peerbit/stream-interface bumped to 6.0.0
 
 ## [4.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.1.1...pubsub-interface-v4.1.2) (2026-01-22)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped to 5.4.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped to 5.4.0
 
 ## [4.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.1.0...pubsub-interface-v4.1.1) (2025-12-30)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.1
-    * @peerbit/stream-interface bumped to 5.3.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.1
+    - @peerbit/stream-interface bumped to 5.3.1
 
 ## [4.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.9...pubsub-interface-v4.1.0) (2025-11-25)
 
-
 ### Features
 
-* add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
-* migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
-
+- add react tests ([42b3923](https://github.com/dao-xyz/peerbit/commit/42b3923c4ff551a691ab2e2c1e605a84ec55d059))
+- migrate to borsh 6 and Typescript Stage 3 decorators ([86caba4](https://github.com/dao-xyz/peerbit/commit/86caba4f2128d3b1e2d274bea1b537722b5ec1c7))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.4.0
-    * @peerbit/stream-interface bumped to 5.3.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.4.0
+    - @peerbit/stream-interface bumped to 5.3.0
 
 ## [4.0.9](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.8...pubsub-interface-v4.0.9) (2025-10-03)
 
-
 ### Bug Fixes
 
-* restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
-
+- restore deps versions ([5d6b35a](https://github.com/dao-xyz/peerbit/commit/5d6b35a01a08f87bd17ad63eacb70b4b8a44b1db))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.13
-    * @peerbit/stream-interface bumped to 5.2.10
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.13
+    - @peerbit/stream-interface bumped to 5.2.10
 
 ## [4.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.7...pubsub-interface-v4.0.8) (2025-10-03)
 
-
 ### Bug Fixes
 
-* add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
-* handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
-
+- add missing deps ([cf45de8](https://github.com/dao-xyz/peerbit/commit/cf45de831c5e0d3d1d97441a9e952537cd708f58))
+- handle missing deps ([1249ff6](https://github.com/dao-xyz/peerbit/commit/1249ff601602d274c3c4bd81ed811667288d3985))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped to 2.3.12
-    * @peerbit/stream-interface bumped to 5.2.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped to 2.3.12
+    - @peerbit/stream-interface bumped to 5.2.9
 
 ## [4.0.7](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.6...pubsub-interface-v4.0.7) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.2.7 to ^5.2.8
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.2.7 to ^5.2.8
 
 ## [4.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.5...pubsub-interface-v4.0.6) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.2.6 to ^5.2.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.2.6 to ^5.2.7
 
 ## [4.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.4...pubsub-interface-v4.0.5) (2025-09-24)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.2.5 to ^5.2.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.2.5 to ^5.2.6
 
 ## [4.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.3...pubsub-interface-v4.0.4) (2025-08-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.10 to 2.3.11
-    * @peerbit/stream-interface bumped from ^5.2.4 to ^5.2.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.10 to 2.3.11
+    - @peerbit/stream-interface bumped from ^5.2.4 to ^5.2.5
 
 ## [4.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.2...pubsub-interface-v4.0.3) (2025-08-08)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.9 to 2.3.10
-    * @peerbit/stream-interface bumped from ^5.2.3 to ^5.2.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.9 to 2.3.10
+    - @peerbit/stream-interface bumped from ^5.2.3 to ^5.2.4
 
 ## [4.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.1...pubsub-interface-v4.0.2) (2025-06-04)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.8 to 2.3.9
-    * @peerbit/stream-interface bumped from ^5.2.2 to ^5.2.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.8 to 2.3.9
+    - @peerbit/stream-interface bumped from ^5.2.2 to ^5.2.3
 
 ## [4.0.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v4.0.0...pubsub-interface-v4.0.1) (2025-04-19)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.7 to 2.3.8
-    * @peerbit/stream-interface bumped from ^5.2.1 to ^5.2.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.7 to 2.3.8
+    - @peerbit/stream-interface bumped from ^5.2.1 to ^5.2.2
 
 ## [4.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.2.0...pubsub-interface-v4.0.0) (2025-04-03)
 
-
 ### ⚠ BREAKING CHANGES
 
-* debounce subscription and unsubscription
+- debounce subscription and unsubscription
 
 ### Bug Fixes
 
-* debounce subscription and unsubscription ([19917a6](https://github.com/dao-xyz/peerbit/commit/19917a6e8313083963bd0f878818cdab46c7d813))
-
+- debounce subscription and unsubscription ([19917a6](https://github.com/dao-xyz/peerbit/commit/19917a6e8313083963bd0f878818cdab46c7d813))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.6 to 2.3.7
-    * @peerbit/stream-interface bumped from ^5.2.0 to ^5.2.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.6 to 2.3.7
+    - @peerbit/stream-interface bumped from ^5.2.0 to ^5.2.1
 
 ## [3.2.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.5...pubsub-interface-v3.2.0) (2025-03-28)
 
-
 ### Features
 
-* support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
-
+- support adding extraSigner ([61928d4](https://github.com/dao-xyz/peerbit/commit/61928d422cea398c8a5f4c806b8df4b22fbd70e8))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.1.5 to ^5.2.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.1.5 to ^5.2.0
 
 ## [3.1.5](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.4...pubsub-interface-v3.1.5) (2025-03-13)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.5 to 2.3.6
-    * @peerbit/stream-interface bumped from ^5.1.4 to ^5.1.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.5 to 2.3.6
+    - @peerbit/stream-interface bumped from ^5.1.4 to ^5.1.5
 
 ## [3.1.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.3...pubsub-interface-v3.1.4) (2025-02-20)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.4 to 2.3.5
-    * @peerbit/stream-interface bumped from ^5.1.3 to ^5.1.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.4 to 2.3.5
+    - @peerbit/stream-interface bumped from ^5.1.3 to ^5.1.4
 
 ## [3.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.2...pubsub-interface-v3.1.3) (2025-02-20)
 
-
 ### Bug Fixes
 
-* prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
-
+- prevent unecessary message publishing when there are no remote recipents ([e6e9b55](https://github.com/dao-xyz/peerbit/commit/e6e9b55304858f1955fecd1195527377dad0dad1))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.3 to 2.3.4
-    * @peerbit/stream-interface bumped from ^5.1.2 to ^5.1.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.3 to 2.3.4
+    - @peerbit/stream-interface bumped from ^5.1.2 to ^5.1.3
 
 ## [3.1.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.1...pubsub-interface-v3.1.2) (2025-01-17)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.2 to 2.3.3
-    * @peerbit/stream-interface bumped from ^5.1.1 to ^5.1.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.2 to 2.3.3
+    - @peerbit/stream-interface bumped from ^5.1.1 to ^5.1.2
 
 ## [3.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.1.0...pubsub-interface-v3.1.1) (2024-10-28)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.1.0 to ^5.1.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.1.0 to ^5.1.1
 
 ## [3.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.0.6...pubsub-interface-v3.1.0) (2024-10-19)
 
-
 ### Features
 
-* add method for resolving publickey from hash ([8ec159b](https://github.com/dao-xyz/peerbit/commit/8ec159b3df85eb5cf6aad57181c4b425e147872a))
-
+- add method for resolving publickey from hash ([8ec159b](https://github.com/dao-xyz/peerbit/commit/8ec159b3df85eb5cf6aad57181c4b425e147872a))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.0.5 to ^5.1.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.0.5 to ^5.1.0
 
 ## [3.0.6](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.0.5...pubsub-interface-v3.0.6) (2024-10-11)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.1 to 2.3.2
-    * @peerbit/stream-interface bumped from ^5.0.4 to ^5.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.1 to 2.3.2
+    - @peerbit/stream-interface bumped from ^5.0.4 to ^5.0.5
 
 ## [3.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.0.4...pubsub-interface-v3.0.5) (2024-09-01)
 
-
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.3.0 to 2.3.1
-    * @peerbit/stream-interface bumped from ^5.0.3 to ^5.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.3.0 to 2.3.1
+    - @peerbit/stream-interface bumped from ^5.0.3 to ^5.0.4
 
 ## [3.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.0.3...pubsub-interface-v3.0.4) (2024-07-20)
 
-
 ### Bug Fixes
 
-* fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
-* peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
-* update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
-* update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
-
+- fmt ([bdee4f4](https://github.com/dao-xyz/peerbit/commit/bdee4f4943fcabd21c53a4f37dba17d04cea2577))
+- peerbit eslint rules ([5056694](https://github.com/dao-xyz/peerbit/commit/5056694f90ad03c0c5ba1e47c6ac57387d85aba9))
+- update borsh ([7d9bc1b](https://github.com/dao-xyz/peerbit/commit/7d9bc1b7b321ce5d3d74d12019ff51ff68eb047d))
+- update libp2p ([87c3374](https://github.com/dao-xyz/peerbit/commit/87c33746b3fe9643327f7b7229e97c7028b8f844))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.2.0 to 2.3.0
-    * @peerbit/stream-interface bumped from ^5.0.2 to ^5.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.2.0 to 2.3.0
+    - @peerbit/stream-interface bumped from ^5.0.2 to ^5.0.3
 
 ## [3.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v3.0.1...pubsub-interface-v3.0.2) (2024-02-02)
 
-
 ### Bug Fixes
 
-* add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
-
+- add id option when publishing ([739b39a](https://github.com/dao-xyz/peerbit/commit/739b39a48f5d8ab3b74545d93789bd9a1d45a2ed))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^5.0.0 to ^5.0.1
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^5.0.0 to ^5.0.1
 
 ## [3.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.13...pubsub-interface-v3.0.0) (2024-02-01)
 
-
 ### ⚠ BREAKING CHANGES
 
-* discrete message prioritization protocol
+- discrete message prioritization protocol
 
 ### Features
 
-* discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
-
+- discrete message prioritization protocol ([33af845](https://github.com/dao-xyz/peerbit/commit/33af8455ddf918e04a3832b50e27e51700994a76))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^3.0.9 to ^4.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^3.0.9 to ^4.0.0
 
 ## [2.0.8](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.7...pubsub-interface-v2.0.8) (2024-01-17)
 
-
 ### Bug Fixes
 
-* update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
-
+- update borsh ([cb1429a](https://github.com/dao-xyz/peerbit/commit/cb1429a22dfa304a83164678b2926d4325aa4eaf))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.4 to 2.1.5
-    * @peerbit/stream-interface bumped from ^3.0.3 to ^3.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.4 to 2.1.5
+    - @peerbit/stream-interface bumped from ^3.0.3 to ^3.0.4
 
 ## [2.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.3...pubsub-interface-v2.0.4) (2024-01-10)
 
-
 ### Bug Fixes
 
-* add session info to SubscriptionData ([b8bcf14](https://github.com/dao-xyz/peerbit/commit/b8bcf14be25d262ca9129a7bb31b7ee1cc32b36c))
-* make _serialized private ([c9e7b6e](https://github.com/dao-xyz/peerbit/commit/c9e7b6e10de5fd85a363bc7c69e3a69cafa408bf))
-
+- add session info to SubscriptionData ([b8bcf14](https://github.com/dao-xyz/peerbit/commit/b8bcf14be25d262ca9129a7bb31b7ee1cc32b36c))
+- make \_serialized private ([c9e7b6e](https://github.com/dao-xyz/peerbit/commit/c9e7b6e10de5fd85a363bc7c69e3a69cafa408bf))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^2.0.2 to ^3.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^2.0.2 to ^3.0.0
 
 ## [2.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.2...pubsub-interface-v2.0.3) (2024-01-08)
 
-
 ### Bug Fixes
 
-* remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
-
+- remove 'to' from publish api ([0b19120](https://github.com/dao-xyz/peerbit/commit/0b1912017d15eecaf6d12cc64c637d82e8a26a0d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 2.1.0 to 2.1.1
-    * @peerbit/stream-interface bumped from ^2.0.1 to ^2.0.2
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 2.1.0 to 2.1.1
+    - @peerbit/stream-interface bumped from ^2.0.1 to ^2.0.2
 
 ## [2.0.2](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v2.0.1...pubsub-interface-v2.0.2) (2024-01-03)
 
-
 ### Bug Fixes
 
-* request subscribers in the Subscribe message ([53c81b0](https://github.com/dao-xyz/peerbit/commit/53c81b0c38181c3e58e2171caa2b1d124474f3aa))
+- request subscribers in the Subscribe message ([53c81b0](https://github.com/dao-xyz/peerbit/commit/53c81b0c38181c3e58e2171caa2b1d124474f3aa))
 
 ## [2.0.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.5...pubsub-interface-v2.0.0) (2023-12-31)
 
-
 ### ⚠ BREAKING CHANGES
 
-* refactor delivery modes
-* simplify subscribe/unsubscribe messages
-* lazy stream routing protocol
+- refactor delivery modes
+- simplify subscribe/unsubscribe messages
+- lazy stream routing protocol
 
 ### Features
 
-* lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
-* refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
-
+- lazy stream routing protocol ([d12eb28](https://github.com/dao-xyz/peerbit/commit/d12eb2843b46c33fcbda5c97422cb263ab9f79a0))
+- refactor delivery modes ([9b366c0](https://github.com/dao-xyz/peerbit/commit/9b366c037521ddd9f80315836585e8d8fe587a09))
 
 ### Bug Fixes
 
-* replace emitSelf property with PublishEvent ([8c080bf](https://github.com/dao-xyz/peerbit/commit/8c080bfe892d40bdd19ba951268c612cd57cf04f))
-* simplify subscribe/unsubscribe messages ([47577fe](https://github.com/dao-xyz/peerbit/commit/47577fed7dd943d748ded3d00a6e54fefeb2cff5))
-* update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
-
+- replace emitSelf property with PublishEvent ([8c080bf](https://github.com/dao-xyz/peerbit/commit/8c080bfe892d40bdd19ba951268c612cd57cf04f))
+- simplify subscribe/unsubscribe messages ([47577fe](https://github.com/dao-xyz/peerbit/commit/47577fed7dd943d748ded3d00a6e54fefeb2cff5))
+- update libp2p dependencies ([743db18](https://github.com/dao-xyz/peerbit/commit/743db18839de3e09904b50384aa389a4b660fe06))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.10 to 2.0.0
-    * @peerbit/stream-interface bumped from ^1.0.11 to ^2.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.10 to 2.0.0
+    - @peerbit/stream-interface bumped from ^1.0.11 to ^2.0.0
 
 ## [1.1.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.2...pubsub-interface-v1.1.3) (2023-09-06)
 
-
 ### Bug Fixes
 
-* handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
-
+- handle overflow from invalid payload decoding ([d19b2e7](https://github.com/dao-xyz/peerbit/commit/d19b2e79597111cc47592e85d577d8456571c4b2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.7 to 1.0.8
-    * @peerbit/stream-interface bumped from ^1.0.8 to ^1.0.9
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.7 to 1.0.8
+    - @peerbit/stream-interface bumped from ^1.0.8 to ^1.0.9
 
 ## [1.1.1](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.1.0...pubsub-interface-v1.1.1) (2023-09-02)
 
-
 ### Bug Fixes
 
-* trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
-
+- trailing comma formatting ([80a679c](https://github.com/dao-xyz/peerbit/commit/80a679c0dc0e7c8ac01538cb11458299fdb334d5))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.5 to 1.0.6
-    * @peerbit/stream-interface bumped from ^1.0.6 to ^1.0.7
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.5 to 1.0.6
+    - @peerbit/stream-interface bumped from ^1.0.6 to ^1.0.7
 
 ## [1.1.0](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.0.5...pubsub-interface-v1.1.0) (2023-08-06)
 
-
 ### Features
 
-* support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
-
+- support for canReplicate filter ([432e6a5](https://github.com/dao-xyz/peerbit/commit/432e6a55b88eac5dd2d036338bf2e51cef2670f3))
 
 ### Bug Fixes
 
-* typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
-
+- typo change recieve to receive ([9b05cfc](https://github.com/dao-xyz/peerbit/commit/9b05cfc9220f6d8206626f5208724e3d0f34abe2))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.4 to 1.0.5
-    * @peerbit/stream-interface bumped from ^1.0.5 to ^1.0.6
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.4 to 1.0.5
+    - @peerbit/stream-interface bumped from ^1.0.5 to ^1.0.6
 
 ## [1.0.5](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.0.4...pubsub-interface-v1.0.5) (2023-07-18)
 
-
 ### Bug Fixes
 
-* refactor ([751a3f3](https://github.com/dao-xyz/peerbit/commit/751a3f365f405b332a227203f65d4b3e278ca49d))
-
+- refactor ([751a3f3](https://github.com/dao-xyz/peerbit/commit/751a3f365f405b332a227203f65d4b3e278ca49d))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.3 to 1.0.4
-    * @peerbit/stream-interface bumped from ^1.0.4 to ^1.0.5
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.3 to 1.0.4
+    - @peerbit/stream-interface bumped from ^1.0.4 to ^1.0.5
 
 ## [1.0.4](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.0.3...pubsub-interface-v1.0.4) (2023-07-04)
 
-
 ### Bug Fixes
 
-* rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
-
+- rm postbuild script ([b627bf0](https://github.com/dao-xyz/peerbit/commit/b627bf0dcdb99d24ac8c9055586e72ea2d174fcc))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.2 to 1.0.3
-    * @peerbit/stream-interface bumped from ^1.0.3 to ^1.0.4
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.2 to 1.0.3
+    - @peerbit/stream-interface bumped from ^1.0.3 to ^1.0.4
 
 ## [1.0.3](https://github.com/dao-xyz/peerbit/compare/pubsub-interface-v1.0.2...pubsub-interface-v1.0.3) (2023-06-29)
 
-
 ### Bug Fixes
 
-* peer stream event types ([7607d7d](https://github.com/dao-xyz/peerbit/commit/7607d7de837813441a81f477b91ceeaba65a108f))
-
+- peer stream event types ([7607d7d](https://github.com/dao-xyz/peerbit/commit/7607d7de837813441a81f477b91ceeaba65a108f))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/stream-interface bumped from ^1.0.2 to ^1.0.3
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/stream-interface bumped from ^1.0.2 to ^1.0.3
 
 ## 1.0.0 (2023-06-28)
 
-
 ### ⚠ BREAKING CHANGES
 
-* reuse pubsub message id on rpc messages
-* client abstraction
+- reuse pubsub message id on rpc messages
+- client abstraction
 
 ### Features
 
-* client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
-* reuse pubsub message id on rpc messages ([57bede7](https://github.com/dao-xyz/peerbit/commit/57bede71cd822c71b439bd8011b6f25bff1da5cb))
-
+- client abstraction ([6a1226d](https://github.com/dao-xyz/peerbit/commit/6a1226d4f8fc6deb167bff86cf7bdd6227c01a6b))
+- reuse pubsub message id on rpc messages ([57bede7](https://github.com/dao-xyz/peerbit/commit/57bede71cd822c71b439bd8011b6f25bff1da5cb))
 
 ### Dependencies
 
-* The following workspace dependencies were updated
-  * dependencies
-    * @peerbit/crypto bumped from 1.0.4 to 1.0.0
+- The following workspace dependencies were updated
+  - dependencies
+    - @peerbit/crypto bumped from 1.0.4 to 1.0.0
