@@ -28,6 +28,15 @@ crate-type = ["rlib"]
 name = "interop_dial_js"
 path = "src/bin/interop_dial_js.rs"
 
+# Path B of the native-transport receive profiling (Measurement 2): decode +
+# Ed25519 batch-verify the shared corpus in place off Rust-owned buffers with
+# NO ingress copy / NO JS. Paired with benchmark/wire-receive-profile.ts
+# (Path A) and PROFILING.md. Bench-only; never built into the wasm pipeline
+# and not part of any default CI partition.
+[[bin]]
+name = "wire_receive_native"
+path = "benchmark/wire_receive_native.rs"
+
 [dependencies]
 # REUSE the frozen wire codec + JsValue-free DirectStream cores from the
 # already-merged @peerbit/network-rust crate as a path dependency — the exact

@@ -2437,7 +2437,20 @@ importers:
         specifier: ^7.1.7
         version: 7.2.2(@types/node@25.5.0)(jiti@2.6.1)(lightningcss@1.30.2)(terser@5.46.1)(yaml@2.8.3)
 
-  packages/transport/transport-rust: {}
+  packages/transport/transport-rust:
+    devDependencies:
+      '@peerbit/crypto':
+        specifier: workspace:*
+        version: link:../../utils/crypto
+      '@peerbit/network-rust':
+        specifier: workspace:*
+        version: link:../network-rust
+      '@peerbit/stream-interface':
+        specifier: workspace:*
+        version: link:../stream-interface
+      uint8arraylist:
+        specifier: ^2.4.8
+        version: 2.4.8
 
   packages/utils/any-store/any-store:
     dependencies:
