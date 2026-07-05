@@ -1386,3 +1386,114 @@ pub fn prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
     }
     Ok(entries)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{prepare_raw_entry_v0_blocks, prepare_raw_entry_v0_blocks_with_expected_cids};
+    use crate::cid::{calculate_raw_cid_v1_from_bytes, raw_cid_v1_digest_from_string};
+    use crate::codec::{
+        encode_entry_v0_parts_unsigned_for_signing, encode_meta_parts, encode_payload,
+        encode_signature_with_key_parts, signable_entry_to_signed_storage,
+    };
+    use crate::crypto::{
+        sign_ed25519_with_key, validate_ed25519_keypair, validate_signature_lengths,
+    };
+    use crate::error::LogError;
+    use ed25519_dalek::SigningKey;
+
+    fn signed_storage_block() -> Vec<u8> {
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let public_key = signing_key.verifying_key().to_bytes();
+        let meta = encode_meta_parts(&[1u8; 4], 1, 0, "gid", &[], 0, None);
+        let payload = encode_payload(b"payload");
+        let signable = encode_entry_v0_parts_unsigned_for_signing(&meta, &payload);
+        let signature = sign_ed25519_with_key(&signing_key, &signable);
+        let signature_with_key = encode_signature_with_key_parts(&signature, &public_key, 0);
+        signable_entry_to_signed_storage(signable, &signature_with_key)
+    }
+
+    #[test]
+    fn malformed_entry_bytes_return_errors_instead_of_aborting() {
+        let error = prepare_raw_entry_v0_blocks(vec![vec![1, 2, 3]]).unwrap_err();
+        assert_eq!(error, LogError::ExpectedEntryV0Variant);
+        assert_eq!(error.to_string(), "Expected EntryV0 variant");
+
+        let error = prepare_raw_entry_v0_blocks(vec![Vec::new()]).unwrap_err();
+        assert_eq!(error, LogError::UnexpectedEndOfStorage("entry variant"));
+        assert_eq!(
+            error.to_string(),
+            "Unexpected end of EntryV0 storage while reading entry variant"
+        );
+    }
+
+    #[test]
+    fn expected_cid_mismatch_returns_error() {
+        let block = signed_storage_block();
+        let other_cid = calculate_raw_cid_v1_from_bytes(b"other-bytes");
+        let error =
+            prepare_raw_entry_v0_blocks_with_expected_cids(vec![block], Some(vec![other_cid]))
+                .unwrap_err();
+        assert_eq!(error, LogError::RawEntryHashMismatch);
+        assert_eq!(error.to_string(), "Raw entry hash did not match bytes");
+    }
+
+    #[test]
+    fn expected_cid_length_mismatch_returns_error() {
+        let error = prepare_raw_entry_v0_blocks_with_expected_cids(
+            vec![signed_storage_block()],
+            Some(Vec::new()),
+        )
+        .unwrap_err();
+        assert_eq!(error, LogError::RawEntryBlockHashLengthMismatch);
+        assert_eq!(
+            error.to_string(),
+            "Expected equal raw entry block and hash lengths"
+        );
+    }
+
+    #[test]
+    fn invalid_expected_cids_return_errors() {
+        assert_eq!(
+            raw_cid_v1_digest_from_string("not-base58btc").unwrap_err(),
+            LogError::ExpectedBase58btcCid
+        );
+        assert_eq!(
+            raw_cid_v1_digest_from_string("z0OIl").unwrap_err(),
+            LogError::InvalidBase58btcCid
+        );
+        assert_eq!(
+            raw_cid_v1_digest_from_string("z1111111111").unwrap_err(),
+            LogError::ExpectedRawCidV1Sha256Cid
+        );
+    }
+
+    #[test]
+    fn invalid_key_and_signature_lengths_return_errors() {
+        assert_eq!(
+            validate_ed25519_keypair(&[0u8; 31], &[0u8; 32])
+                .err()
+                .unwrap(),
+            LogError::ExpectedEd25519PrivateKeyLength32
+        );
+        assert_eq!(
+            validate_ed25519_keypair(&[0u8; 32], &[0u8; 31])
+                .err()
+                .unwrap(),
+            LogError::ExpectedEd25519PublicKeyLength32
+        );
+        assert_eq!(
+            validate_ed25519_keypair(&[0u8; 32], &[0u8; 32])
+                .err()
+                .unwrap(),
+            LogError::Ed25519KeypairMismatch
+        );
+        assert_eq!(
+            validate_signature_lengths(&[0u8; 63], &[0u8; 32]).unwrap_err(),
+            LogError::ExpectedEd25519SignatureLength64
+        );
+        assert_eq!(
+            validate_signature_lengths(&[0u8; 64], &[0u8; 31]).unwrap_err(),
+            LogError::ExpectedEd25519PublicKeyLength32
+        );
+    }
+}
