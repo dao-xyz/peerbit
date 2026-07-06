@@ -859,6 +859,7 @@ export type OpenOptions<
 	maybeOpen: (value: T & Program) => Promise<T & Program>;
 	prefetch?: boolean | Partial<PrefetchOptions>;
 	includeIndexed?: boolean; // if true, indexed representations will always be included in the search results
+	immutable?: boolean; // conflict rule of the owning store: oldest version wins when true (mirrors Documents "immutable")
 };
 
 type IndexableClass<I> = new (
@@ -1093,6 +1094,7 @@ export class DocumentIndex<
 	private _resumableIterators: ResumableIterators<WithContext<I>>;
 	private _prefetch?: PrefetchOptions | undefined;
 	private includeIndexed: boolean | undefined = undefined;
+	private immutable: boolean = false;
 
 	compatibility: 6 | 7 | 8 | 9 | undefined;
 
@@ -1427,6 +1429,7 @@ export class DocumentIndex<
 		this.canRead = properties.canRead;
 		this.canSearch = properties.canSearch;
 		this.includeIndexed = properties.includeIndexed;
+		this.immutable = properties.immutable ?? false;
 
 		@variant(0)
 		class IndexedClassWithContext {
@@ -4669,16 +4672,21 @@ export class DocumentIndex<
 		// head arrives). Plain id-based dedupe would let the first-seen, stale
 		// version permanently shadow the newer one. If the id is still buffered
 		// (not yet handed to the consumer) and the incoming result is strictly
-		// newer, evict the stale buffered entry so the caller can buffer the
-		// newer result in its place. Returns true when the caller should proceed
-		// to buffer the incoming result. Results that were already emitted to the
-		// consumer cannot be retracted here; those are only corrected via live
-		// updates/replication.
-		const isNewerContext = (
+		// preferred by the store's conflict rule, evict the stale buffered entry
+		// so the caller can buffer the preferred result in its place. Returns
+		// true when the caller should proceed to buffer the incoming result.
+		// Results that were already emitted to the consumer cannot be retracted
+		// here; those are only corrected via live updates/replication.
+		// The preference direction mirrors the index merge rule in program.ts:
+		// newest wins for mutable stores, oldest wins for immutable stores.
+		const isPreferredContext = (
 			incoming: types.Context,
 			existing: types.Context,
 		): boolean =>
-			incoming.head !== existing.head && incoming.modified > existing.modified;
+			incoming.head !== existing.head &&
+			(this.immutable
+				? incoming.modified < existing.modified
+				: incoming.modified > existing.modified);
 
 		const evictStaleBuffered = (
 			indexKey: indexerTypes.IdPrimitive,
@@ -4693,8 +4701,8 @@ export class DocumentIndex<
 					if (existingKey !== indexKey) {
 						continue;
 					}
-					if (!isNewerContext(incomingContext, existing.context)) {
-						// same or older version: keep normal dedupe behavior
+					if (!isPreferredContext(incomingContext, existing.context)) {
+						// same or non-preferred version: keep normal dedupe behavior
 						return false;
 					}
 					peerBuffer.buffer.splice(i, 1);
