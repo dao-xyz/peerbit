@@ -5,6 +5,7 @@ type WasmInitModule = {
 
 let wasmModulePromise: Promise<WasmInitModule> | undefined;
 let wasmInitialized = false;
+let wasmInitPromise: Promise<void> | undefined;
 
 export const loadWasm = async <
 	T extends WasmInitModule = WasmInitModule,
@@ -18,25 +19,28 @@ export const loadWasm = async <
 
 	const wasm = await wasmModulePromise;
 	if (!wasmInitialized) {
-		const processLike = (
-			globalThis as { process?: { versions?: { node?: string } } }
-		).process;
-		if (processLike?.versions?.node) {
-			const fsPromises = "fs/promises";
-			const { readFile } = (await import(
-				/* @vite-ignore */ fsPromises
-			)) as typeof import("fs/promises");
-			const bytes = await readFile(
-				new URL("../wasm/log_rust_bg.wasm", import.meta.url),
-			);
-			wasm.initSync({ module: bytes });
-		} else {
-			await wasm.default({
-				module_or_path: new URL("../wasm/log_rust_bg.wasm", import.meta.url),
-			});
-		}
-		wasmInitialized = true;
+		wasmInitPromise ??= (async () => {
+			const processLike = (
+				globalThis as { process?: { versions?: { node?: string } } }
+			).process;
+			if (processLike?.versions?.node) {
+				const fsPromises = "fs/promises";
+				const { readFile } = (await import(
+					/* @vite-ignore */ fsPromises
+				)) as typeof import("fs/promises");
+				const bytes = await readFile(
+					new URL("../wasm/log_rust_bg.wasm", import.meta.url),
+				);
+				wasm.initSync({ module: bytes });
+			} else {
+				await wasm.default({
+					module_or_path: new URL("../wasm/log_rust_bg.wasm", import.meta.url),
+				});
+			}
+			wasmInitialized = true;
+		})();
 	}
+	await wasmInitPromise;
 
 	return wasm as T;
 };

@@ -80,6 +80,7 @@ type WasmModule = {
 let wasmModulePromise: Promise<WasmModule> | undefined;
 let wasmModule: WasmModule | undefined;
 let wasmInitialized = false;
+let wasmInitPromise: Promise<void> | undefined;
 
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
@@ -91,28 +92,31 @@ const loadWasm = async (): Promise<WasmModule> => {
 
 	const wasm = await wasmModulePromise;
 	if (!wasmInitialized) {
-		const processLike = (
-			globalThis as { process?: { versions?: { node?: string } } }
-		).process;
-		if (processLike?.versions?.node) {
-			const fsPromises = "fs/promises";
-			const { readFile } = (await import(
-				/* @vite-ignore */ fsPromises
-			)) as typeof import("fs/promises");
-			const bytes = await readFile(
-				new URL("../wasm/document_rust_bg.wasm", import.meta.url),
-			);
-			wasm.initSync({ module: bytes });
-		} else {
-			await wasm.default({
-				module_or_path: new URL(
-					"../wasm/document_rust_bg.wasm",
-					import.meta.url,
-				),
-			});
-		}
-		wasmInitialized = true;
+		wasmInitPromise ??= (async () => {
+			const processLike = (
+				globalThis as { process?: { versions?: { node?: string } } }
+			).process;
+			if (processLike?.versions?.node) {
+				const fsPromises = "fs/promises";
+				const { readFile } = (await import(
+					/* @vite-ignore */ fsPromises
+				)) as typeof import("fs/promises");
+				const bytes = await readFile(
+					new URL("../wasm/document_rust_bg.wasm", import.meta.url),
+				);
+				wasm.initSync({ module: bytes });
+			} else {
+				await wasm.default({
+					module_or_path: new URL(
+						"../wasm/document_rust_bg.wasm",
+						import.meta.url,
+					),
+				});
+			}
+			wasmInitialized = true;
+		})();
 	}
+	await wasmInitPromise;
 	wasmModule = wasm;
 
 	return wasm;
