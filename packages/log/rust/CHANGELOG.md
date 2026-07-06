@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+### Patch Changes
+
+- [#998](https://github.com/dao-xyz/peerbit/pull/998) [`6646c8b`](https://github.com/dao-xyz/peerbit/commit/6646c8b43c8f9b919c333a6c93a462bac55cc4b1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Refactor the crate into native-safe cores with a thin wasm surface: core logic now returns a real `LogError` type instead of `Result<_, JsValue>`, so error paths (malformed entries, CID mismatches, bad signatures) return catchable errors on native targets instead of aborting the process. The published wasm API and all error messages reaching JS are byte-identical.
+
 ## 1.1.0
 
 ### Minor Changes

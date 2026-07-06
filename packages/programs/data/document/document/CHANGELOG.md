@@ -1,5 +1,17 @@
 # Changelog
 
+## 13.1.1
+
+### Patch Changes
+
+- [#999](https://github.com/dao-xyz/peerbit/pull/999) [`33ae356`](https://github.com/dao-xyz/peerbit/commit/33ae35657bfd93b0c4770dbb4f4c3456c6befe78) Thanks [@peerbit-org](https://github.com/peerbit-org)! - fix: prevent stale local results from shadowing newer remote versions of the same document in the search iterator. The iterator dedupes merged results by document id, which let a first-seen stale head (e.g. a local write still propagating) permanently suppress a newer version returned by a remote peer. Now, when a strictly newer version (different head, later modified timestamp) arrives for an id whose result is still buffered, the stale buffered entry is evicted and replaced. Same-version duplicates from multiple sources still dedupe, and results already delivered to the consumer are unaffected. The eviction direction follows the store's conflict rule: newest wins for mutable stores, oldest wins for `immutable: true` stores.
+
+- Updated dependencies []:
+  - @peerbit/shared-log@13.2.1
+  - @peerbit/log@6.2.1
+  - @peerbit/document-interface@3.2.44
+  - @peerbit/rpc@6.1.0
+
 ## 13.1.0
 
 ### Minor Changes

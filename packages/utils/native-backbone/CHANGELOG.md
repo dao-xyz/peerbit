@@ -1,5 +1,11 @@
 # @peerbit/native-backbone
 
+## 0.1.1
+
+### Patch Changes
+
+- [#1000](https://github.com/dao-xyz/peerbit/pull/1000) [`81b5a4c`](https://github.com/dao-xyz/peerbit/commit/81b5a4c60813e49986663e8dbe3718a11937f8c3) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use non-literal specifiers for the node-only fs/path dynamic imports so browser bundlers (esbuild `--platform=browser`) no longer fail resolving `node:fs/promises` and `node:path` when bundling the package
+
 ## 0.1.0
 
 ### Minor Changes
