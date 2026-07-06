@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store-rust",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Rust-backed AnyStore implementation for Peerbit",
 	"sideEffects": [
 		"./dist/wasm/any_store_rust.js"

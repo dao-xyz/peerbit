@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/indexer-rust",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"description": "Rust-backed indexer for document stores",
 	"sideEffects": [
 		"./dist/wasm/indexer_rust.js"

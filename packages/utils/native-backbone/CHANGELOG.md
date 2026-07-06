@@ -1,5 +1,11 @@
 # @peerbit/native-backbone
 
+## 0.1.2
+
+### Patch Changes
+
+- [#1001](https://github.com/dao-xyz/peerbit/pull/1001) [`8e672ca`](https://github.com/dao-xyz/peerbit/commit/8e672ca92fd2b2d42a407b0947d04508ae5166eb) Thanks [@Faolain](https://github.com/Faolain)! - Serialize wasm init to fix a double-init race under concurrent loads (browser use-after-free).
+
 ## 0.1.1
 
 ### Patch Changes
