@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.2
+
+### Patch Changes
+
+- [#1001](https://github.com/dao-xyz/peerbit/pull/1001) [`8e672ca`](https://github.com/dao-xyz/peerbit/commit/8e672ca92fd2b2d42a407b0947d04508ae5166eb) Thanks [@Faolain](https://github.com/Faolain)! - Serialize wasm init to fix a double-init race under concurrent loads (browser use-after-free).
+
+- [#1002](https://github.com/dao-xyz/peerbit/pull/1002) [`5ae64b2`](https://github.com/dao-xyz/peerbit/commit/5ae64b2b95c6638f8f034df5f7a80343a26e5949) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Harden the entry codec against hostile length prefixes: bound the next-hash count read from untrusted `EntryV0` meta bytes against the input actually remaining before allocating. Previously a malformed entry declaring a huge count could trigger a multi-gigabyte allocation and abort a native node (remote DoS); it now returns a catchable error. No change to valid decoding and the wasm API is byte-identical.
+
 ## 1.1.1
 
 ### Patch Changes

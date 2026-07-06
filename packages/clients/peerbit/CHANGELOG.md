@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.3.2
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/blocks@4.2.0
+
 ## 5.3.1
 
 ## 5.3.0
