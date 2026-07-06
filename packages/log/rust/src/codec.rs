@@ -565,3 +565,105 @@ pub(crate) fn write_u32(out: &mut Vec<u8>, value: u32) {
 pub(crate) fn write_u64(out: &mut Vec<u8>, value: u64) {
     out.extend_from_slice(&value.to_le_bytes());
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::LogError;
+
+    // Build a well-formed EntryV0 meta prefix (variant + clock + gid) up to but
+    // not including the `next` string-vector count, so a test can append a
+    // hostile count of its choosing.
+    fn meta_prefix_before_next(gid: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_u8(&mut out, 0); // Meta variant
+        write_clock(&mut out, &[1u8; 4], 1, 0);
+        write_string(&mut out, gid);
+        out
+    }
+
+    #[test]
+    fn read_string_vec_rejects_length_prefix_exceeding_input() {
+        // A count of 0xFFFF_FFFF strings would drive `Vec::with_capacity` to
+        // pre-allocate ~103 GB (len * size_of::<String>()) before any element
+        // is read, aborting the process. The bound must reject it up front.
+        let mut bytes = Vec::new();
+        write_u32(&mut bytes, u32::MAX); // hostile declared count, no bodies follow
+        let mut reader = BorshReader::new(&bytes);
+        let error = read_string_vec(&mut reader, "meta next").unwrap_err();
+        assert_eq!(error, LogError::UnexpectedEndOfStorage("meta next"));
+        assert_eq!(
+            error.to_string(),
+            "Unexpected end of EntryV0 storage while reading meta next"
+        );
+        // Reaching this assertion at all proves no multi-GB allocation happened.
+    }
+
+    #[test]
+    fn parse_raw_entry_v0_meta_rejects_hostile_next_count() {
+        // Same attack via the public meta-parsing entry point, exercising the
+        // full read path a hostile peer's EntryV0 storage would take.
+        let mut bytes = meta_prefix_before_next("gid");
+        // Hostile `next` count; no string bodies follow, so 0 bytes remain for
+        // u32::MAX elements. `ParsedRawEntryV0Meta` is not `Debug`, so match
+        // rather than unwrap_err.
+        write_u32(&mut bytes, u32::MAX);
+        match parse_raw_entry_v0_meta(&bytes) {
+            Err(error) => assert_eq!(error, LogError::UnexpectedEndOfStorage("meta next")),
+            Ok(_) => panic!("expected hostile next count to be rejected"),
+        }
+        // Process staying alive is the assertion; pre-fix this aborts.
+    }
+
+    #[test]
+    fn parse_raw_entry_v0_meta_rejects_partially_backed_next_count() {
+        // A count that is backed by *some* but not all of the required bytes
+        // must still be rejected before pre-allocation. Declare 1000 strings
+        // but supply only a few trailing bytes.
+        let mut bytes = meta_prefix_before_next("gid");
+        write_u32(&mut bytes, 1000); // needs >= 4000 bytes
+        bytes.extend_from_slice(&[0u8; 8]); // only 8 bytes remain
+        match parse_raw_entry_v0_meta(&bytes) {
+            Err(error) => assert_eq!(error, LogError::UnexpectedEndOfStorage("meta next")),
+            Ok(_) => panic!("expected partially-backed next count to be rejected"),
+        }
+    }
+
+    #[test]
+    fn read_string_vec_accepts_valid_next_strings() {
+        // Regression: a truthfully backed count still decodes identically.
+        let next = vec!["a".to_string(), "bb".to_string()];
+        let mut bytes = Vec::new();
+        write_u32(&mut bytes, next.len() as u32);
+        for value in &next {
+            write_string(&mut bytes, value);
+        }
+        let mut reader = BorshReader::new(&bytes);
+        let values = read_string_vec(&mut reader, "meta next").unwrap();
+        assert_eq!(values, next);
+        assert!(reader.is_done());
+    }
+
+    #[test]
+    fn read_string_vec_accepts_empty_next() {
+        let mut bytes = Vec::new();
+        write_u32(&mut bytes, 0);
+        let mut reader = BorshReader::new(&bytes);
+        let values = read_string_vec(&mut reader, "meta next").unwrap();
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn parse_raw_entry_v0_meta_round_trips_valid_meta() {
+        // Full round-trip through the public path proves valid input is
+        // unchanged by the bound: a meta with real `next` hashes decodes to the
+        // same values it was encoded from.
+        let next = vec!["hashA".to_string(), "hashB".to_string()];
+        let bytes = encode_meta_parts(&[1u8; 4], 42, 7, "gid-1", &next, 0, None);
+        let parsed = parse_raw_entry_v0_meta(&bytes).unwrap();
+        assert_eq!(parsed.gid, "gid-1");
+        assert_eq!(parsed.next, next);
+        assert_eq!(parsed.wall_time, 42);
+        assert_eq!(parsed.logical, 7);
+    }
+}
