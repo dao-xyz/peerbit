@@ -72,6 +72,12 @@ impl<'a> BorshReader<'a> {
         self.offset == self.bytes.len()
     }
 
+    /// Bytes left to read. `offset` is only ever advanced to a value validated
+    /// as `<= bytes.len()` by `read_exact`, so the subtraction never underflows.
+    pub(crate) fn remaining(&self) -> usize {
+        self.bytes.len() - self.offset
+    }
+
     pub(crate) fn read_exact(
         &mut self,
         len: usize,
@@ -244,6 +250,14 @@ pub(crate) fn read_string_vec(
     label: &'static str,
 ) -> Result<Vec<String>, LogError> {
     let len = reader.read_u32(label)? as usize;
+    // Each declared string is read via `read_string`, which first consumes a
+    // 4-byte u32 length prefix. A count of `len` strings therefore needs at
+    // least `len * 4` bytes to remain; if it does not, the declared vector
+    // cannot be backed by the input, so reject before pre-allocating rather
+    // than letting an attacker-controlled `len` drive a huge `with_capacity`.
+    if len.saturating_mul(4) > reader.remaining() {
+        return Err(LogError::UnexpectedEndOfStorage(label));
+    }
     let mut values = Vec::with_capacity(len);
     for _ in 0..len {
         values.push(reader.read_string(label)?);
