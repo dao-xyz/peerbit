@@ -13775,6 +13775,142 @@ describe("index", () => {
 				// TODO session timeouts?
 			});
 
+			describe("local-remote merge recency", () => {
+				let session: TestSession;
+
+				afterEach(async () => {
+					await session.stop();
+				});
+
+				it("prefers newer remote version over stale buffered local version of the same document", async () => {
+					session = await TestSession.connected(2);
+
+					const store = new TestStore({
+						docs: new Documents<Document>(),
+					});
+
+					const writer = await session.peers[0].open(store, {
+						args: { replicate: { factor: 1 } },
+					});
+					const reader = await session.peers[1].open(store.clone(), {
+						args: { replicate: false },
+					});
+
+					await reader.docs.index.waitFor(writer.node.identity.publicKey);
+
+					const id = "same-id";
+
+					// The reader holds a stale local head for the document (kept local,
+					// not announced), while the writer holds a newer version of the same
+					// id that has not replicated to the reader yet
+					await reader.docs.put(new Document({ id, name: "v1" }), {
+						target: "none",
+						replicate: false,
+					});
+					await delay(10); // ensure v2 gets a strictly later timestamp
+					await writer.docs.put(new Document({ id, name: "v2" }));
+					await writer.docs.put(new Document({ id: "other", name: "same" }));
+
+					// Local-first read with remote fallback: the stale local (v1) result
+					// must not shadow the newer remote (v2) result for the same id
+					const results = await reader.docs.index
+						.iterate(
+							{},
+							{
+								local: true,
+								remote: { timeout: 5e3 },
+							},
+						)
+						.all();
+
+					expect(results).to.have.length(2);
+					const byId = new Map(results.map((x) => [x.id, x]));
+					expect(byId.get(id)?.name).to.equal("v2");
+					expect(byId.get("other")?.name).to.equal("same");
+
+					// The reverse direction must keep dedupe semantics: an older remote
+					// version must not replace a newer buffered local version
+					await delay(10); // ensure v3 gets a strictly later timestamp
+					await reader.docs.put(new Document({ id, name: "v3" }), {
+						target: "none",
+						replicate: false,
+					});
+					const afterLocalUpdate = await reader.docs.index
+						.iterate(
+							{},
+							{
+								local: true,
+								remote: { timeout: 5e3 },
+							},
+						)
+						.all();
+					expect(afterLocalUpdate).to.have.length(2);
+					const byIdAfter = new Map(afterLocalUpdate.map((x) => [x.id, x]));
+					expect(byIdAfter.get(id)?.name).to.equal("v3");
+				});
+
+				it("prefers the oldest version for immutable stores (oldest-wins conflict rule)", async () => {
+					session = await TestSession.disconnected(2);
+
+					const store = new TestStore({
+						docs: new Documents<Document>({ immutable: true }),
+					});
+
+					const writer = await session.peers[0].open(store, {
+						args: { replicate: { factor: 1 } },
+					});
+					const reader = await session.peers[1].open(store.clone(), {
+						args: { replicate: false },
+					});
+
+					// Divergent duplicates of the same id in an immutable store can
+					// only be created under partition (canAppend otherwise rejects the
+					// second write), so all writes happen while disconnected.
+					const idEvict = "same-id-evict";
+					const idDedupe = "same-id-dedupe";
+
+					// The writer holds the canonical OLDEST version of idEvict, the
+					// reader a newer local one
+					await writer.docs.put(new Document({ id: idEvict, name: "v1" }));
+					await delay(10); // ensure strictly increasing timestamps
+					await reader.docs.put(new Document({ id: idEvict, name: "v2" }), {
+						target: "none",
+						replicate: false,
+					});
+
+					// The reader holds the canonical OLDEST version of idDedupe, the
+					// writer a newer one
+					await delay(10);
+					await reader.docs.put(new Document({ id: idDedupe, name: "w1" }), {
+						target: "none",
+						replicate: false,
+					});
+					await delay(10);
+					await writer.docs.put(new Document({ id: idDedupe, name: "w2" }));
+
+					await session.connect();
+					await reader.docs.index.waitFor(writer.node.identity.publicKey);
+
+					// Immutable stores converge to the OLDEST version: the older
+					// remote v1 must evict the newer buffered local v2, and the newer
+					// remote w2 must NOT replace the older buffered local w1
+					const results = await reader.docs.index
+						.iterate(
+							{},
+							{
+								local: true,
+								remote: { timeout: 5e3 },
+							},
+						)
+						.all();
+
+					expect(results).to.have.length(2);
+					const byId = new Map(results.map((x) => [x.id, x]));
+					expect(byId.get(idEvict)?.name).to.equal("v1");
+					expect(byId.get(idDedupe)?.name).to.equal("w1");
+				});
+			});
+
 			describe("remote", () => {
 				describe("wait", () => {
 					let session: TestSession;

@@ -859,6 +859,7 @@ export type OpenOptions<
 	maybeOpen: (value: T & Program) => Promise<T & Program>;
 	prefetch?: boolean | Partial<PrefetchOptions>;
 	includeIndexed?: boolean; // if true, indexed representations will always be included in the search results
+	immutable?: boolean; // conflict rule of the owning store: oldest version wins when true (mirrors Documents "immutable")
 };
 
 type IndexableClass<I> = new (
@@ -1093,6 +1094,7 @@ export class DocumentIndex<
 	private _resumableIterators: ResumableIterators<WithContext<I>>;
 	private _prefetch?: PrefetchOptions | undefined;
 	private includeIndexed: boolean | undefined = undefined;
+	private immutable: boolean = false;
 
 	compatibility: 6 | 7 | 8 | 9 | undefined;
 
@@ -1427,6 +1429,7 @@ export class DocumentIndex<
 		this.canRead = properties.canRead;
 		this.canSearch = properties.canSearch;
 		this.includeIndexed = properties.includeIndexed;
+		this.immutable = properties.immutable ?? false;
 
 		@variant(0)
 		class IndexedClassWithContext {
@@ -4663,6 +4666,53 @@ export class DocumentIndex<
 			return indexedPlaceholders;
 		};
 
+		// The `visited` set prevents re-emitting the same document across pages
+		// and sources, but different sources can return different versions of the
+		// same document (e.g. a stale local head merged before a newer remote
+		// head arrives). Plain id-based dedupe would let the first-seen, stale
+		// version permanently shadow the newer one. If the id is still buffered
+		// (not yet handed to the consumer) and the incoming result is strictly
+		// preferred by the store's conflict rule, evict the stale buffered entry
+		// so the caller can buffer the preferred result in its place. Returns
+		// true when the caller should proceed to buffer the incoming result.
+		// Results that were already emitted to the consumer cannot be retracted
+		// here; those are only corrected via live updates/replication.
+		// The preference direction mirrors the index merge rule in program.ts:
+		// newest wins for mutable stores, oldest wins for immutable stores.
+		const isPreferredContext = (
+			incoming: types.Context,
+			existing: types.Context,
+		): boolean =>
+			incoming.head !== existing.head &&
+			(this.immutable
+				? incoming.modified < existing.modified
+				: incoming.modified > existing.modified);
+
+		const evictStaleBuffered = (
+			indexKey: indexerTypes.IdPrimitive,
+			incomingContext: types.Context,
+		): boolean => {
+			for (const peerBuffer of peerBufferMap.values()) {
+				for (let i = 0; i < peerBuffer.buffer.length; i++) {
+					const existing = peerBuffer.buffer[i];
+					const existingKey = indexerTypes.toId(
+						this.indexByResolver(existing.indexed),
+					).primitive;
+					if (existingKey !== indexKey) {
+						continue;
+					}
+					if (!isPreferredContext(incomingContext, existing.context)) {
+						// same or non-preferred version: keep normal dedupe behavior
+						return false;
+					}
+					peerBuffer.buffer.splice(i, 1);
+					indexedPlaceholders?.delete(indexKey);
+					return true;
+				}
+			}
+			return false; // not buffered (already emitted): skip incoming
+		};
+
 		let done = false;
 		let drain = false; // if true, close on empty once (overrides manual)
 		let first = false;
@@ -4921,7 +4971,10 @@ export class DocumentIndex<
 										indexedPlaceholders?.delete(indexKey);
 										continue;
 									}
-									if (visited.has(indexKey)) {
+									if (
+										visited.has(indexKey) &&
+										!evictStaleBuffered(indexKey, result.context)
+									) {
 										continue;
 									}
 									visited.add(indexKey);
@@ -4940,7 +4993,8 @@ export class DocumentIndex<
 										result as unknown as types.ResultIndexedValue<I>;
 									if (
 										visited.has(indexKey) &&
-										!indexedPlaceholders?.has(indexKey)
+										!indexedPlaceholders?.has(indexKey) &&
+										!evictStaleBuffered(indexKey, indexedResult.context)
 									) {
 										continue;
 									}
@@ -5127,7 +5181,10 @@ export class DocumentIndex<
 													indexedPlaceholders?.delete(keyPrimitive);
 													continue;
 												}
-												if (visited.has(keyPrimitive)) {
+												if (
+													visited.has(keyPrimitive) &&
+													!evictStaleBuffered(keyPrimitive, result.context)
+												) {
 													continue;
 												}
 												visited.add(keyPrimitive);
@@ -5154,7 +5211,11 @@ export class DocumentIndex<
 													result as unknown as types.ResultIndexedValue<I>;
 												if (
 													visited.has(keyPrimitive) &&
-													!indexedPlaceholders?.has(keyPrimitive)
+													!indexedPlaceholders?.has(keyPrimitive) &&
+													!evictStaleBuffered(
+														keyPrimitive,
+														indexedResult.context,
+													)
 												) {
 													continue;
 												}
@@ -5279,7 +5340,10 @@ export class DocumentIndex<
 																	indexedPlaceholders?.delete(indexKey);
 																	continue;
 																}
-																if (visited.has(indexKey)) {
+																if (
+																	visited.has(indexKey) &&
+																	!evictStaleBuffered(indexKey, result.context)
+																) {
 																	continue;
 																}
 																visited.add(indexKey);
@@ -5309,7 +5373,11 @@ export class DocumentIndex<
 																	result as unknown as types.ResultIndexedValue<I>;
 																if (
 																	visited.has(indexKey) &&
-																	!indexedPlaceholders?.has(indexKey)
+																	!indexedPlaceholders?.has(indexKey) &&
+																	!evictStaleBuffered(
+																		indexKey,
+																		indexedResult.context,
+																	)
 																) {
 																	continue;
 																}

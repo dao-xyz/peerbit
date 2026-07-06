@@ -2300,6 +2300,7 @@ export class Documents<
 			maybeOpen: this.maybeSubprogramOpen.bind(this),
 			prefetch: options.index?.prefetch,
 			includeIndexed: options.index?.includeIndexed,
+			immutable: this.immutable,
 		});
 		this._documentInternalChangeListenerCount = Math.max(
 			0,
