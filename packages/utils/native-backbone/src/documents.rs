@@ -16,10 +16,9 @@ use wasm_bindgen::prelude::*;
 use crate::error::BackboneError;
 use crate::js_interop::{
     append_journal_delete_record, append_journal_put_record, array_strings, bytes_vec_from_array,
-    clear_journal_prefix, decode_error, ensure_same_len, js_error, js_get, optional_string,
-    parse_optional_u64_string, parse_u64_string, read_bytes, read_encoded_string, read_u32,
-    read_u64, strings_from_array, write_bool, write_bytes, write_string, write_u32, write_u64,
-    write_u8,
+    clear_journal_prefix, ensure_same_len, js_get, optional_string, parse_optional_u64_string,
+    parse_u64_string, read_bytes, read_encoded_string, read_u32, read_u64, strings_from_array,
+    write_bool, write_bytes, write_string, write_u32, write_u64, write_u8,
 };
 use crate::{NativePeerbitBackbone, NATIVE_BACKBONE_BYTE_EXACT_INDEX_LIMIT};
 
@@ -813,7 +812,7 @@ impl NativePeerbitBackbone {
         &mut self,
         schema_ir_bytes: Vec<u8>,
     ) -> Result<Array, JsValue> {
-        let schema_ir = decode_native_schema_ir(&schema_ir_bytes).map_err(js_error)?;
+        let schema_ir = decode_native_schema_ir(&schema_ir_bytes).map_err(BackboneError::from)?;
         let stats = schema_ir.stats();
         self.document_schema_ir = Some(schema_ir);
         self.rebuild_document_index_from_values()?;
@@ -829,7 +828,7 @@ impl NativePeerbitBackbone {
             return Ok(());
         }
         self.document_byte_element_index_limit = limit;
-        self.rebuild_document_index_from_values()
+        Ok(self.rebuild_document_index_from_values()?)
     }
 
     pub fn set_document_context_head_field(&mut self, field: u32) {
@@ -998,8 +997,8 @@ impl NativePeerbitBackbone {
         query_bytes: Vec<u8>,
         sort_bytes: Vec<u8>,
     ) -> Result<Array, JsValue> {
-        let query = decode_query(&query_bytes).map_err(js_error)?;
-        let sort = decode_sort(&sort_bytes).map_err(js_error)?;
+        let query = decode_query(&query_bytes).map_err(BackboneError::Message)?;
+        let sort = decode_sort(&sort_bytes).map_err(BackboneError::Message)?;
         let keys = self.document_index.search(&query, &sort, None);
         Ok(self.document_entries_for_keys(&keys))
     }
@@ -1011,8 +1010,8 @@ impl NativePeerbitBackbone {
         offset: usize,
         limit: usize,
     ) -> Result<Array, JsValue> {
-        let query = decode_query(&query_bytes).map_err(js_error)?;
-        let sort = decode_sort(&sort_bytes).map_err(js_error)?;
+        let query = decode_query(&query_bytes).map_err(BackboneError::Message)?;
+        let sort = decode_sort(&sort_bytes).map_err(BackboneError::Message)?;
         let keys = self
             .document_index
             .search_page(&query, &sort, offset, Some(limit));
@@ -1020,16 +1019,16 @@ impl NativePeerbitBackbone {
     }
 
     pub fn document_count(&self, query_bytes: Vec<u8>) -> Result<usize, JsValue> {
-        let query = decode_query(&query_bytes).map_err(js_error)?;
+        let query = decode_query(&query_bytes).map_err(BackboneError::Message)?;
         Ok(self.document_index.count(&query) as usize)
     }
 
     pub fn document_sum(&self, query_bytes: Vec<u8>, field: u32) -> Result<Array, JsValue> {
-        let query = decode_query(&query_bytes).map_err(js_error)?;
+        let query = decode_query(&query_bytes).map_err(BackboneError::Message)?;
         let sum = self
             .document_index
             .sum(&query, FieldPath::Id(field))
-            .map_err(js_error)?;
+            .map_err(BackboneError::Message)?;
         Ok(sum_to_js(sum))
     }
 
@@ -1199,12 +1198,12 @@ impl NativePeerbitBackbone {
         let mut entries = if snapshot.length() == 0 {
             Default::default()
         } else {
-            decode_key_value_snapshot(&snapshot.to_vec()).map_err(decode_error)?
+            decode_key_value_snapshot(&snapshot.to_vec()).map_err(BackboneError::from)?
         };
         let journal_records = if journal.length() == 0 {
             Vec::new()
         } else {
-            decode_journal(&journal.to_vec()).map_err(decode_error)?
+            decode_journal(&journal.to_vec()).map_err(BackboneError::from)?
         };
         let operations = journal_records.len();
         for record in journal_records {
@@ -1286,12 +1285,12 @@ impl NativePeerbitBackbone {
         let mut entries = if snapshot.length() == 0 {
             Default::default()
         } else {
-            decode_key_value_snapshot(&snapshot.to_vec()).map_err(decode_error)?
+            decode_key_value_snapshot(&snapshot.to_vec()).map_err(BackboneError::from)?
         };
         let journal_records = if journal.length() == 0 {
             Vec::new()
         } else {
-            decode_journal(&journal.to_vec()).map_err(decode_error)?
+            decode_journal(&journal.to_vec()).map_err(BackboneError::from)?
         };
         let operations = journal_records.len();
         for record in journal_records {
@@ -1544,7 +1543,7 @@ impl NativePeerbitBackbone {
             .insert(new_head.to_string(), key.to_string());
     }
 
-    fn refresh_document_previous_signer_fact(&mut self, key: &str) -> Result<(), JsValue> {
+    fn refresh_document_previous_signer_fact(&mut self, key: &str) -> Result<(), BackboneError> {
         let Some(context) = self.document_context_facts_by_key(key)? else {
             self.delete_document_previous_signer_fact(key, true);
             return Ok(());
@@ -1596,7 +1595,7 @@ impl NativePeerbitBackbone {
         self.document_signer_journal_record_count = 0;
     }
 
-    fn rebuild_document_index_from_values(&mut self) -> Result<(), JsValue> {
+    fn rebuild_document_index_from_values(&mut self) -> Result<(), BackboneError> {
         let Some(schema_ir) = self.document_schema_ir.clone() else {
             self.document_index.clear();
             self.document_key_by_head.clear();
@@ -1618,8 +1617,7 @@ impl NativePeerbitBackbone {
                 &[],
                 self.document_byte_element_index_limit,
                 NATIVE_BACKBONE_BYTE_EXACT_INDEX_LIMIT,
-            )
-            .map_err(js_error)?;
+            )?;
             if let Some(context) = self.document_context_facts_from_fields(&fields)? {
                 self.document_key_by_head.insert(context.head, key.clone());
             }
@@ -1779,6 +1777,17 @@ mod tests {
             BackboneError::ProjectionPlanLengthMismatch.to_string(),
             "Projection plan length mismatch"
         );
+    }
+
+    #[test]
+    fn query_decode_errors_forward_the_indexer_string_verbatim() {
+        // decode_query/decode_sort have no typed core error; the document
+        // query/count/sum boundaries forward their String verbatim through
+        // BackboneError::Message. Assert the rendered message is byte-for-byte
+        // the string the indexer core produced (matching the old js_error
+        // funnel that also built Message(error.to_string())).
+        let raw = decode_query(&[0xff]).unwrap_err();
+        assert_eq!(BackboneError::Message(raw.clone()).to_string(), raw);
     }
 
     #[test]
