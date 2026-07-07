@@ -1654,16 +1654,25 @@ impl NativePeerbitBackbone {
                 self.append_profile.coordinate_core_ms += crate::time::now_ms() - started;
             }
 
+            // Rebuild the frozen JS entry/trim rows from the owned pending state
+            // at the emit boundary, timed against the same entry_row/trim_rows
+            // profile counters the pre-lift inline build used.
+            let entry_row = self.committed_entry_facts_to_row_profiled(&pending.entry_facts);
+            let trim_rows = self.native_backbone_trim_entries_to_rows_profiled(
+                pending.trimmed_entries,
+                pending.resolve_trimmed_entries,
+            );
+
             let result_row_started = profile_enabled.then(crate::time::now_ms);
             let row = Array::new();
-            row.push(&pending.entry_row);
+            row.push(&entry_row);
             row.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
             row.push(&JsValue::from_bool(coordinate_facts.is_leader));
             row.push(&JsValue::from_bool(
                 coordinate_facts.assigned_to_range_boundary,
             ));
             row.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
-            row.push(&pending.trim_rows);
+            row.push(&trim_rows);
             row.push(&strings_to_array(pending.trim_hashes));
             row.push(&JsValue::from_bool(
                 pending.document_trimmed_heads_processed,
@@ -1731,8 +1740,8 @@ impl NativePeerbitBackbone {
             self.copy_append_inputs_profiled(meta_datas.get(index), &payload_data)?;
 
         let wall_time = wall_times.get_index(index);
-        let (entry_facts, trim_hashes, entry_row, trim_rows) = self
-            .prepare_committed_log_append_rows_profiled(
+        let (entry_facts, trimmed_entries, trim_hashes) = self
+            .prepare_committed_log_append_owned_profiled(
                 wall_time,
                 logicals.get_index(index),
                 gid.clone(),
@@ -1769,13 +1778,18 @@ impl NativePeerbitBackbone {
             next_hashes: next_hashes.clone(),
             delete_hashes: trim_hashes.clone(),
         });
+        // Keep the entry hash for the document-index put; `entry_facts` itself
+        // moves into the pending state so the JS entry row is rebuilt only when
+        // the batch is emitted.
+        let entry_hash = entry_facts.hash.clone();
         let mut pending_append = LatestBatchPendingAppend {
             wall_time,
             next_hashes,
             meta_bytes: entry_facts.meta_bytes.clone(),
             trim_hashes,
-            entry_row,
-            trim_rows,
+            entry_facts,
+            trimmed_entries,
+            resolve_trimmed_entries,
             document_trimmed_heads_processed: false,
             previous_document_context,
         };
@@ -1784,7 +1798,7 @@ impl NativePeerbitBackbone {
         let prepared_document_put = match self.prepare_document_index_append_put(
             document_index_commit,
             wall_time,
-            &entry_facts.hash,
+            &entry_hash,
             &gid,
             payload_size,
             None,

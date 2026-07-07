@@ -44,8 +44,15 @@ struct LatestBatchPendingAppend {
     next_hashes: Vec<String>,
     meta_bytes: Vec<u8>,
     trim_hashes: Vec<String>,
-    entry_row: Array,
-    trim_rows: Array,
+    // Owned committed-append facts and resolved trimmed entries; the frozen JS
+    // `entry_row`/`trim_rows` layouts are rebuilt at the consume boundary so
+    // this pending state stays JS-free (no `js_sys::Array` captured in core
+    // state). `resolve_trimmed_entries` records which trim-row mode produced
+    // `trimmed_entries` so the empty-resolved and unresolved cases stay
+    // distinct, matching the pre-lift behaviour byte-for-byte.
+    entry_facts: NativeCommittedEntryFacts,
+    trimmed_entries: Vec<LogIndexEntry>,
+    resolve_trimmed_entries: bool,
     document_trimmed_heads_processed: bool,
     previous_document_context: Option<DocumentContextFacts>,
 }
@@ -187,7 +194,7 @@ fn ensure_batch_append_lens(
     gids_label: &'static str,
     meta_datas: &Array,
     document_keys: &Array,
-) -> Result<(), JsValue> {
+) -> Result<(), BackboneError> {
     ensure_same_len(len, wall_times.length() as usize, "batch wall times")?;
     ensure_same_len(len, logicals.length() as usize, "batch logicals")?;
     ensure_same_len(len, gids.length() as usize, gids_label)?;
@@ -201,7 +208,7 @@ fn ensure_batch_projection_lens(
     plan_ids: &Uint32Array,
     encoded_documents: Option<&Array>,
     signers: &Array,
-) -> Result<(), JsValue> {
+) -> Result<(), BackboneError> {
     ensure_same_len(
         len,
         plan_ids.length() as usize,
@@ -225,11 +232,11 @@ fn ensure_batch_projection_lens(
 fn required_projection_encoded_document(
     encoded_documents: &Array,
     index: u32,
-) -> Result<JsValue, JsValue> {
+) -> Result<JsValue, BackboneError> {
     let encoded_document = encoded_documents.get(index);
     if encoded_document.is_undefined() || encoded_document.is_null() {
-        return Err(JsValue::from_str(
-            "Expected batch document projection encoded document",
+        return Err(BackboneError::Expected(
+            "batch document projection encoded document",
         ));
     }
     Ok(encoded_document)
@@ -348,8 +355,14 @@ impl NativePeerbitBackbone {
         Ok(result)
     }
 
+    /// JS-free committed-log append: performs the log append and (optionally)
+    /// resolves the trimmed entries, returning owned Rust data only. Callers
+    /// that need the frozen JS result-row layouts build them at their own
+    /// boundary via [`committed_entry_facts_to_row`] and
+    /// [`native_backbone_trim_entries_to_rows`], keeping the pending-append
+    /// state JS-free until the row is emitted.
     #[allow(clippy::too_many_arguments)]
-    fn prepare_committed_log_append_rows_profiled(
+    fn prepare_committed_log_append_owned_profiled(
         &mut self,
         wall_time: u64,
         logical: u32,
@@ -360,7 +373,7 @@ impl NativePeerbitBackbone {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
         resolve_trimmed_entries: bool,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), BackboneError> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
@@ -407,12 +420,34 @@ impl NativePeerbitBackbone {
             self.append_profile.log_total_ms += crate::time::now_ms() - started;
             self.append_profile.add_log_profile(&log_profile);
         }
-        let entry_row_started = profile_enabled.then(crate::time::now_ms);
-        let entry_row = committed_entry_facts_to_row(&entry_facts, !entry_facts.next.is_empty());
+        Ok((entry_facts, trimmed_entries, trim_hashes))
+    }
+
+    /// Build the frozen committed-append entry row from owned facts, timing the
+    /// build against the `entry_row` profile counter exactly as the inline
+    /// row build did.
+    fn committed_entry_facts_to_row_profiled(
+        &mut self,
+        entry_facts: &NativeCommittedEntryFacts,
+    ) -> Array {
+        let entry_row_started = self.append_profile_enabled.then(crate::time::now_ms);
+        let entry_row = committed_entry_facts_to_row(entry_facts, !entry_facts.next.is_empty());
         if let Some(started) = entry_row_started {
             self.append_profile.entry_row_ms += crate::time::now_ms() - started;
         }
-        let trim_rows_started = profile_enabled.then(crate::time::now_ms);
+        entry_row
+    }
+
+    /// Build the frozen trimmed-entries rows from owned entries, timing the
+    /// build against the `trim_rows` profile counter exactly as the inline
+    /// row build did. `resolve_trimmed_entries` distinguishes an empty resolved
+    /// set from the unresolved mode (which always emits an empty array).
+    fn native_backbone_trim_entries_to_rows_profiled(
+        &mut self,
+        trimmed_entries: Vec<LogIndexEntry>,
+        resolve_trimmed_entries: bool,
+    ) -> Array {
+        let trim_rows_started = self.append_profile_enabled.then(crate::time::now_ms);
         let trim_rows = if resolve_trimmed_entries {
             native_backbone_trim_entries_to_rows(trimmed_entries)
         } else {
@@ -421,6 +456,39 @@ impl NativePeerbitBackbone {
         if let Some(started) = trim_rows_started {
             self.append_profile.trim_rows_ms += crate::time::now_ms() - started;
         }
+        trim_rows
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_committed_log_append_rows_profiled(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        resolve_trimmed_entries: bool,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), BackboneError> {
+        let (entry_facts, trimmed_entries, trim_hashes) = self
+            .prepare_committed_log_append_owned_profiled(
+                wall_time,
+                logical,
+                gid,
+                next_hashes,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                resolve_trimmed_entries,
+            )?;
+        let entry_row = self.committed_entry_facts_to_row_profiled(&entry_facts);
+        let trim_rows = self.native_backbone_trim_entries_to_rows_profiled(
+            trimmed_entries,
+            resolve_trimmed_entries,
+        );
         Ok((entry_facts, trim_hashes, entry_row, trim_rows))
     }
 
