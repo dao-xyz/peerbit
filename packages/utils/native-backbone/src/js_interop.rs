@@ -1,3 +1,4 @@
+use crate::error::BackboneError;
 use js_sys::{Array, Reflect, Uint8Array};
 use peerbit_indexer_core::wire::{self, WireError};
 use std::collections::HashSet;
@@ -309,7 +310,7 @@ pub(crate) fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
 }
 
 pub(crate) fn wire_error_to_js(error: WireError) -> JsValue {
-    JsValue::from_str(&error.to_string())
+    JsValue::from(BackboneError::from(error))
 }
 
 pub(crate) fn read_u32(
@@ -383,11 +384,11 @@ pub(crate) fn write_bool(out: &mut Vec<u8>, value: bool) {
 }
 
 pub(crate) fn js_error(error: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&error.to_string())
+    JsValue::from(BackboneError::Message(error.to_string()))
 }
 
 pub(crate) fn decode_error(error: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&error.to_string())
+    JsValue::from(BackboneError::Message(error.to_string()))
 }
 
 pub(crate) fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, JsValue> {
