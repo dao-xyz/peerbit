@@ -23,6 +23,7 @@ pub enum BackboneError {
     ExpectedBytesArray,
     ExpectedUnsignedIntegerArray,
     MismatchedInputLengths(&'static str),
+    MismatchedCompactCoordinateFacts(&'static str),
     MustBeNumber(&'static str),
     MustBeArray(&'static str),
     MissingOrInvalid(&'static str),
@@ -33,6 +34,39 @@ pub enum BackboneError {
     WireSyncStashFrameTaken,
     WireSyncPinnedEntryMissing,
     CoordinateCountOverflow,
+    Truncated(&'static str),
+    InvalidBool(&'static str),
+    InvalidProjectionOptionMarker,
+    UnsupportedDocumentProjectionFieldType,
+    UnsupportedProjectedDocumentFieldType,
+    ProjectionValueOutputTypeMismatch,
+    DocumentProjectionPlanLengthMismatch,
+    ProjectionPlanLengthMismatch,
+    TrailingDocumentSignerFactBytes,
+    MissingDocumentVariant,
+    InvalidDocumentVariant,
+    DocumentVariantMismatch,
+    UnsupportedDocumentVariantType,
+    MissingOutputVariant,
+    InvalidOutputVariant,
+    UnsupportedOutputVariantType,
+    UnsupportedContextProjectionSource,
+    UnsupportedProjectionSourceKind,
+    PlainPutPayloadTooShort,
+    PlainPutPayloadLengthMismatch,
+    DocumentContextSuffixCapacityOverflow,
+    DocumentSchemaIrNotConfigured,
+    MissingCachedDocumentProjectionPlan,
+    MissingPlainPutPayloadForDocumentIndex,
+    MissingPlainPutPayloadForDocumentProjection,
+    MissingDocumentContextField(&'static str),
+    MaxReplicasMustBeNumber,
+    RawReceiveOriginalIndexOverflow,
+    RawReceiveSelectedIndexOverflow,
+    RawReceiveGroupIndexOverflow,
+    MissingPreparedRawReceiveEntry,
+    MismatchedPreparedRawReceiveVerifyLengths,
+    MissingPartialVerifyHashes,
     Wire(WireError),
     SharedLog(SharedLogError),
     Schema(SchemaError),
@@ -61,6 +95,7 @@ impl std::fmt::Display for BackboneError {
             BackboneError::MismatchedInputLengths(label) => {
                 write!(f, "Mismatched {label} input lengths")
             }
+            BackboneError::MismatchedCompactCoordinateFacts(label) => f.write_str(label),
             BackboneError::MustBeNumber(label) => write!(f, "{label} must be a number"),
             BackboneError::MustBeArray(field) => write!(f, "{field} must be an array"),
             BackboneError::MissingOrInvalid(field) => write!(f, "Missing or invalid {field}"),
@@ -79,6 +114,87 @@ impl std::fmt::Display for BackboneError {
                 f.write_str("wire sync pinned stash entry missing")
             }
             BackboneError::CoordinateCountOverflow => f.write_str("Coordinate count overflow"),
+            BackboneError::Truncated(label) => write!(f, "Truncated {label}"),
+            BackboneError::InvalidBool(label) => write!(f, "Invalid bool {label}"),
+            BackboneError::InvalidProjectionOptionMarker => {
+                f.write_str("Invalid projection option marker")
+            }
+            BackboneError::UnsupportedDocumentProjectionFieldType => {
+                f.write_str("Unsupported document projection field type")
+            }
+            BackboneError::UnsupportedProjectedDocumentFieldType => {
+                f.write_str("Unsupported projected document field type")
+            }
+            BackboneError::ProjectionValueOutputTypeMismatch => {
+                f.write_str("Projection value does not match output type")
+            }
+            BackboneError::DocumentProjectionPlanLengthMismatch => {
+                f.write_str("Document projection plan length mismatch")
+            }
+            BackboneError::ProjectionPlanLengthMismatch => {
+                f.write_str("Projection plan length mismatch")
+            }
+            BackboneError::TrailingDocumentSignerFactBytes => {
+                f.write_str("Trailing document signer fact bytes")
+            }
+            BackboneError::MissingDocumentVariant => f.write_str("Missing document variant"),
+            BackboneError::InvalidDocumentVariant => f.write_str("Invalid document variant"),
+            BackboneError::DocumentVariantMismatch => f.write_str("Document variant mismatch"),
+            BackboneError::UnsupportedDocumentVariantType => {
+                f.write_str("Unsupported document variant type")
+            }
+            BackboneError::MissingOutputVariant => f.write_str("Missing output variant"),
+            BackboneError::InvalidOutputVariant => f.write_str("Invalid output variant"),
+            BackboneError::UnsupportedOutputVariantType => {
+                f.write_str("Unsupported output variant type")
+            }
+            BackboneError::UnsupportedContextProjectionSource => {
+                f.write_str("Unsupported context projection source")
+            }
+            BackboneError::UnsupportedProjectionSourceKind => {
+                f.write_str("Unsupported projection source kind")
+            }
+            BackboneError::PlainPutPayloadTooShort => f.write_str("Plain put payload is too short"),
+            BackboneError::PlainPutPayloadLengthMismatch => {
+                f.write_str("Plain put payload length mismatch")
+            }
+            BackboneError::DocumentContextSuffixCapacityOverflow => {
+                f.write_str("Document context suffix capacity overflow")
+            }
+            BackboneError::DocumentSchemaIrNotConfigured => {
+                f.write_str("Native backbone document schema IR has not been configured")
+            }
+            BackboneError::MissingCachedDocumentProjectionPlan => {
+                f.write_str("Missing cached document projection plan")
+            }
+            BackboneError::MissingPlainPutPayloadForDocumentIndex => {
+                f.write_str("Missing plain put payload for document index")
+            }
+            BackboneError::MissingPlainPutPayloadForDocumentProjection => {
+                f.write_str("Missing plain put payload for document projection")
+            }
+            BackboneError::MissingDocumentContextField(label) => {
+                write!(f, "Missing document context {label} field")
+            }
+            BackboneError::MaxReplicasMustBeNumber => f.write_str("maxReplicas must be a number"),
+            BackboneError::RawReceiveOriginalIndexOverflow => {
+                f.write_str("Raw receive original index overflow")
+            }
+            BackboneError::RawReceiveSelectedIndexOverflow => {
+                f.write_str("Raw receive selected index overflow")
+            }
+            BackboneError::RawReceiveGroupIndexOverflow => {
+                f.write_str("Raw receive group index overflow")
+            }
+            BackboneError::MissingPreparedRawReceiveEntry => {
+                f.write_str("Missing prepared raw receive entry")
+            }
+            BackboneError::MismatchedPreparedRawReceiveVerifyLengths => {
+                f.write_str("Expected equal prepared raw receive verify lengths")
+            }
+            BackboneError::MissingPartialVerifyHashes => {
+                f.write_str("Missing partial verify hashes")
+            }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::SharedLog(error) => write!(f, "{error}"),
             BackboneError::Schema(error) => write!(f, "{error}"),

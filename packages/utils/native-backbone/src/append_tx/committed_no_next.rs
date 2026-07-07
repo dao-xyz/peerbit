@@ -16,6 +16,7 @@ use crate::documents::{
     document_index_plain_put_payload_append_commit, DocumentIndexAppendCommit,
     DocumentIndexValuePrefix,
 };
+use crate::error::BackboneError;
 use crate::js_interop::{
     ensure_same_len, optional_usize_from_js, required_bytes_from_array, strings_from_array,
     strings_to_array,
@@ -40,7 +41,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -57,7 +58,7 @@ impl NativePeerbitBackbone {
             None,
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -77,7 +78,7 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -94,7 +95,7 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -245,7 +246,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -271,7 +272,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -299,7 +300,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -325,7 +326,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -351,7 +352,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -376,7 +377,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -403,7 +404,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -428,7 +429,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -463,7 +464,7 @@ impl NativePeerbitBackbone {
             JsValue::UNDEFINED,
             JsValue::UNDEFINED,
         )?;
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -477,7 +478,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             document_index_commit,
             trim_length_to,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -507,7 +508,7 @@ impl NativePeerbitBackbone {
             document_byte_element_index_limit,
             document_delete_trimmed_heads,
         )?;
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -521,7 +522,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             document_index_commit,
             trim_length_to,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -587,7 +588,7 @@ impl NativePeerbitBackbone {
                 JsValue::UNDEFINED,
             )?);
         }
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
             wall_times,
             logicals,
             gids,
@@ -601,7 +602,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             trim_length_to,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -651,7 +652,7 @@ impl NativePeerbitBackbone {
                 document_delete_trimmed_heads,
             )?);
         }
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
             wall_times,
             logicals,
             gids,
@@ -665,7 +666,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             trim_length_to,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -732,7 +733,7 @@ impl NativePeerbitBackbone {
                 document_projection_signers.get(index_u32),
             )?);
         }
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
             wall_times,
             logicals,
             gids,
@@ -746,7 +747,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             trim_length_to,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -809,7 +810,7 @@ impl NativePeerbitBackbone {
                 )?,
             );
         }
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction_inner(
             wall_times,
             logicals,
             gids,
@@ -823,7 +824,7 @@ impl NativePeerbitBackbone {
             self_replicating,
             trim_length_to,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -859,7 +860,7 @@ impl NativePeerbitBackbone {
             document_projection_encoded_document,
             document_projection_signer,
         )?;
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -872,8 +873,8 @@ impl NativePeerbitBackbone {
             self_hash,
             self_replicating,
             document_index_commit,
-			trim_length_to,
-		)
+            trim_length_to,
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -908,7 +909,7 @@ impl NativePeerbitBackbone {
                 document_projection_plan_id,
                 document_projection_signer,
             )?;
-        self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
+        Ok(self.prepare_plain_committed_no_next_storage_append_document_index_compact_transaction_inner(
 			wall_time,
 			logical,
 			gid,
@@ -922,7 +923,7 @@ impl NativePeerbitBackbone {
 			self_replicating,
 			document_index_commit,
 			trim_length_to,
-        )
+        )?)
     }
 }
 
@@ -943,7 +944,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         trim_length_to: Option<usize>,
         document_index_commits: Vec<DocumentIndexAppendCommit>,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let batch_len = document_index_commits.len();
@@ -956,7 +957,7 @@ impl NativePeerbitBackbone {
             let gid = gids
                 .get(index_u32)
                 .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected batch gid string"))?;
+                .ok_or(BackboneError::ExpectedString("batch gid"))?;
             let payload_bytes = required_bytes_from_array(&payload_datas, index_u32, "payload")?;
             let payload_size = payload_bytes.length();
             let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
@@ -1088,7 +1089,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         document_index_commit: DocumentIndexAppendCommit,
         trim_length_to: Option<usize>,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let payload_size = payload_data.length();

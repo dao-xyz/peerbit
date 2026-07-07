@@ -13,6 +13,7 @@ use crate::documents::{
     DocumentContextFacts, DocumentIndexAppendCommit, DocumentIndexProjectionPlan,
     DocumentIndexValuePrefix, PreparedDocumentIndexAppendPut,
 };
+use crate::error::BackboneError;
 use crate::js_interop::{
     array_from_value, ensure_same_len, hash_number_u64, number_to_row, numbers_to_rows,
     optional_bytes_from_js, string_field, strings_to_array,
@@ -43,8 +44,15 @@ struct LatestBatchPendingAppend {
     next_hashes: Vec<String>,
     meta_bytes: Vec<u8>,
     trim_hashes: Vec<String>,
-    entry_row: Array,
-    trim_rows: Array,
+    // Owned committed-append facts and resolved trimmed entries; the frozen JS
+    // `entry_row`/`trim_rows` layouts are rebuilt at the consume boundary so
+    // this pending state stays JS-free (no `js_sys::Array` captured in core
+    // state). `resolve_trimmed_entries` records which trim-row mode produced
+    // `trimmed_entries` so the empty-resolved and unresolved cases stay
+    // distinct, matching the pre-lift behaviour byte-for-byte.
+    entry_facts: NativeCommittedEntryFacts,
+    trimmed_entries: Vec<LogIndexEntry>,
+    resolve_trimmed_entries: bool,
     document_trimmed_heads_processed: bool,
     previous_document_context: Option<DocumentContextFacts>,
 }
@@ -186,7 +194,7 @@ fn ensure_batch_append_lens(
     gids_label: &'static str,
     meta_datas: &Array,
     document_keys: &Array,
-) -> Result<(), JsValue> {
+) -> Result<(), BackboneError> {
     ensure_same_len(len, wall_times.length() as usize, "batch wall times")?;
     ensure_same_len(len, logicals.length() as usize, "batch logicals")?;
     ensure_same_len(len, gids.length() as usize, gids_label)?;
@@ -200,7 +208,7 @@ fn ensure_batch_projection_lens(
     plan_ids: &Uint32Array,
     encoded_documents: Option<&Array>,
     signers: &Array,
-) -> Result<(), JsValue> {
+) -> Result<(), BackboneError> {
     ensure_same_len(
         len,
         plan_ids.length() as usize,
@@ -224,11 +232,11 @@ fn ensure_batch_projection_lens(
 fn required_projection_encoded_document(
     encoded_documents: &Array,
     index: u32,
-) -> Result<JsValue, JsValue> {
+) -> Result<JsValue, BackboneError> {
     let encoded_document = encoded_documents.get(index);
     if encoded_document.is_undefined() || encoded_document.is_null() {
-        return Err(JsValue::from_str(
-            "Expected batch document projection encoded document",
+        return Err(BackboneError::Expected(
+            "batch document projection encoded document",
         ));
     }
     Ok(encoded_document)
@@ -239,7 +247,7 @@ impl NativePeerbitBackbone {
         &mut self,
         meta_data: JsValue,
         payload_data: &Uint8Array,
-    ) -> Result<(Option<Vec<u8>>, Vec<u8>), JsValue> {
+    ) -> Result<(Option<Vec<u8>>, Vec<u8>), BackboneError> {
         let input_copy_started = self.append_profile_enabled.then(crate::time::now_ms);
         let meta_data = optional_bytes_from_js(meta_data, "meta data")?;
         let payload_data = payload_data.to_vec();
@@ -249,7 +257,7 @@ impl NativePeerbitBackbone {
         Ok((meta_data, payload_data))
     }
 
-    fn hash_number_profiled(&mut self, hash_digest_bytes: &[u8]) -> Result<u64, JsValue> {
+    fn hash_number_profiled(&mut self, hash_digest_bytes: &[u8]) -> Result<u64, BackboneError> {
         let hash_number_started = self.append_profile_enabled.then(crate::time::now_ms);
         let hash_number = hash_number_u64(&self.resolution, hash_digest_bytes)?;
         if let Some(started) = hash_number_started {
@@ -268,7 +276,7 @@ impl NativePeerbitBackbone {
         meta_data: Option<Vec<u8>>,
         payload_data: &[u8],
         trim_length_to: Option<usize>,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
@@ -321,7 +329,7 @@ impl NativePeerbitBackbone {
         meta_data: Option<Vec<u8>>,
         payload_data: &[u8],
         trim_length_to: Option<usize>,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
@@ -347,8 +355,14 @@ impl NativePeerbitBackbone {
         Ok(result)
     }
 
+    /// JS-free committed-log append: performs the log append and (optionally)
+    /// resolves the trimmed entries, returning owned Rust data only. Callers
+    /// that need the frozen JS result-row layouts build them at their own
+    /// boundary via [`committed_entry_facts_to_row`] and
+    /// [`native_backbone_trim_entries_to_rows`], keeping the pending-append
+    /// state JS-free until the row is emitted.
     #[allow(clippy::too_many_arguments)]
-    fn prepare_committed_log_append_rows_profiled(
+    fn prepare_committed_log_append_owned_profiled(
         &mut self,
         wall_time: u64,
         logical: u32,
@@ -359,7 +373,7 @@ impl NativePeerbitBackbone {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
         resolve_trimmed_entries: bool,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), JsValue> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<LogIndexEntry>, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
@@ -406,12 +420,34 @@ impl NativePeerbitBackbone {
             self.append_profile.log_total_ms += crate::time::now_ms() - started;
             self.append_profile.add_log_profile(&log_profile);
         }
-        let entry_row_started = profile_enabled.then(crate::time::now_ms);
-        let entry_row = committed_entry_facts_to_row(&entry_facts, !entry_facts.next.is_empty());
+        Ok((entry_facts, trimmed_entries, trim_hashes))
+    }
+
+    /// Build the frozen committed-append entry row from owned facts, timing the
+    /// build against the `entry_row` profile counter exactly as the inline
+    /// row build did.
+    fn committed_entry_facts_to_row_profiled(
+        &mut self,
+        entry_facts: &NativeCommittedEntryFacts,
+    ) -> Array {
+        let entry_row_started = self.append_profile_enabled.then(crate::time::now_ms);
+        let entry_row = committed_entry_facts_to_row(entry_facts, !entry_facts.next.is_empty());
         if let Some(started) = entry_row_started {
             self.append_profile.entry_row_ms += crate::time::now_ms() - started;
         }
-        let trim_rows_started = profile_enabled.then(crate::time::now_ms);
+        entry_row
+    }
+
+    /// Build the frozen trimmed-entries rows from owned entries, timing the
+    /// build against the `trim_rows` profile counter exactly as the inline
+    /// row build did. `resolve_trimmed_entries` distinguishes an empty resolved
+    /// set from the unresolved mode (which always emits an empty array).
+    fn native_backbone_trim_entries_to_rows_profiled(
+        &mut self,
+        trimmed_entries: Vec<LogIndexEntry>,
+        resolve_trimmed_entries: bool,
+    ) -> Array {
+        let trim_rows_started = self.append_profile_enabled.then(crate::time::now_ms);
         let trim_rows = if resolve_trimmed_entries {
             native_backbone_trim_entries_to_rows(trimmed_entries)
         } else {
@@ -420,6 +456,39 @@ impl NativePeerbitBackbone {
         if let Some(started) = trim_rows_started {
             self.append_profile.trim_rows_ms += crate::time::now_ms() - started;
         }
+        trim_rows
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_committed_log_append_rows_profiled(
+        &mut self,
+        wall_time: u64,
+        logical: u32,
+        gid: String,
+        next_hashes: Vec<String>,
+        entry_type: u8,
+        meta_data: Option<Vec<u8>>,
+        payload_data: Vec<u8>,
+        trim_length_to: Option<usize>,
+        resolve_trimmed_entries: bool,
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), BackboneError> {
+        let (entry_facts, trimmed_entries, trim_hashes) = self
+            .prepare_committed_log_append_owned_profiled(
+                wall_time,
+                logical,
+                gid,
+                next_hashes,
+                entry_type,
+                meta_data,
+                payload_data,
+                trim_length_to,
+                resolve_trimmed_entries,
+            )?;
+        let entry_row = self.committed_entry_facts_to_row_profiled(&entry_facts);
+        let trim_rows = self.native_backbone_trim_entries_to_rows_profiled(
+            trimmed_entries,
+            resolve_trimmed_entries,
+        );
         Ok((entry_facts, trim_hashes, entry_row, trim_rows))
     }
 
@@ -433,8 +502,8 @@ impl NativePeerbitBackbone {
         self_hash: &str,
         self_replicating: bool,
         expected_len: usize,
-        mismatch_label: &str,
-    ) -> Result<Vec<NativeLocalAppendCompactFacts>, JsValue> {
+        mismatch_label: &'static str,
+    ) -> Result<Vec<NativeLocalAppendCompactFacts>, BackboneError> {
         let coordinate_plan_started = self.append_profile_enabled.then(crate::time::now_ms);
         let coordinate_facts = commit_local_appends_for_gids_compact_core(
             &mut self.shared_log,
@@ -451,7 +520,9 @@ impl NativePeerbitBackbone {
             self.append_profile.coordinate_plan_ms += crate::time::now_ms() - started;
         }
         if coordinate_facts.len() != expected_len {
-            return Err(JsValue::from_str(mismatch_label));
+            return Err(BackboneError::MismatchedCompactCoordinateFacts(
+                mismatch_label,
+            ));
         }
         Ok(coordinate_facts)
     }
@@ -467,7 +538,7 @@ impl NativePeerbitBackbone {
         plain_put_payload_data: Option<&[u8]>,
         delete_trimmed_document_heads: bool,
         trim_hashes: &[String],
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, BackboneError> {
         let document_index_started = self.append_profile_enabled.then(crate::time::now_ms);
         self.put_document_index_for_append_with_plain_put_payload(
             document_index_commit,
@@ -489,7 +560,7 @@ impl NativePeerbitBackbone {
         &self,
         document_index_commit: &mut DocumentIndexAppendCommit,
         fallback_gid: String,
-    ) -> Result<(Option<DocumentContextFacts>, String, Vec<String>), JsValue> {
+    ) -> Result<(Option<DocumentContextFacts>, String, Vec<String>), BackboneError> {
         let previous_context = self.document_context_facts_by_key(&document_index_commit.key)?;
         let known_existing = previous_context.is_some();
         let gid = previous_context
@@ -516,7 +587,7 @@ impl NativePeerbitBackbone {
         wall_time: u64,
         document_gid: &str,
         payload_size: u32,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let entry_row = if row.length() == 2 && Array::is_array(&row.get(0)) {
             array_from_value(row.get(0), "native trim document index entry row")?
         } else {
@@ -539,7 +610,7 @@ impl NativePeerbitBackbone {
         hash: &str,
         gid: &str,
         payload_size: u32,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         self.put_document_index_for_append_with_plain_put_payload(
             document_index_commit,
             wall_time,
@@ -558,7 +629,7 @@ impl NativePeerbitBackbone {
         gid: &str,
         payload_size: u32,
         plain_put_payload_data: Option<&[u8]>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let Some(document_index_commit) = document_index_commit else {
             return Ok(());
         };
@@ -583,7 +654,7 @@ impl NativePeerbitBackbone {
         gid: &str,
         payload_size: u32,
         plain_put_payload_data: Option<&[u8]>,
-    ) -> Result<PreparedDocumentIndexAppendPut, JsValue> {
+    ) -> Result<PreparedDocumentIndexAppendPut, BackboneError> {
         let record_previous_signer = document_index_commit
             .required_previous_signer_public_key
             .is_some();
@@ -626,9 +697,10 @@ impl NativePeerbitBackbone {
                     )?
                 }
                 DocumentIndexProjectionPlan::Cached(index) => {
-                    let plan = self.document_projection_plans.get(index).ok_or_else(|| {
-                        JsValue::from_str("Missing cached document projection plan")
-                    })?;
+                    let plan = self
+                        .document_projection_plans
+                        .get(index)
+                        .ok_or(BackboneError::MissingCachedDocumentProjectionPlan)?;
                     project_document_index_simple_bytes_with_plan(
                         &encoded_document,
                         plan,
@@ -644,15 +716,13 @@ impl NativePeerbitBackbone {
             DocumentIndexValuePrefix::PlainPutPayloadIdentity => plain_put_payload_data
                 .map(plain_put_document_bytes_from_payload)
                 .transpose()?
-                .ok_or_else(|| JsValue::from_str("Missing plain put payload for document index"))?
+                .ok_or(BackboneError::MissingPlainPutPayloadForDocumentIndex)?
                 .to_vec(),
             DocumentIndexValuePrefix::PlainPutPayloadProjection { plan, signer } => {
                 let encoded_document = plain_put_payload_data
                     .map(plain_put_document_bytes_from_payload)
                     .transpose()?
-                    .ok_or_else(|| {
-                        JsValue::from_str("Missing plain put payload for document projection")
-                    })?;
+                    .ok_or(BackboneError::MissingPlainPutPayloadForDocumentProjection)?;
                 match plan {
                     DocumentIndexProjectionPlan::Inline(plan) => {
                         project_document_index_simple_bytes_with_plan(
@@ -667,9 +737,10 @@ impl NativePeerbitBackbone {
                         )?
                     }
                     DocumentIndexProjectionPlan::Cached(index) => {
-                        let plan = self.document_projection_plans.get(index).ok_or_else(|| {
-                            JsValue::from_str("Missing cached document projection plan")
-                        })?;
+                        let plan = self
+                            .document_projection_plans
+                            .get(index)
+                            .ok_or(BackboneError::MissingCachedDocumentProjectionPlan)?;
                         project_document_index_simple_bytes_with_plan(
                             encoded_document,
                             plan,
@@ -747,5 +818,36 @@ impl NativePeerbitBackbone {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::BackboneError;
+
+    #[test]
+    fn compact_coordinate_mismatch_variant_renders_exact_message() {
+        for label in [
+            "Native no-next compact batch returned mismatched coordinate facts",
+            "Native latest batch returned mismatched coordinate facts",
+            "Native compact batch returned mismatched coordinate facts",
+        ] {
+            assert_eq!(
+                BackboneError::MismatchedCompactCoordinateFacts(label).to_string(),
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn batch_gid_variants_render_exact_messages() {
+        assert_eq!(
+            BackboneError::ExpectedString("batch gid").to_string(),
+            "Expected batch gid string"
+        );
+        assert_eq!(
+            BackboneError::ExpectedString("batch fallback gid").to_string(),
+            "Expected batch fallback gid string"
+        );
     }
 }

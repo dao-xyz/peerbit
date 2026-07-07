@@ -444,14 +444,6 @@ pub(crate) fn write_bool(out: &mut Vec<u8>, value: bool) {
     out.push(if value { 1 } else { 0 });
 }
 
-pub(crate) fn js_error(error: impl std::fmt::Display) -> JsValue {
-    JsValue::from(BackboneError::Message(error.to_string()))
-}
-
-pub(crate) fn decode_error(error: impl std::fmt::Display) -> JsValue {
-    JsValue::from(BackboneError::Message(error.to_string()))
-}
-
 pub(crate) fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, BackboneError> {
     match resolution {
         "u32" => {

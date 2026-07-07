@@ -17,12 +17,26 @@ use crate::documents::{
     document_index_plain_put_payload_append_commit, DocumentIndexAppendCommit,
     DocumentIndexValuePrefix,
 };
+use crate::error::BackboneError;
 use crate::js_interop::{
     ensure_same_len, has_duplicate_strings, optional_usize_from_js, required_bytes_from_array,
     strings_from_array, strings_to_array,
 };
 use crate::shared_log_plan::leader_samples_to_optional_rows;
 use crate::NativePeerbitBackbone;
+
+/// Forward a JsValue error from an untyped documents-layer helper without
+/// altering its message. The document-commit builders and the
+/// required-previous-signer validator construct every error via
+/// `JsValue::from_str`, so `as_string()` recovers the exact string they would
+/// have thrown; the fallback only guards the theoretically-non-string case.
+fn js_wrapper_error(error: JsValue) -> BackboneError {
+    BackboneError::Message(
+        error
+            .as_string()
+            .unwrap_or_else(|| "Invalid document index append input".to_string()),
+    )
+}
 
 #[wasm_bindgen]
 impl NativePeerbitBackbone {
@@ -43,7 +57,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -60,7 +74,7 @@ impl NativePeerbitBackbone {
             None,
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -128,7 +142,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -154,7 +168,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -191,21 +205,23 @@ impl NativePeerbitBackbone {
             document_projection_encoded_document,
             document_projection_signer,
         )?;
-        self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            document_index_commit,
+        Ok(
+            self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                document_index_commit,
+            )?,
         )
     }
 
@@ -246,21 +262,23 @@ impl NativePeerbitBackbone {
         )?;
         document_index_commit.required_previous_signer_public_key =
             Some(required_previous_signer_public_key.to_vec());
-        self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            document_index_commit,
+        Ok(
+            self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                document_index_commit,
+            )?,
         )
     }
 
@@ -296,21 +314,23 @@ impl NativePeerbitBackbone {
             document_projection_encoded_document,
             document_projection_signer,
         )?;
-        self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            document_index_commit,
+        Ok(
+            self.prepare_plain_committed_storage_append_document_index_latest_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                document_index_commit,
+            )?,
         )
     }
 
@@ -348,21 +368,22 @@ impl NativePeerbitBackbone {
             document_projection_encoded_document,
             document_projection_signer,
         )?;
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            trim_length_to,
-            document_index_commit,
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                trim_length_to,
+                document_index_commit,
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -391,21 +412,22 @@ impl NativePeerbitBackbone {
             document_byte_element_index_limit,
             document_delete_trimmed_heads,
         )?;
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            trim_length_to,
-            document_index_commit,
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                trim_length_to,
+                document_index_commit,
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -445,21 +467,22 @@ impl NativePeerbitBackbone {
         )?;
         document_index_commit.required_previous_signer_public_key =
             Some(required_previous_signer_public_key.to_vec());
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            trim_length_to,
-            document_index_commit,
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                trim_length_to,
+                document_index_commit,
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -494,21 +517,22 @@ impl NativePeerbitBackbone {
             document_projection_encoded_document,
             document_projection_signer,
         )?;
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            trim_length_to,
-            document_index_commit,
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                trim_length_to,
+                document_index_commit,
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -542,21 +566,22 @@ impl NativePeerbitBackbone {
                 document_projection_plan_id,
                 document_projection_signer,
             )?;
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
-            wall_time,
-            logical,
-            fallback_gid,
-            entry_type,
-            meta_data,
-            payload_data,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            trim_length_to,
-            document_index_commit,
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
+                wall_time,
+                logical,
+                fallback_gid,
+                entry_type,
+                meta_data,
+                payload_data,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                trim_length_to,
+                document_index_commit,
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -596,38 +621,39 @@ impl NativePeerbitBackbone {
             "batch document value prefixes",
         )?;
         let document_keys = strings_from_array(document_keys)?;
-        self.prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
-            wall_times,
-            logicals,
-            fallback_gids,
-            entry_type,
-            meta_datas,
-            payload_datas,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            &mut |index| {
-                document_index_append_commit(
-                    document_keys[index as usize].clone(),
-                    required_bytes_from_array(
-                        &document_value_prefix_bytes,
-                        index,
-                        "document value prefix",
-                    )?
-                    .to_vec(),
-                    String::new(),
-                    document_byte_element_index_limit,
-                    document_delete_trimmed_heads,
-                    JsValue::UNDEFINED,
-                    JsValue::UNDEFINED,
-                    JsValue::UNDEFINED,
-                )
-            },
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
+                wall_times,
+                logicals,
+                fallback_gids,
+                entry_type,
+                meta_datas,
+                payload_datas,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                &mut |index| {
+                    document_index_append_commit(
+                        document_keys[index as usize].clone(),
+                        required_bytes_from_array(
+                            &document_value_prefix_bytes,
+                            index,
+                            "document value prefix",
+                        )?
+                        .to_vec(),
+                        String::new(),
+                        document_byte_element_index_limit,
+                        document_delete_trimmed_heads,
+                        JsValue::UNDEFINED,
+                        JsValue::UNDEFINED,
+                        JsValue::UNDEFINED,
+                    )
+                },
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -669,41 +695,42 @@ impl NativePeerbitBackbone {
         )?;
         let required_previous_signer_public_key = required_previous_signer_public_key.to_vec();
         let document_keys = strings_from_array(document_keys)?;
-        self.prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
-            wall_times,
-            logicals,
-            fallback_gids,
-            entry_type,
-            meta_datas,
-            payload_datas,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            &mut |index| {
-                let mut document_index_commit = document_index_append_commit(
-                    document_keys[index as usize].clone(),
-                    required_bytes_from_array(
-                        &document_value_prefix_bytes,
-                        index,
-                        "document value prefix",
-                    )?
-                    .to_vec(),
-                    String::new(),
-                    document_byte_element_index_limit,
-                    document_delete_trimmed_heads,
-                    JsValue::UNDEFINED,
-                    JsValue::UNDEFINED,
-                    JsValue::UNDEFINED,
-                )?;
-                document_index_commit.required_previous_signer_public_key =
-                    Some(required_previous_signer_public_key.clone());
-                Ok(document_index_commit)
-            },
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
+                wall_times,
+                logicals,
+                fallback_gids,
+                entry_type,
+                meta_datas,
+                payload_datas,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                &mut |index| {
+                    let mut document_index_commit = document_index_append_commit(
+                        document_keys[index as usize].clone(),
+                        required_bytes_from_array(
+                            &document_value_prefix_bytes,
+                            index,
+                            "document value prefix",
+                        )?
+                        .to_vec(),
+                        String::new(),
+                        document_byte_element_index_limit,
+                        document_delete_trimmed_heads,
+                        JsValue::UNDEFINED,
+                        JsValue::UNDEFINED,
+                        JsValue::UNDEFINED,
+                    )?;
+                    document_index_commit.required_previous_signer_public_key =
+                        Some(required_previous_signer_public_key.clone());
+                    Ok(document_index_commit)
+                },
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -762,7 +789,7 @@ impl NativePeerbitBackbone {
                 JsValue::UNDEFINED,
             )?);
         }
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
+        Ok(self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
             wall_times,
             logicals,
             fallback_gids,
@@ -777,7 +804,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             &document_keys,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -820,7 +847,7 @@ impl NativePeerbitBackbone {
                 document_delete_trimmed_heads,
             )?);
         }
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
+        Ok(self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
             wall_times,
             logicals,
             fallback_gids,
@@ -835,7 +862,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             &document_keys,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -899,7 +926,7 @@ impl NativePeerbitBackbone {
                 Some(required_previous_signer_public_key.clone());
             document_index_commits.push(document_index_commit);
         }
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
+        Ok(self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
             wall_times,
             logicals,
             fallback_gids,
@@ -914,7 +941,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             &document_keys,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -957,36 +984,37 @@ impl NativePeerbitBackbone {
             &document_projection_signers,
         )?;
         let document_keys = strings_from_array(document_keys)?;
-        self.prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
-            wall_times,
-            logicals,
-            fallback_gids,
-            entry_type,
-            meta_datas,
-            payload_datas,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            &mut |index| {
-                let encoded_document = required_projection_encoded_document(
-                    &document_projection_encoded_documents,
-                    index,
-                )?;
-                document_index_cached_projection_append_commit(
-                    document_keys[index as usize].clone(),
-                    String::new(),
-                    document_byte_element_index_limit,
-                    document_delete_trimmed_heads,
-                    document_projection_plan_ids.get_index(index),
-                    encoded_document,
-                    document_projection_signers.get(index),
-                )
-            },
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
+                wall_times,
+                logicals,
+                fallback_gids,
+                entry_type,
+                meta_datas,
+                payload_datas,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                &mut |index| {
+                    let encoded_document = required_projection_encoded_document(
+                        &document_projection_encoded_documents,
+                        index,
+                    )?;
+                    document_index_cached_projection_append_commit(
+                        document_keys[index as usize].clone(),
+                        String::new(),
+                        document_byte_element_index_limit,
+                        document_delete_trimmed_heads,
+                        document_projection_plan_ids.get_index(index),
+                        encoded_document,
+                        document_projection_signers.get(index),
+                    )
+                },
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1031,39 +1059,40 @@ impl NativePeerbitBackbone {
         )?;
         let required_previous_signer_public_key = required_previous_signer_public_key.to_vec();
         let document_keys = strings_from_array(document_keys)?;
-        self.prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
-            wall_times,
-            logicals,
-            fallback_gids,
-            entry_type,
-            meta_datas,
-            payload_datas,
-            replicas,
-            role_age_ms,
-            now,
-            self_hash,
-            self_replicating,
-            resolve_trimmed_entries,
-            trim_length_to,
-            &mut |index| {
-                let encoded_document = required_projection_encoded_document(
-                    &document_projection_encoded_documents,
-                    index,
-                )?;
-                let mut document_index_commit = document_index_cached_projection_append_commit(
-                    document_keys[index as usize].clone(),
-                    String::new(),
-                    document_byte_element_index_limit,
-                    document_delete_trimmed_heads,
-                    document_projection_plan_ids.get_index(index),
-                    encoded_document,
-                    document_projection_signers.get(index),
-                )?;
-                document_index_commit.required_previous_signer_public_key =
-                    Some(required_previous_signer_public_key.clone());
-                Ok(document_index_commit)
-            },
-        )
+        Ok(self
+            .prepare_plain_committed_storage_append_document_index_latest_batch_transaction_inner(
+                wall_times,
+                logicals,
+                fallback_gids,
+                entry_type,
+                meta_datas,
+                payload_datas,
+                replicas,
+                role_age_ms,
+                now,
+                self_hash,
+                self_replicating,
+                resolve_trimmed_entries,
+                trim_length_to,
+                &mut |index| {
+                    let encoded_document = required_projection_encoded_document(
+                        &document_projection_encoded_documents,
+                        index,
+                    )?;
+                    let mut document_index_commit = document_index_cached_projection_append_commit(
+                        document_keys[index as usize].clone(),
+                        String::new(),
+                        document_byte_element_index_limit,
+                        document_delete_trimmed_heads,
+                        document_projection_plan_ids.get_index(index),
+                        encoded_document,
+                        document_projection_signers.get(index),
+                    )?;
+                    document_index_commit.required_previous_signer_public_key =
+                        Some(required_previous_signer_public_key.clone());
+                    Ok(document_index_commit)
+                },
+            )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1123,7 +1152,7 @@ impl NativePeerbitBackbone {
                 document_projection_signers.get(index_u32),
             )?);
         }
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
+        Ok(self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
             wall_times,
             logicals,
             fallback_gids,
@@ -1138,7 +1167,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             &document_keys,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1203,7 +1232,7 @@ impl NativePeerbitBackbone {
                 Some(required_previous_signer_public_key.clone());
             document_index_commits.push(document_index_commit);
         }
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
+        Ok(self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
             wall_times,
             logicals,
             fallback_gids,
@@ -1218,7 +1247,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             &document_keys,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1274,7 +1303,7 @@ impl NativePeerbitBackbone {
                 )?,
             );
         }
-        self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
+        Ok(self.prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction_dispatch(
             wall_times,
             logicals,
             fallback_gids,
@@ -1289,7 +1318,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             &document_keys,
             document_index_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1310,7 +1339,7 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -1327,7 +1356,7 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1397,7 +1426,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -1423,7 +1452,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 }
 
@@ -1445,7 +1474,7 @@ impl NativePeerbitBackbone {
         trim_length_to: Option<usize>,
         document_keys: &[String],
         document_index_commits: Vec<DocumentIndexAppendCommit>,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         if has_duplicate_strings(document_keys) {
             let out = Array::new();
             for (index, document_index_commit) in document_index_commits.into_iter().enumerate() {
@@ -1453,7 +1482,7 @@ impl NativePeerbitBackbone {
                 let fallback_gid = fallback_gids
                     .get(index_u32)
                     .as_string()
-                    .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
+                    .ok_or(BackboneError::ExpectedString("batch fallback gid"))?;
                 let row = self
                     .prepare_plain_committed_storage_append_document_index_latest_compact_transaction_inner(
                         wall_times.get_index(index_u32),
@@ -1508,11 +1537,12 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: JsValue,
         mut document_index_commit: DocumentIndexAppendCommit,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let (_, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-        self.validate_document_index_required_previous_signer(&document_index_commit)?;
+        self.validate_document_index_required_previous_signer(&document_index_commit)
+            .map_err(js_wrapper_error)?;
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
@@ -1553,7 +1583,7 @@ impl NativePeerbitBackbone {
             u32,
         )
             -> Result<DocumentIndexAppendCommit, JsValue>,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let batch_len = payload_datas.length() as usize;
         if batch_len == 0 {
             return Ok(Array::new());
@@ -1624,16 +1654,25 @@ impl NativePeerbitBackbone {
                 self.append_profile.coordinate_core_ms += crate::time::now_ms() - started;
             }
 
+            // Rebuild the frozen JS entry/trim rows from the owned pending state
+            // at the emit boundary, timed against the same entry_row/trim_rows
+            // profile counters the pre-lift inline build used.
+            let entry_row = self.committed_entry_facts_to_row_profiled(&pending.entry_facts);
+            let trim_rows = self.native_backbone_trim_entries_to_rows_profiled(
+                pending.trimmed_entries,
+                pending.resolve_trimmed_entries,
+            );
+
             let result_row_started = profile_enabled.then(crate::time::now_ms);
             let row = Array::new();
-            row.push(&pending.entry_row);
+            row.push(&entry_row);
             row.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
             row.push(&JsValue::from_bool(coordinate_facts.is_leader));
             row.push(&JsValue::from_bool(
                 coordinate_facts.assigned_to_range_boundary,
             ));
             row.push(&coordinate_plan_to_row(&self.resolution, &coordinate_facts));
-            row.push(&pending.trim_rows);
+            row.push(&trim_rows);
             row.push(&strings_to_array(pending.trim_hashes));
             row.push(&JsValue::from_bool(
                 pending.document_trimmed_heads_processed,
@@ -1680,27 +1719,29 @@ impl NativePeerbitBackbone {
             -> Result<DocumentIndexAppendCommit, JsValue>,
         pending_appends: &mut Vec<LatestBatchPendingAppend>,
         coordinate_inputs: &mut Vec<NativeLocalAppendCompactInput>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let fallback_gid = fallback_gids
             .get(index)
             .as_string()
-            .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
-        let mut document_index_commit = make_document_index_commit(index)?;
+            .ok_or(BackboneError::ExpectedString("batch fallback gid"))?;
+        let mut document_index_commit =
+            make_document_index_commit(index).map_err(js_wrapper_error)?;
         let payload_data = required_bytes_from_array(payload_datas, index, "payload")?;
         let trim_length_to = optional_usize_from_js(trim_length_to.clone(), "trimLengthTo")?;
         let payload_size = payload_data.length();
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
         let (previous_document_context, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-        self.validate_document_index_required_previous_signer(&document_index_commit)?;
+        self.validate_document_index_required_previous_signer(&document_index_commit)
+            .map_err(js_wrapper_error)?;
 
         let (meta_data, payload_data) =
             self.copy_append_inputs_profiled(meta_datas.get(index), &payload_data)?;
 
         let wall_time = wall_times.get_index(index);
-        let (entry_facts, trim_hashes, entry_row, trim_rows) = self
-            .prepare_committed_log_append_rows_profiled(
+        let (entry_facts, trimmed_entries, trim_hashes) = self
+            .prepare_committed_log_append_owned_profiled(
                 wall_time,
                 logicals.get_index(index),
                 gid.clone(),
@@ -1737,13 +1778,18 @@ impl NativePeerbitBackbone {
             next_hashes: next_hashes.clone(),
             delete_hashes: trim_hashes.clone(),
         });
+        // Keep the entry hash for the document-index put; `entry_facts` itself
+        // moves into the pending state so the JS entry row is rebuilt only when
+        // the batch is emitted.
+        let entry_hash = entry_facts.hash.clone();
         let mut pending_append = LatestBatchPendingAppend {
             wall_time,
             next_hashes,
             meta_bytes: entry_facts.meta_bytes.clone(),
             trim_hashes,
-            entry_row,
-            trim_rows,
+            entry_facts,
+            trimmed_entries,
+            resolve_trimmed_entries,
             document_trimmed_heads_processed: false,
             previous_document_context,
         };
@@ -1752,7 +1798,7 @@ impl NativePeerbitBackbone {
         let prepared_document_put = match self.prepare_document_index_append_put(
             document_index_commit,
             wall_time,
-            &entry_facts.hash,
+            &entry_hash,
             &gid,
             payload_size,
             None,
@@ -1786,7 +1832,7 @@ impl NativePeerbitBackbone {
         now: &str,
         self_hash: &str,
         self_replicating: bool,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         if coordinate_inputs.is_empty() {
             return Ok(());
         }
@@ -1829,7 +1875,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         trim_length_to: Option<usize>,
         document_index_commits: Vec<DocumentIndexAppendCommit>,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let batch_len = document_index_commits.len();
@@ -1842,13 +1888,14 @@ impl NativePeerbitBackbone {
             let fallback_gid = fallback_gids
                 .get(index_u32)
                 .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected batch fallback gid string"))?;
+                .ok_or(BackboneError::ExpectedString("batch fallback gid"))?;
             let payload_bytes = required_bytes_from_array(&payload_datas, index_u32, "payload")?;
             let payload_size = payload_bytes.length();
             let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
             let (previous_document_context, gid, next_hashes) = self
                 .resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-            self.validate_document_index_required_previous_signer(&document_index_commit)?;
+            self.validate_document_index_required_previous_signer(&document_index_commit)
+                .map_err(js_wrapper_error)?;
 
             let (meta_data, payload_data) =
                 self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes)?;
@@ -1976,14 +2023,15 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         trim_length_to: Option<usize>,
         mut document_index_commit: DocumentIndexAppendCommit,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let payload_size = payload_data.length();
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
         let (previous_document_context, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-        self.validate_document_index_required_previous_signer(&document_index_commit)?;
+        self.validate_document_index_required_previous_signer(&document_index_commit)
+            .map_err(js_wrapper_error)?;
 
         let (meta_data, payload_data) =
             self.copy_append_inputs_profiled(meta_data, &payload_data)?;
@@ -2060,5 +2108,29 @@ impl NativePeerbitBackbone {
             self.append_profile.storage_append_inner_ms += crate::time::now_ms() - started;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::BackboneError;
+
+    // `js_wrapper_error` forwards the untyped documents-layer JsValue messages
+    // verbatim through `BackboneError::Message`. These are the exact strings
+    // the required-previous-signer validator throws; pin their Display so the
+    // forwarded messages stay byte-for-byte with master. (The `JsValue` recovery
+    // itself is exercised on wasm by the TS suite; host `cargo test` cannot
+    // construct a round-tripping `JsValue`, so it pins the Message rendering.)
+    #[test]
+    fn forwarded_document_signer_messages_render_verbatim() {
+        for message in [
+            "Previous document signer public key unavailable",
+            "Previous document signer public key did not match native policy",
+        ] {
+            assert_eq!(
+                BackboneError::Message(message.to_string()).to_string(),
+                message
+            );
+        }
     }
 }

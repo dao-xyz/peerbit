@@ -6,12 +6,25 @@ use crate::append_tx::coordinate_plan_to_row;
 use crate::documents::{
     document_context_facts_to_row, document_index_append_commit, DocumentIndexAppendCommit,
 };
+use crate::error::BackboneError;
 use crate::js_interop::{
     array_from_value, bytes_field, string_field, strings_from_array, strings_to_array,
     trim_hashes_vec,
 };
 use crate::shared_log_plan::leader_samples_to_optional_rows;
 use crate::NativePeerbitBackbone;
+
+/// Forward a JsValue error from an untyped log-rust wrapper without altering
+/// its message. These wrappers construct every error via `JsValue::from_str`,
+/// so `as_string()` recovers the exact string the wrapper would have thrown;
+/// the fallback only guards the theoretically-non-string case.
+fn js_wrapper_error(error: JsValue) -> BackboneError {
+    BackboneError::Message(
+        error
+            .as_string()
+            .unwrap_or_else(|| "Expected string array".to_string()),
+    )
+}
 
 #[wasm_bindgen]
 impl NativePeerbitBackbone {
@@ -81,7 +94,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -98,7 +111,7 @@ impl NativePeerbitBackbone {
             None,
             false,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -118,7 +131,7 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -135,7 +148,7 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             false,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -162,7 +175,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -188,7 +201,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -216,7 +229,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -242,7 +255,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -262,7 +275,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -279,7 +292,7 @@ impl NativePeerbitBackbone {
             None,
             false,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -300,7 +313,7 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -317,7 +330,7 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             false,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -345,7 +358,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -371,7 +384,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -400,7 +413,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -426,7 +439,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 }
 
@@ -450,7 +463,7 @@ impl NativePeerbitBackbone {
         trim_length_to: Option<usize>,
         commit_blocks: bool,
         document_index_commit: Option<DocumentIndexAppendCommit>,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let payload_size = payload_data.length();
@@ -485,6 +498,13 @@ impl NativePeerbitBackbone {
             )
         } else if let Some(trim_length_to) = trim_length_to {
             let next_hashes_array = strings_to_array(next_hashes.clone());
+            // No typed log-rust equivalent exists for the storage-facts mode
+            // (it hands the storage bytes back to JS instead of committing
+            // them to a native block store). It is the one append path with
+            // no typed core to re-point to, so its JsValue error is forwarded
+            // verbatim through BackboneError::Message, preserving whatever
+            // string the wrapper produced (the dominant reachable case is
+            // strings_from_array over the array built just above).
             let row = self
                 .log
                 .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
@@ -497,7 +517,8 @@ impl NativePeerbitBackbone {
                     meta_data,
                     payload_data,
                     trim_length_to,
-                )?;
+                )
+                .map_err(js_wrapper_error)?;
             let row = array_from_value(row.into(), "native storage trim append row")?;
             let entry_row = array_from_value(row.get(0), "native storage trim append entry row")?;
             let trim_rows = array_from_value(row.get(1), "native storage trim append trim rows")?;
@@ -508,6 +529,8 @@ impl NativePeerbitBackbone {
             (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes)
         } else {
             let next_hashes_array = strings_to_array(next_hashes.clone());
+            // Same untyped storage-facts wrapper seam as the trim branch
+            // above; its JsValue error is forwarded verbatim.
             let row = self
                 .log
                 .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
@@ -519,7 +542,8 @@ impl NativePeerbitBackbone {
                     entry_type,
                     meta_data,
                     payload_data,
-                )?;
+                )
+                .map_err(js_wrapper_error)?;
             let hash = string_field(&row, 1, "storage entry hash")?;
             let digest = bytes_field(&row, 5, "storage entry hash digest")?;
             let meta_bytes = bytes_field(&row, 4, "storage entry meta bytes")?;

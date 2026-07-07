@@ -9,6 +9,7 @@ use peerbit_shared_log_rust::{EntryCoordinateCommit, GidLeaderPlan};
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
+use crate::error::BackboneError;
 use crate::js_interop::{
     bytes_vec_from_array, ensure_same_len, hash_number_u64, numbers_to_rows, strings_from_array,
     strings_slice_to_array, strings_to_array,
@@ -101,7 +102,7 @@ fn prepared_raw_receive_selection_from_leader_plans(
     leader_plans: &[GidLeaderPlan],
     self_hash: &str,
     used_leader_sample_plans: bool,
-) -> Result<JsValue, JsValue> {
+) -> Result<JsValue, BackboneError> {
     if leader_plans.len() != groups.len() {
         return Ok(JsValue::UNDEFINED);
     }
@@ -130,7 +131,7 @@ fn prepared_raw_receive_selection_from_leader_plans(
     let mut dropped_indexes = Vec::new();
     for (original_index, retained) in retained_original_indexes.iter().enumerate() {
         let original_index = u32::try_from(original_index)
-            .map_err(|_| JsValue::from_str("Raw receive original index overflow"))?;
+            .map_err(|_| BackboneError::RawReceiveOriginalIndexOverflow)?;
         if *retained {
             retained_indexes.push(original_index);
         } else {
@@ -148,7 +149,7 @@ fn prepared_raw_receive_selection_from_leader_plans(
                 selected_index_by_original[original_index] = Some(selected_index);
                 selected_index = selected_index
                     .checked_add(1)
-                    .ok_or_else(|| JsValue::from_str("Raw receive selected index overflow"))?;
+                    .ok_or(BackboneError::RawReceiveSelectedIndexOverflow)?;
             }
         }
         for (index, (group, leader_plan)) in groups.iter().zip(leader_plans).enumerate() {
@@ -272,7 +273,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, true)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
+        Ok(self.prepare_raw_receive_columns_from_entries(prepared, true, true)?)
     }
 
     pub fn prepare_raw_receive_unverified_columns_batch(
@@ -286,7 +287,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, false)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
+        Ok(self.prepare_raw_receive_columns_from_entries(prepared, true, true)?)
     }
 
     pub fn prepare_raw_receive_expected_columns_batch(
@@ -302,7 +303,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
+        Ok(self.prepare_raw_receive_columns_from_entries(prepared, true, true)?)
     }
 
     pub fn prepare_raw_receive_unverified_expected_columns_batch(
@@ -318,7 +319,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, true, true)
+        Ok(self.prepare_raw_receive_columns_from_entries(prepared, true, true)?)
     }
 
     pub fn prepare_raw_receive_expected_compact_columns_batch(
@@ -334,7 +335,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, false, false)
+        Ok(self.prepare_raw_receive_columns_from_entries(prepared, false, false)?)
     }
 
     pub fn prepare_raw_receive_unverified_expected_compact_columns_batch(
@@ -350,7 +351,7 @@ impl NativePeerbitBackbone {
             self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
-        self.prepare_raw_receive_columns_from_entries(prepared, false, false)
+        Ok(self.prepare_raw_receive_columns_from_entries(prepared, false, false)?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -611,7 +612,7 @@ impl NativePeerbitBackbone {
         include_strict_full_replica: bool,
         _from_hash: String,
     ) -> Result<JsValue, JsValue> {
-        self.plan_prepared_raw_receive_selection_core(
+        Ok(self.plan_prepared_raw_receive_selection_core(
             strings_from_array(hashes)?,
             min_replicas,
             max_replicas,
@@ -623,7 +624,7 @@ impl NativePeerbitBackbone {
             include_self,
             full_replica_fallback,
             include_strict_full_replica,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -757,7 +758,7 @@ impl NativePeerbitBackbone {
             return Ok(JsValue::UNDEFINED);
         }
 
-        prepared_raw_receive_selection_from_leader_plans(
+        Ok(prepared_raw_receive_selection_from_leader_plans(
             &self.resolution,
             &groups,
             expected_hash_count,
@@ -765,7 +766,7 @@ impl NativePeerbitBackbone {
             &leader_plans,
             &self_hash,
             false,
-        )
+        )?)
     }
 
     pub fn verify_prepared_raw_receive_entries(
@@ -802,7 +803,7 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_prepared_raw_receive_batch_core(hashes, &heads, coordinate_commits)
+        Ok(self.commit_prepared_raw_receive_batch_core(hashes, &heads, coordinate_commits)?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -830,7 +831,7 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_prepared_raw_receive_batch_core(hashes, &heads, coordinate_commits)
+        Ok(self.commit_prepared_raw_receive_batch_core(hashes, &heads, coordinate_commits)?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -856,7 +857,7 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_prepared_raw_receive_join_batch_core(hashes, &heads, coordinate_commits)
+        Ok(self.commit_prepared_raw_receive_join_batch_core(hashes, &heads, coordinate_commits)?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -884,7 +885,7 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_prepared_raw_receive_join_batch_core(hashes, &heads, coordinate_commits)
+        Ok(self.commit_prepared_raw_receive_join_batch_core(hashes, &heads, coordinate_commits)?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -912,12 +913,12 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_verified_prepared_raw_receive_join_batch_core(
+        Ok(self.commit_verified_prepared_raw_receive_join_batch_core(
             hashes,
             &heads,
             Some(verify_hashes),
             coordinate_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -947,12 +948,12 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_verified_prepared_raw_receive_join_batch_core(
+        Ok(self.commit_verified_prepared_raw_receive_join_batch_core(
             hashes,
             &heads,
             Some(verify_hashes),
             coordinate_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -978,12 +979,12 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_verified_prepared_raw_receive_join_batch_core(
+        Ok(self.commit_verified_prepared_raw_receive_join_batch_core(
             hashes,
             &heads,
             None,
             coordinate_commits,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1011,12 +1012,12 @@ impl NativePeerbitBackbone {
             coordinate_assigned_to_range_boundaries,
             coordinate_requested_replicas,
         )?;
-        self.commit_verified_prepared_raw_receive_join_batch_core(
+        Ok(self.commit_verified_prepared_raw_receive_join_batch_core(
             hashes,
             &heads,
             None,
             coordinate_commits,
-        )
+        )?)
     }
 
     pub fn clear_prepared_raw_receive_entries(&mut self, hashes: Array) -> Result<usize, JsValue> {
@@ -1036,7 +1037,7 @@ impl NativePeerbitBackbone {
         blocks: Vec<Vec<u8>>,
         expected_cids: Option<Vec<String>>,
         verify_signatures: bool,
-    ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
+    ) -> Result<Vec<PreparedRawEntryV0>, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let prepare_started = profile_enabled.then(crate::time::now_ms);
         let mut raw_profile = profile_enabled.then(RawEntryV0PrepareProfile::default);
@@ -1060,7 +1061,7 @@ impl NativePeerbitBackbone {
         prepared: Vec<PreparedRawEntryV0>,
         include_hash_digest_bytes: bool,
         include_cids: bool,
-    ) -> Result<Array, JsValue> {
+    ) -> Result<Array, BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let columns_started = profile_enabled.then(crate::time::now_ms);
         let len = prepared.len();
@@ -1156,7 +1157,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<JsValue, BackboneError> {
         let expected_hash_count = hashes.len();
         if expected_hash_count == 0 {
             return Ok(JsValue::UNDEFINED);
@@ -1193,7 +1194,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<JsValue, BackboneError> {
         let expected_hash_count = hashes.len();
         let mut planned_hash_count = 0usize;
         let mut gids = Vec::with_capacity(groups.len());
@@ -1250,7 +1251,7 @@ impl NativePeerbitBackbone {
         hashes: Vec<String>,
         min_replicas: u32,
         max_replicas: JsValue,
-    ) -> Result<Option<Vec<ResolvedPendingRawReceiveGroupPlan>>, JsValue> {
+    ) -> Result<Option<Vec<ResolvedPendingRawReceiveGroupPlan>>, BackboneError> {
         if hashes.is_empty() {
             return Ok(Some(Vec::new()));
         }
@@ -1261,7 +1262,7 @@ impl NativePeerbitBackbone {
         } else {
             max_replicas
                 .as_f64()
-                .ok_or_else(|| JsValue::from_str("maxReplicas must be a number"))?
+                .ok_or(BackboneError::MaxReplicasMustBeNumber)?
                 .max(0.0)
                 .min(u32::MAX as f64) as u32
         };
@@ -1277,7 +1278,7 @@ impl NativePeerbitBackbone {
                 return Ok(None);
             };
             let input_index = u32::try_from(input_index)
-                .map_err(|_| JsValue::from_str("Raw receive group index overflow"))?;
+                .map_err(|_| BackboneError::RawReceiveGroupIndexOverflow)?;
 
             let group_index = if let Some(index) = group_indexes.get(&pending.entry.gid) {
                 *index
@@ -1345,7 +1346,7 @@ impl NativePeerbitBackbone {
     fn verify_pending_raw_receive_entries(
         &mut self,
         hashes: &[String],
-    ) -> Result<Option<Vec<u8>>, JsValue> {
+    ) -> Result<Option<Vec<u8>>, BackboneError> {
         if hashes.is_empty() {
             return Ok(Some(Vec::new()));
         }
@@ -1366,7 +1367,18 @@ impl NativePeerbitBackbone {
             if entries.is_empty() {
                 Some(Vec::new())
             } else {
-                verify_prepared_entry_v0_ed25519_storage_slices(&entries).ok()
+                // Deliberate, documented swallow. This returns Err only when
+                // the signature slices are not parseable as Ed25519 — i.e. a
+                // non-Ed25519 signature scheme or malformed bytes. That is the
+                // load-bearing "native cannot natively verify these slices ->
+                // defer to the caller's TS fallback" path: mapping the parse
+                // error to None (and thence Ok(None) below) is correct for
+                // mixed-scheme verification, so the bound LogError is
+                // intentionally discarded rather than propagated.
+                match verify_prepared_entry_v0_ed25519_storage_slices(&entries) {
+                    Ok(flags) => Some(flags),
+                    Err(_parse_error) => None,
+                }
             }
         };
 
@@ -1374,9 +1386,7 @@ impl NativePeerbitBackbone {
             return Ok(None);
         };
         if verified.len() != verify_positions.len() {
-            return Err(JsValue::from_str(
-                "Expected equal prepared raw receive verify lengths",
-            ));
+            return Err(BackboneError::MismatchedPreparedRawReceiveVerifyLengths);
         }
         for (index, flag) in verify_positions.iter().zip(verified.iter()) {
             out[*index] = *flag;
@@ -1393,7 +1403,7 @@ impl NativePeerbitBackbone {
     fn verify_pending_raw_receive_entries_all(
         &mut self,
         hashes: &[String],
-    ) -> Result<Option<bool>, JsValue> {
+    ) -> Result<Option<bool>, BackboneError> {
         if hashes.is_empty() {
             return Ok(Some(true));
         }
@@ -1413,7 +1423,17 @@ impl NativePeerbitBackbone {
             if entries.is_empty() {
                 Some(true)
             } else {
-                verify_prepared_entry_v0_ed25519_storage_slices_all(&entries).ok()
+                // Deliberate, documented swallow (see the per-entry twin
+                // verify_pending_raw_receive_entries above). Err here means the
+                // signature slices are not parseable as Ed25519 — a non-Ed25519
+                // scheme or malformed bytes — so native cannot natively verify
+                // them and we defer to the caller's TS fallback by resolving to
+                // None -> Ok(None). The bound LogError is intentionally
+                // discarded to preserve that mixed-scheme fallback control flow.
+                match verify_prepared_entry_v0_ed25519_storage_slices_all(&entries) {
+                    Ok(all_verified) => Some(all_verified),
+                    Err(_parse_error) => None,
+                }
             }
         };
 
@@ -1436,7 +1456,7 @@ impl NativePeerbitBackbone {
         hashes: Vec<String>,
         heads: &Uint8Array,
         coordinate_commits: Vec<EntryCoordinateCommit>,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, BackboneError> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
         let pending_check_started = profile_enabled.then(crate::time::now_ms);
@@ -1457,7 +1477,7 @@ impl NativePeerbitBackbone {
             let pending = self
                 .pending_raw_receive_entries
                 .remove(&hash)
-                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                .ok_or(BackboneError::MissingPreparedRawReceiveEntry)?;
             block_entries.push((hash, pending.storage_bytes));
             let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
@@ -1493,7 +1513,7 @@ impl NativePeerbitBackbone {
         hashes: Vec<String>,
         heads: &Uint8Array,
         coordinate_commits: Vec<EntryCoordinateCommit>,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, BackboneError> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
         let pending_check_started = profile_enabled.then(crate::time::now_ms);
@@ -1514,7 +1534,7 @@ impl NativePeerbitBackbone {
                 let pending = self
                     .pending_raw_receive_entries
                     .get(hash)
-                    .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                    .ok_or(BackboneError::MissingPreparedRawReceiveEntry)?;
                 graph_entries.push(&pending.entry);
             }
             let join_plans = self
@@ -1549,7 +1569,7 @@ impl NativePeerbitBackbone {
             let pending = self
                 .pending_raw_receive_entries
                 .remove(&hash)
-                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                .ok_or(BackboneError::MissingPreparedRawReceiveEntry)?;
             block_entries.push((hash, pending.storage_bytes));
             let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
@@ -1586,7 +1606,7 @@ impl NativePeerbitBackbone {
         heads: &Uint8Array,
         verify_hashes: Option<Vec<String>>,
         coordinate_commits: Vec<EntryCoordinateCommit>,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, BackboneError> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
         let verify_hashes_cover_commit = match verify_hashes.as_ref() {
@@ -1624,7 +1644,13 @@ impl NativePeerbitBackbone {
                 return Ok(false);
             }
         } else {
-            let verify_hashes = verify_hashes.expect("partial verify hashes");
+            // Unreachable by construction: verify_hashes_cover_commit is `true`
+            // whenever verify_hashes is None (the match arm above), so reaching
+            // this !verify_hashes_cover_commit branch guarantees Some. The
+            // former `.expect("partial verify hashes")` trapped the whole wasm
+            // instance on a breach; return a typed error instead so a breach
+            // surfaces as a normal thrown value rather than a process abort.
+            let verify_hashes = verify_hashes.ok_or(BackboneError::MissingPartialVerifyHashes)?;
             let Some(verified) = self.verify_pending_raw_receive_entries(&verify_hashes)? else {
                 return Ok(false);
             };
@@ -1656,7 +1682,7 @@ impl NativePeerbitBackbone {
                 let pending = self
                     .pending_raw_receive_entries
                     .get(hash)
-                    .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                    .ok_or(BackboneError::MissingPreparedRawReceiveEntry)?;
                 graph_entries.push(&pending.entry);
             }
             let join_plans = self
@@ -1691,7 +1717,7 @@ impl NativePeerbitBackbone {
             let pending = self
                 .pending_raw_receive_entries
                 .remove(&hash)
-                .ok_or_else(|| JsValue::from_str("Missing prepared raw receive entry"))?;
+                .ok_or(BackboneError::MissingPreparedRawReceiveEntry)?;
             block_entries.push((hash, pending.storage_bytes));
             let mut graph_entry = pending.entry;
             graph_entry.head = heads.get_index(index as u32) != 0;
@@ -1720,5 +1746,54 @@ impl NativePeerbitBackbone {
             }
         }
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::BackboneError;
+
+    #[test]
+    fn raw_receive_selection_variants_render_exact_messages() {
+        for (error, message) in [
+            (
+                BackboneError::MaxReplicasMustBeNumber,
+                "maxReplicas must be a number",
+            ),
+            (
+                BackboneError::RawReceiveOriginalIndexOverflow,
+                "Raw receive original index overflow",
+            ),
+            (
+                BackboneError::RawReceiveSelectedIndexOverflow,
+                "Raw receive selected index overflow",
+            ),
+            (
+                BackboneError::RawReceiveGroupIndexOverflow,
+                "Raw receive group index overflow",
+            ),
+        ] {
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
+    #[test]
+    fn raw_receive_verify_and_commit_variants_render_exact_messages() {
+        for (error, message) in [
+            (
+                BackboneError::MissingPreparedRawReceiveEntry,
+                "Missing prepared raw receive entry",
+            ),
+            (
+                BackboneError::MismatchedPreparedRawReceiveVerifyLengths,
+                "Expected equal prepared raw receive verify lengths",
+            ),
+            (
+                BackboneError::MissingPartialVerifyHashes,
+                "Missing partial verify hashes",
+            ),
+        ] {
+            assert_eq!(error.to_string(), message);
+        }
     }
 }
