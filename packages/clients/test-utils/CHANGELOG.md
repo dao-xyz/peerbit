@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.3
+
+### Patch Changes
+
+- Updated dependencies [[`1cf8edc`](https://github.com/dao-xyz/peerbit/commit/1cf8edc6ebaa0e79e04c038e7bccae440ae79af7)]:
+  - @peerbit/blocks@4.2.1
+  - peerbit@5.3.3
+  - @peerbit/program@6.0.33
+
 ## 3.1.2
 
 ### Patch Changes
