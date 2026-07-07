@@ -490,7 +490,7 @@ impl NativePeerbitBackbone {
         &self,
         document_index_commit: &mut DocumentIndexAppendCommit,
         fallback_gid: String,
-    ) -> Result<(Option<DocumentContextFacts>, String, Vec<String>), JsValue> {
+    ) -> Result<(Option<DocumentContextFacts>, String, Vec<String>), BackboneError> {
         let previous_context = self.document_context_facts_by_key(&document_index_commit.key)?;
         let known_existing = previous_context.is_some();
         let gid = previous_context
@@ -517,20 +517,20 @@ impl NativePeerbitBackbone {
         wall_time: u64,
         document_gid: &str,
         payload_size: u32,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let entry_row = if row.length() == 2 && Array::is_array(&row.get(0)) {
             array_from_value(row.get(0), "native trim document index entry row")?
         } else {
             row.clone()
         };
         let document_hash = string_field(&entry_row, 0, "document index entry hash")?;
-        Ok(self.put_document_index_for_append(
+        self.put_document_index_for_append(
             Some(document_index_commit),
             wall_time,
             &document_hash,
             document_gid,
             payload_size,
-        )?)
+        )
     }
 
     fn put_document_index_for_append(

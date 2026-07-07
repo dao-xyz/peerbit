@@ -1340,7 +1340,7 @@ impl NativePeerbitBackbone {
     pub(crate) fn document_context_facts_by_key(
         &self,
         key: &str,
-    ) -> Result<Option<DocumentContextFacts>, JsValue> {
+    ) -> Result<Option<DocumentContextFacts>, BackboneError> {
         let Some(document_fields) = self.document_index.document_fields_by_id(key) else {
             return Ok(None);
         };
@@ -1350,21 +1350,21 @@ impl NativePeerbitBackbone {
     fn document_context_facts_from_fields(
         &self,
         document_fields: &DocumentFields,
-    ) -> Result<Option<DocumentContextFacts>, JsValue> {
+    ) -> Result<Option<DocumentContextFacts>, BackboneError> {
         let Some(fields) = self.document_context_fields else {
             return Ok(None);
         };
         let created = document_u64_field(document_fields, fields.created)
-            .ok_or_else(|| JsValue::from_str("Missing document context created field"))?;
+            .ok_or(BackboneError::MissingDocumentContextField("created"))?;
         let modified = document_u64_field(document_fields, fields.modified)
-            .ok_or_else(|| JsValue::from_str("Missing document context modified field"))?;
+            .ok_or(BackboneError::MissingDocumentContextField("modified"))?;
         let head = document_string_field(document_fields, fields.head)
-            .ok_or_else(|| JsValue::from_str("Missing document context head field"))?;
+            .ok_or(BackboneError::MissingDocumentContextField("head"))?;
         let gid = document_string_field(document_fields, fields.gid)
-            .ok_or_else(|| JsValue::from_str("Missing document context gid field"))?;
+            .ok_or(BackboneError::MissingDocumentContextField("gid"))?;
         let size = document_u64_field(document_fields, fields.size)
             .and_then(|value| u32::try_from(value).ok())
-            .ok_or_else(|| JsValue::from_str("Missing document context size field"))?;
+            .ok_or(BackboneError::MissingDocumentContextField("size"))?;
         Ok(Some(DocumentContextFacts {
             created,
             modified,
@@ -1854,6 +1854,20 @@ mod tests {
                 .unwrap_err();
         assert_eq!(error, BackboneError::UnsupportedProjectionSourceKind);
         assert_eq!(error.to_string(), "Unsupported projection source kind");
+    }
+
+    #[test]
+    fn document_context_field_variants_render_exact_messages() {
+        for label in ["created", "modified", "head", "gid", "size"] {
+            assert_eq!(
+                BackboneError::MissingDocumentContextField(label).to_string(),
+                format!("Missing document context {label} field")
+            );
+        }
+        assert_eq!(
+            BackboneError::MissingDocumentContextField("created").to_string(),
+            "Missing document context created field"
+        );
     }
 
     #[test]

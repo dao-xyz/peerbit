@@ -56,6 +56,7 @@ pub enum BackboneError {
     MissingCachedDocumentProjectionPlan,
     MissingPlainPutPayloadForDocumentIndex,
     MissingPlainPutPayloadForDocumentProjection,
+    MissingDocumentContextField(&'static str),
     Wire(WireError),
     SharedLog(SharedLogError),
     Schema(SchemaError),
@@ -154,6 +155,9 @@ impl std::fmt::Display for BackboneError {
             }
             BackboneError::MissingPlainPutPayloadForDocumentProjection => {
                 f.write_str("Missing plain put payload for document projection")
+            }
+            BackboneError::MissingDocumentContextField(label) => {
+                write!(f, "Missing document context {label} field")
             }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::SharedLog(error) => write!(f, "{error}"),
