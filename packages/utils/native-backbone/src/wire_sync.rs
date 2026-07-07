@@ -372,7 +372,15 @@ impl NativeWireSyncSession {
                     Ok(stashed) => stashed,
                     // The wasm ABI of this hot-path function is frozen (it
                     // must stay a plain Uint32Array return), so the typed
-                    // error is thrown instead of returned as a Result.
+                    // error is thrown instead of returned as a Result. NOTE:
+                    // throw_val unwinds without dropping the exported-method
+                    // borrow guard, so the session object would be unusable
+                    // afterwards ("recursive use of an object" on every
+                    // later call). Acceptable only because this path is
+                    // unreachable by construction (the frame is checked Some
+                    // above and nothing takes it in between) — the
+                    // pre-refactor expect() trapped the whole wasm instance
+                    // here instead.
                     Err(error) => wasm_bindgen::throw_val(error.into()),
                 };
             record_to_words(record, &mut words);
@@ -395,6 +403,11 @@ impl NativeWireSyncSession {
             Ok(None) => return JsValue::UNDEFINED,
             // The wasm ABI is frozen (`undefined` is a valid success value,
             // so errors cannot travel as a Result); throw the typed error.
+            // NOTE: throw_val leaks the exported-method borrow guard,
+            // leaving the session object permanently unusable — acceptable
+            // only because pin_and_get's Err path is unreachable by
+            // construction (pin() returning true implies the same-id get()
+            // succeeds).
             Err(error) => wasm_bindgen::throw_val(error.into()),
         };
         let hashes = Array::new();
