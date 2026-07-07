@@ -41,6 +41,8 @@ pub enum BackboneError {
     UnsupportedProjectedDocumentFieldType,
     ProjectionValueOutputTypeMismatch,
     DocumentProjectionPlanLengthMismatch,
+    ProjectionPlanLengthMismatch,
+    TrailingDocumentSignerFactBytes,
     MissingDocumentVariant,
     InvalidDocumentVariant,
     DocumentVariantMismatch,
@@ -121,6 +123,12 @@ impl std::fmt::Display for BackboneError {
             }
             BackboneError::DocumentProjectionPlanLengthMismatch => {
                 f.write_str("Document projection plan length mismatch")
+            }
+            BackboneError::ProjectionPlanLengthMismatch => {
+                f.write_str("Projection plan length mismatch")
+            }
+            BackboneError::TrailingDocumentSignerFactBytes => {
+                f.write_str("Trailing document signer fact bytes")
             }
             BackboneError::MissingDocumentVariant => f.write_str("Missing document variant"),
             BackboneError::InvalidDocumentVariant => f.write_str("Invalid document variant"),

@@ -333,12 +333,12 @@ fn encode_document_signer_fact(fact: &DocumentPreviousSignerFact) -> Vec<u8> {
     out
 }
 
-fn decode_document_signer_fact(bytes: &[u8]) -> Result<DocumentPreviousSignerFact, JsValue> {
+fn decode_document_signer_fact(bytes: &[u8]) -> Result<DocumentPreviousSignerFact, BackboneError> {
     let mut offset = 0usize;
     let head = read_encoded_string(bytes, &mut offset, "document signer head")?;
     let public_key = read_bytes(bytes, &mut offset, "document signer public key")?;
     if offset != bytes.len() {
-        return Err(JsValue::from_str("Trailing document signer fact bytes"));
+        return Err(BackboneError::TrailingDocumentSignerFactBytes);
     }
     Ok(DocumentPreviousSignerFact { head, public_key })
 }
@@ -691,7 +691,7 @@ fn write_projection_variant(
     Ok(())
 }
 
-fn parse_projection_plan(plan: &JsValue) -> Result<ParsedProjectionPlan, JsValue> {
+fn parse_projection_plan(plan: &JsValue) -> Result<ParsedProjectionPlan, BackboneError> {
     let document_field_names =
         array_strings(js_get(plan, "documentFieldNames"), "documentFieldNames")?;
     let document_field_types =
@@ -700,7 +700,7 @@ fn parse_projection_plan(plan: &JsValue) -> Result<ParsedProjectionPlan, JsValue
     let source_kinds = array_strings(js_get(plan, "sourceKinds"), "sourceKinds")?;
     let source_values = array_strings(js_get(plan, "sourceValues"), "sourceValues")?;
     if output_field_types.len() != source_kinds.len() || source_kinds.len() != source_values.len() {
-        return Err(JsValue::from_str("Projection plan length mismatch"));
+        return Err(BackboneError::ProjectionPlanLengthMismatch);
     }
     Ok(ParsedProjectionPlan {
         document_variant_type: optional_string(
@@ -786,7 +786,7 @@ fn project_document_index_simple_bytes(
     gid: &str,
     size: u32,
     signer: JsValue,
-) -> Result<Vec<u8>, JsValue> {
+) -> Result<Vec<u8>, BackboneError> {
     let plan = parse_projection_plan(plan)?;
     let created = parse_u64_string(created, "created")?;
     let modified = parse_u64_string(modified, "modified")?;
@@ -795,7 +795,7 @@ fn project_document_index_simple_bytes(
     } else {
         Some(Uint8Array::new(&signer).to_vec())
     };
-    Ok(project_document_index_simple_bytes_with_plan(
+    project_document_index_simple_bytes_with_plan(
         encoded_document,
         &plan,
         created,
@@ -804,7 +804,7 @@ fn project_document_index_simple_bytes(
         gid,
         size,
         signer.as_deref(),
-    )?)
+    )
 }
 
 #[wasm_bindgen]
@@ -1750,6 +1750,35 @@ mod tests {
         let error = plain_put_document_bytes_from_payload(&[0, 3, 2, 0, 0, 0, 9]).unwrap_err();
         assert_eq!(error, BackboneError::PlainPutPayloadLengthMismatch);
         assert_eq!(error.to_string(), "Plain put payload length mismatch");
+    }
+
+    #[test]
+    fn document_signer_fact_decode_reports_typed_errors() {
+        let fact = DocumentPreviousSignerFact {
+            head: "head".to_string(),
+            public_key: vec![1, 2, 3],
+        };
+        let encoded = encode_document_signer_fact(&fact);
+        let decoded = decode_document_signer_fact(&encoded).unwrap();
+        assert_eq!(decoded.head, fact.head);
+        assert_eq!(decoded.public_key, fact.public_key);
+
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        let error = match decode_document_signer_fact(&trailing) {
+            Ok(_) => panic!("expected trailing-bytes error"),
+            Err(error) => error,
+        };
+        assert_eq!(error, BackboneError::TrailingDocumentSignerFactBytes);
+        assert_eq!(error.to_string(), "Trailing document signer fact bytes");
+    }
+
+    #[test]
+    fn projection_plan_length_mismatch_renders_historical_string() {
+        assert_eq!(
+            BackboneError::ProjectionPlanLengthMismatch.to_string(),
+            "Projection plan length mismatch"
+        );
     }
 
     #[test]
