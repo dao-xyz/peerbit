@@ -1364,7 +1364,7 @@ impl NativePeerbitBackbone {
         let Some(common_replicas) = common_replicas else {
             return Ok(Some(false));
         };
-        self.shared_log.full_replica_self_leader_for_replicas(
+        Ok(self.shared_log.full_replica_self_leader_for_replicas(
             common_replicas,
             role_age_ms,
             now,
@@ -1374,7 +1374,7 @@ impl NativePeerbitBackbone {
             include_self,
             full_replica_fallback,
             include_strict_full_replica,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
