@@ -97,7 +97,12 @@ jobs:
           github-token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
           version: pnpm run version-packages
           # Build, publish every unpublished version (from-package), then create
-          # the pkg@version git tags and push them.
+          # the pkg@version git tags and push them. The push is tags-only
+          # (`git push origin --tags`, not `--follow-tags`): the version commit
+          # always reaches master via the merged Version Packages PR, so pushing
+          # the branch ref here is redundant — and it rejects non-fast-forward
+          # if anything merges to master while the publish run is live, turning
+          # a successful publish red.
           #
           # This MUST be a single `pnpm run <script>`. changesets/action runs the
           # publish command WITHOUT a shell, so an inline `a && b && c` chain here

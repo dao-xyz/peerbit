@@ -128,7 +128,7 @@
 		"changeset": "changeset",
 		"version-packages": "changeset version && pnpm install --lockfile-only",
 		"release": "node ./scripts/publish-public-packages.mjs",
-		"release:publish": "pnpm run build && pnpm run release && changeset tag && git push --follow-tags",
+		"release:publish": "pnpm run build && pnpm run release && changeset tag && git push origin --tags",
 		"release:rc": "AEGIR_PACKAGE_MANAGER=pnpm aegir release-rc",
 		"deploy": "pnpm run deploy:docs",
 		"deploy:docs": "pnpm run site:build && gh-pages --dist apps/peerbit-org/dist --dotfiles",
