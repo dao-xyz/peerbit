@@ -23,6 +23,7 @@ pub enum BackboneError {
     ExpectedBytesArray,
     ExpectedUnsignedIntegerArray,
     MismatchedInputLengths(&'static str),
+    MismatchedCompactCoordinateFacts(&'static str),
     MustBeNumber(&'static str),
     MustBeArray(&'static str),
     MissingOrInvalid(&'static str),
@@ -85,6 +86,7 @@ impl std::fmt::Display for BackboneError {
             BackboneError::MismatchedInputLengths(label) => {
                 write!(f, "Mismatched {label} input lengths")
             }
+            BackboneError::MismatchedCompactCoordinateFacts(label) => f.write_str(label),
             BackboneError::MustBeNumber(label) => write!(f, "{label} must be a number"),
             BackboneError::MustBeArray(field) => write!(f, "{field} must be an array"),
             BackboneError::MissingOrInvalid(field) => write!(f, "Missing or invalid {field}"),

@@ -269,7 +269,7 @@ impl NativePeerbitBackbone {
         meta_data: Option<Vec<u8>>,
         payload_data: &[u8],
         trim_length_to: Option<usize>,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
@@ -434,8 +434,8 @@ impl NativePeerbitBackbone {
         self_hash: &str,
         self_replicating: bool,
         expected_len: usize,
-        mismatch_label: &str,
-    ) -> Result<Vec<NativeLocalAppendCompactFacts>, JsValue> {
+        mismatch_label: &'static str,
+    ) -> Result<Vec<NativeLocalAppendCompactFacts>, BackboneError> {
         let coordinate_plan_started = self.append_profile_enabled.then(crate::time::now_ms);
         let coordinate_facts = commit_local_appends_for_gids_compact_core(
             &mut self.shared_log,
@@ -452,7 +452,9 @@ impl NativePeerbitBackbone {
             self.append_profile.coordinate_plan_ms += crate::time::now_ms() - started;
         }
         if coordinate_facts.len() != expected_len {
-            return Err(JsValue::from_str(mismatch_label));
+            return Err(BackboneError::MismatchedCompactCoordinateFacts(
+                mismatch_label,
+            ));
         }
         Ok(coordinate_facts)
     }
@@ -748,5 +750,36 @@ impl NativePeerbitBackbone {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::BackboneError;
+
+    #[test]
+    fn compact_coordinate_mismatch_variant_renders_exact_message() {
+        for label in [
+            "Native no-next compact batch returned mismatched coordinate facts",
+            "Native latest batch returned mismatched coordinate facts",
+            "Native compact batch returned mismatched coordinate facts",
+        ] {
+            assert_eq!(
+                BackboneError::MismatchedCompactCoordinateFacts(label).to_string(),
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn batch_gid_variants_render_exact_messages() {
+        assert_eq!(
+            BackboneError::ExpectedString("batch gid").to_string(),
+            "Expected batch gid string"
+        );
+        assert_eq!(
+            BackboneError::ExpectedString("batch fallback gid").to_string(),
+            "Expected batch fallback gid string"
+        );
     }
 }
