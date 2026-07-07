@@ -5,11 +5,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
-import {
-	AccessError,
-	type PublicSignKey,
-	SignatureWithKey,
-} from "@peerbit/crypto";
+import { AccessError, type PublicSignKey } from "@peerbit/crypto";
 import {
 	Context,
 	NotFoundError,
@@ -2333,20 +2329,31 @@ export class Documents<
 				if (this.keepCache?.has(e.hash)) {
 					return true;
 				}
-				let signatures: SignatureWithKey[] | undefined = undefined;
+				// Only the signer identity matters here. Use getPublicKeys so
+				// prepared native entries (hollow in JS, signature bytes in the
+				// native store) can still answer; if the signer is genuinely
+				// unknowable we cannot prove the entry is ours, so do not keep.
+				const resolveKeys = async (entry: Entry<Operation>) => {
+					try {
+						return await entry.getPublicKeys();
+					} catch {
+						return undefined;
+					}
+				};
+				let publicKeys: PublicSignKey[] | undefined = undefined;
 				if (e instanceof Entry) {
-					signatures = e.signatures;
+					publicKeys = await resolveKeys(e);
 				} else {
 					const entry = await this.log.log.get(e.hash);
-					signatures = entry?.signatures;
+					publicKeys = entry ? await resolveKeys(entry) : undefined;
 				}
 
-				if (!signatures) {
+				if (!publicKeys) {
 					return false;
 				}
 
-				for (const signature of signatures) {
-					if (signature.publicKey.equals(this.node.identity.publicKey)) {
+				for (const publicKey of publicKeys) {
+					if (publicKey.equals(this.node.identity.publicKey)) {
 						this.keepCache?.add(e.hash);
 						return true;
 					}

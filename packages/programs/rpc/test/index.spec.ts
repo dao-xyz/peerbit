@@ -1,4 +1,11 @@
-import { deserialize, field, serialize, variant, vec } from "@dao-xyz/borsh";
+import {
+	BorshError,
+	deserialize,
+	field,
+	serialize,
+	variant,
+	vec,
+} from "@dao-xyz/borsh";
 import {
 	Ed25519Keypair,
 	PublicSignKey,
@@ -16,6 +23,7 @@ import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
+	type CodecErrorEvent,
 	MissingResponsesError,
 	RPC,
 	type RPCResponse,
@@ -165,6 +173,39 @@ describe("rpc", () => {
 			expect(from.hashcode()).equal(
 				responder.node.identity.publicKey.hashcode(),
 			);
+		});
+
+		it("surfaces response serialization failures as codecError", async () => {
+			const codecErrors: CustomEvent<CodecErrorEvent>[] = [];
+			responder.query.events.addEventListener("codecError", (e) => {
+				codecErrors.push(e as CustomEvent<CodecErrorEvent>);
+			});
+
+			// Make the responder produce a response borsh cannot serialize.
+			// This used to be swallowed as "message for a different namespace"
+			// and the requester would just time out with no trace anywhere.
+			(responder.query as any)._responseHandler = async () => {
+				const broken = new Body({ arr: new Uint8Array([1]) });
+				(broken as any).arr = undefined; // violates the borsh schema
+				return broken;
+			};
+
+			const results = await reader.query.request(
+				new Body({ arr: new Uint8Array([0]) }),
+				{ timeout: 2_000 },
+			);
+			expect(results).to.have.length(0);
+			await waitForResolved(() => expect(codecErrors).to.have.length(1));
+			expect(codecErrors[0].detail.stage).to.equal("encode-response");
+			expect(codecErrors[0].detail.error).to.be.instanceOf(BorshError);
+
+			// The responder must stay usable after the failure.
+			(responder.query as any)._responseHandler = async (q: Body) => q;
+			const ok = await reader.query.request(
+				new Body({ arr: new Uint8Array([7]) }),
+				{ amount: 1 },
+			);
+			expect(ok).to.have.length(1);
 		});
 
 		it("falls back to the decode path when resolveRequest throws", async () => {

@@ -97,9 +97,22 @@ export type RequestEvent<R> = {
 	from?: PublicSignKey;
 };
 
+export type CodecErrorEvent = {
+	error: Error;
+	stage:
+		| "decode-request"
+		| "handle-request"
+		| "encode-response"
+		| "publish-response"
+		| "dispatch-response"
+		| "decode-response";
+	message: DataMessage;
+};
+
 export interface RPCEvents<Q, R> extends ProgramEvents {
 	request: CustomEvent<RequestEvent<Q>>;
 	response: CustomEvent<ResponseEvent<R>>;
+	codecError: CustomEvent<CodecErrorEvent>;
 }
 
 @variant("rpc")
@@ -178,8 +191,25 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		const { data, message } = evt.detail;
 
 		if (data?.topics.find((x) => x === this.topic) != null) {
+			let rpcMessage: RPCMessage;
 			try {
-				const rpcMessage = deserialize(data.data, RPCMessage);
+				rpcMessage = deserialize(data.data, RPCMessage);
+			} catch (error: any) {
+				if (error instanceof BorshError) {
+					// The envelope itself is not an RPCMessage: another protocol
+					// sharing the topic. This is the only BorshError that is safe
+					// to treat as "not for us".
+					logger.trace("Got message for a different namespace");
+					return;
+				}
+				logger.error(
+					"Error decoding RPC message: " +
+						(error?.message ? error?.message?.toString() : error),
+				);
+				return;
+			}
+			let stage: CodecErrorEvent["stage"] = "decode-request";
+			try {
 				if (rpcMessage instanceof RequestV0) {
 					if (this._responseHandler) {
 						let request: Q | undefined;
@@ -202,6 +232,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 							);
 							request = this._getRequestValueFn(decrypted);
 						}
+						stage = "handle-request";
 						let from = message.header.signatures!.publicKeys[0];
 
 						this.events.dispatchEvent(
@@ -224,7 +255,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 
 						if (response && rpcMessage.respondTo) {
 							// send query and wait for replies in a generator like behaviour
+							stage = "encode-response";
 							const serializedResponse = serialize(response);
+							stage = "publish-response";
 
 							// we use the peerId/libp2p identity for signatures, since we want to be able to send a message
 							// with pubsub with a certain receiver. If we use (this.identity) we are going to use an identity
@@ -262,6 +295,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 						}
 					}
 				} else if (rpcMessage instanceof ResponseV0) {
+					stage = "dispatch-response";
 					const id = toBase64(rpcMessage.requestId);
 					const handler = this._responseResolver.get(id);
 					// TODO evaluate when and how handler can be missing
@@ -277,7 +311,21 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				}
 
 				if (error instanceof BorshError) {
-					logger.error("Got message for a different namespace");
+					// Past the envelope decode this is OUR payload failing to
+					// (de)serialize — e.g. a response embedding entries that
+					// cannot be re-serialized. Swallowing it silently makes the
+					// requester time out with no trace, so surface it.
+					logger.error(
+						"RPC serialization failed at stage " +
+							stage +
+							": " +
+							error.message,
+					);
+					this.events.dispatchEvent(
+						new CustomEvent<CodecErrorEvent>("codecError", {
+							detail: { error, stage, message },
+						}),
+					);
 					return;
 				}
 
@@ -430,6 +478,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			response: ResponseV0;
 			message: DataMessage;
 		}) => {
+			let decoded = false;
 			try {
 				const { response, message } = properties;
 				const from = message.header.signatures!.publicKeys[0];
@@ -441,6 +490,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				const maybeEncrypted = response.response;
 				const decrypted = await maybeEncrypted.decrypt(keypair);
 				const resultData = this._getResponseValueFn(decrypted);
+				decoded = true;
 
 				this.handleDecodedResponse(
 					{
@@ -460,8 +510,32 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				}
 
 				if (error instanceof BorshError) {
-					logger.trace("Namespace error");
-					return; // Name space conflict most likely
+					if (decoded) {
+						// The response decoded fine; the error came from a
+						// consumer callback afterwards. Don't misreport it as
+						// a codec failure (control flow matches other swallows).
+						logger.error(
+							"Error handling decoded RPC response: " + error.message,
+						);
+						return;
+					}
+					// The response was addressed to us (encrypted to this
+					// request's keypair) but its payload failed to decode —
+					// that is a codec bug, not a namespace conflict. Keep the
+					// request alive for other responders, but surface it.
+					logger.error(
+						"Failed to decode RPC response: " + error.message,
+					);
+					this.events.dispatchEvent(
+						new CustomEvent<CodecErrorEvent>("codecError", {
+							detail: {
+								error,
+								stage: "decode-response",
+								message: properties.message,
+							},
+						}),
+					);
+					return;
 				}
 
 				logger.error("failed ot deserialize query response: " + error?.message);
