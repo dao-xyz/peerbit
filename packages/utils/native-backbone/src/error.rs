@@ -60,6 +60,10 @@ pub enum BackboneError {
     MissingPlainPutPayloadForDocumentIndex,
     MissingPlainPutPayloadForDocumentProjection,
     MissingDocumentContextField(&'static str),
+    MaxReplicasMustBeNumber,
+    RawReceiveOriginalIndexOverflow,
+    RawReceiveSelectedIndexOverflow,
+    RawReceiveGroupIndexOverflow,
     Wire(WireError),
     SharedLog(SharedLogError),
     Schema(SchemaError),
@@ -168,6 +172,16 @@ impl std::fmt::Display for BackboneError {
             }
             BackboneError::MissingDocumentContextField(label) => {
                 write!(f, "Missing document context {label} field")
+            }
+            BackboneError::MaxReplicasMustBeNumber => f.write_str("maxReplicas must be a number"),
+            BackboneError::RawReceiveOriginalIndexOverflow => {
+                f.write_str("Raw receive original index overflow")
+            }
+            BackboneError::RawReceiveSelectedIndexOverflow => {
+                f.write_str("Raw receive selected index overflow")
+            }
+            BackboneError::RawReceiveGroupIndexOverflow => {
+                f.write_str("Raw receive group index overflow")
             }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::SharedLog(error) => write!(f, "{error}"),

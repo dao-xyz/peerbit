@@ -9,6 +9,7 @@ use peerbit_shared_log_rust::{EntryCoordinateCommit, GidLeaderPlan};
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
+use crate::error::BackboneError;
 use crate::js_interop::{
     bytes_vec_from_array, ensure_same_len, hash_number_u64, numbers_to_rows, strings_from_array,
     strings_slice_to_array, strings_to_array,
@@ -101,7 +102,7 @@ fn prepared_raw_receive_selection_from_leader_plans(
     leader_plans: &[GidLeaderPlan],
     self_hash: &str,
     used_leader_sample_plans: bool,
-) -> Result<JsValue, JsValue> {
+) -> Result<JsValue, BackboneError> {
     if leader_plans.len() != groups.len() {
         return Ok(JsValue::UNDEFINED);
     }
@@ -130,7 +131,7 @@ fn prepared_raw_receive_selection_from_leader_plans(
     let mut dropped_indexes = Vec::new();
     for (original_index, retained) in retained_original_indexes.iter().enumerate() {
         let original_index = u32::try_from(original_index)
-            .map_err(|_| JsValue::from_str("Raw receive original index overflow"))?;
+            .map_err(|_| BackboneError::RawReceiveOriginalIndexOverflow)?;
         if *retained {
             retained_indexes.push(original_index);
         } else {
@@ -148,7 +149,7 @@ fn prepared_raw_receive_selection_from_leader_plans(
                 selected_index_by_original[original_index] = Some(selected_index);
                 selected_index = selected_index
                     .checked_add(1)
-                    .ok_or_else(|| JsValue::from_str("Raw receive selected index overflow"))?;
+                    .ok_or(BackboneError::RawReceiveSelectedIndexOverflow)?;
             }
         }
         for (index, (group, leader_plan)) in groups.iter().zip(leader_plans).enumerate() {
@@ -611,7 +612,7 @@ impl NativePeerbitBackbone {
         include_strict_full_replica: bool,
         _from_hash: String,
     ) -> Result<JsValue, JsValue> {
-        self.plan_prepared_raw_receive_selection_core(
+        Ok(self.plan_prepared_raw_receive_selection_core(
             strings_from_array(hashes)?,
             min_replicas,
             max_replicas,
@@ -623,7 +624,7 @@ impl NativePeerbitBackbone {
             include_self,
             full_replica_fallback,
             include_strict_full_replica,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -757,7 +758,7 @@ impl NativePeerbitBackbone {
             return Ok(JsValue::UNDEFINED);
         }
 
-        prepared_raw_receive_selection_from_leader_plans(
+        Ok(prepared_raw_receive_selection_from_leader_plans(
             &self.resolution,
             &groups,
             expected_hash_count,
@@ -765,7 +766,7 @@ impl NativePeerbitBackbone {
             &leader_plans,
             &self_hash,
             false,
-        )
+        )?)
     }
 
     pub fn verify_prepared_raw_receive_entries(
@@ -1156,7 +1157,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<JsValue, BackboneError> {
         let expected_hash_count = hashes.len();
         if expected_hash_count == 0 {
             return Ok(JsValue::UNDEFINED);
@@ -1193,7 +1194,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<JsValue, JsValue> {
+    ) -> Result<JsValue, BackboneError> {
         let expected_hash_count = hashes.len();
         let mut planned_hash_count = 0usize;
         let mut gids = Vec::with_capacity(groups.len());
@@ -1250,7 +1251,7 @@ impl NativePeerbitBackbone {
         hashes: Vec<String>,
         min_replicas: u32,
         max_replicas: JsValue,
-    ) -> Result<Option<Vec<ResolvedPendingRawReceiveGroupPlan>>, JsValue> {
+    ) -> Result<Option<Vec<ResolvedPendingRawReceiveGroupPlan>>, BackboneError> {
         if hashes.is_empty() {
             return Ok(Some(Vec::new()));
         }
@@ -1261,7 +1262,7 @@ impl NativePeerbitBackbone {
         } else {
             max_replicas
                 .as_f64()
-                .ok_or_else(|| JsValue::from_str("maxReplicas must be a number"))?
+                .ok_or(BackboneError::MaxReplicasMustBeNumber)?
                 .max(0.0)
                 .min(u32::MAX as f64) as u32
         };
@@ -1277,7 +1278,7 @@ impl NativePeerbitBackbone {
                 return Ok(None);
             };
             let input_index = u32::try_from(input_index)
-                .map_err(|_| JsValue::from_str("Raw receive group index overflow"))?;
+                .map_err(|_| BackboneError::RawReceiveGroupIndexOverflow)?;
 
             let group_index = if let Some(index) = group_indexes.get(&pending.entry.gid) {
                 *index
@@ -1720,5 +1721,34 @@ impl NativePeerbitBackbone {
             }
         }
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::BackboneError;
+
+    #[test]
+    fn raw_receive_selection_variants_render_exact_messages() {
+        for (error, message) in [
+            (
+                BackboneError::MaxReplicasMustBeNumber,
+                "maxReplicas must be a number",
+            ),
+            (
+                BackboneError::RawReceiveOriginalIndexOverflow,
+                "Raw receive original index overflow",
+            ),
+            (
+                BackboneError::RawReceiveSelectedIndexOverflow,
+                "Raw receive selected index overflow",
+            ),
+            (
+                BackboneError::RawReceiveGroupIndexOverflow,
+                "Raw receive group index overflow",
+            ),
+        ] {
+            assert_eq!(error.to_string(), message);
+        }
     }
 }
