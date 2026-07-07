@@ -3750,6 +3750,27 @@ impl NativeSharedLogState {
         self.inner.gid_peers.is_empty()
     }
 
+    pub fn put_entry_coordinates_core(
+        &mut self,
+        hash: String,
+        gid: String,
+        hash_number: u64,
+        coordinates: Vec<u64>,
+        assigned_to_range_boundary: bool,
+        requested_replicas: usize,
+    ) {
+        self.inner.put_entry_coordinate_state(
+            hash,
+            EntryCoordinateState {
+                gid,
+                hash_number,
+                coordinates,
+                assigned_to_range_boundary,
+                requested_replicas,
+            },
+        );
+    }
+
     pub fn remove_gid_peers_core(&mut self, peer: &str, gids: &[String]) {
         if self.inner.gid_peers.is_empty() {
             return;

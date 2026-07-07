@@ -2,6 +2,7 @@ use peerbit_indexer_core::persistence::DecodeError;
 use peerbit_indexer_core::schema::SchemaError;
 use peerbit_indexer_core::wire::WireError;
 use peerbit_log_rust::LogError;
+use peerbit_shared_log_rust::SharedLogError;
 use wasm_bindgen::JsValue;
 
 /// Error type for the native backbone core. Every failure path in the core
@@ -31,7 +32,9 @@ pub enum BackboneError {
     ExpectedReservedBytes,
     WireSyncStashFrameTaken,
     WireSyncPinnedEntryMissing,
+    CoordinateCountOverflow,
     Wire(WireError),
+    SharedLog(SharedLogError),
     Schema(SchemaError),
     Decode(DecodeError),
     Log(LogError),
@@ -75,7 +78,9 @@ impl std::fmt::Display for BackboneError {
             BackboneError::WireSyncPinnedEntryMissing => {
                 f.write_str("wire sync pinned stash entry missing")
             }
+            BackboneError::CoordinateCountOverflow => f.write_str("Coordinate count overflow"),
             BackboneError::Wire(error) => write!(f, "{error}"),
+            BackboneError::SharedLog(error) => write!(f, "{error}"),
             BackboneError::Schema(error) => write!(f, "{error}"),
             BackboneError::Decode(error) => write!(f, "{error}"),
             BackboneError::Log(error) => write!(f, "{error}"),
@@ -107,6 +112,12 @@ impl From<DecodeError> for BackboneError {
 impl From<LogError> for BackboneError {
     fn from(error: LogError) -> Self {
         BackboneError::Log(error)
+    }
+}
+
+impl From<SharedLogError> for BackboneError {
+    fn from(error: SharedLogError) -> Self {
+        BackboneError::SharedLog(error)
     }
 }
 

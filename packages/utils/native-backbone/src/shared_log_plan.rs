@@ -9,8 +9,8 @@ use crate::coordinates::{
 };
 use crate::error::BackboneError;
 use crate::js_interop::{
-    array_from_value, ensure_same_len, number_strings_to_array, parse_u64_string,
-    string_batches_from_array, strings_from_array, strings_to_array, usize_values_from_array,
+    array_from_value, ensure_same_len, parse_u64_string, string_batches_from_array,
+    strings_from_array, strings_to_array, usize_values_from_array,
 };
 use crate::NativePeerbitBackbone;
 
@@ -47,7 +47,7 @@ pub(crate) fn coordinate_commits_from_string_columns(
     next_hash_batches: Array,
     assigned_to_range_boundaries: Uint8Array,
     requested_replicas: Array,
-) -> Result<Vec<EntryCoordinateCommit>, JsValue> {
+) -> Result<Vec<EntryCoordinateCommit>, BackboneError> {
     let hashes = strings_from_array(hashes)?;
     let gids = strings_from_array(gids)?;
     let hash_numbers = strings_from_array(hash_numbers)?;
@@ -79,7 +79,7 @@ pub(crate) fn coordinate_commits_from_u64_columns(
     next_hash_batches: Array,
     assigned_to_range_boundaries: Uint8Array,
     requested_replicas: Uint32Array,
-) -> Result<Vec<EntryCoordinateCommit>, JsValue> {
+) -> Result<Vec<EntryCoordinateCommit>, BackboneError> {
     let hashes = strings_from_array(hashes)?;
     let gids = strings_from_array(gids)?;
     let hash_numbers = hash_numbers.to_vec();
@@ -100,7 +100,7 @@ pub(crate) fn coordinate_commits_from_u64_columns(
     let coordinate_total = coordinate_counts
         .iter()
         .try_fold(0usize, |sum, count| sum.checked_add(*count as usize))
-        .ok_or_else(|| JsValue::from_str("Coordinate count overflow"))?;
+        .ok_or(BackboneError::CoordinateCountOverflow)?;
     ensure_same_len(
         coordinate_total,
         coordinates.len(),
@@ -133,7 +133,7 @@ fn coordinate_commits_from_parts(
     next_hash_batches: Vec<Vec<String>>,
     assigned_to_range_boundaries: Uint8Array,
     requested_replicas: Vec<usize>,
-) -> Result<Vec<EntryCoordinateCommit>, JsValue> {
+) -> Result<Vec<EntryCoordinateCommit>, BackboneError> {
     ensure_same_len(hashes.len(), gids.len(), "coordinate commit gid")?;
     ensure_same_len(
         hashes.len(),
@@ -183,12 +183,12 @@ fn coordinate_commits_from_parts(
     Ok(commits)
 }
 
-fn coordinate_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
+fn coordinate_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, BackboneError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
         let value = values.get(index);
         if !Array::is_array(&value) {
-            return Err(JsValue::from_str("Expected coordinate batch array"));
+            return Err(BackboneError::ExpectedArray("coordinate batch"));
         }
         out.push(coordinate_numbers_from_array(Array::from(&value))?);
     }
@@ -202,7 +202,10 @@ pub(crate) fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, B
         if let Some(value) = value.as_string() {
             out.push(parse_u64_string(&value, "coordinate")?);
         } else if let Some(value) = value.as_f64() {
-            out.push(value as u64);
+            out.push(
+                crate::js_interop::checked_u64_from_f64(value)
+                    .ok_or(BackboneError::Expected("coordinate string array"))?,
+            );
         } else {
             return Err(BackboneError::Expected("coordinate string array"));
         }
@@ -1334,7 +1337,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<Option<bool>, JsValue> {
+    ) -> Result<Option<bool>, BackboneError> {
         if hashes.is_empty() {
             return Ok(Some(false));
         }
@@ -1390,7 +1393,7 @@ impl NativePeerbitBackbone {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<Option<Vec<String>>, JsValue> {
+    ) -> Result<Option<Vec<String>>, BackboneError> {
         let empty = || Ok(None);
         if hashes.is_empty() {
             return empty();
@@ -1443,15 +1446,15 @@ impl NativePeerbitBackbone {
         &mut self,
         coordinate: CoordinateCoreValue,
         record_journal: bool,
-    ) -> Result<(), JsValue> {
-        self.shared_log.put_entry_coordinates(
+    ) -> Result<(), BackboneError> {
+        self.shared_log.put_entry_coordinates_core(
             coordinate.hash.clone(),
             coordinate.gid.clone(),
-            coordinate.hash_number.to_string(),
-            number_strings_to_array(&coordinate.coordinates),
+            coordinate.hash_number,
+            coordinate.coordinates.clone(),
             coordinate.assigned_to_range_boundary,
             coordinate.requested_replicas,
-        )?;
+        );
         self.put_coordinate_core(
             coordinate.hash,
             &coordinate.gid,
@@ -1480,5 +1483,24 @@ mod tests {
             BackboneError::Expected("coordinate string array").to_string(),
             "Expected coordinate string array"
         );
+    }
+
+    #[test]
+    fn plan_error_messages_match_historical_strings() {
+        assert_eq!(
+            BackboneError::CoordinateCountOverflow.to_string(),
+            "Coordinate count overflow"
+        );
+        assert_eq!(
+            BackboneError::ExpectedArray("coordinate batch").to_string(),
+            "Expected coordinate batch array"
+        );
+    }
+
+    #[test]
+    fn shared_log_errors_render_through_the_bridge_unchanged() {
+        let inner = peerbit_shared_log_rust::SharedLogError::MissingCompactAppendFacts;
+        let expected = inner.to_string();
+        assert_eq!(BackboneError::SharedLog(inner).to_string(), expected);
     }
 }
