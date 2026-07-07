@@ -23,19 +23,23 @@ pub(crate) fn clear_journal_prefix(
     *journal_record_count = journal_record_count.saturating_sub(record_count);
 }
 
+/// Exclusive upper bound for f64 → u64 conversion. `u64::MAX as f64` rounds
+/// UP to 2^64 (exactly representable), so a `> u64::MAX as f64` check admits
+/// 2^64 itself, which an `as` cast then saturates to `u64::MAX`. Valid u64
+/// values in f64 form are exactly the integers in [0, 2^64).
+const F64_U64_EXCLUSIVE_BOUND: f64 = 18_446_744_073_709_551_616.0; // 2^64
+
 /// Rejects non-integral, negative, non-finite and out-of-range values instead
 /// of silently truncating them with an `as` cast.
 pub(crate) fn checked_usize_from_f64(value: f64) -> Option<usize> {
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > usize::MAX as f64 {
-        return None;
-    }
-    Some(value as usize)
+    checked_u64_from_f64(value).and_then(|v| usize::try_from(v).ok())
 }
 
 /// Rejects non-integral, negative, non-finite and out-of-range values instead
 /// of silently truncating them with an `as` cast.
 pub(crate) fn checked_u64_from_f64(value: f64) -> Option<u64> {
-    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > u64::MAX as f64 {
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value >= F64_U64_EXCLUSIVE_BOUND
+    {
         return None;
     }
     Some(value as u64)
@@ -549,6 +553,25 @@ mod tests {
         assert_eq!(checked_u64_from_f64(-0.5), None);
         assert_eq!(checked_u64_from_f64(f64::NEG_INFINITY), None);
         assert_eq!(checked_u64_from_f64(1e20), None);
+    }
+
+    #[test]
+    fn checked_integer_conversions_handle_the_two_pow_64_boundary() {
+        // 2^64 is exactly representable and equals `u64::MAX as f64` after
+        // rounding; it must be rejected, not saturated to u64::MAX.
+        let two_pow_64 = 18_446_744_073_709_551_616.0_f64;
+        assert_eq!(checked_u64_from_f64(two_pow_64), None);
+        assert_eq!(checked_u64_from_f64(u64::MAX as f64), None);
+        assert_eq!(checked_usize_from_f64(two_pow_64), None);
+        // The largest f64 strictly below 2^64 is a valid u64.
+        let below = 18_446_744_073_709_549_568.0_f64; // 2^64 - 2048
+        assert_eq!(
+            checked_u64_from_f64(below),
+            Some(18_446_744_073_709_549_568)
+        );
+        // 2^53 region is unaffected.
+        let two_pow_53 = 9_007_199_254_740_992.0_f64;
+        assert_eq!(checked_u64_from_f64(two_pow_53), Some(1 << 53));
     }
 
     #[test]
