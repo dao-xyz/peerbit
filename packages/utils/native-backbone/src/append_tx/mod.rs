@@ -322,7 +322,7 @@ impl NativePeerbitBackbone {
         meta_data: Option<Vec<u8>>,
         payload_data: &[u8],
         trim_length_to: Option<usize>,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), JsValue> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
