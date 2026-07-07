@@ -17,6 +17,7 @@ mod profile;
 mod raw_receive;
 mod shared_log_plan;
 mod sync_send;
+mod time;
 mod wire_sync;
 
 pub use crate::error::BackboneError;

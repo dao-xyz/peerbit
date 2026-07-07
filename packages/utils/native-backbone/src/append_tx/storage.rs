@@ -452,7 +452,7 @@ impl NativePeerbitBackbone {
         document_index_commit: Option<DocumentIndexAppendCommit>,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let payload_size = payload_data.length();
         let delete_trimmed_document_heads = document_index_commit
             .as_ref()
@@ -529,7 +529,7 @@ impl NativePeerbitBackbone {
         let hash_number = self.hash_number_profiled(&digest)?;
         let document_hash = hash.clone();
         let document_gid = gid.clone();
-        let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_plan_started = profile_enabled.then(crate::time::now_ms);
         let coordinate_facts = commit_local_append_for_gid_compact_core(
             &mut self.shared_log,
             hash,
@@ -546,9 +546,9 @@ impl NativePeerbitBackbone {
             true,
         )?;
         if let Some(started) = coordinate_plan_started {
-            self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_plan_ms += crate::time::now_ms() - started;
         }
-        let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_core_started = profile_enabled.then(crate::time::now_ms);
         self.commit_coordinate_core_from_compact_facts(
             &coordinate_facts,
             &next_hashes,
@@ -557,7 +557,7 @@ impl NativePeerbitBackbone {
             meta_bytes,
         );
         if let Some(started) = coordinate_core_started {
-            self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_core_ms += crate::time::now_ms() - started;
         }
         let document_trimmed_heads_processed = self.commit_append_document_index_profiled(
             document_index_commit,
@@ -570,7 +570,7 @@ impl NativePeerbitBackbone {
             &trim_hashes,
         )?;
 
-        let result_row_started = profile_enabled.then(js_sys::Date::now);
+        let result_row_started = profile_enabled.then(crate::time::now_ms);
         let out = Array::new();
         out.push(&entry_row);
         out.push(&leader_samples_to_optional_rows(&coordinate_facts.leaders));
@@ -589,10 +589,10 @@ impl NativePeerbitBackbone {
                 .unwrap_or(JsValue::UNDEFINED),
         );
         if let Some(started) = result_row_started {
-            self.append_profile.result_row_ms += js_sys::Date::now() - started;
+            self.append_profile.result_row_ms += crate::time::now_ms() - started;
         }
         if let Some(started) = storage_append_started {
-            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+            self.append_profile.storage_append_inner_ms += crate::time::now_ms() - started;
         }
         Ok(out)
     }

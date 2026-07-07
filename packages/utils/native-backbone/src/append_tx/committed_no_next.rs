@@ -111,26 +111,26 @@ impl NativePeerbitBackbone {
     ) -> Result<Array, JsValue> {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let profile_enabled = self.append_profile_enabled;
-        let input_copy_started = profile_enabled.then(js_sys::Date::now);
+        let input_copy_started = profile_enabled.then(crate::time::now_ms);
         let payload_template = payload_data.to_vec();
         if let Some(started) = input_copy_started {
-            self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.input_copy_ms += crate::time::now_ms() - started;
         }
         let payload_size = payload_template.len() as u32;
         let now = wall_time_start.to_string();
-        let started = js_sys::Date::now();
+        let started = crate::time::now_ms();
         for i in 0..iterations {
             let wall_time = wall_time_start + i as u64;
             let logical = i;
             let gid = format!("native-backbone-loop-{wall_time_start}-{i}");
-            let storage_append_started = profile_enabled.then(js_sys::Date::now);
-            let payload_copy_started = profile_enabled.then(js_sys::Date::now);
+            let storage_append_started = profile_enabled.then(crate::time::now_ms);
+            let payload_copy_started = profile_enabled.then(crate::time::now_ms);
             let payload_data = payload_template.clone();
             if let Some(started) = payload_copy_started {
-                self.append_profile.input_copy_ms += js_sys::Date::now() - started;
+                self.append_profile.input_copy_ms += crate::time::now_ms() - started;
             }
 
-            let log_started = profile_enabled.then(js_sys::Date::now);
+            let log_started = profile_enabled.then(crate::time::now_ms);
             let mut log_profile = NativeLogAppendProfile::default();
             let (entry_facts, trim_hashes) = self
                 .log
@@ -148,13 +148,13 @@ impl NativePeerbitBackbone {
                     profile_enabled.then_some(&mut log_profile),
                 )?;
             if let Some(started) = log_started {
-                self.append_profile.log_total_ms += js_sys::Date::now() - started;
+                self.append_profile.log_total_ms += crate::time::now_ms() - started;
                 self.append_profile.add_log_profile(&log_profile);
             }
 
             let hash_number = self.hash_number_profiled(&entry_facts.hash_digest_bytes)?;
 
-            let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_plan_started = profile_enabled.then(crate::time::now_ms);
             let coordinate_facts = commit_local_append_for_gid_compact_core(
                 &mut self.shared_log,
                 entry_facts.hash.clone(),
@@ -171,10 +171,10 @@ impl NativePeerbitBackbone {
                 true,
             )?;
             if let Some(started) = coordinate_plan_started {
-                self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+                self.append_profile.coordinate_plan_ms += crate::time::now_ms() - started;
             }
 
-            let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_core_started = profile_enabled.then(crate::time::now_ms);
             self.commit_coordinate_core_from_compact_facts(
                 &coordinate_facts,
                 &[],
@@ -183,10 +183,10 @@ impl NativePeerbitBackbone {
                 entry_facts.meta_bytes.clone(),
             );
             if let Some(started) = coordinate_core_started {
-                self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+                self.append_profile.coordinate_core_ms += crate::time::now_ms() - started;
             }
 
-            let document_index_started = profile_enabled.then(js_sys::Date::now);
+            let document_index_started = profile_enabled.then(crate::time::now_ms);
             let document_index_commit = use_document_index.then(|| DocumentIndexAppendCommit {
                 key: format!("native-backbone-loop-doc-{wall_time_start}-{i}"),
                 value_prefix: DocumentIndexValuePrefix::Bytes(Vec::new()),
@@ -205,15 +205,15 @@ impl NativePeerbitBackbone {
                 payload_size,
             )?;
             if let Some(started) = document_index_started {
-                self.append_profile.document_index_commit_ms += js_sys::Date::now() - started;
+                self.append_profile.document_index_commit_ms += crate::time::now_ms() - started;
             }
 
             if let Some(started) = storage_append_started {
-                self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+                self.append_profile.storage_append_inner_ms += crate::time::now_ms() - started;
             }
         }
         let row = Array::new();
-        row.push(&JsValue::from_f64(js_sys::Date::now() - started));
+        row.push(&JsValue::from_f64(crate::time::now_ms() - started));
         row.push(&JsValue::from_f64(self.log.len() as f64));
         row.push(&JsValue::from_f64(self.blocks.len() as f64));
         row.push(&JsValue::from_f64(self.coordinate_index.len() as f64));
@@ -945,7 +945,7 @@ impl NativePeerbitBackbone {
         document_index_commits: Vec<DocumentIndexAppendCommit>,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let batch_len = document_index_commits.len();
         self.reserve_document_batch(batch_len);
         let mut pending_appends = Vec::with_capacity(batch_len);
@@ -1020,7 +1020,7 @@ impl NativePeerbitBackbone {
 
         let out = Array::new();
         for (pending, coordinate_facts) in pending_appends.into_iter().zip(coordinate_facts) {
-            let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_core_started = profile_enabled.then(crate::time::now_ms);
             self.commit_coordinate_core_from_compact_facts(
                 &coordinate_facts,
                 &[],
@@ -1029,7 +1029,7 @@ impl NativePeerbitBackbone {
                 pending.entry_facts.meta_bytes.clone(),
             );
             if let Some(started) = coordinate_core_started {
-                self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+                self.append_profile.coordinate_core_ms += crate::time::now_ms() - started;
             }
 
             let document_trimmed_heads_processed = self.commit_append_document_index_profiled(
@@ -1043,7 +1043,7 @@ impl NativePeerbitBackbone {
                 &pending.trim_hashes,
             )?;
 
-            let result_row_started = profile_enabled.then(js_sys::Date::now);
+            let result_row_started = profile_enabled.then(crate::time::now_ms);
             let row = no_next_compact_entry_row(
                 &self.resolution,
                 &pending.entry_facts,
@@ -1062,12 +1062,12 @@ impl NativePeerbitBackbone {
             }
             out.push(&row);
             if let Some(started) = result_row_started {
-                self.append_profile.result_row_ms += js_sys::Date::now() - started;
+                self.append_profile.result_row_ms += crate::time::now_ms() - started;
             }
         }
 
         if let Some(started) = storage_append_started {
-            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+            self.append_profile.storage_append_inner_ms += crate::time::now_ms() - started;
         }
         Ok(out)
     }
@@ -1090,7 +1090,7 @@ impl NativePeerbitBackbone {
         trim_length_to: Option<usize>,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let storage_append_started = profile_enabled.then(js_sys::Date::now);
+        let storage_append_started = profile_enabled.then(crate::time::now_ms);
         let payload_size = payload_data.length();
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
 
@@ -1109,7 +1109,7 @@ impl NativePeerbitBackbone {
 
         let hash_number = self.hash_number_profiled(&entry_facts.hash_digest_bytes)?;
 
-        let coordinate_plan_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_plan_started = profile_enabled.then(crate::time::now_ms);
         let coordinate_facts = commit_local_append_for_gid_compact_core(
             &mut self.shared_log,
             entry_facts.hash.clone(),
@@ -1126,10 +1126,10 @@ impl NativePeerbitBackbone {
             true,
         )?;
         if let Some(started) = coordinate_plan_started {
-            self.append_profile.coordinate_plan_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_plan_ms += crate::time::now_ms() - started;
         }
 
-        let coordinate_core_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_core_started = profile_enabled.then(crate::time::now_ms);
         self.commit_coordinate_core_from_compact_facts(
             &coordinate_facts,
             &[],
@@ -1138,7 +1138,7 @@ impl NativePeerbitBackbone {
             entry_facts.meta_bytes.clone(),
         );
         if let Some(started) = coordinate_core_started {
-            self.append_profile.coordinate_core_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_core_ms += crate::time::now_ms() - started;
         }
 
         let document_trimmed_heads_processed = self.commit_append_document_index_profiled(
@@ -1152,14 +1152,14 @@ impl NativePeerbitBackbone {
             &trim_hashes,
         )?;
 
-        let result_row_started = profile_enabled.then(js_sys::Date::now);
+        let result_row_started = profile_enabled.then(crate::time::now_ms);
         let out = no_next_compact_entry_row(&self.resolution, &entry_facts, &coordinate_facts);
         push_optional_trim_result(&out, trim_hashes, document_trimmed_heads_processed);
         if let Some(started) = result_row_started {
-            self.append_profile.result_row_ms += js_sys::Date::now() - started;
+            self.append_profile.result_row_ms += crate::time::now_ms() - started;
         }
         if let Some(started) = storage_append_started {
-            self.append_profile.storage_append_inner_ms += js_sys::Date::now() - started;
+            self.append_profile.storage_append_inner_ms += crate::time::now_ms() - started;
         }
         Ok(out)
     }

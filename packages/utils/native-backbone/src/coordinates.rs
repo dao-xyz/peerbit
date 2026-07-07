@@ -314,11 +314,11 @@ impl NativePeerbitBackbone {
             true,
         );
         let profile_enabled = self.append_profile_enabled;
-        let coordinate_delete_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_delete_started = profile_enabled.then(crate::time::now_ms);
         self.delete_coordinate_core_strings(next_hashes);
         self.delete_coordinate_core_strings(delete_hashes);
         if let Some(started) = coordinate_delete_started {
-            self.append_profile.coordinate_delete_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_delete_ms += crate::time::now_ms() - started;
         }
     }
 
@@ -335,7 +335,7 @@ impl NativePeerbitBackbone {
         record_journal: bool,
     ) {
         let profile_enabled = self.append_profile_enabled;
-        let value_encode_started = profile_enabled.then(js_sys::Date::now);
+        let value_encode_started = profile_enabled.then(crate::time::now_ms);
         let value = encode_coordinate_value(
             &hash,
             gid,
@@ -347,24 +347,24 @@ impl NativePeerbitBackbone {
             &meta_bytes,
         );
         if let Some(started) = value_encode_started {
-            self.append_profile.coordinate_value_encode_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_value_encode_ms += crate::time::now_ms() - started;
         }
         if record_journal && self.coordinate_journal_enabled {
-            let journal_started = profile_enabled.then(js_sys::Date::now);
+            let journal_started = profile_enabled.then(crate::time::now_ms);
             self.push_coordinate_journal_put(&hash, &value);
             if let Some(started) = journal_started {
-                self.append_profile.coordinate_journal_put_ms += js_sys::Date::now() - started;
+                self.append_profile.coordinate_journal_put_ms += crate::time::now_ms() - started;
             }
         }
-        let index_put_started = profile_enabled.then(js_sys::Date::now);
+        let index_put_started = profile_enabled.then(crate::time::now_ms);
         self.coordinate_index.insert(hash.clone());
         if let Some(started) = index_put_started {
-            self.append_profile.coordinate_index_put_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_index_put_ms += crate::time::now_ms() - started;
         }
-        let value_put_started = profile_enabled.then(js_sys::Date::now);
+        let value_put_started = profile_enabled.then(crate::time::now_ms);
         self.coordinate_values.put(hash, value);
         if let Some(started) = value_put_started {
-            self.append_profile.coordinate_value_put_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_value_put_ms += crate::time::now_ms() - started;
         }
     }
 
