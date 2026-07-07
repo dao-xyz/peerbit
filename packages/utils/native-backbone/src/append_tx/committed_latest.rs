@@ -43,7 +43,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -60,7 +60,7 @@ impl NativePeerbitBackbone {
             None,
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -128,7 +128,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -154,7 +154,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1310,7 +1310,7 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -1327,7 +1327,7 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1397,7 +1397,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -1423,7 +1423,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 }
 
@@ -1513,7 +1513,7 @@ impl NativePeerbitBackbone {
         let (_, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
         self.validate_document_index_required_previous_signer(&document_index_commit)?;
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -1530,7 +1530,7 @@ impl NativePeerbitBackbone {
             trim_length_to,
             true,
             Some(document_index_commit),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1762,7 +1762,7 @@ impl NativePeerbitBackbone {
                 // The per-item path commits the coordinate before the document
                 // index write can fail, so leave this entry coordinate-flushable.
                 pending_appends.push(pending_append);
-                return Err(error);
+                return Err(error.into());
             }
         };
         self.commit_prepared_document_index_append_put(prepared_document_put);

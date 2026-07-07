@@ -13,6 +13,7 @@ use peerbit_log_rust::entry_v0_signature_public_key_from_storage_bytes;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
+use crate::error::BackboneError;
 use crate::js_interop::{
     append_journal_delete_record, append_journal_put_record, array_strings, bytes_vec_from_array,
     clear_journal_prefix, decode_error, ensure_same_len, js_error, js_get, optional_string,
@@ -224,13 +225,15 @@ pub(crate) fn document_index_cached_projection_plain_put_payload_append_commit(
     })
 }
 
-pub(crate) fn plain_put_document_bytes_from_payload(payload_data: &[u8]) -> Result<&[u8], JsValue> {
+pub(crate) fn plain_put_document_bytes_from_payload(
+    payload_data: &[u8],
+) -> Result<&[u8], BackboneError> {
     const PLAIN_PUT_OPERATION_PREFIX_LENGTH: usize = 6;
     if payload_data.len() < PLAIN_PUT_OPERATION_PREFIX_LENGTH {
-        return Err(JsValue::from_str("Plain put payload is too short"));
+        return Err(BackboneError::PlainPutPayloadTooShort);
     }
     if payload_data[0] != 0 || payload_data[1] != 3 {
-        return Err(JsValue::from_str("Expected native plain put payload"));
+        return Err(BackboneError::Expected("native plain put payload"));
     }
     let declared_len = u32::from_le_bytes([
         payload_data[2],
@@ -240,7 +243,7 @@ pub(crate) fn plain_put_document_bytes_from_payload(payload_data: &[u8]) -> Resu
     ]) as usize;
     let document_bytes = &payload_data[PLAIN_PUT_OPERATION_PREFIX_LENGTH..];
     if document_bytes.len() != declared_len {
-        return Err(JsValue::from_str("Plain put payload length mismatch"));
+        return Err(BackboneError::PlainPutPayloadLengthMismatch);
     }
     Ok(document_bytes)
 }
@@ -346,7 +349,7 @@ pub(crate) fn encode_document_context_suffix(
     head: &str,
     gid: &str,
     size: u32,
-) -> Result<Vec<u8>, JsValue> {
+) -> Result<Vec<u8>, BackboneError> {
     let capacity = 1usize
         .checked_add(8)
         .and_then(|value| value.checked_add(8))
@@ -355,7 +358,7 @@ pub(crate) fn encode_document_context_suffix(
         .and_then(|value| value.checked_add(4))
         .and_then(|value| value.checked_add(gid.len()))
         .and_then(|value| value.checked_add(4))
-        .ok_or_else(|| JsValue::from_str("Document context suffix capacity overflow"))?;
+        .ok_or(BackboneError::DocumentContextSuffixCapacityOverflow)?;
     let mut out = Vec::with_capacity(capacity);
     // Context is @variant(0); keep this byte-for-byte aligned with Borsh.
     out.push(0);
@@ -376,24 +379,36 @@ enum ProjectionValue {
     None,
 }
 
-fn read_u8_projection(bytes: &[u8], offset: &mut usize, label: &str) -> Result<u8, JsValue> {
+fn read_u8_projection(
+    bytes: &[u8],
+    offset: &mut usize,
+    label: &'static str,
+) -> Result<u8, BackboneError> {
     if *offset >= bytes.len() {
-        return Err(JsValue::from_str(&format!("Truncated {label}")));
+        return Err(BackboneError::Truncated(label));
     }
     let value = bytes[*offset];
     *offset += 1;
     Ok(value)
 }
 
-fn read_bool_projection(bytes: &[u8], offset: &mut usize, label: &str) -> Result<bool, JsValue> {
+fn read_bool_projection(
+    bytes: &[u8],
+    offset: &mut usize,
+    label: &'static str,
+) -> Result<bool, BackboneError> {
     match read_u8_projection(bytes, offset, label)? {
         0 => Ok(false),
         1 => Ok(true),
-        _ => Err(JsValue::from_str(&format!("Invalid bool {label}"))),
+        _ => Err(BackboneError::InvalidBool(label)),
     }
 }
 
-fn skip_projection_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result<(), JsValue> {
+fn skip_projection_value(
+    bytes: &[u8],
+    offset: &mut usize,
+    kind: &str,
+) -> Result<(), BackboneError> {
     match kind {
         "string" => {
             read_encoded_string(bytes, offset, "projected string")?;
@@ -419,7 +434,7 @@ fn skip_projection_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result
             if has_value == 1 {
                 skip_projection_value(bytes, offset, &kind["option:".len()..])?;
             } else if has_value != 0 {
-                return Err(JsValue::from_str("Invalid projection option marker"));
+                return Err(BackboneError::InvalidProjectionOptionMarker);
             }
         }
         "vec:string" => {
@@ -435,9 +450,7 @@ fn skip_projection_value(bytes: &[u8], offset: &mut usize, kind: &str) -> Result
             }
         }
         _ => {
-            return Err(JsValue::from_str(
-                "Unsupported document projection field type",
-            ))
+            return Err(BackboneError::UnsupportedDocumentProjectionFieldType);
         }
     }
     Ok(())
@@ -447,7 +460,7 @@ fn read_projection_value(
     bytes: &[u8],
     offset: &mut usize,
     kind: &str,
-) -> Result<ProjectionValue, JsValue> {
+) -> Result<ProjectionValue, BackboneError> {
     match kind {
         "string" => Ok(ProjectionValue::String(read_encoded_string(
             bytes,
@@ -486,7 +499,7 @@ fn read_projection_value(
                     "projection option string",
                 )?))
             } else {
-                Err(JsValue::from_str("Invalid projection option marker"))
+                Err(BackboneError::InvalidProjectionOptionMarker)
             }
         }
         "option:u8" => {
@@ -498,7 +511,7 @@ fn read_projection_value(
                     read_u8_projection(bytes, offset, "projection option u8")? as u64,
                 ))
             } else {
-                Err(JsValue::from_str("Invalid projection option marker"))
+                Err(BackboneError::InvalidProjectionOptionMarker)
             }
         }
         "option:u32" => {
@@ -510,7 +523,7 @@ fn read_projection_value(
                     read_u32(bytes, offset, "projection option u32")? as u64,
                 ))
             } else {
-                Err(JsValue::from_str("Invalid projection option marker"))
+                Err(BackboneError::InvalidProjectionOptionMarker)
             }
         }
         "option:u64" => {
@@ -524,7 +537,7 @@ fn read_projection_value(
                     "projection option u64",
                 )?))
             } else {
-                Err(JsValue::from_str("Invalid projection option marker"))
+                Err(BackboneError::InvalidProjectionOptionMarker)
             }
         }
         "option:bool" => {
@@ -538,7 +551,7 @@ fn read_projection_value(
                     "projection option bool",
                 )?))
             } else {
-                Err(JsValue::from_str("Invalid projection option marker"))
+                Err(BackboneError::InvalidProjectionOptionMarker)
             }
         }
         "option:bytes" => {
@@ -552,12 +565,10 @@ fn read_projection_value(
                     "projection option bytes",
                 )?))
             } else {
-                Err(JsValue::from_str("Invalid projection option marker"))
+                Err(BackboneError::InvalidProjectionOptionMarker)
             }
         }
-        _ => Err(JsValue::from_str(
-            "Unsupported projected document field type",
-        )),
+        _ => Err(BackboneError::UnsupportedProjectedDocumentFieldType),
     }
 }
 
@@ -565,7 +576,7 @@ fn write_projection_value(
     out: &mut Vec<u8>,
     kind: &str,
     value: &ProjectionValue,
-) -> Result<(), JsValue> {
+) -> Result<(), BackboneError> {
     match (kind, value) {
         ("string", ProjectionValue::String(value)) => write_string(out, value),
         ("u8", ProjectionValue::U64(value)) => write_u8(out, *value as u8),
@@ -604,9 +615,7 @@ fn write_projection_value(
             write_bytes(out, value);
         }
         _ => {
-            return Err(JsValue::from_str(
-                "Projection value does not match output type",
-            ))
+            return Err(BackboneError::ProjectionValueOutputTypeMismatch);
         }
     }
     Ok(())
@@ -618,32 +627,29 @@ fn read_projected_document_fields(
     variant_value: Option<&str>,
     names: &[String],
     types: &[String],
-) -> Result<HashMap<String, ProjectionValue>, JsValue> {
+) -> Result<HashMap<String, ProjectionValue>, BackboneError> {
     if names.len() != types.len() {
-        return Err(JsValue::from_str(
-            "Document projection plan length mismatch",
-        ));
+        return Err(BackboneError::DocumentProjectionPlanLengthMismatch);
     }
     let mut offset = 0usize;
     match variant_type {
         Some("u8") => {
             let expected = variant_value
-                .ok_or_else(|| JsValue::from_str("Missing document variant"))?
+                .ok_or(BackboneError::MissingDocumentVariant)?
                 .parse::<u8>()
-                .map_err(|_| JsValue::from_str("Invalid document variant"))?;
+                .map_err(|_| BackboneError::InvalidDocumentVariant)?;
             if read_u8_projection(encoded_document, &mut offset, "document variant")? != expected {
-                return Err(JsValue::from_str("Document variant mismatch"));
+                return Err(BackboneError::DocumentVariantMismatch);
             }
         }
         Some("string") => {
-            let expected =
-                variant_value.ok_or_else(|| JsValue::from_str("Missing document variant"))?;
+            let expected = variant_value.ok_or(BackboneError::MissingDocumentVariant)?;
             if read_encoded_string(encoded_document, &mut offset, "document variant")? != expected {
-                return Err(JsValue::from_str("Document variant mismatch"));
+                return Err(BackboneError::DocumentVariantMismatch);
             }
         }
         Some("") | None => {}
-        _ => return Err(JsValue::from_str("Unsupported document variant type")),
+        _ => return Err(BackboneError::UnsupportedDocumentVariantType),
     }
     let mut out = HashMap::with_capacity(names.len());
     for (name, kind) in names.iter().zip(types.iter()) {
@@ -666,21 +672,21 @@ fn write_projection_variant(
     out: &mut Vec<u8>,
     variant_type: Option<&str>,
     variant_value: Option<&str>,
-) -> Result<(), JsValue> {
+) -> Result<(), BackboneError> {
     match variant_type {
         Some("u8") => {
             let value = variant_value
-                .ok_or_else(|| JsValue::from_str("Missing output variant"))?
+                .ok_or(BackboneError::MissingOutputVariant)?
                 .parse::<u8>()
-                .map_err(|_| JsValue::from_str("Invalid output variant"))?;
+                .map_err(|_| BackboneError::InvalidOutputVariant)?;
             write_u8(out, value);
         }
         Some("string") => {
-            let value = variant_value.ok_or_else(|| JsValue::from_str("Missing output variant"))?;
+            let value = variant_value.ok_or(BackboneError::MissingOutputVariant)?;
             write_string(out, value);
         }
         Some("") | None => {}
-        _ => return Err(JsValue::from_str("Unsupported output variant type")),
+        _ => return Err(BackboneError::UnsupportedOutputVariantType),
     }
     Ok(())
 }
@@ -730,7 +736,7 @@ pub(crate) fn project_document_index_simple_bytes_with_plan(
     gid: &str,
     size: u32,
     signer: Option<&[u8]>,
-) -> Result<Vec<u8>, JsValue> {
+) -> Result<Vec<u8>, BackboneError> {
     let document_values = read_projected_document_fields(
         encoded_document,
         plan.document_variant_type.as_deref(),
@@ -758,12 +764,12 @@ pub(crate) fn project_document_index_simple_bytes_with_plan(
                 "head" => ProjectionValue::String(head.to_string()),
                 "gid" => ProjectionValue::String(gid.to_string()),
                 "size" => ProjectionValue::U64(size as u64),
-                _ => return Err(JsValue::from_str("Unsupported context projection source")),
+                _ => return Err(BackboneError::UnsupportedContextProjectionSource),
             },
             "entryFirstSignerPublicKey" => signer
                 .map(|bytes| ProjectionValue::Bytes(bytes.to_vec()))
                 .unwrap_or(ProjectionValue::None),
-            _ => return Err(JsValue::from_str("Unsupported projection source kind")),
+            _ => return Err(BackboneError::UnsupportedProjectionSourceKind),
         };
         write_projection_value(&mut out, &plan.output_field_types[index], &value)?;
     }
@@ -789,7 +795,7 @@ fn project_document_index_simple_bytes(
     } else {
         Some(Uint8Array::new(&signer).to_vec())
     };
-    project_document_index_simple_bytes_with_plan(
+    Ok(project_document_index_simple_bytes_with_plan(
         encoded_document,
         &plan,
         created,
@@ -798,7 +804,7 @@ fn project_document_index_simple_bytes(
         gid,
         size,
         signer.as_deref(),
-    )
+    )?)
 }
 
 #[wasm_bindgen]
@@ -1428,22 +1434,22 @@ impl NativePeerbitBackbone {
         new_head: Option<&str>,
         previous_head: Option<&str>,
         record_document_journal: bool,
-    ) -> Result<PreparedDocumentEncodedPartsPut, JsValue> {
+    ) -> Result<PreparedDocumentEncodedPartsPut, BackboneError> {
         self.document_byte_element_index_limit = byte_element_index_limit;
         let profile_enabled = self.append_profile_enabled;
         let extract_started = profile_enabled.then(crate::time::now_ms);
         let fields = {
-            let schema_ir = self.document_schema_ir.as_ref().ok_or_else(|| {
-                js_error("Native backbone document schema IR has not been configured")
-            })?;
+            let schema_ir = self
+                .document_schema_ir
+                .as_ref()
+                .ok_or(BackboneError::DocumentSchemaIrNotConfigured)?;
             extract_encoded_document_fields_from_parts_with_byte_limits(
                 &schema_ir,
                 &value_prefix_bytes,
                 &value_suffix_bytes,
                 byte_element_index_limit,
                 NATIVE_BACKBONE_BYTE_EXACT_INDEX_LIMIT,
-            )
-            .map_err(js_error)?
+            )?
         };
         if let Some(started) = extract_started {
             self.append_profile.document_index_extract_ms += crate::time::now_ms() - started;
@@ -1706,5 +1712,175 @@ impl NativePeerbitBackbone {
         self.document_values.reserve(batch_len);
         self.document_index.reserve_documents(batch_len);
         self.document_key_by_head.reserve(batch_len);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn projection_plan(
+        source_kinds: &[&str],
+        source_values: &[&str],
+        output_field_types: &[&str],
+    ) -> ParsedProjectionPlan {
+        ParsedProjectionPlan {
+            document_variant_type: None,
+            document_variant_value: None,
+            output_variant_type: None,
+            output_variant_value: None,
+            document_field_names: Vec::new(),
+            document_field_types: Vec::new(),
+            output_field_types: output_field_types.iter().map(|s| s.to_string()).collect(),
+            source_kinds: source_kinds.iter().map(|s| s.to_string()).collect(),
+            source_values: source_values.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn plain_put_payload_reports_typed_errors() {
+        let error = plain_put_document_bytes_from_payload(&[0, 3]).unwrap_err();
+        assert_eq!(error, BackboneError::PlainPutPayloadTooShort);
+        assert_eq!(error.to_string(), "Plain put payload is too short");
+
+        let error = plain_put_document_bytes_from_payload(&[1, 3, 0, 0, 0, 0]).unwrap_err();
+        assert_eq!(error, BackboneError::Expected("native plain put payload"));
+        assert_eq!(error.to_string(), "Expected native plain put payload");
+
+        let error = plain_put_document_bytes_from_payload(&[0, 3, 2, 0, 0, 0, 9]).unwrap_err();
+        assert_eq!(error, BackboneError::PlainPutPayloadLengthMismatch);
+        assert_eq!(error.to_string(), "Plain put payload length mismatch");
+    }
+
+    #[test]
+    fn projected_document_fields_report_typed_errors() {
+        let error =
+            read_projected_document_fields(&[], None, None, &["a".to_string()], &[]).unwrap_err();
+        assert_eq!(error, BackboneError::DocumentProjectionPlanLengthMismatch);
+        assert_eq!(
+            error.to_string(),
+            "Document projection plan length mismatch"
+        );
+
+        let error =
+            read_projected_document_fields(&[], Some("u16"), Some("1"), &[], &[]).unwrap_err();
+        assert_eq!(error, BackboneError::UnsupportedDocumentVariantType);
+        assert_eq!(error.to_string(), "Unsupported document variant type");
+
+        let error = read_projected_document_fields(&[], Some("u8"), None, &[], &[]).unwrap_err();
+        assert_eq!(error, BackboneError::MissingDocumentVariant);
+        assert_eq!(error.to_string(), "Missing document variant");
+
+        let error =
+            read_projected_document_fields(&[], Some("u8"), Some("abc"), &[], &[]).unwrap_err();
+        assert_eq!(error, BackboneError::InvalidDocumentVariant);
+        assert_eq!(error.to_string(), "Invalid document variant");
+
+        let error =
+            read_projected_document_fields(&[], Some("u8"), Some("1"), &[], &[]).unwrap_err();
+        assert_eq!(error, BackboneError::Truncated("document variant"));
+        assert_eq!(error.to_string(), "Truncated document variant");
+
+        let error =
+            read_projected_document_fields(&[0], Some("u8"), Some("1"), &[], &[]).unwrap_err();
+        assert_eq!(error, BackboneError::DocumentVariantMismatch);
+        assert_eq!(error.to_string(), "Document variant mismatch");
+    }
+
+    #[test]
+    fn projection_variant_and_value_writers_report_typed_errors() {
+        let mut out = Vec::new();
+        let error = write_projection_variant(&mut out, Some("u8"), None).unwrap_err();
+        assert_eq!(error, BackboneError::MissingOutputVariant);
+        assert_eq!(error.to_string(), "Missing output variant");
+
+        let error = write_projection_variant(&mut out, Some("u8"), Some("abc")).unwrap_err();
+        assert_eq!(error, BackboneError::InvalidOutputVariant);
+        assert_eq!(error.to_string(), "Invalid output variant");
+
+        let error = write_projection_variant(&mut out, Some("u16"), Some("1")).unwrap_err();
+        assert_eq!(error, BackboneError::UnsupportedOutputVariantType);
+        assert_eq!(error.to_string(), "Unsupported output variant type");
+
+        let error = write_projection_value(&mut out, "string", &ProjectionValue::None).unwrap_err();
+        assert_eq!(error, BackboneError::ProjectionValueOutputTypeMismatch);
+        assert_eq!(
+            error.to_string(),
+            "Projection value does not match output type"
+        );
+    }
+
+    #[test]
+    fn projection_value_readers_report_typed_errors() {
+        let mut offset = 0usize;
+        let error = read_projection_value(&[2], &mut offset, "bool").unwrap_err();
+        assert_eq!(error, BackboneError::InvalidBool("projection bool"));
+        assert_eq!(error.to_string(), "Invalid bool projection bool");
+
+        let mut offset = 0usize;
+        let error = read_projection_value(&[2], &mut offset, "option:u8").unwrap_err();
+        assert_eq!(error, BackboneError::InvalidProjectionOptionMarker);
+        assert_eq!(error.to_string(), "Invalid projection option marker");
+
+        let mut offset = 0usize;
+        let error = read_projection_value(&[], &mut offset, "u128").unwrap_err();
+        assert_eq!(error, BackboneError::UnsupportedProjectedDocumentFieldType);
+        assert_eq!(
+            error.to_string(),
+            "Unsupported projected document field type"
+        );
+
+        let mut offset = 0usize;
+        let error = skip_projection_value(&[], &mut offset, "u128").unwrap_err();
+        assert_eq!(error, BackboneError::UnsupportedDocumentProjectionFieldType);
+        assert_eq!(
+            error.to_string(),
+            "Unsupported document projection field type"
+        );
+    }
+
+    #[test]
+    fn projection_sources_report_typed_errors() {
+        let plan = projection_plan(&["context"], &["bogus"], &["u64"]);
+        let error =
+            project_document_index_simple_bytes_with_plan(&[], &plan, 0, 0, "h", "g", 0, None)
+                .unwrap_err();
+        assert_eq!(error, BackboneError::UnsupportedContextProjectionSource);
+        assert_eq!(error.to_string(), "Unsupported context projection source");
+
+        let plan = projection_plan(&["bogus"], &["x"], &["u64"]);
+        let error =
+            project_document_index_simple_bytes_with_plan(&[], &plan, 0, 0, "h", "g", 0, None)
+                .unwrap_err();
+        assert_eq!(error, BackboneError::UnsupportedProjectionSourceKind);
+        assert_eq!(error.to_string(), "Unsupported projection source kind");
+    }
+
+    #[test]
+    fn document_index_put_chain_variants_render_exact_messages() {
+        for (error, message) in [
+            (
+                BackboneError::DocumentContextSuffixCapacityOverflow,
+                "Document context suffix capacity overflow",
+            ),
+            (
+                BackboneError::DocumentSchemaIrNotConfigured,
+                "Native backbone document schema IR has not been configured",
+            ),
+            (
+                BackboneError::MissingCachedDocumentProjectionPlan,
+                "Missing cached document projection plan",
+            ),
+            (
+                BackboneError::MissingPlainPutPayloadForDocumentIndex,
+                "Missing plain put payload for document index",
+            ),
+            (
+                BackboneError::MissingPlainPutPayloadForDocumentProjection,
+                "Missing plain put payload for document projection",
+            ),
+        ] {
+            assert_eq!(error.to_string(), message);
+        }
     }
 }

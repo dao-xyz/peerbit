@@ -13,6 +13,7 @@ use crate::documents::{
     DocumentContextFacts, DocumentIndexAppendCommit, DocumentIndexProjectionPlan,
     DocumentIndexValuePrefix, PreparedDocumentIndexAppendPut,
 };
+use crate::error::BackboneError;
 use crate::js_interop::{
     array_from_value, ensure_same_len, hash_number_u64, number_to_row, numbers_to_rows,
     optional_bytes_from_js, string_field, strings_to_array,
@@ -239,7 +240,7 @@ impl NativePeerbitBackbone {
         &mut self,
         meta_data: JsValue,
         payload_data: &Uint8Array,
-    ) -> Result<(Option<Vec<u8>>, Vec<u8>), JsValue> {
+    ) -> Result<(Option<Vec<u8>>, Vec<u8>), BackboneError> {
         let input_copy_started = self.append_profile_enabled.then(crate::time::now_ms);
         let meta_data = optional_bytes_from_js(meta_data, "meta data")?;
         let payload_data = payload_data.to_vec();
@@ -249,7 +250,7 @@ impl NativePeerbitBackbone {
         Ok((meta_data, payload_data))
     }
 
-    fn hash_number_profiled(&mut self, hash_digest_bytes: &[u8]) -> Result<u64, JsValue> {
+    fn hash_number_profiled(&mut self, hash_digest_bytes: &[u8]) -> Result<u64, BackboneError> {
         let hash_number_started = self.append_profile_enabled.then(crate::time::now_ms);
         let hash_number = hash_number_u64(&self.resolution, hash_digest_bytes)?;
         if let Some(started) = hash_number_started {
@@ -359,7 +360,7 @@ impl NativePeerbitBackbone {
         payload_data: Vec<u8>,
         trim_length_to: Option<usize>,
         resolve_trimmed_entries: bool,
-    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), JsValue> {
+    ) -> Result<(NativeCommittedEntryFacts, Vec<String>, Array, Array), BackboneError> {
         let profile_enabled = self.append_profile_enabled;
         let log_started = profile_enabled.then(crate::time::now_ms);
         let mut log_profile = NativeLogAppendProfile::default();
@@ -467,7 +468,7 @@ impl NativePeerbitBackbone {
         plain_put_payload_data: Option<&[u8]>,
         delete_trimmed_document_heads: bool,
         trim_hashes: &[String],
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, BackboneError> {
         let document_index_started = self.append_profile_enabled.then(crate::time::now_ms);
         self.put_document_index_for_append_with_plain_put_payload(
             document_index_commit,
@@ -523,13 +524,13 @@ impl NativePeerbitBackbone {
             row.clone()
         };
         let document_hash = string_field(&entry_row, 0, "document index entry hash")?;
-        self.put_document_index_for_append(
+        Ok(self.put_document_index_for_append(
             Some(document_index_commit),
             wall_time,
             &document_hash,
             document_gid,
             payload_size,
-        )
+        )?)
     }
 
     fn put_document_index_for_append(
@@ -539,7 +540,7 @@ impl NativePeerbitBackbone {
         hash: &str,
         gid: &str,
         payload_size: u32,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         self.put_document_index_for_append_with_plain_put_payload(
             document_index_commit,
             wall_time,
@@ -558,7 +559,7 @@ impl NativePeerbitBackbone {
         gid: &str,
         payload_size: u32,
         plain_put_payload_data: Option<&[u8]>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let Some(document_index_commit) = document_index_commit else {
             return Ok(());
         };
@@ -583,7 +584,7 @@ impl NativePeerbitBackbone {
         gid: &str,
         payload_size: u32,
         plain_put_payload_data: Option<&[u8]>,
-    ) -> Result<PreparedDocumentIndexAppendPut, JsValue> {
+    ) -> Result<PreparedDocumentIndexAppendPut, BackboneError> {
         let record_previous_signer = document_index_commit
             .required_previous_signer_public_key
             .is_some();
@@ -626,9 +627,10 @@ impl NativePeerbitBackbone {
                     )?
                 }
                 DocumentIndexProjectionPlan::Cached(index) => {
-                    let plan = self.document_projection_plans.get(index).ok_or_else(|| {
-                        JsValue::from_str("Missing cached document projection plan")
-                    })?;
+                    let plan = self
+                        .document_projection_plans
+                        .get(index)
+                        .ok_or(BackboneError::MissingCachedDocumentProjectionPlan)?;
                     project_document_index_simple_bytes_with_plan(
                         &encoded_document,
                         plan,
@@ -644,15 +646,13 @@ impl NativePeerbitBackbone {
             DocumentIndexValuePrefix::PlainPutPayloadIdentity => plain_put_payload_data
                 .map(plain_put_document_bytes_from_payload)
                 .transpose()?
-                .ok_or_else(|| JsValue::from_str("Missing plain put payload for document index"))?
+                .ok_or(BackboneError::MissingPlainPutPayloadForDocumentIndex)?
                 .to_vec(),
             DocumentIndexValuePrefix::PlainPutPayloadProjection { plan, signer } => {
                 let encoded_document = plain_put_payload_data
                     .map(plain_put_document_bytes_from_payload)
                     .transpose()?
-                    .ok_or_else(|| {
-                        JsValue::from_str("Missing plain put payload for document projection")
-                    })?;
+                    .ok_or(BackboneError::MissingPlainPutPayloadForDocumentProjection)?;
                 match plan {
                     DocumentIndexProjectionPlan::Inline(plan) => {
                         project_document_index_simple_bytes_with_plan(
@@ -667,9 +667,10 @@ impl NativePeerbitBackbone {
                         )?
                     }
                     DocumentIndexProjectionPlan::Cached(index) => {
-                        let plan = self.document_projection_plans.get(index).ok_or_else(|| {
-                            JsValue::from_str("Missing cached document projection plan")
-                        })?;
+                        let plan = self
+                            .document_projection_plans
+                            .get(index)
+                            .ok_or(BackboneError::MissingCachedDocumentProjectionPlan)?;
                         project_document_index_simple_bytes_with_plan(
                             encoded_document,
                             plan,

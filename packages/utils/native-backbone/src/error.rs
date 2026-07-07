@@ -33,6 +33,29 @@ pub enum BackboneError {
     WireSyncStashFrameTaken,
     WireSyncPinnedEntryMissing,
     CoordinateCountOverflow,
+    Truncated(&'static str),
+    InvalidBool(&'static str),
+    InvalidProjectionOptionMarker,
+    UnsupportedDocumentProjectionFieldType,
+    UnsupportedProjectedDocumentFieldType,
+    ProjectionValueOutputTypeMismatch,
+    DocumentProjectionPlanLengthMismatch,
+    MissingDocumentVariant,
+    InvalidDocumentVariant,
+    DocumentVariantMismatch,
+    UnsupportedDocumentVariantType,
+    MissingOutputVariant,
+    InvalidOutputVariant,
+    UnsupportedOutputVariantType,
+    UnsupportedContextProjectionSource,
+    UnsupportedProjectionSourceKind,
+    PlainPutPayloadTooShort,
+    PlainPutPayloadLengthMismatch,
+    DocumentContextSuffixCapacityOverflow,
+    DocumentSchemaIrNotConfigured,
+    MissingCachedDocumentProjectionPlan,
+    MissingPlainPutPayloadForDocumentIndex,
+    MissingPlainPutPayloadForDocumentProjection,
     Wire(WireError),
     SharedLog(SharedLogError),
     Schema(SchemaError),
@@ -79,6 +102,59 @@ impl std::fmt::Display for BackboneError {
                 f.write_str("wire sync pinned stash entry missing")
             }
             BackboneError::CoordinateCountOverflow => f.write_str("Coordinate count overflow"),
+            BackboneError::Truncated(label) => write!(f, "Truncated {label}"),
+            BackboneError::InvalidBool(label) => write!(f, "Invalid bool {label}"),
+            BackboneError::InvalidProjectionOptionMarker => {
+                f.write_str("Invalid projection option marker")
+            }
+            BackboneError::UnsupportedDocumentProjectionFieldType => {
+                f.write_str("Unsupported document projection field type")
+            }
+            BackboneError::UnsupportedProjectedDocumentFieldType => {
+                f.write_str("Unsupported projected document field type")
+            }
+            BackboneError::ProjectionValueOutputTypeMismatch => {
+                f.write_str("Projection value does not match output type")
+            }
+            BackboneError::DocumentProjectionPlanLengthMismatch => {
+                f.write_str("Document projection plan length mismatch")
+            }
+            BackboneError::MissingDocumentVariant => f.write_str("Missing document variant"),
+            BackboneError::InvalidDocumentVariant => f.write_str("Invalid document variant"),
+            BackboneError::DocumentVariantMismatch => f.write_str("Document variant mismatch"),
+            BackboneError::UnsupportedDocumentVariantType => {
+                f.write_str("Unsupported document variant type")
+            }
+            BackboneError::MissingOutputVariant => f.write_str("Missing output variant"),
+            BackboneError::InvalidOutputVariant => f.write_str("Invalid output variant"),
+            BackboneError::UnsupportedOutputVariantType => {
+                f.write_str("Unsupported output variant type")
+            }
+            BackboneError::UnsupportedContextProjectionSource => {
+                f.write_str("Unsupported context projection source")
+            }
+            BackboneError::UnsupportedProjectionSourceKind => {
+                f.write_str("Unsupported projection source kind")
+            }
+            BackboneError::PlainPutPayloadTooShort => f.write_str("Plain put payload is too short"),
+            BackboneError::PlainPutPayloadLengthMismatch => {
+                f.write_str("Plain put payload length mismatch")
+            }
+            BackboneError::DocumentContextSuffixCapacityOverflow => {
+                f.write_str("Document context suffix capacity overflow")
+            }
+            BackboneError::DocumentSchemaIrNotConfigured => {
+                f.write_str("Native backbone document schema IR has not been configured")
+            }
+            BackboneError::MissingCachedDocumentProjectionPlan => {
+                f.write_str("Missing cached document projection plan")
+            }
+            BackboneError::MissingPlainPutPayloadForDocumentIndex => {
+                f.write_str("Missing plain put payload for document index")
+            }
+            BackboneError::MissingPlainPutPayloadForDocumentProjection => {
+                f.write_str("Missing plain put payload for document projection")
+            }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::SharedLog(error) => write!(f, "{error}"),
             BackboneError::Schema(error) => write!(f, "{error}"),

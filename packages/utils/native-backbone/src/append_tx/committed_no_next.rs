@@ -40,7 +40,7 @@ impl NativePeerbitBackbone {
         self_replicating: bool,
         resolve_trimmed_entries: bool,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -57,7 +57,7 @@ impl NativePeerbitBackbone {
             None,
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -77,7 +77,7 @@ impl NativePeerbitBackbone {
         resolve_trimmed_entries: bool,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -94,7 +94,7 @@ impl NativePeerbitBackbone {
             Some(trim_length_to),
             true,
             None,
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -245,7 +245,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -271,7 +271,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -299,7 +299,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -325,7 +325,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -351,7 +351,7 @@ impl NativePeerbitBackbone {
         document_projection_encoded_document: JsValue,
         document_projection_signer: JsValue,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -376,7 +376,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -403,7 +403,7 @@ impl NativePeerbitBackbone {
         document_projection_signer: JsValue,
         trim_length_to: usize,
     ) -> Result<Array, JsValue> {
-        self.prepare_plain_storage_append_transaction_inner(
+        Ok(self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
             gid,
@@ -428,7 +428,7 @@ impl NativePeerbitBackbone {
                 document_projection_encoded_document,
                 document_projection_signer,
             )?),
-        )
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
