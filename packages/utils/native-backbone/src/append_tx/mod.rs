@@ -183,7 +183,7 @@ fn ensure_batch_append_lens(
     wall_times: &BigUint64Array,
     logicals: &Uint32Array,
     gids: &Array,
-    gids_label: &str,
+    gids_label: &'static str,
     meta_datas: &Array,
     document_keys: &Array,
 ) -> Result<(), JsValue> {
@@ -239,14 +239,14 @@ impl NativePeerbitBackbone {
         &mut self,
         meta_data: JsValue,
         payload_data: &Uint8Array,
-    ) -> (Option<Vec<u8>>, Vec<u8>) {
+    ) -> Result<(Option<Vec<u8>>, Vec<u8>), JsValue> {
         let input_copy_started = self.append_profile_enabled.then(js_sys::Date::now);
-        let meta_data = optional_bytes_from_js(meta_data);
+        let meta_data = optional_bytes_from_js(meta_data, "meta data")?;
         let payload_data = payload_data.to_vec();
         if let Some(started) = input_copy_started {
             self.append_profile.input_copy_ms += js_sys::Date::now() - started;
         }
-        (meta_data, payload_data)
+        Ok((meta_data, payload_data))
     }
 
     fn hash_number_profiled(&mut self, hash_digest_bytes: &[u8]) -> Result<u64, JsValue> {

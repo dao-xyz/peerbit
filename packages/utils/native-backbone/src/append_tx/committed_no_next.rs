@@ -962,7 +962,7 @@ impl NativePeerbitBackbone {
             let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
 
             let (meta_data, payload_data) =
-                self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes);
+                self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes)?;
 
             let (entry_facts, trim_hashes) = self.prepare_no_next_log_append_profiled(
                 wall_times.get_index(index_u32),
@@ -1094,7 +1094,8 @@ impl NativePeerbitBackbone {
         let payload_size = payload_data.length();
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
 
-        let (meta_data, payload_data) = self.copy_append_inputs_profiled(meta_data, &payload_data);
+        let (meta_data, payload_data) =
+            self.copy_append_inputs_profiled(meta_data, &payload_data)?;
 
         let (entry_facts, trim_hashes) = self.prepare_no_next_log_append_profiled(
             wall_time,

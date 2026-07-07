@@ -462,7 +462,7 @@ impl NativePeerbitBackbone {
             .and_then(|commit| commit.previous_context.clone());
         let (entry_row, trim_rows, trim_hashes, hash, digest, meta_bytes) = if commit_blocks {
             let (meta_data, payload_data) =
-                self.copy_append_inputs_profiled(meta_data, &payload_data);
+                self.copy_append_inputs_profiled(meta_data, &payload_data)?;
             let (entry_facts, trim_hashes, entry_row, trim_rows) = self
                 .prepare_committed_log_append_rows_profiled(
                     wall_time,

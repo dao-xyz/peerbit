@@ -697,10 +697,22 @@ fn parse_projection_plan(plan: &JsValue) -> Result<ParsedProjectionPlan, JsValue
         return Err(JsValue::from_str("Projection plan length mismatch"));
     }
     Ok(ParsedProjectionPlan {
-        document_variant_type: optional_string(js_get(plan, "documentVariantType")),
-        document_variant_value: optional_string(js_get(plan, "documentVariantValue")),
-        output_variant_type: optional_string(js_get(plan, "outputVariantType")),
-        output_variant_value: optional_string(js_get(plan, "outputVariantValue")),
+        document_variant_type: optional_string(
+            js_get(plan, "documentVariantType"),
+            "documentVariantType",
+        )?,
+        document_variant_value: optional_string(
+            js_get(plan, "documentVariantValue"),
+            "documentVariantValue",
+        )?,
+        output_variant_type: optional_string(
+            js_get(plan, "outputVariantType"),
+            "outputVariantType",
+        )?,
+        output_variant_value: optional_string(
+            js_get(plan, "outputVariantValue"),
+            "outputVariantValue",
+        )?,
         document_field_names,
         document_field_types,
         output_field_types,

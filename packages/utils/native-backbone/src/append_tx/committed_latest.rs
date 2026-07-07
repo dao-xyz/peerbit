@@ -1696,7 +1696,7 @@ impl NativePeerbitBackbone {
         self.validate_document_index_required_previous_signer(&document_index_commit)?;
 
         let (meta_data, payload_data) =
-            self.copy_append_inputs_profiled(meta_datas.get(index), &payload_data);
+            self.copy_append_inputs_profiled(meta_datas.get(index), &payload_data)?;
 
         let wall_time = wall_times.get_index(index);
         let (entry_facts, trim_hashes, entry_row, trim_rows) = self
@@ -1851,7 +1851,7 @@ impl NativePeerbitBackbone {
             self.validate_document_index_required_previous_signer(&document_index_commit)?;
 
             let (meta_data, payload_data) =
-                self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes);
+                self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes)?;
 
             let (entry_facts, trim_hashes) = self.prepare_latest_log_append_profiled(
                 wall_times.get_index(index_u32),
@@ -1985,7 +1985,8 @@ impl NativePeerbitBackbone {
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
         self.validate_document_index_required_previous_signer(&document_index_commit)?;
 
-        let (meta_data, payload_data) = self.copy_append_inputs_profiled(meta_data, &payload_data);
+        let (meta_data, payload_data) =
+            self.copy_append_inputs_profiled(meta_data, &payload_data)?;
 
         let (entry_facts, trim_hashes) = self.prepare_latest_log_append_profiled(
             wall_time,
