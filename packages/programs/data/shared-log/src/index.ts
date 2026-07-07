@@ -8833,11 +8833,14 @@ export class SharedLog<
 				? this._nativeBackbone.graph
 				: this._nativeBackbone.storageBackedGraph
 			: undefined;
-		const nativeBackboneLogStore = useNativeBackboneBlocks
-			? this._nativeBackbone?.blocks
-			: undefined;
+		// The log always opens on RemoteBlocks, whose local layer is the native
+		// block store when the backbone is active (see localBlocks above). Opening
+		// it on the raw native store instead would drop the remote-fetch options
+		// joins rely on: a replicate:false observer syncing a head whose parents
+		// are not local would fail block resolution, and Log.join treats that as
+		// recoverable and skips the entry without persisting anything.
 		await this.log.open(
-			nativeBackboneLogStore ?? this.remoteBlocks,
+			this.remoteBlocks,
 			this.node.identity,
 			{
 				keychain: this.node.services.keychain,

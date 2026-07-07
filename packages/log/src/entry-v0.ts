@@ -666,6 +666,10 @@ export class EntryV0<T>
 	private _keychain?: CryptoKeychain;
 	private _encoding?: Encoding<T>;
 	private _hashDigestBytes?: Uint8Array;
+	// Set for locally-created prepared entries whose signature value and bytes
+	// stay in the native store (cachePreparedEntries: false): the signer is
+	// known at construction, so publicKeys can be answered without them.
+	_preparedSignerPublicKey?: PublicSignKey;
 
 	constructor(obj: {
 		payload: MaybeEncrypted<Payload<T>>;
@@ -762,7 +766,17 @@ export class EntryV0<T>
 	}
 
 	get publicKeys(): PublicSignKey[] {
+		if (this._preparedSignerPublicKey) {
+			return [this._preparedSignerPublicKey];
+		}
 		return this.signatures.map((x) => x.publicKey);
+	}
+
+	override async getPublicKeys(): Promise<PublicSignKey[]> {
+		if (this._preparedSignerPublicKey) {
+			return [this._preparedSignerPublicKey];
+		}
+		return super.getPublicKeys();
 	}
 
 	get next(): string[] {
@@ -1081,6 +1095,9 @@ export class EntryV0<T>
 			if (properties.cachePreparedEntries === false) {
 				entry.hash = preparedEntry.cid;
 				entry.size = preparedEntry.byteLength;
+				if (!preparedEntry.signatureBytes) {
+					entry._preparedSignerPublicKey = properties.identity.publicKey;
+				}
 			} else {
 				if (!preparedEntry.bytes) {
 					throw new Error("Missing prepared entry bytes");
@@ -1726,6 +1743,9 @@ export class EntryV0<T>
 			if (properties.cachePreparedEntries === false) {
 				entry.hash = preparedEntry.cid;
 				entry.size = preparedEntry.byteLength;
+				if (!preparedEntry.signatureBytes) {
+					entry._preparedSignerPublicKey = properties.identity.publicKey;
+				}
 			} else {
 				if (!preparedEntry.bytes) {
 					throw new Error("Missing prepared entry bytes");
