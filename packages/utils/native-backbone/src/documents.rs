@@ -1407,7 +1407,7 @@ impl NativePeerbitBackbone {
         new_head: Option<&str>,
         previous_head: Option<&str>,
         record_document_journal: bool,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let prepared = self.prepare_document_encoded_parts_put(
             key,
             value_prefix_bytes,
