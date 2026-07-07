@@ -7,6 +7,7 @@ use wasm_bindgen::prelude::*;
 use crate::coordinates::{
     coordinate_core_value_to_row, decode_coordinate_value, CoordinateCoreValue,
 };
+use crate::error::BackboneError;
 use crate::js_interop::{
     array_from_value, ensure_same_len, number_strings_to_array, parse_u64_string,
     string_batches_from_array, strings_from_array, strings_to_array, usize_values_from_array,
@@ -194,7 +195,7 @@ fn coordinate_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue
     Ok(out)
 }
 
-pub(crate) fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, JsValue> {
+pub(crate) fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, BackboneError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
         let value = values.get(index);
@@ -203,7 +204,7 @@ pub(crate) fn coordinate_numbers_from_array(values: Array) -> Result<Vec<u64>, J
         } else if let Some(value) = value.as_f64() {
             out.push(value as u64);
         } else {
-            return Err(JsValue::from_str("Expected coordinate string array"));
+            return Err(BackboneError::Expected("coordinate string array"));
         }
     }
     Ok(out)
@@ -409,7 +410,8 @@ impl NativePeerbitBackbone {
             requested_replicas,
             0,
             Vec::new(),
-        )
+        )?;
+        Ok(())
     }
 
     pub fn delete_entry_coordinates(&mut self, hash: &str) -> bool {
@@ -421,7 +423,8 @@ impl NativePeerbitBackbone {
     pub fn delete_entry_coordinates_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
         let hashes_for_core = hashes.clone();
         self.shared_log.delete_entry_coordinates_batch(hashes)?;
-        self.delete_coordinate_core_batch(hashes_for_core)
+        self.delete_coordinate_core_batch(hashes_for_core)?;
+        Ok(())
     }
 
     pub fn commit_entry_coordinates(
@@ -458,7 +461,8 @@ impl NativePeerbitBackbone {
             0,
             Vec::new(),
         )?;
-        self.delete_coordinate_core_batch(next_hashes_for_core)
+        self.delete_coordinate_core_batch(next_hashes_for_core)?;
+        Ok(())
     }
 
     pub fn commit_entry_coordinates_batch(
@@ -1460,5 +1464,21 @@ impl NativePeerbitBackbone {
             record_journal,
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::error::BackboneError;
+
+    #[test]
+    fn coordinate_array_error_message_matches_historical_string() {
+        // `coordinate_numbers_from_array` needs a live JS engine, but its
+        // error variant must keep rendering the exact string previously
+        // built with `JsValue::from_str`.
+        assert_eq!(
+            BackboneError::Expected("coordinate string array").to_string(),
+            "Expected coordinate string array"
+        );
     }
 }

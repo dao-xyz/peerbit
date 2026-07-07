@@ -1,6 +1,6 @@
 use crate::error::BackboneError;
 use js_sys::{Array, Reflect, Uint8Array};
-use peerbit_indexer_core::wire::{self, WireError};
+use peerbit_indexer_core::wire;
 use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -364,10 +364,6 @@ pub(crate) fn write_u32(out: &mut Vec<u8>, value: u32) {
 pub(crate) fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(&(value.len() as u32).to_le_bytes());
     out.extend_from_slice(value);
-}
-
-pub(crate) fn wire_error_to_js(error: WireError) -> JsValue {
-    JsValue::from(BackboneError::from(error))
 }
 
 pub(crate) fn read_u32(

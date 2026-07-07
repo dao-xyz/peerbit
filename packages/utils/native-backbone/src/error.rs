@@ -28,6 +28,9 @@ pub enum BackboneError {
     HashDigestTooShortU32,
     HashDigestTooShortU64,
     ResolutionMustBeU32OrU64,
+    ExpectedReservedBytes,
+    WireSyncStashFrameTaken,
+    WireSyncPinnedEntryMissing,
     Wire(WireError),
     Schema(SchemaError),
     Decode(DecodeError),
@@ -65,6 +68,13 @@ impl std::fmt::Display for BackboneError {
                 f.write_str("hash digest must have at least 8 bytes")
             }
             BackboneError::ResolutionMustBeU32OrU64 => f.write_str("resolution must be u32 or u64"),
+            BackboneError::ExpectedReservedBytes => f.write_str("expected 4 reserved bytes"),
+            BackboneError::WireSyncStashFrameTaken => {
+                f.write_str("wire sync stash frame already taken")
+            }
+            BackboneError::WireSyncPinnedEntryMissing => {
+                f.write_str("wire sync pinned stash entry missing")
+            }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::Schema(error) => write!(f, "{error}"),
             BackboneError::Decode(error) => write!(f, "{error}"),

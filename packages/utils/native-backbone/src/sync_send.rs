@@ -16,6 +16,7 @@ use peerbit_log_rust::NativeLogBlockStore;
 use peerbit_wire::sync_payload::{encode_raw_exchange_sync_payload_refs, SyncPayloadHeadRef};
 use wasm_bindgen::prelude::*;
 
+use crate::error::BackboneError;
 use crate::js_interop::{ensure_same_len, string_batches_from_array, strings_from_array};
 use crate::NativePeerbitBackbone;
 
@@ -53,6 +54,12 @@ pub(crate) fn encode_sync_payload_from_store(
         &heads,
         reserved,
     ))
+}
+
+pub(crate) fn reserved_bytes(reserved: &[u8]) -> Result<[u8; 4], BackboneError> {
+    reserved
+        .try_into()
+        .map_err(|_| BackboneError::ExpectedReservedBytes)
 }
 
 pub(crate) fn block_byte_lengths_core(blocks: &NativeLogBlockStore, hashes: &[String]) -> Vec<u32> {
@@ -94,9 +101,7 @@ impl NativePeerbitBackbone {
         let hashes = strings_from_array(hashes)?;
         let gid_refrences = string_batches_from_array(gid_refrences, "sync send gid references")?;
         ensure_same_len(hashes.len(), gid_refrences.len(), "sync send heads")?;
-        let reserved: [u8; 4] = reserved
-            .try_into()
-            .map_err(|_| JsValue::from_str("expected 4 reserved bytes"))?;
+        let reserved = reserved_bytes(reserved)?;
         match encode_sync_payload_from_store(
             &self.blocks,
             topic,
@@ -162,6 +167,17 @@ mod tests {
         let data = &payload[pubsub.data_offset..pubsub.data_offset + pubsub.data_length];
         let parsed = parse_raw_exchange_rpc_request(data).unwrap();
         assert_eq!(parsed.heads.len(), 2);
+    }
+
+    #[test]
+    fn reserved_bytes_require_exactly_four() {
+        assert_eq!(reserved_bytes(&[1, 2, 3, 4]).unwrap(), [1, 2, 3, 4]);
+
+        for bytes in [&[][..], &[1, 2, 3][..], &[1, 2, 3, 4, 5][..]] {
+            let error = reserved_bytes(bytes).unwrap_err();
+            assert_eq!(error, BackboneError::ExpectedReservedBytes);
+            assert_eq!(error.to_string(), "expected 4 reserved bytes");
+        }
     }
 
     #[test]
