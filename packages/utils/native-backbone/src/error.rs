@@ -64,6 +64,9 @@ pub enum BackboneError {
     RawReceiveOriginalIndexOverflow,
     RawReceiveSelectedIndexOverflow,
     RawReceiveGroupIndexOverflow,
+    MissingPreparedRawReceiveEntry,
+    MismatchedPreparedRawReceiveVerifyLengths,
+    MissingPartialVerifyHashes,
     Wire(WireError),
     SharedLog(SharedLogError),
     Schema(SchemaError),
@@ -182,6 +185,15 @@ impl std::fmt::Display for BackboneError {
             }
             BackboneError::RawReceiveGroupIndexOverflow => {
                 f.write_str("Raw receive group index overflow")
+            }
+            BackboneError::MissingPreparedRawReceiveEntry => {
+                f.write_str("Missing prepared raw receive entry")
+            }
+            BackboneError::MismatchedPreparedRawReceiveVerifyLengths => {
+                f.write_str("Expected equal prepared raw receive verify lengths")
+            }
+            BackboneError::MissingPartialVerifyHashes => {
+                f.write_str("Missing partial verify hashes")
             }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::SharedLog(error) => write!(f, "{error}"),
