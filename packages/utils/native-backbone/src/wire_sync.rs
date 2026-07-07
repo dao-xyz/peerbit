@@ -29,6 +29,7 @@ use peerbit_wire::{record_to_words, RECORD_FLAG_SYNC_STASHED, RECORD_WORDS};
 use std::collections::{HashMap, VecDeque};
 use wasm_bindgen::prelude::*;
 
+use crate::error::BackboneError;
 use crate::js_interop::strings_slice_to_array;
 use crate::NativePeerbitBackbone;
 
@@ -116,46 +117,48 @@ impl WireSyncCore {
         }
     }
 
-    /// Try to stash a decoded-and-verified DataMessage frame. Returns `true`
-    /// when the frame carried a raw exchange sync payload for a registered
-    /// topic addressed to this node.
+    /// Try to stash a decoded-and-verified DataMessage frame. Returns
+    /// `Ok(true)` when the frame carried a raw exchange sync payload for a
+    /// registered topic addressed to this node. The only error is the
+    /// (unreachable-by-construction) invariant breach of the frame buffer
+    /// disappearing between the checks and the take — previously a panic.
     pub(crate) fn try_stash(
         &mut self,
         frame: &mut Option<Vec<u8>>,
         data_offset: usize,
         data_length: usize,
-    ) -> bool {
+    ) -> Result<bool, BackboneError> {
         if self.topic_refs.is_empty() {
-            return false;
+            return Ok(false);
         }
         let Some(frame_bytes) = frame.as_deref() else {
-            return false;
+            return Ok(false);
         };
         let Some(payload) = frame_bytes.get(data_offset..data_offset + data_length) else {
-            return false;
+            return Ok(false);
         };
         let Ok(pubsub) = parse_pubsub_data(payload) else {
-            return false;
+            return Ok(false);
         };
         if !pubsub
             .topics
             .iter()
             .any(|topic| self.topic_refs.contains_key(topic))
         {
-            return false;
+            return Ok(false);
         }
         let Some(data) = payload.get(pubsub.data_offset..pubsub.data_offset + pubsub.data_length)
         else {
-            return false;
+            return Ok(false);
         };
         let Ok(parsed) = parse_raw_exchange_rpc_request(data) else {
-            return false;
+            return Ok(false);
         };
         let Ok(meta) = decode_frame_delivery_meta(frame_bytes) else {
-            return false;
+            return Ok(false);
         };
         if meta.variant != VARIANT_DATA || !self.delivered_locally(meta.mode.as_ref()) {
-            return false;
+            return Ok(false);
         }
 
         if self
@@ -168,7 +171,7 @@ impl WireSyncCore {
             // byte-identical. Keep the pinned entry (replacing it would reset
             // the pin) and report the frame as stashed.
             self.counters.stashed += 1;
-            return true;
+            return Ok(true);
         }
 
         let heads = parsed
@@ -180,7 +183,9 @@ impl WireSyncCore {
                 ..head
             })
             .collect();
-        let frame = frame.take().expect("frame checked above");
+        let Some(frame) = frame.take() else {
+            return Err(BackboneError::WireSyncStashFrameTaken);
+        };
         let frame_length = frame.len();
         if let Some(previous) = self.stash.insert(
             meta.id,
@@ -209,7 +214,7 @@ impl WireSyncCore {
                 self.counters.evicted += 1;
             }
         }
-        true
+        Ok(true)
     }
 
     pub(crate) fn get(&self, id: &[u8]) -> Option<&StashedSyncMessage> {
@@ -234,6 +239,24 @@ impl WireSyncCore {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Pin a stashed entry and return it for meta extraction. `Ok(None)`
+    /// means the id is not stashed; the error is the
+    /// (unreachable-by-construction) invariant breach of a just-pinned entry
+    /// missing from the stash — previously a panic.
+    pub(crate) fn pin_and_get(
+        &mut self,
+        id: &[u8],
+    ) -> Result<Option<&StashedSyncMessage>, BackboneError> {
+        if !self.pin(id) {
+            return Ok(None);
+        }
+        self.counters.meta_reads += 1;
+        match self.get(id) {
+            Some(stashed) => Ok(Some(stashed)),
+            None => Err(BackboneError::WireSyncPinnedEntryMissing),
         }
     }
 
@@ -341,11 +364,25 @@ impl NativeWireSyncSession {
         let mut words = Vec::with_capacity(records.len() * RECORD_WORDS);
         for (record, buffer) in records.iter().zip(buffers.iter_mut()) {
             let stashed = record_is_stash_candidate(record)
-                && self.core.try_stash(
+                && match self.core.try_stash(
                     buffer,
                     record.data_offset as usize,
                     record.data_length as usize,
-                );
+                ) {
+                    Ok(stashed) => stashed,
+                    // The wasm ABI of this hot-path function is frozen (it
+                    // must stay a plain Uint32Array return), so the typed
+                    // error is thrown instead of returned as a Result. NOTE:
+                    // throw_val unwinds without dropping the exported-method
+                    // borrow guard, so the session object would be unusable
+                    // afterwards ("recursive use of an object" on every
+                    // later call). Acceptable only because this path is
+                    // unreachable by construction (the frame is checked Some
+                    // above and nothing takes it in between) — the
+                    // pre-refactor expect() trapped the whole wasm instance
+                    // here instead.
+                    Err(error) => wasm_bindgen::throw_val(error.into()),
+                };
             record_to_words(record, &mut words);
             if stashed {
                 let flag_word = words.len() - RECORD_WORDS;
@@ -361,11 +398,18 @@ impl NativeWireSyncSession {
     /// fallback anymore, so the entry must survive FIFO eviction until
     /// `release` is called when processing finishes.
     pub fn stashed_meta(&mut self, id: &[u8]) -> JsValue {
-        if !self.core.pin(id) {
-            return JsValue::UNDEFINED;
-        }
-        self.core.counters.meta_reads += 1;
-        let stashed = self.core.get(id).expect("pinned above");
+        let stashed = match self.core.pin_and_get(id) {
+            Ok(Some(stashed)) => stashed,
+            Ok(None) => return JsValue::UNDEFINED,
+            // The wasm ABI is frozen (`undefined` is a valid success value,
+            // so errors cannot travel as a Result); throw the typed error.
+            // NOTE: throw_val leaks the exported-method borrow guard,
+            // leaving the session object permanently unusable — acceptable
+            // only because pin_and_get's Err path is unreachable by
+            // construction (pin() returning true implies the same-id get()
+            // succeeds).
+            Err(error) => wasm_bindgen::throw_val(error.into()),
+        };
         let hashes = Array::new();
         let gid_refrences = Array::new();
         let mut byte_lengths: Vec<u32> = Vec::with_capacity(stashed.heads.len());
@@ -566,7 +610,9 @@ mod tests {
         core.register_topic("topic".to_string());
         let (frame, data_offset, data_length) = sync_frame(7, "topic", silent_to_self(), &heads());
         let mut buffer = Some(frame.clone());
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         assert!(buffer.is_none(), "stash takes frame ownership");
         assert_eq!(core.stash_len(), 1);
 
@@ -592,7 +638,9 @@ mod tests {
         let (frame, data_offset, data_length) =
             sync_frame(1, "other-topic", silent_to_self(), &heads());
         let mut buffer = Some(frame);
-        assert!(!core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(!core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         assert!(buffer.is_some(), "rejected frames keep their buffer");
 
         let relay_mode = Some(DeliveryMode::Silent {
@@ -601,17 +649,23 @@ mod tests {
         });
         let (frame, data_offset, data_length) = sync_frame(2, "topic", relay_mode, &heads());
         let mut buffer = Some(frame);
-        assert!(!core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(!core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
 
         let (frame, data_offset, data_length) =
             sync_frame(3, "topic", Some(DeliveryMode::AnyWhere), &heads());
         let mut buffer = Some(frame);
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
 
         core.unregister_topic("topic");
         let (frame, data_offset, data_length) = sync_frame(4, "topic", silent_to_self(), &heads());
         let mut buffer = Some(frame);
-        assert!(!core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(!core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
     }
 
     #[test]
@@ -637,7 +691,9 @@ mod tests {
             let mut frame = frame;
             frame[2] = (index >> 8) as u8; // second byte of the 32-byte id
             let mut buffer = Some(frame);
-            assert!(core.try_stash(&mut buffer, data_offset, data_length));
+            assert!(core
+                .try_stash(&mut buffer, data_offset, data_length)
+                .unwrap());
         }
         assert_eq!(core.stash_len(), WIRE_SYNC_MAX_STASHED_MESSAGES);
         assert_eq!(core.counters.evicted, 3);
@@ -654,7 +710,9 @@ mod tests {
         core.register_topic("topic".to_string());
         let (frame, data_offset, data_length) = sync_frame(0, "topic", silent_to_self(), &heads());
         let mut buffer = Some(frame);
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         assert!(core.pin(&[0u8; ID_LENGTH]));
         assert!(!core.pin(&[9u8; ID_LENGTH]), "missing ids cannot be pinned");
 
@@ -665,7 +723,9 @@ mod tests {
             let mut frame = frame;
             frame[2] = (index >> 8) as u8; // second byte of the 32-byte id
             let mut buffer = Some(frame);
-            assert!(core.try_stash(&mut buffer, data_offset, data_length));
+            assert!(core
+                .try_stash(&mut buffer, data_offset, data_length)
+                .unwrap());
         }
         assert!(core.counters.evicted > 0);
         // Pinned entry survives (the cap counts it, so the stash holds the
@@ -687,11 +747,15 @@ mod tests {
         core.register_topic("topic".to_string());
         let (frame, data_offset, data_length) = sync_frame(5, "topic", silent_to_self(), &heads());
         let mut buffer = Some(frame.clone());
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         assert!(core.pin(&[5u8; ID_LENGTH]));
 
         let mut buffer = Some(frame);
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         assert!(
             buffer.is_some(),
             "duplicates of pinned entries keep their buffer"
@@ -706,10 +770,53 @@ mod tests {
             frame[2] = 0xff; // distinct id space from the pinned entry
             frame[3] = (index >> 8) as u8;
             let mut buffer = Some(frame);
-            assert!(core.try_stash(&mut buffer, data_offset, data_length));
+            assert!(core
+                .try_stash(&mut buffer, data_offset, data_length)
+                .unwrap());
         }
         assert!(core.blocks(&[5u8; ID_LENGTH], None).is_some());
         assert!(core.release(&[5u8; ID_LENGTH]));
+    }
+
+    #[test]
+    fn pin_and_get_resolves_stashed_entries_and_counts_meta_reads() {
+        let mut core = WireSyncCore::new("self-hash".to_string());
+        core.register_topic("topic".to_string());
+        let (frame, data_offset, data_length) = sync_frame(4, "topic", silent_to_self(), &heads());
+        let mut buffer = Some(frame);
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
+
+        assert!(
+            core.pin_and_get(&[3u8; ID_LENGTH]).unwrap().is_none(),
+            "unstashed ids resolve to None"
+        );
+        assert_eq!(
+            core.pin_and_get(&[4u8; ID_LENGTH])
+                .unwrap()
+                .unwrap()
+                .head_count(),
+            2
+        );
+        assert_eq!(core.counters.meta_reads, 1);
+        assert!(core.release(&[4u8; ID_LENGTH]));
+    }
+
+    #[test]
+    fn wire_sync_invariant_errors_render_their_messages() {
+        // Both invariant breaches replace former `expect` panics and cannot
+        // be reached through the public API (a `None` frame short-circuits
+        // `try_stash` early, and `pin` only succeeds for present entries);
+        // pin down the strings a breach would surface to JS.
+        assert_eq!(
+            BackboneError::WireSyncStashFrameTaken.to_string(),
+            "wire sync stash frame already taken"
+        );
+        assert_eq!(
+            BackboneError::WireSyncPinnedEntryMissing.to_string(),
+            "wire sync pinned stash entry missing"
+        );
     }
 
     #[test]
@@ -718,9 +825,13 @@ mod tests {
         core.register_topic("topic".to_string());
         let (frame, data_offset, data_length) = sync_frame(9, "topic", silent_to_self(), &heads());
         let mut buffer = Some(frame.clone());
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         let mut buffer = Some(frame);
-        assert!(core.try_stash(&mut buffer, data_offset, data_length));
+        assert!(core
+            .try_stash(&mut buffer, data_offset, data_length)
+            .unwrap());
         assert_eq!(core.stash_len(), 1);
         assert_eq!(core.counters.stashed, 2);
     }

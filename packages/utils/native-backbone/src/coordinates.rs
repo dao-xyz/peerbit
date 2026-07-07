@@ -8,14 +8,16 @@ use peerbit_indexer_core::wire::{self, WireError};
 use peerbit_shared_log_rust::NativeLocalAppendCompactFacts;
 use wasm_bindgen::prelude::*;
 
+use crate::error::BackboneError;
 use crate::js_interop::{
     append_journal_delete_record, append_journal_put_record, array_from_value, bool_field,
-    clear_journal_prefix, decode_error, number_strings_to_array, parse_u64_string, string_field,
-    stringish_field, strings_from_array, usize_field, wire_error_to_js, write_bytes, write_string,
+    clear_journal_prefix, number_strings_to_array, parse_u64_string, string_field, stringish_field,
+    strings_from_array, usize_field, write_bytes, write_string,
 };
 use crate::shared_log_plan::coordinate_numbers_from_array;
 use crate::NativePeerbitBackbone;
 
+#[derive(Debug)]
 pub(crate) struct CoordinateCoreValue {
     pub(crate) hash: String,
     pub(crate) gid: String,
@@ -66,8 +68,43 @@ pub(crate) fn coordinate_core_value_to_row(value: &CoordinateCoreValue) -> Array
     row
 }
 
-pub(crate) fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, JsValue> {
-    decode_coordinate_value_core(bytes).map_err(wire_error_to_js)
+pub(crate) fn decode_coordinate_value(bytes: &[u8]) -> Result<CoordinateCoreValue, BackboneError> {
+    Ok(decode_coordinate_value_core(bytes)?)
+}
+
+/// Decode a key/value snapshot and apply journal records on top, returning
+/// the merged entries in insertion order plus the number of journal
+/// operations applied.
+pub(crate) fn merged_coordinate_entries(
+    snapshot: &[u8],
+    journal: &[u8],
+) -> Result<(Vec<(String, Vec<u8>)>, usize), BackboneError> {
+    let mut entries = if snapshot.is_empty() {
+        Default::default()
+    } else {
+        decode_key_value_snapshot(snapshot)?
+    };
+    let journal_records = if journal.is_empty() {
+        Vec::new()
+    } else {
+        decode_journal(journal)?
+    };
+    let operations = journal_records.len();
+    for record in journal_records {
+        match record {
+            JournalRecord {
+                key,
+                value: Some(value),
+                ..
+            } => {
+                entries.insert(key, value);
+            }
+            JournalRecord { key, .. } => {
+                entries.shift_remove(&key);
+            }
+        }
+    }
+    Ok((entries.into_iter().collect(), operations))
 }
 
 fn decode_coordinate_value_core(bytes: &[u8]) -> Result<CoordinateCoreValue, WireError> {
@@ -178,32 +215,8 @@ impl NativePeerbitBackbone {
         snapshot: Uint8Array,
         journal: Uint8Array,
     ) -> Result<usize, JsValue> {
-        let mut entries = if snapshot.length() == 0 {
-            Default::default()
-        } else {
-            decode_key_value_snapshot(&snapshot.to_vec()).map_err(decode_error)?
-        };
-        let journal_records = if journal.length() == 0 {
-            Vec::new()
-        } else {
-            decode_journal(&journal.to_vec()).map_err(decode_error)?
-        };
-        let operations = journal_records.len();
-        for record in journal_records {
-            match record {
-                JournalRecord {
-                    key,
-                    value: Some(value),
-                    ..
-                } => {
-                    entries.insert(key, value);
-                }
-                JournalRecord { key, .. } => {
-                    entries.shift_remove(&key);
-                }
-            }
-        }
-
+        let (entries, operations) =
+            merged_coordinate_entries(&snapshot.to_vec(), &journal.to_vec())?;
         self.shared_log.clear_entry_coordinates();
         self.clear_coordinate_core();
         for (_, value) in entries {
@@ -234,7 +247,7 @@ impl NativePeerbitBackbone {
         requested_replicas: usize,
         wall_time: u64,
         meta_bytes: Vec<u8>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let hash_number = parse_u64_string(hash_number, "coordinate hash number")?;
         let coordinates = coordinate_numbers_from_array(coordinates)?;
         self.put_coordinate_core(
@@ -258,7 +271,7 @@ impl NativePeerbitBackbone {
         delete_hashes: Array,
         wall_time: u64,
         meta_bytes: Vec<u8>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let row = array_from_value(coordinate_row, "coordinate plan row")?;
         let hash = string_field(&row, 0, "coordinate hash")?;
         let hash_number = stringish_field(&row, 1, "coordinate hash number")?;
@@ -301,11 +314,11 @@ impl NativePeerbitBackbone {
             true,
         );
         let profile_enabled = self.append_profile_enabled;
-        let coordinate_delete_started = profile_enabled.then(js_sys::Date::now);
+        let coordinate_delete_started = profile_enabled.then(crate::time::now_ms);
         self.delete_coordinate_core_strings(next_hashes);
         self.delete_coordinate_core_strings(delete_hashes);
         if let Some(started) = coordinate_delete_started {
-            self.append_profile.coordinate_delete_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_delete_ms += crate::time::now_ms() - started;
         }
     }
 
@@ -322,7 +335,7 @@ impl NativePeerbitBackbone {
         record_journal: bool,
     ) {
         let profile_enabled = self.append_profile_enabled;
-        let value_encode_started = profile_enabled.then(js_sys::Date::now);
+        let value_encode_started = profile_enabled.then(crate::time::now_ms);
         let value = encode_coordinate_value(
             &hash,
             gid,
@@ -334,24 +347,24 @@ impl NativePeerbitBackbone {
             &meta_bytes,
         );
         if let Some(started) = value_encode_started {
-            self.append_profile.coordinate_value_encode_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_value_encode_ms += crate::time::now_ms() - started;
         }
         if record_journal && self.coordinate_journal_enabled {
-            let journal_started = profile_enabled.then(js_sys::Date::now);
+            let journal_started = profile_enabled.then(crate::time::now_ms);
             self.push_coordinate_journal_put(&hash, &value);
             if let Some(started) = journal_started {
-                self.append_profile.coordinate_journal_put_ms += js_sys::Date::now() - started;
+                self.append_profile.coordinate_journal_put_ms += crate::time::now_ms() - started;
             }
         }
-        let index_put_started = profile_enabled.then(js_sys::Date::now);
+        let index_put_started = profile_enabled.then(crate::time::now_ms);
         self.coordinate_index.insert(hash.clone());
         if let Some(started) = index_put_started {
-            self.append_profile.coordinate_index_put_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_index_put_ms += crate::time::now_ms() - started;
         }
-        let value_put_started = profile_enabled.then(js_sys::Date::now);
+        let value_put_started = profile_enabled.then(crate::time::now_ms);
         self.coordinate_values.put(hash, value);
         if let Some(started) = value_put_started {
-            self.append_profile.coordinate_value_put_ms += js_sys::Date::now() - started;
+            self.append_profile.coordinate_value_put_ms += crate::time::now_ms() - started;
         }
     }
 
@@ -373,7 +386,10 @@ impl NativePeerbitBackbone {
         self.coordinate_journal_record_count += 1;
     }
 
-    pub(crate) fn delete_coordinate_core_batch(&mut self, hashes: Array) -> Result<(), JsValue> {
+    pub(crate) fn delete_coordinate_core_batch(
+        &mut self,
+        hashes: Array,
+    ) -> Result<(), BackboneError> {
         for hash in strings_from_array(hashes)? {
             self.delete_coordinate_core(&hash);
         }
@@ -389,7 +405,15 @@ impl NativePeerbitBackbone {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_coordinate_value_core, encode_coordinate_value};
+    use super::{
+        decode_coordinate_value, decode_coordinate_value_core, encode_coordinate_value,
+        merged_coordinate_entries,
+    };
+    use crate::error::BackboneError;
+    use peerbit_indexer_core::persistence::{
+        encode_journal_delete_record, encode_journal_put_record, encode_journal_record,
+        encode_key_value_snapshot, DecodeError,
+    };
     use peerbit_indexer_core::wire::WireError;
 
     #[test]
@@ -418,5 +442,72 @@ mod tests {
             decode_coordinate_value_core(&bytes),
             Err(WireError::Truncated("coordinate values"))
         ));
+    }
+
+    #[test]
+    fn decode_coordinate_value_reports_typed_wire_errors() {
+        let mut bytes = encode_coordinate_value("hash", "gid", 7, &[1, 2], true, 3, 11, &[9]);
+        bytes.truncate(4);
+
+        let error = decode_coordinate_value(&bytes).unwrap_err();
+        assert_eq!(
+            error,
+            BackboneError::Wire(WireError::Truncated("coordinate hash"))
+        );
+        assert_eq!(error.to_string(), "Truncated coordinate hash");
+    }
+
+    #[test]
+    fn merges_snapshot_entries_with_journal_records() {
+        let snapshot = encode_key_value_snapshot(
+            [
+                ("a".to_string(), vec![1u8]),
+                ("b".to_string(), vec![2u8]),
+                ("c".to_string(), vec![3u8]),
+            ]
+            .into_iter(),
+        );
+        let mut journal = encode_journal_put_record("b", &[42]);
+        journal.extend_from_slice(&encode_journal_delete_record("c"));
+        journal.extend_from_slice(&encode_journal_put_record("d", &[4]));
+
+        let (entries, operations) = merged_coordinate_entries(&snapshot, &journal).unwrap();
+        assert_eq!(operations, 3);
+        assert_eq!(
+            entries,
+            vec![
+                ("a".to_string(), vec![1u8]),
+                ("b".to_string(), vec![42u8]),
+                ("d".to_string(), vec![4u8]),
+            ]
+        );
+
+        let (entries, operations) = merged_coordinate_entries(&[], &[]).unwrap();
+        assert_eq!(operations, 0);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn merged_coordinate_entries_reports_typed_decode_errors() {
+        // The rendered message must equal the `DecodeError` Display output the
+        // old `decode_error` funnel flattened into an untyped string.
+        let snapshot = encode_key_value_snapshot([("a".to_string(), vec![1u8])].into_iter());
+        let truncated = &snapshot[..snapshot.len() - 1];
+        let expected = match super::decode_key_value_snapshot(truncated) {
+            Err(error) => error,
+            Ok(_) => panic!("snapshot decode must fail"),
+        };
+
+        let error = merged_coordinate_entries(truncated, &[]).unwrap_err();
+        assert_eq!(error, BackboneError::Decode(expected.clone()));
+        assert_eq!(error.to_string(), expected.to_string());
+
+        let bad_journal = encode_journal_record(&[9]);
+        let error = merged_coordinate_entries(&[], &bad_journal).unwrap_err();
+        assert_eq!(
+            error,
+            BackboneError::Decode(DecodeError::InvalidOperation(9))
+        );
+        assert_eq!(error.to_string(), "invalid operation 9");
     }
 }

@@ -697,10 +697,22 @@ fn parse_projection_plan(plan: &JsValue) -> Result<ParsedProjectionPlan, JsValue
         return Err(JsValue::from_str("Projection plan length mismatch"));
     }
     Ok(ParsedProjectionPlan {
-        document_variant_type: optional_string(js_get(plan, "documentVariantType")),
-        document_variant_value: optional_string(js_get(plan, "documentVariantValue")),
-        output_variant_type: optional_string(js_get(plan, "outputVariantType")),
-        output_variant_value: optional_string(js_get(plan, "outputVariantValue")),
+        document_variant_type: optional_string(
+            js_get(plan, "documentVariantType"),
+            "documentVariantType",
+        )?,
+        document_variant_value: optional_string(
+            js_get(plan, "documentVariantValue"),
+            "documentVariantValue",
+        )?,
+        output_variant_type: optional_string(
+            js_get(plan, "outputVariantType"),
+            "outputVariantType",
+        )?,
+        output_variant_value: optional_string(
+            js_get(plan, "outputVariantValue"),
+            "outputVariantValue",
+        )?,
         document_field_names,
         document_field_types,
         output_field_types,
@@ -1419,7 +1431,7 @@ impl NativePeerbitBackbone {
     ) -> Result<PreparedDocumentEncodedPartsPut, JsValue> {
         self.document_byte_element_index_limit = byte_element_index_limit;
         let profile_enabled = self.append_profile_enabled;
-        let extract_started = profile_enabled.then(js_sys::Date::now);
+        let extract_started = profile_enabled.then(crate::time::now_ms);
         let fields = {
             let schema_ir = self.document_schema_ir.as_ref().ok_or_else(|| {
                 js_error("Native backbone document schema IR has not been configured")
@@ -1434,13 +1446,13 @@ impl NativePeerbitBackbone {
             .map_err(js_error)?
         };
         if let Some(started) = extract_started {
-            self.append_profile.document_index_extract_ms += js_sys::Date::now() - started;
+            self.append_profile.document_index_extract_ms += crate::time::now_ms() - started;
         }
-        let value_build_started = profile_enabled.then(js_sys::Date::now);
+        let value_build_started = profile_enabled.then(crate::time::now_ms);
         value_prefix_bytes.reserve(value_suffix_bytes.len());
         value_prefix_bytes.extend_from_slice(&value_suffix_bytes);
         if let Some(started) = value_build_started {
-            self.append_profile.document_index_value_build_ms += js_sys::Date::now() - started;
+            self.append_profile.document_index_value_build_ms += crate::time::now_ms() - started;
         }
         Ok(PreparedDocumentEncodedPartsPut {
             key,
@@ -1472,7 +1484,7 @@ impl NativePeerbitBackbone {
         if should_record_document_journal {
             self.push_document_journal_put(&key, &value_bytes);
         }
-        let value_put_started = profile_enabled.then(js_sys::Date::now);
+        let value_put_started = profile_enabled.then(crate::time::now_ms);
         let was_existing = if known_existing {
             self.document_values.put(key.clone(), value_bytes);
             true
@@ -1482,16 +1494,16 @@ impl NativePeerbitBackbone {
                 .is_some()
         };
         if let Some(started) = value_put_started {
-            self.append_profile.document_value_put_ms += js_sys::Date::now() - started;
+            self.append_profile.document_value_put_ms += crate::time::now_ms() - started;
         }
-        let index_put_started = profile_enabled.then(js_sys::Date::now);
+        let index_put_started = profile_enabled.then(crate::time::now_ms);
         if known_existing || was_existing {
             self.document_index.put(&key, fields);
         } else {
             self.document_index.put_new_unchecked(&key, fields);
         }
         if let Some(started) = index_put_started {
-            self.append_profile.document_index_put_ms += js_sys::Date::now() - started;
+            self.append_profile.document_index_put_ms += crate::time::now_ms() - started;
         }
         self.update_document_head_key(
             &key,

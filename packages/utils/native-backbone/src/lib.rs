@@ -10,13 +10,17 @@ use wasm_bindgen::prelude::*;
 mod append_tx;
 mod coordinates;
 mod documents;
+mod error;
 mod graph_blocks;
 mod js_interop;
 mod profile;
 mod raw_receive;
 mod shared_log_plan;
 mod sync_send;
+mod time;
 mod wire_sync;
+
+pub use crate::error::BackboneError;
 
 use crate::documents::{DocumentContextFields, DocumentPreviousSignerFact, ParsedProjectionPlan};
 use crate::profile::NativeBackboneAppendProfile;

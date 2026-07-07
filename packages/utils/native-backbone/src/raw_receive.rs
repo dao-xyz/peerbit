@@ -236,10 +236,10 @@ fn prepared_raw_entry_v0_to_row(entry: &PreparedRawEntryV0, hash_number: Option<
 impl NativePeerbitBackbone {
     pub fn prepare_raw_receive_batch(&mut self, blocks: Array) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, true)?;
         let out = Array::new();
@@ -266,10 +266,10 @@ impl NativePeerbitBackbone {
 
     pub fn prepare_raw_receive_columns_batch(&mut self, blocks: Array) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, true)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true, true)
@@ -280,10 +280,10 @@ impl NativePeerbitBackbone {
         blocks: Array,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, None, false)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true, true)
@@ -295,11 +295,11 @@ impl NativePeerbitBackbone {
         hashes: Array,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         let hashes = strings_from_array(hashes)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true, true)
@@ -311,11 +311,11 @@ impl NativePeerbitBackbone {
         hashes: Array,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         let hashes = strings_from_array(hashes)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
         self.prepare_raw_receive_columns_from_entries(prepared, true, true)
@@ -327,11 +327,11 @@ impl NativePeerbitBackbone {
         hashes: Array,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         let hashes = strings_from_array(hashes)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), true)?;
         self.prepare_raw_receive_columns_from_entries(prepared, false, false)
@@ -343,11 +343,11 @@ impl NativePeerbitBackbone {
         hashes: Array,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         let hashes = strings_from_array(hashes)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes), false)?;
         self.prepare_raw_receive_columns_from_entries(prepared, false, false)
@@ -371,11 +371,11 @@ impl NativePeerbitBackbone {
         _from_hash: String,
     ) -> Result<JsValue, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let input_started = profile_enabled.then(js_sys::Date::now);
+        let input_started = profile_enabled.then(crate::time::now_ms);
         let blocks = bytes_vec_from_array(blocks)?;
         let hashes = strings_from_array(hashes)?;
         if let Some(started) = input_started {
-            self.append_profile.raw_receive_input_copy_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_input_copy_ms += crate::time::now_ms() - started;
         }
         let prepared = self.prepare_raw_receive_entries(blocks, Some(hashes.clone()), false)?;
         let columns = self.prepare_raw_receive_columns_from_entries(prepared, false, false)?;
@@ -1038,7 +1038,7 @@ impl NativePeerbitBackbone {
         verify_signatures: bool,
     ) -> Result<Vec<PreparedRawEntryV0>, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let prepare_started = profile_enabled.then(js_sys::Date::now);
+        let prepare_started = profile_enabled.then(crate::time::now_ms);
         let mut raw_profile = profile_enabled.then(RawEntryV0PrepareProfile::default);
         let prepared = prepare_raw_entry_v0_blocks_with_expected_cids_and_verify_profiled(
             blocks,
@@ -1047,7 +1047,7 @@ impl NativePeerbitBackbone {
             raw_profile.as_mut(),
         )?;
         if let Some(started) = prepare_started {
-            self.append_profile.raw_receive_prepare_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_prepare_ms += crate::time::now_ms() - started;
         }
         if let Some(raw_profile) = raw_profile {
             self.append_profile.add_raw_prepare_profile(&raw_profile);
@@ -1062,7 +1062,7 @@ impl NativePeerbitBackbone {
         include_cids: bool,
     ) -> Result<Array, JsValue> {
         let profile_enabled = self.append_profile_enabled;
-        let columns_started = profile_enabled.then(js_sys::Date::now);
+        let columns_started = profile_enabled.then(crate::time::now_ms);
         let len = prepared.len();
         let cids = Array::new();
         let hash_digest_bytes = Array::new();
@@ -1137,7 +1137,7 @@ impl NativePeerbitBackbone {
         out.push(&Uint32Array::from(requested_replicas.as_slice()));
         out.push(&BigUint64Array::from(hash_numbers.as_slice()));
         if let Some(started) = columns_started {
-            self.append_profile.raw_receive_prepare_columns_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_prepare_columns_ms += crate::time::now_ms() - started;
         }
         Ok(out)
     }
@@ -1439,18 +1439,18 @@ impl NativePeerbitBackbone {
     ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
-        let pending_check_started = profile_enabled.then(js_sys::Date::now);
+        let pending_check_started = profile_enabled.then(crate::time::now_ms);
         let missing_pending = hashes
             .iter()
             .any(|hash| !self.pending_raw_receive_entries.contains_key(hash));
         if let Some(started) = pending_check_started {
-            self.append_profile.raw_receive_pending_check_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_pending_check_ms += crate::time::now_ms() - started;
         }
         if missing_pending {
             return Ok(false);
         }
 
-        let remove_started = profile_enabled.then(js_sys::Date::now);
+        let remove_started = profile_enabled.then(crate::time::now_ms);
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
         for (index, hash) in hashes.into_iter().enumerate() {
@@ -1464,25 +1464,25 @@ impl NativePeerbitBackbone {
             graph_entries.push(graph_entry);
         }
         if let Some(started) = remove_started {
-            self.append_profile.raw_receive_remove_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_remove_ms += crate::time::now_ms() - started;
         }
 
-        let block_put_started = profile_enabled.then(js_sys::Date::now);
+        let block_put_started = profile_enabled.then(crate::time::now_ms);
         self.blocks.put_entries_core(block_entries);
         if let Some(started) = block_put_started {
-            self.append_profile.raw_receive_block_put_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_block_put_ms += crate::time::now_ms() - started;
         }
-        let graph_put_started = profile_enabled.then(js_sys::Date::now);
+        let graph_put_started = profile_enabled.then(crate::time::now_ms);
         self.log.put_entries_core(graph_entries);
         if let Some(started) = graph_put_started {
-            self.append_profile.raw_receive_graph_put_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_graph_put_ms += crate::time::now_ms() - started;
         }
         if !coordinate_commits.is_empty() {
-            let coordinate_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_started = profile_enabled.then(crate::time::now_ms);
             self.commit_entry_coordinate_commits(coordinate_commits);
             if let Some(started) = coordinate_started {
                 self.append_profile.raw_receive_coordinate_commit_ms +=
-                    js_sys::Date::now() - started;
+                    crate::time::now_ms() - started;
             }
         }
         Ok(true)
@@ -1496,19 +1496,19 @@ impl NativePeerbitBackbone {
     ) -> Result<bool, JsValue> {
         ensure_same_len(hashes.len(), heads.length() as usize, "raw receive heads")?;
         let profile_enabled = self.append_profile_enabled;
-        let pending_check_started = profile_enabled.then(js_sys::Date::now);
+        let pending_check_started = profile_enabled.then(crate::time::now_ms);
         let missing_pending = hashes
             .iter()
             .any(|hash| !self.pending_raw_receive_entries.contains_key(hash));
         if let Some(started) = pending_check_started {
-            self.append_profile.raw_receive_pending_check_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_pending_check_ms += crate::time::now_ms() - started;
         }
         if missing_pending {
             return Ok(false);
         }
 
         {
-            let join_plan_started = profile_enabled.then(js_sys::Date::now);
+            let join_plan_started = profile_enabled.then(crate::time::now_ms);
             let mut graph_entries = Vec::with_capacity(hashes.len());
             for hash in &hashes {
                 let pending = self
@@ -1521,7 +1521,7 @@ impl NativePeerbitBackbone {
                 .log
                 .plan_join_entry_refs_core(&graph_entries, false, true);
             if let Some(started) = join_plan_started {
-                self.append_profile.raw_receive_join_plan_ms += js_sys::Date::now() - started;
+                self.append_profile.raw_receive_join_plan_ms += crate::time::now_ms() - started;
             }
             let mut batch_hashes: Option<HashSet<&str>> = None;
             for plan in join_plans {
@@ -1542,7 +1542,7 @@ impl NativePeerbitBackbone {
             }
         }
 
-        let remove_started = profile_enabled.then(js_sys::Date::now);
+        let remove_started = profile_enabled.then(crate::time::now_ms);
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
         for (index, hash) in hashes.into_iter().enumerate() {
@@ -1556,25 +1556,25 @@ impl NativePeerbitBackbone {
             graph_entries.push(graph_entry);
         }
         if let Some(started) = remove_started {
-            self.append_profile.raw_receive_remove_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_remove_ms += crate::time::now_ms() - started;
         }
 
-        let block_put_started = profile_enabled.then(js_sys::Date::now);
+        let block_put_started = profile_enabled.then(crate::time::now_ms);
         self.blocks.put_entries_core(block_entries);
         if let Some(started) = block_put_started {
-            self.append_profile.raw_receive_block_put_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_block_put_ms += crate::time::now_ms() - started;
         }
-        let graph_put_started = profile_enabled.then(js_sys::Date::now);
+        let graph_put_started = profile_enabled.then(crate::time::now_ms);
         self.log.put_join_batch_entries_core(graph_entries);
         if let Some(started) = graph_put_started {
-            self.append_profile.raw_receive_graph_put_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_graph_put_ms += crate::time::now_ms() - started;
         }
         if !coordinate_commits.is_empty() {
-            let coordinate_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_started = profile_enabled.then(crate::time::now_ms);
             self.commit_entry_coordinate_commits(coordinate_commits);
             if let Some(started) = coordinate_started {
                 self.append_profile.raw_receive_coordinate_commit_ms +=
-                    js_sys::Date::now() - started;
+                    crate::time::now_ms() - started;
             }
         }
         Ok(true)
@@ -1600,25 +1600,25 @@ impl NativePeerbitBackbone {
             }
         };
         if !verify_hashes_cover_commit {
-            let pending_check_started = profile_enabled.then(js_sys::Date::now);
+            let pending_check_started = profile_enabled.then(crate::time::now_ms);
             let missing_pending = hashes
                 .iter()
                 .any(|hash| !self.pending_raw_receive_entries.contains_key(hash));
             if let Some(started) = pending_check_started {
-                self.append_profile.raw_receive_pending_check_ms += js_sys::Date::now() - started;
+                self.append_profile.raw_receive_pending_check_ms += crate::time::now_ms() - started;
             }
             if missing_pending {
                 return Ok(false);
             }
         }
-        let verify_started = profile_enabled.then(js_sys::Date::now);
+        let verify_started = profile_enabled.then(crate::time::now_ms);
         if verify_hashes_cover_commit {
             let verify_hashes = verify_hashes.as_ref().unwrap_or(&hashes);
             let Some(verified) = self.verify_pending_raw_receive_entries_all(verify_hashes)? else {
                 return Ok(false);
             };
             if let Some(started) = verify_started {
-                self.append_profile.raw_receive_verify_ms += js_sys::Date::now() - started;
+                self.append_profile.raw_receive_verify_ms += crate::time::now_ms() - started;
             }
             if !verified {
                 return Ok(false);
@@ -1629,12 +1629,12 @@ impl NativePeerbitBackbone {
                 return Ok(false);
             };
             if let Some(started) = verify_started {
-                self.append_profile.raw_receive_verify_ms += js_sys::Date::now() - started;
+                self.append_profile.raw_receive_verify_ms += crate::time::now_ms() - started;
             }
             if verified.iter().any(|flag| *flag == 0) {
                 return Ok(false);
             }
-            let verify_status_started = profile_enabled.then(js_sys::Date::now);
+            let verify_status_started = profile_enabled.then(crate::time::now_ms);
             let missing_verified = hashes.iter().any(|hash| {
                 self.pending_raw_receive_entries
                     .get(hash)
@@ -1642,7 +1642,7 @@ impl NativePeerbitBackbone {
                     .unwrap_or(true)
             });
             if let Some(started) = verify_status_started {
-                self.append_profile.raw_receive_verify_status_ms += js_sys::Date::now() - started;
+                self.append_profile.raw_receive_verify_status_ms += crate::time::now_ms() - started;
             }
             if missing_verified {
                 return Ok(false);
@@ -1650,7 +1650,7 @@ impl NativePeerbitBackbone {
         }
 
         {
-            let join_plan_started = profile_enabled.then(js_sys::Date::now);
+            let join_plan_started = profile_enabled.then(crate::time::now_ms);
             let mut graph_entries = Vec::with_capacity(hashes.len());
             for hash in &hashes {
                 let pending = self
@@ -1663,7 +1663,7 @@ impl NativePeerbitBackbone {
                 .log
                 .plan_join_entry_refs_core(&graph_entries, false, true);
             if let Some(started) = join_plan_started {
-                self.append_profile.raw_receive_join_plan_ms += js_sys::Date::now() - started;
+                self.append_profile.raw_receive_join_plan_ms += crate::time::now_ms() - started;
             }
             let mut batch_hashes: Option<HashSet<&str>> = None;
             for plan in join_plans {
@@ -1684,7 +1684,7 @@ impl NativePeerbitBackbone {
             }
         }
 
-        let remove_started = profile_enabled.then(js_sys::Date::now);
+        let remove_started = profile_enabled.then(crate::time::now_ms);
         let mut block_entries = Vec::with_capacity(hashes.len());
         let mut graph_entries = Vec::with_capacity(hashes.len());
         for (index, hash) in hashes.into_iter().enumerate() {
@@ -1698,25 +1698,25 @@ impl NativePeerbitBackbone {
             graph_entries.push(graph_entry);
         }
         if let Some(started) = remove_started {
-            self.append_profile.raw_receive_remove_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_remove_ms += crate::time::now_ms() - started;
         }
 
-        let block_put_started = profile_enabled.then(js_sys::Date::now);
+        let block_put_started = profile_enabled.then(crate::time::now_ms);
         self.blocks.put_entries_core(block_entries);
         if let Some(started) = block_put_started {
-            self.append_profile.raw_receive_block_put_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_block_put_ms += crate::time::now_ms() - started;
         }
-        let graph_put_started = profile_enabled.then(js_sys::Date::now);
+        let graph_put_started = profile_enabled.then(crate::time::now_ms);
         self.log.put_join_batch_entries_core(graph_entries);
         if let Some(started) = graph_put_started {
-            self.append_profile.raw_receive_graph_put_ms += js_sys::Date::now() - started;
+            self.append_profile.raw_receive_graph_put_ms += crate::time::now_ms() - started;
         }
         if !coordinate_commits.is_empty() {
-            let coordinate_started = profile_enabled.then(js_sys::Date::now);
+            let coordinate_started = profile_enabled.then(crate::time::now_ms);
             self.commit_entry_coordinate_commits(coordinate_commits);
             if let Some(started) = coordinate_started {
                 self.append_profile.raw_receive_coordinate_commit_ms +=
-                    js_sys::Date::now() - started;
+                    crate::time::now_ms() - started;
             }
         }
         Ok(true)

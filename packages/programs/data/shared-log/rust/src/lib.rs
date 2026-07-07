@@ -5,6 +5,10 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use wasm_bindgen::prelude::*;
 
+mod error;
+
+pub use error::SharedLogError;
+
 const MODE_NON_STRICT: u8 = 0;
 const MAX_U32: u64 = u32::MAX as u64;
 const MAX_U64: u64 = u64::MAX;
@@ -1260,7 +1264,7 @@ fn receive_coordinate_plan_to_row(
     out
 }
 
-fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, JsValue> {
+fn plan_repair_dispatch_rows(batch: RepairDispatchBatch) -> Result<Array, SharedLogError> {
     let entry_count = batch.entry_hashes.len();
 
     ensure_same_len(entry_count, batch.entry_gids.len(), "repair entry gid")?;
@@ -1499,7 +1503,7 @@ impl NativeSharedLogState {
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
         from_hash: &str,
-    ) -> Result<Vec<EntryLeaderAssignment>, JsValue> {
+    ) -> Result<Vec<EntryLeaderAssignment>, SharedLogError> {
         ensure_same_len(
             gids.len(),
             replica_counts.len(),
@@ -1552,7 +1556,7 @@ impl NativeSharedLogState {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<Vec<GidLeaderPlan>, JsValue> {
+    ) -> Result<Vec<GidLeaderPlan>, SharedLogError> {
         ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
         let options = find_leader_options(role_age_ms, now, peer_filter)?;
         let mut prepared_options_by_replicas = HashMap::new();
@@ -1950,6 +1954,7 @@ impl NativeRangePlanner {
             full_replica_repair_candidate_count,
             self_hash,
         })
+        .map_err(JsValue::from)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2027,6 +2032,7 @@ impl NativeRangePlanner {
             full_replica_repair_candidate_count,
             self_hash,
         })
+        .map_err(JsValue::from)
     }
 
     pub fn get_grid(&self, from: String, count: usize) -> Result<Array, JsValue> {
@@ -2107,7 +2113,7 @@ pub fn commit_local_append_for_gid_compact_core(
     include_self: bool,
     full_replica_fallback: bool,
     include_strict_full_replica: bool,
-) -> Result<NativeLocalAppendCompactFacts, JsValue> {
+) -> Result<NativeLocalAppendCompactFacts, SharedLogError> {
     let mut facts = commit_local_appends_for_gids_compact_core(
         state,
         vec![NativeLocalAppendCompactInput {
@@ -2125,9 +2131,7 @@ pub fn commit_local_append_for_gid_compact_core(
         full_replica_fallback,
         include_strict_full_replica,
     )?;
-    facts
-        .pop()
-        .ok_or_else(|| JsValue::from_str("Missing compact append facts"))
+    facts.pop().ok_or(SharedLogError::MissingCompactAppendFacts)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2141,7 +2145,7 @@ pub fn commit_local_appends_for_gids_compact_core(
     include_self: bool,
     full_replica_fallback: bool,
     include_strict_full_replica: bool,
-) -> Result<Vec<NativeLocalAppendCompactFacts>, JsValue> {
+) -> Result<Vec<NativeLocalAppendCompactFacts>, SharedLogError> {
     let options = SampleOptions {
         role_age_ms: role_age_ms_from_f64(role_age_ms),
         now: parse_u64(now)?,
@@ -2667,7 +2671,7 @@ impl NativeSharedLogState {
         }
 
         let Some(gid) = gid.as_string() else {
-            return Err(JsValue::from_str("Expected optional gid string"));
+            return Err(SharedLogError::ExpectedOptionalGidString.into());
         };
         if let Some(peers) = self.inner.gid_peers.get_mut(&gid) {
             peers.shift_remove(peer);
@@ -3583,6 +3587,7 @@ impl NativeSharedLogState {
             full_replica_repair_candidate_count,
             self_hash,
         })
+        .map_err(JsValue::from)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3717,6 +3722,7 @@ impl NativeSharedLogState {
             full_replica_repair_candidate_count,
             self_hash,
         })
+        .map_err(JsValue::from)
     }
 }
 
@@ -3742,6 +3748,27 @@ impl NativeSharedLogState {
 
     pub fn gid_peer_history_empty_core(&self) -> bool {
         self.inner.gid_peers.is_empty()
+    }
+
+    pub fn put_entry_coordinates_core(
+        &mut self,
+        hash: String,
+        gid: String,
+        hash_number: u64,
+        coordinates: Vec<u64>,
+        assigned_to_range_boundary: bool,
+        requested_replicas: usize,
+    ) {
+        self.inner.put_entry_coordinate_state(
+            hash,
+            EntryCoordinateState {
+                gid,
+                hash_number,
+                coordinates,
+                assigned_to_range_boundary,
+                requested_replicas,
+            },
+        );
     }
 
     pub fn remove_gid_peers_core(&mut self, peer: &str, gids: &[String]) {
@@ -3770,7 +3797,7 @@ impl NativeSharedLogState {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<Option<bool>, JsValue> {
+    ) -> Result<Option<bool>, SharedLogError> {
         let options = find_leader_options(role_age_ms, now, peer_filter)?;
         Ok(full_replica_self_leader_with_batch_caches(
             &self.inner.range_planner,
@@ -3799,7 +3826,7 @@ impl NativeSharedLogState {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, SharedLogError> {
         ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
         if gids.is_empty() {
             return Ok(true);
@@ -3881,7 +3908,7 @@ impl NativeSharedLogState {
         include_self: bool,
         full_replica_fallback: bool,
         include_strict_full_replica: bool,
-    ) -> Result<Vec<bool>, JsValue> {
+    ) -> Result<Vec<bool>, SharedLogError> {
         ensure_same_len(gids.len(), replica_counts.len(), "gid leader batch")?;
         let options = find_leader_options(role_age_ms, now, peer_filter)?;
         let mut prepared_options_by_replicas = HashMap::new();
@@ -3936,7 +3963,7 @@ fn find_leader_options(
     role_age_ms: f64,
     now: &str,
     peer_filter: JsValue,
-) -> Result<SampleOptions, JsValue> {
+) -> Result<SampleOptions, SharedLogError> {
     Ok(SampleOptions {
         role_age_ms: role_age_ms_from_f64(role_age_ms),
         now: parse_u64(now)?,
@@ -3945,46 +3972,52 @@ fn find_leader_options(
     })
 }
 
-fn parse_u64(value: &str) -> Result<u64, JsValue> {
+fn parse_u64(value: &str) -> Result<u64, SharedLogError> {
     value
         .parse::<u64>()
-        .map_err(|_| JsValue::from_str("Expected unsigned integer string"))
+        .map_err(|_| SharedLogError::ExpectedUnsignedIntegerString)
 }
 
-fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
+fn strings_from_array(values: Array) -> Result<Vec<String>, SharedLogError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for value in values.iter() {
         let Some(value) = value.as_string() else {
-            return Err(JsValue::from_str("Expected string array"));
+            return Err(SharedLogError::ExpectedStringArray);
         };
         out.push(value);
     }
     Ok(out)
 }
 
-fn string_batches_from_array(values: Array, label: &str) -> Result<Vec<Vec<String>>, JsValue> {
+fn string_batches_from_array(
+    values: Array,
+    label: &'static str,
+) -> Result<Vec<Vec<String>>, SharedLogError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for value in values.iter() {
         if !Array::is_array(&value) {
-            return Err(JsValue::from_str(&format!("Expected {label}")));
+            return Err(SharedLogError::Expected(label));
         }
         out.push(strings_from_array(Array::from(&value))?);
     }
     Ok(out)
 }
 
-fn string_matrix_from_array(values: Array, label: &str) -> Result<Vec<Vec<Vec<String>>>, JsValue> {
+fn string_matrix_from_array(
+    values: Array,
+    label: &'static str,
+) -> Result<Vec<Vec<Vec<String>>>, SharedLogError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for value in values.iter() {
         if !Array::is_array(&value) {
-            return Err(JsValue::from_str(&format!("Expected {label}")));
+            return Err(SharedLogError::Expected(label));
         }
         out.push(string_batches_from_array(Array::from(&value), label)?);
     }
     Ok(out)
 }
 
-fn cursor_values_from_array(values: Array) -> Result<Vec<u64>, JsValue> {
+fn cursor_values_from_array(values: Array) -> Result<Vec<u64>, SharedLogError> {
     strings_from_array(values)?
         .into_iter()
         .map(|value| parse_u64(&value))
@@ -3995,34 +4028,34 @@ fn coordinate_in_segment(coordinate: u64, start: u64, end: u64) -> bool {
     coordinate >= start && coordinate < end
 }
 
-fn usize_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
+fn usize_from_array(values: Array) -> Result<Vec<usize>, SharedLogError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for value in values.iter() {
         let Some(value) = value.as_f64() else {
-            return Err(JsValue::from_str("Expected number array"));
+            return Err(SharedLogError::ExpectedNumberArray);
         };
         if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-            return Err(JsValue::from_str("Expected unsigned integer array"));
+            return Err(SharedLogError::ExpectedUnsignedIntegerArray);
         }
         out.push(value as usize);
     }
     Ok(out)
 }
 
-fn optional_usize(value: JsValue) -> Result<Option<usize>, JsValue> {
+fn optional_usize(value: JsValue) -> Result<Option<usize>, SharedLogError> {
     if value.is_undefined() || value.is_null() {
         return Ok(None);
     }
     let Some(value) = value.as_f64() else {
-        return Err(JsValue::from_str("Expected optional unsigned integer"));
+        return Err(SharedLogError::ExpectedOptionalUnsignedInteger);
     };
     if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-        return Err(JsValue::from_str("Expected optional unsigned integer"));
+        return Err(SharedLogError::ExpectedOptionalUnsignedInteger);
     }
     Ok(Some(value as usize))
 }
 
-fn cursor_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
+fn cursor_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, SharedLogError> {
     let batches = string_batches_from_array(values, "cursor batch array")?;
     let mut out = Vec::with_capacity(batches.len());
     for batch in batches {
@@ -4036,13 +4069,11 @@ fn cursor_batches_from_array(values: Array) -> Result<Vec<Vec<u64>>, JsValue> {
     Ok(out)
 }
 
-fn ensure_same_len(left: usize, right: usize, label: &str) -> Result<(), JsValue> {
+fn ensure_same_len(left: usize, right: usize, label: &'static str) -> Result<(), SharedLogError> {
     if left == right {
         Ok(())
     } else {
-        Err(JsValue::from_str(&format!(
-            "Mismatched {label} input lengths"
-        )))
+        Err(SharedLogError::MismatchedInputLengths(label))
     }
 }
 
@@ -4070,12 +4101,12 @@ fn index_set_to_vec(values: &IndexSet<String>) -> Vec<String> {
     values.iter().cloned().collect()
 }
 
-fn optional_string_set(value: JsValue) -> Result<Option<Vec<String>>, JsValue> {
+fn optional_string_set(value: JsValue) -> Result<Option<Vec<String>>, SharedLogError> {
     if value.is_undefined() || value.is_null() {
         return Ok(None);
     }
     if !Array::is_array(&value) {
-        return Err(JsValue::from_str("Expected optional string array"));
+        return Err(SharedLogError::ExpectedOptionalStringArray);
     }
     Ok(Some(strings_from_array(Array::from(&value))?))
 }
@@ -4088,18 +4119,18 @@ fn strings_to_array(values: Vec<String>) -> Array {
     out
 }
 
-fn leader_samples_from_rows(rows: Array) -> Result<Vec<LeaderSample>, JsValue> {
+fn leader_samples_from_rows(rows: Array) -> Result<Vec<LeaderSample>, SharedLogError> {
     let mut out = Vec::with_capacity(rows.length() as usize);
     for row in rows.iter() {
         if !Array::is_array(&row) {
-            return Err(JsValue::from_str("Expected leader sample row"));
+            return Err(SharedLogError::ExpectedLeaderSampleRow);
         }
         let row = Array::from(&row);
         let Some(hash) = row.get(0).as_string() else {
-            return Err(JsValue::from_str("Expected leader hash string"));
+            return Err(SharedLogError::ExpectedLeaderHashString);
         };
         let Some(intersecting) = row.get(1).as_bool() else {
-            return Err(JsValue::from_str("Expected leader intersecting bool"));
+            return Err(SharedLogError::ExpectedLeaderIntersectingBool);
         };
         out.push(LeaderSample { hash, intersecting });
     }
@@ -4135,8 +4166,8 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_leaders_with_prepared_options, LeaderSample, RangePlanner, ReplicationRange,
-        SampleOptions,
+        find_leaders_with_prepared_options, LeaderSample, NativeSharedLogState, RangePlanner,
+        ReplicationRange, SampleOptions, SharedLogError,
     };
     use indexmap::IndexSet;
 
@@ -4653,5 +4684,101 @@ mod tests {
                 "target {target}"
             );
         }
+    }
+
+    #[test]
+    fn parse_u64_reports_typed_error_with_historical_message() {
+        let error = super::parse_u64("not-a-number").unwrap_err();
+        assert_eq!(error, SharedLogError::ExpectedUnsignedIntegerString);
+        assert_eq!(error.to_string(), "Expected unsigned integer string");
+    }
+
+    #[test]
+    fn ensure_same_len_reports_typed_error_with_historical_message() {
+        let error = super::ensure_same_len(1, 2, "gid leader batch").unwrap_err();
+        assert_eq!(
+            error,
+            SharedLogError::MismatchedInputLengths("gid leader batch")
+        );
+        assert_eq!(
+            error.to_string(),
+            "Mismatched gid leader batch input lengths"
+        );
+    }
+
+    #[test]
+    fn commit_local_append_compact_core_reports_typed_now_error() {
+        let mut state = NativeSharedLogState::new("u32".to_string());
+        let error = super::commit_local_append_for_gid_compact_core(
+            &mut state,
+            "hash".to_string(),
+            "gid".to_string(),
+            1,
+            &[],
+            &[],
+            1,
+            0.0,
+            "not-a-number",
+            "self",
+            true,
+            true,
+            true,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error, SharedLogError::ExpectedUnsignedIntegerString);
+        assert_eq!(error.to_string(), "Expected unsigned integer string");
+    }
+
+    #[test]
+    fn plan_leaders_batch_core_reports_typed_length_mismatch() {
+        let state = NativeSharedLogState::new("u32".to_string());
+        let error = state
+            .plan_leaders_for_gids_batch_core(
+                &["gid".to_string()],
+                &[],
+                0.0,
+                "1000",
+                wasm_bindgen::JsValue::UNDEFINED,
+                false,
+                "self",
+                true,
+                true,
+                true,
+            )
+            .err()
+            .unwrap();
+        assert_eq!(
+            error,
+            SharedLogError::MismatchedInputLengths("gid leader batch")
+        );
+        assert_eq!(
+            error.to_string(),
+            "Mismatched gid leader batch input lengths"
+        );
+    }
+
+    #[test]
+    fn shared_log_error_display_matches_historical_messages() {
+        assert_eq!(
+            SharedLogError::Expected("pending peers by mode").to_string(),
+            "Expected pending peers by mode"
+        );
+        assert_eq!(
+            SharedLogError::ExpectedStringArray.to_string(),
+            "Expected string array"
+        );
+        assert_eq!(
+            SharedLogError::ExpectedOptionalGidString.to_string(),
+            "Expected optional gid string"
+        );
+        assert_eq!(
+            SharedLogError::ExpectedLeaderIntersectingBool.to_string(),
+            "Expected leader intersecting bool"
+        );
+        assert_eq!(
+            SharedLogError::MissingCompactAppendFacts.to_string(),
+            "Missing compact append facts"
+        );
     }
 }

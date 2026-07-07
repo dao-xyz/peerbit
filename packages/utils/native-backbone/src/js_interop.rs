@@ -1,5 +1,6 @@
+use crate::error::BackboneError;
 use js_sys::{Array, Reflect, Uint8Array};
-use peerbit_indexer_core::wire::{self, WireError};
+use peerbit_indexer_core::wire;
 use std::collections::HashSet;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -22,51 +23,97 @@ pub(crate) fn clear_journal_prefix(
     *journal_record_count = journal_record_count.saturating_sub(record_count);
 }
 
-pub(crate) fn array_from_value(value: JsValue, label: &str) -> Result<Array, JsValue> {
+/// Exclusive upper bound for f64 → u64 conversion. `u64::MAX as f64` rounds
+/// UP to 2^64 (exactly representable), so a `> u64::MAX as f64` check admits
+/// 2^64 itself, which an `as` cast then saturates to `u64::MAX`. Valid u64
+/// values in f64 form are exactly the integers in [0, 2^64).
+const F64_U64_EXCLUSIVE_BOUND: f64 = 18_446_744_073_709_551_616.0; // 2^64
+
+/// Rejects non-integral, negative, non-finite and out-of-range values instead
+/// of silently truncating them with an `as` cast.
+pub(crate) fn checked_usize_from_f64(value: f64) -> Option<usize> {
+    checked_u64_from_f64(value).and_then(|v| usize::try_from(v).ok())
+}
+
+/// Rejects non-integral, negative, non-finite and out-of-range values instead
+/// of silently truncating them with an `as` cast.
+pub(crate) fn checked_u64_from_f64(value: f64) -> Option<u64> {
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value >= F64_U64_EXCLUSIVE_BOUND
+    {
+        return None;
+    }
+    Some(value as u64)
+}
+
+pub(crate) fn array_from_value(
+    value: JsValue,
+    label: &'static str,
+) -> Result<Array, BackboneError> {
     value
         .dyn_into::<Array>()
-        .map_err(|_| JsValue::from_str(&format!("Expected {label} array")))
+        .map_err(|_| BackboneError::ExpectedArray(label))
 }
 
-pub(crate) fn string_field(row: &Array, index: u32, label: &str) -> Result<String, JsValue> {
+pub(crate) fn string_field(
+    row: &Array,
+    index: u32,
+    label: &'static str,
+) -> Result<String, BackboneError> {
     row.get(index)
         .as_string()
-        .ok_or_else(|| JsValue::from_str(&format!("Expected {label} string")))
+        .ok_or(BackboneError::ExpectedString(label))
 }
 
-pub(crate) fn stringish_field(row: &Array, index: u32, label: &str) -> Result<String, JsValue> {
+pub(crate) fn stringish_field(
+    row: &Array,
+    index: u32,
+    label: &'static str,
+) -> Result<String, BackboneError> {
     let value = row.get(index);
     if let Some(value) = value.as_string() {
         return Ok(value);
     }
     if let Some(value) = value.as_f64() {
-        return Ok((value as u64).to_string());
+        if let Some(value) = checked_u64_from_f64(value) {
+            return Ok(value.to_string());
+        }
     }
-    Err(JsValue::from_str(&format!("Expected {label} string")))
+    Err(BackboneError::ExpectedString(label))
 }
 
-pub(crate) fn bool_field(row: &Array, index: u32, label: &str) -> Result<bool, JsValue> {
+pub(crate) fn bool_field(
+    row: &Array,
+    index: u32,
+    label: &'static str,
+) -> Result<bool, BackboneError> {
     row.get(index)
         .as_bool()
-        .ok_or_else(|| JsValue::from_str(&format!("Expected {label} boolean")))
+        .ok_or(BackboneError::ExpectedBoolean(label))
 }
 
-pub(crate) fn usize_field(row: &Array, index: u32, label: &str) -> Result<usize, JsValue> {
+pub(crate) fn usize_field(
+    row: &Array,
+    index: u32,
+    label: &'static str,
+) -> Result<usize, BackboneError> {
     row.get(index)
         .as_f64()
-        .map(|value| value as usize)
-        .ok_or_else(|| JsValue::from_str(&format!("Expected {label} number")))
+        .and_then(checked_usize_from_f64)
+        .ok_or(BackboneError::ExpectedNumber(label))
 }
 
-pub(crate) fn bytes_field(row: &Array, index: u32, label: &str) -> Result<Vec<u8>, JsValue> {
-    let value = row.get(index);
-    if value.is_undefined() || value.is_null() {
-        return Err(JsValue::from_str(&format!("Expected {label} bytes")));
-    }
-    Ok(Uint8Array::new(&value).to_vec())
+pub(crate) fn bytes_field(
+    row: &Array,
+    index: u32,
+    label: &'static str,
+) -> Result<Vec<u8>, BackboneError> {
+    row.get(index)
+        .dyn_ref::<Uint8Array>()
+        .map(Uint8Array::to_vec)
+        .ok_or(BackboneError::ExpectedBytes(label))
 }
 
-pub(crate) fn trim_hashes_vec(trim_rows: &Array) -> Result<Vec<String>, JsValue> {
+pub(crate) fn trim_hashes_vec(trim_rows: &Array) -> Result<Vec<String>, BackboneError> {
     let mut hashes = Vec::with_capacity(trim_rows.length() as usize);
     for index in 0..trim_rows.length() {
         let row = array_from_value(trim_rows.get(index), "trim row")?;
@@ -111,27 +158,29 @@ pub(crate) fn strings_slice_to_array(values: &[String]) -> Array {
     out
 }
 
-pub(crate) fn strings_from_array(values: Array) -> Result<Vec<String>, JsValue> {
+pub(crate) fn strings_from_array(values: Array) -> Result<Vec<String>, BackboneError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
         out.push(
             values
                 .get(index)
                 .as_string()
-                .ok_or_else(|| JsValue::from_str("Expected string array"))?,
+                .ok_or(BackboneError::ExpectedStringArray)?,
         );
     }
     Ok(out)
 }
 
-pub(crate) fn bytes_vec_from_array(values: Array) -> Result<Vec<Vec<u8>>, JsValue> {
+pub(crate) fn bytes_vec_from_array(values: Array) -> Result<Vec<Vec<u8>>, BackboneError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
         let value = values.get(index);
-        if value.is_undefined() || value.is_null() {
-            return Err(JsValue::from_str("Expected bytes array"));
-        }
-        out.push(Uint8Array::new(&value).to_vec());
+        out.push(
+            value
+                .dyn_ref::<Uint8Array>()
+                .map(Uint8Array::to_vec)
+                .ok_or(BackboneError::ExpectedBytesArray)?,
+        );
     }
     Ok(out)
 }
@@ -139,73 +188,79 @@ pub(crate) fn bytes_vec_from_array(values: Array) -> Result<Vec<Vec<u8>>, JsValu
 pub(crate) fn required_bytes_from_array(
     values: &Array,
     index: u32,
-    field: &str,
-) -> Result<Uint8Array, JsValue> {
-    let value = values.get(index);
-    if value.is_undefined() || value.is_null() {
-        return Err(JsValue::from_str(&format!("Expected {field} bytes")));
-    }
-    Ok(Uint8Array::new(&value))
+    field: &'static str,
+) -> Result<Uint8Array, BackboneError> {
+    values
+        .get(index)
+        .dyn_into::<Uint8Array>()
+        .map_err(|_| BackboneError::ExpectedBytes(field))
 }
 
 pub(crate) fn string_batches_from_array(
     values: Array,
-    label: &str,
-) -> Result<Vec<Vec<String>>, JsValue> {
+    label: &'static str,
+) -> Result<Vec<Vec<String>>, BackboneError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
         let value = values.get(index);
         if !Array::is_array(&value) {
-            return Err(JsValue::from_str(&format!("Expected {label}")));
+            return Err(BackboneError::Expected(label));
         }
         out.push(strings_from_array(Array::from(&value))?);
     }
     Ok(out)
 }
 
-pub(crate) fn usize_values_from_array(values: Array) -> Result<Vec<usize>, JsValue> {
+pub(crate) fn usize_values_from_array(values: Array) -> Result<Vec<usize>, BackboneError> {
     let mut out = Vec::with_capacity(values.length() as usize);
     for index in 0..values.length() {
         let value = values
             .get(index)
             .as_f64()
-            .ok_or_else(|| JsValue::from_str("Expected unsigned integer array"))?;
-        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 {
-            return Err(JsValue::from_str("Expected unsigned integer array"));
-        }
-        out.push(value as usize);
+            .and_then(checked_usize_from_f64)
+            .ok_or(BackboneError::ExpectedUnsignedIntegerArray)?;
+        out.push(value);
     }
     Ok(out)
 }
 
-pub(crate) fn ensure_same_len(left: usize, right: usize, label: &str) -> Result<(), JsValue> {
+pub(crate) fn ensure_same_len(
+    left: usize,
+    right: usize,
+    label: &'static str,
+) -> Result<(), BackboneError> {
     if left == right {
         Ok(())
     } else {
-        Err(JsValue::from_str(&format!(
-            "Mismatched {label} input lengths"
-        )))
+        Err(BackboneError::MismatchedInputLengths(label))
     }
 }
 
-pub(crate) fn optional_bytes_from_js(value: JsValue) -> Option<Vec<u8>> {
+pub(crate) fn optional_bytes_from_js(
+    value: JsValue,
+    label: &'static str,
+) -> Result<Option<Vec<u8>>, BackboneError> {
     if value.is_undefined() || value.is_null() {
-        return None;
+        return Ok(None);
     }
-    Some(Uint8Array::new(&value).to_vec())
+    value
+        .dyn_ref::<Uint8Array>()
+        .map(|value| Some(value.to_vec()))
+        .ok_or(BackboneError::ExpectedBytes(label))
 }
 
 pub(crate) fn optional_usize_from_js(
     value: JsValue,
-    label: &str,
-) -> Result<Option<usize>, JsValue> {
+    label: &'static str,
+) -> Result<Option<usize>, BackboneError> {
     if value.is_undefined() || value.is_null() {
         return Ok(None);
     }
     value
         .as_f64()
-        .map(|value| Some(value as usize))
-        .ok_or_else(|| JsValue::from_str(&format!("{label} must be a number")))
+        .and_then(checked_usize_from_f64)
+        .map(Some)
+        .ok_or(BackboneError::MustBeNumber(label))
 }
 
 pub(crate) fn number_strings_to_array(values: &[u64]) -> Array {
@@ -216,13 +271,16 @@ pub(crate) fn number_strings_to_array(values: &[u64]) -> Array {
     out
 }
 
-pub(crate) fn parse_u64_string(value: &str, label: &str) -> Result<u64, JsValue> {
+pub(crate) fn parse_u64_string(value: &str, label: &'static str) -> Result<u64, BackboneError> {
     value
         .parse::<u64>()
-        .map_err(|_| JsValue::from_str(&format!("Expected {label} u64 string")))
+        .map_err(|_| BackboneError::ExpectedU64String(label))
 }
 
-pub(crate) fn parse_optional_u64_string(value: &str, label: &str) -> Result<Option<u64>, JsValue> {
+pub(crate) fn parse_optional_u64_string(
+    value: &str,
+    label: &'static str,
+) -> Result<Option<u64>, BackboneError> {
     if value.is_empty() {
         Ok(None)
     } else {
@@ -308,55 +366,54 @@ pub(crate) fn write_bytes(out: &mut Vec<u8>, value: &[u8]) {
     out.extend_from_slice(value);
 }
 
-pub(crate) fn wire_error_to_js(error: WireError) -> JsValue {
-    JsValue::from_str(&error.to_string())
-}
-
 pub(crate) fn read_u32(
     bytes: &[u8],
     offset: &mut usize,
     label: &'static str,
-) -> Result<u32, JsValue> {
-    wire::read_u32(bytes, offset, label).map_err(wire_error_to_js)
+) -> Result<u32, BackboneError> {
+    Ok(wire::read_u32(bytes, offset, label)?)
 }
 
 pub(crate) fn read_u64(
     bytes: &[u8],
     offset: &mut usize,
     label: &'static str,
-) -> Result<u64, JsValue> {
-    wire::read_u64(bytes, offset, label).map_err(wire_error_to_js)
+) -> Result<u64, BackboneError> {
+    Ok(wire::read_u64(bytes, offset, label)?)
 }
 
 pub(crate) fn read_encoded_string(
     bytes: &[u8],
     offset: &mut usize,
     label: &'static str,
-) -> Result<String, JsValue> {
-    wire::read_encoded_string(bytes, offset, label).map_err(wire_error_to_js)
+) -> Result<String, BackboneError> {
+    Ok(wire::read_encoded_string(bytes, offset, label)?)
 }
 
 pub(crate) fn read_bytes(
     bytes: &[u8],
     offset: &mut usize,
     label: &'static str,
-) -> Result<Vec<u8>, JsValue> {
-    wire::read_bytes(bytes, offset, label).map_err(wire_error_to_js)
+) -> Result<Vec<u8>, BackboneError> {
+    Ok(wire::read_bytes(bytes, offset, label)?)
 }
 
 pub(crate) fn js_get(value: &JsValue, key: &str) -> JsValue {
     Reflect::get(value, &JsValue::from_str(key)).unwrap_or(JsValue::UNDEFINED)
 }
 
-fn js_string(value: JsValue, field: &str) -> Result<String, JsValue> {
+fn js_string(value: JsValue, field: &'static str) -> Result<String, BackboneError> {
     value
         .as_string()
-        .ok_or_else(|| JsValue::from_str(&format!("Missing or invalid {field}")))
+        .ok_or(BackboneError::MissingOrInvalid(field))
 }
 
-pub(crate) fn array_strings(value: JsValue, field: &str) -> Result<Vec<String>, JsValue> {
+pub(crate) fn array_strings(
+    value: JsValue,
+    field: &'static str,
+) -> Result<Vec<String>, BackboneError> {
     if !Array::is_array(&value) {
-        return Err(JsValue::from_str(&format!("{field} must be an array")));
+        return Err(BackboneError::MustBeArray(field));
     }
     let array = Array::from(&value);
     let mut out = Vec::with_capacity(array.length() as usize);
@@ -366,12 +423,17 @@ pub(crate) fn array_strings(value: JsValue, field: &str) -> Result<Vec<String>, 
     Ok(out)
 }
 
-pub(crate) fn optional_string(value: JsValue) -> Option<String> {
+pub(crate) fn optional_string(
+    value: JsValue,
+    field: &'static str,
+) -> Result<Option<String>, BackboneError> {
     if value.is_null() || value.is_undefined() {
-        None
-    } else {
-        value.as_string()
+        return Ok(None);
     }
+    value
+        .as_string()
+        .map(Some)
+        .ok_or(BackboneError::MissingOrInvalid(field))
 }
 
 pub(crate) fn write_u8(out: &mut Vec<u8>, value: u8) {
@@ -383,43 +445,129 @@ pub(crate) fn write_bool(out: &mut Vec<u8>, value: bool) {
 }
 
 pub(crate) fn js_error(error: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&error.to_string())
+    JsValue::from(BackboneError::Message(error.to_string()))
 }
 
 pub(crate) fn decode_error(error: impl std::fmt::Display) -> JsValue {
-    JsValue::from_str(&error.to_string())
+    JsValue::from(BackboneError::Message(error.to_string()))
 }
 
-pub(crate) fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, JsValue> {
+pub(crate) fn hash_number_u64(resolution: &str, digest: &[u8]) -> Result<u64, BackboneError> {
     match resolution {
         "u32" => {
             if digest.len() < 4 {
-                return Err(JsValue::from_str("hash digest must have at least 4 bytes"));
+                return Err(BackboneError::HashDigestTooShortU32);
             }
             Ok(u32::from_le_bytes(digest[0..4].try_into().unwrap()) as u64)
         }
         "u64" => {
             if digest.len() < 8 {
-                return Err(JsValue::from_str("hash digest must have at least 8 bytes"));
+                return Err(BackboneError::HashDigestTooShortU64);
             }
             Ok(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
         }
-        _ => Err(JsValue::from_str("resolution must be u32 or u64")),
+        _ => Err(BackboneError::ResolutionMustBeU32OrU64),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{append_journal_delete_record, append_journal_put_record, hash_number_u64};
+    use super::{
+        append_journal_delete_record, append_journal_put_record, checked_u64_from_f64,
+        checked_usize_from_f64, ensure_same_len, hash_number_u64, parse_optional_u64_string,
+        parse_u64_string, read_u32,
+    };
+    use crate::error::BackboneError;
     use peerbit_indexer_core::persistence::{
         encode_journal_delete_record, encode_journal_put_record,
     };
+    use peerbit_indexer_core::wire::WireError;
 
     #[test]
     fn decodes_hash_numbers_like_shared_log_integer_helpers() {
         let bytes = [1, 0, 0, 0, 2, 0, 0, 0];
         assert_eq!(hash_number_u64("u32", &bytes).unwrap(), 1);
         assert_eq!(hash_number_u64("u64", &bytes).unwrap(), 8_589_934_593);
+    }
+
+    #[test]
+    fn hash_number_u64_reports_typed_errors() {
+        let error = hash_number_u64("u32", &[1, 2, 3]).unwrap_err();
+        assert_eq!(error, BackboneError::HashDigestTooShortU32);
+        assert_eq!(error.to_string(), "hash digest must have at least 4 bytes");
+
+        let error = hash_number_u64("u64", &[1, 2, 3, 4]).unwrap_err();
+        assert_eq!(error, BackboneError::HashDigestTooShortU64);
+        assert_eq!(error.to_string(), "hash digest must have at least 8 bytes");
+
+        let error = hash_number_u64("u128", &[0; 16]).unwrap_err();
+        assert_eq!(error, BackboneError::ResolutionMustBeU32OrU64);
+        assert_eq!(error.to_string(), "resolution must be u32 or u64");
+    }
+
+    #[test]
+    fn wire_reads_report_typed_errors() {
+        let mut offset = 0usize;
+        let error = read_u32(&[1, 2], &mut offset, "coordinate count").unwrap_err();
+        assert_eq!(
+            error,
+            BackboneError::Wire(WireError::Truncated("coordinate count"))
+        );
+        assert_eq!(error.to_string(), "Truncated coordinate count");
+    }
+
+    #[test]
+    fn parse_u64_string_reports_typed_errors() {
+        assert_eq!(parse_u64_string("42", "coordinate").unwrap(), 42);
+        assert_eq!(parse_optional_u64_string("", "coordinate").unwrap(), None);
+
+        let error = parse_u64_string("not-a-number", "coordinate").unwrap_err();
+        assert_eq!(error, BackboneError::ExpectedU64String("coordinate"));
+        assert_eq!(error.to_string(), "Expected coordinate u64 string");
+    }
+
+    #[test]
+    fn ensure_same_len_reports_typed_errors() {
+        assert_eq!(ensure_same_len(2, 2, "batch gids"), Ok(()));
+
+        let error = ensure_same_len(1, 2, "batch gids").unwrap_err();
+        assert_eq!(error, BackboneError::MismatchedInputLengths("batch gids"));
+        assert_eq!(error.to_string(), "Mismatched batch gids input lengths");
+    }
+
+    #[test]
+    fn checked_integer_conversions_reject_invalid_numbers() {
+        assert_eq!(checked_usize_from_f64(0.0), Some(0));
+        assert_eq!(checked_usize_from_f64(3.0), Some(3));
+        assert_eq!(checked_usize_from_f64(-1.0), None);
+        assert_eq!(checked_usize_from_f64(1.5), None);
+        assert_eq!(checked_usize_from_f64(f64::NAN), None);
+        assert_eq!(checked_usize_from_f64(f64::INFINITY), None);
+        assert_eq!(checked_usize_from_f64(1e20), None);
+
+        assert_eq!(checked_u64_from_f64(42.0), Some(42));
+        assert_eq!(checked_u64_from_f64(-0.5), None);
+        assert_eq!(checked_u64_from_f64(f64::NEG_INFINITY), None);
+        assert_eq!(checked_u64_from_f64(1e20), None);
+    }
+
+    #[test]
+    fn checked_integer_conversions_handle_the_two_pow_64_boundary() {
+        // 2^64 is exactly representable and equals `u64::MAX as f64` after
+        // rounding; it must be rejected, not saturated to u64::MAX.
+        let two_pow_64 = 18_446_744_073_709_551_616.0_f64;
+        assert_eq!(checked_u64_from_f64(two_pow_64), None);
+        assert_eq!(checked_u64_from_f64(u64::MAX as f64), None);
+        assert_eq!(checked_usize_from_f64(two_pow_64), None);
+        // The largest f64 strictly below 2^64 is a valid u64.
+        let below = 18_446_744_073_709_549_568.0_f64; // 2^64 - 2048
+        assert_eq!(
+            checked_u64_from_f64(below),
+            Some(18_446_744_073_709_549_568)
+        );
+        // 2^53 region is unaffected.
+        let two_pow_53 = 9_007_199_254_740_992.0_f64;
+        assert_eq!(checked_u64_from_f64(two_pow_53), Some(1 << 53));
     }
 
     #[test]
