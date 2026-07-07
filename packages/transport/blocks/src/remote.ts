@@ -90,6 +90,11 @@ type EagerBlockCache = {
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
 
+	// Assigned in the constructor only when the local store supports it:
+	// callers feature-detect this method (the log's columnar raw-receive
+	// fast path), so it must not exist without a delegation target.
+	putKnownManyColumns?: (cids: string[], bytes: Uint8Array[]) => string[];
+
 	private _responseHandler?: (
 		data: BlockMessage,
 		context?: BlockMessageContext,
@@ -200,6 +205,25 @@ export class RemoteBlocks implements IBlocks {
 			concurrency: options?.messageProcessingConcurrency || 10,
 		});
 		this.localStore = options?.local;
+		const localPutKnownManyColumns = (
+			this.localStore as {
+				putKnownManyColumns?: (
+					cids: string[],
+					bytes: Uint8Array[],
+				) => string[];
+			}
+		)?.putKnownManyColumns;
+		if (typeof localPutKnownManyColumns === "function") {
+			this.putKnownManyColumns = (cids, bytes) => {
+				const stored = localPutKnownManyColumns.call(
+					this.localStore,
+					cids,
+					bytes,
+				);
+				void this.notifyPuts(stored);
+				return stored;
+			};
+		}
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
 		if (options?.eagerBlocks) {
