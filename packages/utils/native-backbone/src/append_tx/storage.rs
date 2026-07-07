@@ -14,6 +14,18 @@ use crate::js_interop::{
 use crate::shared_log_plan::leader_samples_to_optional_rows;
 use crate::NativePeerbitBackbone;
 
+/// Forward a JsValue error from an untyped log-rust wrapper without altering
+/// its message. These wrappers construct every error via `JsValue::from_str`,
+/// so `as_string()` recovers the exact string the wrapper would have thrown;
+/// the fallback only guards the theoretically-non-string case.
+fn js_wrapper_error(error: JsValue) -> BackboneError {
+    BackboneError::Message(
+        error
+            .as_string()
+            .unwrap_or_else(|| "Expected string array".to_string()),
+    )
+}
+
 #[wasm_bindgen]
 impl NativePeerbitBackbone {
     #[allow(clippy::too_many_arguments)]
@@ -488,10 +500,11 @@ impl NativePeerbitBackbone {
             let next_hashes_array = strings_to_array(next_hashes.clone());
             // No typed log-rust equivalent exists for the storage-facts mode
             // (it hands the storage bytes back to JS instead of committing
-            // them to a native block store). The wrapper's only fallible step
-            // is strings_from_array over the string array built just above,
-            // so the (unreachable) error maps to the variant rendering the
-            // identical "Expected string array" message.
+            // them to a native block store). It is the one append path with
+            // no typed core to re-point to, so its JsValue error is forwarded
+            // verbatim through BackboneError::Message, preserving whatever
+            // string the wrapper produced (the dominant reachable case is
+            // strings_from_array over the array built just above).
             let row = self
                 .log
                 .prepare_entry_v0_plain_entry_storage_facts_trim_and_put_with_builder(
@@ -505,7 +518,7 @@ impl NativePeerbitBackbone {
                     payload_data,
                     trim_length_to,
                 )
-                .map_err(|_| BackboneError::ExpectedStringArray)?;
+                .map_err(js_wrapper_error)?;
             let row = array_from_value(row.into(), "native storage trim append row")?;
             let entry_row = array_from_value(row.get(0), "native storage trim append entry row")?;
             let trim_rows = array_from_value(row.get(1), "native storage trim append trim rows")?;
@@ -517,7 +530,7 @@ impl NativePeerbitBackbone {
         } else {
             let next_hashes_array = strings_to_array(next_hashes.clone());
             // Same untyped storage-facts wrapper seam as the trim branch
-            // above; the mapped error is unreachable by construction.
+            // above; its JsValue error is forwarded verbatim.
             let row = self
                 .log
                 .prepare_entry_v0_plain_entry_storage_facts_and_put_with_builder(
@@ -530,7 +543,7 @@ impl NativePeerbitBackbone {
                     meta_data,
                     payload_data,
                 )
-                .map_err(|_| BackboneError::ExpectedStringArray)?;
+                .map_err(js_wrapper_error)?;
             let hash = string_field(&row, 1, "storage entry hash")?;
             let digest = bytes_field(&row, 5, "storage entry hash digest")?;
             let meta_bytes = bytes_field(&row, 4, "storage entry meta bytes")?;
