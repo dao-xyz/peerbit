@@ -464,12 +464,16 @@ class NativeBackboneWriteThroughBlockStore {
 
 	// --- lifecycle -------------------------------------------------------
 	// The native store's lifecycle hooks are no-ops; only the durable store
-	// needs starting/stopping. Rehydration of the wasm map from disk happens in
-	// start(), i.e. before RemoteBlocks resolves its own start() and therefore
-	// before the log opens and walks the DAG.
+	// needs starting/stopping. The wasm map is NOT eagerly rehydrated from disk:
+	// entry blocks are pulled back lazily on demand through the read fallback in
+	// getMany()/get() (durable hit -> repopulate the wasm map), which is what the
+	// log's DAG walk (EntryIndex.resolveMany -> store.getMany) exercises. Keeping
+	// the wasm map cold on open is required by the strict-native resident
+	// coordinate-state optimization: a reopened non-replicating native node must
+	// report hasBlock(head) === false and answer a same-signer append from the
+	// persisted coordinate + signer facts without resolving the entry block.
 	async start(): Promise<void> {
 		await this.durable.start();
-		await this.rehydrateNativeFromDurable();
 	}
 
 	async stop(): Promise<void> {
@@ -487,32 +491,18 @@ class NativeBackboneWriteThroughBlockStore {
 		return Promise.resolve([]);
 	}
 
-	/**
-	 * Copy every durable block into the native wasm block map so the native
-	 * graph can read entry blocks after a restart. Uses the columnar
-	 * `putKnownManyColumns` fast path in bounded batches. Idempotent and cheap
-	 * when durable is empty (fresh program).
-	 */
-	private async rehydrateNativeFromDurable(): Promise<void> {
-		const BATCH = 256;
-		let cids: string[] = [];
-		let bytes: Uint8Array[] = [];
-		const flush = () => {
-			if (cids.length === 0) {
-				return;
-			}
-			this.native.putKnownManyColumns(cids, bytes);
-			cids = [];
-			bytes = [];
-		};
-		for await (const [cid, value] of this.durable.iterator()) {
-			cids.push(cid);
-			bytes.push(value);
-			if (cids.length >= BATCH) {
-				flush();
-			}
-		}
-		flush();
+	// Mirror a single already-committed block (present in the wasm map) to the
+	// durable store ONLY. Used by the native commit-only append fast path: the
+	// native prepare commits the entry block into the wasm map and returns no raw
+	// bytes, and the strict-native resident-coordinate path deliberately does NOT
+	// route the block through the log's finishBlocks/putKnown* (that would disturb
+	// the commit-only append path the RCS optimization depends on). Instead the
+	// caller reads the committed bytes back and calls this so the block lands in
+	// durable directly. Like putKnownManyColumns' durable mirror, the write is
+	// tracked (not fire-and-forget) so an IO/disk-full failure surfaces on the
+	// next awaited wrapper method / stop() rather than being swallowed.
+	mirrorToDurable(cid: string, bytes: Uint8Array): void {
+		this.trackDurable(this.durable.putKnown(cid, bytes));
 	}
 
 	// --- writes (apply to BOTH: native first for the hot path, then durable) ---
@@ -6658,10 +6648,20 @@ export class SharedLog<
 		// When the durable write-through wrapper is active the log's block store
 		// (this.remoteBlocks.localStore) is the wrapper, NOT the raw wasm block map
 		// (backbone.blocks), so this comparison is false. In that case the block
-		// must be written through to durable; see the guarded handling in the
+		// must be mirrored to durable directly; see the guarded handling in the
 		// prepare callback below.
 		const durableWrapperActive =
 			this.remoteBlocks?.localStore !== backbone.blocks;
+		// The write-through wrapper instance, captured only when active, so the
+		// commit-only block can be mirrored to durable WITHOUT routing it through
+		// the log's finishBlocks/putKnown* (which would disturb the strict-native
+		// resident-coordinate append path). `mirrorToDurable` writes to the durable
+		// side only and tracks the write for error-surfacing.
+		const durableWrapper = durableWrapperActive
+			? (this.remoteBlocks?.localStore as unknown as {
+					mirrorToDurable?: (cid: string, bytes: Uint8Array) => void;
+				})
+			: undefined;
 		let nativeBackboneDocumentIndexCommitted = false;
 		let committedNativeBackboneDocumentIndex:
 			| NativeBackboneDocumentIndexCommitInput
@@ -6731,7 +6731,7 @@ export class SharedLog<
 					backbone.blocks,
 				);
 				if (prepared && !prepared.bytes) {
-					if (durableWrapperActive) {
+					if (durableWrapper) {
 						// The durable write-through wrapper is active, so the block store
 						// the log writes through (this.remoteBlocks.localStore) is the
 						// wrapper, NOT the raw wasm block map. prepareEntryV0PlainEntryCommit
@@ -6740,26 +6740,28 @@ export class SharedLog<
 						// finishBlocks only calls putKnown* when prepared.bytes is set) and
 						// a non-replicating native node would lose it on restart.
 						//
-						// Attach the just-committed block's bytes (read back from the wasm
-						// store) as prepared.bytes so the log's finishBlocks writes them
-						// through: putPreparedAppendBlocks -> this._storage.putKnown* ->
-						// wrapper -> durable. This mirrors how the sibling storage-transaction
-						// path defers block storage to the JS store when commitBlocksInBackbone
-						// is false, and keeps strict-native mode working (it still returns a
-						// valid prepared result rather than bailing).
+						// Mirror the just-committed block (read back from the wasm store)
+						// straight to the DURABLE side of the wrapper. Crucially we do NOT
+						// attach prepared.bytes: doing so would make the log's finishBlocks
+						// call putKnown*, which changes the commit-only append path and
+						// breaks the strict-native resident-coordinate optimization (the
+						// reopen tests assert the append stays native and resolves no entry
+						// block). Instead the prepared result is returned exactly as the
+						// memory-only branch below (getBytes only, no bytes), so the log's
+						// finishBlocks path is UNCHANGED, and the block is made durable
+						// out-of-band here. mirrorToDurable tracks the write so an IO/
+						// disk-full failure surfaces on a later awaited wrapper method.
 						const preparedHash = prepared.cid ?? prepared.hash;
 						const committedBytes = preparedHash
 							? backbone.blocks.get(preparedHash)
 							: undefined;
-						if (committedBytes) {
-							return {
-								...prepared,
-								bytes: committedBytes,
-							};
+						if (committedBytes && durableWrapper.mirrorToDurable) {
+							durableWrapper.mirrorToDurable(preparedHash!, committedBytes);
 						}
 					}
-					// No wrapper (memory-only native node): the block lives in the wasm
-					// map and needs no durable mirror; expose getBytes for materialization.
+					// The block lives in the wasm map; expose getBytes for materialization
+					// (identical to the memory-only native node path). When the durable
+					// wrapper is active the durable copy was mirrored just above.
 					return {
 						...prepared,
 						getBytes: (hash: string) => backbone.blocks.get(hash),
@@ -6858,8 +6860,26 @@ export class SharedLog<
 						NativePeerbitBackbone["preparePlainCommittedNoNextStorageAppendTransaction"]
 				  >
 				| undefined;
+			// The write-through durable wrapper, when active, is captured here so a
+			// just-committed block can be mirrored to durable without disturbing the
+			// strict-native commit path. When the wrapper is active the log's block
+			// store is the wrapper (not the raw wasm map), so `localStore ===
+			// backbone.blocks` is false — but the store is still native-backed, so we
+			// must commit blocks in the backbone (the committed native prepare variant
+			// is the one that emits the document-signer journal record; the
+			// block-deferring variant does not, which would otherwise leave
+			// document-signers.wal unwritten and break same-signer facts after
+			// reopen). The block is then mirrored to durable out-of-band below.
+			const durableWrapperActive =
+				this.remoteBlocks?.localStore !== backbone.blocks;
+			const durableWrapper = durableWrapperActive
+				? (this.remoteBlocks?.localStore as unknown as {
+						mirrorToDurable?: (cid: string, bytes: Uint8Array) => void;
+					})
+				: undefined;
 			const commitBlocksInBackbone =
-				this.remoteBlocks?.localStore === backbone.blocks;
+				this.remoteBlocks?.localStore === backbone.blocks ||
+				durableWrapperActive;
 			let nativeBackboneDocumentIndexCommitted = false;
 			let nativeBackboneDocumentDeleteCommitted = false;
 			let committedNativeBackboneDocumentIndex:
@@ -6983,6 +7003,23 @@ export class SharedLog<
 					!!nativeBackboneDocumentDeleteKey;
 				const useTrimmedHashesOnly =
 					properties?.resolveTrimmedEntries === false;
+				if (durableWrapper?.mirrorToDurable) {
+					// The block was committed into the wasm map (commitBlocksInBackbone is
+					// true) but not into durable, because the log's finishBlocks path is
+					// left UNCHANGED for strict-native mode (getBytes only, no bytes, so
+					// no putKnown* through the wrapper). Mirror the just-committed block
+					// straight to the durable side so a non-replicating native node keeps
+					// it across a restart. mirrorToDurable tracks the write for
+					// error-surfacing.
+					const committedHash =
+						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+					const committedBytes = committedHash
+						? backbone.blocks.get(committedHash)
+						: undefined;
+					if (committedBytes) {
+						durableWrapper.mirrorToDurable(committedHash!, committedBytes);
+					}
+				}
 				return {
 					...backboneAppend.entry,
 					gid: backboneAppend.coordinate.gid,
@@ -7545,12 +7582,25 @@ export class SharedLog<
 			options?.target !== "none" ||
 			options?.replicate === true ||
 			(options?.delivery !== undefined && options.delivery !== false) ||
-			this.remoteBlocks?.localStore !== backbone.blocks ||
 			!this.canUseNativeBackboneResidentCoordinateState() ||
 			properties?.nexts?.some((nexts) => nexts.length > 0)
 		) {
 			return undefined;
 		}
+		// When the durable write-through wrapper is active the log's block store is
+		// the wrapper, not the raw wasm map, so `localStore === backbone.blocks` is
+		// false. This batch path always commits blocks in the backbone (the
+		// committed native batch prepare variants), so it is safe with the wrapper:
+		// the blocks land in wasm and are mirrored to durable per-entry below. This
+		// preserves the resident-coordinate fast batch path (and its meta.next
+		// linking) after a reopen instead of bailing to a slow generic path.
+		const durableWrapperActive =
+			this.remoteBlocks?.localStore !== backbone.blocks;
+		const durableWrapper = durableWrapperActive
+			? (this.remoteBlocks?.localStore as unknown as {
+					mirrorToDurable?: (cid: string, bytes: Uint8Array) => void;
+				})
+			: undefined;
 		const usesLatestDocumentContext = documentIndexes.every(
 			(index) => index.useLatestContext === true,
 		);
@@ -7677,6 +7727,21 @@ export class SharedLog<
 		for (let i = 0; i < appended.appendFacts.length; i++) {
 			const facts = appended.appendFacts[i]!;
 			const backboneAppend = backboneAppends[i]!;
+			if (durableWrapper?.mirrorToDurable) {
+				// The batch prepare committed each block into the wasm map; the log's
+				// finishBlocks path is left unchanged (getBytes only) to preserve
+				// strict-native mode, so mirror the committed block straight to durable
+				// so a non-replicating native node keeps it across a restart. Tracked
+				// for error-surfacing by mirrorToDurable.
+				const committedHash =
+					backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+				const committedBytes = committedHash
+					? backbone.blocks.get(committedHash)
+					: undefined;
+				if (committedBytes) {
+					durableWrapper.mirrorToDurable(committedHash!, committedBytes);
+				}
+			}
 			const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts({
 				appendFacts: facts,
 				plan: backboneAppend.coordinate,
