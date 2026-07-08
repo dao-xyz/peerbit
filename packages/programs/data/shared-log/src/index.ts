@@ -382,6 +382,277 @@ const joinNativeCoordinateDirectory = (
 	fsSafeLogId: string,
 ): string => `${nodeDirectory.replace(/[/\\]+$/, "")}/coordinates/${fsSafeLogId}`;
 
+/** The native backbone's in-wasm-memory block store. */
+type NativeBackboneBlocks = NativePeerbitBackbone["blocks"];
+
+/**
+ * Write-through block store bridging the native backbone's in-wasm-memory block
+ * store to a durable per-program {@link AnyBlockStore}.
+ *
+ * WHY: when the native backbone is active the log's entry blocks live only in
+ * the native wasm block map (`NativeBackboneBlockStore.persisted() === false`).
+ * On a restart that map is empty, so the native graph cannot reload heads the
+ * durable heads index still lists ("Failed to load entry from head"). This
+ * wrapper mirrors every write into the same durable `blocks` sublevel the
+ * non-native path uses, and on open rehydrates the wasm map from disk so the
+ * native graph can walk the DAG again.
+ *
+ * The native store stays the authoritative hot store the native graph reads
+ * from: reads hit native first and only fall back to durable (repopulating
+ * native on a hit so subsequent native-graph reads succeed).
+ *
+ * METHOD SURFACE (see #1006): `RemoteBlocks` and the log feature-detect the
+ * optional batch methods (`putMany`/`putKnown`/`putKnownMany`/
+ * `putKnownManyColumns`/`rmMany`). To keep the receive-fusion / columnar fast
+ * paths engaged this wrapper exposes EXACTLY the methods the native store
+ * exposes — including `putKnownManyColumns`, which `AnyBlockStore` does not have
+ * — and delegates each. It deliberately does not add methods the native store
+ * lacks (`getBlockResponsePayload`/`getNativeLogBlockStoreHandle` stay absent so
+ * the optional-chained probes in `RemoteBlocks` behave exactly as today).
+ */
+class NativeBackboneWriteThroughBlockStore {
+	constructor(
+		private readonly native: NativeBackboneBlocks,
+		private readonly durable: AnyBlockStore,
+	) {}
+
+	// --- lifecycle -------------------------------------------------------
+	// The native store's lifecycle hooks are no-ops; only the durable store
+	// needs starting/stopping. Rehydration of the wasm map from disk happens in
+	// start(), i.e. before RemoteBlocks resolves its own start() and therefore
+	// before the log opens and walks the DAG.
+	async start(): Promise<void> {
+		await this.durable.start();
+		await this.rehydrateNativeFromDurable();
+	}
+
+	async stop(): Promise<void> {
+		await this.durable.stop();
+	}
+
+	status() {
+		return this.durable.status();
+	}
+
+	waitFor(): Promise<string[]> {
+		return Promise.resolve([]);
+	}
+
+	/**
+	 * Copy every durable block into the native wasm block map so the native
+	 * graph can read entry blocks after a restart. Uses the columnar
+	 * `putKnownManyColumns` fast path in bounded batches. Idempotent and cheap
+	 * when durable is empty (fresh program).
+	 */
+	private async rehydrateNativeFromDurable(): Promise<void> {
+		const BATCH = 256;
+		let cids: string[] = [];
+		let bytes: Uint8Array[] = [];
+		const flush = () => {
+			if (cids.length === 0) {
+				return;
+			}
+			this.native.putKnownManyColumns(cids, bytes);
+			cids = [];
+			bytes = [];
+		};
+		for await (const [cid, value] of this.durable.iterator()) {
+			cids.push(cid);
+			bytes.push(value);
+			if (cids.length >= BATCH) {
+				flush();
+			}
+		}
+		flush();
+	}
+
+	// --- writes (apply to BOTH: native first for the hot path, then durable) ---
+	async put(
+		data: Uint8Array | { block: { bytes: Uint8Array }; cid: string },
+	): Promise<string> {
+		const cid = await this.native.put(data as any);
+		// The native store computes a raw-codec CID for a `Uint8Array`, storing
+		// the bytes verbatim (raw codec is identity), and stores `block.bytes`
+		// for the pre-CIDed object form. Either way the input bytes match what
+		// native stored, so feed durable the known cid+bytes without recomputing.
+		const value =
+			data instanceof Uint8Array
+				? data
+				: (data as { block: { bytes: Uint8Array } }).block.bytes;
+		await this.durable.putKnown(cid, value);
+		return cid;
+	}
+
+	async putMany(
+		blocks: Array<Uint8Array | { block: { bytes: Uint8Array }; cid: string }>,
+	): Promise<string[]> {
+		const cids = await this.native.putMany(blocks as any);
+		const durableBlocks: Array<readonly [string, Uint8Array]> = cids.map(
+			(cid, index) => {
+				const block = blocks[index]!;
+				const value =
+					block instanceof Uint8Array
+						? block
+						: (block as { block: { bytes: Uint8Array } }).block.bytes;
+				return [cid, value] as const;
+			},
+		);
+		await this.durable.putKnownMany(durableBlocks);
+		return cids;
+	}
+
+	putKnown(cid: string, bytes: Uint8Array): string {
+		const stored = this.native.putKnown(cid, bytes);
+		void this.durable.putKnown(cid, bytes);
+		return stored;
+	}
+
+	putKnownMany(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+	): string[] {
+		const cids = this.native.putKnownMany(blocks);
+		void this.durable.putKnownMany(blocks);
+		return cids;
+	}
+
+	putKnownManyColumns(cids: string[], bytes: Uint8Array[]): string[] {
+		const stored = this.native.putKnownManyColumns(cids, bytes);
+		// AnyBlockStore has no columnar method; mirror via putKnownMany, which
+		// takes [cid, bytes] tuples and hits the same batched store path.
+		const durableBlocks = cids.map(
+			(cid, index) => [cid, bytes[index]!] as const,
+		);
+		void this.durable.putKnownMany(durableBlocks);
+		return stored;
+	}
+
+	// --- reads (native/wasm first; on miss, durable fallback + repopulate) ---
+	get(cid: string): Uint8Array | undefined {
+		const local = this.native.get(cid);
+		if (local != null) {
+			return local;
+		}
+		// Synchronous native miss. Fall back to durable asynchronously and
+		// repopulate the native map so the native graph can read it next time.
+		// The synchronous contract can only answer with what native has, so a
+		// miss here still returns undefined; the async repopulation is
+		// best-effort for subsequent reads. RemoteBlocks always calls the async
+		// getMany path for DAG walks, so this rarely matters, but keep the
+		// side-effect for parity with getMany's fallback.
+		void this.repopulateFromDurable([cid]);
+		return undefined;
+	}
+
+	async getMany(cids: string[]): Promise<Array<Uint8Array | undefined>> {
+		const results = await this.native.getMany(cids);
+		const missing: string[] = [];
+		for (let i = 0; i < results.length; i++) {
+			if (results[i] == null) {
+				missing.push(cids[i]!);
+			}
+		}
+		if (missing.length === 0) {
+			return results;
+		}
+		const durableValues = await this.durable.getMany(missing);
+		const repopulateCids: string[] = [];
+		const repopulateBytes: Uint8Array[] = [];
+		let missingIndex = 0;
+		for (let i = 0; i < results.length; i++) {
+			if (results[i] != null) {
+				continue;
+			}
+			const value = durableValues[missingIndex++];
+			if (value != null) {
+				results[i] = value;
+				repopulateCids.push(cids[i]!);
+				repopulateBytes.push(value);
+			}
+		}
+		if (repopulateCids.length > 0) {
+			// Repopulate the native map so the native graph sees these blocks.
+			this.native.putKnownManyColumns(repopulateCids, repopulateBytes);
+		}
+		return results;
+	}
+
+	has(cid: string): boolean {
+		return this.native.has(cid);
+	}
+
+	async hasMany(cids: string[]): Promise<boolean[]> {
+		const nativeHas = await this.native.hasMany(cids);
+		const missing: string[] = [];
+		for (let i = 0; i < nativeHas.length; i++) {
+			if (!nativeHas[i]) {
+				missing.push(cids[i]!);
+			}
+		}
+		if (missing.length === 0) {
+			return nativeHas;
+		}
+		const durableHas = await this.durable.hasMany(missing);
+		let missingIndex = 0;
+		for (let i = 0; i < nativeHas.length; i++) {
+			if (!nativeHas[i]) {
+				nativeHas[i] = durableHas[missingIndex++]!;
+			}
+		}
+		return nativeHas;
+	}
+
+	private async repopulateFromDurable(cids: string[]): Promise<void> {
+		try {
+			const values = await this.durable.getMany(cids);
+			const repopulateCids: string[] = [];
+			const repopulateBytes: Uint8Array[] = [];
+			for (let i = 0; i < values.length; i++) {
+				const value = values[i];
+				if (value != null) {
+					repopulateCids.push(cids[i]!);
+					repopulateBytes.push(value);
+				}
+			}
+			if (repopulateCids.length > 0) {
+				this.native.putKnownManyColumns(repopulateCids, repopulateBytes);
+			}
+		} catch {
+			// Best-effort background repopulation; ignore failures.
+		}
+	}
+
+	// --- removes (apply to BOTH) ----------------------------------------
+	rm(cid: string): void {
+		this.native.rm(cid);
+		void this.durable.rm(cid);
+	}
+
+	del(cid: string): void {
+		this.rm(cid);
+	}
+
+	async rmMany(cids: string[]): Promise<number> {
+		const removed = await this.native.rmMany(cids);
+		await this.durable.rmMany(cids);
+		return removed;
+	}
+
+	// --- misc ------------------------------------------------------------
+	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		yield* this.native.iterator();
+	}
+
+	size(): number {
+		return this.native.size();
+	}
+
+	persisted(): boolean {
+		// The blocks are now mirrored to a durable store, so report persisted so
+		// callers that gate durable-only behavior on this flag behave correctly.
+		return true;
+	}
+}
+
 type LeaderMap = Map<string, { intersecting: boolean }>;
 
 type LeaderSelectionOptions<R extends "u32" | "u64"> = {
@@ -8643,9 +8914,28 @@ export class SharedLog<
 			this._wireSyncSession = wireSyncSession;
 			wireSyncSession.registerTopic(this.topic);
 		}
-		const localBlocks = this._nativeBackbone
-			? this._nativeBackbone.blocks
-			: new AnyBlockStore(await storage.sublevel("blocks"));
+		// Block store selection:
+		// - No native backbone: durable per-program cache (unchanged default).
+		// - Native backbone WITHOUT a durable directory (memory-only node): the
+		//   wasm-memory native store only (unchanged prior behavior).
+		// - Native backbone WITH a durable directory: a write-through wrapper that
+		//   mirrors the native wasm store to the SAME durable `blocks` sublevel the
+		//   default path uses, and rehydrates the wasm map from disk on open. This
+		//   is what makes native entry blocks survive a restart so heads reload.
+		let localBlocks: NonNullable<RemoteBlocks["localStore"]>;
+		if (this._nativeBackbone) {
+			if (this.node.directory != null) {
+				const durable = new AnyBlockStore(await storage.sublevel("blocks"));
+				localBlocks = new NativeBackboneWriteThroughBlockStore(
+					this._nativeBackbone.blocks,
+					durable,
+				) as unknown as NonNullable<RemoteBlocks["localStore"]>;
+			} else {
+				localBlocks = this._nativeBackbone.blocks;
+			}
+		} else {
+			localBlocks = new AnyBlockStore(await storage.sublevel("blocks"));
+		}
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,
 			publish: (message, options) =>
