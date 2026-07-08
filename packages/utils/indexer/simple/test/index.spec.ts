@@ -6,7 +6,7 @@ import {
 	StringMatchMethod,
 	id,
 } from "@peerbit/indexer-interface";
-import { tests } from "@peerbit/indexer-tests";
+import { tests, tieParityTests } from "@peerbit/indexer-tests";
 import { expect } from "chai";
 import { create } from "../src/index.js";
 
@@ -29,6 +29,8 @@ describe("all", () => {
 		u64SumSupported: true,
 		iteratorsMutable: false,
 	});
+
+	tieParityTests(create);
 
 	it("applies puts in a batch", async () => {
 		const indices = create();

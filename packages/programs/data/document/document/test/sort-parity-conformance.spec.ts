@@ -138,4 +138,13 @@ describe("sort parity (native vs default)", function () {
 			).to.deep.equal(defaultOrder);
 		}
 	});
+
+	// String ids only exercise the UTF-8/BINARY tie-break. The numeric (bigint)
+	// and raw-byte (Uint8Array) id tie-breaks — the two id kinds that diverge
+	// between the native and default comparators — are covered end-to-end at the
+	// indexer level by the shared @peerbit/indexer-tests `tieParityTests` suite,
+	// which asserts @peerbit/indexer-simple == @peerbit/indexer-sqlite3 for real
+	// bigint and Uint8Array primary-key ids in both directions. The document layer
+	// itself only supports string/base64 primary keys through its put path, so the
+	// bigint/Uint8Array parity is asserted where those ids are natively indexable.
 });
