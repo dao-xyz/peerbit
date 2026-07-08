@@ -112,7 +112,7 @@ pub(crate) fn document_index_append_commit(
     projection_plan: JsValue,
     projection_encoded_document: JsValue,
     projection_signer: JsValue,
-) -> Result<DocumentIndexAppendCommit, JsValue> {
+) -> Result<DocumentIndexAppendCommit, BackboneError> {
     let value_prefix = if projection_plan.is_null() || projection_plan.is_undefined() {
         DocumentIndexValuePrefix::Bytes(value_prefix_bytes)
     } else {
@@ -149,7 +149,7 @@ pub(crate) fn document_index_cached_projection_append_commit(
     projection_plan_id: u32,
     projection_encoded_document: JsValue,
     projection_signer: JsValue,
-) -> Result<DocumentIndexAppendCommit, JsValue> {
+) -> Result<DocumentIndexAppendCommit, BackboneError> {
     Ok(DocumentIndexAppendCommit {
         key,
         value_prefix: DocumentIndexValuePrefix::Projection {
@@ -178,7 +178,7 @@ pub(crate) fn document_index_plain_put_payload_append_commit(
     existing_created: String,
     byte_element_index_limit: usize,
     delete_trimmed_heads: bool,
-) -> Result<DocumentIndexAppendCommit, JsValue> {
+) -> Result<DocumentIndexAppendCommit, BackboneError> {
     Ok(DocumentIndexAppendCommit {
         key,
         value_prefix: DocumentIndexValuePrefix::PlainPutPayloadIdentity,
@@ -201,7 +201,7 @@ pub(crate) fn document_index_cached_projection_plain_put_payload_append_commit(
     delete_trimmed_heads: bool,
     projection_plan_id: u32,
     projection_signer: JsValue,
-) -> Result<DocumentIndexAppendCommit, JsValue> {
+) -> Result<DocumentIndexAppendCommit, BackboneError> {
     Ok(DocumentIndexAppendCommit {
         key,
         value_prefix: DocumentIndexValuePrefix::PlainPutPayloadProjection {
@@ -1376,7 +1376,7 @@ impl NativePeerbitBackbone {
     pub(crate) fn validate_document_index_required_previous_signer(
         &self,
         document_index_commit: &DocumentIndexAppendCommit,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), BackboneError> {
         let Some(required_public_key) = document_index_commit
             .required_previous_signer_public_key
             .as_ref()
@@ -1388,11 +1388,9 @@ impl NativePeerbitBackbone {
         };
         let previous_public_key = self
             .document_previous_signer_public_key(&document_index_commit.key, previous_context)
-            .ok_or_else(|| JsValue::from_str("Previous document signer public key unavailable"))?;
+            .ok_or(BackboneError::PreviousDocumentSignerPublicKeyUnavailable)?;
         if previous_public_key.as_slice() != required_public_key.as_slice() {
-            return Err(JsValue::from_str(
-                "Previous document signer public key did not match native policy",
-            ));
+            return Err(BackboneError::PreviousDocumentSignerPublicKeyPolicyMismatch);
         }
         Ok(())
     }
