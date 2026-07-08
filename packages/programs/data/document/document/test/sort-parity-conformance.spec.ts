@@ -139,12 +139,15 @@ describe("sort parity (native vs default)", function () {
 		}
 	});
 
-	// String ids only exercise the UTF-8/BINARY tie-break. The numeric (bigint)
-	// and raw-byte (Uint8Array) id tie-breaks — the two id kinds that diverge
-	// between the native and default comparators — are covered end-to-end at the
-	// indexer level by the shared @peerbit/indexer-tests `tieParityTests` suite,
-	// which asserts @peerbit/indexer-simple == @peerbit/indexer-sqlite3 for real
-	// bigint and Uint8Array primary-key ids in both directions. The document layer
-	// itself only supports string/base64 primary keys through its put path, so the
-	// bigint/Uint8Array parity is asserted where those ids are natively indexable.
+	// This document-level case exercises string ids only. The numeric (bigint)
+	// and raw-byte (Uint8Array) tie-breaks — the two id kinds that diverge between
+	// the native and default comparators — are locked end-to-end at the indexer
+	// level by the shared @peerbit/indexer-tests `tieParityTests` suite, which
+	// asserts @peerbit/indexer-simple == @peerbit/indexer-sqlite3 for real bigint
+	// and Uint8Array primary-key ids in both directions.
+	//
+	// (Scope note: Uint8Array document primary keys are put-able here too — they
+	// map to a sqlite BLOB — but a bigint (u64) document primary key is not
+	// exercised anywhere in the document suite, so the non-string parity is pinned
+	// where every id kind is natively indexable rather than duplicated per kind.)
 });
