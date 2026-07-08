@@ -25,19 +25,6 @@ use crate::js_interop::{
 use crate::shared_log_plan::leader_samples_to_optional_rows;
 use crate::NativePeerbitBackbone;
 
-/// Forward a JsValue error from an untyped documents-layer helper without
-/// altering its message. The document-commit builders and the
-/// required-previous-signer validator construct every error via
-/// `JsValue::from_str`, so `as_string()` recovers the exact string they would
-/// have thrown; the fallback only guards the theoretically-non-string case.
-fn js_wrapper_error(error: JsValue) -> BackboneError {
-    BackboneError::Message(
-        error
-            .as_string()
-            .unwrap_or_else(|| "Invalid document index append input".to_string()),
-    )
-}
-
 #[wasm_bindgen]
 impl NativePeerbitBackbone {
     #[allow(clippy::too_many_arguments)]
@@ -1541,8 +1528,7 @@ impl NativePeerbitBackbone {
         let trim_length_to = optional_usize_from_js(trim_length_to, "trimLengthTo")?;
         let (_, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-        self.validate_document_index_required_previous_signer(&document_index_commit)
-            .map_err(js_wrapper_error)?;
+        self.validate_document_index_required_previous_signer(&document_index_commit)?;
         self.prepare_plain_storage_append_transaction_inner(
             wall_time,
             logical,
@@ -1581,8 +1567,10 @@ impl NativePeerbitBackbone {
         trim_length_to: JsValue,
         make_document_index_commit: &mut dyn FnMut(
             u32,
-        )
-            -> Result<DocumentIndexAppendCommit, JsValue>,
+        ) -> Result<
+            DocumentIndexAppendCommit,
+            BackboneError,
+        >,
     ) -> Result<Array, BackboneError> {
         let batch_len = payload_datas.length() as usize;
         if batch_len == 0 {
@@ -1715,8 +1703,10 @@ impl NativePeerbitBackbone {
         trim_length_to: &JsValue,
         make_document_index_commit: &mut dyn FnMut(
             u32,
-        )
-            -> Result<DocumentIndexAppendCommit, JsValue>,
+        ) -> Result<
+            DocumentIndexAppendCommit,
+            BackboneError,
+        >,
         pending_appends: &mut Vec<LatestBatchPendingAppend>,
         coordinate_inputs: &mut Vec<NativeLocalAppendCompactInput>,
     ) -> Result<(), BackboneError> {
@@ -1725,16 +1715,14 @@ impl NativePeerbitBackbone {
             .get(index)
             .as_string()
             .ok_or(BackboneError::ExpectedString("batch fallback gid"))?;
-        let mut document_index_commit =
-            make_document_index_commit(index).map_err(js_wrapper_error)?;
+        let mut document_index_commit = make_document_index_commit(index)?;
         let payload_data = required_bytes_from_array(payload_datas, index, "payload")?;
         let trim_length_to = optional_usize_from_js(trim_length_to.clone(), "trimLengthTo")?;
         let payload_size = payload_data.length();
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
         let (previous_document_context, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-        self.validate_document_index_required_previous_signer(&document_index_commit)
-            .map_err(js_wrapper_error)?;
+        self.validate_document_index_required_previous_signer(&document_index_commit)?;
 
         let (meta_data, payload_data) =
             self.copy_append_inputs_profiled(meta_datas.get(index), &payload_data)?;
@@ -1894,8 +1882,7 @@ impl NativePeerbitBackbone {
             let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
             let (previous_document_context, gid, next_hashes) = self
                 .resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-            self.validate_document_index_required_previous_signer(&document_index_commit)
-                .map_err(js_wrapper_error)?;
+            self.validate_document_index_required_previous_signer(&document_index_commit)?;
 
             let (meta_data, payload_data) =
                 self.copy_append_inputs_profiled(meta_datas.get(index_u32), &payload_bytes)?;
@@ -2030,8 +2017,7 @@ impl NativePeerbitBackbone {
         let delete_trimmed_document_heads = document_index_commit.delete_trimmed_heads;
         let (previous_document_context, gid, next_hashes) =
             self.resolve_latest_document_append_context(&mut document_index_commit, fallback_gid)?;
-        self.validate_document_index_required_previous_signer(&document_index_commit)
-            .map_err(js_wrapper_error)?;
+        self.validate_document_index_required_previous_signer(&document_index_commit)?;
 
         let (meta_data, payload_data) =
             self.copy_append_inputs_profiled(meta_data, &payload_data)?;
@@ -2115,22 +2101,17 @@ impl NativePeerbitBackbone {
 mod tests {
     use crate::error::BackboneError;
 
-    // `js_wrapper_error` forwards the untyped documents-layer JsValue messages
-    // verbatim through `BackboneError::Message`. These are the exact strings
-    // the required-previous-signer validator throws; pin their Display so the
-    // forwarded messages stay byte-for-byte with master. (The `JsValue` recovery
-    // itself is exercised on wasm by the TS suite; host `cargo test` cannot
-    // construct a round-tripping `JsValue`, so it pins the Message rendering.)
+    // The required-previous-signer validator now reports typed variants. Pin
+    // their Display so the thrown strings stay byte-for-byte with master.
     #[test]
-    fn forwarded_document_signer_messages_render_verbatim() {
-        for message in [
-            "Previous document signer public key unavailable",
-            "Previous document signer public key did not match native policy",
-        ] {
-            assert_eq!(
-                BackboneError::Message(message.to_string()).to_string(),
-                message
-            );
-        }
+    fn document_signer_variants_render_verbatim() {
+        assert_eq!(
+            BackboneError::PreviousDocumentSignerPublicKeyUnavailable.to_string(),
+            "Previous document signer public key unavailable"
+        );
+        assert_eq!(
+            BackboneError::PreviousDocumentSignerPublicKeyPolicyMismatch.to_string(),
+            "Previous document signer public key did not match native policy"
+        );
     }
 }

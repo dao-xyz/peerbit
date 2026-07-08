@@ -67,6 +67,8 @@ pub enum BackboneError {
     MissingPreparedRawReceiveEntry,
     MismatchedPreparedRawReceiveVerifyLengths,
     MissingPartialVerifyHashes,
+    PreviousDocumentSignerPublicKeyUnavailable,
+    PreviousDocumentSignerPublicKeyPolicyMismatch,
     Wire(WireError),
     SharedLog(SharedLogError),
     Schema(SchemaError),
@@ -194,6 +196,12 @@ impl std::fmt::Display for BackboneError {
             }
             BackboneError::MissingPartialVerifyHashes => {
                 f.write_str("Missing partial verify hashes")
+            }
+            BackboneError::PreviousDocumentSignerPublicKeyUnavailable => {
+                f.write_str("Previous document signer public key unavailable")
+            }
+            BackboneError::PreviousDocumentSignerPublicKeyPolicyMismatch => {
+                f.write_str("Previous document signer public key did not match native policy")
             }
             BackboneError::Wire(error) => write!(f, "{error}"),
             BackboneError::SharedLog(error) => write!(f, "{error}"),
