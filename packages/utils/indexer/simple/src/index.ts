@@ -297,7 +297,10 @@ export class HashmapIndex<T extends Record<string, any>, NestedType = any>
 							: [query.sort];
 						sortArr.length > 0 &&
 							indexedDocuments.sort((a, b) =>
-								types.extractSortCompare(a.value, b.value, sortArr),
+								types.extractSortCompare(a.value, b.value, sortArr, undefined, {
+									a: a.id,
+									b: b.id,
+								}),
 							);
 					}
 				}
