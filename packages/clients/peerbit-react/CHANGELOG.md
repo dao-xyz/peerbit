@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.28
+
+### Patch Changes
+
+- Updated dependencies []:
+  - peerbit@5.3.4
+
 ## 1.1.27
 
 ### Patch Changes

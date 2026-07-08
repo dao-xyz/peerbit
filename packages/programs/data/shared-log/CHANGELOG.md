@@ -1,5 +1,13 @@
 # Changelog
 
+## 13.2.4
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/log@6.2.3
+  - @peerbit/rpc@6.1.1
+
 ## 13.2.3
 
 ### Patch Changes

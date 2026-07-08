@@ -1,5 +1,37 @@
 # Changelog
 
+## 13.1.4
+
+### Patch Changes
+
+- [#1013](https://github.com/dao-xyz/peerbit/pull/1013) [`e5bc36a`](https://github.com/dao-xyz/peerbit/commit/e5bc36ac276f5ad6e86bcbe9fffb0de091cea186) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Stabilize the "keep-open search recovers existing replicators outside the
+  initial cover" test. It asserted that a single keep-open search recovers all
+  documents within a fixed 30s wait, which was flaky on slow/loaded CI runners
+  where recovery occasionally needed longer (the search resolves with a partial
+  result when the budget expires). The test now retries the partial-cover
+  keep-open search with a shorter per-attempt budget until every document is
+  recovered (bounded at 120s), which is faster on capable hardware and robust
+  under load while still failing if recovery is genuinely broken. No product
+  change.
+
+- [#1012](https://github.com/dao-xyz/peerbit/pull/1012) [`b96f9e5`](https://github.com/dao-xyz/peerbit/commit/b96f9e578ec870db38c4b86b6aa5a5abb6639936) Thanks [@Faolain](https://github.com/Faolain)! - Preserve caller-provided `remote.from` targeting on the iterator's first fetch
+
+  `fetchFirst` spread `options.remote` but then overwrote `from` with
+  `fetchOptions?.from ?? initialRemoteTargets`, both of which are undefined on
+  the first fetch unless `reach.discover` is used. The explicit
+  `from: undefined` clobbered the caller's targeting hint, so `queryCommence`
+  fell through to `getCover` and the cold-start fallback, querying connected
+  peers that may never respond (e.g. a relay that does not run the program) and
+  stalling the first batch until the full remote timeout. Caller-provided
+  `remote.from` is now used as the fallback; internal callers passing
+  `fetchOptions.from` (missing-response retries, late-join refetches) and
+  `reach.discover` targets keep precedence.
+
+- Updated dependencies []:
+  - @peerbit/shared-log@13.2.4
+  - @peerbit/log@6.2.3
+  - @peerbit/rpc@6.1.1
+
 ## 13.1.3
 
 ### Patch Changes
