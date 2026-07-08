@@ -7,6 +7,124 @@ use std::sync::Arc;
 pub type DocId = u32;
 const MAX_EXACT_INDEXED_BYTE_FIELD_LENGTH: usize = 128;
 
+/// A document's primary-key id parsed into a typed, canonically-comparable form.
+///
+/// External ids reach the native index as type-prefixed store-keys (see
+/// `keyToStoreKey` in `packages/utils/indexer/rust/src/index.ts`):
+///   `string:<utf8>` | `number:<decimal>` | `bigint:<decimal>` | `bytes:<base64>`
+///
+/// The raw store-key string is load-bearing for identity (it is the persistence,
+/// lookup, and delete key and round-trips back to an `IdKey`), so it must not be
+/// reformatted. Instead we parse it once at insert into this typed key and order
+/// tied documents by it, matching the default sqlite backend's per-id-kind
+/// primary-key order:
+///   - string ids compare as UTF-8 bytes   (sqlite TEXT / BINARY collation)
+///   - integer ids compare numerically     (sqlite INTEGER: 2 < 10, not "10" < "2")
+///   - byte ids compare by raw memcmp       (sqlite BLOB: decoded bytes, not base64)
+///
+/// Unrecognized prefixes fall back to comparing the whole store-key as UTF-8 so
+/// ordering stays deterministic even if a new id kind is added upstream.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum IdSortKey {
+    Int(u128),
+    Bytes(Vec<u8>),
+    Str(String),
+}
+
+impl IdSortKey {
+    fn from_store_key(store_key: &str) -> Self {
+        if let Some(rest) = store_key.strip_prefix("number:") {
+            if let Ok(value) = rest.parse::<u128>() {
+                return IdSortKey::Int(value);
+            }
+        } else if let Some(rest) = store_key.strip_prefix("bigint:") {
+            if let Ok(value) = rest.parse::<u128>() {
+                return IdSortKey::Int(value);
+            }
+        } else if let Some(rest) = store_key.strip_prefix("bytes:") {
+            if let Some(bytes) = decode_base64(rest) {
+                return IdSortKey::Bytes(bytes);
+            }
+        }
+        // `string:` values and any unrecognized/malformed prefix order by the raw
+        // UTF-8 bytes of the whole store-key, matching sqlite's BINARY collation.
+        IdSortKey::Str(store_key.to_string())
+    }
+
+    /// Order id kinds relative to one another when a tie group somehow mixes
+    /// types (a single index only ever holds one id kind, so this is a
+    /// defensive tie-breaker rather than an expected path).
+    fn kind_rank(&self) -> u8 {
+        match self {
+            IdSortKey::Int(_) => 0,
+            IdSortKey::Bytes(_) => 1,
+            IdSortKey::Str(_) => 2,
+        }
+    }
+}
+
+impl Ord for IdSortKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (IdSortKey::Int(left), IdSortKey::Int(right)) => left.cmp(right),
+            (IdSortKey::Bytes(left), IdSortKey::Bytes(right)) => left.cmp(right),
+            (IdSortKey::Str(left), IdSortKey::Str(right)) => left.as_bytes().cmp(right.as_bytes()),
+            _ => self.kind_rank().cmp(&other.kind_rank()),
+        }
+    }
+}
+
+impl PartialOrd for IdSortKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Decode a standard (RFC 4648) base64 string with optional `=` padding into raw
+/// bytes. The byte store-key suffix is produced by `IdKey.primitive` via
+/// libsodium's ORIGINAL variant (alphabet `A-Za-z0-9+/`, padded), so a small
+/// hand-rolled decoder avoids pulling in a base64 crate for this one call site.
+/// Returns `None` on any invalid character or length so the caller can fall back
+/// to string ordering rather than panic.
+fn decode_base64(input: &str) -> Option<Vec<u8>> {
+    fn value(byte: u8) -> Option<u32> {
+        match byte {
+            b'A'..=b'Z' => Some((byte - b'A') as u32),
+            b'a'..=b'z' => Some((byte - b'a' + 26) as u32),
+            b'0'..=b'9' => Some((byte - b'0' + 52) as u32),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+
+    let bytes = input.as_bytes();
+    // Strip trailing '=' padding.
+    let mut end = bytes.len();
+    while end > 0 && bytes[end - 1] == b'=' {
+        end -= 1;
+    }
+    let bytes = &bytes[..end];
+
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let mut chunk = 0_u32;
+    let mut chunk_len = 0_u32;
+    for &byte in bytes {
+        let value = value(byte)?;
+        chunk = (chunk << 6) | value;
+        chunk_len += 6;
+        if chunk_len >= 8 {
+            chunk_len -= 8;
+            out.push((chunk >> chunk_len) as u8);
+        }
+    }
+    // A single leftover base64 symbol (2 bits) is not a valid encoding.
+    if chunk_len >= 6 {
+        return None;
+    }
+    Some(out)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FieldPath {
     Id(u32),
@@ -302,6 +420,10 @@ pub struct NativeQueryIndex {
     all_docs: RoaringBitmap,
     external_to_internal: HashMap<String, DocId>,
     internal_to_external: HashMap<DocId, String>,
+    // Typed, canonically-comparable form of each document's store-key id, parsed
+    // once at insert. Kept parallel to `internal_to_external` (never reformats the
+    // stored string) purely so tie-breaks order by the id's natural typed order.
+    internal_to_sort_key: HashMap<DocId, IdSortKey>,
     documents: HashMap<DocId, DocumentFields>,
     exact: HashMap<FieldPath, HashMap<FieldValue, RoaringBitmap>>,
     range_i64: HashMap<FieldPath, BTreeMap<i64, RoaringBitmap>>,
@@ -339,6 +461,7 @@ impl NativeQueryIndex {
     pub fn reserve_documents(&mut self, additional: usize) {
         self.external_to_internal.reserve(additional);
         self.internal_to_external.reserve(additional);
+        self.internal_to_sort_key.reserve(additional);
         self.documents.reserve(additional);
     }
 
@@ -700,6 +823,7 @@ impl NativeQueryIndex {
             Some(doc_id) => {
                 debug_assert!(
                     !self.internal_to_external.contains_key(&doc_id)
+                        && !self.internal_to_sort_key.contains_key(&doc_id)
                         && !self.documents.contains_key(&doc_id)
                         && !self.all_docs.contains(doc_id),
                     "recycled doc id is still referenced by live structures"
@@ -718,6 +842,8 @@ impl NativeQueryIndex {
                 doc_id
             }
         };
+        self.internal_to_sort_key
+            .insert(doc_id, IdSortKey::from_store_key(&external_id));
         self.external_to_internal
             .insert(external_id.clone(), doc_id);
         self.internal_to_external.insert(doc_id, external_id);
@@ -729,6 +855,7 @@ impl NativeQueryIndex {
             return false;
         };
         self.internal_to_external.remove(&doc_id);
+        self.internal_to_sort_key.remove(&doc_id);
         self.remove_document_fields(doc_id);
         self.all_docs.remove(doc_id);
         self.free_doc_ids.push(doc_id);
@@ -1001,7 +1128,42 @@ impl NativeQueryIndex {
                 return ordering;
             }
         }
-        left.cmp(&right)
+        // Tie-break by primary-key id so equal-key results order identically across
+        // backends and peers. The default (JS/sqlite) index stores rows in
+        // primary-key order and emits tied rows following the scan direction, i.e.
+        // the direction of the final sort field. Match that here — using the id's
+        // natural typed order per id kind — instead of falling back to the local
+        // insertion counter (DocId), which is per-peer and not content-deterministic.
+        self.compare_external_ids(left, right, tie_break_direction(sort))
+    }
+
+    /// Compare two documents by their primary-key id, honoring the tie-break
+    /// `direction` (ascending id for `Asc`, descending id for `Desc`). Ids are
+    /// compared in the id's natural typed order so ties match the default sqlite
+    /// backend for EVERY id kind, not only strings:
+    ///   - integer ids compare numerically   (sqlite INTEGER: 2 < 10)
+    ///   - byte ids compare by raw memcmp     (sqlite BLOB: decoded bytes)
+    ///   - string ids compare as UTF-8 bytes  (sqlite TEXT / BINARY collation)
+    /// The typed key is parsed once at insert (see `IdSortKey`). Falls back to the
+    /// internal DocId only if a sort key is somehow missing (should not happen for
+    /// live docs).
+    fn compare_external_ids(
+        &self,
+        left: DocId,
+        right: DocId,
+        direction: SortDirection,
+    ) -> Ordering {
+        let ordering = match (
+            self.internal_to_sort_key.get(&left),
+            self.internal_to_sort_key.get(&right),
+        ) {
+            (Some(left_key), Some(right_key)) => left_key.cmp(right_key),
+            _ => left.cmp(&right),
+        };
+        match direction {
+            SortDirection::Asc => ordering,
+            SortDirection::Desc => ordering.reverse(),
+        }
     }
 
     fn first_scalar(&self, doc_id: DocId, path: &FieldPath) -> Option<&FieldValue> {
@@ -1043,6 +1205,7 @@ impl NativeQueryIndex {
         if sort.direction == SortDirection::Desc
             && !self.collect_missing_sorted_docs(
                 &sort.field,
+                true,
                 query,
                 offset,
                 limit,
@@ -1171,6 +1334,7 @@ impl NativeQueryIndex {
         if sort.direction == SortDirection::Asc {
             self.collect_missing_sorted_docs(
                 &sort.field,
+                false,
                 query,
                 offset,
                 limit,
@@ -1200,6 +1364,7 @@ impl NativeQueryIndex {
         if reverse {
             self.collect_index_sorted_docs(
                 index.values().rev(),
+                reverse,
                 query,
                 offset,
                 limit,
@@ -1210,6 +1375,7 @@ impl NativeQueryIndex {
         } else {
             self.collect_index_sorted_docs(
                 index.values(),
+                reverse,
                 query,
                 offset,
                 limit,
@@ -1224,6 +1390,7 @@ impl NativeQueryIndex {
     fn collect_index_sorted_docs<'a>(
         &self,
         bitmaps: impl Iterator<Item = &'a RoaringBitmap>,
+        reverse: bool,
         query: &Query,
         offset: usize,
         limit: usize,
@@ -1232,7 +1399,12 @@ impl NativeQueryIndex {
         result: &mut Vec<String>,
     ) -> bool {
         for bitmap in bitmaps {
-            for doc_id in bitmap.iter() {
+            // Docs sharing the same sort value are a tie group. `bitmap.iter()`
+            // yields them in DocId (local insertion) order, which is not
+            // content-deterministic across peers. Re-order each tie group by
+            // primary-key id (in its natural typed order) in the scan direction to
+            // match the default backend.
+            for doc_id in self.tie_ordered_doc_ids(bitmap, reverse) {
                 if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
                     return false;
                 }
@@ -1241,9 +1413,27 @@ impl NativeQueryIndex {
         true
     }
 
+    /// Return the doc ids of a tie group ordered by primary-key id in its natural
+    /// typed order (ascending for a forward scan, descending when `reverse`), so
+    /// equal-sort-key results match the default backend's primary-key ordering for
+    /// every id kind. Single-element groups skip the allocation/sort entirely.
+    fn tie_ordered_doc_ids(&self, bitmap: &RoaringBitmap, reverse: bool) -> Vec<DocId> {
+        let mut doc_ids: Vec<DocId> = bitmap.iter().collect();
+        if doc_ids.len() > 1 {
+            let direction = if reverse {
+                SortDirection::Desc
+            } else {
+                SortDirection::Asc
+            };
+            doc_ids.sort_by(|left, right| self.compare_external_ids(*left, *right, direction));
+        }
+        doc_ids
+    }
+
     fn collect_missing_sorted_docs(
         &self,
         field: &FieldPath,
+        reverse: bool,
         query: &Query,
         offset: usize,
         limit: usize,
@@ -1251,10 +1441,24 @@ impl NativeQueryIndex {
         seen: &mut RoaringBitmap,
         result: &mut Vec<String>,
     ) -> bool {
-        for doc_id in self.all_docs.iter() {
-            if self.first_scalar(doc_id, field).is_some() {
-                continue;
-            }
+        // Docs without a value for the sort field form one tie group (all "null").
+        // Emit them ordered by primary-key id (in its natural typed order) in the
+        // scan direction, matching the default backend, instead of raw DocId (local
+        // insertion) order.
+        let mut missing: Vec<DocId> = self
+            .all_docs
+            .iter()
+            .filter(|doc_id| self.first_scalar(*doc_id, field).is_none())
+            .collect();
+        if missing.len() > 1 {
+            let direction = if reverse {
+                SortDirection::Desc
+            } else {
+                SortDirection::Asc
+            };
+            missing.sort_by(|left, right| self.compare_external_ids(*left, *right, direction));
+        }
+        for doc_id in missing {
             if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
                 return false;
             }
@@ -1714,6 +1918,16 @@ fn compare_optional_values(left: Option<&FieldValue>, right: Option<&FieldValue>
     }
 }
 
+/// Direction used to break sort ties by external document id. The default
+/// (sqlite WITHOUT ROWID) index scans the primary key in the direction of the
+/// final ORDER BY term, so tied rows follow that direction. With no explicit
+/// sort fields we fall back to ascending id order.
+fn tie_break_direction(sort: &[SortField]) -> SortDirection {
+    sort.last()
+        .map(|field| field.direction)
+        .unwrap_or(SortDirection::Asc)
+}
+
 fn compare_field_values(left: &FieldValue, right: &FieldValue) -> Ordering {
     match (left, right) {
         (FieldValue::Bool(left), FieldValue::Bool(right)) => left.cmp(right),
@@ -1983,6 +2197,242 @@ mod tests {
                 Some(3),
             ),
             vec!["bytes", "string", "u64"]
+        );
+    }
+
+    #[test]
+    fn ties_break_by_external_id_not_insertion_order() {
+        // Insert in an order where the local insertion counter (DocId) is the
+        // REVERSE of external-id order, and give every doc the same sort value so
+        // the whole result set is one tie group. The tie-break must follow external
+        // id (matching the default sqlite backend's primary-key order), not the
+        // per-peer DocId, so the emitted order is independent of insertion order.
+        let mut index = NativeQueryIndex::new();
+        for id in ["d", "c", "b", "a"] {
+            index.put(id, DocumentFields::new().with_scalar("number", 1_u64));
+        }
+
+        // Fast path (single-field sort backed by the ordered index).
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["a", "b", "c", "d"],
+            "ASC ties order by external id ascending"
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["d", "c", "b", "a"],
+            "DESC ties order by external id descending"
+        );
+    }
+
+    #[test]
+    fn base64_decoder_round_trips_store_key_bytes() {
+        use super::decode_base64;
+        // Standard-alphabet base64 with padding, exactly as produced by
+        // IdKey.primitive (libsodium ORIGINAL variant).
+        assert_eq!(decode_base64("AA=="), Some(vec![0x00]));
+        assert_eq!(decode_base64("Cg=="), Some(vec![0x0a]));
+        assert_eq!(decode_base64("Pg=="), Some(vec![0x3e]));
+        assert_eq!(decode_base64("+A=="), Some(vec![0xf8]));
+        assert_eq!(decode_base64("+w=="), Some(vec![0xfb]));
+        assert_eq!(decode_base64("/w=="), Some(vec![0xff]));
+        assert_eq!(decode_base64("/wAQ"), Some(vec![0xff, 0x00, 0x10]));
+        assert_eq!(decode_base64("AQID"), Some(vec![0x01, 0x02, 0x03]));
+        assert_eq!(decode_base64(""), Some(vec![]));
+        // Invalid characters / lengths fall back to None.
+        assert_eq!(decode_base64("*"), None);
+        assert_eq!(decode_base64("A"), None);
+    }
+
+    #[test]
+    fn integer_ids_tie_break_numerically_not_lexically() {
+        // number:/bigint: store-keys must order numerically (2 < 10 < 21 < 100),
+        // matching sqlite's INTEGER primary key, NOT lexically ("10" < "2").
+        let mut index = NativeQueryIndex::new();
+        for id in [
+            "bigint:10",
+            "bigint:2",
+            "bigint:21",
+            "bigint:9",
+            "bigint:100",
+            "bigint:300",
+        ] {
+            index.put(id, DocumentFields::new().with_scalar("sort", 1_u64));
+        }
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "sort".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec![
+                "bigint:2",
+                "bigint:9",
+                "bigint:10",
+                "bigint:21",
+                "bigint:100",
+                "bigint:300"
+            ],
+            "ASC integer ties order numerically"
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "sort".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec![
+                "bigint:300",
+                "bigint:100",
+                "bigint:21",
+                "bigint:10",
+                "bigint:9",
+                "bigint:2"
+            ],
+            "DESC integer ties order reverse-numerically"
+        );
+    }
+
+    #[test]
+    fn byte_ids_tie_break_by_raw_bytes_not_base64() {
+        // bytes: store-keys must order by the DECODED raw bytes (0x00 < .. < 0xff),
+        // matching sqlite's BLOB memcmp. Lexically the base64 suffix would sort
+        // 0xf8/0xfb/0xff (leading '+'/'/') BEFORE 0x00 ('A'), which is the bug.
+        // base64: 0x00=AA==, 0x0a=Cg==, 0x3e=Pg==, 0xf8=+A==, 0xfb=+w==, 0xff=/w==
+        let mut index = NativeQueryIndex::new();
+        for id in [
+            "bytes:/w==",
+            "bytes:AA==",
+            "bytes:Cg==",
+            "bytes:Pg==",
+            "bytes:+A==",
+            "bytes:+w==",
+        ] {
+            index.put(id, DocumentFields::new().with_scalar("sort", 1_u64));
+        }
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "sort".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec![
+                "bytes:AA==",
+                "bytes:Cg==",
+                "bytes:Pg==",
+                "bytes:+A==",
+                "bytes:+w==",
+                "bytes:/w=="
+            ],
+            "ASC byte ties order by decoded raw bytes"
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "sort".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec![
+                "bytes:/w==",
+                "bytes:+w==",
+                "bytes:+A==",
+                "bytes:Pg==",
+                "bytes:Cg==",
+                "bytes:AA=="
+            ],
+            "DESC byte ties order by reverse decoded raw bytes"
+        );
+    }
+
+    #[test]
+    fn generic_sort_ties_break_by_external_id() {
+        // A multi-field sort forces the generic `compare_docs` slow path. Docs with
+        // equal keys on every sort field must still tie-break by external id.
+        let mut index = NativeQueryIndex::new();
+        for id in ["d", "c", "b", "a"] {
+            index.put(
+                id,
+                DocumentFields::new()
+                    .with_scalar("primary", 1_u64)
+                    .with_scalar("secondary", "same"),
+            );
+        }
+
+        let sort = [
+            SortField {
+                field: "primary".into(),
+                direction: SortDirection::Asc,
+            },
+            SortField {
+                field: "secondary".into(),
+                direction: SortDirection::Desc,
+            },
+        ];
+        // Tie-break direction follows the final sort field (Desc here).
+        assert_eq!(
+            index.search(&Query::All, &sort, None),
+            vec!["d", "c", "b", "a"]
+        );
+    }
+
+    #[test]
+    fn missing_sort_value_ties_break_by_external_id() {
+        // Docs lacking the sort field form a single "null" tie group. They too must
+        // order by external id, in the scan direction.
+        let mut index = NativeQueryIndex::new();
+        for id in ["d", "c", "b", "a"] {
+            index.put(id, DocumentFields::new().with_scalar("other", 1_u64));
+        }
+
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["a", "b", "c", "d"],
+            "ASC missing-value ties order by external id ascending"
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["d", "c", "b", "a"],
+            "DESC missing-value ties order by external id descending"
         );
     }
 

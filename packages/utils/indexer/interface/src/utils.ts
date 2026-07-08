@@ -5,7 +5,69 @@ import {
 	field,
 	getSchema,
 } from "@dao-xyz/borsh";
+import { type IdKey } from "./id.js";
 import { type Sort, SortDirection } from "./query.js";
+
+const idByteEncoder = new TextEncoder();
+
+const compareBytes = (a: Uint8Array, b: Uint8Array): number => {
+	const length = Math.min(a.length, b.length);
+	for (let i = 0; i < length; i++) {
+		if (a[i] !== b[i]) {
+			return a[i] < b[i] ? -1 : 1;
+		}
+	}
+	return a.length - b.length;
+};
+
+const idKindRank = (key: string | number | bigint | Uint8Array): number => {
+	if (typeof key === "number" || typeof key === "bigint") {
+		return 0;
+	}
+	if (key instanceof Uint8Array) {
+		return 1;
+	}
+	return 2;
+};
+
+/**
+ * Break sort ties by the document primary-key id using the id's NATURAL TYPED
+ * order, so equal-sort-key results order identically to the default sqlite3
+ * backend (which scans its primary-key index):
+ *   - integer ids (number/bigint) compare NUMERICALLY   (sqlite INTEGER: 2 < 10)
+ *   - byte ids (Uint8Array)       compare by raw memcmp  (sqlite BLOB)
+ *   - string ids                  compare as UTF-8 bytes (sqlite TEXT / BINARY
+ *                                 collation) — deliberately NOT localeCompare,
+ *                                 whose locale-aware order diverges from sqlite.
+ * A single index only ever holds one id kind; the kind-rank fallback is a
+ * defensive tie-breaker for mixed kinds. Returns a negative/zero/positive number
+ * suitable for Array.prototype.sort. Callers reverse the result when the primary
+ * (last) sort field is DESC so ties follow the scan direction.
+ */
+export const compareIds = (a: IdKey, b: IdKey): number => {
+	const ak = a.key;
+	const bk = b.key;
+	if (
+		(typeof ak === "number" || typeof ak === "bigint") &&
+		(typeof bk === "number" || typeof bk === "bigint")
+	) {
+		// Compare as bigint so a mixed number/bigint pair (u32 IntegerKey vs u64
+		// LargeIntegerKey) still orders by true numeric value.
+		const an = BigInt(ak);
+		const bn = BigInt(bk);
+		return an < bn ? -1 : an > bn ? 1 : 0;
+	}
+	if (ak instanceof Uint8Array && bk instanceof Uint8Array) {
+		return compareBytes(ak, bk);
+	}
+	if (typeof ak === "string" && typeof bk === "string") {
+		return compareBytes(
+			idByteEncoder.encode(ak),
+			idByteEncoder.encode(bk),
+		);
+	}
+	return idKindRank(ak) - idKindRank(bk);
+};
 
 export const stringArraysEquals = (
 	a: string[] | string,
@@ -38,6 +100,7 @@ export const extractSortCompare = (
 	b: Record<string, any>,
 	sorts: Sort[],
 	aliases?: Map<string, string>,
+	ids?: { a: IdKey; b: IdKey },
 ) => {
 	for (const sort of sorts) {
 		const av = extractFieldValue(a, sort.key, aliases);
@@ -49,6 +112,20 @@ export const extractSortCompare = (
 			} else {
 				return -cmp;
 			}
+		}
+	}
+	// All sort fields compared equal: break the tie deterministically by the
+	// document primary-key id in its natural typed order, so the result order is
+	// content-deterministic and matches the default sqlite3 backend instead of
+	// depending on insertion order. The default backend scans its primary-key
+	// index in the sort direction, so reverse the id order when the primary (last)
+	// sort field is DESC.
+	if (ids) {
+		const idCmp = compareIds(ids.a, ids.b);
+		if (idCmp !== 0) {
+			const primaryDirection =
+				sorts.length > 0 ? sorts[sorts.length - 1].direction : SortDirection.ASC;
+			return primaryDirection === SortDirection.DESC ? -idCmp : idCmp;
 		}
 	}
 	return 0;

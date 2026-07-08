@@ -1,4 +1,4 @@
-import { tests } from "@peerbit/indexer-tests";
+import { tests, tieParityTests } from "@peerbit/indexer-tests";
 import { create } from "../src/index.js";
 
 describe("all", () => {
@@ -12,4 +12,5 @@ describe("all", () => {
 		u64SumSupported: false,
 		iteratorsMutable: true,
 	});
+	tieParityTests(create);
 });
