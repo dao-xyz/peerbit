@@ -21,6 +21,15 @@ import type {
 export interface Client<T extends Manageable<ExtractArgs<T>>> {
 	peerId: Libp2pPeerId;
 	identity: Identity<Ed25519PublicKey>;
+	/**
+	 * Root directory backing this client's durable storage, when it runs
+	 * on-disk. `undefined` for memory-only clients. Programs opened on the
+	 * client may derive per-program persistence locations under it (e.g.
+	 * shared-log auto-persists its replication coordinates here). The
+	 * concrete client (`Peerbit`) already exposes this; declaring it on the
+	 * interface lets programs read it without depending on the client package.
+	 */
+	directory?: string;
 	getMultiaddrs: () => Multiaddr[];
 	dial(
 		address: string | Multiaddr | Multiaddr[],

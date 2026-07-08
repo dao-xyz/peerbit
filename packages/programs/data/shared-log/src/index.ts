@@ -17,6 +17,7 @@ import {
 	getPublicKeyFromPeerId,
 	sha256Base64Sync,
 	sha256Sync,
+	toHexString,
 } from "@peerbit/crypto";
 import {
 	And,
@@ -367,6 +368,19 @@ const canUseOptionalNativeModuleImports = (): boolean => {
 			typeof scope.skipWaiting === "function")
 	);
 };
+
+/**
+ * Build the per-program coordinate persistence directory under a node's
+ * durable storage root: `<nodeDirectory>/coordinates/<fsSafeLogId>`. Uses
+ * forward-slash joining (accepted by Node's `fs` on every platform) so
+ * shared-log does not need to statically import `node:path`, which is not
+ * available in browser bundles. Trailing separators on the root are trimmed
+ * to avoid doubled slashes.
+ */
+const joinNativeCoordinateDirectory = (
+	nodeDirectory: string,
+	fsSafeLogId: string,
+): string => `${nodeDirectory.replace(/[/\\]+$/, "")}/coordinates/${fsSafeLogId}`;
 
 type LeaderMap = Map<string, { intersecting: boolean }>;
 
@@ -9318,21 +9332,36 @@ export class SharedLog<
 			return undefined;
 		}
 		try {
+			const nativeBackboneModule = await import(
+				/* @vite-ignore */ "@peerbit/native-backbone"
+			);
 			const {
 				createNativeBackboneCoordinatePersistence,
 				createNativePeerbitBackbone,
-			} = await import(/* @vite-ignore */ "@peerbit/native-backbone");
+			} = nativeBackboneModule;
 			const backbone = await createNativePeerbitBackbone({
 				resolution: this.domain.resolution,
 				clockId: this.node.identity.publicKey.bytes,
 				privateKey: this.node.identity.privateKey.privateKey,
 				publicKey: this.node.identity.publicKey.publicKey,
 			});
-			this._nativeBackboneCoordinatePersistence = options.coordinatePersistence
-				? createNativeBackboneCoordinatePersistence(
+			// Backward compatible: an explicitly supplied coordinate persistence
+			// config always wins and is used unchanged. Otherwise, when the node
+			// runs on durable on-disk storage, auto-derive a per-program store so
+			// replication coordinates survive a clean stop -> restart without a
+			// peer to re-derive from. Memory-only nodes (no directory) keep the
+			// previous in-memory behavior.
+			if (options.coordinatePersistence) {
+				this._nativeBackboneCoordinatePersistence =
+					createNativeBackboneCoordinatePersistence(
 						options.coordinatePersistence as RuntimeNativeBackboneCoordinatePersistenceConfig,
-					)
-				: undefined;
+					);
+			} else {
+				this._nativeBackboneCoordinatePersistence =
+					await this.createAutoDerivedCoordinatePersistence(
+						nativeBackboneModule,
+					);
+			}
 			return backbone;
 		} catch (error) {
 			if (options.optional === false) {
@@ -9345,6 +9374,65 @@ export class SharedLog<
 			);
 			return undefined;
 		}
+	}
+
+	/**
+	 * When the node has a durable on-disk storage directory, build a
+	 * per-program coordinate persistence store rooted under it so replication
+	 * coordinates auto-persist and survive a clean stop -> restart. Returns
+	 * `undefined` for memory-only nodes (no directory), preserving the prior
+	 * in-memory behavior.
+	 *
+	 * Namespacing: `<nodeDirectory>/coordinates/<fsSafe(log.id)>`. The log id
+	 * is the same identity used for `storage.sublevel`/`indexer.scope`
+	 * (see the `sha256Base64Sync(this.log.id)` above), but that base64 form is
+	 * not filesystem-path-safe, so the directory segment uses the hex encoding
+	 * of `this.log.id` (only `[0-9a-f]`, no `/`, `+`, or padding).
+	 *
+	 * Node vs OPFS is chosen with the same signal native-backbone uses to load
+	 * its wasm (`globalThis.process?.versions?.node`): Node gets the on-disk
+	 * store, browsers get the OPFS store.
+	 */
+	private async createAutoDerivedCoordinatePersistence(
+		nativeBackboneModule: typeof import("@peerbit/native-backbone"),
+	): Promise<NativeBackboneCoordinatePersistenceAdapter | undefined> {
+		const directory = this.node.directory;
+		if (directory == null) {
+			// Memory-only node: keep prior in-memory behavior.
+			return undefined;
+		}
+		const {
+			createNativeBackboneCoordinatePersistence,
+			NativeBackboneNodeCoordinatePersistenceStore,
+			NativeBackboneOPFSCoordinatePersistenceStore,
+		} = nativeBackboneModule;
+		const namespace = toHexString(this.log.id);
+		const isNode = !!(
+			globalThis as { process?: { versions?: { node?: string } } }
+		).process?.versions?.node;
+		let store: NativeBackboneCoordinatePersistenceStore;
+		if (isNode) {
+			const coordinateDirectory = joinNativeCoordinateDirectory(
+				directory,
+				namespace,
+			);
+			store = new NativeBackboneNodeCoordinatePersistenceStore(
+				coordinateDirectory,
+			);
+		} else {
+			// OPFS stores address by directory parts relative to the OPFS root,
+			// not by an absolute filesystem path, so the node `directory` only
+			// gates activation; the per-program namespace segments keep programs
+			// isolated within the browser's origin-private file system.
+			store = await NativeBackboneOPFSCoordinatePersistenceStore.create({
+				directory: ["coordinates", namespace],
+			});
+		}
+		return createNativeBackboneCoordinatePersistence({
+			store,
+			buffered: true,
+			flushOnAppend: true,
+		});
 	}
 
 	private async updateTimestampOfOwnedReplicationRanges(
