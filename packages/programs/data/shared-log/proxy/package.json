@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/shared-log-proxy",
-	"version": "2.0.47",
+	"version": "2.0.48",
 	"description": "RPC/proxy adapter for @peerbit/shared-log (canonical runtime)",
 	"author": "dao.xyz",
 	"license": "MIT",

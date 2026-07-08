@@ -1,5 +1,63 @@
 # @peerbit/native-backbone
 
+## 0.1.3
+
+### Patch Changes
+
+- [#1010](https://github.com/dao-xyz/peerbit/pull/1010) [`9d6c006`](https://github.com/dao-xyz/peerbit/commit/9d6c006f0d43a4568f91e34836a414148a269e3d) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Typed native error paths for the backbone core (part 2)
+
+  Completes the JsValue→typed-error refactor started in the previous release:
+  the append transaction modules (append_tx/storage, facts, committed_no_next,
+  committed_latest, mod), the document projection/query/index paths
+  (documents.rs) and the raw-receive verify/commit hot path (raw_receive.rs)
+  now report a typed `BackboneError` internally instead of constructing
+  `JsValue`s, so the crate no longer aborts on error when consumed as a native
+  rlib. Every `#[wasm_bindgen]` export keeps its exact signature and every
+  error message string is reproduced byte-for-byte.
+
+  Notable non-mechanical changes, each behavior-preserving:
+  - Four append dispatch paths now call log-rust's typed `_core` builders
+    directly instead of its JsValue wrappers, rebuilding the frozen result-row
+    layouts locally (facts rows via the pre-existing `committed_entry_facts_to_row`,
+    trim rows via a byte-identical replica of `log_trim_entries_to_rows` fed by
+    the same `trim_oldest_log_entries_core`).
+  - The pending latest-batch append state no longer captures `js_sys::Array`
+    handles: it holds owned facts and trimmed entries, and the JS rows are built
+    at the emit boundary. The log append/commit/trim side effects still happen at
+    the same point; only row construction is deferred (skipped entirely when a
+    later fallible planning step aborts the append).
+  - Two `expect()` calls that trapped the whole wasm instance (in wire-sync, and
+    a partial-verify-hashes invariant in raw-receive) became typed errors.
+  - The duplicate `js_error`/`decode_error` funnels in documents.rs were deleted
+    once all their call sites were typed.
+
+  The two Ed25519 verification `.ok()` fallbacks in raw-receive are intentionally
+  preserved as documented, control-flow-unchanged swallows: their only error is a
+  signature-slice parse failure (a non-Ed25519 scheme or malformed bytes), and
+  deferring to the TypeScript verification fallback is correct for mixed-scheme
+  verification. The swallow is now explicit and commented rather than a bare
+  `.ok()`.
+
+- [#1008](https://github.com/dao-xyz/peerbit/pull/1008) [`9fc576f`](https://github.com/dao-xyz/peerbit/commit/9fc576f3e7c357fe840433a73aeb2ba3225cc1e2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Typed native error paths for the backbone core (part 1)
+  - native-backbone: new `BackboneError` enum (Display reproduces the exact
+    message strings historically thrown across the wasm boundary; single
+    `From<BackboneError> for JsValue` touchpoint). The js_interop helpers,
+    leaf modules (coordinates, sync_send, wire_sync), graph/profile paths and
+    the shared-log planner glue now report typed errors internally; every
+    `#[wasm_bindgen]` export keeps its exact signature. All 159
+    `js_sys::Date::now()` profiling sites now go through a
+    `cfg(target_arch)` clock shim so the crate can compile natively.
+  - Deliberate validation hardening in the JS marshaling helpers: byte
+    fields reject non-Uint8Array values instead of coercing garbage, f64
+    integer conversions reject non-finite/negative/fractional/out-of-range
+    values (including the 2^64 rounding trap) instead of truncating, and
+    present-but-non-string optional fields error instead of reading as
+    absent. Two `expect()` aborts in wire-sync became typed errors.
+  - shared-log-rust: new `SharedLogError` enum following the same pattern;
+    internal planner/parsing helpers are typed, wasm surface unchanged, and
+    a typed `put_entry_coordinates_core` lets dependants skip the
+    string/Array round-trip.
+
 ## 0.1.2
 
 ### Patch Changes
