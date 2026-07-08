@@ -403,6 +403,7 @@ export type ReachScope = {
 
 export type RemoteQueryOptions<Q, R, D> = RPCRequestAllOptions<Q, R> & {
 	replicate?: boolean;
+	from?: string[]; // if specified, only query these peers
 	minAge?: number;
 	throwOnMissing?: boolean;
 	retryMissingResponses?: boolean;
@@ -4907,7 +4908,12 @@ export class DocumentIndex<
 									...(typeof options?.remote === "object"
 										? options.remote
 										: {}),
-									from: fetchOptions?.from ?? initialRemoteTargets,
+									from:
+										fetchOptions?.from ??
+										initialRemoteTargets ??
+										(typeof options?.remote === "object"
+											? options.remote.from
+											: undefined),
 								}
 							: false,
 					resolve,

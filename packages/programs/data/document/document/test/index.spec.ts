@@ -15265,6 +15265,63 @@ describe("index", () => {
 						});
 					});
 				});
+
+				describe("from", () => {
+					let session: TestSession;
+
+					afterEach(async () => {
+						await session.stop();
+					});
+
+					it("only queries targeted peers on the first fetch", async () => {
+						session = await TestSession.connected(3);
+
+						const store = new TestStore({
+							docs: new Documents<Document>(),
+						});
+
+						// the writer holds the document but does not replicate, so it
+						// never becomes part of the cover set and is only reachable
+						// through explicit 'remote.from' targeting
+						const writer = await session.peers[0].open(store, {
+							args: {
+								replicate: false,
+							},
+						});
+
+						const reader = await session.peers[1].open<TestStore>(
+							store.clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						// session.peers[2] never opens the program (a stand-in for a
+						// connected peer, e.g. a relay, that will never respond to
+						// queries). If the 'from' hint is dropped, the cold-start
+						// fallback queries it and the search stalls until the full
+						// remote timeout
+						await writer.docs.put(new Document({ id: "1" }));
+						await reader.docs.waitFor(writer.node.identity.publicKey);
+
+						const t0 = +new Date();
+						const results = await reader.docs.index.search(
+							{},
+							{
+								remote: {
+									from: [writer.node.identity.publicKey.hashcode()],
+									timeout: 10_000,
+								},
+							},
+						);
+						const t1 = +new Date();
+
+						expect(results.map((x) => x.id)).to.deep.equal(["1"]);
+						expect(t1 - t0).to.be.lessThan(3000); // and not the full remote timeout
+					});
+				});
 			});
 
 			describe("signal", () => {
