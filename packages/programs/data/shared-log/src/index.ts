@@ -416,6 +416,52 @@ class NativeBackboneWriteThroughBlockStore {
 		private readonly durable: AnyBlockStore,
 	) {}
 
+	// A durable mirror write that cannot be awaited at its call site (the
+	// columnar putKnownManyColumns fast path must return a synchronous string[]
+	// because RemoteBlocks.putKnownManyColumns treats the result as sync) is
+	// tracked here instead of being silently `void`ed. Its rejection is stored
+	// and re-thrown on the next awaited wrapper method (and on stop()), so a
+	// failed durable write (IO/disk-full) surfaces as an error rather than
+	// vanishing and leaving the block out of durable while native/log report
+	// success. `.catch` also prevents unhandled-rejection noise.
+	private readonly pendingDurableWrites = new Set<Promise<unknown>>();
+	private durableWriteError: unknown;
+
+	private trackDurable(result: unknown): void {
+		// The durable store may answer synchronously (an in-memory or already
+		// resolved store); only a real pending promise needs tracking. A sync
+		// success is already durable; a sync throw would have propagated already.
+		if (!isPromiseLike(result)) {
+			return;
+		}
+		const tracked = Promise.resolve(result).then(
+			() => {
+				this.pendingDurableWrites.delete(tracked);
+			},
+			(error) => {
+				this.pendingDurableWrites.delete(tracked);
+				if (this.durableWriteError === undefined) {
+					this.durableWriteError = error;
+				}
+			},
+		);
+		this.pendingDurableWrites.add(tracked);
+	}
+
+	// Wait for every tracked (sync-path) durable write to settle, then surface
+	// the first failure. Awaited methods call this so a prior columnar durable
+	// failure propagates as back-pressure to the next caller.
+	private async drainDurable(): Promise<void> {
+		while (this.pendingDurableWrites.size > 0) {
+			await Promise.allSettled([...this.pendingDurableWrites]);
+		}
+		if (this.durableWriteError !== undefined) {
+			const error = this.durableWriteError;
+			this.durableWriteError = undefined;
+			throw error;
+		}
+	}
+
 	// --- lifecycle -------------------------------------------------------
 	// The native store's lifecycle hooks are no-ops; only the durable store
 	// needs starting/stopping. Rehydration of the wasm map from disk happens in
@@ -427,6 +473,9 @@ class NativeBackboneWriteThroughBlockStore {
 	}
 
 	async stop(): Promise<void> {
+		// Surface any tracked (sync-path) durable write failure and ensure all
+		// mirror writes have settled before the durable store is torn down.
+		await this.drainDurable();
 		await this.durable.stop();
 	}
 
@@ -470,6 +519,7 @@ class NativeBackboneWriteThroughBlockStore {
 	async put(
 		data: Uint8Array | { block: { bytes: Uint8Array }; cid: string },
 	): Promise<string> {
+		await this.drainDurable();
 		const cid = await this.native.put(data as any);
 		// The native store computes a raw-codec CID for a `Uint8Array`, storing
 		// the bytes verbatim (raw codec is identity), and stores `block.bytes`
@@ -486,6 +536,7 @@ class NativeBackboneWriteThroughBlockStore {
 	async putMany(
 		blocks: Array<Uint8Array | { block: { bytes: Uint8Array }; cid: string }>,
 	): Promise<string[]> {
+		await this.drainDurable();
 		const cids = await this.native.putMany(blocks as any);
 		const durableBlocks: Array<readonly [string, Uint8Array]> = cids.map(
 			(cid, index) => {
@@ -501,17 +552,24 @@ class NativeBackboneWriteThroughBlockStore {
 		return cids;
 	}
 
-	putKnown(cid: string, bytes: Uint8Array): string {
+	// Native put is synchronous (the authoritative hot store); the durable mirror
+	// is awaited so the returned promise resolves only after BOTH native and
+	// durable succeed and a durable IO/disk-full failure rejects here instead of
+	// being swallowed. RemoteBlocks.putKnown and the log's putKnownEntryBytesBatch
+	// both await this method, so returning a promise is compatible.
+	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
+		await this.drainDurable();
 		const stored = this.native.putKnown(cid, bytes);
-		void this.durable.putKnown(cid, bytes);
+		await this.durable.putKnown(cid, bytes);
 		return stored;
 	}
 
-	putKnownMany(
+	async putKnownMany(
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
-	): string[] {
+	): Promise<string[]> {
+		await this.drainDurable();
 		const cids = this.native.putKnownMany(blocks);
-		void this.durable.putKnownMany(blocks);
+		await this.durable.putKnownMany(blocks);
 		return cids;
 	}
 
@@ -519,27 +577,34 @@ class NativeBackboneWriteThroughBlockStore {
 		const stored = this.native.putKnownManyColumns(cids, bytes);
 		// AnyBlockStore has no columnar method; mirror via putKnownMany, which
 		// takes [cid, bytes] tuples and hits the same batched store path.
+		// This method must return a synchronous string[] (RemoteBlocks.putKnownManyColumns
+		// consumes the result synchronously), so the durable write cannot be awaited
+		// inline. Track it instead of `void`ing it so a durable rejection surfaces
+		// on the next awaited wrapper method / stop() rather than being swallowed.
 		const durableBlocks = cids.map(
 			(cid, index) => [cid, bytes[index]!] as const,
 		);
-		void this.durable.putKnownMany(durableBlocks);
+		this.trackDurable(this.durable.putKnownMany(durableBlocks));
 		return stored;
 	}
 
 	// --- reads (native/wasm first; on miss, durable fallback + repopulate) ---
-	get(cid: string): Uint8Array | undefined {
+	// RemoteBlocks.get awaits this single-get, so on a native miss consult the
+	// durable store (like getMany does) and repopulate the native map, rather
+	// than returning undefined and only scheduling a background repopulate. That
+	// avoids a spurious miss (which would otherwise fall through to a remote
+	// read) for a block that is present on disk.
+	async get(cid: string, _options?: unknown): Promise<Uint8Array | undefined> {
 		const local = this.native.get(cid);
 		if (local != null) {
 			return local;
 		}
-		// Synchronous native miss. Fall back to durable asynchronously and
-		// repopulate the native map so the native graph can read it next time.
-		// The synchronous contract can only answer with what native has, so a
-		// miss here still returns undefined; the async repopulation is
-		// best-effort for subsequent reads. RemoteBlocks always calls the async
-		// getMany path for DAG walks, so this rarely matters, but keep the
-		// side-effect for parity with getMany's fallback.
-		void this.repopulateFromDurable([cid]);
+		const durableValue = await this.durable.get(cid);
+		if (durableValue != null) {
+			// Repopulate the native map so the native graph reads it next time.
+			this.native.putKnownManyColumns([cid], [durableValue]);
+			return durableValue;
+		}
 		return undefined;
 	}
 
@@ -601,37 +666,22 @@ class NativeBackboneWriteThroughBlockStore {
 		return nativeHas;
 	}
 
-	private async repopulateFromDurable(cids: string[]): Promise<void> {
-		try {
-			const values = await this.durable.getMany(cids);
-			const repopulateCids: string[] = [];
-			const repopulateBytes: Uint8Array[] = [];
-			for (let i = 0; i < values.length; i++) {
-				const value = values[i];
-				if (value != null) {
-					repopulateCids.push(cids[i]!);
-					repopulateBytes.push(value);
-				}
-			}
-			if (repopulateCids.length > 0) {
-				this.native.putKnownManyColumns(repopulateCids, repopulateBytes);
-			}
-		} catch {
-			// Best-effort background repopulation; ignore failures.
-		}
-	}
-
 	// --- removes (apply to BOTH) ----------------------------------------
-	rm(cid: string): void {
+	// Native rm is synchronous; the durable rm is awaited so the returned promise
+	// resolves only after both succeed and a durable failure rejects here rather
+	// than being swallowed. All rm callers (RemoteBlocks.rm, the log) await it.
+	async rm(cid: string): Promise<void> {
+		await this.drainDurable();
 		this.native.rm(cid);
-		void this.durable.rm(cid);
+		await this.durable.rm(cid);
 	}
 
 	del(cid: string): void {
-		this.rm(cid);
+		void this.rm(cid);
 	}
 
 	async rmMany(cids: string[]): Promise<number> {
+		await this.drainDurable();
 		const removed = await this.native.rmMany(cids);
 		await this.durable.rmMany(cids);
 		return removed;
@@ -6605,6 +6655,13 @@ export class SharedLog<
 			return undefined;
 		}
 		const backbone = this._nativeBackbone;
+		// When the durable write-through wrapper is active the log's block store
+		// (this.remoteBlocks.localStore) is the wrapper, NOT the raw wasm block map
+		// (backbone.blocks), so this comparison is false. In that case the block
+		// must be written through to durable; see the guarded handling in the
+		// prepare callback below.
+		const durableWrapperActive =
+			this.remoteBlocks?.localStore !== backbone.blocks;
 		let nativeBackboneDocumentIndexCommitted = false;
 		let committedNativeBackboneDocumentIndex:
 			| NativeBackboneDocumentIndexCommitInput
@@ -6673,11 +6730,36 @@ export class SharedLog<
 					},
 					backbone.blocks,
 				);
-				if (
-					prepared &&
-					!prepared.bytes &&
-					this.remoteBlocks?.localStore === backbone.blocks
-				) {
+				if (prepared && !prepared.bytes) {
+					if (durableWrapperActive) {
+						// The durable write-through wrapper is active, so the block store
+						// the log writes through (this.remoteBlocks.localStore) is the
+						// wrapper, NOT the raw wasm block map. prepareEntryV0PlainEntryCommit
+						// committed the block into the wasm map ONLY and returned no raw
+						// bytes, so on its own the block would never reach durable (log's
+						// finishBlocks only calls putKnown* when prepared.bytes is set) and
+						// a non-replicating native node would lose it on restart.
+						//
+						// Attach the just-committed block's bytes (read back from the wasm
+						// store) as prepared.bytes so the log's finishBlocks writes them
+						// through: putPreparedAppendBlocks -> this._storage.putKnown* ->
+						// wrapper -> durable. This mirrors how the sibling storage-transaction
+						// path defers block storage to the JS store when commitBlocksInBackbone
+						// is false, and keeps strict-native mode working (it still returns a
+						// valid prepared result rather than bailing).
+						const preparedHash = prepared.cid ?? prepared.hash;
+						const committedBytes = preparedHash
+							? backbone.blocks.get(preparedHash)
+							: undefined;
+						if (committedBytes) {
+							return {
+								...prepared,
+								bytes: committedBytes,
+							};
+						}
+					}
+					// No wrapper (memory-only native node): the block lives in the wasm
+					// map and needs no durable mirror; expose getBytes for materialization.
 					return {
 						...prepared,
 						getBytes: (hash: string) => backbone.blocks.get(hash),
