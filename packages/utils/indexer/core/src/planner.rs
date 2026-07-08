@@ -1001,7 +1001,37 @@ impl NativeQueryIndex {
                 return ordering;
             }
         }
-        left.cmp(&right)
+        // Tie-break by external document id so equal-key results order identically
+        // across backends and peers. The default (JS/sqlite) index stores rows in
+        // primary-key (id) order (WITHOUT ROWID) and emits tied rows following the
+        // scan direction, i.e. the direction of the final sort field. Match that here
+        // instead of falling back to the local insertion counter (DocId), which is
+        // per-peer and not content-deterministic.
+        self.compare_external_ids(left, right, tie_break_direction(sort))
+    }
+
+    /// Compare two documents by their external id, honoring the tie-break
+    /// `direction` (ascending id for `Asc`, descending id for `Desc`). External
+    /// ids are compared as UTF-8 byte sequences, matching sqlite's BINARY
+    /// collation on the primary-key column. Falls back to the internal DocId only
+    /// if an external id is somehow missing (should not happen for live docs).
+    fn compare_external_ids(
+        &self,
+        left: DocId,
+        right: DocId,
+        direction: SortDirection,
+    ) -> Ordering {
+        let ordering = match (
+            self.internal_to_external.get(&left),
+            self.internal_to_external.get(&right),
+        ) {
+            (Some(left_id), Some(right_id)) => left_id.as_bytes().cmp(right_id.as_bytes()),
+            _ => left.cmp(&right),
+        };
+        match direction {
+            SortDirection::Asc => ordering,
+            SortDirection::Desc => ordering.reverse(),
+        }
     }
 
     fn first_scalar(&self, doc_id: DocId, path: &FieldPath) -> Option<&FieldValue> {
@@ -1043,6 +1073,7 @@ impl NativeQueryIndex {
         if sort.direction == SortDirection::Desc
             && !self.collect_missing_sorted_docs(
                 &sort.field,
+                true,
                 query,
                 offset,
                 limit,
@@ -1171,6 +1202,7 @@ impl NativeQueryIndex {
         if sort.direction == SortDirection::Asc {
             self.collect_missing_sorted_docs(
                 &sort.field,
+                false,
                 query,
                 offset,
                 limit,
@@ -1200,6 +1232,7 @@ impl NativeQueryIndex {
         if reverse {
             self.collect_index_sorted_docs(
                 index.values().rev(),
+                reverse,
                 query,
                 offset,
                 limit,
@@ -1210,6 +1243,7 @@ impl NativeQueryIndex {
         } else {
             self.collect_index_sorted_docs(
                 index.values(),
+                reverse,
                 query,
                 offset,
                 limit,
@@ -1224,6 +1258,7 @@ impl NativeQueryIndex {
     fn collect_index_sorted_docs<'a>(
         &self,
         bitmaps: impl Iterator<Item = &'a RoaringBitmap>,
+        reverse: bool,
         query: &Query,
         offset: usize,
         limit: usize,
@@ -1232,7 +1267,11 @@ impl NativeQueryIndex {
         result: &mut Vec<String>,
     ) -> bool {
         for bitmap in bitmaps {
-            for doc_id in bitmap.iter() {
+            // Docs sharing the same sort value are a tie group. `bitmap.iter()`
+            // yields them in DocId (local insertion) order, which is not
+            // content-deterministic across peers. Re-order each tie group by
+            // external id in the scan direction to match the default backend.
+            for doc_id in self.tie_ordered_doc_ids(bitmap, reverse) {
                 if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
                     return false;
                 }
@@ -1241,9 +1280,27 @@ impl NativeQueryIndex {
         true
     }
 
+    /// Return the doc ids of a tie group ordered by external id (ascending for a
+    /// forward scan, descending when `reverse`), so equal-sort-key results match
+    /// the default backend's primary-key ordering. Single-element groups skip the
+    /// allocation/sort entirely.
+    fn tie_ordered_doc_ids(&self, bitmap: &RoaringBitmap, reverse: bool) -> Vec<DocId> {
+        let mut doc_ids: Vec<DocId> = bitmap.iter().collect();
+        if doc_ids.len() > 1 {
+            let direction = if reverse {
+                SortDirection::Desc
+            } else {
+                SortDirection::Asc
+            };
+            doc_ids.sort_by(|left, right| self.compare_external_ids(*left, *right, direction));
+        }
+        doc_ids
+    }
+
     fn collect_missing_sorted_docs(
         &self,
         field: &FieldPath,
+        reverse: bool,
         query: &Query,
         offset: usize,
         limit: usize,
@@ -1251,10 +1308,23 @@ impl NativeQueryIndex {
         seen: &mut RoaringBitmap,
         result: &mut Vec<String>,
     ) -> bool {
-        for doc_id in self.all_docs.iter() {
-            if self.first_scalar(doc_id, field).is_some() {
-                continue;
-            }
+        // Docs without a value for the sort field form one tie group (all "null").
+        // Emit them ordered by external id in the scan direction, matching the
+        // default backend, instead of raw DocId (local insertion) order.
+        let mut missing: Vec<DocId> = self
+            .all_docs
+            .iter()
+            .filter(|doc_id| self.first_scalar(*doc_id, field).is_none())
+            .collect();
+        if missing.len() > 1 {
+            let direction = if reverse {
+                SortDirection::Desc
+            } else {
+                SortDirection::Asc
+            };
+            missing.sort_by(|left, right| self.compare_external_ids(*left, *right, direction));
+        }
+        for doc_id in missing {
             if !self.collect_sorted_doc(doc_id, query, offset, limit, skipped, seen, result) {
                 return false;
             }
@@ -1714,6 +1784,16 @@ fn compare_optional_values(left: Option<&FieldValue>, right: Option<&FieldValue>
     }
 }
 
+/// Direction used to break sort ties by external document id. The default
+/// (sqlite WITHOUT ROWID) index scans the primary key in the direction of the
+/// final ORDER BY term, so tied rows follow that direction. With no explicit
+/// sort fields we fall back to ascending id order.
+fn tie_break_direction(sort: &[SortField]) -> SortDirection {
+    sort.last()
+        .map(|field| field.direction)
+        .unwrap_or(SortDirection::Asc)
+}
+
 fn compare_field_values(left: &FieldValue, right: &FieldValue) -> Ordering {
     match (left, right) {
         (FieldValue::Bool(left), FieldValue::Bool(right)) => left.cmp(right),
@@ -1983,6 +2063,111 @@ mod tests {
                 Some(3),
             ),
             vec!["bytes", "string", "u64"]
+        );
+    }
+
+    #[test]
+    fn ties_break_by_external_id_not_insertion_order() {
+        // Insert in an order where the local insertion counter (DocId) is the
+        // REVERSE of external-id order, and give every doc the same sort value so
+        // the whole result set is one tie group. The tie-break must follow external
+        // id (matching the default sqlite backend's primary-key order), not the
+        // per-peer DocId, so the emitted order is independent of insertion order.
+        let mut index = NativeQueryIndex::new();
+        for id in ["d", "c", "b", "a"] {
+            index.put(id, DocumentFields::new().with_scalar("number", 1_u64));
+        }
+
+        // Fast path (single-field sort backed by the ordered index).
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["a", "b", "c", "d"],
+            "ASC ties order by external id ascending"
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["d", "c", "b", "a"],
+            "DESC ties order by external id descending"
+        );
+    }
+
+    #[test]
+    fn generic_sort_ties_break_by_external_id() {
+        // A multi-field sort forces the generic `compare_docs` slow path. Docs with
+        // equal keys on every sort field must still tie-break by external id.
+        let mut index = NativeQueryIndex::new();
+        for id in ["d", "c", "b", "a"] {
+            index.put(
+                id,
+                DocumentFields::new()
+                    .with_scalar("primary", 1_u64)
+                    .with_scalar("secondary", "same"),
+            );
+        }
+
+        let sort = [
+            SortField {
+                field: "primary".into(),
+                direction: SortDirection::Asc,
+            },
+            SortField {
+                field: "secondary".into(),
+                direction: SortDirection::Desc,
+            },
+        ];
+        // Tie-break direction follows the final sort field (Desc here).
+        assert_eq!(
+            index.search(&Query::All, &sort, None),
+            vec!["d", "c", "b", "a"]
+        );
+    }
+
+    #[test]
+    fn missing_sort_value_ties_break_by_external_id() {
+        // Docs lacking the sort field form a single "null" tie group. They too must
+        // order by external id, in the scan direction.
+        let mut index = NativeQueryIndex::new();
+        for id in ["d", "c", "b", "a"] {
+            index.put(id, DocumentFields::new().with_scalar("other", 1_u64));
+        }
+
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Asc,
+                }],
+                None,
+            ),
+            vec!["a", "b", "c", "d"],
+            "ASC missing-value ties order by external id ascending"
+        );
+        assert_eq!(
+            index.search(
+                &Query::All,
+                &[SortField {
+                    field: "number".into(),
+                    direction: SortDirection::Desc,
+                }],
+                None,
+            ),
+            vec!["d", "c", "b", "a"],
+            "DESC missing-value ties order by external id descending"
         );
     }
 
