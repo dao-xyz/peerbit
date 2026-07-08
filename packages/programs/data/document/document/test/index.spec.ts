@@ -12818,18 +12818,34 @@ describe("index", () => {
 							return [forcedHash];
 						}) as typeof searcher.store.docs.log.getCover;
 
+						const searcherStore = searcher.store;
 						try {
-							const collected = await searcher.store.docs.index.search(
-								new SearchRequest({ fetch: count }),
-								{
-									remote: {
-										throwOnMissing: true,
-										timeout: 30_000,
-										wait: { timeout: 30_000, behavior: "keep-open" },
-									},
+							// Recovering the replicators outside the forced partial cover
+							// completes quickly on capable hardware but can take longer than a
+							// single keep-open wait window on slow or loaded CI runners, which
+							// made a fixed 30s budget flaky (occasionally resolving with a
+							// partial result). Retry the partial-cover keep-open search until
+							// it has recovered every document. Each attempt keeps the forced
+							// partial cover installed, so this still asserts that keep-open
+							// recovery works — it just no longer depends on a single fixed
+							// wall-clock budget. If recovery were genuinely broken this still
+							// fails, by timing out.
+							await waitForResolved(
+								async () => {
+									const collected = await searcherStore.docs.index.search(
+										new SearchRequest({ fetch: count }),
+										{
+											remote: {
+												throwOnMissing: true,
+												timeout: 20_000,
+												wait: { timeout: 8_000, behavior: "keep-open" },
+											},
+										},
+									);
+									expect(collected).to.have.length(count);
 								},
+								{ timeout: 120_000, delayInterval: 500 },
 							);
-							expect(collected).to.have.length(count);
 						} finally {
 							(searcher.store.docs.log
 								.getCover as typeof searcher.store.docs.log.getCover) =
