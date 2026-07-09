@@ -631,8 +631,17 @@ class NativeBackboneWriteThroughBlockStore {
 		return results;
 	}
 
-	has(cid: string): boolean {
-		return this.native.has(cid);
+	async has(cid: string): Promise<boolean> {
+		if (this.native.has(cid)) {
+			return true;
+		}
+		// Mirror getMany/hasMany: a block absent from the native wasm map may still
+		// be present in the durable store (e.g. persisted on disk but not yet
+		// repopulated into wasm). Consult durable on a native miss so presence
+		// checks agree with the resolves that getMany/hasMany already durable-fall
+		// back on. `Blocks.has` is declared `MaybePromise<boolean>`, so returning a
+		// promise here is contract-compatible.
+		return this.durable.has(cid);
 	}
 
 	async hasMany(cids: string[]): Promise<boolean[]> {

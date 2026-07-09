@@ -146,16 +146,63 @@ classes below. They are **not** addressed by the S1 fix and remain excluded:
   **Class-B / Finding-B (converge-vs-timeout)**. The native path converges via
   authoritative push rather than sitting on the pending-IHave timeout the test
   asserts; final state is correct, the timing/counter assertion is not backend-
-  agnostic.
+  agnostic. Verified unaffected by the S2b crash fix (below): still fails only on
+  the `expected promise to be rejected with 'Timeout' but it was fulfilled`
+  assertion, no crash. Stays excluded.
 - `replication degree > does not confirm checked prune from a shallow-only entry`
   → **Class-B / Finding-B (converge-vs-timeout)**. Same class: the native
   raw-exchange path confirms/converges differently than the JS wire-event counter
   the test asserts on; convergence is correct, the counter/confirmation assertion
-  is backend-coupled.
+  is backend-coupled. Verified against the S2b crash fix (below): it does **not**
+  crash — it fails only on `expected promise to be rejected with 'Timeout' but it
+  was fulfilled`. The crash class is gone, but the converge-vs-timeout divergence
+  remains, so it **stays excluded** (not folded into the allowlist).
 
 Both prune divergences (the Class-D durability one and the two converge-vs-count
 ones) are tracked as separate follow-ups (the S2a durability and S2b prune
 issues); they are out of scope for the S1 fix.
+
+### S2b — block-less native graph head tolerance (FIXED)
+
+A native-vs-JS robustness divergence: native `getHeads(true)` **crashed** on a
+block-less graph head where the JS path tolerates it.
+
+The native log graph can list a HEAD whose block is not materialized in the
+store: pruning a child promotes its (possibly block-less) parent to a head (rust
+`LogGraphIndex.delete` -> `set_head`, which only consults the graph's entry map,
+never the block store). Resolving that head in full
+(`EntryIndex.getHeads(true)`, reached from `SharedLog.startAnnounceReplicating`
+-> `ensureCurrentHeadCoordinatesIndexed`) went through the native-hashes
+resolve-in-full path and threw `Failed to load entry from head with hash: <h>`
+on the native backbone. The JS path already tolerates a missing block (the
+`getShallow` fallback on the non-full path, and `resolveMany`'s own
+`ignoreMissing` branch). This was a hybrid-fleet robustness gap.
+
+**Fix (JS tolerance — no rust change):**
+
+- `@peerbit/log`: `EntryIndex.iterateNativeHashes`' resolve-in-full branch now
+  defaults `ignoreMissing` to `true`, so a block-less head is **skipped** (left
+  non-authoritative, not force-materialized) rather than crashing. The change is
+  confined to the native-graph branch and is a no-op for the default (JS)
+  backend, which never enters it. A focused regression test in
+  `@peerbit/log`'s `native-graph.spec.ts` (`tolerates a block-less native graph
+  head in getHeads(true)`) constructs a block-less head via the natural
+  prune-promotes-parent path and asserts `getHeads(true)` does not throw and
+  skips the head. A/B confirmed: revert the fix → `Failed to load entry from
+  head`; apply → no throw.
+- `@peerbit/shared-log`: the native-backbone write-through block store's `has()`
+  now falls back to the durable store on a native (wasm-map) miss, matching
+  `getMany()`/`hasMany()`, so presence checks and resolves agree.
+
+**Impact on the two S2b-tracked prune tests:** neither is folded into the
+allowlist. Both **stop being a crash class** but still fail on the
+converge-vs-timeout (Class-B / Finding-B) assertion — the native path converges
+(prune fulfilled) where the test asserts `Timeout`. They stay excluded; see the
+S1 "mis-bucket" catalog above for the per-test verdict. (In practice these
+specific shared-log tests never surfaced the crash — their `index.put(shallow)`
+construction does not seed a block-less head into the native graph's head list;
+the crash is exercised by the natural prune-promotes-parent path, covered by the
+`@peerbit/log` focused test.)
 
 ### A2 — memory-only durability (Class-D), NOT a bug
 
