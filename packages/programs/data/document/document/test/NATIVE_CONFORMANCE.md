@@ -64,23 +64,23 @@ The leg is wired as `@peerbit/document`'s `test:document-rust-core` script and a
 shared-log rust-core step. The allowlist is a mocha `--grep` anchored to the
 describe titles confirmed **byte-for-byte green** under the native backend
 (comparator / sort / paging / query surface), with negative-lookahead exclusions
-for the del-path and native-internal cases documented below.
+for the native-internal, remote-indexed, and 2-peer sync cases documented below.
 
 | Describe (mocha title path)                        | Native  | Default |
 | -------------------------------------------------- | ------- | ------- |
 | `native conformance guard` (leg guard)             | 1/1     | 1/1     |
-| `operations > basic` (minus 8 excluded)            | 132/132 | 132/132 |
+| `operations > basic` (minus 5 excluded)            | 135/135 | 135/135 |
 | `operations > get`                                 | 6/6     | 6/6     |
 | `operations > index`                               | 3/3     | 3/3     |
 | `operations > search` (incl `fields`)              | 15/15   | 15/15   |
 | `iterate > sort` (incl `close`)                    | 17/17   | 17/17   |
-| `count > approximate` (minus deletions)            | 6/6     | 6/6     |
+| `count > approximate`                              | 7/7     | 7/7     |
 | `query distribution`                               | 7/7     | 7/7     |
 | `returnIndexed`                                     | 1/1     | 1/1     |
 | `caching`                                          | 1/1     | 1/1     |
-| **Total (allowlist grep)**                         | **188** | **188** |
+| **Total (allowlist grep)**                         | **192** | **192** |
 
-Native and default each run **188 passing / 0 failing** under the allowlist grep.
+Native and default each run **192 passing / 0 failing** under the allowlist grep.
 
 The leg is **opt-in and non-blocking** initially (`continue-on-error: true`). It
 widens as the excluded classes below are made backend-agnostic or fixed.
@@ -96,7 +96,7 @@ native-only failures all live in the **write / delete / block-store** path or in
 (`resolve:false` over the wire)** path — not in query ordering. Class labels
 mirror the shared-log doc.
 
-### Class-A — del-path block-store read-back (`Missing data`)
+### Class-A — del-path block-store read-back (`Missing data`) — FIXED (#1025)
 
 The default `mode:"auto"` delete path reads the prior PUT entry's payload to
 determine which document was removed: `Documents.handleChanges` ->
@@ -111,22 +111,24 @@ A minimal repro: single-peer `put` then `del` — the `put` succeeds, the `del`
 throws. Plain `put` (no del) and query-only paths are unaffected, which is why
 the query-surface describes pass.
 
-This is a real native-vs-JS divergence, but in the **block-store / payload
-read-back** path (the document analog of the shared-log A1 / S2b hollow-entry /
-block-less class), **not** an index-comparator divergence. Excluded tests:
+This was a real native-vs-JS divergence in the **block-store / payload
+read-back** path (the document analog of the shared-log #1021 hollow-entry
+class), **not** an index-comparator divergence.
 
-- `operations > basic > can add and delete`
-- `operations > basic > delete permanently`
-- `operations > basic > reload after delete`
-- `operations > basic > can delete without being replicator`
-  (fails one step further as `No entry with key '…' in the database`, same
-  del-path family)
-- `count > approximate > returns approximate count with deletions`
-  (1000 puts with 25% deletes — throws on the first `del`)
+**Fixed in #1025**: `getAppendOperation` now falls back — only on the
+hollow-payload `Missing data` error — to reading the raw block from the block
+store by entry hash and decoding the plain operation (a no-op for the JS
+backend). The four del-path tests are now **covered** (folded into the
+allowlist, 188 → 192): `can add and delete`, `delete permanently`,
+`reload after delete`, and
+`count > approximate > returns approximate count with deletions`.
 
-Follow-up: route the auto-mode delete read-back through the storage-bytes path
-(as `isNativeMode()` already does) or make the native block store materialize the
-just-appended payload so `getPayloadValue()` resolves.
+Still excluded — a **separate** divergence, not the read-back bug:
+
+- `operations > basic > can delete without being replicator` — the
+  non-replicating peer never indexes the doc, so the delete resolves to a
+  `No entry with key` miss. This is a 2-peer remote/sync path issue (same family
+  as Class-E below); it fails identically with and without the #1025 fix.
 
 ### Class-C — over-nativization (native-internal append-path assertions)
 
@@ -188,8 +190,8 @@ silently capped.
 
 ## Verification summary
 
-- **Native (env set):** allowlist grep GREEN — **188 passing, 0 failing**.
-- **Default (env unset):** same allowlist grep GREEN — **188 passing, 0
+- **Native (env set):** allowlist grep GREEN — **192 passing, 0 failing**.
+- **Default (env unset):** same allowlist grep GREEN — **192 passing, 0
   failing** (baseline unchanged).
 - **Guard:** `docs.index.index` is asserted `RustIndex` under the env and
   `SQLiteIndex` without it; flipping the expected class makes the guard fail with

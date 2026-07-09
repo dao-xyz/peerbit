@@ -53,7 +53,7 @@
 		"clean": "aegir clean",
 		"build": "aegir build --no-bundle",
 		"test": "aegir test --target node",
-		"test:document-rust-core": "npm run build && PEERBIT_SHARED_LOG_RUST_CORE=1 aegir test -t node --grep '^(?!.*(can add and delete|uses the validated local append path|uses the independent native prepared batch path|uses native shared-log planning for replicated target-none puts|uses commit-only local puts when coordinate persistence is deferred|delete permanently|can delete without being replicator|reload after delete|returns approximate count with deletions)).*(native conformance guard |operations basic |operations get |operations index |operations search |iterate sort |count approximate |query distribution |returnIndexed |caching )'",
+		"test:document-rust-core": "npm run build && PEERBIT_SHARED_LOG_RUST_CORE=1 aegir test -t node --grep '^(?!.*(uses the validated local append path|uses the independent native prepared batch path|uses native shared-log planning for replicated target-none puts|uses commit-only local puts when coordinate persistence is deferred|can delete without being replicator)).*(native conformance guard |operations basic |operations get |operations index |operations search |iterate sort |count approximate |query distribution |returnIndexed |caching )'",
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
