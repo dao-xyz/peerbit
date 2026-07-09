@@ -158,6 +158,27 @@ export abstract class Entry<T> {
 		return serialize(this);
 	}
 
+	/**
+	 * Return a fully-materialized, read-oriented version of this entry: an
+	 * instance whose `meta`/`payload`/`signatures` fields are populated (i.e. a
+	 * concrete {@link EntryV0}), suitable for being cached and read many times.
+	 *
+	 * Concrete entries ({@link EntryV0}) are already fully materialized and
+	 * return `this` at zero cost. Lazy wrapper entries (e.g. the native shared
+	 * log's stash-backed head wrapper, which keeps the block bytes in wasm and
+	 * only exposes generic getters) override this to decode themselves into a
+	 * full entry so that consumers reading via field access or an
+	 * `instanceof EntryV0` gated comparison (see {@link EntryV0.equals}) see the
+	 * canonical entry rather than the hollow wrapper.
+	 *
+	 * This must only be called at a read boundary (where a consumer actually
+	 * needs the entry's contents), never on the wire/sync fusion path — a lazy
+	 * wrapper materializing here copies its block bytes out of native memory.
+	 */
+	toMaterialized(): Entry<T> {
+		return this;
+	}
+
 	async getPublicKeys(): Promise<PublicSignKey[]> {
 		const signatures = await this.getSignatures();
 		return signatures.map((s) => s.publicKey);

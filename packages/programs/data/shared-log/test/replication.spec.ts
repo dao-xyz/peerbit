@@ -1433,6 +1433,55 @@ testSetups.forEach((setup) => {
 				for (let i = 0; i < result1.length; i++) {
 					expect(result1[i].equals(result2[i])).to.be.true;
 				}
+
+				// A head that was live-replicated to the receiver is cached in the
+				// entry index as a lazy wrapper on the native path. Resolving it
+				// (any read) must return a fully-materialized entry so that field
+				// consumers and the `instanceof EntryV0` gated `equals` see the
+				// canonical head rather than a hollow object. This guards the
+				// native-vs-default parity regression (S1 / hollow head entry).
+				const receiverHeads = await db2.log.log.getHeads(true).all();
+				expect(receiverHeads.length).to.be.greaterThan(0);
+				for (const head of receiverHeads) {
+					const senderMatch = result1.find((e) => e.hash === head.hash)!;
+					expect(senderMatch, "sender has the head " + head.hash).to.exist;
+
+					// the cached head exposes populated fields, not a hollow wrapper
+					expect((head as any)._meta, "head._meta").to.not.be.undefined;
+					expect((head as any)._payload, "head._payload").to.not.be
+						.undefined;
+					expect((head as any)._signatures, "head._signatures").to.not.be
+						.undefined;
+
+					// equality is symmetric in both directions
+					expect(
+						senderMatch.equals(head),
+						"sender.equals(receiverHead)",
+					).to.be.true;
+					expect(
+						head.equals(senderMatch),
+						"receiverHead.equals(sender)",
+					).to.be.true;
+
+					// resolving the same head again returns the identical cached
+					// (materialized) entry - the hot head is not re-decoded
+					const receiverHeads2 = await db2.log.log.getHeads(true).all();
+					const headAgain = receiverHeads2.find(
+						(e) => e.hash === head.hash,
+					)!;
+					expect(headAgain).to.equal(head);
+
+					// the underlying block re-decodes to the same content (parity)
+					const block = await db2.log.log.blocks.get(head.hash);
+					expect(block, "receiver has the head block").to.not.be
+						.undefined;
+					const decoded = deserialize(block!, Entry);
+					decoded.init(head);
+					expect(
+						decoded.equals(senderMatch),
+						"re-decoded block equals sender head",
+					).to.be.true;
+				}
 			});
 
 			it("can restart replicate", async () => {

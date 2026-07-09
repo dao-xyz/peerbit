@@ -2902,6 +2902,27 @@ export class EntryIndex<T> {
 		return shadowedGids;
 	}
 
+	/**
+	 * A cache hit is a read boundary: the caller is about to consume the
+	 * entry's contents. Lazy wrapper entries (e.g. the native shared log's
+	 * stash-backed head, whose fields stay hollow and whose `instanceof
+	 * EntryV0` is false) must be replaced by their fully-materialized entry
+	 * here so field consumers and `EntryV0.equals` see the canonical entry.
+	 * The materialized entry is written back into the cache so the hot head is
+	 * not re-decoded on subsequent reads. Concrete entries return `this` at
+	 * zero cost, so the default backend is unaffected. This runs only on the
+	 * read path — never on the wire/sync fusion path, which caches heads via
+	 * `put` but never resolves them — so entry laziness on the wire is
+	 * preserved.
+	 */
+	private materializeCached(k: string, mem: Entry<T>): Entry<T> {
+		const materialized = mem.toMaterialized();
+		if (materialized !== mem) {
+			this.cache.add(k, materialized);
+		}
+		return materialized;
+	}
+
 	private async resolve(
 		k: string,
 		options?: ResolveFullyOptions,
@@ -2920,6 +2941,8 @@ export class EntryIndex<T> {
 			if (mem) {
 				this.cache.add(k, mem);
 			}
+		} else if (mem) {
+			mem = this.materializeCached(k, mem);
 		}
 		return mem ? mem : undefined;
 		/* }
@@ -2946,7 +2969,7 @@ export class EntryIndex<T> {
 			const hash = hashes[i]!;
 			const mem = this.cache.get(hash);
 			if (mem !== undefined) {
-				resolved[i] = mem ? mem : undefined;
+				resolved[i] = mem ? this.materializeCached(hash, mem) : undefined;
 				continue;
 			}
 			missingHashes.push(hash);
