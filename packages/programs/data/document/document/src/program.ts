@@ -112,6 +112,16 @@ export class NativeDocumentModeError extends Error {
 
 type MaybePromise<T> = Promise<T> | T;
 
+/**
+ * True when an error signals that an entry's payload bytes were never
+ * materialized on the JS side (a hollow entry backed by a native block store).
+ * `DecryptedThing.getValue` throws `Error("Missing data")` in that case. Used to
+ * decide whether the auto-mode append/delete read-back should recover the
+ * operation from the storage-bytes / block-store path instead.
+ */
+const isMissingPayloadDataError = (error: unknown): boolean =>
+	error instanceof Error && error.message === "Missing data";
+
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
 	!!value && typeof (value as Promise<T>).then === "function";
 
@@ -2837,17 +2847,44 @@ export class Documents<
 			return;
 		}
 		ensureInitialized?.();
-		return entry.getPayloadValue();
+		try {
+			return await entry.getPayloadValue();
+		} catch (error) {
+			// Auto (non-native document) mode with a native block store: the entry
+			// materialized in the entry index can be a hollow shell whose in-memory
+			// payload bytes were never loaded (the native store keeps the block
+			// bytes at the storage layer, not on the JS entry). `getPayloadValue`
+			// then throws "Missing data". The block itself is present, so recover
+			// the operation via the storage-bytes / block-store read path. This is
+			// a no-op for the pure-JS backend, where `getPayloadValue` succeeds.
+			if (!isMissingPayloadDataError(error)) {
+				throw error;
+			}
+			const operation = await this.getPlainEntryOperationFromStorage(entry);
+			if (operation) {
+				return operation;
+			}
+			throw error;
+		}
 	}
 
 	private async getPlainEntryOperationFromStorage(
 		entry: Entry<Operation>,
 	): Promise<Operation | undefined> {
-		let storageBytes: Uint8Array;
+		let storageBytes: Uint8Array | undefined;
 		try {
 			storageBytes =
 				Entry.getPreparedStorageBytes(entry) ?? entry.getStorageBytes();
 		} catch {
+			// The entry object is hollow (its payload bytes never materialized on
+			// the JS side), so it cannot re-serialize itself. Fall through to the
+			// block-store fallback below.
+			storageBytes = undefined;
+		}
+		// Fall back to the raw block held by the block store, keyed by the entry
+		// hash, whenever the entry could not (or did not) yield its own bytes.
+		storageBytes ??= await this.getEntryStorageBytesFromBlocks(entry);
+		if (!storageBytes) {
 			return;
 		}
 		try {
@@ -2866,6 +2903,21 @@ export class Documents<
 			} catch {
 				return;
 			}
+		}
+	}
+
+	private async getEntryStorageBytesFromBlocks(
+		entry: Entry<Operation>,
+	): Promise<Uint8Array | undefined> {
+		const hash = entry.hash;
+		if (!hash) {
+			return;
+		}
+		try {
+			const bytes = await this.log.log.blocks.get(hash);
+			return bytes ?? undefined;
+		} catch {
+			return;
 		}
 	}
 
