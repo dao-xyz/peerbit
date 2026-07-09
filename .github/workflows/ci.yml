@@ -513,6 +513,23 @@ jobs:
         # soft signal while the excluded set is driven down.
         continue-on-error: true
         run: pnpm --filter @peerbit/shared-log run test:shared-log-rust-core
+      - name: Test @peerbit/document conformance in rust-core mode
+        # Opt-in [default,native] conformance leg for the DOCUMENT layer: re-runs
+        # an allowlist of the EXISTING document suites with the native (rust) data
+        # plane engaged via PEERBIT_SHARED_LOG_RUST_CORE=1 (the same switch as the
+        # shared-log leg above; see test:document-rust-core and the switch in
+        # packages/clients/test-utils/src/session.ts). A store opened in the
+        # DEFAULT mode:"auto" builds its generic index on @peerbit/indexer-rust,
+        # so docs.index.index is a RustIndex on the switch peer (a hard in-suite
+        # guard asserts this so the leg cannot false-green as JS). The allowlist
+        # is anchored to the describes confirmed byte-for-byte green native
+        # (comparator / sort / paging / query surface); del-path block-store,
+        # native-internal append-path, and remote-indexed divergences are excluded
+        # (see test/NATIVE_CONFORMANCE.md) and this leg widens as they are made
+        # backend-agnostic. Non-blocking initially: a soft signal while the
+        # excluded set is driven down.
+        continue-on-error: true
+        run: pnpm --filter @peerbit/document run test:document-rust-core
       - name: Test @peerbit/network-rust in the browser
         # Runs the browser-compatible subset (wire/topic-control/fanout codec
         # parity) under headless Chromium, proving the wasm module loads and

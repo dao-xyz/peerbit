@@ -62,6 +62,7 @@ import type { FanoutTree, TopicControlPlane } from "@peerbit/pubsub";
 import { MissingResponsesError, RPCMessage, ResponseV0 } from "@peerbit/rpc";
 import {
 	AbsoluteReplicas,
+	RawExchangeHeadsMessage,
 	SharedLog,
 	decodeReplicas,
 } from "@peerbit/shared-log";
@@ -13318,11 +13319,19 @@ describe("index", () => {
 							},
 						});
 
-						// Omit synchronization so results are always the same (HACKY)
+						// Omit synchronization so results are always the same (HACKY).
+						// Drop the exchange-heads message on BOTH backends: the JS wire
+						// sends ExchangeHeadsMessage, while the native (rust-core) backend
+						// syncs via RawExchangeHeadsMessage. Keying only on the JS class
+						// name would let native sync leak through and make the results
+						// non-deterministic under PEERBIT_SHARED_LOG_RUST_CORE=1.
 						// TODO types
 						const onMessage = store.docs.log.rpc["_responseHandler"];
 						store.docs.log.rpc["_responseHandler"] = (msg: any, ctx: any) => {
-							if (msg.constructor.name === "ExchangeHeadsMessage") {
+							if (
+								msg.constructor.name === "ExchangeHeadsMessage" ||
+								msg instanceof RawExchangeHeadsMessage
+							) {
 								return;
 							}
 							return onMessage(msg, ctx);
