@@ -779,6 +779,19 @@ class PreparedRawExchangeEntry<T> extends Entry<T> {
 		return this.hash === other.hash || this.materialize().equals(other);
 	}
 
+	/**
+	 * Read boundary: when this lazy head is resolved from the entry-index cache
+	 * a consumer is about to read it, so decode into a full {@link EntryV0}
+	 * whose meta/payload/signature fields are populated. The entry index caches
+	 * the returned entry, replacing this hollow wrapper, so subsequent reads and
+	 * `EntryV0.equals` see the canonical entry. Only reached on the read path;
+	 * the wire/sync fusion path never resolves cached heads, so laziness there
+	 * is preserved.
+	 */
+	override toMaterialized(): Entry<T> {
+		return this.materialize();
+	}
+
 	toSignable(): Entry<T> {
 		return this.materialize().toSignable();
 	}
