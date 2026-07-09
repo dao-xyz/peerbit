@@ -868,8 +868,24 @@ export class EntryIndex<T> {
 				? true
 				: options.type === "full"
 			: false;
+		const requestedResolveOptions: ResolveFullyOptions | undefined =
+			resolveInFull ? (options as ResolveFullyOptions) : undefined;
+		// The native graph can list a HEAD whose block is not materialized in the
+		// store: pruning a child promotes its (possibly block-less) parent to a head
+		// (rust `LogGraphIndex.delete` -> `set_head`, which only consults the graph's
+		// entry map, never the block store). Resolving such a head in full would
+		// otherwise throw "Failed to load entry from head". Mirror the tolerance the
+		// non-full path already has (a block-less head yields no shallow entry and is
+		// filtered out) and `resolveMany`'s own `ignoreMissing` branch: default
+		// `ignoreMissing` to true here so a block-less head is SKIPPED rather than
+		// crashing. A block-less head is left non-authoritative (not materialized);
+		// callers that explicitly set `ignoreMissing: false` still opt out.
 		const resolveInFullOptions: ResolveFullyOptions | undefined = resolveInFull
-			? (options as ResolveFullyOptions)
+			? typeof requestedResolveOptions === "object"
+				? requestedResolveOptions.ignoreMissing === undefined
+					? { ...requestedResolveOptions, ignoreMissing: true }
+					: requestedResolveOptions
+				: { type: "full", ignoreMissing: true }
 			: undefined;
 		const shape = !resolveInFull
 			? ((options as { shape?: Shape } | undefined)?.shape as Shape | undefined)

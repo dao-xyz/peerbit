@@ -127,6 +127,59 @@ describe("native graph", () => {
 		}
 	});
 
+	it("tolerates a block-less native graph head in getHeads(true)", async () => {
+		// The native graph can list a HEAD whose block is not materialized in the
+		// store: pruning a child promotes its parent to a head (rust
+		// `LogGraphIndex.delete` -> `set_head`, which only consults the graph's
+		// entry map, never the block store). Resolving that head in full must NOT
+		// throw "Failed to load entry from head" — it should skip the block-less
+		// head, matching the tolerance the JS path already has.
+		const blockLessStore = new AnyBlockStore();
+		await blockLessStore.start();
+		const log = new Log<Uint8Array>();
+		await log.open(blockLessStore, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		try {
+			const present = (
+				await log.append(new Uint8Array([1]), { meta: { next: [] } })
+			).entry;
+			const child = (
+				await log.append(new Uint8Array([2]), { meta: { next: [present] } })
+			).entry;
+
+			// Drop the parent's block from the store AND from the entry-index resolve
+			// cache so a full resolve must hit the (now missing) block.
+			await blockLessStore.rm(present.hash);
+			expect(await blockLessStore.has(present.hash)).equal(false);
+			(log.entryIndex as any).cache.del(present.hash);
+
+			// Pruning the child from the graph promotes the block-less parent to a head.
+			const graph = log.entryIndex.properties.nativeGraph!.graph;
+			graph.delete(child.hash);
+			expect(graph.heads(undefined)).to.include(present.hash);
+
+			// getHeads(true) must NOT throw; the block-less head is skipped.
+			let heads: Array<{ hash: string }> | undefined;
+			let error: Error | undefined;
+			try {
+				heads = (await log.getHeads(true).all()) as Array<{ hash: string }>;
+			} catch (e) {
+				error = e as Error;
+			}
+			expect(error, error?.message).to.equal(undefined);
+			expect(heads!.map((head) => head.hash)).to.not.include(present.hash);
+
+			// The block-less head stays non-authoritative (skipped), so a getHeads(true)
+			// that resolves in full returns only fully-materialized heads.
+			expect(heads).to.deep.equal([]);
+		} finally {
+			await log.close();
+			await blockLessStore.stop();
+		}
+	});
+
 	it("serves shaped native graph heads without index reads", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
