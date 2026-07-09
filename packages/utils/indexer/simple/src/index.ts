@@ -627,6 +627,13 @@ export class HashmapIndices implements types.Indices {
 			(i) => i.schema === properties.schema,
 		);
 		if (existingIndex) {
+			// This scope is node-cached and outlives a program close, so a prior
+			// close may have stopped the cached index. Restart it before handing
+			// it back so the next read does not hit assertOpen -> NotStartedError.
+			// start() is idempotent (no-op when already open).
+			if (!this.closed) {
+				await existingIndex.index.start();
+			}
 			return existingIndex.index as HashmapIndex<T, NestedType>;
 		}
 		const index = new HashmapIndex<T, NestedType>();
