@@ -26,6 +26,148 @@ import {
 import { Peerbit } from "peerbit";
 import { InMemoryNetwork, InMemorySession } from "./inmemory-libp2p.js";
 
+// ---------------------------------------------------------------------------
+// [default,native] conformance auto-matrix switch
+// ---------------------------------------------------------------------------
+// When PEERBIT_SHARED_LOG_RUST_CORE=1 is set, every real (non in-memory,
+// non-external-libp2p) TestSession peer is created with the native Rust data
+// plane: native block/any-store storage, the native (rust) indexer, and the
+// `sharedLogNativeDefaults` preset so a PLAIN `shared-log.open()` auto-nativizes
+// (native backbone + native graph + raw exchange-heads sync). This lets the
+// EXISTING shared-log suites run unmodified against the native backend so we can
+// diff native-vs-JS behaviour.
+//
+// We deliberately DO NOT engage the native network/transport core here
+// (rustCore:false, wireSync:false): TestSession builds its own JS libp2p
+// services (DirectBlock/TopicControlPlane/FanoutTree) and hands the finished
+// instance to `Peerbit.create({ libp2p })`. `Peerbit.create` refuses the
+// `network` option together with an external libp2p instance, and running a
+// second (native) DirectStream over the same node would conflict. So the switch
+// injects the storage + indexer via the normal create options and stamps
+// `sharedLogNativeDefaults` onto the instance AFTER create (with
+// `nativeWireSync: undefined`, i.e. raw exchange-heads over the JS wire).
+//
+// Default (env-unset) runs are byte-for-byte unchanged: `nativeMatrixConfig()`
+// returns undefined and none of the injection code runs.
+
+const SHARED_LOG_RUST_CORE_ENV = "PEERBIT_SHARED_LOG_RUST_CORE";
+
+const isSharedLogRustCoreEnabled = (): boolean =>
+	process.env[SHARED_LOG_RUST_CORE_ENV] === "1" ||
+	process.env[SHARED_LOG_RUST_CORE_ENV] === "true";
+
+type NativeMatrixConfig = {
+	storage: CreateOptions["storage"];
+	indexer: NonNullable<CreateOptions["indexer"]>;
+	sharedLogNativeDefaults: unknown;
+};
+
+let nativeMatrixConfigPromise: Promise<NativeMatrixConfig> | undefined;
+
+/**
+ * Build the native storage + indexer + shared-log defaults for the matrix.
+ * Hard-fails (throws) if the native modules are not present, so a broken/omitted
+ * native build surfaces as a loud error rather than a silent false-green
+ * default-backend run.
+ */
+const buildNativeMatrixConfig = async (): Promise<NativeMatrixConfig> => {
+	// Storage + indexer presets from the `peerbit/rust` client preset, but with
+	// the native network core explicitly disabled (see the block comment above).
+	// `network: false` yields `{ storage, indexer }` only — no native transport
+	// runtime, no `sharedLogDefaults` wire-sync session.
+	const { createRustPeerbitOptions } = await import("peerbit/rust");
+
+	// Native-present guard: importing must yield a real callable. If the native
+	// package is stubbed/absent this throws here (loud), never false-green.
+	if (typeof createRustPeerbitOptions !== "function") {
+		throw new Error(
+			`${SHARED_LOG_RUST_CORE_ENV} is set but the native Rust data-plane module ` +
+				`(peerbit/rust) is not available. Refusing to run the "native" matrix ` +
+				`leg on the default backend (would be a false green).`,
+		);
+	}
+
+	const preset = createRustPeerbitOptions({ network: false });
+	const storage = preset.storage as CreateOptions["storage"];
+	const indexer = preset.indexer as NonNullable<CreateOptions["indexer"]>;
+
+	// Sanity-probe the native indexer once so an unbuildable wasm module fails
+	// here (loud) instead of mid-suite.
+	const probe = await indexer();
+	await (probe as { start?: () => Promise<void> }).start?.();
+	await (probe as { stop?: () => Promise<void> }).stop?.();
+
+	// Mirrors the `sharedLogNativeDefaults` shape produced by peer.ts for the
+	// `peerbit/rust` preset, but WITHOUT a native wire-sync session (no native
+	// transport in the matrix — raw exchange-heads travel over the JS wire).
+	const sharedLogNativeDefaults = {
+		nativeBackbone: {},
+		nativeGraph: { optional: true },
+		sync: {
+			rawExchangeHeads: true,
+			nativeWireSync: undefined as unknown,
+		},
+	};
+
+	return { storage, indexer, sharedLogNativeDefaults };
+};
+
+const nativeMatrixConfig = (): Promise<NativeMatrixConfig> | undefined => {
+	if (!isSharedLogRustCoreEnabled()) {
+		return undefined;
+	}
+	nativeMatrixConfigPromise ??= buildNativeMatrixConfig();
+	return nativeMatrixConfigPromise;
+};
+
+/**
+ * Merge the native matrix storage/indexer into a peer's create options WITHOUT
+ * clobbering options a spec set explicitly (fill-only-undefined). Returns the
+ * options unchanged when the matrix is off.
+ */
+const applyNativeMatrixCreateOptions = <
+	O extends {
+		indexer?: CreateOptions["indexer"];
+		storage?: CreateOptions["storage"];
+	},
+>(
+	config: NativeMatrixConfig | undefined,
+	options: O,
+): O => {
+	if (!config) {
+		return options;
+	}
+	return {
+		...options,
+		indexer: options.indexer ?? config.indexer,
+		storage: options.storage ?? config.storage,
+	};
+};
+
+/**
+ * Post-create injection of `sharedLogNativeDefaults` so a plain
+ * `shared-log.open()` on this peer auto-nativizes. `sharedLogNativeDefaults` is
+ * declared readonly on Peerbit (it is normally set by the `network` create
+ * option, which is incompatible with the external libp2p instance TestSession
+ * builds), so we assign it here after the instance exists.
+ */
+const injectNativeMatrixDefaults = (
+	config: NativeMatrixConfig | undefined,
+	peer: Peerbit,
+): Peerbit => {
+	if (!config) {
+		return peer;
+	}
+	if ((peer as { sharedLogNativeDefaults?: unknown }).sharedLogNativeDefaults) {
+		// Respect a peer that already advertises native defaults (e.g. a
+		// `peerbit/rust` client); do not override its chosen preset.
+		return peer;
+	}
+	(peer as { sharedLogNativeDefaults?: unknown }).sharedLogNativeDefaults =
+		config.sharedLogNativeDefaults;
+	return peer;
+};
+
 export type LibP2POptions = Libp2pOptions<Libp2pExtendServices>;
 
 type CreateOptions = {
@@ -824,23 +966,29 @@ export class TestSession {
 			: m(options);
 
 		const session = await SSession.disconnected(n, optionsWithServices);
+		const matrix = await nativeMatrixConfig();
 		return new TestSession(
 			session,
 			(await Promise.all(
 				session.peers.map((x, ix) =>
-					Array.isArray(options)
-						? Peerbit.create({
-								libp2p: x,
-								directory: options[ix]?.directory,
-								indexer: options[ix]?.indexer,
-								storage: options[ix]?.storage,
-							})
-						: Peerbit.create({
-								libp2p: x,
-								directory: options?.directory,
-								indexer: options?.indexer,
-								storage: options?.storage,
-							}),
+					(Array.isArray(options)
+						? Peerbit.create(
+								applyNativeMatrixCreateOptions(matrix, {
+									libp2p: x,
+									directory: options[ix]?.directory,
+									indexer: options[ix]?.indexer,
+									storage: options[ix]?.storage,
+								}),
+							)
+						: Peerbit.create(
+								applyNativeMatrixCreateOptions(matrix, {
+									libp2p: x,
+									directory: options?.directory,
+									indexer: options?.indexer,
+									storage: options?.storage,
+								}),
+							)
+					).then((peer) => injectNativeMatrixDefaults(matrix, peer)),
 				),
 			)) as Peerbit[],
 		);
