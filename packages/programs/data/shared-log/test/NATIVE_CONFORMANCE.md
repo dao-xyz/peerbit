@@ -49,6 +49,7 @@ backend:
 | `<setup> replication references` (joins-by-ref, next-blocks)  | green         |
 | `<setup> replication replication one way` (1/1000/large/…)    | green*        |
 | `<setup> replication replication two way` (partial synced)    | 6/6           |
+| `<setup> redundancy only sends entries once` (2/3 peers)      | 8/8           |
 | `<setup> canReplicate`                                        | 4/4           |
 | `<setup> replication degree` (prune-family + commit options)  | green*        |
 | `<setup> start/stop replicate on connect`                     | 2/2           |
@@ -57,6 +58,18 @@ backend:
 `<setup>` is `u32-simple` or `u64-iblt` (the active `testSetups`). `replicate`'s
 `persistance` block includes the close→reopen restart cases, which pass thanks to
 the rust-indexer reopen fix (#1019).
+
+The `redundancy only sends entries once` family (2 peers dynamic/fixed/write-after-
+open, 3 peers) was folded in by making the `getReceivedHeads` test helper
+backend-agnostic (see the Class-B root-cause note below): it now counts heads
+from both `ExchangeHeadsMessage` (JS wire) and `RawExchangeHeadsMessage` (native
+raw exchange), at the same per-entry granularity, so the "each head received
+once" assertion measures the same thing on both backends. The companion
+repair-hint filter these tests use to exclude legitimate re-sends was likewise
+made backend-agnostic (`isRepairHintExchangeHeadsMessage`, recognizing the
+`EXCHANGE_HEADS_REPAIR_HINT` reserved bit on both message types), since the
+product tags that bit identically on both paths (`pushRepairEntries` in
+`src/index.ts`). Both changes are test-only and no-ops for the default (JS) count.
 
 `start/stop replicate on connect` is the single test lifted from the otherwise
 memory-only `start/stop` describe: it was native-red because a live-replicated
@@ -82,16 +95,31 @@ convergence. The native path converges to the same state but moves a different
 number of frames (e.g. via authoritative push / different sync batching), so the
 counters differ. Convergence is correct; only the counter assertion fails.
 
-- `redundancy > only sends entries once …` (2 peers dynamic/fixed/write-after-open, 3 peers)
 - `one way > it does not fetch missing entries from remotes when exchanging heads to remote`
 - `replication > retries simple sync when first response is dropped`
 - `leader > will consider in flight` (leader.spec — not in the allowlist describes)
 
-**Root cause for the future widening:** `getReceivedHeads` (and the per-message
-counters layered on it) is backend-coupled — it counts JS-wire receive events
-that the native raw-exchange path does not emit the same way. Making these
-counters backend-agnostic (or asserting on convergence instead of counts) is the
-next widening step, which would fold most of Class-B into the leg.
+**`redundancy > only sends entries once …` — RESOLVED and now covered.** These
+were excluded because `getReceivedHeads` only recognized the JS-wire
+`ExchangeHeadsMessage`; under native, heads arrive via `RawExchangeHeadsMessage`,
+so the helper counted 0 heads and the assertion failed even though the log
+converged correctly. **Root cause fixed:** `getReceivedHeads` now counts heads
+from both message types at the same per-entry granularity (see "What the leg
+covers" above), and the tests' repair-hint exclusion filter was made
+backend-agnostic (`isRepairHintExchangeHeadsMessage`) so native repair hints —
+which carry the same `EXCHANGE_HEADS_REPAIR_HINT` reserved bit over
+`RawExchangeHeadsMessage` — do not leak into the no-redundancy count. The "sends
+once" property genuinely holds on native (each head is re-sent only via the same
+repair-hint mechanism, tagged identically), so this was a helper/filter artifact,
+not a behavioral divergence. The 8 tests (4 variants × 2 setups) are now in the
+allowlist, 8/8 green.
+
+**Root cause for the remaining Class-B entries:** the per-message counters layered
+on the JS wire (e.g. fetch-event counts, dropped-response retry counts) are still
+backend-coupled — they count JS-wire receive events that the native raw-exchange
+path does not emit the same way. Making those counters backend-agnostic (or
+asserting on convergence instead of counts) is the next widening step for the
+still-excluded Class-B tests above.
 
 ### Class-C — over-nativization
 

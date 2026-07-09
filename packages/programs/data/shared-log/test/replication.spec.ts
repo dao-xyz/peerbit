@@ -14,7 +14,6 @@ import mapSeries from "p-each-series";
 import sinon from "sinon";
 import { BlocksMessage } from "../src/blocks.js";
 import {
-	EXCHANGE_HEADS_REPAIR_HINT,
 	ExchangeHeadsMessage,
 	RequestIPrune,
 	ResponseIPrune,
@@ -54,6 +53,7 @@ import {
 	getDeterministicTestSeed,
 	getReceivedHeads,
 	getUnionSize,
+	isRepairHintExchangeHeadsMessage,
 	slowDownMessage,
 	slowDownMessagesWithSeed,
 	slowDownPubSubWritesWithSeed,
@@ -1053,11 +1053,7 @@ testSetups.forEach((setup) => {
 
 					const dataMessages1 = getReceivedHeads(
 						message1.filter(
-							([msg]) =>
-								!(
-									msg instanceof ExchangeHeadsMessage &&
-									(msg.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) !== 0
-								),
+							([msg]) => !isRepairHintExchangeHeadsMessage(msg),
 						),
 					);
 					const uniqueBounceBack = new Set(

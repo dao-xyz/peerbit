@@ -6,8 +6,10 @@ import type { TopicControlPlane } from "@peerbit/pubsub";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import {
+	EXCHANGE_HEADS_REPAIR_HINT,
 	type EntryWithRefs,
 	ExchangeHeadsMessage,
+	RawExchangeHeadsMessage,
 } from "../src/exchange-heads.js";
 import {
 	type ReplicationDomainHash,
@@ -241,17 +243,59 @@ export const slowDownPubSubWritesWithSeed = (
 	};
 };
 
+/**
+ * Collect the heads received across a captured message stream, one returned
+ * entry per received head. Consumers only read `.entry.hash` and the array
+ * length, so this counts heads at the ENTRY granularity — "sent once" means
+ * each head hash appears exactly as many times as it was received, regardless
+ * of how a backend batches heads into messages.
+ *
+ * The JS backend delivers heads via {@link ExchangeHeadsMessage} (heads are
+ * {@link EntryWithRefs} with a real `.entry.hash`). The native backend delivers
+ * the same heads via {@link RawExchangeHeadsMessage}, where each head is a
+ * `RawEntryWithRefs`/`StashBackedRawEntryWithRefs` carrying its `.hash` string
+ * directly (and its block bytes lazily). Reading `.hash` never forces block
+ * materialization, so counting stays cheap on both paths. Making the helper
+ * count both message types folds the redundancy ("only sends entries once")
+ * tests into the native conformance leg without changing JS counting.
+ */
 export const getReceivedHeads = (
 	messages: [TransportMessage, PublicSignKey][],
 ): EntryWithRefs<any>[] => {
 	const heads: EntryWithRefs<any>[] = [];
-	for (const message of messages.filter(
-		(x) => x[0] instanceof ExchangeHeadsMessage,
-	) as [ExchangeHeadsMessage<any>, PublicSignKey][]) {
-		heads.push(...message[0].heads);
+	for (const [message] of messages) {
+		if (message instanceof ExchangeHeadsMessage) {
+			// JS path: preserve exact prior behaviour (real EntryWithRefs objects).
+			heads.push(...(message.heads as EntryWithRefs<any>[]));
+		} else if (message instanceof RawExchangeHeadsMessage) {
+			// Native path: expose the same `.entry.hash` shape per raw head. Only
+			// the hash identity is read; `.hash` does not materialize block bytes.
+			for (const rawHead of message.heads) {
+				heads.push({ entry: { hash: rawHead.hash } } as EntryWithRefs<any>);
+			}
+		}
 	}
 	return heads;
 };
+
+/**
+ * Whether a captured message is an exchange-heads message carrying the
+ * repair-hint reserved bit. Repair hints are legitimate re-sends (not
+ * redundancy), so the "only sends entries once" tests exclude them before
+ * asserting no head was sent twice.
+ *
+ * The product tags the bit identically on both backends' message types
+ * ({@link ExchangeHeadsMessage} on JS, {@link RawExchangeHeadsMessage} on
+ * native — see `pushRepairEntries` in src/index.ts), so this predicate must
+ * recognize both; a JS-only check lets native repair hints leak into the
+ * count and flake the no-redundancy assertion.
+ */
+export const isRepairHintExchangeHeadsMessage = (
+	message: TransportMessage,
+): boolean =>
+	(message instanceof ExchangeHeadsMessage ||
+		message instanceof RawExchangeHeadsMessage) &&
+	(message.reserved[0]! & EXCHANGE_HEADS_REPAIR_HINT) !== 0;
 
 export const waitForConverged = async (
 	fn: () => any,
