@@ -241,12 +241,12 @@ describe("all", () => {
 	tests(create, "persist", {
 		shapingSupported: false,
 		u64SumSupported: true,
-		iteratorsMutable: false,
+		iteratorsMutable: true,
 	});
 	tests(create, "transient", {
 		shapingSupported: false,
 		u64SumSupported: true,
-		iteratorsMutable: false,
+		iteratorsMutable: true,
 	});
 });
 
@@ -417,6 +417,34 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("keeps a sorted iterator stable across a native put batch", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const batchIndex = index as typeof index & {
+			putBatch: (values: BridgeDocument[]) => Promise<void>;
+		};
+
+		await index.put(new BridgeDocument("a", "peerbit", "first"));
+		await index.put(new BridgeDocument("c", "peerbit", "third"));
+		const iterator = index.iterate({
+			sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+		});
+		expect(
+			(await iterator.next(1)).map((result) => result.value.id),
+		).to.deep.equal(["a"]);
+
+		await batchIndex.putBatch([
+			new BridgeDocument("b", "peerbit", "second"),
+			new BridgeDocument("d", "peerbit", "fourth"),
+		]);
+
+		expect(
+			(await iterator.all()).map((result) => result.value.id),
+		).to.deep.equal(["b", "c", "d"]);
+		await indices.drop();
+	});
+
 	it("coalesces a put and matching deletes through the native index", async () => {
 		const indices = create();
 		await indices.start();
@@ -491,6 +519,32 @@ describe("native planner bridge", () => {
 		const results = await index.iterate().all();
 		expect(results.map((result) => result.value.id)).to.deep.equal(["b"]);
 
+		await indices.drop();
+	});
+
+	it("does not skip after exact-id deletion of an already yielded row", async () => {
+		const indices = create();
+		await indices.start();
+		const index = await indices.init({ schema: BridgeDocument });
+		const exactDeleteIndex = index as typeof index & {
+			delIds: (deleteIds: string[]) => Promise<ReturnType<typeof toId>[]>;
+		};
+
+		await index.put(new BridgeDocument("a", "stale", "first"));
+		await index.put(new BridgeDocument("b", "keep", "second"));
+		await index.put(new BridgeDocument("c", "keep", "third"));
+		const iterator = index.iterate({
+			sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+		});
+		expect(
+			(await iterator.next(1)).map((result) => result.value.id),
+		).to.deep.equal(["a"]);
+
+		await exactDeleteIndex.delIds(["a"]);
+
+		expect(
+			(await iterator.all()).map((result) => result.value.id),
+		).to.deep.equal(["b", "c"]);
 		await indices.drop();
 	});
 
