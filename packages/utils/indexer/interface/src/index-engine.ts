@@ -89,6 +89,17 @@ export type IndexIterator<
 	done: () => boolean | undefined;
 	pending: () => MaybePromise<number>;
 	close: () => MaybePromise<void>;
+	/**
+	 * Mark results claimed or enqueued by a higher-level live-update path as
+	 * consumed by this iterator.
+	 *
+	 * Mutable iterators can implement this hook to keep subsequent pages and
+	 * pending counts from returning those same ids again. Callers must only mark
+	 * ids once another delivery path owns them (for example, after enqueueing a
+	 * local result or successfully sending a remote push). Snapshot iterators may
+	 * omit this hook.
+	 */
+	markYielded?: (ids: Iterable<IdKey>) => MaybePromise<void>;
 };
 
 /**

@@ -3346,6 +3346,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				yielded.add(idKey(result.id));
 			}
 		};
+		const markYieldedIds = (ids: Iterable<types.IdKey>) => {
+			for (const id of ids) {
+				yielded.add(idKey(id));
+			}
+			mutationMode = true;
+		};
 
 		const fetch = async (
 			n: number,
@@ -3487,6 +3493,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return results;
 			},
 			next,
+			markYielded: markYieldedIds,
 			done: () => (explicitlyClosed || this.isClosing() ? true : done),
 			pending: async () => {
 				if (explicitlyClosed) {

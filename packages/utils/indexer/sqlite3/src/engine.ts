@@ -763,6 +763,13 @@ export class SQLiteIndex<T extends Record<string, any>>
 		let kept: number | undefined = undefined;
 		let bindable: any[] = [];
 		let sqlFetch: string | undefined = undefined;
+		const markYieldedIds = (ids: Iterable<types.IdKey>) => {
+			for (const id of ids) {
+				yielded.add(idKey(id));
+			}
+			mutationMode = true;
+			kept = undefined;
+		};
 
 		const normalizedQuery = new PlannableQuery({
 			query: coerceLocalQueries(request?.query),
@@ -1081,6 +1088,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 				this.clearupIterator(requestId);
 			},
 			next,
+			markYielded: markYieldedIds,
 			pending: async () => {
 				if (explicitlyClosed) {
 					return 0;

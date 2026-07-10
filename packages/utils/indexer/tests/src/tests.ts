@@ -4213,6 +4213,33 @@ export const tests = (
 				}
 			});
 
+			it("can mark live results delivered outside the iterator as yielded", async () => {
+				if (!properties.iteratorsMutable) {
+					return;
+				}
+
+				await put(0);
+				await put(1);
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.id)).to.deep.equal([
+					"0",
+				]);
+				await put(2);
+				expect(iterator.markYielded).to.be.a("function");
+				await iterator.markYielded!([toId("2")]);
+
+				expect(await iterator.pending()).to.equal(1);
+				expect((await iterator.next(2)).map((x) => x.value.id)).to.deep.equal([
+					"1",
+				]);
+				expect(await iterator.pending()).to.equal(0);
+				expect(iterator.done()).to.be.true;
+			});
+
 			it("tracks filtered updates without duplicates", async () => {
 				if (!properties.iteratorsMutable) {
 					return;

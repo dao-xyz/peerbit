@@ -15860,12 +15860,31 @@ describe("index", () => {
 						if (push) {
 							await notificationPromise!.promise;
 							await waitForResolved(
+								async () => {
+									const serverIndex = replicator.docs.index as any;
+									const serverIteratorIds = [
+										...serverIndex._resultQueue.keys(),
+									];
+									expect(serverIteratorIds).to.have.length(1);
+									expect(
+										await serverIndex._resumableIterators.getPending(
+											serverIteratorIds[0],
+										),
+									).to.equal(0);
+								},
+								{ timeout: 30_000 },
+							);
+							await waitForResolved(
 								async () => expect(await iterator.pending()).to.equal(1),
 								{ timeout: 30_000 },
 							);
 							const batch = await iterator.next(1);
 							expect(batch).to.have.length(1);
 							expect(batch[0].id).to.equal(docId);
+							await waitForResolved(
+								async () => expect(await iterator.pending()).to.equal(0),
+								{ timeout: 30_000 },
+							);
 						} else {
 							await delay(5_000); // ensure we didn't receive a pushed batch
 							expect(await iterator.pending()).to.equal(1);
