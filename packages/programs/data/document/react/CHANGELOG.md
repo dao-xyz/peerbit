@@ -1,5 +1,14 @@
 # @peerbit/document-react
 
+## 1.0.51
+
+### Patch Changes
+
+- Updated dependencies [[`618299f`](https://github.com/dao-xyz/peerbit/commit/618299fcfc27ec7512e15b0395211b1ef9043613), [`4f7c098`](https://github.com/dao-xyz/peerbit/commit/4f7c0989c161ea0f85ad07f9b7be5f4cebd647a8)]:
+  - @peerbit/document@13.1.6
+  - @peerbit/indexer-interface@3.0.6
+  - @peerbit/react@1.1.30
+
 ## 1.0.50
 
 ### Patch Changes

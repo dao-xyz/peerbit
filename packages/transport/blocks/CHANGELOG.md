@@ -1,5 +1,11 @@
 # Changelog
 
+## 4.2.2
+
+### Patch Changes
+
+- [#1033](https://github.com/dao-xyz/peerbit/pull/1033) [`822fa60`](https://github.com/dao-xyz/peerbit/commit/822fa6013a7cf6d54fba6977c3a376076b1499c5) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Cancel active relay proxy lookups when the block transport stops, and reject late provider results before they can start a timeout-backed remote read, so shutdown does not wait for the request timeout.
+
 ## 4.2.1
 
 ### Patch Changes

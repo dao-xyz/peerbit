@@ -1,5 +1,30 @@
 # Changelog
 
+## 13.1.6
+
+### Patch Changes
+
+- [#1035](https://github.com/dao-xyz/peerbit/pull/1035) [`618299f`](https://github.com/dao-xyz/peerbit/commit/618299fcfc27ec7512e15b0395211b1ef9043613) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Batch document result head reads through a new ordered `Log.getMany()` API.
+
+  Document search, queued iterator, and pushed-update result construction now resolve each result page's log heads in one block-store batch while preserving result order, duplicate hashes, missing/pruned entries, and resolved-versus-indexed behavior. Full log reads already materialize native entries at the entry-index boundary, so result construction no longer probes serialization or retries the same block through a second decode path.
+
+- [#957](https://github.com/dao-xyz/peerbit/pull/957) [`4f7c098`](https://github.com/dao-xyz/peerbit/commit/4f7c0989c161ea0f85ad07f9b7be5f4cebd647a8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep paginated sorted iterators complete and duplicate-free when indexed rows are inserted, updated, or deleted between pages.
+
+  After observing a mutation, an iterator keeps the ids it has already yielded and rescans the current result set. This costs O(N) query work per subsequent page and O(yielded ids) memory; consuming a large changing result set in many small pages can therefore approach O(N²) work.
+
+  Allow live-query layers to mark externally delivered ids as yielded so mutable index iterators do not count or emit the same update twice.
+
+- Updated dependencies [[`618299f`](https://github.com/dao-xyz/peerbit/commit/618299fcfc27ec7512e15b0395211b1ef9043613), [`4f7c098`](https://github.com/dao-xyz/peerbit/commit/4f7c0989c161ea0f85ad07f9b7be5f4cebd647a8), [`0d7f324`](https://github.com/dao-xyz/peerbit/commit/0d7f324cb28a759b0aa6d9b2c9d970a383849e08)]:
+  - @peerbit/log@6.2.5
+  - @peerbit/indexer-sqlite3@3.0.9
+  - @peerbit/indexer-interface@3.0.6
+  - @peerbit/indexer-cache@0.2.9
+  - @peerbit/document-interface@3.2.48
+  - @peerbit/shared-log@13.2.6
+  - @peerbit/program@6.0.35
+  - @peerbit/indexer-simple@1.2.10
+  - @peerbit/rpc@6.1.3
+
 ## 13.1.5
 
 ### Patch Changes

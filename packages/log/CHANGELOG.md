@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.2.5
+
+### Patch Changes
+
+- [#1035](https://github.com/dao-xyz/peerbit/pull/1035) [`618299f`](https://github.com/dao-xyz/peerbit/commit/618299fcfc27ec7512e15b0395211b1ef9043613) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Batch document result head reads through a new ordered `Log.getMany()` API.
+
+  Document search, queued iterator, and pushed-update result construction now resolve each result page's log heads in one block-store batch while preserving result order, duplicate hashes, missing/pruned entries, and resolved-versus-indexed behavior. Full log reads already materialize native entries at the entry-index boundary, so result construction no longer probes serialization or retries the same block through a second decode path.
+
+- [#1032](https://github.com/dao-xyz/peerbit/pull/1032) [`0d7f324`](https://github.com/dao-xyz/peerbit/commit/0d7f324cb28a759b0aa6d9b2c9d970a383849e08) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Prevent concurrent full-entry reads from restoring cache entries after deletion.
+
+- Updated dependencies [[`822fa60`](https://github.com/dao-xyz/peerbit/commit/822fa6013a7cf6d54fba6977c3a376076b1499c5), [`4f7c098`](https://github.com/dao-xyz/peerbit/commit/4f7c0989c161ea0f85ad07f9b7be5f4cebd647a8)]:
+  - @peerbit/blocks@4.2.2
+  - @peerbit/indexer-sqlite3@3.0.9
+  - @peerbit/indexer-interface@3.0.6
+  - @peerbit/indexer-simple@1.2.10
+
 ## 6.2.4
 
 ### Patch Changes

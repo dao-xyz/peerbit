@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.6
+
+### Patch Changes
+
+- [#957](https://github.com/dao-xyz/peerbit/pull/957) [`4f7c098`](https://github.com/dao-xyz/peerbit/commit/4f7c0989c161ea0f85ad07f9b7be5f4cebd647a8) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep paginated sorted iterators complete and duplicate-free when indexed rows are inserted, updated, or deleted between pages.
+
+  After observing a mutation, an iterator keeps the ids it has already yielded and rescans the current result set. This costs O(N) query work per subsequent page and O(yielded ids) memory; consuming a large changing result set in many small pages can therefore approach O(N²) work.
+
+  Allow live-query layers to mark externally delivered ids as yielded so mutable index iterators do not count or emit the same update twice.
+
 ## 3.0.5
 
 ### Patch Changes
