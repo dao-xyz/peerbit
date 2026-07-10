@@ -24,7 +24,7 @@ import {
 import { CachedIndex, type QueryCacheOptions } from "@peerbit/indexer-cache";
 import * as indexerTypes from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
-import { BORSH_ENCODING, type Encoding, Entry } from "@peerbit/log";
+import { BORSH_ENCODING, type Encoding, type Entry } from "@peerbit/log";
 import { logger as loggerFn } from "@peerbit/logger";
 import { ClosedError, Program } from "@peerbit/program";
 import {
@@ -1179,35 +1179,42 @@ export class DocumentIndex<
 		}
 	}
 
-	/** Head entry safe to borsh-serialize into ResultIndexedValue.entries over the
-	 * document RPC. Under the native block store, this._log.log.get can return a
-	 * hollow entry whose payload bytes were never materialized on the JS side;
-	 * serializing it throws and aborts the whole RPC response. The complete entry is
-	 * in the block store keyed by hash, so recover it there. No-op for pure JS. */
-	private async getSerializableHead(
-		hash: string,
-	): Promise<Entry<any> | undefined> {
-		const head = await this._log.log.get(hash);
-		if (!head?.hash) return head ?? undefined;
-		try {
-			head.getStorageBytes(); // = serialize(head); throws on a hollow native entry
-			return head;
-		} catch {
-			try {
-				return await Entry.fromMultihash(this._log.log.blocks, head.hash);
-			} catch {
-				return head; // block absent (e.g. pruned) — preserve today's behavior
-			}
-		}
-	}
-
 	private async wrapPushResults(
 		matches: Array<WithContext<T> | WithContext<I>>,
 		resolve: boolean,
 	): Promise<types.Result[]> {
 		if (!matches.length) return [];
+		const headsByMatch: Array<Entry<Operation> | undefined> = [];
+		const preloadedHeadPositions = new Set<number>();
+		if (!resolve) {
+			headsByMatch.push(
+				...(await this._log.log.getMany(
+					matches.map((match) => match.__context.head),
+				)),
+			);
+		} else if (!this.indexedTypeIsDocumentType) {
+			const indexedPositions: number[] = [];
+			for (let i = 0; i < matches.length; i++) {
+				if (!(matches[i] instanceof this.documentType)) {
+					indexedPositions.push(i);
+				}
+			}
+			const indexedHeads = indexedPositions.length
+				? await this._log.log.getMany(
+						indexedPositions.map(
+							(position) => matches[position]!.__context.head,
+						),
+					)
+				: [];
+			for (let i = 0; i < indexedPositions.length; i++) {
+				const position = indexedPositions[i]!;
+				headsByMatch[position] = indexedHeads[i];
+				preloadedHeadPositions.add(position);
+			}
+		}
 		const results: types.Result[] = [];
-		for (const match of matches) {
+		for (let i = 0; i < matches.length; i++) {
+			const match = matches[i]!;
 			if (resolve) {
 				if (match instanceof this.documentType) {
 					const doc = match as WithContext<T>;
@@ -1225,10 +1232,19 @@ export class DocumentIndex<
 				}
 
 				const indexed = match as WithContext<I>;
-				const resolved = await this.resolveDocument({
+				const headWasPreloaded = preloadedHeadPositions.has(i);
+				const resolveInput: {
+					indexed: I;
+					head: string;
+					headEntry?: Entry<Operation> | null;
+				} = {
 					indexed,
 					head: indexed.__context.head,
-				});
+				};
+				if (headWasPreloaded) {
+					resolveInput.headEntry = headsByMatch[i] ?? null;
+				}
+				const resolved = await this.resolveDocument(resolveInput);
 
 				if (resolved) {
 					results.push(
@@ -1242,7 +1258,9 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = await this.getSerializableHead(indexed.__context.head);
+				const head = headWasPreloaded
+					? headsByMatch[i]
+					: await this._log.log.get(indexed.__context.head);
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1253,7 +1271,7 @@ export class DocumentIndex<
 				);
 			} else {
 				const indexed = match as WithContext<I>;
-				const head = await this.getSerializableHead(indexed.__context.head);
+				const head = headsByMatch[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1275,17 +1293,32 @@ export class DocumentIndex<
 			return [];
 		}
 		const drained = queueEntries.splice(0);
+		const headsWerePreloaded = !resolve || !this.indexedTypeIsDocumentType;
+		const heads = headsWerePreloaded
+			? await this._log.log.getMany(
+					drained.map((entry) => entry.value.__context.head),
+				)
+			: [];
 		const results: types.Result[] = [];
-		for (const entry of drained) {
+		for (let i = 0; i < drained.length; i++) {
+			const entry = drained[i]!;
 			const indexedUnwrapped = Object.assign(
 				Object.create(this.indexedType.prototype),
 				entry.value,
 			);
 			if (resolve) {
-				const value = await this.resolveDocument({
+				const resolveInput: {
+					indexed: I;
+					head: string;
+					headEntry?: Entry<Operation> | null;
+				} = {
 					indexed: entry.value,
 					head: entry.value.__context.head,
-				});
+				};
+				if (headsWerePreloaded) {
+					resolveInput.headEntry = heads[i] ?? null;
+				}
+				const value = await this.resolveDocument(resolveInput);
 				if (value) {
 					results.push(
 						new types.ResultValue({
@@ -1298,7 +1331,9 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = await this.getSerializableHead(entry.value.__context.head);
+				const head = headsWerePreloaded
+					? heads[i]
+					: await this._log.log.get(entry.value.__context.head);
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -1308,7 +1343,7 @@ export class DocumentIndex<
 					}),
 				);
 			} else {
-				const head = await this.getSerializableHead(entry.value.__context.head);
+				const head = heads[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -3474,6 +3509,7 @@ export class DocumentIndex<
 		id?: indexerTypes.IdPrimitive;
 		indexed: I;
 		head: string;
+		headEntry?: Entry<Operation> | null;
 	}): Promise<{ value: T } | undefined> {
 		const id =
 			value.id ??
@@ -3495,7 +3531,10 @@ export class DocumentIndex<
 			return { value: obj as T };
 		}
 
-		const head = await this._log.log.get(value.head);
+		const head =
+			value.headEntry === undefined
+				? await this._log.log.get(value.head)
+				: (value.headEntry ?? undefined);
 		if (!head) {
 			return undefined; // we could end up here if we recently pruned the document and other peers never persisted the entry
 			// TODO update changes in index before removing entries from log entry storage
@@ -3633,7 +3672,10 @@ export class DocumentIndex<
 			this._resultQueue.set(query.idString, prevQueued);
 		}
 
-		const filteredResults: types.Result[] = [];
+		const candidates: Array<{
+			result: indexerTypes.IndexedResult<WithContext<I>>;
+			indexed: I;
+		}> = [];
 		const resolveDocumentsFlag = resolvesDocuments(fromQuery);
 		const replicateIndexFlag = replicatesIndex(fromQuery);
 		for (const result of toIterate) {
@@ -3655,11 +3697,33 @@ export class DocumentIndex<
 			) {
 				continue;
 			}
+			candidates.push({ result, indexed: indexedUnwrapped });
+		}
+
+		const headsWerePreloaded =
+			candidates.length > 0 &&
+			(!resolveDocumentsFlag || !this.indexedTypeIsDocumentType);
+		const heads = headsWerePreloaded
+			? await this._log.log.getMany(
+					candidates.map(({ result }) => result.value.__context.head),
+				)
+			: [];
+		const filteredResults: types.Result[] = [];
+		for (let i = 0; i < candidates.length; i++) {
+			const { result, indexed: indexedUnwrapped } = candidates[i]!;
 			if (resolveDocumentsFlag) {
-				const value = await this.resolveDocument({
+				const resolveInput: {
+					indexed: I;
+					head: string;
+					headEntry?: Entry<Operation> | null;
+				} = {
 					indexed: result.value,
 					head: result.value.__context.head,
-				});
+				};
+				if (headsWerePreloaded) {
+					resolveInput.headEntry = heads[i] ?? null;
+				}
+				const value = await this.resolveDocument(resolveInput);
 
 				if (!value) {
 					continue;
@@ -3675,7 +3739,7 @@ export class DocumentIndex<
 				);
 			} else {
 				const context = result.value.__context;
-				const head = await this.getSerializableHead(context.head);
+				const head = heads[i];
 				if (replicateIndexFlag) {
 					if (!head) {
 						continue;

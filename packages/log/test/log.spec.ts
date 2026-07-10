@@ -6,6 +6,7 @@ import {
 } from "@peerbit/stream-interface";
 import assert from "assert";
 import { expect } from "chai";
+import sinon from "sinon";
 import { Timestamp } from "../src/clock.js";
 import { Log } from "../src/log.js";
 import { signKey, signKey2, signKey3 } from "./fixtures/privateKey.js";
@@ -250,6 +251,107 @@ describe("properties", function () {
 			assert.deepStrictEqual(entry, undefined);
 			expect(observedFrom).to.deep.equal(fromPeers);
 			expect(observedPriority).to.eq(FOREGROUND_READ_MESSAGE_PRIORITY);
+		});
+
+		it("gets ordered entries, duplicates, and misses with one block batch read", async () => {
+			const localStore = new AnyBlockStore();
+			await localStore.start();
+			const source = new Log<string>();
+			const reader = new Log<string>();
+			await source.open(localStore, signKey, { encoding: JSON_ENCODING });
+			await reader.open(localStore, signKey2, { encoding: JSON_ENCODING });
+
+			let getManyStub: sinon.SinonStub | undefined;
+			let getSpy: sinon.SinonSpy | undefined;
+			try {
+				const { entry: first } = await source.append("first", {
+					meta: { next: [] },
+				});
+				const { entry: second } = await source.append("second", {
+					meta: { next: [] },
+				});
+				const missing = "zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J";
+				const stored = new Map([
+					[first.hash, await localStore.get(first.hash)],
+					[second.hash, await localStore.get(second.hash)],
+				]);
+				getManyStub = sinon
+					.stub(localStore, "getMany")
+					.callsFake(async (hashes) => hashes.map((hash) => stored.get(hash)));
+				getSpy = sinon.spy(localStore, "get");
+
+				const entries = await reader.getMany([
+					first.hash,
+					missing,
+					second.hash,
+					first.hash,
+				]);
+
+				expect(entries.map((entry) => entry?.hash)).to.deep.equal([
+					first.hash,
+					undefined,
+					second.hash,
+					first.hash,
+				]);
+				expect(await entries[0]!.getPayloadValue()).to.equal("first");
+				expect(await entries[2]!.getPayloadValue()).to.equal("second");
+				expect(getManyStub.callCount).to.equal(1);
+				expect(getManyStub.firstCall.args[0]).to.deep.equal([
+					first.hash,
+					missing,
+					second.hash,
+					first.hash,
+				]);
+				expect(getSpy.callCount).to.equal(0);
+			} finally {
+				getManyStub?.restore();
+				getSpy?.restore();
+				await Promise.all([source.close(), reader.close()]);
+				await localStore.stop();
+			}
+		});
+
+		it("preserves remote options when getMany falls back to per-entry reads", async () => {
+			const localStore = new AnyBlockStore();
+			await localStore.start();
+			const reader = new Log<string>();
+			await reader.open(localStore, signKey, { encoding: JSON_ENCODING });
+			const getManySpy = sinon.spy(localStore, "getMany");
+			const observedOptions: any[] = [];
+			const getStub = sinon
+				.stub(localStore, "get")
+				.callsFake(async (_hash, options) => {
+					observedOptions.push(options);
+					return undefined;
+				});
+
+			try {
+				const entries = await reader.getMany(
+					[
+						"zb2rhbnwihVVVVEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J",
+						"zb2rhYpDDgijHQyZRYovg3mKpgLDCBb89uFGFrRbYoiVCKGiX",
+					],
+					{ remote: { timeout: 123 } },
+				);
+
+				expect(entries).to.deep.equal([undefined, undefined]);
+				expect(getManySpy.callCount).to.equal(0);
+				expect(getStub.callCount).to.equal(2);
+				expect(
+					observedOptions.map((options) => options.remote.timeout),
+				).to.deep.equal([123, 123]);
+				expect(
+					observedOptions.map((options) => options.remote.priority),
+				).to.deep.equal([
+					FOREGROUND_READ_MESSAGE_PRIORITY,
+					FOREGROUND_READ_MESSAGE_PRIORITY,
+				]);
+			} finally {
+				getManySpy.restore();
+				getStub.restore();
+				await reader.close();
+				await localStore.stop();
+			}
 		});
 	});
 

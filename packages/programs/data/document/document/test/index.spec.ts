@@ -17542,31 +17542,50 @@ describe("index", () => {
 						},
 					});
 
-					const doc = new Document({ id: "fallback-wrap", name: "theta" });
-					await store.docs.put(doc);
-					const context = (doc as any).__context;
-					const indexed = Object.assign(new Indexable(doc), {
-						__context: context,
-					});
+					const docs = [
+						new Document({ id: "fallback-wrap-1", name: "theta" }),
+						new Document({ id: "fallback-wrap-2", name: "iota" }),
+					];
+					for (const doc of docs) {
+						await store.docs.put(doc);
+					}
+					const indexed = docs.map((doc) =>
+						Object.assign(new Indexable(doc), {
+							__context: (doc as any).__context,
+						}),
+					);
 					const resolveStub = sinon
 						.stub(store.docs.index as any, "resolveDocument")
 						.resolves(undefined);
+					const getManySpy = sinon.spy(store.docs.log.log, "getMany");
+					const getSpy = sinon.spy(store.docs.log.log, "get");
 
 					try {
 						const results = await (store.docs.index as any).wrapPushResults(
-							[indexed],
+							indexed,
 							true,
 						);
-						expect(results).to.have.length(1);
-						expect(results[0]).to.be.instanceOf(ResultIndexedValue);
+						expect(results).to.have.length(2);
 						expect(
-							(results[0] as ResultIndexedValue<Indexable>).indexed,
-						).to.equal(indexed);
+							results.map(
+								(result: ResultIndexedValue<Indexable>) => result.indexed,
+							),
+						).to.deep.equal(indexed);
 						expect(
-							(results[0] as ResultIndexedValue<Indexable>).entries,
-						).to.have.length(1);
+							results.every(
+								(result: ResultIndexedValue<Indexable>) =>
+									result.entries.length === 1,
+							),
+						).to.be.true;
+						expect(getManySpy.callCount).to.equal(1);
+						expect(getManySpy.firstCall.args[0]).to.deep.equal(
+							indexed.map((value) => value.__context.head),
+						);
+						expect(getSpy.callCount).to.equal(0);
 					} finally {
 						resolveStub.restore();
+						getManySpy.restore();
+						getSpy.restore();
 						await session.stop();
 					}
 				});
@@ -17589,16 +17608,27 @@ describe("index", () => {
 						},
 					});
 
-					const doc = new Document({ id: "fallback-queue", name: "lambda" });
-					await store.docs.put(doc);
-					const context = (doc as any).__context;
-					const indexed = Object.assign(new Indexable(doc), {
-						__context: context,
-					});
+					const docs = [
+						new Document({ id: "fallback-queue-1", name: "lambda" }),
+						new Document({ id: "fallback-queue-2", name: "mu" }),
+					];
+					for (const doc of docs) {
+						await store.docs.put(doc);
+					}
+					const indexed = docs.map((doc) =>
+						Object.assign(new Indexable(doc), {
+							__context: (doc as any).__context,
+						}),
+					);
 					const resolveStub = sinon
 						.stub(store.docs.index as any, "resolveDocument")
 						.resolves(undefined);
-					const queue = [{ id: doc.id, value: indexed }];
+					const getManySpy = sinon.spy(store.docs.log.log, "getMany");
+					const getSpy = sinon.spy(store.docs.log.log, "get");
+					const queue = docs.map((doc, index) => ({
+						id: doc.id,
+						value: indexed[index],
+					}));
 
 					try {
 						const results = await (store.docs.index as any).drainQueuedResults(
@@ -17606,16 +17636,28 @@ describe("index", () => {
 							true,
 						);
 						expect(queue).to.have.length(0);
-						expect(results).to.have.length(1);
-						expect(results[0]).to.be.instanceOf(ResultIndexedValue);
+						expect(results).to.have.length(2);
 						expect(
-							(results[0] as ResultIndexedValue<Indexable>).indexed,
-						).to.be.instanceOf(Indexable);
+							results.every(
+								(result: ResultIndexedValue<Indexable>) =>
+									result.indexed instanceof Indexable,
+							),
+						).to.be.true;
 						expect(
-							(results[0] as ResultIndexedValue<Indexable>).entries,
-						).to.have.length(1);
+							results.every(
+								(result: ResultIndexedValue<Indexable>) =>
+									result.entries.length === 1,
+							),
+						).to.be.true;
+						expect(getManySpy.callCount).to.equal(1);
+						expect(getManySpy.firstCall.args[0]).to.deep.equal(
+							indexed.map((value) => value.__context.head),
+						);
+						expect(getSpy.callCount).to.equal(0);
 					} finally {
 						resolveStub.restore();
+						getManySpy.restore();
+						getSpy.restore();
 						await session.stop();
 					}
 				});
