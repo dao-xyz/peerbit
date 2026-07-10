@@ -741,7 +741,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 		const countStmt = await this.properties.db.prepare(sqlTotalCount); */
 
 		let offset = 0;
-		let once = false;
+		let started = false;
+		let pagedInitialized = false;
+		let explicitlyClosed = false;
 		let requestId = uuid();
 		let hasMore = true;
 		let mutationMode = false;
@@ -774,7 +776,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			pageOptions?: { offset?: number; advance?: boolean },
 		) => {
 			const closeAsDone = () => {
-				once = true;
+				started = true;
 				hasMore = false;
 				kept = 0;
 				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
@@ -785,7 +787,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 			this.assertOpen();
 			try {
 				kept = undefined;
-				if (!once) {
+				if (!pagedInitialized) {
 					planningScope = this.planner.scope(normalizedQuery);
 
 					let { sql, bindable: toBind } = convertSearchRequestToQuery(
@@ -808,9 +810,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 
 					// Bump timeout timer
 					iterator.expire = Date.now() + this.iteratorTimeout;
+					pagedInitialized = true;
 				}
 
-				once = true;
+				started = true;
 
 				const allResults = await planningScope.perform(async () => {
 					const allResults: Record<string, any>[] = await stmt.all([
@@ -895,7 +898,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 		/* 			return fetch(request.fetch); */
 		const fetchAllFresh = async () => {
 			const closeAsDone = () => {
-				once = true;
+				started = true;
 				hasMore = false;
 				kept = 0;
 				return [] as IndexedResult<types.ReturnTypeFromShape<T, S>>[];
@@ -905,22 +908,22 @@ export class SQLiteIndex<T extends Record<string, any>>
 			}
 			this.assertOpen();
 			try {
-				planningScope = this.planner.scope(normalizedQuery);
+				const freshPlanningScope = this.planner.scope(normalizedQuery);
 				let { sql, bindable: toBind } = convertSearchRequestToQuery(
 					normalizedQuery,
 					this.tables,
 					this._rootTables,
 					{
-						planner: planningScope,
+						planner: freshPlanningScope,
 						shape: options?.shape,
 						fetchAll: true,
 					},
 				);
-				await planningScope.beforePrepare();
-				const stmt = await this.properties.db.prepare(sql, sql);
+				await freshPlanningScope.beforePrepare();
+				const freshStatement = await this.properties.db.prepare(sql, sql);
 				iterator.expire = Date.now() + this.iteratorTimeout;
-				const allResults: Record<string, any>[] = await planningScope.perform(
-					async () => stmt.all(toBind),
+				const allResults: Record<string, any>[] = await freshPlanningScope.perform(
+					async () => freshStatement.all(toBind),
 				);
 				const results: IndexedResult<types.ReturnTypeFromShape<T, S>>[] =
 					await Promise.all(
@@ -956,7 +959,7 @@ export class SQLiteIndex<T extends Record<string, any>>
 							};
 						}),
 					);
-				once = true;
+				started = true;
 				hasMore = false;
 				kept = 0;
 				offset += results.length;
@@ -973,6 +976,9 @@ export class SQLiteIndex<T extends Record<string, any>>
 		const next = async (
 			amount: number,
 		): Promise<IndexedResult<types.ReturnTypeFromShape<T, S>>[]> => {
+			if (explicitlyClosed) {
+				return [];
+			}
 			if (amount <= 0) {
 				return [];
 			}
@@ -1046,8 +1052,11 @@ export class SQLiteIndex<T extends Record<string, any>>
 		};
 		return {
 			all: async () => {
+				if (explicitlyClosed) {
+					return [];
+				}
 				if (
-					!once &&
+					!started &&
 					offset === 0 &&
 					!mutationMode &&
 					this.mutationVersion === iteratorMutationVersion
@@ -1065,27 +1074,31 @@ export class SQLiteIndex<T extends Record<string, any>>
 				return results;
 			},
 			close: () => {
-				once = true;
+				explicitlyClosed = true;
+				started = true;
 				hasMore = false;
 				kept = 0;
 				this.clearupIterator(requestId);
 			},
 			next,
 			pending: async () => {
+				if (explicitlyClosed) {
+					return 0;
+				}
 				if (this.isClosing()) {
-					once = true;
+					started = true;
 					hasMore = false;
 					kept = 0;
 					return 0;
 				}
 				this.assertOpen();
-				if (!hasMore) {
-					return 0;
-				}
 				if (mutationMode || this.mutationVersion !== iteratorMutationVersion) {
 					mutationMode = true;
 					iteratorMutationVersion = this.mutationVersion;
 					return pendingUnseen();
+				}
+				if (!hasMore) {
+					return 0;
 				}
 				if (kept != null) {
 					return kept;
@@ -1097,10 +1110,10 @@ export class SQLiteIndex<T extends Record<string, any>>
 				return kept;
 			},
 			done: () => {
-				if (this.isClosing()) {
+				if (explicitlyClosed || this.isClosing()) {
 					return true;
 				}
-				return once ? !hasMore : undefined;
+				return started ? !hasMore : undefined;
 			},
 		};
 	}

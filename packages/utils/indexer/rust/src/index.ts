@@ -2479,6 +2479,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						entry.value,
 						this.fieldEncoder(entry.value),
 					);
+					this.markMutationVisible();
 				}
 			}
 			return;
@@ -2534,6 +2535,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 						item.value,
 						this.fieldEncoder(item.value),
 					);
+					this.markMutationVisible();
 				}
 			}
 			await this.compactIfNeeded();
@@ -2601,9 +2603,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			});
 		}
 		if (!this.snapshotFile) {
-			const deleted = this.getNative()
-				.put_and_delete_matching(storeKey, id, value, fields, queryBytes)
-				.map((entry) => entry[0]);
+			const deletedEntries = this.getNative().put_and_delete_matching(
+				storeKey,
+				id,
+				value,
+				fields,
+				queryBytes,
+			);
+			this.markMutationVisible();
+			const deleted = deletedEntries.map((entry) => entry[0]);
 			this.mutationVersion++;
 			return deleted;
 		}
@@ -2611,6 +2619,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		return this.enqueueMutation(async () => {
 			await this.appendPut(storeKey, value);
 			this.getNative().put(storeKey, id, value, fields);
+			this.markMutationVisible();
 			const deletedEntries = this.getNativeCandidatesForPlan({
 				compiled,
 				sort: [],
@@ -2621,6 +2630,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					deletedEntries.map((entry) => keyToStoreKey(entry.id)),
 				);
 				this.getNative().delete_matching(queryBytes);
+				this.markMutationVisible();
 			}
 			await this.compactIfNeeded();
 			this.mutationVersion++;
@@ -2934,30 +2944,32 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}>,
 	): MaybePromise<types.IdKey[]> {
 		if (!this.snapshotFile) {
-			return prepared.flatMap((entry) =>
-				this.getNative()
-					.put_and_delete_keys(
-						entry.storeKey,
-						entry.id,
-						entry.value,
-						entry.fields,
-						entry.deleteKeys,
-					)
-					.map((deleted) => deleted[0]),
-			);
-		}
-
-		return this.enqueueMutation(async () => {
-			await this.appendPutAndDeletesBatch(prepared);
-			const deletedEntries = prepared.flatMap((entry) =>
-				this.getNative().put_and_delete_keys(
+			return prepared.flatMap((entry) => {
+				const deleted = this.getNative().put_and_delete_keys(
 					entry.storeKey,
 					entry.id,
 					entry.value,
 					entry.fields,
 					entry.deleteKeys,
-				),
-			);
+				);
+				this.markMutationVisible();
+				return deleted.map((item) => item[0]);
+			});
+		}
+
+		return this.enqueueMutation(async () => {
+			await this.appendPutAndDeletesBatch(prepared);
+			const deletedEntries = prepared.flatMap((entry) => {
+				const deleted = this.getNative().put_and_delete_keys(
+					entry.storeKey,
+					entry.id,
+					entry.value,
+					entry.fields,
+					entry.deleteKeys,
+				);
+				this.markMutationVisible();
+				return deleted;
+			});
 			await this.compactIfNeeded();
 			return deletedEntries.map((entry) => entry[0]);
 		});
@@ -3009,6 +3021,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		if (!this.snapshotFile) {
 			const deletedEntries = this.getNative().delete_keys(deleteKeys);
+			if (deletedEntries.length > 0) {
+				this.markMutationVisible();
+			}
 			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			return this.trackMutationIf(
 				deletedEntries.map((entry) => entry[0]),
@@ -3019,6 +3034,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.enqueueMutation(async () => {
 				await this.appendDeletes(deleteKeys);
 				const deletedEntries = this.getNative().delete_keys(deleteKeys);
+				if (deletedEntries.length > 0) {
+					this.markMutationVisible();
+				}
 				this.deleteNativeBackboneDocumentKeys(deleteKeys);
 				await this.compactIfNeeded();
 				return deletedEntries.map((entry) => entry[0]);
@@ -3051,11 +3069,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const native = this.getNative();
 		if (!this.snapshotFile && native.delete_keys_void) {
 			native.delete_keys_void(deleteKeys);
+			this.markMutationVisible();
 			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			return this.trackMutation(undefined);
 		}
 		if (!this.snapshotFile) {
-			native.delete_keys(deleteKeys);
+			const deleted = native.delete_keys(deleteKeys);
+			if (deleted.length > 0) {
+				this.markMutationVisible();
+			}
 			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			return this.trackMutation(undefined);
 		}
@@ -3064,8 +3086,12 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				await this.appendDeletes(deleteKeys);
 				if (native.delete_keys_void) {
 					native.delete_keys_void(deleteKeys);
+					this.markMutationVisible();
 				} else {
-					native.delete_keys(deleteKeys);
+					const deleted = native.delete_keys(deleteKeys);
+					if (deleted.length > 0) {
+						this.markMutationVisible();
+					}
 				}
 				this.deleteNativeBackboneDocumentKeys(deleteKeys);
 				await this.compactIfNeeded();
@@ -3085,11 +3111,17 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const native = this.getNative();
 		if (!this.snapshotFile && native.delete_keys_count) {
 			const deleted = native.delete_keys_count(deleteKeys);
+			if (deleted > 0) {
+				this.markMutationVisible();
+			}
 			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			return this.trackMutationIf(deleted, (count) => count > 0);
 		}
 		if (!this.snapshotFile) {
 			const deleted = native.delete_keys(deleteKeys);
+			if (deleted.length > 0) {
+				this.markMutationVisible();
+			}
 			this.deleteNativeBackboneDocumentKeys(deleteKeys);
 			return this.trackMutationIf(deleted.length, (count) => count > 0);
 		}
@@ -3099,6 +3131,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				const deleted = native.delete_keys_count
 					? native.delete_keys_count(deleteKeys)
 					: native.delete_keys(deleteKeys).length;
+				if (deleted > 0) {
+					this.markMutationVisible();
+				}
 				this.deleteNativeBackboneDocumentKeys(deleteKeys);
 				await this.compactIfNeeded();
 				return deleted;
@@ -3129,6 +3164,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					this.getNative().delete_matching(
 						encodeNativeQuerySpec(compiled.spec),
 					);
+					this.markMutationVisible();
 				}
 				this.mutationVersion++;
 			}
@@ -3153,6 +3189,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					this.getNative().delete_matching(
 						encodeNativeQuerySpec(compiled.spec),
 					);
+					this.markMutationVisible();
 				}
 				await this.compactIfNeeded();
 				this.mutationVersion++;
@@ -3299,6 +3336,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			>;
 		let mutationMode = false;
 		let iteratorMutationVersion = this.mutationVersion;
+		let explicitlyClosed = false;
 		const yielded = new Set<string>();
 		const idKey = (id: types.IdKey) => keyToStoreKey(id);
 		const markYielded = (
@@ -3357,6 +3395,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const next = async (
 			n: number,
 		): Promise<types.IndexedResults<types.ReturnTypeFromShape<T, S>>> => {
+			if (explicitlyClosed) {
+				return [] as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
+			}
 			if (n <= 0) {
 				return [] as types.IndexedResults<types.ReturnTypeFromShape<T, S>>;
 			}
@@ -3431,6 +3472,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 
 		return {
 			all: async () => {
+				if (explicitlyClosed) {
+					return [];
+				}
 				const results: types.IndexedResults<types.ReturnTypeFromShape<T, S>> =
 					[];
 				while (true) {
@@ -3443,8 +3487,11 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return results;
 			},
 			next,
-			done: () => (this.isClosing() ? true : done),
+			done: () => (explicitlyClosed || this.isClosing() ? true : done),
 			pending: async () => {
+				if (explicitlyClosed) {
+					return 0;
+				}
 				if (this.isClosing()) {
 					done = true;
 					return 0;
@@ -3458,6 +3505,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return done ? 0 : Math.max(0, getTotal() - offset);
 			},
 			close: () => {
+				explicitlyClosed = true;
 				done = true;
 			},
 		};
@@ -3629,11 +3677,13 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		if (!this.snapshotFile) {
 			this.getNative().put(storeKey, id, value, fields);
+			this.markMutationVisible();
 			return;
 		}
 		return this.enqueueMutation(async () => {
 			await this.appendPut(storeKey, value, encodedValue);
 			this.getNative().put(storeKey, id, value, fields);
+			this.markMutationVisible();
 			await this.compactIfNeeded();
 		});
 	}
@@ -3673,6 +3723,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return;
 			}
 			this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+			this.markMutationVisible();
 			return;
 		}
 		return this.enqueueMutation(async () => {
@@ -3686,6 +3737,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				)
 			) {
 				this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+				this.markMutationVisible();
 			}
 			await this.compactIfNeeded();
 		});
@@ -3730,6 +3782,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				return;
 			}
 			this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+			this.markMutationVisible();
 			return;
 		}
 		return this.enqueueMutation(async () => {
@@ -3745,6 +3798,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				)
 			) {
 				this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+				this.markMutationVisible();
 			}
 			await this.compactIfNeeded();
 		});
@@ -3797,9 +3851,15 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			});
 		}
 		if (!this.snapshotFile) {
-			return this.getNative()
-				.put_and_delete_keys(storeKey, id, value, fields, deleteKeys)
-				.map((entry) => entry[0]);
+			const deleted = this.getNative().put_and_delete_keys(
+				storeKey,
+				id,
+				value,
+				fields,
+				deleteKeys,
+			);
+			this.markMutationVisible();
+			return deleted.map((entry) => entry[0]);
 		}
 
 		return this.enqueueMutation(async () => {
@@ -3811,6 +3871,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				fields,
 				deleteKeys,
 			);
+			this.markMutationVisible();
 			await this.compactIfNeeded();
 			return deletedEntries.map((entry) => entry[0]);
 		});
@@ -3960,19 +4021,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					value,
 					...this.getSharedLogCoordinateNativePutArgs(fields),
 				);
+				this.markMutationVisible();
 				return [];
 			}
 		}
-		return nativePutCoordinate
-			.call(
-				native,
-				storeKey,
-				id,
-				value,
-				...this.getSharedLogCoordinateNativePutArgs(fields),
-				deleteKeys,
-			)
-			.map((entry) => entry[0]);
+		const deleted = nativePutCoordinate.call(
+			native,
+			storeKey,
+			id,
+			value,
+			...this.getSharedLogCoordinateNativePutArgs(fields),
+			deleteKeys,
+		);
+		this.markMutationVisible();
+		return deleted.map((entry) => entry[0]);
 	}
 
 	private putSharedLogCoordinateNativeValueAndDeleteKeysNoReturn(
@@ -3993,6 +4055,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					value,
 					...this.getSharedLogCoordinateNativePutArgs(fields),
 				);
+				this.markMutationVisible();
 				return;
 			}
 		}
@@ -4016,6 +4079,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			...this.getSharedLogCoordinateNativePutArgs(fields),
 			deleteKeys,
 		);
+		this.markMutationVisible();
 	}
 
 	private putSharedLogCoordinateNativeValuesAndDeleteKeysBatchNoReturn(
@@ -4077,6 +4141,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			this.byteElementIndexLimit,
 			entries.map((entry) => entry.deleteKeys),
 		);
+		this.markMutationVisible();
 	}
 
 	private putSharedLogCoordinateNativeEncodedValueAndDeleteKeysNoReturn(
@@ -4101,6 +4166,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			...this.getSharedLogCoordinateNativePutArgs(fields),
 			deleteKeys,
 		);
+		this.markMutationVisible();
 	}
 
 	private getSharedLogCoordinateFieldIds(): NonNullable<
@@ -4259,6 +4325,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		this.getNative().put(storeKey, id, value, this.fieldEncoder(value));
+		this.markMutationVisible();
 	}
 
 	private putNativeDocumentEncodedPartsBatch(
@@ -4304,6 +4371,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				suffixes,
 				this.nativeByteElementIndexLimit,
 			);
+			this.markMutationVisible();
 			return true;
 		} catch {
 			// Fall back to the per-entry native call, which already falls back again
@@ -4331,6 +4399,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				encodedValueParts.suffix,
 				this.nativeByteElementIndexLimit,
 			);
+			this.markMutationVisible();
 			return true;
 		} catch {
 			return false;
@@ -4345,6 +4414,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		if (!backbone?.putDocumentEncodedPartsStored) {
 			return false;
 		}
+		const previousValue = this.nativeBackboneStoredBytes(storeKey);
 		try {
 			backbone.putDocumentEncodedPartsStored(
 				storeKey,
@@ -4352,10 +4422,49 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				encodedValueParts.suffix,
 				this.nativeByteElementIndexLimit,
 			);
+			this.markMutationVisible();
 			return true;
 		} catch {
+			if (
+				!this.nativeBackboneBytesEqual(
+					previousValue,
+					this.nativeBackboneStoredBytes(storeKey),
+				)
+			) {
+				this.markMutationVisible();
+			}
 			return false;
 		}
+	}
+
+	private nativeBackboneStoredBytes(storeKey: string): Uint8Array | undefined {
+		try {
+			const backbone = this.nativeBackboneDocumentIndex;
+			const bytes =
+				backbone?.documentValueBytes?.(storeKey) ??
+				backbone?.documentEntry?.(storeKey)?.[1];
+			return bytes?.slice();
+		} catch {
+			return;
+		}
+	}
+
+	private nativeBackboneBytesEqual(
+		a: Uint8Array | undefined,
+		b: Uint8Array | undefined,
+	): boolean {
+		if (!a || !b) {
+			return a === b;
+		}
+		if (a.length !== b.length) {
+			return false;
+		}
+		for (let i = 0; i < a.length; i++) {
+			if (a[i] !== b[i]) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private putNativeBackboneDocumentEncodedValueStored(
@@ -4451,6 +4560,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 	): boolean {
 		const backbone = this.nativeBackboneDocumentIndex;
 		if (backbone?.putDocumentEncodedPartsStoredBatch && values.length > 0) {
+			const previousValues = values.map((entry) => {
+				const key = entry.storeKey ?? keyToStoreKey(entry.id);
+				return [key, this.nativeBackboneStoredBytes(key)] as const;
+			});
 			try {
 				backbone.putDocumentEncodedPartsStoredBatch(
 					values.map((entry) => ({
@@ -4460,8 +4573,20 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					})),
 					this.nativeByteElementIndexLimit,
 				);
+				this.markMutationVisible();
 				return true;
 			} catch {
+				if (
+					previousValues.some(
+						([key, previous]) =>
+							!this.nativeBackboneBytesEqual(
+								previous,
+								this.nativeBackboneStoredBytes(key),
+							),
+					)
+				) {
+					this.markMutationVisible();
+				}
 				// Fall back to single puts so older native-backbone objects remain usable.
 			}
 		}
@@ -4518,6 +4643,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				this.nativeBackboneDocumentIndex,
 				storeKeys,
 			);
+			if (deleted.some((value) => value !== 0)) {
+				this.markMutationVisible();
+			}
 			const deletedIds: types.IdKey[] = [];
 			for (let i = 0; i < storeKeys.length; i++) {
 				if (deleted[i] !== 0) {
@@ -4536,6 +4664,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const deletedIds: types.IdKey[] = [];
 		for (const key of storeKeys) {
 			if (deleteDocument.call(this.nativeBackboneDocumentIndex, key)) {
+				this.markMutationVisible();
 				const id = storeKeyToIdKey(key);
 				if (id) {
 					deletedIds.push(id);
@@ -4549,6 +4678,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		const deleteDocuments = this.nativeBackboneDocumentIndex?.deleteDocuments;
 		if (deleteDocuments) {
 			deleteDocuments.call(this.nativeBackboneDocumentIndex, storeKeys);
+			if (storeKeys.length > 0) {
+				this.markMutationVisible();
+			}
 			return;
 		}
 		const deleteDocument = this.nativeBackboneDocumentIndex?.deleteDocument;
@@ -4556,7 +4688,9 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			return;
 		}
 		for (const key of storeKeys) {
-			deleteDocument.call(this.nativeBackboneDocumentIndex, key);
+			if (deleteDocument.call(this.nativeBackboneDocumentIndex, key)) {
+				this.markMutationVisible();
+			}
 		}
 	}
 
@@ -4935,6 +5069,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					encodedValueParts.suffix,
 					this.nativeByteElementIndexLimit,
 				);
+				this.markMutationVisible();
 				return true;
 			} catch {
 				// Fall back to the proven TypeScript fact encoder for schemas whose
@@ -4950,6 +5085,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 					encodedValue,
 					this.nativeByteElementIndexLimit,
 				);
+				this.markMutationVisible();
 				return true;
 			} catch {
 				// Fall back to the proven TypeScript fact encoder for schemas whose
@@ -4958,6 +5094,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 		}
 		if (fields) {
 			this.getNative().put(storeKey, id, value, fields);
+			this.markMutationVisible();
 			return true;
 		}
 		return false;
@@ -5041,6 +5178,10 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 			throw new Error("Index has not been initialized");
 		}
 		return this.native;
+	}
+
+	private markMutationVisible(): void {
+		this.mutationVersion++;
 	}
 
 	private trackMutation<R>(result: MaybePromise<R>): MaybePromise<R> {

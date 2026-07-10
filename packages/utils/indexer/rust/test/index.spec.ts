@@ -445,6 +445,72 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("invalidates iterators after a visible put even when trailing compaction fails", async () => {
+		const directory = createPersistenceDirectory();
+		const indices = create(directory);
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocument });
+			await index.put(new BridgeDocument("b", "peerbit", "second"));
+			await index.put(new BridgeDocument("c", "peerbit", "third"));
+			const internal = index as unknown as {
+				appendPut: (...args: unknown[]) => Promise<void>;
+				compactIfNeeded: () => Promise<void>;
+				mutationVersion: number;
+			};
+			const appendPut = internal.appendPut.bind(index);
+			const versionBeforeAppendFailure = internal.mutationVersion;
+			internal.appendPut = async () => {
+				throw new Error("forced pre-mutation append failure");
+			};
+			try {
+				await index.put(new BridgeDocument("z", "peerbit", "not visible"));
+				expect.fail("put should reject before the native mutation");
+			} catch (error) {
+				expect((error as Error).message).to.equal(
+					"forced pre-mutation append failure",
+				);
+			} finally {
+				internal.appendPut = appendPut;
+			}
+			expect(internal.mutationVersion).to.equal(versionBeforeAppendFailure);
+
+			const iterator = index.iterate({
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			});
+			expect(
+				(await iterator.next(1)).map((result) => result.value.id),
+			).to.deep.equal(["b"]);
+
+			const compactIfNeeded = internal.compactIfNeeded.bind(index);
+			internal.compactIfNeeded = async () => {
+				throw new Error("forced trailing compaction failure");
+			};
+			let rejected = false;
+			try {
+				await index.put(new BridgeDocument("a", "peerbit", "first"));
+			} catch (error) {
+				rejected = true;
+				expect((error as Error).message).to.equal(
+					"forced trailing compaction failure",
+				);
+			} finally {
+				internal.compactIfNeeded = compactIfNeeded;
+			}
+			expect(rejected).to.be.true;
+
+			expect(
+				(await iterator.next(1)).map((result) => result.value.id),
+			).to.deep.equal(["a"]);
+			expect(
+				(await iterator.all()).map((result) => result.value.id),
+			).to.deep.equal(["c"]);
+		} finally {
+			await indices.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("coalesces a put and matching deletes through the native index", async () => {
 		const indices = create();
 		await indices.start();
