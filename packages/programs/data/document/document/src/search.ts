@@ -1179,6 +1179,28 @@ export class DocumentIndex<
 		}
 	}
 
+	/** Head entry safe to borsh-serialize into ResultIndexedValue.entries over the
+	 * document RPC. Under the native block store, this._log.log.get can return a
+	 * hollow entry whose payload bytes were never materialized on the JS side;
+	 * serializing it throws and aborts the whole RPC response. The complete entry is
+	 * in the block store keyed by hash, so recover it there. No-op for pure JS. */
+	private async getSerializableHead(
+		hash: string,
+	): Promise<Entry<any> | undefined> {
+		const head = await this._log.log.get(hash);
+		if (!head?.hash) return head ?? undefined;
+		try {
+			head.getStorageBytes(); // = serialize(head); throws on a hollow native entry
+			return head;
+		} catch {
+			try {
+				return await Entry.fromMultihash(this._log.log.blocks, head.hash);
+			} catch {
+				return head; // block absent (e.g. pruned) — preserve today's behavior
+			}
+		}
+	}
+
 	private async wrapPushResults(
 		matches: Array<WithContext<T> | WithContext<I>>,
 		resolve: boolean,
@@ -1220,7 +1242,7 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = await this._log.log.get(indexed.__context.head);
+				const head = await this.getSerializableHead(indexed.__context.head);
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1231,7 +1253,7 @@ export class DocumentIndex<
 				);
 			} else {
 				const indexed = match as WithContext<I>;
-				const head = await this._log.log.get(indexed.__context.head);
+				const head = await this.getSerializableHead(indexed.__context.head);
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1276,7 +1298,7 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = await this._log.log.get(entry.value.__context.head);
+				const head = await this.getSerializableHead(entry.value.__context.head);
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -1286,7 +1308,7 @@ export class DocumentIndex<
 					}),
 				);
 			} else {
-				const head = await this._log.log.get(entry.value.__context.head);
+				const head = await this.getSerializableHead(entry.value.__context.head);
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -3653,7 +3675,7 @@ export class DocumentIndex<
 				);
 			} else {
 				const context = result.value.__context;
-				const head = await this._log.log.get(context.head);
+				const head = await this.getSerializableHead(context.head);
 				if (replicateIndexFlag) {
 					if (!head) {
 						continue;

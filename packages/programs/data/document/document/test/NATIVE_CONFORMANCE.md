@@ -2,9 +2,10 @@
 
 This document is the PR body / reference for the opt-in `[default, native]`
 conformance leg that re-runs a curated allowlist of the **existing** document
-suites against the native (Rust) data plane. It is test-infra only — no
-`@peerbit/document` `src/` product code is changed. It is a mechanical clone of
-the shared-log conformance leg (see
+suites against the native (Rust) data plane. The leg scaffolding is test-infra;
+the real native-vs-JS divergences it uncovers are fixed in `src/` as the
+corresponding describes are folded in (see the FIXED classes below). It is a
+mechanical clone of the shared-log conformance leg (see
 `packages/programs/data/shared-log/test/NATIVE_CONFORMANCE.md`), reusing the same
 env switch.
 
@@ -64,7 +65,7 @@ The leg is wired as `@peerbit/document`'s `test:document-rust-core` script and a
 shared-log rust-core step. The allowlist is a mocha `--grep` anchored to the
 describe titles confirmed **byte-for-byte green** under the native backend
 (comparator / sort / paging / query surface), with negative-lookahead exclusions
-for the native-internal, remote-indexed, and 2-peer sync cases documented below.
+for the native-internal and 2-peer sync cases documented below.
 
 | Describe (mocha title path)                        | Native  | Default |
 | -------------------------------------------------- | ------- | ------- |
@@ -78,9 +79,11 @@ for the native-internal, remote-indexed, and 2-peer sync cases documented below.
 | `query distribution`                               | 7/7     | 7/7     |
 | `returnIndexed`                                     | 1/1     | 1/1     |
 | `caching`                                          | 1/1     | 1/1     |
-| **Total (allowlist grep)**                         | **192** | **192** |
+| `custom index` (whole describe)                    | 10/10   | 10/10   |
+| `prefetch` (3 active tests)                         | 3/3     | 3/3     |
+| **Total (allowlist grep)**                         | **205** | **205** |
 
-Native and default each run **192 passing / 0 failing** under the allowlist grep.
+Native and default each run **205 passing / 0 failing** under the allowlist grep.
 
 The leg is **opt-in and non-blocking** initially (`continue-on-error: true`). It
 widens as the excluded classes below are made backend-agnostic or fixed.
@@ -127,8 +130,9 @@ Still excluded — a **separate** divergence, not the read-back bug:
 
 - `operations > basic > can delete without being replicator` — the
   non-replicating peer never indexes the doc, so the delete resolves to a
-  `No entry with key` miss. This is a 2-peer remote/sync path issue (same family
-  as Class-E below); it fails identically with and without the #1025 fix.
+  `No entry with key` miss. This is a 2-peer remote/sync path issue distinct from
+  the Class-E head-serialization fix below (the requester never indexes the row in
+  the first place); it fails identically with and without the #1025 fix.
 
 ### Class-C — over-nativization (native-internal append-path assertions)
 
@@ -154,30 +158,58 @@ shared-log Class-C over-nativization block. Excluded tests:
 - `operations > basic > uses commit-only local puts when coordinate persistence is deferred`
   (`expected +0 to equal 1`)
 
-### Class-E — remote-indexed (`resolve:false`) over the native wire
+### Class-E — remote-indexed (`resolve:false`) head serialization — FIXED
 
 The **local** `get(id, { resolve: false })` and custom-transform indexed shape
-are correct under native (single-peer probe: `RustIndex` returns
+were already correct under native (single-peer probe: `RustIndex` returns
 `{ id, nameTransformed, __context, __indexed }` identically to `SQLiteIndex`). It
-is only the **2-peer remote** indexed fetch — a non-replicating peer querying the
-replicator for the *indexed* (non-resolved) row over the native raw-exchange
-wire — that returns `undefined`, so `.nameTransformed` / `.name` reads throw.
-This is a remote-query / sync path divergence, not a local index-comparator one.
-Because the affected `custom index` and `prefetch` describes are remote-heavy and
-mix green local tests with red remote-indexed ones, they are **excluded whole**
-(not partially cherry-picked) to keep the allowlist to cleanly-green describes:
+was only the **2-peer remote** indexed fetch — a non-replicating peer querying
+the replicator for the *indexed* (non-resolved) row over the native raw-exchange
+wire — that returned `undefined`, so `.nameTransformed` / `.name` reads threw.
 
-- `custom index` (whole describe) — `get > get indexed`,
-  `get > uses indexed requests for replicated resolved remote get`,
-  `iterate > iterate indexed`, `iterate > iterate replicate indexed` are
-  native-red; the plain (resolved) `get` / `iterate` / `get local first` tests
-  are native-green.
-- `prefetch` (whole describe) — `can prefetch search results` is native-red on
-  the 2-peer remote prefetch (`Cannot read properties of undefined (reading
-  'name')`).
+Root cause: on a `resolve:false` / `SearchRequestIndexed` query the responder
+(replicator) embeds the head log entry into the RPC response.
+`DocumentIndex.processQuery` builds a `ResultIndexedValue` whose `entries` field
+is a borsh `@field(vec(Entry))` (`document-interface/src/query.ts`), so the head
+`Entry` is serialized over the document RPC. Under the native block store,
+`this._log.log.get(hash)` returns a **hollow** `EntryV0` whose payload `_data` is
+`null` (the bytes live only in the block store); `_payload` is a **required**
+borsh field (`log/src/entry-v0.ts`), so serialize throws
+`Trying to serialize a null value to field _data`, aborting the whole `Results`
+serialization. The response is never sent, the non-replicating requester times
+out (~10s), `get()` / `iterate()` resolve to `undefined`, and the read of
+`.name` / `.nameTransformed` throws `Cannot read properties of undefined`. The
+block itself **is present** in the block store keyed by hash.
 
-Follow-up: make the remote-indexed (`SearchRequestIndexed`) fetch resolve the
-indexed row over the native raw-exchange path, then fold these describes in.
+Isolation proved the culprit is the native **log / sync** boundary, not the rust
+indexer (rust-indexer + JS-log passes; sqlite-indexer + native-log fails
+identically). This was a real native-vs-JS divergence in the **block-store /
+wire-serialization** path (the same hollow-entry family as Class-A #1025 and the
+shared-log #1021), **not** an index-comparator divergence.
+
+**Fixed**: `DocumentIndex` now routes every head lookup that feeds
+`ResultIndexedValue.entries` through a private `getSerializableHead(hash)` helper
+(`src/search.ts`). It keeps the in-memory entry when it serializes cleanly (the
+JS case — a `getStorageBytes()` probe) and, only when serialization would throw,
+recovers the complete entry from the block store by hash
+(`Entry.fromMultihash(this._log.log.blocks, hash)`), which reconstructs a full,
+wire-serializable, joinable `EntryV0`. The pure-JS backend is unchanged (the
+probe succeeds; recovery never runs). Materialization — not "omit `entries` under
+native" — is the correct fix because the requester joins the returned entry in
+its replicate path (`program.ts`, `this.log.join(entries[0]…)`). The helper
+replaces the raw `this._log.log.get(...)` at all **five** sites that feed
+`entries`: the `processQuery` indexed / `resolve:false` branch, both
+`wrapPushResults` sites, and both `drainQueuedResults` sites. The unrelated
+`resolveDocument` payload read-back is untouched (a latent, no-failing-test site
+left for a separate general-fix follow-up).
+
+The `custom index` and `prefetch` describes are now **covered** (folded into the
+allowlist, 192 → 205): the previously native-red `custom index > get > get
+indexed`, `custom index > get > uses indexed requests for replicated resolved
+remote get`, `custom index > iterate > iterate indexed`,
+`custom index > iterate > iterate replicate indexed`, and
+`prefetch > can prefetch search results` now pass, and the rest of both describes
+(already green) come with them.
 
 ### Not yet catalogued (deferred, out of scope for this leg)
 
@@ -185,19 +217,21 @@ The `updates`, `replication`, `remote`, `acl`, `program as value`, `migration`,
 `updateIndex`, and `most-common-query-predictor` describes were not run
 exhaustively for this initial leg — they are replication / sync / lifecycle
 heavy rather than pure query-surface, and are the natural next widening step once
-the Class-A/C/E follow-ups above land. They are neither claimed green nor
-silently capped.
+the Class-C follow-up above lands (Class-A and Class-E are fixed and folded in).
+They are neither claimed green nor silently capped.
 
 ## Verification summary
 
-- **Native (env set):** allowlist grep GREEN — **192 passing, 0 failing**.
-- **Default (env unset):** same allowlist grep GREEN — **192 passing, 0
+- **Native (env set):** allowlist grep GREEN — **205 passing, 0 failing**.
+- **Default (env unset):** same allowlist grep GREEN — **205 passing, 0
   failing** (baseline unchanged).
 - **Guard:** `docs.index.index` is asserted `RustIndex` under the env and
   `SQLiteIndex` without it; flipping the expected class makes the guard fail with
   the real `RustIndex` value, so a missing/disengaged native build cannot
   false-green.
-- **No product `src/` change:** only the test helper (backend-agnostic sync
-  suppression in `iterate > sort`), the new guard spec, `package.json`
-  (`test:document-rust-core` script), `ci.yml` (one `continue-on-error` step),
-  and this doc.
+- **Product `src/` change is the Class-E fix only:** `src/search.ts`
+  (`getSerializableHead`, folding in the `custom index` / `prefetch` describes).
+  The leg scaffolding itself remains test-only — the test helper
+  (backend-agnostic sync suppression in `iterate > sort`), the guard spec,
+  `package.json` (`test:document-rust-core` script), `ci.yml` (one
+  `continue-on-error` step), and this doc.
