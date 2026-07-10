@@ -1,6 +1,6 @@
-# shared-log `[default, native]` conformance matrix (opt-in CI leg)
+# shared-log `[default, native]` conformance matrix (blocking CI leg)
 
-This document is the PR body / reference for the opt-in `[default, native]`
+This document is the reference for the curated `[default, native]`
 conformance leg that re-runs a curated allowlist of the **existing** shared-log
 suites against the native (Rust) data plane. It is test-infra only.
 
@@ -41,23 +41,30 @@ and a CI step in the `test_native` job, mirroring the stream layer's
 top-level describe titles confirmed **byte-for-byte green** under the native
 backend:
 
-| Describe (mocha title path)                                   | Native result |
-| ------------------------------------------------------------- | ------------- |
-| `append delivery options` (delivery.spec)                     | 11/11         |
-| `join` (+ `mergeSegments`, `already but not replicated`)      | 15/15         |
-| `replicate` (+ observer/replicator/mode/entry/persistance)    | 28/28         |
-| `<setup> replication references` (joins-by-ref, next-blocks)  | green         |
-| `<setup> replication replication one way` (1/1000/large/…)    | green*        |
-| `<setup> replication replication two way` (partial synced)    | 6/6           |
-| `<setup> redundancy only sends entries once` (2/3 peers)      | 8/8           |
-| `<setup> canReplicate`                                        | 4/4           |
-| `<setup> replication degree` (prune-family + commit options)  | green*        |
-| `<setup> start/stop replicate on connect`                     | 2/2           |
-| `<setup> sync` (manually synced entries)                      | 2/2           |
+| Describe (mocha title path)                                  | Native result |
+| ------------------------------------------------------------ | ------------- |
+| `append delivery options` (delivery.spec)                    | 11/11         |
+| `join` (+ `mergeSegments`, `already but not replicated`)     | 15/15         |
+| `replicate` (+ observer/replicator/mode/entry/persistance)   | 28/28         |
+| `<setup> replication references` (joins-by-ref, next-blocks) | green         |
+| `<setup> replication replication one way` (1/1000/large/…)   | green\*       |
+| `<setup> replication replication two way` (partial synced)   | 6/6           |
+| `<setup> redundancy only sends entries once` (2/3 peers)     | 8/8           |
+| `<setup> canReplicate`                                       | 4/4           |
+| `<setup> replication degree` (prune-family + commit options) | green\*       |
+| `<setup> start/stop replicate on connect`                    | 2/2           |
+| `<setup> sync` (manually synced entries)                     | 2/2           |
 
 `<setup>` is `u32-simple` or `u64-iblt` (the active `testSetups`). `replicate`'s
 `persistance` block includes the close→reopen restart cases, which pass thanks to
 the rust-indexer reopen fix (#1019).
+
+One setup-specific pending case is excluded explicitly from the strict selector:
+`u32-simple replication degree commit options control per commmit put before join
+converges under deterministic pubsub chaos` is declared with `it.skip` because
+that scenario is u64-only. Its active `u64-iblt` counterpart remains covered.
+The gate therefore runs 147 active tests / 0 pending, and Mocha's
+`--forbid-pending` makes any newly skipped selected test fail the blocking leg.
 
 The `redundancy only sends entries once` family (2 peers dynamic/fixed/write-after-
 open, 3 peers) was folded in by making the `getReceivedHeads` test helper
@@ -83,14 +90,14 @@ boundary (`Entry.toMaterialized()`); see the S1 entry below. The rest of the
 which are removed from the grep via negative lookahead (the whole
 `replication degree update` sub-block is excluded as one unit).
 
-The leg is **opt-in and non-blocking** initially (`continue-on-error: true`). It
-widens as the Class-B tests below are made backend-agnostic.
+The curated leg is blocking. It widens as the Class-B tests below are made
+backend-agnostic.
 
 ## What is EXCLUDED, and why (honest catalog — no silent caps)
 
 ### Class-B — message-counter artifacts (convergence is correct)
 
-These assert on *how many* wire messages/fetches happened, not on final
+These assert on _how many_ wire messages/fetches happened, not on final
 convergence. The native path converges to the same state but moves a different
 number of frames (e.g. via authoritative push / different sync batching), so the
 counters differ. Convergence is correct; only the counter assertion fails.
@@ -131,7 +138,7 @@ still-excluded Class-B tests above.
 ### Finding-B — scoping (native converges via authoritative push)
 
 - `commit options > control per commmit put before join repairs when joiner
-  request responses are dropped` (u64-iblt only). The JS path repairs by
+request responses are dropped` (u64-iblt only). The JS path repairs by
   re-requesting dropped joiner responses; the native path instead converges via
   authoritative push, so the "responses were re-requested" assertion does not
   hold. Final state converges. All the other authoritative-repair tests in
@@ -150,11 +157,13 @@ was `false` while `head.equals(jsEntry)` was `true`). The block itself was alway
 present and decodable; only the cached JS object was hollow, so the default
 backend (which caches heads as full `EntryV0`) never diverged.
 
-**Fix:** a generic `Entry.toMaterialized()` capability in `@peerbit/log` (no-op
-on `EntryV0`, overridden by `PreparedRawExchangeEntry` to decode itself into its
-full `EntryV0`). The entry index calls it at the read/resolve cache boundary and
-writes the materialized entry back into the cache. The wire/sync fusion path
-caches heads via `put` but never resolves them, so it stays lazy (the
+**Fix (#1021, generalized in #1028):** `Entry.toMaterialized()` lets a
+`PreparedRawExchangeEntry` decode itself into a full `EntryV0` at the
+entry-index read boundary. #1028 additionally recognizes a concrete `EntryV0`
+whose decrypted fields are still storage-hollow and routes that cache hit
+through the block store. Both paths replace the cache entry with the complete
+object while preserving batching and local-origin metadata. The wire/sync fusion
+path caches heads via `put` but never resolves them, so it stays lazy (the
 `network-e2e-native` fusion counters — `jsEntryDecode`/`blockCopyOuts` — remain
 0). The `start/stop replicate on connect` case is lifted into the allowlist; the
 rest of `start/stop` stays excluded for the memory-only Class-D reason (A2).
@@ -168,7 +177,7 @@ classes below. They are **not** addressed by the S1 fix and remain excluded:
   (`TestSession.disconnected(3, …)`, line 2280) is directory-less, so the native
   block store is memory-only; the prune's durability bookkeeping cannot be
   satisfied without a persistent store. Same class as the `start/stop > can
-  restart replicate` durability case, and expected to be addressed the same way
+restart replicate` durability case, and expected to be addressed the same way
   (a directory-backed native analog) — tracked as the S2a durability follow-up.
 - `replication degree > time out when pending IHave are never resolved` →
   **Class-B / Finding-B (converge-vs-timeout)**. The native path converges via
@@ -183,7 +192,7 @@ classes below. They are **not** addressed by the S1 fix and remain excluded:
   the test asserts on; convergence is correct, the counter/confirmation assertion
   is backend-coupled. Verified against the S2b crash fix (below): it does **not**
   crash — it fails only on `expected promise to be rejected with 'Timeout' but it
-  was fulfilled`. The crash class is gone, but the converge-vs-timeout divergence
+was fulfilled`. The crash class is gone, but the converge-vs-timeout divergence
   remains, so it **stays excluded** (not folded into the allowlist).
 
 Both prune divergences (the Class-D durability one and the two converge-vs-count
@@ -214,10 +223,10 @@ on the native backbone. The JS path already tolerates a missing block (the
   confined to the native-graph branch and is a no-op for the default (JS)
   backend, which never enters it. A focused regression test in
   `@peerbit/log`'s `native-graph.spec.ts` (`tolerates a block-less native graph
-  head in getHeads(true)`) constructs a block-less head via the natural
+head in getHeads(true)`) constructs a block-less head via the natural
   prune-promotes-parent path and asserts `getHeads(true)` does not throw and
   skips the head. A/B confirmed: revert the fix → `Failed to load entry from
-  head`; apply → no throw.
+head`; apply → no throw.
 - `@peerbit/shared-log`: the native-backbone write-through block store's `has()`
   now falls back to the durable store on a native (wasm-map) miss, matching
   `getMany()`/`hasMany()`, so presence checks and resolves agree.
@@ -259,4 +268,4 @@ the crash is exercised by the natural prune-promotes-parent path, covered by the
 - **Default (env unset):** same allowlist grep GREEN (baseline unchanged).
 - **Guard:** with the native import stubbed to a non-function, the leg throws
   loudly (`… is set but the native Rust data-plane module (peerbit/rust) is not
-  available. Refusing to run the "native" matrix leg …`) instead of false-green.
+available. Refusing to run the "native" matrix leg …`) instead of false-green.

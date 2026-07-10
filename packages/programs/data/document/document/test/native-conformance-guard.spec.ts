@@ -4,7 +4,7 @@ import { Documents } from "../src/index.js";
 import { Document, TestStore } from "./data.js";
 
 /**
- * Hard guard for the opt-in `[default, native]` document conformance leg
+ * Hard guard for the curated `[default, native]` document conformance leg
  * (`PEERBIT_SHARED_LOG_RUST_CORE=1`, wired as `test:document-rust-core`).
  *
  * The switch (packages/clients/test-utils/src/session.ts) attaches the native

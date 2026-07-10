@@ -22,10 +22,12 @@ describe("adaptive ingest burst control", () => {
 
 		(store.log as any).adaptiveRebalanceIdleMs = 120;
 
-		sinon.stub(store.log, "findLeaders").callsFake(async (_coords, _entry, opts) => {
-			opts?.onLeader?.("foreign-leader");
-			return new Map([["foreign-leader", { intersecting: true }]]) as any;
-		});
+		sinon
+			.stub(store.log, "findLeaders")
+			.callsFake(async (_coords, _entry, opts) => {
+				opts?.onLeader?.("foreign-leader");
+				return new Map([["foreign-leader", { intersecting: true }]]) as any;
+			});
 
 		return store;
 	};
@@ -47,7 +49,7 @@ describe("adaptive ingest burst control", () => {
 		expect((store.log as any).shouldDelayAdaptiveRebalance()).to.equal(true);
 	});
 
-	it("skips immediate prune and append-triggered rebalance while the writer is still hot", async () => {
+	it("skips immediate prune and queues one debounced rebalance while the writer is still hot", async () => {
 		const store = await openAdaptiveStore();
 		const pruneAdd = sinon.spy(store.log.pruneDebouncedFn, "add");
 		const rebalanceCall = sinon.spy(
@@ -58,7 +60,7 @@ describe("adaptive ingest burst control", () => {
 		await store.add("a", { target: "none" });
 
 		expect(pruneAdd.callCount).to.equal(0);
-		expect(rebalanceCall.callCount).to.equal(0);
+		expect(rebalanceCall.callCount).to.equal(1);
 	});
 
 	it("requeues adaptive rebalance until the ingest window goes idle", async () => {
@@ -69,17 +71,23 @@ describe("adaptive ingest burst control", () => {
 		);
 
 		await store.add("a", { target: "none" });
+		expect(rebalanceCall.callCount).to.equal(1);
 
 		const rebalanced = await store.log.rebalanceParticipation();
 
 		expect(rebalanced).to.equal(false);
-		expect(rebalanceCall.callCount).to.equal(1);
+		expect(rebalanceCall.callCount).to.equal(2);
 
-		await waitForResolved(() => {
-			expect((store.log as any).shouldDelayAdaptiveRebalance()).to.equal(false);
-		}, {
-			timeout: 2_000,
-			delayInterval: 20,
-		});
+		await waitForResolved(
+			() => {
+				expect((store.log as any).shouldDelayAdaptiveRebalance()).to.equal(
+					false,
+				);
+			},
+			{
+				timeout: 2_000,
+				delayInterval: 20,
+			},
+		);
 	});
 });

@@ -1,6 +1,6 @@
-# document `[default, native]` conformance matrix (opt-in CI leg)
+# document `[default, native]` conformance matrix (blocking CI leg)
 
-This document is the PR body / reference for the opt-in `[default, native]`
+This document is the reference for the curated `[default, native]`
 conformance leg that re-runs a curated allowlist of the **existing** document
 suites against the native (Rust) data plane. The leg scaffolding is test-infra;
 the real native-vs-JS divergences it uncovers are fixed in `src/` as the
@@ -61,32 +61,32 @@ both backends.
 ## What the leg covers (allowlist)
 
 The leg is wired as `@peerbit/document`'s `test:document-rust-core` script and a
-`continue-on-error` CI step in the `test_native` job, immediately after the
-shared-log rust-core step. The allowlist is a mocha `--grep` anchored to the
-describe titles confirmed **byte-for-byte green** under the native backend
-(comparator / sort / paging / query surface), with negative-lookahead exclusions
-for the native-internal and 2-peer sync cases documented below.
+blocking CI step in the `test_native` job, immediately after the shared-log
+rust-core step. The allowlist is a mocha `--grep` anchored to the describe titles
+confirmed **byte-for-byte green** under the native backend (comparator / sort /
+paging / query surface), with negative-lookahead exclusions for the
+native-internal cases documented below.
 
-| Describe (mocha title path)                        | Native  | Default |
-| -------------------------------------------------- | ------- | ------- |
-| `native conformance guard` (leg guard)             | 1/1     | 1/1     |
-| `operations > basic` (minus 5 excluded)            | 135/135 | 135/135 |
-| `operations > get`                                 | 6/6     | 6/6     |
-| `operations > index`                               | 3/3     | 3/3     |
-| `operations > search` (incl `fields`)              | 15/15   | 15/15   |
-| `iterate > sort` (incl `close`)                    | 17/17   | 17/17   |
-| `count > approximate`                              | 7/7     | 7/7     |
-| `query distribution`                               | 7/7     | 7/7     |
-| `returnIndexed`                                     | 1/1     | 1/1     |
-| `caching`                                          | 1/1     | 1/1     |
-| `custom index` (whole describe)                    | 10/10   | 10/10   |
-| `prefetch` (3 active tests)                         | 3/3     | 3/3     |
-| **Total (allowlist grep)**                         | **205** | **205** |
+| Describe (mocha title path)             | Native  | Default |
+| --------------------------------------- | ------- | ------- |
+| `native conformance guard` (leg guard)  | 1/1     | 1/1     |
+| `operations > basic` (minus 5 excluded) | 136/136 | 136/136 |
+| `operations > get`                      | 6/6     | 6/6     |
+| `operations > index`                    | 3/3     | 3/3     |
+| `operations > search` (incl `fields`)   | 15/15   | 15/15   |
+| `iterate > sort` (incl `close`)         | 17/17   | 17/17   |
+| `count > approximate`                   | 7/7     | 7/7     |
+| `query distribution`                    | 7/7     | 7/7     |
+| `returnIndexed`                         | 1/1     | 1/1     |
+| `caching`                               | 1/1     | 1/1     |
+| `custom index` (whole describe)         | 10/10   | 10/10   |
+| `prefetch` (3 active tests)             | 3/3     | 3/3     |
+| **Total (allowlist grep)**              | **206** | **206** |
 
-Native and default each run **205 passing / 0 failing** under the allowlist grep.
+Native and default each run **206 passing / 0 failing** under the allowlist grep.
 
-The leg is **opt-in and non-blocking** initially (`continue-on-error: true`). It
-widens as the excluded classes below are made backend-agnostic or fixed.
+The curated leg is blocking. It widens as the excluded classes below are made
+backend-agnostic or fixed.
 
 ## What is EXCLUDED, and why (honest catalog — no silent caps)
 
@@ -106,7 +106,7 @@ determine which document was removed: `Documents.handleChanges` ->
 `getAppendOperation(entry)` -> `entry.getPayloadValue()`
 (`src/program.ts`). `getAppendOperation` has an `isNativeMode()` branch that
 reads from storage bytes instead, but under this switch the `Documents` program
-is in **auto mode** (`isNativeMode()` is `false` — only the *indexer* is
+is in **auto mode** (`isNativeMode()` is `false` — only the _indexer_ is
 nativized, not the document mode), so it falls through to `getPayloadValue()`,
 which loads the payload block from the **native** block store and throws
 `Error: Missing data` (`DecryptedThing.getValue`, `EntryV0.getPayloadValue`).
@@ -126,21 +126,19 @@ allowlist, 188 → 192): `can add and delete`, `delete permanently`,
 `reload after delete`, and
 `count > approximate > returns approximate count with deletions`.
 
-Still excluded — a **separate** divergence, not the read-back bug:
-
-- `operations > basic > can delete without being replicator` — the
-  non-replicating peer never indexes the doc, so the delete resolves to a
-  `No entry with key` miss. This is a 2-peer remote/sync path issue distinct from
-  the Class-E head-serialization fix below (the requester never indexes the row in
-  the first place); it fails identically with and without the #1025 fix.
+**Generalized in #1028**: full entry-index reads now recognize a concrete
+storage-hollow `EntryV0` and resolve it through the block store, including the
+batched path. This also fixes the 2-peer `can delete without being replicator`
+case: the non-replicating peer can materialize the remote document head before
+issuing the delete. The test is now covered by the allowlist (205 → 206).
 
 ### Class-C — over-nativization (native-internal append-path assertions)
 
-These tests `sinon.spy` **internal append-planning methods** and assert *which*
+These tests `sinon.spy` **internal append-planning methods** and assert _which_
 code path a put took (`appendLocallyValidated`, `appendLocallyPrepared`,
 `commitNativeDocumentAppend`, `planLocalAppendForGid`,
 `createPlainPutCommitPlan`, …). Under the switch the store runs the native
-indexer but in JS *append mode* (auto, not `mode:"native"`), so these
+indexer but in JS _append mode_ (auto, not `mode:"native"`), so these
 mode-internal path assertions do not hold — a smaller/different set of the
 planning methods is called, or a native-only helper (`planLocalAppendForGid`) is
 `undefined` on the JS-mode log. Convergence and query results are correct; only
@@ -164,7 +162,7 @@ The **local** `get(id, { resolve: false })` and custom-transform indexed shape
 were already correct under native (single-peer probe: `RustIndex` returns
 `{ id, nameTransformed, __context, __indexed }` identically to `SQLiteIndex`). It
 was only the **2-peer remote** indexed fetch — a non-replicating peer querying
-the replicator for the *indexed* (non-resolved) row over the native raw-exchange
+the replicator for the _indexed_ (non-resolved) row over the native raw-exchange
 wire — that returned `undefined`, so `.nameTransformed` / `.name` reads threw.
 
 Root cause: on a `resolve:false` / `SearchRequestIndexed` query the responder
@@ -187,7 +185,7 @@ identically). This was a real native-vs-JS divergence in the **block-store /
 wire-serialization** path (the same hollow-entry family as Class-A #1025 and the
 shared-log #1021), **not** an index-comparator divergence.
 
-**Fixed**: `DocumentIndex` now routes every head lookup that feeds
+**Fixed in #1027**: `DocumentIndex` routes every head lookup that feeds
 `ResultIndexedValue.entries` through a private `getSerializableHead(hash)` helper
 (`src/search.ts`). It keeps the in-memory entry when it serializes cleanly (the
 JS case — a `getStorageBytes()` probe) and, only when serialization would throw,
@@ -199,9 +197,9 @@ native" — is the correct fix because the requester joins the returned entry in
 its replicate path (`program.ts`, `this.log.join(entries[0]…)`). The helper
 replaces the raw `this._log.log.get(...)` at all **five** sites that feed
 `entries`: the `processQuery` indexed / `resolve:false` branch, both
-`wrapPushResults` sites, and both `drainQueuedResults` sites. The unrelated
-`resolveDocument` payload read-back is untouched (a latent, no-failing-test site
-left for a separate general-fix follow-up).
+`wrapPushResults` sites, and both `drainQueuedResults` sites. The formerly latent
+`resolveDocument` full-read path is now covered by #1028's general entry-index
+materialization fix and its native full-entry regression test.
 
 The `custom index` and `prefetch` describes are now **covered** (folded into the
 allowlist, 192 → 205): the previously native-red `custom index > get > get
@@ -210,6 +208,12 @@ remote get`, `custom index > iterate > iterate indexed`,
 `custom index > iterate > iterate replicate indexed`, and
 `prefetch > can prefetch search results` now pass, and the rest of both describes
 (already green) come with them.
+
+**Generalized in #1028**: `EntryIndex` now guarantees that a full `Log.get()`
+materializes both lazy prepared entries and concrete storage-hollow `EntryV0`
+objects through the block store. The #1027 helper remains a defensive
+serialization check, but normal native full reads arrive complete before the
+document RPC boundary.
 
 ### Not yet catalogued (deferred, out of scope for this leg)
 
@@ -222,16 +226,17 @@ They are neither claimed green nor silently capped.
 
 ## Verification summary
 
-- **Native (env set):** allowlist grep GREEN — **205 passing, 0 failing**.
-- **Default (env unset):** same allowlist grep GREEN — **205 passing, 0
+- **Native (env set):** allowlist grep GREEN — **206 passing, 0 failing**.
+- **Default (env unset):** same allowlist grep GREEN — **206 passing, 0
   failing** (baseline unchanged).
 - **Guard:** `docs.index.index` is asserted `RustIndex` under the env and
   `SQLiteIndex` without it; flipping the expected class makes the guard fail with
   the real `RustIndex` value, so a missing/disengaged native build cannot
   false-green.
-- **Product `src/` change is the Class-E fix only:** `src/search.ts`
-  (`getSerializableHead`, folding in the `custom index` / `prefetch` describes).
-  The leg scaffolding itself remains test-only — the test helper
+- **Product fixes:** #1027 added `src/search.ts`'s defensive
+  `getSerializableHead` boundary; #1028 generalized full-read materialization in
+  `@peerbit/log`. The conformance scaffolding itself remains test-only — the
+  test helper
   (backend-agnostic sync suppression in `iterate > sort`), the guard spec,
-  `package.json` (`test:document-rust-core` script), `ci.yml` (one
-  `continue-on-error` step), and this doc.
+  `package.json` (`test:document-rust-core` script), `ci.yml` (a blocking
+  conformance step), and this doc.
