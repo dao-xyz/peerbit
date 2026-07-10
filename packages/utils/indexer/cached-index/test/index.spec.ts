@@ -1,12 +1,17 @@
 /* eslint-env mocha */
 import { field } from "@dao-xyz/borsh";
 import { ready } from "@peerbit/crypto";
-import { Compare, IntegerCompare, id } from "@peerbit/indexer-interface";
+import {
+	Compare,
+	IntegerCompare,
+	id,
+	toId,
+} from "@peerbit/indexer-interface";
 import type { IterateOptions } from "@peerbit/indexer-interface";
 import { HashmapIndex } from "@peerbit/indexer-simple";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
-import type { QueryCacheOptions } from "../src/cache.js";
+import { IteratorCache, type QueryCacheOptions } from "../src/cache.js";
 import { CachedIndex } from "../src/index.js";
 
 /* ---------------------------------------------------------------- model */
@@ -86,6 +91,60 @@ describe("CachedIndex iterator cache", () => {
 		const b1 = await it.next(50);
 		const b2 = await it.next(160);
 		expect(b1.length + b2.length).to.equal(size);
+	});
+
+	it("removes marked rows from a warm buffer before forwarding", async () => {
+		const rows = ["0", "1", "2"].map((value) => ({
+			id: toId(value),
+			value: new Document({ id: value, content: value, number: +value }),
+		}));
+		const forwarded: string[] = [];
+		const cache = new IteratorCache<Document>(
+			{
+				strategy: "auto",
+				maxSize: rows.length,
+				maxTotalSize: rows.length,
+				prefetchThreshold: 1,
+			},
+			() => {
+				let offset = 0;
+				return {
+					next: (amount) => {
+						const next = rows.slice(offset, offset + amount);
+						offset += next.length;
+						return next;
+					},
+					all: () => {
+						const rest = rows.slice(offset);
+						offset = rows.length;
+						return rest;
+					},
+					done: () => offset >= rows.length,
+					pending: () => Math.max(0, rows.length - offset),
+					close: () => undefined,
+					markYielded: async (ids) => {
+						forwarded.push(...[...ids].map((id) => String(id.primitive)));
+					},
+				};
+			},
+		);
+
+		const cold = cache.acquire();
+		await cold.close();
+		await waitForResolved(() =>
+			expect(cache._debugStats.activeQueries).to.have.length(1),
+		);
+
+		const warm = cache.acquire();
+		const marking = warm.markYielded!([toId("1")]);
+		expect(forwarded).to.deep.equal(["1"]);
+		expect(await warm.pending()).to.equal(2);
+		expect((await warm.next(rows.length)).map((row) => row.value.id)).to.deep.equal(
+			["0", "2"],
+		);
+		await marking;
+		await warm.close();
+		await cache.clear();
 	});
 
 	it("does not prefetch until query used N times", async () => {

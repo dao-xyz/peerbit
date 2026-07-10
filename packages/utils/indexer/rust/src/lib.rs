@@ -656,6 +656,7 @@ impl NativeRustIndex {
             return Err(js_error("Mismatched shared-log coordinate batch lengths"));
         }
 
+        let mut prepared = Vec::with_capacity(len as usize);
         for index in 0..len {
             let key = required_array_string(&keys, index, "shared-log coordinate key")?;
             let fields = shared_log_coordinate_fields(SharedLogCoordinateFieldsInput {
@@ -694,13 +695,21 @@ impl NativeRustIndex {
                 .iter()
                 .filter_map(|key| key.as_string())
                 .collect();
+            prepared.push((
+                key,
+                ids.get(index),
+                values.get(index),
+                fields,
+                keys_to_delete,
+            ));
+        }
 
-            self.store
-                .put(key.clone(), ids.get(index), values.get(index));
+        for (key, id, value, fields, keys_to_delete) in prepared {
+            self.store.put(key.clone(), id, value);
             self.planner.index.put(key, fields);
-            for key in &keys_to_delete {
-                self.planner.index.delete(key);
-                self.store.delete(key);
+            for key in keys_to_delete {
+                self.planner.index.delete(&key);
+                self.store.delete(&key);
             }
         }
         Ok(())

@@ -11,6 +11,11 @@ import { logger as loggerFn } from "@peerbit/logger";
 const iteratorLogger = loggerFn("peerbit:document:index:iterate");
 
 export class ResumableIterators<T extends Record<string, any>> {
+	private readonly pendingMarks = new Map<
+		string,
+		Map<string, indexerTypes.IdKey>
+	>();
+
 	constructor(
 		readonly index: indexerTypes.Index<T>,
 		readonly queues = new Cache<{
@@ -22,6 +27,36 @@ export class ResumableIterators<T extends Record<string, any>> {
 		// TODO choose upper limit better
 	}
 
+	private markKey(id: indexerTypes.IdKey) {
+		return `${id.key instanceof Uint8Array ? "bytes" : typeof id.key}:${String(id.primitive)}`;
+	}
+
+	private retainMarks(id: string, ids: Iterable<indexerTypes.IdKey>) {
+		let retained = this.pendingMarks.get(id);
+		for (const mark of ids) {
+			if (!retained) {
+				retained = new Map();
+				this.pendingMarks.set(id, retained);
+			}
+			retained.set(this.markKey(mark), mark);
+		}
+	}
+
+	private async applyPendingMarks(
+		id: string,
+		iterator: indexerTypes.IndexIterator<T, undefined>,
+	) {
+		while (true) {
+			const retained = this.pendingMarks.get(id);
+			if (!retained?.size) {
+				this.pendingMarks.delete(id);
+				return;
+			}
+			this.pendingMarks.delete(id);
+			await iterator.markYielded?.(retained.values());
+		}
+	}
+
 	async iterateAndFetch(
 		request: SearchRequest | SearchRequestIndexed | IterationRequest,
 		options?: { keepAlive?: boolean },
@@ -31,29 +66,32 @@ export class ResumableIterators<T extends Record<string, any>> {
 			fetch: request.fetch,
 			keepAlive: Boolean(options?.keepAlive),
 		});
-		const iterator = this.index.iterate(request);
-		const firstResult = await iterator.next(request.fetch);
 		const keepAlive = options?.keepAlive === true;
-		if (keepAlive || iterator.done() !== true) {
-			const cachedIterator = {
-				iterator,
-				request,
+		const iterator = this.index.iterate(request);
+		this.queues.add(request.idString, { iterator, request, keepAlive });
+		try {
+			await this.applyPendingMarks(request.idString, iterator);
+			const firstResult = await iterator.next(request.fetch);
+			if (!keepAlive && iterator.done() === true) {
+				this.queues.del(request.idString);
+				this.pendingMarks.delete(request.idString);
+			}
+			iteratorLogger("iterate:queued", {
+				id: request.idString,
 				keepAlive,
-			};
-			this.queues.add(request.idString, cachedIterator);
+				done: iterator.done() === true,
+				batch: firstResult.length,
+			});
+			/* console.debug(
+				"[ResumableIterators] iterateAndFetch",
+				request.idString,
+				{ keepAlive },
+			); */
+			return firstResult;
+		} catch (error) {
+			this.clear(request.idString);
+			throw error;
 		}
-		iteratorLogger("iterate:queued", {
-			id: request.idString,
-			keepAlive,
-			done: iterator.done() === true,
-			batch: firstResult.length,
-		});
-		/* console.debug(
-			"[ResumableIterators] iterateAndFetch",
-			request.idString,
-			{ keepAlive },
-		); */
-		return firstResult;
 	}
 
 	async next(
@@ -138,6 +176,7 @@ export class ResumableIterators<T extends Record<string, any>> {
 			}
 		}
 		this.queues.del(id);
+		this.pendingMarks.delete(id);
 	}
 
 	async clearAll() {
@@ -155,6 +194,7 @@ export class ResumableIterators<T extends Record<string, any>> {
 			),
 		);
 		this.queues.clear();
+		this.pendingMarks.clear();
 	}
 
 	has(id: string) {
@@ -178,5 +218,13 @@ export class ResumableIterators<T extends Record<string, any>> {
 			keepAlive: iterator.keepAlive,
 		});
 		return pending;
+	}
+
+	async markYielded(id: string, ids: Iterable<indexerTypes.IdKey>) {
+		this.retainMarks(id, ids);
+		const iterator = this.queues.get(id);
+		if (iterator) {
+			await this.applyPendingMarks(id, iterator.iterator);
+		}
 	}
 }

@@ -2,6 +2,7 @@
 import { field, serialize, vec } from "@dao-xyz/borsh";
 import { toBase64 } from "@peerbit/crypto";
 import {
+	type IdKey,
 	type IndexIterator,
 	type IndexedResults,
 	type IterateOptions,
@@ -9,6 +10,9 @@ import {
 	Sort,
 } from "@peerbit/indexer-interface";
 import { toQuery, toSort } from "@peerbit/indexer-interface";
+
+const idKey = (id: IdKey) =>
+	`${id.key instanceof Uint8Array ? "bytes" : typeof id.key}:${String(id.primitive)}`;
 
 /* -------------------------------------------------------- key helpers */
 class KeyableIterate {
@@ -63,6 +67,16 @@ function wrapWithBuffer<T extends Record<string, any>>(
 		done: () => (buf.length ? false : (src.done?.() ?? false)),
 		pending: async () => (buf.length ? buf.length : (src.pending?.() ?? 0)),
 		close: () => src.close(),
+		markYielded: (ids) => {
+			const claimed = [...ids];
+			const claimedKeys = new Set(claimed.map(idKey));
+			for (let i = buf.length - 1; i >= 0; i--) {
+				if (claimedKeys.has(idKey(buf[i].id))) {
+					buf.splice(i, 1);
+				}
+			}
+			return src.markYielded?.(claimed);
+		},
 	};
 }
 

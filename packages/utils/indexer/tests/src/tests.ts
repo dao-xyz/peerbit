@@ -4048,6 +4048,273 @@ export const tests = (
 				expect(await iterator.pending()).to.eq(0);
 			});
 
+			it("all after partial next returns only remaining sorted results", async () => {
+				await put(0);
+				await put(1);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["0"],
+				);
+				expect((await iterator.all()).map((x) => x.value.name)).to.deep.equal([
+					"1",
+					"2",
+				]);
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("deleting an already yielded sorted result does not skip the next result", async () => {
+				await put(0);
+				await put(1);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["0"],
+				);
+				await store.del({
+					query: new StringMatch({
+						key: "id",
+						value: "0",
+						method: StringMatchMethod.exact,
+						caseInsensitive: false,
+					}),
+				});
+
+				expect((await iterator.next(2)).map((x) => x.value.name)).to.deep.equal(
+					["1", "2"],
+				);
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("inserting before an already yielded sorted result does not duplicate it", async () => {
+				await put(1);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["1"],
+				);
+				await put(0);
+
+				const rest = (await iterator.next(3)).map((x) => x.value.name);
+				expect(new Set(rest).size).to.equal(rest.length);
+				expect(rest).to.not.include("1");
+				expect(rest).to.include("2");
+			});
+
+			it("keeps a mutated iterator open while unseen sorted results remain", async () => {
+				await put(0);
+				await put(2);
+
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					["0"],
+				);
+				await put(1);
+
+				if (properties.iteratorsMutable) {
+					expect(
+						(await iterator.next(1)).map((x) => x.value.name),
+					).to.deep.equal(["1"]);
+					expect(iterator.done()).to.be.false;
+					expect(await iterator.pending()).to.equal(1);
+					expect(
+						(await iterator.next(1)).map((x) => x.value.name),
+					).to.deep.equal(["2"]);
+				} else {
+					expect(
+						(await iterator.next(1)).map((x) => x.value.name),
+					).to.deep.equal(["2"]);
+				}
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("next Infinity sees inserts after an initially empty page", async () => {
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect(await iterator.next(1)).to.deep.equal([]);
+				await put(0);
+
+				const rest = (await iterator.next(Infinity)).map((x) => x.value.name);
+				expect(rest).to.deep.equal(properties.iteratorsMutable ? ["0"] : []);
+			});
+
+			it("keeps an explicitly closed iterator terminal across mutations", async () => {
+				await put(0);
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				await iterator.close();
+				await put(1);
+
+				expect(await iterator.next(1)).to.deep.equal([]);
+				expect(await iterator.all()).to.deep.equal([]);
+				expect(await iterator.pending()).to.equal(0);
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("can continue a mutable iterator after all and a later insert", async () => {
+				await put(0);
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.all()).map((x) => x.value.name)).to.deep.equal([
+					"0",
+				]);
+				await put(1);
+
+				expect((await iterator.next(1)).map((x) => x.value.name)).to.deep.equal(
+					properties.iteratorsMutable ? ["1"] : [],
+				);
+			});
+
+			it("refreshes pending after an exhausted mutable iterator mutates", async () => {
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect(await iterator.next(1)).to.deep.equal([]);
+				await put(0);
+
+				expect(await iterator.pending()).to.equal(
+					properties.iteratorsMutable ? 1 : 0,
+				);
+				if (properties.iteratorsMutable) {
+					expect(iterator.done()).to.be.false;
+					expect(
+						(await iterator.next(1)).map((x) => x.value.name),
+					).to.deep.equal(["0"]);
+				}
+			});
+
+			it("can mark live results delivered outside the iterator as yielded", async () => {
+				if (!properties.iteratorsMutable) {
+					return;
+				}
+
+				await put(0);
+				await put(1);
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "name" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.id)).to.deep.equal([
+					"0",
+				]);
+				await put(2);
+				expect(iterator.markYielded).to.be.a("function");
+				await iterator.markYielded!([toId("2")]);
+
+				expect(await iterator.pending()).to.equal(1);
+				expect((await iterator.next(2)).map((x) => x.value.id)).to.deep.equal([
+					"1",
+				]);
+				expect(await iterator.pending()).to.equal(0);
+				expect(iterator.done()).to.be.true;
+			});
+
+			it("tracks filtered updates without duplicates", async () => {
+				if (!properties.iteratorsMutable) {
+					return;
+				}
+
+				await put(0, { name: "match" });
+				await put(1, { name: "miss" });
+				await put(2, { name: "match" });
+				const iterator = store.iterate({
+					query: new StringMatch({
+						key: "name",
+						value: "match",
+						method: StringMatchMethod.exact,
+						caseInsensitive: false,
+					}),
+					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
+				});
+
+				expect((await iterator.next(1)).map((x) => x.value.id)).to.deep.equal([
+					"0",
+				]);
+				await put(1, { name: "match" });
+				await put(2, { name: "miss" });
+				await put(0, { name: "match" });
+				await put(3, { name: "match" });
+
+				expect((await iterator.all()).map((x) => x.value.id)).to.deep.equal([
+					"1",
+					"3",
+				]);
+			});
+
+			it("rescans beyond 128 yielded rows after a mutation", async () => {
+				if (!properties.iteratorsMutable) {
+					return;
+				}
+
+				for (let i = 0; i < 140; i++) {
+					await put(i);
+				}
+				const iterator = store.iterate({
+					query: [],
+					sort: [new Sort({ direction: SortDirection.ASC, key: "number" })],
+				});
+				expect(await iterator.next(130)).to.have.length(130);
+
+				await store.del({
+					query: new StringMatch({
+						key: "id",
+						value: "0",
+						method: StringMatchMethod.exact,
+						caseInsensitive: false,
+					}),
+				});
+				await put(200);
+
+				expect((await iterator.next(1)).map((x) => x.value.id)).to.deep.equal([
+					"130",
+				]);
+				const remaining = (await iterator.all()).map((x) => x.value.id);
+				expect(remaining).to.deep.equal([
+					"131",
+					"132",
+					"133",
+					"134",
+					"135",
+					"136",
+					"137",
+					"138",
+					"139",
+					"200",
+				]);
+				expect(new Set(remaining).size).to.equal(remaining.length);
+			});
+
 			describe("close", () => {
 				it("by invoking close()", async () => {
 					await put(0);

@@ -1429,6 +1429,7 @@ export class DocumentIndex<
 				let pendingAdded = added;
 				do {
 					const batches: types.Result[] = [];
+					let claimedIds: indexerTypes.IdKey[] = [];
 					const queued = await this.drainQueuedResults(
 						queue.queue,
 						resolveFlag,
@@ -1450,6 +1451,21 @@ export class DocumentIndex<
 						const wrapped = await this.wrapPushResults(matches, resolveFlag);
 						if (wrapped.length) {
 							batches.push(...wrapped);
+							claimedIds = wrapped
+								.map((result) =>
+									result instanceof types.ResultValue && result.indexed
+										? indexerTypes.toId(
+												this.indexByResolver(result.indexed),
+											)
+										: result instanceof types.ResultIndexedValue
+											? indexerTypes.toId(
+													this.indexByResolver(result.value),
+												)
+											: undefined,
+								)
+								.filter(
+									(id): id is indexerTypes.IdKey => id !== undefined,
+								);
 						}
 					}
 					if (batches.length) {
@@ -1467,6 +1483,12 @@ export class DocumentIndex<
 								redundancy: 1,
 							}),
 						});
+						if (claimedIds.length) {
+							await this._resumableIterators.markYielded(
+								_iteratorId,
+								claimedIds,
+							);
+						}
 					}
 					pendingAdded = queue.pendingAdded ?? [];
 					queue.pendingAdded = undefined;
@@ -6240,9 +6262,10 @@ export class DocumentIndex<
 									continue;
 								}
 							}
-							const id = indexerTypes.toId(
+							const indexId = indexerTypes.toId(
 								this.indexByResolver(indexedCandidate),
-							).primitive;
+							);
+							const id = indexId.primitive;
 							const existingIndexed = indexedPlaceholders?.get(id);
 							if (existingIndexed) {
 								if (resolve) {
@@ -6283,6 +6306,10 @@ export class DocumentIndex<
 							if (!resolve) {
 								ensureIndexedPlaceholders().set(id, placeholder);
 							}
+							await this._resumableIterators.markYielded(
+								queryRequestCoerced.idString,
+								[indexId],
+							);
 							hasRelevantChange = true;
 						}
 					}
