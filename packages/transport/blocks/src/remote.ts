@@ -728,6 +728,18 @@ export class RemoteBlocks implements IBlocks {
 		cidObject: CID,
 		options: RemoteReadOptions = {},
 	): Promise<Uint8Array | undefined> {
+		// Capture the controller for this open/close generation. start() replaces the
+		// field, so cleanup must remove listeners from the signal it registered on.
+		const closeSignal = this.closeController.signal;
+		const readWasAborted = () =>
+			closeSignal.aborted || options.signal?.aborted === true;
+		const throwIfReadWasAborted = () => {
+			if (readWasAborted()) {
+				throw new AbortError();
+			}
+		};
+		throwIfReadWasAborted();
+
 		const codec = codecCodes[cidObject.code as keyof typeof codecCodes];
 
 		const tryDecode = async (bytes: Uint8Array) => {
@@ -756,6 +768,9 @@ export class RemoteBlocks implements IBlocks {
 			explicitFrom.length > 0
 				? explicitFrom
 				: await this.resolveRemoteProviders(cidString, { signal: options.signal });
+		// A resolver may observe abort and still complete normally. Do not create a
+		// timeout-backed read from the candidates it returns after shutdown.
+		throwIfReadWasAborted();
 		const canResolveLater = typeof this.options.resolveProviders === "function";
 		if (providers.length === 0 && !canResolveLater) {
 			// Without an explicit provider set (or a resolver), we intentionally do not
@@ -773,34 +788,52 @@ export class RemoteBlocks implements IBlocks {
 			const promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					let timeoutCallback: ReturnType<typeof setTimeout> | undefined;
+					let resolver:
+						| ((bytes: Uint8Array) => Promise<void>)
+						| undefined;
+					let settled = false;
 					const abortHandler = () => {
 						cleanup();
+						if (settled) return;
+						settled = true;
 						reject(new AbortError());
 					};
 
 					const cleanup = () => {
 						if (timeoutCallback) clearTimeout(timeoutCallback);
-						this._resolvers.delete(cidString);
-						this.closeController.signal.removeEventListener(
-							"abort",
-							abortHandler,
-						);
+						if (resolver && this._resolvers.get(cidString) === resolver) {
+							this._resolvers.delete(cidString);
+						}
+						closeSignal.removeEventListener("abort", abortHandler);
 						options?.signal?.removeEventListener("abort", abortHandler);
 					};
 
+					// Register first, then re-check. This closes the check/listener window and
+					// makes repeated stop() calls harmless through the settled guard.
+					closeSignal.addEventListener("abort", abortHandler, { once: true });
+					options?.signal?.addEventListener("abort", abortHandler, {
+						once: true,
+					});
+					if (readWasAborted()) {
+						abortHandler();
+						return;
+					}
+
 					timeoutCallback = setTimeout(() => {
 						cleanup();
+						if (settled) return;
+						settled = true;
 						resolve(undefined);
 					}, options.timeout || 30 * 1000);
 
-					this.closeController.signal.addEventListener("abort", abortHandler);
-					options?.signal?.addEventListener("abort", abortHandler);
-
-					this._resolvers.set(cidString, async (bytes: Uint8Array) => {
+					resolver = async (bytes: Uint8Array) => {
 						const value = await tryDecode(bytes);
+						if (settled) return;
+						settled = true;
 						cleanup();
 						resolve(value);
-					});
+					};
+					this._resolvers.set(cidString, resolver);
 				},
 			);
 

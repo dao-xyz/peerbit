@@ -748,9 +748,9 @@ describe("transport", function () {
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
-	it("cancels an active relay proxy lookup when stopping", async () => {
+	it("cancels a relay proxy read when its provider lookup outlives stop", async () => {
 		const proxyStarted = pDefer<AbortSignal | undefined>();
-		const releaseProxy = pDefer<void>();
+		const releaseDownstreamRead = pDefer<void>();
 		session = await TestSession.disconnected(1, {
 			services: {
 				blocks: (components) =>
@@ -758,15 +758,16 @@ describe("transport", function () {
 						resolveProviders: async (_cid, options) => {
 							const signal = options?.signal;
 							proxyStarted.resolve(signal);
-							await Promise.race([
-								releaseProxy.promise,
-								new Promise<void>((resolve) =>
+							if (!signal?.aborted) {
+								await new Promise<void>((resolve) =>
 									signal?.addEventListener("abort", () => resolve(), {
 										once: true,
 									}),
-								),
-							]);
-							return [];
+								);
+							}
+							// A resolver is allowed to finish normally despite cancellation. Returning
+							// a candidate here exercises the downstream read's pre-aborted path.
+							return ["upstream-provider"];
 						},
 					}),
 			},
@@ -776,20 +777,45 @@ describe("transport", function () {
 		const remoteBlocks = (store(session, 0) as any)[
 			"remoteBlocks"
 		] as RemoteBlocks;
+		let downstreamReadCalls = 0;
+		remoteBlocks.options.publish = async (message) => {
+			if (message instanceof BlockRequest) {
+				downstreamReadCalls += 1;
+				// Without the pre-aborted check, the proxy read reaches this point and
+				// stop() remains queued behind this deliberately stalled request.
+				await releaseDownstreamRead.promise;
+			}
+		};
 		remoteBlocks.onMessage(
 			new BlockRequest("zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr"),
 			{ from: "requester" },
 		);
 		const proxySignal = await proxyStarted.promise;
 
-		const stopPromise = remoteBlocks.stop();
-		const abortedOnStop = proxySignal?.aborted === true;
-		if (!abortedOnStop) {
-			releaseProxy.resolve();
+		const stopPromises = [remoteBlocks.stop(), remoteBlocks.stop()];
+		let deadline: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				Promise.all(stopPromises),
+				new Promise<never>((_resolve, reject) => {
+					deadline = setTimeout(
+						() => reject(new Error("relay proxy stop did not settle promptly")),
+						2_000,
+					);
+				}),
+			]);
+		} finally {
+			if (deadline) clearTimeout(deadline);
+			releaseDownstreamRead.resolve();
+			await Promise.all(stopPromises);
 		}
-		await stopPromise;
 
-		expect(abortedOnStop).to.equal(true);
+		expect(proxySignal?.aborted).to.equal(true);
+		expect(downstreamReadCalls).to.equal(0);
+		expect((remoteBlocks as any)._loadFetchQueue.pending).to.equal(0);
+		expect((remoteBlocks as any)._loadFetchQueue.size).to.equal(0);
+		expect((remoteBlocks as any)._readFromPeersPromises.size).to.equal(0);
+		expect((remoteBlocks as any)._resolvers.size).to.equal(0);
 	});
 
 	it("retries after a dropped block response", async () => {
