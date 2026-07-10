@@ -679,6 +679,13 @@ export class RemoteBlocks implements IBlocks {
 						? Math.max(1, Math.min(60_000, inheritedTimeoutMs))
 						: Math.max(10_000, Math.floor(localTimeout) || 0);
 				const controller = new AbortController();
+				const abortOnClose = () => controller.abort();
+				this.closeController.signal.addEventListener("abort", abortOnClose, {
+					once: true,
+				});
+				if (this.closeController.signal.aborted) {
+					abortOnClose();
+				}
 				const timer = setTimeout(() => controller.abort(), proxyTimeoutMs);
 				try {
 					const candidates = await this.resolveRemoteProviders(cid, {
@@ -697,6 +704,10 @@ export class RemoteBlocks implements IBlocks {
 					}
 				} finally {
 					clearTimeout(timer);
+					this.closeController.signal.removeEventListener(
+						"abort",
+						abortOnClose,
+					);
 				}
 			} catch {
 				// ignore proxy failures

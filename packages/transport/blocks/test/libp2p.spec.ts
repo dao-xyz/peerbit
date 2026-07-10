@@ -748,6 +748,50 @@ describe("transport", function () {
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
+	it("cancels an active relay proxy lookup when stopping", async () => {
+		const proxyStarted = pDefer<AbortSignal | undefined>();
+		const releaseProxy = pDefer<void>();
+		session = await TestSession.disconnected(1, {
+			services: {
+				blocks: (components) =>
+					new DirectBlock(components, {
+						resolveProviders: async (_cid, options) => {
+							const signal = options?.signal;
+							proxyStarted.resolve(signal);
+							await Promise.race([
+								releaseProxy.promise,
+								new Promise<void>((resolve) =>
+									signal?.addEventListener("abort", () => resolve(), {
+										once: true,
+									}),
+								),
+							]);
+							return [];
+						},
+					}),
+			},
+		});
+		await store(session, 0).start();
+
+		const remoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		remoteBlocks.onMessage(
+			new BlockRequest("zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr"),
+			{ from: "requester" },
+		);
+		const proxySignal = await proxyStarted.promise;
+
+		const stopPromise = remoteBlocks.stop();
+		const abortedOnStop = proxySignal?.aborted === true;
+		if (!abortedOnStop) {
+			releaseProxy.resolve();
+		}
+		await stopPromise;
+
+		expect(abortedOnStop).to.equal(true);
+	});
+
 	it("retries after a dropped block response", async () => {
 		session = await TestSession.connected(2, {
 			services: { blocks: (c) => new DirectBlock(c) },
