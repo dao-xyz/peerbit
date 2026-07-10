@@ -168,6 +168,126 @@ describe("delete", function () {
 			expect(await log.get(retained.hash)).to.exist;
 		});
 
+		it("does not publish a batched read invalidated by native trim", async () => {
+			const log = new Log<Uint8Array>();
+			await log.open(store, signKey);
+			const { entry: trimmedEntry } = await log.append(new Uint8Array([1]));
+			const { entry: retainedEntry } = await log.append(new Uint8Array([2]));
+			(log.entryIndex as any).cache.clear();
+
+			const readStarted = deferred();
+			const releaseRead = deferred();
+			const originalGetMany = store.getMany.bind(store);
+			let intercepted = false;
+			store.getMany = async (cids, options) => {
+				const values = await originalGetMany(cids, options);
+				if (cids.includes(trimmedEntry.hash) && !intercepted) {
+					intercepted = true;
+					readStarted.resolve();
+					await releaseRead.promise;
+				}
+				return values;
+			};
+
+			let inFlight: Promise<Array<Entry<Uint8Array> | undefined>> | undefined;
+			try {
+				inFlight = log.entryIndex.getMany(
+					[trimmedEntry.hash, retainedEntry.hash],
+					{ type: "full", ignoreMissing: true },
+				);
+				await readStarted.promise;
+				const consumed =
+					log.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+						[trimmedEntry.hash],
+						{ skipNextHeadUpdates: true, deleteBlocks: false },
+					);
+				expect(consumed).not.to.equal(undefined);
+				expect(await consumed).to.equal(true);
+				releaseRead.resolve();
+				const resolved = await inFlight;
+				expect(resolved.map((entry) => entry?.hash)).to.deep.equal([
+					trimmedEntry.hash,
+					retainedEntry.hash,
+				]);
+				expect((log.entryIndex as any).cache.get(trimmedEntry.hash)).to.equal(
+					undefined,
+				);
+				expect((log.entryIndex as any).cache.get(retainedEntry.hash)).to.equal(
+					resolved[1],
+				);
+			} finally {
+				releaseRead.resolve();
+				store.getMany = originalGetMany;
+				await inFlight;
+			}
+
+			expect((log.entryIndex as any).activeCacheInvalidations.size).to.equal(0);
+			expect((log.entryIndex as any).inFlightCachePublications.size).to.equal(
+				0,
+			);
+		});
+
+		it("keeps overlapping deletion invalidations active until all settle", async () => {
+			const log = new Log<Uint8Array>();
+			await log.open(store, signKey);
+			const { entry } = await log.append(new Uint8Array([1]));
+			const shallow = (await log.getShallow(entry.hash))!;
+			(log.entryIndex as any).cache.clear();
+
+			const removeStarted = [deferred(), deferred()];
+			const releaseRemove = [deferred(), deferred()];
+			const originalRm = store.rm.bind(store);
+			let removeCalls = 0;
+			store.rm = async (cid) => {
+				if (cid !== entry.hash || removeCalls >= removeStarted.length) {
+					return originalRm(cid);
+				}
+				const call = removeCalls++;
+				removeStarted[call]!.resolve();
+				await releaseRemove[call]!.promise;
+				if (call === 1) {
+					return originalRm(cid);
+				}
+			};
+
+			let firstDeletion: Promise<unknown> | undefined;
+			let secondDeletion: Promise<unknown> | undefined;
+			try {
+				firstDeletion = log.entryIndex.delete(entry.hash, shallow);
+				await removeStarted[0]!.promise;
+				secondDeletion = log.entryIndex.delete(entry.hash, shallow);
+				await removeStarted[1]!.promise;
+
+				releaseRemove[0]!.resolve();
+				await firstDeletion;
+				expect(
+					(log.entryIndex as any).activeCacheInvalidations.get(entry.hash),
+				).to.equal(1);
+
+				const resolvedDuringDelete = await log.get(entry.hash);
+				expect(resolvedDuringDelete?.hash).to.equal(entry.hash);
+				expect((log.entryIndex as any).cache.get(entry.hash)).to.equal(
+					undefined,
+				);
+
+				releaseRemove[1]!.resolve();
+				await secondDeletion;
+			} finally {
+				for (const release of releaseRemove) {
+					release.resolve();
+				}
+				store.rm = originalRm;
+				await firstDeletion;
+				await secondDeletion;
+			}
+
+			expect((log.entryIndex as any).activeCacheInvalidations.size).to.equal(0);
+			expect((log.entryIndex as any).inFlightCachePublications.size).to.equal(
+				0,
+			);
+			expect(await log.get(entry.hash)).to.equal(undefined);
+		});
+
 		it("only skips deleted entries when publishing a batched store read", async () => {
 			const log = new Log<Uint8Array>();
 			await log.open(store, signKey);
