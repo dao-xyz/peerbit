@@ -512,8 +512,12 @@ export type ReturnTypeFromResolveOptions<
 		? any
 		: Entry<T>;
 
+type CachePublicationGuard = { invalidated: boolean };
+
 export class EntryIndex<T> {
 	private cache: Cache<Entry<T>>;
+	private inFlightCachePublications: Map<string, Set<CachePublicationGuard>>;
+	private activeCacheInvalidations: Map<string, number>;
 	private sortReversed: Sort[];
 	private initialied = false;
 	private _length: number;
@@ -551,9 +555,92 @@ export class EntryIndex<T> {
 						: SortDirection.DESC),
 		);
 		this.cache = properties.cache ?? new Cache({ max: ENTRY_CACHE_MAX_SIZE });
+		this.inFlightCachePublications = new Map();
+		this.activeCacheInvalidations = new Map();
 		this._length = 0;
 		this.insertionPromises = new Map();
 		this.pendingIndexWrites = new Map();
+	}
+
+	/**
+	 * Cache publication is guarded separately from the storage read. Deletions
+	 * invalidate reads that were already in flight, while the active counter
+	 * makes reads started during the delete window invalid from the outset.
+	 */
+	private beginCachePublication(hash: string): CachePublicationGuard {
+		const guard: CachePublicationGuard = {
+			invalidated: this.activeCacheInvalidations.has(hash),
+		};
+		let guards = this.inFlightCachePublications.get(hash);
+		if (!guards) {
+			guards = new Set();
+			this.inFlightCachePublications.set(hash, guards);
+		}
+		guards.add(guard);
+		return guard;
+	}
+
+	private endCachePublication(hash: string, guard: CachePublicationGuard) {
+		const guards = this.inFlightCachePublications.get(hash);
+		if (!guards) {
+			return;
+		}
+		guards.delete(guard);
+		if (guards.size === 0) {
+			this.inFlightCachePublications.delete(hash);
+		}
+	}
+
+	private invalidateCachedEntry(hash: string) {
+		this.cache.del(hash);
+		for (const guard of this.inFlightCachePublications.get(hash) ?? []) {
+			guard.invalidated = true;
+		}
+	}
+
+	private beginCacheInvalidation(hash: string) {
+		this.activeCacheInvalidations.set(
+			hash,
+			(this.activeCacheInvalidations.get(hash) ?? 0) + 1,
+		);
+		this.invalidateCachedEntry(hash);
+	}
+
+	private endCacheInvalidation(hash: string) {
+		this.invalidateCachedEntry(hash);
+		const remaining = (this.activeCacheInvalidations.get(hash) ?? 1) - 1;
+		if (remaining === 0) {
+			this.activeCacheInvalidations.delete(hash);
+		} else {
+			this.activeCacheInvalidations.set(hash, remaining);
+		}
+	}
+
+	private withCacheInvalidation<R>(
+		hashes: Iterable<string>,
+		fn: () => MaybePromise<R>,
+	): MaybePromise<R> {
+		const uniqueHashes = [...new Set(hashes)];
+		for (const hash of uniqueHashes) {
+			this.beginCacheInvalidation(hash);
+		}
+		const finish = () => {
+			for (const hash of uniqueHashes) {
+				this.endCacheInvalidation(hash);
+			}
+		};
+		let result: MaybePromise<R>;
+		try {
+			result = fn();
+		} catch (error) {
+			finish();
+			throw error;
+		}
+		if (isPromiseLike(result)) {
+			return result.finally(finish);
+		}
+		finish();
+		return result;
 	}
 
 	private materializePendingIndexWrite(
@@ -2202,37 +2289,37 @@ export class EntryIndex<T> {
 	}
 
 	async delete(k: string, from?: Entry<any> | ShallowEntry) {
-		this.cache.del(k);
+		return this.withCacheInvalidation([k], async () => {
+			if (from && from.hash !== k) {
+				throw new Error("Shallow hash doesn't match the key");
+			}
 
-		if (from && from.hash !== k) {
-			throw new Error("Shallow hash doesn't match the key");
-		}
+			const pending = this.getPendingIndexWrite(k);
+			from = from || pending || (await this.getShallow(k))?.value;
+			if (!from) {
+				return; // already deleted
+			}
+			if (pending) {
+				this.pendingIndexWrites.delete(k);
+				await this.properties.store.rm(k);
+				this._length--;
+				this.properties.nativeGraph?.graph.delete(k);
+				await this.privateUpdateNextHeadProperty(from, true);
+				return from;
+			}
 
-		const pending = this.getPendingIndexWrite(k);
-		from = from || pending || (await this.getShallow(k))?.value;
-		if (!from) {
-			return; // already deleted
-		}
-		if (pending) {
-			this.pendingIndexWrites.delete(k);
+			let deleted = await this.properties.index.del({ query: { hash: k } });
 			await this.properties.store.rm(k);
-			this._length--;
-			this.properties.nativeGraph?.graph.delete(k);
-			await this.privateUpdateNextHeadProperty(from, true);
-			return from;
-		}
 
-		let deleted = await this.properties.index.del({ query: { hash: k } });
-		await this.properties.store.rm(k);
+			if (deleted.length > 0) {
+				this._length -= deleted.length;
+				this.properties.nativeGraph?.graph.delete(k);
 
-		if (deleted.length > 0) {
-			this._length -= deleted.length;
-			this.properties.nativeGraph?.graph.delete(k);
-
-			// mark all next entries as new heads
-			await this.privateUpdateNextHeadProperty(from, true);
-			return from;
-		}
+				// mark all next entries as new heads
+				await this.privateUpdateNextHeadProperty(from, true);
+				return from;
+			}
+		});
 	}
 
 	canDeleteMany(): boolean {
@@ -2256,6 +2343,16 @@ export class EntryIndex<T> {
 		if (from.length === 0) {
 			return [];
 		}
+		return this.withCacheInvalidation(
+			from.map((node) => node.hash),
+			() => this.deleteManyWithInvalidation(from, options),
+		);
+	}
+
+	private deleteManyWithInvalidation(
+		from: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean },
+	): MaybePromise<ShallowEntry[]> {
 		if (from.length === 1) {
 			return this.deleteSingleMaybe(from[0]!, options);
 		}
@@ -2275,7 +2372,6 @@ export class EntryIndex<T> {
 		const storeHashes: string[] = [];
 
 		for (const node of nodes) {
-			this.cache.del(node.hash);
 			const pending = this.getPendingIndexWrite(node.hash);
 			if (pending) {
 				this.pendingIndexWrites.delete(node.hash);
@@ -2379,7 +2475,14 @@ export class EntryIndex<T> {
 		) {
 			return undefined;
 		}
+		return this.withCacheInvalidation(hashes, () =>
+			this.consumeNativeTrimmedEntryHashesNoReturnWithInvalidation(hashes),
+		);
+	}
 
+	private consumeNativeTrimmedEntryHashesNoReturnWithInvalidation(
+		hashes: string[],
+	): MaybePromise<boolean> {
 		const indexedHashes: string[] = [];
 		let pendingDeleted = 0;
 		const seen = new Set<string>();
@@ -2388,7 +2491,6 @@ export class EntryIndex<T> {
 				continue;
 			}
 			seen.add(hash);
-			this.cache.del(hash);
 			if (this.pendingIndexWrites.delete(hash)) {
 				pendingDeleted++;
 			} else {
@@ -2447,11 +2549,20 @@ export class EntryIndex<T> {
 		nodes: ShallowEntry[],
 		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
 	): MaybePromise<ShallowEntry[]> {
+		return this.withCacheInvalidation(
+			nodes.map((node) => node.hash),
+			() => this.consumeNativeTrimmedEntryNodesWithInvalidation(nodes, options),
+		);
+	}
+
+	private consumeNativeTrimmedEntryNodesWithInvalidation(
+		nodes: ShallowEntry[],
+		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+	): MaybePromise<ShallowEntry[]> {
 		const indexedByHash = new Map(nodes.map((node) => [node.hash, node]));
 		const deletedByHash = new Map<string, ShallowEntry>();
 		const indexedHashes: string[] = [];
 		for (const node of nodes) {
-			this.cache.del(node.hash);
 			const pending = this.getPendingIndexWrite(node.hash);
 			if (pending) {
 				this.pendingIndexWrites.delete(node.hash);
@@ -2501,7 +2612,6 @@ export class EntryIndex<T> {
 		node: ShallowEntry,
 		options?: { skipNextHeadUpdates?: boolean },
 	): MaybePromise<ShallowEntry[]> {
-		this.cache.del(node.hash);
 		const pending = this.getPendingIndexWrite(node.hash);
 		if (pending) {
 			this.pendingIndexWrites.delete(node.hash);
@@ -2976,18 +3086,23 @@ export class EntryIndex<T> {
 			mem = this.materializeCached(k, mem);
 		}
 		if (mem === undefined) {
-			mem = await this.resolveFromStore(k, coercedOptions);
-			if (mem) {
-				this.properties.init(mem);
-				mem.hash = k;
-				if (cached?.createdLocally !== undefined) {
-					mem.createdLocally = cached.createdLocally;
+			const cachePublication = this.beginCachePublication(k);
+			try {
+				mem = await this.resolveFromStore(k, coercedOptions);
+				if (mem) {
+					this.properties.init(mem);
+					mem.hash = k;
+					if (cached?.createdLocally !== undefined) {
+						mem.createdLocally = cached.createdLocally;
+					}
+				} else if (coercedOptions?.ignoreMissing !== true) {
+					throw new Error("Failed to load entry from head with hash: " + k);
 				}
-			} else if (coercedOptions?.ignoreMissing !== true) {
-				throw new Error("Failed to load entry from head with hash: " + k);
-			}
-			if (mem) {
-				this.cache.add(k, mem);
+				if (mem && !cachePublication.invalidated) {
+					this.cache.add(k, mem);
+				}
+			} finally {
+				this.endCachePublication(k, cachePublication);
 			}
 		}
 		return mem ? mem : undefined;
@@ -3037,29 +3152,42 @@ export class EntryIndex<T> {
 			return resolved;
 		}
 
-		const values = await this.properties.store.getMany!(
-			missingHashes,
-			withDefaultRemoteReadPriority(coercedOptions),
+		const cachePublications = missingHashes.map((hash) =>
+			this.beginCachePublication(hash),
 		);
-		for (let i = 0; i < values.length; i++) {
-			const hash = missingHashes[i]!;
-			const value = values[i];
-			if (!value) {
-				if (coercedOptions?.ignoreMissing !== true) {
-					throw new Error("Failed to load entry from head with hash: " + hash);
+		try {
+			const values = await this.properties.store.getMany!(
+				missingHashes,
+				withDefaultRemoteReadPriority(coercedOptions),
+			);
+			for (let i = 0; i < values.length; i++) {
+				const hash = missingHashes[i]!;
+				const value = values[i];
+				if (!value) {
+					if (coercedOptions?.ignoreMissing !== true) {
+						throw new Error(
+							"Failed to load entry from head with hash: " + hash,
+						);
+					}
+					continue;
 				}
-				continue;
-			}
 
-			const entry = deserialize(value, Entry) as Entry<T>;
-			this.properties.init(entry);
-			entry.hash = hash;
-			entry.size = value.length;
-			if (missingCreatedLocally[i] !== undefined) {
-				entry.createdLocally = missingCreatedLocally[i];
+				const entry = deserialize(value, Entry) as Entry<T>;
+				this.properties.init(entry);
+				entry.hash = hash;
+				entry.size = value.length;
+				if (missingCreatedLocally[i] !== undefined) {
+					entry.createdLocally = missingCreatedLocally[i];
+				}
+				if (!cachePublications[i]!.invalidated) {
+					this.cache.add(hash, entry);
+				}
+				resolved[missingPositions[i]!] = entry;
 			}
-			this.cache.add(hash, entry);
-			resolved[missingPositions[i]!] = entry;
+		} finally {
+			for (let i = 0; i < cachePublications.length; i++) {
+				this.endCachePublication(missingHashes[i]!, cachePublications[i]!);
+			}
 		}
 
 		return resolved;
