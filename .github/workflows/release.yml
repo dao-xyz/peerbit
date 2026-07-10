@@ -93,8 +93,8 @@ jobs:
     # changesets/action opens the Version Packages PR (when changesets are
     # pending) and, once that PR is merged, runs the publish command below.
     #
-    # NOTE: the default workflow token cannot trigger downstream workflows (CI) on the
-    # Version Packages PR it opens, so the PR is opened with RELEASE_PR_TOKEN —
+    # NOTE: the default workflow token cannot trigger downstream workflows (CI)
+    # on the Version Packages PR it opens, so the PR uses RELEASE_PR_TOKEN —
     # a peerbit-org bot PAT with repo + workflow scopes. The authentication
     # preflight above deliberately fails closed if the secret is missing or does
     # not belong to peerbit-org. The checkout token (git pushes: version branch,
