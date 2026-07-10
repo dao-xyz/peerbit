@@ -1179,37 +1179,93 @@ export class DocumentIndex<
 		}
 	}
 
+	/**
+	 * Resolve documents without bypassing the resolver/program caches. Cache and
+	 * identity-index hits are collected first; only the remaining heads cross the
+	 * log read boundary, and those reads stay aligned in one batch.
+	 */
+	private async resolveDocumentsWithBatchedHeads(
+		values: Array<{
+			id?: indexerTypes.IdPrimitive;
+			indexed: I;
+			head: string;
+		}>,
+	): Promise<{
+		resolved: Array<{ value: T } | undefined>;
+		heads: Array<Entry<Operation> | undefined>;
+	}> {
+		const resolved: Array<{ value: T } | undefined> = new Array(values.length);
+		const heads: Array<Entry<Operation> | undefined> = new Array(values.length);
+		const unresolvedPositions: number[] = [];
+
+		for (let i = 0; i < values.length; i++) {
+			const value = values[i]!;
+			const cached = await this.resolveDocument({
+				...value,
+				headEntry: null,
+			});
+			if (cached) {
+				resolved[i] = cached;
+			} else {
+				unresolvedPositions.push(i);
+			}
+		}
+
+		if (unresolvedPositions.length === 0) {
+			return { resolved, heads };
+		}
+
+		const unresolvedHeads = await this._log.log.getMany(
+			unresolvedPositions.map((position) => values[position]!.head),
+		);
+		for (let i = 0; i < unresolvedPositions.length; i++) {
+			const position = unresolvedPositions[i]!;
+			const head = unresolvedHeads[i];
+			heads[position] = head;
+			resolved[position] = await this.resolveDocument({
+				...values[position]!,
+				headEntry: head ?? null,
+			});
+		}
+
+		return { resolved, heads };
+	}
+
 	private async wrapPushResults(
 		matches: Array<WithContext<T> | WithContext<I>>,
 		resolve: boolean,
 	): Promise<types.Result[]> {
 		if (!matches.length) return [];
 		const headsByMatch: Array<Entry<Operation> | undefined> = [];
-		const preloadedHeadPositions = new Set<number>();
+		const resolvedByMatch: Array<{ value: T } | undefined> = [];
 		if (!resolve) {
 			headsByMatch.push(
 				...(await this._log.log.getMany(
 					matches.map((match) => match.__context.head),
 				)),
 			);
-		} else if (!this.indexedTypeIsDocumentType) {
+		} else {
 			const indexedPositions: number[] = [];
 			for (let i = 0; i < matches.length; i++) {
 				if (!(matches[i] instanceof this.documentType)) {
 					indexedPositions.push(i);
 				}
 			}
-			const indexedHeads = indexedPositions.length
-				? await this._log.log.getMany(
-						indexedPositions.map(
-							(position) => matches[position]!.__context.head,
-						),
+			const indexedBatch = indexedPositions.length
+				? await this.resolveDocumentsWithBatchedHeads(
+						indexedPositions.map((position) => {
+							const indexed = matches[position] as WithContext<I>;
+							return {
+								indexed,
+								head: indexed.__context.head,
+							};
+						}),
 					)
-				: [];
+				: { resolved: [], heads: [] };
 			for (let i = 0; i < indexedPositions.length; i++) {
 				const position = indexedPositions[i]!;
-				headsByMatch[position] = indexedHeads[i];
-				preloadedHeadPositions.add(position);
+				resolvedByMatch[position] = indexedBatch.resolved[i];
+				headsByMatch[position] = indexedBatch.heads[i];
 			}
 		}
 		const results: types.Result[] = [];
@@ -1232,19 +1288,7 @@ export class DocumentIndex<
 				}
 
 				const indexed = match as WithContext<I>;
-				const headWasPreloaded = preloadedHeadPositions.has(i);
-				const resolveInput: {
-					indexed: I;
-					head: string;
-					headEntry?: Entry<Operation> | null;
-				} = {
-					indexed,
-					head: indexed.__context.head,
-				};
-				if (headWasPreloaded) {
-					resolveInput.headEntry = headsByMatch[i] ?? null;
-				}
-				const resolved = await this.resolveDocument(resolveInput);
+				const resolved = resolvedByMatch[i];
 
 				if (resolved) {
 					results.push(
@@ -1258,9 +1302,7 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = headWasPreloaded
-					? headsByMatch[i]
-					: await this._log.log.get(indexed.__context.head);
+				const head = headsByMatch[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: indexed.__context,
@@ -1293,12 +1335,19 @@ export class DocumentIndex<
 			return [];
 		}
 		const drained = queueEntries.splice(0);
-		const headsWerePreloaded = !resolve || !this.indexedTypeIsDocumentType;
-		const heads = headsWerePreloaded
-			? await this._log.log.getMany(
-					drained.map((entry) => entry.value.__context.head),
+		const resolvedBatch = resolve
+			? await this.resolveDocumentsWithBatchedHeads(
+					drained.map((entry) => ({
+						indexed: entry.value,
+						head: entry.value.__context.head,
+					})),
 				)
-			: [];
+			: undefined;
+		const heads = resolvedBatch
+			? resolvedBatch.heads
+			: await this._log.log.getMany(
+					drained.map((entry) => entry.value.__context.head),
+				);
 		const results: types.Result[] = [];
 		for (let i = 0; i < drained.length; i++) {
 			const entry = drained[i]!;
@@ -1307,18 +1356,7 @@ export class DocumentIndex<
 				entry.value,
 			);
 			if (resolve) {
-				const resolveInput: {
-					indexed: I;
-					head: string;
-					headEntry?: Entry<Operation> | null;
-				} = {
-					indexed: entry.value,
-					head: entry.value.__context.head,
-				};
-				if (headsWerePreloaded) {
-					resolveInput.headEntry = heads[i] ?? null;
-				}
-				const value = await this.resolveDocument(resolveInput);
+				const value = resolvedBatch!.resolved[i];
 				if (value) {
 					results.push(
 						new types.ResultValue({
@@ -1331,9 +1369,7 @@ export class DocumentIndex<
 					continue;
 				}
 
-				const head = headsWerePreloaded
-					? heads[i]
-					: await this._log.log.get(entry.value.__context.head);
+				const head = heads[i];
 				results.push(
 					new types.ResultIndexedValue({
 						context: entry.value.__context,
@@ -3700,30 +3736,26 @@ export class DocumentIndex<
 			candidates.push({ result, indexed: indexedUnwrapped });
 		}
 
-		const headsWerePreloaded =
-			candidates.length > 0 &&
-			(!resolveDocumentsFlag || !this.indexedTypeIsDocumentType);
-		const heads = headsWerePreloaded
-			? await this._log.log.getMany(
-					candidates.map(({ result }) => result.value.__context.head),
+		const resolvedBatch = resolveDocumentsFlag
+			? await this.resolveDocumentsWithBatchedHeads(
+					candidates.map(({ result }) => ({
+						indexed: result.value,
+						head: result.value.__context.head,
+					})),
 				)
-			: [];
+			: undefined;
+		const heads = resolvedBatch
+			? resolvedBatch.heads
+			: candidates.length > 0
+				? await this._log.log.getMany(
+						candidates.map(({ result }) => result.value.__context.head),
+					)
+				: [];
 		const filteredResults: types.Result[] = [];
 		for (let i = 0; i < candidates.length; i++) {
 			const { result, indexed: indexedUnwrapped } = candidates[i]!;
 			if (resolveDocumentsFlag) {
-				const resolveInput: {
-					indexed: I;
-					head: string;
-					headEntry?: Entry<Operation> | null;
-				} = {
-					indexed: result.value,
-					head: result.value.__context.head,
-				};
-				if (headsWerePreloaded) {
-					resolveInput.headEntry = heads[i] ?? null;
-				}
-				const value = await this.resolveDocument(resolveInput);
+				const value = resolvedBatch!.resolved[i];
 
 				if (!value) {
 					continue;

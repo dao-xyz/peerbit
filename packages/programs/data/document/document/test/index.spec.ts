@@ -17387,6 +17387,127 @@ describe("index", () => {
 					await check(store, undefined, true);
 				});
 
+				it("keeps resolver-cached custom-index queries off block storage", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+							},
+						},
+					});
+
+					const docs = Array.from(
+						{ length: 12 },
+						(_, index) =>
+							new Document({
+								id: `resolver-cache-${index}`,
+								name: `value-${index}`,
+							}),
+					);
+					for (const doc of docs) {
+						await store.docs.put(doc);
+					}
+
+					const logGetManySpy = sinon.spy(store.docs.log.log, "getMany");
+					const logGetSpy = sinon.spy(store.docs.log.log, "get");
+					const blocks = store.docs.log.log.blocks;
+					const blocksGetManyStub = sinon
+						.stub(blocks as any, "getMany")
+						.rejects(new Error("resolver cache must avoid block getMany"));
+					const blocksGetStub = sinon
+						.stub(blocks, "get")
+						.rejects(new Error("resolver cache must avoid block get"));
+
+					try {
+						const response = await store.docs.index.processQuery(
+							new SearchRequest({ query: [], fetch: docs.length }),
+							store.node.identity.publicKey,
+							true,
+						);
+
+						expect(response.results).to.have.length(docs.length);
+						expect(
+							response.results.map((result) => result.value.id),
+						).to.have.members(docs.map((doc) => doc.id));
+						expect(logGetManySpy.callCount).to.equal(0);
+						expect(logGetSpy.callCount).to.equal(0);
+						expect(blocksGetManyStub.callCount).to.equal(0);
+						expect(blocksGetStub.callCount).to.equal(0);
+					} finally {
+						logGetManySpy.restore();
+						logGetSpy.restore();
+						blocksGetManyStub.restore();
+						blocksGetStub.restore();
+					}
+				});
+
+				it("filters unreadable heads before batched result reads", async () => {
+					session = await TestSession.connected(1);
+
+					const store = new TestStore<Indexable>({
+						docs: new Documents<Document, Indexable>(),
+					});
+
+					await session.peers[0].open(store, {
+						args: {
+							replicate: { factor: 1 },
+							index: {
+								type: Indexable,
+								transform: (doc) => new Indexable(doc),
+							},
+						},
+					});
+
+					const docs = [
+						new Document({ id: "readable-1", name: "one" }),
+						new Document({ id: "unreadable", name: "two" }),
+						new Document({ id: "readable-2", name: "three" }),
+					];
+					const puts = [];
+					for (const doc of docs) {
+						puts.push(await store.docs.put(doc));
+					}
+
+					const getManySpy = sinon.spy(store.docs.log.log, "getMany");
+					const canReadIds: string[] = [];
+					try {
+						const response = await store.docs.index.processQuery(
+							new SearchRequestIndexed({ query: [], fetch: docs.length }),
+							store.node.identity.publicKey,
+							true,
+							{
+								canRead: (indexed) => {
+									canReadIds.push(indexed.id);
+									return indexed.id !== "unreadable";
+								},
+							},
+						);
+
+						expect(
+							response.results.map((result) => result.value.id),
+						).to.have.members(["readable-1", "readable-2"]);
+						expect(canReadIds).to.have.members(docs.map((doc) => doc.id));
+						expect(getManySpy.callCount).to.equal(1);
+						expect(getManySpy.firstCall.args[0]).to.have.members([
+							puts[0].entry.hash,
+							puts[2].entry.hash,
+						]);
+						expect(getManySpy.firstCall.args[0]).not.to.include(
+							puts[1].entry.hash,
+						);
+					} finally {
+						getManySpy.restore();
+					}
+				});
+
 				it("drops unresolved indexed placeholders when resolving iterator batches", async () => {
 					session = await TestSession.connected(1);
 
