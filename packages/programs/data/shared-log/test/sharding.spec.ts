@@ -1,5 +1,6 @@
 import { keys } from "@libp2p/crypto";
 import { randomBytes, toBase64 } from "@peerbit/crypto";
+import type { Entry } from "@peerbit/log";
 // Include test utilities
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitFor, waitForResolved } from "@peerbit/time";
@@ -308,6 +309,413 @@ testSetups.forEach((setup) => {
 						rows,
 					)}`,
 				);
+			};
+
+			const collectReplicaFacts = async (
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+			) => {
+				const actualByPeer = new Map<string, Set<string>>();
+				const missingBlocksByPeer = new Map<string, string[]>();
+				const replicasByHash = new Map<string, number>();
+
+				for (const db of dbs) {
+					const peer = db.log.node.identity.publicKey.hashcode();
+					const entries = await db.log.log.toArray();
+					const hashes = new Set(entries.map((entry) => entry.hash));
+					actualByPeer.set(peer, hashes);
+					missingBlocksByPeer.set(
+						peer,
+						(
+							await Promise.all(
+								entries.map(async (entry) => ({
+									hash: entry.hash,
+									has: await db.log.log.blocks.has(entry.hash),
+								})),
+							)
+						)
+							.filter(({ has }) => !has)
+							.map(({ hash }) => hash),
+					);
+					for (const hash of hashes) {
+						replicasByHash.set(hash, (replicasByHash.get(hash) ?? 0) + 1);
+					}
+				}
+
+				return { actualByPeer, missingBlocksByPeer, replicasByHash };
+			};
+
+			const collectExpectedLeaderViews = async (
+				entries: Entry<any>[],
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+				candidates: string[],
+			) => {
+				const viewsByHash = new Map<string, Set<string>[]>();
+				for (const entry of entries) {
+					const views = await Promise.all(
+						dbs.map(async (db) => {
+							const leaders = new Set<string>();
+							await db.log.isLeader(
+								{ entry, replicas: 2 },
+								{
+									candidates,
+									onLeader: (leader) => leaders.add(leader),
+									persist: false,
+									roleAge: 0,
+								},
+							);
+							return leaders;
+						}),
+					);
+					viewsByHash.set(entry.hash, views);
+				}
+				return viewsByHash;
+			};
+
+			const assertAndCollectAgreedLeaders = (
+				viewsByHash: Map<string, Set<string>[]>,
+				candidates: string[],
+			) => {
+				const expectedByHash = new Map<string, Set<string>>();
+				for (const [hash, views] of viewsByHash) {
+					const expected = views[0] ?? new Set<string>();
+					const expectedSorted = [...expected].sort();
+					expect(
+						expected.size,
+						`semantic replica floor for ${hash}`,
+					).to.be.at.least(2);
+					expect(
+						expectedSorted.every((leader) => candidates.includes(leader)),
+						`semantic leaders for ${hash} must be fixed test peers`,
+					).to.be.true;
+					for (let index = 1; index < views.length; index++) {
+						expect(
+							[...views[index]!].sort(),
+							`planner agreement for ${hash} at peer ${index}`,
+						).to.deep.equal(expectedSorted);
+					}
+					expectedByHash.set(hash, new Set(expected));
+				}
+				return expectedByHash;
+			};
+
+			const invertExpectedLeaders = (
+				expectedByHash: Map<string, Set<string>>,
+				peers: string[],
+			) => {
+				const expectedByPeer = new Map(
+					peers.map((peer) => [peer, new Set<string>()]),
+				);
+				for (const [hash, leaders] of expectedByHash) {
+					for (const leader of leaders) {
+						expectedByPeer.get(leader)?.add(hash);
+					}
+				}
+				return expectedByPeer;
+			};
+
+			const semanticLeaderSignature = (
+				expectedByHash: Map<string, Set<string>>,
+			) =>
+				[...expectedByHash.entries()]
+					.sort(([left], [right]) => left.localeCompare(right))
+					.map(([hash, leaders]) => `${hash}:${[...leaders].sort().join(",")}`)
+					.join("|");
+
+			const printSemanticReplicationDiagnostics = async (
+				label: string,
+				expectedHashes: Set<string>,
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+				expectedByPeer?: Map<string, Set<string>>,
+			) => {
+				const { actualByPeer, missingBlocksByPeer, replicasByHash } =
+					await collectReplicaFacts(dbs);
+				const rows = [];
+				for (const db of dbs) {
+					const log = db.log as any;
+					const peer = db.log.node.identity.publicKey.hashcode();
+					const expected = expectedByPeer?.get(peer) ?? expectedHashes;
+					const actual = actualByPeer.get(peer) ?? new Set<string>();
+					const prunable = await db.log.getPrunable().catch(() => []);
+					const frontier = [
+						...(
+							(log._repairFrontierByMode ?? new Map()) as Map<
+								string,
+								Map<string, Set<string>>
+							>
+						).entries(),
+					].map(([mode, targets]) => ({
+						mode,
+						targets: [...targets.entries()].map(([target, hashes]) => ({
+							target,
+							hashes: hashes.size,
+						})),
+					}));
+					const pendingSweepPeers = [
+						...(
+							(log._repairSweepPendingPeersByMode ?? new Map()) as Map<
+								string,
+								Set<string>
+							>
+						).entries(),
+					].map(([mode, peers]) => ({ mode, peers: [...peers] }));
+					const sync = log.syncronizer as any;
+					rows.push({
+						peer,
+						expected: [...expected],
+						actual: [...actual],
+						missing: [...expected].filter((hash) => !actual.has(hash)),
+						unexpected: [...actual].filter((hash) => !expected.has(hash)),
+						missingBlocks: missingBlocksByPeer.get(peer) ?? [],
+						prunable: prunable.map((entry: { hash?: string }) => entry.hash),
+						repair: {
+							running: Boolean(log._repairSweepRunning),
+							pendingModes: [...(log._repairSweepPendingModes ?? new Set())],
+							pendingSweepPeers,
+						},
+						frontier,
+						timers: {
+							repairRetries: (log._repairRetryTimers ?? new Set()).size,
+							joinAuthoritative: (
+								log._joinAuthoritativeRepairTimersByDelay ?? new Map()
+							).size,
+							appendBackfill: Boolean(log._appendBackfillTimer),
+							checkedPrune: [
+								...(log._checkedPruneRetries ?? new Map()).values(),
+							].filter((state: { timer?: unknown }) => state.timer).length,
+						},
+						sync: {
+							pending: sync.pending,
+							queued: sync.syncInFlightQueue?.size,
+							inFlight: [...(sync.syncInFlight ?? new Map()).entries()].map(
+								([target, hashes]: [string, Map<string, unknown>]) => ({
+									target,
+									hashes: hashes.size,
+								}),
+							),
+						},
+					});
+				}
+
+				console.error(
+					`[shared-log-semantic-replication-diagnostics:${label}] ${JSON.stringify(
+						{
+							expectedUnion: [...expectedHashes],
+							actualUnion: [...replicasByHash.keys()],
+							missingFromUnion: [...expectedHashes].filter(
+								(hash) => !replicasByHash.has(hash),
+							),
+							globallyUnknown: [...replicasByHash.keys()].filter(
+								(hash) => !expectedHashes.has(hash),
+							),
+							replicas: [...replicasByHash.entries()],
+							rows,
+						},
+					)}`,
+				);
+			};
+
+			const waitForExactReplicaCopies = async (
+				label: string,
+				expectedHashes: Set<string>,
+				expectedCopies: number,
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+			) => {
+				let stableSamples = 0;
+				try {
+					await waitForResolved(
+						async () => {
+							try {
+								const { missingBlocksByPeer, replicasByHash } =
+									await collectReplicaFacts(dbs);
+								expect(
+									[...expectedHashes].filter(
+										(hash) => !replicasByHash.has(hash),
+									),
+									"expected hashes missing from union",
+								).to.be.empty;
+								expect(
+									[...replicasByHash.keys()].filter(
+										(hash) => !expectedHashes.has(hash),
+									),
+									"unexpected hashes in union",
+								).to.be.empty;
+								for (const hash of expectedHashes) {
+									expect(
+										replicasByHash.get(hash) ?? 0,
+										`replicas for ${hash}`,
+									).to.equal(expectedCopies);
+								}
+								expect(
+									[...replicasByHash.values()].reduce(
+										(total, copies) => total + copies,
+										0,
+									),
+									"total replica copies",
+								).to.equal(expectedHashes.size * expectedCopies);
+								for (const missingBlocks of missingBlocksByPeer.values()) {
+									expect(missingBlocks, "entries missing local blocks").to.be
+										.empty;
+								}
+							} catch (error) {
+								stableSamples = 0;
+								throw error;
+							}
+							stableSamples += 1;
+							expect(stableSamples, "stable exact-copy samples").to.equal(3);
+						},
+						{ timeout: 120_000, delayInterval: 500 },
+					);
+				} catch (error) {
+					const expectedByPeer =
+						expectedCopies === dbs.length
+							? new Map(
+									dbs.map((db) => [
+										db.log.node.identity.publicKey.hashcode(),
+										expectedHashes,
+									]),
+								)
+							: undefined;
+					await printSemanticReplicationDiagnostics(
+						label,
+						expectedHashes,
+						dbs,
+						expectedByPeer,
+					);
+					throw error;
+				}
+			};
+
+			const waitForSemanticOwnership = async (
+				label: string,
+				entries: Entry<any>[],
+				dbs: { log: EventStore<string, ReplicationDomainHash<any>>["log"] }[],
+				peers: string[],
+				options: {
+					expectedCount: number;
+					mode: "containment" | "exact";
+					requiredPeer?: string;
+				},
+			) => {
+				const expectedHashes = new Set(entries.map((entry) => entry.hash));
+				expect(expectedHashes.size, "distinct appended hashes").to.equal(
+					options.expectedCount,
+				);
+				let diagnosticExpectedByPeer: Map<string, Set<string>> | undefined;
+				let lastLeaderSignature: string | undefined;
+				let stableSamples = 0;
+				try {
+					await waitForResolved(
+						async () => {
+							try {
+								const viewsByHash = await collectExpectedLeaderViews(
+									entries,
+									dbs,
+									peers,
+								);
+								const firstViewByHash = new Map(
+									[...viewsByHash].map(([hash, views]) => [
+										hash,
+										new Set(views[0]),
+									]),
+								);
+								diagnosticExpectedByPeer = invertExpectedLeaders(
+									firstViewByHash,
+									peers,
+								);
+								const expectedByHash = assertAndCollectAgreedLeaders(
+									viewsByHash,
+									peers,
+								);
+								const leaderSignature = semanticLeaderSignature(expectedByHash);
+								if (leaderSignature !== lastLeaderSignature) {
+									lastLeaderSignature = leaderSignature;
+									stableSamples = 0;
+								}
+								const requiredPeer = options.requiredPeer;
+								if (requiredPeer) {
+									expect(
+										[...expectedByHash.values()].filter((leaders) =>
+											leaders.has(requiredPeer),
+										).length,
+										"the sample must assign work to the required peer",
+									).to.be.greaterThan(0);
+								}
+
+								const { actualByPeer, missingBlocksByPeer, replicasByHash } =
+									await collectReplicaFacts(dbs);
+								expect(
+									[...expectedHashes].filter(
+										(hash) => !replicasByHash.has(hash),
+									),
+									"expected hashes missing from union",
+								).to.be.empty;
+								expect(
+									[...replicasByHash.keys()].filter(
+										(hash) => !expectedHashes.has(hash),
+									),
+									"unexpected hashes in union",
+								).to.be.empty;
+
+								let expectedCopies = 0;
+								for (const [hash, expectedLeaders] of expectedByHash) {
+									expectedCopies += expectedLeaders.size;
+									const actualLeaders = peers.filter(
+										(peer) => actualByPeer.get(peer)?.has(hash) ?? false,
+									);
+									if (options.mode === "exact") {
+										expect(
+											actualLeaders.sort(),
+											`exact semantic owners for ${hash}`,
+										).to.deep.equal([...expectedLeaders].sort());
+									} else {
+										expect(
+											replicasByHash.get(hash) ?? 0,
+											`replicas for ${hash}`,
+										).to.be.greaterThanOrEqual(2);
+										for (const leader of expectedLeaders) {
+											expect(
+												actualByPeer.get(leader)?.has(hash) ?? false,
+												`semantic leader ${leader} is missing ${hash}`,
+											).to.be.true;
+										}
+									}
+									for (const leader of expectedLeaders) {
+										expect(
+											missingBlocksByPeer.get(leader)?.includes(hash) ?? false,
+											`semantic leader ${leader} block store is missing ${hash}`,
+										).to.be.false;
+									}
+								}
+								if (options.mode === "exact") {
+									expect(
+										[...replicasByHash.values()].reduce(
+											(total, copies) => total + copies,
+											0,
+										),
+										"total copies must equal the semantic owner total",
+									).to.equal(expectedCopies);
+								}
+							} catch (error) {
+								stableSamples = 0;
+								throw error;
+							}
+							stableSamples += 1;
+							expect(
+								stableSamples,
+								"stable semantic ownership samples",
+							).to.equal(3);
+						},
+						{ timeout: 120_000, delayInterval: 500 },
+					);
+				} catch (error) {
+					await printSemanticReplicationDiagnostics(
+						label,
+						expectedHashes,
+						dbs,
+						diagnosticExpectedByPeer,
+					);
+					throw error;
+				}
 			};
 
 			const startEventLoopPressure = (
@@ -1094,12 +1502,18 @@ testSetups.forEach((setup) => {
 					setup.name === "u64-iblt"
 						? shardingSmallEntryCount
 						: shardingMediumEntryCount;
+				const appendedEntries: Array<
+					Awaited<ReturnType<typeof db1.add>>["entry"]
+				> = [];
 
 				// expect min replicas 2 with 3 peers, this means that 66% of entries (ca)
 				// will be at peer 2 and 3, and peer1 will have all of them since 1 is the creator
-				await appendInBatches(entryCount, (i) =>
-					db1.add(toBase64(new Uint8Array([i])), { meta: { next: [] } }),
-				);
+				await appendInBatches(entryCount, async (i) => {
+					const { entry } = await db1.add(toBase64(new Uint8Array([i])), {
+						meta: { next: [] },
+					});
+					appendedEntries.push(entry);
+				});
 
 				db3 = await EventStore.open<EventStore<string, any>>(
 					db1.address!,
@@ -1146,25 +1560,23 @@ testSetups.forEach((setup) => {
 					db2.log.rebalanceAll({ clearCache: true }),
 					db3.log.rebalanceAll({ clearCache: true }),
 				]);
-				await waitForParticipationToSettle(db1, db2, db3);
-				await waitForDistributionQuiesced(db1, db2, db3);
-				// The final bound is meaningful after the ownership, checked-prune, and
-				// repair work kicked off by the join has drained.
-				await waitForResolved(
-					async () => {
-						await checkBounded(
-							entryCount,
-							setup.name === "u64-iblt" ? 0.4 : 0.5,
-							setup.name === "u64-iblt" ? 1 : 0.9,
-							db1,
-							db2,
-							db3,
-						);
-						expect(
-							await countIdleUnderReplicatedEntries(2, db1, db2, db3),
-						).equal(0);
+
+				const fixedPeers = [
+					session.peers[0].identity.publicKey.hashcode(),
+					session.peers[1].identity.publicKey.hashcode(),
+					session.peers[2].identity.publicKey.hashcode(),
+				];
+				const joiner = fixedPeers[2];
+				await waitForSemanticOwnership(
+					"write-while-joining-peers",
+					appendedEntries,
+					[db1, db2, db3],
+					fixedPeers,
+					{
+						expectedCount: entryCount,
+						mode: "containment",
+						requiredPeer: joiner,
 					},
-					{ timeout: 120_000, delayInterval: 500 },
 				);
 			});
 
@@ -2289,33 +2701,28 @@ testSetups.forEach((setup) => {
 					setup.name === "u64-iblt"
 						? shardingSmallEntryCount
 						: shardingMediumEntryCount;
-				const initialLowerBound = setup.name === "u64-iblt" ? 14 / 30 : 0.5;
-				const initialUpperBound = setup.name === "u64-iblt" ? 14 / 15 : 0.9;
+				const appendedEntries: Entry<any>[] = [];
+				const expectedHashes = new Set<string>();
 
-				await appendInBatches(entryCount, (i) =>
-					db1.add(toBase64(new Uint8Array(i)), {
+				await appendInBatches(entryCount, async (i) => {
+					const { entry } = await db1.add(toBase64(new Uint8Array(i)), {
 						meta: { next: [] },
-					}),
-				);
+					});
+					appendedEntries.push(entry);
+					expectedHashes.add(entry.hash);
+				});
 
-				await waitForParticipationToSettle(db1, db2, db3);
-				// Join repair may still have receipt-driven follow-up sweeps queued under
-				// full-shard load. The correctness contract here is settled coverage and
-				// distribution before churn starts, not total internal repair idleness.
-				await waitForReplicationCoverageSettled([db1, db2, db3], 2, entryCount);
-
-				// This first three-peer bound is only a coarse fairness check before the close/reopen
-				// churn below. With a 30-entry u64 sample, one entry is 3.3%, so allowing 14/30 to
-				// 28/30 still catches pathological imbalance without turning one-entry rounding noise
-				// into a CI failure. The exact post-churn contract is still enforced later by the
-				// two-peer 1.0 / 1.0 check.
-				await checkBounded(
-					entryCount,
-					initialLowerBound,
-					initialUpperBound,
-					db1,
-					db2,
-					db3,
+				expect(expectedHashes.size).to.equal(entryCount);
+				await waitForSemanticOwnership(
+					"peer-churn-before-close",
+					appendedEntries,
+					[db1, db2, db3],
+					[
+						session.peers[0].identity.publicKey.hashcode(),
+						session.peers[1].identity.publicKey.hashcode(),
+						session.peers[2].identity.publicKey.hashcode(),
+					],
+					{ expectedCount: entryCount, mode: "exact" },
 				);
 
 				await db3.close();
@@ -2376,31 +2783,14 @@ testSetups.forEach((setup) => {
 				/* 	db1.log.xreset();
 					db2.log.xreset(); */
 
-				// The final contract after db3 is gone is the exact two-peer distribution,
-				// not whether every internal repair/prune timer has gone fully idle first.
-				// `checkBounded()` already waits for length convergence and replica bounds, so
-				// using it directly avoids turning transient background cleanup into a failure.
-				await checkBounded(entryCount, 1, 1, db1, db2);
-
-				// Under full-suite load (GC + timers), rebalancing can take longer. Use a
-				// larger window with slower polling to avoid flakiness.
-				const participationWaitOpts = {
-					timeout: 60_000,
-					delayInterval: 500,
-				} as const;
-				await waitForResolved(
-					async () =>
-						expect((await db1.log.calculateTotalParticipation()) - 1).lessThan(
-							0.25,
-						),
-					participationWaitOpts,
-				);
-				await waitForResolved(
-					async () =>
-						expect((await db2.log.calculateTotalParticipation()) - 1).lessThan(
-							0.25,
-						),
-					participationWaitOpts,
+				// With only two peers left, every retained hash and its block must be local
+				// on both peers. This exact content contract supersedes approximate,
+				// one-sided participation checks.
+				await waitForExactReplicaCopies(
+					"peer-churn-after-final-close",
+					expectedHashes,
+					2,
+					[db1, db2],
 				);
 			});
 
