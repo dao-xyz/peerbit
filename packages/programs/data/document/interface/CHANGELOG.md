@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.2.47
+
+### Patch Changes
+
+- Updated dependencies [[`b9059e2`](https://github.com/dao-xyz/peerbit/commit/b9059e209c540fd8434e42da70850ea8ac9f7493), [`b70ae74`](https://github.com/dao-xyz/peerbit/commit/b70ae7426b90a6077ce329ad119803b5a9d58e51), [`e072d9e`](https://github.com/dao-xyz/peerbit/commit/e072d9ea466fd09ee79ba6c488c91dd58852deaf)]:
+  - @peerbit/log@6.2.4
+
 ## 3.2.46
 
 ### Patch Changes

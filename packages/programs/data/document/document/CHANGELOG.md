@@ -1,5 +1,52 @@
 # Changelog
 
+## 13.1.5
+
+### Patch Changes
+
+- [#1024](https://github.com/dao-xyz/peerbit/pull/1024) [`67f77f3`](https://github.com/dao-xyz/peerbit/commit/67f77f300b8f0b7502be777a698209c3404f463b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add an opt-in `[default, native]` conformance matrix leg for the document layer,
+  a mechanical clone of the merged shared-log leg. It re-runs an allowlist of the
+  existing document suites against the native (Rust) data plane via the shared-log
+  env switch (`PEERBIT_SHARED_LOG_RUST_CORE=1`), under which a store opened in the
+  default `mode:"auto"` builds its generic index on `@peerbit/indexer-rust` — so
+  `docs.index.index` is a `RustIndex` on the switch peer where it is a
+  `SQLiteIndex` on the default backend. A hard in-suite guard asserts this so the
+  leg cannot false-green as JS.
+
+  Test-only: no `@peerbit/document` `src/` product code changes. The single
+  test-helper fix makes the `iterate > sort` sync-suppression HACK backend-agnostic
+  (it drops both `ExchangeHeadsMessage` and `RawExchangeHeadsMessage`), a no-op for
+  the default (JS) suite. Wire-up mirrors the shared-log leg: a
+  `test:document-rust-core` script (grep anchored to the confirmed native-green
+  comparator/sort/paging/query describes) and a `continue-on-error` step in the
+  `test_native` job. Native and default each run 188 passing / 0 failing under the
+  allowlist grep. The excluded set (del-path block-store read-back, native-internal
+  append-path assertions, remote-indexed `resolve:false` fetch) is documented in
+  `test/NATIVE_CONFORMANCE.md`; none is an index comparator/sort/paging divergence.
+
+- [#1026](https://github.com/dao-xyz/peerbit/pull/1026) [`4c9c5e1`](https://github.com/dao-xyz/peerbit/commit/4c9c5e1a79b75162588b0348b85230565a9c9d3a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fold the native-storage delete-path tests into the document `[default, native]` conformance leg now that the del read-back is fixed ([#1025](https://github.com/dao-xyz/peerbit/issues/1025)). The `test:document-rust-core` allowlist grows from 188 to 192 (adds `can add and delete`, `delete permanently`, `reload after delete`, and `count > approximate > returns approximate count with deletions`). Test-only.
+
+- [#1025](https://github.com/dao-xyz/peerbit/pull/1025) [`0f40868`](https://github.com/dao-xyz/peerbit/commit/0f40868d0524fd56dd10278d0b95912d9547afa2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fix `del` throwing "Missing data" on a peer with a native block store but a Documents store in the default `mode: "auto"` (not `mode: "native"`).
+
+  On such a peer the delete read-back path (`handleChanges` -> `getAppendOperation`) resolved the prior put's operation via the in-memory JS entry (`Entry.getPayloadValue`). Under a native block store the entry materialized in the entry index is a hollow shell whose payload bytes were never loaded onto the JS object, so `getPayloadValue` threw `Error("Missing data")` even though the block itself is present in the store.
+
+  Auto mode now falls back to the storage-bytes / block-store read path when (and only when) the in-memory payload is unavailable: it recovers the entry's raw block from the block store by hash and extracts the plain operation payload from those bytes. The pure-JS backend is unchanged — there `getPayloadValue` succeeds and the fallback never runs. Document mode semantics and the `isNativeMode()` gate are untouched.
+
+- [#1027](https://github.com/dao-xyz/peerbit/pull/1027) [`04ce576`](https://github.com/dao-xyz/peerbit/commit/04ce576aece59ca0f602b1265f667e1e4a4a48e4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fix a remote `resolve: false` / `SearchRequestIndexed` query timing out (requester `get`/`iterate` returns `undefined`) on a peer with a native block store.
+
+  When answering an indexed remote query, the responder embeds the head log entry into the RPC response via `ResultIndexedValue.entries` (a borsh `vec(Entry)` field). Under a native block store, `this._log.log.get(hash)` can return a hollow entry whose payload bytes were never materialized on the JS side; serializing it throws "Trying to serialize a null value to field \_data", aborting the whole `Results` serialization so the response is never sent and the non-replicating requester times out.
+
+  `DocumentIndex` now routes those head lookups through a `getSerializableHead` helper: it keeps the in-memory entry when it serializes cleanly (the JS case) and, only when serialization would throw, recovers the complete entry from the block store by hash (`Entry.fromMultihash`) so a wire-serializable, joinable entry is sent. The pure-JS backend is unchanged — the serialize probe succeeds and the recovery never runs. This covers all five head sites that feed `entries` (the `processQuery` indexed branch, both `wrapPushResults` sites, and both `drainQueuedResults` sites); the unrelated `resolveDocument` payload path is untouched.
+
+- Updated dependencies [[`17bcf7f`](https://github.com/dao-xyz/peerbit/commit/17bcf7f8d85a07347768a281ff64ebc2a38332f4), [`149ea9e`](https://github.com/dao-xyz/peerbit/commit/149ea9e79a1f1f08165d1eb8b2b0bcead62e68cb), [`a4f8646`](https://github.com/dao-xyz/peerbit/commit/a4f864641eaa1cb3578a6cfb93a2ba66f58adaac), [`b9059e2`](https://github.com/dao-xyz/peerbit/commit/b9059e209c540fd8434e42da70850ea8ac9f7493), [`b70ae74`](https://github.com/dao-xyz/peerbit/commit/b70ae7426b90a6077ce329ad119803b5a9d58e51), [`e072d9e`](https://github.com/dao-xyz/peerbit/commit/e072d9ea466fd09ee79ba6c488c91dd58852deaf), [`c917835`](https://github.com/dao-xyz/peerbit/commit/c9178355cef55c3af983f8bf3b8abe11cf8af4e0)]:
+  - @peerbit/shared-log@13.2.5
+  - @peerbit/program@6.0.34
+  - @peerbit/log@6.2.4
+  - @peerbit/indexer-simple@1.2.9
+  - @peerbit/rpc@6.1.2
+  - @peerbit/document-interface@3.2.47
+  - @peerbit/indexer-cache@0.2.8
+
 ## 13.1.4
 
 ### Patch Changes

@@ -1,5 +1,48 @@
 # Changelog
 
+## 13.2.5
+
+### Patch Changes
+
+- [#1016](https://github.com/dao-xyz/peerbit/pull/1016) [`17bcf7f`](https://github.com/dao-xyz/peerbit/commit/17bcf7f8d85a07347768a281ff64ebc2a38332f4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Durable persistence for native-backbone nodes: a native node started with a storage directory now survives a clean stop/restart with its replication coordinates and entry blocks intact.
+  - Auto-derive per-program coordinate persistence from the client `directory` (previously only active if a caller passed `coordinatePersistence` explicitly). Namespaced per program under `<directory>/coordinates/<hex(log.id)>`; Node fs and browser OPFS backends. Backward-compatible: an explicitly-passed config still wins, and memory-only nodes are unchanged.
+  - Make the native-backbone block store durable via a write-through wrapper over the wasm hot store and a durable `AnyBlockStore` (the same per-program `storage.sublevel("blocks")` the non-native path uses). The wasm store stays cold on open and is repopulated lazily from durable storage as log reads walk the DAG, preserving the resident-coordinate-state fast path. This closes the gap where entry blocks lived only in wasm memory when the native backbone was active, so a native node could not reopen its program after restart.
+  - `@peerbit/program`: expose the optional `directory` on the `Client` interface (already set by `Peerbit`), so shared-log can derive durable per-program paths type-safely.
+
+  Scope note: covers clean stop/restart. Hard-kill crash-consistency (flush ordering across the block store, heads index, and coordinate WAL) is a follow-up.
+
+- [#1017](https://github.com/dao-xyz/peerbit/pull/1017) [`149ea9e`](https://github.com/dao-xyz/peerbit/commit/149ea9e79a1f1f08165d1eb8b2b0bcead62e68cb) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add a cross-backend wire conformance test: a pure-native (rust) peer and an all-default (JS) peer that sync over the frozen wire must converge to byte-identical log state (identical content-addressed entry hashes, gids, values and heads), not merely the same entry count. The existing mixed-pair test asserted `log.length` only, which would not catch a native encoder emitting a subtly different but still-valid frame. Test-only.
+
+- [#1023](https://github.com/dao-xyz/peerbit/pull/1023) [`a4f8646`](https://github.com/dao-xyz/peerbit/commit/a4f864641eaa1cb3578a6cfb93a2ba66f58adaac) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make the `getReceivedHeads` test helper backend-agnostic so the native
+  `[default, native]` conformance leg (`PEERBIT_SHARED_LOG_RUST_CORE=1`) folds in
+  the `redundancy > only sends entries once` family (4 variants × 2 setups). The
+  helper now counts heads from both `ExchangeHeadsMessage` (JS wire) and
+  `RawExchangeHeadsMessage` (native raw exchange) at the same per-entry
+  granularity, and the companion repair-hint exclusion filter these tests use was
+  made backend-agnostic (`isRepairHintExchangeHeadsMessage`) so native repair
+  hints do not leak into the no-redundancy count. Both changes are no-ops for the
+  default (JS) count; the native leg goes from 139 to 147 passing, 0 failing.
+  Test-only.
+
+- [#1022](https://github.com/dao-xyz/peerbit/pull/1022) [`b70ae74`](https://github.com/dao-xyz/peerbit/commit/b70ae7426b90a6077ce329ad119803b5a9d58e51) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Tolerate a block-less native graph head in `getHeads(true)` instead of crashing.
+
+  The native log graph can list a HEAD whose block is not materialized in the store: pruning a child promotes its (possibly block-less) parent to a head (rust `LogGraphIndex.delete` -> `set_head`, which only consults the graph's entry map, never the block store). Resolving that head in full (`EntryIndex.getHeads(true)`, reached from `SharedLog.startAnnounceReplicating` -> `ensureCurrentHeadCoordinatesIndexed`) threw `Failed to load entry from head with hash: <h>` on the native backbone, where the JS path already tolerates a missing block. This was a hybrid-fleet robustness gap.
+  - `@peerbit/log`: the native-graph head-resolution path (`EntryIndex.iterateNativeHashes`, the resolve-in-full branch) now defaults `ignoreMissing` to `true`, mirroring `resolveMany`'s own `ignoreMissing` branch and the shallow (`getShallow`) fallback the non-full path already uses. A block-less head is skipped (left non-authoritative, not force-materialized) rather than crashing. Callers that explicitly pass `ignoreMissing: false` still opt out. The change is confined to the native-graph branch and is a no-op for the default (JS) backend, which never enters it.
+  - `@peerbit/shared-log`: make the native-backbone write-through block store's `has()` consistent with `getMany()`/`hasMany()` by falling back to the durable store on a native (wasm-map) miss, so presence checks and resolves agree. `Blocks.has` is declared `MaybePromise<boolean>`, so returning a promise is contract-compatible.
+
+- [#1021](https://github.com/dao-xyz/peerbit/pull/1021) [`e072d9e`](https://github.com/dao-xyz/peerbit/commit/e072d9ea466fd09ee79ba6c488c91dd58852deaf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fix native-vs-default parity for live-replicated head entries.
+
+  On the native shared-log path a live-replicated HEAD is cached in the entry index as a lazy `PreparedRawExchangeEntry` wrapper (it keeps the block bytes in wasm and only exposes generic getters). Its `_meta`/`_payload`/`_signatures` fields stay undefined, so a read of that head returned a hollow object: field consumers saw `undefined`, and because `EntryV0.equals` is gated on `other instanceof EntryV0`, comparisons were asymmetric (`jsEntry.equals(head)` was `false` while `head.equals(jsEntry)` was `true`). The default backend caches heads as full `EntryV0`, so this divergence was native-only. The underlying block was always fully present and decodable — only the cached JS object was hollow.
+  - `@peerbit/log`: add a generic `Entry.toMaterialized()` capability (a no-op returning `this` on the concrete `EntryV0`, so the default backend is unchanged). The entry index calls it at the read/resolve cache boundary and writes the materialized entry back into the cache, so a resolved head is always a full entry and the hot head is not re-decoded on subsequent reads.
+  - `@peerbit/shared-log`: `PreparedRawExchangeEntry` overrides `toMaterialized()` to decode itself into its full `EntryV0`.
+
+  Materialization happens only at the read boundary; the wire/sync fusion path caches heads via `put` but never resolves them, so it stays lazy (no block-byte materialization on send/receive).
+
+- Updated dependencies [[`17bcf7f`](https://github.com/dao-xyz/peerbit/commit/17bcf7f8d85a07347768a281ff64ebc2a38332f4), [`b9059e2`](https://github.com/dao-xyz/peerbit/commit/b9059e209c540fd8434e42da70850ea8ac9f7493), [`b70ae74`](https://github.com/dao-xyz/peerbit/commit/b70ae7426b90a6077ce329ad119803b5a9d58e51), [`e072d9e`](https://github.com/dao-xyz/peerbit/commit/e072d9ea466fd09ee79ba6c488c91dd58852deaf)]:
+  - @peerbit/program@6.0.34
+  - @peerbit/log@6.2.4
+  - @peerbit/rpc@6.1.2
+
 ## 13.2.4
 
 ### Patch Changes
