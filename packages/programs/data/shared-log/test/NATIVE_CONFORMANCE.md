@@ -1,6 +1,6 @@
-# shared-log `[default, native]` conformance matrix (opt-in CI leg)
+# shared-log `[default, native]` conformance matrix (blocking CI leg)
 
-This document is the PR body / reference for the opt-in `[default, native]`
+This document is the reference for the curated `[default, native]`
 conformance leg that re-runs a curated allowlist of the **existing** shared-log
 suites against the native (Rust) data plane. It is test-infra only.
 
@@ -83,8 +83,8 @@ boundary (`Entry.toMaterialized()`); see the S1 entry below. The rest of the
 which are removed from the grep via negative lookahead (the whole
 `replication degree update` sub-block is excluded as one unit).
 
-The leg is **opt-in and non-blocking** initially (`continue-on-error: true`). It
-widens as the Class-B tests below are made backend-agnostic.
+The curated leg is blocking. It widens as the Class-B tests below are made
+backend-agnostic.
 
 ## What is EXCLUDED, and why (honest catalog — no silent caps)
 
@@ -150,11 +150,13 @@ was `false` while `head.equals(jsEntry)` was `true`). The block itself was alway
 present and decodable; only the cached JS object was hollow, so the default
 backend (which caches heads as full `EntryV0`) never diverged.
 
-**Fix:** a generic `Entry.toMaterialized()` capability in `@peerbit/log` (no-op
-on `EntryV0`, overridden by `PreparedRawExchangeEntry` to decode itself into its
-full `EntryV0`). The entry index calls it at the read/resolve cache boundary and
-writes the materialized entry back into the cache. The wire/sync fusion path
-caches heads via `put` but never resolves them, so it stays lazy (the
+**Fix (#1021, generalized in #1028):** `Entry.toMaterialized()` lets a
+`PreparedRawExchangeEntry` decode itself into a full `EntryV0` at the
+entry-index read boundary. #1028 additionally recognizes a concrete `EntryV0`
+whose decrypted fields are still storage-hollow and routes that cache hit
+through the block store. Both paths replace the cache entry with the complete
+object while preserving batching and local-origin metadata. The wire/sync fusion
+path caches heads via `put` but never resolves them, so it stays lazy (the
 `network-e2e-native` fusion counters — `jsEntryDecode`/`blockCopyOuts` — remain
 0). The `start/stop replicate on connect` case is lifted into the allowlist; the
 rest of `start/stop` stays excluded for the memory-only Class-D reason (A2).
