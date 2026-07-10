@@ -22,10 +22,12 @@ describe("adaptive ingest burst control", () => {
 
 		(store.log as any).adaptiveRebalanceIdleMs = 120;
 
-		sinon.stub(store.log, "findLeaders").callsFake(async (_coords, _entry, opts) => {
-			opts?.onLeader?.("foreign-leader");
-			return new Map([["foreign-leader", { intersecting: true }]]) as any;
-		});
+		sinon
+			.stub(store.log, "findLeaders")
+			.callsFake(async (_coords, _entry, opts) => {
+				opts?.onLeader?.("foreign-leader");
+				return new Map([["foreign-leader", { intersecting: true }]]) as any;
+			});
 
 		return store;
 	};
@@ -76,11 +78,16 @@ describe("adaptive ingest burst control", () => {
 		expect(rebalanced).to.equal(false);
 		expect(rebalanceCall.callCount).to.equal(2);
 
-		await waitForResolved(() => {
-			expect((store.log as any).shouldDelayAdaptiveRebalance()).to.equal(false);
-		}, {
-			timeout: 2_000,
-			delayInterval: 20,
-		});
+		await waitForResolved(
+			() => {
+				expect((store.log as any).shouldDelayAdaptiveRebalance()).to.equal(
+					false,
+				);
+			},
+			{
+				timeout: 2_000,
+				delayInterval: 20,
+			},
+		);
 	});
 });

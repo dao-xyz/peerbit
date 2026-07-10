@@ -67,21 +67,21 @@ confirmed **byte-for-byte green** under the native backend (comparator / sort /
 paging / query surface), with negative-lookahead exclusions for the
 native-internal cases documented below.
 
-| Describe (mocha title path)                        | Native  | Default |
-| -------------------------------------------------- | ------- | ------- |
-| `native conformance guard` (leg guard)             | 1/1     | 1/1     |
-| `operations > basic` (minus 5 excluded)            | 136/136 | 136/136 |
-| `operations > get`                                 | 6/6     | 6/6     |
-| `operations > index`                               | 3/3     | 3/3     |
-| `operations > search` (incl `fields`)              | 15/15   | 15/15   |
-| `iterate > sort` (incl `close`)                    | 17/17   | 17/17   |
-| `count > approximate`                              | 7/7     | 7/7     |
-| `query distribution`                               | 7/7     | 7/7     |
-| `returnIndexed`                                     | 1/1     | 1/1     |
-| `caching`                                          | 1/1     | 1/1     |
-| `custom index` (whole describe)                    | 10/10   | 10/10   |
-| `prefetch` (3 active tests)                         | 3/3     | 3/3     |
-| **Total (allowlist grep)**                         | **206** | **206** |
+| Describe (mocha title path)             | Native  | Default |
+| --------------------------------------- | ------- | ------- |
+| `native conformance guard` (leg guard)  | 1/1     | 1/1     |
+| `operations > basic` (minus 5 excluded) | 136/136 | 136/136 |
+| `operations > get`                      | 6/6     | 6/6     |
+| `operations > index`                    | 3/3     | 3/3     |
+| `operations > search` (incl `fields`)   | 15/15   | 15/15   |
+| `iterate > sort` (incl `close`)         | 17/17   | 17/17   |
+| `count > approximate`                   | 7/7     | 7/7     |
+| `query distribution`                    | 7/7     | 7/7     |
+| `returnIndexed`                         | 1/1     | 1/1     |
+| `caching`                               | 1/1     | 1/1     |
+| `custom index` (whole describe)         | 10/10   | 10/10   |
+| `prefetch` (3 active tests)             | 3/3     | 3/3     |
+| **Total (allowlist grep)**              | **206** | **206** |
 
 Native and default each run **206 passing / 0 failing** under the allowlist grep.
 
@@ -106,7 +106,7 @@ determine which document was removed: `Documents.handleChanges` ->
 `getAppendOperation(entry)` -> `entry.getPayloadValue()`
 (`src/program.ts`). `getAppendOperation` has an `isNativeMode()` branch that
 reads from storage bytes instead, but under this switch the `Documents` program
-is in **auto mode** (`isNativeMode()` is `false` — only the *indexer* is
+is in **auto mode** (`isNativeMode()` is `false` — only the _indexer_ is
 nativized, not the document mode), so it falls through to `getPayloadValue()`,
 which loads the payload block from the **native** block store and throws
 `Error: Missing data` (`DecryptedThing.getValue`, `EntryV0.getPayloadValue`).
@@ -134,11 +134,11 @@ issuing the delete. The test is now covered by the allowlist (205 → 206).
 
 ### Class-C — over-nativization (native-internal append-path assertions)
 
-These tests `sinon.spy` **internal append-planning methods** and assert *which*
+These tests `sinon.spy` **internal append-planning methods** and assert _which_
 code path a put took (`appendLocallyValidated`, `appendLocallyPrepared`,
 `commitNativeDocumentAppend`, `planLocalAppendForGid`,
 `createPlainPutCommitPlan`, …). Under the switch the store runs the native
-indexer but in JS *append mode* (auto, not `mode:"native"`), so these
+indexer but in JS _append mode_ (auto, not `mode:"native"`), so these
 mode-internal path assertions do not hold — a smaller/different set of the
 planning methods is called, or a native-only helper (`planLocalAppendForGid`) is
 `undefined` on the JS-mode log. Convergence and query results are correct; only
@@ -162,7 +162,7 @@ The **local** `get(id, { resolve: false })` and custom-transform indexed shape
 were already correct under native (single-peer probe: `RustIndex` returns
 `{ id, nameTransformed, __context, __indexed }` identically to `SQLiteIndex`). It
 was only the **2-peer remote** indexed fetch — a non-replicating peer querying
-the replicator for the *indexed* (non-resolved) row over the native raw-exchange
+the replicator for the _indexed_ (non-resolved) row over the native raw-exchange
 wire — that returned `undefined`, so `.nameTransformed` / `.name` reads threw.
 
 Root cause: on a `resolve:false` / `SearchRequestIndexed` query the responder
