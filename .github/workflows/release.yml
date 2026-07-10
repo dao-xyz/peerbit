@@ -68,6 +68,11 @@ jobs:
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
+      - name: Configure Peerbit Bot git identity
+        run: |
+          git config --local user.name "Peerbit Bot"
+          git config --local user.email "273107789+peerbit-org@users.noreply.github.com"
+
     # changesets/action opens the Version Packages PR (when changesets are
     # pending) and, once that PR is merged, runs the publish command below.
     #
@@ -95,6 +100,9 @@ jobs:
         uses: changesets/action@v1
         with:
           github-token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          # Keep the repository-local Peerbit Bot identity configured above.
+          # Otherwise the action replaces it with github-actions[bot].
+          setupGitUser: false
           version: pnpm run version-packages
           # Build, publish every unpublished version (from-package), then create
           # the pkg@version git tags and push them. The push is tags-only
