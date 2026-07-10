@@ -1,5 +1,32 @@
 # Changelog
 
+## 6.2.4
+
+### Patch Changes
+
+- [#1028](https://github.com/dao-xyz/peerbit/pull/1028) [`b9059e2`](https://github.com/dao-xyz/peerbit/commit/b9059e209c540fd8434e42da70850ea8ac9f7493) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Materialize storage-hollow native local entries when callers request a full log entry.
+
+  Native local append can keep payload and signature bytes exclusively in the native block store while caching a lightweight concrete `EntryV0` in JavaScript. A later `Log.get()` cache hit returned that hollow object because the existing read-boundary materialization only recognized the lazy raw-exchange wrapper. Payload reads and serialization could therefore fail with `Missing data` even though the complete block was present.
+
+  The entry index now detects this concrete hollow state without serializing healthy entries and routes it through the existing block-store resolution path. Batched reads continue to use `getMany`, the materialized entry replaces the cache value, and local-origin metadata is preserved. Raw-exchange send and receive remain lazy because they do not resolve entries through this full-read boundary.
+
+- [#1022](https://github.com/dao-xyz/peerbit/pull/1022) [`b70ae74`](https://github.com/dao-xyz/peerbit/commit/b70ae7426b90a6077ce329ad119803b5a9d58e51) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Tolerate a block-less native graph head in `getHeads(true)` instead of crashing.
+
+  The native log graph can list a HEAD whose block is not materialized in the store: pruning a child promotes its (possibly block-less) parent to a head (rust `LogGraphIndex.delete` -> `set_head`, which only consults the graph's entry map, never the block store). Resolving that head in full (`EntryIndex.getHeads(true)`, reached from `SharedLog.startAnnounceReplicating` -> `ensureCurrentHeadCoordinatesIndexed`) threw `Failed to load entry from head with hash: <h>` on the native backbone, where the JS path already tolerates a missing block. This was a hybrid-fleet robustness gap.
+  - `@peerbit/log`: the native-graph head-resolution path (`EntryIndex.iterateNativeHashes`, the resolve-in-full branch) now defaults `ignoreMissing` to `true`, mirroring `resolveMany`'s own `ignoreMissing` branch and the shallow (`getShallow`) fallback the non-full path already uses. A block-less head is skipped (left non-authoritative, not force-materialized) rather than crashing. Callers that explicitly pass `ignoreMissing: false` still opt out. The change is confined to the native-graph branch and is a no-op for the default (JS) backend, which never enters it.
+  - `@peerbit/shared-log`: make the native-backbone write-through block store's `has()` consistent with `getMany()`/`hasMany()` by falling back to the durable store on a native (wasm-map) miss, so presence checks and resolves agree. `Blocks.has` is declared `MaybePromise<boolean>`, so returning a promise is contract-compatible.
+
+- [#1021](https://github.com/dao-xyz/peerbit/pull/1021) [`e072d9e`](https://github.com/dao-xyz/peerbit/commit/e072d9ea466fd09ee79ba6c488c91dd58852deaf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Fix native-vs-default parity for live-replicated head entries.
+
+  On the native shared-log path a live-replicated HEAD is cached in the entry index as a lazy `PreparedRawExchangeEntry` wrapper (it keeps the block bytes in wasm and only exposes generic getters). Its `_meta`/`_payload`/`_signatures` fields stay undefined, so a read of that head returned a hollow object: field consumers saw `undefined`, and because `EntryV0.equals` is gated on `other instanceof EntryV0`, comparisons were asymmetric (`jsEntry.equals(head)` was `false` while `head.equals(jsEntry)` was `true`). The default backend caches heads as full `EntryV0`, so this divergence was native-only. The underlying block was always fully present and decodable — only the cached JS object was hollow.
+  - `@peerbit/log`: add a generic `Entry.toMaterialized()` capability (a no-op returning `this` on the concrete `EntryV0`, so the default backend is unchanged). The entry index calls it at the read/resolve cache boundary and writes the materialized entry back into the cache, so a resolved head is always a full entry and the hot head is not re-decoded on subsequent reads.
+  - `@peerbit/shared-log`: `PreparedRawExchangeEntry` overrides `toMaterialized()` to decode itself into its full `EntryV0`.
+
+  Materialization happens only at the read boundary; the wire/sync fusion path caches heads via `put` but never resolves them, so it stays lazy (no block-byte materialization on send/receive).
+
+- Updated dependencies [[`c917835`](https://github.com/dao-xyz/peerbit/commit/c9178355cef55c3af983f8bf3b8abe11cf8af4e0)]:
+  - @peerbit/indexer-simple@1.2.9
+
 ## 6.2.3
 
 ### Patch Changes

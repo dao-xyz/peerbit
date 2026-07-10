@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.50
+
+### Patch Changes
+
+- Updated dependencies [[`67f77f3`](https://github.com/dao-xyz/peerbit/commit/67f77f300b8f0b7502be777a698209c3404f463b), [`17bcf7f`](https://github.com/dao-xyz/peerbit/commit/17bcf7f8d85a07347768a281ff64ebc2a38332f4), [`4c9c5e1`](https://github.com/dao-xyz/peerbit/commit/4c9c5e1a79b75162588b0348b85230565a9c9d3a), [`0f40868`](https://github.com/dao-xyz/peerbit/commit/0f40868d0524fd56dd10278d0b95912d9547afa2), [`04ce576`](https://github.com/dao-xyz/peerbit/commit/04ce576aece59ca0f602b1265f667e1e4a4a48e4)]:
+  - @peerbit/document@13.1.5
+  - @peerbit/program@6.0.34
+  - @peerbit/shared-log-proxy@2.0.49
+  - @peerbit/canonical-client@1.1.37
+  - @peerbit/document-interface@3.2.47
+  - @peerbit/canonical-host@1.0.46
+
 ## 2.0.49
 
 ### Patch Changes
