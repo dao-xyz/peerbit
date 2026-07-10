@@ -42,6 +42,23 @@ jobs:
       id-token: write
       pull-requests: write
     steps:
+      - name: Verify Peerbit Bot release authentication
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "RELEASE_PR_TOKEN is required for stable releases" >&2
+            exit 1
+          fi
+          if ! authenticated_login=$(gh api user --jq .login); then
+            echo "RELEASE_PR_TOKEN could not authenticate with GitHub" >&2
+            exit 1
+          fi
+          if [ "$authenticated_login" != "peerbit-org" ]; then
+            echo "RELEASE_PR_TOKEN must authenticate as peerbit-org (got: $authenticated_login)" >&2
+            exit 1
+          fi
+
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -50,7 +67,7 @@ jobs:
           # credentials persisted here — so this must be the bot PAT (see the
           # RELEASE_PR_TOKEN note below) for the version-branch push to be able
           # to trigger CI on the Version Packages PR.
-          token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          token: ${{ secrets.RELEASE_PR_TOKEN }}
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -68,15 +85,20 @@ jobs:
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
+      - name: Configure Peerbit Bot git identity
+        run: |
+          git config --local user.name "Peerbit Bot"
+          git config --local user.email "273107789+peerbit-org@users.noreply.github.com"
+
     # changesets/action opens the Version Packages PR (when changesets are
     # pending) and, once that PR is merged, runs the publish command below.
     #
-    # NOTE: secrets.GITHUB_TOKEN cannot trigger downstream workflows (CI) on the
-    # Version Packages PR it opens, so the PR is opened with RELEASE_PR_TOKEN —
-    # a peerbit-org bot PAT with repo + workflow scopes. Both the checkout token
-    # above (git pushes: version branch, release tags) and the action token
-    # below fall back to the default GITHUB_TOKEN if the secret is removed, in
-    # which case everything still works except CI on the Version Packages PR.
+    # NOTE: the default workflow token cannot trigger downstream workflows (CI)
+    # on the Version Packages PR it opens, so the PR uses RELEASE_PR_TOKEN —
+    # a peerbit-org bot PAT with repo + workflow scopes. The authentication
+    # preflight above deliberately fails closed if the secret is missing or does
+    # not belong to peerbit-org. The checkout token (git pushes: version branch,
+    # release tags), action token, and environment token below all use that PAT.
     #
     # createGithubReleases is disabled deliberately. changesets tags packages as
     # `<name>@<version>` (e.g. peerbit@5.2.21, @peerbit/crypto@3.2.0), whereas
@@ -92,9 +114,12 @@ jobs:
     # once the CHANGELOGs are migrated to the changesets `## <version>` format.
       - name: Create Release PR or Publish
         if: ${{ github.event_name == 'push' }}
-        uses: changesets/action@v1
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
         with:
-          github-token: ${{ secrets.RELEASE_PR_TOKEN || github.token }}
+          github-token: ${{ secrets.RELEASE_PR_TOKEN }}
+          # Keep the repository-local Peerbit Bot identity configured above.
+          # Otherwise the action replaces it with github-actions[bot].
+          setupGitUser: false
           version: pnpm run version-packages
           # Build, publish every unpublished version (from-package), then create
           # the pkg@version git tags and push them. The push is tags-only
@@ -117,7 +142,7 @@ jobs:
         env:
           # Older changesets/action builds read the token from the environment
           # rather than the github-token input; set both to stay robust.
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     # Manual stable escape hatch: build and publish anything whose package.json
@@ -131,8 +156,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm run --if-present release
 
-  # Release candidate flow, unchanged in behavior: manual dispatch only, builds
-  # and runs `aegir release-rc` to publish prerelease versions to npm.
+  # Release candidate flow: manual dispatch only, builds and runs
+  # `aegir release-rc` to publish prerelease versions to npm.
   release-rc:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'rc' }}
     runs-on: ubuntu-latest
@@ -142,10 +167,28 @@ jobs:
       contents: write
       id-token: write
     steps:
+      - name: Verify Peerbit Bot release authentication
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "RELEASE_PR_TOKEN is required for release candidates" >&2
+            exit 1
+          fi
+          if ! authenticated_login=$(gh api user --jq .login); then
+            echo "RELEASE_PR_TOKEN could not authenticate with GitHub" >&2
+            exit 1
+          fi
+          if [ "$authenticated_login" != "peerbit-org" ]; then
+            echo "RELEASE_PR_TOKEN must authenticate as peerbit-org (got: $authenticated_login)" >&2
+            exit 1
+          fi
+
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PR_TOKEN }}
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -161,11 +204,18 @@ jobs:
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
 
+      - name: Configure Peerbit Bot git identity
+        run: |
+          git config --local user.name "Peerbit Bot"
+          git config --local user.email "273107789+peerbit-org@users.noreply.github.com"
+
       - name: Build Packages
         run: pnpm run build
 
       - name: Publish RC to NPM
         env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           NPM_CONFIG_GIT_CHECKS: "false"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm run --if-present release:rc
