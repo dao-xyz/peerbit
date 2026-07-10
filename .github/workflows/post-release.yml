@@ -16,10 +16,28 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' && vars.ENABLE_WORKSPACE_RESTORE == 'true' }}
     runs-on: ubuntu-latest
     steps:
+      - name: Verify Peerbit Bot restore authentication
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "RELEASE_PR_TOKEN is required for workspace restore pull requests" >&2
+            exit 1
+          fi
+          if ! authenticated_login=$(gh api user --jq .login); then
+            echo "RELEASE_PR_TOKEN could not authenticate with GitHub" >&2
+            exit 1
+          fi
+          if [ "$authenticated_login" != "peerbit-org" ]; then
+            echo "RELEASE_PR_TOKEN must authenticate as peerbit-org (got: $authenticated_login)" >&2
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.RELEASE_PR_TOKEN }}
 
       - name: Use Node.js
         uses: actions/setup-node@v4
@@ -32,7 +50,9 @@ jobs:
       - name: Create workspace restore pull request
         uses: peter-evans/create-pull-request@v6
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PR_TOKEN }}
+          author: "Peerbit Bot <273107789+peerbit-org@users.noreply.github.com>"
+          committer: "Peerbit Bot <273107789+peerbit-org@users.noreply.github.com>"
           commit-message: "chore: restore workspace dependency protocol"
           title: "chore: restore workspace dependency protocol"
           body: |
@@ -77,10 +97,18 @@ jobs:
         if: ${{ steps.server.outputs.changed == 'true' }}
         id: auth
         env:
-          BOOTSTRAP_PR_TOKEN: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
+          GH_TOKEN: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
         run: |
-          if [ -z "$BOOTSTRAP_PR_TOKEN" ]; then
+          if [ -z "${GH_TOKEN:-}" ]; then
             echo "PEERBIT_BOOTSTRAP_PR_TOKEN is required when @peerbit/server changes" >&2
+            exit 1
+          fi
+          if ! authenticated_login=$(gh api user --jq .login); then
+            echo "PEERBIT_BOOTSTRAP_PR_TOKEN could not authenticate with GitHub" >&2
+            exit 1
+          fi
+          if [ "$authenticated_login" != "peerbit-org" ]; then
+            echo "PEERBIT_BOOTSTRAP_PR_TOKEN must authenticate as peerbit-org (got: $authenticated_login)" >&2
             exit 1
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
@@ -104,6 +132,8 @@ jobs:
         with:
           token: ${{ secrets.PEERBIT_BOOTSTRAP_PR_TOKEN }}
           path: peerbit-bootstrap
+          author: "Peerbit Bot <273107789+peerbit-org@users.noreply.github.com>"
+          committer: "Peerbit Bot <273107789+peerbit-org@users.noreply.github.com>"
           commit-message: "chore: roll bootstrap-5 to @peerbit/server@${{ steps.server.outputs.version }}"
           title: "chore: roll bootstrap-5 to @peerbit/server@${{ steps.server.outputs.version }}"
           body: |
