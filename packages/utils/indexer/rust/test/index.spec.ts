@@ -1414,6 +1414,97 @@ describe("native planner bridge", () => {
 		await indices.drop();
 	});
 
+	it("keeps a persisted stored batch visible after trailing compaction rejects", async () => {
+		const directory = createPersistenceDirectory();
+		const indices = create(directory);
+		try {
+			await indices.start();
+			const index = await indices.init({ schema: BridgeDocumentWithContext });
+			const contextualIndex = index as typeof index & {
+				putStoredContextualEncodedValueBatch: (
+					values: Array<{
+						id: ReturnType<typeof toId>;
+						encodedValueParts: {
+							prefix: Uint8Array;
+							suffix: Uint8Array;
+						};
+					}>,
+				) => Promise<boolean>;
+			};
+			await index.put(
+				new BridgeDocumentWithContext(
+					new BridgeDocument("b", "peerbit", "second"),
+					new BridgeContext("head-b"),
+				),
+			);
+			await index.put(
+				new BridgeDocumentWithContext(
+					new BridgeDocument("d", "peerbit", "fourth"),
+					new BridgeContext("head-d"),
+				),
+			);
+
+			const iterator = index.iterate({
+				sort: [new Sort({ key: "id", direction: SortDirection.ASC })],
+			});
+			const first = (await iterator.next(1)).map((result) => result.value.id);
+			expect(first).to.deep.equal(["b"]);
+
+			const internal = index as unknown as {
+				compactIfNeeded: () => Promise<void>;
+				mutationVersion: number;
+			};
+			const compactIfNeeded = internal.compactIfNeeded.bind(index);
+			const versionBeforeBatch = internal.mutationVersion;
+			internal.compactIfNeeded = async () => {
+				throw new Error("forced trailing batch compaction failure");
+			};
+			let rejected = false;
+			try {
+				await contextualIndex.putStoredContextualEncodedValueBatch([
+					{
+						id: toId("a"),
+						encodedValueParts: {
+							prefix: serialize(
+								new BridgeDocument("a", "peerbit", "first"),
+							),
+							suffix: serialize(new BridgeContext("head-a")),
+						},
+					},
+					{
+						id: toId("c"),
+						encodedValueParts: {
+							prefix: serialize(
+								new BridgeDocument("c", "peerbit", "third"),
+							),
+							suffix: serialize(new BridgeContext("head-c")),
+						},
+					},
+				]);
+				expect.fail("stored batch should reject after the native mutation");
+			} catch (error) {
+				rejected = true;
+				expect((error as Error).message).to.equal(
+					"forced trailing batch compaction failure",
+				);
+			} finally {
+				internal.compactIfNeeded = compactIfNeeded;
+			}
+			expect(rejected).to.be.true;
+			expect(internal.mutationVersion).to.be.greaterThan(versionBeforeBatch);
+
+			const remaining = (await iterator.all()).map(
+				(result) => result.value.id,
+			);
+			expect(remaining).to.deep.equal(["a", "c", "d"]);
+			expect(new Set([...first, ...remaining]).size).to.equal(4);
+			iterator.close();
+		} finally {
+			await indices.drop();
+			await removeNodeDirectoryIfNeeded(directory);
+		}
+	});
+
 	it("coalesces native-backbone exact deletes with result flags", async () => {
 		const directory = createPersistenceDirectory();
 		const indices = create(directory);

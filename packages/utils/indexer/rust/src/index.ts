@@ -4545,6 +4545,7 @@ export class RustIndex<T extends Record<string, any>, NestedType = any>
 				suffixes,
 				this.nativeByteElementIndexLimit,
 			);
+			this.markMutationVisible();
 			return true;
 		} catch {
 			return false;
