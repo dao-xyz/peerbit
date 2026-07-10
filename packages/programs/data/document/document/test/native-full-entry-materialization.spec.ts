@@ -1,4 +1,5 @@
-import { field, variant } from "@dao-xyz/borsh";
+import { field, serialize, variant } from "@dao-xyz/borsh";
+import { SearchRequestIndexed } from "@peerbit/document-interface";
 import { expect } from "chai";
 import { Peerbit } from "peerbit";
 import { createRustPeerbitOptions } from "peerbit/rust";
@@ -106,9 +107,8 @@ describe("native full-entry materialization", () => {
 		const getManySpy = sinon.spy(store.docs.log.log.blocks, "getMany");
 
 		try {
-			const entries = await store.docs.log.log.entryIndex.getMany(
+			const entries = await store.docs.log.log.getMany(
 				puts.map((put) => put.entry.hash),
-				{ type: "full", ignoreMissing: true },
 			);
 			expect(entries).to.have.length(3);
 			expect(entries[0]).equal(full);
@@ -123,13 +123,50 @@ describe("native full-entry materialization", () => {
 				puts[2].entry.hash,
 			]);
 
-			const cached = await store.docs.log.log.entryIndex.getMany(
+			const cached = await store.docs.log.log.getMany(
 				puts.slice(0, 2).map((put) => put.entry.hash),
 			);
 			expect(cached).to.deep.equal(entries.slice(0, 2));
 			expect(getManySpy.callCount).equal(1);
 		} finally {
 			getManySpy.restore();
+		}
+	});
+
+	it("batch-materializes serializable indexed RPC result heads", async () => {
+		const store = await openStore();
+		const puts = [];
+		for (const [index, name] of ["one", "two", "three"].entries()) {
+			puts.push(
+				await store.docs.put(
+					new Document({ id: `materialize-rpc-${index}`, name }),
+				),
+			);
+		}
+		const blocks = store.docs.log.log.blocks;
+		const getManySpy = sinon.spy(blocks, "getMany");
+		const getSpy = sinon.spy(blocks, "get");
+
+		try {
+			const response = await store.docs.index.processQuery(
+				new SearchRequestIndexed({ query: [], fetch: puts.length }),
+				store.node.identity.publicKey,
+				false,
+			);
+
+			expect(response.results).to.have.length(puts.length);
+			expect(
+				response.results.map((result) => result.context.head),
+			).to.have.members(puts.map((put) => put.entry.hash));
+			expect(() => serialize(response)).not.to.throw();
+			expect(getManySpy.callCount).to.equal(1);
+			expect(getManySpy.firstCall.args[0]).to.have.members(
+				puts.map((put) => put.entry.hash),
+			);
+			expect(getSpy.callCount).to.equal(0);
+		} finally {
+			getManySpy.restore();
+			getSpy.restore();
 		}
 	});
 

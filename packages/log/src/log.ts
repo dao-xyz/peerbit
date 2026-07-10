@@ -784,6 +784,26 @@ export class Log<T> {
 	}
 
 	/**
+	 * Get entries while preserving the order and duplicates in `hashes`.
+	 * Missing entries are returned as `undefined`.
+	 */
+	getMany(
+		hashes: string[],
+		options?: GetOptions,
+	): Promise<Array<Entry<T> | undefined>> {
+		return this._entryIndex.getMany(
+			hashes,
+			options
+				? {
+						type: "full",
+						remote: options.remote,
+						ignoreMissing: true,
+					}
+				: { type: "full", ignoreMissing: true },
+		);
+	}
+
+	/**
 	 * Get a entry with shallow representation
 	 * @param {string} [hash] The hashes of the entry
 	 */
