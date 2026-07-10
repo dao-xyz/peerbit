@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
 import { type Blocks, type GetOptions } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
-import type { PublicSignKey } from "@peerbit/crypto";
+import { DecryptedThing, type PublicSignKey } from "@peerbit/crypto";
 import {
 	BoolQuery,
 	type Index,
@@ -20,6 +20,7 @@ import { FOREGROUND_READ_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
 import { LamportClock as Clock, Timestamp } from "./clock.js";
 import { ShallowEntry, ShallowMeta } from "./entry-shallow.js";
 import { EntryType } from "./entry-type.js";
+import { EntryV0 } from "./entry-v0.js";
 import {
 	Entry,
 	type PreparedEntryBlock,
@@ -31,6 +32,21 @@ import { logger as baseLogger } from "./logger.js";
 
 const log = baseLogger.newScope("entry-index");
 const LOG_ENTRY_REMOTE_READ_PRIORITY = FOREGROUND_READ_MESSAGE_PRIORITY;
+
+/**
+ * Native local append can cache a concrete EntryV0 whose payload/signature
+ * bytes stay only in the native block store. Unlike the lazy wire wrapper,
+ * that EntryV0 inherits Entry.toMaterialized() as a no-op. Detect the missing
+ * required borsh bytes without serializing the healthy/common case.
+ */
+const isStorageHollowDecryptedThing = (value: unknown): boolean =>
+	value instanceof DecryptedThing && value._data == null;
+
+const isStorageHollowEntryV0 = <T>(entry: Entry<T>): boolean =>
+	entry instanceof EntryV0 &&
+	(isStorageHollowDecryptedThing(entry._meta) ||
+		isStorageHollowDecryptedThing(entry._payload) ||
+		entry._signatures?.signatures.some(isStorageHollowDecryptedThing) === true);
 
 export type ResultsIterator<T> = {
 	close: () => void | Promise<void>;
@@ -2924,15 +2940,24 @@ export class EntryIndex<T> {
 	 * stash-backed head, whose fields stay hollow and whose `instanceof
 	 * EntryV0` is false) must be replaced by their fully-materialized entry
 	 * here so field consumers and `EntryV0.equals` see the canonical entry.
+	 * Native local append can also cache a concrete EntryV0 whose required
+	 * storage bytes remain only in the block store; returning undefined for that
+	 * case makes resolve/resolveMany reuse their existing store-backed path.
 	 * The materialized entry is written back into the cache so the hot head is
-	 * not re-decoded on subsequent reads. Concrete entries return `this` at
-	 * zero cost, so the default backend is unaffected. This runs only on the
-	 * read path — never on the wire/sync fusion path, which caches heads via
-	 * `put` but never resolves them — so entry laziness on the wire is
+	 * not re-decoded on subsequent reads. Complete concrete entries return
+	 * `this` at zero cost, so the default backend is unaffected. This runs only
+	 * on the read path — never on the wire/sync fusion path, which caches heads
+	 * via `put` but never resolves them — so entry laziness on the wire is
 	 * preserved.
 	 */
-	private materializeCached(k: string, mem: Entry<T>): Entry<T> {
+	private materializeCached(k: string, mem: Entry<T>): Entry<T> | undefined {
 		const materialized = mem.toMaterialized();
+		if (isStorageHollowEntryV0(materialized)) {
+			// Signal resolve/resolveMany to use their existing store-backed path.
+			// Cache misses already deserialize a complete entry, and resolveMany
+			// keeps these reloads batched through store.getMany.
+			return undefined;
+		}
 		if (materialized !== mem) {
 			this.cache.add(k, materialized);
 		}
@@ -2945,20 +2970,25 @@ export class EntryIndex<T> {
 	): Promise<Entry<T> | undefined> {
 		let coercedOptions = typeof options === "object" ? options : undefined;
 		/* if (await this.has(k)) { */
-		let mem = this.cache.get(k);
+		const cached = this.cache.get(k);
+		let mem = cached;
+		if (mem) {
+			mem = this.materializeCached(k, mem);
+		}
 		if (mem === undefined) {
 			mem = await this.resolveFromStore(k, coercedOptions);
 			if (mem) {
 				this.properties.init(mem);
 				mem.hash = k;
+				if (cached?.createdLocally !== undefined) {
+					mem.createdLocally = cached.createdLocally;
+				}
 			} else if (coercedOptions?.ignoreMissing !== true) {
 				throw new Error("Failed to load entry from head with hash: " + k);
 			}
 			if (mem) {
 				this.cache.add(k, mem);
 			}
-		} else if (mem) {
-			mem = this.materializeCached(k, mem);
 		}
 		return mem ? mem : undefined;
 		/* }
@@ -2980,13 +3010,24 @@ export class EntryIndex<T> {
 		const resolved: Array<Entry<T> | undefined> = new Array(hashes.length);
 		const missingHashes: string[] = [];
 		const missingPositions: number[] = [];
+		const missingCreatedLocally: Array<boolean | undefined> = [];
 
 		for (let i = 0; i < hashes.length; i++) {
 			const hash = hashes[i]!;
 			const mem = this.cache.get(hash);
 			if (mem !== undefined) {
-				resolved[i] = mem ? this.materializeCached(hash, mem) : undefined;
-				continue;
+				if (!mem) {
+					resolved[i] = undefined;
+					continue;
+				}
+				const materialized = this.materializeCached(hash, mem);
+				if (materialized) {
+					resolved[i] = materialized;
+					continue;
+				}
+				missingCreatedLocally.push(mem.createdLocally);
+			} else {
+				missingCreatedLocally.push(undefined);
 			}
 			missingHashes.push(hash);
 			missingPositions.push(i);
@@ -3014,6 +3055,9 @@ export class EntryIndex<T> {
 			this.properties.init(entry);
 			entry.hash = hash;
 			entry.size = value.length;
+			if (missingCreatedLocally[i] !== undefined) {
+				entry.createdLocally = missingCreatedLocally[i];
+			}
 			this.cache.add(hash, entry);
 			resolved[missingPositions[i]!] = entry;
 		}
