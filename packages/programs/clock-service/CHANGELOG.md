@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.2.75
+
+### Patch Changes
+
+- Updated dependencies [[`618299f`](https://github.com/dao-xyz/peerbit/commit/618299fcfc27ec7512e15b0395211b1ef9043613), [`0d7f324`](https://github.com/dao-xyz/peerbit/commit/0d7f324cb28a759b0aa6d9b2c9d970a383849e08)]:
+  - @peerbit/log@6.2.5
+  - @peerbit/trusted-network@6.0.51
+  - @peerbit/shared-log@13.2.6
+  - @peerbit/program@6.0.35
+  - @peerbit/rpc@6.1.3
+
 ## 3.2.74
 
 ### Patch Changes
