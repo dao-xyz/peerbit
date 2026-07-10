@@ -59,6 +59,13 @@ backend:
 `persistance` block includes the close→reopen restart cases, which pass thanks to
 the rust-indexer reopen fix (#1019).
 
+One setup-specific pending case is excluded explicitly from the strict selector:
+`u32-simple replication degree commit options control per commmit put before join
+converges under deterministic pubsub chaos` is declared with `it.skip` because
+that scenario is u64-only. Its active `u64-iblt` counterpart remains covered.
+The gate therefore runs 147 active tests / 0 pending, and Mocha's
+`--forbid-pending` makes any newly skipped selected test fail the blocking leg.
+
 The `redundancy only sends entries once` family (2 peers dynamic/fixed/write-after-
 open, 3 peers) was folded in by making the `getReceivedHeads` test helper
 backend-agnostic (see the Class-B root-cause note below): it now counts heads

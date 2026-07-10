@@ -61,7 +61,7 @@
 		"benchmark:sync-catchup": "node --loader ts-node/esm ./benchmark/sync-catchup.ts",
 		"benchmark:sync-phase-profile": "node --loader ts-node/esm ./benchmark/sync-phase-profile.ts",
 		"test": "aegir test --target node",
-		"test:shared-log-rust-core": "npm run build && PEERBIT_SHARED_LOG_RUST_CORE=1 aegir test -t node --grep '^(?!.*(does not fetch missing entries from remotes|will prune once reaching max replicas|repairs when joiner request responses are dropped|time out when pending IHave are never resolved|does not confirm checked prune from a shallow-only entry|replication degree update ))(append delivery options |join |replicate |(u32-simple|u64-iblt) (replication references |replication replication (one way|two way) |redundancy only sends entries once|canReplicate |replication degree |start/stop replicate on connect|sync ))'",
+		"test:shared-log-rust-core": "npm run build && PEERBIT_SHARED_LOG_RUST_CORE=1 aegir test -t node --grep '^(?!u32-simple replication degree commit options control per commmit put before join converges under deterministic pubsub chaos$)(?!.*(does not fetch missing entries from remotes|will prune once reaching max replicas|repairs when joiner request responses are dropped|time out when pending IHave are never resolved|does not confirm checked prune from a shallow-only entry|replication degree update ))(append delivery options |join |replicate |(u32-simple|u64-iblt) (replication references |replication replication (one way|two way) |redundancy only sends entries once|canReplicate |replication degree |start/stop replicate on connect|sync ))' -- --forbid-pending",
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
