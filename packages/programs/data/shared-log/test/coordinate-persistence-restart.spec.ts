@@ -11,20 +11,12 @@
 // directory. This test exercises the auto-wire: a `peerbit/rust` client with a
 // `directory` derives the store itself.
 //
-// SCOPE / KNOWN BLOCKER (verified, see the PR notes): a *full* program reopen
-// on the same directory does NOT yet resurrect the log, because when the native
-// backbone is active the log's entry blocks are held in the backbone's
-// wasm-memory block store rather than the durable program block cache
-// (`shared-log/src/index.ts`: `localBlocks = this._nativeBackbone.blocks : new
-// AnyBlockStore(await storage.sublevel("blocks"))`). On restart the heads index
-// still lists the head hashes but the entry blocks backing them are gone, so
-// `log.getHeads(true).all()` fails with "Failed to load entry from head".
-// Making native-backbone entry blocks durable is a separate, upstream piece of
-// work (flush ordering across the block store) and is intentionally out of
-// scope for this slice. This test therefore proves the coordinate layer that
-// this slice adds — WAL written under the auto-derived namespace on clean stop,
-// and those coordinates restored from that same directory into a fresh
-// backbone — which is exactly the gap this slice closes.
+// This test intentionally isolates the coordinate layer: the WAL is written
+// under the auto-derived namespace on clean stop and restored from that same
+// directory into a fresh backbone. Full program restart, including durable
+// entry blocks, is covered separately by durable-native-restart.spec.ts. Its
+// write-through block store keeps the wasm map cold on open and repopulates it
+// lazily from durable storage as the log walks the DAG.
 import { toHexString } from "@peerbit/crypto";
 import {
 	NativeBackboneCoordinatePersistence,
@@ -146,9 +138,9 @@ describe("coordinate persistence auto-wire", function () {
 
 		// --- Restore: hydrate a fresh backbone straight from that directory ---
 		// This mirrors what shared-log's auto-wire does on reopen (construct the
-		// same Node store rooted at the per-program directory and hydrate), but
-		// isolated from the separate native block-store durability gap noted at
-		// the top of this file. No peer exists; the coordinates come from disk.
+		// same Node store rooted at the per-program directory and hydrate), while
+		// deliberately isolating coordinate persistence from block-store restart.
+		// No peer exists; the coordinates come from disk.
 		const store = new NativeBackboneNodeCoordinatePersistenceStore(
 			coordinateDir,
 		);
