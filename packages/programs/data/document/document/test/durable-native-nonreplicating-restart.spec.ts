@@ -176,10 +176,11 @@ describe("durable native block store restart (non-replicating)", function () {
 		expect(log2._nativeBackbone, "session 2 native backbone").to.exist;
 
 		// The core durable guarantee of FIX-1: every entry block a non-replicating
-		// native node committed is present in the reopened block store (durable +
-		// rehydrated into the native wasm map). Before FIX-1 the native commit-only
-		// fast path committed the block into the wasm map ONLY, bypassing the
-		// write-through wrapper, so after a restart these blocks were gone and
+		// native node committed is present in the reopened block store (read through
+		// from durable storage and repopulated into the native wasm map lazily).
+		// Before FIX-1, the native commit-only fast path committed the block into the
+		// wasm map ONLY and bypassed the write-through wrapper, so after a restart
+		// these blocks were gone and
 		// remoteBlocks.get returned undefined (falling through to a remote read
 		// that never resolves on a peerless node).
 		for (const hash of entryHashes) {

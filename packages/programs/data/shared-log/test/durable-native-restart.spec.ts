@@ -11,8 +11,9 @@
 // "Failed to load entry from head" (see entry-index.ts `resolveMany`). The
 // coordinate-persistence slice already restores replication coordinates; this
 // slice makes the entry blocks durable via a write-through wrapper over the
-// native wasm store and a durable per-program `blocks` sublevel, and rehydrates
-// the wasm map from that sublevel on open.
+// native wasm store and a durable per-program `blocks` sublevel. The wasm map
+// remains cold on open; reads fall through to the durable sublevel and lazily
+// repopulate the hot map as the log walks the DAG.
 //
 // This test proves the real durable native restart:
 //   (i)  the program reopens WITHOUT "Failed to load entry from head",

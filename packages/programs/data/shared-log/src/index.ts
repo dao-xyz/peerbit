@@ -394,8 +394,8 @@ type NativeBackboneBlocks = NativePeerbitBackbone["blocks"];
  * On a restart that map is empty, so the native graph cannot reload heads the
  * durable heads index still lists ("Failed to load entry from head"). This
  * wrapper mirrors every write into the same durable `blocks` sublevel the
- * non-native path uses, and on open rehydrates the wasm map from disk so the
- * native graph can walk the DAG again.
+ * non-native path uses. On a native miss, reads fall through to durable storage
+ * and lazily repopulate the wasm map so the native graph can walk the DAG again.
  *
  * The native store stays the authoritative hot store the native graph reads
  * from: reads hit native first and only fall back to durable (repopulating
