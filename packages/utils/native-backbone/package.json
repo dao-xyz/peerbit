@@ -57,7 +57,8 @@
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\""
 	},
 	"dependencies": {
-		"@peerbit/blocks-interface": "workspace:*"
+		"@peerbit/blocks-interface": "workspace:*",
+		"classic-level": "^3.0.0"
 	},
 	"author": "dao.xyz",
 	"license": "MIT"
