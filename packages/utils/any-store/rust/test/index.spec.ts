@@ -1,6 +1,6 @@
 import { type AnyStore } from "@peerbit/any-store-interface";
 import { expect } from "chai";
-import { mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { createStore } from "../src/index.js";
@@ -170,6 +170,143 @@ describe("@peerbit/any-store-rust", () => {
 		expect(await store.get("a")).to.equal(undefined);
 		expect(await store.get("b")).to.deep.equal(new Uint8Array([2]));
 		await store.close();
+	});
+
+	it("validates immutable options when returning a cached sublevel", async () => {
+		const store = createStore();
+		await store.open();
+		const configured = await store.sublevel("blocks", {
+			compactOnClose: false,
+			compactOnCloseMinJournalBytes: 1024,
+		});
+		expect(await store.sublevel("blocks")).to.equal(configured);
+		expect(
+			await store.sublevel("blocks", {
+				compactOnClose: false,
+				compactOnCloseMinJournalBytes: 1024,
+			}),
+		).to.equal(configured);
+		expect(
+			await store.sublevel("blocks", {
+				compactOnClose: undefined,
+				compactOnCloseMinJournalBytes: undefined,
+			}),
+		).to.equal(configured);
+
+		let conflict: unknown;
+		try {
+			await store.sublevel("blocks", { compactOnClose: true });
+		} catch (error) {
+			conflict = error;
+		}
+		expect(conflict).to.be.instanceOf(Error);
+		expect((conflict as Error).message).to.contain(
+			'sublevel "blocks" already exists with compactOnClose=false; requested true',
+		);
+
+		conflict = undefined;
+		try {
+			await store.sublevel("blocks", {
+				compactOnCloseMinJournalBytes: 2048,
+			});
+		} catch (error) {
+			conflict = error;
+		}
+		expect(conflict).to.be.instanceOf(Error);
+		expect((conflict as Error).message).to.contain(
+			"compactOnCloseMinJournalBytes=1024; requested 2048",
+		);
+
+		const defaultConfigured = await store.sublevel("default-blocks");
+		expect(
+			await store.sublevel("default-blocks", {
+				compactOnClose: true,
+				durability: "normal",
+			}),
+		).to.equal(defaultConfigured);
+		conflict = undefined;
+		try {
+			await store.sublevel("default-blocks", { compactOnClose: false });
+		} catch (error) {
+			conflict = error;
+		}
+		expect(conflict).to.be.instanceOf(Error);
+		expect((conflict as Error).message).to.contain(
+			'sublevel "default-blocks" already exists with compactOnClose=true; requested false',
+		);
+		await store.close();
+	});
+
+	it("defers sublevel close compaction below its journal threshold and recovers a torn tail", async () => {
+		const directory = await tempDirectory();
+		cleanup.push(directory);
+		const sublevelDirectory = join(directory, "sublevels", "blocks");
+		const snapshotPath = join(sublevelDirectory, "store.bin");
+		const journalPath = join(sublevelDirectory, "store.wal");
+		const sublevelOptions = {
+			compactOnClose: false,
+			compactOnCloseMinJournalBytes: 1024,
+		};
+
+		let root = createStore(directory);
+		await root.open();
+		let blocks = await root.sublevel("blocks", sublevelOptions);
+		await blocks.put("a", new Uint8Array([1]));
+		await blocks.put("b", new Uint8Array([2, 3]));
+		await root.close();
+
+		// The generic root still uses its unchanged compact-on-close default, while
+		// the explicitly configured append-heavy child remains journal-backed below
+		// its close-time compaction threshold.
+		expect(await stat(join(directory, "store.bin"))).to.exist;
+		const snapshotExists = await stat(snapshotPath)
+			.then(() => true)
+			.catch(() => false);
+		expect(snapshotExists).to.equal(false);
+		const journal = await readFile(journalPath);
+		expect(journal.byteLength).to.be.greaterThan(0);
+		expect(journal.byteLength).to.be.lessThan(
+			sublevelOptions.compactOnCloseMinJournalBytes,
+		);
+
+		// Tear the second record. Reopen must retain the complete first record,
+		// discard the incomplete tail, and checkpoint before accepting new writes.
+		await writeFile(journalPath, journal.subarray(0, journal.byteLength - 3));
+		root = createStore(directory);
+		await root.open();
+		blocks = await root.sublevel("blocks", sublevelOptions);
+		expect(await blocks.get("a")).to.deep.equal(new Uint8Array([1]));
+		expect(await blocks.get("b")).to.equal(undefined);
+		await blocks.put("c", new Uint8Array([4]));
+		await root.close();
+
+		root = createStore(directory);
+		await root.open();
+		blocks = await root.sublevel("blocks", sublevelOptions);
+		expect(await blocks.get("a")).to.deep.equal(new Uint8Array([1]));
+		expect(await blocks.get("b")).to.equal(undefined);
+		expect(await blocks.get("c")).to.deep.equal(new Uint8Array([4]));
+		await root.close();
+	});
+
+	it("compacts an opted-out sublevel when its close-time journal threshold is reached", async () => {
+		const directory = await tempDirectory();
+		cleanup.push(directory);
+
+		const root = createStore(directory);
+		await root.open();
+		const blocks = await root.sublevel("blocks", {
+			compactOnClose: false,
+			compactOnCloseMinJournalBytes: 1,
+		});
+		await blocks.put("a", new Uint8Array([1]));
+		await root.close();
+
+		const sublevelDirectory = join(directory, "sublevels", "blocks");
+		expect(await stat(join(sublevelDirectory, "store.bin"))).to.exist;
+		expect(
+			(await readFile(join(sublevelDirectory, "store.wal"))).byteLength,
+		).to.equal(0);
 	});
 
 	it("recovers from a torn journal tail and keeps later writes", async () => {
