@@ -5,6 +5,7 @@ import {
 	serialize,
 	variant,
 } from "@dao-xyz/borsh";
+import type { AnyStore } from "@peerbit/any-store";
 import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
 import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
@@ -381,6 +382,48 @@ const joinNativeCoordinateDirectory = (
 	nodeDirectory: string,
 	fsSafeLogId: string,
 ): string => `${nodeDirectory.replace(/[/\\]+$/, "")}/coordinates/${fsSafeLogId}`;
+
+// Native durable block mirrors are content-addressed and therefore primarily
+// append-only. Rewriting the complete live block set into a RustAnyStore
+// snapshot on every program close is redundant and makes close O(total block
+// bytes). Keep the WAL crash-safe and defer that rewrite on close until the
+// journal reaches this explicit threshold. This does not cap WAL growth during
+// an open session. Stores that do not support per-sublevel options ignore the
+// second argument and retain their existing behavior.
+const NATIVE_DURABLE_BLOCK_COMPACT_ON_CLOSE_MIN_JOURNAL_BYTES =
+	512 * 1024 * 1024;
+
+type DurableBlockSublevelStore = {
+	sublevel(
+		name: string,
+		options?: {
+			compactOnClose?: boolean;
+			compactOnCloseMinJournalBytes?: number;
+		},
+	): MaybePromise<AnyStore>;
+};
+
+const createNativeDurableBlockStore = async (
+	storage: DurableBlockSublevelStore,
+): Promise<AnyBlockStore> =>
+	new AnyBlockStore(
+		await storage.sublevel("blocks", {
+			compactOnClose: false,
+			compactOnCloseMinJournalBytes:
+				NATIVE_DURABLE_BLOCK_COMPACT_ON_CLOSE_MIN_JOURNAL_BYTES,
+		}),
+	);
+
+const createDefaultDurableBlockStore = async (
+	storage: DurableBlockSublevelStore,
+): Promise<AnyBlockStore> =>
+	new AnyBlockStore(
+		await storage.sublevel("blocks", {
+			// State this default explicitly so a cached child created by the native
+			// path cannot silently carry its deferred-close policy into this path.
+			compactOnClose: true,
+		}),
+	);
 
 /** The native backbone's in-wasm-memory block store. */
 type NativeBackboneBlocks = NativePeerbitBackbone["blocks"];
@@ -9081,7 +9124,9 @@ export class SharedLog<
 		let localBlocks: NonNullable<RemoteBlocks["localStore"]>;
 		if (this._nativeBackbone) {
 			if (this.node.directory != null) {
-				const durable = new AnyBlockStore(await storage.sublevel("blocks"));
+				const durable = await createNativeDurableBlockStore(
+					storage as unknown as DurableBlockSublevelStore,
+				);
 				localBlocks = new NativeBackboneWriteThroughBlockStore(
 					this._nativeBackbone.blocks,
 					durable,
@@ -9090,7 +9135,9 @@ export class SharedLog<
 				localBlocks = this._nativeBackbone.blocks;
 			}
 		} else {
-			localBlocks = new AnyBlockStore(await storage.sublevel("blocks"));
+			localBlocks = await createDefaultDurableBlockStore(
+				storage as unknown as DurableBlockSublevelStore,
+			);
 		}
 		this.remoteBlocks = new RemoteBlocks({
 			local: localBlocks,

@@ -77,6 +77,21 @@ describe("durable native block store restart", function () {
 			log1._nativeBackboneCoordinatePersistence,
 			"session 1 auto-derived coordinate persistence",
 		).to.exist;
+		const durableBlockOptions = log1.remoteBlocks.localStore?.durable?._store
+			?.options as
+			| {
+					compactOnClose?: boolean;
+					compactOnCloseMinJournalBytes?: number;
+			  }
+			| undefined;
+		expect(
+			durableBlockOptions?.compactOnClose,
+			"native durable block sublevel skips redundant close snapshots",
+		).to.equal(false);
+		expect(
+			durableBlockOptions?.compactOnCloseMinJournalBytes,
+			"native durable block WAL retains an explicit close-time compaction threshold",
+		).to.equal(512 * 1024 * 1024);
 
 		for (let index = 0; index < entryCount; index++) {
 			await store1.add(`entry-${index}`, { meta: { next: [] } });

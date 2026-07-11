@@ -37,6 +37,13 @@ type WasmModule = {
 
 export type RustAnyStoreOptions = {
 	compactOnClose?: boolean;
+	/**
+	 * When `compactOnClose` is false, compact during close only if the journal
+	 * has reached at least this many bytes. Append-heavy stores can defer a
+	 * complete live-value rewrite on smaller closes while retaining an explicit
+	 * checkpoint trigger for larger journals.
+	 */
+	compactOnCloseMinJournalBytes?: number;
 	durability?: "normal" | "strict";
 };
 
@@ -92,6 +99,7 @@ export class RustAnyStore implements AnyStore {
 	private queuedMutations = 0;
 	private journalQueue: Promise<unknown> = Promise.resolve();
 	private journalError?: unknown;
+	private journalByteLength = 0;
 	private children = new Map<string, RustAnyStore>();
 	private _status: StoreStatus = "closed";
 
@@ -182,7 +190,7 @@ export class RustAnyStore implements AnyStore {
 				closeError ??= error;
 			}
 		}
-		if (this.native && this.directory && this.options.compactOnClose !== false) {
+		if (this.native && this.directory && this.shouldCompactOnClose()) {
 			try {
 				await this.compact();
 			} catch (error) {
@@ -386,16 +394,88 @@ export class RustAnyStore implements AnyStore {
 		return native.has_many(keys);
 	}
 
-	async sublevel(name: string): Promise<AnyStore> {
+	async sublevel(
+		name: string,
+		options?: RustAnyStoreOptions,
+	): Promise<AnyStore> {
 		let child = this.children.get(name);
 		if (!child) {
-			child = new RustAnyStore(this.directory, [...this.level, name], this.options);
+			child = new RustAnyStore(
+				this.directory,
+				[...this.level, name],
+				this.mergeSublevelOptions(options),
+			);
 			this.children.set(name, child);
+		} else {
+			child.assertCompatibleSublevelOptions(options);
 		}
 		if (this._status === "open") {
 			await child.open();
 		}
 		return child;
+	}
+
+	private mergeSublevelOptions(
+		requested?: RustAnyStoreOptions,
+	): RustAnyStoreOptions {
+		return {
+			compactOnClose:
+				requested?.compactOnClose !== undefined
+					? requested.compactOnClose
+					: this.options.compactOnClose,
+			compactOnCloseMinJournalBytes:
+				requested?.compactOnCloseMinJournalBytes !== undefined
+					? requested.compactOnCloseMinJournalBytes
+					: this.options.compactOnCloseMinJournalBytes,
+			durability:
+				requested?.durability !== undefined
+					? requested.durability
+					: this.options.durability,
+		};
+	}
+
+	private assertCompatibleSublevelOptions(
+		requested?: RustAnyStoreOptions,
+	): void {
+		if (!requested) {
+			return;
+		}
+		this.assertCompatibleSublevelOption(
+			"compactOnClose",
+			requested.compactOnClose,
+			this.options.compactOnClose ?? true,
+		);
+		this.assertCompatibleSublevelOption(
+			"compactOnCloseMinJournalBytes",
+			requested.compactOnCloseMinJournalBytes == null
+				? undefined
+				: Math.max(0, requested.compactOnCloseMinJournalBytes),
+			this.options.compactOnCloseMinJournalBytes == null
+				? undefined
+				: Math.max(0, this.options.compactOnCloseMinJournalBytes),
+		);
+		this.assertCompatibleSublevelOption(
+			"durability",
+			requested.durability,
+			this.options.durability ?? "normal",
+		);
+	}
+
+	private assertCompatibleSublevelOption(
+		name: keyof RustAnyStoreOptions,
+		requested: RustAnyStoreOptions[keyof RustAnyStoreOptions],
+		configured: RustAnyStoreOptions[keyof RustAnyStoreOptions],
+	): void {
+		// An omitted field adds no constraint to an already-cached child.
+		if (requested === undefined || Object.is(requested, configured)) {
+			return;
+		}
+		const path = this.level.join("/");
+		throw new Error(
+			`RustAnyStore sublevel "${path}" already exists with ${name}=${String(
+				configured,
+			)}; requested ${String(requested)}`,
+		);
 	}
 
 	iterator(): {
@@ -463,6 +543,7 @@ export class RustAnyStore implements AnyStore {
 			native.load_snapshot(snapshot);
 		}
 		const journal = await this.persistence.readJournal();
+		this.journalByteLength = journal?.byteLength ?? 0;
 		if (journal && journal.byteLength > 0) {
 			const applied = native.apply_journal(journal);
 			if (applied < journal.byteLength) {
@@ -470,8 +551,21 @@ export class RustAnyStore implements AnyStore {
 				// records are not appended after the unreadable bytes and lost on
 				// the next replay.
 				await this.persistence.writeSnapshot(native.snapshot());
+				this.journalByteLength = 0;
 			}
 		}
+	}
+
+	private shouldCompactOnClose(): boolean {
+		if (this.options.compactOnClose !== false) {
+			return true;
+		}
+		const minJournalBytes = this.options.compactOnCloseMinJournalBytes;
+		return (
+			minJournalBytes != null &&
+			this.journalByteLength > 0 &&
+			this.journalByteLength >= Math.max(0, minJournalBytes)
+		);
 	}
 
 	private async ensureOpen(allowDraining = false): Promise<NativeAnyStore> {
@@ -569,18 +663,21 @@ export class RustAnyStore implements AnyStore {
 			throw new Error("RustAnyStore persistence backend is not open");
 		}
 		await this.persistence.writeSnapshot(journaled.snapshot());
+		this.journalByteLength = 0;
 	}
 
 	private recordJournal(record: Uint8Array): Promise<void> {
+		const recordByteLength = record.byteLength;
 		const write = this.journalQueue
-			.then(() => {
+			.then(async () => {
 				if (!this.persistence) {
 					throw new Error("RustAnyStore persistence backend is not open");
 				}
-				return this.persistence.appendJournal(
+				await this.persistence.appendJournal(
 					record,
 					this.options.durability ?? "normal",
 				);
+				this.journalByteLength += recordByteLength;
 			})
 			.catch((error) => {
 				this.journalError = error;
