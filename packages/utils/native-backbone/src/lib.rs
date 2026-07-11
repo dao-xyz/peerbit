@@ -10,6 +10,7 @@ use wasm_bindgen::prelude::*;
 mod append_tx;
 mod coordinates;
 mod documents;
+pub mod durability;
 mod error;
 mod graph_blocks;
 mod js_interop;

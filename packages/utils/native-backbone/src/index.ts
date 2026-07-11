@@ -1,5 +1,12 @@
 import { calculateRawCid, cidifyString } from "@peerbit/blocks-interface";
 
+export * from "./durability/codec.js";
+export * from "./durability/lease.js";
+export * from "./durability/memory-storage.js";
+export * from "./durability/node-lease.js";
+export * from "./durability/node-storage.js";
+export * from "./durability/storage.js";
+
 export type RangeResolution = "u32" | "u64";
 
 type NativePeerbitBackboneHandle = {
