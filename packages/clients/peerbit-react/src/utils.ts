@@ -113,6 +113,7 @@ const acquirePinnedKeypairLock = async ({
 
 	try {
 		await lock.lock(key, lockCondition);
+		throwIfAborted(signal);
 		lock.pin(key);
 	} catch (error) {
 		try {

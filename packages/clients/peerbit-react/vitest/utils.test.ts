@@ -241,6 +241,59 @@ describe("getKeypair", () => {
 		current.release();
 	});
 
+	it("does not overwrite a successor marker when cancellation races local locking", async () => {
+		const id = uuid();
+		const manager = new InMemoryLockManager();
+		const controller = new AbortController();
+		const firstMutex = new FastMutex({
+			localStorage,
+			clientId: createWebLockClientId(),
+			timeout: 1000,
+		});
+		const replacementMutex = new FastMutex({
+			localStorage,
+			clientId: createWebLockClientId(),
+			timeout: 1000,
+		});
+		let replacement:
+			| Awaited<ReturnType<typeof getFreeKeypairWithWebLock>>
+			| undefined;
+		const originalLock = firstMutex.lock.bind(firstMutex);
+		firstMutex.lock = async (key, keepLocked, options) => {
+			const result = await originalLock(key, keepLocked, options);
+			if (key === `${id}/0`) {
+				controller.abort(new DOMException("Cancelled", "AbortError"));
+				replacement = await getFreeKeypairWithWebLock(
+					id,
+					replacementMutex,
+					manager as unknown as LockManager,
+				);
+			}
+			return result;
+		};
+
+		let rejected = false;
+		try {
+			await getFreeKeypairWithWebLock(
+				id,
+				firstMutex,
+				manager as unknown as LockManager,
+				undefined,
+				controller.signal,
+			);
+		} catch (error) {
+			rejected = (error as DOMException).name === "AbortError";
+		}
+
+		expect(rejected).to.be.true;
+		expect(replacement).not.to.be.undefined;
+		expect(replacement!.index).to.eq(0);
+		expect(replacementMutex.getLockedOwners(replacement!.path)).to.deep.equal([
+			replacementMutex.clientId,
+		]);
+		replacement!.release();
+	});
+
 	it("releases both lock layers when pinning the advisory marker fails", async () => {
 		const id = uuid();
 		const manager = new InMemoryLockManager();
