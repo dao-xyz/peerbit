@@ -4081,17 +4081,17 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 	}
 
 	private async _sendControlMany(to: string[], bytes: Uint8Array) {
-		if (to.length === 0) return;
+		if (to.length === 0) return true;
 		const streams = to
 			.map((t) => this.peers.get(t))
 			.filter((s): s is PeerStreams => Boolean(s));
-		if (streams.length === 0) return;
+		if (streams.length === 0) return false;
 		this.recordControlSend(bytes, streams.length);
 		const message = await this.createMessage(bytes, {
 			mode: new AnyWhere(),
 			priority: CONTROL_PRIORITY,
 		} as any);
-		await this.publishMessageMaybe(this.publicKey, message, streams);
+		return this.publishMessageMaybe(this.publicKey, message, streams);
 	}
 
 	private refillUploadTokens(ch: ChannelState, now = Date.now()) {
@@ -7603,7 +7603,11 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const resetPeerConnections = options?.resetPeerConnections === true;
 		let kickFailed = false;
 		try {
-			await this._sendControlMany(unique, this.codec.encodeKick(ch.id.key));
+			const kickDelivered = await this._sendControlMany(
+				unique,
+				this.codec.encodeKick(ch.id.key),
+			);
+			kickFailed = !kickDelivered;
 		} catch (error) {
 			kickFailed = true;
 			throw error;
