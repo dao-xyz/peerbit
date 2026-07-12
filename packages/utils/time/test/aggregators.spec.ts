@@ -138,6 +138,37 @@ describe("debounceFixedInterval", () => {
 		expect(invoked).to.eq(0);
 	});
 
+	it("close() is terminal while an invocation is running with queued work", async () => {
+		let invoked = 0;
+		let release!: () => void;
+		const running = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const d = debounceFixedInterval(
+			async () => {
+				invoked++;
+				await running;
+			},
+			20,
+			{ leading: true },
+		);
+
+		const first = d.call();
+		await waitForResolved(() => expect(invoked).to.eq(1));
+		const queued = d.call();
+		const flushed = d.flush();
+		d.close();
+		release();
+
+		await Promise.all([first, queued, flushed]);
+		await delay(60);
+		expect(invoked).to.eq(1);
+
+		await d.call();
+		await d.flush();
+		expect(invoked).to.eq(1);
+	});
+
 	it("preserves latest args and call-site `this`", async () => {
 		const seen: Array<{ selfHasValue: number | undefined; arg: string }> = [];
 
