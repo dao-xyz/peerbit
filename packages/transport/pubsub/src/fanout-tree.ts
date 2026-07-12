@@ -727,6 +727,7 @@ export type FanoutTreeChannelMetrics = {
 	joinAcceptReceived: number;
 	joinRejectSent: number;
 	joinRejectReceived: number;
+	joinPeerResets: number;
 	kickSent: number;
 	kickReceived: number;
 	reparentDisconnect: number;
@@ -861,6 +862,11 @@ const PARENT_REPAIR_DEAD_STREAK_THRESHOLD = 16;
 const PARENT_REPAIR_DEAD_MIN_LIVENESS_MS = 15_000;
 const REPAIR_RETRY_MIN_MS = 1_000;
 const REPAIR_RETRY_INTERVAL_FACTOR = 5;
+// A stream can remain locally readable/writable while silently dropping every
+// control frame. Repeated unanswered JOIN requests are end-to-end evidence that
+// the peer path needs to be rebuilt.
+const JOIN_TIMEOUT_RESET_STREAK_THRESHOLD = 3;
+const JOIN_TIMEOUT_RESET_COOLDOWN_MS = 10_000;
 
 const JOIN_REJECT_REDIRECT_QUEUE_MAX = 64;
 // When a relay loses its parent, pause before trying to rejoin so its children can
@@ -1226,6 +1232,7 @@ const createEmptyMetrics = (): FanoutTreeChannelMetrics => ({
 	joinAcceptReceived: 0,
 	joinRejectSent: 0,
 	joinRejectReceived: 0,
+	joinPeerResets: 0,
 	kickSent: 0,
 	kickReceived: 0,
 	reparentDisconnect: 0,
@@ -1314,6 +1321,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		string,
 		FanoutTreeChannelMetrics
 	>();
+	private readonly joinTimeoutStreakByPeer = new Map<string, number>();
+	private readonly joinResetCooldownUntilByPeer = new Map<string, number>();
 	private bootstraps: Multiaddr[] = [];
 	private trackerBySuffixKey = new Map<string, Map<string, TrackerEntry>>();
 	private trackerNamespaceLru = new Map<string, number>();
@@ -1398,6 +1407,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			);
 			this.underlayPeerDisconnectHandler = undefined;
 		}
+		this.joinTimeoutStreakByPeer.clear();
+		this.joinResetCooldownUntilByPeer.clear();
 		return super.stop();
 	}
 
@@ -2563,6 +2574,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 	private onPeerDisconnectedFromUnderlay(peerHash: string) {
 		if (!peerHash) return;
+		this.joinTimeoutStreakByPeer.delete(peerHash);
 
 		// Detach from a disconnected parent immediately, so children can rejoin.
 		// This is more reliable than polling `getConnections()` because the underlay
@@ -2796,11 +2808,21 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 
 		if (!ch.joinedOnce) ch.joinedOnce = createDeferred();
 		if (!ch.joinLoop) {
-			ch.joinLoop = this._joinLoop(ch, joinOpts).catch((err) => {
-				// Surface join errors to the caller without crashing the process
-				// via an unhandled rejection (joinLoop is not generally awaited).
-				ch.joinedOnce?.reject(err);
-			});
+			const joinedOnce = ch.joinedOnce;
+			const joinLoop = this._joinLoop(ch, joinOpts)
+				.catch((err) => {
+					// Surface join errors to the caller without crashing the process
+					// via an unhandled rejection (joinLoop is not generally awaited).
+					if (ch.joinLoop === joinLoop) ch.joinLoop = undefined;
+					if (ch.joinedOnce === joinedOnce && !ch.joinedAtLeastOnce) {
+						ch.joinedOnce = undefined;
+					}
+					joinedOnce.reject(err);
+				})
+				.finally(() => {
+					if (ch.joinLoop === joinLoop) ch.joinLoop = undefined;
+				});
+			ch.joinLoop = joinLoop;
 		}
 		return ch.joinedOnce.promise;
 	}
@@ -4009,6 +4031,42 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 		const idx = seq % ch.cacheSeqs.length;
 		if (ch.cacheSeqs[idx] !== (seq | 0)) return;
 		return ch.cachePayloads[idx];
+	}
+
+	private noteJoinResponse(peerHash: string) {
+		this.joinTimeoutStreakByPeer.delete(peerHash);
+	}
+
+	private noteJoinTimeout(ch: ChannelState, peerHash: string) {
+		const streak = (this.joinTimeoutStreakByPeer.get(peerHash) ?? 0) + 1;
+		if (streak < JOIN_TIMEOUT_RESET_STREAK_THRESHOLD) {
+			this.joinTimeoutStreakByPeer.set(peerHash, streak);
+			return;
+		}
+
+		this.joinTimeoutStreakByPeer.delete(peerHash);
+		const now = Date.now();
+		for (const [hash, until] of this.joinResetCooldownUntilByPeer) {
+			if (until <= now) this.joinResetCooldownUntilByPeer.delete(hash);
+		}
+		const resetCooldownUntil =
+			this.joinResetCooldownUntilByPeer.get(peerHash) ?? 0;
+		if (resetCooldownUntil > now) return;
+
+		const stream = this.peers.get(peerHash);
+		if (!stream) return;
+		this.joinResetCooldownUntilByPeer.set(
+			peerHash,
+			now + JOIN_TIMEOUT_RESET_COOLDOWN_MS,
+		);
+		ch.metrics.joinPeerResets += 1;
+		try {
+			void this.components.connectionManager
+				.closeConnections(stream.peerId)
+				.catch(() => {});
+		} catch {
+			// Best-effort reset. The join loop keeps retrying other candidates.
+		}
 	}
 
 	private async _sendControl(to: string, bytes: Uint8Array) {
@@ -5904,7 +5962,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 							? " No fanout bootstraps are configured for this channel, and the root is not a direct neighbor. If this peer reached the network via a bootstrap or relay node, initialize it with Peerbit.bootstrap(...) instead of Peerbit.dial(...), or configure FanoutTree.setBootstraps(...) before joining sharded topics."
 							: "";
 					throw new Error(
-						`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount}).${bootstrapHint}`,
+						`fanout join timed out after ${timeoutMs}ms (topic=${ch.id.topic} root=${ch.id.root} self=${this.publicKeyHash} rootNeighbor=${rootNeighbor} peers=${this.peers.size} bootstraps=${bootstrapsCount} joinReqSent=${ch.metrics.joinReqSent} joinAcceptReceived=${ch.metrics.joinAcceptReceived} joinRejectReceived=${ch.metrics.joinRejectReceived} peerResets=${ch.metrics.joinPeerResets}).${bootstrapHint}`,
 					);
 				}
 
@@ -6290,6 +6348,7 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 					}
 
 					if (res.timedOut) {
+						this.noteJoinTimeout(ch, c.hash);
 						try {
 							await this.sendTrackerFeedback(
 								ch,
@@ -8379,6 +8438,8 @@ export class FanoutTree extends DirectStream<FanoutTreeEvents> {
 			if (kind === MSG_JOIN_ACCEPT || kind === MSG_JOIN_REJECT) {
 				const reqId = this.codec.decodeJoinResponseReqId(data);
 				if (reqId == null) return false;
+				// Any explicit join response proves this path is alive end to end.
+				this.noteJoinResponse(fromHash);
 				const pending = ch.pendingJoin.get(reqId);
 				if (!pending) return true;
 				ch.pendingJoin.delete(reqId);

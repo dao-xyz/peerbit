@@ -288,6 +288,84 @@ describe("pubsub (subscribe race regressions)", function () {
 		expect(resolvedRoot).to.equal(root.publicKeyHash);
 	});
 
+	it("confirms a gateway-resolved shard with the direct root before joining", async function () {
+		this.timeout(120_000);
+
+		const TOPIC = "gateway-root-host-confirmation";
+		session = await createDisconnectedSessionWithPerPeerRoots(3);
+
+		const peers = session.peers
+			.map((node) => ({ node, pubsub: node.services.pubsub }))
+			.sort((a, b) =>
+				a.pubsub.publicKeyHash < b.pubsub.publicKeyHash
+					? -1
+					: a.pubsub.publicKeyHash > b.pubsub.publicKeyHash
+						? 1
+						: 0,
+			);
+		const gateway = peers[0]!;
+		const root = peers[1]!;
+		const leaf = peers[2]!;
+
+		await leaf.node.dial(gateway.node.getMultiaddrs()[0]!);
+		await leaf.node.dial(root.node.getMultiaddrs()[0]!);
+		await waitForNeighbour(leaf.pubsub, gateway.pubsub);
+		await waitForNeighbour(leaf.pubsub, root.pubsub);
+		await Promise.all(
+			peers.map(
+				({ pubsub }) =>
+					(pubsub as any).hostOwnedShardRootsInFlight ?? Promise.resolve(),
+			),
+		);
+
+		const shardTopic = `/peerbit/pubsub-shard/1/${topicHash32(TOPIC) % 16}`;
+		leaf.pubsub.setTopicRootCandidates([]);
+		gateway.pubsub.setTopicRootCandidates([root.pubsub.publicKeyHash]);
+		root.pubsub.setTopicRootCandidates([root.pubsub.publicKeyHash]);
+		await root.pubsub.hostShardRootsNow();
+		await ((root.pubsub as any).hostOwnedShardRootsInFlight ?? Promise.resolve());
+		await (root.pubsub as any).closeFanoutChannel(shardTopic, { force: true });
+		await delay(100);
+		expect((root.pubsub as any).fanoutChannels.get(shardTopic)).to.equal(undefined);
+		expect(
+			root.node.services.fanout.getChannelStats(
+				shardTopic,
+				root.pubsub.publicKeyHash,
+			),
+		).to.equal(undefined);
+
+		const leafInternals = leaf.pubsub as any;
+		leafInternals.shardRootCache.clear();
+		expect([...leafInternals.peers.keys()]).to.include(gateway.pubsub.publicKeyHash);
+		expect([...leafInternals.peers.keys()]).to.include(root.pubsub.publicKeyHash);
+		const originalQueryTopicRootFromPeer = leafInternals.queryTopicRootFromPeer;
+		const queriedPeers: string[] = [];
+		leafInternals.queryTopicRootFromPeer = async (...args: any[]) => {
+			queriedPeers.push(args[0].publicKey.hashcode());
+			return originalQueryTopicRootFromPeer.apply(leaf.pubsub, args);
+		};
+
+		try {
+			await leaf.pubsub.subscribe(TOPIC);
+		} finally {
+			leafInternals.queryTopicRootFromPeer = originalQueryTopicRootFromPeer;
+		}
+
+		expect(queriedPeers.slice(0, 2)).to.deep.equal([
+			gateway.pubsub.publicKeyHash,
+			root.pubsub.publicKeyHash,
+		]);
+		expect((root.pubsub as any).fanoutChannels.get(shardTopic)?.root).to.equal(
+			root.pubsub.publicKeyHash,
+		);
+		expect(
+			leaf.node.services.fanout.getChannelStats(
+				shardTopic,
+				root.pubsub.publicKeyHash,
+			)?.parent,
+		).to.equal(root.pubsub.publicKeyHash);
+	});
+
 	it("hosts a shard before answering a direct root query for itself", async function () {
 		this.timeout(120_000);
 

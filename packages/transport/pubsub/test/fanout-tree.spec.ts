@@ -1592,6 +1592,140 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("resets an already-connected root after unanswered initial joins", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			const rootNode = session.peers[0];
+			const root = rootNode.services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const topic = "initial-join-zombie-reset";
+			const rootId = root.publicKeyHash;
+			const bootstrapAddrs = rootNode
+				.getMultiaddrs()
+				.filter((address) => !address.getComponents().some((c) => c.code === 290));
+			root.openChannel(topic, rootId, {
+				role: "root",
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+
+			const leafInternals = leaf as any;
+			await waitForResolved(() =>
+				expect(leafInternals.peers.get(rootId)).to.exist,
+			);
+			const rootPeer = leafInternals.peers.get(rootId);
+			expect(rootPeer).to.exist;
+			const connectionManager = leafInternals.components.connectionManager as any;
+			const originalSendControl = leafInternals._sendControl;
+			const originalCloseConnections =
+				connectionManager.closeConnections.bind(connectionManager);
+			let dropJoinControls = true;
+			let resetCount = 0;
+
+			leafInternals._sendControl = async (to: string, bytes: Uint8Array) => {
+				if (dropJoinControls && to === rootId) return;
+				return originalSendControl.call(leaf, to, bytes);
+			};
+			connectionManager.closeConnections = async (...args: any[]) => {
+				if (args[0]?.toString?.() === rootPeer.peerId.toString()) {
+					resetCount += 1;
+					await originalCloseConnections(...args);
+					dropJoinControls = false;
+					return;
+				}
+				return originalCloseConnections(...args);
+			};
+
+			try {
+				await leaf.joinChannel(
+					topic,
+					rootId,
+					{
+						msgRate: 10,
+						msgSize: 64,
+						uploadLimitBps: 0,
+						maxChildren: 0,
+						repair: false,
+					},
+					{
+						timeoutMs: 5_000,
+						bootstrap: bootstrapAddrs,
+						retryMs: 5,
+						joinReqTimeoutMs: 25,
+						candidateCooldownMs: 0,
+						candidateScoringMode: "ranked-strict",
+					},
+				);
+				expect(resetCount).to.equal(1);
+				expect(leaf.getChannelMetrics(topic, rootId).joinPeerResets).to.equal(1);
+				expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
+				expect(connectionManager.getConnections(rootPeer.peerId).length).to.be.greaterThan(
+					0,
+				);
+			} finally {
+				leafInternals._sendControl = originalSendControl;
+				connectionManager.closeConnections = originalCloseConnections;
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
+	it("starts a fresh join after an initial join timeout", async function () {
+		this.timeout(30_000);
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			const root = session.peers[0].services.fanout;
+			const leaf = session.peers[1].services.fanout;
+			const topic = "initial-join-timeout-retry";
+			const rootId = root.publicKeyHash;
+			const channelOptions = {
+				msgRate: 10,
+				msgSize: 64,
+				uploadLimitBps: 0,
+				maxChildren: 0,
+				repair: false,
+			};
+			const joinOptions = {
+				timeoutMs: 200,
+				retryMs: 5,
+				joinReqTimeoutMs: 25,
+				candidateCooldownMs: 0,
+				candidateScoringMode: "ranked-strict" as const,
+			};
+
+			await expect(
+				leaf.joinChannel(topic, rootId, channelOptions, joinOptions),
+			).to.be.rejectedWith("fanout join timed out after 200ms");
+
+			root.openChannel(topic, rootId, {
+				...channelOptions,
+				role: "root",
+				maxChildren: 1,
+				uploadLimitBps: 1_000_000,
+			});
+			await leaf.joinChannel(topic, rootId, channelOptions, {
+				...joinOptions,
+				timeoutMs: 5_000,
+			});
+			expect(leaf.getChannelStats(topic, rootId)?.parent).to.equal(rootId);
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("keeps rejoining after the initial join timeout has elapsed", async function () {
 		this.timeout(30_000);
 		const session: TestSession<{ fanout: FanoutTree }> =
