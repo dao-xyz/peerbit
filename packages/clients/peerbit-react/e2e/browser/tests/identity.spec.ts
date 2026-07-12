@@ -11,6 +11,7 @@ import { Peerbit } from "peerbit";
 const launchPersistentBrowserContext = async (
 	testInfo: TestInfo,
 	baseURL: string,
+	protectedFromEviction = true,
 ) => {
 	const userDataDir = testInfo.outputPath("peerbit-react");
 	const context = await chromium.launchPersistentContext(userDataDir, {
@@ -19,16 +20,16 @@ const launchPersistentBrowserContext = async (
 		args: ["--enable-features=FileSystemAccessAPI"],
 	});
 
-	await context.addInitScript(() => {
-		Object.defineProperty(navigator, "storage", {
-			value: {
-				...navigator.storage,
-				persist: async () => true,
-				persisted: async () => true,
-			},
+	await context.addInitScript((persisted) => {
+		Object.defineProperty(navigator.storage, "persist", {
+			value: async () => persisted,
 			configurable: true,
 		});
-	});
+		Object.defineProperty(navigator.storage, "persisted", {
+			value: async () => persisted,
+			configurable: true,
+		});
+	}, protectedFromEviction);
 
 	const origin = new URL(baseURL).origin;
 	await context.grantPermissions(["storage-access"], { origin });
@@ -49,13 +50,29 @@ const waitForPeerHash = (page: Page) =>
 		{ timeout: 20_000 },
 	);
 
+const getStorageState = (page: Page) =>
+	page.evaluate(async () => {
+		const root = await navigator.storage.getDirectory();
+		let opfsEntryCount = 0;
+		for await (const _entry of root.entries()) {
+			opfsEntryCount += 1;
+		}
+		const estimate = await navigator.storage.estimate();
+		return {
+			evictionProtected: await navigator.storage.persisted(),
+			reactPersisted: (window as any).__peerInfo?.persisted ?? null,
+			opfsEntryCount,
+			usage: estimate.usage ?? 0,
+		};
+	});
+
 let bootstrap: Peerbit;
 let bootstrapAddr: string;
 let persistentContext: BrowserContext | undefined;
 let baseURL: string;
 
 test.describe("identity", () => {
-	test.beforeEach(async (_, testInfo) => {
+	test.beforeEach(async ({ browserName: _browserName }, testInfo) => {
 		baseURL =
 			testInfo.project.use.baseURL?.toString() ||
 			process.env.PLAYWRIGHT_BASE_URL ||
@@ -73,7 +90,7 @@ test.describe("identity", () => {
 		await bootstrap?.stop();
 	});
 
-	test("reuses identity across reload", async (_, testInfo) => {
+	test("reuses identity across reload", async ({ browserName: _browserName }, testInfo) => {
 		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
 		const page = await persistentContext!.newPage();
 		const target = new URL(
@@ -96,20 +113,16 @@ test.describe("identity", () => {
 		expect(secondValue).toBe(firstValue);
 	});
 
-	test("reuses identity across reload without persistence", async ({
-		page,
-	}) => {
-		await page.addInitScript(() => {
-			Object.defineProperty(navigator, "storage", {
-				value: {
-					...navigator.storage,
-					persist: async () => false,
-					persisted: async () => false,
-				},
-				configurable: true,
-			});
-		});
-
+	test("uses OPFS and reuses identity without eviction protection", async (
+		{ browserName: _browserName },
+		testInfo,
+	) => {
+		persistentContext = await launchPersistentBrowserContext(
+			testInfo,
+			baseURL,
+			false,
+		);
+		const page = await persistentContext.newPage();
 		const target = new URL(
 			`/?bootstrap=${encodeURIComponent(bootstrapAddr)}`,
 			baseURL,
@@ -120,12 +133,22 @@ test.describe("identity", () => {
 		const first = await waitForPeerHash(page);
 		const firstValue = (await first.jsonValue()) as string | null;
 		expect(firstValue && firstValue !== "no-peer").toBeTruthy();
+		const firstStorage = await getStorageState(page);
+		expect(firstStorage.evictionProtected).toBe(false);
+		expect(firstStorage.reactPersisted).toBe(false);
+		expect(firstStorage.opfsEntryCount).toBeGreaterThan(0);
+		expect(firstStorage.usage).toBeGreaterThan(0);
 
 		await page.reload();
 
 		const second = await waitForPeerHash(page);
 		const secondValue = (await second.jsonValue()) as string | null;
 		expect(secondValue).toBe(firstValue);
+		const secondStorage = await getStorageState(page);
+		expect(secondStorage.evictionProtected).toBe(false);
+		expect(secondStorage.reactPersisted).toBe(false);
+		expect(secondStorage.opfsEntryCount).toBeGreaterThan(0);
+		expect(secondStorage.usage).toBeGreaterThan(0);
 	});
 
 	test("creates new identity when storage is cleared", async ({ page }) => {

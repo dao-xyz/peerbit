@@ -403,16 +403,42 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 
 			let directory: string | undefined;
 			if (!nodeOptions.inMemory && !(await detectIncognito()).isPrivate) {
-				storageLog("requesting persist");
-				const persistedValue = await navigator.storage.persist();
+				const storage = navigator.storage as StorageManager & {
+					getDirectory?: () => Promise<FileSystemDirectoryHandle>;
+				};
+				let persistedValue = false;
+				if (typeof storage?.persist === "function") {
+					storageLog("requesting persist");
+					try {
+						persistedValue = await storage.persist();
+					} catch (error) {
+						console.warn(
+							"Failed to request protection from browser storage eviction.",
+							error,
+						);
+					}
+				}
 				setPersisted(persistedValue);
 				persistedResolved = persistedValue;
-				if (!persistedValue) {
-					console.error(
-						"Request persistence but permission was not granted by browser.",
-					);
+				if (typeof storage?.getDirectory === "function") {
+					try {
+						await storage.getDirectory();
+						directory = `./repo/${peerId.toString()}/`;
+						if (!persistedValue) {
+							console.warn(
+								"Browser storage is not protected from eviction; continuing with OPFS-backed storage.",
+							);
+						}
+					} catch (error) {
+						console.error(
+							"Origin-private file system storage could not be opened; falling back to in-memory storage.",
+							error,
+						);
+					}
 				} else {
-					directory = `./repo/${peerId.toString()}/`;
+					console.error(
+						"Origin-private file system storage is unavailable; falling back to in-memory storage.",
+					);
 				}
 			}
 
