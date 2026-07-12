@@ -47,8 +47,33 @@ const waitForPeerHash = (page: Page) =>
 					?.textContent?.trim();
 			return text && text !== "no-peer" ? text : null;
 		},
+		undefined,
 		{ timeout: 20_000 },
 	);
+
+const waitForPeerIdentity = async (page: Page) => {
+	const handle = await page.waitForFunction(
+		() => {
+			const hash = document
+				.querySelector("[data-testid='peer-hash']")
+				?.textContent?.trim();
+			const indexText = document
+				.querySelector("[data-testid='tab-index']")
+				?.textContent?.trim();
+			const index = Number(indexText);
+			return hash && hash !== "no-peer" && Number.isInteger(index)
+				? { hash, index }
+				: null;
+		},
+		undefined,
+		{ timeout: 20_000 },
+	);
+	try {
+		return (await handle.jsonValue()) as { hash: string; index: number };
+	} finally {
+		await handle.dispose();
+	}
+};
 
 const getStorageState = (page: Page) =>
 	page.evaluate(async () => {
@@ -111,6 +136,99 @@ test.describe("identity", () => {
 
 		const secondValue = (await second.jsonValue()) as string | null;
 		expect(secondValue).toBe(firstValue);
+		expect((await waitForPeerIdentity(page)).index).toBe(0);
+	});
+
+	test("preserves fallback identity across reload without Web Locks", async ({
+		browserName: _browserName,
+	}, testInfo) => {
+		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
+		const page = await persistentContext!.newPage();
+		await page.addInitScript(() => {
+			Object.defineProperty(navigator, "locks", {
+				configurable: true,
+				value: undefined,
+			});
+		});
+		const target = new URL(
+			`/?bootstrap=${encodeURIComponent(bootstrapAddr)}`,
+			baseURL,
+		).toString();
+
+		await page.goto(target);
+		const first = await waitForPeerIdentity(page);
+		expect(first.index).toBe(0);
+
+		await page.reload();
+		const second = await waitForPeerIdentity(page);
+
+		expect(second).toEqual(first);
+	});
+
+	test("reuses identity immediately across a persistent browser restart", async ({
+		browserName: _browserName,
+	}, testInfo) => {
+		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
+		const page =
+			persistentContext.pages()[0] ?? (await persistentContext.newPage());
+		const target = new URL(
+			`/?bootstrap=${encodeURIComponent(bootstrapAddr)}`,
+			baseURL,
+		).toString();
+
+		await page.goto(target);
+		const first = await waitForPeerIdentity(page);
+		expect(first.index).toBe(0);
+
+		await persistentContext.close();
+		persistentContext = undefined;
+
+		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
+		const reopened =
+			persistentContext.pages()[0] ?? (await persistentContext.newPage());
+		await reopened.goto(target);
+		const second = await waitForPeerIdentity(reopened);
+
+		expect(second).toEqual(first);
+	});
+
+	test("reclaims a crashed tab identity while keeping another tab isolated", async ({
+		browserName: _browserName,
+	}, testInfo) => {
+		persistentContext = await launchPersistentBrowserContext(testInfo, baseURL);
+		const target = new URL(
+			`/?bootstrap=${encodeURIComponent(bootstrapAddr)}`,
+			baseURL,
+		).toString();
+		const firstPage =
+			persistentContext.pages()[0] ?? (await persistentContext.newPage());
+		await firstPage.addInitScript(() => {
+			sessionStorage.setItem("CLIENT_ID", "copied-session-id");
+		});
+		await firstPage.goto(target);
+		const first = await waitForPeerIdentity(firstPage);
+		expect(first.index).toBe(0);
+
+		const secondPage = await persistentContext.newPage();
+		await secondPage.addInitScript(() => {
+			sessionStorage.setItem("CLIENT_ID", "copied-session-id");
+		});
+		await secondPage.goto(target);
+		const second = await waitForPeerIdentity(secondPage);
+		expect(second.index).toBe(1);
+		expect(second.hash).not.toBe(first.hash);
+
+		const cdp = await persistentContext.newCDPSession(firstPage);
+		const crashed = firstPage.waitForEvent("crash");
+		void cdp.send("Page.crash").catch(() => {});
+		await crashed;
+
+		const replacementPage = await persistentContext.newPage();
+		await replacementPage.goto(target);
+		const replacement = await waitForPeerIdentity(replacementPage);
+		expect(replacement).toEqual(first);
+		expect(await waitForPeerIdentity(secondPage)).toEqual(second);
+		await expect(secondPage.getByTestId("status")).toContainText("connected");
 	});
 
 	test("uses OPFS and reuses identity without eviction protection", async (

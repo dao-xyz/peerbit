@@ -118,10 +118,10 @@ jobs:
           ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
-          # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
-          # here and have proven flaky on GitHub runners due to transient apt repository errors.
+          # Playwright system-dependency installation has proven flaky on GitHub runners
+          # due to transient apt repository errors; install only the browser binary below.
       - name: Install Playwright browser
-        if: matrix.test_cmd == 'pnpm run test:ci:part-2c'
+        if: matrix.test_cmd == 'pnpm run test:ci:part-1' || matrix.test_cmd == 'pnpm run test:ci:part-2c'
         run: pnpm exec playwright install --only-shell chromium
       - uses: actions/download-artifact@v4
         with:
@@ -138,6 +138,14 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Upload React identity browser artifacts
+        if: failure() && matrix.test_cmd == 'pnpm run test:ci:part-1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-identity-test-results-${{ github.job }}
+          path: packages/clients/peerbit-react/e2e/browser/test-results
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Remap coverage reports to source paths
         if: always()
         run: node ./scripts/remap-coverage.mjs
@@ -233,10 +241,10 @@ jobs:
           ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
-          # NOTE: CI runs node-only tests (`-t node`). Playwright system deps are not required
-          # here and have proven flaky on GitHub runners due to transient apt repository errors.
+          # Playwright system-dependency installation has proven flaky on GitHub runners
+          # due to transient apt repository errors; install only the browser binary below.
       - name: Install Playwright browser
-        if: matrix.test_cmd == 'pnpm run test:ci:part-2c'
+        if: matrix.test_cmd == 'pnpm run test:ci:part-1' || matrix.test_cmd == 'pnpm run test:ci:part-2c'
         run: pnpm exec playwright install --only-shell chromium
       - uses: actions/download-artifact@v4
         with:
@@ -253,6 +261,14 @@ jobs:
           PEERBIT_MOCHA_LOG_QUIET: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '1' || '0' }}
           PEERBIT_MOCHA_LOG_INTERVAL_MS: ${{ (matrix.test_cmd == 'pnpm run test:ci:part-4' || matrix.test_cmd == 'pnpm run test:ci:part-6' || startsWith(matrix.test_cmd, 'pnpm run test:ci:part-7')) && '10000' || '0' }}
         run: ${{matrix.test_cmd}}
+      - name: Upload React identity browser artifacts
+        if: failure() && matrix.test_cmd == 'pnpm run test:ci:part-1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-identity-test-results-${{ github.job }}
+          path: packages/clients/peerbit-react/e2e/browser/test-results
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Remap coverage reports to source paths
         if: always()
         run: node ./scripts/remap-coverage.mjs

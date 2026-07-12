@@ -43,6 +43,32 @@ export class FastMutex {
 		this.localStorage = localStorage || window.localStorage;
 	}
 
+	private clearKeepAlive(key: string) {
+		clearInterval(this.intervals.get(key));
+		this.intervals.delete(key);
+	}
+
+	private getStoredItem(
+		key: string,
+	): { expiresAt: number; value: string } | undefined {
+		const item = this.localStorage.getItem(key);
+		if (!item) return;
+		const parsed = JSON.parse(item) as { expiresAt: number; value: string };
+		// Preserve the legacy grace period so a current bundle does not steal an
+		// identity from an older tab whose keep-alive timer was briefly throttled.
+		if (Date.now() - parsed.expiresAt >= this.timeout) {
+			debug(
+				'FastMutex client "%s" removed an expired record on "%s"',
+				this.clientId,
+				key,
+			);
+			this.localStorage.removeItem(key);
+			this.clearKeepAlive(key);
+			return;
+		}
+		return parsed;
+	}
+
 	lock(
 		key: string,
 		keepLocked?: () => boolean,
@@ -89,6 +115,7 @@ export class FastMutex {
 				if (settled) return;
 				settled = true;
 				clearPendingRetries();
+				this.release(key);
 				reject(error);
 			};
 
@@ -219,17 +246,44 @@ export class FastMutex {
 		return this.getItem(x) || this.getItem(y);
 	}
 
+	getLockedOwners(key: string): string[] {
+		const owners = [
+			this.getItem(this.xPrefix + key),
+			this.getItem(this.yPrefix + key),
+		].filter((owner): owner is string => !!owner);
+		return [...new Set(owners)];
+	}
+
 	release(key: string) {
+		this.releaseIfOwnedBy(key, (owner) => owner === this.clientId);
+	}
+
+	releaseIfOwnedBy(key: string, predicate: (owner: string) => boolean) {
 		debug(
 			'FastMutex client "%s" is releasing lock on "%s"',
 			this.clientId,
 			key,
 		);
-		let ps = [this.yPrefix + key, this.xPrefix + key];
+		const ps = [this.yPrefix + key, this.xPrefix + key];
 		for (const p of ps) {
-			clearInterval(this.intervals.get(p));
-			this.intervals.delete(p);
-			this.localStorage.removeItem(p);
+			this.clearKeepAlive(p);
+			const stored = this.getStoredItem(p);
+			if (stored && predicate(stored.value)) {
+				this.localStorage.removeItem(p);
+			}
+		}
+	}
+
+	pin(key: string) {
+		for (const p of [this.xPrefix + key, this.yPrefix + key]) {
+			this.clearKeepAlive(p);
+			this.localStorage.setItem(
+				p,
+				JSON.stringify({
+					expiresAt: Number.MAX_SAFE_INTEGER,
+					value: this.clientId,
+				}),
+			);
 		}
 	}
 
@@ -239,11 +293,7 @@ export class FastMutex {
 	 */
 	setItem(key: string, value: any, keepLocked?: () => boolean) {
 		// Avoid leaking keep-alive intervals when re-setting the same key (e.g. re-lock with replaceIfSameClient).
-		const existing = this.intervals.get(key);
-		if (existing) {
-			clearInterval(existing);
-			this.intervals.delete(key);
-		}
+		this.clearKeepAlive(key);
 		if (!keepLocked) {
 			return this.localStorage.setItem(
 				key,
@@ -262,15 +312,13 @@ export class FastMutex {
 				}),
 			);
 			const interval = setInterval(() => {
+				if (this.getStoredItem(key)?.value !== value) {
+					this.clearKeepAlive(key);
+					return;
+				}
 				if (!keepLocked()) {
-					this.localStorage.setItem(
-						// TODO, release directly?
-						key,
-						JSON.stringify({
-							expiresAt: 0,
-							value,
-						}),
-					);
+					this.localStorage.removeItem(key);
+					this.clearKeepAlive(key);
 				} else {
 					this.localStorage.setItem(
 						key,
@@ -290,22 +338,92 @@ export class FastMutex {
 	 * Helper function to parse JSON encoded values set in localStorage
 	 */
 	getItem(key: string): string | undefined {
-		const item = this.localStorage.getItem(key);
-		if (!item) return;
-
-		const parsed = JSON.parse(item);
-		if (new Date().getTime() - parsed.expiresAt >= this.timeout) {
-			debug(
-				'FastMutex client "%s" removed an expired record on "%s"',
-				this.clientId,
-				key,
-			);
-			this.localStorage.removeItem(key);
-			clearInterval(this.intervals.get(key));
-			this.intervals.delete(key);
-			return;
-		}
-
-		return JSON.parse(item).value;
+		return this.getStoredItem(key)?.value;
 	}
 }
+
+export type WebLockLease = {
+	release: () => void;
+	detachAbort: () => void;
+};
+
+const getAbortReason = (signal: AbortSignal) =>
+	signal.reason ?? new DOMException("Aborted", "AbortError");
+
+export const acquireWebLock = (
+	manager: LockManager,
+	name: string,
+	options: { ifAvailable?: boolean; signal?: AbortSignal } = {},
+): Promise<WebLockLease | undefined> => {
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		let held = false;
+		let released = false;
+		let releaseHold: (() => void) | undefined;
+		const hold = new Promise<void>((resolveHold) => {
+			releaseHold = resolveHold;
+		});
+		const signal = options.signal;
+
+		const detachAbort = () => {
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const release = () => {
+			if (released) return;
+			released = true;
+			detachAbort();
+			releaseHold?.();
+		};
+		const rejectOnce = (error: unknown) => {
+			if (settled) return;
+			settled = true;
+			detachAbort();
+			reject(error);
+		};
+		const onAbort = () => {
+			if (held) {
+				release();
+			}
+			rejectOnce(getAbortReason(signal!));
+		};
+
+		if (signal?.aborted) {
+			rejectOnce(getAbortReason(signal));
+			return;
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
+
+		void manager
+			.request(
+				name,
+				options.ifAvailable
+					? { mode: "exclusive", ifAvailable: true }
+					: signal
+						? { mode: "exclusive", signal }
+						: { mode: "exclusive" },
+				async (lock) => {
+					if (!lock) {
+						if (!settled) {
+							settled = true;
+							detachAbort();
+							resolve(undefined);
+						}
+						return;
+					}
+
+					held = true;
+					if (signal?.aborted) {
+						release();
+						rejectOnce(getAbortReason(signal));
+						return;
+					}
+					if (!settled) {
+						settled = true;
+						resolve({ release, detachAbort });
+					}
+					await hold;
+				},
+			)
+			.catch((error) => rejectOnce(error));
+	});
+};
