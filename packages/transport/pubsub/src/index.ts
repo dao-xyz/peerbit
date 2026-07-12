@@ -138,6 +138,7 @@ const AUTO_TOPIC_ROOT_CANDIDATES_MAX = 64;
 // Topic-root queries may need to wait for the responder to finish opening an
 // outbound stream back to the requester after an inbound-only dial.
 const DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS = 12_000;
+const DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS = 2_000;
 
 const DEFAULT_PUBSUB_FANOUT_CHANNEL_OPTIONS: Omit<
 	FanoutTreeChannelOptions,
@@ -1217,6 +1218,7 @@ export class TopicControlPlane
 	private async queryTopicRootFromPeer(
 		peer: PeerStreams,
 		topic: string,
+		timeoutMs = DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS,
 	): Promise<string | undefined> {
 		if (!this.started || this.stopping) return undefined;
 
@@ -1225,7 +1227,7 @@ export class TopicControlPlane
 			const timer = setTimeout(() => {
 				this.pendingTopicRootQueries.delete(requestId);
 				resolve(undefined);
-			}, DEFAULT_TOPIC_ROOT_QUERY_TIMEOUT_MS);
+			}, Math.max(1, Math.floor(timeoutMs)));
 			timer.unref?.();
 			this.pendingTopicRootQueries.set(requestId, { topic, resolve, timer });
 		});
@@ -1245,6 +1247,33 @@ export class TopicControlPlane
 		}
 
 		return responsePromise;
+	}
+
+	private async confirmDirectShardRoot(
+		shardTopic: string,
+		root: string,
+		signal?: AbortSignal,
+	): Promise<string> {
+		if (root === this.publicKeyHash) return root;
+		const rootPeer = this.peers.get(root);
+		if (!rootPeer) return root;
+
+		const confirmation = await withAbort(
+			this.queryTopicRootFromPeer(
+				rootPeer,
+				shardTopic,
+				DIRECT_SHARD_ROOT_CONFIRM_TIMEOUT_MS,
+			),
+			signal,
+		);
+		if (!confirmation) return root;
+		if (confirmation !== root) {
+			this.shardRootCache.set(shardTopic, {
+				root: confirmation,
+				authoritative: true,
+			});
+		}
+		return confirmation;
 	}
 
 	private async resolveQueryableTopicRoot(
@@ -1333,6 +1362,7 @@ export class TopicControlPlane
 		}
 
 		root = root ?? (await this.resolveShardRoot(t));
+		root = await this.confirmDirectShardRoot(t, root, options?.signal);
 		const channel = new FanoutChannel(this.fanout, { topic: t, root });
 
 		const onPayload = (payload: Uint8Array) => {
@@ -1465,9 +1495,9 @@ export class TopicControlPlane
 					// ignore
 				}
 				try {
-					channel.close();
+					await channel.leave({ notifyParent: false, kickChildren: false });
 				} catch {
-					// ignore
+					channel.close();
 				}
 				throw error;
 			}
