@@ -905,6 +905,7 @@ export abstract class Program<
 			remote: {
 				timeout: options?.timeout,
 				priority: 1,
+				replicate: true,
 			},
 		});
 		if (!bytes) {

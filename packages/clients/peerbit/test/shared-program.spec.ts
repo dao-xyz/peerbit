@@ -1,6 +1,9 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { expect } from "chai";
+import fs from "fs/promises";
+import os from "os";
+import path from "path";
 import { Peerbit } from "../src/peer.js";
 
 @variant("test-shared_nested")
@@ -151,4 +154,48 @@ describe(`shared`, () => {
 	// TODO add tests and define behaviour for cross topic programs
 	// TODO add tests for shared subprogams
 	// TODO add tests for subprograms that is also open as root program
+});
+
+describe("remote program persistence", () => {
+	let writer: Peerbit | undefined;
+	let reader: Peerbit | undefined;
+	let directory: string | undefined;
+
+	afterEach(async () => {
+		await reader?.stop();
+		await writer?.stop();
+		if (directory) {
+			await fs.rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("reopens an address locally after its provider stops", async function () {
+		this.timeout(30_000);
+		directory = await fs.mkdtemp(
+			path.join(os.tmpdir(), "peerbit-program-restart-"),
+		);
+		writer = await Peerbit.create();
+		reader = await Peerbit.create({ directory });
+		await reader.dial(writer.getMultiaddrs()[0]!);
+
+		const source = await writer.open(new TestProgram(7));
+		expect(await reader.services.blocks.has(source.address)).to.be.false;
+
+		const loaded = await reader.open<TestProgram>(source.address, {
+			timeout: 10_000,
+		});
+		expect(loaded.id).to.equal(7);
+		expect(await reader.services.blocks.has(source.address)).to.be.true;
+
+		await reader.stop();
+		reader = undefined;
+		await writer.stop();
+		writer = undefined;
+
+		reader = await Peerbit.create({ directory });
+		const reopened = await reader.open<TestProgram>(source.address, {
+			timeout: 100,
+		});
+		expect(reopened.id).to.equal(7);
+	});
 });
