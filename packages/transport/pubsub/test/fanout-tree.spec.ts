@@ -284,6 +284,74 @@ describe("fanout-tree", () => {
 		}
 	});
 
+	it("resets a kicked child connection when control delivery returns false", async () => {
+		const session: TestSession<{ fanout: FanoutTree }> =
+			await createFanoutTestSession(2);
+
+		try {
+			await session.connect([[session.peers[0], session.peers[1]]]);
+
+			const root = session.peers[0].services.fanout;
+			const child = session.peers[1].services.fanout;
+			const rootInternals = root as any;
+			const childHash = child.publicKeyHash;
+			await waitForResolved(
+				() => expect(rootInternals.peers.get(childHash)).to.exist,
+			);
+
+			const id = root.openChannel("kick-delivery-failure", root.publicKeyHash, {
+				role: "root",
+				msgRate: 1,
+				msgSize: 8,
+				uploadLimitBps: 1_000_000,
+				maxChildren: 1,
+				repair: false,
+			});
+			const ch = rootInternals.channelsBySuffixKey.get(id.suffixKey);
+			expect(ch).to.exist;
+			ch.children.set(childHash, { bidPerByte: 0 });
+
+			const connectionManager = rootInternals.components
+				.connectionManager as any;
+			const originalPublishMessageMaybe = root.publishMessageMaybe;
+			const originalCloseConnections = connectionManager.closeConnections;
+			const closedPeerIds: string[] = [];
+
+			root.publishMessageMaybe = (async () =>
+				false) as typeof root.publishMessageMaybe;
+			connectionManager.closeConnections = async (peerId: any) => {
+				closedPeerIds.push(peerId.toString());
+			};
+
+			try {
+				await rootInternals.kickChildHashes(ch, [childHash], {
+					resetPeerConnections: true,
+				});
+				expect(closedPeerIds).to.deep.equal([
+					rootInternals.peers.get(childHash).peerId.toString(),
+				]);
+				expect(ch.children.has(childHash)).to.equal(false);
+
+				ch.children.set(childHash, { bidPerByte: 0 });
+				root.publishMessageMaybe = (async () => {
+					throw new Error("unexpected control publish failure");
+				}) as typeof root.publishMessageMaybe;
+
+				await expect(
+					rootInternals.kickChildHashes(ch, [childHash], {
+						resetPeerConnections: true,
+					}),
+				).to.be.rejectedWith("unexpected control publish failure");
+				expect(closedPeerIds).to.have.length(2);
+			} finally {
+				root.publishMessageMaybe = originalPublishMessageMaybe;
+				connectionManager.closeConnections = originalCloseConnections;
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("forms a small tree and delivers data", async () => {
 		const session: TestSession<{ fanout: FanoutTree }> =
 			await createFanoutTestSession(3);
