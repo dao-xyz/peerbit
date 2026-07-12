@@ -1029,7 +1029,7 @@ const DocumentBenchmarkStatus = ({
 };
 
 const PeerInfo = () => {
-	const { peer, loading, status, error } = usePeer();
+	const { peer, loading, status, error, tabIndex } = usePeer();
 	const [peerHash, setPeerHash] = React.useState<string | undefined>(undefined);
 	const [multiaddrs, setMultiaddrs] = React.useState<string[]>([]);
 	const [connections, setConnections] = React.useState<string[]>([]);
@@ -1082,6 +1082,7 @@ const PeerInfo = () => {
 			<div data-testid="status">status: {status}</div>
 			<div data-testid="loading">loading: {loading ? "yes" : "no"}</div>
 			<div data-testid="peer-hash">{peerHash ?? "no-peer"}</div>
+			<div data-testid="tab-index">{tabIndex ?? "no-tab"}</div>
 			<div data-testid="multiaddrs">{multiaddrs.join(",")}</div>
 			<div data-testid="connections">{connections.join(",")}</div>
 			{error ? <div data-testid="error">{error.message}</div> : null}

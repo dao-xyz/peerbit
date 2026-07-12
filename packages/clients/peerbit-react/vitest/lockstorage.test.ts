@@ -255,6 +255,87 @@ describe("FastMutex", () => {
 		await fm1.lock("timeoutTest"); // should not throw
 	});
 
+	it("preserves the legacy grace period after the stored expiry", () => {
+		const clock = sandbox.useFakeTimers({ now: 10_000 });
+		const fm = new FastMutex({ localStorage, timeout: 50 });
+		fm.setItem("lease", "owner");
+
+		clock.tick(50);
+		expect(fm.getItem("lease")).to.eq("owner");
+		clock.tick(49);
+		expect(fm.getItem("lease")).to.eq("owner");
+		clock.tick(1);
+		expect(fm.getItem("lease")).to.be.undefined;
+	});
+
+	it("does not let an old owner release a successor lock", async () => {
+		const key = "owner-safe-release";
+		const oldOwner = new FastMutex({
+			localStorage,
+			clientId: "old-owner",
+		});
+		const successor = new FastMutex({
+			localStorage,
+			clientId: "successor",
+		});
+
+		await oldOwner.lock(key, () => true);
+		successor.pin(key);
+		oldOwner.release(key);
+
+		expect(successor.getLockedOwners(key)).to.deep.equal(["successor"]);
+		successor.release(key);
+	});
+
+	it("stops an old keepalive before it can overwrite a successor", async () => {
+		const clock = sandbox.useFakeTimers({ now: 20_000 });
+		const key = "owner-safe-renewal";
+		const oldOwner = new FastMutex({
+			localStorage,
+			clientId: "old-owner",
+			timeout: 50,
+		});
+		const successor = new FastMutex({
+			localStorage,
+			clientId: "successor",
+			timeout: 50,
+		});
+
+		await oldOwner.lock(key, () => true);
+		successor.pin(key);
+		clock.tick(50);
+
+		expect(successor.getLockedOwners(key)).to.deep.equal(["successor"]);
+		expect(oldOwner.intervals.size).to.eq(0);
+		successor.release(key);
+	});
+
+	it("cleans a timed-out contender without deleting the holder", async () => {
+		const key = "timed-out-contender";
+		const holder = new FastMutex({
+			localStorage,
+			clientId: "holder",
+			timeout: 500,
+		});
+		const contender = new FastMutex({
+			localStorage,
+			clientId: "contender",
+			timeout: 40,
+		});
+
+		await holder.lock(key, () => true);
+		let rejected = false;
+		try {
+			await contender.lock(key, () => true);
+		} catch {
+			rejected = true;
+		}
+		expect(rejected).to.be.true;
+		expect(contender.intervals.size).to.eq(0);
+		expect(holder.getLockedOwners(key)).to.deep.equal(["holder"]);
+		holder.release(key);
+	});
+
 	it("should reset the client stats after lock is released", async () => {
 		// without resetting the stats, the acquireStart will always be set, and
 		// after `timeout` ms, will be unable to acquire a lock anymore

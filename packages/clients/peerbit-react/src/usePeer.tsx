@@ -20,8 +20,10 @@ import { v4 as uuid } from "uuid";
 import { FastMutex } from "./lockstorage.ts";
 import {
 	cookiesWhereClearedJustNow,
+	createWebLockClientId,
 	getClientId,
 	getFreeKeypair,
+	getFreeKeypairWithWebLock,
 	inIframe,
 } from "./utils.ts";
 
@@ -245,8 +247,16 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 	React.useEffect(() => {
 		let unmounted = false;
 		let unloadUnsubscribe: (() => void) | undefined;
+		let identityUnloadUnsubscribe: (() => void) | undefined;
 		let stopKeepAlive: (() => void) | undefined;
 		let closePeer: (() => void) | undefined;
+		let releaseIdentityLock: (() => void) | undefined;
+		const startupAbortController = new AbortController();
+		const releaseIdentity = () => {
+			const release = releaseIdentityLock;
+			releaseIdentityLock = undefined;
+			release?.();
+		};
 
 		const selected = resolveConfig(config);
 		setRuntime(selected.runtime);
@@ -344,32 +354,44 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			const keepAliveRef = { current: true } as { current: boolean };
 
 			const releaseFirstLock = cookiesWhereClearedJustNow();
+			const webLockManager =
+				typeof navigator.locks?.request === "function"
+					? navigator.locks
+					: undefined;
 			const sessionId = getClientId("session");
-			const mutex = new FastMutex({ clientId: sessionId, timeout: 1e3 });
+			const mutex = new FastMutex({
+				clientId: webLockManager
+					? createWebLockClientId()
+					: sessionId,
+				timeout: 1e3,
+			});
 
 			if (nodeOptions.singleton) {
+				const singletonMutex = webLockManager
+					? new FastMutex({ clientId: sessionId, timeout: 1e3 })
+					: mutex;
 				singletonLog("acquiring lock");
 				const localId = getClientId("local");
 				try {
 					const lockKey = localId + "-singleton";
 					const unsubscribeUnload = subscribeToUnload(() => {
 						keepAliveRef.current = false;
-						mutex.release(lockKey);
+						singletonMutex.release(lockKey);
 					});
 					const onVisibility = () => {
 						if (document.visibilityState === "hidden") {
 							keepAliveRef.current = false;
 							try {
-								mutex.release(lockKey);
+								singletonMutex.release(lockKey);
 							} catch {}
 						}
 					};
 					document.addEventListener("visibilitychange", onVisibility);
 					if (isInStandaloneMode()) {
 						keepAliveRef.current = false;
-						mutex.release(lockKey);
+						singletonMutex.release(lockKey);
 					}
-					await mutex.lock(lockKey, () => keepAliveRef.current, {
+					await singletonMutex.lock(lockKey, () => keepAliveRef.current, {
 						replaceIfSameClient: true,
 					});
 					singletonLog("lock acquired");
@@ -385,14 +407,44 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				nodeId = nodeOptions.keypair;
 			} else {
 				keypairLog("acquiring lock");
-				const kp = await getFreeKeypair("", mutex, () => keepAliveRef.current, {
-					releaseFirstLock,
-					releaseLockIfSameId: true,
-				});
+				const kp = webLockManager
+					? await getFreeKeypairWithWebLock(
+							"",
+							mutex,
+							webLockManager,
+							() => keepAliveRef.current,
+							startupAbortController.signal,
+						)
+					: await getFreeKeypair(
+							"",
+							mutex,
+							() => keepAliveRef.current,
+							{
+								releaseFirstLock,
+								releaseLockIfSameId: true,
+							},
+						);
 				keypairLog("lock acquired", { index: kp.index });
-				subscribeToUnload(() => {
+				const webLockRelease = (kp as { release?: () => void }).release;
+				releaseIdentityLock = webLockRelease
+					? webLockRelease
+					: () => mutex.release(kp.path);
+				if (unmounted) {
+					releaseIdentity();
+					return;
+				}
+				identityUnloadUnsubscribe = subscribeToUnload(() => {
 					keepAliveRef.current = false;
-					mutex.release(kp.path);
+					if (!webLockManager) {
+						releaseIdentity();
+					}
+					if (closePeer) {
+						closePeer();
+					} else {
+						startupAbortController.abort(
+							new DOMException("Page unloaded", "AbortError"),
+						);
+					}
 				});
 				nodeId = kp.key;
 				setTabIndex(kp.index);
@@ -475,9 +527,18 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			});
 
 			newPeer = created as unknown as PeerbitLike;
+			let stopping: Promise<void> | undefined;
 			closePeer = () => {
-				keepAliveRef.current = false;
-				void (created as any)?.stop?.().catch(() => {});
+				stopping ??= Promise.resolve()
+					.then(() => (created as any)?.stop?.())
+					.then(() => {
+						keepAliveRef.current = false;
+						releaseIdentity();
+					})
+					.catch((error) => {
+						stopping = undefined;
+						clientLog("stop failed; retaining identity lock", error);
+					});
 			};
 
 			(window as any).__peerInfo = {
@@ -610,9 +671,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			}
 
 			if (unmounted) {
-				try {
-					await (created as any)?.stop?.();
-				} catch {}
+				closePeer();
 				return;
 			}
 			setPeer(newPeer);
@@ -623,6 +682,14 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			try {
 				await fn();
 			} catch (error: any) {
+				if (closePeer) {
+					closePeer();
+				} else {
+					releaseIdentity();
+				}
+				if (unmounted) {
+					return;
+				}
 				setError(error);
 				setConnectionState("failed");
 				setLoading(false);
@@ -633,7 +700,11 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 		setPromise(p);
 		return () => {
 			unmounted = true;
+			startupAbortController.abort(
+				new DOMException("PeerProvider unmounted", "AbortError"),
+			);
 			unloadUnsubscribe?.();
+			identityUnloadUnsubscribe?.();
 			closePeer?.();
 		};
 	}, [config]);
