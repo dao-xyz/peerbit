@@ -1,6 +1,6 @@
 import { type PeerId } from "@libp2p/interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
-import { delay, waitForResolved } from "@peerbit/time";
+import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { PeerStreams } from "../src/index.js";
 
@@ -166,5 +166,106 @@ describe("priority lanes", () => {
 
 		await blockedLow;
 		await streams.close();
+	});
+
+	it("rejects a capacity-blocked write when the peer stream closes", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+			outboundQueue: {
+				maxBufferedBytes: 1,
+				reservedPriorityBytes: 0,
+			},
+		});
+
+		const outbound = new TestOutboundStream();
+		await streams.attachOutboundStream(outbound as any);
+
+		// Keep the raw stream blocked after its first frame, then fill the one-byte
+		// outbound queue behind it.
+		await streams.waitForWrite(new Uint8Array([1]), 0);
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1]),
+		);
+		await streams.waitForWrite(new Uint8Array([2]), 0);
+		expect(streams.getOutboundQueuedBytes()).to.equal(1);
+
+		// Observe entry into the real capacity waiter so closing cannot race with
+		// the setup of this regression.
+		const queue = streams._getActiveOutboundPushable()!;
+		const originalOnBufferedBelow = queue.onBufferedBelow.bind(queue);
+		let capacityWaitStartedResolve!: () => void;
+		const capacityWaitStarted = new Promise<void>((resolve) => {
+			capacityWaitStartedResolve = resolve;
+		});
+		queue.onBufferedBelow = (limitBytes, options) => {
+			capacityWaitStartedResolve();
+			return originalOnBufferedBelow(limitBytes, options);
+		};
+
+		const blockedResult: Promise<unknown | undefined> = streams
+			.waitForWrite(new Uint8Array([3]), 0)
+			.then(
+				(): undefined => undefined,
+				(error: unknown): unknown => error,
+			);
+		await capacityWaitStarted;
+
+		await streams.close();
+		expect(await blockedResult).to.be.instanceOf(AbortError);
+	});
+
+	it("rechecks closure after outbound readiness wakes a write", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+		});
+
+		const writeResult: Promise<unknown | undefined> = streams
+			.waitForWrite(new Uint8Array([1]), 0)
+			.then(
+				(): undefined => undefined,
+				(error: unknown): unknown => error,
+			);
+
+		// waitForWrite registers its outbound listener synchronously. Wake that
+		// listener, then close before its promise continuation can run. The ended
+		// pushable must not make the pending write look successful.
+		const outbound = new TestOutboundStream();
+		const attaching = streams.attachOutboundStream(outbound as any);
+		const closing = streams.close();
+
+		await attaching;
+		await closing;
+		expect(await writeResult).to.be.instanceOf(AbortError);
+		expect(outbound.sentPayloads).to.deep.equal([]);
+	});
+
+	it("rejects a direct write while the peer stream is closing", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+		});
+
+		const outbound = new TestOutboundStream();
+		await streams.attachOutboundStream(outbound as any);
+
+		// close() marks the PeerStreams closed and ends its pushable before its
+		// first await. A direct write in that interval must not count the ended
+		// queue's no-op push as a successful delivery.
+		const closing = streams.close();
+		expect(() => streams.write(new Uint8Array([1]), 0)).to.throw(AbortError);
+
+		await closing;
+		expect(outbound.sentPayloads).to.deep.equal([]);
 	});
 });
