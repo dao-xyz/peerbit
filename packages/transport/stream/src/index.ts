@@ -624,6 +624,11 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 * Throws if there is no `stream` to write to available.
 	 */
 	write(data: Uint8Array | Uint8ArrayList, priority: number) {
+		if (this.closed) {
+			logger.error(`Failed to send to stream ${this.peerId}: closed`);
+			throw new AbortError("Closed");
+		}
+
 		if (data.length > MAX_DATA_LENGTH_OUT) {
 			throw new Error(
 				`Message too large (${data.length * 1e-6}) mb). Needs to be less than ${
@@ -709,12 +714,12 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		priority = 0,
 		signal?: AbortSignal,
 	) {
-		if (this.closed) {
-			logger.error(`Failed to send to stream ${this.peerId}: closed`);
-			return;
-		}
-
 		while (true) {
+			if (this.closed) {
+				logger.error(`Failed to send to stream ${this.peerId}: closed`);
+				throw new AbortError("Closed");
+			}
+
 			if (!this.isWritable) {
 				// Outbound stream negotiation can legitimately take several seconds in CI
 				// (identify/protocol discovery, resource contention, etc). Keep this fairly
@@ -759,6 +764,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 					// Catch a race where writability flips after the first check.
 					if (this.isWritable) onOutbound();
 				});
+
+				// Re-enter through the lifecycle check before attempting the write.
+				continue;
 			}
 
 			try {

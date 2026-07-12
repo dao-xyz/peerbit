@@ -2968,6 +2968,37 @@ describe("streams", function () {
 					}
 				}
 			});
+
+			it("publishMessageMaybe returns false for an explicitly targeted closed stream", async () => {
+				const isolated = await disconnected(1, {
+					services: {
+						directstream: (c) =>
+							new TestDirectStream(c, { connectionManager: false }),
+					},
+				});
+
+				try {
+					const writer = stream(isolated, 0) as TestDirectStream;
+					const remoteKey = await Ed25519Keypair.create();
+					const peer = writer.addPeer(
+						{ toString: () => "closed-peer" } as PeerId,
+						remoteKey.publicKey,
+						"/test/0.0.0",
+						"conn-closed",
+					);
+					const message = await writer.createMessage(crypto.randomBytes(32), {
+						mode: new AnyWhere(),
+					});
+
+					await peer.close();
+
+					await expect(
+						writer.publishMessageMaybe(writer.publicKey, message, [peer]),
+					).to.eventually.equal(false);
+				} finally {
+					await isolated.stop();
+				}
+			});
 		});
 
 		describe("limits", () => {
