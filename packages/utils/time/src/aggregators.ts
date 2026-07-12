@@ -22,6 +22,7 @@ export const debounceFixedInterval = <
 	let lastThis: any;
 	let pendingCall = false;
 	let isRunning = false;
+	let closed = false;
 	let waitingResolvers: Array<() => void> = [];
 	let lastInvokeTime: number | null = null;
 	let forceNextImmediate = false;
@@ -56,7 +57,7 @@ export const debounceFixedInterval = <
 
 	const invoke = async (): Promise<void> => {
 		timeout = null;
-		if (!lastArgs) {
+		if (closed || !lastArgs) {
 			return;
 		}
 
@@ -83,7 +84,7 @@ export const debounceFixedInterval = <
 			completedRuns++;
 			resolveRunWaiters();
 
-			if (pendingCall) {
+			if (!closed && pendingCall) {
 				if (forceNextImmediate) {
 					forceNextImmediate = false;
 					timeout = setTimeout(invoke, 0);
@@ -97,6 +98,9 @@ export const debounceFixedInterval = <
 	};
 
 	function debounced(this: any, ...args: Parameters<T>): Promise<void> {
+		if (closed) {
+			return Promise.resolve();
+		}
 		lastArgs = args;
 		lastThis = this;
 		pendingCall = true;
@@ -122,6 +126,9 @@ export const debounceFixedInterval = <
 	}
 
 	const flush = (): Promise<void> => {
+		if (closed) {
+			return Promise.resolve();
+		}
 		if (isRunning) {
 			const hadPendingArgs = Boolean(lastArgs);
 			if (hadPendingArgs) {
@@ -147,12 +154,30 @@ export const debounceFixedInterval = <
 	};
 
 	const close = (): void => {
+		if (closed) {
+			return;
+		}
+		closed = true;
 		if (timeout !== null) {
 			clearTimeout(timeout);
 			timeout = null;
 		}
-		isRunning = false;
+		lastArgs = null;
+		lastThis = undefined;
+		pendingCall = false;
 		forceNextImmediate = false;
+
+		const resolvers = waitingResolvers;
+		waitingResolvers = [];
+		for (const resolve of resolvers) {
+			resolve();
+		}
+
+		const flushWaiters = runWaiters;
+		runWaiters = [];
+		for (const waiter of flushWaiters) {
+			waiter.resolve();
+		}
 	};
 
 	return { call: debounced, close, flush };
@@ -186,7 +211,9 @@ export const debounceAccumulator = <K, T, V>(
 		await fn(toSend);
 	};
 
-	const deb = debounceFixedInterval(innerInvoke, delay, options);
+	const createDebouncer = () =>
+		debounceFixedInterval(innerInvoke, delay, options);
+	let deb = createDebouncer();
 
 	return {
 		add: (value: T): Promise<void> => {
@@ -200,6 +227,7 @@ export const debounceAccumulator = <K, T, V>(
 		has: (key: K): boolean => accumulator.has(key),
 		invoke: async (): Promise<void> => {
 			deb.close();
+			deb = createDebouncer();
 			await innerInvoke();
 		},
 		close: (): void => {

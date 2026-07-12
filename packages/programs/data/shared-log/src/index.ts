@@ -1285,6 +1285,57 @@ const isNotStartedError = (e: Error) => {
 	return false;
 };
 
+/**
+ * Replication announcements are best-effort convergence messages. A detached
+ * fanout shard can time out even though the shared log itself remains open.
+ * Keep retries deliberately limited to concrete TimeoutErrors: abort/close and
+ * unexpected programming/data errors must retain their existing semantics.
+ *
+ * Exact constructor/name checks complement `instanceof` for errors crossing
+ * worker or duplicate-package boundaries in browsers.
+ */
+const isTransientReplicationAnnouncementError = (
+	error: unknown,
+	seen = new Set<unknown>(),
+): boolean => {
+	if (
+		error != null &&
+		(typeof error === "object" || typeof error === "function")
+	) {
+		if (seen.has(error)) {
+			return false;
+		}
+		seen.add(error);
+	}
+
+	if (error instanceof TimeoutError) {
+		return true;
+	}
+
+	const nested = (error as { errors?: unknown })?.errors;
+	if (Array.isArray(nested) && nested.length > 0) {
+		return nested.every((item) =>
+			isTransientReplicationAnnouncementError(item, new Set(seen)),
+		);
+	}
+
+	const cause = (error as { cause?: unknown })?.cause;
+	if (cause != null && isTransientReplicationAnnouncementError(cause, seen)) {
+		return true;
+	}
+
+	const constructorName =
+		typeof (error as { constructor?: { name?: unknown } })?.constructor?.name ===
+		"string"
+			? (error as { constructor: { name: string } }).constructor.name
+			: "";
+	const name =
+		typeof (error as { name?: unknown })?.name === "string"
+			? (error as { name: string }).name
+			: "";
+	return constructorName === "TimeoutError" || name === "TimeoutError";
+};
+
 interface IndexableDomain<R extends "u32" | "u64"> {
 	numbers: Numbers<R>;
 	constructorEntry: new (properties: {
@@ -1559,6 +1610,7 @@ const CHECKED_PRUNE_RETRY_MAX_DELAY_MS = 30_000;
 
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
+const REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL = 1000;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
@@ -2170,6 +2222,12 @@ export class SharedLog<
 	private rebalanceParticipationDebounced:
 		| ReturnType<typeof debounceFixedInterval>
 		| undefined;
+	private replicationAnnouncementRetryDebounced:
+		| ReturnType<typeof debounceFixedInterval>
+		| undefined;
+	private _replicationAnnouncementRetryPending!: boolean;
+	private _replicationAnnouncementRetryGeneration!: number;
+	private _replicationAnnouncementRetryController!: AbortController;
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
@@ -2312,6 +2370,9 @@ export class SharedLog<
 		this._replicatorLivenessCursor = 0;
 		this._replicatorLivenessFailures = new Map();
 		this._replicatorLastActivityAt = new Map();
+		this._replicationAnnouncementRetryPending = false;
+		this._replicationAnnouncementRetryGeneration = 0;
+		this._replicationAnnouncementRetryController = new AbortController();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
 	}
@@ -3573,6 +3634,7 @@ export class SharedLog<
 	private setupRebalanceDebounceFunction(
 		interval = RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL,
 	) {
+		this.rebalanceParticipationDebounced?.close();
 		this.rebalanceParticipationDebounced = undefined;
 
 		this.rebalanceParticipationDebounced = debounceFixedInterval(
@@ -3585,7 +3647,168 @@ export class SharedLog<
 				)
 			) */
 			interval, // TODO make this dynamic on the number of replicators
+			{
+				onError: (error) => this.onRebalanceParticipationError(error),
+			},
 		);
+	}
+
+	private queueCurrentReplicationStateAnnouncementRetry(
+		error: unknown,
+	): boolean {
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			this._replicationAnnouncementRetryController.signal.aborted ||
+			!isTransientReplicationAnnouncementError(error)
+		) {
+			return false;
+		}
+
+		this._replicationAnnouncementRetryPending = true;
+		void this.replicationAnnouncementRetryDebounced?.call();
+		return true;
+	}
+
+	private onRebalanceParticipationError(error: Error): void {
+		if (
+			this.closed ||
+			isNotStartedError(error) ||
+			(isTransientReplicationAnnouncementError(error) &&
+				this._replicationAnnouncementRetryPending)
+		) {
+			return;
+		}
+
+		// Debounced invocations run from an un-awaited timer. Throwing here would
+		// create an unhandled rejection (and a browser pageerror), so surface
+		// unexpected failures through the logger instead.
+		logger.error(error);
+	}
+
+	private setupReplicationAnnouncementRetryFunction(
+		interval = REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL,
+	): void {
+		this.replicationAnnouncementRetryDebounced?.close();
+		this._replicationAnnouncementRetryController?.abort();
+		this._replicationAnnouncementRetryController = new AbortController();
+		this.replicationAnnouncementRetryDebounced = debounceFixedInterval(
+			() => this.retryCurrentReplicationStateAnnouncement(),
+			interval,
+			{
+				leading: false,
+				onError: (error) => {
+					if (
+						this.closed ||
+						this._closeController.signal.aborted ||
+						isNotStartedError(error)
+					) {
+						return;
+					}
+					logger.error(error);
+				},
+			},
+		);
+	}
+
+	private cancelCurrentReplicationStateAnnouncementRetry(): void {
+		this._replicationAnnouncementRetryGeneration += 1;
+		this._replicationAnnouncementRetryPending = false;
+		this._replicationAnnouncementRetryController?.abort();
+		this.replicationAnnouncementRetryDebounced?.close();
+	}
+
+	private async sendReplicationAnnouncement(
+		message:
+			| AllReplicatingSegmentsMessage
+			| AddedReplicationSegmentMessage
+			| StoppedReplicating,
+	): Promise<void> {
+		// Advance before every post-mutation send, including successful ones. An
+		// authoritative retry already in flight may have captured the previous
+		// local state; the generation mismatch forces one more current snapshot
+		// after that stale send settles.
+		this._replicationAnnouncementRetryGeneration += 1;
+		try {
+			await this.rpc.send(message, {
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
+			});
+		} catch (error) {
+			// The local replication-index mutation precedes all calls to this
+			// wrapper. Preserve the explicit caller's rejection, but independently
+			// schedule an authoritative snapshot so peers eventually observe the
+			// already-committed local state.
+			this.queueCurrentReplicationStateAnnouncementRetry(error);
+			throw error;
+		}
+	}
+
+	private async retryCurrentReplicationStateAnnouncement(): Promise<void> {
+		const generation = this._replicationAnnouncementRetryGeneration;
+		const controller = this._replicationAnnouncementRetryController;
+		try {
+			const segments = (await this.getMyReplicationSegments()).map((range) =>
+				range.toReplicationRange(),
+			);
+			if (
+				this.closed ||
+				this._closeController.signal.aborted ||
+				controller.signal.aborted
+			) {
+				return;
+			}
+			if (generation !== this._replicationAnnouncementRetryGeneration) {
+				void this.replicationAnnouncementRetryDebounced?.call();
+				return;
+			}
+
+			await this.rpc.send(new AllReplicatingSegmentsMessage({ segments }), {
+				priority: CONVERGENCE_MESSAGE_PRIORITY,
+				signal: controller.signal,
+			});
+		} catch (error) {
+			if (
+				this.closed ||
+				this._closeController.signal.aborted ||
+				controller.signal.aborted
+			) {
+				return;
+			}
+			if (this.queueCurrentReplicationStateAnnouncementRetry(error)) {
+				return;
+			}
+			if (generation === this._replicationAnnouncementRetryGeneration) {
+				this._replicationAnnouncementRetryPending = false;
+			} else {
+				void this.replicationAnnouncementRetryDebounced?.call();
+			}
+			throw error;
+		}
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			controller.signal.aborted
+		) {
+			return;
+		}
+
+		// A newer mutation announcement may have started while this snapshot was
+		// in flight. In that case keep the repair pending so the newer current
+		// state is also announced in full, regardless of whether its incremental
+		// send succeeded or failed.
+		if (generation === this._replicationAnnouncementRetryGeneration) {
+			this._replicationAnnouncementRetryPending = false;
+			if (
+				!this.closed &&
+				!this._closeController.signal.aborted &&
+				!controller.signal.aborted &&
+				this._isAdaptiveReplicating
+			) {
+				void this.rebalanceParticipationDebounced?.call();
+			}
+		} else {
+			void this.replicationAnnouncementRetryDebounced?.call();
+		}
 	}
 
 	private markLocalAppendActivity(timestamp = Date.now()) {
@@ -3917,13 +4140,10 @@ export class SharedLog<
 		});
 
 		if (rangesToUnreplicate.length > 0) {
-			await this.rpc.send(
+			await this.sendReplicationAnnouncement(
 				new StoppedReplicating({
 					segmentIds: rangesToUnreplicate.map((x) => x.id),
 				}),
-				{
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
-				},
 			);
 		}
 
@@ -4082,9 +4302,9 @@ export class SharedLog<
 			rangesToRemove,
 			this.node.identity.publicKey,
 		);
-		await this.rpc.send(new StoppedReplicating({ segmentIds }), {
-			priority: CONVERGENCE_MESSAGE_PRIORITY,
-		});
+		await this.sendReplicationAnnouncement(
+			new StoppedReplicating({ segmentIds }),
+		);
 	}
 
 	private async removeReplicator(
@@ -4111,9 +4331,9 @@ export class SharedLog<
 		if (isMe) {
 			// announce that we are no longer replicating
 
-			await this.rpc.send(new AllReplicatingSegmentsMessage({ segments: [] }), {
-				priority: CONVERGENCE_MESSAGE_PRIORITY,
-			});
+			await this.sendReplicationAnnouncement(
+				new AllReplicatingSegmentsMessage({ segments: [] }),
+			);
 		}
 
 		if (options?.noEvent !== true) {
@@ -4610,9 +4830,7 @@ export class SharedLog<
 				if (options.announce) {
 					return options.announce(message);
 				} else {
-					await this.rpc.send(message, {
-						priority: CONVERGENCE_MESSAGE_PRIORITY,
-					});
+					await this.sendReplicationAnnouncement(message);
 				}
 			}
 		}
@@ -8981,6 +9199,8 @@ export class SharedLog<
 		this._replicatorLivenessFailures = new Map();
 		this._replicatorLastActivityAt = new Map();
 		this._lastLocalAppendAt = 0;
+		this._replicationAnnouncementRetryPending = false;
+		this._replicationAnnouncementRetryGeneration = 0;
 		const adaptiveReplicateOptions =
 			options?.replicate && isAdaptiveReplicatorOption(options.replicate)
 				? options.replicate
@@ -9039,6 +9259,7 @@ export class SharedLog<
 		}
 
 		this._closeController = new AbortController();
+		this.setupReplicationAnnouncementRetryFunction();
 		this._closeController.signal.addEventListener("abort", () => {
 			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
 				if (state.timer) clearTimeout(state.timer);
@@ -11099,6 +11320,8 @@ export class SharedLog<
 	}
 
 	private async _close() {
+		this.cancelCurrentReplicationStateAnnouncementRetry();
+		this.replicationAnnouncementRetryDebounced = undefined;
 		if (!this._entryCoordinatesIndex && !this._replicationRangeIndex) {
 			return;
 		}
@@ -11221,6 +11444,7 @@ export class SharedLog<
 		/* this._totalParticipation = 0; */
 	}
 	async close(from?: Program): Promise<boolean> {
+		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state.
 		//
@@ -11283,6 +11507,7 @@ export class SharedLog<
 	}
 
 	async drop(from?: Program): Promise<boolean> {
+		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state (same reasoning as in `close()`).
 		try {
@@ -14093,9 +14318,7 @@ export class SharedLog<
 			}
 
 			if (messageToSend) {
-				await this.rpc.send(messageToSend, {
-					priority: CONVERGENCE_MESSAGE_PRIORITY,
-				});
+				await this.sendReplicationAnnouncement(messageToSend);
 			}
 		}
 	}
@@ -18520,10 +18743,20 @@ export class SharedLog<
 						return false;
 					}
 
-					await this.startAnnounceReplicating([dynamicRange], {
-						checkDuplicates: false,
-						reset: false,
-					});
+					try {
+						await this.startAnnounceReplicating([dynamicRange], {
+							checkDuplicates: false,
+							reset: false,
+						});
+					} catch (error) {
+						if (
+							isTransientReplicationAnnouncementError(error) &&
+							this._replicationAnnouncementRetryPending
+						) {
+							return false;
+						}
+						throw error;
+					}
 
 					/* await this._updateRole(newRole, onRoleChange); */
 					this.rebalanceParticipationDebounced?.call();
