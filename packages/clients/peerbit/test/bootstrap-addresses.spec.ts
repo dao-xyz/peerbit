@@ -300,7 +300,7 @@ describe("resolveBootstrapAddresses", () => {
 				return new Response(`${addressA}\n`, { status: 200 });
 			}) as typeof fetch;
 			const fallbackResult = resolveBootstrapAddresses();
-			await clock.nextAsync();
+			clock.tick(10_000);
 			await secondRequestStarted;
 			expect(requestCount).to.equal(2);
 			expect(await fallbackResult).to.deep.equal([addressA]);
@@ -321,10 +321,10 @@ describe("resolveBootstrapAddresses", () => {
 			const failedResult = resolveBootstrapAddresses().catch((error) => {
 				failure = error;
 			});
-			await clock.nextAsync();
+			clock.tick(10_000);
 			await secondFailedRequestStarted;
 			expect(failedRequestCount).to.equal(2);
-			await clock.nextAsync();
+			clock.tick(10_000);
 			await failedResult;
 			expect(failure).to.be.instanceOf(AggregateError);
 			expect((failure as AggregateError).errors).to.have.length(2);
