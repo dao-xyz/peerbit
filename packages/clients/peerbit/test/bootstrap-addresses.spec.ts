@@ -266,7 +266,10 @@ describe("resolveBootstrapAddresses", () => {
 	});
 
 	it("aborts hanging sources before falling back or aggregating failures", async () => {
-		const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		const clock = sinon.useFakeTimers({
+			shouldClearNativeTimers: true,
+			toFake: ["setTimeout", "clearTimeout"],
+		});
 		const waitForAbort = (init?: RequestInit): Promise<Response> =>
 			new Promise((_resolve, reject) => {
 				const signal = init?.signal;
@@ -284,27 +287,45 @@ describe("resolveBootstrapAddresses", () => {
 
 		try {
 			let requestCount = 0;
+			let resolveSecondRequest!: () => void;
+			const secondRequestStarted = new Promise<void>((resolve) => {
+				resolveSecondRequest = resolve;
+			});
 			globalThis.fetch = (async (_input, init) => {
 				requestCount += 1;
-				return requestCount === 1
-					? waitForAbort(init)
-					: new Response(`${addressA}\n`, { status: 200 });
+				if (requestCount === 1) {
+					return waitForAbort(init);
+				}
+				resolveSecondRequest();
+				return new Response(`${addressA}\n`, { status: 200 });
 			}) as typeof fetch;
 			const fallbackResult = resolveBootstrapAddresses();
-			await clock.tickAsync(10_000);
-			expect(await fallbackResult).to.deep.equal([addressA]);
+			await clock.nextAsync();
+			await secondRequestStarted;
 			expect(requestCount).to.equal(2);
+			expect(await fallbackResult).to.deep.equal([addressA]);
 
-			globalThis.fetch = (async (_input, init) =>
-				waitForAbort(init)) as typeof fetch;
-			const failedResult = resolveBootstrapAddresses();
-			await clock.tickAsync(20_000);
+			let failedRequestCount = 0;
+			let resolveSecondFailedRequest!: () => void;
+			const secondFailedRequestStarted = new Promise<void>((resolve) => {
+				resolveSecondFailedRequest = resolve;
+			});
+			globalThis.fetch = (async (_input, init) => {
+				failedRequestCount += 1;
+				if (failedRequestCount === 2) {
+					resolveSecondFailedRequest();
+				}
+				return waitForAbort(init);
+			}) as typeof fetch;
 			let failure: unknown;
-			try {
-				await failedResult;
-			} catch (error) {
+			const failedResult = resolveBootstrapAddresses().catch((error) => {
 				failure = error;
-			}
+			});
+			await clock.nextAsync();
+			await secondFailedRequestStarted;
+			expect(failedRequestCount).to.equal(2);
+			await clock.nextAsync();
+			await failedResult;
 			expect(failure).to.be.instanceOf(AggregateError);
 			expect((failure as AggregateError).errors).to.have.length(2);
 			for (const error of (failure as AggregateError).errors) {
