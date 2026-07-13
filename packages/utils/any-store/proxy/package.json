@@ -2,7 +2,7 @@
 	"name": "@peerbit/any-store-proxy",
 	"version": "1.0.47",
 	"description": "Canonical module adapters for @peerbit/any-store",
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
@@ -80,9 +80,6 @@
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"keywords": [
 		"peerbit",
 		"any-store",

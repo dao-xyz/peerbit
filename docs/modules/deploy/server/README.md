@@ -20,7 +20,9 @@ for more info
 ## Configure a server
 To configure an existing server to run a reachable node, [read this](./custom.md).
 
-## Spawning servers with the CLI
-You can also spawn servers using the CLI. Read more [here](./automatic.md).
+## Provision a server
+
+Provision a server with any provider, then follow the
+[provider-independent setup guide](./automatic.md).
 
 

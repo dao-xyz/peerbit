@@ -2,7 +2,7 @@
 	"name": "@peerbit/shared-log-proxy",
 	"version": "2.0.50",
 	"description": "RPC/proxy adapter for @peerbit/shared-log (canonical runtime)",
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
@@ -88,9 +88,6 @@
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"keywords": [
 		"peerbit",
 		"shared-log",

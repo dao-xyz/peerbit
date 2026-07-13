@@ -19,7 +19,8 @@ const BIN_PATH =
 		path.join(__dirname, "..", "src", "bin.js"),
 		// When running from sources in `test/*`
 		path.join(__dirname, "..", "dist", "src", "bin.js"),
-	].find((p) => fs.existsSync(p)) ?? path.join(__dirname, "..", "src", "bin.js");
+	].find((p) => fs.existsSync(p)) ??
+	path.join(__dirname, "..", "src", "bin.js");
 
 const runCommandProcess = (args: any): ProcessWithOut => {
 	const cmd = `node --experimental-vm-modules ${BIN_PATH} ${args}`;
@@ -199,6 +200,62 @@ describe("cli", () => {
 				kp2.publicKey.hashcode(),
 			]);
 		});
+
+		it("authorizes a separate remote administrator identity", async () => {
+			const serverDirectory = path.join(configDirectory, "server");
+			const adminDirectory = path.join(configDirectory, "admin");
+			const strangerDirectory = path.join(configDirectory, "stranger");
+			const adminId = runCommand(`id --directory ${adminDirectory}`).trim();
+			const server = runCommandProcess(
+				`start --reset --port-api ${PORT} --port-node 0 --directory ${serverDirectory} --grant-access ${adminId}`,
+			);
+			processes.push(server);
+			await waitForResolved(() => expect(server.out.length).greaterThan(0));
+
+			let rejected = false;
+			try {
+				runCommand(
+					`remote add unauthorized http://localhost:${PORT} --directory ${strangerDirectory}`,
+				);
+			} catch (error: any) {
+				rejected = true;
+				expect(`${error?.message || ""}${error?.stderr || ""}`).to.include(
+					"Failed to add remote",
+				);
+			}
+			expect(rejected).to.be.true;
+
+			runCommand(
+				`remote add authorized http://localhost:${PORT} --directory ${adminDirectory}`,
+			);
+		});
+	});
+
+	describe("retired provisioning commands", () => {
+		for (const [command, expected] of [
+			[
+				"domain test --email operator@example.com --outdir /tmp/retired",
+				"Automatic test domains have been retired",
+			],
+			[
+				"domain aws --domain node.example.com --hostedZoneId retired",
+				"Automatic AWS DNS configuration has been retired",
+			],
+			[
+				"remote spawn aws --count 1",
+				"Automatic cloud provisioning has been retired",
+			],
+		] as const) {
+			it(`explains ${command.split(" ").slice(0, 2).join(" ")}`, () => {
+				let output = "";
+				try {
+					runCommand(command);
+				} catch (error: any) {
+					output = `${error?.message || ""}${error?.stderr || ""}`;
+				}
+				expect(output).to.include(expected);
+			});
+		}
 	});
 
 	describe("remote", () => {

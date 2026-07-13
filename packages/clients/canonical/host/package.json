@@ -2,7 +2,7 @@
 	"name": "@peerbit/canonical-host",
 	"version": "1.0.47",
 	"description": "Peerbit canonical runtime host implementation (worker/server)",
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
@@ -87,9 +87,6 @@
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"keywords": [
 		"peerbit",
 		"rpc",

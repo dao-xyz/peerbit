@@ -58,6 +58,6 @@
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\"",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

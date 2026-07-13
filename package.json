@@ -1,7 +1,7 @@
 {
 	"private": true,
 	"name": "org",
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/dao-xyz/peerbit"
@@ -142,7 +142,6 @@
 	"pnpm": {
 		"onlyBuiltDependencies": [
 			"@ipshipyard/node-datachannel",
-			"aws-sdk",
 			"better-sqlite3",
 			"classic-level",
 			"esbuild",

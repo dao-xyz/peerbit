@@ -57,7 +57,7 @@
 		"test": "cargo test && npm run build && pnpm --filter @peerbit/shared-log run build && aegir test",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\""
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"devDependencies": {
 		"@peerbit/indexer-sqlite3": "workspace:*"

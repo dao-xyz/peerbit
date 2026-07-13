@@ -7,17 +7,10 @@ import chalk from "chalk";
 import fs from "fs";
 import sodium from "libsodium-wrappers";
 import path from "path";
-import { exit } from "process";
 import readline from "readline";
 import Table from "tty-table";
 import type { Argv } from "yargs";
-import {
-	AWS_LINUX_ARM_AMIs,
-	createRecord,
-	launchNodes,
-	terminateNode,
-} from "./aws.js";
-import { createClient, waitForDomain } from "./client.js";
+import { createClient } from "./client.js";
 import {
 	getHomeConfigDir,
 	getKeypair,
@@ -25,17 +18,24 @@ import {
 	getRemotesPath,
 } from "./config.js";
 import {
-	createTestDomain,
-	getDomainFromConfig,
-	loadConfig,
-	startCertbot,
-} from "./domain.js";
+	DNS_LEASE_ACCESS_TOKEN_ENV,
+	DNS_LEASE_SERVICE_URL_ENV,
+	DNS_LEASE_STATE_FILE_ENV,
+	getDnsLeaseStatePath,
+	provisionDnsLease,
+	readDnsLeaseState,
+	releaseDnsLease,
+	renewDnsLease,
+	startDnsLeaseRenewal,
+} from "./domain-lease.js";
+import { getDomainFromConfig, loadConfig, startCertbot } from "./domain.js";
+import { terminateNode as terminateHetznerNode } from "./hetzner.js";
 import {
-	HETZNER_SERVER_TYPES,
-	launchNodes as launchHetznerNodes,
-	terminateNode as terminateHetznerNode,
-} from "./hetzner.js";
-import { DEFAULT_REMOTE_GROUP, type RemoteObject, Remotes } from "./remotes.js";
+	DEFAULT_REMOTE_GROUP,
+	type RemoteObject,
+	Remotes,
+	getRetiredAWSManagementError,
+} from "./remotes.js";
 import { LOCAL_API_PORT } from "./routes.js";
 import { startServerWithNode } from "./server.js";
 import type { InstallDependency, StartProgram } from "./types.js";
@@ -178,20 +178,43 @@ export const cli = async (args?: string[]) => {
 							"Set Libp2p listen port. Only modify this when testing locally, since NGINX config depends on the default value",
 						type: "number",
 						default: undefined,
+					})
+					.option("dns-lease-state-file", {
+						describe: `Managed DNS lease state file (or ${DNS_LEASE_STATE_FILE_ENV})`,
+						type: "string",
 					});
 				return yargs;
 			},
 			handler: async (args) => {
-				await startServerWithNode({
-					directory: args.directory,
-					domain: await loadConfig().then((config) =>
-						config ? getDomainFromConfig(config) : undefined,
-					),
-					ports: { api: args["port-api"], node: args["port-node"] },
-					bootstrap: args.bootstrap,
-					newSession: args.reset,
-					grantAccess: args["grant-access"],
-				});
+				let stopDnsLeaseRenewal: () => void = () => undefined;
+				try {
+					stopDnsLeaseRenewal = await startDnsLeaseRenewal({
+						statePath:
+							(args["dns-lease-state-file"] as string | undefined) ||
+							process.env[DNS_LEASE_STATE_FILE_ENV],
+						onError: (message) => console.warn(message),
+					});
+				} catch {
+					console.warn(
+						"Managed DNS lease renewal could not start; use 'peerbit domain lease renew' to inspect it",
+					);
+				}
+				try {
+					const started = await startServerWithNode({
+						directory: args.directory,
+						domain: await loadConfig().then((config) =>
+							config ? getDomainFromConfig(config) : undefined,
+						),
+						ports: { api: args["port-api"], node: args["port-node"] },
+						bootstrap: args.bootstrap,
+						newSession: args.reset,
+						grantAccess: args["grant-access"],
+					});
+					started.server.once("close", stopDnsLeaseRenewal);
+				} catch (error) {
+					stopDnsLeaseRenewal();
+					throw error;
+				}
 			},
 		})
 		.command({
@@ -214,103 +237,153 @@ export const cli = async (args?: string[]) => {
 		})
 		.command(
 			"domain",
-			"Setup a domain and certificate for this node",
+			"Configure a domain and certificate for this node",
 			(yargs) => {
 				yargs
 					.command({
-						command: "test",
+						command: "lease [operation]",
+						describe: "Manage a temporary peerchecker.com DNS lease",
+						builder: (leaseArgs: Argv) =>
+							leaseArgs
+								.positional("operation", {
+									choices: ["claim", "renew", "release", "status"] as const,
+									default: "claim",
+									describe: "Lease operation",
+									type: "string",
+								})
+								.option("service-url", {
+									describe: `Lease service URL (or ${DNS_LEASE_SERVICE_URL_ENV})`,
+									type: "string",
+								})
+								.option("access-token", {
+									describe: `Claim access token (prefer ${DNS_LEASE_ACCESS_TOKEN_ENV} to avoid shell history)`,
+									type: "string",
+								})
+								.option("address", {
+									describe: "Public IPv4 or IPv6 address for a new lease",
+									type: "string",
+								})
+								.option("email", {
+									describe: "Email for Let's Encrypt security messages",
+									type: "string",
+								})
+								.option("configure", {
+									default: true,
+									describe: "Configure NGINX and Let's Encrypt after claiming",
+									type: "boolean",
+								})
+								.option("wait", {
+									alias: "w",
+									default: true,
+									describe: "Wait for HTTPS setup to succeed",
+									type: "boolean",
+								})
+								.option("state-file", {
+									default: getDnsLeaseStatePath(),
+									describe: "Managed DNS lease state file",
+									type: "string",
+								}),
+						handler: async (args) => {
+							const operation = args.operation || "claim";
+							const statePath = args["state-file"] as string;
+							const serviceUrl =
+								(args["service-url"] as string | undefined) ||
+								process.env[DNS_LEASE_SERVICE_URL_ENV];
+							if (operation === "status") {
+								const state = readDnsLeaseState(statePath);
+								console.log(
+									JSON.stringify(
+										state
+											? {
+													address: state.address,
+													configuredAt: state.configuredAt,
+													domain: state.domain,
+													expiresAt: state.expiresAt,
+													status: state.status,
+												}
+											: { status: "none" },
+										undefined,
+										2,
+									),
+								);
+								return;
+							}
+							if (operation === "renew") {
+								const active = await renewDnsLease({ statePath, serviceUrl });
+								console.log(`DNS lease renewed until ${active.expiresAt}`);
+								return;
+							}
+							if (operation === "release") {
+								await releaseDnsLease({ statePath, serviceUrl });
+								console.log("DNS lease released");
+								return;
+							}
+							if (args.configure && !args.email) {
+								throw new Error(
+									"--email is required when configuring the leased domain",
+								);
+							}
+							const active = await provisionDnsLease({
+								accessToken:
+									(args["access-token"] as string | undefined) ||
+									process.env[DNS_LEASE_ACCESS_TOKEN_ENV],
+								address: args.address as string | undefined,
+								configure: args.configure
+									? (domain) =>
+											startCertbot(domain, args.email as string, args.wait)
+									: undefined,
+								serviceUrl,
+								statePath,
+							});
+							console.log(`DNS lease active until ${active.expiresAt}`);
+						},
+					})
+					.command({
+						command: "configure <domain>",
 						describe:
-							"Setup a testing domain with SSL (no guarantess on how long the domain will be available)",
+							"Configure NGINX and Let's Encrypt for a domain you control",
 						builder: {
-							email: {
-								describe: "Email for Lets security messages",
+							domain: {
+								describe:
+									"Domain whose DNS record already points to this server",
 								type: "string",
 								demandOption: true,
 							},
-							outdir: {
-								describe: "Output path for Nginx config",
+							email: {
+								describe: "Email for Let's Encrypt security messages",
 								type: "string",
-								alias: "o",
+								demandOption: true,
 							},
 							wait: {
 								alias: "w",
-								describe: "Wait for setup to succeed (or fail)",
+								describe:
+									"Wait for HTTPS setup to succeed (use --no-wait to return early)",
 								type: "boolean",
-								default: false,
+								default: true,
 							},
 						},
 						handler: async (args) => {
-							const domain = await createTestDomain();
-							await startCertbot(domain, args.email, args.wait);
-							exit();
+							await startCertbot(args.domain, args.email, args.wait);
+						},
+					})
+					.command({
+						command: "test",
+						describe: false,
+						builder: (retiredArgs: Argv) => retiredArgs.strict(false),
+						handler: () => {
+							throw new Error(
+								"Automatic test domains have been retired. Point a domain you control to this server, then run 'peerbit domain configure <domain> --email <email>'.",
+							);
 						},
 					})
 					.command({
 						command: "aws",
-						describe:
-							"Setup a domain with an AWS account. You either have to setup you AWS credentials in the .aws folder, or pass the credentials in the cli",
-						builder: {
-							domain: {
-								describe: "domain, e.g. abc.example.com, example.com",
-								alias: "d",
-								type: "string",
-								demandOption: true,
-							},
-							hostedZoneId: {
-								describe: 'The id of the hosted zone "HostedZoneId"',
-								alias: "hz",
-								type: "string",
-								require: true,
-							},
-							accessKeyId: {
-								describe: "Access key id of the AWS user",
-								alias: "ak",
-								type: "string",
-							},
-							region: {
-								describe: "AWS region",
-								alias: "r",
-								type: "string",
-							},
-							secretAccessKey: {
-								describe: "Secret key id of the AWS user",
-								alias: "sk",
-								type: "string",
-							},
-							outdir: {
-								describe: "Output path for Nginx config",
-								type: "string",
-								alias: "o",
-							},
-							wait: {
-								alias: "w",
-								describe: "Wait for setup to succeed (or fail)",
-								type: "boolean",
-								default: false,
-							},
-						},
-						handler: async (args) => {
-							if (
-								!!args.accessKeyId !== !!args.secretAccessKey ||
-								!!args.region !== !!args.secretAccessKey
-							) {
-								throw new Error(
-									"Expecting either all 'accessKeyId', 'region' and 'secretAccessKey' to be provided or none",
-								);
-							}
-							await createRecord({
-								domain: args.domain,
-								hostedZoneId: args.hostedZoneId,
-								region: args.region,
-								credentials: args.accessKeyId
-									? {
-											accessKeyId: args.accessKeyId,
-											secretAccessKey: args.secretAccessKey,
-										}
-									: undefined,
-							});
-							await startCertbot(args.domain, args.email, args.wait);
-							exit();
+						describe: false,
+						builder: (retiredArgs: Argv) => retiredArgs.strict(false),
+						handler: () => {
+							throw new Error(
+								"Automatic AWS DNS configuration has been retired. Configure DNS with your provider, then run 'peerbit domain configure <domain> --email <email>'.",
+							);
 						},
 					})
 					.strict()
@@ -319,301 +392,21 @@ export const cli = async (args?: string[]) => {
 		)
 		.command("remote", "Handle remote nodes", (innerYargs) => {
 			innerYargs
-				.command("spawn", "Spawn remote nodes", (spawnYargs) => {
-					spawnYargs
-						.command({
-							command: "aws",
-							describe: "Spawn remote nodes on AWS",
-							builder: (awsArgs: Argv) => {
-								awsArgs.option("count", {
-									describe: "Amount of nodes to spawn",
-									defaultDescription: "One node",
-									type: "number",
-									alias: "c",
-									default: 1,
-								});
-								awsArgs.option("region", {
-									describe: "Region",
-									type: "string",
-									defaultDescription: "Region defined in ~.aws/config",
-									choices: Object.keys(AWS_LINUX_ARM_AMIs),
-								});
-								awsArgs.option("group", {
-									describe: "Remote group to launch nodes in",
-									type: "string",
-									alias: "g",
-									default: DEFAULT_REMOTE_GROUP,
-								});
-								awsArgs.option("size", {
-									describe: "Instance size",
-									type: "string",
-									alias: "s",
-									choices: [
-										"micro",
-										"small",
-										"medium",
-										"large",
-										"xlarge",
-										"2xlarge",
-									],
-									default: "micro",
-								});
-
-								awsArgs.option("name", {
-									describe: "Name prefix for spawned nodes",
-									type: "string",
-									alias: "n",
-									default: "peerbit-node",
-								});
-								awsArgs.option("grant-access", {
-									describe: "Grant access to public keys on start",
-									defaultDescription:
-										"The publickey of this device located in 'directory'",
-									type: "string",
-									array: true,
-									alias: "ga",
-								});
-								awsArgs.option("directory", {
-									describe: "Peerbit directory",
-									defaultDescription: "~.peerbit",
-									type: "string",
-									alias: "d",
-									default: getHomeConfigDir(),
-								});
-								awsArgs.option("email", {
-									describe: "Email for Let's security messages",
-									type: "string",
-									alias: "e",
-									demandOption: true,
-								});
-								awsArgs.option("server-version", {
-									describe:
-										"@peerbit/server version or tag to install on the instance (e.g. 5.7.0-58d3d09)",
-									type: "string",
-									alias: ["sv"],
-								});
-								return awsArgs;
-							},
-							handler: async (args) => {
-								const self = (
-									await getKeypair(args.directory)
-								).publicKey.toPeerId();
-								const accessGrant: PeerId[] =
-									args["grant-access"]?.length > 0
-										? (args["grant-access"] as string[]).map((x) =>
-												peerIdFromString(x),
-											)
-										: [];
-								accessGrant.push(self);
-								const nodes = await launchNodes({
-									email: args.email as string,
-									count: args.count,
-									namePrefix: args.name,
-									region: args.region,
-									grantAccess: accessGrant,
-									size: args.size,
-									serverVersion:
-										(args["server-version"] as string) || undefined,
-								});
-
-								console.log(
-									`Waiting for ${args.count} ${
-										args.count > 1 ? "nodes" : "node"
-									} to spawn. This might take a few minutes. You can watch the progress in your AWS console.`,
-								);
-								const twirlTimer = (function () {
-									const P = ["\\", "|", "/", "-"];
-									let x = 0;
-									return setInterval(function () {
-										process.stdout.write(
-											"\r" + "Loading: " + chalk.hex(colors[x])(P[x++]),
-										);
-										x &= 3;
-									}, 250);
-								})();
-								for (const node of nodes) {
-									try {
-										const domain = await waitForDomain(node.publicIp);
-										const remotes = new Remotes(getRemotesPath(args.directory));
-										remotes.add({
-											name: node.name,
-											address: domain,
-											group: args.group,
-											origin: {
-												type: "aws",
-												instanceId: node.instanceId,
-												region: node.region,
-											},
-										});
-									} catch (error: any) {
-										process.stdout.write("\r");
-										console.error(
-											`Error waiting for domain for ip: ${
-												node.publicIp
-											} to be available: ${error?.toString()}`,
-										);
-									}
-								}
-								process.stdout.write("\r");
-								clearInterval(twirlTimer);
-								console.log(`New nodes available (${nodes.length}):`);
-								for (const node of nodes) {
-									console.log(chalk.green(node.name));
-								}
-							},
-						})
-						.command({
-							command: "hetzner",
-							describe: "Spawn remote nodes on Hetzner Cloud",
-							builder: (hetznerArgs: Argv) => {
-								hetznerArgs.option("count", {
-									describe: "Amount of nodes to spawn",
-									defaultDescription: "One node",
-									type: "number",
-									alias: "c",
-									default: 1,
-								});
-								hetznerArgs.option("location", {
-									describe: "Location (e.g. fsn1, nbg1, hel1, ash, hil)",
-									type: "string",
-									alias: "l",
-									default: "fsn1",
-								});
-								hetznerArgs.option("group", {
-									describe: "Remote group to launch nodes in",
-									type: "string",
-									alias: "g",
-									default: DEFAULT_REMOTE_GROUP,
-								});
-								hetznerArgs.option("server-type", {
-									describe: "Server type",
-									type: "string",
-									alias: "t",
-									choices: [...HETZNER_SERVER_TYPES],
-									default: "cx11",
-								});
-
-								hetznerArgs.option("name", {
-									describe: "Name prefix for spawned nodes",
-									type: "string",
-									alias: "n",
-									default: "peerbit-node",
-								});
-								hetznerArgs.option("grant-access", {
-									describe: "Grant access to public keys on start",
-									defaultDescription:
-										"The publickey of this device located in 'directory'",
-									type: "string",
-									array: true,
-									alias: "ga",
-								});
-								hetznerArgs.option("directory", {
-									describe: "Peerbit directory",
-									defaultDescription: "~.peerbit",
-									type: "string",
-									alias: "d",
-									default: getHomeConfigDir(),
-								});
-								hetznerArgs.option("email", {
-									describe: "Email for Let's security messages",
-									type: "string",
-									alias: "e",
-									demandOption: true,
-								});
-								hetznerArgs.option("token", {
-									describe: "Hetzner Cloud API token (or set HCLOUD_TOKEN)",
-									type: "string",
-									alias: ["tok"],
-								});
-								hetznerArgs.option("image", {
-									describe: "Image to use (e.g. ubuntu-22.04)",
-									type: "string",
-									default: "ubuntu-22.04",
-								});
-								hetznerArgs.option("server-version", {
-									describe:
-										"@peerbit/server version or tag to install on the instance (e.g. 5.7.0-58d3d09)",
-									type: "string",
-									alias: ["sv"],
-								});
-								return hetznerArgs;
-							},
-							handler: async (args) => {
-								const self = (
-									await getKeypair(args.directory)
-								).publicKey.toPeerId();
-								const accessGrant: PeerId[] =
-									args["grant-access"]?.length > 0
-										? (args["grant-access"] as string[]).map((x) =>
-												peerIdFromString(x),
-											)
-										: [];
-								accessGrant.push(self);
-								const nodes = await launchHetznerNodes({
-									token: (args.token as string) || undefined,
-									email: args.email as string,
-									count: args.count,
-									namePrefix: args.name,
-									location: args.location,
-									serverType: args["server-type"],
-									grantAccess: accessGrant,
-									image: args.image,
-									serverVersion:
-										(args["server-version"] as string) || undefined,
-								});
-
-								console.log(
-									`Waiting for ${args.count} ${
-										args.count > 1 ? "nodes" : "node"
-									} to spawn. This might take a few minutes. You can watch the progress in your Hetzner Cloud console.`,
-								);
-								const twirlTimer = (function () {
-									const P = ["\\", "|", "/", "-"];
-									let x = 0;
-									return setInterval(function () {
-										process.stdout.write(
-											"\r" + "Loading: " + chalk.hex(colors[x])(P[x++]),
-										);
-										x &= 3;
-									}, 250);
-								})();
-								for (const node of nodes) {
-									try {
-										const domain = await waitForDomain(node.publicIp);
-										const remotes = new Remotes(getRemotesPath(args.directory));
-										remotes.add({
-											name: node.name,
-											address: domain,
-											group: args.group,
-											origin: {
-												type: "hetzner",
-												serverId: node.serverId,
-												location: node.location,
-											},
-										});
-									} catch (error: any) {
-										process.stdout.write("\r");
-										console.error(
-											`Error waiting for domain for ip: ${
-												node.publicIp
-											} to be available: ${error?.toString()}`,
-										);
-									}
-								}
-								process.stdout.write("\r");
-								clearInterval(twirlTimer);
-								console.log(`New nodes available (${nodes.length}):`);
-								for (const node of nodes) {
-									console.log(chalk.green(node.name));
-								}
-							},
-						})
-						.strict()
-						.demandCommand();
+				.command({
+					command: "spawn [provider]",
+					describe: false,
+					builder: (spawnArgs: Argv) =>
+						spawnArgs.positional("provider", { type: "string" }).strict(false),
+					handler: () => {
+						throw new Error(
+							"Automatic cloud provisioning has been retired. Provision a server with your provider, configure a domain you control, then register it with 'peerbit remote add <name> <address>'.",
+						);
+					},
 				})
 				.command({
 					command: "terminate [name...]",
-					describe: "Terminate remote instances that was previously spawned",
+					describe:
+						"Terminate legacy Hetzner instances recorded by older releases",
 					builder: (killArgs: Argv) => {
 						killArgs.option("all", {
 							describe: "Kill all nodes",
@@ -644,19 +437,22 @@ export const cli = async (args?: string[]) => {
 					handler: async (args) => {
 						const remotes = new Remotes(getRemotesPath(args.directory));
 						const allRemotes = await remotes.all();
-						for (const remote of allRemotes) {
-							if (args.all || args.name.includes(remote.name)) {
-								if (remote.origin?.type === "aws") {
-									await terminateNode({
-										instanceId: remote.origin.instanceId,
-										region: remote.origin.region,
-									});
-								} else if (remote.origin?.type === "hetzner") {
-									await terminateHetznerNode({
-										serverId: remote.origin.serverId,
-										token: (args.token as string) || undefined,
-									});
-								}
+						const selectedRemotes = allRemotes.filter(
+							(remote) => args.all || args.name.includes(remote.name),
+						);
+						const retiredAWSRemote = selectedRemotes.find(
+							(remote) => remote.origin?.type === "aws",
+						);
+						if (retiredAWSRemote?.origin?.type === "aws") {
+							throw getRetiredAWSManagementError(retiredAWSRemote.origin);
+						}
+
+						for (const remote of selectedRemotes) {
+							if (remote.origin?.type === "hetzner") {
+								await terminateHetznerNode({
+									serverId: remote.origin.serverId,
+									token: (args.token as string) || undefined,
+								});
 							}
 						}
 					},

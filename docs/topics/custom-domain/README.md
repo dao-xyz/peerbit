@@ -21,11 +21,7 @@ For example, subscribing to a live feed might involve replicating only the lates
 
 The timeline will turn more blue and become taller when more replicators/viewers are watching the video.
 
-Watch a clip for yourself here 
-
-https://stream.dao.xyz/#/s/zb2rhdUMAfWE42qg6JH1Nnz2GoKeayJtgVxa8q8Wo1T74HFWR
-
-[Source code for the video on demand](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming)
+Run the [video-on-demand example](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming) to try the clip locally.
 
 ## Domain Mapping Strategies: Hash vs Time vs Identity
 When designing a custom data domain, the choice of mapping strategy is crucial. Here’s a breakdown of the benefits and trade-offs of three common approaches:
@@ -148,6 +144,4 @@ Peerbit’s custom data domains represent a paradigm shift in replication:
 - **Real-World Utility:**  
   Whether you’re building a decentralized document store or a live video stream, the ability to tailor replication based on content properties leads to more efficient and targeted data distribution.
 
-Watch the upcoming video demonstration where the buffering timeline of a live video translates directly into the replication domain. As the video buffers, new segments are dynamically replicated, ensuring a seamless, real-time experience.
-
-https://stream.dao.xyz/#/s/zb2rhdUMAfWE42qg6JH1Nnz2GoKeayJtgVxa8q8Wo1T74HFWR
+In the [live-streaming example](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming), the buffering timeline translates directly into the replication domain. As the video buffers, new segments are dynamically replicated, ensuring a seamless, real-time experience.

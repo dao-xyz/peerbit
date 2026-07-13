@@ -60,6 +60,6 @@
 		"@peerbit/blocks-interface": "workspace:*",
 		"classic-level": "^3.0.0"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

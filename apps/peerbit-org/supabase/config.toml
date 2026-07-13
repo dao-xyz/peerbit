@@ -361,6 +361,11 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
+# This function authenticates opaque invite/lease bearer tokens itself. Supabase JWT verification
+# must stay disabled or the gateway will reject those tokens before the function can hash them.
+[functions.dns-lease]
+verify_jwt = false
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

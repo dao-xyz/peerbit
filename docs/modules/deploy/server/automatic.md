@@ -1,86 +1,23 @@
-# Spawn nodes with the CLI
+# Provision a server
 
-The CLI offers the capability to directly spawn nodes within server centers, presently limited to AWS and Hetzner Cloud, using a set of commands.
+The Peerbit CLI no longer creates virtual machines or DNS records. The old
+provider-specific provisioning commands depended on a hosted test-domain
+service, so they could not produce a working, portable deployment after that
+service was retired.
 
-## AWS
+To deploy a public node:
 
-1. 
+1. Create a server with the provider of your choice.
+2. Point a domain you control to the server.
+3. Follow the [existing-server guide](./custom.md) to configure TLS and start
+   Peerbit.
+4. Register the server from the same local identity that the setup guide grants
+   with `peerbit remote add <name> <address>`.
 
-
-Configure your AWS environment to ensure the availability of a .aws configuration folder in your system's home directory. If you haven't already done this, consult this [guide](https://wellarchitectedlabs.com/common/documentation/aws_credentials/) if you have not done it already. 
-
-2. 
-
-
-Install the CLI locally:
-```sh
-npm install -g @peerbit/server
-```
-
-3. 
-
-
-Initiate the spawn command:
-This will create a new node in your default region.
-```sh
-peerbit remote spawn aws --count 1 --email <your-email>
-```
-Please note that this process might require several minutes.
-
-
-For additional spawning options, refer to:
-```sh
-peerbit remote spawn aws --help
-```
-
-4. 
-
-
-Verify the status of your node:
-```sh
-peerbit remote ls
-```
-
-If you have recently spawned the node and it displays as offline, it's possible that you need to wait a bit longer for the SSL certificates and configurations to finalize. This step typically consumes the most time.
-
-You can also access your AWS console within the region where the deployment was initiated to monitor the progress.
-
-## Hetzner Cloud
-
-1.
-
-Create a Hetzner Cloud API token and export it (recommended):
-```sh
-export HCLOUD_TOKEN="<your-token>"
-```
-
-2.
-
-Install the CLI locally:
-```sh
-npm install -g @peerbit/server
-```
-
-3.
-
-Initiate the spawn command:
-```sh
-peerbit remote spawn hetzner --count 1 --email <your-email>
-```
-Please note that this process might require several minutes.
-
-For additional spawning options, refer to:
-```sh
-peerbit remote spawn hetzner --help
-```
-
-4.
-
-Verify the status of your node:
-```sh
-peerbit remote ls
-```
-
-
-## Other cloud vendors
-If you would like to see support for specific cloud vendors, please suggest them [here](https://github.com/dao-xyz/peerbit/issues).
+Existing cloud resources are not deleted by this change. Manage them in their
+provider console. `peerbit remote terminate` remains available for legacy
+Hetzner entries; legacy AWS entries produce an explicit message containing the
+instance ID and region so they can be cleaned up manually. Termination
+preflights the selected entries: if an AWS entry is selected, no Hetzner entry
+is deleted. Clean up the AWS instance and remove its local entry first, or name
+only the Hetzner entries you intend to terminate.

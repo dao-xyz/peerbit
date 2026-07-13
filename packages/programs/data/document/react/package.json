@@ -73,6 +73,6 @@
 		"happy-dom": "^20.0.10",
 		"vitest": "^4.0.12"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

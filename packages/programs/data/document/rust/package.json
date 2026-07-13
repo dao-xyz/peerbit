@@ -56,6 +56,6 @@
 		"test": "cargo test && npm run build",
 		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\""
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

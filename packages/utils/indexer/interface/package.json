@@ -56,7 +56,7 @@
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
 		"uuid": "^10.0.0",

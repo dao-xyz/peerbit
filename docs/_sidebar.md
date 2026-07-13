@@ -19,7 +19,7 @@ Modules
 - [Canonical runtime + proxies](/modules/client/canonical.md)
 - [Deploy](/modules/deploy/)
     - [Setup server](/modules/deploy/server/)
-        - [Spawn new servers](/modules/deploy/server/automatic.md)
+    - [Provision a server](/modules/deploy/server/automatic.md)
         - [Existing server](/modules/deploy/server/custom.md)
     - [Manage nodes](/modules/deploy/manage/)
     - [Deploy a project](/modules/deploy/publish/)

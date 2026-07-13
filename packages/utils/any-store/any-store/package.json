@@ -80,8 +80,5 @@
 	"devDependencies": {
 		"@types/uuid": "^10.0.0",
 		"url": "^0.11.4"
-	},
-	"localMaintainers": [
-		"dao.xyz"
-	]
+	}
 }

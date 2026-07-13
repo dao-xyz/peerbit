@@ -43,8 +43,5 @@
 		"chai": "^6.0.1",
 		"@types/chai": "^5.2.2"
 	},
-	"license": "MIT",
-	"localMaintainers": [
-		"dao.xyz"
-	]
+	"license": "MIT"
 }

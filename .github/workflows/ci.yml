@@ -51,10 +51,56 @@ jobs:
           ./scripts/ci/install-wasm-pack.sh
           rustup target add wasm32-unknown-unknown
           pnpm install --frozen-lockfile=false
+      - name: Validate retired domain references
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: |
+          node --test scripts/validate-retired-domain-references.test.mjs
+          node scripts/validate-retired-domain-references.mjs
+      - name: Validate managed DNS lease edge function
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: |
+          pnpm dlx deno@2.9.2 check \
+            --frozen \
+            --config apps/peerbit-org/supabase/functions/dns-lease/deno.json \
+            apps/peerbit-org/supabase/functions/dns-lease/index.ts
+          node --test \
+            apps/peerbit-org/supabase/functions/_shared/dns-lease.test.ts \
+            apps/peerbit-org/supabase/functions/_shared/cloudflare-dns.test.ts \
+            apps/peerbit-org/supabase/functions/_shared/dns-lease-renewal.test.ts
+          broker=apps/peerbit-org/cloudflare/dns-lease-broker
+          pnpm --dir "$broker" install --frozen-lockfile --ignore-workspace
+          pnpm --dir "$broker" run check
+      - name: Seed retired server artifact regression fixture
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p packages/clients/peerbit-server/node/dist/src
+          for artifact in \
+            aws.js aws.browser.js \
+            aws.d.ts aws.browser.d.ts \
+            aws.js.map aws.browser.js.map \
+            aws.d.ts.map aws.browser.d.ts.map; do
+            touch "packages/clients/peerbit-server/node/dist/src/$artifact"
+          done
       - name: Build
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |
           pnpm run build
+      - name: Verify retired server artifacts cannot be packaged
+        if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          server=packages/clients/peerbit-server/node
+          if find "$server/dist/src" -maxdepth 1 -type f -name 'aws*' -print -quit | grep -q .; then
+            echo "Retired AWS build artifacts survived @peerbit/server clean" >&2
+            exit 1
+          fi
+          pack_dir="$(mktemp -d)"
+          trap 'rm -rf "$pack_dir"' EXIT
+          pnpm --dir "$server" pack --pack-destination "$pack_dir" >/dev/null
+          if tar -tzf "$pack_dir"/*.tgz | grep -Eq 'package/(dist/src|src)/aws(\.browser)?\.'; then
+            echo "Retired AWS implementation leaked into @peerbit/server package" >&2
+            exit 1
+          fi
       - name: Pack build outputs
         if: steps.workspace_dist_cache.outputs.cache-hit != 'true'
         run: |

@@ -66,8 +66,5 @@
 	},
 	"dependencies": {
 		"yallist": "^5.0.0"
-	},
-	"localMaintainers": [
-		"dao.xyz"
-	]
+	}
 }

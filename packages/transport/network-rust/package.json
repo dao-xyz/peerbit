@@ -76,6 +76,6 @@
 		"@peerbit/stream-interface": "workspace:*",
 		"uint8arraylist": "^2.4.8"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

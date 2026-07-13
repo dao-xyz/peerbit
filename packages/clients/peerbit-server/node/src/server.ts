@@ -228,6 +228,9 @@ export const startServerWithNode = async (properties: {
 	}
 
 	const trust = new Trust(getTrustPath(properties.directory));
+	for (const id of trustPeerIds) {
+		trust.add(getPublicKeyFromPeerId(id).hashcode());
+	}
 	const server = await startApiServer(peer, {
 		port: properties.ports?.api,
 		trust,
@@ -278,11 +281,6 @@ export const startServerWithNode = async (properties: {
 	};
 	await shutDownHook(peer, server);
 
-	if (trustPeerIds.length > 0) {
-		for (const id of trustPeerIds) {
-			trust.add(getPublicKeyFromPeerId(id).hashcode());
-		}
-	}
 	return { server, node: peer };
 };
 

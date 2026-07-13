@@ -1,0 +1,9 @@
+name = "peerbit-dns-lease-broker"
+main = "src/index.ts"
+compatibility_date = "2026-07-13"
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+head_sampling_rate = 1

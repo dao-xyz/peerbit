@@ -10,6 +10,7 @@ import {
 import type { Address, Program } from "@peerbit/program";
 import { PermissionedString } from "@peerbit/test-lib";
 import { TestSession } from "@peerbit/test-utils";
+import { waitForResolved } from "@peerbit/time";
 import type { AbstractLevel } from "abstract-level";
 import { expect } from "chai";
 import fs from "fs";
@@ -340,9 +341,11 @@ describe("server", () => {
 				.getMultiaddrs()
 				.map((x) => x.toString());
 			await c.network.bootstrap({ addresses: bootstrapAddresses });
-			expect(
-				(session.peers[0] as Peerbit).services.pubsub.peers.size,
-			).greaterThan(0);
+			await waitForResolved(() =>
+				expect(
+					(session.peers[0] as Peerbit).services.pubsub.peers.size,
+				).greaterThan(0),
+			);
 		});
 
 		/* TODO how to test this properly? Seems to hang once we added 'sudo --prefix __dirname' to the npm install in the child_process
