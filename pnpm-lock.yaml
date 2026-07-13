@@ -370,6 +370,9 @@ importers:
       '@multiformats/multiaddr':
         specifier: ^13.0.1
         version: 13.0.1
+      '@multiformats/multiaddr-matcher':
+        specifier: ^3.0.1
+        version: 3.0.1
       '@peerbit/any-store':
         specifier: workspace:*
         version: link:../../utils/any-store/any-store

@@ -80,6 +80,7 @@
 		"@libp2p/webrtc": "^6.0.15",
 		"@libp2p/websockets": "^10.1.7",
 		"@multiformats/multiaddr": "^13.0.1",
+		"@multiformats/multiaddr-matcher": "^3.0.1",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-opfs": "workspace:*",
 		"@peerbit/blocks": "workspace:*",
