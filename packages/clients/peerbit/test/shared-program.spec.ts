@@ -1,9 +1,6 @@
 import { field, variant } from "@dao-xyz/borsh";
 import { Program } from "@peerbit/program";
 import { expect } from "chai";
-import fs from "fs/promises";
-import os from "os";
-import path from "path";
 import { Peerbit } from "../src/peer.js";
 
 @variant("test-shared_nested")
@@ -43,6 +40,7 @@ const rejectsWithMessage = async (promise: Promise<any>, message: string) => {
 		expect(error?.message).to.eq(message);
 	}
 };
+const isNode = typeof process !== "undefined" && process.versions?.node != null;
 
 describe(`shared`, () => {
 	let client: Peerbit;
@@ -159,43 +157,57 @@ describe(`shared`, () => {
 describe("remote program persistence", () => {
 	let writer: Peerbit | undefined;
 	let reader: Peerbit | undefined;
-	let directory: string | undefined;
+	let cleanupDirectory: (() => Promise<void>) | undefined;
 
 	afterEach(async () => {
 		await reader?.stop();
 		await writer?.stop();
-		if (directory) {
-			await fs.rm(directory, { recursive: true, force: true });
-		}
+		await cleanupDirectory?.();
+		cleanupDirectory = undefined;
 	});
 
-	it("reopens an address locally after its provider stops", async function () {
-		this.timeout(30_000);
-		directory = await fs.mkdtemp(
-			path.join(os.tmpdir(), "peerbit-program-restart-"),
-		);
-		writer = await Peerbit.create();
-		reader = await Peerbit.create({ directory });
-		await reader.dial(writer.getMultiaddrs()[0]!);
+	(isNode ? it : it.skip)(
+		"reopens an address locally after its provider stops",
+		async function () {
+			this.timeout(30_000);
+			// Keep Node built-ins behind non-literal dynamic imports so this file
+			// remains bundleable for the browser tests that exercise the shared core.
+			const fsModule = "node:fs/promises";
+			const osModule = "node:os";
+			const pathModule = "node:path";
+			const [fs, os, path] = await Promise.all([
+				import(fsModule),
+				import(osModule),
+				import(pathModule),
+			]);
+			const directory = await fs.mkdtemp(
+				path.join(os.tmpdir(), "peerbit-program-restart-"),
+			);
+			cleanupDirectory = () =>
+				fs.rm(directory, { recursive: true, force: true });
+			writer = await Peerbit.create();
+			reader = await Peerbit.create({ directory });
+			await reader.dial(writer.getMultiaddrs()[0]!);
 
-		const source = await writer.open(new TestProgram(7));
-		expect(await reader.services.blocks.has(source.address)).to.be.false;
+			const source = await writer.open(new TestProgram(7));
+			expect(await reader.services.blocks.has(source.address)).to.be.false;
 
-		const loaded = await reader.open<TestProgram>(source.address, {
-			timeout: 10_000,
-		});
-		expect(loaded.id).to.equal(7);
-		expect(await reader.services.blocks.has(source.address)).to.be.true;
+			const loaded = await reader.open<TestProgram>(source.address, {
+				timeout: 10_000,
+			});
+			expect(loaded.id).to.equal(7);
+			expect(await reader.services.blocks.has(source.address)).to.be.true;
 
-		await reader.stop();
-		reader = undefined;
-		await writer.stop();
-		writer = undefined;
+			await reader.stop();
+			reader = undefined;
+			await writer.stop();
+			writer = undefined;
 
-		reader = await Peerbit.create({ directory });
-		const reopened = await reader.open<TestProgram>(source.address, {
-			timeout: 100,
-		});
-		expect(reopened.id).to.equal(7);
-	});
+			reader = await Peerbit.create({ directory });
+			const reopened = await reader.open<TestProgram>(source.address, {
+				timeout: 100,
+			});
+			expect(reopened.id).to.equal(7);
+		},
+	);
 });
