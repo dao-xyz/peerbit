@@ -43,6 +43,12 @@ import path from "path-browserify";
 import { concat } from "uint8arrays";
 import { getBootstrapPeerId, resolveBootstrapAddresses } from "./bootstrap.js";
 import {
+	BootstrapRecoveryController,
+	type BootstrapRecoveryEventTarget,
+	type BootstrapRecoveryOptions,
+	validateBootstrapRecoveryOptions,
+} from "./bootstrap-recovery.js";
+import {
 	type Libp2pCreateOptions as ClientCreateOptions,
 	type Libp2pExtended,
 	type PartialLibp2pCreateOptions,
@@ -169,6 +175,12 @@ export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
 	storage?: StorageCreateOptions;
 	network?: NativeNetworkCreateOptions;
+	/**
+	 * Opt-in automatic bootstrap recovery. `true` uses bounded defaults; an
+	 * options object customizes retry policy or fixed targets. It is disabled by
+	 * default to avoid unexpected network access from `Peerbit.create()`.
+	 */
+	bootstrapRecovery?: boolean | BootstrapRecoveryOptions;
 } & OptionalCreateOptions;
 
 export type DialReadiness =
@@ -193,6 +205,11 @@ export type BootstrapResult = {
 	failures: BootstrapFailure[];
 };
 
+export type BootstrapDialOptions = {
+	dialTimeoutMs?: number;
+	signal?: AbortSignal;
+};
+
 const isLibp2pInstance = (libp2p: Libp2pExtended | ClientCreateOptions) =>
 	!!(libp2p as Libp2p).getMultiaddrs;
 
@@ -210,6 +227,17 @@ const createCache = async (
 	return cache;
 };
 
+const getOnlineEventTarget = (): BootstrapRecoveryEventTarget | undefined => {
+	const target = globalThis as unknown as Partial<BootstrapRecoveryEventTarget>;
+	return typeof target.addEventListener === "function" &&
+		typeof target.removeEventListener === "function"
+		? (target as BootstrapRecoveryEventTarget)
+		: undefined;
+};
+
+const isEnvironmentOnline = (): boolean =>
+	typeof navigator === "undefined" || navigator.onLine !== false;
+
 const SELF_IDENTITY_KEY_ID = new Uint8Array([
 	95, 95, 115, 101, 108, 102, 95, 95,
 ]); // new TextEncoder().encode("__self__");
@@ -223,6 +251,11 @@ export class Peerbit implements ProgramClient {
 	private _indexer: Indices;
 	private _libp2pExternal?: boolean = false;
 	private _nativeNetwork?: NativeNetworkRuntime;
+	private _bootstrapRecoveryOptions?: BootstrapRecoveryOptions;
+	private _bootstrapRecovery?: BootstrapRecoveryController;
+	private _bootstrapRecoveryGeneration = 0;
+	private _bootstrapRecoveryTransition: Promise<void> = Promise.resolve();
+	private _bootstrapRecoveryPaused = false;
 
 	/**
 	 * Native shared-log defaults advertised to programs opened on this
@@ -266,6 +299,14 @@ export class Peerbit implements ProgramClient {
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
+		const bootstrapRecoveryOptions = options.bootstrapRecovery;
+		if (
+			bootstrapRecoveryOptions &&
+			bootstrapRecoveryOptions !== true &&
+			bootstrapRecoveryOptions.enabled !== false
+		) {
+			validateBootstrapRecoveryOptions(bootstrapRecoveryOptions);
+		}
 		await sodium.ready; // Some of the modules depends on sodium to be readyy
 
 		let libp2pExtended: Libp2pExtended | undefined = (options as Libp2pOptions)
@@ -594,6 +635,14 @@ export class Peerbit implements ProgramClient {
 			nativeNetwork,
 			sharedLogNativeDefaults,
 		});
+		if (options.bootstrapRecovery === true) {
+			peer.enableBootstrapRecovery();
+		} else if (
+			options.bootstrapRecovery &&
+			options.bootstrapRecovery.enabled !== false
+		) {
+			peer.enableBootstrapRecovery(options.bootstrapRecovery);
+		}
 		return peer;
 	}
 	get libp2p(): Libp2pExtended {
@@ -734,16 +783,98 @@ export class Peerbit implements ProgramClient {
 		// TODO wait for pubsub and blocks to disconnect?
 	}
 
+	get bootstrapRecoveryEnabled(): boolean {
+		return this._bootstrapRecoveryOptions != null;
+	}
+
+	/** Enable automatic recovery and schedule an immediate attempt if disconnected. */
+	enableBootstrapRecovery(options: BootstrapRecoveryOptions = {}): void {
+		if (options.enabled === false) {
+			this.disableBootstrapRecovery();
+			return;
+		}
+		validateBootstrapRecoveryOptions(options);
+		this._bootstrapRecoveryOptions = {
+			...options,
+			enabled: true,
+			addresses: options.addresses ? [...options.addresses] : undefined,
+		};
+		this.transitionBootstrapRecovery(true);
+	}
+
+	/** Disable recovery, remove environment listeners, and abort its active dial. */
+	disableBootstrapRecovery(): void {
+		this._bootstrapRecoveryOptions = undefined;
+		this.transitionBootstrapRecovery(false);
+	}
+
+	private transitionBootstrapRecovery(startAfterDrain: boolean): Promise<void> {
+		const generation = ++this._bootstrapRecoveryGeneration;
+		const previous = this._bootstrapRecovery;
+		this._bootstrapRecovery = undefined;
+		const drain = previous?.stop() ?? Promise.resolve();
+		const transition = Promise.all([
+			this._bootstrapRecoveryTransition,
+			drain,
+		]).then(() => {
+			if (
+				startAfterDrain &&
+				generation === this._bootstrapRecoveryGeneration
+			) {
+				this.startBootstrapRecovery();
+			}
+		});
+		this._bootstrapRecoveryTransition = transition.catch((error) => {
+			logger.error(`Bootstrap recovery lifecycle transition failed: ${error}`);
+		});
+		return this._bootstrapRecoveryTransition;
+	}
+
+	private startBootstrapRecovery(): void {
+		const options = this._bootstrapRecoveryOptions;
+		if (
+			!options ||
+			this._bootstrapRecovery ||
+			this._bootstrapRecoveryPaused ||
+			this.libp2p.status !== "started"
+		) {
+			return;
+		}
+		const controller = new BootstrapRecoveryController(
+			{
+				bootstrap: (signal) => {
+					const addresses = this._bootstrapRecoveryOptions?.addresses;
+					return this.bootstrap(addresses ? [...addresses] : undefined, {
+						signal,
+					});
+				},
+				connectionEvents: this
+					.libp2p as unknown as BootstrapRecoveryEventTarget,
+				onlineEvents: getOnlineEventTarget(),
+				isConnected: () => this.libp2p.getConnections().length > 0,
+				isOnline: isEnvironmentOnline,
+			},
+			options,
+		);
+		this._bootstrapRecovery = controller;
+		controller.start();
+	}
+
 	async start() {
 		await this._storage.open();
 		await this.indexer.start();
 
 		if (this.libp2p.status === "stopped" || this.libp2p.status === "stopping") {
 			this._libp2pExternal = false; // this means we will also close libp2p client on close
-			return this.libp2p.start();
+			await this.libp2p.start();
 		}
+		this._bootstrapRecoveryPaused = false;
+		await this._bootstrapRecoveryTransition;
+		this.startBootstrapRecovery();
 	}
 	async stop() {
+		this._bootstrapRecoveryPaused = true;
+		await this.transitionBootstrapRecovery(false);
 		await this._handler?.stop();
 		await this._storage.close();
 		await this.indexer.stop();
@@ -755,8 +886,16 @@ export class Peerbit implements ProgramClient {
 		}
 	}
 
-	async bootstrap(addresses?: string[] | Multiaddr[]) {
-		const _addresses = addresses ?? (await resolveBootstrapAddresses());
+	async bootstrap(
+		addresses?: Array<string | Multiaddr>,
+		options: BootstrapDialOptions = {},
+	) {
+		if (options.signal?.aborted) {
+			throw options.signal.reason ?? new Error("Bootstrap aborted");
+		}
+		const _addresses =
+			addresses ??
+			(await resolveBootstrapAddresses("5", { signal: options.signal }));
 		if (_addresses.length === 0) {
 			throw new Error("Failed to find any addresses to dial");
 		}
@@ -785,7 +924,7 @@ export class Peerbit implements ProgramClient {
 			byPeerId.set(pid, list);
 		}
 
-		const dialTimeoutMs = 30_000;
+		const dialTimeoutMs = options.dialTimeoutMs ?? 30_000;
 		const scoreBootstrapAddr = (a: Multiaddr) => {
 			const s = a.toString();
 			const isCircuit = s.includes("p2p-circuit");
@@ -803,7 +942,11 @@ export class Peerbit implements ProgramClient {
 					// Bootstrap nodes are rendezvous points; they may not immediately satisfy
 					// "services" readiness (pubsub/blocks/fanout neighbor checks), especially in
 					// browser runtimes. A successful transport-level dial is enough here.
-					await this.dial(ma, { dialTimeoutMs, readiness: "connection" });
+					await this.dial(ma, {
+						dialTimeoutMs,
+						readiness: "connection",
+						signal: options.signal,
+					});
 					return true;
 				} catch (e) {
 					lastError = e;
@@ -832,11 +975,15 @@ export class Peerbit implements ProgramClient {
 				promise: this.dial(typeof a === "string" ? multiaddr(a) : a, {
 					dialTimeoutMs,
 					readiness: "connection",
+					signal: options.signal,
 				}),
 			});
 		}
 
 		const settled = await Promise.allSettled(dialTasks.map((t) => t.promise));
+		if (options.signal?.aborted) {
+			throw options.signal.reason ?? new Error("Bootstrap aborted");
+		}
 		let once = false;
 		const connectedPeerIds = new Set<string>();
 		const failures: BootstrapFailure[] = [];

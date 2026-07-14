@@ -336,6 +336,38 @@ describe("resolveBootstrapAddresses", () => {
 		}
 	});
 
+	it("aborts recovery discovery without trying the fallback source", async () => {
+		let requestCount = 0;
+		let fetchSignal: AbortSignal | null | undefined;
+		globalThis.fetch = ((_input, init) => {
+			requestCount += 1;
+			fetchSignal = init?.signal;
+			return new Promise<Response>((_resolve, reject) => {
+				const signal = init?.signal;
+				if (!signal) {
+					reject(new Error("Missing bootstrap fetch signal"));
+					return;
+				}
+				const onAbort = () => reject(signal.reason);
+				if (signal.aborted) {
+					onAbort();
+				} else {
+					signal.addEventListener("abort", onAbort, { once: true });
+				}
+			});
+		}) as typeof fetch;
+		const controller = new AbortController();
+		const failure = resolveBootstrapAddresses("5", {
+			signal: controller.signal,
+		}).catch((error) => error);
+		await Promise.resolve();
+		controller.abort(new Error("recovery stopped"));
+
+		expect((await failure).message).to.equal("recovery stopped");
+		expect(requestCount).to.equal(1);
+		expect(fetchSignal?.aborted).to.equal(true);
+	});
+
 	it("reports every source failure instead of returning an empty list", async () => {
 		globalThis.fetch = (async (input: string | URL | Request) => {
 			const url =
