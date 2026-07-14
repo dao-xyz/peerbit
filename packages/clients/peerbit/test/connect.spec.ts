@@ -1,6 +1,7 @@
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { Peerbit } from "../src/index.js";
+import { expectRejectedWith } from "./utils/rejection.js";
 
 const isNode = typeof process !== "undefined" && !!process.versions?.node;
 
@@ -154,11 +155,12 @@ describe(`dial`, function () {
 			};
 
 			try {
-				await expect(
+				await expectRejectedWith(
 					clients[0].dial(clients[1].getMultiaddrs()[0], {
 						dialTimeoutMs: 5_000,
 					}),
-				).to.be.rejectedWith("Fanout");
+					"Fanout",
+				);
 			} finally {
 				(clients[0].services.fanout as any).waitFor = originalWaitFor;
 			}

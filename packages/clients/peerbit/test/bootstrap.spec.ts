@@ -1,12 +1,13 @@
-import { expect } from "chai";
-import sinon from "sinon";
 import { noise } from "@chainsafe/libp2p-noise";
 import { yamux } from "@chainsafe/libp2p-yamux";
 import { identify } from "@libp2p/identify";
-import { webSockets } from "@libp2p/websockets";
 import type { Libp2p } from "@libp2p/interface";
+import { webSockets } from "@libp2p/websockets";
+import { expect } from "chai";
 import { createLibp2p } from "libp2p";
+import sinon from "sinon";
 import { Peerbit } from "../src/peer.js";
+import { expectRejectedWith } from "./utils/rejection.js";
 
 const isNode = typeof process !== "undefined" && !!process.versions?.node;
 
@@ -31,7 +32,9 @@ describe("bootstrap", () => {
 		await peer.bootstrap(bootstrapPeer.getMultiaddrs());
 		// Bootstrap readiness is transport-level; DirectStream neighbours may establish
 		// asynchronously after the dial succeeds.
-		expect(peer.libp2p.getConnections(bootstrapPeer.peerId).length).greaterThan(0);
+		expect(peer.libp2p.getConnections(bootstrapPeer.peerId).length).greaterThan(
+			0,
+		);
 	});
 
 	(isNode ? it : it.skip)("remote", async function () {
@@ -74,53 +77,61 @@ describe("bootstrap", () => {
 		},
 	);
 
-	it("reports partial failures when one bootstrap peer is reachable and another is not", async function () {
-		this.timeout(180_000);
-		const unreachable = `/ip4/127.0.0.1/tcp/1/ws/p2p/12D3KooWUnreachablePeer111111111111111111111111111111`;
-		const result = await peer.bootstrap([
-			...bootstrapPeer.getMultiaddrs().map((addr) => addr.toString()),
-			unreachable,
-		]);
+	(isNode ? it : it.skip)(
+		"reports partial failures when one bootstrap peer is reachable and another is not",
+		async function () {
+			this.timeout(180_000);
+			const unreachable = `/ip4/127.0.0.1/tcp/1/ws/p2p/12D3KooWUnreachablePeer111111111111111111111111111111`;
+			const result = await peer.bootstrap([
+				...bootstrapPeer.getMultiaddrs().map((addr) => addr.toString()),
+				unreachable,
+			]);
 
-		expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
-		expect(result.failures).to.have.length(1);
-		expect(result.failures[0]?.peerId).to.equal(
-			"12D3KooWUnreachablePeer111111111111111111111111111111",
-		);
-	});
+			expect(result.connectedPeerIds).to.include(
+				bootstrapPeer.peerId.toString(),
+			);
+			expect(result.failures).to.have.length(1);
+			expect(result.failures[0]?.peerId).to.equal(
+				"12D3KooWUnreachablePeer111111111111111111111111111111",
+			);
+		},
+	);
 
-	it("does not report a failure when a fallback address for the same bootstrap peer succeeds", async function () {
-		this.timeout(180_000);
-		const valid = bootstrapPeer.getMultiaddrs()[0]!.toString();
-		const invalidSamePeer = `/ip4/127.0.0.1/tcp/1/ws/p2p/${bootstrapPeer.peerId.toString()}`;
-		const result = await peer.bootstrap([invalidSamePeer, valid]);
+	(isNode ? it : it.skip)(
+		"does not report a failure when a fallback address for the same bootstrap peer succeeds",
+		async function () {
+			this.timeout(180_000);
+			const valid = bootstrapPeer.getMultiaddrs()[0]!.toString();
+			const invalidSamePeer = `/ip4/127.0.0.1/tcp/1/ws/p2p/${bootstrapPeer.peerId.toString()}`;
+			const result = await peer.bootstrap([invalidSamePeer, valid]);
 
-		expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
-		expect(result.failures).to.deep.equal([]);
-	});
+			expect(result.connectedPeerIds).to.include(
+				bootstrapPeer.peerId.toString(),
+			);
+			expect(result.failures).to.deep.equal([]);
+		},
+	);
 
 	it("reports unknown-address failures without a bootstrap peer id", async function () {
 		this.timeout(180_000);
 		const unknown = "/dns4/node-a.peerchecker.com/tcp/1/ws";
-		const originalDial = peer.dial.bind(peer);
-		const dialStub = sinon
-			.stub(peer, "dial")
-			.callsFake(async (address, ...args: any[]) => {
-				const value =
-					typeof address === "string" ? address : (address as any).toString();
-				if (value === unknown) {
-					throw "forced-string-reason";
-				}
-				return await (originalDial as any)(address, ...args);
-			});
+		const reachable = `/dns4/bootstrap.example/tcp/443/wss/p2p/${bootstrapPeer.peerId.toString()}`;
+		const dialStub = sinon.stub(peer, "dial").callsFake(async (address) => {
+			const value =
+				typeof address === "string" ? address : (address as any).toString();
+			if (value === unknown) {
+				throw "forced-string-reason";
+			}
+			expect(value).to.equal(reachable);
+			return true;
+		});
 
 		try {
-			const result = await peer.bootstrap([
-				...bootstrapPeer.getMultiaddrs().map((addr) => addr.toString()),
-				unknown,
-			]);
+			const result = await peer.bootstrap([reachable, unknown]);
 
-			expect(result.connectedPeerIds).to.include(bootstrapPeer.peerId.toString());
+			expect(result.connectedPeerIds).to.include(
+				bootstrapPeer.peerId.toString(),
+			);
 			expect(result.failures).to.deep.equal([
 				{
 					peerId: undefined,
@@ -133,22 +144,27 @@ describe("bootstrap", () => {
 	});
 
 	it("throws when bootstrapping with no addresses", async () => {
-		await expect(peer.bootstrap([])).to.be.rejectedWith(
+		await expectRejectedWith(
+			peer.bootstrap([]),
 			"Failed to find any addresses to dial",
 		);
 	});
 
-	it("throws when no bootstrap peer can be reached", async function () {
-		this.timeout(180_000);
-		const unreachable =
-			"/ip4/127.0.0.1/tcp/1/ws/p2p/12D3KooWUnreachablePeer111111111111111111111111111111";
-		await expect(peer.bootstrap([unreachable])).to.be.rejectedWith(
-			"Failed to succefully dial any bootstrap node",
-		);
-	});
+	(isNode ? it : it.skip)(
+		"throws when no bootstrap peer can be reached",
+		async function () {
+			this.timeout(180_000);
+			const unreachable =
+				"/ip4/127.0.0.1/tcp/1/ws/p2p/12D3KooWUnreachablePeer111111111111111111111111111111";
+			await expectRejectedWith(
+				peer.bootstrap([unreachable]),
+				"Failed to succefully dial any bootstrap node",
+			);
+		},
+	);
 
 	it("hosts shard roots when this peer is itself a bootstrap candidate", async () => {
-		const selfAddress = peer.getMultiaddrs()[0]!.toString();
+		const selfAddress = `/dns4/self.example/tcp/443/wss/p2p/${peer.peerId.toString()}`;
 		const dialStub = sinon.stub(peer, "dial").resolves(true);
 		const hostRootsSpy = sinon.stub(peer.services.pubsub, "hostShardRootsNow");
 

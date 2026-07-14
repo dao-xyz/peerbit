@@ -7,6 +7,7 @@ import {
 	validateBootstrapRecoveryOptions,
 } from "../src/bootstrap-recovery.js";
 import { Peerbit } from "../src/peer.js";
+import { expectRejectedWith } from "./utils/rejection.js";
 
 const peerIdA = "12D3KooWKj1J1hHxrYyB37qDDGCi9aU2vcHzDZhtMk7te7dEmqqT";
 const peerIdB = "12D3KooWAYyiQBc1ti51riCkNX6Nvh33pWWvNfyrcPHrq373qCju";
@@ -352,9 +353,10 @@ describe("bootstrap recovery policy", () => {
 
 describe("Peerbit bootstrap recovery integration", () => {
 	it("keeps recovery opt-in and supports the create-time policy", async () => {
-		await expect(
+		await expectRejectedWith(
 			Peerbit.create({ bootstrapRecovery: { addresses: [] } }),
-		).to.be.rejectedWith("bootstrapRecovery.addresses must not be empty");
+			"bootstrapRecovery.addresses must not be empty",
+		);
 		const disabled = await Peerbit.create();
 		const enabled = await Peerbit.create({
 			bootstrapRecovery: {
