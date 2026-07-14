@@ -17223,6 +17223,9 @@ export class SharedLog<
 	): Promise<Map<string, { intersecting: boolean }> | undefined> {
 		const now = Date.now();
 		const leaders = new Map<string, { intersecting: boolean }>();
+		// Strict-only peers are not global fallbacks, but may still own an entry's
+		// coordinates. Remember them so a partial fallback cannot bypass sampling.
+		const excludedStrictPeers = new Set<string>();
 		const includeStrict =
 			this._logProperties?.strictFullReplicaFallback !== false;
 		const iterator = this.replicationIndex.iterate(
@@ -17241,10 +17244,11 @@ export class SharedLog<
 					if (peerFilter && !peerFilter.has(range.hash)) {
 						continue;
 					}
-					if (!isMatured(range, now, roleAge)) {
+					if (range.mode === ReplicationIntent.Strict && !includeStrict) {
+						excludedStrictPeers.add(range.hash);
 						continue;
 					}
-					if (range.mode === ReplicationIntent.Strict && !includeStrict) {
+					if (!isMatured(range, now, roleAge)) {
 						continue;
 					}
 					leaders.set(range.hash, { intersecting: true });
@@ -17255,6 +17259,12 @@ export class SharedLog<
 			}
 		} finally {
 			await iterator.close();
+		}
+
+		for (const hash of excludedStrictPeers) {
+			if (!leaders.has(hash)) {
+				return undefined;
+			}
 		}
 
 		return leaders.size > 0 ? leaders : undefined;

@@ -294,6 +294,54 @@ class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
 }
 
 describe("native peerbit backbone", () => {
+	it("samples intersecting strict ranges excluded from full replica fallback", async () => {
+		const maxU64 = (1n << 64n) - 1n;
+		const liveRangeEnd = 86_400_000_000_000_000n;
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+			resolution: "u64",
+		});
+		backbone.putRange({
+			id: "writer",
+			hash: "peer-writer",
+			timestamp: 0,
+			start1: 0n,
+			end1: maxU64,
+			start2: 0n,
+			end2: maxU64,
+			width: maxU64,
+			mode: 0,
+		});
+		backbone.putRange({
+			id: "viewer",
+			hash: "peer-viewer",
+			timestamp: 0,
+			start1: 0n,
+			end1: liveRangeEnd,
+			start2: 0n,
+			end2: liveRangeEnd,
+			width: liveRangeEnd,
+			mode: 1,
+		});
+
+		expect(
+			backbone.findLeaders([0n, maxU64 / 2n], 2, {
+				fullReplicaFallback: true,
+				includeStrictFullReplica: false,
+				now: 1_000,
+				selfHash: "peer-writer",
+				selfReplicating: true,
+			}),
+		).to.deep.equal(
+			new Map([
+				["peer-writer", { intersecting: true }],
+				["peer-viewer", { intersecting: true }],
+			]),
+		);
+	});
+
 	it("defaults buffered coordinate WAL to bounded pending bytes", () => {
 		const persistence = new NativeBackboneCoordinatePersistence(
 			new NativeBackboneMemoryCoordinatePersistenceStore(),

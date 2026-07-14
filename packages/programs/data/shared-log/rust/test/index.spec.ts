@@ -232,6 +232,35 @@ describe("native shared-log range planner", () => {
 		);
 	});
 
+	it("samples intersecting strict ranges excluded from full replica fallback", async () => {
+		const planner = await createRangePlanner("u32");
+		planner.put(
+			range({ id: "writer", hash: "peer-writer", start1: 0, end1: 100 }),
+		);
+		planner.put(
+			range({
+				id: "viewer",
+				hash: "peer-viewer",
+				start1: 0,
+				end1: 10,
+				mode: 1,
+			}),
+		);
+
+		expect(
+			planner.findLeaders([5, 75], 2, {
+				now: 1_000,
+				fullReplicaFallback: true,
+				includeStrictFullReplica: false,
+			}),
+		).to.deep.equal(
+			new Map([
+				["peer-writer", { intersecting: true }],
+				["peer-viewer", { intersecting: true }],
+			]),
+		);
+	});
+
 	it("finds hash gid leaders without returning coordinates to TypeScript", async () => {
 		const planner = await createRangePlanner("u32");
 		planner.put(range({ id: "a", hash: "peer-a", start1: 0, end1: 10 }));
