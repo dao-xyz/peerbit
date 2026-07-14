@@ -5040,20 +5040,25 @@ describe("start/stop", () => {
 					slowDownSetup(stream(session, 1), deferred.promise);
 
 					await session.connect();
-					let t0 = Date.now();
-					let t1 = Number.MAX_SAFE_INTEGER;
 					const waitForPromise = stream(session, 0).waitFor(
 						stream(session, 1).publicKey,
 						{ seek: "present" },
 					);
-					waitForPromise.finally(() => {
-						t1 = Date.now();
-					});
-					await delay(3e3);
-					deferred.resolve();
-					await waitForPromise;
-					clearTimeout(timeout);
-					expect(t1 - t0).to.be.greaterThan(3e3); // it should have waited for the slow down
+					try {
+						const settlementBeforeRelease = await Promise.race([
+							waitForPromise.then(
+								() => "settled",
+								() => "settled",
+							),
+							delay(100).then(() => "pending"),
+						]);
+						expect(settlementBeforeRelease).to.equal("pending");
+						deferred.resolve();
+						await waitForPromise;
+					} finally {
+						deferred.resolve();
+						clearTimeout(timeout);
+					}
 				});
 			});
 		});
