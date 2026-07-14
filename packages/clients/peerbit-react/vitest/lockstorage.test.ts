@@ -14,7 +14,6 @@ OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 */
-import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import nodelocalstorage from "node-localstorage";
 import sinon from "sinon";
@@ -349,20 +348,27 @@ describe("FastMutex", () => {
 		fm.releaseIfOwnedBy("node-unref", () => true);
 	});
 
-	it("should reset the client stats after lock is released", async () => {
-		// without resetting the stats, the acquireStart will always be set, and
-		// after `timeout` ms, will be unable to acquire a lock anymore
+	it("can reacquire after the keep-alive callback releases the lock", async () => {
+		const clock = sandbox.useFakeTimers({ now: 30_000 });
 		const fm1 = new FastMutex({ localStorage: localStorage, timeout: 50 });
 		let keepLock = true;
 		let keepLockFn = () => keepLock;
 		await fm1.lock("resetStats", keepLockFn);
 		expect(fm1.isLocked("resetStats")).to.be.true;
 		keepLock = false;
-		await delay(100); // await timeout
-		expect(fm1.isLocked("resetStats")).to.be.false;
-		const p = fm1.lock("resetStats").then(() => fm1.release("resetStats"));
-
-		await p; // should not throw
+		clock.tick(50);
+		expect(fm1.getLockedOwners("resetStats")).to.deep.equal([]);
+		expect(fm1.intervals.size).to.eq(0);
+		try {
+			const stats = await fm1.lock("resetStats");
+			expect(stats).to.deep.equal({
+				restartCount: 0,
+				contentionCount: 0,
+				locksLost: 0,
+			});
+		} finally {
+			fm1.release("resetStats");
+		}
 	});
 
 	it("can keep lock with callback function", async () => {
@@ -373,17 +379,24 @@ describe("FastMutex", () => {
 		await fm1.lock("x").then(() => fm1.release("x"));
 	});
 
-	it("should reset the client stats if the lock has expired", async () => {
-		// in the event a lock cannot be acquired within `timeout`, acquireStart
-		// will never be reset, and a subsequent call (after the `timeout`) would
-		// immediately fail
+	it("can reacquire after the lock and its legacy grace period expire", async () => {
+		const clock = sandbox.useFakeTimers({ now: 40_000 });
 		const fm1 = new FastMutex({ localStorage: localStorage, timeout: 50 });
 
 		await fm1.lock("resetStats");
-
-		// try to acquire a lock after `timeout`:
-		await delay(75); // a small buffer over timeout to avoid flakiness
-
-		await fm1.lock("resetStats"); // should not throw
+		clock.tick(99);
+		expect(fm1.getLockedOwners("resetStats")).to.deep.equal([fm1.clientId]);
+		clock.tick(1);
+		expect(fm1.getLockedOwners("resetStats")).to.deep.equal([]);
+		try {
+			const stats = await fm1.lock("resetStats");
+			expect(stats).to.deep.equal({
+				restartCount: 0,
+				contentionCount: 0,
+				locksLost: 0,
+			});
+		} finally {
+			fm1.release("resetStats");
+		}
 	});
 });
