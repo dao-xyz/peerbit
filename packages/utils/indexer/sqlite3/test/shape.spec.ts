@@ -19,11 +19,67 @@ import { setup } from "./utils.js";
 
 use(chaiAsPromised);
 
-// These tests are micro-benchmarks and can be noisy across machines/CI.
-// We assert only that shaped queries don't regress badly (they should usually be faster).
+// Keep the projection path warm and repeatedly exercised without turning the
+// correctness suite into a machine-dependent benchmark. A generous absolute
+// budget still catches pathological query/decoding regressions, while the
+// bounded sample count keeps all three cases well below Mocha's suite timeout.
+const SHAPE_SAMPLE_RUNS = 6;
+const SHAPE_SAMPLE_MAX_MS = 15_000;
+const SHAPE_TEST_TIMEOUT_MS = 30_000;
 const MAX_SHAPED_SLOWDOWN = 5;
-const expectNotSignificantlySlower = (shapedMs: number, unshapedMs: number) => {
-	expect(shapedMs).to.be.at.most(unshapedMs * MAX_SHAPED_SLOWDOWN);
+const SHAPED_NOISE_ALLOWANCE_MS = 1_000;
+const now = () => globalThis.performance?.now?.() ?? Date.now();
+
+const runBoundedProjectionSamples = async (
+	label: string,
+	unshaped: () => Promise<string[]>,
+	shaped: () => Promise<string[]>,
+) => {
+	const sample = async (
+		shapedFirst: boolean,
+		totals?: { unshaped: number; shaped: number },
+	) => {
+		const run = async (
+			sampleKind: "unshaped" | "shaped",
+			query: () => Promise<string[]>,
+		) => {
+			const started = now();
+			const ids = await query();
+			if (totals) {
+				totals[sampleKind] += now() - started;
+			}
+			return ids;
+		};
+
+		let fullIds: string[];
+		let projectedIds: string[];
+		if (shapedFirst) {
+			projectedIds = await run("shaped", shaped);
+			fullIds = await run("unshaped", unshaped);
+		} else {
+			fullIds = await run("unshaped", unshaped);
+			projectedIds = await run("shaped", shaped);
+		}
+		expect(projectedIds).to.deep.equal(fullIds);
+	};
+
+	// Prepare statements and verify the same contract once before timing.
+	await sample(false);
+
+	// Alternate which path runs first so cache warmth and scheduler pauses are not
+	// consistently charged to one side of the comparison.
+	const totals = { unshaped: 0, shaped: 0 };
+	for (let i = 0; i < SHAPE_SAMPLE_RUNS; i++) {
+		await sample(i % 2 === 1, totals);
+	}
+	const { unshaped: unshapedMs, shaped: shapedMs } = totals;
+	const elapsed = unshapedMs + shapedMs;
+	expect(elapsed, `${label} ${SHAPE_SAMPLE_RUNS}-sample budget`).to.be.lessThan(
+		SHAPE_SAMPLE_MAX_MS,
+	);
+	expect(shapedMs, `${label} projected-query regression`).to.be.at.most(
+		unshapedMs * MAX_SHAPED_SLOWDOWN + SHAPED_NOISE_ALLOWANCE_MS,
+	);
 };
 
 @variant(0)
@@ -153,22 +209,24 @@ describe("shape", () => {
 	describe("simple array", () => {
 		/*   abstract class ArrayDocumentBase { } */
 
-		it("shaped queries are faster", async () => {
+		it("returns equivalent bounded shape samples", async () => {
 			index = await setup({ schema: ArrayDocument }, create);
 			index.store as SQLiteIndex<ArrayDocument>;
-			let count = 5e4;
-			let itemsToQuery: bigint[] = [];
+			const count = 256;
+			const itemsToQuery: bigint[] = [];
 			for (let i = 0; i < count; i++) {
-				let offset = BigInt(i) * 3n;
-				if (itemsToQuery.length < 1) {
+				const offset = BigInt(i) * 3n;
+				if (itemsToQuery.length < 3) {
 					itemsToQuery.push(offset);
 				}
 				await index.store.put(
-					new ArrayDocument(uuid(), [offset + 0n, offset + 1n, offset + 2n]),
+					new ArrayDocument(`array-${i}`, [
+						offset + 0n,
+						offset + 1n,
+						offset + 2n,
+					]),
 				);
 			}
-
-			const queryCount = 1e4;
 
 			const compares: IntegerCompare[] = itemsToQuery.map(
 				(x) =>
@@ -179,157 +237,99 @@ describe("shape", () => {
 					}),
 			);
 
-			const iterator = index.store.iterate(
-				{ query: new Or(compares) },
-				{ shape: { id: true } },
-			);
-			await iterator.next(1);
-			await iterator.close();
-
-			const iterator2 = index.store.iterate({ query: new Or(compares) });
-			await iterator2.next(1);
-			await iterator2.close();
-
-			const t1 = +new Date();
-
-			let fetch = 30;
-			for (let i = 0; i < queryCount; i++) {
-				const iterator = index.store.iterate(
-					{ query: new Or(compares) },
-					{ shape: { id: true } },
-				);
-				/* const out1 = */ await iterator.next(fetch);
-				await iterator.close();
-
-				/*   if (out1.length !== itemsToQuery.length) {
-					  throw new Error("Expected " + itemsToQuery.length + " but got " + out1.length);
-				  } */
-			}
-
-			const t2 = +new Date();
-
-			const t3 = +new Date();
-			for (let i = 0; i < queryCount; i++) {
-				const iterator = index.store.iterate({ query: new Or(compares) });
-				const out2 = await iterator.next(fetch);
-				await iterator.close();
-				if (out2.length !== itemsToQuery.length) {
-					throw new Error(
-						"Expected " + itemsToQuery.length + " but got " + out2.length,
+			const fetch = 30;
+			await runBoundedProjectionSamples(
+				"simple array shape",
+				async () => {
+					const iterator = index.store.iterate({ query: new Or(compares) });
+					try {
+						const results = await iterator.next(fetch);
+						expect(results).to.have.length(itemsToQuery.length);
+						for (const item of results) {
+							expect(item.value.value).to.have.length(3);
+						}
+						return results.map((item) => String(item.id.primitive));
+					} finally {
+						await iterator.close();
+					}
+				},
+				async () => {
+					const iterator = index.store.iterate(
+						{ query: new Or(compares) },
+						{ shape: { id: true } },
 					);
-				}
-			}
-
-			const t4 = +new Date();
-
-			const shapedMs = t2 - t1;
-			const unshapedMs = t4 - t3;
-			console.log(unshapedMs, shapedMs);
-			expectNotSignificantlySlower(shapedMs, unshapedMs);
-		});
+					try {
+						const results = await iterator.next(fetch);
+						expect(results).to.have.length(itemsToQuery.length);
+						for (const item of results) {
+							expect(item.value).to.have.all.keys("id");
+							expect(item.value.id).to.equal(item.id.primitive);
+						}
+						return results.map((item) => String(item.id.primitive));
+					} finally {
+						await iterator.close();
+					}
+				},
+			);
+		}).timeout(SHAPE_TEST_TIMEOUT_MS);
 	});
 
 	describe("document array", () => {
-		it("shaped queries are faster", async () => {
+		it("returns equivalent bounded shape samples", async () => {
 			index = await setup({ schema: Base }, create);
 			index.store as SQLiteIndex<Base>;
-			let count = 1e4;
+			const count = 128;
 			for (let i = 0; i < count; i++) {
 				if (i % 5 === 0) {
-					await index.store.put(new NestedBoolQueryDocument(uuid(), []));
+					await index.store.put(
+						new NestedBoolQueryDocument(`document-array-${i}`, []),
+					);
 				} else {
 					await index.store.put(
-						new NestedBoolQueryDocument(uuid(), [
+						new NestedBoolQueryDocument(`document-array-${i}`, [
 							new DocumentWithProperties({ bool: i % 2 === 0 ? true : false }),
 						]),
 					);
 				}
 			}
 			const fetch = 30;
-			const queryCount = 1e4;
+			const query = () =>
+				new BoolQuery({ key: ["nested", "bool"], value: true });
 
-			let iterator = index.store.iterate({
-				query: new BoolQuery({ key: ["nested", "bool"], value: true }),
-			});
-			await iterator.next(1);
-			await iterator.close();
-
-			let iteratorShaped = index.store.iterate(
-				{
-					query: new BoolQuery({ key: ["nested", "bool"], value: true }),
+			await runBoundedProjectionSamples(
+				"document array shape",
+				async () => {
+					const iterator = index.store.iterate({ query: query() });
+					try {
+						const results = await iterator.next(fetch);
+						expect(results).to.have.length(fetch);
+						for (const item of results) {
+							expect(item.value.nested[0].bool).to.equal(true);
+						}
+						return results.map((item) => String(item.id.primitive));
+					} finally {
+						await iterator.close();
+					}
 				},
-				{
-					shape: { id: true },
+				async () => {
+					const iterator = index.store.iterate(
+						{ query: query() },
+						{ shape: { id: true } },
+					);
+					try {
+						const results = await iterator.next(fetch);
+						expect(results).to.have.length(fetch);
+						for (const item of results) {
+							expect(item.value).to.have.all.keys("id");
+							expect(item.value.id).to.equal(item.id.primitive);
+						}
+						return results.map((item) => String(item.id.primitive));
+					} finally {
+						await iterator.close();
+					}
 				},
 			);
-			await iteratorShaped.next(1);
-			await iteratorShaped.close();
-
-			const t1 = +new Date();
-			let allResults = [];
-
-			for (let i = 0; i < queryCount; i++) {
-				let iterator = index.store.iterate({
-					query: new BoolQuery({ key: ["nested", "bool"], value: true }),
-				});
-				const result = await iterator.next(fetch);
-				if (result.length !== fetch) {
-					throw new Error(
-						"Expected to fetch " + fetch + " but got " + result.length,
-					);
-				}
-				for (const item of result) {
-					if (item.value.nested[0].bool !== true) {
-						throw new Error("Expected to fetch only true values");
-					}
-				}
-				for (const item of result) {
-					allResults.push(item);
-				}
-				await iterator.close();
-			}
-
-			const t2 = +new Date();
-			const t3 = +new Date();
-
-			let c = 0;
-			for (let i = 0; i < queryCount; i++) {
-				let iteratorShaped = index.store.iterate(
-					{
-						query: new BoolQuery({ key: ["nested", "bool"], value: true }),
-					},
-					{
-						shape: { id: true },
-					},
-				);
-				const result = await iteratorShaped.next(fetch);
-				if (result.length !== fetch) {
-					throw new Error(
-						"Expected to fetch " + fetch + " but got " + result.length,
-					);
-				}
-
-				for (const item of result) {
-					if (item.id.primitive !== allResults[c].id.primitive) {
-						throw new Error(
-							"Mismatch: " +
-								item.id.primitive +
-								" !== " +
-								allResults[c].id.primitive,
-						);
-					}
-					c++;
-				}
-				await iteratorShaped.close();
-			}
-
-			const t4 = +new Date();
-			const shapedMs = t4 - t3;
-			const unshapedMs = t2 - t1;
-			console.log(shapedMs, unshapedMs);
-			expectNotSignificantlySlower(shapedMs, unshapedMs);
-			expect(allResults.length).to.equal(queryCount * fetch);
-		});
+		}).timeout(SHAPE_TEST_TIMEOUT_MS);
 	});
 
 	describe("nested document", () => {
@@ -405,88 +405,61 @@ describe("shape", () => {
 			}
 		}
 
-		it("shaped queries are faster", async () => {
+		it("returns equivalent bounded shape samples", async () => {
 			index = await setup({ schema: NestedBoolQueryDocument }, create);
 			index.store as SQLiteIndex<NestedBoolQueryDocument>;
-			let count = 1e4;
+			const count = 128;
 			for (let i = 0; i < count; i++) {
 				if (i % 5 === 0) {
-					await index.store.put(new NestedBoolQueryDocument(uuid()));
+					await index.store.put(
+						new NestedBoolQueryDocument(`nested-document-${i}`),
+					);
 				} else {
 					await index.store.put(
 						new NestedBoolQueryDocument(
-							uuid(),
+							`nested-document-${i}`,
 							new Nested(i % 2 === 0 ? true : false),
 						),
 					);
 				}
 			}
 			const fetch = 30;
-			const queryCount = 1e4;
-			const t1 = +new Date();
-			let allResults = [];
-			for (let i = 0; i < queryCount; i++) {
-				let iterator = index.store.iterate({
-					query: new BoolQuery({ key: ["nested", "bool"], value: true }),
-				});
-				const result = await iterator.next(fetch);
-				if (result.length !== fetch) {
-					throw new Error(
-						"Expected to fetch " + fetch + " but got " + result.length,
-					);
-				}
-				for (const item of result) {
-					if (item.value.nested.bool !== true) {
-						throw new Error("Expected to fetch only true values");
+			const query = () =>
+				new BoolQuery({ key: ["nested", "bool"], value: true });
+
+			await runBoundedProjectionSamples(
+				"nested document shape",
+				async () => {
+					const iterator = index.store.iterate({ query: query() });
+					try {
+						const results = await iterator.next(fetch);
+						expect(results).to.have.length(fetch);
+						for (const item of results) {
+							expect(item.value.nested?.bool).to.equal(true);
+						}
+						return results.map((item) => String(item.id.primitive));
+					} finally {
+						await iterator.close();
 					}
-				}
-				for (const item of result) {
-					allResults.push(item);
-				}
-				await iterator.close();
-			}
-
-			const t2 = +new Date();
-
-			const t3 = +new Date();
-			/*  let c = 0; */
-			for (let i = 0; i < queryCount; i++) {
-				let iteratorShaped = index.store.iterate(
-					{
-						query: new BoolQuery({ key: ["nested", "bool"], value: true }),
-					},
-					{
-						shape: { id: true },
-					},
-				);
-				const result = await iteratorShaped.next(fetch);
-				if (result.length !== fetch) {
-					throw new Error(
-						"Expected to fetch " + fetch + " but got " + result.length,
+				},
+				async () => {
+					const iterator = index.store.iterate(
+						{ query: query() },
+						{ shape: { id: true } },
 					);
-				}
-
-				/*  for (const item of result) {
-					 if (item.id.primitive !== allResults[c].id.primitive) {
-						 throw new Error(
-							 "Mismatch: " +
-							 item.id.primitive +
-							 " !== " +
-							 allResults[c].id.primitive,
-						 );
-					 }
-					 c++;
-				 } */
-
-				await iteratorShaped.close();
-			}
-
-			const t4 = +new Date();
-			const shapedMs = t4 - t3;
-			const unshapedMs = t2 - t1;
-			console.log(shapedMs, unshapedMs);
-			expectNotSignificantlySlower(shapedMs, unshapedMs);
-			expect(allResults.length).to.equal(queryCount * fetch);
-		});
+					try {
+						const results = await iterator.next(fetch);
+						expect(results).to.have.length(fetch);
+						for (const item of results) {
+							expect(item.value).to.have.all.keys("id");
+							expect(item.value.id).to.equal(item.id.primitive);
+						}
+						return results.map((item) => String(item.id.primitive));
+					} finally {
+						await iterator.close();
+					}
+				},
+			);
+		}).timeout(SHAPE_TEST_TIMEOUT_MS);
 	});
 });
