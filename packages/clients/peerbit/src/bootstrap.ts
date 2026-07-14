@@ -202,8 +202,20 @@ const readBootstrapList = async (response: Response): Promise<string> => {
 	}
 };
 
-const fetchBootstrapAddresses = async (source: string): Promise<string[]> => {
+const abortReason = (signal: AbortSignal): unknown =>
+	signal.reason ?? new Error("Bootstrap address resolution aborted");
+
+const fetchBootstrapAddresses = async (
+	source: string,
+	externalSignal?: AbortSignal,
+): Promise<string[]> => {
 	const controller = new AbortController();
+	const onExternalAbort = () => controller.abort(abortReason(externalSignal!));
+	if (externalSignal?.aborted) {
+		onExternalAbort();
+	} else {
+		externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
+	}
 	const timeout = setTimeout(() => {
 		controller.abort(
 			new Error(
@@ -233,17 +245,29 @@ const fetchBootstrapAddresses = async (source: string): Promise<string[]> => {
 		throw error;
 	} finally {
 		clearTimeout(timeout);
+		externalSignal?.removeEventListener("abort", onExternalAbort);
 	}
+};
+
+export type ResolveBootstrapAddressesOptions = {
+	signal?: AbortSignal;
 };
 
 export const resolveBootstrapAddresses = async (
 	v: string = "5",
+	options: ResolveBootstrapAddressesOptions = {},
 ): Promise<string[]> => {
 	const failures: Error[] = [];
 	for (const source of getBootstrapListSources(v)) {
+		if (options.signal?.aborted) {
+			throw abortReason(options.signal);
+		}
 		try {
-			return await fetchBootstrapAddresses(source);
+			return await fetchBootstrapAddresses(source, options.signal);
 		} catch (error) {
+			if (options.signal?.aborted) {
+				throw abortReason(options.signal);
+			}
 			failures.push(
 				new Error(
 					`Failed to load bootstrap addresses from ${source}: ${
