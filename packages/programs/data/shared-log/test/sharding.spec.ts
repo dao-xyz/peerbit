@@ -2251,11 +2251,13 @@ testSetups.forEach((setup) => {
 				);
 
 				const entryCount = shardingSmallEntryCount;
-				await appendInBatches(entryCount, (i) =>
-					db1.add(toBase64(new Uint8Array([i])), {
+				const appendedEntries: Entry<any>[] = [];
+				await appendInBatches(entryCount, async (i) => {
+					const { entry } = await db1.add(toBase64(new Uint8Array([i])), {
 						meta: { next: [] },
-					}),
-				);
+					});
+					appendedEntries.push(entry);
+				});
 
 				db3 = await EventStore.open<EventStore<string, any>>(
 					db1.address!,
@@ -2269,18 +2271,25 @@ testSetups.forEach((setup) => {
 						},
 					},
 				);
-				// The runtime now schedules delayed repair for late joiners. The contract
-				// here is the settled bounded distribution with no idle under-replication,
-				// not that every internal repair/prune timer has gone fully idle.
+				// The runtime now schedules delayed repair for late joiners. Assert the
+				// planner-agreed owners instead of a probabilistic per-peer size band: random
+				// peer identities can legitimately put one peer just outside that band.
 				await waitForParticipationToSettle(db1, db2, db3);
-				await waitForResolved(
-					async () => {
-						await checkBounded(entryCount, 0.5, 0.9, db1, db2, db3);
-						expect(
-							await countIdleUnderReplicatedEntries(2, db1, db2, db3),
-						).equal(0);
+				const fixedPeers = [
+					session.peers[0].identity.publicKey.hashcode(),
+					session.peers[1].identity.publicKey.hashcode(),
+					session.peers[2].identity.publicKey.hashcode(),
+				];
+				await waitForSemanticOwnership(
+					"distributes-to-joining-peers",
+					appendedEntries,
+					[db1, db2, db3],
+					fixedPeers,
+					{
+						expectedCount: entryCount,
+						mode: "exact",
+						requiredPeer: fixedPeers[2],
 					},
-					{ timeout: 120_000, delayInterval: 500 },
 				);
 			});
 
