@@ -81,6 +81,7 @@ export type Args<
 	nativeGraph?: boolean;
 	nativeBackbone?: SharedLogOptions<Operation<T>, D, R>["nativeBackbone"];
 	nativeRangePlanner?: SharedLogOptions<Operation<T>, D, R>["nativeRangePlanner"];
+	strictFullReplicaFallback?: boolean;
 };
 @variant("event_store")
 export class EventStore<
@@ -157,6 +158,7 @@ export class EventStore<
 			nativeGraph: properties?.nativeGraph,
 			nativeBackbone: properties?.nativeBackbone,
 			nativeRangePlanner: properties?.nativeRangePlanner,
+			strictFullReplicaFallback: properties?.strictFullReplicaFallback,
 
 			// staticArgs was unused; keep open args explicit in tests
 		});

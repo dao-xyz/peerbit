@@ -280,6 +280,10 @@ impl PeerRangeStats {
             .first()
             .is_some_and(|range| range.is_matured(now, role_age_ms))
     }
+
+    fn has_strict_range(&self) -> bool {
+        self.all.len() > self.non_strict.len()
+    }
 }
 
 impl RangePlanner {
@@ -547,6 +551,16 @@ impl RangePlanner {
         options: &SampleOptions,
         include_strict: bool,
     ) -> Option<Vec<LeaderSample>> {
+        self.get_full_replica_leaders_inner(replicas, options, include_strict, false)
+    }
+
+    fn get_full_replica_leaders_inner(
+        &self,
+        replicas: usize,
+        options: &SampleOptions,
+        include_strict: bool,
+        require_coordinate_sampling_for_strict_only: bool,
+    ) -> Option<Vec<LeaderSample>> {
         let mut leaders: IndexSet<String> = IndexSet::new();
 
         for (hash, stats) in self.peer_ranges.iter() {
@@ -555,7 +569,23 @@ impl RangePlanner {
                     continue;
                 }
             }
-            if !stats.has_matured_range(options.now, options.role_age_ms, include_strict) {
+            let has_matured_range = if include_strict {
+                stats.has_matured_range(options.now, options.role_age_ms, true)
+            } else {
+                let has_matured_non_strict =
+                    stats.has_matured_range(options.now, options.role_age_ms, false);
+                // A strict-only peer is intentionally omitted from the global fallback,
+                // but it may still own one of this entry's coordinates. The fallback has
+                // no coordinates to check, so its partial result must not return early.
+                if require_coordinate_sampling_for_strict_only
+                    && stats.has_strict_range()
+                    && !has_matured_non_strict
+                {
+                    return None;
+                }
+                has_matured_non_strict
+            };
+            if !has_matured_range {
                 continue;
             }
 
@@ -866,9 +896,12 @@ fn find_leaders_with_prepared_options(
     include_strict_full_replica: bool,
 ) -> Vec<LeaderSample> {
     if full_replica_fallback {
-        if let Some(leaders) =
-            planner.get_full_replica_leaders(replicas, options, include_strict_full_replica)
-        {
+        if let Some(leaders) = get_routing_full_replica_leaders(
+            planner,
+            replicas,
+            options,
+            include_strict_full_replica,
+        ) {
             return leaders;
         }
     }
@@ -880,6 +913,15 @@ fn find_leaders_with_prepared_options(
         .map(|peers| IndexSet::from_iter(peers.iter().cloned()));
 
     planner.get_samples(cursors, &options)
+}
+
+fn get_routing_full_replica_leaders(
+    planner: &RangePlanner,
+    replicas: usize,
+    options: &SampleOptions,
+    include_strict_full_replica: bool,
+) -> Option<Vec<LeaderSample>> {
+    planner.get_full_replica_leaders_inner(replicas, options, include_strict_full_replica, true)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -934,7 +976,8 @@ fn find_leaders_with_batch_caches(
         if let Some(leaders) = full_replica_leaders_by_replicas
             .entry(replicas)
             .or_insert_with(|| {
-                planner.get_full_replica_leaders(
+                get_routing_full_replica_leaders(
+                    planner,
                     replicas,
                     prepared_options,
                     include_strict_full_replica,
@@ -977,9 +1020,13 @@ fn full_replica_self_leader_with_batch_caches(
     full_replica_self_leader_by_replicas
         .entry(replicas)
         .or_insert_with(|| {
-            planner
-                .get_full_replica_leaders(replicas, prepared_options, include_strict_full_replica)
-                .map(|leaders| leaders.iter().any(|leader| leader.hash == self_hash))
+            get_routing_full_replica_leaders(
+                planner,
+                replicas,
+                prepared_options,
+                include_strict_full_replica,
+            )
+            .map(|leaders| leaders.iter().any(|leader| leader.hash == self_hash))
         })
         .as_ref()
         .copied()
@@ -2866,7 +2913,8 @@ impl NativeSharedLogState {
                 full_replica_leaders_by_replicas
                     .entry(replicas)
                     .or_insert_with(|| {
-                        self.inner.range_planner.get_full_replica_leaders(
+                        get_routing_full_replica_leaders(
+                            &self.inner.range_planner,
                             replicas,
                             prepared_options,
                             include_strict_full_replica,
@@ -4167,7 +4215,7 @@ fn samples_to_rows(samples: Vec<LeaderSample>) -> Array {
 mod tests {
     use super::{
         find_leaders_with_prepared_options, LeaderSample, NativeSharedLogState, RangePlanner,
-        ReplicationRange, SampleOptions, SharedLogError,
+        ReplicationRange, SampleOptions, SharedLogError, MAX_U64,
     };
     use indexmap::IndexSet;
 
@@ -4612,6 +4660,61 @@ mod tests {
         assert_eq!(leaders[0].hash, "peer-a");
         assert_eq!(leaders[1].hash, "peer-b");
         assert!(leaders.iter().all(|leader| leader.intersecting));
+    }
+
+    #[test]
+    fn find_leaders_samples_strict_ranges_excluded_from_full_replica_fallback() {
+        let mut planner = RangePlanner::new("u64");
+        planner.put(ReplicationRange::new(
+            "writer",
+            "peer-writer",
+            0,
+            0,
+            MAX_U64,
+            0,
+            MAX_U64,
+            MAX_U64,
+            0,
+        ));
+        planner.put(ReplicationRange::new(
+            "viewer",
+            "peer-viewer",
+            0,
+            0,
+            86_400_000_000_000_000,
+            0,
+            86_400_000_000_000_000,
+            86_400_000_000_000_000,
+            1,
+        ));
+
+        let leaders = planner.find_leaders(
+            &[0, MAX_U64 / 2],
+            2,
+            &SampleOptions {
+                now: 1_000,
+                ..Default::default()
+            },
+            true,
+            "peer-writer",
+            true,
+            true,
+            false,
+        );
+
+        assert_eq!(
+            leaders,
+            vec![
+                LeaderSample {
+                    hash: "peer-writer".to_string(),
+                    intersecting: true,
+                },
+                LeaderSample {
+                    hash: "peer-viewer".to_string(),
+                    intersecting: true,
+                },
+            ],
+        );
     }
 
     #[test]
