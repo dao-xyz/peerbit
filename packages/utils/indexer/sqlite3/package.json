@@ -71,21 +71,21 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"better-sqlite3": "^12.5.0",
 		"@dao-xyz/borsh": "^6.0.0",
-		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
 		"@sqlite.org/sqlite-wasm": "^3.51.1-build2",
+		"better-sqlite3": "^12.5.0",
+		"libsodium-wrappers": "0.7.15",
 		"p-defer": "^4.0.0",
 		"uint8arrays": "^5.1.0",
-		"uuid": "^10.0.0",
-		"libsodium-wrappers": "0.7.15"
+		"uuid": "^11.1.1"
 	},
 	"devDependencies": {
-		"@types/better-sqlite3": "^7.6.13",
-		"@peerbit/indexer-tests": "workspace:*",
 		"@peerbit/build-assets": "workspace:*",
-		"esbuild": "0.27.0"
+		"@peerbit/indexer-tests": "workspace:*",
+		"@types/better-sqlite3": "^7.6.13",
+		"esbuild": "0.28.1"
 	}
 }

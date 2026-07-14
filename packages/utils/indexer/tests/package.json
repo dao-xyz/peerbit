@@ -61,13 +61,13 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"@peerbit/indexer-interface": "workspace:*",
-		"@peerbit/crypto": "workspace:*",
-		"@peerbit/time": "workspace:*",
 		"@dao-xyz/borsh": "^6.0.0",
+		"@peerbit/crypto": "workspace:*",
+		"@peerbit/indexer-interface": "workspace:*",
+		"@peerbit/time": "workspace:*",
+		"benchmark": "^2.1.4",
 		"libsodium-wrappers": "0.7.15",
 		"uint8arrays": "^5.1.0",
-		"benchmark": "^2.1.4",
-		"uuid": "^10.0.0"
+		"uuid": "^11.1.1"
 	}
 }

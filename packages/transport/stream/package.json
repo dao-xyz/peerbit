@@ -81,7 +81,7 @@
 		"@peerbit/libp2p-test-utils": "workspace:*",
 		"@types/fast-fifo": "^1.0.2",
 		"@types/sinon": "^10.0.20",
-		"sinon": "^21.0.0"
+		"sinon": "^22.0.0"
 	},
 	"dependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",

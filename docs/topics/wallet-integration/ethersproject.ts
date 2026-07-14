@@ -1,5 +1,4 @@
 import { field, variant } from "@dao-xyz/borsh";
-import { Wallet } from "@ethersproject/wallet";
 import {
 	type Identity,
 	PreHash,
@@ -9,6 +8,7 @@ import {
 import { Documents } from "@peerbit/document";
 import { Program } from "@peerbit/program";
 import { expect } from "chai";
+import { Wallet } from "ethers";
 import { Peerbit } from "peerbit";
 import { v4 as uuid } from "uuid";
 

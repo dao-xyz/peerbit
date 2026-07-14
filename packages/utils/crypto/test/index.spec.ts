@@ -1,7 +1,7 @@
 import { deserialize, serialize } from "@dao-xyz/borsh";
-import { Wallet } from "@ethersproject/wallet";
 import { keys } from "@libp2p/crypto";
 import { expect } from "chai";
+import { Wallet, getBytes } from "ethers";
 import sodium from "libsodium-wrappers";
 import {
 	sign as signEd25519Browser,
@@ -19,6 +19,7 @@ import {
 	SignatureWithKey,
 	X25519Keypair,
 	getKeypairFromPrivateKey,
+	recoverPublicKeyFromSignature,
 	verify,
 	verifySignatureSecp256k1,
 } from "../src/index.js";
@@ -197,6 +198,43 @@ describe("X25519", () => {
 
 describe("Sepck2561k1", () => {
 	const data = new Uint8Array([1, 2, 3]);
+	const decoder = new TextDecoder();
+	const oldWireVectors = [
+		{
+			privateKey:
+				"0x0000000000000000000000000000000000000000000000000000000000000001",
+			digest:
+				"0x1d2e3f5061728394a5b6c7d8e9fa0b1c2d3e4f60718293a4b5c6d7e8f90a1b2c",
+			signature:
+				"0xe0cadda129bbfe422d073abe89a24aadd151b3aad0d9af765d70eb325206385844001498a5524c889cbf9012d5052a458ea8494fe8b1803a53de3da2c1db0bec1c",
+			recoveryParam: 1,
+		},
+		{
+			privateKey:
+				"0x0000000000000000000000000000000000000000000000000000000000000002",
+			digest:
+				"0x3a4b5c6d7e8fa0b1c2d3e4f5061728394a5b6c7d8e9fb0c1d2e3f40516273849",
+			signature:
+				"0xc7db01f7356bd08214e54ea2bcd04bcad58eec823a3ab839f7a95450b9f3e45d09ae730270d61da6a7d9e8b08c8d93683e89d83e490d67fa128e55226fee77291b",
+			recoveryParam: 0,
+		},
+	] as const;
+	const fixedKeypair = (privateKey: string) =>
+		getKeypairFromPrivateKey(
+			keys.privateKeyFromRaw(getBytes(privateKey)),
+		) as Secp256k1Keypair;
+	const expectDigestRejection = async (operation: Promise<unknown>) => {
+		let rejection: unknown;
+		try {
+			await operation;
+		} catch (error) {
+			rejection = error;
+		}
+		expect(rejection).to.be.instanceOf(Error);
+		expect((rejection as Error).message).to.contain(
+			"exactly 32-byte prepared digest",
+		);
+	};
 
 	it("wallet sign", async () => {
 		const wallet = Wallet.createRandom();
@@ -225,6 +263,71 @@ describe("Sepck2561k1", () => {
 		const keypair = getKeypairFromPrivateKey(privateKeyGenerated);
 		const signature = await keypair.sign(data, PreHash.ETH_KECCAK_256);
 		expect(await verifySignatureSecp256k1(signature, data)).to.be.true;
+	});
+
+	it("preserves Ethers v5 wire signatures for both recovery parities", async () => {
+		for (const vector of oldWireVectors) {
+			const keypair = fixedKeypair(vector.privateKey);
+			const digest = getBytes(vector.digest);
+			const signature = await keypair.sign(digest, PreHash.NONE);
+
+			expect(decoder.decode(signature.signature)).to.equal(vector.signature);
+			expect(Number.parseInt(vector.signature.slice(-2), 16) - 27).to.equal(
+				vector.recoveryParam,
+			);
+			expect(await verifySignatureSecp256k1(signature, digest)).to.be.true;
+			expect(
+				recoverPublicKeyFromSignature(digest, vector.signature),
+			).to.deep.equal(keypair.publicKey.publicKey);
+		}
+	});
+
+	it("requires exactly 32 prepared digest bytes", async () => {
+		const keypair = fixedKeypair(oldWireVectors[0].privateKey);
+		const validDigest = getBytes(oldWireVectors[0].digest);
+		const validSignature = await keypair.sign(validDigest, PreHash.NONE);
+		expect(await verifySignatureSecp256k1(validSignature, validDigest)).to.be
+			.true;
+
+		for (const length of [0, 1, 31, 33, 64]) {
+			const invalidDigest = new Uint8Array(length);
+			await expectDigestRejection(keypair.sign(invalidDigest, PreHash.NONE));
+			expect(await verifySignatureSecp256k1(validSignature, invalidDigest)).to
+				.be.false;
+			expect(() =>
+				recoverPublicKeyFromSignature(
+					invalidDigest,
+					oldWireVectors[0].signature,
+				),
+			).to.throw("exactly 32-byte prepared digest");
+		}
+	});
+
+	it("rejects scalar-equivalent raw-message collisions", async () => {
+		const keypair = fixedKeypair(oldWireVectors[0].privateKey);
+		const scalarOne = new Uint8Array(32);
+		scalarOne[31] = 1;
+		const scalarOneSignature = await keypair.sign(scalarOne, PreHash.NONE);
+		expect(
+			await verifySignatureSecp256k1(scalarOneSignature, new Uint8Array([1])),
+		).to.be.false;
+		expect(
+			await verifySignatureSecp256k1(
+				scalarOneSignature,
+				new Uint8Array([0, 1]),
+			),
+		).to.be.false;
+
+		const prefix = new Uint8Array(32).fill(9);
+		const prefixSignature = await keypair.sign(prefix, PreHash.NONE);
+		for (const tail of [8, 9]) {
+			const extended = new Uint8Array(33);
+			extended.set(prefix);
+			extended[32] = tail;
+			expect(await verifySignatureSecp256k1(prefixSignature, extended)).to.be
+				.false;
+			await expectDigestRejection(keypair.sign(extended, PreHash.NONE));
+		}
 	});
 
 	describe("PeerId", () => {

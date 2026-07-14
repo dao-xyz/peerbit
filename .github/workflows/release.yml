@@ -1,23 +1,23 @@
 on:
-    push:
-      branches:
-        - master
-      paths:
-          - packages/**
-          - package.json
-          - scripts/**
-          - .changeset/**
-          - .github/workflows/release.yml
-    workflow_dispatch:
-      inputs:
-        publish_mode:
-          description: Publish mode
-          required: true
-          default: stable
-          type: choice
-          options:
-            - stable
-            - rc
+  push:
+    branches:
+      - master
+    paths:
+      - packages/**
+      - package.json
+      - scripts/**
+      - .changeset/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+    inputs:
+      publish_mode:
+        description: Publish mode
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - rc
 permissions:
   contents: write
   issues: write
@@ -72,46 +72,46 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
 
-    # The publish command builds, so the wasm toolchain must be installed before
-    # the changesets action runs (several packages ship wasm-pack artifacts).
+      # The publish command builds, so the wasm toolchain must be installed before
+      # the changesets action runs (several packages ship wasm-pack artifacts).
       - name: Install deps
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           rustup target add wasm32-unknown-unknown
-          pnpm install --frozen-lockfile=false
+          pnpm install --frozen-lockfile
 
       - name: Configure Peerbit Bot git identity
         run: |
           git config --local user.name "Peerbit Bot"
           git config --local user.email "273107789+peerbit-org@users.noreply.github.com"
 
-    # changesets/action opens the Version Packages PR (when changesets are
-    # pending) and, once that PR is merged, runs the publish command below.
-    #
-    # NOTE: the default workflow token cannot trigger downstream workflows (CI)
-    # on the Version Packages PR it opens, so the PR uses RELEASE_PR_TOKEN —
-    # a peerbit-org bot PAT with repo + workflow scopes. The authentication
-    # preflight above deliberately fails closed if the secret is missing or does
-    # not belong to peerbit-org. The checkout token (git pushes: version branch,
-    # release tags), action token, and environment token below all use that PAT.
-    #
-    # createGithubReleases is disabled deliberately. changesets tags packages as
-    # `<name>@<version>` (e.g. peerbit@5.2.21, @peerbit/crypto@3.2.0), whereas
-    # release-please used `<component>-v<version>` (peerbit-v5.2.20). The new
-    # namespace does not overlap the legacy one, so the first release run sees
-    # every current package as "untagged" and establishes a fresh `@`-format tag
-    # baseline. If GitHub Releases were left on, the action would parse those
-    # baseline `New tag:` lines and create a GitHub Release per package built
-    # from its release-please-formatted CHANGELOG (which has no `## <version>`
-    # heading changesets can locate), producing release bodies that are the whole
-    # changelog. Publishing correctness (npm from-package + git tags) is
-    # unaffected; only the redundant GitHub Release objects are dropped. Re-enable
-    # once the CHANGELOGs are migrated to the changesets `## <version>` format.
+      # changesets/action opens the Version Packages PR (when changesets are
+      # pending) and, once that PR is merged, runs the publish command below.
+      #
+      # NOTE: the default workflow token cannot trigger downstream workflows (CI)
+      # on the Version Packages PR it opens, so the PR uses RELEASE_PR_TOKEN —
+      # a peerbit-org bot PAT with repo + workflow scopes. The authentication
+      # preflight above deliberately fails closed if the secret is missing or does
+      # not belong to peerbit-org. The checkout token (git pushes: version branch,
+      # release tags), action token, and environment token below all use that PAT.
+      #
+      # createGithubReleases is disabled deliberately. changesets tags packages as
+      # `<name>@<version>` (e.g. peerbit@5.2.21, @peerbit/crypto@3.2.0), whereas
+      # release-please used `<component>-v<version>` (peerbit-v5.2.20). The new
+      # namespace does not overlap the legacy one, so the first release run sees
+      # every current package as "untagged" and establishes a fresh `@`-format tag
+      # baseline. If GitHub Releases were left on, the action would parse those
+      # baseline `New tag:` lines and create a GitHub Release per package built
+      # from its release-please-formatted CHANGELOG (which has no `## <version>`
+      # heading changesets can locate), producing release bodies that are the whole
+      # changelog. Publishing correctness (npm from-package + git tags) is
+      # unaffected; only the redundant GitHub Release objects are dropped. Re-enable
+      # once the CHANGELOGs are migrated to the changesets `## <version>` format.
       - name: Create Release PR or Publish
         if: ${{ github.event_name == 'push' }}
         uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
@@ -145,16 +145,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-    # Manual stable escape hatch: build and publish anything whose package.json
-    # version is not yet on npm, without going through the Version Packages PR.
-      - name: Build Packages
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable' }}
-        run: pnpm run build
-      - name: Publish to NPM
+      # Manual stable escape hatch: build, run the shared fail-closed security
+      # gate, and publish anything whose package.json version is not yet on npm,
+      # without going through the Version Packages PR.
+      - name: Build, gate, and publish stable packages
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish_mode == 'stable' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm run --if-present release
+        run: pnpm run release
 
   # Release candidate flow: manual dispatch only, builds and runs
   # `aegir release-rc` to publish prerelease versions to npm.
@@ -193,7 +191,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
-          registry-url: 'https://registry.npmjs.org'
+          registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
@@ -202,20 +200,17 @@ jobs:
         run: |
           curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
           rustup target add wasm32-unknown-unknown
-          pnpm install --frozen-lockfile=false
+          pnpm install --frozen-lockfile
 
       - name: Configure Peerbit Bot git identity
         run: |
           git config --local user.name "Peerbit Bot"
           git config --local user.email "273107789+peerbit-org@users.noreply.github.com"
 
-      - name: Build Packages
-        run: pnpm run build
-
-      - name: Publish RC to NPM
+      - name: Build, gate, and publish RC to NPM
         env:
           GH_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.RELEASE_PR_TOKEN }}
           NPM_CONFIG_GIT_CHECKS: "false"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm run --if-present release:rc
+        run: pnpm run release:rc

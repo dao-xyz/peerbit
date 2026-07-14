@@ -69,9 +69,9 @@
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
-		"@ethersproject/wallet": "^5.8.0",
 		"@peerbit/test-utils": "workspace:*",
-		"@peerbit/time": "workspace:*"
+		"@peerbit/time": "workspace:*",
+		"ethers": "^6.17.0"
 	},
 	"repository": {
 		"type": "git",
