@@ -91,7 +91,7 @@ describe("pubsub-topic-sim (ci)", () => {
 		expect(result.modeToLenMax).to.equal(0);
 	});
 
-	it("remains mostly connected under mild churn", async function () {
+	it("remains mostly connected under mild leaf churn", async function () {
 		this.timeout(90_000);
 
 		const result = await runPubsubTopicSimIsolated({
@@ -107,6 +107,10 @@ describe("pubsub-topic-sim (ci)", () => {
 			seed: 1,
 			topic: "concert",
 			subscribeModel: "preseed",
+			// This case measures ordinary subscriber churn. Keep relay capacity on the
+			// stable routers, which the churn selector excludes; relay-loss recovery is
+			// covered separately by deterministic fanout-tree tests.
+			relayFraction: 0,
 			warmupMessages: 2,
 			settleMs: 1_000,
 			timeoutMs: 60_000,
@@ -125,5 +129,6 @@ describe("pubsub-topic-sim (ci)", () => {
 		expect(result.deliveredOnlinePct).to.be.at.least(85);
 		expect(result.publishErrors).to.be.lessThan(10);
 		expect(result.churnEvents).to.be.greaterThan(0);
+		expect(result.params.relayFraction).to.equal(0);
 	});
 });
