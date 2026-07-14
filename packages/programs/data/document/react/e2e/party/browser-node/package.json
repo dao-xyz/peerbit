@@ -9,27 +9,27 @@
 		"preview": "vite preview --host"
 	},
 	"dependencies": {
-		"@peerbit/document-react-party-shared": "workspace:*",
 		"@peerbit/any-store-opfs": "workspace:*",
 		"@peerbit/document": "workspace:*",
 		"@peerbit/document-react": "workspace:*",
+		"@peerbit/document-react-party-shared": "workspace:*",
 		"@peerbit/indexer-simple": "workspace:*",
 		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@peerbit/logger": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/program-react": "workspace:*",
 		"@peerbit/react": "workspace:*",
 		"@peerbit/riblt": "workspace:*",
 		"@peerbit/vite": "workspace:*",
+		"events": "^3.3.0",
 		"react": "^19.0.0",
-		"react-dom": "^19.0.0",
-		"@peerbit/logger": "workspace:*",
-		"events": "^3.3.0"
+		"react-dom": "^19.0.0"
 	},
 	"devDependencies": {
 		"@types/react": "^18.3.11",
 		"@types/react-dom": "^18.3.0",
 		"@vitejs/plugin-react": "^5.1.1",
 		"typescript": "^5.6.3",
-		"vite": "^7.1.7"
+		"vite": "^7.3.6"
 	}
 }

@@ -63,8 +63,8 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"devDependencies": {
-		"@types/elliptic": "^6.4.18",
 		"@types/libsodium-wrappers": "^0.7.14",
+		"ethers": "^6.17.0",
 		"multiformats": "^13.4.2",
 		"uint8arrays": "^5.1.0"
 	},
@@ -72,14 +72,13 @@
 		"@dao-xyz/borsh": "^6.0.0",
 		"@ethersproject/bytes": "^5.7.0",
 		"@ethersproject/strings": "^5.7.0",
-		"@ethersproject/wallet": "^5.8.0",
 		"@libp2p/crypto": "^5.1.14",
 		"@libp2p/interface": "^3.1.1",
 		"@libp2p/peer-id": "^6.0.5",
+		"@noble/curves": "1.9.7",
 		"@peerbit/cache": "workspace:*",
-		"@protobufjs/utf8": "^1.1.0",
+		"@protobufjs/utf8": "^1.1.2",
 		"@stablelib/sha256": "^2.0.1",
-		"elliptic": "^6.6.1",
 		"js-sha3": "^0.9.3",
 		"libsodium-wrappers": "0.7.15"
 	},

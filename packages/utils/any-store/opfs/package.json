@@ -68,15 +68,14 @@
 	"license": "MIT",
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
+		"@peerbit/any-store-interface": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"@peerbit/any-store-interface": "workspace:*",
-		"uuid": "^10.0.0",
-		"elliptic": "^6.6.1"
+		"uuid": "^11.1.1"
 	},
 	"devDependencies": {
 		"@types/uuid": "^9.0.8",
-		"esbuild": "0.27.0"
+		"esbuild": "0.28.1"
 	}
 }

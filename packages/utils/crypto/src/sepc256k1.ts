@@ -2,15 +2,15 @@ import { field, fixedArray, variant } from "@dao-xyz/borsh";
 import {
 	type SignatureLike,
 	arrayify,
+	hexlify,
 	joinSignature,
 	splitSignature,
 } from "@ethersproject/bytes";
-import { Wallet } from "@ethersproject/wallet";
 import { keys } from "@libp2p/crypto";
 import { type PeerId } from "@libp2p/interface";
 import { peerIdFromPublicKey } from "@libp2p/peer-id";
+import { secp256k1 } from "@noble/curves/secp256k1";
 import utf8 from "@protobufjs/utf8";
-import _ec from "elliptic";
 import { equals } from "uint8arrays";
 import { Keypair, PrivateSignKey, PublicSignKey } from "./key.js";
 import { PreHash, prehashFn } from "./prehash.js";
@@ -18,8 +18,16 @@ import { SignatureWithKey } from "./signature.js";
 import { type Identity } from "./signer.js";
 import { toHexString } from "./utils.js";
 
-import EC = _ec.ec;
-let _curve: EC;
+const SECP256K1_DIGEST_LENGTH = 32;
+
+const requireSecp256k1Digest = (digest: Uint8Array): Uint8Array => {
+	if (digest.length !== SECP256K1_DIGEST_LENGTH) {
+		throw new Error(
+			`Secp256k1 requires an exactly ${SECP256K1_DIGEST_LENGTH}-byte prepared digest`,
+		);
+	}
+	return digest;
+};
 
 @variant(1)
 export class Secp256k1PublicKey extends PublicSignKey {
@@ -112,7 +120,6 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 	@field({ type: Secp256k1PrivateKey })
 	privateKey: Secp256k1PrivateKey;
 
-	_wallet!: Wallet;
 	constructor(properties: {
 		publicKey: Secp256k1PublicKey;
 		privateKey: Secp256k1PrivateKey;
@@ -140,13 +147,19 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 		data: Uint8Array,
 		prehash: PreHash = PreHash.ETH_KECCAK_256,
 	): Promise<SignatureWithKey> {
-		const maybeHashed = await prehashFn(data, prehash);
+		const maybeHashed = requireSecp256k1Digest(await prehashFn(data, prehash));
 
-		const signature = joinSignature(
-			(this._wallet || (this._wallet = new Wallet(this.privateKey.privateKey)))
-				._signingKey()
-				.signDigest(maybeHashed),
+		const recoveredSignature = secp256k1.sign(
+			maybeHashed,
+			this.privateKey.privateKey,
+			{ lowS: true, prehash: false },
 		);
+		const compactSignature = recoveredSignature.toBytes("compact");
+		const signature = joinSignature({
+			r: hexlify(compactSignature.subarray(0, 32)),
+			s: hexlify(compactSignature.subarray(32)),
+			recoveryParam: recoveredSignature.recovery,
+		});
 		const signatureBytes = new Uint8Array(utf8.length(signature)); // TODO utilize Buffer allocUnsafe
 		utf8.write(signature, signatureBytes, 0);
 
@@ -174,24 +187,19 @@ export class Secp256k1Keypair extends Keypair implements Identity {
 
 const decoder = new TextDecoder();
 
-function getCurve() {
-	if (!_curve) {
-		_curve = new EC("secp256k1");
-	}
-	return _curve;
-}
-
 export const recoverPublicKeyFromSignature = (
 	digest: Uint8Array,
 	signature: SignatureLike,
 ): Uint8Array => {
-	const sig = splitSignature(signature);
-	const rs = { r: arrayify(sig.r), s: arrayify(sig.s) };
-	return new Uint8Array(
-		getCurve()
-			.recoverPubKey(arrayify(digest), rs, sig.recoveryParam)
-			.encodeCompressed(),
-	);
+	requireSecp256k1Digest(digest);
+	const { r, recoveryParam, s } = splitSignature(signature);
+	const recoveredSignature = new Uint8Array(65);
+	recoveredSignature[0] = recoveryParam;
+	recoveredSignature.set(arrayify(r), 1);
+	recoveredSignature.set(arrayify(s), 33);
+	return secp256k1.Signature.fromBytes(recoveredSignature, "recovered")
+		.recoverPublicKey(digest)
+		.toBytes(true);
 };
 
 export const verifySignatureSecp256k1 = async (
@@ -206,14 +214,14 @@ export const verifySignatureSecp256k1Prepared = (
 	signature: SignatureWithKey,
 	preparedData: Uint8Array,
 ): Promise<boolean> => {
+	if (preparedData.length !== SECP256K1_DIGEST_LENGTH) {
+		return Promise.resolve(false);
+	}
 	const signerKey = recoverPublicKeyFromSignature(
 		arrayify(preparedData),
 		decoder.decode(signature.signature),
 	);
 	return Promise.resolve(
-		equals(
-		signerKey,
-		(signature.publicKey as Secp256k1PublicKey).publicKey,
-		),
+		equals(signerKey, (signature.publicKey as Secp256k1PublicKey).publicKey),
 	);
 };

@@ -1,5 +1,4 @@
 import { serialize, variant } from "@dao-xyz/borsh";
-import { Wallet } from "@ethersproject/wallet";
 import { AccessError, Ed25519Keypair, type Identity } from "@peerbit/crypto";
 import { Secp256k1PublicKey } from "@peerbit/crypto";
 import { Documents, SearchRequest } from "@peerbit/document";
@@ -7,6 +6,7 @@ import { Program } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import { Wallet } from "ethers";
 import { equals } from "uint8arrays";
 import {
 	FromTo,

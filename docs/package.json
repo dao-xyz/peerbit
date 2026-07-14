@@ -22,7 +22,6 @@
 	},
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
-		"@ethersproject/wallet": "^5.8.0",
 		"@multiformats/multiaddr": "^13.0.1",
 		"@peerbit/canonical-client": "workspace:*",
 		"@peerbit/canonical-host": "workspace:*",
@@ -36,8 +35,9 @@
 		"@peerbit/shared-log-proxy": "workspace:*",
 		"@peerbit/string": "workspace:*",
 		"@peerbit/time": "workspace:*",
+		"ethers": "^6.17.0",
 		"peerbit": "workspace:*",
-		"uuid": "^10.0.0"
+		"uuid": "^11.1.1"
 	},
 	"devDependencies": {
 		"chai": "^6.0.1",

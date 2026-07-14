@@ -114,6 +114,31 @@ jobs:
           path: workspace-dist.tar.gz
           retention-days: 1
 
+  security_dependency_contracts:
+    name: Security Dependency Contracts
+    needs: build_workspace
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install exact dependency graph
+        run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: workspace-dist-${{ github.sha }}
+      - name: Restore workspace build outputs
+        run: tar -xzf workspace-dist.tar.gz
+      - name: Run fail-closed release security gate
+        run: pnpm run release:security-gate
+
   test_push:
     if: github.event_name == 'push'
     name: Test (${{ matrix.test_cmd }}, Node v${{ matrix.node-version }}, OS ${{ matrix.os }})

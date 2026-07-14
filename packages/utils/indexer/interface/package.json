@@ -59,9 +59,9 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"uuid": "^10.0.0",
 		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/crypto": "workspace:*",
-		"uint8-varint": "^2.0.4"
+		"uint8-varint": "^2.0.4",
+		"uuid": "^11.1.1"
 	}
 }

@@ -61,16 +61,16 @@
 	"dependencies": {
 		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/crypto": "workspace:*",
+		"@peerbit/log": "workspace:*",
 		"@peerbit/logger": "workspace:*",
 		"@peerbit/program": "workspace:*",
-		"@peerbit/shared-log": "workspace:*",
 		"@peerbit/rpc": "workspace:*",
+		"@peerbit/shared-log": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"@peerbit/log": "workspace:*",
 		"uint8arrays": "^5.1.0"
 	},
 	"devDependencies": {
 		"@peerbit/test-utils": "workspace:*",
-		"uuid": "^10.0.0"
+		"uuid": "^11.1.1"
 	}
 }

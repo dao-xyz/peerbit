@@ -66,16 +66,16 @@
 	},
 	"license": "MIT",
 	"dependencies": {
+		"@peerbit/any-store-interface": "workspace:*",
+		"@peerbit/any-store-opfs": "workspace:*",
+		"@peerbit/build-assets": "workspace:*",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/logger": "workspace:*",
-		"@peerbit/any-store-opfs": "workspace:*",
-		"@peerbit/any-store-interface": "workspace:*",
 		"@peerbit/time": "workspace:*",
-		"@peerbit/build-assets": "workspace:*",
-		"level": "^10.0.0",
 		"abstract-level": "^3.1.0",
 		"classic-level": "^3.0.0",
-		"uuid": "^10.0.0"
+		"level": "^10.0.0",
+		"uuid": "^11.1.1"
 	},
 	"devDependencies": {
 		"@types/uuid": "^10.0.0",

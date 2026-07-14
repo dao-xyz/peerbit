@@ -66,15 +66,15 @@
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
-		"vite-plugin-static-copy": "^3.1.2",
-		"vite": "^7.1.7",
-		"@peerbit/build-assets": "workspace:*"
+		"@peerbit/build-assets": "workspace:*",
+		"vite": "^7.3.6",
+		"vite-plugin-static-copy": "^3.1.2"
 	},
 	"devDependencies": {
-		"chai": "^4.3.10",
-		"@types/chai": "^4.3.16",
-		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/any-store": "workspace:*",
-		"@peerbit/any-store-opfs": "workspace:*"
+		"@peerbit/any-store-opfs": "workspace:*",
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@types/chai": "^4.3.16",
+		"chai": "^4.3.10"
 	}
 }

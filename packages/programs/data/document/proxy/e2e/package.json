@@ -30,6 +30,6 @@
 		"@peerbit/vite": "workspace:*",
 		"@playwright/test": "^1.47.0",
 		"typescript": "^5.6.3",
-		"vite": "^7.1.7"
+		"vite": "^7.3.6"
 	}
 }

@@ -95,7 +95,7 @@
 		"@types/pidusage": "^2.0.5",
 		"peerbit": "workspace:*",
 		"pidusage": "^4.0.1",
-		"uuid": "^10.0.0"
+		"uuid": "^11.1.1"
 	},
 	"repository": {
 		"type": "git",

@@ -10,23 +10,23 @@
 		"preview": "vite preview"
 	},
 	"dependencies": {
-		"react": "^19.2.0",
-		"react-dom": "^19.2.0",
 		"@dao-xyz/borsh": "^6.0.0",
 		"@peerbit/crypto": "workspace:*",
 		"@peerbit/log": "workspace:*",
 		"@peerbit/program": "workspace:*",
 		"@peerbit/shared-log": "workspace:*",
-		"peerbit": "workspace:*"
+		"peerbit": "workspace:*",
+		"react": "^19.2.0",
+		"react-dom": "^19.2.0"
 	},
 	"devDependencies": {
+		"@peerbit/vite": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14",
 		"@types/react": "^19.2.4",
 		"@types/react-dom": "^19.2.3",
 		"@vitejs/plugin-react": "^5.1.1",
-		"vite": "^7.1.7",
-		"@peerbit/vite": "workspace:*",
-		"events": "^3.3.0"
+		"events": "^3.3.0",
+		"vite": "^7.3.6"
 	},
 	"browserslist": {
 		"production": [
