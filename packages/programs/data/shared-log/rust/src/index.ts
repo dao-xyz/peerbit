@@ -576,10 +576,12 @@ let wasmInitPromise: Promise<void> | undefined;
 
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
-		const wasmModulePath = "../wasm/shared_log_rust.js";
+		// Keep this import lazy, but leave the relative specifier visible to
+		// bundlers so they emit the wasm-bindgen glue as a real browser chunk.
+		// Node resolves the same path against dist/src/index.js.
 		wasmModulePromise = import(
-			/* @vite-ignore */ wasmModulePath
-		) as Promise<WasmModule>;
+			"../wasm/shared_log_rust.js"
+		) as unknown as Promise<WasmModule>;
 	}
 
 	const wasm = await wasmModulePromise;

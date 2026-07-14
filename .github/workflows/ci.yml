@@ -560,6 +560,7 @@ jobs:
           cargo test
           pnpm run build
           pnpm exec aegir test -t node
+          pnpm run test:e2e
       - name: Test @peerbit/document-rust
         run: pnpm --filter @peerbit/document-rust run test
       - name: Test @peerbit/network-rust
