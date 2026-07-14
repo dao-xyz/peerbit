@@ -6,11 +6,11 @@ import {
 	toId,
 } from "@peerbit/indexer-interface";
 import { expect } from "chai";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { SQLiteIndex } from "../src/engine.js";
 import { create } from "../src/index.js";
 import { setup } from "./utils.js";
+
+const isNode = typeof process !== "undefined" && process.versions?.node != null;
 
 describe("statement", () => {
 	let index: Awaited<ReturnType<typeof setup<any>>>;
@@ -76,12 +76,20 @@ describe("statement", () => {
 			); // + count stmt
 		});
 
-		it("count with a foreign query instance", async () => {
+		(isNode ? it : it.skip)("count with a foreign query instance", async () => {
 			await store.put(new DocumentWithFromProperty("1", "from1"));
+			// Keep Node built-ins behind non-literal dynamic imports. Aegir bundles this
+			// test file for browsers too, where static `node:` imports cannot resolve.
+			const pathModule = "node:path";
+			const urlModule = "node:url";
+			const [path, { pathToFileURL }] = await Promise.all([
+				import(pathModule) as Promise<typeof import("node:path")>,
+				import(urlModule) as Promise<typeof import("node:url")>,
+			]);
 			const { StringMatch: ForeignStringMatch } = await import(
 				pathToFileURL(
 					path.resolve(process.cwd(), "../interface/dist/src/query.js"),
-				).href,
+				).href
 			);
 
 			expect(
