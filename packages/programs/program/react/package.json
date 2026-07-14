@@ -58,6 +58,6 @@
 		"@testing-library/react": "^16.1.0",
 		"react-test-renderer": "^19.0.0"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

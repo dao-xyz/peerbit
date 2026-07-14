@@ -17,6 +17,7 @@ keystore-test
 **/tmp/
 nginx_secrets
 nginx
+.peerbit-domain
 coverage
 **/.coverage/
 /test-results/

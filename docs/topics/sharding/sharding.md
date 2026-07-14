@@ -176,7 +176,7 @@ Aggregate every range and note its owner, but avoid considering more than one ra
 The source code for the aggregation is accessible [here](https://github.com/dao-xyz/peerbit/blob/95420cd37cb8d2ced4733495b6901b2b5e445e01/packages/programs/data/shared-log/src/ranges.ts#L155).
 
 ## Demo
-The [file-sharing](https://files.dao.xyz) application demonstrates how this technology operates in real scenarios.
+The [file-sharing example](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/file-share) demonstrates how this technology operates in real scenarios.
 
 Initially, we observe peers receiving segments within the content space, with starting points independently determined based on the public key.
 

@@ -1,6 +1,6 @@
 import fs from "fs";
 
-interface AWSOrigin {
+export interface AWSOrigin {
 	type: "aws";
 	region: string;
 	instanceId: string;
@@ -13,6 +13,11 @@ interface HetznerOrigin {
 }
 
 export type RemoteOrigin = AWSOrigin | HetznerOrigin;
+
+export const getRetiredAWSManagementError = (origin: AWSOrigin): Error =>
+	new Error(
+		`Automatic AWS management has been retired. Terminate EC2 instance ${origin.instanceId} in region ${origin.region} from the AWS console, then remove the local remote entry.`,
+	);
 
 export const DEFAULT_REMOTE_GROUP = "default";
 

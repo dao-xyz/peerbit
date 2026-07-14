@@ -84,7 +84,7 @@
 		"sinon": "^21.0.0",
 		"vitest": "^4.0.12"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"repository": {
 		"type": "git",

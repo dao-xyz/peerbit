@@ -63,7 +63,7 @@
 	"engines": {
 		"node": ">=16.15.1"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
 		"vite-plugin-static-copy": "^3.1.2",
@@ -76,8 +76,5 @@
 		"@peerbit/indexer-sqlite3": "workspace:*",
 		"@peerbit/any-store": "workspace:*",
 		"@peerbit/any-store-opfs": "workspace:*"
-	},
-	"localMaintainers": [
-		"dao.xyz"
-	]
+	}
 }

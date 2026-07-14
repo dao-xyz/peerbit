@@ -62,6 +62,6 @@
 		"lint": "cargo fmt",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT"
 }

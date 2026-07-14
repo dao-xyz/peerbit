@@ -58,7 +58,7 @@
 		"test": "",
 		"lint": "aegir lint"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
 		"@peerbit/indexer-interface": "workspace:*",

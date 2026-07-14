@@ -29,7 +29,10 @@ peerbit remote connect --group GROUP_NAME
 
 
 ### Allow more machines to access your remote nodes
-By default, when you spawn nodes using the [CLI](/modules/deploy/server/automatic.md), permissions are granted to your local machine so that your local machine can access the spawned remote nodes. This is achieved by keeping a record on the remote nodes that your local machine's public key as permitted to perform admin actions. To prove authorization, every request from your local machine to the remote nodes is signed by your private key.
+Remote administration is authorized with Peerbit identities. Each request is
+signed by your private key, and the server checks the corresponding public key
+against its trust list. Grant the identity you use for administration when you
+start the server, or add it from an already trusted session as described below.
 
 If you need to modify permissions for which nodes that can perform actions, do follow these steps:
 

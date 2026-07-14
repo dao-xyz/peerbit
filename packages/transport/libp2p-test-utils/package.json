@@ -60,7 +60,7 @@
 	"engines": {
 		"node": ">=16.15.1"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
 		"@chainsafe/libp2p-noise": "^17.0.0",
@@ -88,9 +88,6 @@
 		"@peerbit/time": "workspace:*",
 		"@types/libsodium-wrappers": "^0.7.14"
 	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"bugs": {
 		"url": "https://github.com/dao-xyz/peerbit/issues"
 	},

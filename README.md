@@ -25,7 +25,7 @@ Your database schema can remain very simple but still utilize P2P networks, auto
 
 ## Optimized for performance
 
-Peerbit is performant, so performant in fact you can use it for [streaming video](https://stream.dao.xyz) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 MB/s.
+Peerbit is performant, so performant in fact you can use it for [streaming video](https://github.com/dao-xyz/peerbit-examples/tree/master/packages/live-streaming) by having peers subscribing to database updates. In a low latency setting, you can achieve around 1000 replications a second and have a thoughput of 100 MB/s.
 
 ![Dogestream](/docs/videostream.gif)
 

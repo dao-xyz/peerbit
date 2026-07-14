@@ -2,7 +2,7 @@
 	"name": "@peerbit/canonical-transport",
 	"version": "1.0.0",
 	"description": "Transport and multiplexing utilities for the Peerbit canonical runtime",
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
@@ -67,9 +67,6 @@
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"keywords": [
 		"peerbit",
 		"canonical",

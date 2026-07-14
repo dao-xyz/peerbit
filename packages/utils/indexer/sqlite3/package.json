@@ -68,7 +68,7 @@
 		"test:cov": "aegir test -t node --cov",
 		"bench:query-planner": "node --loader ts-node/esm ./benchmark/query-planner.ts"
 	},
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"dependencies": {
 		"better-sqlite3": "^12.5.0",

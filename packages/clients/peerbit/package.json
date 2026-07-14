@@ -2,7 +2,7 @@
 	"name": "peerbit",
 	"version": "5.3.6",
 	"description": "Peerbit client",
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"sideEffects": false,
 	"type": "module",
@@ -128,9 +128,6 @@
 		"lint": "aegir lint",
 		"test:cov": "aegir test -t node --cov"
 	},
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"keywords": [
 		"crdt",
 		"database",

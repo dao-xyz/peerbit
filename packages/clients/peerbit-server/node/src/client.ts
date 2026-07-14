@@ -9,7 +9,7 @@ import {
 } from "@peerbit/crypto";
 import type { Address } from "@peerbit/program";
 import { waitForResolved } from "@peerbit/time";
-import type { RemoteOrigin } from "./remotes.js";
+import { type RemoteOrigin, getRetiredAWSManagementError } from "./remotes.js";
 import {
 	ADDRESS_PATH,
 	BOOTSTRAP_PATH,
@@ -381,11 +381,7 @@ export const createClient = async (
 
 		terminate: async () => {
 			if (remote.origin?.type === "aws") {
-				const { terminateNode } = await import("./aws.js");
-				await terminateNode({
-					instanceId: remote.origin.instanceId,
-					region: remote.origin.region,
-				});
+				throw getRetiredAWSManagementError(remote.origin);
 			} else if (remote.origin?.type === "hetzner") {
 				const { terminateNode } = await import("./hetzner.js");
 				await terminateNode({

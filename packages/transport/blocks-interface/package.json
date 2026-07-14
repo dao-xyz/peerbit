@@ -66,15 +66,12 @@
 	"keywords": [
 		"peerbit"
 	],
-	"author": "dao.xyz",
+	"author": "Peerbit contributors",
 	"license": "MIT",
 	"bugs": {
 		"url": "https://github.com/dao-xyz/peerbit/issues"
 	},
 	"homepage": "https://github.com/dao-xyz/peerbit#readme",
-	"localMaintainers": [
-		"dao.xyz"
-	],
 	"devDependencies": {
 		"@peerbit/libp2p-test-utils": "workspace:*"
 	},

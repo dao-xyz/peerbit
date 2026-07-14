@@ -1,0 +1,22 @@
+{
+	"name": "@peerbit/dns-lease-broker",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@10.24.0",
+	"engines": {
+		"node": ">=22.6.0"
+	},
+	"scripts": {
+		"check": "pnpm run test && pnpm run typecheck && wrangler deploy --dry-run --outdir .wrangler-dist",
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"tail": "wrangler tail",
+		"test": "node --experimental-strip-types --test src/index.test.ts",
+		"typecheck": "tsc -p tsconfig.json"
+	},
+	"devDependencies": {
+		"typescript": "5.9.3",
+		"wrangler": "4.110.0"
+	}
+}
