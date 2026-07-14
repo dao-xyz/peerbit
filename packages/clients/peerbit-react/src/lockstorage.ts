@@ -329,6 +329,10 @@ export class FastMutex {
 					);
 				}
 			}, this.timeout);
+			// A browser timer has no `unref`, while Node returns a Timeout object.
+			// Keeping the lease alive must not keep an otherwise finished Node
+			// process (or a Vitest coverage worker) alive indefinitely.
+			(interval as unknown as { unref?: () => void }).unref?.();
 			this.intervals.set(key, interval);
 			return ret;
 		}

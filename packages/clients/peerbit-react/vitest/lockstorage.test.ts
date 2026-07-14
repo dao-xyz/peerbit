@@ -336,6 +336,19 @@ describe("FastMutex", () => {
 		holder.release(key);
 	});
 
+	it("does not keep a Node process alive for a keep-alive lock", () => {
+		const fm = new FastMutex({ localStorage, timeout: 1_000 });
+		fm.setItem("node-unref", "owner", () => true);
+
+		const interval = fm.intervals.get("node-unref") as
+			| { hasRef?: () => boolean }
+			| undefined;
+		expect(interval).to.not.equal(undefined);
+		expect(interval?.hasRef?.()).to.equal(false);
+
+		fm.releaseIfOwnedBy("node-unref", () => true);
+	});
+
 	it("should reset the client stats after lock is released", async () => {
 		// without resetting the stats, the acquireStart will always be set, and
 		// after `timeout` ms, will be unable to acquire a lock anymore
