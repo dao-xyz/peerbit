@@ -32,6 +32,28 @@ assert((await store.size()) > 0);
 await store.close();
 console.log("@peerbit/any-store-rust tarball smoke OK");
 `,
+	"@peerbit/shared-log-rust": `
+import { strict as assert } from "node:assert";
+import { createRangePlanner } from "@peerbit/shared-log-rust";
+
+const planner = await createRangePlanner("u32");
+planner.put({
+	id: "range-a",
+	hash: "peer-a",
+	timestamp: 0n,
+	start1: 10,
+	end1: 20,
+	start2: 10,
+	end2: 20,
+	width: 10,
+	mode: 0,
+});
+assert.equal(planner.length, 1);
+assert.deepEqual([...planner.getSamples([15], { now: 1_000 })], [
+	["peer-a", { intersecting: true }],
+]);
+console.log("@peerbit/shared-log-rust tarball smoke OK");
+`,
 	"@peerbit/native-backbone": `
 import { strict as assert } from "node:assert";
 import { createNativePeerbitBackbone } from "@peerbit/native-backbone";

@@ -54,12 +54,17 @@
 		"benchmark:get-samples": "npm run build && pnpm --filter @peerbit/shared-log run build && node ./dist/benchmark/get-samples.js",
 		"clean": "aegir clean && shx rm -rf ./wasm && cargo clean",
 		"build": "wasm-pack build --target web --out-dir wasm --out-name shared_log_rust && shx rm -rf ./wasm/.gitignore ./wasm/package.json && aegir build --no-bundle && shx rm -rf ./dist/wasm && shx cp -r ./wasm ./dist/wasm",
+		"e2e:build": "vite build --config e2e/vite.config.ts",
+		"e2e:preview": "vite preview --config e2e/vite.config.ts",
+		"test:e2e": "npm run build && npm run e2e:build && playwright test --config e2e/playwright.config.ts",
 		"test": "cargo test && npm run build && pnpm --filter @peerbit/shared-log run build && aegir test",
-		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\""
+		"lint": "cargo fmt --check && pnpm exec eslint --config ../../../../../eslint.config.js \"src/**/*.ts\" \"test/**/*.ts\" \"benchmark/**/*.ts\" \"e2e/**/*.ts\""
 	},
 	"author": "Peerbit contributors",
 	"license": "MIT",
 	"devDependencies": {
-		"@peerbit/indexer-sqlite3": "workspace:*"
+		"@peerbit/indexer-sqlite3": "workspace:*",
+		"@playwright/test": "^1.47.0",
+		"vite": "^7.1.7"
 	}
 }
