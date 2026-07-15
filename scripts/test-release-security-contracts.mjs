@@ -17,7 +17,7 @@ const scripts = packageManifest.scripts;
 
 assert.equal(
 	scripts["release:security-gate"],
-	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm audit --prod && pnpm audit",
+	"pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod && pnpm dlx pnpm@11.13.0 with current audit",
 	"the shared release gate must fail closed on its contract test, dependency probe, focused publication-closure proof, full published-package smoke, and both root audits",
 );
 assert.equal(

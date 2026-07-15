@@ -131,7 +131,7 @@
 		"release": "pnpm run build && pnpm run release:security-gate && node ./scripts/publish-public-packages.mjs",
 		"release:publish": "pnpm run release && changeset tag && git push origin --tags",
 		"release:rc": "pnpm run build && pnpm run release:security-gate && AEGIR_PACKAGE_MANAGER=pnpm aegir release-rc",
-		"release:security-gate": "pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm audit --prod && pnpm audit",
+		"release:security-gate": "pnpm run test:release-security-contracts && pnpm run test:security-dependencies && pnpm run test:security-published-closure && pnpm run test:security-published && pnpm dlx pnpm@11.13.0 with current audit --prod && pnpm dlx pnpm@11.13.0 with current audit",
 		"deploy": "pnpm run deploy:docs",
 		"deploy:docs": "pnpm run site:build && gh-pages --dist apps/peerbit-org/dist --dotfiles",
 		"fmt": "prettier --write '{*,**/*}.{js,ts,jsx,tsx,json,vue}'",
