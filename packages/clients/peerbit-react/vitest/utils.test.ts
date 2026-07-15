@@ -364,10 +364,13 @@ describe("getKeypair", () => {
 	it("publishes a pinned advisory marker visible to legacy tabs", async () => {
 		const id = uuid();
 		const manager = new InMemoryLockManager();
+		// This test verifies cross-lock visibility, not the mutex timeout path.
+		// Keep enough headroom for loaded CI workers and instrumented coverage runs.
+		const lockTimeout = 1000;
 		const webMutex = new FastMutex({
 			localStorage,
 			clientId: createWebLockClientId(),
-			timeout: 50,
+			timeout: lockTimeout,
 		});
 		const current = await getFreeKeypairWithWebLock(
 			id,
@@ -382,7 +385,7 @@ describe("getKeypair", () => {
 		const legacyMutex = new FastMutex({
 			localStorage,
 			clientId: "later-legacy-owner",
-			timeout: 50,
+			timeout: lockTimeout,
 		});
 		const legacy = await getFreeKeypair(id, legacyMutex, () => true);
 		expect(legacy.index).to.eq(1);
