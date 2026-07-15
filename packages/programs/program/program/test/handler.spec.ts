@@ -11,6 +11,7 @@ import {
 	TestNestedProgram,
 	TestParenteRefernceProgram,
 	TestProgram,
+	TestSameAddressSiblingsProgram,
 } from "./samples.js";
 import { creatMockPeer } from "./utils.js";
 
@@ -745,7 +746,7 @@ describe(`shared`, () => {
 		await handler.stop();
 	});
 
-	it("rejects concurrent roots with distinct same-address children", async () => {
+	it("allows concurrent roots with distinct same-address children", async () => {
 		const handler = new ProgramHandler({ client });
 		const seed = new TestNestedProgram(441);
 		const first = new TestProgram(442, seed.clone());
@@ -769,16 +770,37 @@ describe(`shared`, () => {
 
 		const firstOpening = handler.open(first);
 		await saveStarted;
+		const secondOpening = handler.open(second);
 		try {
-			await expect(handler.open(second)).to.be.rejectedWith(
-				"already opening as another instance",
-			);
-			expect(second.closed).to.be.true;
-			expect(second.nested.closed).to.be.true;
+			expect(await secondOpening).to.equal(second);
+			expect(second.closed).to.be.false;
+			expect(second.nested.closed).to.be.false;
 		} finally {
 			releaseSave();
 		}
 		expect(await firstOpening).to.equal(first);
+		await handler.stop();
+	});
+
+	it("supports same-address siblings in one opening graph", async () => {
+		const handler = new ProgramHandler({ client });
+		const root = new TestSameAddressSiblingsProgram(468, 469);
+		await Promise.all([
+			root.first.calculateAddress(),
+			root.second.calculateAddress(),
+		]);
+		expect(root.first).not.to.equal(root.second);
+		expect(root.first.address.toString()).to.equal(
+			root.second.address.toString(),
+		);
+
+		expect(await handler.open(root)).to.equal(root);
+		expect(root.nestedOpenResult).to.equal(root.first);
+		expect(root.first.closed).to.be.false;
+		expect(root.second.closed).to.be.false;
+		expect(await root.close()).to.be.true;
+		expect(root.first.closed).to.be.true;
+		expect(root.second.closed).to.be.true;
 		await handler.stop();
 	});
 

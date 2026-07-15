@@ -116,7 +116,8 @@ type OpeningReservation<T extends Manageable<any>> = {
 	contributedParticipants: Set<Manageable<any>>;
 	wakeWaiters: Set<() => void>;
 	group: OpeningReservationGroup;
-	programsByAddress: Map<string, Manageable<any>>;
+	rootProgram?: Manageable<any>;
+	programsByAddress: Map<string, Set<Manageable<any>>>;
 	programs: Set<Manageable<any>>;
 	provisionalTerminalStates: Set<TerminalOperationState<T>>;
 };
@@ -954,8 +955,16 @@ export class Handler<T extends Manageable<any>> {
 	private findMonitoredProgram(
 		address: Address,
 		liveOnly = false,
+		preferred?: Manageable<any>,
 	): T | undefined {
 		const matches = this.findMonitoredPrograms(address);
+		if (
+			preferred &&
+			matches.includes(preferred as T) &&
+			(!liveOnly || !preferred.closed)
+		) {
+			return preferred as T;
+		}
 		return liveOnly
 			? matches.find((candidate) => !candidate.closed)
 			: (matches.find((candidate) => !candidate.closed) ?? matches[0]);
@@ -1111,14 +1120,6 @@ export class Handler<T extends Manageable<any>> {
 			) {
 				throw new TerminalOperationNotStartedError(
 					`Program at ${address} cannot terminate while an open generation owns its address`,
-				);
-			}
-			const conflicting = this.findMonitoredPrograms(address).find(
-				(monitored) => monitored !== candidate && !monitored.closed,
-			);
-			if (conflicting) {
-				throw new TerminalOperationNotStartedError(
-					`Program at ${address} cannot terminate while another live instance owns its address`,
 				);
 			}
 			for (const child of candidate.children ?? []) {
@@ -1415,7 +1416,7 @@ export class Handler<T extends Manageable<any>> {
 	): Promise<S | undefined> {
 		this.assertNoFailedInitialization(address);
 		this.assertNoTerminalOperation(address, toOpen);
-		const prev = this.findMonitoredProgram(address);
+		const prev = this.findMonitoredProgram(address, false, toOpen);
 		if (prev?.closed) {
 			if (this.items.get(address) === prev) {
 				this.items.delete(address);
@@ -1446,7 +1447,11 @@ export class Handler<T extends Manageable<any>> {
 	): Promise<S | undefined> {
 		this.assertNoFailedInitialization(address);
 		this.assertNoTerminalOperation(address, requestedProgram);
-		const existing = this.findMonitoredProgram(address);
+		const existing = this.findMonitoredProgram(
+			address,
+			false,
+			requestedProgram,
+		);
 		if (existing?.closed) {
 			if (this.items.get(address) === existing) {
 				this.items.delete(address);
@@ -1770,14 +1775,40 @@ export class Handler<T extends Manageable<any>> {
 		existing: OpeningReservation<T>,
 		reservation: OpeningReservation<T>,
 		address: string,
-		candidate: Manageable<any>,
+		candidates: Set<Manageable<any>>,
 		parent?: Manageable<any>,
 	): boolean {
-		if (existing.programsByAddress.get(address) !== candidate) return false;
+		const existingCandidates = existing.programsByAddress.get(address);
+		if (
+			!existingCandidates ||
+			[...candidates].some((candidate) => !existingCandidates.has(candidate))
+		) {
+			return false;
+		}
 		if (existing.group === reservation.group) return true;
 		if (parent && this.reservationContains(existing, parent)) return true;
 		return [...reservation.adoptedParents].some((adoptedParent) =>
 			this.reservationContains(existing, adoptedParent),
+		);
+	}
+
+	private canOpenAlongsideReservation(
+		existing: OpeningReservation<T>,
+		address: string,
+		candidates: Set<Manageable<any>>,
+		rootProgram: Manageable<any>,
+	): boolean {
+		const existingCandidates = existing.programsByAddress.get(address);
+		if (!existingCandidates) return false;
+		if (
+			[...candidates].some((candidate) => existingCandidates.has(candidate))
+		) {
+			return false;
+		}
+		return (
+			!candidates.has(rootProgram) &&
+			(existing.rootProgram == null ||
+				!existingCandidates.has(existing.rootProgram))
 		);
 	}
 
@@ -1860,7 +1891,7 @@ export class Handler<T extends Manageable<any>> {
 			(reservation) =>
 				this.reservationContains(reservation, parent) &&
 				(program == null ||
-					reservation.programsByAddress.get(address) === program),
+					reservation.programsByAddress.get(address)?.has(program) === true),
 		);
 	}
 
@@ -1879,7 +1910,7 @@ export class Handler<T extends Manageable<any>> {
 					parent &&
 					this.reservationContains(reservation, parent) &&
 					(program == null ||
-						reservation.programsByAddress.get(address) === program)
+						reservation.programsByAddress.get(address)?.has(program) === true)
 				) {
 					continue;
 				}
@@ -1906,24 +1937,21 @@ export class Handler<T extends Manageable<any>> {
 	): Promise<Map<Manageable<any>, string>> {
 		const addresses =
 			resolvedAddresses ?? (await this.resolveDependencyAddresses(program));
+		reservation.rootProgram = program;
 		const programs = [...addresses.keys()];
 		for (const candidate of programs) {
 			this.contributeOpeningParticipant(reservation, candidate);
 		}
-		const uniqueProgramsByAddress = new Map<string, Manageable<any>>();
+		const programsByAddress = new Map<string, Set<Manageable<any>>>();
 		for (const [candidate, address] of addresses) {
-			const duplicate = uniqueProgramsByAddress.get(address);
-			if (duplicate && duplicate !== candidate) {
-				throw new Error(
-					`Opening graph contains distinct program instances with the same address (${address})`,
-				);
-			}
-			uniqueProgramsByAddress.set(address, candidate);
+			const candidates = programsByAddress.get(address) ?? new Set();
+			candidates.add(candidate);
+			programsByAddress.set(address, candidates);
 		}
 
 		while (true) {
 			const waits = new Set<Promise<T>>();
-			for (const [address, candidate] of uniqueProgramsByAddress) {
+			for (const [address, candidates] of programsByAddress) {
 				for (const existing of this._openingReservationsByAddress.get(
 					address,
 				) ?? []) {
@@ -1933,7 +1961,7 @@ export class Handler<T extends Manageable<any>> {
 							existing,
 							reservation,
 							address,
-							candidate,
+							candidates,
 							parent,
 						)
 					) {
@@ -1948,8 +1976,23 @@ export class Handler<T extends Manageable<any>> {
 							`Program at ${address} is finishing initialization rollback cleanup`,
 						);
 					}
-					const existingProgram = existing.programsByAddress.get(address);
-					if (existingProgram && existingProgram !== candidate) {
+					if (
+						this.canOpenAlongsideReservation(
+							existing,
+							address,
+							candidates,
+							program,
+						)
+					) {
+						continue;
+					}
+					const existingPrograms = existing.programsByAddress.get(address);
+					if (
+						existingPrograms &&
+						![...candidates].some((candidate) =>
+							existingPrograms.has(candidate),
+						)
+					) {
 						throw new Error(
 							`Program at ${address} is already opening as another instance`,
 						);
@@ -1961,15 +2004,13 @@ export class Handler<T extends Manageable<any>> {
 			await this.waitForOpeningConflictChange(reservation, waits);
 		}
 
-		for (const [address, candidate] of uniqueProgramsByAddress) {
+		for (const [address, candidates] of programsByAddress) {
 			this.assertNoFailedInitialization(address);
-			this.assertNoTerminalOperation(address, candidate, candidate === program);
-			const conflicting = this.findMonitoredPrograms(address).find(
-				(monitored) => monitored !== candidate && !monitored.closed,
-			);
-			if (conflicting) {
-				throw new Error(
-					`Program at ${address} is already open as another live instance`,
+			for (const candidate of candidates) {
+				this.assertNoTerminalOperation(
+					address,
+					candidate,
+					candidate === program,
 				);
 			}
 		}
@@ -1978,7 +2019,7 @@ export class Handler<T extends Manageable<any>> {
 		// Terminal admission reads the same map synchronously, so either the open
 		// generation owns the whole graph or cleanup wins and the checks above fail.
 		reservation.programs = new Set(programs);
-		for (const [address, candidate] of uniqueProgramsByAddress) {
+		for (const [address, candidates] of programsByAddress) {
 			for (const existing of this._openingReservationsByAddress.get(address) ??
 				[]) {
 				if (existing === reservation) continue;
@@ -1987,30 +2028,41 @@ export class Handler<T extends Manageable<any>> {
 						existing,
 						reservation,
 						address,
-						candidate,
+						candidates,
 						parent,
 					)
 				) {
 					this.mergeOpeningReservationGroups(reservation, existing);
+				} else if (
+					this.canOpenAlongsideReservation(
+						existing,
+						address,
+						candidates,
+						program,
+					)
+				) {
+					continue;
 				} else {
 					throw new TerminalOperationNotStartedError(
 						`Program at ${address} became reserved by another open generation`,
 					);
 				}
 			}
-			reservation.programsByAddress.set(address, candidate);
+			reservation.programsByAddress.set(address, new Set(candidates));
 			const reservations =
 				this._openingReservationsByAddress.get(address) ?? new Set();
 			reservations.add(reservation);
 			this._openingReservationsByAddress.set(address, reservations);
 		}
-		for (const [address, candidate] of uniqueProgramsByAddress) {
-			const monitoring = this.monitorTerminalOperations(
-				address,
-				candidate as T,
-			);
-			if (monitoring.newLifecycle) {
-				reservation.provisionalTerminalStates.add(monitoring.state);
+		for (const [address, candidates] of programsByAddress) {
+			for (const candidate of candidates) {
+				const monitoring = this.monitorTerminalOperations(
+					address,
+					candidate as T,
+				);
+				if (monitoring.newLifecycle) {
+					reservation.provisionalTerminalStates.add(monitoring.state);
+				}
 			}
 		}
 		return addresses;
