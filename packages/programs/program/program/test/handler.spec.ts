@@ -1,14 +1,56 @@
 import { delay } from "@peerbit/time";
 import { expect, use } from "chai";
 import chaiAsPromised from "chai-as-promised";
-import { type ProgramClient } from "../src/index.js";
-import { TestParenteRefernceProgram, TestProgram } from "./samples.js";
+import {
+	ClosedError,
+	type ProgramClient,
+	ProgramHandler,
+	TerminalOperationNotStartedError,
+} from "../src/index.js";
+import {
+	TestNestedProgram,
+	TestParenteRefernceProgram,
+	TestProgram,
+} from "./samples.js";
 import { creatMockPeer } from "./utils.js";
 
 use(chaiAsPromised);
 
 describe(`shared`, () => {
 	let client: ProgramClient;
+	const reuseRoutes: {
+		name: string;
+		open: (program: TestProgram) => Promise<TestProgram>;
+	}[] = [
+		{
+			name: "same-instance",
+			open: (program) =>
+				client.open(program, { existing: "reuse" }) as Promise<TestProgram>,
+		},
+		{
+			name: "address",
+			open: (program) =>
+				client.open(program.address, {
+					existing: "reuse",
+				}) as Promise<TestProgram>,
+		},
+		{
+			name: "closed clone",
+			open: (program) =>
+				client.open(program.clone(), {
+					existing: "reuse",
+				}) as Promise<TestProgram>,
+		},
+		{
+			name: "already-open clone",
+			open: async (program) => {
+				const clone = program.clone();
+				await clone.calculateAddress();
+				clone.closed = false;
+				return client.open(clone, { existing: "reuse" });
+			},
+		},
+	];
 
 	beforeEach(async () => {
 		client = await creatMockPeer();
@@ -21,6 +63,1640 @@ describe(`shared`, () => {
 	it("open same store twice will share instance", async () => {
 		const db1 = await client.open(new TestProgram());
 		expect(await client.open(db1)).equal(db1);
+	});
+
+	it("singleflights concurrent base close calls with exact promise identity", async () => {
+		const program = await client.open(new TestProgram(142));
+		const childClose = program.nested.close.bind(program.nested);
+		let childCloseCalls = 0;
+		let parentCloseEvents = 0;
+		let childCloseEvents = 0;
+		program.nested.close = (from) => {
+			childCloseCalls += 1;
+			return childClose(from);
+		};
+		program.events.addEventListener("close", (event) => {
+			if (event.detail === program) parentCloseEvents += 1;
+		});
+		program.nested.events.addEventListener("close", () => {
+			childCloseEvents += 1;
+		});
+
+		const first = program.close();
+		const second = program.close();
+		expect(second).to.equal(first);
+		expect(await first).to.be.true;
+		expect(childCloseCalls).to.equal(1);
+		expect(parentCloseEvents).to.equal(1);
+		expect(childCloseEvents).to.equal(1);
+	});
+
+	it("singleflights the full async subclass close before invoking it", async () => {
+		const program = await client.open(new TestNestedProgram(146));
+		const pubsub = client.services.pubsub;
+		const unsubscribe = pubsub.unsubscribe.bind(pubsub);
+		let unsubscribeCalls = 0;
+		pubsub.unsubscribe = (...args) => {
+			unsubscribeCalls += 1;
+			return unsubscribe(...args);
+		};
+
+		const first = program.close();
+		const second = program.close();
+		expect(second).to.equal(first);
+		expect(await first).to.be.true;
+		expect(unsubscribeCalls).to.equal(1);
+		pubsub.unsubscribe = unsubscribe;
+	});
+
+	it("invokes the first outer close synchronously so its fence is immediate", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(166);
+		const baseClose = program.close.bind(program);
+		let invoked = false;
+		let releaseCleanup!: () => void;
+		const cleanupGate = new Promise<void>((resolve) => {
+			releaseCleanup = resolve;
+		});
+		program.close = async (from) => {
+			invoked = true;
+			const closed = await baseClose(from);
+			await cleanupGate;
+			return closed;
+		};
+
+		await handler.open(program);
+		const closing = program.close();
+		expect(invoked).to.be.true;
+		expect(program.acceptsParentAttachments).to.be.false;
+		releaseCleanup();
+		expect(await closing).to.be.true;
+		await handler.stop();
+	});
+
+	it("leaves an explicitly unstarted terminal rejection retryable", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(167);
+		const baseDrop = program.drop.bind(program);
+		let attempts = 0;
+		program.drop = async (from) => {
+			attempts += 1;
+			if (attempts === 1) {
+				throw new TerminalOperationNotStartedError(
+					"synthetic terminal precondition rejection",
+				);
+			}
+			return baseDrop(from);
+		};
+
+		await handler.open(program);
+		await expect(program.drop()).to.be.rejectedWith(
+			"synthetic terminal precondition rejection",
+		);
+		expect(program.closed).to.be.false;
+		expect(await program.drop()).to.be.true;
+		expect(attempts).to.equal(2);
+		await handler.stop();
+	});
+
+	it("leaves an invalid parent release retryable with the correct owner", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = await handler.open(new TestProgram(170));
+		const wrongParent = new TestProgram(171);
+
+		await expect(program.close(wrongParent)).to.be.rejectedWith(
+			"Could not find from in parents",
+		);
+		expect(program.closed).to.be.false;
+		expect(await program.close()).to.be.true;
+		await handler.stop();
+	});
+
+	it("rejects callback-reentrant stop without deadlocking cleanup", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestNestedProgram(172);
+		let callbackAttempts = 0;
+		await handler.open(program, {
+			onClose: async () => {
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) await handler.stop();
+			},
+		});
+
+		await expect(program.close()).to.be.rejectedWith(
+			"Program lifecycle callbacks cannot wait for their own handler to stop",
+		);
+		expect(await program.close()).to.be.true;
+		expect(callbackAttempts).to.equal(2);
+		await handler.stop();
+	});
+
+	it("rejects callback-reentrant close without sharing its own promise", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestNestedProgram(173);
+		let callbackAttempts = 0;
+		await handler.open(program, {
+			onClose: async () => {
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) await program.close();
+			},
+		});
+
+		await expect(program.close()).to.be.rejectedWith(
+			"Program lifecycle callbacks cannot wait for their own terminal operation",
+		);
+		expect(await program.close()).to.be.true;
+		expect(callbackAttempts).to.equal(2);
+		await handler.stop();
+	});
+
+	it("allows a terminal callback to close an unrelated program", async () => {
+		const handler = new ProgramHandler({ client });
+		const other = await handler.open(new TestNestedProgram(423));
+		const program = new TestNestedProgram(424);
+		await handler.open(program, {
+			onClose: async (closed) => {
+				if (closed === program) await other.close();
+			},
+		});
+
+		expect(await program.close()).to.be.true;
+		expect(program.closed).to.be.true;
+		expect(other.closed).to.be.true;
+		await handler.stop();
+	});
+
+	it("rejects a child callback waiting for its active parent close", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = new TestProgram(431);
+		let callbackAttempts = 0;
+		await handler.open(parent, {
+			onClose: async (closed) => {
+				if (closed !== parent.nested) return;
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) await parent.close();
+			},
+		});
+
+		await expect(parent.close()).to.be.rejectedWith(
+			"Program lifecycle callbacks cannot wait for their own terminal operation",
+		);
+		expect(await parent.close()).to.be.true;
+		expect(callbackAttempts).to.equal(2);
+		await handler.stop();
+	});
+
+	it("rejects callback-reentrant stop during open without deadlocking admission", async () => {
+		const handler = new ProgramHandler({ client });
+		await expect(
+			handler.open(new TestProgram(174), {
+				onBeforeOpen: async () => handler.stop(),
+			}),
+		).to.be.rejectedWith(
+			"Program lifecycle callbacks cannot wait for their own handler to stop",
+		);
+		await handler.stop();
+	});
+
+	it("rejects stop invoked synchronously by a program open override", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestNestedProgram(458);
+		program.open = async () => {
+			await handler.stop();
+		};
+
+		await expect(handler.open(program)).to.be.rejectedWith(
+			"Program lifecycle callbacks cannot wait for their own handler to stop",
+		);
+		await handler.stop();
+	});
+
+	it("rejects stop invoked synchronously by a terminal override", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestNestedProgram(459);
+		const baseClose = program.close.bind(program);
+		let stopFromClose = false;
+		program.close = async (from) => {
+			if (stopFromClose) await handler.stop();
+			return baseClose(from);
+		};
+		await handler.open(program);
+		stopFromClose = true;
+
+		await expect(program.close()).to.be.rejectedWith(
+			"Program lifecycle callbacks cannot wait for their own handler to stop",
+		);
+		stopFromClose = false;
+		expect(await program.close()).to.be.true;
+		await handler.stop();
+	});
+
+	it("lets an in-flight drop subsume close with one terminal operation", async () => {
+		const program = await client.open(new TestProgram(143));
+		const childDrop = program.nested.drop.bind(program.nested);
+		let markChildDropStarted!: () => void;
+		const childDropStarted = new Promise<void>((resolve) => {
+			markChildDropStarted = resolve;
+		});
+		let releaseChildDrop!: () => void;
+		const childDropGate = new Promise<void>((resolve) => {
+			releaseChildDrop = resolve;
+		});
+		let childDropCalls = 0;
+		program.nested.drop = async (from) => {
+			childDropCalls += 1;
+			markChildDropStarted();
+			await childDropGate;
+			return childDrop(from);
+		};
+		const rootAddress = program.address;
+		const blocksRm = client.services.blocks.rm.bind(client.services.blocks);
+		let rootDeleteCalls = 0;
+		client.services.blocks.rm = (address) => {
+			if (address === rootAddress) rootDeleteCalls += 1;
+			return blocksRm(address);
+		};
+
+		const dropping = program.drop();
+		await childDropStarted;
+		const duplicateDrop = program.drop();
+		const closing = program.close();
+		expect(duplicateDrop).to.equal(dropping);
+		expect(closing).to.equal(dropping);
+		releaseChildDrop();
+		expect(await dropping).to.be.true;
+		expect(childDropCalls).to.equal(1);
+		expect(rootDeleteCalls).to.equal(1);
+	});
+
+	it("serializes drop behind close and reports that close won", async () => {
+		const program = await client.open(new TestProgram(144));
+		const childClose = program.nested.close.bind(program.nested);
+		let markChildCloseStarted!: () => void;
+		const childCloseStarted = new Promise<void>((resolve) => {
+			markChildCloseStarted = resolve;
+		});
+		let releaseChildClose!: () => void;
+		const childCloseGate = new Promise<void>((resolve) => {
+			releaseChildClose = resolve;
+		});
+		let childCloseCalls = 0;
+		program.nested.close = async (from) => {
+			childCloseCalls += 1;
+			markChildCloseStarted();
+			await childCloseGate;
+			return childClose(from);
+		};
+		const rootAddress = program.address;
+		const blocksRm = client.services.blocks.rm.bind(client.services.blocks);
+		let rootDeleteCalls = 0;
+		client.services.blocks.rm = (address) => {
+			if (address === rootAddress) rootDeleteCalls += 1;
+			return blocksRm(address);
+		};
+
+		const closing = program.close();
+		await childCloseStarted;
+		const dropping = program.drop();
+		expect(dropping).not.to.equal(closing);
+		releaseChildClose();
+		expect(await closing).to.be.true;
+		await expect(dropping).to.be.rejectedWith(ClosedError);
+		expect(childCloseCalls).to.equal(1);
+		expect(rootDeleteCalls).to.equal(0);
+	});
+
+	it("rejects parent reuse while attachment is fenced and permits a reopen", async () => {
+		const program = await client.open(new TestProgram());
+		const parent = await client.open(new TestProgram(1));
+		program.preventNewParents();
+
+		await expect(client.open(program, { parent })).to.be.rejectedWith(
+			"Program is terminating and cannot accept another parent",
+		);
+		expect(program.parents).to.deep.equal([undefined]);
+		expect(parent.children).not.to.include(program);
+
+		await program.close();
+		const reopened = await client.open(program, { parent });
+		expect(reopened).to.equal(program);
+		expect(reopened.parents).to.deep.equal([parent]);
+	});
+
+	for (const route of reuseRoutes) {
+		it(`automatically fences ${route.name} reuse while child close drains`, async () => {
+			const program = await client.open(new TestProgram());
+			const originalClose = program.nested.close.bind(program.nested);
+			let markChildCloseStarted!: () => void;
+			const childCloseStarted = new Promise<void>((resolve) => {
+				markChildCloseStarted = resolve;
+			});
+			let releaseChildClose!: () => void;
+			const childCloseGate = new Promise<void>((resolve) => {
+				releaseChildClose = resolve;
+			});
+			program.nested.close = async (from) => {
+				markChildCloseStarted();
+				await childCloseGate;
+				return originalClose(from);
+			};
+
+			const closing = program.close();
+			await childCloseStarted;
+			try {
+				await expect(route.open(program)).to.be.rejectedWith(
+					"Program is terminating and cannot accept another parent",
+				);
+				expect(program.closed).to.be.false;
+			} finally {
+				releaseChildClose();
+			}
+			await closing;
+			expect(program.closed).to.be.true;
+		});
+
+		it(`registers an undefined root attachment for ${route.name} reuse`, async () => {
+			const parent = await client.open(new TestProgram(100));
+			const program = await client.open(new TestProgram(101), { parent });
+			expect(program.parents).to.deep.equal([parent]);
+
+			const reused = await route.open(program);
+			expect(reused).to.equal(program);
+			expect(program.parents).to.deep.equal([parent, undefined]);
+
+			await parent.close();
+			expect(program.closed).to.be.false;
+			expect(program.parents).to.deep.equal([undefined]);
+			await program.close();
+		});
+
+		it(`rejects ${route.name} reuse while attachment is fenced`, async () => {
+			const program = await client.open(new TestProgram());
+			program.preventNewParents();
+
+			await expect(route.open(program)).to.be.rejectedWith(
+				"Program is terminating and cannot accept another parent",
+			);
+			expect(program.parents).to.deep.equal([undefined]);
+		});
+
+		it(`retains ${route.name} identity through post-super close cleanup`, async () => {
+			const program = new TestProgram(137);
+			const baseClose = program.close.bind(program);
+			let markPostSuperCleanupStarted!: () => void;
+			const postSuperCleanupStarted = new Promise<void>((resolve) => {
+				markPostSuperCleanupStarted = resolve;
+			});
+			let releasePostSuperCleanup!: () => void;
+			const postSuperCleanupGate = new Promise<void>((resolve) => {
+				releasePostSuperCleanup = resolve;
+			});
+			program.close = async (from) => {
+				const closed = await baseClose(from);
+				markPostSuperCleanupStarted();
+				await postSuperCleanupGate;
+				return closed;
+			};
+
+			await client.open(program);
+			const closing = program.close();
+			await postSuperCleanupStarted;
+			try {
+				expect(program.closed).to.be.true;
+				await expect(route.open(program)).to.be.rejectedWith(
+					"Program is terminating and cannot accept another parent",
+				);
+			} finally {
+				releasePostSuperCleanup();
+			}
+			await closing;
+		});
+	}
+
+	it("retains address identity through post-super drop cleanup", async () => {
+		const program = new TestProgram(138);
+		const baseDrop = program.drop.bind(program);
+		let markPostSuperCleanupStarted!: () => void;
+		const postSuperCleanupStarted = new Promise<void>((resolve) => {
+			markPostSuperCleanupStarted = resolve;
+		});
+		let releasePostSuperCleanup!: () => void;
+		const postSuperCleanupGate = new Promise<void>((resolve) => {
+			releasePostSuperCleanup = resolve;
+		});
+		program.drop = async (from) => {
+			const dropped = await baseDrop(from);
+			markPostSuperCleanupStarted();
+			await postSuperCleanupGate;
+			return dropped;
+		};
+
+		await client.open(program);
+		const dropping = program.drop();
+		await postSuperCleanupStarted;
+		try {
+			expect(program.closed).to.be.true;
+			await expect(
+				client.open(program.address, { existing: "reuse" }),
+			).to.be.rejectedWith(
+				"Program is terminating and cannot accept another parent",
+			);
+		} finally {
+			releasePostSuperCleanup();
+		}
+		await dropping;
+	});
+
+	it("fences embedded child reuse during post-super cleanup", async () => {
+		const handler = new ProgramHandler({ client });
+		const nested = new TestNestedProgram(401);
+		const baseClose = nested.close.bind(nested);
+		let markPostSuperCleanupStarted!: () => void;
+		const postSuperCleanupStarted = new Promise<void>((resolve) => {
+			markPostSuperCleanupStarted = resolve;
+		});
+		let releasePostSuperCleanup!: () => void;
+		const postSuperCleanupGate = new Promise<void>((resolve) => {
+			releasePostSuperCleanup = resolve;
+		});
+		nested.close = async (from) => {
+			const closed = await baseClose(from);
+			markPostSuperCleanupStarted();
+			await postSuperCleanupGate;
+			return closed;
+		};
+
+		const firstParent = await handler.open(new TestProgram(402, nested));
+		const closing = firstParent.close();
+		await postSuperCleanupStarted;
+		try {
+			await expect(
+				handler.open(new TestProgram(403, nested)),
+			).to.be.rejectedWith("finishing");
+			await expect(
+				handler.open(nested.clone(), { existing: "reuse" }),
+			).to.be.rejectedWith("finishing");
+			await expect(
+				handler.open(nested.address, { existing: "reuse" }),
+			).to.be.rejectedWith("finishing");
+			await expect(
+				handler.open(new TestProgram(435, nested.clone())),
+			).to.be.rejectedWith("finishing");
+		} finally {
+			releasePostSuperCleanup();
+		}
+		await closing;
+
+		const secondParent = await handler.open(new TestProgram(404, nested));
+		expect(secondParent.closed).to.be.false;
+		expect(nested.closed).to.be.false;
+		expect(nested.parents).to.deep.equal([secondParent]);
+		await handler.stop();
+	});
+
+	it("promotes an embedded reuse to a monitored root owner", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(436));
+		const child = parent.nested;
+
+		const reused = await handler.open(child.clone(), { existing: "reuse" });
+		expect(reused).to.equal(child);
+		expect(handler.items.get(child.address)).to.equal(child);
+		expect(child.parents).to.include(undefined);
+
+		expect(await parent.close()).to.be.true;
+		expect(child.closed).to.be.false;
+		await handler.stop();
+		expect(child.closed).to.be.true;
+	});
+
+	it("does not resurrect a dropped child block from a rejected clone open", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = new TestProgram(428);
+		const child = parent.nested;
+		const baseChildDrop = child.drop.bind(child);
+		let markPostSuperCleanupStarted!: () => void;
+		const postSuperCleanupStarted = new Promise<void>((resolve) => {
+			markPostSuperCleanupStarted = resolve;
+		});
+		let releasePostSuperCleanup!: () => void;
+		const postSuperCleanupGate = new Promise<void>((resolve) => {
+			releasePostSuperCleanup = resolve;
+		});
+		child.drop = async (from) => {
+			const dropped = await baseChildDrop(from);
+			markPostSuperCleanupStarted();
+			await postSuperCleanupGate;
+			return dropped;
+		};
+
+		await handler.open(parent);
+		const childAddress = child.address;
+		await child.save(client.services.blocks, { skipOnAddress: false });
+		expect(await client.services.blocks.has(childAddress)).to.be.true;
+		const dropping = parent.drop();
+		await postSuperCleanupStarted;
+		try {
+			expect(await client.services.blocks.has(childAddress)).to.be.false;
+			await expect(
+				handler.open(child.clone(), { existing: "reuse" }),
+			).to.be.rejectedWith("finishing");
+			expect(await client.services.blocks.has(childAddress)).to.be.false;
+		} finally {
+			releasePostSuperCleanup();
+		}
+		expect(await dropping).to.be.true;
+		expect(await client.services.blocks.has(childAddress)).to.be.false;
+		await handler.stop();
+	});
+
+	it("fences embedded child reuse before base cleanup starts", async () => {
+		const handler = new ProgramHandler({ client });
+		const nested = new TestNestedProgram(408);
+		const baseClose = nested.close.bind(nested);
+		let markCleanupStarted!: () => void;
+		const cleanupStarted = new Promise<void>((resolve) => {
+			markCleanupStarted = resolve;
+		});
+		let releaseCleanup!: () => void;
+		const cleanupGate = new Promise<void>((resolve) => {
+			releaseCleanup = resolve;
+		});
+		nested.close = async (from) => {
+			markCleanupStarted();
+			await cleanupGate;
+			return baseClose(from);
+		};
+
+		const firstParent = await handler.open(new TestProgram(409, nested));
+		const closing = firstParent.close();
+		await cleanupStarted;
+		try {
+			await expect(
+				handler.open(new TestProgram(410, nested)),
+			).to.be.rejectedWith("finishing");
+			await expect(
+				handler.open(new TestProgram(437, nested.clone())),
+			).to.be.rejectedWith("finishing");
+		} finally {
+			releaseCleanup();
+		}
+		await closing;
+
+		const secondParent = await handler.open(new TestProgram(411, nested));
+		expect(nested.parents).to.deep.equal([secondParent]);
+		await handler.stop();
+	});
+
+	for (const gateAt of ["save", "beforeOpen"] as const) {
+		it(`reserves an embedded address through ${gateAt}`, async () => {
+			const handler = new ProgramHandler({ client });
+			const first = await handler.open(new TestProgram(438));
+			const child = first.nested;
+			const second = new TestProgram(gateAt === "save" ? 439 : 440, child);
+			let markGateStarted!: () => void;
+			const gateStarted = new Promise<void>((resolve) => {
+				markGateStarted = resolve;
+			});
+			let releaseGate!: () => void;
+			const gate = new Promise<void>((resolve) => {
+				releaseGate = resolve;
+			});
+
+			const originalSave = second.save.bind(second);
+			if (gateAt === "save") {
+				second.save = async (...args: Parameters<TestProgram["save"]>) => {
+					if (args[1]?.skipOnAddress === false) {
+						markGateStarted();
+						await gate;
+					}
+					return originalSave(...args);
+				};
+			}
+
+			const opening = handler.open(second, {
+				onBeforeOpen:
+					gateAt === "beforeOpen"
+						? async (opened) => {
+								if (opened !== second) return;
+								markGateStarted();
+								await gate;
+							}
+						: undefined,
+			});
+			await gateStarted;
+			try {
+				await expect(first.drop()).to.be.rejectedWith(
+					"open generation owns its address",
+				);
+				expect(first.closed).to.be.false;
+				expect(child.closed).to.be.false;
+			} finally {
+				releaseGate();
+			}
+			expect(await opening).to.equal(second);
+			expect(await first.drop()).to.be.true;
+			expect(child.closed).to.be.false;
+			expect(child.parents).to.deep.equal([second]);
+			await handler.stop();
+		});
+	}
+
+	it("does not expose a reserved child before its owning open completes", async () => {
+		const handler = new ProgramHandler({ client });
+		const root = new TestProgram(454);
+		const child = root.nested;
+		const baseOpen = root.open.bind(root);
+		let markRootOpenStarted!: () => void;
+		const rootOpenStarted = new Promise<void>((resolve) => {
+			markRootOpenStarted = resolve;
+		});
+		let releaseRootOpen!: () => void;
+		const rootOpenGate = new Promise<void>((resolve) => {
+			releaseRootOpen = resolve;
+		});
+		root.open = async (args) => {
+			markRootOpenStarted();
+			await rootOpenGate;
+			return baseOpen(args);
+		};
+
+		const rootOpening = handler.open(root);
+		await rootOpenStarted;
+		const waiters = [
+			handler.open(child),
+			handler.open(child.clone(), { existing: "reuse" }),
+			handler.open(child.address, { existing: "reuse" }),
+		];
+		let waitersSettled = false;
+		void Promise.all(waiters).then(() => {
+			waitersSettled = true;
+		});
+		await delay(25);
+		expect(waitersSettled).to.be.false;
+		expect(child.openInvoked).to.be.false;
+
+		releaseRootOpen();
+		expect(await rootOpening).to.equal(root);
+		for (const opened of await Promise.all(waiters)) {
+			expect(opened).to.equal(child);
+		}
+		expect(child.openInvoked).to.be.true;
+		await handler.stop();
+	});
+
+	it("rejects concurrent roots with distinct same-address children", async () => {
+		const handler = new ProgramHandler({ client });
+		const seed = new TestNestedProgram(441);
+		const first = new TestProgram(442, seed.clone());
+		const second = new TestProgram(443, seed.clone());
+		let markSaveStarted!: () => void;
+		const saveStarted = new Promise<void>((resolve) => {
+			markSaveStarted = resolve;
+		});
+		let releaseSave!: () => void;
+		const saveGate = new Promise<void>((resolve) => {
+			releaseSave = resolve;
+		});
+		const originalSave = first.save.bind(first);
+		first.save = async (...args: Parameters<TestProgram["save"]>) => {
+			if (args[1]?.skipOnAddress === false) {
+				markSaveStarted();
+				await saveGate;
+			}
+			return originalSave(...args);
+		};
+
+		const firstOpening = handler.open(first);
+		await saveStarted;
+		try {
+			await expect(handler.open(second)).to.be.rejectedWith(
+				"already opening as another instance",
+			);
+			expect(second.closed).to.be.true;
+			expect(second.nested.closed).to.be.true;
+		} finally {
+			releaseSave();
+		}
+		expect(await firstOpening).to.equal(first);
+		await handler.stop();
+	});
+
+	it("reconciles a shared child's released inverse owner edge", async () => {
+		const handler = new ProgramHandler({ client });
+		const child = new TestNestedProgram(444);
+		const first = await handler.open(new TestProgram(445, child));
+		const second = await handler.open(new TestProgram(446, child));
+
+		expect(await child.close(first)).to.be.false;
+		expect(child.parents).to.deep.equal([second]);
+		expect(first.children).not.to.include(child);
+		expect(await second.close()).to.be.true;
+		expect(child.closed).to.be.true;
+
+		const reopened = await handler.open(child.clone(), { existing: "reuse" });
+		expect(reopened.closed).to.be.false;
+		await handler.stop();
+	});
+
+	it("blocks a direct child drop while another root reserves it", async () => {
+		const handler = new ProgramHandler({ client });
+		const first = await handler.open(new TestProgram(447));
+		const child = first.nested;
+		await child.save(client.services.blocks, { skipOnAddress: false });
+		const second = new TestProgram(448, child);
+		let markSaveStarted!: () => void;
+		const saveStarted = new Promise<void>((resolve) => {
+			markSaveStarted = resolve;
+		});
+		let releaseSave!: () => void;
+		const saveGate = new Promise<void>((resolve) => {
+			releaseSave = resolve;
+		});
+		const originalSave = second.save.bind(second);
+		second.save = async (...args: Parameters<TestProgram["save"]>) => {
+			if (args[1]?.skipOnAddress === false) {
+				markSaveStarted();
+				await saveGate;
+			}
+			return originalSave(...args);
+		};
+
+		const opening = handler.open(second);
+		await saveStarted;
+		try {
+			await expect(child.drop(first)).to.be.rejectedWith(
+				"open generation owns its address",
+			);
+			expect(child.closed).to.be.false;
+			expect(await client.services.blocks.has(child.address)).to.be.true;
+		} finally {
+			releaseSave();
+		}
+		expect(await opening).to.equal(second);
+		expect(await child.drop(first)).to.be.false;
+		expect(await client.services.blocks.has(child.address)).to.be.true;
+		await handler.stop();
+	});
+
+	it("blocks cloned descendants during a direct post-super child drop", async () => {
+		const handler = new ProgramHandler({ client });
+		const child = new TestNestedProgram(449);
+		const baseDrop = child.drop.bind(child);
+		let markPostSuperStarted!: () => void;
+		const postSuperStarted = new Promise<void>((resolve) => {
+			markPostSuperStarted = resolve;
+		});
+		let releasePostSuper!: () => void;
+		const postSuperGate = new Promise<void>((resolve) => {
+			releasePostSuper = resolve;
+		});
+		child.drop = async (from) => {
+			const dropped = await baseDrop(from);
+			markPostSuperStarted();
+			await postSuperGate;
+			return dropped;
+		};
+		const first = await handler.open(new TestProgram(450, child));
+
+		const dropping = child.drop(first);
+		await postSuperStarted;
+		try {
+			await expect(
+				handler.open(new TestProgram(451, child.clone())),
+			).to.be.rejectedWith("operation is finishing");
+		} finally {
+			releasePostSuper();
+		}
+		expect(await dropping).to.be.true;
+		expect(first.children).not.to.include(child);
+
+		const reopened = await handler.open(new TestProgram(452, child.clone()));
+		expect(reopened.nested.closed).to.be.false;
+		await handler.stop();
+	});
+
+	it("reconciles a direct terminal child's inverse owner edge", async () => {
+		const handler = new ProgramHandler({ client });
+		const first = await handler.open(new TestProgram(453));
+		const child = first.nested;
+
+		expect(await child.close(first)).to.be.true;
+		expect(child.parents).to.be.empty;
+		expect(first.children).not.to.include(child);
+
+		const reopened = await handler.open(child.clone(), { existing: "reuse" });
+		expect(reopened.closed).to.be.false;
+		await handler.stop();
+	});
+
+	it("reserves descendant addresses while a final close is queued", async () => {
+		const handler = new ProgramHandler({ client });
+		const owner = await handler.open(new TestProgram(429));
+		const parent = new TestProgram(430);
+		const child = parent.nested;
+		const baseParentClose = parent.close.bind(parent);
+		let markOwnerReleaseStarted!: () => void;
+		const ownerReleaseStarted = new Promise<void>((resolve) => {
+			markOwnerReleaseStarted = resolve;
+		});
+		let releaseOwnerClose!: () => void;
+		const ownerCloseGate = new Promise<void>((resolve) => {
+			releaseOwnerClose = resolve;
+		});
+		let gated = false;
+		parent.close = async (from) => {
+			if (from === owner && !gated) {
+				gated = true;
+				markOwnerReleaseStarted();
+				await ownerCloseGate;
+			}
+			return baseParentClose(from);
+		};
+
+		await handler.open(parent);
+		await handler.open(parent, { parent: owner });
+		const ownerRelease = parent.close(owner);
+		await ownerReleaseStarted;
+		const finalClose = parent.close();
+		try {
+			expect(child.acceptsParentAttachments).to.be.true;
+			await expect(
+				handler.open(child.clone(), { existing: "reuse" }),
+			).to.be.rejectedWith("finishing");
+			await expect(
+				handler.open(child.address, { existing: "reuse" }),
+			).to.be.rejectedWith("finishing");
+		} finally {
+			releaseOwnerClose();
+		}
+		expect(await ownerRelease).to.be.false;
+		expect(await finalClose).to.be.true;
+		await handler.stop();
+	});
+
+	it("fences embedded child reuse after pre-super cleanup rejects", async () => {
+		const handler = new ProgramHandler({ client });
+		const nested = new TestNestedProgram(417);
+		const baseClose = nested.close.bind(nested);
+		const cleanupError = new Error("synthetic embedded pre-super failure");
+		let attempts = 0;
+		nested.close = async (from) => {
+			attempts += 1;
+			if (attempts === 1) throw cleanupError;
+			return baseClose(from);
+		};
+
+		const firstParent = await handler.open(new TestProgram(418, nested));
+		await expect(firstParent.close()).to.be.rejectedWith(cleanupError.message);
+		expect(nested.acceptsParentAttachments).to.be.false;
+		await expect(handler.open(new TestProgram(419, nested))).to.be.rejectedWith(
+			"cleanup",
+		);
+
+		expect(await firstParent.close()).to.be.true;
+		const secondParent = await handler.open(new TestProgram(420, nested));
+		expect(nested.parents).to.deep.equal([secondParent]);
+		await handler.stop();
+	});
+
+	it("retains rejected post-super cleanup until stop retries it", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(139);
+		const baseClose = program.close.bind(program);
+		const cleanupError = new Error("synthetic post-super cleanup failure");
+		let cleanupAttempts = 0;
+		program.close = async (from) => {
+			const closed = await baseClose(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) {
+				throw cleanupError;
+			}
+			return closed;
+		};
+
+		await handler.open(program);
+		let failure: unknown;
+		try {
+			await program.close();
+		} catch (error) {
+			failure = error;
+		}
+		expect(failure).to.equal(cleanupError);
+		expect(program.closed).to.be.true;
+		expect(handler.items.get(program.address)).to.equal(program);
+		await expect(
+			handler.open(program.address, { existing: "reuse" }),
+		).to.be.rejectedWith("failed terminal cleanup");
+
+		await handler.stop();
+		expect(cleanupAttempts).to.equal(2);
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("retries base Program deletion after drop committed closed", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(141);
+		await handler.open(program);
+		const rootAddress = program.address;
+		const childAddress = program.nested.address;
+		const blocksRm = client.services.blocks.rm.bind(client.services.blocks);
+		const cleanupError = new Error("synthetic block deletion failure");
+		let rootDeleteAttempts = 0;
+		let childDeleteAttempts = 0;
+		client.services.blocks.rm = (address) => {
+			if (address === childAddress) childDeleteAttempts += 1;
+			if (address === rootAddress) {
+				rootDeleteAttempts += 1;
+				if (rootDeleteAttempts === 1) throw cleanupError;
+			}
+			return blocksRm(address);
+		};
+
+		await expect(program.drop()).to.be.rejectedWith(cleanupError.message);
+		expect(program.closed).to.be.true;
+		expect(handler.items.get(program.address)).to.equal(program);
+
+		await handler.stop();
+		expect(rootDeleteAttempts).to.equal(2);
+		expect(childDeleteAttempts).to.equal(1);
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("retries the exact drop after cleanup fails before base drop starts", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(179);
+		const baseDrop = program.drop.bind(program);
+		const cleanupError = new Error("synthetic pre-super drop failure");
+		let attempts = 0;
+		program.drop = async (from) => {
+			attempts += 1;
+			if (attempts === 1) throw cleanupError;
+			return baseDrop(from);
+		};
+
+		await handler.open(program);
+		const address = program.address;
+		await expect(program.drop()).to.be.rejectedWith(cleanupError.message);
+		expect(program.closed).to.be.false;
+		expect(await program.drop()).to.be.true;
+		expect(attempts).to.equal(2);
+		expect(await client.services.blocks.has(address)).to.be.false;
+		await handler.stop();
+	});
+
+	it("fences same-instance admission across handlers until drop retry", async () => {
+		const firstHandler = new ProgramHandler({ client });
+		const secondHandler = new ProgramHandler({ client });
+		const program = new TestProgram(416);
+		const baseDrop = program.drop.bind(program);
+		const cleanupError = new Error("synthetic cross-handler drop failure");
+		let attempts = 0;
+		program.drop = async (from) => {
+			attempts += 1;
+			if (attempts === 1) throw cleanupError;
+			return baseDrop(from);
+		};
+
+		await firstHandler.open(program);
+		await expect(program.drop()).to.be.rejectedWith(cleanupError.message);
+		expect(program.closed).to.be.false;
+		expect(program.acceptsParentAttachments).to.be.false;
+		await expect(secondHandler.open(program)).to.be.rejectedWith(
+			"Program is terminating and cannot accept another parent",
+		);
+
+		expect(await program.drop()).to.be.true;
+		expect(attempts).to.equal(2);
+		await firstHandler.stop();
+
+		const reopened = await secondHandler.open(program);
+		expect(reopened).to.equal(program);
+		expect(reopened.closed).to.be.false;
+		await secondHandler.stop();
+	});
+
+	it("retries a fenced pre-super drop without downgrading deletion", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(182);
+		const baseDrop = program.drop.bind(program);
+		const cleanupError = new Error("synthetic fenced pre-super drop failure");
+		let attempts = 0;
+		program.drop = async (from) => {
+			attempts += 1;
+			if (attempts === 1) {
+				program.preventNewParents();
+				throw cleanupError;
+			}
+			return baseDrop(from);
+		};
+
+		await handler.open(program);
+		const address = program.address;
+		await expect(program.drop()).to.be.rejectedWith(cleanupError.message);
+		expect(program.acceptsParentAttachments).to.be.false;
+		expect(await program.drop()).to.be.true;
+		expect(attempts).to.equal(2);
+		expect(await client.services.blocks.has(address)).to.be.false;
+		await handler.stop();
+	});
+
+	it("releases a provisional child lease when drop rejects before starting", async () => {
+		const program = await client.open(new TestProgram(407), {
+			args: { dontOpenNested: true },
+		});
+
+		await expect(program.drop()).to.be.rejectedWith(ClosedError);
+		const nested = await client.open(program.nested);
+		expect(nested.closed).to.be.false;
+
+		expect(await program.drop()).to.be.true;
+		expect(await nested.close()).to.be.true;
+	});
+
+	it("reconciles the parent edge after retrying base drop deletion", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(180));
+		const child = await handler.open(new TestProgram(181), { parent });
+		const address = child.address;
+		const blocksRm = client.services.blocks.rm.bind(client.services.blocks);
+		const cleanupError = new Error("synthetic child block deletion failure");
+		let attempts = 0;
+		client.services.blocks.rm = (candidate) => {
+			if (candidate === address) {
+				attempts += 1;
+				if (attempts === 1) throw cleanupError;
+			}
+			return blocksRm(candidate);
+		};
+
+		await expect(child.drop(parent)).to.be.rejectedWith(cleanupError.message);
+		expect(child.parents).to.be.empty;
+		expect(parent.children).to.include(child);
+		expect(await child.drop(parent)).to.be.true;
+		expect(attempts).to.equal(2);
+		expect(parent.children).not.to.include(child);
+		expect(await client.services.blocks.has(address)).to.be.false;
+
+		handler.items.delete(parent.address);
+		await handler.stop();
+		await parent.close();
+	});
+
+	it("retries rejected post-super drop cleanup without dropping twice", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(147);
+		const baseDrop = program.drop.bind(program);
+		const cleanupError = new Error("synthetic post-super drop failure");
+		let cleanupAttempts = 0;
+		program.drop = async (from) => {
+			const dropped = await baseDrop(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) throw cleanupError;
+			return dropped;
+		};
+
+		await handler.open(program);
+		await expect(program.drop()).to.be.rejectedWith(cleanupError.message);
+		expect(program.closed).to.be.true;
+		await handler.stop();
+		expect(cleanupAttempts).to.equal(2);
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("retries a nested post-super drop through a parent close", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(148);
+		const childDrop = program.nested.drop.bind(program.nested);
+		const cleanupError = new Error("synthetic nested post-super drop failure");
+		let cleanupAttempts = 0;
+		program.nested.drop = async (from) => {
+			const dropped = await childDrop(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) throw cleanupError;
+			return dropped;
+		};
+
+		await handler.open(program);
+		await expect(program.drop()).to.be.rejectedWith(cleanupError.message);
+		expect(program.closed).to.be.false;
+		expect(program.nested.closed).to.be.true;
+		await handler.stop();
+		expect(cleanupAttempts).to.equal(2);
+		expect(program.closed).to.be.true;
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("retries a retained child whose outer close failed after super", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(145);
+		const childClose = program.nested.close.bind(program.nested);
+		const cleanupError = new Error("synthetic nested post-super failure");
+		let childCloseAttempts = 0;
+		let childCloseEvents = 0;
+		let parentCloseEvents = 0;
+		program.nested.close = async (from) => {
+			const closed = await childClose(from);
+			childCloseAttempts += 1;
+			if (childCloseAttempts === 1) throw cleanupError;
+			return closed;
+		};
+		program.nested.events.addEventListener("close", () => {
+			childCloseEvents += 1;
+		});
+		program.events.addEventListener("close", (event) => {
+			if (event.detail === program) parentCloseEvents += 1;
+		});
+
+		await handler.open(program);
+		await expect(program.close()).to.be.rejectedWith(cleanupError.message);
+		expect(program.closed).to.be.false;
+		expect(program.nested.closed).to.be.true;
+		expect(program.children).to.include(program.nested);
+		expect(childCloseEvents).to.equal(1);
+		expect(parentCloseEvents).to.equal(1);
+
+		await handler.stop();
+		expect(childCloseAttempts).to.equal(2);
+		expect(childCloseEvents).to.equal(1);
+		expect(parentCloseEvents).to.equal(1);
+		expect(program.children).not.to.include(program.nested);
+		expect(program.closed).to.be.true;
+	});
+
+	it("releases a parent lease after direct child recovery removes its edge", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(412));
+		const child = new TestProgram(413);
+		const baseClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic direct child recovery failure");
+		let cleanupAttempts = 0;
+		child.close = async (from) => {
+			const closed = await baseClose(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) throw cleanupError;
+			return closed;
+		};
+
+		await handler.open(child, { parent });
+		await expect(parent.close()).to.be.rejectedWith(cleanupError.message);
+		expect(await child.close(parent)).to.be.true;
+		expect(parent.children).not.to.include(child);
+		expect(await parent.close()).to.be.true;
+
+		const reopened = await handler.open(child);
+		expect(reopened).to.equal(child);
+		expect(reopened.closed).to.be.false;
+		await handler.stop();
+	});
+
+	it("retries a committed non-terminal child release without releasing the next owner", async () => {
+		const handler = new ProgramHandler({ client });
+		const parentA = await handler.open(new TestProgram(149));
+		const parentB = await handler.open(new TestProgram(150));
+		const child = new TestProgram(151);
+		const childClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic owner A post-super failure");
+		let cleanupAttempts = 0;
+		child.close = async (from) => {
+			const closed = await childClose(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) throw cleanupError;
+			return closed;
+		};
+
+		await handler.open(child, { parent: parentA });
+		await handler.open(child, { parent: parentB });
+		await expect(parentA.close()).to.be.rejectedWith(cleanupError.message);
+		expect(child.parents).to.deep.equal([parentB]);
+		expect(parentA.children).to.include(child);
+
+		expect(await parentA.close()).to.be.true;
+		expect(cleanupAttempts).to.equal(2);
+		expect(parentA.closed).to.be.true;
+		expect(child.closed).to.be.false;
+		expect(child.parents).to.deep.equal([parentB]);
+		expect(parentA.children).not.to.include(child);
+		await handler.stop();
+	});
+
+	it("retries a committed terminal child cleanup with the original owner", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(156));
+		const child = new TestProgram(157);
+		const childClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic terminal owner cleanup failure");
+		const cleanupOwners: (TestProgram | undefined)[] = [];
+		child.close = async (from) => {
+			const closed = await childClose(from);
+			cleanupOwners.push(from as TestProgram | undefined);
+			if (cleanupOwners.length === 1) throw cleanupError;
+			return closed;
+		};
+
+		await handler.open(child, { parent });
+		await expect(child.close(parent)).to.be.rejectedWith(cleanupError.message);
+		expect(child.closed).to.be.true;
+		expect(child.parents).to.be.empty;
+		expect(parent.children).to.include(child);
+
+		handler.items.delete(parent.address);
+		await handler.stop();
+		expect(cleanupOwners).to.deep.equal([parent, parent]);
+		expect(parent.children).not.to.include(child);
+		await parent.close();
+	});
+
+	it("serializes duplicate owner releases instead of coalescing them", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(158));
+		const child = new TestProgram(159);
+		const childClose = child.close.bind(child);
+		let cleanupCalls = 0;
+		child.close = async (from) => {
+			cleanupCalls += 1;
+			await delay(1);
+			return childClose(from);
+		};
+
+		await handler.open(child, { parent });
+		await handler.open(child, { parent });
+		expect(child.parents).to.deep.equal([parent, parent]);
+		expect(
+			parent.children.filter((candidate) => candidate === child),
+		).to.have.length(2);
+
+		const first = child.close(parent);
+		const second = child.close(parent);
+		expect(second).not.to.equal(first);
+		expect(await first).to.be.false;
+		expect(await second).to.be.true;
+		expect(cleanupCalls).to.equal(2);
+		expect(child.parents).to.be.empty;
+		expect(parent.children).not.to.include(child);
+
+		handler.items.delete(parent.address);
+		await handler.stop();
+		await parent.close();
+	});
+
+	it("serializes immediate duplicate owner releases after synchronous base progress", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(175));
+		const child = new TestProgram(176);
+
+		await handler.open(child, { parent });
+		await handler.open(child, { parent });
+		const first = child.close(parent);
+		const second = child.close(parent);
+
+		expect(second).not.to.equal(first);
+		expect(await first).to.be.false;
+		expect(await second).to.be.true;
+		expect(child.parents).to.be.empty;
+		expect(parent.children).not.to.include(child);
+		handler.items.delete(parent.address);
+		await handler.stop();
+		await parent.close();
+	});
+
+	it("keeps duplicate ownership edges aligned after a later close fails", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(405));
+		const child = new TestProgram(406);
+		const baseClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic second owner close failure");
+		let closeAttempts = 0;
+		child.close = async (from) => {
+			closeAttempts += 1;
+			if (closeAttempts === 2) throw cleanupError;
+			return baseClose(from);
+		};
+
+		await handler.open(child, { parent });
+		await handler.open(child, { parent });
+		handler.items.delete(parent.address);
+		await expect(handler.stop()).to.be.rejectedWith(cleanupError.message);
+		expect(child.closed).to.be.false;
+		expect(child.parents).to.deep.equal([parent]);
+		expect(
+			parent.children.filter((candidate) => candidate === child),
+		).to.have.length(1);
+
+		await handler.stop();
+		expect(child.closed).to.be.true;
+		expect(parent.children).not.to.include(child);
+		await parent.close();
+	});
+
+	it("restores wrapped terminal methods before another handler reopens an instance", async () => {
+		const firstHandler = new ProgramHandler({ client });
+		const secondHandler = new ProgramHandler({ client });
+		const program = new TestProgram(177);
+		const originalClose = program.close;
+		const originalDrop = program.drop;
+
+		await firstHandler.open(program);
+		expect(program.close).not.to.equal(originalClose);
+		expect(await program.close()).to.be.true;
+		expect(program.close).to.equal(originalClose);
+		expect(program.drop).to.equal(originalDrop);
+
+		await secondHandler.open(program);
+		expect(program.close).not.to.equal(originalClose);
+		expect(await program.close()).to.be.true;
+		expect(program.close).to.equal(originalClose);
+		expect(program.drop).to.equal(originalDrop);
+		await firstHandler.stop();
+		await secondHandler.stop();
+	});
+
+	it("does not spend a duplicate owner reference past failed cleanup", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(163));
+		const child = new TestProgram(164);
+		const childClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic duplicate owner cleanup failure");
+		let cleanupAttempts = 0;
+		child.close = async (from) => {
+			const closed = await childClose(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) throw cleanupError;
+			return closed;
+		};
+
+		await handler.open(child, { parent });
+		await handler.open(child, { parent });
+		await expect(parent.close()).to.be.rejectedWith(cleanupError.message);
+		expect(cleanupAttempts).to.equal(1);
+		expect(child.closed).to.be.false;
+		expect(child.parents).to.deep.equal([parent]);
+		expect(
+			parent.children.filter((candidate) => candidate === child),
+		).to.have.length(2);
+
+		expect(await parent.close()).to.be.true;
+		expect(cleanupAttempts).to.equal(3);
+		expect(child.closed).to.be.true;
+		expect(child.parents).to.be.empty;
+		expect(parent.children).not.to.include(child);
+
+		await handler.stop();
+	});
+
+	it("rejects a parent close when a child reports no ownership progress", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(168));
+		const child = new TestProgram(169);
+		const childClose = child.close.bind(child);
+		let allowProgress = false;
+		let childCloseCalls = 0;
+		child.close = (from) => {
+			childCloseCalls += 1;
+			return allowProgress ? childClose(from) : Promise.resolve(false);
+		};
+
+		await handler.open(child, { parent });
+		await handler.open(child, { parent });
+		await expect(parent.close()).to.be.rejectedWith(
+			"did not release parent ownership",
+		);
+		expect(childCloseCalls).to.equal(1);
+		expect(parent.closed).to.be.false;
+		expect(child.closed).to.be.false;
+		expect(child.parents).to.deep.equal([parent, parent]);
+		expect(
+			parent.children.filter((candidate) => candidate === child),
+		).to.have.length(2);
+
+		allowProgress = true;
+		expect(await parent.close()).to.be.true;
+		expect(childCloseCalls).to.equal(3);
+		expect(child.closed).to.be.true;
+		expect(parent.children).not.to.include(child);
+		await handler.stop();
+	});
+
+	it("singleflights a queued release that will become terminal", async () => {
+		const handler = new ProgramHandler({ client });
+		const parentA = await handler.open(new TestProgram(160));
+		const parentB = await handler.open(new TestProgram(161));
+		const child = new TestProgram(162);
+		const childClose = child.close.bind(child);
+		let cleanupCalls = 0;
+		child.close = async (from) => {
+			cleanupCalls += 1;
+			await delay(1);
+			return childClose(from);
+		};
+
+		await handler.open(child, { parent: parentA });
+		await handler.open(child, { parent: parentB });
+		const releaseA = child.close(parentA);
+		const releaseB = child.close(parentB);
+		const duplicateB = child.close(parentB);
+
+		expect(releaseB).not.to.equal(releaseA);
+		expect(duplicateB).to.equal(releaseB);
+		expect(await releaseA).to.be.false;
+		expect(await releaseB).to.be.true;
+		expect(cleanupCalls).to.equal(2);
+		expect(child.parents).to.be.empty;
+		expect(parentA.children).not.to.include(child);
+		expect(parentB.children).not.to.include(child);
+
+		await handler.stop();
+	});
+
+	it("waits for and retries a failing outer close during stop", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(140);
+		const baseClose = program.close.bind(program);
+		const cleanupError = new Error("synthetic in-flight cleanup failure");
+		let cleanupAttempts = 0;
+		let markFirstCleanupStarted!: () => void;
+		const firstCleanupStarted = new Promise<void>((resolve) => {
+			markFirstCleanupStarted = resolve;
+		});
+		let releaseFirstCleanup!: () => void;
+		const firstCleanupGate = new Promise<void>((resolve) => {
+			releaseFirstCleanup = resolve;
+		});
+		program.close = async (from) => {
+			const closed = await baseClose(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) {
+				markFirstCleanupStarted();
+				await firstCleanupGate;
+				throw cleanupError;
+			}
+			return closed;
+		};
+
+		await handler.open(program);
+		const closing = program.close();
+		await firstCleanupStarted;
+		let stopSettled = false;
+		const stopping = handler.stop().then(() => {
+			stopSettled = true;
+		});
+		await delay(25);
+		expect(stopSettled).to.be.false;
+		releaseFirstCleanup();
+
+		let closeFailure: unknown;
+		try {
+			await closing;
+		} catch (error) {
+			closeFailure = error;
+		}
+		expect(closeFailure).to.equal(cleanupError);
+		await stopping;
+		expect(cleanupAttempts).to.equal(2);
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("serializes an address reload after evicting a stale closed cache entry", async () => {
+		const handler = new ProgramHandler({ client });
+		const stale = await handler.open(new TestProgram(102));
+		const address = stale.address;
+		await stale.close();
+		handler.items.set(address, stale);
+		const parent = await handler.open(new TestProgram(103));
+
+		const originalGet = client.services.blocks.get.bind(client.services.blocks);
+		let markLoadStarted!: () => void;
+		const loadStarted = new Promise<void>((resolve) => {
+			markLoadStarted = resolve;
+		});
+		let releaseLoad!: () => void;
+		const loadGate = new Promise<void>((resolve) => {
+			releaseLoad = resolve;
+		});
+		let matchingLoads = 0;
+		client.services.blocks.get = async (cid, options) => {
+			if (cid === address) {
+				matchingLoads += 1;
+				markLoadStarted();
+				await loadGate;
+			}
+			return originalGet(cid, options);
+		};
+
+		let rootOpen: Promise<TestProgram> | undefined;
+		let parentOpen: Promise<TestProgram> | undefined;
+		try {
+			rootOpen = handler.open(address, {
+				existing: "reuse",
+			}) as Promise<TestProgram>;
+			await loadStarted;
+			let parentResolved = false;
+			parentOpen = (
+				handler.open(address, { parent }) as Promise<TestProgram>
+			).then((program) => {
+				parentResolved = true;
+				return program;
+			});
+
+			await delay(25);
+			expect(parentResolved).to.be.false;
+			releaseLoad();
+
+			const [rootResult, parentResult] = await Promise.all([
+				rootOpen,
+				parentOpen,
+			]);
+			expect(rootResult).to.equal(parentResult);
+			expect(rootResult.closed).to.be.false;
+			expect(handler.items.get(address)).to.equal(rootResult);
+			expect(rootResult.parents).to.have.length(2);
+			expect(rootResult.parents).to.have.members([undefined, parent]);
+			expect(
+				parent.children.filter((child) => child === rootResult),
+			).to.have.length(1);
+			expect(matchingLoads).to.equal(1);
+		} finally {
+			releaseLoad();
+			await Promise.allSettled(
+				[rootOpen, parentOpen].filter(
+					(open): open is Promise<TestProgram> => open !== undefined,
+				),
+			);
+			client.services.blocks.get = originalGet;
+			await handler.stop();
+		}
+	});
+
+	it("serializes a closed-clone reopen after evicting a stale closed cache entry", async () => {
+		const handler = new ProgramHandler({ client });
+		const stale = await handler.open(new TestProgram(104));
+		const address = stale.address;
+		await stale.close();
+		handler.items.set(address, stale);
+		const parent = await handler.open(new TestProgram(105));
+		const candidate = stale.clone();
+
+		let markOpenStarted!: () => void;
+		const openStarted = new Promise<void>((resolve) => {
+			markOpenStarted = resolve;
+		});
+		let releaseOpen!: () => void;
+		const openGate = new Promise<void>((resolve) => {
+			releaseOpen = resolve;
+		});
+		let openCalls = 0;
+		const originalOpen = candidate.open.bind(candidate);
+		candidate.open = async (args) => {
+			openCalls += 1;
+			markOpenStarted();
+			await openGate;
+			return originalOpen(args);
+		};
+
+		let rootOpen: Promise<TestProgram> | undefined;
+		let parentOpen: Promise<TestProgram> | undefined;
+		try {
+			rootOpen = handler.open(candidate, { existing: "reuse" });
+			const firstOutcome = await Promise.race([
+				openStarted.then(() => "started" as const),
+				rootOpen.then(() => "resolved" as const),
+			]);
+			expect(firstOutcome).to.equal("started");
+
+			let parentResolved = false;
+			parentOpen = (
+				handler.open(address, { parent }) as Promise<TestProgram>
+			).then((program) => {
+				parentResolved = true;
+				return program;
+			});
+			await delay(25);
+			expect(parentResolved).to.be.false;
+			releaseOpen();
+
+			const [rootResult, parentResult] = await Promise.all([
+				rootOpen,
+				parentOpen,
+			]);
+			expect(rootResult).to.equal(candidate);
+			expect(rootResult).to.equal(parentResult);
+			expect(rootResult.closed).to.be.false;
+			expect(handler.items.get(address)).to.equal(rootResult);
+			expect(rootResult.parents).to.have.length(2);
+			expect(rootResult.parents).to.have.members([undefined, parent]);
+			expect(
+				parent.children.filter((child) => child === rootResult),
+			).to.have.length(1);
+			expect(openCalls).to.equal(1);
+		} finally {
+			releaseOpen();
+			await Promise.allSettled(
+				[rootOpen, parentOpen].filter(
+					(open): open is Promise<TestProgram> => open !== undefined,
+				),
+			);
+			await handler.stop();
+		}
 	});
 
 	it("can open different dbs concurrently", async () => {
@@ -62,6 +1738,702 @@ describe(`shared`, () => {
 		expect(db2.closed).to.be.false;
 		expect(db2.address).to.equal(address);
 		expect(db2).to.not.equal(db1);
+	});
+
+	it("honors reject for an already-open parent-owned program", async () => {
+		const parent = await client.open(new TestProgram(123));
+		const original = await client.open(new TestProgram(124), { parent });
+		const candidate = original.clone();
+		const parentChildrenBefore = [...parent.children];
+
+		await expect(
+			client.open(candidate, { parent, existing: "reject" }),
+		).to.be.rejectedWith(`Program at ${original.address} is already open`);
+		expect(original.closed).to.be.false;
+		expect(parent.children).to.deep.equal(parentChildrenBefore);
+		expect(parent.children).not.to.include(candidate);
+		expect(candidate.closed).to.be.true;
+	});
+
+	it("replaces a sole parent-owned program without leaving a stale child edge", async () => {
+		const parent = await client.open(new TestProgram(125));
+		const original = await client.open(new TestProgram(126), { parent });
+		const candidate = original.clone();
+		const unrelatedChildren = parent.children.filter(
+			(child) => child !== original,
+		);
+
+		const replacement = await client.open(candidate, {
+			parent,
+			existing: "replace",
+		});
+
+		expect(replacement).to.equal(candidate);
+		expect(original.closed).to.be.true;
+		expect(original.parents).to.deep.equal([]);
+		expect(
+			parent.children.filter((child) => child !== candidate),
+		).to.deep.equal(unrelatedChildren);
+		expect(parent.children).not.to.include(original);
+		expect(
+			parent.children.filter((child) => child === candidate),
+		).to.have.length(1);
+		expect(candidate.parents).to.deep.equal([parent]);
+
+		await parent.drop();
+		expect(candidate.closed).to.be.true;
+	});
+
+	it("rejects parent replacement while another parent still owns the program", async () => {
+		const firstParent = await client.open(new TestProgram(127));
+		const secondParent = await client.open(new TestProgram(128));
+		const original = await client.open(new TestProgram(129), {
+			parent: firstParent,
+		});
+		await client.open(original, { parent: secondParent });
+		const candidate = original.clone();
+		const firstParentChildrenBefore = [...firstParent.children];
+		const secondParentChildrenBefore = [...secondParent.children];
+
+		await expect(
+			client.open(candidate, {
+				parent: firstParent,
+				existing: "replace",
+			}),
+		).to.be.rejectedWith("cannot be replaced while it has other owners");
+		expect(original.closed).to.be.false;
+		expect(original.parents).to.have.members([firstParent, secondParent]);
+		expect(firstParent.children).to.deep.equal(firstParentChildrenBefore);
+		expect(secondParent.children).to.deep.equal(secondParentChildrenBefore);
+		expect(firstParent.children).not.to.include(candidate);
+		expect(secondParent.children).not.to.include(candidate);
+	});
+
+	for (const route of ["address", "closed clone"] as const) {
+		it(`does not replace through ${route} while another owner remains`, async () => {
+			const parent = await client.open(new TestProgram(106));
+			const original = await client.open(new TestProgram(107), { parent });
+			await client.open(original);
+			const parentsBefore = [...original.parents];
+			const parentChildrenBefore = [...parent.children];
+			const candidate = original.clone();
+
+			const replacement =
+				route === "address"
+					? client.open(original.address, { existing: "replace" })
+					: client.open(candidate, { existing: "replace" });
+			await expect(replacement).to.be.rejectedWith(
+				"cannot be replaced while it has other owners",
+			);
+
+			expect(original.closed).to.be.false;
+			expect(original.parents).to.deep.equal(parentsBefore);
+			expect(parent.children).to.deep.equal(parentChildrenBefore);
+			expect(
+				parent.children.filter((child) => child === original),
+			).to.have.length(1);
+			expect(
+				await client.open(original.address, { existing: "reuse" }),
+			).to.equal(original);
+			if (route === "closed clone") {
+				expect(candidate.closed).to.be.true;
+			}
+		});
+	}
+
+	it("does not replace when close reports a non-terminal result", async () => {
+		const original = await client.open(new TestProgram(108));
+		const candidate = original.clone();
+		const originalClose = original.close.bind(original);
+		original.close = async () => false;
+		try {
+			await expect(
+				client.open(candidate, { existing: "replace" }),
+			).to.be.rejectedWith("close was not terminal");
+
+			expect(original.closed).to.be.false;
+			expect(original.parents).to.deep.equal([undefined]);
+			expect(candidate.closed).to.be.true;
+			expect(
+				await client.open(original.address, { existing: "reuse" }),
+			).to.equal(original);
+		} finally {
+			original.close = originalClose;
+		}
+	});
+
+	it("rolls back a failed initialization and permits a clean retry", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(109));
+		const candidate = new TestProgram(110);
+		const originalError = new Error("synthetic open failure");
+		const parentsBefore = candidate.parents;
+		const childrenBefore = candidate.children;
+		const parentChildrenBefore = [...parent.children];
+		const originalOpen = candidate.open.bind(candidate);
+		let attempts = 0;
+		candidate.open = async (args) => {
+			attempts += 1;
+			if (attempts === 1) {
+				throw originalError;
+			}
+			await originalOpen(args);
+		};
+
+		try {
+			let failure: unknown;
+			try {
+				await handler.open(candidate, { parent });
+			} catch (error) {
+				failure = error;
+			}
+			expect(failure).to.equal(originalError);
+			expect(handler.items.has(candidate.address)).to.be.false;
+			expect(candidate.closed).to.be.true;
+			expect(candidate.parents).to.deep.equal(parentsBefore);
+			expect(candidate.children).to.deep.equal(childrenBefore);
+			expect(candidate.nested.closed).to.be.true;
+			expect(parent.children).to.deep.equal(parentChildrenBefore);
+
+			const retried = await handler.open(candidate, { parent });
+			expect(retried).to.equal(candidate);
+			expect(retried.closed).to.be.false;
+			expect(attempts).to.equal(2);
+			expect(handler.items.get(candidate.address)).to.equal(candidate);
+			expect(candidate.parents).to.deep.equal([parent]);
+			expect(
+				parent.children.filter((child) => child === candidate),
+			).to.have.length(1);
+		} finally {
+			await handler.stop();
+		}
+	});
+
+	it("root-closes an unowned rollback child after a no-progress cleanup", async () => {
+		const handler = new ProgramHandler({ client });
+		const candidate = new TestProgram(170);
+		const childClose = candidate.nested.close.bind(candidate.nested);
+		let allowProgress = false;
+		let childCloseCalls = 0;
+		candidate.nested.close = (from) => {
+			childCloseCalls += 1;
+			return allowProgress ? childClose(from) : Promise.resolve(false);
+		};
+		candidate.open = async () => {
+			throw new Error("synthetic rollback no-progress failure");
+		};
+
+		await expect(handler.open(candidate)).to.be.rejectedWith(
+			"synthetic rollback no-progress failure",
+		);
+		expect(candidate.closed).to.be.false;
+		expect(candidate.nested.closed).to.be.false;
+		expect(candidate.nested.parents).to.be.empty;
+
+		allowProgress = true;
+		await handler.stop();
+		expect(candidate.closed).to.be.true;
+		expect(candidate.nested.closed).to.be.true;
+		expect(childCloseCalls).to.equal(3);
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("retains a rollback residual until repeated callback cleanup succeeds", async () => {
+		const handler = new ProgramHandler({ client });
+		const root = new TestProgram(421);
+		const cleanupError = new Error("synthetic residual callback failure");
+		let callbackAttempts = 0;
+
+		await expect(
+			handler.open(root, {
+				onBeforeOpen: async (opened) => {
+					if (opened === root) {
+						throw new Error("synthetic residual open failure");
+					}
+				},
+				onClose: async (closed) => {
+					if (closed !== root.nested) return;
+					callbackAttempts += 1;
+					if (callbackAttempts <= 2) throw cleanupError;
+				},
+			}),
+		).to.be.rejectedWith("synthetic residual open failure");
+		expect(callbackAttempts).to.equal(1);
+		expect(root.nested.closed).to.be.true;
+		expect(root.nested.pendingTerminalOperation).to.equal("close");
+		expect(handler.items.get(root.nested.address)).to.equal(root.nested);
+
+		await expect(handler.stop()).to.be.rejectedWith(cleanupError.message);
+		expect(callbackAttempts).to.equal(2);
+		expect(root.nested.pendingTerminalOperation).to.equal("close");
+
+		await handler.stop();
+		expect(callbackAttempts).to.equal(3);
+		expect(root.nested.pendingTerminalOperation).to.be.undefined;
+		handler.start();
+		await handler.stop();
+	});
+
+	it("blocks rollback residual reopen until post-super cleanup is retried", async () => {
+		const handler = new ProgramHandler({ client });
+		const root = new TestProgram(422);
+		const child = root.nested;
+		const baseChildClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic residual post-super failure");
+		let childCloseCalls = 0;
+		child.close = async (from) => {
+			const closed = await baseChildClose(from);
+			childCloseCalls += 1;
+			if (childCloseCalls === 1) throw cleanupError;
+			return closed;
+		};
+
+		await expect(
+			handler.open(root, {
+				onBeforeOpen: async (opened) => {
+					if (opened === root) {
+						throw new Error("synthetic residual reopen failure");
+					}
+				},
+			}),
+		).to.be.rejectedWith("synthetic residual reopen failure");
+		expect(childCloseCalls).to.equal(1);
+		expect(child.closed).to.be.true;
+		await expect(handler.open(child)).to.be.rejectedWith("cleanup");
+
+		await handler.stop();
+		expect(childCloseCalls).to.equal(2);
+		expect(child.pendingTerminalOperation).to.be.undefined;
+
+		handler.start();
+		const reopened = await handler.open(child);
+		expect(reopened).to.equal(child);
+		expect(reopened.closed).to.be.false;
+		await handler.stop();
+	});
+
+	it("does not replay a managed child failure as a rollback residual", async () => {
+		const handler = new ProgramHandler({ client });
+		const child = new TestNestedProgram(425);
+		const baseChildClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic managed rollback overlap");
+		const closeFrom: (TestProgram | undefined)[] = [];
+		child.close = async (from) => {
+			const closed = await baseChildClose(from);
+			closeFrom.push(from as TestProgram | undefined);
+			if (closeFrom.length === 1) throw cleanupError;
+			return closed;
+		};
+		await handler.open(child);
+		const root = new TestProgram(426, child);
+
+		await expect(
+			handler.open(root, {
+				onBeforeOpen: async (opened) => {
+					if (opened === root) {
+						throw new Error("synthetic managed root open failure");
+					}
+				},
+			}),
+		).to.be.rejectedWith("synthetic managed root open failure");
+
+		await handler.stop();
+		expect(closeFrom).to.deep.equal([root, root, undefined]);
+	});
+
+	it("reserves a rollback child address while post-super cleanup drains", async () => {
+		const handler = new ProgramHandler({ client });
+		const root = new TestProgram(427);
+		const child = root.nested;
+		const baseChildClose = child.close.bind(child);
+		const cleanupError = new Error("synthetic gated rollback cleanup");
+		let closeAttempts = 0;
+		let markPostSuperStarted!: () => void;
+		const postSuperStarted = new Promise<void>((resolve) => {
+			markPostSuperStarted = resolve;
+		});
+		let releasePostSuper!: () => void;
+		const postSuperGate = new Promise<void>((resolve) => {
+			releasePostSuper = resolve;
+		});
+		child.close = async (from) => {
+			const closed = await baseChildClose(from);
+			closeAttempts += 1;
+			if (closeAttempts === 1) {
+				markPostSuperStarted();
+				await postSuperGate;
+				throw cleanupError;
+			}
+			return closed;
+		};
+
+		const opening = handler.open(root, {
+			onBeforeOpen: async (opened) => {
+				if (opened === root) {
+					throw new Error("synthetic gated root open failure");
+				}
+			},
+		});
+		await postSuperStarted;
+		try {
+			await expect(handler.open(child)).to.be.rejectedWith("cleanup");
+			await expect(
+				handler.open(child.clone(), { existing: "reuse" }),
+			).to.be.rejectedWith("cleanup");
+			await expect(
+				handler.open(child.address, { existing: "reuse" }),
+			).to.be.rejectedWith("cleanup");
+		} finally {
+			releasePostSuper();
+		}
+		await expect(opening).to.be.rejectedWith(
+			"synthetic gated root open failure",
+		);
+		await expect(
+			handler.open(child.clone(), { existing: "reuse" }),
+		).to.be.rejectedWith("cleanup");
+
+		await handler.stop();
+		expect(closeAttempts).to.equal(2);
+		handler.start();
+		const reopened = await handler.open(child);
+		expect(reopened).to.equal(child);
+		await handler.stop();
+	});
+
+	it("rejects shared-child roots during rollback and permits a clean retry", async () => {
+		const handler = new ProgramHandler({ client });
+		const child = new TestNestedProgram(432);
+		const firstRoot = new TestProgram(433, child);
+		const secondRoot = new TestProgram(434, child);
+		const baseChildClose = child.close.bind(child);
+		let markFirstCleanupStarted!: () => void;
+		const firstCleanupStarted = new Promise<void>((resolve) => {
+			markFirstCleanupStarted = resolve;
+		});
+		let markSecondCleanupStarted!: () => void;
+		const secondCleanupStarted = new Promise<void>((resolve) => {
+			markSecondCleanupStarted = resolve;
+		});
+		let releaseFirstCleanup!: () => void;
+		const firstCleanupGate = new Promise<void>((resolve) => {
+			releaseFirstCleanup = resolve;
+		});
+		let releaseSecondCleanup!: () => void;
+		const secondCleanupGate = new Promise<void>((resolve) => {
+			releaseSecondCleanup = resolve;
+		});
+		child.close = async (from) => {
+			const closed = await baseChildClose(from);
+			if (from === firstRoot) {
+				markFirstCleanupStarted();
+				await firstCleanupGate;
+			} else if (from === secondRoot) {
+				markSecondCleanupStarted();
+				await secondCleanupGate;
+			}
+			return closed;
+		};
+		const openWithRootFailure = async (root: TestProgram): Promise<unknown> => {
+			try {
+				await handler.open(root, {
+					onBeforeOpen: async (opened) => {
+						if (opened === root) {
+							throw new Error(`synthetic shared rollback ${root.id}`);
+						}
+					},
+				});
+				return undefined;
+			} catch (error) {
+				return error;
+			}
+		};
+
+		const firstOpenResult = openWithRootFailure(firstRoot);
+		await firstCleanupStarted;
+		try {
+			await expect(
+				handler.open(child.clone(), { existing: "reuse" }),
+			).to.be.rejectedWith("cleanup");
+			const blockedSecondResult = await openWithRootFailure(secondRoot);
+			expect(blockedSecondResult).to.be.instanceOf(Error);
+			expect(String(blockedSecondResult)).to.contain("cleanup");
+			releaseFirstCleanup();
+			expect(await firstOpenResult).to.be.instanceOf(Error);
+
+			const secondOpenResult = openWithRootFailure(secondRoot);
+			await secondCleanupStarted;
+			await expect(
+				handler.open(child.address, { existing: "reuse" }),
+			).to.be.rejectedWith("cleanup");
+			releaseSecondCleanup();
+			expect(await secondOpenResult).to.be.instanceOf(Error);
+		} finally {
+			releaseFirstCleanup();
+			releaseSecondCleanup();
+		}
+
+		const reopened = await handler.open(child);
+		expect(reopened).to.equal(child);
+		await handler.stop();
+	});
+
+	it("preserves concurrent sibling attachments when rollback removes its edge", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(118));
+		const failing = new TestProgram(119);
+		const sibling = new TestProgram(120);
+		let markOpenStarted!: () => void;
+		const openStarted = new Promise<void>((resolve) => {
+			markOpenStarted = resolve;
+		});
+		let releaseOpen!: () => void;
+		const openGate = new Promise<void>((resolve) => {
+			releaseOpen = resolve;
+		});
+		failing.open = async () => {
+			markOpenStarted();
+			await openGate;
+			throw new Error("synthetic concurrent failure");
+		};
+
+		const failedOpen = handler.open(failing, { parent });
+		try {
+			await openStarted;
+			const openedSibling = await handler.open(sibling, { parent });
+			expect(parent.children).to.include(failing);
+			expect(parent.children).to.include(openedSibling);
+
+			releaseOpen();
+			await expect(failedOpen).to.be.rejectedWith(
+				"synthetic concurrent failure",
+			);
+
+			expect(parent.children).not.to.include(failing);
+			expect(
+				parent.children.filter((child) => child === openedSibling),
+			).to.have.length(1);
+			expect(openedSibling.parents).to.deep.equal([parent]);
+
+			await parent.close();
+			expect(openedSibling.closed).to.be.true;
+		} finally {
+			releaseOpen();
+			await Promise.allSettled([failedOpen]);
+			await handler.stop();
+		}
+	});
+
+	it("retains a live failed cleanup until stop can retry it", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(121));
+		const candidate = new TestProgram(122);
+		const originalOpen = candidate.open.bind(candidate);
+		const originalClose = candidate.close.bind(candidate);
+		const originalError = new Error("synthetic open failure");
+		const cleanupError = new Error("synthetic cleanup failure");
+		let attempts = 0;
+		candidate.open = async (args) => {
+			attempts += 1;
+			if (attempts === 1) {
+				throw originalError;
+			}
+			await originalOpen(args);
+		};
+		candidate.close = async () => {
+			throw cleanupError;
+		};
+
+		try {
+			let failure: unknown;
+			try {
+				await handler.open(candidate, { parent });
+			} catch (error) {
+				failure = error;
+			}
+			expect(failure).to.equal(originalError);
+			expect(candidate.closed).to.be.false;
+			expect(handler.items.get(candidate.address)).to.equal(candidate);
+			expect(parent.children).not.to.include(candidate);
+			await expect(handler.open(candidate, { parent })).to.be.rejectedWith(
+				"failed initialization cleanup",
+			);
+
+			candidate.close = originalClose;
+			await handler.stop();
+			expect(candidate.closed).to.be.true;
+			expect(handler.items.size).to.equal(0);
+
+			handler.start();
+			const reopenedParent = await handler.open(parent);
+			const retried = await handler.open(candidate, {
+				parent: reopenedParent,
+			});
+			expect(retried).to.equal(candidate);
+			expect(retried.closed).to.be.false;
+			expect(attempts).to.equal(2);
+		} finally {
+			candidate.close = originalClose;
+			await handler.stop();
+		}
+	});
+
+	it("composes user lifecycle callbacks without disabling Handler ownership", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(152);
+		let beforeOpenCalls = 0;
+		let closeCalls = 0;
+		await handler.open(program, {
+			onBeforeOpen: () => {
+				beforeOpenCalls += 1;
+			},
+			onClose: async () => {
+				closeCalls += 1;
+			},
+		});
+		expect(beforeOpenCalls).to.equal(2); // nested and root
+		expect(handler.items.get(program.address)).to.equal(program);
+
+		await handler.stop();
+		expect(closeCalls).to.equal(2); // nested and root
+		expect(program.closed).to.be.true;
+		expect(handler.items.size).to.equal(0);
+	});
+
+	it("retries an awaited terminal callback before releasing ownership", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(153));
+		const child = new TestProgram(154);
+		const callbackError = new Error("synthetic terminal callback failure");
+		let callbackAttempts = 0;
+		await handler.open(child, {
+			parent,
+			onClose: async (closed) => {
+				if (closed !== child) return;
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) throw callbackError;
+			},
+		});
+
+		await expect(child.close(parent)).to.be.rejectedWith(callbackError.message);
+		expect(child.closed).to.be.true;
+		expect(child.parents).to.deep.equal([parent]);
+		expect(parent.children).to.include(child);
+
+		handler.items.delete(parent.address);
+		await handler.stop();
+		expect(callbackAttempts).to.equal(2);
+		expect(child.parents).to.be.empty;
+		expect(parent.children).not.to.include(child);
+		await parent.close();
+	});
+
+	it("reconciles an owner edge released during a direct callback retry", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestProgram(414));
+		const child = new TestProgram(415);
+		const callbackError = new Error("synthetic direct callback retry failure");
+		let callbackAttempts = 0;
+		await handler.open(child, {
+			parent,
+			onClose: async (closed) => {
+				if (closed !== child) return;
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) throw callbackError;
+			},
+		});
+
+		await expect(child.close(parent)).to.be.rejectedWith(callbackError.message);
+		expect(child.parents).to.deep.equal([parent]);
+		expect(
+			parent.children.filter((candidate) => candidate === child),
+		).to.have.length(1);
+
+		expect(await child.close(parent)).to.be.true;
+		expect(callbackAttempts).to.equal(2);
+		expect(child.parents).to.be.empty;
+		expect(parent.children).not.to.include(child);
+
+		handler.items.delete(parent.address);
+		await handler.stop();
+		await parent.close();
+	});
+
+	it("lets a parent resume a nested child's pending close tail", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = new TestProgram(171);
+		const callbackError = new Error("synthetic nested close tail failure");
+		let callbackAttempts = 0;
+		await handler.open(parent, {
+			onClose: async (closed) => {
+				if (closed !== parent.nested) return;
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) throw callbackError;
+			},
+		});
+
+		await expect(parent.nested.close(parent)).to.be.rejectedWith(
+			callbackError.message,
+		);
+		expect(parent.nested.closed).to.be.true;
+		expect(parent.nested.pendingTerminalOperation).to.equal("close");
+		expect(parent.children).to.include(parent.nested);
+
+		expect(await parent.close()).to.be.true;
+		expect(callbackAttempts).to.equal(2);
+		expect(parent.nested.pendingTerminalOperation).to.be.undefined;
+		expect(parent.children).not.to.include(parent.nested);
+		await handler.stop();
+	});
+
+	it("does not let close bypass pending drop callback cleanup", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(165);
+		const unwrappedClose = program.close.bind(program);
+		const callbackError = new Error("synthetic pending drop callback failure");
+		let callbackAttempts = 0;
+		await handler.open(program, {
+			onDrop: async (dropped) => {
+				if (dropped !== program) return;
+				callbackAttempts += 1;
+				if (callbackAttempts === 1) throw callbackError;
+			},
+		});
+
+		await expect(program.drop()).to.be.rejectedWith(callbackError.message);
+		expect(program.closed).to.be.true;
+		await expect(unwrappedClose()).to.be.rejectedWith("pending drop cleanup");
+
+		await handler.stop();
+		expect(callbackAttempts).to.equal(2);
+	});
+
+	it("retains closed nested cleanup failures from early initialization rollback", async () => {
+		const handler = new ProgramHandler({ client });
+		const program = new TestProgram(155);
+		const childClose = program.nested.close.bind(program.nested);
+		const cleanupError = new Error("synthetic closed rollback residual");
+		let cleanupAttempts = 0;
+		program.nested.close = async (from) => {
+			const closed = await childClose(from);
+			cleanupAttempts += 1;
+			if (cleanupAttempts === 1) throw cleanupError;
+			return closed;
+		};
+
+		await expect(
+			handler.open(program, {
+				onBeforeOpen: (opened) => {
+					if (opened === program)
+						throw new Error("synthetic root open failure");
+				},
+			}),
+		).to.be.rejectedWith("synthetic root open failure");
+		expect(program.closed).to.be.true;
+		expect(program.nested.closed).to.be.true;
+
+		await handler.stop();
+		expect(cleanupAttempts).to.equal(2);
 	});
 
 	it("is open on open", async () => {
@@ -251,6 +2623,261 @@ describe(`shared`, () => {
 		expect(p1.closed).to.be.true;
 	});
 
+	it("does not deadlock a reserved nested open behind an external waiter", async () => {
+		const handler = new ProgramHandler({ client });
+		const originalOpen = client.open.bind(client);
+		client.open = handler.open.bind(handler) as typeof client.open;
+		const root = new TestParenteRefernceProgram();
+		let markChildBeforeOpen!: () => void;
+		const childBeforeOpen = new Promise<void>((resolve) => {
+			markChildBeforeOpen = resolve;
+		});
+		let releaseChildBeforeOpen!: () => void;
+		const childBeforeOpenGate = new Promise<void>((resolve) => {
+			releaseChildBeforeOpen = resolve;
+		});
+
+		try {
+			const rootOpening = handler.open(root, {
+				onBeforeOpen: async (opened) => {
+					if (opened !== root.nested) return;
+					markChildBeforeOpen();
+					await childBeforeOpenGate;
+				},
+			});
+			await childBeforeOpen;
+			const externalChildOpening = handler.open(root.nested, {
+				existing: "reuse",
+			});
+			await delay(25);
+			releaseChildBeforeOpen();
+
+			const [openedRoot, openedChild] = await Promise.all([
+				rootOpening,
+				externalChildOpening,
+			]);
+			expect(openedRoot).to.equal(root);
+			expect(openedChild).to.equal(root.nested);
+			await handler.stop();
+		} finally {
+			releaseChildBeforeOpen();
+			client.open = originalOpen;
+		}
+	});
+
+	for (const route of ["exact", "clone", "address"] as const) {
+		it(`adopts a dynamic nested ${route} reuse into an external opening generation`, async () => {
+			const handler = new ProgramHandler({ client });
+			const originalOpen = client.open.bind(client);
+			client.open = handler.open.bind(handler) as typeof client.open;
+			const child = new TestNestedProgram(455);
+			const first = new TestProgram(456, child);
+			const second = new TestProgram(457, child);
+			await second.calculateAddress();
+			let markFirstOpenStarted!: () => void;
+			const firstOpenStarted = new Promise<void>((resolve) => {
+				markFirstOpenStarted = resolve;
+			});
+			let releaseNestedOpen!: () => void;
+			const nestedOpenGate = new Promise<void>((resolve) => {
+				releaseNestedOpen = resolve;
+			});
+			let nestedSecond: TestProgram | undefined;
+			let secondOpenCalls = 0;
+			const originalSecondOpen = second.open.bind(second);
+			second.open = async (args) => {
+				secondOpenCalls += 1;
+				await originalSecondOpen(args);
+			};
+			first.open = async () => {
+				markFirstOpenStarted();
+				await nestedOpenGate;
+				const requested =
+					route === "exact"
+						? second
+						: route === "clone"
+							? second.clone()
+							: second.address;
+				nestedSecond = (await first.node.open(requested, {
+					parent: first,
+					existing: "reuse",
+				})) as TestProgram;
+			};
+
+			try {
+				const firstOpening = handler.open(first);
+				await firstOpenStarted;
+				const secondOpening = handler.open(second);
+				await delay(25);
+				releaseNestedOpen();
+
+				const [openedFirst, openedSecond] = await Promise.all([
+					firstOpening,
+					secondOpening,
+				]);
+				expect(openedFirst).to.equal(first);
+				expect(openedSecond).to.equal(second);
+				expect(nestedSecond).to.equal(second);
+				expect(secondOpenCalls).to.equal(1);
+				expect(
+					second.parents.filter((parent) => parent == null),
+				).to.have.length(1);
+				expect(
+					second.parents.filter((parent) => parent === first),
+				).to.have.length(1);
+				expect(
+					child.parents.filter((parent) => parent === first),
+				).to.have.length(1);
+				expect(
+					child.parents.filter((parent) => parent === second),
+				).to.have.length(1);
+				await handler.stop();
+				const state = handler as unknown as {
+					_openingPromises: Map<string, Promise<TestProgram>>;
+					_openingReservations: Set<unknown>;
+					_openingReservationsByAddress: Map<string, Set<unknown>>;
+				};
+				expect(state._openingPromises.size).to.equal(0);
+				expect(state._openingReservations.size).to.equal(0);
+				expect(state._openingReservationsByAddress.size).to.equal(0);
+			} finally {
+				releaseNestedOpen();
+				client.open = originalOpen;
+			}
+		});
+	}
+
+	it("retracts a failed adopted participant before authorizing nested reuse", async () => {
+		const handler = new ProgramHandler({ client });
+		const originalOpen = client.open.bind(client);
+		client.open = handler.open.bind(handler) as typeof client.open;
+		const child = new TestNestedProgram(460);
+		const first = new TestProgram(461, child);
+		const second = new TestProgram(462, child);
+		await second.calculateAddress();
+		second.open = async () => {
+			throw new Error("synthetic adopted generation failure");
+		};
+		let markFirstOpenStarted!: () => void;
+		const firstOpenStarted = new Promise<void>((resolve) => {
+			markFirstOpenStarted = resolve;
+		});
+		let releaseNestedOpen!: () => void;
+		const nestedOpenGate = new Promise<void>((resolve) => {
+			releaseNestedOpen = resolve;
+		});
+		let markNestedFailed!: () => void;
+		const nestedFailed = new Promise<void>((resolve) => {
+			markNestedFailed = resolve;
+		});
+		let releaseFirstOpen!: () => void;
+		const firstOpenGate = new Promise<void>((resolve) => {
+			releaseFirstOpen = resolve;
+		});
+		first.open = async () => {
+			markFirstOpenStarted();
+			await nestedOpenGate;
+			try {
+				await first.node.open(second, { parent: first, existing: "reuse" });
+			} catch {
+				markNestedFailed();
+				await firstOpenGate;
+			}
+		};
+
+		try {
+			const firstOpening = handler.open(first);
+			await firstOpenStarted;
+			const secondOpening = handler.open(second);
+			await delay(25);
+			releaseNestedOpen();
+			await nestedFailed;
+			await expect(secondOpening).to.be.rejectedWith(
+				"synthetic adopted generation failure",
+			);
+			expect(second.closed).to.be.true;
+			const state = handler as unknown as {
+				_openingReservations: Set<{
+					programs: Set<unknown>;
+					group: { participantReferences: Map<unknown, number> };
+				}>;
+			};
+			const firstReservation = [...state._openingReservations].find(
+				(reservation) => reservation.programs.has(first),
+			);
+			expect(firstReservation).to.exist;
+			expect(firstReservation!.group.participantReferences.has(second)).to.be
+				.false;
+			await expect(
+				handler.open(child as any, {
+					parent: second as any,
+					existing: "reuse",
+				}),
+			).to.be.rejectedWith("Parent program");
+			expect(
+				child.parents.filter((parent) => parent === second),
+			).to.have.length(0);
+
+			releaseFirstOpen();
+			expect(await firstOpening).to.equal(first);
+			await handler.stop();
+			expect(child.closed).to.be.true;
+		} finally {
+			releaseNestedOpen();
+			releaseFirstOpen();
+			client.open = originalOpen;
+		}
+	});
+
+	it("rejects a reserved dependency as parent before it is open", async () => {
+		const handler = new ProgramHandler({ client });
+		const prospectiveParent = new TestNestedProgram(465);
+		const root = new TestProgram(466, prospectiveParent);
+		const outsider = new TestNestedProgram(467);
+		let markBeforeOpenStarted!: () => void;
+		const beforeOpenStarted = new Promise<void>((resolve) => {
+			markBeforeOpenStarted = resolve;
+		});
+		let releaseBeforeOpen!: () => void;
+		const beforeOpenGate = new Promise<void>((resolve) => {
+			releaseBeforeOpen = resolve;
+		});
+		root.beforeOpen = async () => {
+			markBeforeOpenStarted();
+			await beforeOpenGate;
+			throw new Error("synthetic root pre-open failure");
+		};
+
+		const rootOpening = handler.open(root);
+		try {
+			await beforeOpenStarted;
+			expect(prospectiveParent.closed).to.be.true;
+			await expect(
+				handler.open(outsider as any, {
+					parent: prospectiveParent as any,
+					existing: "reuse",
+				}),
+			).to.be.rejectedWith("Parent program is closed");
+			expect(outsider.closed).to.be.true;
+			expect(outsider.parents ?? []).to.have.length(0);
+			expect(
+				(prospectiveParent.children ?? []).filter(
+					(child) => child === outsider,
+				),
+			).to.have.length(0);
+
+			releaseBeforeOpen();
+			await expect(rootOpening).to.be.rejectedWith(
+				"synthetic root pre-open failure",
+			);
+			await handler.stop();
+			expect(outsider.closed).to.be.true;
+		} finally {
+			releaseBeforeOpen();
+			await Promise.allSettled([rootOpening]);
+		}
+	});
+
 	it("rejects", async () => {
 		const someParent = new TestProgram();
 		await expect(client.open(someParent, { parent: someParent })).rejectedWith(
@@ -355,6 +2982,289 @@ describe(`shared`, () => {
 	// TODO add tests for subprograms that is also open as root program
 
 	describe("parent option", () => {
+		it("fences parent close while a child attachment is waiting", async () => {
+			const handler = new ProgramHandler({ client });
+			const parent = await handler.open(new TestProgram(463));
+			const child = new TestNestedProgram(464);
+			const baseChildOpen = child.open.bind(child);
+			let markChildOpenStarted!: () => void;
+			const childOpenStarted = new Promise<void>((resolve) => {
+				markChildOpenStarted = resolve;
+			});
+			let releaseChildOpen!: () => void;
+			const childOpenGate = new Promise<void>((resolve) => {
+				releaseChildOpen = resolve;
+			});
+			child.open = async () => {
+				markChildOpenStarted();
+				await childOpenGate;
+				await baseChildOpen();
+			};
+
+			const rootOpening = handler.open(child);
+			await childOpenStarted;
+			const nestedOpening = handler.open(child as any, {
+				parent: parent as any,
+				existing: "reuse",
+			});
+			try {
+				await delay(25);
+				await expect(parent.close()).to.be.rejectedWith(
+					"opening child attachment",
+				);
+				expect(parent.closed).to.be.false;
+				releaseChildOpen();
+				const [root, nested] = await Promise.all([rootOpening, nestedOpening]);
+				expect(root).to.equal(child);
+				expect(nested).to.equal(child);
+				expect(
+					child.parents.filter((owner) => owner === parent),
+				).to.have.length(1);
+				expect(
+					parent.children.filter((owned) => owned === child),
+				).to.have.length(1);
+			} finally {
+				releaseChildOpen();
+				await Promise.allSettled([rootOpening, nestedOpening]);
+				await handler.stop();
+			}
+		});
+
+		for (const first of ["root", "parent"] as const) {
+			it(`waits for a ${first}-initiated open before resolving the concurrent ${
+				first === "root" ? "parent" : "root"
+			} open`, async () => {
+				const parent = await client.open(new TestProgram(999));
+				const child = new TestProgram(1);
+				let markOpenStarted!: () => void;
+				const openStarted = new Promise<void>((resolve) => {
+					markOpenStarted = resolve;
+				});
+				let releaseOpen!: () => void;
+				const openGate = new Promise<void>((resolve) => {
+					releaseOpen = resolve;
+				});
+				let openCompleted = false;
+				const originalOpen = child.open.bind(child);
+				child.open = async (args) => {
+					markOpenStarted();
+					await openGate;
+					await originalOpen(args);
+					openCompleted = true;
+				};
+
+				const rootOpen = () => client.open(child);
+				const parentOpen = () => client.open(child, { parent });
+				const firstOpen = first === "root" ? rootOpen() : parentOpen();
+				await openStarted;
+				let secondResolved = false;
+				const secondOpen = (first === "root" ? parentOpen() : rootOpen()).then(
+					(result) => {
+						secondResolved = true;
+						return result;
+					},
+				);
+
+				try {
+					await delay(25);
+					expect(secondResolved).to.be.false;
+					expect(openCompleted).to.be.false;
+				} finally {
+					releaseOpen();
+				}
+
+				const [firstResult, secondResult] = await Promise.all([
+					firstOpen,
+					secondOpen,
+				]);
+				expect(firstResult).to.equal(child);
+				expect(secondResult).to.equal(child);
+				expect(openCompleted).to.be.true;
+				expect(child.parents).to.have.length(2);
+				expect(child.parents).to.have.members([parent, undefined]);
+			});
+		}
+
+		it("singleflights simultaneous opens from two parents", async () => {
+			const handler = new ProgramHandler({ client });
+			const firstParent = await handler.open(new TestProgram(134));
+			const secondParent = await handler.open(new TestProgram(135));
+			const firstCandidate = new TestProgram(136);
+			const secondCandidate = firstCandidate.clone();
+
+			let saveArrivals = 0;
+			let releaseInitialSaves!: () => void;
+			const initialSaveGate = new Promise<void>((resolve) => {
+				releaseInitialSaves = resolve;
+			});
+			const gateInitialSave = (program: TestProgram) => {
+				const originalSave = program.save.bind(program);
+				let calls = 0;
+				program.save = async (store, options) => {
+					const address = await originalSave(store, options);
+					calls += 1;
+					if (calls === 1) {
+						saveArrivals += 1;
+						if (saveArrivals === 2) {
+							releaseInitialSaves();
+						}
+						await initialSaveGate;
+					}
+					return address;
+				};
+			};
+			gateInitialSave(firstCandidate);
+			gateInitialSave(secondCandidate);
+
+			let initializationStarts = 0;
+			let markInitializationStarted!: () => void;
+			const initializationStarted = new Promise<void>((resolve) => {
+				markInitializationStarted = resolve;
+			});
+			let releaseInitialization!: () => void;
+			const initializationGate = new Promise<void>((resolve) => {
+				releaseInitialization = resolve;
+			});
+			for (const candidate of [firstCandidate, secondCandidate]) {
+				const originalOpen = candidate.open.bind(candidate);
+				candidate.open = async (args) => {
+					initializationStarts += 1;
+					markInitializationStarted();
+					await initializationGate;
+					await originalOpen(args);
+				};
+			}
+
+			let firstOpen: Promise<TestProgram> | undefined;
+			let secondOpen: Promise<TestProgram> | undefined;
+			try {
+				firstOpen = handler.open(firstCandidate, { parent: firstParent });
+				secondOpen = handler.open(secondCandidate, { parent: secondParent });
+				await initializationStarted;
+				await delay(25);
+				expect(initializationStarts).to.equal(1);
+
+				releaseInitialization();
+				const [firstResult, secondResult] = await Promise.all([
+					firstOpen,
+					secondOpen,
+				]);
+				expect(firstResult).to.equal(secondResult);
+				expect([firstCandidate, secondCandidate]).to.include(firstResult);
+				expect(firstResult.parents).to.have.length(2);
+				expect(firstResult.parents).to.have.members([
+					firstParent,
+					secondParent,
+				]);
+				expect(
+					firstParent.children.filter((child) => child === firstResult),
+				).to.have.length(1);
+				expect(
+					secondParent.children.filter((child) => child === firstResult),
+				).to.have.length(1);
+			} finally {
+				releaseInitialSaves();
+				releaseInitialization();
+				await Promise.allSettled(
+					[firstOpen, secondOpen].filter(
+						(promise): promise is Promise<TestProgram> => promise !== undefined,
+					),
+				);
+				await handler.stop();
+			}
+		});
+
+		for (const first of ["root", "parent"] as const) {
+			it(`lets a concurrent ${first === "root" ? "parent" : "root"} open run after a ${first} generation fails`, async () => {
+				const handler = new ProgramHandler({ client });
+				const parent = await handler.open(new TestProgram(130));
+				const failing = new TestProgram(131);
+				const retry = failing.clone();
+				let markOpenStarted!: () => void;
+				const openStarted = new Promise<void>((resolve) => {
+					markOpenStarted = resolve;
+				});
+				let releaseOpen!: () => void;
+				const openGate = new Promise<void>((resolve) => {
+					releaseOpen = resolve;
+				});
+				failing.open = async () => {
+					markOpenStarted();
+					await openGate;
+					throw new Error("synthetic first-generation failure");
+				};
+
+				const firstOpen =
+					first === "root"
+						? handler.open(failing)
+						: handler.open(failing, { parent });
+				await openStarted;
+				const secondOpen =
+					first === "root"
+						? handler.open(retry, { parent })
+						: handler.open(retry);
+
+				try {
+					releaseOpen();
+					await expect(firstOpen).to.be.rejectedWith(
+						"synthetic first-generation failure",
+					);
+					const result = await secondOpen;
+					expect(result).to.equal(retry);
+					expect(result.closed).to.be.false;
+					expect(result.parents).to.deep.equal(
+						first === "root" ? [parent] : [undefined],
+					);
+					expect(parent.children).not.to.include(failing);
+				} finally {
+					releaseOpen();
+					await Promise.allSettled([firstOpen, secondOpen]);
+					await handler.stop();
+				}
+			});
+		}
+
+		it("applies parent reject after waiting for a successful root generation", async () => {
+			const handler = new ProgramHandler({ client });
+			const parent = await handler.open(new TestProgram(132));
+			const child = new TestProgram(133);
+			const candidate = child.clone();
+			let markOpenStarted!: () => void;
+			const openStarted = new Promise<void>((resolve) => {
+				markOpenStarted = resolve;
+			});
+			let releaseOpen!: () => void;
+			const openGate = new Promise<void>((resolve) => {
+				releaseOpen = resolve;
+			});
+			const originalOpen = child.open.bind(child);
+			child.open = async (args) => {
+				markOpenStarted();
+				await openGate;
+				await originalOpen(args);
+			};
+
+			const rootOpen = handler.open(child);
+			await openStarted;
+			const parentOpen = handler.open(candidate, {
+				parent,
+				existing: "reject",
+			});
+			try {
+				releaseOpen();
+				expect(await rootOpen).to.equal(child);
+				await expect(parentOpen).to.be.rejectedWith(
+					`Program at ${child.address} is already open`,
+				);
+				expect(child.parents).to.deep.equal([undefined]);
+				expect(parent.children).not.to.include(child);
+			} finally {
+				releaseOpen();
+				await Promise.allSettled([rootOpen, parentOpen]);
+				await handler.stop();
+			}
+		});
+
 		it("second open should wait for first open to complete", async () => {
 			const parent = new TestProgram(999);
 			await client.open(parent);
@@ -397,6 +3307,142 @@ describe(`shared`, () => {
 	});
 
 	describe("stop", () => {
+		it("drains admitted queued opens and requires an explicit restart", async () => {
+			const handler = new ProgramHandler({ client });
+			const first = new TestProgram(111);
+			const second = first.clone();
+			let markOpenStarted!: () => void;
+			const openStarted = new Promise<void>((resolve) => {
+				markOpenStarted = resolve;
+			});
+			let releaseOpen!: () => void;
+			const openGate = new Promise<void>((resolve) => {
+				releaseOpen = resolve;
+			});
+			const originalOpen = first.open.bind(first);
+			first.open = async (args) => {
+				markOpenStarted();
+				await openGate;
+				await originalOpen(args);
+			};
+
+			let firstOpen: Promise<TestProgram> | undefined;
+			let queuedOpen: Promise<TestProgram> | undefined;
+			let stopping: Promise<void> | undefined;
+			try {
+				firstOpen = handler.open(first);
+				await openStarted;
+				queuedOpen = handler.open(second, { existing: "reuse" });
+				stopping = handler.stop();
+
+				expect(handler.stop()).to.equal(stopping);
+				await expect(handler.open(new TestProgram(112))).to.be.rejectedWith(
+					"Program handler is stopping or stopped",
+				);
+
+				releaseOpen();
+				const [firstResult, queuedResult] = await Promise.all([
+					firstOpen,
+					queuedOpen,
+				]);
+				expect(firstResult).to.equal(first);
+				expect(queuedResult).to.equal(first);
+				await stopping;
+				expect(first.closed).to.be.true;
+
+				await expect(handler.open(new TestProgram(113))).to.be.rejectedWith(
+					"Program handler is stopping or stopped",
+				);
+				handler.start();
+				const reopened = await handler.open(new TestProgram(113));
+				expect(reopened.closed).to.be.false;
+				await handler.stop();
+				expect(reopened.closed).to.be.true;
+			} finally {
+				releaseOpen();
+				await Promise.allSettled(
+					[firstOpen, queuedOpen, stopping].filter(
+						(promise): promise is Promise<TestProgram> | Promise<void> =>
+							promise !== undefined,
+					),
+				);
+				await handler.stop();
+			}
+		});
+
+		it("fully closes a multi-owned program even when one close returns false", async () => {
+			const handler = new ProgramHandler({ client });
+			const parent = await handler.open(new TestProgram(114));
+			const child = await handler.open(new TestProgram(115), { parent });
+			await handler.open(child);
+			expect(child.parents).to.deep.equal([parent, undefined]);
+			const closeSteps: {
+				ownersBefore: number;
+				ownersAfter: number;
+				closed: boolean;
+			}[] = [];
+			const originalClose = child.close.bind(child);
+			child.close = async (from) => {
+				const ownersBefore = child.parents.length;
+				const closed = await originalClose(from);
+				closeSteps.push({
+					ownersBefore,
+					ownersAfter: child.parents.length,
+					closed,
+				});
+				return closed;
+			};
+
+			// Leave only the child under Handler ownership. This makes stop responsible
+			// for draining both of its references instead of relying on parent.close().
+			handler.items.delete(parent.address);
+			try {
+				await handler.stop();
+				expect(child.closed).to.be.true;
+				expect(handler.items.size).to.equal(0);
+				expect(parent.children).not.to.include(child);
+				expect(closeSteps).to.deep.equal([
+					{ ownersBefore: 2, ownersAfter: 1, closed: false },
+					{ ownersBefore: 1, ownersAfter: 0, closed: true },
+				]);
+			} finally {
+				child.close = originalClose;
+				await parent.close();
+				await handler.stop();
+			}
+		});
+
+		it("keeps admissions closed when stopping makes no ownership progress", async () => {
+			const handler = new ProgramHandler({ client });
+			const program = await handler.open(new TestProgram(116));
+			const originalClose = program.close.bind(program);
+			let closeCalls = 0;
+			program.close = async () => {
+				closeCalls += 1;
+				return false;
+			};
+
+			try {
+				await expect(handler.stop()).to.be.rejectedWith(
+					"did not make ownership progress while stopping (1 -> 1)",
+				);
+				expect(closeCalls).to.equal(1);
+				expect(program.closed).to.be.false;
+				expect(handler.items.get(program.address)).to.equal(program);
+				await expect(handler.open(new TestProgram(117))).to.be.rejectedWith(
+					"Program handler is stopping or stopped",
+				);
+
+				program.close = originalClose;
+				await handler.stop();
+				expect(program.closed).to.be.true;
+				expect(handler.items.size).to.equal(0);
+			} finally {
+				program.close = originalClose;
+				await handler.stop();
+			}
+		});
+
 		it("waits for in-progress parent opens to complete", async () => {
 			const parent = new TestProgram(999);
 			await client.open(parent);

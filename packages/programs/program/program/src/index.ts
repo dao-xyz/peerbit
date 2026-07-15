@@ -1,6 +1,7 @@
 export {
 	type ProgramInitializationOptions,
 	type OpenOptions,
+	TerminalOperationNotStartedError,
 } from "./handler.js";
 export * from "./client.js";
 export * from "./program.js";

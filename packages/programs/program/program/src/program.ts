@@ -17,6 +17,13 @@ import {
 	Handler,
 	type Manageable,
 	type ProgramInitializationOptions,
+	TERMINAL_BASE_CHECKPOINT,
+	TERMINAL_BASE_COMMIT,
+	TERMINAL_BASE_RETRY,
+	TERMINAL_OUTER_CLEANUP_RELEASE,
+	TERMINAL_OUTER_CLEANUP_RETAIN,
+	type TerminalBaseCommit,
+	TerminalOperationNotStartedError,
 	addParent,
 } from "./handler.js";
 import { getValuesWithType } from "./utils.js";
@@ -77,6 +84,7 @@ class ProgramHandler extends Handler<Program> {
 			identity: properties.client.identity,
 			client: properties.client,
 			shouldMonitor: (p) => p instanceof Program,
+			getDependencies: (program) => program.allPrograms,
 			load: Program.load,
 		});
 	}
@@ -86,6 +94,32 @@ export { ProgramHandler };
 type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 
 const PROGRAM_INSTANCE_SYMBOL = Symbol.for("@peerbit/program/Program");
+
+type TerminalOperation = "close" | "drop";
+type TerminalCall = {
+	type: TerminalOperation;
+	from?: Program;
+	terminal: boolean;
+	promise: Promise<boolean>;
+};
+type FailedTerminalChild = {
+	program: Program;
+	operation: TerminalOperation;
+	commit?: TerminalBaseCommit;
+	cleanupLease?: object;
+};
+type TerminalRetryContext = {
+	commit: TerminalBaseCommit;
+	consumed: boolean;
+	promise: Promise<boolean>;
+};
+type PendingTerminalTail = {
+	type: TerminalOperation;
+	from?: Program;
+	hadParentReference: boolean;
+	eventEmitted: boolean;
+	callbackCompleted: boolean;
+};
 
 @variant(0)
 export abstract class Program<
@@ -132,9 +166,30 @@ export abstract class Program<
 
 	private _node: ProgramClient;
 	private _allPrograms: Program[] | undefined;
+	private _acceptsParentAttachments = true;
 
 	private _events: TypedEventTarget<ProgramEvents>;
 	private _closed: boolean;
+	private _terminalCalls: TerminalCall[] | undefined;
+	private _dropDeletePending: boolean | undefined;
+	private _failedTerminalChildren: FailedTerminalChild[] | undefined;
+	private _emittedTerminalEvents: Set<TerminalOperation> | undefined;
+	private _terminalBaseCommitVersion: number | undefined;
+	private _terminalBaseCommitEpoch: number | undefined;
+	private _terminalBaseCommitsByParent:
+		| WeakMap<
+				Manageable<any>,
+				Partial<Record<TerminalOperation, TerminalBaseCommit>>
+		  >
+		| undefined;
+	private _rootTerminalBaseCommits:
+		| Partial<Record<TerminalOperation, TerminalBaseCommit>>
+		| undefined;
+	private _terminalRetryContexts: TerminalRetryContext[] | undefined;
+	private _pendingTerminalTail: PendingTerminalTail | undefined;
+	private _terminalLifecycleCallbackRunning = false;
+	private _terminalOuterCleanupLeases: Set<object> | undefined;
+	private _pendingInverseParentReleases: Map<Program, number> | undefined;
 
 	parents: (Program<any> | undefined)[];
 	children: Program<Args>[];
@@ -198,6 +253,34 @@ export abstract class Program<
 		this._closed = closed;
 	}
 
+	get acceptsParentAttachments(): boolean {
+		// Program clones are borsh-created without running class field initializers.
+		return (
+			this._acceptsParentAttachments !== false &&
+			(this._terminalOuterCleanupLeases?.size ?? 0) === 0
+		);
+	}
+
+	get pendingTerminalOperation(): TerminalOperation | undefined {
+		return (
+			this._pendingTerminalTail?.type ||
+			(this._dropDeletePending ? "drop" : undefined)
+		);
+	}
+
+	get terminalLifecycleCallbackRunning(): boolean {
+		return this._terminalLifecycleCallbackRunning;
+	}
+
+	/**
+	 * Fence Handler reuse while a subclass performs irreversible terminal work
+	 * before delegating to Program.end(). A subsequent successful reopen clears
+	 * the fence in beforeOpen().
+	 */
+	protected preventParentAttachments(): void {
+		this._acceptsParentAttachments = false;
+	}
+
 	get node(): ProgramClient {
 		return this._node;
 	}
@@ -212,6 +295,25 @@ export abstract class Program<
 		node: ProgramClient,
 		options?: ProgramInitializationOptions<Args, this>,
 	) {
+		if ((this._terminalOuterCleanupLeases?.size ?? 0) > 0) {
+			throw new Error(
+				"Program terminal cleanup must finish before the program can reopen",
+			);
+		}
+		if (this.closed) {
+			if (this._pendingTerminalTail || this._dropDeletePending) {
+				throw new Error(
+					"Program terminal cleanup must finish before the program can reopen",
+				);
+			}
+			this._terminalBaseCommitEpoch = (this._terminalBaseCommitEpoch ?? 0) + 1;
+			this._acceptsParentAttachments = true;
+			this._failedTerminalChildren = undefined;
+			this._emittedTerminalEvents?.clear();
+			this._emittedTerminalEvents = undefined;
+			this._terminalBaseCommitsByParent = undefined;
+			this._rootTerminalBaseCommits = undefined;
+		}
 		// check that a  discriminator exist
 		const schema = getSchema(this.constructor);
 		if (!schema || typeof schema.variant !== "string") {
@@ -413,43 +515,416 @@ export abstract class Program<
 		e: CustomEvent<UnsubcriptionEvent>,
 	) => void;
 
-	private async processEnd(type: "drop" | "close") {
-		if (!this.closed) {
-			this.emitEvent(new CustomEvent(type, { detail: this }), true);
-			if (type === "close") {
-				this._eventOptions?.onClose?.(this);
-			} else if (type === "drop") {
-				this._eventOptions?.onDrop?.(this);
-			} else {
-				throw new Error("Unsupported event type: " + type);
-			}
+	[TERMINAL_BASE_CHECKPOINT](): number {
+		return this._terminalBaseCommitVersion ?? 0;
+	}
 
-			const promises: Promise<void | boolean>[] = [];
+	[TERMINAL_OUTER_CLEANUP_RETAIN](): object {
+		const lease = {};
+		const leases =
+			this._terminalOuterCleanupLeases ||
+			(this._terminalOuterCleanupLeases = new Set());
+		leases.add(lease);
+		return lease;
+	}
 
-			if (this.children) {
-				for (const program of this.children) {
-					if (program.closed) {
-						if (type === "close") {
-							continue;
-						}
-					}
-					promises.push(program[type](this as Program)); // TODO types
-				}
-				this.children = [];
-			}
-			await Promise.all(promises);
-
-			this._clear();
-			this.closed = true;
-			return true;
-		} else {
-			this._clear();
-			return true;
+	[TERMINAL_OUTER_CLEANUP_RELEASE](lease: object): void {
+		this._terminalOuterCleanupLeases?.delete(lease);
+		if (this._terminalOuterCleanupLeases?.size === 0) {
+			this._terminalOuterCleanupLeases = undefined;
+			this.reconcilePendingInverseParentReleases();
 		}
 	}
 
-	private async end(type: "drop" | "close", from?: Program): Promise<boolean> {
+	[TERMINAL_BASE_COMMIT](
+		afterVersion: number,
+		type: TerminalOperation,
+		from?: Manageable<any>,
+	): TerminalBaseCommit | undefined {
+		const commit = from
+			? this._terminalBaseCommitsByParent?.get(from)?.[type]
+			: this._rootTerminalBaseCommits?.[type];
+		return commit && commit.version > afterVersion ? commit : undefined;
+	}
+
+	async [TERMINAL_BASE_RETRY](
+		commit: TerminalBaseCommit,
+		operation: () => Promise<boolean>,
+	): Promise<boolean> {
+		if (commit.epoch !== (this._terminalBaseCommitEpoch ?? 0)) {
+			throw new Error(
+				"Program terminal cleanup belongs to a stale open lifecycle",
+			);
+		}
+		const context: TerminalRetryContext = {
+			commit,
+			consumed: false,
+			promise: Promise.resolve(commit.result),
+		};
+		const contexts =
+			this._terminalRetryContexts || (this._terminalRetryContexts = []);
+		contexts.push(context);
+		try {
+			return await operation();
+		} finally {
+			const index = contexts.indexOf(context);
+			if (index !== -1) contexts.splice(index, 1);
+			if (contexts.length === 0) this._terminalRetryContexts = undefined;
+		}
+	}
+
+	private consumeTerminalRetry(
+		type: TerminalOperation,
+		from?: Program,
+	): Promise<boolean> | undefined {
+		const context = this._terminalRetryContexts?.find(
+			(candidate) =>
+				!candidate.consumed &&
+				candidate.commit.type === type &&
+				candidate.commit.from === from,
+		);
+		if (!context) return undefined;
+		context.consumed = true;
+		return context.promise;
+	}
+
+	private recordTerminalBaseCommit(
+		type: TerminalOperation,
+		from: Program | undefined,
+		result: boolean,
+		releasedParentReferences: number,
+	): void {
+		const version = (this._terminalBaseCommitVersion ?? 0) + 1;
+		this._terminalBaseCommitVersion = version;
+		const commit = {
+			epoch: this._terminalBaseCommitEpoch ?? 0,
+			version,
+			type,
+			from,
+			result,
+			releasedParentReferences,
+		};
+		if (from) {
+			const commits =
+				this._terminalBaseCommitsByParent?.get(from) ??
+				({} as Partial<Record<TerminalOperation, TerminalBaseCommit>>);
+			commits[type] = commit;
+			const commitsByParent =
+				this._terminalBaseCommitsByParent ||
+				(this._terminalBaseCommitsByParent = new WeakMap());
+			commitsByParent.set(from, commits);
+		} else {
+			const commits =
+				this._rootTerminalBaseCommits || (this._rootTerminalBaseCommits = {});
+			commits[type] = commit;
+		}
+	}
+
+	private retainInverseParentRelease(from: Program | undefined): void {
+		if (!from) return;
+		const pending =
+			this._pendingInverseParentReleases ||
+			(this._pendingInverseParentReleases = new Map());
+		pending.set(from, (pending.get(from) ?? 0) + 1);
+	}
+
+	private reconcilePendingInverseParentReleases(from?: Program): void {
+		const pending = this._pendingInverseParentReleases;
+		if (!pending) return;
+		const parents = from ? [from] : [...pending.keys()];
+		for (const parent of parents) {
+			let releasedReferences = pending.get(parent) ?? 0;
+			const retainedReferences =
+				this.parents?.filter((candidate) => candidate === parent).length ?? 0;
+			while (releasedReferences > 0) {
+				const inverseReferences =
+					parent.children?.filter((candidate) => candidate === this).length ??
+					0;
+				if (inverseReferences > retainedReferences) {
+					const childIndex = parent.children.indexOf(this);
+					if (childIndex !== -1) parent.children.splice(childIndex, 1);
+				}
+				releasedReferences -= 1;
+			}
+			pending.delete(parent);
+		}
+		if (pending.size === 0) this._pendingInverseParentReleases = undefined;
+	}
+
+	private isOutermostBaseTerminalOperation(type: TerminalOperation): boolean {
+		const current = type === "close" ? this.close : this.drop;
+		const base =
+			type === "close" ? Program.prototype.close : Program.prototype.drop;
+		return current === base;
+	}
+
+	private async processEnd(
+		type: TerminalOperation,
+		from: Program | undefined,
+		hadParentReference: boolean,
+	) {
 		if (this.closed) {
+			this._clear();
+			return true;
+		}
+		// Lifecycle events retain their historical attempt semantics and parent-first
+		// ordering. A failed attempt emits once; retries in the same open epoch do not
+		// emit a duplicate event. The awaited onClose/onDrop callback below remains a
+		// committed-tail callback and only runs after children have drained.
+		const emittedTerminalEvents =
+			this._emittedTerminalEvents ||
+			(this._emittedTerminalEvents = new Set<TerminalOperation>());
+		const retryingTerminalAttempt = emittedTerminalEvents.has(type);
+		if (!emittedTerminalEvents.has(type)) {
+			emittedTerminalEvents.add(type);
+			this.emitEvent(new CustomEvent(type, { detail: this }), true);
+		}
+
+		const children = [...(this.children ?? [])];
+		const previousFailures = [...(this._failedTerminalChildren ?? [])];
+		const claimedFailures = new Set<FailedTerminalChild>();
+		const attempts: {
+			child: Program;
+			operation: TerminalOperation;
+			previous?: FailedTerminalChild;
+			checkpoint: number;
+			startedClosed: boolean;
+			ownerReferencesBefore: number;
+			skipped: boolean;
+			cleanupLease?: object;
+		}[] = [];
+		const tailsByChild = new Map<Program, Promise<boolean>>();
+		const childPromises = children.map((child) => {
+			const previous = previousFailures.find(
+				(failure) => failure.program === child && !claimedFailures.has(failure),
+			);
+			if (previous) claimedFailures.add(previous);
+			const attempt = {
+				child,
+				operation:
+					previous?.operation ?? child.pendingTerminalOperation ?? type,
+				previous,
+				checkpoint: 0,
+				startedClosed: false,
+				ownerReferencesBefore: 0,
+				skipped: false,
+				cleanupLease: previous?.cleanupLease,
+			};
+			attempts.push(attempt);
+			const run = async () => {
+				attempt.startedClosed = child.closed;
+				attempt.ownerReferencesBefore =
+					child.parents?.filter((parent) => parent === this).length ?? 0;
+				if (
+					child.closed &&
+					(attempt.operation === "close" || retryingTerminalAttempt) &&
+					!previous &&
+					!child.pendingTerminalOperation
+				) {
+					return true;
+				}
+				attempt.cleanupLease ??= child[TERMINAL_OUTER_CLEANUP_RETAIN]();
+				attempt.checkpoint = child[TERMINAL_BASE_CHECKPOINT]();
+				const invoke = () => child[attempt.operation](this as Program);
+				const result = await (previous?.commit
+					? child[TERMINAL_BASE_RETRY](previous.commit, invoke)
+					: invoke());
+				const ownerReferencesAfter =
+					child.parents?.filter((parent) => parent === this).length ?? 0;
+				const committedRelease =
+					(previous?.commit?.releasedParentReferences ?? 0) > 0;
+				if (
+					!attempt.startedClosed &&
+					!child.closed &&
+					!committedRelease &&
+					ownerReferencesAfter >= attempt.ownerReferencesBefore
+				) {
+					throw new Error(
+						`Child program at ${child.address} did not release parent ownership during ${attempt.operation}`,
+					);
+				}
+				return result;
+			};
+			const predecessor = tailsByChild.get(child);
+			const promise = predecessor
+				? predecessor.then(run, (error) => {
+						// Duplicate appearances represent distinct ownership references.
+						// Do not spend the next reference while cleanup for the preceding
+						// release is unresolved; retain it for the recovery attempt.
+						attempt.skipped = true;
+						throw error;
+					})
+				: run();
+			tailsByChild.set(child, promise);
+			return promise;
+		});
+		const results = await Promise.allSettled(childPromises);
+		const failedChildren: FailedTerminalChild[] = [];
+		let firstChildError: unknown;
+		for (let index = 0; index < results.length; index++) {
+			const result = results[index]!;
+			const attempt = attempts[index]!;
+			const child = attempt.child;
+			if (result.status === "rejected") {
+				if (attempt.skipped) {
+					if (attempt.previous) failedChildren.push(attempt.previous);
+					firstChildError ??= result.reason;
+					continue;
+				}
+				if (!attempt.startedClosed || attempt.previous) {
+					const ownerReferencesAfter =
+						child.parents?.filter((parent) => parent === this).length ?? 0;
+					const commit =
+						attempt.previous?.commit ||
+						child[TERMINAL_BASE_COMMIT](
+							attempt.checkpoint,
+							attempt.operation,
+							this,
+						);
+					const baseProgressed =
+						commit != null ||
+						child.closed !== attempt.startedClosed ||
+						ownerReferencesAfter !== attempt.ownerReferencesBefore;
+					const retainCleanupLease =
+						baseProgressed ||
+						attempt.previous != null ||
+						!(result.reason instanceof TerminalOperationNotStartedError);
+					const cleanupLease = retainCleanupLease
+						? attempt.cleanupLease
+						: undefined;
+					if (!retainCleanupLease && attempt.cleanupLease) {
+						child[TERMINAL_OUTER_CLEANUP_RELEASE](attempt.cleanupLease);
+						attempt.cleanupLease = undefined;
+					}
+					failedChildren.push({
+						program: child,
+						operation:
+							attempt.operation === "drop" && !baseProgressed
+								? "drop"
+								: commit || child.closed
+									? attempt.operation
+									: "close",
+						commit,
+						cleanupLease,
+					});
+				} else if (attempt.cleanupLease) {
+					child[TERMINAL_OUTER_CLEANUP_RELEASE](attempt.cleanupLease);
+					attempt.cleanupLease = undefined;
+				}
+				firstChildError ??= result.reason;
+				continue;
+			}
+			if (attempt.cleanupLease) {
+				child[TERMINAL_OUTER_CLEANUP_RELEASE](attempt.cleanupLease);
+				attempt.cleanupLease = undefined;
+			}
+			// A managed child's Handler may already have reconciled the inverse edge
+			// from its committed base release. Nested unmanaged children rely on this
+			// parent instead. Remove at most the one excess edge represented by this
+			// successful occurrence so both paths remain count-correct.
+			const childReferences =
+				child.parents?.filter((parent) => parent === this).length ?? 0;
+			const childEdges =
+				this.children?.filter((candidate) => candidate === child).length ?? 0;
+			if (childEdges > childReferences) {
+				const childIndex = this.children.indexOf(child);
+				if (childIndex !== -1) this.children.splice(childIndex, 1);
+			}
+		}
+		for (const previous of previousFailures) {
+			if (!claimedFailures.has(previous) && previous.cleanupLease) {
+				previous.program[TERMINAL_OUTER_CLEANUP_RELEASE](previous.cleanupLease);
+				previous.cleanupLease = undefined;
+			}
+		}
+		this._failedTerminalChildren =
+			failedChildren.length > 0 ? failedChildren : undefined;
+		if (firstChildError !== undefined) throw firstChildError;
+
+		this._clear();
+		this.closed = true;
+		this._pendingTerminalTail = {
+			type,
+			from,
+			hadParentReference,
+			eventEmitted: true,
+			callbackCompleted: false,
+		};
+		await this.finishTerminalTail();
+		return true;
+	}
+
+	private async finishTerminalTail(): Promise<void> {
+		const tail = this._pendingTerminalTail;
+		if (!tail) return;
+		if (!tail.eventEmitted) {
+			tail.eventEmitted = true;
+			const emittedTerminalEvents =
+				this._emittedTerminalEvents ||
+				(this._emittedTerminalEvents = new Set<TerminalOperation>());
+			if (!emittedTerminalEvents.has(tail.type)) {
+				emittedTerminalEvents.add(tail.type);
+				this.emitEvent(new CustomEvent(tail.type, { detail: this }), true);
+			}
+		}
+		if (!tail.callbackCompleted) {
+			const callback =
+				tail.type === "close"
+					? this._eventOptions?.onClose
+					: this._eventOptions?.onDrop;
+			this._terminalLifecycleCallbackRunning = true;
+			try {
+				await callback?.(this);
+			} finally {
+				this._terminalLifecycleCallbackRunning = false;
+			}
+			tail.callbackCompleted = true;
+		}
+
+		this.node?.services.pubsub.removeEventListener(
+			"subscribe",
+			this._subscriptionEventListener,
+		);
+		this.node?.services.pubsub.removeEventListener(
+			"unsubscribe",
+			this._unsubscriptionEventListener,
+		);
+		this._emittedEventsFor?.clear();
+		this._emittedEventsFor = undefined;
+		this._peerTopicsByHash?.clear();
+		this._peerTopicsByHash = undefined;
+		this._seedPeerTopicsFromSubscribers = undefined;
+		this._eventOptions = undefined;
+		if (tail.hadParentReference) {
+			const parentIndex =
+				this.parents?.findIndex((parent) => parent === tail.from) ?? -1;
+			if (parentIndex !== -1) {
+				this.parents.splice(parentIndex, 1);
+				this.retainInverseParentRelease(tail.from);
+			}
+		}
+		this._pendingTerminalTail = undefined;
+	}
+
+	private async end(type: TerminalOperation, from?: Program): Promise<boolean> {
+		if (this.closed) {
+			if (
+				this._pendingTerminalTail &&
+				this._pendingTerminalTail.type !== type
+			) {
+				throw new Error(
+					`Program has pending ${this._pendingTerminalTail.type} cleanup; retry it before ${type}`,
+				);
+			}
+			if (this._pendingTerminalTail) {
+				await this.finishTerminalTail();
+				return true;
+			}
+			if (this._dropDeletePending && type === "close") {
+				throw new Error(
+					"Program has pending drop deletion; retry drop before close",
+				);
+			}
 			if (type === "drop") {
 				throw new ClosedError("Program is closed, can not drop");
 			}
@@ -465,48 +940,166 @@ export abstract class Program<
 					close = true;
 				} else {
 					this.parents.splice(parentIdx, 1);
+					this.retainInverseParentRelease(from);
 					close = false;
 				}
 			} else if (from) {
-				throw new Error("Could not find from in parents");
+				throw new TerminalOperationNotStartedError(
+					"Could not find from in parents",
+				);
 			}
 		}
 
-		const end = close && (await this.processEnd(type));
-		if (end) {
-			this.node?.services.pubsub.removeEventListener(
-				"subscribe",
-				this._subscriptionEventListener,
-			);
-			this.node?.services.pubsub.removeEventListener(
-				"unsubscribe",
-				this._unsubscriptionEventListener,
-			);
-			this._emittedEventsFor?.clear();
+		if (close) {
+			// Establish the reuse fence synchronously once this call owns terminal
+			// shutdown. Non-terminal parent releases remain attachable.
+			this.preventParentAttachments();
+		}
+		return close && (await this.processEnd(type, from, parentIdx !== -1));
+	}
+	private performTerminalOperation(
+		type: TerminalOperation,
+		from?: Program,
+	): Promise<boolean> {
+		if (type === "close") {
 			this._emittedEventsFor = undefined;
-			this._peerTopicsByHash?.clear();
-			this._peerTopicsByHash = undefined;
-			this._seedPeerTopicsFromSubscribers = undefined;
-
-			this._eventOptions = undefined;
-
-			if (parentIdx !== -1) {
-				this.parents.splice(parentIdx, 1); // We splice this here because this._end depends on this parent to exist
-			}
+			return this.end("close", from);
 		}
-		return end;
-	}
-	async close(from?: Program): Promise<boolean> {
-		this._emittedEventsFor = undefined;
-		return this.end("close", from);
+		return this.performDrop(from);
 	}
 
-	async drop(from?: Program): Promise<boolean> {
+	private async performDrop(from?: Program): Promise<boolean> {
+		if (this.closed && this._dropDeletePending) {
+			await this.delete();
+			this._dropDeletePending = false;
+			return true;
+		}
+
 		const dropped = await this.end("drop", from);
 		if (dropped) {
+			// Remember the committed terminal transition before deletion. If rm()
+			// fails, a later drop retry must resume here instead of rejecting merely
+			// because Program.end() already made `closed` observable.
+			this._dropDeletePending = true;
 			await this.delete();
+			this._dropDeletePending = false;
 		}
 		return dropped;
+	}
+
+	private terminalOperation(
+		type: TerminalOperation,
+		from?: Program,
+	): Promise<boolean> {
+		if (this._terminalLifecycleCallbackRunning) {
+			return Promise.reject(
+				new TerminalOperationNotStartedError(
+					"Program lifecycle callbacks cannot wait for their own terminal operation",
+				),
+			);
+		}
+		const retry = this.consumeTerminalRetry(type, from);
+		if (retry) return retry;
+		const calls = this._terminalCalls || (this._terminalCalls = []);
+		const matching = calls.find(
+			(call) => call.type === type && call.from === from && call.terminal,
+		);
+		if (matching) {
+			return matching.promise;
+		}
+
+		if (type === "close") {
+			// Drop is the stronger terminal operation. A close admitted for the same
+			// owner while drop is pending observes that exact operation and promise.
+			const dropping = calls.find(
+				(call) => call.type === "drop" && call.from === from && call.terminal,
+			);
+			if (dropping) {
+				return dropping.promise;
+			}
+		}
+
+		const predecessor = calls.at(-1);
+		let resolve!: (value: boolean) => void;
+		let reject!: (reason?: unknown) => void;
+		const promise = new Promise<boolean>((promiseResolve, promiseReject) => {
+			resolve = promiseResolve;
+			reject = promiseReject;
+		});
+		const parentIndex =
+			this.parents?.findIndex((parent) => parent === from) ?? -1;
+		const terminal =
+			this.closed || parentIndex === -1 || (this.parents?.length ?? 0) === 1;
+		const call: TerminalCall = { type, from, terminal, promise };
+		calls.push(call);
+
+		const execute = () => {
+			let operation: Promise<boolean>;
+			const ownerReferencesBefore =
+				this.parents?.filter((parent) => parent === from).length ?? 0;
+			try {
+				operation = this.performTerminalOperation(type, from);
+			} catch (error) {
+				reject(error);
+				return;
+			}
+			void operation.then((result) => {
+				const ownerReferencesAfter =
+					this.parents?.filter((parent) => parent === from).length ?? 0;
+				this.recordTerminalBaseCommit(
+					type,
+					from,
+					result,
+					Math.max(0, ownerReferencesBefore - ownerReferencesAfter),
+				);
+				// Program only owns the base promise. A subclass may still be doing
+				// post-super terminal cleanup, so managed/embedded calls defer inverse-
+				// edge removal to the caller's outer cleanup lease. A non-terminal owner
+				// release leaves the child live and can reconcile immediately; an
+				// inherited base method is itself the full public operation.
+				if (
+					(this._terminalOuterCleanupLeases?.size ?? 0) === 0 &&
+					(!result || this.isOutermostBaseTerminalOperation(type))
+				) {
+					this.reconcilePendingInverseParentReleases(result ? undefined : from);
+				}
+				resolve(result);
+			}, reject);
+		};
+		if (predecessor) {
+			// Different owners and close-vs-drop calls are serialized. In particular,
+			// a drop admitted after close does not pretend destructive cleanup happened:
+			// it runs after close and receives ClosedError from the now-closed program.
+			void predecessor.promise.then(execute, execute);
+		} else {
+			execute();
+		}
+
+		void promise.then(
+			() => this.finishTerminalCall(call),
+			() => this.finishTerminalCall(call),
+		);
+		return promise;
+	}
+
+	private finishTerminalCall(call: TerminalCall): void {
+		const calls = this._terminalCalls;
+		const index = calls?.indexOf(call) ?? -1;
+		if (index !== -1) {
+			calls!.splice(index, 1);
+		}
+		if (calls?.length === 0) {
+			this._terminalCalls = undefined;
+		}
+	}
+
+	close(from?: Program): Promise<boolean> {
+		this._emittedEventsFor = undefined;
+		return this.terminalOperation("close", from);
+	}
+
+	drop(from?: Program): Promise<boolean> {
+		return this.terminalOperation("drop", from);
 	}
 
 	emitEvent(event: CustomEvent, parents = false) {
@@ -545,7 +1138,9 @@ export abstract class Program<
 			throw new Error("Program has no topics, cannot get ready");
 		}
 		const pubsub = this.node.services.pubsub;
-		const collectProvidedPublicKeys = (refs: PeerRefs): Map<string, PublicSignKey> => {
+		const collectProvidedPublicKeys = (
+			refs: PeerRefs,
+		): Map<string, PublicSignKey> => {
 			const providedPublicKeysByHash = new Map<string, PublicSignKey>();
 			const rememberPublicKey = (ref: unknown) => {
 				if (ref instanceof PublicSignKey) {
@@ -563,7 +1158,9 @@ export abstract class Program<
 				}
 				return providedPublicKeysByHash;
 			}
-			if (typeof (refs as Iterable<unknown>)?.[Symbol.iterator] === "function") {
+			if (
+				typeof (refs as Iterable<unknown>)?.[Symbol.iterator] === "function"
+			) {
 				for (const ref of refs as Iterable<unknown>) {
 					rememberPublicKey(ref);
 				}
@@ -816,10 +1413,18 @@ export abstract class Program<
 		if (this._allPrograms) {
 			return this._allPrograms;
 		}
-		const arr: Program[] = this.programs;
-		const nexts = this.programs;
-		for (const next of nexts) {
-			arr.push(...next.allPrograms);
+		const arr: Program[] = [];
+		const pending = [...this.programs];
+		const visited = new Set<Program>([this]);
+		while (pending.length > 0) {
+			const next = pending.pop()!;
+			if (visited.has(next)) continue;
+			visited.add(next);
+			arr.push(next);
+			const nested = (next as Program & { programs?: Program[] }).programs;
+			pending.push(
+				...(Array.isArray(nested) ? nested : getValuesWithType(next, Program)),
+			);
 		}
 		this._allPrograms = arr;
 		return this._allPrograms;

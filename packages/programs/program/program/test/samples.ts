@@ -143,6 +143,10 @@ export class TestProgram extends Program<{ dontOpenNested?: boolean }> {
 		this.nested = nested;
 	}
 
+	preventNewParents(): void {
+		this.preventParentAttachments();
+	}
+
 	async open(args?: { dontOpenNested?: boolean }): Promise<void> {
 		if (args?.dontOpenNested) {
 			this.nested.closed = true;
