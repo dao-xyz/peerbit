@@ -113,7 +113,7 @@ node --test \
 Point the UI form action to the subscribe function:
 
 - Local dev: set `VITE_UPDATES_EMAIL_FORM_ACTION=https://<project>.supabase.co/functions/v1/updates-subscribe` (e.g. in `apps/peerbit-org/.env.local`)
-- GitHub Actions: `site.yml` derives this automatically from `SUPABASE_UPDATES_SYNC_URL` (if set)
+- Site builds (including GitHub Actions and `pnpm deploy:docs`) derive this automatically from `SUPABASE_UPDATES_SYNC_URL` if an explicit form action is not set
 
 Production deployment fails closed when either variable would embed a signup endpoint that is malformed, does not resolve, cannot answer a non-mutating `OPTIONS` request, or does not allow `https://peerbit.org` to `POST`. Leaving both variables unset intentionally disables the signup form and remains deployable. The GitHub Pages workflow runs this check after the build and before sync/upload; `pnpm deploy:docs` applies the same gate for manual deployment.
 

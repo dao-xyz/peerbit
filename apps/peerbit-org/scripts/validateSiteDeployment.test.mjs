@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createSiteBuildEnvironment } from "./buildSite.mjs";
 import {
 	resolveSubscribeEndpoint,
 	validateSiteDeployment,
@@ -11,6 +12,7 @@ const healthyResponse = () =>
 		headers: {
 			"Access-Control-Allow-Origin": "https://peerbit.org",
 			"Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type, Authorization",
 		},
 	});
 
@@ -62,6 +64,33 @@ test("derives and validates the public subscribe endpoint from the sync URL", as
 		endpoint: "https://project.supabase.co/functions/v1/updates-subscribe",
 		addresses: [{ address: "192.0.2.10", family: 4 }],
 	});
+});
+
+test("uses the derived subscribe endpoint in the effective Vite build environment", () => {
+	const processEnv = {
+		PATH: "/test/bin",
+		SUPABASE_UPDATES_SYNC_URL:
+			"https://project.supabase.co/functions/v1/updates-sync",
+	};
+	const result = createSiteBuildEnvironment({
+		processEnv,
+		loadEnvImpl: () => ({}),
+	});
+
+	assert.equal(
+		result.endpoint.href,
+		"https://project.supabase.co/functions/v1/updates-subscribe",
+	);
+	assert.equal(
+		result.buildEnv.VITE_UPDATES_EMAIL_FORM_ACTION,
+		result.endpoint.href,
+	);
+	assert.equal(
+		result.buildEnv.SUPABASE_UPDATES_SYNC_URL,
+		processEnv.SUPABASE_UPDATES_SYNC_URL,
+	);
+	assert.equal(result.buildEnv.PATH, "/test/bin");
+	assert.equal(processEnv.VITE_UPDATES_EMAIL_FORM_ACTION, undefined);
 });
 
 test("accepts matching explicit subscribe and sync endpoints", () => {
@@ -251,5 +280,41 @@ test("fails closed when production CORS is not enabled", async () => {
 				}),
 		}),
 		/CORS policy does not allow POST/,
+	);
+});
+
+test("fails closed when CORS does not allow the JSON content-type header", async () => {
+	const env = {
+		VITE_UPDATES_EMAIL_FORM_ACTION:
+			"https://project.supabase.co/functions/v1/updates-subscribe",
+	};
+	const lookupHost = async () => [{ address: "192.0.2.10", family: 4 }];
+	const headers = {
+		"Access-Control-Allow-Origin": "https://peerbit.org",
+		"Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+	};
+
+	await assert.rejects(
+		validateSiteDeployment({
+			env,
+			lookupHost,
+			fetchImpl: async () => new Response("ok", { status: 200, headers }),
+		}),
+		/CORS policy does not allow the content-type header/,
+	);
+	await assert.rejects(
+		validateSiteDeployment({
+			env,
+			lookupHost,
+			fetchImpl: async () =>
+				new Response("ok", {
+					status: 200,
+					headers: {
+						...headers,
+						"Access-Control-Allow-Headers": "Authorization, X-Request-ID",
+					},
+				}),
+		}),
+		/CORS policy does not allow the content-type header/,
 	);
 });
