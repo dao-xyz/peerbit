@@ -8,6 +8,7 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"typecheck": "tsc -p tsconfig.json --noEmit",
+		"validate:deployment": "node scripts/validateSiteDeployment.mjs",
 		"test": "vitest run --config vitest.config.ts",
 		"test:cov": "vitest run --config vitest.config.ts --coverage"
 	},
