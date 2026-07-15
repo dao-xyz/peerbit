@@ -735,6 +735,7 @@ type TrustedDocumentSharedLogAppendManyResult = {
 };
 
 type TrustedDocumentSharedLog = {
+	finishNativeStrictDurableDocumentRecovery(): Promise<void>;
 	appendLocallyPrepared(
 		data: Operation,
 		options?: SharedAppendOptions<Operation>,
@@ -2418,6 +2419,9 @@ export class Documents<
 				await initializeDocumentRust();
 			}
 		}
+		await asTrustedDocumentSharedLog(
+			this.log,
+		).finishNativeStrictDurableDocumentRecovery();
 
 		this._optionCanPerformNativeFastPath = this._optionCanPerformNativePolicy
 			? createCanPerformPolicyEvaluator(

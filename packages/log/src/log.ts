@@ -25,7 +25,9 @@ import {
 import { type Encoding, NO_ENCODING } from "./encoding.js";
 import {
 	EntryIndex,
+	type EntryIndexHashMutationLockOwner,
 	type MaybeResolveOptions,
+	type NativeCommittedAppendFactsTransaction,
 	type NativeLogGraph,
 	type PreparedAppendIndexFacts,
 	type ResultsIterator,
@@ -46,9 +48,9 @@ import {
 	type ShallowOrFullEntry,
 } from "./entry.js";
 import { findUniques } from "./find-uniques.js";
-import { logger as baseLogger } from "./logger.js";
 import * as LogError from "./log-errors.js";
 import * as Sorting from "./log-sorting.js";
+import { logger as baseLogger } from "./logger.js";
 import type { Payload } from "./payload.js";
 import { canUseOptionalNativeModuleImports } from "./runtime.js";
 import { Trim, type TrimOptions } from "./trim.js";
@@ -78,6 +80,26 @@ type BlocksWithPutKnown = Blocks & {
 	putKnown: (cid: string, bytes: Uint8Array) => Promise<string> | string;
 };
 
+type BlocksWithDurableWriteBarrier = Blocks & {
+	waitForDurableWrites: () => Promise<void> | void;
+};
+
+type BlocksWithDurableFailureGuard = Blocks & {
+	throwIfDurableWritesFailed: () => void;
+};
+
+type BlocksWithFailedNativeRollback = Blocks & {
+	rollbackFailedNativeCommits: (
+		cids: string[],
+		restoreNativeCids?: string[],
+		ownershipToken?: unknown,
+	) => Promise<void>;
+};
+
+type BlocksWithNativeCommitOwnershipAck = Blocks & {
+	acknowledgeNativeCommitOwnership: (ownershipToken: unknown) => void;
+};
+
 const hasPutMany = (storage: Blocks): storage is BlocksWithPutMany =>
 	typeof (storage as BlocksWithPutMany).putMany === "function";
 
@@ -92,6 +114,30 @@ const hasPutKnownManyColumns = (
 ): storage is BlocksWithPutKnownManyColumns =>
 	typeof (storage as BlocksWithPutKnownManyColumns).putKnownManyColumns ===
 	"function";
+
+const hasDurableWriteBarrier = (
+	storage: Blocks,
+): storage is BlocksWithDurableWriteBarrier =>
+	typeof (storage as BlocksWithDurableWriteBarrier).waitForDurableWrites ===
+	"function";
+
+const hasDurableFailureGuard = (
+	storage: Blocks,
+): storage is BlocksWithDurableFailureGuard =>
+	typeof (storage as BlocksWithDurableFailureGuard)
+		.throwIfDurableWritesFailed === "function";
+
+const hasFailedNativeRollback = (
+	storage: Blocks,
+): storage is BlocksWithFailedNativeRollback =>
+	typeof (storage as BlocksWithFailedNativeRollback)
+		.rollbackFailedNativeCommits === "function";
+
+const hasNativeCommitOwnershipAck = (
+	storage: Blocks,
+): storage is BlocksWithNativeCommitOwnershipAck =>
+	typeof (storage as BlocksWithNativeCommitOwnershipAck)
+		.acknowledgeNativeCommitOwnership === "function";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -108,6 +154,62 @@ type InternalProfileEvent = {
 };
 type InternalProfileSink = (event: InternalProfileEvent) => void;
 type InternalAppendHashesSink = (hashes: string[]) => void | Promise<void>;
+
+type NativeCommittedAppendFinalizer = {
+	acknowledge(onLowerMarkerDurable?: () => Promise<void>): Promise<void>;
+	retainForRecovery(): void;
+	rollback(): Promise<void>;
+	settleForTerminal(): Promise<void>;
+};
+
+type NativeCommittedAppendAdmission = {
+	settled: Promise<void>;
+	release(): void;
+};
+
+type LogLifecycleState =
+	| "closed"
+	| "opening"
+	| "active"
+	| "closing"
+	| "close-failed"
+	| "dropping"
+	| "drop-failed"
+	| "dropped";
+
+type LogCloseProgress = {
+	admissionsSettled: boolean;
+	finalizersSettled: boolean;
+	rollbacksRetried: boolean;
+	pendingWritesFlushed: boolean;
+	blockHashesRetained: boolean;
+	indexerStopped: boolean;
+};
+
+type LogDropProgress = {
+	admissionsSettled: boolean;
+	finalizersSettled: boolean;
+	entryIndexCleared: boolean;
+	indexerDropped: boolean;
+	indexerStopped: boolean;
+};
+
+const createLogCloseProgress = (): LogCloseProgress => ({
+	admissionsSettled: false,
+	finalizersSettled: false,
+	rollbacksRetried: false,
+	pendingWritesFlushed: false,
+	blockHashesRetained: false,
+	indexerStopped: false,
+});
+
+const createLogDropProgress = (): LogDropProgress => ({
+	admissionsSettled: false,
+	finalizersSettled: false,
+	entryIndexCleared: false,
+	indexerDropped: false,
+	indexerStopped: false,
+});
 
 const internalProfileNow = () => globalThis.performance?.now?.() ?? Date.now();
 const internalProfileStart = (sink: InternalProfileSink | undefined) =>
@@ -145,6 +247,7 @@ type PreparedCommitOnlyAppendResult<T> = {
 		gid: string;
 		size: number;
 	};
+	nativeCommittedAppendFinalizer?: NativeCommittedAppendFinalizer;
 };
 
 type PreparedCommitOnlyAppendBatchResult<T> = {
@@ -154,6 +257,7 @@ type PreparedCommitOnlyAppendBatchResult<T> = {
 	removedHashes?: string[];
 	appendFacts: PreparedAppendFacts[];
 	documentTrimmedHeadsProcessed?: boolean[];
+	nativeCommittedAppendFinalizer?: NativeCommittedAppendFinalizer;
 };
 
 type PreparedIndependentAppendBatch = {
@@ -198,6 +302,10 @@ type NativePreparedNoNextCommit = {
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: PreparedNativeLogEntry[];
 	trimmedEntryHashes?: string[];
+	nativeBlocksDeleted?: boolean;
+	nativeDeleteCleanupToken?: unknown;
+	nativeCommitOwnershipToken?: unknown;
+	nativeIndexMutationLockOwner?: EntryIndexHashMutationLockOwner;
 	documentTrimmedHeadsProcessed?: boolean;
 	documentPreviousContext?: PreparedCommitOnlyAppendResult<unknown>["documentPreviousContext"];
 };
@@ -409,6 +517,8 @@ type EntryWithMetaBytes = {
 	getHashDigestBytes?: () => Uint8Array | undefined;
 };
 
+type MutationCallback = (...args: any[]) => any;
+
 @variant(0)
 export class Log<T> {
 	@field({ type: fixedArray("u8", 32) })
@@ -434,20 +544,191 @@ export class Log<T> {
 	private _canAppend?: CanAppend<T>;
 	private _onChange?: OnChange<T>;
 	private _closed = true;
+	private _dropCompleted = false;
+	private _closeCompleted = false;
+	private _terminalAdmissionClosed = true;
+	private _lifecycleState: LogLifecycleState = "closed";
+	private _lifecycleEpoch = 0;
+	private _openPromise?: Promise<void>;
+	private _closePromise?: Promise<void>;
+	private _dropPromise?: Promise<void>;
+	private _terminalLifecycleQueue: Promise<void> = Promise.resolve();
+	private _closeProgress = createLogCloseProgress();
+	private _dropProgress = createLogDropProgress();
 	private _closeController!: AbortController;
 	private _loadedOnce = false;
 	private _indexer!: Indices;
+	private _openingIndexer?: Indices;
 	private _appendDurability!: AppendDurability;
 	private _joining!: Map<string, Promise<any>>; // entry hashes that are currently joining into this log
 	private _sortFn!: Sorting.SortFn;
 	private _hasCustomCanAppend = false;
+	private _nativeCommittedAppendFinalizers?: Set<NativeCommittedAppendFinalizer>;
+	private _nativeCommittedAppendAdmissions?: Set<Promise<void>>;
+	private _mutationCallbacksInFlight = 0;
+	private _mutationCallbackWrappers = new WeakMap<
+		MutationCallback,
+		MutationCallback
+	>();
 
 	constructor(properties?: { id?: Uint8Array }) {
 		this._id = properties?.id || randomBytes(32);
-		this._closeController = new AbortController();
+		this.ensureRuntimeState();
+	}
+
+	private ensureRuntimeState(): void {
+		// Borsh creates instances with Object.create by default, so undecorated
+		// runtime fields and their class initializers are absent after a round trip.
+		// Initialize each field independently to preserve failed close/drop progress
+		// and in-flight lifecycle ownership on ordinary, already-live instances.
+		this._closed ??= true;
+		this._dropCompleted ??= false;
+		this._closeCompleted ??= false;
+		this._terminalAdmissionClosed ??= true;
+		this._lifecycleState ??= "closed";
+		this._lifecycleEpoch ??= 0;
+		this._terminalLifecycleQueue ??= Promise.resolve();
+		this._closeProgress ??= createLogCloseProgress();
+		this._dropProgress ??= createLogDropProgress();
+		this._closeController ??= new AbortController();
+		this._loadedOnce ??= false;
+		this._hasCustomCanAppend ??= false;
+		this._mutationCallbacksInFlight ??= 0;
+		this._mutationCallbackWrappers ??= new WeakMap();
+	}
+
+	private throwIfDurableWritesFailed(): void {
+		this.ensureRuntimeState();
+		if (this._terminalAdmissionClosed) {
+			throw new Error("Log is closed");
+		}
+		if (hasDurableFailureGuard(this._storage)) {
+			this._storage.throwIfDurableWritesFailed();
+		}
+		this._entryIndex?.throwIfNativeDurableTransactionMutationsFailed();
+	}
+
+	private waitForDurableWrites(): MaybePromise<void> {
+		return hasDurableWriteBarrier(this._storage)
+			? this._storage.waitForDurableWrites()
+			: undefined;
 	}
 
 	async open(store: Blocks, identity: Identity, options: LogOptions<T> = {}) {
+		this.ensureRuntimeState();
+		// Reject before touching lifecycle ownership. A rejected reopen must never
+		// change the state of the live generation, and one in-flight initializer
+		// must remain the sole owner of fields/resources.
+		if (
+			this._openPromise ||
+			!this._closed ||
+			this._lifecycleState === "active" ||
+			this._lifecycleState === "opening"
+		) {
+			throw new Error("Already open");
+		}
+		if (this._dropPromise || this._lifecycleState === "dropping") {
+			throw new Error("Log drop must complete before reopening");
+		}
+		if (this._closePromise || this._lifecycleState === "closing") {
+			throw new Error("Log close must complete before reopening");
+		}
+		if (this._lifecycleState === "drop-failed") {
+			throw new Error("Failed log drop must be retried before reopening");
+		}
+		if (this._lifecycleState === "close-failed") {
+			throw new Error("Failed log close must be retried before reopening");
+		}
+		// Admission of a new generation resets terminal progress synchronously.
+		// A close admitted in the next microtask must not inherit completed stages
+		// from the previous generation and skip teardown of this initializer.
+		this._dropCompleted = false;
+		this._closeCompleted = false;
+		this._terminalAdmissionClosed = true;
+		this._closeProgress = createLogCloseProgress();
+		this._dropProgress = createLogDropProgress();
+		const epoch = ++this._lifecycleEpoch;
+		const terminalTail = this._terminalLifecycleQueue;
+		const operation = (async () => {
+			await terminalTail;
+			if (epoch === this._lifecycleEpoch) {
+				this._lifecycleState = "opening";
+			}
+			try {
+				await this.openInternal(store, identity, options);
+			} catch (error) {
+				const openingIndexer = this._openingIndexer;
+				this._openingIndexer = undefined;
+				let cleanupError: unknown;
+				if (openingIndexer) {
+					try {
+						await openingIndexer.stop?.();
+					} catch (stopError) {
+						cleanupError = stopError;
+					}
+				}
+				this._closed = true;
+				if (cleanupError !== undefined) {
+					this._closeProgress = {
+						admissionsSettled: true,
+						finalizersSettled: true,
+						rollbacksRetried: true,
+						pendingWritesFlushed: true,
+						blockHashesRetained: true,
+						indexerStopped: false,
+					};
+					if (epoch === this._lifecycleEpoch) {
+						this._lifecycleState = "close-failed";
+					}
+					throw new AggregateError(
+						[error, cleanupError],
+						"Log open and indexer cleanup both failed",
+					);
+				}
+				// The failed initializer successfully stopped every resource it opened.
+				// Treat close as complete so a later/concurrent close never scans the
+				// stopped partial EntryIndex. Keep the stopped indexer reference only so
+				// an explicitly queued drop can restart it and erase existing rows.
+				this._closeProgress = {
+					admissionsSettled: true,
+					finalizersSettled: true,
+					rollbacksRetried: true,
+					pendingWritesFlushed: true,
+					blockHashesRetained: false,
+					indexerStopped: true,
+				};
+				this._closeCompleted = true;
+				this._loadedOnce = false;
+				if (epoch === this._lifecycleEpoch) {
+					this._lifecycleState = "closed";
+				}
+				throw error;
+			}
+			this._openingIndexer = undefined;
+			if (epoch !== this._lifecycleEpoch) {
+				// A close/drop admitted while startup was in flight owns teardown.
+				this._closed = true;
+				return;
+			}
+			this._closed = false;
+			this._terminalAdmissionClosed = false;
+			this._lifecycleState = "active";
+			this._closeController = new AbortController();
+		})();
+		const wrapped: Promise<void> = operation.finally(() => {
+			if (this._openPromise === wrapped) {
+				this._openPromise = undefined;
+			}
+		});
+		this._openPromise = wrapped;
+		return wrapped;
+	}
+
+	private async openInternal(
+		store: Blocks,
+		identity: Identity,
+		options: LogOptions<T> = {},
+	) {
 		if (store == null) {
 			throw LogError.BlockStoreNotDefinedError();
 		}
@@ -477,6 +758,7 @@ export class Log<T> {
 
 		this._storage = store;
 		this._indexer = indexer || (await createDefaultIndexer());
+		this._openingIndexer = this._indexer;
 		await this._indexer.start?.();
 
 		this._encoding = encoding || NO_ENCODING;
@@ -617,12 +899,14 @@ export class Log<T> {
 				sortFn: this._sortFn,
 				getLength: () => this.length,
 			},
-			trim,
+			this.wrapTrimCallbacks(trim),
 		);
 
 		this._canAppend = async (entry) => {
 			if (options?.canAppend) {
-				if (!(await options.canAppend(entry))) {
+				if (
+					!(await this.runWithMutationCallback(() => options.canAppend!(entry)))
+				) {
 					return false;
 				}
 			}
@@ -630,9 +914,9 @@ export class Log<T> {
 		};
 		this._hasCustomCanAppend = !!options?.canAppend;
 
-		this._onChange = options?.onChange;
-		this._closed = false;
-		this._closeController = new AbortController();
+		this._onChange = options?.onChange
+			? this.wrapMutationCallback(options.onChange)
+			: undefined;
 	}
 
 	private _idString: string | undefined;
@@ -663,7 +947,7 @@ export class Log<T> {
 	 * Returns the length of the log.
 	 */
 	get length() {
-		if (this._closed) {
+		if (this.closed) {
 			throw new Error("Closed");
 		}
 		return this._entryIndex.length;
@@ -755,7 +1039,7 @@ export class Log<T> {
 	}
 
 	get closed() {
-		return this._closed;
+		return this._closed !== false;
 	}
 
 	/**
@@ -887,68 +1171,96 @@ export class Log<T> {
 		data: T,
 		options: AppendOptions<T> = {},
 	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
+		this.throwIfDurableWritesFailed();
+		return this.withNativeCommittedAppendAdmission(() =>
+			this.appendAdmitted(data, options),
+		);
+	}
+
+	private async appendAdmitted(
+		data: T,
+		options: AppendOptions<T>,
+	): Promise<{ entry: Entry<T>; removed: ShallowOrFullEntry<T>[] }> {
 		const nexts = await this.getNextsForAppend(options);
 		const deferBlockStore = hasPutMany(this._storage);
-		const nativeAppendChain = this.entryIndex.properties.nativeGraph
-			? await this.createNativePlainAppendChain(
-					[data],
-					options,
-					nexts,
-					deferBlockStore,
-				)
-			: undefined;
-		let entry: Entry<T>;
-		if (nativeAppendChain) {
-			entry = nativeAppendChain.entries[0]!;
-			try {
-				await this.joinMissingNexts(entry, nexts);
-				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
-					await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
+		type MutationResult = {
+			entry: Entry<T>;
+			pendingDeletes: (
+				| PendingDelete<T>
+				| { entry: ShallowOrFullEntry<T>; fn: undefined }
+			)[];
+			removed: ShallowOrFullEntry<T>[];
+			changes: Change<T>;
+		};
+		const finishMutation = async (entry: Entry<T>): Promise<MutationResult> => {
+			const pendingDeletes: MutationResult["pendingDeletes"] =
+				await this.processEntry(entry);
+			entry.init({ encoding: this._encoding, keychain: this._keychain });
+			const trimmed = await this.trimIfConfigured(options.trim);
+			if (trimmed) {
+				for (const trimmedEntry of trimmed) {
+					pendingDeletes.push({ entry: trimmedEntry, fn: undefined });
 				}
-				await this.putAppendEntries(
-					[entry],
-					options,
-					nexts.map((next) => next.hash),
-					nativeAppendChain,
-				);
-			} catch (error) {
-				if (nativeAppendChain.nativeGraphUpdated) {
-					this.rollbackNativeAppendGraph([entry]);
-				}
-				if (nativeAppendChain.nativeBlocksCommitted) {
-					await this.rollbackNativeAppendBlocks([entry]);
-				}
-				throw error;
 			}
-		} else {
-			entry = await this.createAppendEntry(data, options, nexts);
-			await this.joinMissingNexts(entry, nexts);
-			await this.putAppendEntry(entry, options);
-		}
-
-		const pendingDeletes: (
-			| PendingDelete<T>
-			| { entry: ShallowOrFullEntry<T>; fn: undefined }
-		)[] = await this.processEntry(entry);
-
-		entry.init({ encoding: this._encoding, keychain: this._keychain });
-
-		const trimmed = await this.trimIfConfigured(options?.trim);
-
-		if (trimmed) {
-			for (const entry of trimmed) {
-				pendingDeletes.push({ entry, fn: undefined });
-			}
-		}
-		const removed = pendingDeletes.map((x) => x.entry);
-		const changes: Change<T> = {
-			added: [{ head: true, entry }],
-			removed,
+			const removed = pendingDeletes.map((pending) => pending.entry);
+			return {
+				entry,
+				pendingDeletes,
+				removed,
+				changes: { added: [{ head: true, entry }], removed },
+			};
 		};
 
-		await (options?.onChange || this._onChange)?.(changes);
-		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
-		return { entry, removed };
+		let mutation: MutationResult | undefined;
+		if (this.entryIndex.properties.nativeGraph) {
+			const nativeAppendChain = await this.createNativePlainAppendChain(
+				[data],
+				options,
+				nexts,
+				deferBlockStore,
+			);
+			if (nativeAppendChain) {
+				const entry = nativeAppendChain.entries[0]!;
+				try {
+					await this.joinMissingNexts(entry, nexts);
+					if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+						await this.putAppendEntryBlocks([entry], nativeAppendChain.blocks);
+					}
+					await this.putAppendEntries(
+						[entry],
+						options,
+						nexts.map((next) => next.hash),
+						nativeAppendChain,
+					);
+				} catch (error) {
+					if (nativeAppendChain.nativeGraphUpdated) {
+						this.rollbackNativeAppendGraph([entry]);
+					}
+					if (nativeAppendChain.nativeBlocksCommitted) {
+						await this.rollbackNativeAppendBlocks([entry]);
+					}
+					throw error;
+				}
+				mutation = await finishMutation(entry);
+			}
+		}
+
+		if (!mutation) {
+			const entry = await this.createAppendEntry(data, options, nexts);
+			await this.joinMissingNexts(entry, nexts);
+			await this.putAppendEntry(entry, options);
+			mutation = await finishMutation(entry);
+		}
+
+		if (options.onChange) {
+			await this.runWithMutationCallback(() =>
+				options.onChange!(mutation.changes),
+			);
+		} else {
+			await this._onChange?.(mutation.changes);
+		}
+		await Promise.all(mutation.pendingDeletes.map((pending) => pending.fn?.()));
+		return { entry: mutation.entry, removed: mutation.removed };
 	}
 
 	// Internal trusted local append path for callers that already handled validation
@@ -956,6 +1268,28 @@ export class Log<T> {
 	private async appendLocallyPrepared(
 		data: T,
 		options: AppendOptions<T> = {},
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+	): Promise<{
+		entry: Entry<T>;
+		removed: ShallowOrFullEntry<T>[];
+		change: Change<T>;
+		appendFacts: PreparedAppendFacts;
+	}> {
+		this.throwIfDurableWritesFailed();
+		return this.withNativeCommittedAppendAdmission(() =>
+			this.appendLocallyPreparedAdmitted(data, options, properties),
+		);
+	}
+
+	private async appendLocallyPreparedAdmitted(
+		data: T,
+		options: AppendOptions<T>,
 		properties?: {
 			skipMissingNextJoin?: boolean;
 			resolveTrimmedEntries?: boolean;
@@ -1061,6 +1395,7 @@ export class Log<T> {
 			includeAppendFactsBytes?: boolean;
 		},
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		this.throwIfDurableWritesFailed();
 		if (
 			options.canAppend ||
 			options.onChange ||
@@ -1095,11 +1430,13 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		this.throwIfDurableWritesFailed();
 		const directResult = this.appendLocallyPreparedNativeKnownNoNextCommitOnly(
 			data,
 			options,
@@ -1125,11 +1462,13 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		this.throwIfDurableWritesFailed();
 		if (options.meta?.next == null || options.meta.next.length !== 0) {
 			return undefined;
 		}
@@ -1175,6 +1514,7 @@ export class Log<T> {
 			payloadData?: Uint8Array;
 			resolveTrimmedEntries?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: NativeNoNextCommitInput,
@@ -1210,20 +1550,24 @@ export class Log<T> {
 		const resolvedGid = EntryV0.createGid() as string;
 		const timestamp = this._hlc.now();
 		const entryType = options.meta?.type ?? EntryType.APPEND;
-		const preparedValue = prepare({
-			clockId: identity.publicKey.bytes,
-			privateKey: identity.privateKey.privateKey,
-			publicKey: identity.publicKey.publicKey,
-			wallTime: timestamp.wallTime,
-			logical: timestamp.logical,
-			gid: resolvedGid,
-			type: entryType,
-			metaData: options.meta?.data,
-			payloadData,
-			resolveTrimmedEntries: properties.resolveTrimmedEntries,
-			trimLengthTo: nativeTrimLengthTo,
-		});
-		return mapMaybePromise(preparedValue, (prepared) => {
+		const nativePreparation = this.prepareNativeCommittedAppend(() =>
+			prepare({
+				clockId: identity.publicKey.bytes,
+				privateKey: identity.privateKey.privateKey,
+				publicKey: identity.publicKey.publicKey,
+				wallTime: timestamp.wallTime,
+				logical: timestamp.logical,
+				gid: resolvedGid,
+				type: entryType,
+				metaData: options.meta?.data,
+				payloadData,
+				resolveTrimmedEntries: properties.resolveTrimmedEntries,
+				trimLengthTo: nativeTrimLengthTo,
+			}),
+		);
+		const consumePrepared = (
+			prepared: NativePreparedNoNextCommit | undefined,
+		): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> => {
 			if (!prepared) {
 				return undefined;
 			}
@@ -1246,10 +1590,7 @@ export class Log<T> {
 				const bytes =
 					prepared.getBytes?.(hash) ??
 					(this._storage.get(hash) as Uint8Array | undefined);
-				if (
-					bytes &&
-					typeof (bytes as { then?: unknown }).then !== "function"
-				) {
+				if (bytes && typeof (bytes as { then?: unknown }).then !== "function") {
 					retainedMaterializationBytes = bytes;
 				}
 			};
@@ -1313,6 +1654,7 @@ export class Log<T> {
 				materializedEntry = entry;
 				return entry;
 			};
+			let indexTransaction: NativeCommittedAppendFactsTransaction | undefined;
 			const finish = (): PreparedCommitOnlyAppendResult<T> => {
 				retainMaterializationBytes();
 				return {
@@ -1351,6 +1693,9 @@ export class Log<T> {
 								{
 									skipNextHeadUpdates: true,
 									deleteBlocks: false,
+									nativeBlocksDeleted: prepared.nativeBlocksDeleted === true,
+									nativeDeleteCleanupToken: prepared.nativeDeleteCleanupToken,
+									nativeCommittedAppendFactsTransaction: indexTransaction,
 								},
 							);
 						if (consumedNoReturn !== undefined) {
@@ -1377,6 +1722,9 @@ export class Log<T> {
 							{
 								skipNextHeadUpdates: true,
 								deleteBlocks: false,
+								nativeBlocksDeleted: prepared.nativeBlocksDeleted === true,
+								nativeDeleteCleanupToken: prepared.nativeDeleteCleanupToken,
+								nativeCommittedAppendFactsTransaction: indexTransaction,
 							},
 						);
 					return mapMaybePromise(consumedResult, (removed) => ({
@@ -1406,6 +1754,9 @@ export class Log<T> {
 					{
 						skipNextHeadUpdates: true,
 						deleteBlocks: false,
+						nativeBlocksDeleted: prepared.nativeBlocksDeleted === true,
+						nativeDeleteCleanupToken: prepared.nativeDeleteCleanupToken,
+						nativeCommittedAppendFactsTransaction: indexTransaction,
 					},
 				);
 				return mapMaybePromise(consumedResult, (removed) => ({
@@ -1435,26 +1786,85 @@ export class Log<T> {
 					finishTrim,
 				);
 			};
-			const rollback = (error: unknown): never | Promise<never> => {
-				this.rollbackNativeAppendGraphHashes([hash]);
-				return this.rollbackNativeAppendBlocksHashes([hash]).then(() => {
+			const trimmedHashes =
+				prepared.trimmedEntryHashes ??
+				prepared.trimmedEntries?.map((entry) => entry.hash) ??
+				[];
+			let finalizer: NativeCommittedAppendFinalizer | undefined;
+			const rollback = async (error: unknown): Promise<never> => {
+				if (finalizer) {
+					try {
+						await finalizer.rollback();
+					} catch (rollbackError) {
+						throw new AggregateError(
+							[error, rollbackError],
+							"Native append and its compensation both failed",
+						);
+					}
 					throw error;
-				});
+				}
+				this.rollbackNativeAppendGraphHashes([hash]);
+				return this.rollbackNativeAppendFactsAndBlocksHashesPreservingError(
+					indexTransaction,
+					[hash],
+					error,
+					trimmedHashes,
+					prepared.nativeCommitOwnershipToken,
+				);
 			};
 			try {
-				const putResult = this.entryIndex.putNativeCommittedAppendFacts({
-					hash,
-					unique: true,
-					externalNextHashes: effectiveNextHashes,
-					getShallowEntry,
-					isHead: true,
-				});
+				indexTransaction =
+					prepared.nativeCommitOwnershipToken !== undefined ||
+					properties.deferNativeTransactionAcknowledgement === true
+						? this.entryIndex.beginNativeCommittedAppendFactsTransaction(
+								[hash, ...effectiveNextHashes, ...trimmedHashes],
+								prepared.nativeIndexMutationLockOwner,
+							)
+						: undefined;
+				finalizer = indexTransaction
+					? this.createNativeCommittedAppendFinalizer({
+							transaction: indexTransaction,
+							hashes: [hash],
+							restoreNativeCids: trimmedHashes,
+							ownershipToken: prepared.nativeCommitOwnershipToken,
+						})
+					: undefined;
+				const putResult = this.entryIndex.putNativeCommittedAppendFacts(
+					{
+						hash,
+						unique: true,
+						externalNextHashes: effectiveNextHashes,
+						getShallowEntry,
+						isHead: true,
+					},
+					indexTransaction,
+				);
 				const result = mapMaybePromise(putResult, finishBlocks);
-				return isPromiseLike(result) ? result.catch(rollback) : result;
+				const acknowledged = mapMaybePromise(result, async (value) => {
+					if (
+						finalizer &&
+						properties.deferNativeTransactionAcknowledgement === true
+					) {
+						value.nativeCommittedAppendFinalizer = finalizer;
+						return value;
+					}
+					if (finalizer) {
+						await finalizer.acknowledge();
+					} else if (hasNativeCommitOwnershipAck(this._storage)) {
+						this._storage.acknowledgeNativeCommitOwnership(
+							prepared.nativeCommitOwnershipToken,
+						);
+					}
+					return value;
+				});
+				return isPromiseLike(acknowledged)
+					? acknowledged.catch(rollback)
+					: acknowledged;
 			} catch (error) {
 				return rollback(error);
 			}
-		});
+		};
+		return this.finishNativeCommittedAppend(nativePreparation, consumePrepared);
 	}
 
 	private appendLocallyPreparedNativeCommitOnly(
@@ -1466,12 +1876,14 @@ export class Log<T> {
 			skipMissingNextJoin?: boolean;
 			knownNoNext?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: NativeCommitInput,
 		) => MaybePromise<NativePreparedNoNextCommit | undefined>,
 		knownNoNext = false,
 	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		this.throwIfDurableWritesFailed();
 		const resolvedTrim = options.trim ?? this._trim.options;
 		const supportsNativeTrim =
 			!resolvedTrim ||
@@ -1540,21 +1952,25 @@ export class Log<T> {
 					timestamp: this._hlc.now(),
 				});
 				const entryType = appendOptions.meta?.type ?? EntryType.APPEND;
-				const preparedValue = prepare({
-					clockId: identity.publicKey.bytes,
-					privateKey: identity.privateKey.privateKey,
-					publicKey: identity.publicKey.publicKey,
-					wallTime: clock.timestamp.wallTime,
-					logical: clock.timestamp.logical,
-					gid: resolvedGid,
-					next: nextHashes,
-					type: entryType,
-					metaData: appendOptions.meta?.data,
-					payloadData,
-					resolveTrimmedEntries: properties.resolveTrimmedEntries,
-					trimLengthTo: nativeTrimLengthTo,
-				});
-				return mapMaybePromise(preparedValue, (prepared) => {
+				const nativePreparation = this.prepareNativeCommittedAppend(() =>
+					prepare({
+						clockId: identity.publicKey.bytes,
+						privateKey: identity.privateKey.privateKey,
+						publicKey: identity.publicKey.publicKey,
+						wallTime: clock.timestamp.wallTime,
+						logical: clock.timestamp.logical,
+						gid: resolvedGid,
+						next: nextHashes,
+						type: entryType,
+						metaData: appendOptions.meta?.data,
+						payloadData,
+						resolveTrimmedEntries: properties.resolveTrimmedEntries,
+						trimLengthTo: nativeTrimLengthTo,
+					}),
+				);
+				const consumePrepared = (
+					prepared: NativePreparedNoNextCommit | undefined,
+				): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> => {
 					if (!prepared) {
 						return undefined;
 					}
@@ -1631,10 +2047,16 @@ export class Log<T> {
 						entry.size = prepared.byteLength;
 						entry.createdLocally = true;
 						Entry.prepareShallowEntry(entry, shallowEntry);
-						entry.init({ encoding: this._encoding, keychain: this._keychain });
+						entry.init({
+							encoding: this._encoding,
+							keychain: this._keychain,
+						});
 						materializedEntry = entry;
 						return entry;
 					};
+					let indexTransaction:
+						| NativeCommittedAppendFactsTransaction
+						| undefined;
 					const finish = (): PreparedCommitOnlyAppendResult<T> => {
 						retainMaterializationBytes();
 						return {
@@ -1685,6 +2107,11 @@ export class Log<T> {
 										{
 											skipNextHeadUpdates: true,
 											deleteBlocks: false,
+											nativeBlocksDeleted:
+												prepared.nativeBlocksDeleted === true,
+											nativeDeleteCleanupToken:
+												prepared.nativeDeleteCleanupToken,
+											nativeCommittedAppendFactsTransaction: indexTransaction,
 										},
 									);
 								if (consumedNoReturn !== undefined) {
@@ -1709,6 +2136,9 @@ export class Log<T> {
 									{
 										skipNextHeadUpdates: true,
 										deleteBlocks: false,
+										nativeBlocksDeleted: prepared.nativeBlocksDeleted === true,
+										nativeDeleteCleanupToken: prepared.nativeDeleteCleanupToken,
+										nativeCommittedAppendFactsTransaction: indexTransaction,
 									},
 								);
 							return mapMaybePromise(consumedResult, (removed) => ({
@@ -1735,6 +2165,9 @@ export class Log<T> {
 							this.entryIndex.consumeNativeTrimmedEntriesMaybe(trimmedEntries, {
 								skipNextHeadUpdates: true,
 								deleteBlocks: false,
+								nativeBlocksDeleted: prepared.nativeBlocksDeleted === true,
+								nativeDeleteCleanupToken: prepared.nativeDeleteCleanupToken,
+								nativeCommittedAppendFactsTransaction: indexTransaction,
 							});
 						return mapMaybePromise(consumedResult, (removed) => ({
 							get entry() {
@@ -1749,31 +2182,117 @@ export class Log<T> {
 							documentPreviousContext: prepared.documentPreviousContext,
 						}));
 					};
-					const rollback = (error: unknown): never | Promise<never> => {
-						this.rollbackNativeAppendGraphHashes([hash]);
-						return this.rollbackNativeAppendBlocksHashes([hash]).then(() => {
+					const trimmedHashes =
+						prepared.trimmedEntryHashes ??
+						prepared.trimmedEntries?.map((entry) => entry.hash) ??
+						[];
+					let finalizer: NativeCommittedAppendFinalizer | undefined;
+					const rollback = async (error: unknown): Promise<never> => {
+						if (finalizer) {
+							try {
+								await finalizer.rollback();
+							} catch (rollbackError) {
+								throw new AggregateError(
+									[error, rollbackError],
+									"Native append and its compensation both failed",
+								);
+							}
 							throw error;
-						});
+						}
+						this.rollbackNativeAppendGraphHashes([hash]);
+						return this.rollbackNativeAppendFactsAndBlocksHashesPreservingError(
+							indexTransaction,
+							[hash],
+							error,
+							trimmedHashes,
+							prepared.nativeCommitOwnershipToken,
+						);
 					};
 					try {
-						const putResult = this.entryIndex.putNativeCommittedAppendFacts({
-							hash,
-							unique: true,
-							externalNextHashes: nextHashes,
-							shallowEntry,
-							isHead: true,
-						});
+						indexTransaction =
+							prepared.nativeCommitOwnershipToken !== undefined ||
+							properties.deferNativeTransactionAcknowledgement === true
+								? this.entryIndex.beginNativeCommittedAppendFactsTransaction(
+										[hash, ...nextHashes, ...trimmedHashes],
+										prepared.nativeIndexMutationLockOwner,
+									)
+								: undefined;
+						finalizer = indexTransaction
+							? this.createNativeCommittedAppendFinalizer({
+									transaction: indexTransaction,
+									hashes: [hash],
+									restoreNativeCids: trimmedHashes,
+									ownershipToken: prepared.nativeCommitOwnershipToken,
+								})
+							: undefined;
+						const putResult = this.entryIndex.putNativeCommittedAppendFacts(
+							{
+								hash,
+								unique: true,
+								externalNextHashes: nextHashes,
+								shallowEntry,
+								isHead: true,
+							},
+							indexTransaction,
+						);
 						const result = mapMaybePromise(putResult, finishBlocks);
-						return isPromiseLike(result) ? result.catch(rollback) : result;
+						const acknowledged = mapMaybePromise(result, async (value) => {
+							if (
+								finalizer &&
+								properties.deferNativeTransactionAcknowledgement === true
+							) {
+								value.nativeCommittedAppendFinalizer = finalizer;
+								return value;
+							}
+							if (finalizer) {
+								await finalizer.acknowledge();
+							} else if (hasNativeCommitOwnershipAck(this._storage)) {
+								this._storage.acknowledgeNativeCommitOwnership(
+									prepared.nativeCommitOwnershipToken,
+								);
+							}
+							return value;
+						});
+						return isPromiseLike(acknowledged)
+							? acknowledged.catch(rollback)
+							: acknowledged;
 					} catch (error) {
 						return rollback(error);
 					}
-				});
+				};
+				return this.finishNativeCommittedAppend(
+					nativePreparation,
+					consumePrepared,
+				);
 			});
 		});
 	}
 
 	private appendLocallyPreparedCommitOnlyWithNexts(
+		data: T,
+		appendOptions: AppendOptions<T>,
+		nexts: Sorting.SortableEntry[],
+		properties?: {
+			skipMissingNextJoin?: boolean;
+			resolveTrimmedEntries?: boolean;
+			payloadData?: Uint8Array;
+			includeMaterializationBytes?: boolean;
+			includeAppendFactsBytes?: boolean;
+		},
+		nativeTrimLengthTo?: number,
+	): MaybePromise<PreparedCommitOnlyAppendResult<T> | undefined> {
+		return this.withNativeCommittedAppendAdmission(() =>
+			this.appendLocallyPreparedCommitOnlyWithNextsAdmitted(
+				data,
+				appendOptions,
+				nexts,
+				properties,
+				nativeTrimLengthTo,
+			),
+		);
+	}
+
+	private appendLocallyPreparedCommitOnlyWithNextsAdmitted(
 		data: T,
 		appendOptions: AppendOptions<T>,
 		nexts: Sorting.SortableEntry[],
@@ -1846,6 +2365,7 @@ export class Log<T> {
 							{
 								skipNextHeadUpdates: true,
 								deleteBlocks: false,
+								nativeBlocksDeleted: true,
 							},
 						);
 					if (consumedNoReturn !== undefined) {
@@ -1868,6 +2388,8 @@ export class Log<T> {
 							skipNextHeadUpdates: true,
 							deleteBlocks:
 								nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+							nativeBlocksDeleted:
+								nativeAppendChain.trimmedNativeBlocksDeleted === true,
 						},
 					);
 				return mapMaybePromise(consumedResult, (removed) => ({
@@ -1890,6 +2412,8 @@ export class Log<T> {
 					{
 						skipNextHeadUpdates: true,
 						deleteBlocks: nativeAppendChain.trimmedNativeBlocksDeleted !== true,
+						nativeBlocksDeleted:
+							nativeAppendChain.trimmedNativeBlocksDeleted === true,
 					},
 				);
 				return mapMaybePromise(consumedResult, (removed) => ({
@@ -1937,6 +2461,15 @@ export class Log<T> {
 					finishFacts,
 				);
 			}
+			if (
+				nativeAppendChain.nativeBlocksCommitted &&
+				hasDurableWriteBarrier(this._storage)
+			) {
+				return mapMaybePromise(
+					this._storage.waitForDurableWrites(),
+					finishFacts,
+				);
+			}
 			return finishFacts();
 		};
 		const rollback = (error: unknown): never | Promise<never> => {
@@ -1944,10 +2477,11 @@ export class Log<T> {
 				this.rollbackNativeAppendGraphHashes([appendFacts.hash]);
 			}
 			if (nativeAppendChain.nativeBlocksCommitted) {
-				return this.rollbackNativeAppendBlocksHashes([appendFacts.hash]).then(
-					() => {
-						throw error;
-					},
+				return this.rollbackNativeAppendBlocksHashesPreservingError(
+					[appendFacts.hash],
+					error,
+					nativeAppendChain.trimmedNativeEntryHashes ??
+						nativeAppendChain.trimmedNativeEntries?.map((entry) => entry.hash),
 				);
 			}
 			throw error;
@@ -1971,6 +2505,33 @@ export class Log<T> {
 	private async appendLocallyPreparedManyIndependent(
 		data: T[],
 		options: AppendOptions<T> = {},
+		properties?: {
+			resolveTrimmedEntries?: boolean;
+			payloadDatas?: Uint8Array[];
+			nexts?: Sorting.SortableEntry[][];
+		},
+	): Promise<
+		| {
+				entries: Entry<T>[];
+				removed: ShallowOrFullEntry<T>[];
+				change: Change<T>;
+				appendFacts: PreparedAppendFacts[];
+		  }
+		| undefined
+	> {
+		this.throwIfDurableWritesFailed();
+		return this.withNativeCommittedAppendAdmission(() =>
+			this.appendLocallyPreparedManyIndependentAdmitted(
+				data,
+				options,
+				properties,
+			),
+		);
+	}
+
+	private async appendLocallyPreparedManyIndependentAdmitted(
+		data: T[],
+		options: AppendOptions<T>,
 		properties?: {
 			resolveTrimmedEntries?: boolean;
 			payloadDatas?: Uint8Array[];
@@ -2069,11 +2630,15 @@ export class Log<T> {
 			resolveTrimmedEntries?: boolean;
 			allowPreparedNexts?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			inputs: NativeNoNextCommitInput[],
-		) => MaybePromise<Array<NativePreparedNoNextCommit | undefined> | undefined>,
+		) => MaybePromise<
+			Array<NativePreparedNoNextCommit | undefined> | undefined
+		>,
 	): MaybePromise<PreparedCommitOnlyAppendBatchResult<T> | undefined> {
+		this.throwIfDurableWritesFailed();
 		if (data.length === 0) {
 			return {
 				entries: [],
@@ -2137,8 +2702,12 @@ export class Log<T> {
 				} satisfies NativeNoNextCommitInput,
 			};
 		});
-		const preparedValue = prepare(rows.map((row) => row.input));
-		return mapMaybePromise(preparedValue, (preparedRows) => {
+		const nativePreparation = this.prepareNativeCommittedAppend(() =>
+			prepare(rows.map((row) => row.input)),
+		);
+		const consumePrepared = (
+			preparedRows: Array<NativePreparedNoNextCommit | undefined> | undefined,
+		): MaybePromise<PreparedCommitOnlyAppendBatchResult<T> | undefined> => {
 			if (!preparedRows || preparedRows.length !== rows.length) {
 				return undefined;
 			}
@@ -2149,6 +2718,12 @@ export class Log<T> {
 				EntryIndex<T>["putNativeCommittedAppendFactsBatch"]
 			>[0] = [];
 			const trimmedEntryHashes: string[] = [];
+			let trimmedNativeBlocksDeleted = true;
+			let nativeDeleteCleanupToken: unknown;
+			let nativeCommitOwnershipToken: unknown;
+			let nativeIndexMutationLockOwner:
+				| EntryIndexHashMutationLockOwner
+				| undefined;
 			const documentTrimmedHeadsProcessed: boolean[] = [];
 			for (let index = 0; index < rows.length; index++) {
 				const row = rows[index]!;
@@ -2257,22 +2832,40 @@ export class Log<T> {
 					getShallowEntry,
 					isHead: true,
 				});
+				nativeCommitOwnershipToken ??= prepared.nativeCommitOwnershipToken;
+				nativeIndexMutationLockOwner ??= prepared.nativeIndexMutationLockOwner;
 				if (prepared.trimmedEntryHashes?.length) {
 					trimmedEntryHashes.push(...prepared.trimmedEntryHashes);
+					trimmedNativeBlocksDeleted &&= prepared.nativeBlocksDeleted === true;
+					nativeDeleteCleanupToken ??= prepared.nativeDeleteCleanupToken;
 				}
 				documentTrimmedHeadsProcessed.push(
 					prepared.documentTrimmedHeadsProcessed === true,
 				);
 			}
-			const rollback = (error: unknown): never | Promise<never> => {
-				this.rollbackNativeAppendGraphHashes(
-					appendFacts.map((facts) => facts.hash),
-				);
-				return this.rollbackNativeAppendBlocksHashes(
-					appendFacts.map((facts) => facts.hash),
-				).then(() => {
+			const appendHashes = appendFacts.map((facts) => facts.hash);
+			let indexTransaction: NativeCommittedAppendFactsTransaction | undefined;
+			let finalizer: NativeCommittedAppendFinalizer | undefined;
+			const rollback = async (error: unknown): Promise<never> => {
+				if (finalizer) {
+					try {
+						await finalizer.rollback();
+					} catch (rollbackError) {
+						throw new AggregateError(
+							[error, rollbackError],
+							"Native append batch and its compensation both failed",
+						);
+					}
 					throw error;
-				});
+				}
+				this.rollbackNativeAppendGraphHashes(appendHashes);
+				return this.rollbackNativeAppendFactsAndBlocksHashesPreservingError(
+					indexTransaction,
+					appendHashes,
+					error,
+					trimmedEntryHashes,
+					nativeCommitOwnershipToken,
+				);
 			};
 			const finish = (): PreparedCommitOnlyAppendBatchResult<T> => {
 				for (const retainMaterializationBytes of retainMaterializationBytesFns) {
@@ -2315,6 +2908,9 @@ export class Log<T> {
 						{
 							skipNextHeadUpdates: true,
 							deleteBlocks: false,
+							nativeBlocksDeleted: trimmedNativeBlocksDeleted,
+							nativeDeleteCleanupToken,
+							nativeCommittedAppendFactsTransaction: indexTransaction,
 						},
 					);
 				if (consumedNoReturn === undefined) {
@@ -2323,14 +2919,60 @@ export class Log<T> {
 				return mapMaybePromise(consumedNoReturn, finish);
 			};
 			try {
-				const putResult =
-					this.entryIndex.putNativeCommittedAppendFactsBatch(indexRows);
+				indexTransaction =
+					nativeCommitOwnershipToken !== undefined ||
+					properties.deferNativeTransactionAcknowledgement === true
+						? this.entryIndex.beginNativeCommittedAppendFactsTransaction(
+								[
+									...appendHashes,
+									...indexRows.flatMap((row) => row.externalNextHashes),
+									...trimmedEntryHashes,
+								],
+								nativeIndexMutationLockOwner,
+							)
+						: undefined;
+				finalizer = indexTransaction
+					? this.createNativeCommittedAppendFinalizer({
+							transaction: indexTransaction,
+							hashes: appendHashes,
+							restoreNativeCids: trimmedEntryHashes,
+							ownershipToken: nativeCommitOwnershipToken,
+						})
+					: undefined;
+				const putResult = this.entryIndex.putNativeCommittedAppendFactsBatch(
+					indexRows,
+					indexTransaction,
+				);
 				const result = mapMaybePromise(putResult, finishTrim);
-				return isPromiseLike(result) ? result.catch(rollback) : result;
+				const acknowledged = mapMaybePromise(result, async (value) => {
+					if (!value) {
+						await finalizer?.rollback();
+						return value;
+					}
+					if (
+						finalizer &&
+						properties.deferNativeTransactionAcknowledgement === true
+					) {
+						value.nativeCommittedAppendFinalizer = finalizer;
+						return value;
+					}
+					if (finalizer) {
+						await finalizer.acknowledge();
+					} else if (hasNativeCommitOwnershipAck(this._storage)) {
+						this._storage.acknowledgeNativeCommitOwnership(
+							nativeCommitOwnershipToken,
+						);
+					}
+					return value;
+				});
+				return isPromiseLike(acknowledged)
+					? acknowledged.catch(rollback)
+					: acknowledged;
 			} catch (error) {
 				return rollback(error);
 			}
-		});
+		};
+		return this.finishNativeCommittedAppend(nativePreparation, consumePrepared);
 	}
 
 	private createPreparedAppendFacts(
@@ -2377,6 +3019,16 @@ export class Log<T> {
 		data: T[],
 		options: AppendOptions<T> = {},
 	): Promise<{ entries: Entry<T>[]; removed: ShallowOrFullEntry<T>[] }> {
+		this.throwIfDurableWritesFailed();
+		return this.withNativeCommittedAppendAdmission(() =>
+			this.appendManyAdmitted(data, options),
+		);
+	}
+
+	private async appendManyAdmitted(
+		data: T[],
+		options: AppendOptions<T>,
+	): Promise<{ entries: Entry<T>[]; removed: ShallowOrFullEntry<T>[] }> {
 		if (data.length === 0) {
 			return { entries: [], removed: [] };
 		}
@@ -2384,25 +3036,70 @@ export class Log<T> {
 			throw new Error("appendMany does not support CUT entries");
 		}
 
-		let nexts = await this.getNextsForAppend(options);
-		const initialNexts = nexts;
-		const entries: Entry<T>[] = [];
-		const pendingDeletes: (
-			| PendingDelete<T>
-			| { entry: ShallowOrFullEntry<T>; fn: undefined }
-		)[] = [];
+		const initialNexts = await this.getNextsForAppend(options);
 		const deferBlockStore = hasPutMany(this._storage);
+		type MutationResult = {
+			entries: Entry<T>[];
+			removed: ShallowOrFullEntry<T>[];
+			changes: Change<T>;
+		};
+		const finishMutation = async (
+			entries: Entry<T>[],
+		): Promise<MutationResult> => {
+			for (const entry of entries) {
+				entry.init({ encoding: this._encoding, keychain: this._keychain });
+			}
+			const removed =
+				(await this.trimIfConfigured(options.trim))?.map((entry) => entry) ??
+				[];
+			return {
+				entries,
+				removed,
+				changes: {
+					added: entries.map((entry, index) => ({
+						head: index === entries.length - 1,
+						entry,
+					})),
+					removed,
+				},
+			};
+		};
+
+		let mutation: MutationResult | undefined;
 		const nativeAppendChain = await this.createNativePlainAppendChain(
 			data,
 			options,
-			nexts,
+			initialNexts,
 			deferBlockStore,
 		);
-
 		if (nativeAppendChain) {
-			entries.push(...nativeAppendChain.entries);
-			nexts = [entries[entries.length - 1]!];
-		} else {
+			const entries = nativeAppendChain.entries;
+			try {
+				await this.joinMissingNexts(entries[0]!, initialNexts);
+				if (deferBlockStore && !nativeAppendChain.nativeBlocksCommitted) {
+					await this.putAppendEntryBlocks(entries, nativeAppendChain.blocks);
+				}
+				await this.putAppendEntries(
+					entries,
+					options,
+					initialNexts.map((entry) => entry.hash),
+					nativeAppendChain,
+				);
+			} catch (error) {
+				if (nativeAppendChain.nativeGraphUpdated) {
+					this.rollbackNativeAppendGraph(entries);
+				}
+				if (nativeAppendChain.nativeBlocksCommitted) {
+					await this.rollbackNativeAppendBlocks(entries);
+				}
+				throw error;
+			}
+			mutation = await finishMutation(entries);
+		}
+
+		if (!mutation) {
+			const entries: Entry<T>[] = [];
+			let nexts = initialNexts;
 			for (const item of data) {
 				const entry = await this.createAppendEntry(item, options, nexts, {
 					deferStore: deferBlockStore,
@@ -2410,52 +3107,26 @@ export class Log<T> {
 				entries.push(entry);
 				nexts = [entry];
 			}
-		}
-
-		try {
 			await this.joinMissingNexts(entries[0]!, initialNexts);
-			if (deferBlockStore && !nativeAppendChain?.nativeBlocksCommitted) {
-				await this.putAppendEntryBlocks(entries, nativeAppendChain?.blocks);
+			if (deferBlockStore) {
+				await this.putAppendEntryBlocks(entries);
 			}
 			await this.putAppendEntries(
 				entries,
 				options,
 				initialNexts.map((entry) => entry.hash),
-				nativeAppendChain,
 			);
-		} catch (error) {
-			if (nativeAppendChain?.nativeGraphUpdated) {
-				this.rollbackNativeAppendGraph(entries);
-			}
-			if (nativeAppendChain?.nativeBlocksCommitted) {
-				await this.rollbackNativeAppendBlocks(entries);
-			}
-			throw error;
+			mutation = await finishMutation(entries);
 		}
 
-		for (const entry of entries) {
-			entry.init({ encoding: this._encoding, keychain: this._keychain });
+		if (options.onChange) {
+			await this.runWithMutationCallback(() =>
+				options.onChange!(mutation.changes),
+			);
+		} else {
+			await this._onChange?.(mutation.changes);
 		}
-
-		const trimmed = await this.trimIfConfigured(options?.trim);
-		if (trimmed) {
-			for (const entry of trimmed) {
-				pendingDeletes.push({ entry, fn: undefined });
-			}
-		}
-
-		const removed = pendingDeletes.map((x) => x.entry);
-		const changes: Change<T> = {
-			added: entries.map((entry, index) => ({
-				head: index === entries.length - 1,
-				entry,
-			})),
-			removed,
-		};
-
-		await (options?.onChange || this._onChange)?.(changes);
-		await Promise.all(pendingDeletes.map((x) => x.fn?.()));
-		return { entries, removed };
+		return { entries: mutation.entries, removed: mutation.removed };
 	}
 
 	private createNativePlainAppendChain(
@@ -2732,13 +3403,338 @@ export class Log<T> {
 		);
 	}
 
-	private async rollbackNativeAppendBlocksHashes(hashes: string[]) {
+	private async rollbackNativeAppendBlocksHashes(
+		hashes: string[],
+		restoreNativeCids: string[] = [],
+		ownershipToken?: unknown,
+	) {
+		if (hasFailedNativeRollback(this._storage)) {
+			await this._storage.rollbackFailedNativeCommits(
+				hashes,
+				restoreNativeCids,
+				ownershipToken,
+			);
+			return;
+		}
 		const storage = this._storage as BlocksWithPutMany;
 		if (typeof storage.rmMany === "function") {
 			await storage.rmMany(hashes);
 			return;
 		}
 		await Promise.all(hashes.map((hash) => this._storage.rm(hash)));
+	}
+
+	/** Reserve an in-flight native mutation before its prepare callback can commit
+	 * blocks. Terminal teardown closes admission synchronously and waits for every
+	 * earlier reservation to either finish or compensate. */
+	private beginNativeCommittedAppendAdmission(): NativeCommittedAppendAdmission {
+		if (this._terminalAdmissionClosed || this._lifecycleState !== "active") {
+			throw new Error(
+				"Native append transaction cannot start while the log is closing or dropped",
+			);
+		}
+		let resolveSettled!: () => void;
+		const settled = new Promise<void>((resolve) => {
+			resolveSettled = resolve;
+		});
+		(this._nativeCommittedAppendAdmissions ??= new Set()).add(settled);
+		let released = false;
+		return {
+			settled,
+			release: () => {
+				if (released) {
+					return;
+				}
+				released = true;
+				this._nativeCommittedAppendAdmissions?.delete(settled);
+				resolveSettled();
+			},
+		};
+	}
+
+	private prepareNativeCommittedAppend<TValue>(
+		prepare: () => MaybePromise<TValue>,
+	): {
+		admission: NativeCommittedAppendAdmission;
+		prepared: MaybePromise<TValue>;
+	} {
+		const admission = this.beginNativeCommittedAppendAdmission();
+		let prepared: MaybePromise<TValue>;
+		try {
+			prepared = prepare();
+		} catch (error) {
+			admission.release();
+			throw error;
+		}
+		return { admission, prepared };
+	}
+
+	private finishNativeCommittedAppend<TValue, TResult>(
+		preparation: {
+			admission: NativeCommittedAppendAdmission;
+			prepared: MaybePromise<TValue>;
+		},
+		operation: (value: TValue) => MaybePromise<TResult>,
+	): MaybePromise<TResult> {
+		let result: MaybePromise<TResult>;
+		try {
+			result = mapMaybePromise(preparation.prepared, operation);
+		} catch (error) {
+			preparation.admission.release();
+			throw error;
+		}
+		if (isPromiseLike(result)) {
+			return result.finally(preparation.admission.release);
+		}
+		preparation.admission.release();
+		return result;
+	}
+
+	private withNativeCommittedAppendAdmission<TResult>(
+		operation: () => Promise<TResult>,
+	): Promise<TResult>;
+	private withNativeCommittedAppendAdmission<TResult>(
+		operation: () => MaybePromise<TResult>,
+	): MaybePromise<TResult>;
+	private withNativeCommittedAppendAdmission<TResult>(
+		operation: () => MaybePromise<TResult>,
+	): MaybePromise<TResult> {
+		const preparation = this.prepareNativeCommittedAppend(operation);
+		return this.finishNativeCommittedAppend(preparation, (result) => result);
+	}
+
+	private runWithMutationCallback<TResult>(
+		callback: () => MaybePromise<TResult>,
+	): MaybePromise<TResult> {
+		this._mutationCallbacksInFlight++;
+		let result: MaybePromise<TResult>;
+		try {
+			result = callback();
+		} catch (error) {
+			this._mutationCallbacksInFlight--;
+			throw error;
+		}
+		if (isPromiseLike(result)) {
+			return result.finally(() => {
+				this._mutationCallbacksInFlight--;
+			});
+		}
+		this._mutationCallbacksInFlight--;
+		return result;
+	}
+
+	private wrapMutationCallback<TCallback extends (...args: any[]) => any>(
+		callback: TCallback,
+	): TCallback {
+		const existing = this._mutationCallbackWrappers.get(callback);
+		if (existing) {
+			return existing as TCallback;
+		}
+		const wrapped = ((...args: Parameters<TCallback>) =>
+			this.runWithMutationCallback(() => callback(...args))) as TCallback;
+		this._mutationCallbackWrappers.set(callback, wrapped);
+		return wrapped;
+	}
+
+	private wrapTrimCallbacks(option?: TrimOptions): TrimOptions | undefined {
+		if (!option?.filter?.canTrim) {
+			return option;
+		}
+		return {
+			...option,
+			filter: {
+				...option.filter,
+				canTrim: this.wrapMutationCallback(option.filter.canTrim),
+			},
+		};
+	}
+
+	private async settleNativeCommittedAppendAdmissions(): Promise<void> {
+		while ((this._nativeCommittedAppendAdmissions?.size ?? 0) > 0) {
+			await Promise.all([...this._nativeCommittedAppendAdmissions!]);
+		}
+	}
+
+	private createNativeCommittedAppendFinalizer(properties: {
+		transaction: NativeCommittedAppendFactsTransaction;
+		hashes: string[];
+		restoreNativeCids?: string[];
+		ownershipToken?: unknown;
+	}): NativeCommittedAppendFinalizer {
+		if (this._terminalAdmissionClosed || this._lifecycleState !== "active") {
+			throw new Error(
+				"Native append transaction cannot start while the log is closing or dropped",
+			);
+		}
+		let state:
+			| "open"
+			| "acknowledging"
+			| "acknowledged"
+			| "rolling-back"
+			| "rollback-required"
+			| "rolled-back" = "open";
+		let terminalSettlementRequested = false;
+		let acknowledgePromise: Promise<void> | undefined;
+		let rollbackPromise: Promise<void> | undefined;
+		const finalizer: NativeCommittedAppendFinalizer = {
+			acknowledge: async (onLowerMarkerDurable) => {
+				if (state === "acknowledged") {
+					return;
+				}
+				if (
+					state === "rolled-back" ||
+					state === "rolling-back" ||
+					state === "rollback-required"
+				) {
+					throw new Error("Native append transaction was already rolled back");
+				}
+				if (acknowledgePromise) {
+					return acknowledgePromise;
+				}
+				state = "acknowledging";
+				acknowledgePromise = (async () => {
+					await this.entryIndex.flushNativeCommittedExternalNextFacts(
+						properties.transaction,
+					);
+					await this.entryIndex.flushNativeCommittedAppendFacts(
+						properties.transaction,
+					);
+					await onLowerMarkerDurable?.();
+					await this.entryIndex.flushNativeCommittedTrimFacts(
+						properties.transaction,
+					);
+					if (hasNativeCommitOwnershipAck(this._storage)) {
+						this._storage.acknowledgeNativeCommitOwnership(
+							properties.ownershipToken,
+						);
+					}
+					this.entryIndex.acknowledgeNativeCommittedAppendFacts(
+						properties.transaction,
+					);
+					state = "acknowledged";
+					this._nativeCommittedAppendFinalizers?.delete(finalizer);
+				})();
+				try {
+					await acknowledgePromise;
+				} catch (error) {
+					state = terminalSettlementRequested ? "rollback-required" : "open";
+					acknowledgePromise = undefined;
+					throw error;
+				}
+			},
+			retainForRecovery: () => {
+				if (state === "acknowledged") {
+					return;
+				}
+				if (state !== "open" || terminalSettlementRequested) {
+					throw new Error(
+						"Native append transaction cannot be retained for recovery",
+					);
+				}
+				const failures: unknown[] = [];
+				try {
+					if (hasNativeCommitOwnershipAck(this._storage)) {
+						this._storage.acknowledgeNativeCommitOwnership(
+							properties.ownershipToken,
+						);
+					}
+				} catch (error) {
+					failures.push(error);
+				}
+				try {
+					// The durable strict intent is now the recovery authority. Finalize
+					// in-memory ownership and locks so close cannot roll back a lower
+					// marker that may still be durably true; reopen finishes any trim debt.
+					this.entryIndex.acknowledgeNativeCommittedAppendFacts(
+						properties.transaction,
+					);
+				} catch (error) {
+					failures.push(error);
+				}
+				state = "acknowledged";
+				this._nativeCommittedAppendFinalizers?.delete(finalizer);
+				if (failures.length > 0) {
+					throw new AggregateError(
+						failures,
+						"Failed to retain a native append transaction for recovery",
+					);
+				}
+			},
+			rollback: async () => {
+				if (state === "rolled-back") {
+					return;
+				}
+				if (state === "acknowledged" || state === "acknowledging") {
+					throw new Error("Native append transaction was already acknowledged");
+				}
+				if (rollbackPromise) {
+					return rollbackPromise;
+				}
+				// Compensation direction is irrevocable once any rollback begins. A
+				// partial failure may retry rollback, but can never switch to publish.
+				terminalSettlementRequested = true;
+				state = "rolling-back";
+				rollbackPromise = (async () => {
+					const failures: unknown[] = [];
+					try {
+						this.rollbackNativeAppendGraphHashes(properties.hashes);
+					} catch (error) {
+						failures.push(error);
+					}
+					try {
+						await this.entryIndex.rollbackNativeCommittedAppendFacts(
+							properties.transaction,
+						);
+					} catch (error) {
+						failures.push(error);
+					}
+					try {
+						await this.rollbackNativeAppendBlocksHashes(
+							properties.hashes,
+							properties.restoreNativeCids,
+							properties.ownershipToken,
+						);
+					} catch (error) {
+						failures.push(error);
+					}
+					try {
+						await this.entryIndex.restoreNativeGraphFromIndex();
+					} catch (error) {
+						failures.push(error);
+					}
+					if (failures.length > 0) {
+						throw new AggregateError(
+							failures,
+							"Failed to compensate a native append transaction",
+						);
+					}
+					state = "rolled-back";
+					this._nativeCommittedAppendFinalizers?.delete(finalizer);
+				})();
+				try {
+					await rollbackPromise;
+				} catch (error) {
+					state = "rollback-required";
+					rollbackPromise = undefined;
+					throw error;
+				}
+			},
+			settleForTerminal: () => {
+				terminalSettlementRequested = true;
+				if (state === "acknowledged" || state === "rolled-back") {
+					return Promise.resolve();
+				}
+				if (state === "acknowledging" && acknowledgePromise) {
+					return acknowledgePromise;
+				}
+				if (state === "rolling-back" && rollbackPromise) {
+					return rollbackPromise;
+				}
+				return finalizer.rollback();
+			},
+		};
+		(this._nativeCommittedAppendFinalizers ??= new Set()).add(finalizer);
+		return finalizer;
 	}
 
 	private validateExplicitNexts(options: AppendOptions<T>) {
@@ -2752,6 +3748,60 @@ export class Log<T> {
 				);
 			}
 		}
+	}
+
+	private async rollbackNativeAppendBlocksHashesPreservingError(
+		hashes: string[],
+		error: unknown,
+		restoreNativeCids: string[] = [],
+		ownershipToken?: unknown,
+	): Promise<never> {
+		try {
+			await this.rollbackNativeAppendBlocksHashes(
+				hashes,
+				restoreNativeCids,
+				ownershipToken,
+			);
+		} catch (rollbackError) {
+			throw new AggregateError(
+				[error, rollbackError],
+				"Native append and block compensation both failed",
+			);
+		}
+		throw error;
+	}
+
+	private async rollbackNativeAppendFactsAndBlocksHashesPreservingError(
+		transaction: NativeCommittedAppendFactsTransaction | undefined,
+		hashes: string[],
+		error: unknown,
+		restoreNativeCids: string[] = [],
+		ownershipToken?: unknown,
+	): Promise<never> {
+		const rollbackFailures: unknown[] = [];
+		if (transaction) {
+			try {
+				await this.entryIndex.rollbackNativeCommittedAppendFacts(transaction);
+			} catch (rollbackError) {
+				rollbackFailures.push(rollbackError);
+			}
+		}
+		try {
+			await this.rollbackNativeAppendBlocksHashes(
+				hashes,
+				restoreNativeCids,
+				ownershipToken,
+			);
+		} catch (rollbackError) {
+			rollbackFailures.push(rollbackError);
+		}
+		if (rollbackFailures.length > 0) {
+			throw new AggregateError(
+				[error, ...rollbackFailures],
+				"Native append and compensation both failed",
+			);
+		}
+		throw error;
 	}
 
 	private getNextsForAppend(
@@ -2783,7 +3833,9 @@ export class Log<T> {
 		const entry = await EntryV0.create<T>({
 			store: this._storage,
 			identity: options.identity || this._identity,
-			signers: options.signers,
+			signers: options.signers?.map((signer) =>
+				this.wrapMutationCallback(signer),
+			),
 			data,
 			meta: {
 				clock,
@@ -2801,11 +3853,14 @@ export class Log<T> {
 						},
 					}
 				: undefined,
-			canAppend:
-				canAppendAlreadyValidated(options)
-					? undefined
-					: options.canAppend ||
-						(this._hasCustomCanAppend ? this._canAppend : undefined),
+			canAppend: canAppendAlreadyValidated(options)
+				? undefined
+				: options.canAppend
+					? (entry) =>
+							this.runWithMutationCallback(() => options.canAppend!(entry))
+					: this._hasCustomCanAppend
+						? this._canAppend
+						: undefined,
 			deferStore: storeOptions?.deferStore,
 		});
 
@@ -2872,6 +3927,12 @@ export class Log<T> {
 					}
 				: undefined;
 		if (
+			prepared?.nativeBlocksCommitted === true &&
+			hasDurableWriteBarrier(this._storage)
+		) {
+			await this._storage.waitForDurableWrites();
+		}
+		if (
 			entries.length === 1 &&
 			prepared?.nativeGraphUpdated === true &&
 			!this.entryIndex.properties.onGidRemoved
@@ -2920,6 +3981,7 @@ export class Log<T> {
 			if (cid !== block.cid) {
 				throw new Error("Unexpected block cid");
 			}
+			await this.waitForDurableWrites();
 			return;
 		}
 		if (hasPutKnownManyColumns(this._storage)) {
@@ -2940,6 +4002,7 @@ export class Log<T> {
 					throw new Error("Unexpected block batch cid");
 				}
 			}
+			await this.waitForDurableWrites();
 			return;
 		}
 		if (hasPutKnownMany(this._storage)) {
@@ -2955,6 +4018,7 @@ export class Log<T> {
 					throw new Error("Unexpected block batch cid");
 				}
 			}
+			await this.waitForDurableWrites();
 			return;
 		}
 		const cids = await (this._storage as BlocksWithPutMany).putMany!(blocks);
@@ -2966,6 +4030,7 @@ export class Log<T> {
 				throw new Error("Unexpected block batch cid");
 			}
 		}
+		await this.waitForDurableWrites();
 	}
 
 	private async putKnownEntryBytesBatch(
@@ -2981,6 +4046,7 @@ export class Log<T> {
 			if (cid !== block.cid) {
 				throw new Error("Unexpected block cid");
 			}
+			await this.waitForDurableWrites();
 			return;
 		}
 		if (hasPutKnownManyColumns(this._storage)) {
@@ -3001,6 +4067,7 @@ export class Log<T> {
 					throw new Error("Unexpected block batch cid");
 				}
 			}
+			await this.waitForDurableWrites();
 			return;
 		}
 		if (hasPutKnownMany(this._storage)) {
@@ -3016,6 +4083,7 @@ export class Log<T> {
 					throw new Error("Unexpected block batch cid");
 				}
 			}
+			await this.waitForDurableWrites();
 			return;
 		}
 		const preparedBlocks = blocks.map((block) =>
@@ -3032,6 +4100,7 @@ export class Log<T> {
 				throw new Error("Unexpected block batch cid");
 			}
 		}
+		await this.waitForDurableWrites();
 	}
 
 	private putPreparedAppendBlocks(
@@ -3048,11 +4117,10 @@ export class Log<T> {
 					throw new Error("Unexpected block cid");
 				}
 			};
-			if (isPromiseLike(cidResult)) {
-				return cidResult.then(checkCid);
-			}
-			checkCid(cidResult);
-			return;
+			return mapMaybePromise(cidResult, (cid) => {
+				checkCid(cid);
+				return this.waitForDurableWrites();
+			});
 		}
 		const checkCids = (cids: string[]) => {
 			if (cids.length !== preparedBlocks.length) {
@@ -3073,29 +4141,27 @@ export class Log<T> {
 				bytes[i] = block.block.bytes;
 			}
 			const cidsResult = this._storage.putKnownManyColumns(cids, bytes);
-			if (isPromiseLike(cidsResult)) {
-				return cidsResult.then(checkCids);
-			}
-			checkCids(cidsResult);
-			return;
+			return mapMaybePromise(cidsResult, (result) => {
+				checkCids(result);
+				return this.waitForDurableWrites();
+			});
 		}
 		if (hasPutKnownMany(this._storage)) {
 			const cidsResult = this._storage.putKnownMany(
 				preparedBlocks.map((block) => [block.cid, block.block.bytes] as const),
 			);
-			if (isPromiseLike(cidsResult)) {
-				return cidsResult.then(checkCids);
-			}
-			checkCids(cidsResult);
-			return;
+			return mapMaybePromise(cidsResult, (result) => {
+				checkCids(result);
+				return this.waitForDurableWrites();
+			});
 		}
 		const cidsResult = (this._storage as BlocksWithPutMany).putMany!(
 			preparedBlocks,
 		);
-		if (isPromiseLike(cidsResult)) {
-			return cidsResult.then(checkCids);
-		}
-		checkCids(cidsResult);
+		return mapMaybePromise(cidsResult, (result) => {
+			checkCids(result);
+			return this.waitForDurableWrites();
+		});
 	}
 
 	async remove(
@@ -3104,6 +4170,7 @@ export class Log<T> {
 			| { hash: string; meta: { next: string[] } }[],
 		options?: { recursively?: boolean },
 	): Promise<Change<T>> {
+		this.throwIfDurableWritesFailed();
 		/* await this.load({ reload: false }); */
 		const entries = Array.isArray(entry) ? entry : [entry];
 
@@ -3147,6 +4214,7 @@ export class Log<T> {
 		option: TrimOptions | undefined = this._trim.options,
 		properties?: { resolveDeletedEntries?: boolean },
 	) {
+		this.throwIfDurableWritesFailed();
 		return this._trim.trim(option, properties);
 	}
 
@@ -3154,7 +4222,9 @@ export class Log<T> {
 		option?: TrimOptions,
 		properties?: { resolveDeletedEntries?: boolean },
 	): MaybePromise<ShallowOrFullEntry<T>[] | undefined> {
-		const resolved = option ?? this._trim.options;
+		const resolved = option
+			? this.wrapTrimCallbacks(option)
+			: this._trim.options;
 		return resolved ? this.trim(resolved, properties) : undefined;
 	}
 
@@ -3193,6 +4263,7 @@ export class Log<T> {
 			| ResultsIterator<Entry<any>>,
 		options?: TrustedJoinOptions<T>,
 	): Promise<void> {
+		this.throwIfDurableWritesFailed();
 		let entries: Entry<T>[];
 		const references: Map<string, Entry<T>> = new Map();
 
@@ -3382,6 +4453,16 @@ export class Log<T> {
 		entries: PreparedAppendJoinFacts[],
 		options?: TrustedPreparedAppendFactsBatchJoinOptions,
 	): Promise<boolean> {
+		this.throwIfDurableWritesFailed();
+		return this.withNativeCommittedAppendAdmission(() =>
+			this.joinPreparedAppendFactsBatchAdmitted(entries, options),
+		);
+	}
+
+	private async joinPreparedAppendFactsBatchAdmitted(
+		entries: PreparedAppendJoinFacts[],
+		options?: TrustedPreparedAppendFactsBatchJoinOptions,
+	): Promise<boolean> {
 		if (
 			entries.length === 0 ||
 			!canAppendAlreadyValidated(options) ||
@@ -3517,14 +4598,16 @@ export class Log<T> {
 			if (resolvedOptions.__peerbitNativePreparedJoinCommit) {
 				const nativeCommitStartedAt = internalProfileStart(profile);
 				nativePreparedCommitted =
-					(await resolvedOptions.__peerbitNativePreparedJoinCommit({
-						entries,
-						hashes: entryHashes,
-						headFlags,
-						headFlagsBytes,
-						trustedMissing,
-						validatePlan: nativeCommitValidatesPlan,
-					})) === true;
+					(await this.runWithMutationCallback(() =>
+						resolvedOptions.__peerbitNativePreparedJoinCommit!({
+							entries,
+							hashes: entryHashes,
+							headFlags,
+							headFlagsBytes,
+							trustedMissing,
+							validatePlan: nativeCommitValidatesPlan,
+						}),
+					)) === true;
 				emitInternalProfileDuration(profile, nativeCommitStartedAt, {
 					name: "log.joinPreparedFacts.nativePreparedCommit",
 					component: "log",
@@ -3545,6 +4628,11 @@ export class Log<T> {
 						bytes: entry.bytes,
 					})),
 				);
+			} else {
+				// A native prepared receive may have used the synchronous columnar block
+				// callback. Hold index/head/change publication behind the one batch-level
+				// durability barrier just like the generic block-store fallback.
+				await this.waitForDurableWrites();
 			}
 			emitInternalProfileDuration(profile, blocksStartedAt, {
 				name: "log.joinPreparedFacts.blocks",
@@ -3608,12 +4696,14 @@ export class Log<T> {
 
 			if (resolvedOptions.__peerbitOnPreparedJoinCommitted) {
 				const committedStartedAt = internalProfileStart(profile);
-				await resolvedOptions.__peerbitOnPreparedJoinCommitted({
-					entries,
-					hashes: entryHashes,
-					headFlags,
-					nativePreparedCommitted,
-				});
+				await this.runWithMutationCallback(() =>
+					resolvedOptions.__peerbitOnPreparedJoinCommitted!({
+						entries,
+						hashes: entryHashes,
+						headFlags,
+						nativePreparedCommitted,
+					}),
+				);
 				emitInternalProfileDuration(profile, committedStartedAt, {
 					name: "log.joinPreparedFacts.committed",
 					component: "log",
@@ -3625,8 +4715,10 @@ export class Log<T> {
 
 			const changeStartedAt = internalProfileStart(profile);
 			if (resolvedOptions.__peerbitOnAppendHashes) {
-				await resolvedOptions.__peerbitOnAppendHashes(
-					entries.map((entry) => entry.hash),
+				await this.runWithMutationCallback(() =>
+					resolvedOptions.__peerbitOnAppendHashes!(
+						entries.map((entry) => entry.hash),
+					),
 				);
 			} else {
 				const change: Change<T> = {
@@ -3811,7 +4903,9 @@ export class Log<T> {
 					})),
 					removed: [],
 				};
-				await options.onChange?.(change);
+				if (options.onChange) {
+					await this.runWithMutationCallback(() => options.onChange!(change));
+				}
 				await this._onChange?.(change);
 			}
 			emitInternalProfileDuration(profile, changeStartedAt, {
@@ -4061,10 +5155,14 @@ export class Log<T> {
 
 		const removed = pendingDeletes.map((x) => x.entry);
 
-		await options.onChange?.({
-			added: [{ head: options.isHead, entry }],
-			removed,
-		});
+		if (options.onChange) {
+			await this.runWithMutationCallback(() =>
+				options.onChange!({
+					added: [{ head: options.isHead, entry }],
+					removed,
+				}),
+			);
+		}
 		await this._onChange?.({
 			added: [{ head: options.isHead, entry }],
 			removed,
@@ -4163,6 +5261,7 @@ export class Log<T> {
 	async prepareDelete(
 		hash: string,
 	): Promise<PendingDelete<T> | { entry: undefined }> {
+		this.throwIfDurableWritesFailed();
 		let entry = await this._entryIndex.getShallow(hash);
 		if (!entry) {
 			return { entry: undefined };
@@ -4170,6 +5269,7 @@ export class Log<T> {
 		return {
 			entry: entry.value,
 			fn: async () => {
+				this.throwIfDurableWritesFailed();
 				await this._trim.deleteFromCache(hash);
 				const removedEntry = (await this._entryIndex.delete(
 					hash,
@@ -4181,6 +5281,7 @@ export class Log<T> {
 	}
 
 	async delete(hash: string): Promise<ShallowEntry | undefined> {
+		this.throwIfDurableWritesFailed();
 		const deleteFn = await this.prepareDelete(hash);
 		return deleteFn.entry && deleteFn.fn();
 	}
@@ -4220,23 +5321,204 @@ export class Log<T> {
 		).join("\n");
 	}
 
-	async close() {
-		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
-		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-		this._closeController?.abort();
-		await this._entryIndex?.flushPendingWrites();
-		await this._indexer?.stop?.();
-		this._indexer = undefined as any;
-		this._loadedOnce = false;
+	private enqueueTerminalLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+		const next = this._terminalLifecycleQueue.then(operation);
+		this._terminalLifecycleQueue = next.then(
+			() => undefined,
+			() => undefined,
+		);
+		return next;
 	}
 
-	async drop() {
-		// Don't return early here if closed = true, because "load" might create processes that needs to be closed
-		this._closed = true; // closed = true before doing below, else we might try to open the headsIndex cache because it is closed as we assume log is still open
-		this._closeController.abort();
-		await this._entryIndex?.clear();
-		await this._indexer?.drop();
-		await this._indexer?.stop?.();
+	private async settleNativeCommittedAppendFinalizers(): Promise<void> {
+		while ((this._nativeCommittedAppendFinalizers?.size ?? 0) > 0) {
+			const finalizers = [...this._nativeCommittedAppendFinalizers!];
+			for (const finalizer of finalizers) {
+				await finalizer.settleForTerminal();
+			}
+		}
+	}
+
+	close(): Promise<void> {
+		this.ensureRuntimeState();
+		// Mutation callbacks run inside terminal admission. Waiting for teardown
+		// from one would create a self-deadlock, so reject before changing any
+		// lifecycle state and let the caller retry after the mutation settles.
+		if (this._mutationCallbacksInFlight > 0) {
+			return Promise.reject(
+				new Error(
+					"Cannot close a log while a mutation callback is running; retry after the callback completes",
+				),
+			);
+		}
+		if (this._dropCompleted) {
+			return Promise.resolve();
+		}
+		if (this._dropPromise) {
+			return this._dropPromise;
+		}
+		if (this._lifecycleState === "drop-failed") {
+			// Drop is the stronger terminal operation. Never let close downgrade a
+			// failed erase into a clean closed state that can be reopened.
+			return this.drop();
+		}
+		if (this._closePromise) {
+			return this._closePromise;
+		}
+		if (this._closeCompleted) {
+			return Promise.resolve();
+		}
+
+		const opening = this._openPromise;
+		this._lifecycleEpoch++;
+		this._closed = true;
+		this._terminalAdmissionClosed = true;
+		this._lifecycleState = "closing";
+		this._closeController?.abort();
+		const operation = this.enqueueTerminalLifecycle(async () => {
+			// If startup was admitted first, it owns initialization and this close
+			// owns every teardown stage that follows. Its failure does not skip cleanup.
+			await opening?.catch(() => undefined);
+			this._closed = true;
+			this._lifecycleState = "closing";
+			if (!this._closeProgress.admissionsSettled) {
+				await this.settleNativeCommittedAppendAdmissions();
+				this._closeProgress.admissionsSettled = true;
+			}
+			if (!this._closeProgress.finalizersSettled) {
+				await this.settleNativeCommittedAppendFinalizers();
+				this._closeProgress.finalizersSettled = true;
+			}
+			if (!this._closeProgress.rollbacksRetried) {
+				await this._entryIndex?.retryFailedNativeCommittedAppendFactsRollbacks();
+				this._closeProgress.rollbacksRetried = true;
+			}
+			if (!this._closeProgress.pendingWritesFlushed) {
+				await this._entryIndex?.flushPendingWrites();
+				this._closeProgress.pendingWritesFlushed = true;
+			}
+			if (!this._closeProgress.blockHashesRetained && this._entryIndex) {
+				const explicitlyPreservesData =
+					await this._indexer?.preservesDataOnStop?.();
+				const preservesDataOnStop =
+					explicitlyPreservesData ??
+					(await this._indexer?.persisted?.()) ??
+					false;
+				// A destructive/unknown stop must snapshot before stopping regardless of
+				// when drop is requested. Data-preserving backends avoid this O(n) work
+				// on ordinary close and can be restarted for a later drop.
+				if (this._dropPromise || !preservesDataOnStop) {
+					await this._entryIndex.retainBlockHashesForDrop();
+					this._closeProgress.blockHashesRetained = true;
+				}
+			}
+			if (!this._closeProgress.indexerStopped) {
+				await this._indexer?.stop?.();
+				this._closeProgress.indexerStopped = true;
+			}
+			this._loadedOnce = false;
+			this._closeCompleted = true;
+			this._lifecycleState = "closed";
+		});
+		const wrapped: Promise<void> = operation
+			.catch((error) => {
+				this._lifecycleState = "close-failed";
+				throw error;
+			})
+			.finally(() => {
+				if (this._closePromise === wrapped) {
+					this._closePromise = undefined;
+				}
+			});
+		this._closePromise = wrapped;
+		return wrapped;
+	}
+
+	drop(): Promise<void> {
+		this.ensureRuntimeState();
+		// See close(): terminal reentrancy from a mutation callback must fail before
+		// this stronger terminal operation mutates lifecycle ownership.
+		if (this._mutationCallbacksInFlight > 0) {
+			return Promise.reject(
+				new Error(
+					"Cannot drop a log while a mutation callback is running; retry after the callback completes",
+				),
+			);
+		}
+		if (this._dropCompleted) {
+			return Promise.resolve();
+		}
+		if (this._dropPromise) {
+			return this._dropPromise;
+		}
+
+		const opening = this._openPromise;
+		this._lifecycleEpoch++;
+		this._closed = true;
+		this._terminalAdmissionClosed = true;
+		this._lifecycleState = "dropping";
+		this._closeController?.abort();
+		const operation = this.enqueueTerminalLifecycle(async () => {
+			await opening?.catch(() => undefined);
+			this._closed = true;
+			this._lifecycleState = "dropping";
+			if (!this._dropProgress.admissionsSettled) {
+				await this.settleNativeCommittedAppendAdmissions();
+				this._dropProgress.admissionsSettled = true;
+			}
+			if (!this._dropProgress.entryIndexCleared) {
+				// start() is required even when a prior stop rejected: backends may
+				// reject after applying stop, and start is intentionally idempotent.
+				await this._indexer?.start?.();
+				if (
+					!this._closeProgress.blockHashesRetained &&
+					(this._closeCompleted || this._closeProgress.pendingWritesFlushed) &&
+					this._entryIndex
+				) {
+					const reopenedSize =
+						await this._entryIndex.properties.index.getSize();
+					if (reopenedSize !== this._entryIndex.length) {
+						throw new Error(
+							"Cannot drop after close discarded an ephemeral entry index; request drop before close completes",
+						);
+					}
+				}
+			}
+			if (!this._dropProgress.finalizersSettled) {
+				await this.settleNativeCommittedAppendFinalizers();
+				await this._entryIndex?.retryFailedNativeCommittedAppendFactsRollbacks();
+				this._dropProgress.finalizersSettled = true;
+			}
+			if (!this._dropProgress.entryIndexCleared) {
+				await this._entryIndex?.clear();
+				this._dropProgress.entryIndexCleared = true;
+			}
+			if (!this._dropProgress.indexerDropped) {
+				await this._indexer?.drop();
+				this._dropProgress.indexerDropped = true;
+			}
+			if (!this._dropProgress.indexerStopped) {
+				await this._indexer?.stop?.();
+				this._dropProgress.indexerStopped = true;
+			}
+			this._indexer = undefined as any;
+			this._loadedOnce = false;
+			this._dropCompleted = true;
+			this._closeCompleted = true;
+			this._lifecycleState = "dropped";
+		});
+		const wrapped: Promise<void> = operation
+			.catch((error) => {
+				this._lifecycleState = "drop-failed";
+				throw error;
+			})
+			.finally(() => {
+				if (this._dropPromise === wrapped) {
+					this._dropPromise = undefined;
+				}
+			});
+		this._dropPromise = wrapped;
+		return wrapped;
 	}
 
 	async recover() {

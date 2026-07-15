@@ -38,6 +38,7 @@ import {
 	type Change,
 	type Ed25519VerifyBatchInput,
 	Entry,
+	type EntryIndexHashMutationLockOwner,
 	EntryType,
 	LamportClock,
 	Log,
@@ -59,15 +60,15 @@ import type {
 	NativeBackboneAppendResult,
 	NativeBackboneCoordinateCommitColumns,
 	NativeBackboneCoordinateFields,
-	NativeBackboneCoordinatePersistenceConfig as RuntimeNativeBackboneCoordinatePersistenceConfig,
 	NativeBackboneLogCommitEntry,
-	NativeBackboneRequestPruneHintColumns,
 	NativeBackboneRawReceiveGroupAssignmentPlan,
 	NativeBackboneRawReceiveGroupIndexPlan,
 	NativeBackboneRawReceiveGroupLeaderPlan,
 	NativeBackboneRawReceiveGroupPlan,
 	NativeBackboneRawReceiveSelectionPlan,
+	NativeBackboneRequestPruneHintColumns,
 	NativePeerbitBackbone,
+	NativeBackboneCoordinatePersistenceConfig as RuntimeNativeBackboneCoordinatePersistenceConfig,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
 import {
@@ -127,15 +128,15 @@ import {
 	type DebouncedAccumulatorMap,
 	debouncedAccumulatorMap,
 } from "./debounce.js";
-import { NoPeersError } from "./errors.js";
+import { NativeDurableCommitError, NoPeersError } from "./errors.js";
 import {
 	EXCHANGE_HEADS_REPAIR_HINT,
 	EntryWithRefs,
 	ExchangeHeadsMessage,
 	MAX_RAW_EXCHANGE_MESSAGE_SIZE,
 	RawEntryWithRefs,
-	RawExchangeHeadsMessage,
 	type RawExchangeHeadSendPlan,
+	RawExchangeHeadsMessage,
 	type RawReceiveHashSelection,
 	RequestIPrune,
 	ResponseIPrune,
@@ -151,8 +152,8 @@ import {
 	getPreparedRawExchangeHeadAppendFacts,
 	getPreparedRawExchangeHeadGid,
 	getPreparedRawExchangeHeadRequestedReplicas,
-	getPreparedRawExchangeHeadSignatureVerified,
 	getPreparedRawExchangeHeadShallowEntry,
+	getPreparedRawExchangeHeadSignatureVerified,
 	getPreparedRawExchangeNext,
 	getPreparedRawExchangeRequestedReplicas,
 	getPreparedRawExchangeTimestamp,
@@ -339,6 +340,7 @@ export {
 	EntryReplicatedU32,
 	EntryReplicatedU64,
 	type CoverRange,
+	NativeDurableCommitError,
 	NoPeersError,
 };
 export { MAX_U32, MAX_U64, type NumberFromType };
@@ -348,7 +350,11 @@ export type {
 	SyncProfileEvent,
 	SyncProfileFn,
 } from "./sync/index.js";
-export { ExchangeHeadsMessage, RawExchangeHeadsMessage };
+export {
+	ExchangeHeadsMessage,
+	RawExchangeHeadsMessage,
+	StashBackedRawExchangeHeadsMessage,
+};
 export const logger = loggerFn("peerbit:shared-log");
 const warn = logger.newScope("warn");
 const traceLogger = logger.trace as typeof logger.trace & { enabled?: boolean };
@@ -381,17 +387,8 @@ const canUseOptionalNativeModuleImports = (): boolean => {
 const joinNativeCoordinateDirectory = (
 	nodeDirectory: string,
 	fsSafeLogId: string,
-): string => `${nodeDirectory.replace(/[/\\]+$/, "")}/coordinates/${fsSafeLogId}`;
-
-// Native durable block mirrors are content-addressed and therefore primarily
-// append-only. Rewriting the complete live block set into a RustAnyStore
-// snapshot on every program close is redundant and makes close O(total block
-// bytes). Keep the WAL crash-safe and defer that rewrite on close until the
-// journal reaches this explicit threshold. This does not cap WAL growth during
-// an open session. Stores that do not support per-sublevel options ignore the
-// second argument and retain their existing behavior.
-const NATIVE_DURABLE_BLOCK_COMPACT_ON_CLOSE_MIN_JOURNAL_BYTES =
-	512 * 1024 * 1024;
+): string =>
+	`${nodeDirectory.replace(/[/\\]+$/, "")}/coordinates/${fsSafeLogId}`;
 
 type DurableBlockSublevelStore = {
 	sublevel(
@@ -399,6 +396,7 @@ type DurableBlockSublevelStore = {
 		options?: {
 			compactOnClose?: boolean;
 			compactOnCloseMinJournalBytes?: number;
+			durability?: "normal" | "strict";
 		},
 	): MaybePromise<AnyStore>;
 };
@@ -408,9 +406,14 @@ const createNativeDurableBlockStore = async (
 ): Promise<AnyBlockStore> =>
 	new AnyBlockStore(
 		await storage.sublevel("blocks", {
+			// Strict mirrors remain WAL-backed across close. The available snapshot
+			// rewrite is not a crash-atomic generation protocol, so thresholds must
+			// not re-enable it behind this acknowledgement boundary.
 			compactOnClose: false,
-			compactOnCloseMinJournalBytes:
-				NATIVE_DURABLE_BLOCK_COMPACT_ON_CLOSE_MIN_JOURNAL_BYTES,
+			// A native append is acknowledged only after this mirror resolves. The
+			// Rust store's normal immutable fast path may resolve before its WAL write;
+			// strict mode waits for the journal write and sync, closing the SIGKILL gap.
+			durability: "strict",
 		}),
 	);
 
@@ -427,6 +430,18 @@ const createDefaultDurableBlockStore = async (
 
 /** The native backbone's in-wasm-memory block store. */
 type NativeBackboneBlocks = NativePeerbitBackbone["blocks"];
+
+type NativeCommitOwnershipToken = {
+	id: number;
+	rows: Map<
+		string,
+		{
+			generation: number;
+			durableExistedBefore?: boolean;
+			shared: boolean;
+		}
+	>;
+};
 
 /**
  * Write-through block store bridging the native backbone's in-wasm-memory block
@@ -447,11 +462,12 @@ type NativeBackboneBlocks = NativePeerbitBackbone["blocks"];
  * METHOD SURFACE (see #1006): `RemoteBlocks` and the log feature-detect the
  * optional batch methods (`putMany`/`putKnown`/`putKnownMany`/
  * `putKnownManyColumns`/`rmMany`). To keep the receive-fusion / columnar fast
- * paths engaged this wrapper exposes EXACTLY the methods the native store
- * exposes — including `putKnownManyColumns`, which `AnyBlockStore` does not have
- * — and delegates each. It deliberately does not add methods the native store
- * lacks (`getBlockResponsePayload`/`getNativeLogBlockStoreHandle` stay absent so
- * the optional-chained probes in `RemoteBlocks` behave exactly as today).
+ * paths engaged this wrapper preserves the native store's optional write
+ * methods — including `putKnownManyColumns`, which `AnyBlockStore` does not have
+ * — and delegates each. It adds only local durability/trim coordination hooks
+ * consumed by `RemoteBlocks` and the log; protocol/native-handle capabilities
+ * such as `getBlockResponsePayload`/`getNativeLogBlockStoreHandle` stay absent,
+ * so their optional-chained probes keep the existing fallback behavior.
  */
 class NativeBackboneWriteThroughBlockStore {
 	constructor(
@@ -468,9 +484,357 @@ class NativeBackboneWriteThroughBlockStore {
 	// vanishing and leaving the block out of durable while native/log report
 	// success. `.catch` also prevents unhandled-rejection noise.
 	private readonly pendingDurableWrites = new Set<Promise<unknown>>();
-	private durableWriteError: unknown;
+	private nativeDurableCommitFailure?: NativeDurableCommitError;
+	private readonly nativeDeleteTombstones = new Map<string, number>();
+	private nativeDeleteEpoch = 0;
+	private readonly nativeBlockWriteGenerations = new Map<string, number>();
+	private readonly pendingNativeDeleteCleanup = new Map<string, number>();
+	private readonly stagedNativeDeleteCleanups = new Map<
+		number,
+		Map<string, number>
+	>();
+	private nextNativeDeleteCleanupToken = 0;
+	private nativeDeleteCleanupRunning: Promise<void> | undefined;
+	private nextNativeCommitOwnershipToken = 0;
+	private readonly nativeCommitOwnerships = new Map<
+		number,
+		NativeCommitOwnershipToken
+	>();
+	private readonly nativeCommitOwnershipsByCid = new Map<string, Set<number>>();
 
-	private trackDurable(result: unknown): void {
+	getNativeDurableCommitFailure(): NativeDurableCommitError | undefined {
+		return this.nativeDurableCommitFailure;
+	}
+
+	private recordNativeDurableCommitFailure(
+		cause: unknown,
+		options?: {
+			committedCids?: Iterable<string>;
+			failedCids?: Iterable<string>;
+		},
+	): NativeDurableCommitError {
+		if (this.nativeDurableCommitFailure) {
+			this.nativeDurableCommitFailure.addCommitContext(options);
+			return this.nativeDurableCommitFailure;
+		}
+		this.nativeDurableCommitFailure =
+			cause instanceof NativeDurableCommitError
+				? cause
+				: new NativeDurableCommitError(cause, options);
+		if (cause instanceof NativeDurableCommitError) {
+			cause.addCommitContext(options);
+		}
+		return this.nativeDurableCommitFailure;
+	}
+
+	private throwIfNativeDurableCommitFailed(): void {
+		if (this.nativeDurableCommitFailure) {
+			throw this.nativeDurableCommitFailure;
+		}
+	}
+
+	throwIfDurableWritesFailed(): void {
+		this.throwIfNativeDurableCommitFailed();
+	}
+
+	private async commitDurableMutation<T>(
+		operation: () => MaybePromise<T>,
+		committedCids: Iterable<string>,
+		failedCids?: Iterable<string>,
+	): Promise<T> {
+		this.throwIfNativeDurableCommitFailed();
+		const committedCidList = [...committedCids];
+		const failedCidList = failedCids ? [...failedCids] : committedCidList;
+		let result: T;
+		const operationResult = Promise.resolve().then(operation);
+		this.trackAwaitedDurable(operationResult);
+		try {
+			result = await operationResult;
+		} catch (error) {
+			throw this.recordNativeDurableCommitFailure(error, {
+				committedCids: committedCidList,
+				failedCids: failedCidList,
+			});
+		}
+		// A different concurrent native mutation may have poisoned the wrapper
+		// while this durable call was in flight. Include this operation among the
+		// native-applied facts, but not among durable calls that actually failed.
+		if (this.nativeDurableCommitFailure) {
+			this.nativeDurableCommitFailure.addCommitContext({
+				committedCids: committedCidList,
+				failedCids: [],
+			});
+			throw this.nativeDurableCommitFailure;
+		}
+		return result;
+	}
+
+	private beginNativeDelete(cids: string[]): void {
+		this.nativeDeleteEpoch++;
+		for (const cid of cids) {
+			this.nativeDeleteTombstones.set(
+				cid,
+				(this.nativeDeleteTombstones.get(cid) ?? 0) + 1,
+			);
+		}
+	}
+
+	private endNativeDelete(cids: string[]): void {
+		for (const cid of cids) {
+			const remaining = (this.nativeDeleteTombstones.get(cid) ?? 1) - 1;
+			if (remaining <= 0) {
+				this.nativeDeleteTombstones.delete(cid);
+			} else {
+				this.nativeDeleteTombstones.set(cid, remaining);
+			}
+		}
+	}
+
+	private isNativeDeletePending(cid: string): boolean {
+		return this.nativeDeleteTombstones.has(cid);
+	}
+
+	// A CID can be legitimately re-added after a native trim (content addressing
+	// makes the bytes identical, but its liveness is new). Cancel any queued trim
+	// for that CID and advance its generation before the write is exposed. An
+	// already-running cleanup uses the generation/pending map to avoid deleting
+	// the new native value; synchronous columnar writes also chain their durable
+	// mirror behind that cleanup below.
+	private noteNativeBlockWrite(cids: string[]): Map<string, number> {
+		const generations = new Map<string, number>();
+		for (const cid of new Set(cids)) {
+			const generation = (this.nativeBlockWriteGenerations.get(cid) ?? 0) + 1;
+			this.nativeBlockWriteGenerations.set(cid, generation);
+			generations.set(cid, generation);
+			if (this.pendingNativeDeleteCleanup.delete(cid)) {
+				this.endNativeDelete([cid]);
+			}
+			for (const staged of this.stagedNativeDeleteCleanups.values()) {
+				if (staged.delete(cid)) {
+					this.endNativeDelete([cid]);
+				}
+			}
+		}
+		return generations;
+	}
+
+	private beginNativeCommitOwnership(
+		generations: Map<string, number>,
+	): NativeCommitOwnershipToken | undefined {
+		if (generations.size === 0) {
+			return undefined;
+		}
+		const token: NativeCommitOwnershipToken = {
+			id: ++this.nextNativeCommitOwnershipToken,
+			rows: new Map(),
+		};
+		for (const [cid, generation] of generations) {
+			const owners = this.nativeCommitOwnershipsByCid.get(cid) ?? new Set();
+			const shared = owners.size > 0;
+			for (const ownerId of owners) {
+				const owner = this.nativeCommitOwnerships.get(ownerId);
+				const row = owner?.rows.get(cid);
+				if (row) row.shared = true;
+			}
+			owners.add(token.id);
+			this.nativeCommitOwnershipsByCid.set(cid, owners);
+			token.rows.set(cid, { generation, shared });
+		}
+		this.nativeCommitOwnerships.set(token.id, token);
+		return token;
+	}
+
+	private releaseNativeCommitOwnership(token: unknown): void {
+		if (
+			!token ||
+			typeof token !== "object" ||
+			typeof (token as NativeCommitOwnershipToken).id !== "number"
+		) {
+			return;
+		}
+		const owned = this.nativeCommitOwnerships.get(
+			(token as NativeCommitOwnershipToken).id,
+		);
+		if (owned !== token) {
+			return;
+		}
+		this.nativeCommitOwnerships.delete(owned.id);
+		for (const cid of owned.rows.keys()) {
+			const owners = this.nativeCommitOwnershipsByCid.get(cid);
+			owners?.delete(owned.id);
+			if (owners?.size === 0) {
+				this.nativeCommitOwnershipsByCid.delete(cid);
+			}
+		}
+	}
+
+	acknowledgeNativeCommitOwnership(token: unknown): void {
+		this.releaseNativeCommitOwnership(token);
+	}
+
+	private enqueueNativeDeleteCleanup(cids: string[]): void {
+		for (const cid of new Set(cids)) {
+			if (!this.pendingNativeDeleteCleanup.has(cid)) {
+				this.pendingNativeDeleteCleanup.set(
+					cid,
+					this.nativeBlockWriteGenerations.get(cid) ?? 0,
+				);
+				this.beginNativeDelete([cid]);
+			}
+		}
+	}
+
+	private releaseStagedNativeDeleteCleanup(token: number): boolean {
+		const staged = this.stagedNativeDeleteCleanups.get(token);
+		if (!staged) {
+			return false;
+		}
+		this.stagedNativeDeleteCleanups.delete(token);
+		for (const [cid] of staged) {
+			this.endNativeDelete([cid]);
+		}
+		return true;
+	}
+
+	private discardStagedNativeDeleteCleanups(): void {
+		for (const token of [...this.stagedNativeDeleteCleanups.keys()]) {
+			this.releaseStagedNativeDeleteCleanup(token);
+		}
+	}
+
+	// Native commit callbacks call this immediately after the native transaction
+	// returns, before awaiting the new block's durable mirror. This stages read
+	// tombstones only. Durable deletion is promoted later by the exact EntryIndex
+	// consume token, so an unacknowledged/failed append cannot delete the old
+	// durable head that the lower log still publishes.
+	beginNativeDeleteCleanup(cids: string[]): number | undefined {
+		this.throwIfNativeDurableCommitFailed();
+		const uniqueCids = [...new Set(cids)];
+		if (uniqueCids.length === 0) {
+			return undefined;
+		}
+		const token = ++this.nextNativeDeleteCleanupToken;
+		const staged = new Map(
+			uniqueCids.map((cid) => [
+				cid,
+				this.nativeBlockWriteGenerations.get(cid) ?? 0,
+			]),
+		);
+		this.stagedNativeDeleteCleanups.set(token, staged);
+		this.beginNativeDelete(uniqueCids);
+		return token;
+	}
+
+	cancelNativeDeleteCleanup(cleanupToken: unknown): void {
+		if (typeof cleanupToken === "number") {
+			this.releaseStagedNativeDeleteCleanup(cleanupToken);
+		}
+	}
+
+	private async waitForNativeDeleteCleanup(): Promise<void> {
+		while (this.nativeDeleteCleanupRunning) {
+			await this.nativeDeleteCleanupRunning;
+		}
+	}
+
+	private async waitForTrackedDurableWrites(): Promise<void> {
+		while (this.pendingDurableWrites.size > 0) {
+			await Promise.allSettled([...this.pendingDurableWrites]);
+		}
+	}
+
+	private async retryNativeDeleteCleanup(options?: {
+		allowPoisoned?: boolean;
+		throwOnFailure?: boolean;
+	}): Promise<void> {
+		await this.waitForNativeDeleteCleanup();
+		if (this.nativeDurableCommitFailure && !options?.allowPoisoned) {
+			throw this.nativeDurableCommitFailure;
+		}
+		// A synchronous columnar write may already have scheduled its durable
+		// mirror. Let it settle before deleting queued CIDs, but leave any recorded
+		// error for drainDurable() to surface to its owning operation/stop.
+		await this.waitForTrackedDurableWrites();
+		await this.waitForNativeDeleteCleanup();
+		// A tracked mirror or the cleanup we just waited for may have poisoned the
+		// wrapper. Do not begin another durable mutation on the ordinary path after
+		// that asynchronous boundary. stop() alone opts into one cleanup retry so a
+		// transient delete failure can still release its tombstones and resources.
+		if (this.nativeDurableCommitFailure && !options?.allowPoisoned) {
+			throw this.nativeDurableCommitFailure;
+		}
+		if (this.pendingNativeDeleteCleanup.size === 0) {
+			return;
+		}
+		const cleanupEntries = [...this.pendingNativeDeleteCleanup].filter(
+			([cid, generation]) =>
+				(this.nativeBlockWriteGenerations.get(cid) ?? 0) === generation,
+		);
+		if (cleanupEntries.length === 0) {
+			return;
+		}
+		const cids = cleanupEntries.map(([cid]) => cid);
+		let cleanupFailure: unknown;
+		const running = (async () => {
+			let durableRemoved = false;
+			let nativeRemoved = false;
+			try {
+				await this.durable.rmMany(cids);
+				durableRemoved = true;
+			} catch (error) {
+				cleanupFailure = error;
+				// The new entry blocks are already durable at this point and the native
+				// transaction has selected the new graph/index state. Old content-addressed
+				// blocks are therefore harmless unreachable orphans. Keep this cleanup as
+				// retryable debt instead of poisoning/rolling back a fully durable append;
+				// a partial rmMany is safe for the same reason.
+				warn(
+					`Failed durable native-trim cleanup; retaining retry debt: ${String(error)}`,
+				);
+			} finally {
+				// A read that began in the native-transaction -> cleanup-hook gap may
+				// have repopulated native. Always repeat the native removal, even when
+				// durable rm failed. Exclude CIDs re-added while durable IO was pending;
+				// their generation change cancelled the queued delete.
+				const stillDeleted = cids.filter((cid) =>
+					this.pendingNativeDeleteCleanup.has(cid),
+				);
+				try {
+					if (stillDeleted.length > 0) {
+						await this.native.rmMany(stillDeleted);
+					}
+					nativeRemoved = true;
+				} catch (error) {
+					cleanupFailure ??= error;
+					warn(
+						`Failed to repeat native-trim hot block removal: ${String(error)}`,
+					);
+				}
+			}
+			if (durableRemoved && nativeRemoved) {
+				for (const [cid, generation] of cleanupEntries) {
+					if (this.pendingNativeDeleteCleanup.get(cid) === generation) {
+						this.pendingNativeDeleteCleanup.delete(cid);
+						this.nativeBlockWriteGenerations.delete(cid);
+						this.endNativeDelete([cid]);
+					}
+				}
+			}
+		})();
+		this.nativeDeleteCleanupRunning = running;
+		try {
+			await running;
+		} finally {
+			if (this.nativeDeleteCleanupRunning === running) {
+				this.nativeDeleteCleanupRunning = undefined;
+			}
+		}
+		if (options?.throwOnFailure && cleanupFailure !== undefined) {
+			throw cleanupFailure;
+		}
+	}
+
+	private trackDurable(result: unknown, cids: string[]): void {
 		// The durable store may answer synchronously (an in-memory or already
 		// resolved store); only a real pending promise needs tracking. A sync
 		// success is already durable; a sync throw would have propagated already.
@@ -483,9 +847,26 @@ class NativeBackboneWriteThroughBlockStore {
 			},
 			(error) => {
 				this.pendingDurableWrites.delete(tracked);
-				if (this.durableWriteError === undefined) {
-					this.durableWriteError = error;
-				}
+				this.recordNativeDurableCommitFailure(error, {
+					committedCids: cids,
+					failedCids: cids,
+				});
+			},
+		);
+		this.pendingDurableWrites.add(tracked);
+	}
+
+	// Awaited mirror writes surface their own rejection to the append that
+	// created them. Track a non-rejecting settlement companion as well so stop()
+	// and later wrapper operations cannot close/use durable storage while that
+	// append barrier is still in flight.
+	private trackAwaitedDurable(result: Promise<unknown>): void {
+		const tracked = result.then(
+			() => {
+				this.pendingDurableWrites.delete(tracked);
+			},
+			() => {
+				this.pendingDurableWrites.delete(tracked);
 			},
 		);
 		this.pendingDurableWrites.add(tracked);
@@ -495,14 +876,8 @@ class NativeBackboneWriteThroughBlockStore {
 	// the first failure. Awaited methods call this so a prior columnar durable
 	// failure propagates as back-pressure to the next caller.
 	private async drainDurable(): Promise<void> {
-		while (this.pendingDurableWrites.size > 0) {
-			await Promise.allSettled([...this.pendingDurableWrites]);
-		}
-		if (this.durableWriteError !== undefined) {
-			const error = this.durableWriteError;
-			this.durableWriteError = undefined;
-			throw error;
-		}
+		await this.waitForTrackedDurableWrites();
+		this.throwIfNativeDurableCommitFailed();
 	}
 
 	// --- lifecycle -------------------------------------------------------
@@ -521,9 +896,32 @@ class NativeBackboneWriteThroughBlockStore {
 
 	async stop(): Promise<void> {
 		// Surface any tracked (sync-path) durable write failure and ensure all
-		// mirror writes have settled before the durable store is torn down.
-		await this.drainDurable();
-		await this.durable.stop();
+		// mirror writes have settled before the durable store is torn down. Closing
+		// the durable store is unconditional: a prior columnar mirror failure must
+		// not leak the store lifecycle resource.
+		let firstError: unknown;
+		try {
+			await this.drainDurable();
+		} catch (error) {
+			firstError = error;
+		}
+		// Tokens not consumed by EntryIndex belong to native prepares that never
+		// published their lower-log trim. Release their read tombstones, but never
+		// promote them to durable deletion during shutdown.
+		this.discardStagedNativeDeleteCleanups();
+		try {
+			await this.retryNativeDeleteCleanup({ allowPoisoned: true });
+		} catch (error) {
+			firstError ??= error;
+		}
+		try {
+			await this.durable.stop();
+		} catch (error) {
+			firstError ??= error;
+		}
+		if (firstError !== undefined) {
+			throw firstError;
+		}
 	}
 
 	status() {
@@ -534,6 +932,13 @@ class NativeBackboneWriteThroughBlockStore {
 		return Promise.resolve([]);
 	}
 
+	// Native commit APIs must keep their block-store callback synchronous. The
+	// lower log calls this barrier after that callback reports committed blocks
+	// and before publishing index/head facts.
+	waitForDurableWrites(): Promise<void> {
+		return this.drainDurable();
+	}
+
 	// Mirror a single already-committed block (present in the wasm map) to the
 	// durable store ONLY. Used by the native commit-only append fast path: the
 	// native prepare commits the entry block into the wasm map and returns no raw
@@ -541,11 +946,191 @@ class NativeBackboneWriteThroughBlockStore {
 	// route the block through the log's finishBlocks/putKnown* (that would disturb
 	// the commit-only append path the RCS optimization depends on). Instead the
 	// caller reads the committed bytes back and calls this so the block lands in
-	// durable directly. Like putKnownManyColumns' durable mirror, the write is
-	// tracked (not fire-and-forget) so an IO/disk-full failure surfaces on the
-	// next awaited wrapper method / stop() rather than being swallowed.
-	mirrorToDurable(cid: string, bytes: Uint8Array): void {
-		this.trackDurable(this.durable.putKnown(cid, bytes));
+	// durable directly. The caller awaits this method before acknowledging its
+	// append, so a failed write rejects the append that produced the block.
+	async mirrorToDurable(
+		cid: string,
+		bytes: Uint8Array,
+		options?: { nativeTrimmed?: boolean },
+	): Promise<unknown> {
+		this.throwIfNativeDurableCommitFailed();
+		// The native commit happened before this call. Mark the CID live before
+		// awaiting anything so a concurrent retry of an older trim cannot remove
+		// the newly committed hot block.
+		let ownership: NativeCommitOwnershipToken | undefined;
+		if (options?.nativeTrimmed !== true) {
+			ownership = this.beginNativeCommitOwnership(
+				this.noteNativeBlockWrite([cid]),
+			);
+			await this.waitForNativeDeleteCleanup();
+		}
+		try {
+			await this.drainDurable();
+			if (ownership) {
+				const existed = await this.durable.hasMany([...ownership.rows.keys()]);
+				let index = 0;
+				for (const row of ownership.rows.values()) {
+					row.durableExistedBefore = existed[index++] === true;
+				}
+			}
+			const result = this.commitDurableMutation(
+				() => this.durable.putKnown(cid, bytes),
+				[cid],
+			);
+			await result;
+			await this.retryNativeDeleteCleanup();
+			this.throwIfNativeDurableCommitFailed();
+			return ownership;
+		} catch (error) {
+			// The caller never receives an ownership token for an indeterminate write.
+			// Release the in-memory claim and preserve any bytes the backend may have
+			// applied before rejecting.
+			this.releaseNativeCommitOwnership(ownership);
+			throw error;
+		}
+	}
+
+	async mirrorManyToDurable(
+		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+		options?: { nativeTrimmedCids?: ReadonlySet<string> },
+	): Promise<unknown> {
+		this.throwIfNativeDurableCommitFailed();
+		const cids = blocks.map(([cid]) => cid);
+		// Rows trimmed later in the same native batch deliberately remain owned by
+		// that batch's staged cleanup; only mark surviving rows live.
+		const liveCids = cids.filter(
+			(cid) => !options?.nativeTrimmedCids?.has(cid),
+		);
+		const ownership = this.beginNativeCommitOwnership(
+			this.noteNativeBlockWrite(liveCids),
+		);
+		if (liveCids.length > 0) {
+			await this.waitForNativeDeleteCleanup();
+		}
+		try {
+			await this.drainDurable();
+			if (ownership) {
+				const existed = await this.durable.hasMany([...ownership.rows.keys()]);
+				let index = 0;
+				for (const row of ownership.rows.values()) {
+					row.durableExistedBefore = existed[index++] === true;
+				}
+			}
+			if (blocks.length > 0) {
+				await this.commitDurableMutation(
+					() => this.durable.putKnownMany(blocks),
+					cids,
+				);
+			}
+			await this.retryNativeDeleteCleanup();
+			this.throwIfNativeDurableCommitFailed();
+			return ownership;
+		} catch (error) {
+			this.releaseNativeCommitOwnership(ownership);
+			throw error;
+		}
+	}
+
+	async rollbackFailedNativeCommits(
+		cids: string[],
+		restoreNativeCids: string[] = [],
+		ownershipToken?: unknown,
+	): Promise<void> {
+		// This is the sole mutation allowed after poison: it removes a native
+		// transaction that the lower log never published. Do not route through the
+		// guarded rmMany path, and settle the failed mirror before compensating it.
+		await this.waitForTrackedDurableWrites();
+		// A failed replacement never published its trim. Reassert the restored CIDs
+		// as live before any compensation IO so staged/pending delete intents cannot
+		// remove the last acknowledged blocks during stop or reopen.
+		const ownership =
+			ownershipToken && typeof ownershipToken === "object"
+				? this.nativeCommitOwnerships.get(
+						(ownershipToken as NativeCommitOwnershipToken).id,
+					)
+				: undefined;
+		const verifiedOwnership =
+			ownership && ownership === ownershipToken ? ownership : undefined;
+		const restoreSet = new Set(restoreNativeCids);
+		const safeDurableDeletes = verifiedOwnership
+			? [...new Set(cids)].filter((cid) => {
+					const row = verifiedOwnership.rows.get(cid);
+					const owners = this.nativeCommitOwnershipsByCid.get(cid);
+					return (
+						!restoreSet.has(cid) &&
+						row?.durableExistedBefore === false &&
+						row.shared === false &&
+						(this.nativeBlockWriteGenerations.get(cid) ?? 0) ===
+							row.generation &&
+						owners?.size === 1 &&
+						owners.has(verifiedOwnership.id)
+					);
+				})
+			: [];
+		this.noteNativeBlockWrite(restoreNativeCids);
+		let firstError: unknown;
+		try {
+			if (safeDurableDeletes.length > 0) {
+				await this.durable.rmMany(safeDurableDeletes);
+			}
+		} catch (error) {
+			firstError = error;
+		}
+		// A native prepare runs before ownership can observe the hot map, so it cannot
+		// prove that a CID was absent there before this operation. Keep native bytes as
+		// unreachable orphans rather than deleting acknowledged/shared/restored data.
+		if (restoreNativeCids.length > 0) {
+			try {
+				const values = await this.durable.getMany(restoreNativeCids);
+				const restore: Array<readonly [string, Uint8Array]> = [];
+				for (let index = 0; index < restoreNativeCids.length; index++) {
+					const value = values[index];
+					if (value) restore.push([restoreNativeCids[index]!, value]);
+				}
+				if (restore.length > 0) {
+					this.native.putKnownMany(restore);
+				}
+			} catch (error) {
+				firstError ??= error;
+			}
+		}
+		this.releaseNativeCommitOwnership(ownershipToken);
+		if (firstError !== undefined) throw firstError;
+	}
+
+	/**
+	 * Compensate a native prepare that failed before its durable mirror began.
+	 * Durable presence proves a same-CID acknowledged owner; an active ownership
+	 * token proves a concurrent mirror. Only an unowned, non-durable hot block is
+	 * exclusively attributable to the failed prepare and safe to remove.
+	 */
+	async rollbackUnmirroredNativeCommits(
+		cids: string[],
+		restoreNativeCids: string[] = [],
+	): Promise<void> {
+		const unique = [...new Set(cids)];
+		// Native prepares bypass this wrapper. Any observed wrapper generation is
+		// therefore evidence of a generic/same-CID writer, not of the failed prepare.
+		// Snapshot before the first await and require both absence and stability so a
+		// write starting before or during durable.hasMany cannot lose its hot value to
+		// a stale `false` result.
+		const genericWriteGenerations = new Map(
+			unique.map((cid) => [cid, this.nativeBlockWriteGenerations.get(cid)]),
+		);
+		await this.rollbackFailedNativeCommits(cids, restoreNativeCids);
+		const durablePresence = await this.durable.hasMany(unique);
+		const restore = new Set(restoreNativeCids);
+		const safeNativeDeletes = unique.filter(
+			(cid, index) =>
+				!restore.has(cid) &&
+				durablePresence[index] !== true &&
+				genericWriteGenerations.get(cid) === undefined &&
+				this.nativeBlockWriteGenerations.get(cid) === undefined &&
+				(this.nativeCommitOwnershipsByCid.get(cid)?.size ?? 0) === 0,
+		);
+		if (safeNativeDeletes.length > 0) {
+			await this.native.rmMany(safeNativeDeletes);
+		}
 	}
 
 	// --- writes (apply to BOTH: native first for the hot path, then durable) ---
@@ -562,7 +1147,16 @@ class NativeBackboneWriteThroughBlockStore {
 			data instanceof Uint8Array
 				? data
 				: (data as { block: { bytes: Uint8Array } }).block.bytes;
-		await this.durable.putKnown(cid, value);
+		this.noteNativeBlockWrite([cid]);
+		await this.waitForNativeDeleteCleanup();
+		// put() may have yielded while calculating the CID. Restore the hot value
+		// after any older cleanup that was already in flight.
+		this.throwIfNativeDurableCommitFailed();
+		this.native.putKnown(cid, value);
+		await this.commitDurableMutation(
+			() => this.durable.putKnown(cid, value),
+			[cid],
+		);
 		return cid;
 	}
 
@@ -581,7 +1175,14 @@ class NativeBackboneWriteThroughBlockStore {
 				return [cid, value] as const;
 			},
 		);
-		await this.durable.putKnownMany(durableBlocks);
+		this.noteNativeBlockWrite(cids);
+		await this.waitForNativeDeleteCleanup();
+		this.throwIfNativeDurableCommitFailed();
+		this.native.putKnownMany(durableBlocks);
+		await this.commitDurableMutation(
+			() => this.durable.putKnownMany(durableBlocks),
+			cids,
+		);
 		return cids;
 	}
 
@@ -592,8 +1193,14 @@ class NativeBackboneWriteThroughBlockStore {
 	// both await this method, so returning a promise is compatible.
 	async putKnown(cid: string, bytes: Uint8Array): Promise<string> {
 		await this.drainDurable();
+		await this.waitForNativeDeleteCleanup();
+		this.throwIfNativeDurableCommitFailed();
 		const stored = this.native.putKnown(cid, bytes);
-		await this.durable.putKnown(cid, bytes);
+		this.noteNativeBlockWrite([cid]);
+		await this.commitDurableMutation(
+			() => this.durable.putKnown(cid, bytes),
+			[cid],
+		);
 		return stored;
 	}
 
@@ -601,13 +1208,25 @@ class NativeBackboneWriteThroughBlockStore {
 		blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
 	): Promise<string[]> {
 		await this.drainDurable();
+		await this.waitForNativeDeleteCleanup();
+		this.throwIfNativeDurableCommitFailed();
 		const cids = this.native.putKnownMany(blocks);
-		await this.durable.putKnownMany(blocks);
+		this.noteNativeBlockWrite(cids);
+		await this.commitDurableMutation(
+			() => this.durable.putKnownMany(blocks),
+			cids,
+		);
 		return cids;
 	}
 
 	putKnownManyColumns(cids: string[], bytes: Uint8Array[]): string[] {
+		this.throwIfNativeDurableCommitFailed();
+		if (cids.length !== bytes.length) {
+			throw new Error("Expected equal block column lengths");
+		}
+		const cleanupBarrier = this.nativeDeleteCleanupRunning;
 		const stored = this.native.putKnownManyColumns(cids, bytes);
+		this.noteNativeBlockWrite(cids);
 		// AnyBlockStore has no columnar method; mirror via putKnownMany, which
 		// takes [cid, bytes] tuples and hits the same batched store path.
 		// This method must return a synchronous string[] (RemoteBlocks.putKnownManyColumns
@@ -617,7 +1236,18 @@ class NativeBackboneWriteThroughBlockStore {
 		const durableBlocks = cids.map(
 			(cid, index) => [cid, bytes[index]!] as const,
 		);
-		this.trackDurable(this.durable.putKnownMany(durableBlocks));
+		let durableResult: unknown;
+		try {
+			durableResult = cleanupBarrier
+				? cleanupBarrier.then(() => this.durable.putKnownMany(durableBlocks))
+				: this.durable.putKnownMany(durableBlocks);
+		} catch (error) {
+			throw this.recordNativeDurableCommitFailure(error, {
+				committedCids: cids,
+				failedCids: cids,
+			});
+		}
+		this.trackDurable(durableResult, cids);
 		return stored;
 	}
 
@@ -628,11 +1258,28 @@ class NativeBackboneWriteThroughBlockStore {
 	// avoids a spurious miss (which would otherwise fall through to a remote
 	// read) for a block that is present on disk.
 	async get(cid: string, _options?: unknown): Promise<Uint8Array | undefined> {
+		if (this.nativeDurableCommitFailure) {
+			// After poison, durable storage is the last acknowledged authority. Do not
+			// repopulate or otherwise mutate the native store until reopen.
+			return this.isNativeDeletePending(cid)
+				? undefined
+				: this.durable.get(cid);
+		}
+		const deleteEpoch = this.nativeDeleteEpoch;
+		if (this.isNativeDeletePending(cid)) {
+			return undefined;
+		}
 		const local = this.native.get(cid);
 		if (local != null) {
-			return local;
+			return deleteEpoch === this.nativeDeleteEpoch ? local : this.get(cid);
 		}
 		const durableValue = await this.durable.get(cid);
+		if (this.nativeDurableCommitFailure) {
+			return this.isNativeDeletePending(cid) ? undefined : durableValue;
+		}
+		if (deleteEpoch !== this.nativeDeleteEpoch) {
+			return this.get(cid);
+		}
 		if (durableValue != null) {
 			// Repopulate the native map so the native graph reads it next time.
 			this.native.putKnownManyColumns([cid], [durableValue]);
@@ -642,25 +1289,55 @@ class NativeBackboneWriteThroughBlockStore {
 	}
 
 	async getMany(cids: string[]): Promise<Array<Uint8Array | undefined>> {
+		if (this.nativeDurableCommitFailure) {
+			const values = await this.durable.getMany(cids);
+			for (let index = 0; index < cids.length; index++) {
+				if (this.isNativeDeletePending(cids[index]!)) {
+					values[index] = undefined;
+				}
+			}
+			return values;
+		}
+		const deleteEpoch = this.nativeDeleteEpoch;
 		const results = await this.native.getMany(cids);
+		if (deleteEpoch !== this.nativeDeleteEpoch) {
+			return this.getMany(cids);
+		}
 		const missing: string[] = [];
+		const missingIndexes: number[] = [];
 		for (let i = 0; i < results.length; i++) {
-			if (results[i] == null) {
+			if (this.isNativeDeletePending(cids[i]!)) {
+				results[i] = undefined;
+			} else if (results[i] == null) {
 				missing.push(cids[i]!);
+				missingIndexes.push(i);
 			}
 		}
 		if (missing.length === 0) {
 			return results;
 		}
 		const durableValues = await this.durable.getMany(missing);
+		if (this.nativeDurableCommitFailure) {
+			const values = await this.durable.getMany(cids);
+			for (let index = 0; index < cids.length; index++) {
+				if (this.isNativeDeletePending(cids[index]!)) {
+					values[index] = undefined;
+				}
+			}
+			return values;
+		}
+		if (deleteEpoch !== this.nativeDeleteEpoch) {
+			return this.getMany(cids);
+		}
 		const repopulateCids: string[] = [];
 		const repopulateBytes: Uint8Array[] = [];
-		let missingIndex = 0;
-		for (let i = 0; i < results.length; i++) {
-			if (results[i] != null) {
-				continue;
-			}
-			const value = durableValues[missingIndex++];
+		for (
+			let missingIndex = 0;
+			missingIndex < missingIndexes.length;
+			missingIndex++
+		) {
+			const i = missingIndexes[missingIndex]!;
+			const value = durableValues[missingIndex];
 			if (value != null) {
 				results[i] = value;
 				repopulateCids.push(cids[i]!);
@@ -675,8 +1352,15 @@ class NativeBackboneWriteThroughBlockStore {
 	}
 
 	async has(cid: string): Promise<boolean> {
+		if (this.nativeDurableCommitFailure) {
+			return this.isNativeDeletePending(cid) ? false : this.durable.has(cid);
+		}
+		const deleteEpoch = this.nativeDeleteEpoch;
+		if (this.isNativeDeletePending(cid)) {
+			return false;
+		}
 		if (this.native.has(cid)) {
-			return true;
+			return deleteEpoch === this.nativeDeleteEpoch ? true : this.has(cid);
 		}
 		// Mirror getMany/hasMany: a block absent from the native wasm map may still
 		// be present in the durable store (e.g. persisted on disk but not yet
@@ -684,26 +1368,48 @@ class NativeBackboneWriteThroughBlockStore {
 		// checks agree with the resolves that getMany/hasMany already durable-fall
 		// back on. `Blocks.has` is declared `MaybePromise<boolean>`, so returning a
 		// promise here is contract-compatible.
-		return this.durable.has(cid);
+		const durableHas = await this.durable.has(cid);
+		return deleteEpoch === this.nativeDeleteEpoch ? durableHas : this.has(cid);
 	}
 
 	async hasMany(cids: string[]): Promise<boolean[]> {
+		if (this.nativeDurableCommitFailure) {
+			const values = await this.durable.hasMany(cids);
+			for (let index = 0; index < cids.length; index++) {
+				if (this.isNativeDeletePending(cids[index]!)) {
+					values[index] = false;
+				}
+			}
+			return values;
+		}
+		const deleteEpoch = this.nativeDeleteEpoch;
 		const nativeHas = await this.native.hasMany(cids);
+		if (deleteEpoch !== this.nativeDeleteEpoch) {
+			return this.hasMany(cids);
+		}
 		const missing: string[] = [];
+		const missingIndexes: number[] = [];
 		for (let i = 0; i < nativeHas.length; i++) {
-			if (!nativeHas[i]) {
+			if (this.isNativeDeletePending(cids[i]!)) {
+				nativeHas[i] = false;
+			} else if (!nativeHas[i]) {
 				missing.push(cids[i]!);
+				missingIndexes.push(i);
 			}
 		}
 		if (missing.length === 0) {
 			return nativeHas;
 		}
 		const durableHas = await this.durable.hasMany(missing);
-		let missingIndex = 0;
-		for (let i = 0; i < nativeHas.length; i++) {
-			if (!nativeHas[i]) {
-				nativeHas[i] = durableHas[missingIndex++]!;
-			}
+		if (deleteEpoch !== this.nativeDeleteEpoch) {
+			return this.hasMany(cids);
+		}
+		for (
+			let missingIndex = 0;
+			missingIndex < missingIndexes.length;
+			missingIndex++
+		) {
+			nativeHas[missingIndexes[missingIndex]!] = durableHas[missingIndex]!;
 		}
 		return nativeHas;
 	}
@@ -713,29 +1419,147 @@ class NativeBackboneWriteThroughBlockStore {
 	// resolves only after both succeed and a durable failure rejects here rather
 	// than being swallowed. All rm callers (RemoteBlocks.rm, the log) await it.
 	async rm(cid: string): Promise<void> {
-		await this.drainDurable();
-		this.native.rm(cid);
-		await this.durable.rm(cid);
+		this.throwIfNativeDurableCommitFailed();
+		const writeGeneration = this.nativeBlockWriteGenerations.get(cid);
+		this.beginNativeDelete([cid]);
+		try {
+			await this.drainDurable();
+			this.native.rm(cid);
+			await this.commitDurableMutation(() => this.durable.rm(cid), [cid]);
+			// A durable read that began before the tombstone may have repopulated
+			// native while durable rm was pending. Remove it idempotently again.
+			this.native.rm(cid);
+			if (
+				this.nativeBlockWriteGenerations.get(cid) === writeGeneration &&
+				!this.pendingNativeDeleteCleanup.has(cid)
+			) {
+				this.nativeBlockWriteGenerations.delete(cid);
+			}
+		} finally {
+			this.endNativeDelete([cid]);
+		}
 	}
 
-	del(cid: string): void {
-		void this.rm(cid);
+	del(cid: string): Promise<void> {
+		return this.rm(cid);
 	}
 
 	async rmMany(cids: string[]): Promise<number> {
-		await this.drainDurable();
-		const removed = await this.native.rmMany(cids);
-		await this.durable.rmMany(cids);
-		return removed;
+		this.throwIfNativeDurableCommitFailed();
+		const writeGenerations = new Map(
+			cids.map((cid) => [cid, this.nativeBlockWriteGenerations.get(cid)]),
+		);
+		this.beginNativeDelete(cids);
+		try {
+			await this.drainDurable();
+			const removed = await this.native.rmMany(cids);
+			await this.commitDurableMutation(() => this.durable.rmMany(cids), cids);
+			await this.native.rmMany(cids);
+			for (const cid of cids) {
+				if (
+					this.nativeBlockWriteGenerations.get(cid) ===
+						writeGenerations.get(cid) &&
+					!this.pendingNativeDeleteCleanup.has(cid)
+				) {
+					this.nativeBlockWriteGenerations.delete(cid);
+				}
+			}
+			return removed;
+		} finally {
+			this.endNativeDelete(cids);
+		}
+	}
+
+	// Native trim may already have removed the hot wasm blocks. Queue the durable
+	// copy for cleanup, retaining read tombstones until removal succeeds; a
+	// cleanup failure is retried and never fed into ordinary append rollback.
+	// EntryIndex feature-detects this hook.
+	async rmManyAfterNativeDelete(
+		cids: string[],
+		cleanupToken?: unknown,
+	): Promise<void> {
+		if (this.nativeDurableCommitFailure) {
+			this.cancelNativeDeleteCleanup(cleanupToken);
+			throw this.nativeDurableCommitFailure;
+		}
+		let preannounced = false;
+		if (typeof cleanupToken === "number") {
+			const staged = this.stagedNativeDeleteCleanups.get(cleanupToken);
+			if (staged) {
+				preannounced = true;
+				this.stagedNativeDeleteCleanups.delete(cleanupToken);
+				for (const [cid, generation] of staged) {
+					if ((this.nativeBlockWriteGenerations.get(cid) ?? 0) !== generation) {
+						this.endNativeDelete([cid]);
+						continue;
+					}
+					if (this.pendingNativeDeleteCleanup.has(cid)) {
+						// Another delete already owns a tombstone for this CID.
+						this.endNativeDelete([cid]);
+					} else {
+						// Transfer the staged tombstone to the now-published cleanup.
+						this.pendingNativeDeleteCleanup.set(cid, generation);
+					}
+				}
+			}
+		}
+		if (!preannounced) {
+			this.enqueueNativeDeleteCleanup(cids);
+		}
+		await this.retryNativeDeleteCleanup();
+	}
+
+	/** Finish committed trim GC before its durable recovery intent is retired. */
+	async completeCommittedNativeDeleteCleanup(
+		cids: string[],
+		options?: { reconstructMissing?: boolean },
+	): Promise<void> {
+		this.throwIfNativeDurableCommitFailed();
+		const uniqueCids = [...new Set(cids.filter(Boolean))];
+		if (uniqueCids.length === 0) {
+			return;
+		}
+		// Only restart recovery reconstructs missing debt. On the live path, an
+		// absent row may mean the CID was legitimately re-added after its original
+		// generation-owned trim completed or was cancelled; re-enqueueing it here
+		// would capture the new generation and delete live content.
+		if (options?.reconstructMissing) {
+			this.enqueueNativeDeleteCleanup(uniqueCids);
+		}
+		if (!uniqueCids.some((cid) => this.pendingNativeDeleteCleanup.has(cid))) {
+			return;
+		}
+		await this.retryNativeDeleteCleanup({ throwOnFailure: true });
+		const remaining = uniqueCids.filter((cid) =>
+			this.pendingNativeDeleteCleanup.has(cid),
+		);
+		if (remaining.length > 0) {
+			throw new Error(
+				`Committed native trim cleanup remains incomplete: ${remaining.join(", ")}`,
+			);
+		}
 	}
 
 	// --- misc ------------------------------------------------------------
 	async *iterator(): AsyncGenerator<[string, Uint8Array], void, void> {
+		if (this.nativeDurableCommitFailure) {
+			for await (const block of this.durable.iterator()) {
+				if (!this.isNativeDeletePending(block[0])) {
+					yield block;
+				}
+			}
+			return;
+		}
 		yield* this.native.iterator();
 	}
 
-	size(): number {
-		return this.native.size();
+	async size(): Promise<number> {
+		// The hot wasm map is intentionally cold after reopen, so it cannot be the
+		// storage-budget authority. Settle synchronous columnar mirrors first, then
+		// report durable bytes; pending trim cleanup remains conservatively counted
+		// until its durable deletion succeeds.
+		await this.drainDurable();
+		return this.durable.size();
 	}
 
 	persisted(): boolean {
@@ -925,7 +1749,13 @@ type NativeBackboneReceiveCoordinateRow<R extends "u32" | "u64"> = {
 
 type NativeBackboneReceiveCoordinateBatch<R extends "u32" | "u64"> = {
 	rows: NativeBackboneReceiveCoordinateRow<R>[];
-	rollbackCoordinateEntries?: Map<string, ResidentCoordinateEntry<R>>;
+	rollbackCoordinateEntries?: NativeBackboneCoordinateRollback<R>;
+};
+
+type NativeBackboneCoordinateRollback<R extends "u32" | "u64"> = {
+	hashes: Set<string>;
+	entries: Map<string, ResidentCoordinateEntry<R>>;
+	generations: Map<string, number>;
 };
 
 type RepairDispatchEntry<R extends "u32" | "u64"> = ResidentCoordinateEntry<R>;
@@ -980,6 +1810,12 @@ type NativeBackboneDocumentIndexCommitInput = {
 	requiredPreviousSignerPublicKey?: Uint8Array;
 };
 
+type NativeBackboneDocumentRollback = {
+	key: string;
+	value?: Uint8Array;
+	byteElementIndexLimit: number;
+};
+
 type NativeBackboneDocumentIndexAppendFacts = {
 	wallTime: bigint | number | string;
 	gid: string;
@@ -1020,20 +1856,30 @@ type NativeBackboneCoordinatePersistenceStore = {
 	write(name: string, bytes: Uint8Array): Promise<void>;
 	append(name: string, bytes: Uint8Array): Promise<void>;
 	remove?(name: string): Promise<void>;
-	flush?(): Promise<void>;
-	close?(): Promise<void>;
+	durableBarrier?(name?: string): Promise<void>;
+	supportsRemoval?: boolean;
+	flush?(name?: string): Promise<void>;
+	close?(options?: { flush?: boolean }): Promise<void>;
 };
 
 type NativeBackboneCoordinatePersistenceAdapter = {
+	/** Explicit capability required by durable strict-native operation intents. */
+	intentStore?: NativeBackboneCoordinatePersistenceStore;
 	flushOnAppend?: boolean;
 	flushMaxPendingBytes?: number;
 	flushIntervalMs?: number;
 	compactMaxJournalBytes?: number;
 	compactMaxJournalRecords?: number;
+	crashSafeCompaction?: boolean;
+	durableBarrier?: boolean;
+	supportsDrop?: boolean;
+	dropIsTerminal?: boolean;
 	hydrate(backbone: unknown): Promise<number>;
 	flushJournal(backbone: unknown): Promise<number>;
 	flushJournalOnAppend?(backbone: unknown): number | Promise<number>;
 	compact?(backbone: unknown): Promise<void>;
+	drop?(additionalFiles?: readonly string[]): Promise<void>;
+	resumeDrop?(): Promise<boolean>;
 	close?(): Promise<void>;
 };
 
@@ -1043,6 +1889,103 @@ type NativeBackboneCoordinatePersistenceConfig =
 			store: NativeBackboneCoordinatePersistenceStore;
 			buffered?: boolean | { maxBufferedBytes?: number };
 	  });
+
+type NativeStrictDurableTransactionIntent = {
+	version: 1;
+	lowerMarkerCommitted?: boolean;
+	appendHashes: string[];
+	trimHashes: string[];
+	coordinateDeleteHashes?: string[];
+	lowerIndexRows: Array<{
+		hash: string;
+		before?: number[];
+		after?: number[];
+	}>;
+	coordinates: Array<{
+		hash: string;
+		value?: {
+			hashNumber: string;
+			gid: string;
+			coordinates: string[];
+			wallTime: string;
+			assignedToRangeBoundary: boolean;
+			metaBytes: number[];
+		};
+	}>;
+	documents: Array<{
+		key: string;
+		value?: number[];
+		byteElementIndexLimit: number;
+	}>;
+};
+
+type NativeStrictDurableTransactionJournalBody = {
+	format: "peerbit-native-strict-durable-transaction";
+	version: 1;
+	sequence: number;
+	state: "intent" | "cleared";
+	intent: NativeStrictDurableTransactionIntent | null;
+};
+
+type NativeStrictDurableTransactionJournalRecord =
+	NativeStrictDurableTransactionJournalBody & {
+		checksum: string;
+	};
+
+type NativeStrictDurableTransactionJournalState = {
+	sequence: number;
+	slot: 0 | 1;
+	intent?: NativeStrictDurableTransactionIntent;
+	/** No journal file exists yet; materialize a cleared frame before first use. */
+	implicit?: boolean;
+};
+
+type NativeStrictDurableTransactionHandle = {
+	intent: NativeStrictDurableTransactionIntent;
+	release: () => void;
+	released: boolean;
+	lowerHashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+};
+
+const NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILE =
+	"strict-durable-transaction-intent.json";
+const NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_BACKUP_FILE =
+	"strict-durable-transaction-intent.backup.json";
+const NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES = [
+	NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILE,
+	NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_BACKUP_FILE,
+] as const;
+const NATIVE_STRICT_DURABLE_TRANSACTION_JOURNAL_FORMAT =
+	"peerbit-native-strict-durable-transaction" as const;
+
+const nativeStrictDurableTransactionJournalBody = (
+	sequence: number,
+	intent: NativeStrictDurableTransactionIntent | undefined,
+): NativeStrictDurableTransactionJournalBody => ({
+	format: NATIVE_STRICT_DURABLE_TRANSACTION_JOURNAL_FORMAT,
+	version: 1,
+	sequence,
+	state: intent ? "intent" : "cleared",
+	intent: intent ?? null,
+});
+
+const nativeStrictDurableTransactionJournalBodyBytes = (
+	body: NativeStrictDurableTransactionJournalBody,
+) => new TextEncoder().encode(JSON.stringify(body));
+
+const nativeStrictDurableTransactionJournalRecordBytes = (
+	sequence: number,
+	intent: NativeStrictDurableTransactionIntent | undefined,
+) => {
+	const body = nativeStrictDurableTransactionJournalBody(sequence, intent);
+	const record: NativeStrictDurableTransactionJournalRecord = {
+		...body,
+		checksum: toHexString(
+			sha256Sync(nativeStrictDurableTransactionJournalBodyBytes(body)),
+		),
+	};
+	return new TextEncoder().encode(JSON.stringify(record));
+};
 
 type PreparedPayloadCommitOnlyProperties =
 	NativeBackboneDocumentCommitOptions & {
@@ -1325,8 +2268,8 @@ const isTransientReplicationAnnouncementError = (
 	}
 
 	const constructorName =
-		typeof (error as { constructor?: { name?: unknown } })?.constructor?.name ===
-		"string"
+		typeof (error as { constructor?: { name?: unknown } })?.constructor
+			?.name === "string"
 			? (error as { constructor: { name: string } }).constructor.name
 			: "";
 	const name =
@@ -1947,6 +2890,10 @@ type TrustedLowerLogNativePreparedCommit = {
 	hashDigestBytes?: Uint8Array;
 	trimmedEntries?: unknown[];
 	trimmedEntryHashes?: string[];
+	nativeBlocksDeleted?: boolean;
+	nativeDeleteCleanupToken?: unknown;
+	nativeCommitOwnershipToken?: unknown;
+	nativeIndexMutationLockOwner?: EntryIndexHashMutationLockOwner;
 	documentTrimmedHeadsProcessed?: boolean;
 	documentPreviousContext?: PreparedLocalAppendCommit<"u32">["documentPreviousContext"];
 };
@@ -1961,11 +2908,13 @@ type TrustedLowerLogPreparedAppendResult<T> = {
 type TrustedLowerLogCommitOnlyAppendResult<T> = {
 	entry: Entry<T>;
 	materializeEntry: () => Entry<T>;
+	shallowEntry: ShallowEntry;
 	removed: ShallowOrFullEntry<T>[];
 	removedHashes?: string[];
 	appendFacts: PreparedAppendFacts;
 	documentTrimmedHeadsProcessed?: boolean;
 	documentPreviousContext?: PreparedLocalAppendCommit<"u32">["documentPreviousContext"];
+	nativeCommittedAppendFinalizer?: TrustedLowerLogNativeCommitFinalizer;
 };
 
 type TrustedLowerLogCommitOnlyAppendBatchResult<T> = {
@@ -1975,6 +2924,13 @@ type TrustedLowerLogCommitOnlyAppendBatchResult<T> = {
 	removedHashes?: string[];
 	appendFacts: PreparedAppendFacts[];
 	documentTrimmedHeadsProcessed?: boolean[];
+	nativeCommittedAppendFinalizer?: TrustedLowerLogNativeCommitFinalizer;
+};
+
+type TrustedLowerLogNativeCommitFinalizer = {
+	acknowledge(onLowerMarkerDurable?: () => Promise<void>): Promise<void>;
+	retainForRecovery(): void;
+	rollback(): Promise<void>;
 };
 
 type TrustedLowerLog<T> = {
@@ -2008,6 +2964,7 @@ type TrustedLowerLog<T> = {
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: TrustedLowerLogNativeCommitInput,
@@ -2021,6 +2978,7 @@ type TrustedLowerLog<T> = {
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: TrustedLowerLogNativeCommitInput,
@@ -2035,6 +2993,7 @@ type TrustedLowerLog<T> = {
 			skipMissingNextJoin?: boolean;
 			knownNoNext?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			input: TrustedLowerLogNativeCommitInput,
@@ -2066,6 +3025,7 @@ type TrustedLowerLog<T> = {
 			resolveTrimmedEntries?: boolean;
 			allowPreparedNexts?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		},
 		prepare: (
 			inputs: TrustedLowerLogNativeCommitInput[],
@@ -2129,9 +3089,20 @@ export class SharedLog<
 	private _nativeRangePlanner?: SharedLogRangePlanner;
 	private _nativeSharedLogState?: SharedLogNativeState;
 	private _nativeBackbone?: NativePeerbitBackbone;
+	private _nativeDurableCommitFailure?: NativeDurableCommitError;
+	private _nativeDurableRecoveryReadyForReopen = false;
+	private _nativeDurableRecoveryCids = new Set<string>();
 	private _wireSyncSession?: SharedLogNativeWireSync;
 	private _nativeBackboneCoordinatePersistence?: NativeBackboneCoordinatePersistenceAdapter;
+	private _nativeBackboneCoordinatePersistenceStore?: NativeBackboneCoordinatePersistenceStore;
+	private _nativeBackboneDropStarted = false;
 	private _nativeBackboneCoordinateJournalLastFlushMs = 0;
+	private _nativeStrictDurableTransactionTail?: Promise<void>;
+	private _nativeStrictDurableTransactions?: Set<NativeStrictDurableTransactionHandle>;
+	private _nativeStrictDurableTransactionJournalState?: NativeStrictDurableTransactionJournalState;
+	private _nativeStrictDurableDocumentRecoveryDeferred = false;
+	private _nativeStrictDurableTransactionsClosing = false;
+	private _nativeStrictDurableTransactionFailure?: unknown;
 	private _defaultAppendReplicaMetadataCache?: {
 		source: MinReplicas;
 		value: number;
@@ -2141,6 +3112,7 @@ export class SharedLog<
 		string,
 		ResidentCoordinateEntry<R>
 	>;
+	private _nativeCoordinateMutationGenerations?: Map<string, number>;
 	private coordinateToHash!: Cache<string>;
 	private recentlyRebalanced!: Cache<string>;
 
@@ -2211,6 +3183,950 @@ export class SharedLog<
 
 	private remoteBlocks!: RemoteBlocks;
 
+	private throwIfNativeDurableCommitFailed(): void {
+		if (this._nativeStrictDurableTransactionFailure !== undefined) {
+			throw new Error(
+				"Native durable transaction recovery is required before another mutation",
+				{ cause: this._nativeStrictDurableTransactionFailure },
+			);
+		}
+		const wrapperFailure = (
+			this.remoteBlocks?.localStore as unknown as {
+				getNativeDurableCommitFailure?: () =>
+					| NativeDurableCommitError
+					| undefined;
+			}
+		)?.getNativeDurableCommitFailure?.();
+		if (wrapperFailure) {
+			this._nativeDurableCommitFailure ??= wrapperFailure;
+		}
+		if (this._nativeDurableCommitFailure) {
+			throw this._nativeDurableCommitFailure;
+		}
+	}
+
+	private poisonNativeStrictDurableTransaction(cause: unknown): void {
+		this._nativeStrictDurableTransactionFailure ??= cause;
+		this.log?.entryIndex?.poisonNativeDurableTransactionMutations(
+			this._nativeStrictDurableTransactionFailure,
+		);
+	}
+
+	private clearNativeStrictDurableTransactionFailure(): void {
+		this._nativeStrictDurableTransactionFailure = undefined;
+		this.log?.entryIndex?.clearNativeDurableTransactionMutationFailure();
+	}
+
+	private failNativeDurableCommit(
+		cause: unknown,
+		options?: {
+			committedCids?: Iterable<string>;
+			failedCids?: Iterable<string>;
+		},
+	): never {
+		this.ensureNativeDurabilityRuntimeState();
+		for (const cid of options?.committedCids ?? []) {
+			this._nativeDurableRecoveryCids.add(cid);
+		}
+		if (cause instanceof NativeDurableCommitError) {
+			cause.addCommitContext(options, { preferIncomingOrder: true });
+		}
+		this._nativeDurableCommitFailure ??=
+			cause instanceof NativeDurableCommitError
+				? cause
+				: new NativeDurableCommitError(cause, options);
+		this._nativeDurableCommitFailure.addCommitContext(options, {
+			preferIncomingOrder: true,
+		});
+		throw this._nativeDurableCommitFailure;
+	}
+
+	private snapshotNativeBackboneDocument(
+		input: NativeBackboneDocumentIndexCommitInput | undefined,
+	): NativeBackboneDocumentRollback | undefined {
+		const backbone = this._nativeBackbone;
+		if (!backbone || !input) return undefined;
+		const value = backbone.documentValueBytes(input.key);
+		return {
+			key: input.key,
+			value: value ? new Uint8Array(value) : undefined,
+			byteElementIndexLimit: input.byteElementIndexLimit ?? 0,
+		};
+	}
+
+	private restoreNativeBackboneDocument(
+		rollback: NativeBackboneDocumentRollback,
+	): void {
+		const backbone = this._nativeBackbone;
+		if (!backbone) return;
+		backbone.deleteDocument(rollback.key);
+		if (rollback.value) {
+			// documentValueBytes returns the complete stored encoding, so it can be
+			// restored as one prefix with an empty suffix.
+			backbone.putDocumentEncodedPartsStored(
+				rollback.key,
+				rollback.value,
+				new Uint8Array(),
+				rollback.byteElementIndexLimit,
+			);
+		}
+	}
+
+	private parseNativeStrictDurableTransactionJournalRecord(
+		bytes: Uint8Array | undefined,
+		slot: 0 | 1,
+	): NativeStrictDurableTransactionJournalState | undefined {
+		if (bytes === undefined) {
+			return undefined;
+		}
+		// The pre-journal implementation represented a cleared intent as an empty
+		// primary file. Treat it as generation zero so the first framed update is
+		// written to the other slot and can never destroy the only valid state.
+		if (bytes.byteLength === 0) {
+			return { sequence: 0, slot };
+		}
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(new TextDecoder().decode(bytes));
+		} catch (error) {
+			throw new Error("Invalid native durable transaction journal JSON", {
+				cause: error,
+			});
+		}
+		if (!parsed || typeof parsed !== "object") {
+			throw new Error("Invalid native durable transaction journal record");
+		}
+		const candidate =
+			parsed as Partial<NativeStrictDurableTransactionJournalRecord>;
+		if (candidate.format === NATIVE_STRICT_DURABLE_TRANSACTION_JOURNAL_FORMAT) {
+			if (
+				candidate.version !== 1 ||
+				!Number.isSafeInteger(candidate.sequence) ||
+				(candidate.sequence ?? -1) < 1 ||
+				(candidate.state !== "intent" && candidate.state !== "cleared") ||
+				typeof candidate.checksum !== "string"
+			) {
+				throw new Error("Invalid native durable transaction journal frame");
+			}
+			const intent = candidate.intent ?? null;
+			if (
+				(candidate.state === "intent" && intent?.version !== 1) ||
+				(candidate.state === "cleared" && intent !== null)
+			) {
+				throw new Error("Invalid native durable transaction journal state");
+			}
+			const body = nativeStrictDurableTransactionJournalBody(
+				candidate.sequence!,
+				intent ?? undefined,
+			);
+			const checksum = toHexString(
+				sha256Sync(nativeStrictDurableTransactionJournalBodyBytes(body)),
+			);
+			if (checksum !== candidate.checksum) {
+				throw new Error("Native durable transaction journal checksum mismatch");
+			}
+			return {
+				sequence: candidate.sequence!,
+				slot,
+				intent: intent ?? undefined,
+			};
+		}
+		// Backward compatibility with the original single raw-JSON intent. A
+		// framed generation always sorts after this synthetic generation zero.
+		const legacy = parsed as Partial<NativeStrictDurableTransactionIntent>;
+		if (legacy.version !== 1) {
+			throw new Error("Unsupported native durable transaction recovery intent");
+		}
+		return {
+			sequence: 0,
+			slot,
+			intent: legacy as NativeStrictDurableTransactionIntent,
+		};
+	}
+
+	private async loadNativeStrictDurableTransactionJournalState(): Promise<NativeStrictDurableTransactionJournalState> {
+		if (this._nativeStrictDurableTransactionJournalState) {
+			return this._nativeStrictDurableTransactionJournalState;
+		}
+		const store = this._nativeBackboneCoordinatePersistenceStore;
+		if (!store) {
+			return (this._nativeStrictDurableTransactionJournalState = {
+				sequence: 0,
+				slot: 0,
+			});
+		}
+		const bytes = await Promise.all(
+			NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES.map((name) =>
+				store.read(name),
+			),
+		);
+		const valid: NativeStrictDurableTransactionJournalState[] = [];
+		const errors: unknown[] = [];
+		for (let index = 0; index < bytes.length; index++) {
+			try {
+				const state = this.parseNativeStrictDurableTransactionJournalRecord(
+					bytes[index],
+					index as 0 | 1,
+				);
+				if (state) valid.push(state);
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		if (valid.length === 0) {
+			if (errors.length > 0) {
+				throw new AggregateError(
+					errors,
+					"No valid native durable transaction journal generation remains",
+				);
+			}
+			// A completely new store has an implicit cleared generation. Before the
+			// first intent is written we materialize this baseline in one slot, so a
+			// corrupt sole slot can never be confused with a safe first-write tear (or
+			// with a torn legacy single-file intent).
+			return (this._nativeStrictDurableTransactionJournalState = {
+				sequence: 0,
+				slot: 0,
+				implicit: true,
+			});
+		}
+		valid.sort(
+			(left, right) => left.sequence - right.sequence || left.slot - right.slot,
+		);
+		return (this._nativeStrictDurableTransactionJournalState = valid.at(-1)!);
+	}
+
+	private async writeNativeStrictDurableTransactionIntent(
+		intent: NativeStrictDurableTransactionIntent | undefined,
+	) {
+		const store = this._nativeBackboneCoordinatePersistenceStore;
+		if (!store) {
+			return;
+		}
+		let previous = await this.loadNativeStrictDurableTransactionJournalState();
+		if (previous.implicit) {
+			const baselineSequence = previous.sequence + 1;
+			const baselineSlot = (previous.slot === 0 ? 1 : 0) as 0 | 1;
+			const baselineFile =
+				NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES[baselineSlot];
+			await store.write(
+				baselineFile,
+				nativeStrictDurableTransactionJournalRecordBytes(
+					baselineSequence,
+					undefined,
+				),
+			);
+			await this.barrierNativeStrictDurableStore(store, baselineFile);
+			previous = {
+				sequence: baselineSequence,
+				slot: baselineSlot,
+			};
+			this._nativeStrictDurableTransactionJournalState = previous;
+		}
+		const sequence = previous.sequence + 1;
+		const slot = (previous.slot === 0 ? 1 : 0) as 0 | 1;
+		const bytes = nativeStrictDurableTransactionJournalRecordBytes(
+			sequence,
+			intent,
+		);
+		const file = NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES[slot];
+		// Alternate slots. If this write is interrupted or torn, the previous
+		// checksummed generation remains untouched and recovery ignores the invalid
+		// newer slot. A durable shared-log generation requires an explicit physical
+		// barrier before this generation can become recovery-authoritative.
+		await store.write(file, bytes);
+		await this.barrierNativeStrictDurableStore(store, file);
+		this._nativeStrictDurableTransactionJournalState = {
+			sequence,
+			slot,
+			intent,
+		};
+	}
+
+	private async barrierNativeStrictDurableStore(
+		store: NativeBackboneCoordinatePersistenceStore,
+		file: string,
+	): Promise<void> {
+		if (this.node.directory != null) {
+			if (typeof store.durableBarrier !== "function") {
+				throw new Error(
+					"Durable native coordinate persistence does not expose a physical durability barrier",
+				);
+			}
+			await store.durableBarrier(file);
+			return;
+		}
+		// Memory-only operation has no durable lower marker. Preserve compatibility
+		// for transient adapters while still using a real barrier when they expose it.
+		if (store.durableBarrier) {
+			await store.durableBarrier(file);
+		} else {
+			await store.flush?.(file);
+		}
+	}
+
+	private async beginNativeStrictDurableTransaction(
+		documents: NativeBackboneDocumentRollback[],
+	): Promise<NativeStrictDurableTransactionHandle> {
+		this.throwIfNativeDurableCommitFailed();
+		if (this._nativeStrictDurableTransactionsClosing) {
+			throw new Error("Shared log is closing");
+		}
+		const previous =
+			this._nativeStrictDurableTransactionTail ?? Promise.resolve();
+		let release!: () => void;
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		this._nativeStrictDurableTransactionTail = previous.then(() => held);
+		await previous;
+		try {
+			this.throwIfNativeDurableCommitFailed();
+			if (this._nativeStrictDurableTransactionsClosing) {
+				throw new Error("Shared log is closing");
+			}
+		} catch (error) {
+			release();
+			throw error;
+		}
+		const handle: NativeStrictDurableTransactionHandle = {
+			intent: {
+				version: 1,
+				lowerMarkerCommitted: false,
+				appendHashes: [],
+				trimHashes: [],
+				coordinateDeleteHashes: [],
+				lowerIndexRows: [],
+				coordinates: [],
+				documents: documents.map((document) => ({
+					key: document.key,
+					value: document.value ? [...document.value] : undefined,
+					byteElementIndexLimit: document.byteElementIndexLimit,
+				})),
+			},
+			release,
+			released: false,
+		};
+		(this._nativeStrictDurableTransactions ??= new Set()).add(handle);
+		try {
+			await this.writeNativeStrictDurableTransactionIntent(handle.intent);
+			return handle;
+		} catch (error) {
+			handle.released = true;
+			this._nativeStrictDurableTransactions.delete(handle);
+			handle.release();
+			throw error;
+		}
+	}
+
+	private async setNativeStrictDurableTransactionOperation(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+		appendHashes: string[],
+		trimHashes: string[],
+		coordinateRollback?: NativeBackboneCoordinateRollback<R>,
+		coordinateDeleteHashes: string[] = [],
+	) {
+		if (!handle) {
+			return;
+		}
+		handle.intent.appendHashes = [...new Set(appendHashes.filter(Boolean))];
+		handle.intent.trimHashes = [...new Set(trimHashes.filter(Boolean))];
+		handle.intent.coordinateDeleteHashes = [
+			...new Set(coordinateDeleteHashes.filter(Boolean)),
+		];
+		const lowerHashes = [
+			...new Set([
+				...handle.intent.appendHashes,
+				...handle.intent.trimHashes,
+				...(coordinateRollback?.hashes ?? []),
+				...handle.intent.coordinateDeleteHashes,
+			]),
+		];
+		if (handle.lowerHashMutationLockOwner) {
+			throw new Error("Native durable transaction operation is already locked");
+		}
+		// This lease is shared with the lower native transaction and every ordinary
+		// EntryIndex mutation. Acquire it before reading any before-image, then hold
+		// it through marker acknowledgement or exact compensation.
+		handle.lowerHashMutationLockOwner =
+			await this.log.entryIndex.acquireHashMutationLocks(lowerHashes);
+		handle.intent.lowerIndexRows = await Promise.all(
+			lowerHashes.map(async (hash) => {
+				// EntryIndex publication may still live only in its pending generation.
+				// Snapshot the exact logical row that the marker phase will consume,
+				// rather than only the durable index, so a pre-marker crash can restore a
+				// pending external-next head instead of treating it as previously absent.
+				const previous = (await this.log.entryIndex.getShallow(hash))?.value;
+				return {
+					hash,
+					before: previous ? [...serialize(previous)] : undefined,
+				};
+			}),
+		);
+		handle.intent.coordinates = coordinateRollback
+			? [...coordinateRollback.hashes].map((hash) => {
+					const previous = coordinateRollback.entries.get(hash);
+					if (!previous) {
+						return { hash };
+					}
+					const materialized =
+						this.materializeResidentCoordinateEntry(previous);
+					return {
+						hash,
+						value: {
+							hashNumber: materialized.hashNumber.toString(),
+							gid: materialized.gid,
+							coordinates: materialized.coordinates.map((value) =>
+								value.toString(),
+							),
+							wallTime: materialized.wallTime.toString(),
+							assignedToRangeBoundary: materialized.assignedToRangeBoundary,
+							metaBytes: [...materialized.getMetaBytes()],
+						},
+					};
+				})
+			: [];
+		await this.writeNativeStrictDurableTransactionIntent(handle.intent);
+	}
+
+	private async setNativeStrictDurableTransactionExpectedRows(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+		rows: ShallowEntry[],
+	) {
+		if (!handle) {
+			return;
+		}
+		if (!handle.lowerHashMutationLockOwner) {
+			throw new Error(
+				"Native durable transaction has no lower hash lock owner",
+			);
+		}
+		this.log.entryIndex.assertHashMutationLocks(
+			handle.lowerHashMutationLockOwner,
+			rows.flatMap((row) => [row.hash, ...row.meta.next]),
+		);
+		const rowsByHash = new Map(
+			handle.intent.lowerIndexRows.map((row) => [row.hash, row]),
+		);
+		for (const row of rows) {
+			const intentRow = rowsByHash.get(row.hash);
+			if (intentRow) {
+				intentRow.after = [...serialize(row)];
+			}
+		}
+		for (const nextHash of new Set(rows.flatMap((row) => row.meta.next))) {
+			const existingIntentRow = rowsByHash.get(nextHash);
+			if (existingIntentRow) {
+				if (!existingIntentRow.after && existingIntentRow.before) {
+					const after = deserialize(
+						Uint8Array.from(existingIntentRow.before),
+						ShallowEntry,
+					);
+					after.head = false;
+					existingIntentRow.after = [...serialize(after)];
+				}
+				continue;
+			}
+			const previous = (await this.log.entryIndex.getShallow(nextHash))?.value;
+			if (!previous) {
+				continue;
+			}
+			const after = deserialize(serialize(previous), ShallowEntry);
+			after.head = false;
+			const intentRow = {
+				hash: nextHash,
+				before: [...serialize(previous)],
+				after: [...serialize(after)],
+			};
+			handle.intent.lowerIndexRows.push(intentRow);
+			rowsByHash.set(nextHash, intentRow);
+		}
+		handle.intent.coordinateDeleteHashes = [
+			...new Set([
+				...(handle.intent.coordinateDeleteHashes ?? []),
+				...handle.intent.trimHashes,
+				...rows.flatMap((row) => row.meta.next),
+			]),
+		];
+		await this.writeNativeStrictDurableTransactionIntent(handle.intent);
+	}
+
+	private async markNativeStrictDurableTransactionLowerMarker(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+	) {
+		if (!handle || handle.released) {
+			return;
+		}
+		handle.intent.lowerMarkerCommitted = true;
+		await this.writeNativeStrictDurableTransactionIntent(handle.intent);
+	}
+
+	private async markNativeStrictDurableTransactionRollback(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+	) {
+		if (!handle || handle.released) {
+			return;
+		}
+		const previousMarker = handle.intent.lowerMarkerCommitted;
+		handle.intent.lowerMarkerCommitted = false;
+		try {
+			await this.writeNativeStrictDurableTransactionIntent(handle.intent);
+		} catch (error) {
+			// The last valid generation may still contain a true marker. Preserve
+			// that in-memory knowledge and keep the handle held until the caller has
+			// retained the lower finalizer. Releasing first would let concurrent close
+			// compensate lower facts while recovery still sees a committed marker.
+			handle.intent.lowerMarkerCommitted = previousMarker;
+			this.poisonNativeStrictDurableTransaction(error);
+			throw error;
+		}
+	}
+
+	private async completeNativeStrictDurableTrimCleanup(
+		intent: NativeStrictDurableTransactionIntent,
+		committed = intent.lowerMarkerCommitted === true,
+		reconstructMissing = false,
+	) {
+		if (!committed || intent.trimHashes.length === 0) {
+			return;
+		}
+		const localStore = this.remoteBlocks?.localStore as unknown as {
+			completeCommittedNativeDeleteCleanup?: (
+				cids: string[],
+				options?: { reconstructMissing?: boolean },
+			) => Promise<void>;
+		};
+		if (
+			typeof localStore?.completeCommittedNativeDeleteCleanup === "function"
+		) {
+			await localStore.completeCommittedNativeDeleteCleanup(intent.trimHashes, {
+				reconstructMissing,
+			});
+		}
+	}
+
+	private async completeNativeStrictDurableCoordinateCleanup(
+		intent: NativeStrictDurableTransactionIntent,
+		committed = intent.lowerMarkerCommitted === true,
+	) {
+		const hashes = intent.coordinateDeleteHashes ?? [];
+		if (!committed || hashes.length === 0) {
+			return;
+		}
+		await this.deleteCoordinatesForHashes(hashes);
+		const flushed = this.flushNativeBackboneCoordinateJournal();
+		if (isPromiseLike(flushed)) {
+			await flushed;
+		}
+	}
+
+	private async completeNativeStrictDurableTransaction(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+	) {
+		if (!handle || handle.released) {
+			return;
+		}
+		try {
+			await this.completeNativeStrictDurableCoordinateCleanup(handle.intent);
+			await this.completeNativeStrictDurableTrimCleanup(handle.intent);
+			await this.writeNativeStrictDurableTransactionIntent(undefined);
+			this.clearNativeStrictDurableTransactionFailure();
+		} catch (error) {
+			// The lower marker may already be acknowledged. Retain the intent and
+			// reject every later mutation until reopen can finish recovery; allowing a
+			// new transaction to overwrite this generation would make rollback/GC debt
+			// ambiguous and can erase acknowledged data.
+			this.poisonNativeStrictDurableTransaction(error);
+			throw error;
+		} finally {
+			if (handle.lowerHashMutationLockOwner) {
+				this.log.entryIndex.releaseHashMutationLocks(
+					handle.lowerHashMutationLockOwner,
+				);
+				handle.lowerHashMutationLockOwner = undefined;
+			}
+			handle.released = true;
+			this._nativeStrictDurableTransactions?.delete(handle);
+			handle.release();
+		}
+	}
+
+	private releaseNativeStrictDurableTransaction(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+		cause: unknown = new Error(
+			"Native durable transaction intent was retained for recovery",
+		),
+	) {
+		if (!handle || handle.released) {
+			return;
+		}
+		this.poisonNativeStrictDurableTransaction(cause);
+		if (handle.lowerHashMutationLockOwner) {
+			this.log.entryIndex.releaseHashMutationLocks(
+				handle.lowerHashMutationLockOwner,
+			);
+			handle.lowerHashMutationLockOwner = undefined;
+		}
+		handle.released = true;
+		this._nativeStrictDurableTransactions?.delete(handle);
+		handle.release();
+	}
+
+	private retainNativeStrictDurableTransactionAfterMarkerFailure(
+		handle: NativeStrictDurableTransactionHandle | undefined,
+		finalizer: TrustedLowerLogNativeCommitFinalizer | undefined,
+		cause: unknown,
+	): unknown[] {
+		const failures: unknown[] = [cause];
+		try {
+			finalizer?.retainForRecovery();
+		} catch (error) {
+			failures.push(error);
+		} finally {
+			// retainForRecovery finalizes its lower transaction even when one of its
+			// internal cleanup steps reports an error. Only release the strict handle
+			// after that synchronous state transition has been attempted.
+			this.releaseNativeStrictDurableTransaction(handle, cause);
+		}
+		return failures;
+	}
+
+	private async settleNativeStrictDurableTransactionsForClose(): Promise<void> {
+		while ((this._nativeStrictDurableTransactions?.size ?? 0) > 0) {
+			const tail = this._nativeStrictDurableTransactionTail;
+			if (!tail) {
+				throw new Error(
+					"Native strict durable transaction has no settlement tail",
+				);
+			}
+			// A close racing an acknowledged lower marker must not release the strict
+			// handle and let Log.close() compensate while the on-disk intent still says
+			// committed. Wait until the owner either retires the intent or deliberately
+			// retains it for recovery before closing the lower log or persistence stores.
+			await tail;
+		}
+	}
+
+	private async recoverNativeStrictDurableTransactionIntent(
+		documentIndexReady = false,
+	): Promise<boolean> {
+		const store = this._nativeBackboneCoordinatePersistenceStore;
+		if (!store || !this._nativeBackbone) {
+			this._nativeStrictDurableDocumentRecoveryDeferred = false;
+			return true;
+		}
+		const journalState =
+			await this.loadNativeStrictDurableTransactionJournalState();
+		const intent = journalState.intent;
+		if (!intent) {
+			this._nativeStrictDurableDocumentRecoveryDeferred = false;
+			this.clearNativeStrictDurableTransactionFailure();
+			return true;
+		}
+		if (intent.version !== 1) {
+			throw new Error("Unsupported native durable transaction recovery intent");
+		}
+		intent.trimHashes ??= [];
+		intent.coordinateDeleteHashes ??= [];
+		intent.lowerIndexRows ??= [];
+		intent.coordinates ??= [];
+		const bytesEqual = (
+			left: Uint8Array | undefined,
+			right: number[] | undefined,
+		) => {
+			if (!left || !right) {
+				return left === undefined && right === undefined;
+			}
+			if (left.byteLength !== right.length) {
+				return false;
+			}
+			for (let index = 0; index < left.byteLength; index++) {
+				if (left[index] !== right[index]) {
+					return false;
+				}
+			}
+			return true;
+		};
+		const immutableRowEquals = (
+			current: Uint8Array | undefined,
+			expected: number[] | undefined,
+		) => {
+			if (!current || !expected) {
+				return current === undefined && expected === undefined;
+			}
+			const currentRow = deserialize(current, ShallowEntry);
+			const expectedRow = deserialize(Uint8Array.from(expected), ShallowEntry);
+			// `head` is a mutable graph projection. Hash, payload size, and metadata
+			// are content-addressed append identity and are safe marker evidence even
+			// when a later acknowledged entry has demoted this row.
+			currentRow.head = false;
+			expectedRow.head = false;
+			return bytesEqual(serialize(currentRow), [...serialize(expectedRow)]);
+		};
+		const currentLowerRows = new Map<string, Uint8Array | undefined>();
+		for (const row of intent.lowerIndexRows) {
+			const current = (
+				await this.log.entryIndex.properties.index.get(toId(row.hash))
+			)?.value;
+			currentLowerRows.set(row.hash, current ? serialize(current) : undefined);
+		}
+		const trimHashes = new Set(intent.trimHashes);
+		const retainedMarkerRows = intent.lowerIndexRows.filter(
+			(row) =>
+				intent.appendHashes.includes(row.hash) &&
+				!trimHashes.has(row.hash) &&
+				row.after !== undefined,
+		);
+		// Only a row known absent in the before-image is an unambiguous lower commit
+		// marker. An existing content-addressed row can equal the after-image once
+		// mutable `head` is ignored even before this transaction mutated anything.
+		const expectedMarkerRows = retainedMarkerRows.filter(
+			(row) => row.before === undefined,
+		);
+		let lowerMarkerCommitted =
+			intent.lowerMarkerCommitted === true ||
+			(expectedMarkerRows.length > 0 &&
+				expectedMarkerRows.every((row) =>
+					immutableRowEquals(currentLowerRows.get(row.hash), row.after),
+				));
+		if (
+			!lowerMarkerCommitted &&
+			!documentIndexReady &&
+			intent.documents.some((document) => document.value !== undefined)
+		) {
+			// SharedLog opens before Documents can attach its schema-aware native
+			// index. Restoring an encoded before-image requires that schema. Keep the
+			// intent authoritative and mutations poisoned until Documents has attached
+			// the index and explicitly resumes recovery.
+			this._nativeStrictDurableDocumentRecoveryDeferred = true;
+			this.poisonNativeStrictDurableTransaction(
+				new Error(
+					"Native strict durable document recovery is waiting for its document index",
+				),
+			);
+			return false;
+		}
+
+		const lowerIndex = this.log.entryIndex.properties
+			.index as PutAndDeleteIndex<ShallowEntry>;
+		const deleteLowerIndexHash = async (hash: string) => {
+			if (lowerIndex.delIds) {
+				await lowerIndex.delIds([hash]);
+			} else if (lowerIndex.delIdsNoReturn) {
+				await lowerIndex.delIdsNoReturn([hash]);
+			} else {
+				await lowerIndex.del({ query: { hash } });
+			}
+		};
+		let lowerIndexChanged = false;
+		if (lowerMarkerCommitted) {
+			for (const row of intent.lowerIndexRows) {
+				if (trimHashes.has(row.hash) || !row.after) {
+					continue;
+				}
+				const current = currentLowerRows.get(row.hash);
+				if (immutableRowEquals(current, row.after)) {
+					// Preserve the current mutable head projection. It may include a later
+					// acknowledged Y -> X demotion that must survive recovery.
+					continue;
+				}
+				if (!intent.appendHashes.includes(row.hash) || current !== undefined) {
+					// External-next rows are not resurrected over a later delete, and a
+					// conflicting present content-addressed row is never overwritten.
+					continue;
+				}
+				await lowerIndex.put(
+					deserialize(Uint8Array.from(row.after), ShallowEntry),
+				);
+				lowerIndexChanged = true;
+			}
+			for (const hash of intent.trimHashes) {
+				const current = await lowerIndex.get(toId(hash));
+				const intentRow = intent.lowerIndexRows.find(
+					(row) => row.hash === hash,
+				);
+				if (
+					current &&
+					intentRow?.before &&
+					bytesEqual(serialize(current.value), intentRow.before)
+				) {
+					await deleteLowerIndexHash(hash);
+					lowerIndexChanged = true;
+				}
+			}
+		} else {
+			for (const row of intent.lowerIndexRows) {
+				const current = currentLowerRows.get(row.hash);
+				if (bytesEqual(current, row.before)) {
+					continue;
+				}
+				// Exact after-image CAS: a later mutation (including only a `head`
+				// change) owns the row and must not be erased or overwritten by recovery.
+				if (!bytesEqual(current, row.after)) {
+					continue;
+				}
+				if (row.before) {
+					await lowerIndex.put(
+						deserialize(Uint8Array.from(row.before), ShallowEntry),
+					);
+				} else {
+					await deleteLowerIndexHash(row.hash);
+				}
+				lowerIndexChanged = true;
+			}
+		}
+		if (lowerIndexChanged) {
+			await this.log.entryIndex.init();
+		}
+
+		if (!lowerMarkerCommitted) {
+			if (intent.coordinates.length > 0) {
+				const mutationGenerations =
+					(this._nativeCoordinateMutationGenerations ??= new Map());
+				const rollback: NativeBackboneCoordinateRollback<R> = {
+					hashes: new Set(),
+					entries: new Map(),
+					generations: new Map(),
+				};
+				for (const coordinate of intent.coordinates) {
+					rollback.hashes.add(coordinate.hash);
+					const generation =
+						(mutationGenerations.get(coordinate.hash) ?? 0) + 1;
+					mutationGenerations.set(coordinate.hash, generation);
+					rollback.generations.set(coordinate.hash, generation);
+					if (coordinate.value) {
+						const number = (value: string) =>
+							(this.domain.resolution === "u32"
+								? Number(value)
+								: BigInt(value)) as NumberFromType<R>;
+						rollback.entries.set(
+							coordinate.hash,
+							new this.indexableDomain.constructorEntry({
+								hash: coordinate.hash,
+								hashNumber: number(coordinate.value.hashNumber),
+								gid: coordinate.value.gid,
+								coordinates: coordinate.value.coordinates.map(number),
+								wallTime: BigInt(coordinate.value.wallTime),
+								assignedToRangeBoundary:
+									coordinate.value.assignedToRangeBoundary,
+								metaBytes: Uint8Array.from(coordinate.value.metaBytes),
+							}),
+						);
+					}
+				}
+				await this.rollbackNativeBackboneCoordinateAppendDurably("", rollback);
+			}
+			for (const document of intent.documents) {
+				this.restoreNativeBackboneDocument({
+					key: document.key,
+					value: document.value ? Uint8Array.from(document.value) : undefined,
+					byteElementIndexLimit: document.byteElementIndexLimit,
+				});
+			}
+			const flushed = this.flushNativeBackboneCoordinateJournal();
+			if (isPromiseLike(flushed)) {
+				await flushed;
+			}
+		}
+		if (lowerMarkerCommitted) {
+			await this.completeNativeStrictDurableCoordinateCleanup(intent, true);
+			await this.completeNativeStrictDurableTrimCleanup(intent, true, true);
+		}
+		await this.writeNativeStrictDurableTransactionIntent(undefined);
+		this._nativeStrictDurableDocumentRecoveryDeferred = false;
+		this.clearNativeStrictDurableTransactionFailure();
+		return true;
+	}
+
+	/** @internal Complete a deferred rollback after Documents attaches its schema. */
+	async finishNativeStrictDurableDocumentRecovery(): Promise<void> {
+		if (!this._nativeStrictDurableDocumentRecoveryDeferred) {
+			return;
+		}
+		const completed =
+			await this.recoverNativeStrictDurableTransactionIntent(true);
+		if (!completed) {
+			throw new Error(
+				"Native strict durable document recovery did not complete",
+			);
+		}
+		await this.reconcileNativeCoordinatesWithLowerCommitMarkers();
+	}
+
+	private async rollbackFailedNativeBackboneTransaction(properties: {
+		committedHashes: string[];
+		trimmedEntries?: Parameters<NativePeerbitBackbone["graph"]["putBatch"]>[0];
+		coordinateEntries?: NativeBackboneCoordinateRollback<R>;
+		documents?: NativeBackboneDocumentRollback[];
+		unmirroredBlockCompensation?: boolean;
+		skipBlockCompensation?: boolean;
+		restoreGraphFromIndex?: boolean;
+		durableWrapper?: {
+			rollbackUnmirroredNativeCommits?: (
+				cids: string[],
+				restoreNativeCids?: string[],
+			) => Promise<void>;
+			rollbackFailedNativeCommits?: (
+				cids: string[],
+				restoreNativeCids?: string[],
+			) => Promise<void>;
+		};
+	}): Promise<void> {
+		const backbone = this._nativeBackbone;
+		if (!backbone) return;
+		for (
+			let index = properties.committedHashes.length - 1;
+			index >= 0;
+			index--
+		) {
+			const hash = properties.committedHashes[index]!;
+			backbone.graph.delete(hash);
+			this.rollbackNativeBackboneCoordinateAppend(
+				hash,
+				properties.coordinateEntries,
+			);
+		}
+		if (properties.restoreGraphFromIndex) {
+			await this.log.entryIndex.restoreNativeGraphFromIndex();
+		} else {
+			if (properties.trimmedEntries?.length) {
+				backbone.graph.putBatch(properties.trimmedEntries);
+			}
+		}
+		for (const document of properties.documents ?? []) {
+			this.restoreNativeBackboneDocument(document);
+		}
+		const flushed = this.flushNativeBackboneCoordinateJournal();
+		if (isPromiseLike(flushed)) {
+			await flushed;
+		}
+		if (properties.skipBlockCompensation) {
+			return;
+		}
+		let compensated = false;
+		try {
+			if (
+				properties.unmirroredBlockCompensation &&
+				properties.durableWrapper?.rollbackUnmirroredNativeCommits
+			) {
+				await properties.durableWrapper.rollbackUnmirroredNativeCommits(
+					properties.committedHashes,
+					properties.trimmedEntries?.map((entry) => entry.hash),
+				);
+			} else if (properties.durableWrapper?.rollbackFailedNativeCommits) {
+				await properties.durableWrapper.rollbackFailedNativeCommits(
+					properties.committedHashes,
+					properties.trimmedEntries?.map((entry) => entry.hash),
+				);
+			} else {
+				await backbone.blocks.rmMany(properties.committedHashes);
+			}
+			compensated = true;
+		} finally {
+			this._nativeDurableRecoveryReadyForReopen = compensated;
+		}
+	}
+
 	private openTime!: number;
 	private oldestOpenTime!: number;
 
@@ -2267,12 +4183,18 @@ export class SharedLog<
 		RepairDispatchMode,
 		Map<string, Map<string, RepairDispatchEntry<R>>>
 	>;
-	private _repairFrontierActiveTargetsByMode!: Map<RepairDispatchMode, Set<string>>;
+	private _repairFrontierActiveTargetsByMode!: Map<
+		RepairDispatchMode,
+		Set<string>
+	>;
 	private _repairFrontierBypassKnownPeersByMode!: Map<
 		RepairDispatchMode,
 		Set<string>
 	>;
-	private _repairSweepOptimisticGidPeersPending!: Map<string, Map<string, number>>;
+	private _repairSweepOptimisticGidPeersPending!: Map<
+		string,
+		Map<string, number>
+	>;
 	private _entryKnownPeers!: Map<string, Set<string>>;
 	private _entryKnownPeerObservedAt!: Map<string, Map<string, number>>;
 	private _joinAuthoritativeRepairTimersByDelay!: Map<
@@ -2331,6 +4253,7 @@ export class SharedLog<
 
 	constructor(properties?: { id?: Uint8Array }) {
 		super();
+		this.ensureNativeDurabilityRuntimeState();
 		this.log = new Log(properties);
 		this.rpc = new RPC();
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
@@ -2375,6 +4298,18 @@ export class SharedLog<
 		this._replicationAnnouncementRetryController = new AbortController();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
+	}
+
+	private ensureNativeDurabilityRuntimeState(): void {
+		// Program clones are borsh-created without running class field initializers.
+		// Keep recovery state from an existing generation, while supplying fresh
+		// defaults only when the runtime-only fields are absent.
+		this._nativeDurableRecoveryReadyForReopen ??= false;
+		this._nativeDurableRecoveryCids ??= new Set();
+		this._nativeBackboneDropStarted ??= false;
+		this._nativeBackboneCoordinateJournalLastFlushMs ??= 0;
+		this._nativeStrictDurableDocumentRecoveryDeferred ??= false;
+		this._nativeStrictDurableTransactionsClosing ??= false;
 	}
 
 	get compatibility(): number | undefined {
@@ -2962,9 +4897,10 @@ export class SharedLog<
 		const encodeChunk = (from: number, until: number): boolean => {
 			const payload = backbone.encodeRawExchangeSyncPayload!({
 				topic,
-				hashes: from === 0 && until === plan.hashes.length
-					? plan.hashes
-					: plan.hashes.slice(from, until),
+				hashes:
+					from === 0 && until === plan.hashes.length
+						? plan.hashes
+						: plan.hashes.slice(from, until),
 				gidRefrences:
 					from === 0 && until === plan.gidRefrences.length
 						? plan.gidRefrences
@@ -5223,10 +7159,7 @@ export class SharedLog<
 			}
 			return;
 		}
-		for await (const message of createExchangeHeadsMessages(
-			this.log,
-			hashes,
-		)) {
+		for await (const message of createExchangeHeadsMessages(this.log, hashes)) {
 			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
 				priority: SYNC_MESSAGE_PRIORITY,
@@ -6475,6 +8408,7 @@ export class SharedLog<
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
 	}> {
+		this.throwIfNativeDurableCommitFailed();
 		if (this._isAdaptiveReplicating) {
 			this.markLocalAppendActivity();
 		}
@@ -6496,6 +8430,7 @@ export class SharedLog<
 		entry: Entry<T>;
 		removed: ShallowOrFullEntry<T>[];
 	}> {
+		this.throwIfNativeDurableCommitFailed();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyValidated does not accept canAppend or onChange hooks",
@@ -6530,6 +8465,7 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 		appendCommit: PreparedLocalAppendCommit<R>;
 	}> {
+		this.throwIfNativeDurableCommitFailed();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyPrepared does not accept canAppend or onChange hooks",
@@ -6728,6 +8664,7 @@ export class SharedLog<
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: PreparedPayloadCommitOnlyProperties,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		this.throwIfNativeDurableCommitFailed();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyPreparedPayloadCommitOnly does not accept canAppend or onChange hooks",
@@ -6791,6 +8728,7 @@ export class SharedLog<
 		options?: SharedAppendOptions<T> | undefined,
 		properties?: PreparedPayloadCommitOnlyProperties,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		this.throwIfNativeDurableCommitFailed();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendStrictNativeDocumentPayloadCommitOnly does not accept canAppend or onChange hooks",
@@ -6833,17 +8771,13 @@ export class SharedLog<
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const resultMaybe = asTrustedLowerLog(
 			this.log,
-		).appendLocallyPreparedCommitOnly(
-			undefined as T,
-			appendOptions,
-			{
-				skipMissingNextJoin: properties?.skipMissingNextJoin,
-				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-				payloadData,
-				includeMaterializationBytes: false,
-				includeAppendFactsBytes: !deferHeadCoordinatePersistence,
-			},
-		);
+		).appendLocallyPreparedCommitOnly(undefined as T, appendOptions, {
+			skipMissingNextJoin: properties?.skipMissingNextJoin,
+			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+			payloadData,
+			includeMaterializationBytes: false,
+			includeAppendFactsBytes: !deferHeadCoordinatePersistence,
+		});
 		return mapMaybePromise(resultMaybe, (result) =>
 			this.finishPreparedPayloadCommitOnlyAppend(
 				result,
@@ -6926,15 +8860,48 @@ export class SharedLog<
 		// commit-only block can be mirrored to durable WITHOUT routing it through
 		// the log's finishBlocks/putKnown* (which would disturb the strict-native
 		// resident-coordinate append path). `mirrorToDurable` writes to the durable
-		// side only and tracks the write for error-surfacing.
+		// side only; the lower-log result is held behind that durability barrier.
 		const durableWrapper = durableWrapperActive
 			? (this.remoteBlocks?.localStore as unknown as {
-					mirrorToDurable?: (cid: string, bytes: Uint8Array) => void;
+					beginNativeDeleteCleanup?: (cids: string[]) => number | undefined;
+					cancelNativeDeleteCleanup?: (cleanupToken: unknown) => void;
+					mirrorToDurable?: (
+						cid: string,
+						bytes: Uint8Array,
+						options?: { nativeTrimmed?: boolean },
+					) => Promise<unknown>;
+					rollbackFailedNativeCommits?: (
+						cids: string[],
+						restoreNativeCids?: string[],
+					) => Promise<void>;
 				})
 			: undefined;
 		let nativeBackboneDocumentIndexCommitted = false;
-		let committedNativeBackboneDocumentIndex:
-			| NativeBackboneDocumentIndexCommitInput
+		let nativeDeleteCleanupToken: unknown;
+		let nativeDocumentRollback: NativeBackboneDocumentRollback | undefined;
+		let nativeStrictTransaction:
+			| NativeStrictDurableTransactionHandle
+			| undefined;
+		let lowerPublicationRollback:
+			| {
+					committedHashes: string[];
+					trimmedEntries?: Parameters<
+						NativePeerbitBackbone["graph"]["putBatch"]
+					>[0];
+					coordinateEntries?: NativeBackboneCoordinateRollback<R>;
+					documents?: NativeBackboneDocumentRollback[];
+					durableWrapper?: {
+						rollbackUnmirroredNativeCommits?: (
+							cids: string[],
+							restoreNativeCids?: string[],
+						) => Promise<void>;
+						rollbackFailedNativeCommits?: (
+							cids: string[],
+							restoreNativeCids?: string[],
+						) => Promise<void>;
+					};
+					lowerPublicationStarted: boolean;
+			  }
 			| undefined;
 		const nativeCommitProperties = {
 			payloadData,
@@ -6944,128 +8911,386 @@ export class SharedLog<
 			resolveTrimmedEntries?: boolean;
 			skipMissingNextJoin?: boolean;
 			retainMaterializationBytes?: boolean;
+			deferNativeTransactionAcknowledgement?: boolean;
 		};
 		nativeCommitProperties.skipMissingNextJoin =
 			properties?.skipMissingNextJoin;
 		nativeCommitProperties.retainMaterializationBytes =
 			this._logProperties?.trim != null;
-		const result = asTrustedLowerLog(
-			this.log,
-		).appendLocallyPreparedNativeNoNextCommitOnly(
-			undefined as T,
-			appendOptions,
-			nativeCommitProperties,
-			(input) => {
-				const next =
-					"next" in input && Array.isArray(input.next) ? input.next : [];
-				const nativeBackboneDocumentIndex =
-					properties?.nativeBackboneDocumentIndex ??
-					properties?.prepareNativeBackboneDocumentIndex?.({
-						wallTime: input.wallTime,
-						gid: input.gid,
-						payloadSize: input.payloadData.byteLength,
+		nativeCommitProperties.deferNativeTransactionAcknowledgement = true;
+		const rollbackLowerPublication = async (error: unknown): Promise<never> => {
+			durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+			const rollbackFailures: unknown[] = [];
+			if (
+				lowerPublicationRollback &&
+				!(error instanceof NativeDurableCommitError)
+			) {
+				try {
+					const lowerPublicationStarted =
+						lowerPublicationRollback.lowerPublicationStarted;
+					await this.rollbackFailedNativeBackboneTransaction({
+						committedHashes: lowerPublicationRollback.committedHashes,
+						trimmedEntries: lowerPublicationRollback.trimmedEntries,
+						coordinateEntries: lowerPublicationRollback.coordinateEntries,
+						documents: lowerPublicationRollback.documents,
+						durableWrapper: lowerPublicationStarted
+							? undefined
+							: lowerPublicationRollback.durableWrapper,
+						skipBlockCompensation: lowerPublicationStarted,
+						unmirroredBlockCompensation: !lowerPublicationStarted,
+						restoreGraphFromIndex: true,
 					});
-				const nativeBackboneDocumentIndexForAppend =
-					nativeBackboneDocumentIndex &&
-					input.trimLengthTo == null &&
-					nativeBackboneDocumentIndex.deleteTrimmedHeads === true
-						? {
-								...nativeBackboneDocumentIndex,
-								deleteTrimmedHeads: false,
-							}
-						: nativeBackboneDocumentIndex;
-				if (nativeBackboneDocumentIndex) {
-					nativeBackboneDocumentIndexCommitted = true;
-					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
+				} catch (rollbackError) {
+					rollbackFailures.push(rollbackError);
 				}
-				const useLatestDocumentContext =
-					properties?.useNativeExistingDocumentContext === true;
-				const prepared = backbone.graph.prepareEntryV0PlainEntryCommit(
-					{
-						...input,
-						next,
-						includeMaterializationBytes: false,
-						includeAppendFactsBytes: true,
-						trimLengthTo: input.trimLengthTo,
-						...(nativeBackboneDocumentIndexForAppend
-							? {
-									documentIndex: {
-										...nativeBackboneDocumentIndexForAppend,
-										...(useLatestDocumentContext
-											? { useLatestContext: true }
-											: {}),
-									},
-								}
-							: {}),
-					},
-					backbone.blocks,
-				);
-				if (prepared && !prepared.bytes) {
-					if (durableWrapper) {
-						// The durable write-through wrapper is active, so the block store
-						// the log writes through (this.remoteBlocks.localStore) is the
-						// wrapper, NOT the raw wasm block map. prepareEntryV0PlainEntryCommit
-						// committed the block into the wasm map ONLY and returned no raw
-						// bytes, so on its own the block would never reach durable (log's
-						// finishBlocks only calls putKnown* when prepared.bytes is set) and
-						// a non-replicating native node would lose it on restart.
-						//
-						// Mirror the just-committed block (read back from the wasm store)
-						// straight to the DURABLE side of the wrapper. Crucially we do NOT
-						// attach prepared.bytes: doing so would make the log's finishBlocks
-						// call putKnown*, which changes the commit-only append path and
-						// breaks the strict-native resident-coordinate optimization (the
-						// reopen tests assert the append stays native and resolves no entry
-						// block). Instead the prepared result is returned exactly as the
-						// memory-only branch below (getBytes only, no bytes), so the log's
-						// finishBlocks path is UNCHANGED, and the block is made durable
-						// out-of-band here. mirrorToDurable tracks the write so an IO/
-						// disk-full failure surfaces on a later awaited wrapper method.
-						const preparedHash = prepared.cid ?? prepared.hash;
-						const committedBytes = preparedHash
-							? backbone.blocks.get(preparedHash)
-							: undefined;
-						if (committedBytes && durableWrapper.mirrorToDurable) {
-							durableWrapper.mirrorToDurable(preparedHash!, committedBytes);
-						}
+			} else if (
+				nativeDocumentRollback &&
+				!(error instanceof NativeDurableCommitError)
+			) {
+				try {
+					this.restoreNativeBackboneDocument(nativeDocumentRollback);
+					const flushed = this.flushNativeBackboneCoordinateJournal();
+					if (isPromiseLike(flushed)) {
+						await flushed;
 					}
-					// The block lives in the wasm map; expose getBytes for materialization
-					// (identical to the memory-only native node path). When the durable
-					// wrapper is active the durable copy was mirrored just above.
-					return {
-						...prepared,
-						getBytes: (hash: string) => backbone.blocks.get(hash),
-					};
+				} catch (rollbackError) {
+					rollbackFailures.push(rollbackError);
 				}
-				return prepared;
-			},
-		);
-		if (!result) {
-			return undefined;
+			}
+			if (rollbackFailures.length > 0) {
+				this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+				throw new AggregateError(
+					[error, ...rollbackFailures],
+					"Lower-log publication and native compensation both failed",
+				);
+			}
+			await this.completeNativeStrictDurableTransaction(
+				nativeStrictTransaction,
+			);
+			throw error;
+		};
+		let result: MaybePromise<
+			TrustedLowerLogCommitOnlyAppendResult<T> | undefined
+		>;
+		try {
+			result = asTrustedLowerLog(
+				this.log,
+			).appendLocallyPreparedNativeNoNextCommitOnly(
+				undefined as T,
+				appendOptions,
+				nativeCommitProperties,
+				async (input) => {
+					const next =
+						"next" in input && Array.isArray(input.next) ? input.next : [];
+					const nativeBackboneDocumentIndex =
+						properties?.nativeBackboneDocumentIndex ??
+						properties?.prepareNativeBackboneDocumentIndex?.({
+							wallTime: input.wallTime,
+							gid: input.gid,
+							payloadSize: input.payloadData.byteLength,
+						});
+					const nativeBackboneDocumentIndexForAppend =
+						nativeBackboneDocumentIndex &&
+						input.trimLengthTo == null &&
+						nativeBackboneDocumentIndex.deleteTrimmedHeads === true
+							? {
+									...nativeBackboneDocumentIndex,
+									deleteTrimmedHeads: false,
+								}
+							: nativeBackboneDocumentIndex;
+					if (nativeBackboneDocumentIndex) {
+						nativeBackboneDocumentIndexCommitted = true;
+					}
+					const useLatestDocumentContext =
+						properties?.useNativeExistingDocumentContext === true;
+					nativeDocumentRollback = this.snapshotNativeBackboneDocument(
+						nativeBackboneDocumentIndexForAppend,
+					);
+					nativeStrictTransaction =
+						await this.beginNativeStrictDurableTransaction(
+							nativeDocumentRollback ? [nativeDocumentRollback] : [],
+						);
+					const prepared = backbone.graph.prepareEntryV0PlainEntryCommit(
+						{
+							...input,
+							next,
+							includeMaterializationBytes: false,
+							includeAppendFactsBytes: true,
+							trimLengthTo: input.trimLengthTo,
+							...(nativeBackboneDocumentIndexForAppend
+								? {
+										documentIndex: {
+											...nativeBackboneDocumentIndexForAppend,
+											...(useLatestDocumentContext
+												? { useLatestContext: true }
+												: {}),
+										},
+									}
+								: {}),
+						},
+						backbone.blocks,
+					);
+					if (prepared) {
+						const preparedHash = prepared.cid ?? prepared.hash;
+						const preparedNext = prepared.next ?? next;
+						const nativeTrimmedHashes =
+							prepared.trimmedEntryHashes ??
+							(
+								prepared.trimmedEntries as Array<{ hash?: string }> | undefined
+							)?.flatMap((entry) => (entry.hash ? [entry.hash] : [])) ??
+							[];
+						const coordinateRollback = this.snapshotResidentCoordinateEntries([
+							...(preparedHash ? [preparedHash] : []),
+							...preparedNext,
+							...nativeTrimmedHashes,
+						]);
+						lowerPublicationRollback = {
+							committedHashes: preparedHash ? [preparedHash] : [],
+							trimmedEntries: prepared.trimmedEntries,
+							coordinateEntries: coordinateRollback,
+							documents: nativeDocumentRollback
+								? [nativeDocumentRollback]
+								: undefined,
+							durableWrapper,
+							lowerPublicationStarted: false,
+						};
+						await this.setNativeStrictDurableTransactionOperation(
+							nativeStrictTransaction,
+							preparedHash ? [preparedHash] : [],
+							nativeTrimmedHashes,
+							coordinateRollback,
+							combineCoordinateDeleteHashes(preparedNext, nativeTrimmedHashes),
+						);
+						if (prepared.bytes) {
+							lowerPublicationRollback.lowerPublicationStarted = true;
+							return {
+								...prepared,
+								nativeIndexMutationLockOwner:
+									nativeStrictTransaction?.lowerHashMutationLockOwner,
+							};
+						}
+						const rollbackCommitted = async (
+							cause: unknown,
+							committedCids: string[],
+						): Promise<never> => {
+							durableWrapper?.cancelNativeDeleteCleanup?.(
+								nativeDeleteCleanupToken,
+							);
+							let compensated = false;
+							try {
+								await this.rollbackFailedNativeBackboneTransaction({
+									committedHashes: committedCids,
+									trimmedEntries: prepared.trimmedEntries,
+									coordinateEntries: coordinateRollback,
+									documents: nativeDocumentRollback
+										? [nativeDocumentRollback]
+										: undefined,
+									durableWrapper,
+								});
+								compensated = true;
+							} catch {
+								// Keep recovery marked incomplete; close will discard pending native
+								// journals. Reopen preserves uncertain content-addressed bytes and
+								// recovers liveness from the authoritative lower-log facts.
+							}
+							if (compensated) {
+								await this.completeNativeStrictDurableTransaction(
+									nativeStrictTransaction,
+								);
+							} else {
+								this.releaseNativeStrictDurableTransaction(
+									nativeStrictTransaction,
+								);
+							}
+							return this.failNativeDurableCommit(cause, {
+								committedCids,
+								failedCids: committedCids,
+							});
+						};
+						if (
+							durableWrapper &&
+							nativeTrimmedHashes.length > 0 &&
+							!durableWrapper.beginNativeDeleteCleanup
+						) {
+							return rollbackCommitted(
+								new Error(
+									"Native durable block wrapper cannot preannounce trim cleanup",
+								),
+								preparedHash ? [preparedHash] : [],
+							);
+						}
+						nativeDeleteCleanupToken =
+							durableWrapper?.beginNativeDeleteCleanup?.(nativeTrimmedHashes);
+						const preparedResult = {
+							...prepared,
+							nativeIndexMutationLockOwner:
+								nativeStrictTransaction?.lowerHashMutationLockOwner,
+							getBytes: (hash: string) => backbone.blocks.get(hash),
+							nativeBlocksDeleted: true,
+							nativeDeleteCleanupToken,
+						};
+						if (durableWrapper) {
+							// The durable write-through wrapper is active, so the block store
+							// the log writes through (this.remoteBlocks.localStore) is the
+							// wrapper, NOT the raw wasm block map. prepareEntryV0PlainEntryCommit
+							// committed the block into the wasm map ONLY and returned no raw
+							// bytes, so on its own the block would never reach durable (log's
+							// finishBlocks only calls putKnown* when prepared.bytes is set) and
+							// a non-replicating native node would lose it on restart.
+							//
+							// Mirror the just-committed block (read back from the wasm store)
+							// straight to the DURABLE side of the wrapper. Crucially we do NOT
+							// attach prepared.bytes: doing so would make the log's finishBlocks
+							// call putKnown*, which changes the commit-only append path and
+							// breaks the strict-native resident-coordinate optimization (the
+							// reopen tests assert the append stays native and resolves no entry
+							// block). Instead the prepared result is returned exactly as the
+							// memory-only branch below (getBytes only, no bytes), so the log's
+							// finishBlocks path is UNCHANGED. Returning the mirror promise from
+							// this prepare callback holds lower-log index/head/trim publication
+							// until durable succeeds.
+							if (!preparedHash) {
+								durableWrapper.cancelNativeDeleteCleanup?.(
+									nativeDeleteCleanupToken,
+								);
+								return rollbackCommitted(
+									new Error("Native commit returned no entry CID to mirror"),
+									[],
+								);
+							}
+							if (!durableWrapper.mirrorToDurable) {
+								durableWrapper.cancelNativeDeleteCleanup?.(
+									nativeDeleteCleanupToken,
+								);
+								return rollbackCommitted(
+									new Error(
+										"Native durable block wrapper has no mirror method",
+									),
+									[preparedHash],
+								);
+							}
+							const committedBytes = backbone.blocks.get(preparedHash);
+							if (!committedBytes) {
+								durableWrapper.cancelNativeDeleteCleanup?.(
+									nativeDeleteCleanupToken,
+								);
+								return rollbackCommitted(
+									new Error(
+										`Native committed block ${preparedHash} is missing from the hot store`,
+									),
+									[preparedHash],
+								);
+							}
+							return durableWrapper
+								.mirrorToDurable(preparedHash, committedBytes, {
+									nativeTrimmed: nativeTrimmedHashes.includes(preparedHash),
+								})
+								.then(
+									(nativeCommitOwnershipToken) => {
+										lowerPublicationRollback!.lowerPublicationStarted = true;
+										return {
+											...preparedResult,
+											nativeCommitOwnershipToken,
+										};
+									},
+									(error) => {
+										durableWrapper.cancelNativeDeleteCleanup?.(
+											nativeDeleteCleanupToken,
+										);
+										return rollbackCommitted(error, [preparedHash]);
+									},
+								);
+						}
+						lowerPublicationRollback.lowerPublicationStarted = true;
+						return preparedResult;
+					}
+					await this.completeNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+					);
+					return prepared;
+				},
+			);
+			if (isPromiseLike(result)) {
+				result = result.catch(rollbackLowerPublication);
+			}
+		} catch (error) {
+			return rollbackLowerPublication(error);
 		}
-		return mapMaybePromise(result, (prepared) => {
+		if (!result) {
+			return this.completeNativeStrictDurableTransaction(
+				nativeStrictTransaction,
+			).then(() => undefined);
+		}
+		return mapMaybePromise(result, async (prepared) => {
 			if (!prepared) {
+				await this.completeNativeStrictDurableTransaction(
+					nativeStrictTransaction,
+				);
 				return undefined;
 			}
-			const rollback = (error: unknown): never => {
-				if (committedNativeBackboneDocumentIndex) {
-					backbone.deleteDocument(committedNativeBackboneDocumentIndex.key);
+			const rollback = async (error: unknown): Promise<never> => {
+				const rollbackFailures: unknown[] = [];
+				try {
+					await this.markNativeStrictDurableTransactionRollback(
+						nativeStrictTransaction,
+					);
+				} catch (rollbackError) {
+					const retentionFailures =
+						this.retainNativeStrictDurableTransactionAfterMarkerFailure(
+							nativeStrictTransaction,
+							prepared.nativeCommittedAppendFinalizer,
+							rollbackError,
+						);
+					throw new AggregateError(
+						[error, ...retentionFailures],
+						"Native rollback marker could not be persisted; recovery is required",
+					);
+				}
+				try {
+					await prepared.nativeCommittedAppendFinalizer?.rollback();
+				} catch (rollbackError) {
+					rollbackFailures.push(rollbackError);
+				}
+				try {
+					await this.rollbackNativeBackboneCoordinateAppendDurably(
+						prepared.appendFacts.hash,
+						lowerPublicationRollback?.coordinateEntries,
+					);
+					for (const document of lowerPublicationRollback?.documents ?? []) {
+						this.restoreNativeBackboneDocument(document);
+					}
+					const flushed = this.flushNativeBackboneCoordinateJournal();
+					if (isPromiseLike(flushed)) {
+						await flushed;
+					}
+				} catch (rollbackError) {
+					rollbackFailures.push(rollbackError);
+				}
+				if (rollbackFailures.length === 0) {
+					try {
+						await this.completeNativeStrictDurableTransaction(
+							nativeStrictTransaction,
+						);
+					} catch (rollbackError) {
+						rollbackFailures.push(rollbackError);
+					}
+				} else {
+					this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+				}
+				if (rollbackFailures.length > 0) {
+					throw new AggregateError(
+						[error, ...rollbackFailures],
+						"Shared-log append and compensation both failed",
+					);
 				}
 				throw error;
 			};
+			let finishResult: PreparedPayloadCommitOnlyResult<T, R> | undefined;
 			try {
-				const deferredCoordinateDeleteHashes =
-					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-						prepared.appendFacts,
-						prepared.removed,
-						prepared.materializeEntry,
-						{ removedHashes: prepared.removedHashes },
-					);
-				const deleteHashes =
-					deferredCoordinateDeleteHashes &&
-					deferredCoordinateDeleteHashes.length > 0
-						? deferredCoordinateDeleteHashes
-						: [];
+				await this.setNativeStrictDurableTransactionExpectedRows(
+					nativeStrictTransaction,
+					[prepared.shallowEntry],
+				);
 				const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
 					const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
 						prepared.appendFacts,
@@ -7084,19 +9309,36 @@ export class SharedLog<
 						appendCommit,
 					};
 				};
-				const completed =
-					deleteHashes.length === 0
-						? finish()
-						: mapMaybePromise(
-								this.deleteCoordinatesForHashes(deleteHashes),
-								finish,
-							);
-				return isPromiseLike(completed)
-					? completed.catch((error) => rollback(error))
-					: completed;
+				if (!prepared.nativeCommittedAppendFinalizer) {
+					throw new Error("Missing deferred native append finalizer");
+				}
+				// Strict success cannot honor batching thresholds: native
+				// coordinate/document/signer facts must be physically durable before
+				// the lower commit marker is acknowledged and its intent is retired.
+				await this.flushNativeBackboneCoordinateJournal();
+				await prepared.nativeCommittedAppendFinalizer.acknowledge(() =>
+					this.markNativeStrictDurableTransactionLowerMarker(
+						nativeStrictTransaction,
+					),
+				);
+				finishResult = finish();
 			} catch (error) {
 				return rollback(error);
 			}
+			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+				prepared.appendFacts,
+				prepared.removed,
+				prepared.materializeEntry,
+				{ removedHashes: prepared.removedHashes },
+			);
+			try {
+				await this.completeNativeStrictDurableTransaction(
+					nativeStrictTransaction,
+				);
+			} catch (error) {
+				warn(`Failed to retire committed native intent: ${String(error)}`);
+			}
+			return finishResult;
 		});
 	}
 
@@ -7144,7 +9386,17 @@ export class SharedLog<
 				this.remoteBlocks?.localStore !== backbone.blocks;
 			const durableWrapper = durableWrapperActive
 				? (this.remoteBlocks?.localStore as unknown as {
-						mirrorToDurable?: (cid: string, bytes: Uint8Array) => void;
+						beginNativeDeleteCleanup?: (cids: string[]) => number | undefined;
+						cancelNativeDeleteCleanup?: (cleanupToken: unknown) => void;
+						mirrorToDurable?: (
+							cid: string,
+							bytes: Uint8Array,
+							options?: { nativeTrimmed?: boolean },
+						) => Promise<unknown>;
+						rollbackFailedNativeCommits?: (
+							cids: string[],
+							restoreNativeCids?: string[],
+						) => Promise<void>;
 					})
 				: undefined;
 			const commitBlocksInBackbone =
@@ -7152,10 +9404,15 @@ export class SharedLog<
 				durableWrapperActive;
 			let nativeBackboneDocumentIndexCommitted = false;
 			let nativeBackboneDocumentDeleteCommitted = false;
-			let committedNativeBackboneDocumentIndex:
-				| NativeBackboneDocumentIndexCommitInput
+			let nativeDocumentRollback: NativeBackboneDocumentRollback | undefined;
+			let nativeCoordinateRollback:
+				| NativeBackboneCoordinateRollback<R>
 				| undefined;
-			const prepareBackboneAppend = (input: {
+			let nativeDeleteCleanupToken: unknown;
+			let nativeStrictTransaction:
+				| NativeStrictDurableTransactionHandle
+				| undefined;
+			const prepareBackboneAppend = async (input: {
 				wallTime: bigint;
 				logical: number;
 				gid: string;
@@ -7208,21 +9465,32 @@ export class SharedLog<
 						"Native backbone append cannot both put and delete a document index row",
 					);
 				}
-				const appendInputWithDocumentIndex = nativeBackboneDocumentIndexForAppend
-					? {
-							...appendInput,
-							documentIndex: {
-								...nativeBackboneDocumentIndexForAppend,
-								useLatestContext:
-									properties?.useNativeExistingDocumentContext === true,
-							},
-						}
-					: nativeBackboneDocumentDeleteKey
+				const appendInputWithDocumentIndex =
+					nativeBackboneDocumentIndexForAppend
 						? {
 								...appendInput,
-								documentDeleteKey: nativeBackboneDocumentDeleteKey,
+								documentIndex: {
+									...nativeBackboneDocumentIndexForAppend,
+									useLatestContext:
+										properties?.useNativeExistingDocumentContext === true,
+								},
 							}
-						: appendInput;
+						: nativeBackboneDocumentDeleteKey
+							? {
+									...appendInput,
+									documentDeleteKey: nativeBackboneDocumentDeleteKey,
+								}
+							: appendInput;
+				nativeDocumentRollback = this.snapshotNativeBackboneDocument(
+					nativeBackboneDocumentIndexForAppend ??
+						(nativeBackboneDocumentDeleteKey
+							? { key: nativeBackboneDocumentDeleteKey }
+							: undefined),
+				);
+				nativeStrictTransaction =
+					await this.beginNativeStrictDurableTransaction(
+						nativeDocumentRollback ? [nativeDocumentRollback] : [],
+					);
 				if (next.length === 0) {
 					if (commitBlocksInBackbone) {
 						if (
@@ -7267,31 +9535,81 @@ export class SharedLog<
 				}
 				if (nativeBackboneDocumentIndex) {
 					nativeBackboneDocumentIndexCommitted = true;
-					committedNativeBackboneDocumentIndex = nativeBackboneDocumentIndex;
 				}
 				nativeBackboneDocumentDeleteCommitted =
 					!!nativeBackboneDocumentDeleteKey;
 				const useTrimmedHashesOnly =
 					properties?.resolveTrimmedEntries === false;
-				if (durableWrapper?.mirrorToDurable) {
-					// The block was committed into the wasm map (commitBlocksInBackbone is
-					// true) but not into durable, because the log's finishBlocks path is
-					// left UNCHANGED for strict-native mode (getBytes only, no bytes, so
-					// no putKnown* through the wrapper). Mirror the just-committed block
-					// straight to the durable side so a non-replicating native node keeps
-					// it across a restart. mirrorToDurable tracks the write for
-					// error-surfacing.
-					const committedHash =
-						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
-					const committedBytes = committedHash
-						? backbone.blocks.get(committedHash)
-						: undefined;
-					if (committedBytes) {
-						durableWrapper.mirrorToDurable(committedHash!, committedBytes);
+				const nativeTrimmedHashes =
+					backboneAppend.trimmedHashes ??
+					backboneAppend.trimmed.map((entry) => entry.hash);
+				const committedHash =
+					backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+				const committedNext = backboneAppend.entry.next ?? next;
+				nativeCoordinateRollback = this.snapshotResidentCoordinateEntries([
+					...(committedHash ? [committedHash] : []),
+					...committedNext,
+					...nativeTrimmedHashes,
+				]);
+				await this.setNativeStrictDurableTransactionOperation(
+					nativeStrictTransaction,
+					committedHash ? [committedHash] : [],
+					nativeTrimmedHashes,
+					nativeCoordinateRollback,
+					combineCoordinateDeleteHashes(committedNext, nativeTrimmedHashes),
+				);
+				const rollbackCommitted = async (
+					cause: unknown,
+					committedCids: string[],
+				): Promise<never> => {
+					durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+					let compensated = false;
+					try {
+						await this.rollbackFailedNativeBackboneTransaction({
+							committedHashes: committedCids,
+							trimmedEntries: backboneAppend?.trimmed,
+							coordinateEntries: nativeCoordinateRollback,
+							documents: nativeDocumentRollback
+								? [nativeDocumentRollback]
+								: undefined,
+							durableWrapper,
+						});
+						compensated = true;
+					} catch {
+						// close/reopen completes recovery if durable compensation failed
 					}
+					if (compensated) {
+						await this.completeNativeStrictDurableTransaction(
+							nativeStrictTransaction,
+						);
+					} else {
+						this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+					}
+					return this.failNativeDurableCommit(cause, {
+						committedCids,
+						failedCids: committedCids,
+					});
+				};
+				if (
+					durableWrapper &&
+					commitBlocksInBackbone &&
+					nativeTrimmedHashes.length > 0 &&
+					!durableWrapper.beginNativeDeleteCleanup
+				) {
+					return rollbackCommitted(
+						new Error(
+							"Native durable block wrapper cannot preannounce trim cleanup",
+						),
+						committedHash ? [committedHash] : [],
+					);
 				}
-				return {
+				nativeDeleteCleanupToken = commitBlocksInBackbone
+					? durableWrapper?.beginNativeDeleteCleanup?.(nativeTrimmedHashes)
+					: undefined;
+				const preparedResult = {
 					...backboneAppend.entry,
+					nativeIndexMutationLockOwner:
+						nativeStrictTransaction?.lowerHashMutationLockOwner,
 					gid: backboneAppend.coordinate.gid,
 					getBytes: commitBlocksInBackbone
 						? (hash: string) => backbone.blocks.get(hash)
@@ -7302,8 +9620,63 @@ export class SharedLog<
 					trimmedEntryHashes: useTrimmedHashesOnly
 						? backboneAppend.trimmedHashes
 						: undefined,
+					nativeBlocksDeleted: commitBlocksInBackbone,
+					nativeDeleteCleanupToken,
 					documentPreviousContext: backboneAppend.documentPreviousContext,
 				};
+				if (durableWrapper?.mirrorToDurable) {
+					// The block was committed into the wasm map (commitBlocksInBackbone is
+					// true) but not into durable, because the log's finishBlocks path is
+					// left UNCHANGED for strict-native mode (getBytes only, no bytes, so
+					// no putKnown* through the wrapper). Returning the promise here prevents
+					// lower-log index/head/trim publication until the mirror settles.
+					if (!committedHash) {
+						durableWrapper.cancelNativeDeleteCleanup?.(
+							nativeDeleteCleanupToken,
+						);
+						return rollbackCommitted(
+							new Error("Native commit returned no entry CID to mirror"),
+							[],
+						);
+					}
+					const committedBytes =
+						backboneAppend.entry.bytes ?? backbone.blocks.get(committedHash);
+					if (!committedBytes) {
+						durableWrapper.cancelNativeDeleteCleanup?.(
+							nativeDeleteCleanupToken,
+						);
+						return rollbackCommitted(
+							new Error(
+								`Native committed block ${committedHash} is missing from the hot store`,
+							),
+							[committedHash],
+						);
+					}
+					return durableWrapper
+						.mirrorToDurable(committedHash, committedBytes, {
+							nativeTrimmed: nativeTrimmedHashes.includes(committedHash),
+						})
+						.then(
+							(nativeCommitOwnershipToken) => ({
+								...preparedResult,
+								nativeCommitOwnershipToken,
+							}),
+							(error) => {
+								durableWrapper.cancelNativeDeleteCleanup?.(
+									nativeDeleteCleanupToken,
+								);
+								return rollbackCommitted(error, [committedHash]);
+							},
+						);
+				}
+				if (durableWrapper) {
+					durableWrapper.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+					return rollbackCommitted(
+						new Error("Native durable block wrapper has no mirror method"),
+						committedHash ? [committedHash] : [],
+					);
+				}
+				return preparedResult;
 			};
 			const hasKnownNoNext =
 				appendOptions.meta?.next != null &&
@@ -7316,32 +9689,78 @@ export class SharedLog<
 						payloadData,
 						resolveTrimmedEntries: properties?.resolveTrimmedEntries,
 						skipMissingNextJoin: properties?.skipMissingNextJoin,
-						retainMaterializationBytes:
-							this._logProperties?.trim != null,
+						retainMaterializationBytes: this._logProperties?.trim != null,
+						deferNativeTransactionAcknowledgement: true,
 					},
 					prepareBackboneAppend,
 				);
-			const directNoNextResult = hasKnownNoNext
-				? asTrustedLowerLog(
-						this.log,
-					).appendLocallyPreparedNativeKnownNoNextCommitOnly(
-						undefined as T,
-						appendOptions,
-						{
-							payloadData,
-							resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-							retainMaterializationBytes:
-								this._logProperties?.trim != null,
-						},
-						prepareBackboneAppend,
-					)
-				: undefined;
-			const result =
-				directNoNextResult === undefined
-					? appendGenericNativeCommit()
-					: directNoNextResult;
-			return mapMaybePromise(result, (prepared) => {
+			const rollbackLowerPublication = async (
+				error: unknown,
+			): Promise<never> => {
+				durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+				let compensated = !backboneAppend;
+				if (backboneAppend && !(error instanceof NativeDurableCommitError)) {
+					const committedHash =
+						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+					try {
+						await this.rollbackFailedNativeBackboneTransaction({
+							committedHashes: committedHash ? [committedHash] : [],
+							coordinateEntries: nativeCoordinateRollback,
+							documents: nativeDocumentRollback
+								? [nativeDocumentRollback]
+								: undefined,
+							skipBlockCompensation: true,
+							restoreGraphFromIndex: true,
+						});
+						compensated = true;
+					} catch {
+						// Lower-log compensation already handled durable/native blocks.
+						// Preserve the index publication error for this caller.
+					}
+				}
+				if (compensated) {
+					await this.completeNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+					);
+				} else {
+					this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+				}
+				throw error;
+			};
+			let result: MaybePromise<
+				TrustedLowerLogCommitOnlyAppendResult<T> | undefined
+			>;
+			try {
+				const directNoNextResult = hasKnownNoNext
+					? asTrustedLowerLog(
+							this.log,
+						).appendLocallyPreparedNativeKnownNoNextCommitOnly(
+							undefined as T,
+							appendOptions,
+							{
+								payloadData,
+								resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+								retainMaterializationBytes: this._logProperties?.trim != null,
+								deferNativeTransactionAcknowledgement: true,
+							},
+							prepareBackboneAppend,
+						)
+					: undefined;
+				result =
+					directNoNextResult === undefined
+						? appendGenericNativeCommit()
+						: directNoNextResult;
+				if (isPromiseLike(result)) {
+					result = result.catch(rollbackLowerPublication);
+				}
+			} catch (error) {
+				return rollbackLowerPublication(error);
+			}
+			return mapMaybePromise(result, async (prepared) => {
 				if (!prepared || !backboneAppend) {
+					await this.completeNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+					);
 					return undefined;
 				}
 				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts(
@@ -7366,17 +9785,11 @@ export class SharedLog<
 					prepared.removedHashes ?? prepared.removed.map((entry) => entry.hash),
 				);
 				const rollbackCoordinateEntries =
-					this.snapshotResidentCoordinateEntries(plannedCoordinateDeleteHashes);
-				const deferredCoordinateDeleteHashes =
-					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-						prepared.appendFacts,
-						prepared.removed,
-						prepared.materializeEntry,
-						{
-							forgetNativeCoordinates: false,
-							removedHashes: prepared.removedHashes,
-						},
-					);
+					nativeCoordinateRollback ??
+					this.snapshotResidentCoordinateEntries([
+						prepared.appendFacts.hash,
+						...plannedCoordinateDeleteHashes,
+					]);
 				const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
 					const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
 						prepared.appendFacts,
@@ -7409,17 +9822,65 @@ export class SharedLog<
 				const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
 					EntryReplicated<R>
 				>;
-				const rollback = (error: unknown): never => {
-					this.rollbackNativeBackboneCoordinateAppend(
-						prepared.appendFacts.hash,
-						rollbackCoordinateEntries,
-					);
-					if (committedNativeBackboneDocumentIndex) {
-						backbone.deleteDocument(committedNativeBackboneDocumentIndex.key);
+				const rollback = async (error: unknown): Promise<never> => {
+					const rollbackFailures: unknown[] = [];
+					try {
+						await this.markNativeStrictDurableTransactionRollback(
+							nativeStrictTransaction,
+						);
+					} catch (rollbackError) {
+						const retentionFailures =
+							this.retainNativeStrictDurableTransactionAfterMarkerFailure(
+								nativeStrictTransaction,
+								prepared.nativeCommittedAppendFinalizer,
+								rollbackError,
+							);
+						throw new AggregateError(
+							[error, ...retentionFailures],
+							"Native rollback marker could not be persisted; recovery is required",
+						);
 					}
+					try {
+						await prepared.nativeCommittedAppendFinalizer?.rollback();
+					} catch (rollbackError) {
+						rollbackFailures.push(rollbackError);
+					}
+					try {
+						await this.rollbackNativeBackboneCoordinateAppendDurably(
+							prepared.appendFacts.hash,
+							rollbackCoordinateEntries,
+						);
+					} catch (rollbackError) {
+						rollbackFailures.push(rollbackError);
+					}
+					if (nativeDocumentRollback) {
+						try {
+							this.restoreNativeBackboneDocument(nativeDocumentRollback);
+							const flushed = this.flushNativeBackboneCoordinateJournal();
+							if (isPromiseLike(flushed)) {
+								await flushed;
+							}
+						} catch (rollbackError) {
+							rollbackFailures.push(rollbackError);
+						}
+					}
+					if (rollbackFailures.length > 0) {
+						this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+						throw new AggregateError(
+							[error, ...rollbackFailures],
+							"Shared-log append and compensation both failed",
+						);
+					}
+					await this.completeNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+					);
 					throw error;
 				};
 				try {
+					await this.setNativeStrictDurableTransactionExpectedRows(
+						nativeStrictTransaction,
+						[prepared.shallowEntry],
+					);
 					const hasNativeCoordinatePut =
 						this.canUseBackboneOnlyCoordinatePersistence() ||
 						coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
@@ -7429,7 +9890,7 @@ export class SharedLog<
 								coordinateIndex,
 								fields: coordinateFields,
 								hash: prepared.appendFacts.hash,
-								deleteHashes: plannedCoordinateDeleteHashes,
+								deleteHashes: [],
 								coordinates: backboneAppend.coordinate
 									.coordinates as NumberFromType<R>[],
 								skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
@@ -7437,46 +9898,69 @@ export class SharedLog<
 						: this.persistPreparedCoordinate({
 								prepared: getPreparedCoordinate(),
 								hash: prepared.appendFacts.hash,
-								nextHashes: prepared.appendFacts.next,
-								deleteHashes: deferredCoordinateDeleteHashes,
+								nextHashes: [],
+								deleteHashes: [],
 								coordinates: backboneAppend.coordinate
 									.coordinates as NumberFromType<R>[],
 								replicas: backboneAppend.coordinate.coordinates.length,
 								commitNative: true,
 								commitNativeBackbone: false,
 							});
-					const completed = mapMaybePromise(persisted, () => {
-						if (
-							commitBlocksInBackbone &&
-							!runtimeOnlyCoordinates &&
-							this.remoteBlocks.hasNotifyStoredHook()
-						) {
-							this.remoteBlocks.notifyStoredDeferred(prepared.appendFacts.hash);
-						}
-						const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-						if (!backboneAppend!.isLeader && !delayAdaptiveRebalance) {
-							const leaders = backboneAppend!.leaders;
-							if (leaders) {
-								const pruneEntry = this.materializePreparedCoordinateEntry(
-									getPreparedCoordinate(),
-								);
-								this.pruneDebouncedFnAddIfNotKeeping({
-									key: pruneEntry.hash,
-									value: { entry: pruneEntry, leaders },
-								});
-							}
-						}
-						if (!delayAdaptiveRebalance) {
-							this.rebalanceParticipationDebounced?.call();
-						}
-						return finish();
-					});
-					return isPromiseLike(completed)
-						? completed.catch((error) => rollback(error))
-						: completed;
+					if (isPromiseLike(persisted)) {
+						await persisted;
+					}
+					if (!prepared.nativeCommittedAppendFinalizer) {
+						throw new Error("Missing deferred native append finalizer");
+					}
+					await this.flushNativeBackboneCoordinateJournal();
+					await prepared.nativeCommittedAppendFinalizer.acknowledge(() =>
+						this.markNativeStrictDurableTransactionLowerMarker(
+							nativeStrictTransaction,
+						),
+					);
 				} catch (error) {
 					return rollback(error);
 				}
+				this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+					prepared.appendFacts,
+					prepared.removed,
+					prepared.materializeEntry,
+					{
+						forgetNativeCoordinates: false,
+						removedHashes: prepared.removedHashes,
+					},
+				);
+				try {
+					await this.completeNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+					);
+				} catch (error) {
+					warn(`Failed to retire committed native intent: ${String(error)}`);
+				}
+				if (
+					commitBlocksInBackbone &&
+					!runtimeOnlyCoordinates &&
+					this.remoteBlocks.hasNotifyStoredHook()
+				) {
+					this.remoteBlocks.notifyStoredDeferred(prepared.appendFacts.hash);
+				}
+				const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+				if (!backboneAppend.isLeader && !delayAdaptiveRebalance) {
+					const leaders = backboneAppend.leaders;
+					if (leaders) {
+						const pruneEntry = this.materializePreparedCoordinateEntry(
+							getPreparedCoordinate(),
+						);
+						this.pruneDebouncedFnAddIfNotKeeping({
+							key: pruneEntry.hash,
+							value: { entry: pruneEntry, leaders },
+						});
+					}
+				}
+				if (!delayAdaptiveRebalance) {
+					this.rebalanceParticipationDebounced?.call();
+				}
+				return finish();
 			});
 		});
 	}
@@ -7832,12 +10316,12 @@ export class SharedLog<
 		properties: PreparedPayloadsManyIndependentProperties<T> | undefined,
 		minReplicasValue: number,
 	): Promise<
-			| {
-					entries: Entry<T>[];
-					materializeEntries?: Array<() => Entry<T>>;
-					removed: ShallowOrFullEntry<T>[];
-					appendCommits: PreparedLocalAppendCommit<R>[];
-			  }
+		| {
+				entries: Entry<T>[];
+				materializeEntries?: Array<() => Entry<T>>;
+				removed: ShallowOrFullEntry<T>[];
+				appendCommits: PreparedLocalAppendCommit<R>[];
+		  }
 		| undefined
 	> {
 		const backbone = this._nativeBackbone;
@@ -7868,7 +10352,21 @@ export class SharedLog<
 			this.remoteBlocks?.localStore !== backbone.blocks;
 		const durableWrapper = durableWrapperActive
 			? (this.remoteBlocks?.localStore as unknown as {
-					mirrorToDurable?: (cid: string, bytes: Uint8Array) => void;
+					beginNativeDeleteCleanup?: (cids: string[]) => number | undefined;
+					cancelNativeDeleteCleanup?: (cleanupToken: unknown) => void;
+					mirrorToDurable?: (
+						cid: string,
+						bytes: Uint8Array,
+						options?: { nativeTrimmed?: boolean },
+					) => Promise<unknown>;
+					mirrorManyToDurable?: (
+						blocks: Array<readonly [cid: string, bytes: Uint8Array]>,
+						options?: { nativeTrimmedCids?: ReadonlySet<string> },
+					) => Promise<unknown>;
+					rollbackFailedNativeCommits?: (
+						cids: string[],
+						restoreNativeCids?: string[],
+					) => Promise<void>;
 				})
 			: undefined;
 		const usesLatestDocumentContext = documentIndexes.every(
@@ -7905,8 +10403,17 @@ export class SharedLog<
 		const context = await this.createLeaderSelectionContext();
 		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 		let backboneAppends: NativeBackboneAppendResult[] | undefined;
-		const appended =
-			await asTrustedLowerLog(
+		let batchDocumentRollbacks: NativeBackboneDocumentRollback[] = [];
+		let batchCoordinateRollback:
+			| NativeBackboneCoordinateRollback<R>
+			| undefined;
+		let nativeDeleteCleanupToken: unknown;
+		let nativeStrictTransaction:
+			| NativeStrictDurableTransactionHandle
+			| undefined;
+		let appended: TrustedLowerLogCommitOnlyAppendBatchResult<T> | undefined;
+		try {
+			appended = await asTrustedLowerLog(
 				this.log,
 			).appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
 				data,
@@ -7918,61 +10425,152 @@ export class SharedLog<
 					retainMaterializationBytes:
 						properties?.retainMaterializationBytes === true ||
 						this._logProperties?.trim != null,
+					deferNativeTransactionAcknowledgement: true,
 				},
-				(inputs) => {
+				async (inputs) => {
+					batchDocumentRollbacks = documentIndexes
+						.map((index) => this.snapshotNativeBackboneDocument(index))
+						.filter(
+							(value): value is NativeBackboneDocumentRollback => !!value,
+						);
+					nativeStrictTransaction =
+						await this.beginNativeStrictDurableTransaction(
+							batchDocumentRollbacks,
+						);
 					const documentDeleteTrimmedHeadsForAppend =
 						deleteTrimmedHeads && inputs[0]?.trimLengthTo != null;
-					backboneAppends =
-						usesLatestDocumentContext
-							? backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
-									{
-										entries: inputs.map((input, index) => ({
-											wallTime: input.wallTime,
-											logical: input.logical,
-											gid: input.gid,
-											type: input.type,
-											metaData: input.metaData,
-											payloadData: input.payloadData,
-											documentIndex: documentIndexes[index]!,
-										})),
-										replicas: minReplicasValue,
-										roleAgeMs: nativeLeaderOptions.roleAge,
-										now: nativeLeaderOptions.now,
-										selfHash: nativeLeaderOptions.selfHash,
-										selfReplicating: nativeLeaderOptions.selfReplicating,
-										resolveTrimmedEntries:
-											properties?.resolveTrimmedEntries,
-										documentByteElementIndexLimit:
-											byteElementIndexLimit,
-										documentDeleteTrimmedHeads:
-											documentDeleteTrimmedHeadsForAppend,
-										trimLengthTo: inputs[0]?.trimLengthTo,
-									},
-								)
-							: backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
-									{
-										entries: inputs.map((input, index) => ({
-											wallTime: input.wallTime,
-											logical: input.logical,
-											gid: input.gid,
-											type: input.type,
-											metaData: input.metaData,
-											payloadData: input.payloadData,
-											documentIndex: documentIndexes[index]!,
-										})),
-										replicas: minReplicasValue,
-										roleAgeMs: nativeLeaderOptions.roleAge,
-										now: nativeLeaderOptions.now,
-										selfHash: nativeLeaderOptions.selfHash,
-										selfReplicating: nativeLeaderOptions.selfReplicating,
-										documentByteElementIndexLimit:
-											byteElementIndexLimit,
-										documentDeleteTrimmedHeads:
-											documentDeleteTrimmedHeadsForAppend,
-										trimLengthTo: inputs[0]?.trimLengthTo,
-									},
-								);
-					return backboneAppends?.map((append) => ({
+					backboneAppends = usesLatestDocumentContext
+						? backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
+								{
+									entries: inputs.map((input, index) => ({
+										wallTime: input.wallTime,
+										logical: input.logical,
+										gid: input.gid,
+										type: input.type,
+										metaData: input.metaData,
+										payloadData: input.payloadData,
+										documentIndex: documentIndexes[index]!,
+									})),
+									replicas: minReplicasValue,
+									roleAgeMs: nativeLeaderOptions.roleAge,
+									now: nativeLeaderOptions.now,
+									selfHash: nativeLeaderOptions.selfHash,
+									selfReplicating: nativeLeaderOptions.selfReplicating,
+									resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+									documentByteElementIndexLimit: byteElementIndexLimit,
+									documentDeleteTrimmedHeads:
+										documentDeleteTrimmedHeadsForAppend,
+									trimLengthTo: inputs[0]?.trimLengthTo,
+								},
+							)
+						: backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactBatchTransaction(
+								{
+									entries: inputs.map((input, index) => ({
+										wallTime: input.wallTime,
+										logical: input.logical,
+										gid: input.gid,
+										type: input.type,
+										metaData: input.metaData,
+										payloadData: input.payloadData,
+										documentIndex: documentIndexes[index]!,
+									})),
+									replicas: minReplicasValue,
+									roleAgeMs: nativeLeaderOptions.roleAge,
+									now: nativeLeaderOptions.now,
+									selfHash: nativeLeaderOptions.selfHash,
+									selfReplicating: nativeLeaderOptions.selfReplicating,
+									documentByteElementIndexLimit: byteElementIndexLimit,
+									documentDeleteTrimmedHeads:
+										documentDeleteTrimmedHeadsForAppend,
+									trimLengthTo: inputs[0]?.trimLengthTo,
+								},
+							);
+					if (!backboneAppends) {
+						await this.completeNativeStrictDurableTransaction(
+							nativeStrictTransaction,
+						);
+						return undefined;
+					}
+					const committedAppends = backboneAppends;
+					const committedCids = committedAppends
+						.map((append) => append.entry.cid ?? append.entry.hash)
+						.filter((cid): cid is string => !!cid);
+					const nativeTrimmedHashSet = new Set(
+						committedAppends.flatMap(
+							(append) =>
+								append.trimmedHashes ??
+								append.trimmed.map((entry) => entry.hash),
+						),
+					);
+					const nativeTrimmedHashes = [...nativeTrimmedHashSet];
+					batchCoordinateRollback = this.snapshotResidentCoordinateEntries(
+						committedAppends.flatMap((append) => [
+							...((append.entry.cid ?? append.entry.hash)
+								? [append.entry.cid ?? append.entry.hash!]
+								: []),
+							...append.entry.next,
+							...(append.trimmedHashes ??
+								append.trimmed.map((entry) => entry.hash)),
+						]),
+					);
+					await this.setNativeStrictDurableTransactionOperation(
+						nativeStrictTransaction,
+						committedCids,
+						nativeTrimmedHashes,
+						batchCoordinateRollback,
+						committedAppends.flatMap((append) => [
+							...append.entry.next,
+							...(append.trimmedHashes ??
+								append.trimmed.map((entry) => entry.hash)),
+						]),
+					);
+					const rollbackCommitted = async (cause: unknown): Promise<never> => {
+						durableWrapper?.cancelNativeDeleteCleanup?.(
+							nativeDeleteCleanupToken,
+						);
+						let compensated = false;
+						try {
+							await this.rollbackFailedNativeBackboneTransaction({
+								committedHashes: committedCids,
+								trimmedEntries: committedAppends.flatMap(
+									(append) => append.trimmed,
+								),
+								coordinateEntries: batchCoordinateRollback,
+								documents: batchDocumentRollbacks,
+								durableWrapper,
+							});
+							compensated = true;
+						} catch {
+							// close/reopen completes recovery if durable compensation failed
+						}
+						if (compensated) {
+							await this.completeNativeStrictDurableTransaction(
+								nativeStrictTransaction,
+							);
+						} else {
+							this.releaseNativeStrictDurableTransaction(
+								nativeStrictTransaction,
+							);
+						}
+						return this.failNativeDurableCommit(cause, {
+							committedCids,
+							failedCids: committedCids,
+						});
+					};
+					if (
+						durableWrapper &&
+						nativeTrimmedHashes.length > 0 &&
+						!durableWrapper.beginNativeDeleteCleanup
+					) {
+						return rollbackCommitted(
+							new Error(
+								"Native durable block wrapper cannot preannounce trim cleanup",
+							),
+						);
+					}
+					nativeDeleteCleanupToken =
+						durableWrapper?.beginNativeDeleteCleanup?.(nativeTrimmedHashes);
+					const preparedRows = committedAppends.map((append) => ({
 						cid: append.entry.hash,
 						hash: append.entry.hash,
 						gid: append.coordinate.gid,
@@ -7982,49 +10580,290 @@ export class SharedLog<
 						metaBytes: append.entry.metaBytes,
 						hashDigestBytes: append.entry.hashDigestBytes,
 						getBytes: (hash: string) => backbone.blocks.get(hash),
+						nativeIndexMutationLockOwner:
+							nativeStrictTransaction?.lowerHashMutationLockOwner,
 						trimmedEntryHashes: append.trimmedHashes,
-						documentTrimmedHeadsProcessed:
-							append.documentTrimmedHeadsProcessed,
+						nativeBlocksDeleted: true,
+						nativeDeleteCleanupToken,
+						documentTrimmedHeadsProcessed: append.documentTrimmedHeadsProcessed,
 						documentPreviousContext: append.documentPreviousContext,
 					}));
+					if (!durableWrapper) {
+						return preparedRows;
+					}
+					if (!durableWrapper.mirrorManyToDurable) {
+						durableWrapper.cancelNativeDeleteCleanup?.(
+							nativeDeleteCleanupToken,
+						);
+						return rollbackCommitted(
+							new Error(
+								"Native durable block wrapper has no batch mirror method",
+							),
+						);
+					}
+					const durableMirrorBlocks: Array<
+						readonly [cid: string, bytes: Uint8Array]
+					> = [];
+					const missingCommittedCids: string[] = [];
+					let missingCommittedHash = false;
+					for (const backboneAppend of committedAppends) {
+						const committedHash =
+							backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+						if (!committedHash) {
+							missingCommittedHash = true;
+							continue;
+						}
+						// Earlier rows can be trimmed by later rows in this one native batch.
+						// The native result retains their bytes even though the final hot map
+						// no longer does; mirror those bytes, then let the explicit trim cleanup
+						// remove the durable copy.
+						const committedBytes =
+							backboneAppend.entry.bytes ?? backbone.blocks.get(committedHash);
+						if (!committedBytes) {
+							missingCommittedCids.push(committedHash);
+							continue;
+						}
+						durableMirrorBlocks.push([committedHash, committedBytes]);
+					}
+					// One strict putKnownMany WAL mutation gives the whole native batch one
+					// durability barrier instead of issuing and fsyncing one record per row.
+					const durableMirror =
+						durableMirrorBlocks.length > 0
+							? durableWrapper.mirrorManyToDurable(durableMirrorBlocks, {
+									nativeTrimmedCids: nativeTrimmedHashSet,
+								})
+							: Promise.resolve();
+					return Promise.allSettled([durableMirror]).then(async (settled) => {
+						const rejected =
+							settled[0]?.status === "rejected"
+								? (settled[0] as PromiseRejectedResult).reason
+								: undefined;
+						if (
+							missingCommittedHash ||
+							missingCommittedCids.length > 0 ||
+							rejected !== undefined
+						) {
+							durableWrapper.cancelNativeDeleteCleanup?.(
+								nativeDeleteCleanupToken,
+							);
+							const cause =
+								rejected === undefined
+									? new Error(
+											missingCommittedHash
+												? "Native batch commit returned an entry with no CID to mirror"
+												: `Native committed blocks are missing from the hot store: ${missingCommittedCids.join(", ")}`,
+										)
+									: rejected;
+							const rejectedCids =
+								cause instanceof NativeDurableCommitError
+									? cause.failedCids.filter((cid) =>
+											committedCids.includes(cid),
+										)
+									: durableMirrorBlocks.map(([cid]) => cid);
+							if (cause instanceof NativeDurableCommitError) {
+								cause.addCommitContext({
+									committedCids,
+									failedCids: [...missingCommittedCids, ...rejectedCids],
+								});
+							}
+							return rollbackCommitted(cause);
+						}
+						const nativeCommitOwnershipToken =
+							settled[0]?.status === "fulfilled" ? settled[0].value : undefined;
+						return preparedRows.map((row) => ({
+							...row,
+							nativeCommitOwnershipToken,
+						}));
+					});
 				},
 			);
-		if (!appended || !backboneAppends) {
-			return undefined;
-		}
-		const appendCommits: PreparedLocalAppendCommit<R>[] = [];
-		const runtimeOnlyCoordinates = options?.replicate === false;
-		for (let i = 0; i < appended.appendFacts.length; i++) {
-			const facts = appended.appendFacts[i]!;
-			const backboneAppend = backboneAppends[i]!;
-			if (durableWrapper?.mirrorToDurable) {
-				// The batch prepare committed each block into the wasm map; the log's
-				// finishBlocks path is left unchanged (getBytes only) to preserve
-				// strict-native mode, so mirror the committed block straight to durable
-				// so a non-replicating native node keeps it across a restart. Tracked
-				// for error-surfacing by mirrorToDurable.
-				const committedHash =
-					backboneAppend.entry.cid ?? backboneAppend.entry.hash;
-				const committedBytes = committedHash
-					? backbone.blocks.get(committedHash)
-					: undefined;
-				if (committedBytes) {
-					durableWrapper.mirrorToDurable(committedHash!, committedBytes);
+		} catch (error) {
+			durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
+			let compensated = !backboneAppends;
+			if (backboneAppends && !(error instanceof NativeDurableCommitError)) {
+				try {
+					await this.rollbackFailedNativeBackboneTransaction({
+						committedHashes: backboneAppends
+							.map((append) => append.entry.cid ?? append.entry.hash)
+							.filter((hash): hash is string => !!hash),
+						coordinateEntries: batchCoordinateRollback,
+						documents: batchDocumentRollbacks,
+						skipBlockCompensation: true,
+						restoreGraphFromIndex: true,
+					});
+					compensated = true;
+				} catch {
+					// Preserve the lower index publication failure.
 				}
 			}
-			const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts({
-				appendFacts: facts,
-				plan: backboneAppend.coordinate,
-			});
-			if (!coordinateFields) {
-				throw new Error(
-					"Native backbone batch append transaction returned mismatched coordinate facts",
+			if (!(error instanceof NativeDurableCommitError)) {
+				if (compensated) {
+					await this.completeNativeStrictDurableTransaction(
+						nativeStrictTransaction,
+					);
+				} else {
+					this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+				}
+			}
+			throw error;
+		}
+		if (!appended || !backboneAppends) {
+			await this.completeNativeStrictDurableTransaction(
+				nativeStrictTransaction,
+			);
+			return undefined;
+		}
+		const runtimeOnlyCoordinates = options?.replicate === false;
+		const rollbackBatch = async (error: unknown): Promise<never> => {
+			const rollbackFailures: unknown[] = [];
+			try {
+				await this.markNativeStrictDurableTransactionRollback(
+					nativeStrictTransaction,
+				);
+			} catch (rollbackError) {
+				const retentionFailures =
+					this.retainNativeStrictDurableTransactionAfterMarkerFailure(
+						nativeStrictTransaction,
+						appended.nativeCommittedAppendFinalizer,
+						rollbackError,
+					);
+				throw new AggregateError(
+					[error, ...retentionFailures],
+					"Native rollback marker could not be persisted; recovery is required",
 				);
 			}
-			const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
-				facts.next,
-				backboneAppend.trimmedHashes ?? [],
+			try {
+				await appended.nativeCommittedAppendFinalizer?.rollback();
+			} catch (rollbackError) {
+				rollbackFailures.push(rollbackError);
+			}
+			try {
+				await this.rollbackNativeBackboneCoordinateAppendDurably(
+					appended.appendFacts[0]?.hash ?? "",
+					batchCoordinateRollback,
+				);
+			} catch (rollbackError) {
+				rollbackFailures.push(rollbackError);
+			}
+			try {
+				for (const document of batchDocumentRollbacks) {
+					this.restoreNativeBackboneDocument(document);
+				}
+				const flushed = this.flushNativeBackboneCoordinateJournal();
+				if (isPromiseLike(flushed)) {
+					await flushed;
+				}
+			} catch (rollbackError) {
+				rollbackFailures.push(rollbackError);
+			}
+			if (rollbackFailures.length > 0) {
+				this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
+				throw new AggregateError(
+					[error, ...rollbackFailures],
+					"Shared-log append batch and compensation both failed",
+				);
+			}
+			await this.completeNativeStrictDurableTransaction(
+				nativeStrictTransaction,
 			);
+			throw error;
+		};
+		const coordinateRows: Array<{
+			facts: PreparedAppendFacts;
+			backboneAppend: NativeBackboneAppendResult;
+			coordinateFields: SharedLogCoordinateNativeFields<R>;
+			plannedCoordinateDeleteHashes: string[];
+		}> = [];
+		try {
+			const batchExternalNextHashes = new Set(
+				appended.appendFacts.flatMap((facts) => facts.next),
+			);
+			await this.setNativeStrictDurableTransactionExpectedRows(
+				nativeStrictTransaction,
+				appended.appendFacts.map(
+					(facts) =>
+						new ShallowEntry({
+							hash: facts.hash,
+							payloadSize: facts.payloadSize,
+							head: !batchExternalNextHashes.has(facts.hash),
+							meta: new ShallowMeta({
+								gid: facts.gid,
+								clock: new LamportClock({
+									id: facts.clockId ?? this.node.identity.publicKey.bytes,
+									timestamp: new Timestamp({
+										wallTime: facts.wallTime,
+										logical: facts.logical,
+									}),
+								}),
+								data: facts.metaData,
+								next: facts.next,
+								type: facts.type ?? EntryType.APPEND,
+							}),
+						}),
+				),
+			);
+			for (let i = 0; i < appended.appendFacts.length; i++) {
+				const facts = appended.appendFacts[i]!;
+				const backboneAppend = backboneAppends[i]!;
+				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts(
+					{
+						appendFacts: facts,
+						plan: backboneAppend.coordinate,
+					},
+				);
+				if (!coordinateFields) {
+					throw new Error(
+						"Native backbone batch append transaction returned mismatched coordinate facts",
+					);
+				}
+				const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
+					facts.next,
+					backboneAppend.trimmedHashes ?? [],
+				);
+				coordinateRows.push({
+					facts,
+					backboneAppend,
+					coordinateFields,
+					plannedCoordinateDeleteHashes,
+				});
+				const persisted = this.persistBackboneCoordinateFieldsNativeTransaction(
+					{
+						coordinateIndex: this.entryCoordinatesIndex as PutAndDeleteIndex<
+							EntryReplicated<R>
+						>,
+						fields: coordinateFields,
+						hash: facts.hash,
+						deleteHashes: [],
+						coordinates: backboneAppend.coordinate
+							.coordinates as NumberFromType<R>[],
+						skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
+					},
+				);
+				if (isPromiseLike(persisted)) {
+					await persisted;
+				}
+			}
+			if (!appended.nativeCommittedAppendFinalizer) {
+				throw new Error("Missing deferred native append batch finalizer");
+			}
+			await this.flushNativeBackboneCoordinateJournal();
+			await appended.nativeCommittedAppendFinalizer.acknowledge(() =>
+				this.markNativeStrictDurableTransactionLowerMarker(
+					nativeStrictTransaction,
+				),
+			);
+		} catch (error) {
+			return rollbackBatch(error);
+		}
+
+		const appendCommits: PreparedLocalAppendCommit<R>[] = [];
+		for (let i = 0; i < coordinateRows.length; i++) {
+			const {
+				facts,
+				backboneAppend,
+				coordinateFields,
+				plannedCoordinateDeleteHashes,
+			} = coordinateRows[i]!;
 			this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 				facts,
 				[],
@@ -8034,27 +10873,13 @@ export class SharedLog<
 					removedHashes: plannedCoordinateDeleteHashes,
 				},
 			);
-			const persisted = this.persistBackboneCoordinateFieldsNativeTransaction({
-				coordinateIndex: this.entryCoordinatesIndex as PutAndDeleteIndex<
-					EntryReplicated<R>
-				>,
-				fields: coordinateFields,
-				hash: facts.hash,
-				deleteHashes: plannedCoordinateDeleteHashes,
-				coordinates: backboneAppend.coordinate.coordinates as NumberFromType<R>[],
-				skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
-			});
-			if (isPromiseLike(persisted)) {
-				await persisted;
-			}
 			if (!runtimeOnlyCoordinates && this.remoteBlocks.hasNotifyStoredHook()) {
 				this.remoteBlocks.notifyStoredDeferred(facts.hash);
 			}
 			const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
 				facts,
 				{
-					hashNumber: backboneAppend.coordinate
-						.hashNumber as NumberFromType<R>,
+					hashNumber: backboneAppend.coordinate.hashNumber as NumberFromType<R>,
 					coordinateFields,
 				},
 			);
@@ -8064,6 +10889,13 @@ export class SharedLog<
 			appendCommit.documentPreviousContext =
 				backboneAppend.documentPreviousContext;
 			appendCommits.push(appendCommit);
+		}
+		try {
+			await this.completeNativeStrictDurableTransaction(
+				nativeStrictTransaction,
+			);
+		} catch (error) {
+			warn(`Failed to retire committed native intent: ${String(error)}`);
 		}
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!delayAdaptiveRebalance) {
@@ -8092,6 +10924,7 @@ export class SharedLog<
 		  }
 		| undefined
 	> {
+		this.throwIfNativeDurableCommitFailed();
 		if (data.length === 0) {
 			return { entries: [], removed: [], appendCommits: [] };
 		}
@@ -8120,15 +10953,11 @@ export class SharedLog<
 		}
 		const result = await asTrustedLowerLog(
 			this.log,
-		).appendLocallyPreparedManyIndependent(
-			data,
-			appendOptions,
-			{
-				resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-				payloadDatas: properties?.payloadDatas,
-				nexts: properties?.nexts,
-			},
-		);
+		).appendLocallyPreparedManyIndependent(data, appendOptions, {
+			resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+			payloadDatas: properties?.payloadDatas,
+			nexts: properties?.nexts,
+		});
 		if (!result) {
 			return undefined;
 		}
@@ -8216,7 +11045,10 @@ export class SharedLog<
 	private async appendLocallyPreparedPayloadsManyIndependent(
 		payloadDatas: Uint8Array[],
 		options?: SharedAppendOptions<T> | undefined,
-		properties?: Omit<PreparedPayloadsManyIndependentProperties<T>, "payloadDatas">,
+		properties?: Omit<
+			PreparedPayloadsManyIndependentProperties<T>,
+			"payloadDatas"
+		>,
 	) {
 		return this.appendLocallyPreparedManyIndependent(
 			new Array(payloadDatas.length) as T[],
@@ -8239,6 +11071,7 @@ export class SharedLog<
 		entries: Entry<T>[];
 		removed: ShallowOrFullEntry<T>[];
 	}> {
+		this.throwIfNativeDurableCommitFailed();
 		if (data.length === 0) {
 			return { entries: [], removed: [] };
 		}
@@ -9124,6 +11957,10 @@ export class SharedLog<
 	}
 
 	async open(options?: Args<T, D, R>): Promise<void> {
+		this.ensureNativeDurabilityRuntimeState();
+		this._nativeStrictDurableTransactionsClosing = false;
+		const recoveringNativeDurableFailure =
+			this._nativeDurableCommitFailure !== undefined;
 		options = applySharedLogNativeDefaults(
 			options,
 			(this.node as unknown as NodeWithSharedLogNativeDefaults)
@@ -9554,6 +12391,10 @@ export class SharedLog<
 		);
 
 		await remoteBlocksStartPromise;
+		// Failed native prepares can leave content-addressed bytes behind. Recovery
+		// deliberately preserves them: the reopened lower log is the liveness
+		// authority, while these unreachable bytes are safer than deleting a CID that
+		// may also belong to an acknowledged, restored, or concurrent operation.
 		const useNativeBackboneBlocks =
 			this._nativeBackbone && this._logProperties?.replicate === false;
 		const nativeBackboneGraph = this._nativeBackbone
@@ -9567,41 +12408,62 @@ export class SharedLog<
 		// joins rely on: a replicate:false observer syncing a head whose parents
 		// are not local would fail block resolution, and Log.join treats that as
 		// recoverable and skips the entry without persisting anything.
-		await this.log.open(
-			this.remoteBlocks,
-			this.node.identity,
-			{
-				keychain: this.node.services.keychain,
-				resolveRemotePeers: (hash, options) =>
-					this.resolveCandidatePeersForHash(hash, {
-						signal: options?.signal,
-						maxPeers: 8,
-					}),
-				...this._logProperties,
-				nativeGraph: nativeBackboneGraph
-					? {
-							graph: nativeBackboneGraph,
-							heads: this._logProperties?.nativeBackbone
-								? this._logProperties.nativeBackbone.heads
-								: undefined,
-						}
-					: (this._logProperties?.nativeGraph ?? { optional: true }),
-				onChange: async (change) => {
-					await this.onChange(change);
-					return this._logProperties?.onChange?.(change);
-				},
-				canAppend: async (entry) => {
-					if (!(await this.canAppend(entry))) {
-						return false;
+		await this.log.open(this.remoteBlocks, this.node.identity, {
+			keychain: this.node.services.keychain,
+			resolveRemotePeers: (hash, options) =>
+				this.resolveCandidatePeersForHash(hash, {
+					signal: options?.signal,
+					maxPeers: 8,
+				}),
+			...this._logProperties,
+			nativeGraph: nativeBackboneGraph
+				? {
+						graph: nativeBackboneGraph,
+						heads: this._logProperties?.nativeBackbone
+							? this._logProperties.nativeBackbone.heads
+							: undefined,
 					}
-					return this._logProperties?.canAppend?.(entry) ?? true;
-				},
-				trim: this._logProperties?.trim && {
-					...this._logProperties?.trim,
-				},
-				indexer: logIndex,
+				: (this._logProperties?.nativeGraph ?? { optional: true }),
+			onChange: async (change) => {
+				await this.onChange(change);
+				return this._logProperties?.onChange?.(change);
 			},
-		);
+			canAppend: async (entry) => {
+				if (!(await this.canAppend(entry))) {
+					return false;
+				}
+				return this._logProperties?.canAppend?.(entry) ?? true;
+			},
+			trim: this._logProperties?.trim && {
+				...this._logProperties?.trim,
+			},
+			indexer: logIndex,
+		});
+		try {
+			const recovered =
+				await this.recoverNativeStrictDurableTransactionIntent();
+			if (recovered) {
+				await this.reconcileNativeCoordinatesWithLowerCommitMarkers();
+			}
+		} catch (error) {
+			this.poisonNativeStrictDurableTransaction(error);
+			throw error;
+		}
+		// A fresh wrapper alone is not proof of recovery. Clear the cached poison
+		// only after the failed native transaction was compensated (or its pending
+		// native journals were deliberately discarded during close) and the lower log
+		// reopened successfully. Unreferenced content-addressed bytes are preserved;
+		// the reopened lower-log facts, not block presence, determine liveness.
+		if (
+			localBlocks instanceof NativeBackboneWriteThroughBlockStore &&
+			!localBlocks.getNativeDurableCommitFailure() &&
+			(!recoveringNativeDurableFailure ||
+				this._nativeDurableRecoveryReadyForReopen)
+		) {
+			this._nativeDurableCommitFailure = undefined;
+			this._nativeDurableRecoveryReadyForReopen = false;
+			this._nativeDurableRecoveryCids.clear();
+		}
 		const resolveHashesForSymbols = (
 			symbols: readonly bigint[] | BigUint64Array,
 		) => {
@@ -9882,6 +12744,10 @@ export class SharedLog<
 			await rangeIterator.close();
 		}
 		if (this._nativeBackboneCoordinatePersistence) {
+			// A previous explicit drop may have been interrupted after its durable
+			// tombstone was written. Complete that erase before the adapter can expose
+			// any stale coordinate or document state to this backbone.
+			await this._nativeBackboneCoordinatePersistence.resumeDrop?.();
 			await this._nativeBackboneCoordinatePersistence.hydrate(backbone);
 			this._nativeBackboneCoordinateJournalLastFlushMs = Date.now();
 			this.hydrateNativeCoordinateStateFromBackbone(backbone);
@@ -9916,6 +12782,63 @@ export class SharedLog<
 			}
 		} finally {
 			await iterator.close();
+		}
+	}
+
+	private async reconcileNativeCoordinatesWithLowerCommitMarkers() {
+		if (!this._nativeBackbone) {
+			return;
+		}
+		const hashes = new Set(this._residentEntryCoordinatesByHash?.keys() ?? []);
+		const iterator = this.entryCoordinatesIndex.iterate({});
+		try {
+			for (;;) {
+				const batch = await iterator.next(256);
+				if (batch.length === 0) {
+					break;
+				}
+				for (const result of batch) {
+					hashes.add(result.value.hash);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+		if (hashes.size === 0) {
+			return;
+		}
+		const committed = await this.log.entryIndex.hasMany(hashes);
+		const orphaned = [...hashes].filter((hash) => !committed.has(hash));
+		if (orphaned.length === 0) {
+			return;
+		}
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		if (coordinateIndex.delIdsNoReturn) {
+			await coordinateIndex.delIdsNoReturn(orphaned);
+		} else if (coordinateIndex.delIds) {
+			await coordinateIndex.delIds(orphaned);
+		} else {
+			await coordinateIndex.del({
+				query:
+					orphaned.length === 1
+						? { hash: orphaned[0]! }
+						: new Or(
+								orphaned.map(
+									(hash) => new StringMatch({ key: "hash", value: hash }),
+								),
+							),
+			});
+		}
+		for (const hash of orphaned) {
+			this._nativeBackbone.deleteEntryCoordinates(hash);
+			this._nativeSharedLogState?.deleteEntryCoordinates(hash);
+			this._residentEntryCoordinatesByHash?.delete(hash);
+		}
+		const flushed = this.flushNativeBackboneCoordinateJournal();
+		if (isPromiseLike(flushed)) {
+			await flushed;
 		}
 	}
 
@@ -9991,7 +12914,7 @@ export class SharedLog<
 
 		try {
 			const { createRangePlanner, createSharedLogState } = await import(
-				/* @vite-ignore */ "@peerbit/shared-log-rust",
+				/* @vite-ignore */ "@peerbit/shared-log-rust"
 			);
 			const [planner, state] = await Promise.all([
 				createRangePlanner(this.domain.resolution),
@@ -10021,7 +12944,10 @@ export class SharedLog<
 		options: SharedLogOptions<T, D, R>["nativeBackbone"],
 	): Promise<NativePeerbitBackbone | undefined> {
 		this._nativeBackboneCoordinatePersistence = undefined;
+		this._nativeBackboneCoordinatePersistenceStore = undefined;
+		this._nativeBackboneDropStarted = false;
 		this._nativeBackboneCoordinateJournalLastFlushMs = 0;
+		this._nativeStrictDurableTransactionJournalState = undefined;
 		if (!options) {
 			return undefined;
 		}
@@ -10066,6 +12992,17 @@ export class SharedLog<
 			// peer to re-derive from. Memory-only nodes (no directory) keep the
 			// previous in-memory behavior.
 			if (options.coordinatePersistence) {
+				if ("store" in options.coordinatePersistence) {
+					this._nativeBackboneCoordinatePersistenceStore =
+						options.coordinatePersistence.store;
+				} else if (options.coordinatePersistence.intentStore) {
+					this._nativeBackboneCoordinatePersistenceStore =
+						options.coordinatePersistence.intentStore;
+				} else if (this.node.directory != null) {
+					throw new Error(
+						"Durable nativeBackbone.coordinatePersistence adapters must expose intentStore",
+					);
+				}
 				this._nativeBackboneCoordinatePersistence =
 					createNativeBackboneCoordinatePersistence(
 						options.coordinatePersistence as RuntimeNativeBackboneCoordinatePersistenceConfig,
@@ -10075,6 +13012,34 @@ export class SharedLog<
 					await this.createAutoDerivedCoordinatePersistence(
 						nativeBackboneModule,
 					);
+			}
+			if (
+				this.node.directory != null &&
+				this._nativeBackboneCoordinatePersistence
+			) {
+				if (
+					this._nativeBackboneCoordinatePersistence.durableBarrier !== true ||
+					typeof this._nativeBackboneCoordinatePersistenceStore
+						?.durableBarrier !== "function"
+				) {
+					throw new Error(
+						"Durable nativeBackbone coordinate persistence requires an explicit physical durability barrier",
+					);
+				}
+			}
+			if (
+				this._nativeBackboneCoordinatePersistence &&
+				(this._nativeBackboneCoordinatePersistence.compactMaxJournalBytes !=
+					null ||
+					this._nativeBackboneCoordinatePersistence.compactMaxJournalRecords !=
+						null) &&
+				this._nativeBackboneCoordinatePersistence.crashSafeCompaction !== true
+			) {
+				// Durable custom adapters must explicitly advertise an atomic generation
+				// protocol before SharedLog permits automatic WAL compaction.
+				throw new Error(
+					"Durable native coordinate persistence compaction thresholds require crashSafeCompaction",
+				);
 			}
 			return backbone;
 		} catch (error) {
@@ -10142,6 +13107,7 @@ export class SharedLog<
 				directory: ["coordinates", namespace],
 			});
 		}
+		this._nativeBackboneCoordinatePersistenceStore = store;
 		return createNativeBackboneCoordinatePersistence({
 			store,
 			buffered: true,
@@ -11320,130 +14286,136 @@ export class SharedLog<
 	}
 
 	private async _close() {
-		this.cancelCurrentReplicationStateAnnouncementRetry();
-		this.replicationAnnouncementRetryDebounced = undefined;
-		if (!this._entryCoordinatesIndex && !this._replicationRangeIndex) {
-			return;
-		}
-		if (this._wireSyncSession) {
-			this._wireSyncSession.unregisterTopic(this.topic);
-			this._wireSyncSession = undefined;
-		}
-		await this.closeNativeBackboneCoordinatePersistence();
-		await this.syncronizer?.close();
-
-		for (const [_key, peerMap] of this.pendingMaturity ?? []) {
-			for (const [_key2, info] of peerMap) {
-				clearTimeout(info.timeout);
+		let firstError: unknown;
+		const capture = async (operation: () => Promise<unknown> | unknown) => {
+			try {
+				await operation();
+			} catch (error) {
+				firstError ??= error;
 			}
-		}
+		};
+		const captureSync = (operation: () => unknown) => {
+			try {
+				operation();
+			} catch (error) {
+				firstError ??= error;
+			}
+		};
+		captureSync(() => this.cancelCurrentReplicationStateAnnouncementRetry());
+		this.replicationAnnouncementRetryDebounced = undefined;
+		captureSync(() => {
+			if (this._wireSyncSession) {
+				this._wireSyncSession.unregisterTopic(this.topic);
+				this._wireSyncSession = undefined;
+			}
+		});
+		await capture(() => this.closeNativeBackboneCoordinatePersistence());
+		await capture(() => this.syncronizer?.close());
 
-		this.pendingMaturity?.clear();
-
-		this.distributeQueue?.clear();
-		this._closeFanoutChannel();
-		try {
-			this._providerHandle?.close();
-		} catch {
-			// ignore
-		}
+		captureSync(() => {
+			for (const [_key, peerMap] of this.pendingMaturity ?? []) {
+				for (const [_key2, info] of peerMap) clearTimeout(info.timeout);
+			}
+			this.pendingMaturity?.clear();
+			this.distributeQueue?.clear();
+		});
+		captureSync(() => this._closeFanoutChannel());
+		captureSync(() => this._providerHandle?.close());
 		this._providerHandle = undefined;
-		this.coordinateToHash?.clear();
-		this.recentlyRebalanced?.clear();
-		this.uniqueReplicators?.clear();
-		this._topicSubscribersCache?.clear();
-		this._closeController.abort();
-
-		clearInterval(this.interval);
-		this.stopReplicatorLivenessSweep();
-
-		this.node.services.pubsub.removeEventListener(
-			"subscribe",
-			this._onSubscriptionFn,
+		captureSync(() => {
+			this.coordinateToHash?.clear();
+			this.recentlyRebalanced?.clear();
+			this.uniqueReplicators?.clear();
+			this._topicSubscribersCache?.clear();
+			this._closeController.abort();
+			clearInterval(this.interval);
+			this.stopReplicatorLivenessSweep();
+		});
+		captureSync(() =>
+			this.node.services.pubsub.removeEventListener(
+				"subscribe",
+				this._onSubscriptionFn,
+			),
 		);
-
-		this.node.services.pubsub.removeEventListener(
-			"unsubscribe",
-			this._onUnsubscriptionFn,
+		captureSync(() =>
+			this.node.services.pubsub.removeEventListener(
+				"unsubscribe",
+				this._onUnsubscriptionFn,
+			),
 		);
-		for (const timer of this._repairRetryTimers ?? []) {
-			clearTimeout(timer);
-		}
-		this._repairRetryTimers?.clear();
-		this._recentRepairDispatch?.clear();
-		this._repairSweepRunning = false;
-		this._repairSweepPendingModes?.clear();
-		for (const peers of this._repairSweepPendingPeersByMode?.values() ?? []) {
-			peers.clear();
-		}
-		this._repairSweepOptimisticGidPeersPending?.clear();
-		this._entryKnownPeers?.clear();
-		this._entryKnownPeerObservedAt?.clear();
-		this._nativeSharedLogState?.clearEntryKnownPeers();
-		this._nativeBackbone?.clearEntryKnownPeers();
-		for (const timer of this._joinAuthoritativeRepairTimersByDelay?.values() ??
-			[]) {
-			clearTimeout(timer);
-		}
-		this._joinAuthoritativeRepairTimersByDelay?.clear();
-		this._joinAuthoritativeRepairPeersByDelay?.clear();
-		for (const targets of this._repairFrontierByMode?.values() ?? []) {
-			targets.clear();
-		}
-		for (const targets of this._repairFrontierActiveTargetsByMode?.values() ??
-			[]) {
-			targets.clear();
-		}
-		for (const targets of this._repairFrontierBypassKnownPeersByMode?.values() ??
-			[]) {
-			targets.clear();
-		}
-		if (this._appendBackfillTimer) {
-			clearTimeout(this._appendBackfillTimer);
-			this._appendBackfillTimer = undefined;
-		}
-		this._appendBackfillPendingByTarget?.clear();
+		captureSync(() => {
+			for (const timer of this._repairRetryTimers ?? []) clearTimeout(timer);
+			this._repairRetryTimers?.clear();
+			this._recentRepairDispatch?.clear();
+			this._repairSweepRunning = false;
+			this._repairSweepPendingModes?.clear();
+			for (const peers of this._repairSweepPendingPeersByMode?.values() ?? [])
+				peers.clear();
+			this._repairSweepOptimisticGidPeersPending?.clear();
+			this._entryKnownPeers?.clear();
+			this._entryKnownPeerObservedAt?.clear();
+			this._nativeSharedLogState?.clearEntryKnownPeers();
+			this._nativeBackbone?.clearEntryKnownPeers();
+			for (const timer of this._joinAuthoritativeRepairTimersByDelay?.values() ??
+				[])
+				clearTimeout(timer);
+			this._joinAuthoritativeRepairTimersByDelay?.clear();
+			this._joinAuthoritativeRepairPeersByDelay?.clear();
+			for (const targets of this._repairFrontierByMode?.values() ?? [])
+				targets.clear();
+			for (const targets of this._repairFrontierActiveTargetsByMode?.values() ??
+				[])
+				targets.clear();
+			for (const targets of this._repairFrontierBypassKnownPeersByMode?.values() ??
+				[])
+				targets.clear();
+			if (this._appendBackfillTimer) {
+				clearTimeout(this._appendBackfillTimer);
+				this._appendBackfillTimer = undefined;
+			}
+			this._appendBackfillPendingByTarget?.clear();
+			for (const [_key, value] of this._pendingIHave ?? []) value.clear();
+			if (this._pendingIHaveExpiryTimer) {
+				clearTimeout(this._pendingIHaveExpiryTimer);
+				this._pendingIHaveExpiryTimer = undefined;
+				this._pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
+			}
+		});
+		captureSync(() => this._checkedPrune.close());
 
-		for (const [_k, v] of this._pendingIHave ?? []) {
-			v.clear();
-		}
-		if (this._pendingIHaveExpiryTimer) {
-			clearTimeout(this._pendingIHaveExpiryTimer);
-			this._pendingIHaveExpiryTimer = undefined;
-			this._pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
-		}
-		this._checkedPrune.close();
-
-		await this.remoteBlocks?.stop?.();
-		this._pendingIHave?.clear();
-		this.latestReplicationInfoMessage?.clear();
-		this._gidPeersHistory?.clear();
-		this._peerSyncCapabilities?.clear();
-		this._liveRawGossipBatches?.clear();
-		this._nativeSharedLogState?.clearGidPeers();
-		this._nativeBackbone?.clearGidPeers();
-		// Cancel any pending debounced timers so they can't fire after we've torn down
-		// indexes/RPC state.
-		this.rebalanceParticipationDebounced?.close();
-		this.replicationChangeDebounceFn?.close?.();
-		this.pruneDebouncedFn?.close?.();
-		this.responseToPruneDebouncedFn?.close?.();
+		await capture(() => this.remoteBlocks?.stop?.());
+		captureSync(() => {
+			this._pendingIHave?.clear();
+			this.latestReplicationInfoMessage?.clear();
+			this._gidPeersHistory?.clear();
+			this._peerSyncCapabilities?.clear();
+			this._liveRawGossipBatches?.clear();
+			this._nativeSharedLogState?.clearGidPeers();
+			this._nativeBackbone?.clearGidPeers();
+		});
+		// Cancel every debounce independently so one faulty close hook cannot keep
+		// the remaining timers or indexes alive.
+		captureSync(() => this.rebalanceParticipationDebounced?.close());
+		captureSync(() => this.replicationChangeDebounceFn?.close?.());
+		captureSync(() => this.pruneDebouncedFn?.close?.());
+		captureSync(() => this.responseToPruneDebouncedFn?.close?.());
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
-		await Promise.all([
-			this._replicationRangeIndex?.stop?.(),
-			this._entryCoordinatesIndex?.stop?.(),
-		]);
+		await capture(() => this._replicationRangeIndex?.stop?.());
+		await capture(() => this._entryCoordinatesIndex?.stop?.());
 		this._replicationRangeIndex = undefined as any;
 		this._entryCoordinatesIndex = undefined as any;
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
 		this._residentEntryCoordinatesByHash = undefined;
+		captureSync(() => this.cpuUsage?.stop?.());
 
-		this.cpuUsage?.stop?.();
-		/* this._totalParticipation = 0; */
+		if (firstError !== undefined) {
+			throw firstError;
+		}
 	}
 	async close(from?: Program): Promise<boolean> {
+		this.ensureNativeDurabilityRuntimeState();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state.
@@ -11497,16 +14469,58 @@ export class SharedLog<
 		} catch {
 			// ignore: close should be resilient even if we were never fully started
 		}
-		const superClosed = await super.close(from);
-		if (!superClosed) {
-			return superClosed;
+		let firstError: unknown;
+		let superClosed = false;
+		try {
+			superClosed = await super.close(from);
+		} catch (error) {
+			firstError = error;
 		}
-		await this._close();
-		await this.log.close();
+		if (!superClosed && firstError === undefined) {
+			return false;
+		}
+		this._nativeStrictDurableTransactionsClosing = true;
+		let strictTransactionsSettled = false;
+		try {
+			await this.settleNativeStrictDurableTransactionsForClose();
+			strictTransactionsSettled = true;
+		} catch (error) {
+			firstError ??= error;
+		}
+		if (!strictTransactionsSettled) {
+			throw firstError;
+		}
+		try {
+			await this.log.close();
+		} catch (error) {
+			firstError ??= error;
+		}
+		try {
+			await this._close();
+		} catch (error) {
+			firstError ??= error;
+		}
+		if (firstError !== undefined) {
+			throw firstError;
+		}
 		return true;
 	}
 
 	async drop(from?: Program): Promise<boolean> {
+		this.ensureNativeDurabilityRuntimeState();
+		const nativePersistence = this._nativeBackboneCoordinatePersistence;
+		if (
+			nativePersistence &&
+			(typeof nativePersistence.drop !== "function" ||
+				typeof nativePersistence.resumeDrop !== "function" ||
+				nativePersistence.supportsDrop !== true ||
+				nativePersistence.dropIsTerminal !== true)
+		) {
+			// Reject before `super.drop()` can drop child programs or any lower index.
+			throw new Error(
+				"NativeBackbone coordinate persistence adapters must expose a terminal underlying drop capability and resumeDrop before SharedLog.drop() can erase their namespace",
+			);
+		}
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state (same reasoning as in `close()`).
@@ -11545,14 +14559,68 @@ export class SharedLog<
 			// ignore: drop should be resilient even if we were never fully started
 		}
 
-		const superDropped = await super.drop(from);
-		if (!superDropped) {
-			return superDropped;
+		let firstError: unknown;
+		let superDropped = false;
+		try {
+			superDropped = await super.drop(from);
+		} catch (error) {
+			firstError = error;
 		}
-		await this._entryCoordinatesIndex.drop();
-		await this._replicationRangeIndex.drop();
-		await this.log.drop();
-		await this._close();
+		if (!superDropped && firstError === undefined) {
+			return false;
+		}
+		this._nativeStrictDurableTransactionsClosing = true;
+		const capture = async (operation: () => Promise<unknown> | unknown) => {
+			try {
+				await operation();
+			} catch (error) {
+				firstError ??= error;
+			}
+		};
+		let strictTransactionsSettled = false;
+		try {
+			await this.settleNativeStrictDurableTransactionsForClose();
+			strictTransactionsSettled = true;
+		} catch (error) {
+			firstError ??= error;
+		}
+		if (!strictTransactionsSettled) {
+			throw firstError;
+		}
+		if (nativePersistence) {
+			this._nativeBackboneDropStarted = true;
+			try {
+				await nativePersistence.drop!(
+					this._nativeBackboneCoordinatePersistenceStore
+						? NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES
+						: [],
+				);
+			} catch (error) {
+				firstError ??= error;
+				// The adapter remains in its drop lifecycle, so this closes handles
+				// without flushing live journals over a partial erase.
+				await capture(() => this.log.close());
+				await capture(() => this._close());
+				throw firstError;
+			}
+			// These in-memory states only stop being recovery-authoritative after all
+			// six persistence files and both alternating intent slots are durably gone.
+			this._nativeStrictDurableTransactionJournalState = undefined;
+			this._nativeStrictDurableDocumentRecoveryDeferred = false;
+			this._nativeStrictDurableTransactionTail = undefined;
+			this._nativeStrictDurableTransactions?.clear();
+			this.clearNativeStrictDurableTransactionFailure();
+			this._nativeDurableCommitFailure = undefined;
+			this._nativeDurableRecoveryReadyForReopen = false;
+			this._nativeDurableRecoveryCids.clear();
+		}
+		await capture(() => this._entryCoordinatesIndex?.drop());
+		await capture(() => this._replicationRangeIndex?.drop());
+		await capture(() => this.log.drop());
+		await capture(() => this._close());
+		if (firstError !== undefined) {
+			throw firstError;
+		}
 		return true;
 	}
 
@@ -11609,6 +14677,7 @@ export class SharedLog<
 			? msg
 			: undefined;
 		try {
+			this.throwIfNativeDurableCommitFailed();
 			if (!context.from) {
 				throw new Error("Missing from in update role message");
 			}
@@ -11665,10 +14734,7 @@ export class SharedLog<
 				}
 				if (rawConfirmedHashes.size > 0 && !fromIsSelf) {
 					const rawConfirmStartedAt = syncProfileStart(syncProfile);
-					this.markEntriesKnownByPeer(
-						rawConfirmedHashes,
-						rawFrom.hashcode(),
-					);
+					this.markEntriesKnownByPeer(rawConfirmedHashes, rawFrom.hashcode());
 					await this.sendRepairConfirmation(rawFrom, rawConfirmedHashes);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, rawConfirmStartedAt, {
@@ -11736,8 +14802,7 @@ export class SharedLog<
 							hashes,
 							from: rawFrom,
 						});
-					rawPreparedReceiveSelectionValue =
-						await rawPreparedReceiveSelection;
+					rawPreparedReceiveSelectionValue = await rawPreparedReceiveSelection;
 					return rawPreparedReceiveSelectionValue;
 				};
 				// Receive fusion: when this message was resolved from the wire
@@ -11774,87 +14839,83 @@ export class SharedLog<
 								}
 							}
 						: undefined;
-				const prepareNativeBackboneExpectedColumnsAndSelection =
-					rawIsRepairHint
-						? undefined
-						: async ({
-								blocks,
-								hashes,
-								verifySignatures,
-							}: {
-								blocks: () => Uint8Array[];
-								hashes: string[];
-								verifySignatures: boolean;
-							}) => {
+				const prepareNativeBackboneExpectedColumnsAndSelection = rawIsRepairHint
+					? undefined
+					: async ({
+							blocks,
+							hashes,
+							verifySignatures,
+						}: {
+							blocks: () => Uint8Array[];
+							hashes: string[];
+							verifySignatures: boolean;
+						}) => {
+							if (
+								verifySignatures ||
+								!canDeferRawReceiveVerificationUntilNativeSelection
+							) {
+								return undefined;
+							}
+							try {
+								const replicaOptions = {
+									minReplicas: this.replicas.min?.getValue(this) || 1,
+									maxReplicas: this.replicas.max?.getValue(this),
+								};
+								const leaderSelectionContext =
+									await this.createLeaderSelectionContext();
+								const prepareOptions = {
+									verifySignatures: false as const,
+									...replicaOptions,
+									leaderOptions: this.createNativeLeaderOptions(
+										leaderSelectionContext,
+									),
+									fromHash: rawFrom.hashcode(),
+								};
+								let prepared:
+									| ReturnType<
+											NativePeerbitBackbone["prepareRawReceiveExpectedColumnsAndSelectionBatch"]
+									  >
+									| undefined;
+								const wireSession = this._wireSyncSession;
 								if (
-									verifySignatures ||
-									!canDeferRawReceiveVerificationUntilNativeSelection
+									stashBackedRawMessage &&
+									rawStashIndexes &&
+									wireSession &&
+									this._nativeBackbone
 								) {
+									prepared =
+										this._nativeBackbone.prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
+											wireSession,
+											stashBackedRawMessage.messageId,
+											rawStashIndexes,
+											hashes,
+											prepareOptions,
+										);
+								}
+								if (
+									!prepared &&
+									this._nativeBackbone
+										?.prepareRawReceiveExpectedColumnsAndSelectionBatch
+								) {
+									prepared =
+										this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+											blocks(),
+											hashes,
+											prepareOptions,
+										);
+								}
+								if (!prepared) {
 									return undefined;
 								}
-								try {
-									const replicaOptions = {
-										minReplicas:
-											this.replicas.min?.getValue(this) || 1,
-										maxReplicas: this.replicas.max?.getValue(this),
-									};
-									const leaderSelectionContext =
-										await this.createLeaderSelectionContext();
-									const prepareOptions = {
-										verifySignatures: false as const,
-										...replicaOptions,
-										leaderOptions:
-											this.createNativeLeaderOptions(
-												leaderSelectionContext,
-											),
-										fromHash: rawFrom.hashcode(),
-									};
-									let prepared:
-										| ReturnType<
-												NativePeerbitBackbone["prepareRawReceiveExpectedColumnsAndSelectionBatch"]
-										  >
-										| undefined;
-									const wireSession = this._wireSyncSession;
-									if (
-										stashBackedRawMessage &&
-										rawStashIndexes &&
-										wireSession &&
-										this._nativeBackbone
-									) {
-										prepared =
-											this._nativeBackbone.prepareStashedRawReceiveExpectedColumnsAndSelectionBatch(
-												wireSession,
-												stashBackedRawMessage.messageId,
-												rawStashIndexes,
-												hashes,
-												prepareOptions,
-											);
-									}
-									if (
-										!prepared &&
-										this._nativeBackbone
-											?.prepareRawReceiveExpectedColumnsAndSelectionBatch
-									) {
-										prepared =
-											this._nativeBackbone.prepareRawReceiveExpectedColumnsAndSelectionBatch(
-												blocks(),
-												hashes,
-												prepareOptions,
-											);
-									}
-									if (!prepared) {
-										return undefined;
-									}
-									rawPreparedReceiveSelectionValue =
-										prepared.selection;
-									rawPreparedReceiveSelection = Promise.resolve(
-										rawPreparedReceiveSelectionValue,
-									);
-									return { columns: prepared.columns };
-								} catch {
-									return undefined;
-								}
-							};
+								rawPreparedReceiveSelectionValue = prepared.selection;
+								rawPreparedReceiveSelection = Promise.resolve(
+									rawPreparedReceiveSelectionValue,
+								);
+								return { columns: prepared.columns };
+							} catch {
+								return undefined;
+							}
+						};
 				const rawMaterializeStartedAt = syncProfileStart(syncProfile);
 				const materializedRawMessage =
 					await materializeVerifiedRawExchangeHeadsMessage(
@@ -11885,8 +14946,10 @@ export class SharedLog<
 											from: rawFrom,
 											fromIsSelf,
 											syncProfile,
-											selection:
-												await getRawPreparedReceiveSelection(heads, hashes),
+											selection: await getRawPreparedReceiveSelection(
+												heads,
+												hashes,
+											),
 										}),
 							selectPreparedRawReceiveHashes: rawIsRepairHint
 								? undefined
@@ -11897,8 +14960,10 @@ export class SharedLog<
 											from: rawFrom,
 											fromIsSelf,
 											syncProfile,
-											selection:
-												await getRawPreparedReceiveSelection(heads, hashes),
+											selection: await getRawPreparedReceiveSelection(
+												heads,
+												hashes,
+											),
 										}),
 						},
 					);
@@ -11955,9 +15020,7 @@ export class SharedLog<
 
 				logger.trace(
 					`${this.node.identity.publicKey.hashcode()}: Recieved heads: ${
-						heads.length === 1
-							? headHashes[0]
-							: "#" + heads.length
+						heads.length === 1 ? headHashes[0] : "#" + heads.length
 					}, logId: ${this.log.idString}`,
 				);
 
@@ -12003,10 +15066,7 @@ export class SharedLog<
 					const fromIsSelf = context.from.equals(this.node.identity.publicKey);
 					const contextFromHash = context.from.hashcode();
 					if (!fromIsSelf) {
-						this.markEntriesKnownByPeer(
-							headHashes,
-							contextFromHash,
-						);
+						this.markEntriesKnownByPeer(headHashes, contextFromHash);
 					}
 
 					if (filteredHeads.length === 0) {
@@ -12112,8 +15172,7 @@ export class SharedLog<
 						};
 						if (
 							!isReplicating &&
-							rawPreparedReceiveSelectionValue
-								?.retainedGroupLeaderPlans &&
+							rawPreparedReceiveSelectionValue?.retainedGroupLeaderPlans &&
 							rawPreparedReceiveSelectionValue.retainedHashes.length ===
 								filteredHeadHashes.length &&
 							rawPreparedReceiveSelectionValue.retainedHashes.every(
@@ -12145,8 +15204,7 @@ export class SharedLog<
 										nativeRawGroupAssignmentPlans &&
 										!nativeRawGroupAssignmentPlans.every((plan) => {
 											const keepAsLeader =
-												plan.isLeader ||
-												(isRepairHint && plan.fromIsLeader);
+												plan.isLeader || (isRepairHint && plan.fromIsLeader);
 											const canKeepWithoutWait = isReplicating
 												? plan.isLeader
 												: keepAsLeader;
@@ -12233,13 +15291,11 @@ export class SharedLog<
 								maxReplicasFromNewEntries: plan.maxReplicasFromNewEntries,
 								maxMaxReplicas: plan.maxMaxReplicas,
 								leaderPlan: {
-									coordinates:
-										plan.coordinates as NumberFromType<R>[],
+									coordinates: plan.coordinates as NumberFromType<R>[],
 									coordinateStrings: plan.coordinateStrings,
 									leaders: new Map(),
 									isLeader: plan.isLeader,
-									assignedToRangeBoundary:
-										plan.assignedToRangeBoundary,
+									assignedToRangeBoundary: plan.assignedToRangeBoundary,
 								},
 								leaders: false,
 								isLeader: plan.isLeader,
@@ -12456,14 +15512,13 @@ export class SharedLog<
 					let usedNativeReceiveGroupLeaderPlans = false;
 					if (!isReplicating) {
 						let leaderPlans =
-							usedNativeRawGroupLeaderPlans ||
-							usedNativeRawGroupAssignmentPlans
+							usedNativeRawGroupLeaderPlans || usedNativeRawGroupAssignmentPlans
 								? receiveGroups.map((group) => group.leaderPlan!)
 								: usedNativeRawGroups && this._nativeBackbone
-								? await this.planNativeBackboneReceiveGroupLeaders(
-										receiveGroups,
-									)
-								: undefined;
+									? await this.planNativeBackboneReceiveGroupLeaders(
+											receiveGroups,
+										)
+									: undefined;
 						usedNativeReceiveGroupLeaderPlans = leaderPlans !== undefined;
 						leaderPlans ??= await this.planEntryLeaderBatch(
 							receiveGroups.map((group) => ({
@@ -12495,8 +15550,7 @@ export class SharedLog<
 								predecodedReplicaHits: receivePredecodedReplicaHits,
 								nativeRawGroups: usedNativeRawGroups,
 								nativeRawGroupIndexes: usedNativeRawGroupIndexes,
-								nativeRawGroupLeaderPlans:
-									usedNativeRawGroupLeaderPlans,
+								nativeRawGroupLeaderPlans: usedNativeRawGroupLeaderPlans,
 								nativeRawGroupAssignmentPlans:
 									usedNativeRawGroupAssignmentPlans,
 								nativeRawGroupLeaderPlansFromSelection:
@@ -12610,9 +15664,7 @@ export class SharedLog<
 							(group) =>
 								group.isLeader === false &&
 								group.fromIsLeader === false &&
-								group.entries.every(
-									(entry) => entry.gidRefrences.length === 0,
-								),
+								group.entries.every((entry) => entry.gidRefrences.length === 0),
 						);
 					if (canFastDropNativeRawReceive) {
 						const joinPlanStartedAt = syncProfileStart(syncProfile);
@@ -12661,21 +15713,15 @@ export class SharedLog<
 						receiveGroups.every(
 							(group) =>
 								group.leaders !== undefined &&
-								group.entries.every(
-									(entry) => entry.gidRefrences.length === 0,
-								),
+								group.entries.every((entry) => entry.gidRefrences.length === 0),
 						);
-					let canUseAllKeptNativeJoinPlan =
-						canUseNativeSynchronousJoinPlanBase;
+					let canUseAllKeptNativeJoinPlan = canUseNativeSynchronousJoinPlanBase;
 					if (canUseAllKeptNativeJoinPlan) {
 						for (const group of receiveGroups) {
 							const fromIsLeader = group.fromIsLeader ?? false;
 							const keepAsLeader =
 								group.isLeader === true || (isRepairHint && fromIsLeader);
-							if (
-								group.maxReplicasFromNewEntries <
-								group.maxReplicasFromHead
-							) {
+							if (group.maxReplicasFromNewEntries < group.maxReplicasFromHead) {
 								canUseAllKeptNativeJoinPlan = false;
 								break;
 							}
@@ -12714,10 +15760,7 @@ export class SharedLog<
 									immediateReplicatingLeaderPlanHits++;
 								}
 								if (group.fromIsLeader) {
-									this.addPeersToGidPeerHistory(
-										group.gid,
-										contextFromHashes,
-									);
+									this.addPeersToGidPeerHistory(group.gid, contextFromHashes);
 								}
 								for (const entry of group.entries) {
 									const hash = getExchangeHeadHash(entry);
@@ -12728,9 +15771,7 @@ export class SharedLog<
 								}
 							}
 							this.removePruneRequestsSent(cleanupHashes);
-							this._checkedPrune.clearConfirmedReplicatorsBatch(
-								cleanupHashes,
-							);
+							this._checkedPrune.clearConfirmedReplicatorsBatch(cleanupHashes);
 							nativeAllKeptJoinHashes = cleanupHashes;
 							joinPlans = [
 								{
@@ -12765,8 +15806,7 @@ export class SharedLog<
 										this.addPeersToGidPeerHistory(group.gid, [contextFromHash]);
 									}
 									if (
-										group.maxReplicasFromNewEntries <
-										group.maxReplicasFromHead
+										group.maxReplicasFromNewEntries < group.maxReplicasFromHead
 									) {
 										(maybeDelete || (maybeDelete = [])).push(group.entries);
 									}
@@ -12829,7 +15869,8 @@ export class SharedLog<
 													isLeader =
 														isLeader ||
 														this.node.identity.publicKey.hashcode() === key;
-													fromIsLeader = fromIsLeader || contextFromHash === key;
+													fromIsLeader =
+														fromIsLeader || contextFromHash === key;
 												},
 											},
 										);
@@ -12893,8 +15934,7 @@ export class SharedLog<
 									const entry = entries[i]!;
 									let shouldKeep = keepAsLeader;
 									if (!shouldKeep && this.keep) {
-										const keepResult =
-											getReceiveKeepDecision(entry);
+										const keepResult = getReceiveKeepDecision(entry);
 										shouldKeep = isPromiseLike(keepResult)
 											? await keepResult
 											: keepResult;
@@ -12952,8 +15992,7 @@ export class SharedLog<
 								immediateReplicatingLeaderPlanHits,
 								immediateReplicatingLeaderPlans:
 									immediateReplicatingLeaderPlans?.length ?? 0,
-								nativeSynchronousJoinPlan:
-									usedNativeSynchronousJoinPlan,
+								nativeSynchronousJoinPlan: usedNativeSynchronousJoinPlan,
 								nativeAllKeptJoinPlan: usedNativeAllKeptJoinPlan,
 							},
 						});
@@ -13039,15 +16078,10 @@ export class SharedLog<
 							!programOnChange &&
 							!!this.syncronizer.onEntryAddedHashes &&
 							this._pendingIHave.size === 0;
-						let mergeEntryByHash:
-							| Map<string, EntryWithRefs<any>>
-							| undefined;
+						let mergeEntryByHash: Map<string, EntryWithRefs<any>> | undefined;
 						const materializeMergedEntry = (hash: string) => {
 							mergeEntryByHash ??= new Map(
-								allToMerge.map((entry) => [
-									getExchangeHeadHash(entry),
-									entry,
-								]),
+								allToMerge.map((entry) => [getExchangeHeadHash(entry), entry]),
 							);
 							const entryRef = mergeEntryByHash.get(hash);
 							if (!entryRef) {
@@ -13129,9 +16163,7 @@ export class SharedLog<
 									nativeCommitVerifyAllHashes,
 									syncProfile,
 									(committedHashes) => {
-										nativePreparedCommittedHashes = new Set(
-											committedHashes,
-										);
+										nativePreparedCommittedHashes = new Set(committedHashes);
 									},
 								)
 							: undefined;
@@ -13197,10 +16229,9 @@ export class SharedLog<
 									__peerbitNativePreparedJoinCommit: nativePreparedJoinCommit,
 									__peerbitNativePreparedJoinCommitValidatesPlan:
 										nativePreparedJoinCommitValidatesPlan,
-									__peerbitOnPreparedJoinCommitted:
-										nativePreparedJoinCommit
-											? finishNativePreparedCoordinates
-											: undefined,
+									__peerbitOnPreparedJoinCommitted: nativePreparedJoinCommit
+										? finishNativePreparedCoordinates
+										: undefined,
 								},
 							));
 						if (!joinedPreparedFacts) {
@@ -13303,14 +16334,11 @@ export class SharedLog<
 							confirmedHashes.add(hash);
 						}
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
-						await this.pruneJoinedEntriesNoLongerLed(
-							allToMergeShallowEntries,
-							{
-								decodedReplicaCounts: receiveReplicaCounts,
-								reusableLeaderPlans: reusableCoordinatePlans,
-								profile: syncProfile,
-							},
-						);
+						await this.pruneJoinedEntriesNoLongerLed(allToMergeShallowEntries, {
+							decodedReplicaCounts: receiveReplicaCounts,
+							reusableLeaderPlans: reusableCoordinatePlans,
+							profile: syncProfile,
+						});
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, checkedPruneStartedAt, {
 								name: "sharedLog.receive.checkedPrune",
@@ -13369,9 +16397,7 @@ export class SharedLog<
 							)
 						: filteredHeadHashes;
 					if (hashesToClear.length > 0) {
-						this._nativeBackbone?.clearPreparedRawReceiveEntries(
-							hashesToClear,
-						);
+						this._nativeBackbone?.clearPreparedRawReceiveEntries(hashesToClear);
 					}
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, clearPreparedStartedAt, {
@@ -13380,8 +16406,7 @@ export class SharedLog<
 							entries: hashesToClear.length,
 							messages: 1,
 							details: {
-								nativeCommitted:
-									nativePreparedCommittedHashes?.size ?? 0,
+								nativeCommitted: nativePreparedCommittedHashes?.size ?? 0,
 							},
 						});
 					}
@@ -13456,30 +16481,25 @@ export class SharedLog<
 									nativeLeaderHints.presentBlockHashes?.size ??
 									countTruthyValues(nativeLeaderHints.presentBlocks) ??
 									0,
-								localLeaders:
-									nativeLeaderHints.nativeAllConfirmed
-										? msg.hashes.length
-										: nativeLeaderHints.localLeaderHashes.size ||
-											countTruthyValues(nativeLeaderHints.localLeaderFlags) ||
-											0,
-								plannedEntries:
-									nativeLeaderHints.nativeAllConfirmed
-										? msg.hashes.length
-										: nativeLeaderHints.replicaCounts.size ||
-											countPositiveValues(
-												nativeLeaderHints.replicaCountsByIndex,
-											) ||
-											0,
-								peerHistoryGids:
-									nativeLeaderHints.peerHistoryGids.length,
+								localLeaders: nativeLeaderHints.nativeAllConfirmed
+									? msg.hashes.length
+									: nativeLeaderHints.localLeaderHashes.size ||
+										countTruthyValues(nativeLeaderHints.localLeaderFlags) ||
+										0,
+								plannedEntries: nativeLeaderHints.nativeAllConfirmed
+									? msg.hashes.length
+									: nativeLeaderHints.replicaCounts.size ||
+										countPositiveValues(
+											nativeLeaderHints.replicaCountsByIndex,
+										) ||
+										0,
+								peerHistoryGids: nativeLeaderHints.peerHistoryGids.length,
 							},
 						});
 					}
 				} else {
 					const metadataStartedAt = syncProfileStart(syncProfile);
-					nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(
-						msg.hashes,
-					);
+					nativeEntryMetadata = this.getNativeLogEntryMetadataBatch(msg.hashes);
 					if (syncProfile) {
 						emitSyncProfileDuration(syncProfile, metadataStartedAt, {
 							name: "sharedLog.receive.requestPrune.nativeMetadata",
@@ -13529,8 +16549,7 @@ export class SharedLog<
 							details: {
 								localLeaders: nativeLeaderHints.localLeaderHashes.size,
 								plannedEntries: nativeLeaderHints.replicaCounts.size,
-								peerHistoryGids:
-									nativeLeaderHints.peerHistoryGids.length,
+								peerHistoryGids: nativeLeaderHints.peerHistoryGids.length,
 							},
 						});
 					}
@@ -13621,8 +16640,8 @@ export class SharedLog<
 						: nativeLeaderHints.presentBlocks
 							? !!nativeLeaderHints.presentBlocks[i]
 							: presentBlocks
-							? presentBlocks[i] === true
-							: await this.log.blocks.has(hash);
+								? presentBlocks[i] === true
+								: await this.log.blocks.has(hash);
 					if (
 						!presentBlocks &&
 						!nativeLeaderHints.presentBlockHashes &&
@@ -13657,13 +16676,15 @@ export class SharedLog<
 							}
 						} else {
 							const gid =
-								nativeEntryGid ?? nativeEntry?.gid ?? indexedEntry!.value.meta.gid;
+								nativeEntryGid ??
+								nativeEntry?.gid ??
+								indexedEntry!.value.meta.gid;
 							const replicaCountByIndex =
 								nativeLeaderHints.replicaCountsByIndex?.[i];
 							const replicas =
 								replicaCountByIndex != null && replicaCountByIndex > 0
 									? replicaCountByIndex
-									: nativeLeaderHints.replicaCounts.get(hash) ??
+									: (nativeLeaderHints.replicaCounts.get(hash) ??
 										decodeReplicas({
 											meta: {
 												data:
@@ -13671,7 +16692,7 @@ export class SharedLog<
 													nativeEntry?.data ??
 													indexedEntry!.value.meta.data,
 											},
-										}).getValue(this);
+										}).getValue(this));
 
 							if (
 								!nativeLeaderHints.peerHistoryRemovedFlags?.[i] &&
@@ -13732,8 +16753,7 @@ export class SharedLog<
 							let pendingIHave!: PendingIHave<T>;
 							pendingIHave = {
 								requesting,
-								resetTimeout: () =>
-									this.resetPendingIHaveTimeout(pendingIHave),
+								resetTimeout: () => this.resetPendingIHaveTimeout(pendingIHave),
 								clear: () => this.clearPendingIHaveTimeout(pendingIHave),
 								callback: async (entry: Entry<T>) => {
 									this.removePeerFromGidPeerHistory(from, entry.meta.gid);
@@ -13976,6 +16996,9 @@ export class SharedLog<
 				throw new Error("Unexpected message");
 			}
 		} catch (e: any) {
+			if (e instanceof NativeDurableCommitError) {
+				throw e;
+			}
 			if (
 				e instanceof AbortError ||
 				e instanceof NotStartedError ||
@@ -14003,20 +17026,26 @@ export class SharedLog<
 			}
 			logger.error(e);
 		} finally {
-			if (stashBackedRawMessage && stashBackedRawMessage.release()) {
-				const syncProfile = this._logProperties?.sync?.profile;
-				if (syncProfile) {
-					emitSyncProfileEvent(syncProfile, {
-						name: "sharedLog.rawReceive.wireStashRelease",
-						component: "shared-log",
-						entries: stashBackedRawMessage.heads.length,
-						messages: 1,
-						details: {
-							bytesMaterialized:
-								stashBackedRawMessage.bytesMaterializedCount,
-						},
-					});
+			try {
+				if (stashBackedRawMessage && stashBackedRawMessage.release()) {
+					const syncProfile = this._logProperties?.sync?.profile;
+					if (syncProfile) {
+						emitSyncProfileEvent(syncProfile, {
+							name: "sharedLog.rawReceive.wireStashRelease",
+							component: "shared-log",
+							entries: stashBackedRawMessage.heads.length,
+							messages: 1,
+							details: {
+								bytesMaterialized: stashBackedRawMessage.bytesMaterializedCount,
+							},
+						});
+					}
 				}
+			} finally {
+				// Every return and every locally swallowed receive error passes this
+				// boundary. Release a native wire stash exactly once first, then surface
+				// any durable mutation poison that arose while handling the message.
+				this.throwIfNativeDurableCommitFailed();
 			}
 		}
 	}
@@ -14173,6 +17202,7 @@ export class SharedLog<
 				  };
 		},
 	): Promise<void> {
+		this.throwIfNativeDurableCommitFailed();
 		let entriesToReplicate: Entry<T>[] = [];
 		const localHashes =
 			options?.replicate && this.log.length > 0
@@ -14909,7 +17939,8 @@ export class SharedLog<
 			this._checkedPrune.pendingDeletes.size > 0
 				? [...this._checkedPrune.pendingDeletes.keys()]
 				: [];
-		const nativeBackboneHintArrays = this._nativeBackbone as NativePeerbitBackbone & {
+		const nativeBackboneHintArrays = this
+			._nativeBackbone as NativePeerbitBackbone & {
 			planRequestPruneAllConfirmed?: (
 				hashes: Iterable<string>,
 				prunePeer: string,
@@ -14923,16 +17954,12 @@ export class SharedLog<
 		};
 		if (skipHashes.length === 0) {
 			const allConfirmed =
-				nativeBackboneHintArrays.planRequestPruneAllConfirmed?.(
-					hashes,
-					from,
-					{
-						...this.createNativeLeaderOptions(context),
-						omitPeerHistoryGids:
-							this._gidPeersHistory.size === 0 &&
-							this._nativeSharedLogState == null,
-					},
-				);
+				nativeBackboneHintArrays.planRequestPruneAllConfirmed?.(hashes, from, {
+					...this.createNativeLeaderOptions(context),
+					omitPeerHistoryGids:
+						this._gidPeersHistory.size === 0 &&
+						this._nativeSharedLogState == null,
+				});
 			if (allConfirmed?.allConfirmed) {
 				return {
 					localLeaderHashes: new Set(),
@@ -15612,34 +18639,53 @@ export class SharedLog<
 
 	private snapshotResidentCoordinateEntries(
 		hashes: Iterable<string>,
-	): Map<string, ResidentCoordinateEntry<R>> | undefined {
-		if (!this._residentEntryCoordinatesByHash) {
+	): NativeBackboneCoordinateRollback<R> | undefined {
+		const uniqueHashes = new Set([...hashes].filter(Boolean));
+		if (uniqueHashes.size === 0) {
 			return undefined;
 		}
-		const snapshot = new Map<string, ResidentCoordinateEntry<R>>();
-		for (const hash of new Set([...hashes].filter(Boolean))) {
-			const entry = this._residentEntryCoordinatesByHash.get(hash);
+		const entries = new Map<string, ResidentCoordinateEntry<R>>();
+		const generations = new Map<string, number>();
+		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
+			new Map());
+		for (const hash of uniqueHashes) {
+			const generation = (mutationGenerations.get(hash) ?? 0) + 1;
+			mutationGenerations.set(hash, generation);
+			generations.set(hash, generation);
+			const entry = this._residentEntryCoordinatesByHash?.get(hash);
 			if (entry) {
-				snapshot.set(hash, entry);
+				entries.set(hash, entry);
 			}
 		}
-		return snapshot.size === 0 ? undefined : snapshot;
+		return { hashes: uniqueHashes, entries, generations };
 	}
 
 	private rollbackNativeBackboneCoordinateAppend(
 		appendHash: string,
-		previousEntries?: Map<string, ResidentCoordinateEntry<R>>,
+		rollback?: NativeBackboneCoordinateRollback<R>,
 	): void {
 		const backbone = this._nativeBackbone;
 		if (!backbone) {
 			return;
 		}
-		backbone.deleteEntryCoordinates(appendHash);
-		this._residentEntryCoordinatesByHash?.delete(appendHash);
-		if (!previousEntries) {
-			return;
-		}
-		for (const [hash, entry] of previousEntries) {
+		const hashes = rollback?.hashes ?? new Set([appendHash]);
+		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
+			new Map());
+		for (const hash of hashes) {
+			const expectedGeneration = rollback?.generations.get(hash);
+			if (
+				expectedGeneration !== undefined &&
+				mutationGenerations.get(hash) !== expectedGeneration
+			) {
+				continue;
+			}
+			backbone.deleteEntryCoordinates(hash);
+			this._nativeSharedLogState?.deleteEntryCoordinates(hash);
+			this._residentEntryCoordinatesByHash?.delete(hash);
+			const entry = rollback?.entries.get(hash);
+			if (!entry) {
+				continue;
+			}
 			const fields = isEntryReplicated(entry)
 				? {
 						hash: entry.hash,
@@ -15660,7 +18706,53 @@ export class SharedLog<
 				requestedReplicas,
 				fields.hashNumber,
 			);
+			this._nativeSharedLogState?.putEntryCoordinates(
+				fields.hash,
+				fields.gid,
+				fields.coordinates,
+				fields.assignedToRangeBoundary,
+				requestedReplicas,
+				fields.hashNumber,
+			);
 			this._residentEntryCoordinatesByHash?.set(hash, entry);
+		}
+	}
+
+	private async rollbackNativeBackboneCoordinateAppendDurably(
+		appendHash: string,
+		rollback?: NativeBackboneCoordinateRollback<R>,
+	): Promise<void> {
+		this.rollbackNativeBackboneCoordinateAppend(appendHash, rollback);
+		const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
+			EntryReplicated<R>
+		>;
+		const hashes = rollback?.hashes ?? new Set([appendHash]);
+		const mutationGenerations = (this._nativeCoordinateMutationGenerations ??=
+			new Map());
+		for (const hash of hashes) {
+			const expectedGeneration = rollback?.generations.get(hash);
+			if (
+				expectedGeneration !== undefined &&
+				mutationGenerations.get(hash) !== expectedGeneration
+			) {
+				continue;
+			}
+			const previous = rollback?.entries.get(hash);
+			if (previous) {
+				await coordinateIndex.put(
+					this.materializeResidentCoordinateEntry(previous),
+				);
+			} else if (coordinateIndex.delIds) {
+				await coordinateIndex.delIds([hash]);
+			} else if (coordinateIndex.delIdsNoReturn) {
+				await coordinateIndex.delIdsNoReturn([hash]);
+			} else {
+				await coordinateIndex.del({ query: { hash } });
+			}
+		}
+		const flushed = this.flushNativeBackboneCoordinateJournal();
+		if (isPromiseLike(flushed)) {
+			await flushed;
 		}
 	}
 
@@ -15935,7 +19027,14 @@ export class SharedLog<
 	private flushNativeBackboneCoordinateJournal(): MaybePromise<void> {
 		const backbone = this._nativeBackbone;
 		const persistence = this._nativeBackboneCoordinatePersistence;
-		if (!backbone || !persistence) {
+		if (!backbone || !persistence || this._nativeBackboneDropStarted) {
+			return undefined;
+		}
+		if (
+			backbone.coordinatePendingJournalLength === 0 &&
+			backbone.documentPendingJournalLength === 0 &&
+			backbone.documentSignerPendingJournalLength === 0
+		) {
 			return undefined;
 		}
 		return mapMaybePromise(persistence.flushJournal(backbone), () => {
@@ -15947,7 +19046,7 @@ export class SharedLog<
 	private flushNativeBackboneCoordinateJournalOnAppend(): MaybePromise<void> {
 		const backbone = this._nativeBackbone;
 		const persistence = this._nativeBackboneCoordinatePersistence;
-		if (!backbone || !persistence) {
+		if (!backbone || !persistence || this._nativeBackboneDropStarted) {
 			return undefined;
 		}
 		if (persistence.flushJournalOnAppend) {
@@ -15991,6 +19090,25 @@ export class SharedLog<
 	private async closeNativeBackboneCoordinatePersistence(): Promise<void> {
 		const persistence = this._nativeBackboneCoordinatePersistence;
 		if (!persistence) {
+			return;
+		}
+		if (this._nativeBackboneDropStarted) {
+			// `drop()` owns the durable namespace lifecycle. Never flush the live wasm
+			// journals or invoke an ordinary custom close after its tombstone/erase has
+			// started: a close implementation that rewrites cached state could resurrect
+			// files after a successful terminal drop.
+			return;
+		}
+		if (
+			this._nativeDurableCommitFailure &&
+			!this._nativeDurableRecoveryReadyForReopen
+		) {
+			// The failed native transaction was never published by the lower log.
+			// Its coordinate/document/signer records are still only in the wasm
+			// pending journals. Closing without flushing discards that generation;
+			// the next backbone hydrates the last acknowledged checkpoint.
+			await persistence.close?.();
+			this._nativeDurableRecoveryReadyForReopen = true;
 			return;
 		}
 		await this.flushNativeBackboneCoordinateJournal();
@@ -16818,12 +19936,8 @@ export class SharedLog<
 				for (let i = 0; i < nativeGroups.length; i++) {
 					const group = nativeGroups[i]!;
 					const leaders = leaderSamples[i]!;
-					const shouldRetain = leaders.has(
-						leaderSelectionContext!.selfHash,
-					);
-					(shouldRetain ? retainedHashes : droppedHashes).push(
-						...group.hashes,
-					);
+					const shouldRetain = leaders.has(leaderSelectionContext!.selfHash);
+					(shouldRetain ? retainedHashes : droppedHashes).push(...group.hashes);
 				}
 			} else {
 				for (let i = 0; i < nativeGroups.length; i++) {
@@ -16833,9 +19947,7 @@ export class SharedLog<
 						return undefined;
 					}
 					const shouldRetain = leaderPlan.isLeader;
-					(shouldRetain ? retainedHashes : droppedHashes).push(
-						...group.hashes,
-					);
+					(shouldRetain ? retainedHashes : droppedHashes).push(...group.hashes);
 				}
 			}
 			if (droppedHashes.length === 0) {
@@ -16886,8 +19998,7 @@ export class SharedLog<
 					predecodedReplicaHits: selection.plannedHashCount,
 					nativeRawGroups: true,
 					nativeReceiveGroupLeaderPlans: true,
-					nativeReceiveGroupLeaderSamples:
-						selection.usedLeaderSamplePlans,
+					nativeReceiveGroupLeaderSamples: selection.usedLeaderSamplePlans,
 					nativePreparedFastDropPlan: selection.usedNativeFastDropPlan,
 					nativeFastDropEarly: true,
 				},
@@ -16931,11 +20042,11 @@ export class SharedLog<
 					nativeFastDrop: true,
 					nativeFastDropEarly: true,
 				},
-				});
-			}
-			backbone.clearPreparedRawReceiveEntries?.(selection.droppedHashes);
-			return true;
+			});
 		}
+		backbone.clearPreparedRawReceiveEntries?.(selection.droppedHashes);
+		return true;
+	}
 
 	private async selectNativePreparedRawReceiveHashes(properties: {
 		heads: RawEntryWithRefs[];
@@ -17464,13 +20575,13 @@ export class SharedLog<
 				const optimisticPeers = properties.optimisticGidPeersByMode
 					.get(mode)
 					?.get(entry.gid);
-					const broadRepairCandidatePlanning =
-						this.usesBroadRepairCandidatePlanning(mode);
-					for (const peer of modePeers) {
-						if (
-							!broadRepairCandidatePlanning &&
-							this.isEntryKnownByPeer(entry.hash, peer)
-						) {
+				const broadRepairCandidatePlanning =
+					this.usesBroadRepairCandidatePlanning(mode);
+				for (const peer of modePeers) {
+					if (
+						!broadRepairCandidatePlanning &&
+						this.isEntryKnownByPeer(entry.hash, peer)
+					) {
 						continue;
 					}
 					const wasOptimisticallyAssigned = optimisticPeers?.has(peer) === true;
@@ -18569,7 +21680,9 @@ export class SharedLog<
 			const hasFixedSelfRangeRemovalToZero =
 				localSegmentsAfterChange != null &&
 				localSegmentsAfterChange.length > 0 &&
-				localSegmentsAfterChange.every((segment) => segment.widthNormalized === 0);
+				localSegmentsAfterChange.every(
+					(segment) => segment.widthNormalized === 0,
+				);
 			const shouldRunLocalPruneScan =
 				hasFixedSelfRangeRemovalToZero ||
 				(this._isAdaptiveReplicating &&

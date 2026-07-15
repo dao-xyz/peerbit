@@ -1382,6 +1382,10 @@ export class SQLiteIndices implements types.Indices {
 		return this.properties.directory != null;
 	}
 
+	preservesDataOnStop(): boolean {
+		return this.properties.directory != null;
+	}
+
 	async start(): Promise<void> {
 		this.closed = false;
 

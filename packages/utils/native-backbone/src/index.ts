@@ -1281,10 +1281,10 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionEncodedDocument: Uint8Array,
 		documentProjectionSigner: Uint8Array | undefined,
 	) => unknown[];
-		prepare_plain_committed_no_next_storage_append_document_index_compact_transaction: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
+	prepare_plain_committed_no_next_storage_append_document_index_compact_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
 		type: number,
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
@@ -1297,31 +1297,31 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array,
 		documentExistingCreated: string,
 		documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			trimLengthTo: number | undefined,
-		) => unknown[];
-		prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_transaction?: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKey: string,
-			documentExistingCreated: string,
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			trimLengthTo: number | undefined,
-		) => unknown[];
-		prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
-			gids: string[],
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentExistingCreated: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_no_next_storage_append_document_index_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
@@ -1334,27 +1334,27 @@ type NativePeerbitBackboneHandle = {
 		documentValuePrefixBytes: Uint8Array[],
 		documentExistingCreated: string[],
 		documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			trimLengthTo: number | undefined,
-		) => unknown[][];
-		prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
-			gids: string[],
-			type: number,
-			metaDatas: Array<Uint8Array | undefined>,
-			payloadDatas: Uint8Array[],
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKeys: string[],
-			documentExistingCreated: string[],
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			trimLengthTo: number | undefined,
-		) => unknown[][];
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_no_next_storage_append_document_index_compact_plain_put_payload_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentExistingCreated: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction?: (
 		wallTimes: BigUint64Array,
 		logicals: Uint32Array,
@@ -1591,8 +1591,8 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number,
 	) => unknown[];
-		prepare_plain_committed_storage_append_transaction: (
-			wallTime: bigint,
+	prepare_plain_committed_storage_append_transaction: (
+		wallTime: bigint,
 		logical: number,
 		gid: string,
 		next: string[],
@@ -1603,25 +1603,25 @@ type NativePeerbitBackboneHandle = {
 		roleAgeMs: number,
 		now: string,
 		selfHash: string,
-			selfReplicating: boolean,
-			resolveTrimmedEntries: boolean,
-		) => unknown[];
-		prepare_plain_committed_storage_append_document_delete_transaction: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
-			next: string[],
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			resolveTrimmedEntries: boolean,
-			documentKey: string,
-		) => unknown[];
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_delete_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKey: string,
+	) => unknown[];
 	prepare_plain_committed_storage_append_document_index_transaction: (
 		wallTime: bigint,
 		logical: number,
@@ -1671,10 +1671,10 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigner: Uint8Array | undefined,
 		trimLengthTo: number | undefined,
 	) => unknown[];
-		prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_transaction?: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
+	prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
 		type: number,
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
@@ -1693,116 +1693,116 @@ type NativePeerbitBackboneHandle = {
 			| undefined,
 		documentProjectionEncodedDocument: Uint8Array | undefined,
 		documentProjectionSigner: Uint8Array | undefined,
-			requiredPreviousSignerPublicKey: Uint8Array,
-			trimLengthTo: number | undefined,
-		) => unknown[];
-			prepare_plain_committed_storage_append_document_index_latest_compact_transaction?: (
-				wallTime: bigint,
-				logical: number,
-				gid: string,
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKey: string,
-			documentValuePrefixBytes: Uint8Array,
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			documentProjectionPlan:
-				| NativeBackboneSimpleDocumentProjectionPlan
-				| undefined,
-			documentProjectionEncodedDocument: Uint8Array | undefined,
-				documentProjectionSigner: Uint8Array | undefined,
-				trimLengthTo: number | undefined,
-			) => unknown[];
-			prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_transaction?: (
-				wallTime: bigint,
-				logical: number,
-				gid: string,
-				type: number,
-				metaData: Uint8Array | undefined,
-				payloadData: Uint8Array,
-				replicas: number,
-				roleAgeMs: number,
-				now: string,
-				selfHash: string,
-				selfReplicating: boolean,
-				documentKey: string,
-				documentByteElementIndexLimit: number,
-				documentDeleteTrimmedHeads: boolean,
-				trimLengthTo: number | undefined,
-			) => unknown[];
-			prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_transaction?: (
-				wallTime: bigint,
-				logical: number,
-				gid: string,
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKey: string,
-			documentValuePrefixBytes: Uint8Array,
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			documentProjectionPlan:
-				| NativeBackboneSimpleDocumentProjectionPlan
-				| undefined,
-			documentProjectionEncodedDocument: Uint8Array | undefined,
-			documentProjectionSigner: Uint8Array | undefined,
-			requiredPreviousSignerPublicKey: Uint8Array,
-			trimLengthTo: number | undefined,
-		) => unknown[];
-		prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_transaction?: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKey: string,
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			documentProjectionPlanId: number,
-			documentProjectionEncodedDocument: Uint8Array,
-			documentProjectionSigner: Uint8Array | undefined,
-			trimLengthTo: number | undefined,
-		) => unknown[];
-		prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_transaction?: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKey: string,
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			documentProjectionPlanId: number,
-			documentProjectionSigner: Uint8Array | undefined,
-			trimLengthTo: number | undefined,
-		) => unknown[];
-		prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
+		requiredPreviousSignerPublicKey: Uint8Array,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_compact_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentValuePrefixBytes: Uint8Array,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlan:
+			| NativeBackboneSimpleDocumentProjectionPlan
+			| undefined,
+		documentProjectionEncodedDocument: Uint8Array | undefined,
+		documentProjectionSigner: Uint8Array | undefined,
+		requiredPreviousSignerPublicKey: Uint8Array,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionEncodedDocument: Uint8Array,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_transaction?: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKey: string,
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanId: number,
+		documentProjectionSigner: Uint8Array | undefined,
+		trimLengthTo: number | undefined,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_transaction: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
 		type: number,
 		metaData: Uint8Array | undefined,
 		payloadData: Uint8Array,
@@ -1859,10 +1859,10 @@ type NativePeerbitBackboneHandle = {
 		requiredPreviousSignerPublicKey: Uint8Array,
 		trimLengthTo: number | undefined,
 	) => unknown[][];
-			prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction?: (
-				wallTimes: BigUint64Array,
-				logicals: Uint32Array,
-				gids: string[],
+	prepare_plain_committed_storage_append_document_index_latest_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
 		payloadDatas: Uint8Array[],
@@ -1874,26 +1874,26 @@ type NativePeerbitBackboneHandle = {
 		documentKeys: string[],
 		documentValuePrefixBytes: Uint8Array[],
 		documentByteElementIndexLimit: number,
-				documentDeleteTrimmedHeads: boolean,
-				trimLengthTo: number | undefined,
-			) => unknown[][];
-			prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_batch_transaction?: (
-				wallTimes: BigUint64Array,
-				logicals: Uint32Array,
-				gids: string[],
-				type: number,
-				metaDatas: Array<Uint8Array | undefined>,
-				payloadDatas: Uint8Array[],
-				replicas: number,
-				roleAgeMs: number,
-				now: string,
-				selfHash: string,
-				selfReplicating: boolean,
-				documentKeys: string[],
-				documentByteElementIndexLimit: number,
-				documentDeleteTrimmedHeads: boolean,
-				trimLengthTo: number | undefined,
-			) => unknown[][];
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
 	prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_compact_batch_transaction?: (
 		wallTimes: BigUint64Array,
 		logicals: Uint32Array,
@@ -1913,9 +1913,9 @@ type NativePeerbitBackboneHandle = {
 		requiredPreviousSignerPublicKey: Uint8Array,
 		trimLengthTo: number | undefined,
 	) => unknown[][];
-		prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
 		gids: string[],
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
@@ -1931,34 +1931,34 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlanIds: Uint32Array,
 		documentProjectionEncodedDocuments: Uint8Array[],
-			documentProjectionSigners: Array<Uint8Array | undefined>,
-			trimLengthTo: number | undefined,
-		) => unknown[][];
-		prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
-			gids: string[],
-			type: number,
-			metaDatas: Array<Uint8Array | undefined>,
-			payloadDatas: Uint8Array[],
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			resolveTrimmedEntries: boolean,
-			documentKeys: string[],
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			documentProjectionPlanIds: Uint32Array,
-			documentProjectionEncodedDocuments: Uint8Array[],
-			documentProjectionSigners: Array<Uint8Array | undefined>,
-			requiredPreviousSignerPublicKey: Uint8Array,
-			trimLengthTo: number | undefined,
-		) => unknown[][];
-		prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKeys: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanIds: Uint32Array,
+		documentProjectionEncodedDocuments: Uint8Array[],
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		requiredPreviousSignerPublicKey: Uint8Array,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
 		gids: string[],
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
@@ -1973,33 +1973,33 @@ type NativePeerbitBackboneHandle = {
 		documentDeleteTrimmedHeads: boolean,
 		documentProjectionPlanIds: Uint32Array,
 		documentProjectionEncodedDocuments: Uint8Array[],
-			documentProjectionSigners: Array<Uint8Array | undefined>,
-			trimLengthTo: number | undefined,
-		) => unknown[][];
-		prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_compact_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
-			gids: string[],
-			type: number,
-			metaDatas: Array<Uint8Array | undefined>,
-			payloadDatas: Uint8Array[],
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			documentKeys: string[],
-			documentByteElementIndexLimit: number,
-			documentDeleteTrimmedHeads: boolean,
-			documentProjectionPlanIds: Uint32Array,
-			documentProjectionEncodedDocuments: Uint8Array[],
-			documentProjectionSigners: Array<Uint8Array | undefined>,
-			requiredPreviousSignerPublicKey: Uint8Array,
-			trimLengthTo: number | undefined,
-		) => unknown[][];
-		prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_batch_transaction?: (
-			wallTimes: BigUint64Array,
-			logicals: Uint32Array,
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_compact_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
+		gids: string[],
+		type: number,
+		metaDatas: Array<Uint8Array | undefined>,
+		payloadDatas: Uint8Array[],
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		documentKeys: string[],
+		documentByteElementIndexLimit: number,
+		documentDeleteTrimmedHeads: boolean,
+		documentProjectionPlanIds: Uint32Array,
+		documentProjectionEncodedDocuments: Uint8Array[],
+		documentProjectionSigners: Array<Uint8Array | undefined>,
+		requiredPreviousSignerPublicKey: Uint8Array,
+		trimLengthTo: number | undefined,
+	) => unknown[][];
+	prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_batch_transaction?: (
+		wallTimes: BigUint64Array,
+		logicals: Uint32Array,
 		gids: string[],
 		type: number,
 		metaDatas: Array<Uint8Array | undefined>,
@@ -2016,8 +2016,8 @@ type NativePeerbitBackboneHandle = {
 		documentProjectionSigners: Array<Uint8Array | undefined>,
 		trimLengthTo: number | undefined,
 	) => unknown[][];
-		prepare_plain_committed_storage_append_transaction_trim: (
-			wallTime: bigint,
+	prepare_plain_committed_storage_append_transaction_trim: (
+		wallTime: bigint,
 		logical: number,
 		gid: string,
 		next: string[],
@@ -2029,26 +2029,26 @@ type NativePeerbitBackboneHandle = {
 		now: string,
 		selfHash: string,
 		selfReplicating: boolean,
-			resolveTrimmedEntries: boolean,
-			trimLengthTo: number,
-		) => unknown[];
-		prepare_plain_committed_storage_append_document_delete_transaction_trim: (
-			wallTime: bigint,
-			logical: number,
-			gid: string,
-			next: string[],
-			type: number,
-			metaData: Uint8Array | undefined,
-			payloadData: Uint8Array,
-			replicas: number,
-			roleAgeMs: number,
-			now: string,
-			selfHash: string,
-			selfReplicating: boolean,
-			resolveTrimmedEntries: boolean,
-			documentKey: string,
-			trimLengthTo: number,
-		) => unknown[];
+		resolveTrimmedEntries: boolean,
+		trimLengthTo: number,
+	) => unknown[];
+	prepare_plain_committed_storage_append_document_delete_transaction_trim: (
+		wallTime: bigint,
+		logical: number,
+		gid: string,
+		next: string[],
+		type: number,
+		metaData: Uint8Array | undefined,
+		payloadData: Uint8Array,
+		replicas: number,
+		roleAgeMs: number,
+		now: string,
+		selfHash: string,
+		selfReplicating: boolean,
+		resolveTrimmedEntries: boolean,
+		documentKey: string,
+		trimLengthTo: number,
+	) => unknown[];
 	prepare_plain_committed_storage_append_document_index_transaction_trim: (
 		wallTime: bigint,
 		logical: number,
@@ -2091,15 +2091,10 @@ type NativeWireSyncSessionHandle = {
 	register_topic: (topic: string) => void;
 	unregister_topic: (topic: string) => boolean;
 	topic_count: () => number;
-	decode_and_verify_batch: (
-		frames: Uint8Array[],
-		nowMs: number,
-	) => Uint32Array;
+	decode_and_verify_batch: (frames: Uint8Array[], nowMs: number) => Uint32Array;
 	stashed_meta: (
 		id: Uint8Array,
-	) =>
-		| [string[], string[][], Uint32Array, Uint8Array, number]
-		| undefined;
+	) => [string[], string[][], Uint32Array, Uint8Array, number] | undefined;
 	stashed_blocks: (
 		id: Uint8Array,
 		indexes?: Uint32Array,
@@ -2393,10 +2388,7 @@ type NativeBackboneResidentRepairDispatchInput = Omit<
 	"entries"
 >;
 
-type NativeBackboneRepairDispatchPlan = Map<
-	string,
-	Map<string, string[]>
->;
+type NativeBackboneRepairDispatchPlan = Map<string, Map<string, string[]>>;
 
 type NativeBackboneCommittedEntry = {
 	cid: string;
@@ -2966,26 +2958,52 @@ export type NativeBackboneCoordinatePersistenceStore = {
 	/**
 	 * Appends `bytes` to the named file. Callers hand over ownership of
 	 * `bytes` and must not mutate it afterwards: buffering stores keep the
-	 * array until their next flush instead of copying it.
+	 * array until their next flush instead of copying it. A rejected append
+	 * must either leave the file unchanged or make later appends fail closed.
 	 */
 	append(name: string, bytes: Uint8Array): Promise<void>;
 	remove?(name: string): Promise<void>;
-	flush?(): Promise<void>;
-	close?(): Promise<void>;
+	/** Explicit physical durability barrier; its presence is a capability. */
+	durableBarrier?(name?: string): Promise<void>;
+	/** Override removal inference for wrappers whose remove method is conditional. */
+	supportsRemoval?: boolean;
+	/** Flush one named file when supported, otherwise the complete store. */
+	flush?(name?: string): Promise<void>;
+	close?(options?: { flush?: boolean }): Promise<void>;
 };
 
 export type NativeBackboneCoordinatePersistenceAdapter = {
+	/**
+	 * Optional durable capability used by higher layers for atomic operation
+	 * intents that must share this persistence lifecycle.
+	 */
+	intentStore?: NativeBackboneCoordinatePersistenceStore;
 	flushOnAppend?: boolean;
 	flushMaxPendingBytes?: number;
 	flushIntervalMs?: number;
 	compactMaxJournalBytes?: number;
 	compactMaxJournalRecords?: number;
+	/** Explicit opt-in for a generation-based, crash-atomic compaction protocol. */
+	crashSafeCompaction?: boolean;
+	/** Every acknowledged WAL/intent write crosses a physical durability barrier. */
+	durableBarrier?: boolean;
+	/** Drop is implemented by the underlying namespace, not only by a wrapper. */
+	supportsDrop?: boolean;
+	/** A successful drop owns handle cleanup and must not need ordinary close(). */
+	dropIsTerminal?: boolean;
 	hydrate(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number>;
 	flushJournalOnAppend?(
 		backbone: NativePeerbitBackbone,
 	): number | Promise<number>;
 	compact?(backbone: NativePeerbitBackbone): Promise<void>;
+	/**
+	 * Durably erase this adapter's configured files and any additional files
+	 * sharing the same namespace. A tombstone makes interrupted erases resumable.
+	 */
+	drop?(additionalFiles?: readonly string[]): Promise<void>;
+	/** Complete an interrupted drop before any native state is hydrated. */
+	resumeDrop?(): Promise<boolean>;
 	close?(): Promise<void>;
 };
 
@@ -3020,9 +3038,75 @@ const nativeBackboneCoordinatePersistenceFiles = {
 	documentSignerJournal: "document-signers.wal",
 } as const;
 
+export const nativeBackboneCoordinateDropTombstoneFile =
+	"native-backbone-drop.tombstone";
+
 export const defaultNativeBackboneCoordinateFlushMaxPendingBytes = 1024 * 1024;
+/** @deprecated Built-in coordinate persistence compaction is currently disabled. */
 export const defaultNativeBackboneCoordinateCompactMaxJournalBytes =
 	64 * 1024 * 1024;
+
+const nativeBackboneCoordinateCompactionDisabledMessage =
+	"Native backbone coordinate persistence compaction is disabled until snapshots use a crash-safe generation protocol";
+
+const nativeBackboneCoordinateJournalMagic = Uint8Array.from([
+	0x50, 0x42, 0x52, 0x49, 0x44, 0x58, 0x57, 0x31,
+]);
+
+const readCoordinateJournalU32 = (bytes: Uint8Array, offset: number): number =>
+	(bytes[offset]! |
+		(bytes[offset + 1]! << 8) |
+		(bytes[offset + 2]! << 16) |
+		(bytes[offset + 3]! << 24)) >>>
+	0;
+
+const coordinateJournalChecksum = (bytes: Uint8Array): number => {
+	let checksum = 0x811c9dc5;
+	for (const byte of bytes) {
+		checksum = Math.imul(checksum ^ byte, 0x01000193) >>> 0;
+	}
+	return checksum;
+};
+
+const hasCoordinateJournalMagic = (bytes: Uint8Array): boolean =>
+	bytes.byteLength >= nativeBackboneCoordinateJournalMagic.byteLength &&
+	nativeBackboneCoordinateJournalMagic.every(
+		(byte, index) => bytes[index] === byte,
+	);
+
+/**
+ * The Rust decoder intentionally stops at a torn/corrupt tail. Persistence
+ * must reject that tail before hydrate, otherwise a later append can land
+ * behind it and remain permanently invisible to replay.
+ */
+const validateCoordinateJournal = (
+	bytes: Uint8Array | undefined,
+	name: string,
+): void => {
+	if (!bytes || bytes.byteLength === 0) {
+		return;
+	}
+	let offset = hasCoordinateJournalMagic(bytes)
+		? nativeBackboneCoordinateJournalMagic.byteLength
+		: 0;
+	while (offset < bytes.byteLength) {
+		if (bytes.byteLength - offset < 8) {
+			throw new Error(`Native backbone ${name} has a torn record header`);
+		}
+		const length = readCoordinateJournalU32(bytes, offset);
+		const expectedChecksum = readCoordinateJournalU32(bytes, offset + 4);
+		const payloadOffset = offset + 8;
+		const end = payloadOffset + length;
+		if (!Number.isSafeInteger(end) || end > bytes.byteLength) {
+			throw new Error(`Native backbone ${name} has a torn record payload`);
+		}
+		const payload = bytes.subarray(payloadOffset, end);
+		if (coordinateJournalChecksum(payload) !== expectedChecksum) {
+			throw new Error(`Native backbone ${name} has a checksum mismatch`);
+		}
+		offset = end;
+	}
+};
 
 const resolveCoordinateFlushMaxPendingBytes = (
 	options: NativeBackboneCoordinatePersistenceOptions,
@@ -3046,7 +3130,8 @@ type NativeBackboneNodeFs = {
 };
 
 type NativeBackboneNodeAppendFileHandle = {
-	write(data: Uint8Array): Promise<unknown>;
+	write(data: Uint8Array): Promise<{ bytesWritten: number }>;
+	sync?(): Promise<unknown>;
 	close(): Promise<unknown>;
 };
 
@@ -3058,6 +3143,7 @@ type NativeBackboneOPFSFile = {
 type NativeBackboneOPFSSyncAccessHandle = {
 	getSize(): number;
 	write(buffer: Uint8Array, options?: { at?: number }): number;
+	truncate?(size: number): void;
 	flush?(): void;
 	close(): void;
 };
@@ -3091,6 +3177,29 @@ export type NativeBackboneOPFSDirectoryHandle = {
 const isNotFoundError = (error: unknown): boolean => {
 	const maybeError = error as { code?: string; name?: string } | undefined;
 	return maybeError?.code === "ENOENT" || maybeError?.name === "NotFoundError";
+};
+
+const isUnsupportedDirectorySyncError = (error: unknown): boolean => {
+	const code = (error as { code?: string } | undefined)?.code;
+	return (
+		code === "EISDIR" ||
+		code === "EINVAL" ||
+		code === "EPERM" ||
+		code === "ENOTSUP"
+	);
+};
+
+const validateCoordinatePersistenceWriteProgress = (
+	written: number,
+	remaining: number,
+	target: string,
+): number => {
+	if (!Number.isSafeInteger(written) || written <= 0 || written > remaining) {
+		throw new Error(
+			`Invalid ${target} write progress: ${String(written)} for ${remaining} remaining bytes`,
+		);
+	}
+	return written;
 };
 
 // Non-literal specifiers keep browser bundlers (esbuild statically resolves
@@ -3131,6 +3240,94 @@ const validateCoordinatePersistenceName = (name: string): string => {
 		);
 	}
 	return name;
+};
+
+type NativeBackboneCoordinateDropTombstoneBody = {
+	format: "peerbit-native-backbone-coordinate-drop";
+	version: 1;
+	files: string[];
+};
+
+type NativeBackboneCoordinateDropTombstone =
+	NativeBackboneCoordinateDropTombstoneBody & {
+		checksum: string;
+	};
+
+const nativeBackboneCoordinateDropTombstoneBodyBytes = (
+	body: NativeBackboneCoordinateDropTombstoneBody,
+): Uint8Array => new TextEncoder().encode(JSON.stringify(body));
+
+const nativeBackboneCoordinateDropChecksum = (bytes: Uint8Array): string => {
+	let checksum = 0xffffffff;
+	for (const byte of bytes) {
+		checksum ^= byte;
+		for (let bit = 0; bit < 8; bit++) {
+			checksum = (checksum >>> 1) ^ (checksum & 1 ? 0xedb88320 : 0);
+		}
+	}
+	return ((checksum ^ 0xffffffff) >>> 0).toString(16).padStart(8, "0");
+};
+
+const nativeBackboneCoordinateDropTombstoneBytes = (
+	files: readonly string[],
+): Uint8Array => {
+	const body: NativeBackboneCoordinateDropTombstoneBody = {
+		format: "peerbit-native-backbone-coordinate-drop",
+		version: 1,
+		files: [...files],
+	};
+	return new TextEncoder().encode(
+		JSON.stringify({
+			...body,
+			checksum: nativeBackboneCoordinateDropChecksum(
+				nativeBackboneCoordinateDropTombstoneBodyBytes(body),
+			),
+		} satisfies NativeBackboneCoordinateDropTombstone),
+	);
+};
+
+const parseNativeBackboneCoordinateDropTombstone = (
+	bytes: Uint8Array,
+): NativeBackboneCoordinateDropTombstoneBody => {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(new TextDecoder().decode(bytes));
+	} catch (error) {
+		throw new Error("Invalid native backbone drop tombstone JSON", {
+			cause: error,
+		});
+	}
+	const candidate = parsed as Partial<NativeBackboneCoordinateDropTombstone>;
+	if (
+		!candidate ||
+		candidate.format !== "peerbit-native-backbone-coordinate-drop" ||
+		candidate.version !== 1 ||
+		!Array.isArray(candidate.files) ||
+		candidate.files.some((name) => typeof name !== "string") ||
+		typeof candidate.checksum !== "string"
+	) {
+		throw new Error("Invalid native backbone drop tombstone");
+	}
+	const files = candidate.files.map(validateCoordinatePersistenceName);
+	if (
+		new Set(files).size !== files.length ||
+		files.includes(nativeBackboneCoordinateDropTombstoneFile)
+	) {
+		throw new Error("Invalid native backbone drop tombstone file set");
+	}
+	const body: NativeBackboneCoordinateDropTombstoneBody = {
+		format: "peerbit-native-backbone-coordinate-drop",
+		version: 1,
+		files,
+	};
+	if (
+		nativeBackboneCoordinateDropChecksum(
+			nativeBackboneCoordinateDropTombstoneBodyBytes(body),
+		) !== candidate.checksum
+	) {
+		throw new Error("Native backbone drop tombstone checksum mismatch");
+	}
+	return body;
 };
 
 const concatBytes = (chunks: Uint8Array[]): Uint8Array => {
@@ -3598,8 +3795,12 @@ const metadataEntryFromRow = (row: unknown) => {
 		Uint8Array | undefined,
 		number | undefined,
 	];
-	const entry: { hash: string; gid: string; data?: Uint8Array; replicas?: number } =
-		{ hash, gid, data };
+	const entry: {
+		hash: string;
+		gid: string;
+		data?: Uint8Array;
+		replicas?: number;
+	} = { hash, gid, data };
 	if (replicas != null) {
 		entry.replicas = replicas;
 	}
@@ -3615,8 +3816,12 @@ const requestPruneEntryFromRow = (
 		number | undefined,
 		Uint8Array | undefined,
 	];
-	const entry: { hash: string; gid: string; data?: Uint8Array; replicas?: number } =
-		{ hash, gid };
+	const entry: {
+		hash: string;
+		gid: string;
+		data?: Uint8Array;
+		replicas?: number;
+	} = { hash, gid };
 	if (replicas != null) {
 		entry.replicas = replicas;
 	}
@@ -3997,7 +4202,11 @@ const validateNativeBackboneCoordinateCommitColumns = (
 	) {
 		throw new Error("Expected equal native coordinate commit column lengths");
 	}
-	if (columns.hashNumberValues || columns.coordinateCounts || columns.coordinateValues) {
+	if (
+		columns.hashNumberValues ||
+		columns.coordinateCounts ||
+		columns.coordinateValues
+	) {
 		if (
 			!columns.hashNumberValues ||
 			!columns.coordinateCounts ||
@@ -4005,7 +4214,9 @@ const validateNativeBackboneCoordinateCommitColumns = (
 			columns.hashNumberValues.length !== length ||
 			columns.coordinateCounts.length !== length
 		) {
-			throw new Error("Expected equal native coordinate numeric column lengths");
+			throw new Error(
+				"Expected equal native coordinate numeric column lengths",
+			);
 		}
 		let coordinateCount = 0;
 		for (const count of columns.coordinateCounts) {
@@ -4021,7 +4232,11 @@ const validateNativeBackboneCoordinateCommitColumns = (
 	) {
 		throw new Error("Expected equal native coordinate replica column lengths");
 	}
-	if (columns.hashNumbers || columns.coordinateBatches || columns.requestedReplicas) {
+	if (
+		columns.hashNumbers ||
+		columns.coordinateBatches ||
+		columns.requestedReplicas
+	) {
 		if (
 			!columns.hashNumbers ||
 			!columns.coordinateBatches ||
@@ -4072,7 +4287,11 @@ const nativeBackboneCoordinateCommitStringColumns = (
 		"hashNumbers" | "coordinateBatches" | "requestedReplicas"
 	>
 > => {
-	if (columns.hashNumbers && columns.coordinateBatches && columns.requestedReplicas) {
+	if (
+		columns.hashNumbers &&
+		columns.coordinateBatches &&
+		columns.requestedReplicas
+	) {
 		return {
 			hashNumbers: columns.hashNumbers,
 			coordinateBatches: columns.coordinateBatches,
@@ -4193,8 +4412,7 @@ const rawReceivePreparedFactsFromColumns = ([
 				requestedReplicas[i] && requestedReplicas[i] > 0
 					? requestedReplicas[i]
 					: undefined,
-			hashNumber:
-				hashNumbers[i] == null ? undefined : String(hashNumbers[i]),
+			hashNumber: hashNumbers[i] == null ? undefined : String(hashNumbers[i]),
 		};
 	}
 	return out;
@@ -4963,11 +5181,7 @@ class NativeBackboneLogGraph {
 				),
 			);
 		}
-		if (
-			documentIndexArgs &&
-			input.trimLengthTo == null &&
-			hasNoNext
-		) {
+		if (documentIndexArgs && input.trimLengthTo == null && hasNoNext) {
 			return preparedCommitFactsFromRow(
 				this.native.prepare_plain_entry_commit_no_next_facts_document_index_compact(
 					wallTime,
@@ -6317,9 +6531,7 @@ export class NativePeerbitBackbone {
 		return { exists, publicKey };
 	}
 
-	documentContextsAndPreviousSignaturePublicKeys(
-		keys: string[],
-	):
+	documentContextsAndPreviousSignaturePublicKeys(keys: string[]):
 		| Array<{
 				context?: NativeBackboneDocumentContextFacts;
 				publicKey?: Uint8Array;
@@ -6710,12 +6922,8 @@ export class NativePeerbitBackbone {
 	commitEntryCoordinatesColumnsBatch(
 		columns: NativeBackboneCoordinateCommitColumns,
 	): void {
-		const {
-			hashes,
-			gids,
-			nextHashBatches,
-			assignedToRangeBoundaries,
-		} = columns;
+		const { hashes, gids, nextHashBatches, assignedToRangeBoundaries } =
+			columns;
 		if (hashes.length === 0) {
 			return;
 		}
@@ -6979,7 +7187,9 @@ export class NativePeerbitBackbone {
 	planRequestPruneAllConfirmed(
 		hashes: Iterable<string>,
 		prunePeer: string,
-		options?: NativeBackboneFindLeaderOptions & { omitPeerHistoryGids?: boolean },
+		options?: NativeBackboneFindLeaderOptions & {
+			omitPeerHistoryGids?: boolean;
+		},
 	): NativeBackboneRequestPruneAllConfirmed | undefined {
 		const hashArray = iterableToArray(hashes);
 		if (
@@ -7459,10 +7669,12 @@ export class NativePeerbitBackbone {
 					}
 				}
 				const projection = documentIndex.projection;
-					if (projection) {
-						const projectionPlanId = this.documentProjectionPlanId(projection.plan);
-						const nativeCompactPlainPutPayload =
-							documentIndex.usePlainPutPayload === true
+				if (projection) {
+					const projectionPlanId = this.documentProjectionPlanId(
+						projection.plan,
+					);
+					const nativeCompactPlainPutPayload =
+						documentIndex.usePlainPutPayload === true
 							? this.native
 									.prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_transaction
 							: undefined;
@@ -7519,45 +7731,45 @@ export class NativePeerbitBackbone {
 						);
 						return compactCommittedLatestStorageAppendResultFromRow(
 							this.resolution,
-								row,
-							);
-						}
+							row,
+						);
 					}
-					if (
-						!requiredPreviousSignerPublicKey &&
-						documentIndex.usePlainPutPayload === true
-					) {
-						const nativeCompactPlainPutPayload =
-							this.native
-								.prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_transaction;
-						if (nativeCompactPlainPutPayload) {
-							const row = nativeCompactPlainPutPayload.call(
-								this.native,
-								BigInt(input.wallTime),
-								input.logical ?? 0,
-								input.gid,
-								input.type ?? 0,
-								input.metaData,
-								input.payloadData,
-								input.replicas,
-								input.roleAgeMs ?? 0,
-								integerString(input.now ?? Date.now()),
-								input.selfHash ?? "",
-								input.selfReplicating ?? true,
-								documentIndex.key,
-								documentIndex.byteElementIndexLimit ?? 0,
-								documentIndex.deleteTrimmedHeads === true,
-								input.trimLengthTo,
-							);
-							return compactCommittedLatestStorageAppendResultFromRow(
-								this.resolution,
-								row,
-							);
-						}
-					}
-					const nativeCompact =
+				}
+				if (
+					!requiredPreviousSignerPublicKey &&
+					documentIndex.usePlainPutPayload === true
+				) {
+					const nativeCompactPlainPutPayload =
 						this.native
-							.prepare_plain_committed_storage_append_document_index_latest_compact_transaction;
+							.prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_transaction;
+					if (nativeCompactPlainPutPayload) {
+						const row = nativeCompactPlainPutPayload.call(
+							this.native,
+							BigInt(input.wallTime),
+							input.logical ?? 0,
+							input.gid,
+							input.type ?? 0,
+							input.metaData,
+							input.payloadData,
+							input.replicas,
+							input.roleAgeMs ?? 0,
+							integerString(input.now ?? Date.now()),
+							input.selfHash ?? "",
+							input.selfReplicating ?? true,
+							documentIndex.key,
+							documentIndex.byteElementIndexLimit ?? 0,
+							documentIndex.deleteTrimmedHeads === true,
+							input.trimLengthTo,
+						);
+						return compactCommittedLatestStorageAppendResultFromRow(
+							this.resolution,
+							row,
+						);
+					}
+				}
+				const nativeCompact =
+					this.native
+						.prepare_plain_committed_storage_append_document_index_latest_compact_transaction;
 				if (nativeCompact) {
 					const row = nativeCompact.call(
 						this.native,
@@ -7710,8 +7922,7 @@ export class NativePeerbitBackbone {
 		const requiredPreviousSignerPublicKeys = input.entries
 			.map((entry) => entry.documentIndex.requiredPreviousSignerPublicKey)
 			.filter((key): key is Uint8Array => !!key);
-		const requiredPreviousSignerPublicKey =
-			requiredPreviousSignerPublicKeys[0];
+		const requiredPreviousSignerPublicKey = requiredPreviousSignerPublicKeys[0];
 		if (
 			requiredPreviousSignerPublicKeys.length > 0 &&
 			requiredPreviousSignerPublicKeys.length !== input.entries.length
@@ -7723,25 +7934,25 @@ export class NativePeerbitBackbone {
 			requiredPreviousSignerPublicKeys.some(
 				(key) =>
 					key.byteLength !== requiredPreviousSignerPublicKey.byteLength ||
-					key.some((byte, index) => byte !== requiredPreviousSignerPublicKey[index]),
+					key.some(
+						(byte, index) => byte !== requiredPreviousSignerPublicKey[index],
+					),
 			)
 		) {
 			return undefined;
 		}
-			const projected = input.entries.every(
-				(entry) => entry.documentIndex.projection,
+		const projected = input.entries.every(
+			(entry) => entry.documentIndex.projection,
+		);
+		if (projected) {
+			const usePlainPutPayload = input.entries.every(
+				(entry) => entry.documentIndex.usePlainPutPayload === true,
 			);
-			if (projected) {
-				const usePlainPutPayload = input.entries.every(
-					(entry) => entry.documentIndex.usePlainPutPayload === true,
-				);
 			const baseArgs = [
 				new BigUint64Array(
 					input.entries.map((entry) => BigInt(entry.wallTime)),
 				),
-				new Uint32Array(
-					input.entries.map((entry) => entry.logical ?? 0),
-				),
+				new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
 				input.entries.map((entry) => entry.gid),
 				input.type ?? 0,
 				input.entries.map((entry) => entry.metaData),
@@ -7758,9 +7969,7 @@ export class NativePeerbitBackbone {
 				input.documentDeleteTrimmedHeads === true,
 				new Uint32Array(
 					input.entries.map((entry) =>
-						this.documentProjectionPlanId(
-							entry.documentIndex.projection!.plan,
-						),
+						this.documentProjectionPlanId(entry.documentIndex.projection!.plan),
 					),
 				),
 			] as const;
@@ -7773,43 +7982,20 @@ export class NativePeerbitBackbone {
 			const nativeCompactCachedBatch =
 				this.native
 					.prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_batch_transaction;
-				const nativeCompactCachedPlainPayloadBatch =
-					this.native
-						.prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_batch_transaction;
-				if (requiredPreviousSignerPublicKey) {
-					if (useCompact) {
-						const nativeRequiredCompactCachedBatch =
-							this.native
-								.prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_compact_batch_transaction;
-						if (!nativeRequiredCompactCachedBatch) {
-							return undefined;
-						}
-						const rows = nativeRequiredCompactCachedBatch.call(
-							this.native,
-							...baseArgs,
-							...documentPlanArgs,
-							documentEncodedDocuments,
-							documentSigners,
-							requiredPreviousSignerPublicKey,
-							input.trimLengthTo,
-						);
-						return rows.map((row) =>
-							compactCommittedLatestStorageAppendResultFromRow(
-								this.resolution,
-								row,
-							),
-						);
-					}
-					const nativeRequiredCachedBatch =
+			const nativeCompactCachedPlainPayloadBatch =
+				this.native
+					.prepare_plain_committed_storage_append_document_index_latest_cached_plan_compact_plain_put_payload_batch_transaction;
+			if (requiredPreviousSignerPublicKey) {
+				if (useCompact) {
+					const nativeRequiredCompactCachedBatch =
 						this.native
-							.prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_batch_transaction;
-					if (!nativeRequiredCachedBatch) {
+							.prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_compact_batch_transaction;
+					if (!nativeRequiredCompactCachedBatch) {
 						return undefined;
 					}
-					const rows = nativeRequiredCachedBatch.call(
+					const rows = nativeRequiredCompactCachedBatch.call(
 						this.native,
 						...baseArgs,
-						input.resolveTrimmedEntries !== false,
 						...documentPlanArgs,
 						documentEncodedDocuments,
 						documentSigners,
@@ -7817,12 +8003,35 @@ export class NativePeerbitBackbone {
 						input.trimLengthTo,
 					);
 					return rows.map((row) =>
-						committedStorageAppendResultFromRow(this.resolution, row),
+						compactCommittedLatestStorageAppendResultFromRow(
+							this.resolution,
+							row,
+						),
 					);
 				}
-				if (
-					useCompact &&
-					usePlainPutPayload &&
+				const nativeRequiredCachedBatch =
+					this.native
+						.prepare_plain_committed_storage_append_document_index_latest_required_previous_signer_cached_plan_batch_transaction;
+				if (!nativeRequiredCachedBatch) {
+					return undefined;
+				}
+				const rows = nativeRequiredCachedBatch.call(
+					this.native,
+					...baseArgs,
+					input.resolveTrimmedEntries !== false,
+					...documentPlanArgs,
+					documentEncodedDocuments,
+					documentSigners,
+					requiredPreviousSignerPublicKey,
+					input.trimLengthTo,
+				);
+				return rows.map((row) =>
+					committedStorageAppendResultFromRow(this.resolution, row),
+				);
+			}
+			if (
+				useCompact &&
+				usePlainPutPayload &&
 				nativeCompactCachedPlainPayloadBatch
 			) {
 				const rows = nativeCompactCachedPlainPayloadBatch.call(
@@ -7876,16 +8085,12 @@ export class NativePeerbitBackbone {
 		}
 		if (
 			input.entries.some((entry) => entry.documentIndex.projection) ||
-			input.entries.some(
-				(entry) => !entry.documentIndex.valuePrefixBytes,
-			)
+			input.entries.some((entry) => !entry.documentIndex.valuePrefixBytes)
 		) {
 			return undefined;
 		}
 		const baseArgs = [
-			new BigUint64Array(
-				input.entries.map((entry) => BigInt(entry.wallTime)),
-			),
+			new BigUint64Array(input.entries.map((entry) => BigInt(entry.wallTime))),
 			new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
 			input.entries.map((entry) => entry.gid),
 			input.type ?? 0,
@@ -7897,38 +8102,34 @@ export class NativePeerbitBackbone {
 			input.selfHash ?? "",
 			input.selfReplicating ?? true,
 		] as const;
-			const documentKeys = input.entries.map((entry) => entry.documentIndex.key);
-			const usePlainPutPayload = input.entries.every(
-				(entry) => entry.documentIndex.usePlainPutPayload === true,
-			);
-			if (
-				!requiredPreviousSignerPublicKey &&
-				useCompact &&
-				usePlainPutPayload
-			) {
-				const nativeCompactPlainPutPayloadBatch =
-					this.native
-						.prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_batch_transaction;
-				if (nativeCompactPlainPutPayloadBatch) {
-					const rows = nativeCompactPlainPutPayloadBatch.call(
-						this.native,
-						...baseArgs,
-						documentKeys,
-						input.documentByteElementIndexLimit ?? 0,
-						input.documentDeleteTrimmedHeads === true,
-						input.trimLengthTo,
-					);
-					return rows.map((row) =>
-						compactCommittedLatestStorageAppendResultFromRow(
-							this.resolution,
-							row,
-						),
-					);
-				}
+		const documentKeys = input.entries.map((entry) => entry.documentIndex.key);
+		const usePlainPutPayload = input.entries.every(
+			(entry) => entry.documentIndex.usePlainPutPayload === true,
+		);
+		if (!requiredPreviousSignerPublicKey && useCompact && usePlainPutPayload) {
+			const nativeCompactPlainPutPayloadBatch =
+				this.native
+					.prepare_plain_committed_storage_append_document_index_latest_compact_plain_put_payload_batch_transaction;
+			if (nativeCompactPlainPutPayloadBatch) {
+				const rows = nativeCompactPlainPutPayloadBatch.call(
+					this.native,
+					...baseArgs,
+					documentKeys,
+					input.documentByteElementIndexLimit ?? 0,
+					input.documentDeleteTrimmedHeads === true,
+					input.trimLengthTo,
+				);
+				return rows.map((row) =>
+					compactCommittedLatestStorageAppendResultFromRow(
+						this.resolution,
+						row,
+					),
+				);
 			}
-			const documentValuePrefixBytes = input.entries.map(
-				(entry) => entry.documentIndex.valuePrefixBytes!,
-			);
+		}
+		const documentValuePrefixBytes = input.entries.map(
+			(entry) => entry.documentIndex.valuePrefixBytes!,
+		);
 		const documentByteElementIndexLimit =
 			input.documentByteElementIndexLimit ?? 0;
 		const documentDeleteTrimmedHeads =
@@ -7996,10 +8197,7 @@ export class NativePeerbitBackbone {
 				...documentArgs,
 			);
 			return rows.map((row) =>
-				compactCommittedLatestStorageAppendResultFromRow(
-					this.resolution,
-					row,
-				),
+				compactCommittedLatestStorageAppendResultFromRow(this.resolution, row),
 			);
 		}
 		const nativeBatch =
@@ -8217,9 +8415,7 @@ export class NativePeerbitBackbone {
 				new BigUint64Array(
 					input.entries.map((entry) => BigInt(entry.wallTime)),
 				),
-				new Uint32Array(
-					input.entries.map((entry) => entry.logical ?? 0),
-				),
+				new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
 				input.entries.map((entry) => entry.gid),
 				input.type ?? 0,
 				input.entries.map((entry) => entry.metaData),
@@ -8239,46 +8435,35 @@ export class NativePeerbitBackbone {
 				input.documentDeleteTrimmedHeads === true,
 				new Uint32Array(
 					input.entries.map((entry) =>
-						this.documentProjectionPlanId(
-							entry.documentIndex.projection!.plan,
-						),
+						this.documentProjectionPlanId(entry.documentIndex.projection!.plan),
 					),
 				),
 			] as const;
 			const rows = usePlainPutPayload
-				? this.native
-						.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_batch_transaction?.call(
-							this.native,
-							...baseArgs,
-							input.entries.map(
-								(entry) =>
-									entry.documentIndex.projection!.signer,
-							),
-							input.trimLengthTo,
-						)
-				: this.native
-						.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction?.call(
-							this.native,
-							...baseArgs,
-							input.entries.map(
-								(entry) =>
-									entry.documentIndex.projection!
-										.encodedDocument,
-							),
-							input.entries.map(
-								(entry) =>
-									entry.documentIndex.projection!.signer,
-							),
-							input.trimLengthTo,
-						);
+				? this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_plain_put_payload_batch_transaction?.call(
+						this.native,
+						...baseArgs,
+						input.entries.map(
+							(entry) => entry.documentIndex.projection!.signer,
+						),
+						input.trimLengthTo,
+					)
+				: this.native.prepare_plain_committed_no_next_storage_append_document_index_cached_plan_compact_batch_transaction?.call(
+						this.native,
+						...baseArgs,
+						input.entries.map(
+							(entry) => entry.documentIndex.projection!.encodedDocument,
+						),
+						input.entries.map(
+							(entry) => entry.documentIndex.projection!.signer,
+						),
+						input.trimLengthTo,
+					);
 			if (!rows) {
 				return undefined;
 			}
 			return rows.map((row) =>
-				compactCommittedNoNextStorageAppendResultFromRow(
-					this.resolution,
-					row,
-				),
+				compactCommittedNoNextStorageAppendResultFromRow(this.resolution, row),
 			);
 		}
 		if (
@@ -8336,9 +8521,7 @@ export class NativePeerbitBackbone {
 		}
 		const rows = nativeBatch.call(
 			this.native,
-			new BigUint64Array(
-				input.entries.map((entry) => BigInt(entry.wallTime)),
-			),
+			new BigUint64Array(input.entries.map((entry) => BigInt(entry.wallTime))),
 			new Uint32Array(input.entries.map((entry) => entry.logical ?? 0)),
 			input.entries.map((entry) => entry.gid),
 			input.type ?? 0,
@@ -8351,8 +8534,7 @@ export class NativePeerbitBackbone {
 			input.selfReplicating ?? true,
 			input.entries.map((entry) => entry.documentIndex.key),
 			input.entries.map(
-				(entry) =>
-					entry.documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
+				(entry) => entry.documentIndex.valuePrefixBytes ?? EMPTY_UINT8_ARRAY,
 			),
 			input.entries.map((entry) =>
 				entry.documentIndex.existingCreated == null
@@ -8364,13 +8546,9 @@ export class NativePeerbitBackbone {
 			input.trimLengthTo,
 		);
 		return rows.map((row) =>
-			compactCommittedNoNextStorageAppendResultFromRow(
-				this.resolution,
-				row,
-			),
+			compactCommittedNoNextStorageAppendResultFromRow(this.resolution, row),
 		);
 	}
-
 }
 
 export class NativeBackboneMemoryCoordinatePersistenceStore
@@ -8399,6 +8577,8 @@ export class NativeBackboneMemoryCoordinatePersistenceStore
 	async remove(name: string): Promise<void> {
 		this.files.delete(validateCoordinatePersistenceName(name));
 	}
+
+	async flush(_name?: string): Promise<void> {}
 }
 
 export class NativeBackboneNodeCoordinatePersistenceStore
@@ -8410,11 +8590,20 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 	>();
 	private readonly filePaths = new Map<string, string>();
 	private directoryEnsured = false;
+	private appendFailure: unknown;
+	readonly durableBarrier?: (name?: string) => Promise<void>;
 
 	constructor(
 		private readonly directory: string,
 		private readonly fs?: NativeBackboneNodeFs,
-	) {}
+	) {
+		// The default Node backend has FileHandle.sync. Injected test/custom
+		// backends only advertise durability when they at least expose open(); the
+		// barrier itself verifies sync on every opened handle before ACK.
+		if (!fs || typeof fs.open === "function") {
+			this.durableBarrier = (name) => this.syncDurably(name);
+		}
+	}
 
 	private async nodeFs(): Promise<NativeBackboneNodeFs> {
 		return this.fs ?? (await importNodeFs());
@@ -8483,14 +8672,45 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 	}
 
 	async append(name: string, bytes: Uint8Array): Promise<void> {
+		if (this.appendFailure !== undefined) {
+			throw this.appendFailure;
+		}
 		const fs = await this.ensureDirectory();
 		const path = await this.filePath(name);
 		const handle = await this.appendHandle(fs, path);
 		if (handle) {
-			await handle.write(bytes);
+			let offset = 0;
+			while (offset < bytes.byteLength) {
+				let result: { bytesWritten: number };
+				try {
+					result = await handle.write(bytes.subarray(offset));
+				} catch (error) {
+					// FileHandle.write does not expose progress on rejection, even for the
+					// first call, so a partial tail can not be ruled out.
+					this.appendFailure ??= error;
+					throw this.appendFailure;
+				}
+				try {
+					offset += validateCoordinatePersistenceWriteProgress(
+						result.bytesWritten,
+						bytes.byteLength - offset,
+						"Node coordinate WAL",
+					);
+				} catch (error) {
+					this.appendFailure ??= error;
+					throw this.appendFailure;
+				}
+			}
 			return;
 		}
-		await fs.appendFile(path, bytes);
+		try {
+			await fs.appendFile(path, bytes);
+		} catch (error) {
+			// appendFile does not report partial progress. Conservatively prevent a
+			// later append from landing behind a possibly torn tail.
+			this.appendFailure ??= error;
+			throw this.appendFailure;
+		}
 	}
 
 	async remove(name: string): Promise<void> {
@@ -8506,6 +8726,74 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 		}
 	}
 
+	async flush(name?: string): Promise<void> {
+		if (!this.durableBarrier) {
+			return;
+		}
+		try {
+			await this.durableBarrier(name);
+		} catch (error) {
+			// Ordinary buffering reads flush a named queue before discovering whether
+			// the backing file exists. Missing files are expected there; strict ACK
+			// paths call durableBarrier directly and therefore remain fail-closed.
+			if (!name || !isNotFoundError(error)) {
+				throw error;
+			}
+		}
+	}
+
+	private async syncDurably(name?: string): Promise<void> {
+		const fs = await this.nodeFs();
+		if (!fs.open) {
+			throw new Error(
+				"Node coordinate persistence does not expose a durable FileHandle.sync barrier",
+			);
+		}
+		const syncHandle = async (
+			handle: NativeBackboneNodeAppendFileHandle,
+			target: string,
+		): Promise<void> => {
+			if (typeof handle.sync !== "function") {
+				throw new Error(
+					`Node coordinate persistence ${target} does not expose FileHandle.sync`,
+				);
+			}
+			await handle.sync();
+		};
+		if (name) {
+			const path = await this.filePath(name);
+			const appendHandle = this.appendHandles.get(path);
+			if (appendHandle) {
+				await syncHandle(await appendHandle, `file ${name}`);
+			} else {
+				let handle: NativeBackboneNodeAppendFileHandle | undefined;
+				try {
+					handle = await fs.open(path, "r");
+					await syncHandle(handle, `file ${name}`);
+				} finally {
+					await handle?.close();
+				}
+			}
+		} else {
+			await Promise.all(
+				[...this.appendHandles.entries()].map(async ([path, handle]) =>
+					syncHandle(await handle, `file ${path}`),
+				),
+			);
+		}
+		let directoryHandle: NativeBackboneNodeAppendFileHandle | undefined;
+		try {
+			directoryHandle = await fs.open(this.directory, "r");
+			await syncHandle(directoryHandle, "directory");
+		} catch (error) {
+			if (!isNotFoundError(error) && !isUnsupportedDirectorySyncError(error)) {
+				throw error;
+			}
+		} finally {
+			await directoryHandle?.close();
+		}
+	}
+
 	async close(): Promise<void> {
 		this.directoryEnsured = false;
 		const handles = [...this.appendHandles.values()];
@@ -8517,6 +8805,8 @@ export class NativeBackboneNodeCoordinatePersistenceStore
 export class NativeBackboneOPFSCoordinatePersistenceStore
 	implements NativeBackboneCoordinatePersistenceStore
 {
+	private appendFailure: unknown;
+
 	constructor(private readonly directory: NativeBackboneOPFSDirectoryHandle) {}
 
 	static async create(options?: {
@@ -8588,6 +8878,9 @@ export class NativeBackboneOPFSCoordinatePersistenceStore
 	}
 
 	async append(name: string, bytes: Uint8Array): Promise<void> {
+		if (this.appendFailure !== undefined) {
+			throw this.appendFailure;
+		}
 		const handle = await this.directory.getFileHandle(
 			validateCoordinatePersistenceName(name),
 			{ create: true },
@@ -8600,10 +8893,29 @@ export class NativeBackboneOPFSCoordinatePersistenceStore
 				// Main-thread OPFS and some browser contexts do not expose sync handles.
 			}
 			if (access) {
+				const originalSize = access.getSize();
+				let offset = 0;
 				try {
-					access.write(bytes, { at: access.getSize() });
+					while (offset < bytes.byteLength) {
+						offset += validateCoordinatePersistenceWriteProgress(
+							access.write(bytes.subarray(offset), {
+								at: originalSize + offset,
+							}),
+							bytes.byteLength - offset,
+							"OPFS coordinate WAL",
+						);
+					}
 					access.flush?.();
 					return;
+				} catch (error) {
+					try {
+						access.truncate?.(originalSize);
+						access.flush?.();
+					} catch {
+						// The sticky error below prevents appending behind a torn tail.
+					}
+					this.appendFailure ??= error;
+					throw this.appendFailure;
 				} finally {
 					access.close();
 				}
@@ -8614,8 +8926,16 @@ export class NativeBackboneOPFSCoordinatePersistenceStore
 		try {
 			await writable.seek(file.size);
 			await writable.write(bytes);
-		} finally {
 			await writable.close();
+		} catch (error) {
+			try {
+				await writable.close();
+			} catch {
+				// Preserve the first error; the adapter is terminal either way.
+			}
+			// Async OPFS reports no write progress, so failure may leave a torn tail.
+			this.appendFailure ??= error;
+			throw this.appendFailure;
 		}
 	}
 
@@ -8628,6 +8948,36 @@ export class NativeBackboneOPFSCoordinatePersistenceStore
 			}
 		}
 	}
+
+	async flush(_name?: string): Promise<void> {}
+
+	async durableBarrier(name?: string): Promise<void> {
+		if (!name) {
+			throw new Error(
+				"OPFS coordinate persistence requires a named durable barrier",
+			);
+		}
+		const handle = await this.directory.getFileHandle(
+			validateCoordinatePersistenceName(name),
+			{ create: false },
+		);
+		if (!handle.createSyncAccessHandle) {
+			throw new Error(
+				"OPFS coordinate persistence durable barriers require createSyncAccessHandle",
+			);
+		}
+		const access = await handle.createSyncAccessHandle();
+		try {
+			if (typeof access.flush !== "function") {
+				throw new Error(
+					"OPFS coordinate persistence sync handle does not expose flush",
+				);
+			}
+			access.flush();
+		} finally {
+			access.close();
+		}
+	}
 }
 
 export class NativeBackboneBufferedCoordinatePersistenceStore
@@ -8635,11 +8985,22 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 {
 	private readonly buffers = new Map<string, Uint8Array[]>();
 	private bufferedBytes = 0;
+	readonly supportsRemoval: boolean;
+	readonly durableBarrier?: (name?: string) => Promise<void>;
 
 	constructor(
 		private readonly inner: NativeBackboneCoordinatePersistenceStore,
 		private readonly options: { maxBufferedBytes?: number } = {},
-	) {}
+	) {
+		this.supportsRemoval =
+			inner.supportsRemoval ?? typeof inner.remove === "function";
+		if (typeof inner.durableBarrier === "function") {
+			this.durableBarrier = async (name) => {
+				await this.flush(name);
+				await inner.durableBarrier!(name);
+			};
+		}
+	}
 
 	private buffer(name: string): Uint8Array[] {
 		const validName = validateCoordinatePersistenceName(name);
@@ -8685,7 +9046,12 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 				this.bufferedBytes -= chunk.byteLength;
 			}
 		}
-		await this.inner.remove?.(name);
+		if (!this.inner.remove) {
+			throw new Error(
+				"Native backbone coordinate persistence store does not support removal",
+			);
+		}
+		await this.inner.remove(name);
 	}
 
 	async flush(name?: string): Promise<void> {
@@ -8702,12 +9068,17 @@ export class NativeBackboneBufferedCoordinatePersistenceStore
 			this.bufferedBytes -= bytes.byteLength;
 			await this.inner.append(fileName, bytes);
 		}
-		await this.inner.flush?.();
+		await this.inner.flush?.(name);
 	}
 
-	async close(): Promise<void> {
-		await this.flush();
-		await this.inner.close?.();
+	async close(options?: { flush?: boolean }): Promise<void> {
+		if (options?.flush === false) {
+			this.buffers.clear();
+			this.bufferedBytes = 0;
+		} else {
+			await this.flush();
+		}
+		await this.inner.close?.(options);
 	}
 }
 
@@ -8717,6 +9088,10 @@ export class NativeBackboneCoordinatePersistence {
 	readonly flushIntervalMs?: number;
 	readonly compactMaxJournalBytes?: number;
 	readonly compactMaxJournalRecords?: number;
+	readonly crashSafeCompaction = false;
+	readonly durableBarrier: boolean;
+	readonly supportsDrop: boolean;
+	readonly dropIsTerminal = true;
 	private readonly snapshotFile: string;
 	private readonly journalFile: string;
 	private readonly documentSnapshotFile: string;
@@ -8724,101 +9099,317 @@ export class NativeBackboneCoordinatePersistence {
 	private readonly documentSignerSnapshotFile: string;
 	private readonly documentSignerJournalFile: string;
 	private journalInitialized: boolean | undefined;
-	private journalByteLength = 0;
-	private journalRecordCount = 0;
 	private documentJournalInitialized: boolean | undefined;
-	private documentJournalByteLength = 0;
-	private documentJournalRecordCount = 0;
 	private documentSignerJournalInitialized: boolean | undefined;
-	private documentSignerJournalByteLength = 0;
-	private documentSignerJournalRecordCount = 0;
 	private lastFlushMs = Date.now();
 	private persistenceQueue: Promise<unknown> | undefined;
+	private persistenceLifecycle:
+		| "active"
+		| "hydrating"
+		| "dropping"
+		| "dropped"
+		| "closing"
+		| "closed" = "active";
+	private persistenceFailure: unknown;
+	private closePromise: Promise<void> | undefined;
 
 	constructor(
 		private readonly store: NativeBackboneCoordinatePersistenceStore,
 		options: NativeBackboneCoordinatePersistenceOptions = {},
 	) {
-		this.snapshotFile =
-			options.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot;
-		this.journalFile =
-			options.journal ?? nativeBackboneCoordinatePersistenceFiles.journal;
-		this.documentSnapshotFile =
+		this.durableBarrier = typeof store.durableBarrier === "function";
+		this.supportsDrop =
+			(store.supportsRemoval ?? typeof store.remove === "function") &&
+			typeof store.remove === "function";
+		this.snapshotFile = validateCoordinatePersistenceName(
+			options.snapshot ?? nativeBackboneCoordinatePersistenceFiles.snapshot,
+		);
+		this.journalFile = validateCoordinatePersistenceName(
+			options.journal ?? nativeBackboneCoordinatePersistenceFiles.journal,
+		);
+		this.documentSnapshotFile = validateCoordinatePersistenceName(
 			options.documentSnapshot ??
-			nativeBackboneCoordinatePersistenceFiles.documentSnapshot;
-		this.documentJournalFile =
+				nativeBackboneCoordinatePersistenceFiles.documentSnapshot,
+		);
+		this.documentJournalFile = validateCoordinatePersistenceName(
 			options.documentJournal ??
-			nativeBackboneCoordinatePersistenceFiles.documentJournal;
-		this.documentSignerSnapshotFile =
+				nativeBackboneCoordinatePersistenceFiles.documentJournal,
+		);
+		this.documentSignerSnapshotFile = validateCoordinatePersistenceName(
 			options.documentSignerSnapshot ??
-			nativeBackboneCoordinatePersistenceFiles.documentSignerSnapshot;
-		this.documentSignerJournalFile =
+				nativeBackboneCoordinatePersistenceFiles.documentSignerSnapshot,
+		);
+		this.documentSignerJournalFile = validateCoordinatePersistenceName(
 			options.documentSignerJournal ??
-			nativeBackboneCoordinatePersistenceFiles.documentSignerJournal;
+				nativeBackboneCoordinatePersistenceFiles.documentSignerJournal,
+		);
+		if (
+			this.configuredFiles().includes(nativeBackboneCoordinateDropTombstoneFile)
+		) {
+			throw new Error(
+				"Native backbone coordinate persistence file conflicts with its drop tombstone",
+			);
+		}
 		this.flushOnAppend = options.flushOnAppend ?? true;
 		this.flushMaxPendingBytes = resolveCoordinateFlushMaxPendingBytes(options);
 		if (options.flushIntervalMs != null) {
 			this.flushIntervalMs = Math.max(0, options.flushIntervalMs);
 		}
-		if (options.compactMaxJournalBytes != null) {
-			this.compactMaxJournalBytes = Math.max(
-				0,
-				options.compactMaxJournalBytes,
-			);
+		if (
+			options.compactMaxJournalBytes != null ||
+			options.compactMaxJournalRecords != null
+		) {
+			throw new Error(nativeBackboneCoordinateCompactionDisabledMessage);
 		}
-		if (options.compactMaxJournalRecords != null) {
-			this.compactMaxJournalRecords = Math.max(
-				0,
-				options.compactMaxJournalRecords,
+	}
+
+	/** Durable operation-intent capability for strict shared-log transactions. */
+	get intentStore(): NativeBackboneCoordinatePersistenceStore {
+		return this.store;
+	}
+
+	private configuredFiles(): string[] {
+		return [
+			this.snapshotFile,
+			this.journalFile,
+			this.documentSnapshotFile,
+			this.documentJournalFile,
+			this.documentSignerSnapshotFile,
+			this.documentSignerJournalFile,
+		];
+	}
+
+	private assertLifecycleActive(operation: string): void {
+		if (this.persistenceLifecycle !== "active") {
+			throw new Error(
+				`Native backbone coordinate persistence can not ${operation} while ${this.persistenceLifecycle}`,
 			);
 		}
 	}
 
-	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
-		const [
-			snapshot,
-			journal,
-			documentSnapshot,
-			documentJournal,
-			documentSignerSnapshot,
-			documentSignerJournal,
-		] = await Promise.all([
-			this.store.read(this.snapshotFile),
-			this.store.read(this.journalFile),
-			this.store.read(this.documentSnapshotFile),
-			this.store.read(this.documentJournalFile),
-			this.store.read(this.documentSignerSnapshotFile),
-			this.store.read(this.documentSignerJournalFile),
-		]);
-		const operations = backbone.loadCoordinateSnapshotAndJournal(
-			snapshot,
-			journal,
-		);
-		const documentOperations = backbone.loadDocumentSnapshotAndJournal(
-			documentSnapshot,
-			documentJournal,
-		);
-		const documentSignerOperations = backbone.loadDocumentSignerSnapshotAndJournal(
-			documentSignerSnapshot,
-			documentSignerJournal,
-		);
-		this.journalInitialized = !!journal && journal.byteLength > 0;
-		this.journalByteLength = journal?.byteLength ?? 0;
-		this.journalRecordCount = operations;
-		this.documentJournalInitialized =
-			!!documentJournal && documentJournal.byteLength > 0;
-		this.documentJournalByteLength = documentJournal?.byteLength ?? 0;
-		this.documentJournalRecordCount = documentOperations;
-		this.documentSignerJournalInitialized =
-			!!documentSignerJournal && documentSignerJournal.byteLength > 0;
-		this.documentSignerJournalByteLength =
-			documentSignerJournal?.byteLength ?? 0;
-		this.documentSignerJournalRecordCount = documentSignerOperations;
-		backbone.setCoordinateJournalEnabled(true);
-		backbone.setDocumentJournalEnabled(true);
-		backbone.setDocumentSignerJournalEnabled(true);
+	private assertActive(operation: string): void {
+		if (this.persistenceFailure !== undefined) {
+			throw this.persistenceFailure;
+		}
+		this.assertLifecycleActive(operation);
+	}
+
+	private resetJournalTracking(): void {
+		this.journalInitialized = undefined;
+		this.documentJournalInitialized = undefined;
+		this.documentSignerJournalInitialized = undefined;
 		this.lastFlushMs = Date.now();
-		return operations + documentOperations + documentSignerOperations;
+	}
+
+	private async eraseDropFiles(files: readonly string[]): Promise<void> {
+		if (!this.supportsDrop || !this.store.remove) {
+			throw new Error(
+				"Native backbone coordinate persistence store does not support removal",
+			);
+		}
+		const removals = await Promise.allSettled(
+			files.map((name) => this.store.remove!(name)),
+		);
+		const failures = removals.flatMap((result) =>
+			result.status === "rejected" ? [result.reason] : [],
+		);
+		if (failures.length > 0) {
+			throw new AggregateError(
+				failures,
+				"Failed to erase native backbone coordinate persistence namespace",
+			);
+		}
+		await this.store.flush?.();
+		await this.store.remove(nativeBackboneCoordinateDropTombstoneFile);
+		await this.store.flush?.();
+	}
+
+	async drop(additionalFiles: readonly string[] = []): Promise<void> {
+		// Drop is the recovery escape hatch for a persistence generation that has
+		// already failed closed, so only the lifecycle (not persistenceFailure)
+		// gates this destructive operation.
+		this.assertLifecycleActive("drop");
+		const files = [
+			...new Set([
+				...this.configuredFiles(),
+				...additionalFiles.map(validateCoordinatePersistenceName),
+			]),
+		];
+		if (files.includes(nativeBackboneCoordinateDropTombstoneFile)) {
+			throw new Error(
+				"Native backbone drop targets can not include the drop tombstone",
+			);
+		}
+		if (!this.supportsDrop || !this.store.remove) {
+			throw new Error(
+				"Native backbone coordinate persistence store does not support removal",
+			);
+		}
+		// Flip synchronously so no later append/compact can enqueue behind this
+		// erase and recreate a file after its removal.
+		this.persistenceLifecycle = "dropping";
+		await this.enqueuePersistence(async () => {
+			await this.store.write(
+				nativeBackboneCoordinateDropTombstoneFile,
+				nativeBackboneCoordinateDropTombstoneBytes(files),
+			);
+			if (this.store.durableBarrier) {
+				await this.store.durableBarrier(
+					nativeBackboneCoordinateDropTombstoneFile,
+				);
+			} else {
+				await this.store.flush?.(nativeBackboneCoordinateDropTombstoneFile);
+			}
+			await this.eraseDropFiles(files);
+			this.resetJournalTracking();
+			this.persistenceLifecycle = "dropped";
+		});
+	}
+
+	async resumeDrop(): Promise<boolean> {
+		this.assertActive("resume drop");
+		this.persistenceLifecycle = "dropping";
+		return this.enqueuePersistence(() => this.resumeDropInternal("active"));
+	}
+
+	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
+		this.assertActive("hydrate");
+		// Claim the lifecycle synchronously. close() queues after this complete
+		// read/validate/load operation; drop() rejects before erasing anything.
+		this.persistenceLifecycle = "hydrating";
+		return this.enqueuePersistence(async () => {
+			try {
+				this.assertHydrating();
+				await this.resumeDropInternal("hydrating");
+				this.assertHydrating();
+				const [
+					snapshot,
+					journal,
+					documentSnapshot,
+					documentJournal,
+					documentSignerSnapshot,
+					documentSignerJournal,
+				] = await Promise.all([
+					this.store.read(this.snapshotFile),
+					this.store.read(this.journalFile),
+					this.store.read(this.documentSnapshotFile),
+					this.store.read(this.documentJournalFile),
+					this.store.read(this.documentSignerSnapshotFile),
+					this.store.read(this.documentSignerJournalFile),
+				]);
+				this.assertHydrating();
+				try {
+					validateCoordinateJournal(journal, this.journalFile);
+					validateCoordinateJournal(documentJournal, this.documentJournalFile);
+					validateCoordinateJournal(
+						documentSignerJournal,
+						this.documentSignerJournalFile,
+					);
+				} catch (error) {
+					this.persistenceFailure ??= error;
+					throw this.persistenceFailure;
+				}
+				let operations: number;
+				let documentOperations: number;
+				let documentSignerOperations: number;
+				try {
+					this.assertHydrating();
+					operations = backbone.loadCoordinateSnapshotAndJournal(
+						snapshot,
+						journal,
+					);
+					this.assertHydrating();
+					documentOperations = backbone.loadDocumentSnapshotAndJournal(
+						documentSnapshot,
+						documentJournal,
+					);
+					this.assertHydrating();
+					documentSignerOperations =
+						backbone.loadDocumentSignerSnapshotAndJournal(
+							documentSignerSnapshot,
+							documentSignerJournal,
+						);
+				} catch (error) {
+					if (
+						journal?.byteLength ||
+						documentJournal?.byteLength ||
+						documentSignerJournal?.byteLength
+					) {
+						this.persistenceFailure ??= error;
+						throw this.persistenceFailure;
+					}
+					throw error;
+				}
+				this.assertHydrating();
+				this.journalInitialized = !!journal && journal.byteLength > 0;
+				this.documentJournalInitialized =
+					!!documentJournal && documentJournal.byteLength > 0;
+				this.documentSignerJournalInitialized =
+					!!documentSignerJournal && documentSignerJournal.byteLength > 0;
+				backbone.setCoordinateJournalEnabled(true);
+				backbone.setDocumentJournalEnabled(true);
+				backbone.setDocumentSignerJournalEnabled(true);
+				this.lastFlushMs = Date.now();
+				this.persistenceLifecycle = this.closePromise ? "closing" : "active";
+				return operations + documentOperations + documentSignerOperations;
+			} catch (error) {
+				if (this.persistenceLifecycle === "hydrating") {
+					this.persistenceLifecycle = this.closePromise ? "closing" : "active";
+				}
+				throw error;
+			}
+		});
+	}
+
+	private assertHydrating(): void {
+		if (this.persistenceLifecycle !== "hydrating") {
+			throw new Error(
+				`Native backbone coordinate persistence hydrate was interrupted while ${this.persistenceLifecycle}`,
+			);
+		}
+	}
+
+	private async resumeDropInternal(
+		finalLifecycle: "active" | "hydrating",
+	): Promise<boolean> {
+		const bytes = await this.store.read(
+			nativeBackboneCoordinateDropTombstoneFile,
+		);
+		if (!bytes) {
+			this.persistenceLifecycle =
+				finalLifecycle === "hydrating"
+					? "hydrating"
+					: this.closePromise
+						? "closing"
+						: "active";
+			return false;
+		}
+		let tombstone: NativeBackboneCoordinateDropTombstoneBody;
+		try {
+			tombstone = parseNativeBackboneCoordinateDropTombstone(bytes);
+			for (const file of this.configuredFiles()) {
+				if (!tombstone.files.includes(file)) {
+					throw new Error(
+						"Native backbone drop tombstone does not cover the configured namespace",
+					);
+				}
+			}
+		} catch (error) {
+			// Corruption must never hydrate stale files, but an explicit drop must
+			// remain available to overwrite the bad marker and erase the namespace.
+			this.persistenceFailure ??= error;
+			this.persistenceLifecycle = this.closePromise ? "closing" : "active";
+			throw this.persistenceFailure;
+		}
+		await this.eraseDropFiles(tombstone.files);
+		this.resetJournalTracking();
+		this.persistenceLifecycle =
+			finalLifecycle === "hydrating"
+				? "hydrating"
+				: this.closePromise
+					? "closing"
+					: "active";
+		return true;
 	}
 
 	shouldFlushJournalOnAppend(
@@ -8853,6 +9444,7 @@ export class NativeBackboneCoordinatePersistence {
 	flushJournalOnAppend(
 		backbone: NativePeerbitBackbone,
 	): number | Promise<number> {
+		this.assertActive("flush on append");
 		if (!this.shouldFlushJournalOnAppend(backbone)) {
 			return 0;
 		}
@@ -8860,6 +9452,7 @@ export class NativeBackboneCoordinatePersistence {
 	}
 
 	flushJournal(backbone: NativePeerbitBackbone): Promise<number> {
+		this.assertActive("flush");
 		// Serialized with compact() so a flush never clears records appended to
 		// the wasm journal while a previous flush was awaiting its disk write.
 		return this.enqueuePersistence(() => this.flushJournalInternal(backbone));
@@ -8869,9 +9462,7 @@ export class NativeBackboneCoordinatePersistence {
 		// Runs `fn` immediately when no other persistence operation is in
 		// flight so the common uncontended flush starts synchronously; queued
 		// operations still run strictly one at a time, in order.
-		const next = this.persistenceQueue
-			? this.persistenceQueue.then(fn)
-			: fn();
+		const next = this.persistenceQueue ? this.persistenceQueue.then(fn) : fn();
 		const tail: Promise<void> = next.then(
 			() => undefined,
 			() => undefined,
@@ -8889,153 +9480,151 @@ export class NativeBackboneCoordinatePersistence {
 		backbone: NativePeerbitBackbone,
 	): Promise<number> {
 		let written = 0;
+		let persistenceMutationStarted = false;
+		let coordinateBytes: Uint8Array | undefined;
+		let documentBytes: Uint8Array | undefined;
+		let signerBytes: Uint8Array | undefined;
 		const coordinateRecords = backbone.coordinateJournal();
 		const coordinateRecordCount = backbone.coordinatePendingJournalLength;
-		if (coordinateRecords.byteLength > 0) {
-			if (this.journalInitialized === undefined) {
-				const existing = await this.store.read(this.journalFile);
-				this.journalInitialized = !!existing && existing.byteLength > 0;
+		const documentRecords = backbone.documentJournal();
+		const documentRecordCount = backbone.documentPendingJournalLength;
+		const signerRecords = backbone.documentSignerJournal();
+		const signerRecordCount = backbone.documentSignerPendingJournalLength;
+		try {
+			if (coordinateRecords.byteLength > 0) {
+				if (this.journalInitialized === undefined) {
+					const existing = await this.store.read(this.journalFile);
+					this.journalInitialized = !!existing && existing.byteLength > 0;
+				}
+				coordinateBytes = this.journalInitialized
+					? coordinateRecords
+					: concatBytes([
+							backbone.coordinateJournalHeader(),
+							coordinateRecords,
+						]);
+				await this.store.append(this.journalFile, coordinateBytes);
+				persistenceMutationStarted = true;
+				written += coordinateRecords.byteLength;
 			}
-			const bytes = this.journalInitialized
-				? coordinateRecords
-				: concatBytes([backbone.coordinateJournalHeader(), coordinateRecords]);
-			await this.store.append(this.journalFile, bytes);
-			this.journalInitialized = true;
-			this.journalByteLength += bytes.byteLength;
-			this.journalRecordCount += coordinateRecordCount;
+			if (documentRecords.byteLength > 0) {
+				if (this.documentJournalInitialized === undefined) {
+					const existing = await this.store.read(this.documentJournalFile);
+					this.documentJournalInitialized =
+						!!existing && existing.byteLength > 0;
+				}
+				documentBytes = this.documentJournalInitialized
+					? documentRecords
+					: concatBytes([backbone.documentJournalHeader(), documentRecords]);
+				await this.store.append(this.documentJournalFile, documentBytes);
+				persistenceMutationStarted = true;
+				written += documentRecords.byteLength;
+			}
+			if (signerRecords.byteLength > 0) {
+				if (this.documentSignerJournalInitialized === undefined) {
+					const existing = await this.store.read(
+						this.documentSignerJournalFile,
+					);
+					this.documentSignerJournalInitialized =
+						!!existing && existing.byteLength > 0;
+				}
+				signerBytes = this.documentSignerJournalInitialized
+					? signerRecords
+					: concatBytes([
+							backbone.documentSignerJournalHeader(),
+							signerRecords,
+						]);
+				await this.store.append(this.documentSignerJournalFile, signerBytes);
+				persistenceMutationStarted = true;
+				written += signerRecords.byteLength;
+			}
+			if (written === 0) {
+				this.lastFlushMs = Date.now();
+				return 0;
+			}
+
+			// `append` may only enqueue bytes in a buffered store. Drain and fsync
+			// every affected WAL before clearing its wasm prefix or returning an ACK.
+			for (const file of [
+				coordinateBytes ? this.journalFile : undefined,
+				documentBytes ? this.documentJournalFile : undefined,
+				signerBytes ? this.documentSignerJournalFile : undefined,
+			]) {
+				if (file) {
+					if (this.store.durableBarrier) {
+						await this.store.durableBarrier(file);
+					} else {
+						await this.store.flush?.(file);
+					}
+				}
+			}
+
+			if (coordinateBytes) {
+				this.journalInitialized = true;
+			}
+			if (documentBytes) {
+				this.documentJournalInitialized = true;
+			}
+			if (signerBytes) {
+				this.documentSignerJournalInitialized = true;
+			}
+
 			backbone.clearCoordinateJournalPrefix(
 				coordinateRecords.byteLength,
 				coordinateRecordCount,
 			);
-			written += coordinateRecords.byteLength;
-		}
-		const documentRecords = backbone.documentJournal();
-		const documentRecordCount = backbone.documentPendingJournalLength;
-		if (documentRecords.byteLength > 0) {
-			if (this.documentJournalInitialized === undefined) {
-				const existing = await this.store.read(this.documentJournalFile);
-				this.documentJournalInitialized = !!existing && existing.byteLength > 0;
-			}
-			const bytes = this.documentJournalInitialized
-				? documentRecords
-				: concatBytes([backbone.documentJournalHeader(), documentRecords]);
-			await this.store.append(this.documentJournalFile, bytes);
-			this.documentJournalInitialized = true;
-			this.documentJournalByteLength += bytes.byteLength;
-			this.documentJournalRecordCount += documentRecordCount;
 			backbone.clearDocumentJournalPrefix(
 				documentRecords.byteLength,
 				documentRecordCount,
 			);
-			written += documentRecords.byteLength;
-		}
-		const signerRecords = backbone.documentSignerJournal();
-		const signerRecordCount = backbone.documentSignerPendingJournalLength;
-		if (signerRecords.byteLength > 0) {
-			if (this.documentSignerJournalInitialized === undefined) {
-				const existing = await this.store.read(this.documentSignerJournalFile);
-				this.documentSignerJournalInitialized =
-					!!existing && existing.byteLength > 0;
-			}
-			const bytes = this.documentSignerJournalInitialized
-				? signerRecords
-				: concatBytes([backbone.documentSignerJournalHeader(), signerRecords]);
-			await this.store.append(this.documentSignerJournalFile, bytes);
-			this.documentSignerJournalInitialized = true;
-			this.documentSignerJournalByteLength += bytes.byteLength;
-			this.documentSignerJournalRecordCount += signerRecordCount;
 			backbone.clearDocumentSignerJournalPrefix(
 				signerRecords.byteLength,
 				signerRecordCount,
 			);
-			written += signerRecords.byteLength;
-		}
-		if (written === 0) {
 			this.lastFlushMs = Date.now();
-			return 0;
+			return written;
+		} catch (error) {
+			if (persistenceMutationStarted) {
+				this.persistenceFailure ??= error;
+				throw this.persistenceFailure;
+			}
+			throw error;
 		}
-		this.lastFlushMs = Date.now();
-		if (this.shouldCompactJournal()) {
-			await this.compactInternal(backbone);
+	}
+
+	async compact(_backbone: NativePeerbitBackbone): Promise<void> {
+		this.assertActive("compact");
+		throw new Error(nativeBackboneCoordinateCompactionDisabledMessage);
+	}
+
+	close(): Promise<void> {
+		if (this.closePromise) {
+			return this.closePromise;
 		}
-		return written;
-	}
-
-	private shouldCompactJournal(): boolean {
-		return (
-			(this.compactMaxJournalBytes != null &&
-				this.journalByteLength +
-					this.documentJournalByteLength +
-					this.documentSignerJournalByteLength >=
-					this.compactMaxJournalBytes) ||
-			(this.compactMaxJournalRecords != null &&
-				this.journalRecordCount +
-					this.documentJournalRecordCount +
-					this.documentSignerJournalRecordCount >=
-					this.compactMaxJournalRecords)
-		);
-	}
-
-	compact(backbone: NativePeerbitBackbone): Promise<void> {
-		return this.enqueuePersistence(() => this.compactInternal(backbone));
-	}
-
-	private async compactInternal(backbone: NativePeerbitBackbone): Promise<void> {
-		// The snapshots below cover exactly the journal records pending right
-		// now; records appended during the awaited writes must survive the
-		// clears at the end, so only this prefix is dropped.
-		const coordinateJournalByteLength =
-			backbone.coordinatePendingJournalByteLength;
-		const coordinateJournalRecordCount =
-			backbone.coordinatePendingJournalLength;
-		const documentJournalByteLength = backbone.documentPendingJournalByteLength;
-		const documentJournalRecordCount = backbone.documentPendingJournalLength;
-		const documentSignerJournalByteLength =
-			backbone.documentSignerPendingJournalByteLength;
-		const documentSignerJournalRecordCount =
-			backbone.documentSignerPendingJournalLength;
-		await Promise.all([
-			this.store.write(this.snapshotFile, backbone.coordinateSnapshot()),
-			this.store.write(this.documentSnapshotFile, backbone.documentSnapshot()),
-			this.store.write(
-				this.documentSignerSnapshotFile,
-				backbone.documentSignerSnapshot(),
-			),
-		]);
-		await Promise.all([
-			this.store.remove?.(this.journalFile),
-			this.store.remove?.(this.documentJournalFile),
-			this.store.remove?.(this.documentSignerJournalFile),
-		]);
-		this.journalInitialized = false;
-		this.journalByteLength = 0;
-		this.journalRecordCount = 0;
-		this.documentJournalInitialized = false;
-		this.documentJournalByteLength = 0;
-		this.documentJournalRecordCount = 0;
-		this.documentSignerJournalInitialized = false;
-		this.documentSignerJournalByteLength = 0;
-		this.documentSignerJournalRecordCount = 0;
-		backbone.clearCoordinateJournalPrefix(
-			coordinateJournalByteLength,
-			coordinateJournalRecordCount,
-		);
-		backbone.clearDocumentJournalPrefix(
-			documentJournalByteLength,
-			documentJournalRecordCount,
-		);
-		backbone.clearDocumentSignerJournalPrefix(
-			documentSignerJournalByteLength,
-			documentSignerJournalRecordCount,
-		);
-		// Compact persists the full pending state, so it restarts the
-		// flushIntervalMs pacing window like a flush does.
-		this.lastFlushMs = Date.now();
-	}
-
-	async close(): Promise<void> {
-		await this.store.flush?.();
-		await this.store.close?.();
+		// Close wins once invoked from an active generation. The synchronous
+		// transition rejects any later drop/hydrate/flush before the terminal
+		// store close starts, including for stores that forbid all post-close I/O.
+		const closesActiveGeneration = this.persistenceLifecycle === "active";
+		if (closesActiveGeneration) {
+			this.persistenceLifecycle = "closing";
+		}
+		this.closePromise = this.enqueuePersistence(async () => {
+			if (closesActiveGeneration || this.persistenceLifecycle === "active") {
+				this.persistenceLifecycle = "closing";
+				await this.store.flush?.();
+				await this.store.close?.();
+				this.persistenceLifecycle = "closed";
+				return;
+			}
+			if (this.persistenceLifecycle === "closing") {
+				await this.store.close?.({ flush: false });
+				this.persistenceLifecycle = "closed";
+				return;
+			}
+			// A drop already in flight wins. Drain no buffered bytes after its
+			// tombstone erase and preserve the dropped terminal lifecycle.
+			await this.store.close?.({ flush: false });
+		});
+		return this.closePromise;
 	}
 }
 
@@ -9093,20 +9682,13 @@ export const createNativeBackboneCoordinatePersistence = (
 		return config;
 	}
 	const { store, buffered, ...options } = config;
-	const isBuffered = buffered === true || !!buffered;
 	const resolvedStore =
 		buffered === true
 			? new NativeBackboneBufferedCoordinatePersistenceStore(store)
 			: buffered
 				? new NativeBackboneBufferedCoordinatePersistenceStore(store, buffered)
 				: store;
-	return new NativeBackboneCoordinatePersistence(resolvedStore, {
-		...options,
-		compactMaxJournalBytes:
-			isBuffered && options.compactMaxJournalBytes == null
-				? defaultNativeBackboneCoordinateCompactMaxJournalBytes
-				: options.compactMaxJournalBytes,
-	});
+	return new NativeBackboneCoordinatePersistence(resolvedStore, options);
 };
 
 export const createBufferedNativeBackboneCoordinatePersistence = (
@@ -9117,8 +9699,7 @@ export const createBufferedNativeBackboneCoordinatePersistence = (
 		options.maxBufferedBytes ??
 		options.flushMaxPendingBytes ??
 		defaultNativeBackboneCoordinateFlushMaxPendingBytes;
-	const flushMaxPendingBytes =
-		options.flushMaxPendingBytes ?? maxBufferedBytes;
+	const flushMaxPendingBytes = options.flushMaxPendingBytes ?? maxBufferedBytes;
 	return new NativeBackboneCoordinatePersistence(
 		new NativeBackboneBufferedCoordinatePersistenceStore(store, {
 			maxBufferedBytes,
@@ -9133,9 +9714,7 @@ export const createBufferedNativeBackboneCoordinatePersistence = (
 			flushOnAppend: false,
 			flushMaxPendingBytes,
 			flushIntervalMs: options.flushIntervalMs,
-			compactMaxJournalBytes:
-				options.compactMaxJournalBytes ??
-				defaultNativeBackboneCoordinateCompactMaxJournalBytes,
+			compactMaxJournalBytes: options.compactMaxJournalBytes,
 			compactMaxJournalRecords: options.compactMaxJournalRecords,
 		},
 	);
@@ -9153,9 +9732,6 @@ export const createBufferedNativeBackboneNodeCoordinatePersistence = (
 		flushOnAppend: false,
 		flushMaxPendingBytes,
 		writeBufferMaxBytes: options.writeBufferMaxBytes ?? flushMaxPendingBytes,
-		compactMaxJournalBytes:
-			options.compactMaxJournalBytes ??
-			defaultNativeBackboneCoordinateCompactMaxJournalBytes,
 	});
 };
 

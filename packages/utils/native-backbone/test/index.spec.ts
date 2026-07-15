@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { benchmarkPlainCommittedNoNextStorageAppendTransactionLoop } from "../src/benchmark.js";
 import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
@@ -12,10 +13,8 @@ import {
 	createBufferedNativeBackboneNodeCoordinatePersistence,
 	createNativeBackboneCoordinatePersistence,
 	createNativePeerbitBackbone,
-	defaultNativeBackboneCoordinateCompactMaxJournalBytes,
 	defaultNativeBackboneCoordinateFlushMaxPendingBytes,
 } from "../src/index.js";
-import { benchmarkPlainCommittedNoNextStorageAppendTransactionLoop } from "../src/benchmark.js";
 
 const fromHex = (hex: string) =>
 	Uint8Array.from(
@@ -206,6 +205,7 @@ class FakeOPFSFileHandle {
 	async createSyncAccessHandle(): Promise<{
 		getSize(): number;
 		write(buffer: Uint8Array, options?: { at?: number }): number;
+		truncate(size: number): void;
 		flush(): void;
 		close(): void;
 	}> {
@@ -220,9 +220,15 @@ class FakeOPFSFileHandle {
 		return {
 			getSize: () => this.directory.fileBytes(this.name).byteLength,
 			write: (buffer, options) => {
-				this.writeAt(options?.at ?? 0, buffer);
+				const written = this.directory.nextSyncWriteCount(buffer.byteLength);
+				if (written > 0 && written <= buffer.byteLength) {
+					this.writeAt(options?.at ?? 0, buffer.subarray(0, written));
+				}
 				this.directory.syncWriteCount++;
-				return buffer.byteLength;
+				return written;
+			},
+			truncate: (size) => {
+				this.replace(this.directory.fileBytes(this.name).subarray(0, size));
 			},
 			flush: () => {
 				this.directory.syncFlushCount++;
@@ -259,7 +265,14 @@ class FakeOPFSDirectoryHandle implements NativeBackboneOPFSDirectoryHandle {
 	syncFlushCount = 0;
 	syncCloseCount = 0;
 
-	constructor(private readonly syncAccess = false) {}
+	constructor(
+		private readonly syncAccess = false,
+		private readonly syncWriteCounts: number[] = [],
+	) {}
+
+	nextSyncWriteCount(requested: number): number {
+		return this.syncWriteCounts.shift() ?? requested;
+	}
 
 	fileBytes(name: string): Uint8Array {
 		return this.files.get(name)?.slice() ?? new Uint8Array();
@@ -366,9 +379,7 @@ describe("native peerbit backbone", () => {
 			flushOnAppend: false,
 		});
 
-		expect(persistence.compactMaxJournalBytes).equal(
-			defaultNativeBackboneCoordinateCompactMaxJournalBytes,
-		);
+		expect(persistence.compactMaxJournalBytes).equal(undefined);
 		await persistence.hydrate(backbone);
 		backbone.putEntryCoordinates(
 			"hash-config",
@@ -381,52 +392,24 @@ describe("native peerbit backbone", () => {
 		expect(await persistence.flushJournalOnAppend?.(backbone)).equal(0);
 		expect(store.files.has("coordinates.wal")).equal(false);
 		expect(await persistence.flushJournal(backbone)).to.be.greaterThan(0);
-		expect(store.files.has("coordinates.wal")).equal(false);
+		expect(store.files.has("coordinates.wal")).equal(true);
 		await persistence.close?.();
 		expect(store.files.get("coordinates.wal")?.byteLength).to.be.greaterThan(
 			backbone.coordinateJournalHeader().byteLength,
 		);
 	});
 
-	it("honors buffered store config coordinate WAL checkpoint thresholds", async () => {
-		const backbone = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
-		const restored = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
+	it("rejects buffered store config coordinate WAL compaction thresholds", () => {
 		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
-		const persistence = createNativeBackboneCoordinatePersistence({
-			store,
-			buffered: true,
-			flushOnAppend: false,
-			flushMaxPendingBytes: 1,
-			compactMaxJournalRecords: 1,
-		});
-
-		await persistence.hydrate(backbone);
-		backbone.putEntryCoordinates(
-			"hash-buffered-config-compact",
-			"gid-buffered-config-compact",
-			[1n],
-			false,
-			1,
-			1n,
-		);
-
-		expect(await persistence.flushJournalOnAppend?.(backbone)).to.be.greaterThan(
-			0,
-		);
-		expect(store.files.has("coordinates.bin")).equal(true);
-		expect(store.files.has("coordinates.wal")).equal(false);
-		await new NativeBackboneCoordinatePersistence(store).hydrate(restored);
-		expect(restored.getEntryCoordinateHashes()).to.deep.equal([
-			"hash-buffered-config-compact",
-		]);
+		expect(() =>
+			createNativeBackboneCoordinatePersistence({
+				store,
+				buffered: true,
+				flushOnAppend: false,
+				flushMaxPendingBytes: 1,
+				compactMaxJournalRecords: 1,
+			}),
+		).to.throw("compaction is disabled");
 	});
 
 	it("creates high-throughput buffered coordinate persistence with bounded flush policy", async () => {
@@ -443,9 +426,7 @@ describe("native peerbit backbone", () => {
 
 		expect(persistence.flushOnAppend).equal(false);
 		expect(persistence.flushMaxPendingBytes).equal(1024);
-		expect(persistence.compactMaxJournalBytes).equal(
-			defaultNativeBackboneCoordinateCompactMaxJournalBytes,
-		);
+		expect(persistence.compactMaxJournalBytes).equal(undefined);
 		await persistence.hydrate(backbone);
 		backbone.putEntryCoordinates(
 			"hash-buffered",
@@ -459,7 +440,7 @@ describe("native peerbit backbone", () => {
 		expect(await persistence.flushJournalOnAppend?.(backbone)).equal(0);
 		expect(store.files.has("coordinates.wal")).equal(false);
 		expect(await persistence.flushJournal(backbone)).to.be.greaterThan(0);
-		expect(store.files.has("coordinates.wal")).equal(false);
+		expect(store.files.has("coordinates.wal")).equal(true);
 		await persistence.close?.();
 		expect(store.files.get("coordinates.wal")?.byteLength).to.be.greaterThan(
 			backbone.coordinateJournalHeader().byteLength,
@@ -497,22 +478,24 @@ describe("native peerbit backbone", () => {
 		);
 
 		await persistence.hydrate(source);
-		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
-			wallTime: 11n,
-			logical: 1,
-			gid: "gid-buffered-document-custom",
-			payloadData: new Uint8Array([1, 2, 3]),
-			replicas: 1,
-			selfHash: "peer",
-			documentIndex: {
-				key: "doc-buffered-custom",
-				valuePrefixBytes: new Uint8Array(0),
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+			{
+				wallTime: 11n,
+				logical: 1,
+				gid: "gid-buffered-document-custom",
+				payloadData: new Uint8Array([1, 2, 3]),
+				replicas: 1,
+				selfHash: "peer",
+				documentIndex: {
+					key: "doc-buffered-custom",
+					valuePrefixBytes: new Uint8Array(0),
+				},
 			},
-		});
+		);
 		expect(source.documentPendingJournalLength).equal(1);
 
 		expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
-		expect(store.files.has("custom-document-values.wal")).equal(false);
+		expect(store.files.has("custom-document-values.wal")).equal(true);
 		expect(store.files.has("document-values.wal")).equal(false);
 		await persistence.close?.();
 		expect(store.files.has("custom-document-values.wal")).equal(true);
@@ -571,18 +554,20 @@ describe("native peerbit backbone", () => {
 		);
 
 		await persistence.hydrate(source);
-		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
-			wallTime: 11n,
-			logical: 1,
-			gid: "gid-buffered-document-signer-custom",
-			payloadData: new Uint8Array([1, 2, 3]),
-			replicas: 1,
-			selfHash: "peer",
-			documentIndex: {
-				key: "doc-buffered-signer-custom",
-				valuePrefixBytes: new Uint8Array(0),
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+			{
+				wallTime: 11n,
+				logical: 1,
+				gid: "gid-buffered-document-signer-custom",
+				payloadData: new Uint8Array([1, 2, 3]),
+				replicas: 1,
+				selfHash: "peer",
+				documentIndex: {
+					key: "doc-buffered-signer-custom",
+					valuePrefixBytes: new Uint8Array(0),
+				},
 			},
-		});
+		);
 		const documentValue = source.documentValueBytes(
 			"doc-buffered-signer-custom",
 		);
@@ -595,7 +580,7 @@ describe("native peerbit backbone", () => {
 		expect(source.documentSignerPendingJournalLength).equal(1);
 
 		expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
-		expect(store.files.has("custom-document-signers.wal")).equal(false);
+		expect(store.files.has("custom-document-signers.wal")).equal(true);
 		expect(store.files.has("document-signers.wal")).equal(false);
 		await persistence.close?.();
 		expect(store.files.has("custom-document-signers.wal")).equal(true);
@@ -620,77 +605,24 @@ describe("native peerbit backbone", () => {
 		).to.deep.equal(Array.from(publicKey));
 	});
 
-	it("checkpoints generic coordinate WAL after compact thresholds", async () => {
-		const backbone = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
-		const restored = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
+	it("rejects generic coordinate WAL compaction thresholds", () => {
 		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
-		const persistence = new NativeBackboneCoordinatePersistence(store, {
-			compactMaxJournalRecords: 1,
-		});
-
-		await persistence.hydrate(backbone);
-		backbone.putEntryCoordinates(
-			"hash-compact",
-			"gid-compact",
-			[1n],
-			false,
-			1,
-			1n,
-		);
-
-		expect(await persistence.flushJournal(backbone)).to.be.greaterThan(0);
-		expect(store.files.has("coordinates.bin")).equal(true);
-		expect(store.files.has("coordinates.wal")).equal(false);
-		expect(backbone.coordinatePendingJournalLength).equal(0);
-		await new NativeBackboneCoordinatePersistence(store).hydrate(restored);
-		expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-compact"]);
+		expect(
+			() =>
+				new NativeBackboneCoordinatePersistence(store, {
+					compactMaxJournalBytes: 1,
+				}),
+		).to.throw("compaction is disabled");
 	});
 
-	it("checkpoints buffered coordinate WAL after compact thresholds", async () => {
-		const backbone = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
-		const restored = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
+	it("rejects buffered coordinate WAL compaction thresholds", () => {
 		const store = new NativeBackboneMemoryCoordinatePersistenceStore();
-		const persistence = createBufferedNativeBackboneCoordinatePersistence(
-			store,
-			{ compactMaxJournalRecords: 1, flushMaxPendingBytes: 1 },
-		);
-
-		await persistence.hydrate(backbone);
-		backbone.putEntryCoordinates(
-			"hash-buffered-compact",
-			"gid-buffered-compact",
-			[1n],
-			false,
-			1,
-			1n,
-		);
-
-		expect(await persistence.flushJournalOnAppend?.(backbone)).to.be.greaterThan(
-			0,
-		);
-		expect(store.files.has("coordinates.bin")).equal(true);
-		expect(store.files.has("coordinates.wal")).equal(false);
-		expect(backbone.coordinatePendingJournalLength).equal(0);
-		await new NativeBackboneCoordinatePersistence(store).hydrate(restored);
-		expect(restored.getEntryCoordinateHashes()).to.deep.equal([
-			"hash-buffered-compact",
-		]);
+		expect(() =>
+			createBufferedNativeBackboneCoordinatePersistence(store, {
+				compactMaxJournalRecords: 1,
+				flushMaxPendingBytes: 1,
+			}),
+		).to.throw("compaction is disabled");
 	});
 
 	it("owns coordinate WAL append flush decisions", async () => {
@@ -1040,10 +972,7 @@ describe("native peerbit backbone", () => {
 			undefined,
 			undefined,
 		]);
-		expect(results?.map((result) => result.entry.next)).to.deep.equal([
-			[],
-			[],
-		]);
+		expect(results?.map((result) => result.entry.next)).to.deep.equal([[], []]);
 		expect(backbone.documentValueLength).to.equal(2);
 		expect(backbone.getEntryCoordinateHashes()).to.deep.equal(
 			results?.map((result) => result.entry.hash),
@@ -1084,8 +1013,7 @@ describe("native peerbit backbone", () => {
 							documentIndex: {
 								key: "doc-projected-batch-1",
 								projection: {
-									encodedDocument:
-										encodedDocumentWithIdScoreAndBytes("abc", 7),
+									encodedDocument: encodedDocumentWithIdScoreAndBytes("abc", 7),
 									plan: projection,
 								},
 							},
@@ -1098,8 +1026,7 @@ describe("native peerbit backbone", () => {
 							documentIndex: {
 								key: "doc-projected-batch-2",
 								projection: {
-									encodedDocument:
-										encodedDocumentWithIdScoreAndBytes("def", 8),
+									encodedDocument: encodedDocumentWithIdScoreAndBytes("def", 8),
 									plan: projection,
 								},
 							},
@@ -1124,11 +1051,11 @@ describe("native peerbit backbone", () => {
 		).to.equal("doc-projected-batch-2");
 	});
 
-		it("batches compact committed no-next cached-plan plain-put-payload document index transactions", async () => {
-			const backbone = await createNativePeerbitBackbone({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
+	it("batches compact committed no-next cached-plan plain-put-payload document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
 		});
 		backbone.configureDocumentSchemaIr(contextOnlySchema());
 		backbone.setDocumentContextHeadField(3);
@@ -1190,55 +1117,55 @@ describe("native peerbit backbone", () => {
 			backbone.documentExactStringFirstKey(3, results![0]!.entry.hash),
 		).to.equal("doc-projected-payload-batch-1");
 		expect(
-				backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
-			).to.equal("doc-projected-payload-batch-2");
+			backbone.documentExactStringFirstKey(3, results![1]!.entry.hash),
+		).to.equal("doc-projected-payload-batch-2");
+	});
+
+	it("commits compact no-next identity document indexes from plain put payloads", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+		backbone.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
 		});
 
-		it("commits compact no-next identity document indexes from plain put payloads", async () => {
-			const backbone = await createNativePeerbitBackbone({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
-			});
-			backbone.configureDocumentSchemaIr(contextOnlySchema());
-			backbone.setDocumentContextHeadField(3);
-			backbone.setDocumentContextFields({
-				created: 1,
-				modified: 2,
-				head: 3,
-				gid: 4,
-				size: 5,
-			});
-
-			const result =
-				backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
-					{
-						wallTime: 34n,
-						logical: 1,
-						gid: "gid-doc-index-identity-payload",
-						payloadData: plainPutPayload(new Uint8Array(0)),
-						documentIndex: {
-							key: "doc-identity-payload",
-							valuePrefixBytes: new Uint8Array(0),
-							usePlainPutPayload: true,
-						},
-						replicas: 1,
-						selfHash: "peer",
+		const result =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+				{
+					wallTime: 34n,
+					logical: 1,
+					gid: "gid-doc-index-identity-payload",
+					payloadData: plainPutPayload(new Uint8Array(0)),
+					documentIndex: {
+						key: "doc-identity-payload",
+						valuePrefixBytes: new Uint8Array(0),
+						usePlainPutPayload: true,
 					},
-				);
+					replicas: 1,
+					selfHash: "peer",
+				},
+			);
 
-			expect(result.entry.bytes).equal(undefined);
-			expect(backbone.documentValueLength).to.equal(1);
-			expect(
-				backbone.documentExactStringFirstKey(3, result.entry.hash),
-			).to.equal("doc-identity-payload");
-		});
+		expect(result.entry.bytes).equal(undefined);
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(backbone.documentExactStringFirstKey(3, result.entry.hash)).to.equal(
+			"doc-identity-payload",
+		);
+	});
 
-		it("batches committed latest-context document index transactions", async () => {
-			const backbone = await createNativePeerbitBackbone({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
+	it("batches committed latest-context document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
 		});
 		backbone.configureDocumentSchemaIr(contextOnlySchema());
 		backbone.setDocumentContextHeadField(3);
@@ -1298,71 +1225,71 @@ describe("native peerbit backbone", () => {
 			first[0]!.entry.hash,
 		);
 		expect(backbone.documentValueLength).to.equal(1);
-			expect(
-				backbone.documentExactStringFirstKey(3, updated[0]!.entry.hash),
-			).to.equal("doc-latest-batch-1");
+		expect(
+			backbone.documentExactStringFirstKey(3, updated[0]!.entry.hash),
+		).to.equal("doc-latest-batch-1");
+	});
+
+	it("commits latest-context identity document indexes from plain put payloads", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		backbone.configureDocumentSchemaIr(contextOnlySchema());
+		backbone.setDocumentContextHeadField(3);
+		backbone.setDocumentContextFields({
+			created: 1,
+			modified: 2,
+			head: 3,
+			gid: 4,
+			size: 5,
 		});
 
-		it("commits latest-context identity document indexes from plain put payloads", async () => {
-			const backbone = await createNativePeerbitBackbone({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
-			});
-			backbone.configureDocumentSchemaIr(contextOnlySchema());
-			backbone.setDocumentContextHeadField(3);
-			backbone.setDocumentContextFields({
-				created: 1,
-				modified: 2,
-				head: 3,
-				gid: 4,
-				size: 5,
-			});
-
-			const first =
-				backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
-					{
-						wallTime: 44n,
-						logical: 1,
-						gid: "gid-doc-latest-identity",
-						payloadData: plainPutPayload(new Uint8Array(0)),
-						documentIndex: {
-							key: "doc-latest-identity",
-							valuePrefixBytes: new Uint8Array(0),
-							usePlainPutPayload: true,
-						},
-						replicas: 1,
-						selfHash: "peer",
+		const first =
+			backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+				{
+					wallTime: 44n,
+					logical: 1,
+					gid: "gid-doc-latest-identity",
+					payloadData: plainPutPayload(new Uint8Array(0)),
+					documentIndex: {
+						key: "doc-latest-identity",
+						valuePrefixBytes: new Uint8Array(0),
+						usePlainPutPayload: true,
 					},
-				);
-
-			const updated = backbone.preparePlainCommittedStorageAppendTransaction({
-				wallTime: 45n,
-				logical: 2,
-				gid: "fallback-doc-latest-identity",
-				payloadData: plainPutPayload(new Uint8Array(0)),
-				documentIndex: {
-					key: "doc-latest-identity",
-					valuePrefixBytes: new Uint8Array(0),
-					useLatestContext: true,
-					usePlainPutPayload: true,
+					replicas: 1,
+					selfHash: "peer",
 				},
-				replicas: 1,
-				selfHash: "peer",
-				resolveTrimmedEntries: false,
-			});
+			);
 
-			expect(updated.entry.next).to.deep.equal([first.entry.hash]);
-			expect(updated.coordinate.gid).to.equal("gid-doc-latest-identity");
-			expect(backbone.documentValueLength).to.equal(1);
-			expect(
-				backbone.documentExactStringFirstKey(3, updated.entry.hash),
-			).to.equal("doc-latest-identity");
+		const updated = backbone.preparePlainCommittedStorageAppendTransaction({
+			wallTime: 45n,
+			logical: 2,
+			gid: "fallback-doc-latest-identity",
+			payloadData: plainPutPayload(new Uint8Array(0)),
+			documentIndex: {
+				key: "doc-latest-identity",
+				valuePrefixBytes: new Uint8Array(0),
+				useLatestContext: true,
+				usePlainPutPayload: true,
+			},
+			replicas: 1,
+			selfHash: "peer",
+			resolveTrimmedEntries: false,
 		});
 
-		it("batches committed latest-context cached-plan plain-put-payload document index transactions", async () => {
-			const backbone = await createNativePeerbitBackbone({
-				clockId: publicKey,
+		expect(updated.entry.next).to.deep.equal([first.entry.hash]);
+		expect(updated.coordinate.gid).to.equal("gid-doc-latest-identity");
+		expect(backbone.documentValueLength).to.equal(1);
+		expect(
+			backbone.documentExactStringFirstKey(3, updated.entry.hash),
+		).to.equal("doc-latest-identity");
+	});
+
+	it("batches committed latest-context cached-plan plain-put-payload document index transactions", async () => {
+		const backbone = await createNativePeerbitBackbone({
+			clockId: publicKey,
 			privateKey,
 			publicKey,
 		});
@@ -1431,9 +1358,7 @@ describe("native peerbit backbone", () => {
 
 		expect(updated).to.have.length(1);
 		expect(updated[0]!.entry.next).to.deep.equal([first[0]!.entry.hash]);
-		expect(updated[0]!.coordinate.gid).to.equal(
-			"gid-doc-latest-payload-batch",
-		);
+		expect(updated[0]!.coordinate.gid).to.equal("gid-doc-latest-payload-batch");
 		expect(updated[0]!.documentPreviousContext?.head).to.equal(
 			first[0]!.entry.hash,
 		);
@@ -1643,16 +1568,13 @@ describe("native peerbit backbone", () => {
 		expect(Array.from(expectedColumns?.[14] ?? [], String)).to.deep.equal([
 			String(expectedHashNumber),
 		]);
-		const compactExpectedColumns =
-			target.prepareRawReceiveExpectedColumnsBatch(
-				[prepared.bytes],
-				[prepared.hash],
-			);
+		const compactExpectedColumns = target.prepareRawReceiveExpectedColumnsBatch(
+			[prepared.bytes],
+			[prepared.hash],
+		);
 		expect(compactExpectedColumns?.[0]).to.deep.equal([]);
 		expect(compactExpectedColumns?.[1][0]).to.equal(undefined);
-		expect(Array.from(compactExpectedColumns?.[12] ?? [])).to.deep.equal([
-			1,
-		]);
+		expect(Array.from(compactExpectedColumns?.[12] ?? [])).to.deep.equal([1]);
 		expect(
 			Array.from(compactExpectedColumns?.[14] ?? [], String),
 		).to.deep.equal([String(expectedHashNumber)]);
@@ -1675,32 +1597,26 @@ describe("native peerbit backbone", () => {
 			);
 		expect(compactUnverifiedColumns?.[0]).to.deep.equal([]);
 		expect(compactUnverifiedColumns?.[1][0]).to.equal(undefined);
-		expect(Array.from(compactUnverifiedColumns?.[12] ?? [])).to.deep.equal([
-			0,
-		]);
+		expect(Array.from(compactUnverifiedColumns?.[12] ?? [])).to.deep.equal([0]);
 		expect(
 			target.graph.verifyPreparedRawReceiveEntries([prepared.hash]),
 		).to.deep.equal([true]);
-		expect(
-			target.graph.verifyPreparedRawReceiveEntries(["missing"]),
-		).to.equal(undefined);
+		expect(target.graph.verifyPreparedRawReceiveEntries(["missing"])).to.equal(
+			undefined,
+		);
 		expect(() =>
 			target.prepareRawReceiveColumnsBatch([prepared.bytes], ["not-a-cid"]),
 		).to.throw("Expected base58btc CID");
 		expect(
-			target.graph.commitPreparedRawReceiveBatch(
-				[prepared.hash],
-				[true],
-				{
-					hashes: [prepared.hash],
-					gids: ["gid-raw-receive"],
-					hashNumbers: ["9"],
-					coordinateBatches: [["11"]],
-					nextHashBatches: [[]],
-					assignedToRangeBoundaries: new Uint8Array([0]),
-					requestedReplicas: [1],
-				},
-			),
+			target.graph.commitPreparedRawReceiveBatch([prepared.hash], [true], {
+				hashes: [prepared.hash],
+				gids: ["gid-raw-receive"],
+				hashNumbers: ["9"],
+				coordinateBatches: [["11"]],
+				nextHashBatches: [[]],
+				assignedToRangeBoundaries: new Uint8Array([0]),
+				requestedReplicas: [1],
+			}),
 		).to.equal(true);
 
 		expect(target.hasBlock(prepared.hash)).to.equal(true);
@@ -1831,35 +1747,32 @@ describe("native peerbit backbone", () => {
 			maxReplicasFromNewEntries: 3,
 			maxMaxReplicas: 3,
 		});
-		expect(Array.from(indexPlans?.[0].indexes ?? [])).to.deep.equal([
-			0,
-			1,
-		]);
+		expect(Array.from(indexPlans?.[0].indexes ?? [])).to.deep.equal([0, 1]);
 		expect(indexPlans?.[0].requestedReplicas).to.deep.equal([2, 4]);
-			expect(indexPlans?.[1]).to.deep.include({
-				gid: "gid-raw-group-b",
-				latestIndex: 2,
-				maxReplicasFromHead: 1,
-				maxReplicasFromNewEntries: 1,
-				maxMaxReplicas: 1,
-			});
-			const groupACoordinate = Number(
-				target.getGidCoordinates("gid-raw-group-a", 3)[0],
-			);
-			target.putRange({
-				id: "peer-keep-range",
-				hash: "peer-keep",
-				timestamp: 0,
-				start1: groupACoordinate,
-				end1: groupACoordinate + 1,
-				start2: groupACoordinate,
-				end2: groupACoordinate + 1,
-				width: 1,
-				mode: 0,
-			});
-			const leaderPlans = target.planPreparedRawReceiveGroupLeaders(
-				[first.hash, second.hash, third.hash],
-				{ minReplicas: 1, maxReplicas: 3 },
+		expect(indexPlans?.[1]).to.deep.include({
+			gid: "gid-raw-group-b",
+			latestIndex: 2,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 1,
+			maxMaxReplicas: 1,
+		});
+		const groupACoordinate = Number(
+			target.getGidCoordinates("gid-raw-group-a", 3)[0],
+		);
+		target.putRange({
+			id: "peer-keep-range",
+			hash: "peer-keep",
+			timestamp: 0,
+			start1: groupACoordinate,
+			end1: groupACoordinate + 1,
+			start2: groupACoordinate,
+			end2: groupACoordinate + 1,
+			width: 1,
+			mode: 0,
+		});
+		const leaderPlans = target.planPreparedRawReceiveGroupLeaders(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
 			{
 				selfHash: "peer-a",
 				selfReplicating: false,
@@ -1874,261 +1787,245 @@ describe("native peerbit backbone", () => {
 			maxReplicasFromNewEntries: 3,
 			maxMaxReplicas: 3,
 		});
-		expect(Array.from(leaderPlans?.[0].indexes ?? [])).to.deep.equal([
-			0,
-			1,
+		expect(Array.from(leaderPlans?.[0].indexes ?? [])).to.deep.equal([0, 1]);
+		expect(leaderPlans?.[0].coordinates).to.have.length(3);
+		expect(leaderPlans?.[0].coordinateStrings).to.have.length(3);
+		expect(leaderPlans?.[0].leaders).to.be.instanceOf(Map);
+		expect(leaderPlans?.[0].leaders.has("peer-keep")).to.equal(true);
+		const assignmentPlans = target.planPreparedRawReceiveGroupAssignments(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
+			{
+				selfHash: "peer-keep",
+				selfReplicating: false,
+				fullReplicaFallback: false,
+			},
+			"peer-b",
+		);
+		expect(assignmentPlans).to.have.length(2);
+		expect(assignmentPlans?.[0]).to.deep.include({
+			gid: "gid-raw-group-a",
+			latestIndex: 1,
+			isLeader: true,
+			fromIsLeader: false,
+		});
+		expect(assignmentPlans?.[0].coordinates).to.have.length(3);
+		expect(assignmentPlans?.[0].coordinateStrings).to.have.length(3);
+		expect(assignmentPlans?.[0].assignedToRangeBoundary).to.be.a("boolean");
+		expect(assignmentPlans?.[1]).to.deep.include({
+			gid: "gid-raw-group-b",
+			latestIndex: 2,
+			fromIsLeader: false,
+		});
+		expect(assignmentPlans?.[1].isLeader).to.be.a("boolean");
+		expect(
+			target.planPreparedRawReceiveFastDrop(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-b",
+			),
+		).to.deep.include({
+			canDrop: true,
+			groupCount: 2,
+			plannedHashCount: 3,
+		});
+		expect(
+			target.selectPreparedRawReceiveHashes(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-b",
+			),
+		).to.deep.include({
+			retainedHashes: [],
+			droppedHashes: [first.hash, second.hash, third.hash],
+			groupCount: 2,
+			plannedHashCount: 3,
+			usedNativeFastDropPlan: true,
+			usedLeaderSamplePlans: false,
+		});
+		expect(
+			target.planPreparedRawReceiveFastDrop(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-keep",
+			),
+		).to.deep.include({
+			canDrop: true,
+			groupCount: 2,
+			plannedHashCount: 3,
+		});
+		expect(
+			target.selectPreparedRawReceiveHashes(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-keep",
+			),
+		).to.deep.include({
+			retainedHashes: [],
+			droppedHashes: [first.hash, second.hash, third.hash],
+			groupCount: 2,
+			plannedHashCount: 3,
+			usedNativeFastDropPlan: true,
+			usedLeaderSamplePlans: false,
+		});
+		expect(
+			target.planPreparedRawReceiveSelection(
+				[first.hash, second.hash, third.hash],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-b",
+			),
+		).to.deep.include({
+			retainedHashes: [],
+			droppedHashes: [first.hash, second.hash, third.hash],
+			groupCount: 2,
+			plannedHashCount: 3,
+			usedNativeFastDropPlan: true,
+			usedLeaderSamplePlans: true,
+		});
+		const groupBCoordinate = Number(
+			target.getGidCoordinates("gid-raw-group-b", 1)[0],
+		);
+		target.putRange({
+			id: "peer-drop-range",
+			hash: "peer-drop",
+			timestamp: 0,
+			start1: groupBCoordinate,
+			end1: groupBCoordinate + 1,
+			start2: groupBCoordinate,
+			end2: groupBCoordinate + 1,
+			width: 1,
+			mode: 0,
+		});
+		const mixedSelection = target.selectPreparedRawReceiveHashes(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
+			{
+				selfHash: "peer-keep",
+				selfReplicating: false,
+				fullReplicaFallback: false,
+			},
+			"peer-b",
+		);
+		expect(mixedSelection?.retainedHashes).to.deep.equal([
+			first.hash,
+			second.hash,
 		]);
-			expect(leaderPlans?.[0].coordinates).to.have.length(3);
-			expect(leaderPlans?.[0].coordinateStrings).to.have.length(3);
-			expect(leaderPlans?.[0].leaders).to.be.instanceOf(Map);
-			expect(leaderPlans?.[0].leaders.has("peer-keep")).to.equal(true);
-			const assignmentPlans =
-				target.planPreparedRawReceiveGroupAssignments(
-					[first.hash, second.hash, third.hash],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
+		expect(mixedSelection?.droppedHashes).to.deep.equal([third.hash]);
+		expect(Array.from(mixedSelection?.retainedIndexes ?? [])).to.deep.equal([
+			0, 1,
+		]);
+		expect(Array.from(mixedSelection?.droppedIndexes ?? [])).to.deep.equal([2]);
+		expect(mixedSelection).to.deep.include({
+			groupCount: 2,
+			plannedHashCount: 3,
+			usedNativeFastDropPlan: false,
+			usedLeaderSamplePlans: false,
+		});
+		expect(mixedSelection?.retainedGroupLeaderPlans).to.have.length(1);
+		expect(mixedSelection?.retainedGroupLeaderPlans?.[0]).to.deep.include({
+			gid: "gid-raw-group-a",
+			latestIndex: 1,
+			maxReplicasFromHead: 1,
+			maxReplicasFromNewEntries: 3,
+			maxMaxReplicas: 3,
+		});
+		expect(
+			Array.from(mixedSelection?.retainedGroupLeaderPlans?.[0]?.indexes ?? []),
+		).to.deep.equal([0, 1]);
+		expect(
+			mixedSelection?.retainedGroupLeaderPlans?.[0]?.leaders.has("peer-keep"),
+		).to.equal(true);
+		const mixedFusedSelection = target.planPreparedRawReceiveSelection(
+			[first.hash, second.hash, third.hash],
+			{ minReplicas: 1, maxReplicas: 3 },
+			{
+				selfHash: "peer-keep",
+				selfReplicating: false,
+				fullReplicaFallback: false,
+			},
+			"peer-b",
+		);
+		expect(mixedFusedSelection?.retainedHashes).to.deep.equal([
+			first.hash,
+			second.hash,
+		]);
+		expect(mixedFusedSelection?.droppedHashes).to.deep.equal([third.hash]);
+		expect(
+			Array.from(mixedFusedSelection?.retainedIndexes ?? []),
+		).to.deep.equal([0, 1]);
+		expect(Array.from(mixedFusedSelection?.droppedIndexes ?? [])).to.deep.equal(
+			[2],
+		);
+		expect(mixedFusedSelection).to.deep.include({
+			groupCount: 2,
+			plannedHashCount: 3,
+			usedNativeFastDropPlan: false,
+			usedLeaderSamplePlans: false,
+		});
+		expect(mixedFusedSelection?.retainedGroupLeaderPlans).to.have.length(1);
+		const mixedPreparedSelection =
+			target.prepareRawReceiveExpectedColumnsAndSelectionBatch(
+				[first.bytes, second.bytes, third.bytes],
+				[first.hash, second.hash, third.hash],
+				{
+					verifySignatures: false,
+					minReplicas: 1,
+					maxReplicas: 3,
+					leaderOptions: {
 						selfHash: "peer-keep",
 						selfReplicating: false,
 						fullReplicaFallback: false,
 					},
-					"peer-b",
-				);
-			expect(assignmentPlans).to.have.length(2);
-			expect(assignmentPlans?.[0]).to.deep.include({
-				gid: "gid-raw-group-a",
-				latestIndex: 1,
-				isLeader: true,
-				fromIsLeader: false,
-			});
-			expect(assignmentPlans?.[0].coordinates).to.have.length(3);
-			expect(assignmentPlans?.[0].coordinateStrings).to.have.length(3);
-			expect(assignmentPlans?.[0].assignedToRangeBoundary).to.be.a(
-				"boolean",
-			);
-			expect(assignmentPlans?.[1]).to.deep.include({
-				gid: "gid-raw-group-b",
-				latestIndex: 2,
-				fromIsLeader: false,
-			});
-			expect(assignmentPlans?.[1].isLeader).to.be.a("boolean");
-			expect(
-				target.planPreparedRawReceiveFastDrop(
-					[first.hash, second.hash, third.hash],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
-						selfHash: "peer-a",
-						selfReplicating: false,
-						fullReplicaFallback: true,
-					},
-					"peer-b",
-				),
-			).to.deep.include({
-				canDrop: true,
-				groupCount: 2,
-				plannedHashCount: 3,
-			});
-			expect(
-				target.selectPreparedRawReceiveHashes(
-					[first.hash, second.hash, third.hash],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
-						selfHash: "peer-a",
-						selfReplicating: false,
-						fullReplicaFallback: true,
-					},
-					"peer-b",
-				),
-			).to.deep.include({
-				retainedHashes: [],
-				droppedHashes: [first.hash, second.hash, third.hash],
-				groupCount: 2,
-				plannedHashCount: 3,
-				usedNativeFastDropPlan: true,
-				usedLeaderSamplePlans: false,
-			});
-			expect(
-				target.planPreparedRawReceiveFastDrop(
-					[first.hash, second.hash, third.hash],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
-						selfHash: "peer-a",
-						selfReplicating: false,
-						fullReplicaFallback: true,
-					},
-					"peer-keep",
-				),
-			).to.deep.include({
-				canDrop: true,
-				groupCount: 2,
-				plannedHashCount: 3,
-			});
-			expect(
-				target.selectPreparedRawReceiveHashes(
-					[first.hash, second.hash, third.hash],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
-						selfHash: "peer-a",
-						selfReplicating: false,
-						fullReplicaFallback: true,
-					},
-					"peer-keep",
-				),
-				).to.deep.include({
-				retainedHashes: [],
-				droppedHashes: [first.hash, second.hash, third.hash],
-				groupCount: 2,
-				plannedHashCount: 3,
-				usedNativeFastDropPlan: true,
-				usedLeaderSamplePlans: false,
-			});
-			expect(
-				target.planPreparedRawReceiveSelection(
-					[first.hash, second.hash, third.hash],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
-						selfHash: "peer-a",
-						selfReplicating: false,
-						fullReplicaFallback: true,
-					},
-					"peer-b",
-				),
-				).to.deep.include({
-				retainedHashes: [],
-				droppedHashes: [first.hash, second.hash, third.hash],
-				groupCount: 2,
-				plannedHashCount: 3,
-				usedNativeFastDropPlan: true,
-				usedLeaderSamplePlans: true,
-			});
-			const groupBCoordinate = Number(
-				target.getGidCoordinates("gid-raw-group-b", 1)[0],
-			);
-			target.putRange({
-				id: "peer-drop-range",
-				hash: "peer-drop",
-				timestamp: 0,
-				start1: groupBCoordinate,
-				end1: groupBCoordinate + 1,
-				start2: groupBCoordinate,
-				end2: groupBCoordinate + 1,
-				width: 1,
-				mode: 0,
-			});
-			const mixedSelection = target.selectPreparedRawReceiveHashes(
-				[first.hash, second.hash, third.hash],
-				{ minReplicas: 1, maxReplicas: 3 },
-				{
-					selfHash: "peer-keep",
-					selfReplicating: false,
-					fullReplicaFallback: false,
-				},
-				"peer-b",
-			);
-			expect(mixedSelection?.retainedHashes).to.deep.equal([
-				first.hash,
-				second.hash,
-			]);
-			expect(mixedSelection?.droppedHashes).to.deep.equal([third.hash]);
-			expect(Array.from(mixedSelection?.retainedIndexes ?? [])).to.deep.equal([
-				0, 1,
-			]);
-			expect(Array.from(mixedSelection?.droppedIndexes ?? [])).to.deep.equal([
-				2,
-			]);
-			expect(mixedSelection).to.deep.include({
-				groupCount: 2,
-				plannedHashCount: 3,
-				usedNativeFastDropPlan: false,
-				usedLeaderSamplePlans: false,
-			});
-			expect(mixedSelection?.retainedGroupLeaderPlans).to.have.length(1);
-			expect(mixedSelection?.retainedGroupLeaderPlans?.[0]).to.deep.include(
-				{
-					gid: "gid-raw-group-a",
-					latestIndex: 1,
-					maxReplicasFromHead: 1,
-					maxReplicasFromNewEntries: 3,
-					maxMaxReplicas: 3,
+					fromHash: "peer-b",
 				},
 			);
-			expect(
-				Array.from(
-					mixedSelection?.retainedGroupLeaderPlans?.[0]?.indexes ?? [],
-				),
-			).to.deep.equal([0, 1]);
-			expect(
-				mixedSelection?.retainedGroupLeaderPlans?.[0]?.leaders.has(
-					"peer-keep",
-				),
-			).to.equal(true);
-			const mixedFusedSelection = target.planPreparedRawReceiveSelection(
-				[first.hash, second.hash, third.hash],
-				{ minReplicas: 1, maxReplicas: 3 },
-				{
-					selfHash: "peer-keep",
-					selfReplicating: false,
-					fullReplicaFallback: false,
-				},
-				"peer-b",
-			);
-			expect(mixedFusedSelection?.retainedHashes).to.deep.equal([
-				first.hash,
-				second.hash,
-			]);
-			expect(mixedFusedSelection?.droppedHashes).to.deep.equal([third.hash]);
-			expect(
-				Array.from(mixedFusedSelection?.retainedIndexes ?? []),
-			).to.deep.equal([0, 1]);
-			expect(
-				Array.from(mixedFusedSelection?.droppedIndexes ?? []),
-			).to.deep.equal([2]);
-			expect(mixedFusedSelection).to.deep.include({
-				groupCount: 2,
-				plannedHashCount: 3,
-				usedNativeFastDropPlan: false,
-				usedLeaderSamplePlans: false,
-			});
-			expect(mixedFusedSelection?.retainedGroupLeaderPlans).to.have.length(
-				1,
-			);
-			const mixedPreparedSelection =
-				target.prepareRawReceiveExpectedColumnsAndSelectionBatch(
-					[first.bytes, second.bytes, third.bytes],
-					[first.hash, second.hash, third.hash],
-					{
-						verifySignatures: false,
-						minReplicas: 1,
-						maxReplicas: 3,
-						leaderOptions: {
-							selfHash: "peer-keep",
-							selfReplicating: false,
-							fullReplicaFallback: false,
-						},
-						fromHash: "peer-b",
-					},
-				);
-			expect(mixedPreparedSelection?.columns[0]).to.deep.equal([]);
-			expect(
-				Array.from(mixedPreparedSelection?.columns[12] ?? []),
-			).to.deep.equal([0, 0, 0]);
-			expect(mixedPreparedSelection?.selection?.retainedHashes).to.deep.equal([
-				first.hash,
-				second.hash,
-			]);
-			expect(mixedPreparedSelection?.selection?.droppedHashes).to.deep.equal([
-				third.hash,
-			]);
-			expect(
-				Array.from(mixedPreparedSelection?.selection?.retainedIndexes ?? []),
-			).to.deep.equal([0, 1]);
-			expect(
-				Array.from(mixedPreparedSelection?.selection?.droppedIndexes ?? []),
-			).to.deep.equal([2]);
+		expect(mixedPreparedSelection?.columns[0]).to.deep.equal([]);
+		expect(Array.from(mixedPreparedSelection?.columns[12] ?? [])).to.deep.equal(
+			[0, 0, 0],
+		);
+		expect(mixedPreparedSelection?.selection?.retainedHashes).to.deep.equal([
+			first.hash,
+			second.hash,
+		]);
+		expect(mixedPreparedSelection?.selection?.droppedHashes).to.deep.equal([
+			third.hash,
+		]);
+		expect(
+			Array.from(mixedPreparedSelection?.selection?.retainedIndexes ?? []),
+		).to.deep.equal([0, 1]);
+		expect(
+			Array.from(mixedPreparedSelection?.selection?.droppedIndexes ?? []),
+		).to.deep.equal([2]);
 
-			target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
+		target.storageBackedGraph.prepareEntryV0PlainEntryAndPut({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
 			wallTime: 1n,
 			gid: "gid-raw-existing-head",
 			metaData: replicaData(5),
@@ -2179,22 +2076,22 @@ describe("native peerbit backbone", () => {
 					selfReplicating: false,
 					fullReplicaFallback: true,
 				},
-					"peer-b",
-				),
-			).to.equal(undefined);
-			expect(
-				target.selectPreparedRawReceiveHashes(
-					["missing"],
-					{ minReplicas: 1, maxReplicas: 3 },
-					{
-						selfHash: "peer-a",
-						selfReplicating: false,
-						fullReplicaFallback: true,
-					},
-					"peer-b",
-				),
-			).to.equal(undefined);
-		});
+				"peer-b",
+			),
+		).to.equal(undefined);
+		expect(
+			target.selectPreparedRawReceiveHashes(
+				["missing"],
+				{ minReplicas: 1, maxReplicas: 3 },
+				{
+					selfHash: "peer-a",
+					selfReplicating: false,
+					fullReplicaFallback: true,
+				},
+				"peer-b",
+			),
+		).to.equal(undefined);
+	});
 
 	it("validates and commits prepared raw receive joins natively", async () => {
 		const source = await createNativePeerbitBackbone({
@@ -2332,12 +2229,12 @@ describe("native peerbit backbone", () => {
 			payloadData: new Uint8Array([3]),
 		});
 
-		expect(backbone.graph.uniqueReferenceGidRowsFlatBatch([head.hash])).to.deep.equal(
-			[
-				[0, root.hash, "root-gid"],
-				[0, side.hash, "side-gid"],
-			],
-		);
+		expect(
+			backbone.graph.uniqueReferenceGidRowsFlatBatch([head.hash]),
+		).to.deep.equal([
+			[0, root.hash, "root-gid"],
+			[0, side.hash, "side-gid"],
+		]);
 		expect(
 			backbone.graph.uniqueReferenceGidRowsFlatBatch([head.hash, root.hash]),
 		).to.deep.equal([
@@ -2658,35 +2555,33 @@ describe("native peerbit backbone", () => {
 			leaderPlan.leaders.has("peer-a"),
 		);
 		expect(requestPruneHints.entries.has("missing")).equal(false);
-		const requestPruneHintColumns =
-			backbone.planRequestPruneLeaderHintColumns(
-					[second.entry.hash, "missing"],
-					[],
-					{
-						selfHash: "peer-a",
-						selfReplicating: true,
-						fullReplicaFallback: true,
-					},
-				)!;
-			expect(requestPruneHintColumns.gids[0]).equal(
-				"gid-storage-committed-no-next",
-			);
-			expect(requestPruneHintColumns.gids[1]).equal(undefined);
-			expect([...requestPruneHintColumns.presentBlockFlags]).to.deep.equal([
-				1,
-				0,
-			]);
-			expect([...requestPruneHintColumns.replicaCounts]).to.deep.equal([1, 0]);
-			expect([...requestPruneHintColumns.localLeaderFlags]).to.deep.equal([
-				leaderPlan.leaders.has("peer-a") ? 1 : 0,
-				0,
-			]);
-			expect([...requestPruneHintColumns.peerHistoryRemovedFlags]).to.deep.equal(
-				[1, 0],
-			);
-			expect(
-				backbone.getGidCoordinates("gid-storage-committed-no-next", 1),
-			).to.deep.equal(leaderPlan.coordinates);
+		const requestPruneHintColumns = backbone.planRequestPruneLeaderHintColumns(
+			[second.entry.hash, "missing"],
+			[],
+			{
+				selfHash: "peer-a",
+				selfReplicating: true,
+				fullReplicaFallback: true,
+			},
+		)!;
+		expect(requestPruneHintColumns.gids[0]).equal(
+			"gid-storage-committed-no-next",
+		);
+		expect(requestPruneHintColumns.gids[1]).equal(undefined);
+		expect([...requestPruneHintColumns.presentBlockFlags]).to.deep.equal([
+			1, 0,
+		]);
+		expect([...requestPruneHintColumns.replicaCounts]).to.deep.equal([1, 0]);
+		expect([...requestPruneHintColumns.localLeaderFlags]).to.deep.equal([
+			leaderPlan.leaders.has("peer-a") ? 1 : 0,
+			0,
+		]);
+		expect([...requestPruneHintColumns.peerHistoryRemovedFlags]).to.deep.equal([
+			1, 0,
+		]);
+		expect(
+			backbone.getGidCoordinates("gid-storage-committed-no-next", 1),
+		).to.deep.equal(leaderPlan.coordinates);
 		expect(backbone.getGrid(leaderPlan.coordinates[0]!, 1)).to.deep.equal(
 			leaderPlan.coordinates,
 		);
@@ -2766,15 +2661,17 @@ describe("native peerbit backbone", () => {
 		backbone.setCoordinateJournalEnabled(true);
 		backbone.resetAppendProfile();
 		backbone.setAppendProfileEnabled(true);
-		const result =
-			benchmarkPlainCommittedNoNextStorageAppendTransactionLoop(backbone, {
+		const result = benchmarkPlainCommittedNoNextStorageAppendTransactionLoop(
+			backbone,
+			{
 				iterations: 3,
 				wallTimeStart: 100n,
 				payloadData: new Uint8Array([1, 2, 3]),
 				replicas: 1,
 				selfHash: "peer-a",
 				useDocumentIndex: true,
-			});
+			},
+		);
 		backbone.setAppendProfileEnabled(false);
 
 		const profile = backbone.appendProfile();
@@ -2974,7 +2871,7 @@ describe("native peerbit backbone", () => {
 		expect(target.coordinatePendingJournalLength).to.equal(0);
 	});
 
-	it("flushes and compacts native coordinate state through the persistence adapter", async () => {
+	it("flushes native coordinate state and rejects unsafe compaction", async () => {
 		const source = await createNativePeerbitBackbone({
 			clockId: publicKey,
 			privateKey,
@@ -2985,7 +2882,7 @@ describe("native peerbit backbone", () => {
 			privateKey,
 			publicKey,
 		});
-		const compacted = await createNativePeerbitBackbone({
+		const reflushed = await createNativePeerbitBackbone({
 			clockId: publicKey,
 			privateKey,
 			publicKey,
@@ -3004,14 +2901,338 @@ describe("native peerbit backbone", () => {
 		expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
 
 		source.putEntryCoordinates("hash-b", "gid-b", [2n], false, 1, 2n);
-		await persistence.compact(source);
-		expect(store.files.has("coordinates.wal")).equal(false);
-		expect(await persistence.hydrate(compacted)).to.equal(0);
-		expect(compacted.getEntryCoordinateHashes()).to.deep.equal([
+		let compactError: unknown;
+		await persistence.compact(source).catch((error) => {
+			compactError = error;
+		});
+		expect(String(compactError)).to.contain("compaction is disabled");
+		expect(source.coordinatePendingJournalLength).to.equal(1);
+		await persistence.flushJournal(source);
+		expect(store.files.has("coordinates.wal")).equal(true);
+		expect(await persistence.hydrate(reflushed)).to.equal(2);
+		expect(reflushed.getEntryCoordinateHashes()).to.deep.equal([
 			"hash-a",
 			"hash-b",
 		]);
-		expect(compacted.coordinateIndexLength).to.equal(2);
+		expect(reflushed.coordinateIndexLength).to.equal(2);
+	});
+
+	it("drops every configured native file through memory and buffered stores", async () => {
+		const files = {
+			snapshot: "custom-coordinates.bin",
+			journal: "custom-coordinates.wal",
+			documentSnapshot: "custom-document-values.bin",
+			documentJournal: "custom-document-values.wal",
+			documentSignerSnapshot: "custom-document-signers.bin",
+			documentSignerJournal: "custom-document-signers.wal",
+		};
+		for (const buffered of [false, true]) {
+			const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+			const store = buffered
+				? new NativeBackboneBufferedCoordinatePersistenceStore(memory)
+				: memory;
+			const persistence = new NativeBackboneCoordinatePersistence(store, files);
+			for (const name of Object.values(files)) {
+				await store.append(name, new Uint8Array([1, 2, 3]));
+			}
+			await store.write("strict-intent-a", new Uint8Array([4]));
+			await store.write("strict-intent-b", new Uint8Array([5]));
+
+			await persistence.drop(["strict-intent-a", "strict-intent-b"]);
+			await persistence.close();
+			expect(memory.files.size, `buffered=${String(buffered)}`).equal(0);
+		}
+	});
+
+	it("fails closed on a corrupt drop tombstone but still permits explicit erase", async () => {
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		await memory.write("coordinates.wal", new Uint8Array([1, 2, 3]));
+		await memory.write(
+			"native-backbone-drop.tombstone",
+			new TextEncoder().encode(
+				'{"format":"peerbit-native-backbone-coordinate-drop"',
+			),
+		);
+		const persistence = new NativeBackboneCoordinatePersistence(memory);
+
+		let hydrateError: unknown;
+		await persistence.hydrate(target).catch((error) => {
+			hydrateError = error;
+		});
+		expect(String(hydrateError)).to.contain(
+			"Invalid native backbone drop tombstone JSON",
+		);
+		expect(memory.files.has("coordinates.wal")).equal(true);
+		expect(memory.files.has("native-backbone-drop.tombstone")).equal(true);
+
+		await persistence.drop();
+		expect(memory.files.size).equal(0);
+	});
+
+	it("makes close terminal before a later drop can touch the store", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let closed = false;
+		let closeCalls = 0;
+		let postCloseOperations = 0;
+		const assertOpen = () => {
+			if (closed) {
+				postCloseOperations++;
+				throw new Error("terminal store is closed");
+			}
+		};
+		const inner: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => {
+				assertOpen();
+				return memory.read(name);
+			},
+			write: (name, bytes) => {
+				assertOpen();
+				return memory.write(name, bytes);
+			},
+			append: (name, bytes) => {
+				assertOpen();
+				return memory.append(name, bytes);
+			},
+			remove: (name) => {
+				assertOpen();
+				return memory.remove(name);
+			},
+			flush: (name) => {
+				assertOpen();
+				return memory.flush(name);
+			},
+			close: async () => {
+				assertOpen();
+				closeCalls++;
+				closed = true;
+			},
+		};
+		const buffered = new NativeBackboneBufferedCoordinatePersistenceStore(
+			inner,
+		);
+		const persistence = new NativeBackboneCoordinatePersistence(buffered);
+		await buffered.append("coordinates.wal", new Uint8Array([7, 8, 9]));
+
+		const closing = persistence.close();
+		expect(persistence.close()).equal(closing);
+		let dropError: unknown;
+		await persistence.drop().catch((error) => {
+			dropError = error;
+		});
+		await closing;
+
+		expect(String(dropError)).to.contain("while closing");
+		expect(memory.files.get("coordinates.wal")).to.deep.equal(
+			new Uint8Array([7, 8, 9]),
+		);
+		expect(closeCalls).equal(1);
+		expect(postCloseOperations).equal(0);
+	});
+
+	it("lets an in-flight drop finish before terminal close", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let closed = false;
+		let closeCalls = 0;
+		const assertOpen = () => {
+			if (closed) {
+				throw new Error("terminal store is closed");
+			}
+		};
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => {
+				assertOpen();
+				return memory.read(name);
+			},
+			write: (name, bytes) => {
+				assertOpen();
+				return memory.write(name, bytes);
+			},
+			append: (name, bytes) => {
+				assertOpen();
+				return memory.append(name, bytes);
+			},
+			remove: (name) => {
+				assertOpen();
+				return memory.remove(name);
+			},
+			flush: (name) => {
+				assertOpen();
+				return memory.flush(name);
+			},
+			close: async () => {
+				assertOpen();
+				closeCalls++;
+				closed = true;
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await memory.write("coordinates.wal", new Uint8Array([1, 2, 3]));
+
+		const dropping = persistence.drop();
+		const closing = persistence.close();
+		expect(persistence.close()).equal(closing);
+		await Promise.all([dropping, closing]);
+
+		expect(memory.files.size).equal(0);
+		expect(closeCalls).equal(1);
+	});
+
+	it("serializes close behind all hydrate data reads and backbone loads", async () => {
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let readEntered!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			readEntered = resolve;
+		});
+		let releaseRead!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		let gateArmed = true;
+		let closed = false;
+		let postCloseReads = 0;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: async (name) => {
+				if (closed) {
+					postCloseReads++;
+					throw new Error("terminal store is closed");
+				}
+				if (gateArmed && name === "coordinates.wal") {
+					gateArmed = false;
+					readEntered();
+					await gate;
+				}
+				return memory.read(name);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: (name) => memory.flush(name),
+			close: async () => {
+				closed = true;
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		const hydrating = persistence.hydrate(target);
+		await entered;
+		let closeSettled = false;
+		const closing = persistence.close().finally(() => {
+			closeSettled = true;
+		});
+		await Promise.resolve();
+		expect(closeSettled).equal(false);
+		releaseRead();
+		expect(await hydrating).equal(0);
+		await closing;
+
+		expect(postCloseReads).equal(0);
+	});
+
+	it("rejects drop before erasure while a hydrate data read is in flight", async () => {
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		await memory.write("coordinates.bin", target.coordinateSnapshot());
+		let readEntered!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			readEntered = resolve;
+		});
+		let releaseRead!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		let gateArmed = true;
+		let removes = 0;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: async (name) => {
+				if (gateArmed && name === "document-values.wal") {
+					gateArmed = false;
+					readEntered();
+					await gate;
+				}
+				return memory.read(name);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: async (name) => {
+				removes++;
+				await memory.remove(name);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		const hydrating = persistence.hydrate(target);
+		await entered;
+		const dropError = await persistence.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(dropError)).to.contain("while hydrating");
+		expect(removes).equal(0);
+		releaseRead();
+		expect(await hydrating).equal(0);
+		expect(memory.files.has("coordinates.bin")).equal(true);
+	});
+
+	it("does not reactivate a dropped generation from a queued resume", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let removeEntered!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			removeEntered = resolve;
+		});
+		let releaseRemove!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			releaseRemove = resolve;
+		});
+		let gateArmed = true;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: async (name) => {
+				if (name === "coordinates.bin" && gateArmed) {
+					gateArmed = false;
+					removeEntered();
+					await gate;
+				}
+				await memory.remove(name);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await memory.append("coordinates.bin", new Uint8Array([1]));
+
+		const dropping = persistence.drop();
+		await entered;
+		const resuming = persistence.resumeDrop();
+		releaseRemove();
+		await dropping;
+		let resumeError: unknown;
+		try {
+			await resuming;
+		} catch (error) {
+			resumeError = error;
+		}
+		expect(String(resumeError)).to.contain("while dropping");
+
+		let secondDropError: unknown;
+		try {
+			await persistence.drop();
+		} catch (error) {
+			secondDropError = error;
+		}
+		expect(String(secondDropError)).to.contain("while dropped");
+		expect(memory.files.size).equal(0);
 	});
 
 	it("keeps journal records appended during a flush write for the next flush", async () => {
@@ -3071,7 +3292,111 @@ describe("native peerbit backbone", () => {
 		]);
 	});
 
-	it("replays only the clean WAL prefix when the journal tail is truncated mid-record", async () => {
+	it("keeps the wasm journal pending until the WAL durability barrier completes", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let flushEntered!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			flushEntered = resolve;
+		});
+		let releaseFlush!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			releaseFlush = resolve;
+		});
+		let gateArmed = false;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			durableBarrier: async (name) => {
+				if (gateArmed && name === "coordinates.wal") {
+					gateArmed = false;
+					flushEntered();
+					await gate;
+				}
+				await memory.flush(name);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await persistence.hydrate(source);
+		source.putEntryCoordinates(
+			"hash-barrier",
+			"gid-barrier",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+
+		gateArmed = true;
+		let settled = false;
+		const flushing = persistence.flushJournal(source).finally(() => {
+			settled = true;
+		});
+		await entered;
+		await Promise.resolve();
+		expect(settled).equal(false);
+		expect(source.coordinatePendingJournalLength).equal(1);
+
+		releaseFlush();
+		expect(await flushing).to.be.greaterThan(0);
+		expect(source.coordinatePendingJournalLength).equal(0);
+	});
+
+	it("poisons the adapter when the WAL durability barrier fails", async () => {
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		const barrierError = new Error("injected WAL fsync failure");
+		let appendCalls = 0;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: async (name, bytes) => {
+				appendCalls++;
+				await memory.append(name, bytes);
+			},
+			remove: (name) => memory.remove(name),
+			durableBarrier: async (name) => {
+				if (name === "coordinates.wal") {
+					throw barrierError;
+				}
+				await memory.flush(name);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await persistence.hydrate(source);
+		source.putEntryCoordinates("hash-fsync", "gid-fsync", [1n], false, 1, 1n);
+
+		let firstError: unknown;
+		await persistence.flushJournal(source).catch((error) => {
+			firstError = error;
+		});
+		expect(firstError).equal(barrierError);
+		expect(source.coordinatePendingJournalLength).equal(1);
+		expect(appendCalls).equal(1);
+
+		let secondError: unknown;
+		try {
+			await persistence.flushJournal(source);
+		} catch (error) {
+			secondError = error;
+		}
+		expect(secondError).equal(firstError);
+		expect(appendCalls).equal(1);
+		await persistence.drop();
+		expect(memory.files.size).equal(0);
+	});
+
+	it("fails closed when the journal tail is truncated mid-record", async () => {
 		const source = await createNativePeerbitBackbone({
 			clockId: publicKey,
 			privateKey,
@@ -3083,11 +3408,25 @@ describe("native peerbit backbone", () => {
 			publicKey,
 		});
 		source.setCoordinateJournalEnabled(true);
-		source.putEntryCoordinates("hash-snapshot", "gid-snapshot", [1n], false, 1, 1n);
+		source.putEntryCoordinates(
+			"hash-snapshot",
+			"gid-snapshot",
+			[1n],
+			false,
+			1,
+			1n,
+		);
 		const snapshot = source.coordinateSnapshot();
 		source.clearCoordinateJournal();
 		const recordBytes = (hash: string, coordinate: bigint) => {
-			source.putEntryCoordinates(hash, `gid-${hash}`, [coordinate], false, 1, coordinate);
+			source.putEntryCoordinates(
+				hash,
+				`gid-${hash}`,
+				[coordinate],
+				false,
+				1,
+				coordinate,
+			);
 			const record = source.coordinateJournal();
 			source.clearCoordinateJournal();
 			return record;
@@ -3109,18 +3448,22 @@ describe("native peerbit backbone", () => {
 			]),
 		);
 
-		// decode_journal is stop-at-tail tolerant: the torn record is dropped and
-		// only the clean prefix is replayed on top of the snapshot.
-		expect(await persistence.hydrate(target)).to.equal(1);
-		expect(target.getEntryCoordinateHashes()).to.deep.equal([
-			"hash-snapshot",
-			"hash-a",
-		]);
-		expect(target.hasCoordinateIndexHash("hash-b")).equal(false);
-		expect(target.coordinatePendingJournalLength).to.equal(0);
+		let hydrateError: unknown;
+		await persistence.hydrate(target).catch((error) => {
+			hydrateError = error;
+		});
+		expect(String(hydrateError)).to.contain("torn record payload");
+		expect(target.getEntryCoordinateHashes()).to.deep.equal([]);
+		let flushError: unknown;
+		try {
+			await persistence.flushJournal(target);
+		} catch (error) {
+			flushError = error;
+		}
+		expect(flushError).equal(hydrateError);
 	});
 
-	it("stops WAL replay at a checksum-corrupted journal record", async () => {
+	it("fails closed on a checksum-corrupted journal record", async () => {
 		const source = await createNativePeerbitBackbone({
 			clockId: publicKey,
 			privateKey,
@@ -3133,7 +3476,14 @@ describe("native peerbit backbone", () => {
 		});
 		source.setCoordinateJournalEnabled(true);
 		const recordBytes = (hash: string, coordinate: bigint) => {
-			source.putEntryCoordinates(hash, `gid-${hash}`, [coordinate], false, 1, coordinate);
+			source.putEntryCoordinates(
+				hash,
+				`gid-${hash}`,
+				[coordinate],
+				false,
+				1,
+				coordinate,
+			);
 			const record = source.coordinateJournal();
 			source.clearCoordinateJournal();
 			return record;
@@ -3158,12 +3508,12 @@ describe("native peerbit backbone", () => {
 			]),
 		);
 
-		// Stop-at-tail semantics: replay halts at the corrupted record, so the
-		// intact record behind it is ignored too.
-		expect(await persistence.hydrate(target)).to.equal(1);
-		expect(target.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
-		expect(target.hasCoordinateIndexHash("hash-b")).equal(false);
-		expect(target.hasCoordinateIndexHash("hash-c")).equal(false);
+		let hydrateError: unknown;
+		await persistence.hydrate(target).catch((error) => {
+			hydrateError = error;
+		});
+		expect(String(hydrateError)).to.contain("checksum mismatch");
+		expect(target.getEntryCoordinateHashes()).to.deep.equal([]);
 	});
 
 	it("rejects hydrate on a checksum-corrupted snapshot and stays usable", async () => {
@@ -3177,7 +3527,14 @@ describe("native peerbit backbone", () => {
 			privateKey,
 			publicKey,
 		});
-		source.putEntryCoordinates("hash-snapshot", "gid-snapshot", [1n], false, 1, 1n);
+		source.putEntryCoordinates(
+			"hash-snapshot",
+			"gid-snapshot",
+			[1n],
+			false,
+			1,
+			1n,
+		);
 		const snapshot = source.coordinateSnapshot();
 		// Flip a payload byte behind the envelope header (magic + length +
 		// checksum = 16 bytes) so the envelope checksum no longer matches.
@@ -3249,11 +3606,6 @@ describe("native peerbit backbone", () => {
 			privateKey,
 			publicKey,
 		});
-		const restoredFromSnapshot = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
 		source.configureDocumentSchemaIr(contextOnlySchema());
 		source.setDocumentContextHeadField(3);
 		source.setDocumentContextFields({
@@ -3267,24 +3619,26 @@ describe("native peerbit backbone", () => {
 		const persistence = new NativeBackboneCoordinatePersistence(store);
 
 		await persistence.hydrate(source);
-		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction({
-			wallTime: 11n,
-			logical: 1,
-			gid: "gid-document-persist",
-			payloadData: new Uint8Array([1, 2, 3]),
-			replicas: 1,
-			selfHash: "peer",
-			documentIndex: {
-				key: "doc-value",
-				valuePrefixBytes: new Uint8Array(0),
+		source.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+			{
+				wallTime: 11n,
+				logical: 1,
+				gid: "gid-document-persist",
+				payloadData: new Uint8Array([1, 2, 3]),
+				replicas: 1,
+				selfHash: "peer",
+				documentIndex: {
+					key: "doc-value",
+					valuePrefixBytes: new Uint8Array(0),
+				},
 			},
-		});
+		);
 		expect(source.documentPendingJournalLength).to.equal(1);
 		await persistence.flushJournal(source);
 		expect(store.files.has("document-values.wal")).equal(true);
-		expect(store.files.get("document-values.wal")?.byteLength).to.be.greaterThan(
-			source.documentJournalHeader().byteLength,
-		);
+		expect(
+			store.files.get("document-values.wal")?.byteLength,
+		).to.be.greaterThan(source.documentJournalHeader().byteLength);
 
 		await persistence.hydrate(restoredFromWal);
 		expect(restoredFromWal.documentValueLength).to.equal(1);
@@ -3302,24 +3656,6 @@ describe("native peerbit backbone", () => {
 		expect(
 			Array.from(restoredFromWal.documentKeysExist(["doc-value"])),
 		).to.deep.equal([1]);
-
-		await persistence.compact(source);
-		expect(store.files.has("document-values.wal")).equal(false);
-		expect(store.files.has("document-values.bin")).equal(true);
-		await persistence.hydrate(restoredFromSnapshot);
-		restoredFromSnapshot.configureDocumentSchemaIr(contextOnlySchema());
-		restoredFromSnapshot.setDocumentContextHeadField(3);
-		restoredFromSnapshot.setDocumentContextFields({
-			created: 1,
-			modified: 2,
-			head: 3,
-			gid: 4,
-			size: 5,
-		});
-		expect(restoredFromSnapshot.documentIndexLength).to.equal(1);
-		expect(
-			Array.from(restoredFromSnapshot.documentKeysExist(["doc-value"])),
-		).to.deep.equal([1]);
 	});
 
 	it("persists document previous signer facts through the native persistence adapter", async () => {
@@ -3333,12 +3669,7 @@ describe("native peerbit backbone", () => {
 			privateKey,
 			publicKey,
 		});
-		const restoredFromSnapshot = await createNativePeerbitBackbone({
-			clockId: publicKey,
-			privateKey,
-			publicKey,
-		});
-		for (const backbone of [source, restoredFromWal, restoredFromSnapshot]) {
+		for (const backbone of [source, restoredFromWal]) {
 			backbone.configureDocumentSchemaIr(contextOnlySchema());
 			backbone.setDocumentContextHeadField(3);
 			backbone.setDocumentContextFields({
@@ -3378,9 +3709,9 @@ describe("native peerbit backbone", () => {
 		expect(source.documentSignerPendingJournalLength).to.equal(1);
 		await persistence.flushJournal(source);
 		expect(store.files.has("document-signers.wal")).equal(true);
-		expect(store.files.get("document-signers.wal")?.byteLength).to.be.greaterThan(
-			source.documentSignerJournalHeader().byteLength,
-		);
+		expect(
+			store.files.get("document-signers.wal")?.byteLength,
+		).to.be.greaterThan(source.documentSignerJournalHeader().byteLength);
 
 		await persistence.hydrate(restoredFromWal);
 		restoredFromWal.clearDocumentIndex();
@@ -3393,24 +3724,6 @@ describe("native peerbit backbone", () => {
 		expect(
 			Array.from(
 				restoredFromWal.documentPreviousSignaturePublicKey("doc-signer")
-					?.publicKey ?? [],
-			),
-		).to.deep.equal(Array.from(publicKey));
-
-		await persistence.compact(source);
-		expect(store.files.has("document-signers.wal")).equal(false);
-		expect(store.files.has("document-signers.bin")).equal(true);
-		await persistence.hydrate(restoredFromSnapshot);
-		restoredFromSnapshot.clearDocumentIndex();
-		restoredFromSnapshot.putDocumentEncodedPartsStored(
-			"doc-signer",
-			documentValue!,
-			new Uint8Array(0),
-		);
-		expect(restoredFromSnapshot.hasBlock(append.entry.hash)).equal(false);
-		expect(
-			Array.from(
-				restoredFromSnapshot.documentPreviousSignaturePublicKey("doc-signer")
 					?.publicKey ?? [],
 			),
 		).to.deep.equal(Array.from(publicKey));
@@ -3436,7 +3749,7 @@ describe("native peerbit backbone", () => {
 				privateKey,
 				publicKey,
 			});
-			const compacted = await createNativePeerbitBackbone({
+			const reflushed = await createNativePeerbitBackbone({
 				clockId: publicKey,
 				privateKey,
 				publicKey,
@@ -3452,16 +3765,155 @@ describe("native peerbit backbone", () => {
 			expect(restored.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
 
 			source.putEntryCoordinates("hash-b", "gid-b", [2n], false, 1, 2n);
-			await persistence.compact(source);
-			expect(await persistence.hydrate(compacted)).to.equal(0);
-			expect(compacted.getEntryCoordinateHashes()).to.deep.equal([
+			await persistence.flushJournal(source);
+			expect(await persistence.hydrate(reflushed)).to.equal(2);
+			expect(reflushed.getEntryCoordinateHashes()).to.deep.equal([
 				"hash-a",
 				"hash-b",
 			]);
-			expect(compacted.coordinateIndexLength).to.equal(2);
+			expect(reflushed.coordinateIndexLength).to.equal(2);
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
+	});
+
+	it("completes short Node WAL writes and poisons zero-progress writes", async () => {
+		const createStore = (writeCounts: number[]) => {
+			const files = new Map<string, Uint8Array>();
+			let writeCalls = 0;
+			const store = new NativeBackboneNodeCoordinatePersistenceStore(
+				"coordinate-directory",
+				{
+					mkdir: async () => {},
+					readFile: async (path) => {
+						const bytes = files.get(path);
+						if (!bytes) {
+							throw Object.assign(new Error("not found"), { code: "ENOENT" });
+						}
+						return bytes.slice();
+					},
+					writeFile: async (path, data) => {
+						files.set(path, data.slice());
+					},
+					appendFile: async (path, data) => {
+						files.set(
+							path,
+							concatBytes([files.get(path) ?? new Uint8Array(), data]),
+						);
+					},
+					open: async (path) => ({
+						write: async (data) => {
+							writeCalls++;
+							const bytesWritten = writeCounts.shift() ?? data.byteLength;
+							if (bytesWritten > 0 && bytesWritten <= data.byteLength) {
+								files.set(
+									path,
+									concatBytes([
+										files.get(path) ?? new Uint8Array(),
+										data.subarray(0, bytesWritten),
+									]),
+								);
+							}
+							return { bytesWritten };
+						},
+						sync: async () => {},
+						close: async () => {},
+					}),
+					rm: async (path) => {
+						files.delete(path);
+					},
+				},
+			);
+			return { store, files, writeCalls: () => writeCalls };
+		};
+
+		const short = createStore([2]);
+		await short.store.append("coordinates.wal", new Uint8Array([1, 2, 3, 4]));
+		expect(short.writeCalls()).equal(2);
+		expect([...short.files.values()][0]).deep.equal(
+			new Uint8Array([1, 2, 3, 4]),
+		);
+
+		const zero = createStore([0]);
+		let firstError: unknown;
+		try {
+			await zero.store.append("coordinates.wal", new Uint8Array([5, 6]));
+		} catch (error) {
+			firstError = error;
+		}
+		expect(String(firstError)).to.contain(
+			"Invalid Node coordinate WAL write progress",
+		);
+		let secondError: unknown;
+		try {
+			await zero.store.append("coordinates.wal", new Uint8Array([7]));
+		} catch (error) {
+			secondError = error;
+		}
+		expect(secondError).equal(firstError);
+		expect(zero.writeCalls()).equal(1);
+		expect([...zero.files.values()][0]?.byteLength ?? 0).equal(0);
+	});
+
+	it("refuses a Node WAL acknowledgement without FileHandle.sync", async () => {
+		const files = new Map<string, Uint8Array>();
+		const store = new NativeBackboneNodeCoordinatePersistenceStore(
+			"coordinate-directory",
+			{
+				mkdir: async () => {},
+				readFile: async (path) => {
+					const bytes = files.get(path);
+					if (!bytes) {
+						throw Object.assign(new Error("not found"), { code: "ENOENT" });
+					}
+					return bytes.slice();
+				},
+				writeFile: async (path, data) => {
+					files.set(path, data.slice());
+				},
+				appendFile: async (path, data) => {
+					files.set(
+						path,
+						concatBytes([files.get(path) ?? new Uint8Array(), data]),
+					);
+				},
+				open: async (path) => ({
+					write: async (data) => {
+						files.set(
+							path,
+							concatBytes([files.get(path) ?? new Uint8Array(), data]),
+						);
+						return { bytesWritten: data.byteLength };
+					},
+					close: async () => {},
+				}),
+				rm: async (path) => {
+					files.delete(path);
+				},
+			},
+		);
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		await persistence.hydrate(source);
+		source.putEntryCoordinates(
+			"hash-no-sync",
+			"gid-no-sync",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+
+		const failure = await persistence.flushJournal(source).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(failure)).to.contain("does not expose FileHandle.sync");
+		expect(source.coordinatePendingJournalLength).equal(1);
 	});
 
 	it("persists native coordinate WAL through the direct node adapter", async () => {
@@ -3574,16 +4026,16 @@ describe("native peerbit backbone", () => {
 				privateKey,
 				publicKey,
 			});
-			const persistence =
-				createBufferedNativeBackboneNodeCoordinatePersistence(directory, {
+			const persistence = createBufferedNativeBackboneNodeCoordinatePersistence(
+				directory,
+				{
 					flushMaxPendingBytes: 1024,
-				});
+				},
+			);
 
 			expect(persistence.flushOnAppend).equal(false);
 			expect(persistence.flushMaxPendingBytes).equal(1024);
-			expect(persistence.compactMaxJournalBytes).equal(
-				defaultNativeBackboneCoordinateCompactMaxJournalBytes,
-			);
+			expect(persistence.compactMaxJournalBytes).equal(undefined);
 			await persistence.hydrate(source);
 			source.putEntryCoordinates(
 				"hash-node-buffered",
@@ -3611,7 +4063,7 @@ describe("native peerbit backbone", () => {
 		}
 	});
 
-	it("checkpoints node coordinate WAL after compact thresholds", async () => {
+	it("rejects node coordinate WAL compaction thresholds", async () => {
 		const [{ mkdtemp, rm }, { tmpdir }, { join }] = await Promise.all([
 			import("node:fs/promises"),
 			import("node:os"),
@@ -3621,47 +4073,18 @@ describe("native peerbit backbone", () => {
 			join(tmpdir(), "peerbit-native-backbone-node-coordinate-compact-"),
 		);
 		try {
-			const source = await createNativePeerbitBackbone({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
-			});
-			const restored = await createNativePeerbitBackbone({
-				clockId: publicKey,
-				privateKey,
-				publicKey,
-			});
-			const persistence = new NativeBackboneNodeCoordinatePersistence(
-				directory,
-				{ compactMaxJournalRecords: 1 },
-			);
-
-			await persistence.hydrate(source);
-			source.putEntryCoordinates(
-				"hash-node-compact",
-				"gid-node-compact",
-				[1n],
-				false,
-				1,
-				1n,
-			);
-			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
-			await persistence.close();
-
-			const restoredPersistence = new NativeBackboneNodeCoordinatePersistence(
-				directory,
-			);
-			expect(await restoredPersistence.hydrate(restored)).equal(0);
-			expect(restored.getEntryCoordinateHashes()).to.deep.equal([
-				"hash-node-compact",
-			]);
-			await restoredPersistence.close();
+			expect(
+				() =>
+					new NativeBackboneNodeCoordinatePersistence(directory, {
+						compactMaxJournalRecords: 1,
+					}),
+			).to.throw("compaction is disabled");
 		} finally {
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
 
-	it("keeps unflushed WAL records when a node append fails and flushes them on retry", async () => {
+	it("keeps WAL records pending and requires a new adapter after append failure", async () => {
 		const [fsPromises, { tmpdir }, { join }] = await Promise.all([
 			import("node:fs/promises"),
 			import("node:os"),
@@ -3724,9 +4147,22 @@ describe("native peerbit backbone", () => {
 			// unflushed records must still be pending in the wasm journal.
 			expect(source.coordinatePendingJournalLength).to.equal(2);
 
-			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
-			expect(source.coordinatePendingJournalLength).to.equal(0);
+			let repeatedError: unknown;
+			try {
+				await persistence.flushJournal(source);
+			} catch (error) {
+				repeatedError = error;
+			}
+			expect(repeatedError).equal(thrown);
+			expect(source.coordinatePendingJournalLength).to.equal(2);
 			await persistence.close();
+
+			const retryPersistence = new NativeBackboneNodeCoordinatePersistence(
+				directory,
+			);
+			expect(await retryPersistence.flushJournal(source)).to.be.greaterThan(0);
+			expect(source.coordinatePendingJournalLength).to.equal(0);
+			await retryPersistence.close();
 
 			const restoredPersistence = new NativeBackboneNodeCoordinatePersistence(
 				directory,
@@ -3790,14 +4226,7 @@ describe("native peerbit backbone", () => {
 			);
 
 			await persistence.hydrate(source);
-			source.putEntryCoordinates(
-				"hash-mkdir",
-				"gid-mkdir",
-				[1n],
-				false,
-				1,
-				1n,
-			);
+			source.putEntryCoordinates("hash-mkdir", "gid-mkdir", [1n], false, 1, 1n);
 
 			failNextMkdir = true;
 			let thrown: unknown;
@@ -3856,17 +4285,20 @@ describe("native peerbit backbone", () => {
 			const buffered = new NativeBackboneBufferedCoordinatePersistenceStore(
 				nodeStore,
 			);
-			const persistence = new NativeBackboneCoordinatePersistence(buffered);
+			const persistence = new NativeBackboneCoordinatePersistence(buffered, {
+				flushOnAppend: false,
+				flushMaxPendingBytes: 1024,
+			});
 
 			await persistence.hydrate(source);
 			source.putEntryCoordinates("hash-a", "gid-a", [1n], false, 1, 1n);
-			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
+			expect(await persistence.flushJournalOnAppend(source)).equal(0);
 
 			const writeThroughPersistence = new NativeBackboneCoordinatePersistence(
 				new NativeBackboneNodeCoordinatePersistenceStore(directory),
 			);
 			expect(await writeThroughPersistence.hydrate(beforeFlush)).to.equal(0);
-			await buffered.flush();
+			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
 			expect(await writeThroughPersistence.hydrate(afterFlush)).to.equal(1);
 			expect(afterFlush.getEntryCoordinateHashes()).to.deep.equal(["hash-a"]);
 			await persistence.close();
@@ -3891,6 +4323,41 @@ describe("native peerbit backbone", () => {
 		expect(directory.syncFlushCount).to.equal(2);
 		expect(directory.syncCloseCount).to.equal(2);
 		expect(directory.asyncWritableCount).to.equal(0);
+	});
+
+	it("completes short OPFS WAL writes and poisons zero-progress writes", async () => {
+		const shortDirectory = new FakeOPFSDirectoryHandle(true, [2]);
+		const shortStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+			shortDirectory,
+		);
+		await shortStore.append("coordinates.wal", new Uint8Array([1, 2, 3, 4]));
+		expect(shortDirectory.syncWriteCount).equal(2);
+		expect(await shortStore.read("coordinates.wal")).deep.equal(
+			new Uint8Array([1, 2, 3, 4]),
+		);
+
+		const zeroDirectory = new FakeOPFSDirectoryHandle(true, [0]);
+		const zeroStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+			zeroDirectory,
+		);
+		let firstError: unknown;
+		try {
+			await zeroStore.append("coordinates.wal", new Uint8Array([5, 6]));
+		} catch (error) {
+			firstError = error;
+		}
+		expect(String(firstError)).to.contain(
+			"Invalid OPFS coordinate WAL write progress",
+		);
+		let secondError: unknown;
+		try {
+			await zeroStore.append("coordinates.wal", new Uint8Array([7]));
+		} catch (error) {
+			secondError = error;
+		}
+		expect(secondError).equal(firstError);
+		expect(zeroDirectory.syncWriteCount).equal(1);
+		expect((await zeroStore.read("coordinates.wal"))?.byteLength).equal(0);
 	});
 
 	it("uses buffered coordinate persistence with OPFS stores", async () => {
@@ -3923,20 +4390,58 @@ describe("native peerbit backbone", () => {
 		expect(await persistence.flushJournalOnAppend?.(source)).equal(0);
 		expect(await opfsStore.read("coordinates.wal")).equal(undefined);
 		await persistence.flushJournal(source);
-		expect(await opfsStore.read("coordinates.wal")).equal(undefined);
+		expect(
+			(await opfsStore.read("coordinates.wal"))?.byteLength,
+		).to.be.greaterThan(source.coordinateJournalHeader().byteLength);
 		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(
 			beforeClose,
 		);
-		expect(beforeClose.getEntryCoordinateHashes()).to.deep.equal([]);
+		expect(beforeClose.getEntryCoordinateHashes()).to.deep.equal(["hash-opfs"]);
 
 		await persistence.close?.();
-		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(afterClose);
+		await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(
+			afterClose,
+		);
 		expect(afterClose.getEntryCoordinateHashes()).to.deep.equal(["hash-opfs"]);
 		expect(directory.syncAccessCount).to.be.greaterThan(0);
 	});
 
-	it("persists buffered native document WAL and signer facts through OPFS sync and writable stores", async () => {
-		for (const syncAccess of [true, false]) {
+	it("drops buffered native persistence through OPFS without replaying buffers", async () => {
+		const directory = new FakeOPFSDirectoryHandle(true);
+		const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+			directory,
+		);
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			opfsStore,
+			{ flushMaxPendingBytes: 1024 },
+		);
+		for (const name of [
+			"coordinates.bin",
+			"coordinates.wal",
+			"document-values.bin",
+			"document-values.wal",
+			"document-signers.bin",
+			"document-signers.wal",
+		]) {
+			await persistence.intentStore!.append(name, new Uint8Array([1, 2, 3]));
+		}
+		await persistence.intentStore!.write(
+			"strict-intent-a",
+			new Uint8Array([4]),
+		);
+		await persistence.intentStore!.write(
+			"strict-intent-b",
+			new Uint8Array([5]),
+		);
+
+		await persistence.drop!(["strict-intent-a", "strict-intent-b"]);
+		await persistence.close?.();
+		expect(directory.files.size).equal(0);
+	});
+
+	it("persists buffered native document WAL and signer facts through OPFS sync stores", async () => {
+		{
+			const syncAccess = true;
 			const directory = new FakeOPFSDirectoryHandle(syncAccess);
 			const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
 				directory,
@@ -3993,8 +4498,12 @@ describe("native peerbit backbone", () => {
 			expect(source.documentSignerPendingJournalLength).equal(1);
 
 			expect(await persistence.flushJournal(source)).to.be.greaterThan(0);
-			expect(await opfsStore.read("document-values.wal")).equal(undefined);
-			expect(await opfsStore.read("document-signers.wal")).equal(undefined);
+			expect(
+				(await opfsStore.read("document-values.wal"))?.byteLength,
+			).to.be.greaterThan(source.documentJournalHeader().byteLength);
+			expect(
+				(await opfsStore.read("document-signers.wal"))?.byteLength,
+			).to.be.greaterThan(source.documentSignerJournalHeader().byteLength);
 			await persistence.close?.();
 			expect(
 				(await opfsStore.read("document-values.wal"))?.byteLength,
@@ -4003,7 +4512,9 @@ describe("native peerbit backbone", () => {
 				(await opfsStore.read("document-signers.wal"))?.byteLength,
 			).to.be.greaterThan(source.documentSignerJournalHeader().byteLength);
 
-			await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(restored);
+			await new NativeBackboneCoordinatePersistence(opfsStore).hydrate(
+				restored,
+			);
 			expect(restored.documentIndexLength).equal(1);
 			expect(
 				Array.from(restored.documentKeysExist(["doc-opfs"])),
@@ -4020,14 +4531,42 @@ describe("native peerbit backbone", () => {
 						[],
 				),
 			).to.deep.equal(Array.from(publicKey));
-			if (syncAccess) {
-				expect(directory.syncAccessCount).to.be.greaterThan(0);
-				expect(directory.asyncWritableCount).equal(0);
-			} else {
-				expect(directory.syncAccessCount).equal(0);
-				expect(directory.asyncWritableCount).to.be.greaterThan(0);
-			}
+			expect(directory.syncAccessCount).to.be.greaterThan(0);
+			expect(directory.asyncWritableCount).equal(0);
 		}
+	});
+
+	it("rejects a durable ACK when OPFS only exposes writable streams", async () => {
+		const directory = new FakeOPFSDirectoryHandle(false);
+		const opfsStore = new NativeBackboneOPFSCoordinatePersistenceStore(
+			directory,
+		);
+		const persistence = createBufferedNativeBackboneCoordinatePersistence(
+			opfsStore,
+			{ flushMaxPendingBytes: 1024 },
+		);
+		const source = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		await persistence.hydrate(source);
+		source.putEntryCoordinates(
+			"hash-no-opfs-barrier",
+			"gid-no-opfs-barrier",
+			[1n],
+			false,
+			1,
+			1n,
+		);
+
+		const failure = await persistence.flushJournal(source).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(failure)).to.contain("sync handles unavailable");
+		expect(source.coordinatePendingJournalLength).equal(1);
+		expect(directory.asyncWritableCount).to.be.greaterThan(0);
 	});
 
 	it("appends coordinate WAL bytes through OPFS writable fallback", async () => {

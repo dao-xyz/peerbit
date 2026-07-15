@@ -199,6 +199,10 @@ export interface Indices {
 	): MaybePromise<Index<T, NestedType>>;
 	scope(name: string): MaybePromise<Indices>;
 	persisted(): MaybePromise<boolean>;
+	/** Whether stop/start preserves every indexed row even for a non-persistent
+	 * backend. When absent, persistent backends are treated as preserving and
+	 * unknown non-persistent backends as destructive. */
+	preservesDataOnStop?(): MaybePromise<boolean>;
 	start(): MaybePromise<void>;
 	stop(): MaybePromise<void>;
 	drop(): MaybePromise<void>;

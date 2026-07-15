@@ -90,8 +90,8 @@ describe("durable native block store restart", function () {
 		).to.equal(false);
 		expect(
 			durableBlockOptions?.compactOnCloseMinJournalBytes,
-			"native durable block WAL retains an explicit close-time compaction threshold",
-		).to.equal(512 * 1024 * 1024);
+			"strict native durable block WAL has no checkpoint threshold",
+		).to.equal(undefined);
 
 		for (let index = 0; index < entryCount; index++) {
 			await store1.add(`entry-${index}`, { meta: { next: [] } });
@@ -174,9 +174,10 @@ describe("durable native block store restart", function () {
 			.collect()
 			.map((entry: any) => entry.payload.getValue().value)
 			.sort();
-		expect(restoredValues, "restored documents match pre-restart").to.deep.equal(
-			preRestartValues,
-		);
+		expect(
+			restoredValues,
+			"restored documents match pre-restart",
+		).to.deep.equal(preRestartValues);
 
 		// (iv) coordinates restored (coordinate slice; kept green here).
 		const restoredCoordinateHashes = [
