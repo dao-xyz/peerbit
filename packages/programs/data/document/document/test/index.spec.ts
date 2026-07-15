@@ -2199,7 +2199,7 @@ describe("index", () => {
 				}
 			});
 
-			it("removes trimmed prepared puts from the document index by head", async () => {
+			it("removes durably indexed native puts by exact head", async () => {
 				const rustSession = await TestSession.connected(
 					1,
 					createRustPeerbitOptions(),
@@ -2254,9 +2254,12 @@ describe("index", () => {
 					expect(entryIndexGetSpy.withArgs(first.entry.hash).callCount).equal(
 						0,
 					);
-					expect(
-						entryIndexDelIdsSpy.callCount + entryIndexDelSpy.callCount,
-					).equal(0);
+					// Strict native acknowledgement flushes append facts before returning,
+					// so trim must delete the now-durable row by exact id.
+					expect(entryIndexDelIdsSpy.callCount).equal(1);
+					expect(entryIndexDelIdsSpy.firstCall.args[0]).to.deep.equal([
+						first.entry.hash,
+					]);
 					expect(entryIndexDelSpy.callCount).equal(0);
 					expect(await store.docs.get(firstId)).to.be.undefined;
 					expect(changes).to.have.length(2);
