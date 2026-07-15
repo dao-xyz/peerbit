@@ -2210,6 +2210,8 @@ describe("index", () => {
 				await rustSession.peers[0].open(store, {
 					args: {
 						replicate: false,
+						nativeGraph: true,
+						nativeBackbone: { optional: false },
 						log: {
 							trim: { type: "length", to: 1 },
 						},
@@ -2241,6 +2243,10 @@ describe("index", () => {
 				const entryIndexDelSpy = sinon.spy(entryIndexBackend, "del");
 
 				try {
+					expect(
+						await entryIndexBackend.get(toId(first.entry.hash)),
+						"strict native acknowledgement must durably index the append",
+					).to.not.be.undefined;
 					await store.docs.put(
 						new Document({ id: uuid(), name: "remaining" }),
 						{
