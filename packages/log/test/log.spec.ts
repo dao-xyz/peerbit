@@ -1,3 +1,4 @@
+import { deserialize, serialize } from "@dao-xyz/borsh";
 import { AnyBlockStore, type BlockStore } from "@peerbit/blocks";
 import { HashmapIndices } from "@peerbit/indexer-simple";
 import {
@@ -36,10 +37,205 @@ describe("properties", function () {
 			assert.deepStrictEqual(await log.getTailHashes(), []);
 		});
 
-		it("can not open twice", async () => {
-			const log = new Log();
+		it("initializes runtime lifecycle state after a borsh round trip", async () => {
+			const log = deserialize(
+				serialize(new Log<Uint8Array>()),
+				Log,
+			) as Log<Uint8Array>;
+			let changes = 0;
+			const onChange = async () => {
+				changes++;
+			};
+
+			expect(log.closed).to.equal(true);
+			await log.open(store, signKey, { onChange });
+			expect(log.closed).to.equal(false);
+			await log.append(new Uint8Array([1]));
+			expect(changes).to.equal(1);
+			await log.close();
+			expect(log.closed).to.equal(true);
+
+			await log.open(store, signKey, { onChange });
+			await log.append(new Uint8Array([2]));
+			expect(changes).to.equal(2);
+			await log.drop();
+			expect(log.closed).to.equal(true);
+		});
+
+		it("closes and drops unopened borsh round trips", async () => {
+			const roundTrip = () =>
+				deserialize(serialize(new Log<Uint8Array>()), Log) as Log<Uint8Array>;
+			const closing = roundTrip();
+			const dropping = roundTrip();
+
+			expect(closing.closed).to.equal(true);
+			await closing.close();
+			expect(closing.closed).to.equal(true);
+			expect(dropping.closed).to.equal(true);
+			await dropping.drop();
+			expect(dropping.closed).to.equal(true);
+		});
+
+		it("rejects reopen without corrupting the live generation", async () => {
+			const log = new Log<Uint8Array>();
 			await log.open(store, signKey, undefined);
-			await expect(log.open(store, signKey, undefined)).rejectedWith();
+			const first = await log.append(new Uint8Array([1]));
+			await expect(log.open(store, signKey, undefined)).rejectedWith(
+				"Already open",
+			);
+			expect(log.closed).to.equal(false);
+			expect(log.length).to.equal(1);
+			expect((await log.get(first.entry.hash))?.hash).to.equal(
+				first.entry.hash,
+			);
+			await log.append(new Uint8Array([2]));
+			expect(log.length).to.equal(2);
+			await log.close();
+			expect(log.closed).to.equal(true);
+		});
+
+		it("lets only the first concurrent open initialize the log", async () => {
+			const log = new Log<Uint8Array>();
+			const indexer = new HashmapIndices();
+			const originalStart = indexer.start.bind(indexer);
+			let markStarted!: () => void;
+			const started = new Promise<void>((resolve) => {
+				markStarted = resolve;
+			});
+			let releaseStart!: () => void;
+			const startGate = new Promise<void>((resolve) => {
+				releaseStart = resolve;
+			});
+			const start = sinon.stub(indexer, "start").callsFake(async () => {
+				markStarted();
+				await startGate;
+				await originalStart();
+			});
+
+			const first = log.open(store, signKey, { indexer });
+			const second = log.open(store, signKey, { indexer });
+			try {
+				await expect(second).rejectedWith("Already open");
+				await started;
+				expect(start.calledOnce).to.equal(true);
+				releaseStart();
+				await first;
+				expect(log.closed).to.equal(false);
+				await log.append(new Uint8Array([3]));
+				expect(log.length).to.equal(1);
+				await log.close();
+				expect(log.closed).to.equal(true);
+			} finally {
+				releaseStart();
+				await first.catch(() => undefined);
+				await log.close().catch(() => undefined);
+				start.restore();
+			}
+		});
+
+		it("stops a started indexer when later open initialization fails", async () => {
+			const log = new Log<Uint8Array>();
+			const failedIndexer = new HashmapIndices();
+			const start = sinon.spy(failedIndexer, "start");
+			const stop = sinon.spy(failedIndexer, "stop");
+			const failure = new Error("scope initialization failed");
+			const scope = sinon.stub(failedIndexer, "scope").rejects(failure);
+
+			expect(
+				await log.open(store, signKey, { indexer: failedIndexer }).then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+			).to.equal(failure);
+			expect(start.calledOnce).to.equal(true);
+			expect(stop.calledOnce).to.equal(true);
+			expect(log.closed).to.equal(true);
+
+			await log.open(store, signKey, { indexer: new HashmapIndices() });
+			await log.append(Uint8Array.of(4));
+			expect(log.length).to.equal(1);
+			await log.close();
+			scope.restore();
+		});
+
+		it("treats a post-init open failure as already closed", async () => {
+			const log = new Log<Uint8Array>();
+			const failedIndexer = new HashmapIndices();
+			const heads = await failedIndexer.scope("heads");
+			const originalInit = heads.init.bind(heads);
+			const failure = new Error("persisted failed after init");
+			const init = sinon.stub(heads, "init").callsFake(async (properties) => {
+				const index = await originalInit(properties as any);
+				sinon.stub(index, "persisted").rejects(failure);
+				return index;
+			});
+			const stop = sinon.spy(failedIndexer, "stop");
+
+			expect(
+				await log.open(store, signKey, { indexer: failedIndexer }).then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+			).to.equal(failure);
+			expect(stop.calledOnce).to.equal(true);
+			await log.close();
+			expect(stop.calledOnce).to.equal(true);
+			expect((log as any)._lifecycleState).to.equal("closed");
+
+			await log.open(store, signKey, { indexer: new HashmapIndices() });
+			await log.close();
+			init.restore();
+		});
+
+		it("lets concurrent close own a post-init open failure", async () => {
+			const log = new Log<Uint8Array>();
+			const failedIndexer = new HashmapIndices();
+			const heads = await failedIndexer.scope("heads");
+			const originalInit = heads.init.bind(heads);
+			const failure = new Error("persisted failed after init");
+			let markPersisted!: () => void;
+			const persisted = new Promise<void>((resolve) => {
+				markPersisted = resolve;
+			});
+			let releasePersisted!: () => void;
+			const persistedGate = new Promise<void>((resolve) => {
+				releasePersisted = resolve;
+			});
+			const init = sinon.stub(heads, "init").callsFake(async (properties) => {
+				const index = await originalInit(properties as any);
+				sinon.stub(index, "persisted").callsFake(async () => {
+					markPersisted();
+					await persistedGate;
+					throw failure;
+				});
+				return index;
+			});
+			const stop = sinon.spy(failedIndexer, "stop");
+			const opening = log.open(store, signKey, { indexer: failedIndexer });
+			try {
+				await persisted;
+				const closing = log.close();
+				releasePersisted();
+				const [openResult, closeResult] = await Promise.allSettled([
+					opening,
+					closing,
+				]);
+				expect(openResult.status).to.equal("rejected");
+				if (openResult.status === "rejected") {
+					expect(openResult.reason).to.equal(failure);
+				}
+				expect(closeResult.status).to.equal("fulfilled");
+				expect(stop.calledOnce).to.equal(true);
+				expect((log as any)._lifecycleState).to.equal("closed");
+
+				await log.open(store, signKey, { indexer: new HashmapIndices() });
+				await log.close();
+			} finally {
+				releasePersisted();
+				await opening.catch(() => undefined);
+				await log.close().catch(() => undefined);
+				init.restore();
+			}
 		});
 		it("sets an id", async () => {
 			const log = new Log({ id: new Uint8Array(1) });

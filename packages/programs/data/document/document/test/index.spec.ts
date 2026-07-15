@@ -55,6 +55,7 @@ import {
 	NativeBackboneBufferedCoordinatePersistenceStore,
 	NativeBackboneCoordinatePersistence,
 	NativeBackboneMemoryCoordinatePersistenceStore,
+	NativeBackboneNodeCoordinatePersistenceStore,
 	createNativePeerbitBackbone,
 } from "@peerbit/native-backbone";
 import { ClosedError, Program } from "@peerbit/program";
@@ -1948,7 +1949,7 @@ describe("index", () => {
 				}
 			});
 
-			it("flushes buffered native backbone coordinate WAL on close", async () => {
+			it("flushes buffered native backbone WAL before strict acknowledgement", async () => {
 				const rustSession = await TestSession.connected(
 					1,
 					createRustPeerbitOptions(),
@@ -2027,9 +2028,11 @@ describe("index", () => {
 					expect(documentStoredIdentityPutSpy.callCount).equal(0);
 					expect(backendStoredContextPutSpy.callCount).equal(0);
 					expect(backbone.documentValueLength).equal(1);
-					expect(flushSpy.callCount).equal(0);
-					expect(backbone.coordinatePendingJournalLength).to.be.greaterThan(0);
-					expect(coordinateStore.files.has("coordinates.wal")).equal(false);
+					expect(flushSpy.callCount).equal(1);
+					expect(backbone.coordinatePendingJournalLength).to.equal(0);
+					expect(backbone.documentPendingJournalLength).to.equal(0);
+					expect(backbone.documentSignerPendingJournalLength).to.equal(0);
+					expect(coordinateStore.files.has("coordinates.wal")).equal(true);
 					await store.close();
 					store = undefined;
 
@@ -3565,7 +3568,10 @@ describe("index", () => {
 				it("keeps strict native same-signer policies native after reopen with persisted signer facts", async () => {
 					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
 					const directory = `./tmp/document-store/native-same-signer-reopen-${uuid()}`;
-					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${directory}/native-backbone-coordinates`,
+						);
 					const openArgs = () => ({
 						mode: "native" as const,
 						replicate: false,
@@ -3615,10 +3621,8 @@ describe("index", () => {
 						store = undefined;
 						await peer.stop();
 						peer = undefined;
-						expect(coordinateStore.files.has("coordinates.wal")).equal(true);
-						expect(coordinateStore.files.has("document-signers.wal")).equal(
-							true,
-						);
+						expect(await coordinateStore.read("coordinates.wal")).to.exist;
+						expect(await coordinateStore.read("document-signers.wal")).to.exist;
 
 						peer = await Peerbit.create({
 							...createRustPeerbitOptions(),
@@ -3674,10 +3678,16 @@ describe("index", () => {
 					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
 					const sourceDirectory = `./tmp/document-store/native-same-signer-receive-source-${uuid()}`;
 					const targetDirectory = `./tmp/document-store/native-same-signer-receive-target-${uuid()}`;
-					const sourceCoordinateStore = new MemoryCoordinatePersistenceStore();
-					const targetCoordinateStore = new MemoryCoordinatePersistenceStore();
+					const sourceCoordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${sourceDirectory}/native-backbone-coordinates`,
+						);
+					const targetCoordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${targetDirectory}/native-backbone-coordinates`,
+						);
 					const openArgs = (
-						coordinateStore: MemoryCoordinatePersistenceStore,
+						coordinateStore: NativeBackboneNodeCoordinatePersistenceStore,
 						replicate: false | { factor: number } = { factor: 1 },
 					) => ({
 						mode: "native" as const,
@@ -3753,9 +3763,9 @@ describe("index", () => {
 							reopenedTarget = await targetPeer.open(clone, {
 								args: openArgs(targetCoordinateStore, false),
 							});
-						expect(targetCoordinateStore.files.has("document-signers.wal")).equal(
-							true,
-						);
+						expect(
+							await targetCoordinateStore.read("document-signers.wal"),
+						).to.exist;
 						const reopenedBackbone = (reopenedTarget.docs.log as any)
 							._nativeBackbone;
 						const reopenedSignerFact =
@@ -3841,7 +3851,10 @@ describe("index", () => {
 
 					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
 					const directory = `./tmp/document-store/native-same-signer-batch-reopen-${uuid()}`;
-					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${directory}/native-backbone-coordinates`,
+						);
 					const openArgs = () => ({
 						mode: "native" as const,
 						replicate: false,
@@ -3911,11 +3924,9 @@ describe("index", () => {
 						store = undefined;
 						await peer.stop();
 						peer = undefined;
-						expect(coordinateStore.files.has("coordinates.wal")).equal(true);
-						expect(coordinateStore.files.has("document-values.wal")).equal(true);
-						expect(coordinateStore.files.has("document-signers.wal")).equal(
-							true,
-						);
+						expect(await coordinateStore.read("coordinates.wal")).to.exist;
+						expect(await coordinateStore.read("document-values.wal")).to.exist;
+						expect(await coordinateStore.read("document-signers.wal")).to.exist;
 
 						peer = await Peerbit.create({
 							...createRustPeerbitOptions(),
@@ -5797,10 +5808,16 @@ describe("index", () => {
 							const [{ rm }] = await Promise.all([import("node:fs/promises")]);
 							const sourceDirectory = `./tmp/document-store/native-project-receive-wal-source-${uuid()}`;
 							const targetDirectory = `./tmp/document-store/native-project-receive-wal-target-${uuid()}`;
-							const sourceCoordinateStore = new MemoryCoordinatePersistenceStore();
-							const targetCoordinateStore = new MemoryCoordinatePersistenceStore();
+							const sourceCoordinateStore =
+								new NativeBackboneNodeCoordinatePersistenceStore(
+									`${sourceDirectory}/native-backbone-coordinates`,
+								);
+							const targetCoordinateStore =
+								new NativeBackboneNodeCoordinatePersistenceStore(
+									`${targetDirectory}/native-backbone-coordinates`,
+								);
 							const openArgs = (
-								coordinateStore: MemoryCoordinatePersistenceStore,
+								coordinateStore: NativeBackboneNodeCoordinatePersistenceStore,
 								replicate: false | { factor: number } = { factor: 1 },
 							) => ({
 								mode: "native" as const,
@@ -5890,9 +5907,9 @@ describe("index", () => {
 								target = undefined;
 								await targetPeer.stop();
 								targetPeer = undefined;
-								expect(targetCoordinateStore.files.has("document-values.wal")).equal(
-									true,
-								);
+								expect(
+									await targetCoordinateStore.read("document-values.wal"),
+								).to.exist;
 
 								targetPeer = await Peerbit.create({
 									...createRustPeerbitOptions(),
@@ -6411,7 +6428,10 @@ describe("index", () => {
 				it("restores strict native document index from native document WAL without indexer mirror", async () => {
 					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
 					const directory = `./tmp/document-store/native-document-index-wal-${uuid()}`;
-					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${directory}/native-backbone-coordinates`,
+						);
 					const openArgs = () => ({
 						mode: "native" as const,
 						replicate: false,
@@ -6471,7 +6491,7 @@ describe("index", () => {
 						store = undefined;
 						await peer.stop();
 						peer = undefined;
-						expect(coordinateStore.files.has("document-values.wal")).equal(true);
+						expect(await coordinateStore.read("document-values.wal")).to.exist;
 
 						peer = await Peerbit.create({
 							...createRustPeerbitOptions(),
@@ -6529,7 +6549,10 @@ describe("index", () => {
 
 					const [{ rm }] = await Promise.all([import("node:fs/promises")]);
 					const directory = `./tmp/document-store/native-document-index-project-wal-${uuid()}`;
-					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${directory}/native-backbone-coordinates`,
+						);
 					const openArgs = () => ({
 						mode: "native" as const,
 						replicate: false,
@@ -6613,7 +6636,7 @@ describe("index", () => {
 						store = undefined;
 						await peer.stop();
 						peer = undefined;
-						expect(coordinateStore.files.has("document-values.wal")).equal(true);
+						expect(await coordinateStore.read("document-values.wal")).to.exist;
 
 						peer = await Peerbit.create({
 							...createRustPeerbitOptions(),
@@ -9088,7 +9111,10 @@ describe("index", () => {
 					}
 
 					const directory = `./tmp/document-store/native-delete-owner-reopen-${uuid()}`;
-					const coordinateStore = new MemoryCoordinatePersistenceStore();
+					const coordinateStore =
+						new NativeBackboneNodeCoordinatePersistenceStore(
+							`${directory}/native-backbone-coordinates`,
+						);
 					const openArgs = () => ({
 						mode: "native" as const,
 						replicate: false,

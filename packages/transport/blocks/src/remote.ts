@@ -18,8 +18,8 @@ import {
 	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
-	type RequestTransportContext,
 	type PeerRefs,
+	type RequestTransportContext,
 	SilentDelivery,
 	type WaitForAnyOpts,
 	type WaitForPeersFn,
@@ -94,6 +94,24 @@ export class RemoteBlocks implements IBlocks {
 	// callers feature-detect this method (the log's columnar raw-receive
 	// fast path), so it must not exist without a delegation target.
 	putKnownManyColumns?: (cids: string[], bytes: Uint8Array[]) => string[];
+	// Native commit callbacks are synchronous, so a write-through local store
+	// exposes an explicit post-commit durability barrier for the lower log.
+	waitForDurableWrites?: () => Promise<void> | void;
+	// Durable native stores expose a synchronous poison guard so lower-log
+	// mutation entry points can reject before changing graph/index state.
+	throwIfDurableWritesFailed?: () => void;
+	rollbackFailedNativeCommits?: (
+		cids: string[],
+		restoreNativeCids?: string[],
+		ownershipToken?: unknown,
+	) => Promise<void>;
+	acknowledgeNativeCommitOwnership?: (ownershipToken: unknown) => void;
+	// Native trim uses the same feature-detection pattern to mirror a hot-store
+	// deletion into a write-through store without re-entering generic rmMany.
+	rmManyAfterNativeDelete?: (
+		cids: string[],
+		cleanupToken?: unknown,
+	) => Promise<number | void> | number | void;
 
 	private _responseHandler?: (
 		data: BlockMessage,
@@ -207,10 +225,7 @@ export class RemoteBlocks implements IBlocks {
 		this.localStore = options?.local;
 		const localPutKnownManyColumns = (
 			this.localStore as {
-				putKnownManyColumns?: (
-					cids: string[],
-					bytes: Uint8Array[],
-				) => string[];
+				putKnownManyColumns?: (cids: string[], bytes: Uint8Array[]) => string[];
 			}
 		)?.putKnownManyColumns;
 		if (typeof localPutKnownManyColumns === "function") {
@@ -220,9 +235,81 @@ export class RemoteBlocks implements IBlocks {
 					cids,
 					bytes,
 				);
-				void this.notifyPuts(stored);
+				const durableBarrier = this.waitForDurableWrites?.();
+				if (durableBarrier && typeof durableBarrier.then === "function") {
+					void Promise.resolve(durableBarrier).then(
+						() => this.notifyPuts(stored),
+						(): void => undefined,
+					);
+				} else {
+					void this.notifyPuts(stored);
+				}
 				return stored;
 			};
+		}
+		const localWaitForDurableWrites = (
+			this.localStore as {
+				waitForDurableWrites?: () => Promise<void> | void;
+			}
+		).waitForDurableWrites;
+		if (typeof localWaitForDurableWrites === "function") {
+			this.waitForDurableWrites = () =>
+				localWaitForDurableWrites.call(this.localStore);
+		}
+		const localThrowIfDurableWritesFailed = (
+			this.localStore as {
+				throwIfDurableWritesFailed?: () => void;
+			}
+		).throwIfDurableWritesFailed;
+		if (typeof localThrowIfDurableWritesFailed === "function") {
+			this.throwIfDurableWritesFailed = () =>
+				localThrowIfDurableWritesFailed.call(this.localStore);
+		}
+		const localRollbackFailedNativeCommits = (
+			this.localStore as {
+				rollbackFailedNativeCommits?: (
+					cids: string[],
+					restoreNativeCids?: string[],
+					ownershipToken?: unknown,
+				) => Promise<void>;
+			}
+		).rollbackFailedNativeCommits;
+		if (typeof localRollbackFailedNativeCommits === "function") {
+			this.rollbackFailedNativeCommits = (
+				cids,
+				restoreNativeCids,
+				ownershipToken,
+			) =>
+				localRollbackFailedNativeCommits.call(
+					this.localStore,
+					cids,
+					restoreNativeCids,
+					ownershipToken,
+				);
+		}
+		const localAcknowledgeNativeCommitOwnership = (
+			this.localStore as {
+				acknowledgeNativeCommitOwnership?: (ownershipToken: unknown) => void;
+			}
+		).acknowledgeNativeCommitOwnership;
+		if (typeof localAcknowledgeNativeCommitOwnership === "function") {
+			this.acknowledgeNativeCommitOwnership = (ownershipToken) =>
+				localAcknowledgeNativeCommitOwnership.call(
+					this.localStore,
+					ownershipToken,
+				);
+		}
+		const localRmManyAfterNativeDelete = (
+			this.localStore as {
+				rmManyAfterNativeDelete?: (
+					cids: string[],
+					cleanupToken?: unknown,
+				) => Promise<number | void> | number | void;
+			}
+		).rmManyAfterNativeDelete;
+		if (typeof localRmManyAfterNativeDelete === "function") {
+			this.rmManyAfterNativeDelete = (cids, cleanupToken) =>
+				localRmManyAfterNativeDelete.call(this.localStore, cids, cleanupToken);
 		}
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
@@ -398,7 +485,10 @@ export class RemoteBlocks implements IBlocks {
 		if (cached.length > 0 && !options?.refresh) return cached;
 		try {
 			const resolved = await this.options.resolveProviders(cidString, options);
-			const normalized = this.normalizeProviderHints([...cached, ...(resolved ?? [])]);
+			const normalized = this.normalizeProviderHints([
+				...cached,
+				...(resolved ?? []),
+			]);
 			if (normalized.length > 0) {
 				this.rememberProviderHints(cidString, normalized);
 			}
@@ -420,7 +510,9 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	async putMany(
-		blocks: Array<Uint8Array | { block: Block<any, any, any, any>; cid: string }>,
+		blocks: Array<
+			Uint8Array | { block: Block<any, any, any, any>; cid: string }
+		>,
 	): Promise<string[]> {
 		if (!this.localStore) {
 			throw new Error("Local store not set");
@@ -767,7 +859,9 @@ export class RemoteBlocks implements IBlocks {
 		let providers =
 			explicitFrom.length > 0
 				? explicitFrom
-				: await this.resolveRemoteProviders(cidString, { signal: options.signal });
+				: await this.resolveRemoteProviders(cidString, {
+						signal: options.signal,
+					});
 		// A resolver may observe abort and still complete normally. Do not create a
 		// timeout-backed read from the candidates it returns after shutdown.
 		throwIfReadWasAborted();
@@ -788,9 +882,7 @@ export class RemoteBlocks implements IBlocks {
 			const promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					let timeoutCallback: ReturnType<typeof setTimeout> | undefined;
-					let resolver:
-						| ((bytes: Uint8Array) => Promise<void>)
-						| undefined;
+					let resolver: ((bytes: Uint8Array) => Promise<void>) | undefined;
 					let settled = false;
 					const abortHandler = () => {
 						cleanup();
@@ -819,12 +911,15 @@ export class RemoteBlocks implements IBlocks {
 						return;
 					}
 
-					timeoutCallback = setTimeout(() => {
-						cleanup();
-						if (settled) return;
-						settled = true;
-						resolve(undefined);
-					}, options.timeout || 30 * 1000);
+					timeoutCallback = setTimeout(
+						() => {
+							cleanup();
+							if (settled) return;
+							settled = true;
+							resolve(undefined);
+						},
+						options.timeout || 30 * 1000,
+					);
 
 					resolver = async (bytes: Uint8Array) => {
 						const value = await tryDecode(bytes);
@@ -851,10 +946,7 @@ export class RemoteBlocks implements IBlocks {
 				Math.min(1_000, Math.floor(requestRetryIntervalMs / 2)),
 			);
 			let retryTimeout: ReturnType<typeof setTimeout> | undefined;
-			let stopWatchingProviders:
-				| void
-				| (() => void)
-				| { close: () => void };
+			let stopWatchingProviders: void | (() => void) | { close: () => void };
 			const refreshProviders = async (force = false) => {
 				if (!canResolveLater) return;
 				if (!force && explicitFrom.length > 0) return;
@@ -883,18 +975,15 @@ export class RemoteBlocks implements IBlocks {
 							? this.normalizeProviderHints(properties.providers)
 							: this.pickRequestBatch(providers, requeryCount);
 					if (requestProviders.length === 0) return;
-					await this.options.publish(
-						new BlockRequest(cidString),
-						{
-							priority: options.priority,
-							responsePriority: options.priority,
-							expiresAt,
-							mode: new SilentDelivery({
-								to: requestProviders,
-								redundancy: requestProviders.length,
-							}),
-						},
-					);
+					await this.options.publish(new BlockRequest(cidString), {
+						priority: options.priority,
+						responsePriority: options.priority,
+						expiresAt,
+						mode: new SilentDelivery({
+							to: requestProviders,
+							redundancy: requestProviders.length,
+						}),
+					});
 					requeryCount += 1;
 				} catch (e) {
 					dontThrowIfDeliveryError(e);
@@ -926,7 +1015,8 @@ export class RemoteBlocks implements IBlocks {
 			};
 			inFlight = {
 				promise,
-				addProviders: (nextProviders) => publishAdditionalProviders(nextProviders),
+				addProviders: (nextProviders) =>
+					publishAdditionalProviders(nextProviders),
 			};
 			this._readFromPeersPromises.set(cidString, inFlight);
 
@@ -964,7 +1054,11 @@ export class RemoteBlocks implements IBlocks {
 				);
 			};
 
-			if (canResolveLater && explicitFrom.length === 0 && this.options.watchProviders) {
+			if (
+				canResolveLater &&
+				explicitFrom.length === 0 &&
+				this.options.watchProviders
+			) {
 				stopWatchingProviders = this.options.watchProviders(cidString, {
 					signal: options.signal,
 					onProviders: (nextProviders) => {
@@ -972,7 +1066,10 @@ export class RemoteBlocks implements IBlocks {
 						const normalized = this.normalizeProviderHints(nextProviders);
 						if (normalized.length === 0) return;
 						this.rememberProviderHints(cidString, normalized);
-						providers = this.normalizeProviderHints([...providers, ...normalized]);
+						providers = this.normalizeProviderHints([
+							...providers,
+							...normalized,
+						]);
 						tryPublishRequest({ force: true, providers: normalized }).catch(
 							dontThrowIfDeliveryError,
 						);
@@ -993,7 +1090,10 @@ export class RemoteBlocks implements IBlocks {
 				}
 				this._readFromPeersPromises.delete(cidString);
 				this._events.removeEventListener("peer:reachable", publishOnNewPeers);
-				this._events.removeEventListener("providers:hints", publishOnProviderHints);
+				this._events.removeEventListener(
+					"providers:hints",
+					publishOnProviderHints,
+				);
 				if (typeof stopWatchingProviders === "function") {
 					stopWatchingProviders();
 				} else if (stopWatchingProviders) {
@@ -1040,9 +1140,12 @@ export class RemoteBlocks implements IBlocks {
 			}
 
 			if (options.timeout != null) {
-				timeout = setTimeout(() => {
-					finish(() => resolve(undefined));
-				}, Math.max(0, options.timeout));
+				timeout = setTimeout(
+					() => {
+						finish(() => resolve(undefined));
+					},
+					Math.max(0, options.timeout),
+				);
 			}
 			options.signal?.addEventListener("abort", abort, { once: true });
 
@@ -1054,18 +1157,26 @@ export class RemoteBlocks implements IBlocks {
 	}
 
 	async stop(): Promise<void> {
-		// Dont listen for more incoming messages
+		let firstError: unknown;
+		const capture = async (operation: () => Promise<unknown> | unknown) => {
+			try {
+				await operation();
+			} catch (error) {
+				firstError ??= error;
+			}
+		};
 
-		// Wait for processing request
-		this.closeController.abort();
+		// Stop accepting work first, then always release every independent
+		// queue/store/cache resource even when an earlier drain fails.
+		await capture(() => this.closeController.abort());
 		if (this._deferredStoredNotificationTimer) {
 			clearTimeout(this._deferredStoredNotificationTimer);
 			this._deferredStoredNotificationTimer = undefined;
 		}
-		await this.flushDeferredStoredNotifications();
-		this._loadFetchQueue.clear();
-		await this._loadFetchQueue.onIdle(); // wait for pending
-		await this.localStore?.stop();
+		await capture(() => this.flushDeferredStoredNotifications());
+		await capture(() => this._loadFetchQueue.clear());
+		await capture(() => this._loadFetchQueue.onIdle());
+		await capture(() => this.localStore?.stop());
 		this._readFromPeersPromises.clear();
 		this._resolvers.clear();
 		this._blockCache?.clear();
@@ -1073,6 +1184,9 @@ export class RemoteBlocks implements IBlocks {
 		this._rustProviderCache?.clear();
 		this._open = false;
 		// we dont cleanup subscription because we dont know if someone else is sbuscribing also
+		if (firstError !== undefined) {
+			throw firstError;
+		}
 	}
 
 	waitFor(

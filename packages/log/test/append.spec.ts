@@ -145,6 +145,150 @@ describe("append", function () {
 		putSpy.restore();
 	});
 
+	it("rolls back only its native index generation and preserves same-CID pending facts", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			appendDurability: "strict",
+		});
+		const { entry } = await log.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
+		const index = log.entryIndex.properties.index;
+		const concurrentShallow = entry.toShallow(false);
+		const rejectedShallow = entry.toShallow(true);
+
+		await log.entryIndex.putNativeCommittedAppendFacts({
+			hash: entry.hash,
+			unique: false,
+			externalNextHashes: [],
+			shallowEntry: concurrentShallow,
+			isHead: false,
+		});
+		const transaction =
+			log.entryIndex.beginNativeCommittedAppendFactsTransaction();
+		log.entryIndex.putNativeCommittedAppendFacts(
+			{
+				hash: entry.hash,
+				unique: true,
+				externalNextHashes: [],
+				shallowEntry: rejectedShallow,
+				isHead: true,
+			},
+			transaction,
+		);
+		// A later same-CID publication gets its own generation and must survive
+		// compensation of the rejected transaction.
+		await log.entryIndex.putNativeCommittedAppendFacts({
+			hash: entry.hash,
+			unique: false,
+			externalNextHashes: [],
+			shallowEntry: concurrentShallow,
+			isHead: false,
+		});
+
+		const failure = new Error("native index generation failed");
+		const putStub = sinon.stub(index, "put").rejects(failure);
+		try {
+			const rejected = await log.entryIndex
+				.flushNativeCommittedAppendFacts(transaction)
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			expect(rejected).equal(failure);
+			await log.entryIndex.rollbackNativeCommittedAppendFacts(transaction);
+			expect(log.length).equal(1);
+		} finally {
+			putStub.restore();
+		}
+
+		const laterPutSpy = sinon.spy(index, "put");
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(laterPutSpy.callCount).equal(1);
+			expect((await log.entryIndex.getShallow(entry.hash))?.value.head).equal(
+				false,
+			);
+			await log.entryIndex.flushPendingWrites();
+			expect(laterPutSpy.callCount).equal(1);
+			expect(log.length).equal(1);
+		} finally {
+			laterPutSpy.restore();
+			await log.close();
+		}
+	});
+
+	it("restores an earlier same-CID pending fact after an applied native index write rejects", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			appendDurability: "strict",
+		});
+		const { entry } = await log.append(new Uint8Array([1]), {
+			meta: { next: [] },
+		});
+		const index = log.entryIndex.properties.index;
+		const previousShallow = entry.toShallow(false);
+		const rejectedShallow = entry.toShallow(true);
+
+		await log.entryIndex.putNativeCommittedAppendFacts({
+			hash: entry.hash,
+			unique: false,
+			externalNextHashes: [],
+			shallowEntry: previousShallow,
+			isHead: false,
+		});
+		const transaction =
+			log.entryIndex.beginNativeCommittedAppendFactsTransaction();
+		log.entryIndex.putNativeCommittedAppendFacts(
+			{
+				hash: entry.hash,
+				unique: true,
+				externalNextHashes: [],
+				shallowEntry: rejectedShallow,
+				isHead: true,
+			},
+			transaction,
+		);
+
+		const failure = new Error("applied native index generation failed");
+		const originalPut = index.put.bind(index);
+		const putStub = sinon.stub(index, "put").callsFake(async (value) => {
+			await originalPut(value);
+			throw failure;
+		});
+		try {
+			const rejected = await log.entryIndex
+				.flushNativeCommittedAppendFacts(transaction)
+				.then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			expect(rejected).equal(failure);
+			await log.entryIndex.rollbackNativeCommittedAppendFacts(transaction);
+			expect(log.length).equal(1);
+			expect((await log.entryIndex.getShallow(entry.hash))?.value.head).equal(
+				false,
+			);
+		} finally {
+			putStub.restore();
+		}
+
+		const restoredPutSpy = sinon.spy(index, "put");
+		try {
+			await new Promise((resolve) => setTimeout(resolve, 400));
+			expect(restoredPutSpy.callCount).equal(1);
+			expect((await log.entryIndex.getShallow(entry.hash))?.value.head).equal(
+				false,
+			);
+			expect(log.length).equal(1);
+		} finally {
+			restoredPutSpy.restore();
+			await log.close();
+		}
+	});
+
 	it("appendMany appends a local chain with one coalesced change", async () => {
 		const log = new Log<Uint8Array>();
 		const changes: any[] = [];
@@ -181,10 +325,7 @@ describe("append", function () {
 				.putKnownManyColumns === "function"
 				? sinon.spy(
 						store as unknown as {
-							putKnownManyColumns: (
-								cids: string[],
-								bytes: Uint8Array[],
-							) => any;
+							putKnownManyColumns: (cids: string[], bytes: Uint8Array[]) => any;
 						},
 						"putKnownManyColumns",
 					)
@@ -429,6 +570,78 @@ describe("append", function () {
 		}
 	});
 
+	it("holds native commit-only publication behind its durable barrier", async () => {
+		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
+		const nativeStore = await createNativeLogBlockStore();
+		await nativeStore.start();
+		let releaseBarrier!: () => void;
+		const barrierGate = new Promise<void>((resolve) => {
+			releaseBarrier = resolve;
+		});
+		let markBarrierStarted!: () => void;
+		const barrierStarted = new Promise<void>((resolve) => {
+			markBarrierStarted = resolve;
+		});
+		const barrierSpy = sinon.spy(async () => {
+			markBarrierStarted();
+			await barrierGate;
+		});
+		(
+			nativeStore as typeof nativeStore & {
+				waitForDurableWrites?: () => Promise<void>;
+			}
+		).waitForDurableWrites = barrierSpy;
+		const log = new Log<Uint8Array>();
+		await log.open(nativeStore, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+
+		try {
+			let settled = false;
+			const pending = Promise.resolve(
+				(log as any).appendLocallyPreparedCommitOnly(
+					new Uint8Array([1]),
+					{ meta: { next: [] } },
+					{
+						skipMissingNextJoin: true,
+						resolveTrimmedEntries: false,
+						includeMaterializationBytes: false,
+						includeAppendFactsBytes: true,
+					},
+				),
+			);
+			void pending.then(
+				() => {
+					settled = true;
+				},
+				() => {
+					settled = true;
+				},
+			);
+			await barrierStarted;
+			await Promise.resolve();
+			expect(settled).equal(false);
+			expect(log.length).equal(0);
+
+			releaseBarrier();
+			const result = await pending;
+			expect(result).to.not.equal(undefined);
+			expect(log.length).equal(1);
+			expect(barrierSpy.callCount).equal(1);
+		} finally {
+			releaseBarrier();
+			delete (
+				nativeStore as typeof nativeStore & {
+					waitForDurableWrites?: () => Promise<void>;
+				}
+			).waitForDurableWrites;
+			await log.close();
+			await nativeStore.stop();
+		}
+	});
+
 	it("uses single native committed append bookkeeping for prepared append", async () => {
 		const { createNativeLogBlockStore } = await import("@peerbit/log-rust");
 		const nativeStore = await createNativeLogBlockStore();
@@ -582,6 +795,270 @@ describe("append", function () {
 		}
 	});
 
+	it("keeps uncontended native append-facts bookkeeping synchronous and single-pass", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const { entry: template } = await log.append(new Uint8Array([41]), {
+			meta: { next: [] },
+		});
+		const entryIndex = log.entryIndex as any;
+		const makeShallow = (hash: string) => {
+			const shallow = template.toShallow(true);
+			shallow.hash = hash;
+			shallow.meta.next = [];
+			return shallow;
+		};
+		const singleSpy = sinon.spy(
+			log.entryIndex,
+			"putNativeCommittedAppendFacts",
+		);
+		const batchSpy = sinon.spy(
+			log.entryIndex,
+			"putNativeCommittedAppendFactsBatch",
+		);
+		try {
+			const generationBefore = entryIndex.nextPendingIndexWriteGeneration;
+			const lengthBefore = log.length;
+			const single = log.entryIndex.putNativeCommittedAppendFacts({
+				hash: "uncontended-single",
+				unique: true,
+				externalNextHashes: [],
+				shallowEntry: makeShallow("uncontended-single"),
+			});
+			expect((single as { then?: unknown } | undefined)?.then).to.equal(
+				undefined,
+			);
+			expect(singleSpy.callCount).to.equal(1);
+			expect(log.length).to.equal(lengthBefore + 1);
+			expect(entryIndex.nextPendingIndexWriteGeneration).to.equal(
+				generationBefore + 1,
+			);
+
+			const batchGenerationBefore = entryIndex.nextPendingIndexWriteGeneration;
+			const batchLengthBefore = log.length;
+			const batch = log.entryIndex.putNativeCommittedAppendFactsBatch([
+				{
+					hash: "uncontended-batch-a",
+					unique: true,
+					externalNextHashes: [],
+					shallowEntry: makeShallow("uncontended-batch-a"),
+				},
+				{
+					hash: "uncontended-batch-b",
+					unique: true,
+					externalNextHashes: [],
+					shallowEntry: makeShallow("uncontended-batch-b"),
+				},
+			]);
+			expect((batch as { then?: unknown } | undefined)?.then).to.equal(
+				undefined,
+			);
+			expect(batchSpy.callCount).to.equal(1);
+			expect(log.length).to.equal(batchLengthBefore + 2);
+			expect(entryIndex.nextPendingIndexWriteGeneration).to.equal(
+				batchGenerationBefore + 2,
+			);
+		} finally {
+			batchSpy.restore();
+			singleSpy.restore();
+			await log.close();
+		}
+	});
+
+	it("defers same-hash native append-facts bookkeeping until the held lease releases", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const { entry: template } = await log.append(new Uint8Array([42]), {
+			meta: { next: [] },
+		});
+		const hash = "contended-native-facts";
+		const shallowEntry = template.toShallow(true);
+		shallowEntry.hash = hash;
+		shallowEntry.meta.next = [];
+		const entryIndex = log.entryIndex as any;
+		const owner = await log.entryIndex.acquireHashMutationLocks([hash]);
+		const lengthBefore = log.length;
+		const generationBefore = entryIndex.nextPendingIndexWriteGeneration;
+		try {
+			const pending = log.entryIndex.putNativeCommittedAppendFacts({
+				hash,
+				unique: true,
+				externalNextHashes: [],
+				shallowEntry,
+			});
+			expect(pending).to.be.instanceOf(Promise);
+			expect(log.length).to.equal(lengthBefore);
+			expect(entryIndex.nextPendingIndexWriteGeneration).to.equal(
+				generationBefore,
+			);
+			log.entryIndex.releaseHashMutationLocks(owner);
+			await pending;
+			expect(log.length).to.equal(lengthBefore + 1);
+			expect(entryIndex.nextPendingIndexWriteGeneration).to.equal(
+				generationBefore + 1,
+			);
+		} finally {
+			try {
+				log.entryIndex.releaseHashMutationLocks(owner);
+			} catch {
+				// The successful path already released the caller-owned test lease.
+			}
+			await log.close();
+		}
+	});
+
+	it("releases native hash leases after synchronous throws and async rejection", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const { entry: template } = await log.append(new Uint8Array([43]), {
+			meta: { next: [] },
+		});
+		const makeShallow = (hash: string) => {
+			const shallow = template.toShallow(true);
+			shallow.hash = hash;
+			shallow.meta.next = [];
+			return shallow;
+		};
+		try {
+			const syncHash = "sync-throw-native-facts";
+			expect(() =>
+				log.entryIndex.putNativeCommittedAppendFactsBatch([
+					{
+						hash: syncHash,
+						unique: true,
+						externalNextHashes: [],
+					},
+				]),
+			).to.throw("Missing shallow entry");
+			const afterSyncThrow = log.entryIndex.putNativeCommittedAppendFacts({
+				hash: syncHash,
+				unique: true,
+				externalNextHashes: [],
+				shallowEntry: makeShallow(syncHash),
+			});
+			expect((afterSyncThrow as { then?: unknown } | undefined)?.then).to.equal(
+				undefined,
+			);
+
+			const asyncHash = "async-reject-native-facts";
+			const failure = new Error("injected native facts lookup failure");
+			const has = sinon.stub(log.entryIndex, "has").rejects(failure);
+			const rejected = log.entryIndex.putNativeCommittedAppendFacts({
+				hash: asyncHash,
+				unique: false,
+				externalNextHashes: [],
+				shallowEntry: makeShallow(asyncHash),
+			});
+			expect(rejected).to.be.instanceOf(Promise);
+			expect(
+				await Promise.resolve(rejected).then(
+					() => undefined,
+					(error: unknown) => error,
+				),
+			).to.equal(failure);
+			has.restore();
+			const afterAsyncReject = log.entryIndex.putNativeCommittedAppendFacts({
+				hash: asyncHash,
+				unique: true,
+				externalNextHashes: [],
+				shallowEntry: makeShallow(asyncHash),
+			});
+			expect(
+				(afterAsyncReject as { then?: unknown } | undefined)?.then,
+			).to.equal(undefined);
+		} finally {
+			sinon.restore();
+			await log.close();
+		}
+	});
+
+	it("does not release a caller-supplied native hash-lock owner", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+		});
+		const { entry: template } = await log.append(new Uint8Array([44]), {
+			meta: { next: [] },
+		});
+		const hash = "caller-owned-native-facts";
+		const makeShallow = (value = hash) => {
+			const shallow = template.toShallow(true);
+			shallow.hash = value;
+			shallow.meta.next = [];
+			return shallow;
+		};
+		const owner = await log.entryIndex.acquireHashMutationLocks([hash]);
+		try {
+			const lengthBeforeRejectedOwners = log.length;
+			expect(() =>
+				log.entryIndex.putNativeCommittedAppendFacts(
+					{
+						hash: "uncovered-single",
+						unique: true,
+						externalNextHashes: [],
+						shallowEntry: makeShallow("uncovered-single"),
+					},
+					undefined,
+					owner,
+				),
+			).to.throw("does not cover uncovered-single");
+			expect(() =>
+				log.entryIndex.putNativeCommittedAppendFactsBatch(
+					[
+						{
+							hash: "uncovered-batch",
+							unique: true,
+							externalNextHashes: [],
+							shallowEntry: makeShallow("uncovered-batch"),
+						},
+					],
+					undefined,
+					owner,
+				),
+			).to.throw("does not cover uncovered-batch");
+			expect(log.length).to.equal(lengthBeforeRejectedOwners);
+			const owned = log.entryIndex.putNativeCommittedAppendFacts(
+				{
+					hash,
+					unique: true,
+					externalNextHashes: [],
+					shallowEntry: makeShallow(),
+				},
+				undefined,
+				owner,
+			);
+			expect((owned as { then?: unknown } | undefined)?.then).to.equal(
+				undefined,
+			);
+			const waiting = log.entryIndex.putNativeCommittedAppendFacts({
+				hash,
+				unique: false,
+				externalNextHashes: [],
+				shallowEntry: makeShallow(),
+			});
+			expect(waiting).to.be.instanceOf(Promise);
+			log.entryIndex.releaseHashMutationLocks(owner);
+			await waiting;
+		} finally {
+			try {
+				log.entryIndex.releaseHashMutationLocks(owner);
+			} catch {
+				// The test releases its owner before awaiting the contended mutation.
+			}
+			await log.close();
+		}
+	});
+
 	it("uses native graph trim facts for commit-only prepared append without native block store", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
@@ -639,6 +1116,56 @@ describe("append", function () {
 		}
 	});
 
+	it("mirrors trim deletion only after native confirms hot deletion", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+		});
+		const nativeDeleteMirror = sinon.stub().resolves();
+		(
+			store as BlockStore & {
+				rmManyAfterNativeDelete?: (hashes: string[]) => Promise<void>;
+			}
+		).rmManyAfterNativeDelete = nativeDeleteMirror;
+
+		try {
+			const first = await log.append(new Uint8Array([1]), {
+				meta: { next: [] },
+			});
+			await log.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+				[first.entry.hash],
+				{
+					skipNextHeadUpdates: true,
+					deleteBlocks: false,
+				},
+			);
+			expect(nativeDeleteMirror.callCount).equal(0);
+
+			const second = await log.append(new Uint8Array([2]), {
+				meta: { next: [] },
+			});
+			await log.entryIndex.consumeNativeTrimmedEntryHashesNoReturnMaybe(
+				[second.entry.hash],
+				{
+					skipNextHeadUpdates: true,
+					deleteBlocks: false,
+					nativeBlocksDeleted: true,
+				},
+			);
+			expect(
+				nativeDeleteMirror.calledOnceWithExactly([second.entry.hash]),
+			).equal(true);
+		} finally {
+			delete (
+				store as BlockStore & {
+					rmManyAfterNativeDelete?: (hashes: string[]) => Promise<void>;
+				}
+			).rmManyAfterNativeDelete;
+			await log.close();
+		}
+	});
+
 	it("keeps known no-next native append on the direct path with length trim", async () => {
 		const log = new Log<Uint8Array>();
 		await log.open(store, signKey, {
@@ -663,7 +1190,9 @@ describe("append", function () {
 			});
 
 		try {
-			const first = await (log as any).appendLocallyPreparedNativeNoNextCommitOnly(
+			const first = await (
+				log as any
+			).appendLocallyPreparedNativeNoNextCommitOnly(
 				new Uint8Array([1]),
 				{ meta: { next: [] } },
 				{ resolveTrimmedEntries: false },
@@ -694,6 +1223,301 @@ describe("append", function () {
 			trimSpy.restore();
 			getNextsForAppendSpy.restore();
 			await log.close();
+		}
+	});
+
+	it("waits for an admitted native prepare and compensates terminal admission", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			appendDurability: "strict",
+			indexer: new HashmapIndices(),
+		});
+		const cid = await store.put(Uint8Array.of(99));
+		let markPrepared!: () => void;
+		const prepared = new Promise<void>((resolve) => {
+			markPrepared = resolve;
+		});
+		let releasePrepare!: () => void;
+		const prepareGate = new Promise<void>((resolve) => {
+			releasePrepare = resolve;
+		});
+		const pending = Promise.resolve(
+			(log as any).appendLocallyPreparedNativeNoNextCommitOnly(
+				Uint8Array.of(1),
+				{ meta: { next: [] } },
+				{
+					resolveTrimmedEntries: false,
+					skipMissingNextJoin: true,
+					retainMaterializationBytes: false,
+					deferNativeTransactionAcknowledgement: true,
+				},
+				async () => {
+					markPrepared();
+					await prepareGate;
+					return {
+						cid,
+						byteLength: 1,
+						nativeCommitOwnershipToken: {},
+					};
+				},
+			),
+		);
+		try {
+			await prepared;
+			let closeSettled = false;
+			const closing = log.close().finally(() => {
+				closeSettled = true;
+			});
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(closeSettled).to.equal(false);
+			releasePrepare();
+			const [appendResult, closeResult] = await Promise.allSettled([
+				pending,
+				closing,
+			]);
+			expect(appendResult.status).to.equal("rejected");
+			expect(closeResult.status).to.equal("fulfilled");
+			expect(await store.get(cid)).to.equal(undefined);
+			expect((log as any)._nativeCommittedAppendFinalizers?.size ?? 0).to.equal(
+				0,
+			);
+		} finally {
+			releasePrepare();
+			await pending.catch(() => undefined);
+			await log.close().catch(() => undefined);
+		}
+	});
+
+	for (const method of ["append", "appendMany"] as const) {
+		it(`waits for an admitted public ${method} before closing`, async () => {
+			const log = new Log<Uint8Array>();
+			await log.open(store, signKey, {
+				indexer: new HashmapIndices(),
+				nativeGraph: true,
+			});
+			const originalCreateNativePlainAppendChain = (
+				log as any
+			).createNativePlainAppendChain.bind(log);
+			let markPrepared!: () => void;
+			const prepared = new Promise<void>((resolve) => {
+				markPrepared = resolve;
+			});
+			let releasePrepared!: () => void;
+			const preparedGate = new Promise<void>((resolve) => {
+				releasePrepared = resolve;
+			});
+			const createNativePlainAppendChain = sinon
+				.stub(log as any, "createNativePlainAppendChain")
+				.callsFake(async (...args: any[]) => {
+					const chain = await originalCreateNativePlainAppendChain(...args);
+					expect(chain).to.not.equal(undefined);
+					expect(chain.nativeBlocksCommitted).to.equal(false);
+					markPrepared();
+					await preparedGate;
+					return chain;
+				});
+			const pending =
+				method === "append"
+					? log.append(Uint8Array.of(7))
+					: log.appendMany([Uint8Array.of(7), Uint8Array.of(8)]);
+			try {
+				await prepared;
+				let closeSettled = false;
+				const closing = log.close().finally(() => {
+					closeSettled = true;
+				});
+				await Promise.resolve();
+				await Promise.resolve();
+				expect(closeSettled).to.equal(false);
+
+				releasePrepared();
+				const [appendResult, closeResult] = await Promise.allSettled([
+					pending,
+					closing,
+				]);
+				expect(appendResult.status).to.equal("fulfilled");
+				expect(closeResult.status).to.equal("fulfilled");
+				if (appendResult.status === "fulfilled") {
+					const hashes =
+						"entry" in appendResult.value
+							? [appendResult.value.entry.hash]
+							: appendResult.value.entries.map((entry) => entry.hash);
+					for (const hash of hashes) {
+						expect(await blockExists(hash)).to.equal(true);
+					}
+				}
+				expect((log.entryIndex as any).pendingIndexWrites.size).to.equal(0);
+			} finally {
+				releasePrepared();
+				await pending.catch(() => undefined);
+				await log.close().catch(() => undefined);
+				createNativePlainAppendChain.restore();
+			}
+		});
+	}
+
+	it("lets an onChange observer catch terminal reentrancy and retry later", async () => {
+		const log = new Log<Uint8Array>();
+		let closeError: unknown;
+		let dropError: unknown;
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			onChange: async () => {
+				closeError = await log.close().then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+				dropError = await log.drop().then(
+					() => undefined,
+					(error: unknown) => error,
+				);
+			},
+		});
+
+		const result = await Promise.race([
+			log.append(Uint8Array.of(10)),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("onChange close deadlocked")), 1000),
+			),
+		]);
+		expect(result.entry.hash).to.be.a("string");
+		expect(String(closeError)).to.contain("mutation callback");
+		expect(String(dropError)).to.contain("mutation callback");
+		expect(log.closed).to.equal(false);
+		await log.drop();
+		expect(log.closed).to.equal(true);
+		expect(await blockExists(result.entry.hash)).to.equal(false);
+	});
+
+	it("rejects post-commit on uncaught onChange terminal reentrancy", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			nativeGraph: true,
+			onChange: async () => log.close(),
+		});
+
+		const result = await Promise.race([
+			log.append(Uint8Array.of(12)).then(
+				() => ({ status: "fulfilled" as const }),
+				(error: unknown) => ({ status: "rejected" as const, error }),
+			),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("onChange close deadlocked")), 1000),
+			),
+		]);
+		expect(result.status).to.equal("rejected");
+		if (result.status === "rejected") {
+			expect(String(result.error)).to.contain("mutation callback");
+		}
+		expect(log.length).to.equal(1);
+		expect(log.closed).to.equal(false);
+		await log.close();
+		expect(log.closed).to.equal(true);
+	});
+
+	it("rejects without deadlocking when canAppend closes the log", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			canAppend: async () => {
+				await log.close();
+				return true;
+			},
+		});
+
+		const result = await Promise.race([
+			log.append(Uint8Array.of(11)).then(
+				() => ({ status: "fulfilled" as const }),
+				(error: unknown) => ({ status: "rejected" as const, error }),
+			),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("canAppend close deadlocked")), 1000),
+			),
+		]);
+		expect(result.status).to.equal("rejected");
+		if (result.status === "rejected") {
+			expect(String(result.error)).to.contain("mutation callback");
+		}
+		expect(log.length).to.equal(0);
+		expect(log.closed).to.equal(false);
+		await log.close();
+		expect(log.closed).to.equal(true);
+	});
+
+	it("rejects terminal reentrancy from canTrim without deadlocking", async () => {
+		const log = new Log<Uint8Array>();
+		let closeError: unknown;
+		await log.open(store, signKey, {
+			indexer: new HashmapIndices(),
+			trim: {
+				type: "length",
+				to: 1,
+				filter: {
+					canTrim: async () => {
+						closeError = await log.close().then(
+							() => undefined,
+							(error: unknown) => error,
+						);
+						return true;
+					},
+				},
+			},
+		});
+		await log.append(Uint8Array.of(15));
+
+		await Promise.race([
+			log.append(Uint8Array.of(16)),
+			new Promise<never>((_, reject) =>
+				setTimeout(() => reject(new Error("canTrim close deadlocked")), 1000),
+			),
+		]);
+		expect(String(closeError)).to.contain("mutation callback");
+		expect(log.length).to.equal(1);
+		expect(log.closed).to.equal(false);
+		await log.close();
+		expect(log.closed).to.equal(true);
+	});
+
+	it("finishes CUT deletion before terminal admission is released", async () => {
+		const log = new Log<Uint8Array>();
+		await log.open(store, signKey, { indexer: new HashmapIndices() });
+		const { entry: first } = await log.append(Uint8Array.of(13));
+		let markChange!: () => void;
+		const changeStarted = new Promise<void>((resolve) => {
+			markChange = resolve;
+		});
+		let releaseChange!: () => void;
+		const changeGate = new Promise<void>((resolve) => {
+			releaseChange = resolve;
+		});
+		const cutting = log.append(Uint8Array.of(14), {
+			meta: { type: EntryType.CUT },
+			onChange: async () => {
+				markChange();
+				await changeGate;
+			},
+		});
+		try {
+			await changeStarted;
+			const closeError = await log.close().then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(String(closeError)).to.contain("mutation callback");
+			expect(await blockExists(first.hash)).to.equal(true);
+
+			releaseChange();
+			await cutting;
+			expect(await blockExists(first.hash)).to.equal(false);
+			await log.close();
+			expect(log.closed).to.equal(true);
+		} finally {
+			releaseChange();
+			await cutting.catch(() => undefined);
+			await log.close().catch(() => undefined);
 		}
 	});
 

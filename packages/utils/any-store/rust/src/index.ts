@@ -1,7 +1,7 @@
 import { type AnyStore } from "@peerbit/any-store-interface";
 import {
-	createPersistenceBackend,
 	type RustAnyStorePersistenceBackend,
+	createPersistenceBackend,
 } from "./persistence.js";
 
 type NativeAnyStore = {
@@ -56,14 +56,17 @@ let wasmInitPromise: Promise<void> | undefined;
 const loadWasm = async (): Promise<WasmModule> => {
 	if (!wasmModulePromise) {
 		const wasmModulePath = "../wasm/any_store_rust.js";
-		wasmModulePromise = import(/* @vite-ignore */ wasmModulePath) as Promise<WasmModule>;
+		wasmModulePromise = import(
+			/* @vite-ignore */ wasmModulePath
+		) as Promise<WasmModule>;
 	}
 
 	const wasm = await wasmModulePromise;
 	if (!wasmInitialized) {
 		wasmInitPromise ??= (async () => {
-			const processLike = (globalThis as { process?: { versions?: { node?: string } } })
-				.process;
+			const processLike = (
+				globalThis as { process?: { versions?: { node?: string } } }
+			).process;
 			if (processLike?.versions?.node) {
 				const fsPromises = "fs/promises";
 				const { readFile } = (await import(
@@ -75,7 +78,10 @@ const loadWasm = async (): Promise<WasmModule> => {
 				wasm.initSync({ module: bytes });
 			} else {
 				await wasm.default({
-					module_or_path: new URL("../wasm/any_store_rust_bg.wasm", import.meta.url),
+					module_or_path: new URL(
+						"../wasm/any_store_rust_bg.wasm",
+						import.meta.url,
+					),
 				});
 			}
 			wasmInitialized = true;
@@ -133,8 +139,17 @@ export class RustAnyStore implements AnyStore {
 				this._status = "open";
 			} catch (error) {
 				this._status = "closed";
+				const persistence = this.persistence;
 				this.native = undefined;
 				this.persistence = undefined;
+				try {
+					await persistence?.close();
+				} catch (closeError) {
+					throw new AggregateError(
+						[error, closeError],
+						"RustAnyStore open failed and its persistence backend could not close",
+					);
+				}
 				throw error;
 			}
 		});
@@ -255,7 +270,7 @@ export class RustAnyStore implements AnyStore {
 		}
 		const normalNative = this.openNormalDurabilityNative();
 		if (normalNative && this.directory) {
-			const journalError = this.takePendingJournalError();
+			const journalError = this.pendingJournalError();
 			if (journalError) {
 				return Promise.reject(journalError);
 			}
@@ -276,7 +291,9 @@ export class RustAnyStore implements AnyStore {
 		});
 	}
 
-	putMany(entries: Iterable<readonly [string, Uint8Array]>): Promise<void> | void {
+	putMany(
+		entries: Iterable<readonly [string, Uint8Array]>,
+	): Promise<void> | void {
 		const inputPairs = Array.from(entries);
 		if (inputPairs.length === 0) {
 			return;
@@ -290,7 +307,9 @@ export class RustAnyStore implements AnyStore {
 			return;
 		}
 
-		const pairs = inputPairs.map(([key, value]) => [key, copyBytes(value)] as const);
+		const pairs = inputPairs.map(
+			([key, value]) => [key, copyBytes(value)] as const,
+		);
 		if (pairs.length === 0) {
 			return;
 		}
@@ -326,7 +345,7 @@ export class RustAnyStore implements AnyStore {
 		}
 		const normalNative = this.openNormalDurabilityNative();
 		if (normalNative && this.directory) {
-			const journalError = this.takePendingJournalError();
+			const journalError = this.pendingJournalError();
 			if (journalError) {
 				return Promise.reject(journalError);
 			}
@@ -384,7 +403,9 @@ export class RustAnyStore implements AnyStore {
 		});
 	}
 
-	async getMany(keys: Iterable<string>): Promise<Array<Uint8Array | undefined>> {
+	async getMany(
+		keys: Iterable<string>,
+	): Promise<Array<Uint8Array | undefined>> {
 		const native = await this.ensureOpen();
 		return native.get_many(Array.from(keys)).map((value) => value ?? undefined);
 	}
@@ -479,7 +500,11 @@ export class RustAnyStore implements AnyStore {
 	}
 
 	iterator(): {
-		[Symbol.asyncIterator]: () => AsyncIterator<[string, Uint8Array], void, void>;
+		[Symbol.asyncIterator]: () => AsyncIterator<
+			[string, Uint8Array],
+			void,
+			void
+		>;
 	} {
 		return {
 			[Symbol.asyncIterator]: () => {
@@ -487,7 +512,9 @@ export class RustAnyStore implements AnyStore {
 				let index = 0;
 				return {
 					next: async () => {
-						entriesPromise ??= this.ensureOpen().then((native) => native.entries());
+						entriesPromise ??= this.ensureOpen().then((native) =>
+							native.entries(),
+						);
 						const entries = await entriesPromise;
 						if (index >= entries.length) {
 							return { done: true, value: undefined };
@@ -506,7 +533,9 @@ export class RustAnyStore implements AnyStore {
 	async clear(): Promise<void> {
 		await this.enqueueMutation(async (native) => {
 			if (this.directory) {
-				await this.recordJournal(this.journaledNative(native).encode_clear_record());
+				await this.recordJournal(
+					this.journaledNative(native).encode_clear_record(),
+				);
 			}
 			native.clear();
 		});
@@ -537,7 +566,10 @@ export class RustAnyStore implements AnyStore {
 			return;
 		}
 		const native = this.journaledNative(this.native);
-		this.persistence = await createPersistenceBackend(this.directory, this.level);
+		this.persistence = await createPersistenceBackend(
+			this.directory,
+			this.level,
+		);
 		const snapshot = await this.persistence.readSnapshot();
 		if (snapshot && snapshot.byteLength > 0) {
 			native.load_snapshot(snapshot);
@@ -547,16 +579,26 @@ export class RustAnyStore implements AnyStore {
 		if (journal && journal.byteLength > 0) {
 			const applied = native.apply_journal(journal);
 			if (applied < journal.byteLength) {
-				// Torn tail from a mid-write crash: rewrite the checkpoint so new
-				// records are not appended after the unreadable bytes and lost on
-				// the next replay.
-				await this.persistence.writeSnapshot(native.snapshot());
-				this.journalByteLength = 0;
+				// Torn tail from a mid-write crash: retain the verified WAL prefix and
+				// durably remove only the unreadable suffix. A checkpoint rewrite is
+				// not crash-safe on every backend and must never be an implicit repair.
+				await this.persistence.truncateJournal(applied);
+				this.journalByteLength = applied;
 			}
 		}
+		// A journal failure poisons the current open generation. Only a complete
+		// close/reopen that replays a verified checkpoint may clear it.
+		this.journalError = undefined;
+		this.journalQueue = Promise.resolve();
 	}
 
 	private shouldCompactOnClose(): boolean {
+		// Strict mode backs acknowledgement-sensitive mirrors. Until every backend
+		// has a proven crash-atomic generation protocol, neither an explicit close
+		// request nor a forced threshold may replace its WAL with a checkpoint.
+		if (this.options.durability === "strict") {
+			return false;
+		}
 		if (this.options.compactOnClose !== false) {
 			return true;
 		}
@@ -615,14 +657,14 @@ export class RustAnyStore implements AnyStore {
 		}
 	}
 
-	private takePendingJournalError(): unknown {
-		const error = this.journalError;
-		this.journalError = undefined;
-		return error;
+	private pendingJournalError(): unknown {
+		return this.journalError;
 	}
 
-	private enqueueMutation<T>(fn: (native: NativeAnyStore) => Promise<T>): Promise<T> {
-		const journalError = this.takePendingJournalError();
+	private enqueueMutation<T>(
+		fn: (native: NativeAnyStore) => Promise<T>,
+	): Promise<T> {
+		const journalError = this.pendingJournalError();
 		if (journalError) {
 			return Promise.reject(journalError);
 		}
@@ -633,9 +675,18 @@ export class RustAnyStore implements AnyStore {
 		// A mutation enqueued behind a pending close belongs to the queued
 		// re-open and must not drain into the closing native.
 		const drainAllowed = this.pendingCloses === 0;
-		const next = this.mutationQueue.then(async () =>
-			fn(await this.ensureOpen(drainAllowed)),
-		);
+		const next = this.mutationQueue.then(async () => {
+			// A strict mutation can be queued while the mutation ahead of it is still
+			// waiting for fsync. Re-check poison after reaching the head of the queue;
+			// the enqueue-time check alone would let this follower mutate memory/WAL
+			// after its predecessor recorded the generation's sticky first error.
+			const queuedError = this.pendingJournalError();
+			if (queuedError) throw queuedError;
+			const native = await this.ensureOpen(drainAllowed);
+			const openError = this.pendingJournalError();
+			if (openError) throw openError;
+			return fn(native);
+		});
 		this.mutationQueue = next.then(
 			() => undefined,
 			() => undefined,
@@ -647,7 +698,9 @@ export class RustAnyStore implements AnyStore {
 
 	private journaledNative(native: NativeAnyStore): JournaledNativeAnyStore {
 		if (!("encode_put_record" in native)) {
-			throw new Error("RustAnyStore native store does not expose journal records");
+			throw new Error(
+				"RustAnyStore native store does not expose journal records",
+			);
 		}
 		return native as JournaledNativeAnyStore;
 	}
@@ -670,6 +723,8 @@ export class RustAnyStore implements AnyStore {
 		const recordByteLength = record.byteLength;
 		const write = this.journalQueue
 			.then(async () => {
+				const journalError = this.pendingJournalError();
+				if (journalError) throw journalError;
 				if (!this.persistence) {
 					throw new Error("RustAnyStore persistence backend is not open");
 				}
@@ -680,8 +735,8 @@ export class RustAnyStore implements AnyStore {
 				this.journalByteLength += recordByteLength;
 			})
 			.catch((error) => {
-				this.journalError = error;
-				throw error;
+				this.journalError ??= error;
+				throw this.journalError;
 			});
 		this.journalQueue = write.then(
 			() => undefined,
@@ -692,7 +747,7 @@ export class RustAnyStore implements AnyStore {
 
 	private async waitForJournal(): Promise<void> {
 		await this.journalQueue;
-		const journalError = this.takePendingJournalError();
+		const journalError = this.pendingJournalError();
 		if (journalError) {
 			throw journalError;
 		}

@@ -3,7 +3,15 @@ export type PersistenceDurability = "normal" | "strict";
 export interface RustAnyStorePersistenceBackend {
 	readSnapshot(): Promise<Uint8Array | undefined>;
 	readJournal(): Promise<Uint8Array | undefined>;
-	appendJournal(record: Uint8Array, durability: PersistenceDurability): Promise<void>;
+	appendJournal(
+		record: Uint8Array,
+		durability: PersistenceDurability,
+	): Promise<void>;
+	/**
+	 * Remove an unreadable journal tail and make the new length durable before
+	 * any later record can be appended.
+	 */
+	truncateJournal(byteLength: number): Promise<void>;
 	writeSnapshot(snapshot: Uint8Array): Promise<void>;
 	removeSublevels(): Promise<void>;
 	close(): Promise<void>;
@@ -27,13 +35,16 @@ type ActiveManifest = CheckpointManifest & {
 };
 
 const encodePathPart = (part: string): string =>
-	encodeURIComponent(part).replace(/[!'()*]/g, (char) =>
-		`%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+	encodeURIComponent(part).replace(
+		/[!'()*]/g,
+		(char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
 	);
 
 const isNodeRuntime = () =>
-	Boolean((globalThis as { process?: { versions?: { node?: string } } }).process
-		?.versions?.node);
+	Boolean(
+		(globalThis as { process?: { versions?: { node?: string } } }).process
+			?.versions?.node,
+	);
 
 const isNotFoundError = (error: unknown): boolean =>
 	Boolean(
@@ -64,7 +75,10 @@ const manifestPayload = (manifest: CheckpointManifest): string =>
 const encodeManifest = (manifest: CheckpointManifest): Uint8Array => {
 	const payload = manifestPayload(manifest);
 	return new TextEncoder().encode(
-		JSON.stringify({ payload: JSON.parse(payload), checksum: checksumString(payload) }),
+		JSON.stringify({
+			payload: JSON.parse(payload),
+			checksum: checksumString(payload),
+		}),
 	);
 };
 
@@ -104,7 +118,9 @@ let nodeFsModule: Promise<NodeFsModule> | undefined;
 const importNodeFs = (): Promise<NodeFsModule> => {
 	if (!nodeFsModule) {
 		const fsPromises = "fs/promises";
-		nodeFsModule = import(/* @vite-ignore */ fsPromises) as Promise<NodeFsModule>;
+		nodeFsModule = import(
+			/* @vite-ignore */ fsPromises
+		) as Promise<NodeFsModule>;
 	}
 	return nodeFsModule;
 };
@@ -120,7 +136,9 @@ const importNodePathJoin = (): Promise<(...parts: string[]) => string> => {
 	return nodePathJoin;
 };
 
-const readNodeFileIfExists = async (path: string): Promise<Uint8Array | undefined> => {
+const readNodeFileIfExists = async (
+	path: string,
+): Promise<Uint8Array | undefined> => {
 	const { readFile } = await importNodeFs();
 	try {
 		return new Uint8Array(await readFile(path));
@@ -132,9 +150,23 @@ const readNodeFileIfExists = async (path: string): Promise<Uint8Array | undefine
 	}
 };
 
-class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
+const validateWriteProgress = (
+	written: number,
+	remaining: number,
+	target: string,
+): number => {
+	if (!Number.isSafeInteger(written) || written <= 0 || written > remaining) {
+		throw new Error(
+			`${target} write made invalid progress: wrote ${written} of ${remaining} remaining bytes`,
+		);
+	}
+	return written;
+};
+
+export class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	private journalHandle?: import("fs/promises").FileHandle;
 	private journalOffset?: number;
+	private journalPoison?: unknown;
 	private levelDirectoryPath?: string;
 	private sublevelsDirectoryPath?: string;
 	private snapshotFilePath?: string;
@@ -142,7 +174,10 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	private journalFilePath?: string;
 	private directoryEnsured = false;
 
-	constructor(private readonly rootDirectory: string, private readonly level: string[]) {}
+	constructor(
+		private readonly rootDirectory: string,
+		private readonly level: string[],
+	) {}
 
 	async readSnapshot(): Promise<Uint8Array | undefined> {
 		return readNodeFileIfExists(await this.snapshotPath());
@@ -160,24 +195,68 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		record: Uint8Array,
 		durability: PersistenceDurability,
 	): Promise<void> {
-		await this.ensureLevelDirectory();
-		const { open, stat } = await importNodeFs();
-		if (!this.journalHandle) {
-			const path = await this.journalPath();
-			this.journalHandle = await open(path, "a+");
-			if (this.journalOffset == null) {
-				try {
-					this.journalOffset = (await stat(path)).size;
-				} catch {
-					this.journalOffset = 0;
-				}
-			}
+		if (this.journalPoison !== undefined) {
+			throw this.journalPoison;
 		}
+		await this.ensureLevelDirectory();
+		await this.ensureJournalHandle();
+		const handle = this.journalHandle!;
 		const offset = this.journalOffset ?? 0;
-		await this.journalHandle.write(record, 0, record.byteLength, offset);
-		this.journalOffset = offset + record.byteLength;
-		if (durability === "strict") {
-			await this.journalHandle.sync();
+		let written = 0;
+		try {
+			while (written < record.byteLength) {
+				const remaining = record.byteLength - written;
+				const result = await handle.write(
+					record,
+					written,
+					remaining,
+					offset + written,
+				);
+				written += validateWriteProgress(
+					result.bytesWritten,
+					remaining,
+					"Node persistence journal",
+				);
+			}
+			if (durability === "strict") {
+				await handle.sync();
+			}
+			this.journalOffset = offset + written;
+		} catch (error) {
+			try {
+				// A rejected record must be completely absent before another write is
+				// allowed. Persist the rollback even for normal durability: otherwise a
+				// later valid record could be stranded behind an unreadable torn tail.
+				await handle.truncate(offset);
+				await handle.sync();
+				this.journalOffset = offset;
+			} catch (rollbackError) {
+				this.journalPoison = new AggregateError(
+					[error, rollbackError],
+					"Node persistence journal rollback failed; reopen is required",
+				);
+				throw this.journalPoison;
+			}
+			throw error;
+		}
+	}
+
+	async truncateJournal(byteLength: number): Promise<void> {
+		if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+			throw new Error(`Invalid Node persistence journal length: ${byteLength}`);
+		}
+		if (this.journalPoison !== undefined) {
+			throw this.journalPoison;
+		}
+		await this.ensureLevelDirectory();
+		await this.ensureJournalHandle();
+		try {
+			await this.journalHandle!.truncate(byteLength);
+			await this.journalHandle!.sync();
+			this.journalOffset = byteLength;
+		} catch (error) {
+			this.journalPoison = error;
+			throw error;
 		}
 	}
 
@@ -199,6 +278,8 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 
 	async close(): Promise<void> {
 		this.directoryEnsured = false;
+		this.journalOffset = undefined;
+		this.journalPoison = undefined;
 		if (!this.journalHandle) {
 			return;
 		}
@@ -215,6 +296,31 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 		const { mkdir } = await importNodeFs();
 		await mkdir(await this.levelDirectory(), { recursive: true });
 		this.directoryEnsured = true;
+	}
+
+	private async ensureJournalHandle(): Promise<void> {
+		if (this.journalHandle) {
+			return;
+		}
+		const { open, stat } = await importNodeFs();
+		const path = await this.journalPath();
+		try {
+			// O_APPEND ignores positional offsets on Linux. Use a positional
+			// read/write handle so a retry can never append behind a torn tail.
+			this.journalHandle = await open(path, "r+");
+		} catch (error) {
+			if (!isNotFoundError(error)) {
+				throw error;
+			}
+			this.journalHandle = await open(path, "w+");
+		}
+		if (this.journalOffset == null) {
+			try {
+				this.journalOffset = (await stat(path)).size;
+			} catch {
+				this.journalOffset = 0;
+			}
+		}
 	}
 
 	private async levelDirectory(): Promise<string> {
@@ -262,9 +368,10 @@ class NodePersistenceBackend implements RustAnyStorePersistenceBackend {
 	}
 }
 
-class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
+export class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 	private journalHandle?: FileSystemSyncAccessHandle;
 	private journalOffset?: number;
+	private journalPoison?: unknown;
 	private journalFileName?: string;
 	private activeManifest?: ActiveManifest;
 	private manifestLoaded = false;
@@ -300,6 +407,9 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		record: Uint8Array,
 		durability: PersistenceDurability,
 	): Promise<void> {
+		if (this.journalPoison !== undefined) {
+			throw this.journalPoison;
+		}
 		await this.ensureManifestLoaded();
 		const journalFile = this.activeManifest?.journal ?? JOURNAL_FILE_NAME;
 		if (this.journalHandle && this.journalFileName !== journalFile) {
@@ -314,10 +424,64 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 			this.journalOffset ??= this.journalHandle.getSize();
 		}
 		const offset = this.journalOffset ?? 0;
-		this.journalHandle.write(record, { at: offset });
-		this.journalOffset = offset + record.byteLength;
-		if (durability === "strict") {
+		let written = 0;
+		try {
+			while (written < record.byteLength) {
+				const remaining = record.byteLength - written;
+				written += validateWriteProgress(
+					this.journalHandle.write(record.subarray(written), {
+						at: offset + written,
+					}),
+					remaining,
+					"OPFS",
+				);
+			}
+			if (durability === "strict") {
+				this.journalHandle.flush();
+			}
+			this.journalOffset = offset + written;
+		} catch (error) {
+			try {
+				this.journalHandle.truncate(offset);
+				this.journalHandle.flush();
+				this.journalOffset = offset;
+			} catch (rollbackError) {
+				this.journalPoison = new AggregateError(
+					[error, rollbackError],
+					"OPFS persistence journal rollback failed; reopen is required",
+				);
+				throw this.journalPoison;
+			}
+			throw error;
+		}
+	}
+
+	async truncateJournal(byteLength: number): Promise<void> {
+		if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+			throw new Error(`Invalid OPFS persistence journal length: ${byteLength}`);
+		}
+		if (this.journalPoison !== undefined) {
+			throw this.journalPoison;
+		}
+		await this.ensureManifestLoaded();
+		const journalFile = this.activeManifest?.journal ?? JOURNAL_FILE_NAME;
+		if (this.journalHandle && this.journalFileName !== journalFile) {
+			await this.close();
+		}
+		if (!this.journalHandle) {
+			const file = await this.directory.getFileHandle(journalFile, {
+				create: true,
+			});
+			this.journalHandle = await createSyncAccessHandle(file);
+			this.journalFileName = journalFile;
+		}
+		try {
+			this.journalHandle.truncate(byteLength);
 			this.journalHandle.flush();
+			this.journalOffset = byteLength;
+		} catch (error) {
+			this.journalPoison = error;
+			throw error;
 		}
 	}
 
@@ -351,6 +515,8 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 	}
 
 	async close(): Promise<void> {
+		this.journalOffset = undefined;
+		this.journalPoison = undefined;
 		if (!this.journalHandle) {
 			return;
 		}
@@ -360,7 +526,9 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		handle.close();
 	}
 
-	private async readFileIfExists(name: string): Promise<Uint8Array | undefined> {
+	private async readFileIfExists(
+		name: string,
+	): Promise<Uint8Array | undefined> {
 		try {
 			const file = await this.directory.getFileHandle(name);
 			const handle = await createSyncAccessHandle(file);
@@ -385,17 +553,26 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		flush: boolean,
 	): Promise<void> {
 		const file = await this.directory.getFileHandle(name, { create: true });
-		await this.writeHandle(file, bytes, flush);
+		await this.writeHandle(file, bytes, flush, name);
 	}
 
 	private async writeHandle(
 		file: FileSystemFileHandle,
 		bytes: Uint8Array,
 		flush: boolean,
+		target: string,
 	): Promise<void> {
 		const handle = await createSyncAccessHandle(file);
 		try {
-			handle.write(bytes, { at: 0 });
+			let written = 0;
+			while (written < bytes.byteLength) {
+				const remaining = bytes.byteLength - written;
+				written += validateWriteProgress(
+					handle.write(bytes.subarray(written), { at: written }),
+					remaining,
+					`OPFS persistence file ${target}`,
+				);
+			}
 			handle.truncate(bytes.byteLength);
 			if (flush) {
 				handle.flush();
@@ -464,7 +641,10 @@ class OpfsPersistenceBackend implements RustAnyStorePersistenceBackend {
 		]);
 	}
 
-	private async removeEntryIfExists(name: string, recursive = false): Promise<void> {
+	private async removeEntryIfExists(
+		name: string,
+		recursive = false,
+	): Promise<void> {
 		try {
 			await this.directory.removeEntry(name, { recursive });
 		} catch (error) {
@@ -527,5 +707,7 @@ export const createPersistenceBackend = async (
 	if (isNodeRuntime()) {
 		return new NodePersistenceBackend(directory, level);
 	}
-	return new OpfsPersistenceBackend(await getOpfsLevelDirectory(directory, level));
+	return new OpfsPersistenceBackend(
+		await getOpfsLevelDirectory(directory, level),
+	);
 };

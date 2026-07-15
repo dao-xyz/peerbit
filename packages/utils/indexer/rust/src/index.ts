@@ -5386,6 +5386,10 @@ export class RustIndices implements types.Indices {
 		return Boolean(this.directory);
 	}
 
+	preservesDataOnStop(): boolean {
+		return true;
+	}
+
 	async start(): Promise<void> {
 		this.closed = false;
 		for (const scope of this.scopes.values()) {

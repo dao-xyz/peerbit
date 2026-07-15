@@ -303,17 +303,28 @@ fn encode_record(operation: JournalOperation, key: &[u8], value: &[u8]) -> Vec<u
     output
 }
 
-/// Replays journal records, stopping at the first record that does not frame
-/// cleanly (torn tail after a mid-write crash) instead of failing the whole
-/// replay, mirroring peerbit_indexer_core journal recovery. Returns the number
-/// of bytes applied so callers can detect the tear and rewrite the checkpoint.
-/// Records that pass the checksum but carry an invalid payload still error.
+/// Replays journal records. Only a structurally incomplete final frame is a
+/// recoverable crash tail; complete frames with bad magic, checksum, or payload
+/// fail closed. Replay is transactional on corruption so the caller never sees
+/// a partially applied corrupt generation. Returns the verified prefix length
+/// so callers can durably truncate an incomplete EOF tail.
 fn apply_journal(store: &mut NativeAnyStore, bytes: &[u8]) -> Result<usize, String> {
+    let mut replay = NativeAnyStore {
+        entries: store.entries.clone(),
+        total_size: store.total_size,
+    };
     let mut applied = 0;
     while applied < bytes.len() {
         let mut offset = applied;
-        if !bytes[offset..].starts_with(JOURNAL_MAGIC) {
-            break;
+        let remaining = &bytes[offset..];
+        if remaining.len() < JOURNAL_MAGIC.len() {
+            if JOURNAL_MAGIC.starts_with(remaining) {
+                break;
+            }
+            return Err("journal magic mismatch".to_string());
+        }
+        if !remaining.starts_with(JOURNAL_MAGIC) {
+            return Err("journal magic mismatch".to_string());
         }
         offset += JOURNAL_MAGIC.len();
         let Ok(payload_len) = read_u32(bytes, &mut offset) else {
@@ -326,11 +337,13 @@ fn apply_journal(store: &mut NativeAnyStore, bytes: &[u8]) -> Result<usize, Stri
             break;
         };
         if fnv1a(payload) != checksum {
-            break;
+            return Err("journal checksum mismatch".to_string());
         }
-        apply_record_payload(store, payload)?;
+        apply_record_payload(&mut replay, payload)?;
         applied = offset;
     }
+    store.entries = replay.entries;
+    store.total_size = replay.total_size;
     Ok(applied)
 }
 
@@ -408,20 +421,35 @@ mod tests {
     }
 
     #[test]
-    fn journal_stops_at_checksum_mismatch() {
+    fn journal_rejects_checksum_mismatch_without_partial_replay() {
         let encoder = NativeAnyStore::new();
         let mut journal = Vec::new();
         journal.extend_from_slice(&encoder.encode_put_record("a".to_string(), vec![1]));
-        let clean_len = journal.len();
         let mut corrupt = encoder.encode_put_record("b".to_string(), vec![2]);
         let last = corrupt.len() - 1;
         corrupt[last] ^= 0xff;
         journal.extend_from_slice(&corrupt);
 
         let mut store = NativeAnyStore::new();
-        let applied = apply_journal(&mut store, &journal).unwrap();
-        assert_eq!(applied, clean_len);
-        assert_eq!(store.get("a"), Some(vec![1]));
+        store.put("seed".to_string(), vec![9]);
+        let error = apply_journal(&mut store, &journal).unwrap_err();
+        assert_eq!(error, "journal checksum mismatch");
+        assert_eq!(store.get("seed"), Some(vec![9]));
+        assert_eq!(store.get("a"), None);
         assert_eq!(store.get("b"), None);
+    }
+
+    #[test]
+    fn journal_rejects_non_prefix_magic_without_partial_replay() {
+        let encoder = NativeAnyStore::new();
+        let mut journal = encoder.encode_put_record("a".to_string(), vec![1]);
+        journal.extend_from_slice(b"BAD");
+
+        let mut store = NativeAnyStore::new();
+        store.put("seed".to_string(), vec![9]);
+        let error = apply_journal(&mut store, &journal).unwrap_err();
+        assert_eq!(error, "journal magic mismatch");
+        assert_eq!(store.get("seed"), Some(vec![9]));
+        assert_eq!(store.get("a"), None);
     }
 }

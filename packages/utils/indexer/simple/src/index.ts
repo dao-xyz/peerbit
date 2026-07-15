@@ -663,6 +663,10 @@ export class HashmapIndices implements types.Indices {
 		return false;
 	}
 
+	preservesDataOnStop(): boolean {
+		return true;
+	}
+
 	async start(): Promise<void> {
 		this.closed = false;
 		for (const scope of this.scopes.values()) {

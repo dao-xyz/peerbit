@@ -75,6 +75,26 @@ type EntryIndexProfileSink = (event: EntryIndexProfileEvent) => void;
 
 const entryIndexProfileNow = () =>
 	globalThis.performance?.now?.() ?? Date.now();
+
+const shallowEntryEquals = (
+	left: ShallowEntry | undefined,
+	right: ShallowEntry | undefined,
+) => {
+	if (!left || !right) {
+		return left === right;
+	}
+	const leftBytes = serialize(left);
+	const rightBytes = serialize(right);
+	if (leftBytes.byteLength !== rightBytes.byteLength) {
+		return false;
+	}
+	for (let index = 0; index < leftBytes.byteLength; index++) {
+		if (leftBytes[index] !== rightBytes[index]) {
+			return false;
+		}
+	}
+	return true;
+};
 const entryIndexProfileStart = (sink: EntryIndexProfileSink | undefined) =>
 	sink ? entryIndexProfileNow() : 0;
 const emitEntryIndexProfileDuration = (
@@ -102,12 +122,52 @@ type BlocksWithRmMany = Blocks & {
 	rmMany?: (cids: string[]) => Promise<number | void> | number | void;
 };
 
+type BlocksWithNativeDeleteMirror = Blocks & {
+	rmManyAfterNativeDelete: (
+		cids: string[],
+		cleanupToken?: unknown,
+	) => Promise<number | void> | number | void;
+};
+
+type NativeTrimConsumeOptions = {
+	skipNextHeadUpdates?: boolean;
+	deleteBlocks?: boolean;
+	/** The native transaction positively reported that it deleted hot blocks. */
+	nativeBlocksDeleted?: boolean;
+	/** Opaque token for a delete announced before the native prepare awaited. */
+	nativeDeleteCleanupToken?: unknown;
+	/** Operation-scoped rollback ownership for strict native publication. */
+	nativeCommittedAppendFactsTransaction?: NativeCommittedAppendFactsTransaction;
+	/** Reentrant ownership for ordinary native graph/index mutations. */
+	hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+};
+
+type EntryIndexDeleteOptions = {
+	skipNextHeadUpdates?: boolean;
+	hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+};
+
 type BlocksWithPutKnown = Blocks & {
 	putKnown?: (cid: string, bytes: Uint8Array) => Promise<string> | string;
 };
 
 const hasRmMany = (store: Blocks): store is BlocksWithRmMany =>
 	typeof (store as BlocksWithRmMany).rmMany === "function";
+
+const hasNativeDeleteMirror = (
+	store: Blocks,
+): store is BlocksWithNativeDeleteMirror =>
+	typeof (store as BlocksWithNativeDeleteMirror).rmManyAfterNativeDelete ===
+	"function";
+
+const mirrorNativeDelete = (
+	store: BlocksWithNativeDeleteMirror,
+	cids: string[],
+	cleanupToken?: unknown,
+) =>
+	cleanupToken === undefined
+		? store.rmManyAfterNativeDelete(cids)
+		: store.rmManyAfterNativeDelete(cids, cleanupToken);
 
 type IndexWithExactDelete = Index<any> & {
 	delIds: (
@@ -170,6 +230,89 @@ type NativeJoinPlanInput = {
 type MaybePromise<T> = T | Promise<T>;
 type PendingIndexWrite = ShallowEntry | (() => ShallowEntry);
 
+type NativeCommittedAppendFactsTransactionRow = {
+	hash: string;
+	pending: PendingIndexWrite;
+	generation: number;
+	previousPending?: PendingIndexWrite;
+	previousGeneration?: number;
+	lengthIncremented: boolean;
+	shared: boolean;
+	hasNewerPendingWrite: boolean;
+	pendingRemovedByFlush: boolean;
+	indexValueBefore?: ShallowEntry;
+	indexSnapshotTaken: boolean;
+	indexWriteAttempted: boolean;
+};
+
+type NativeCommittedAppendFactsTrimTransactionRow = {
+	hash: string;
+	previousPending?: PendingIndexWrite;
+	previousGeneration?: number;
+	previousIndex?: ShallowEntry;
+	pendingRemoved: boolean;
+	indexDeleteAttempted: boolean;
+	lengthDecremented: boolean;
+};
+
+type NativeCommittedAppendFactsTrimTransactionBatch = {
+	rows: NativeCommittedAppendFactsTrimTransactionRow[];
+	nativeBlocksDeleted: boolean;
+	nativeDeleteCleanupToken?: unknown;
+};
+
+type NativeCommittedAppendFactsHeadTransactionRow = {
+	hash: string;
+	previousPending?: PendingIndexWrite;
+	previousGeneration?: number;
+	previousIndex?: ShallowEntry;
+	pendingRemoved: boolean;
+	pendingAfterCommit?: ShallowEntry;
+	coveredByAppend: boolean;
+	indexWriteAttempted: boolean;
+};
+
+type NativeCommittedAppendFactsHashLock = {
+	hash: string;
+	tail: Promise<void>;
+	ready: Promise<void>;
+	waitsForPrevious: boolean;
+	release: () => void;
+};
+
+/**
+ * @internal Opaque, operation-scoped ownership of entry-index hash mutations.
+ * Callers may pass this back to trusted lower-log APIs, but cannot construct it.
+ */
+export type EntryIndexHashMutationLockOwner = {
+	readonly __peerbitEntryIndexHashMutationLockOwner: never;
+};
+
+type EntryIndexHashMutationLockOwnerState = {
+	locks: Map<string, NativeCommittedAppendFactsHashLock>;
+	released: boolean;
+};
+
+/** @internal Opaque ownership for one native no-next index publication. */
+export type NativeCommittedAppendFactsTransaction = {
+	id: number;
+	state:
+		| "open"
+		| "rolling-back"
+		| "rollback-failed"
+		| "acknowledged"
+		| "rolled-back";
+	rows: NativeCommittedAppendFactsTransactionRow[];
+	externalNextHashes: Set<string>;
+	headRows: NativeCommittedAppendFactsHeadTransactionRow[];
+	trimRows: NativeCommittedAppendFactsTrimTransactionRow[];
+	trimBatches: NativeCommittedAppendFactsTrimTransactionBatch[];
+	hashLocks: Map<string, NativeCommittedAppendFactsHashLock>;
+	hashLocksReady: Promise<void>;
+	hashMutationLockOwner?: EntryIndexHashMutationLockOwner;
+	rollbackPromise?: Promise<void>;
+};
+
 const isPromiseLike = <T>(value: MaybePromise<T>): value is Promise<T> =>
 	!!value && typeof (value as { then?: unknown }).then === "function";
 
@@ -182,8 +325,7 @@ const materializePreparedAppendShallowEntry = (
 	entry: PreparedAppendIndexFacts,
 	isHead: boolean,
 ): ShallowEntry => {
-	const shallowEntry =
-		entry.shallowEntry ?? entry.getShallowEntry?.(isHead);
+	const shallowEntry = entry.shallowEntry ?? entry.getShallowEntry?.(isHead);
 	if (!shallowEntry) {
 		throw new Error("Missing prepared append shallow entry");
 	}
@@ -523,8 +665,26 @@ export class EntryIndex<T> {
 	private _length: number;
 	private insertionPromises: Map<string, Promise<void>>;
 	private pendingIndexWrites: Map<string, PendingIndexWrite>;
+	private pendingIndexWriteGenerations: Map<string, number>;
+	private retainedBlockHashesForDrop: Set<string>;
+	private nextPendingIndexWriteGeneration = 0;
+	private nextNativeCommittedAppendFactsTransactionId = 0;
+	private nativeCommittedAppendFactsOwners: Map<
+		string,
+		Set<NativeCommittedAppendFactsTransaction>
+	>;
+	private hashMutationLockTails: Map<string, Promise<void>>;
+	private hashMutationLockOwners: WeakMap<
+		EntryIndexHashMutationLockOwner,
+		EntryIndexHashMutationLockOwnerState
+	>;
+	private failedNativeCommittedAppendFactsRollbacks: Set<NativeCommittedAppendFactsTransaction>;
+	private nativeCommittedAppendFactsRollbackFailure?: unknown;
+	private nativeDurableTransactionMutationFailure?: unknown;
 	private pendingIndexFlushTimer?: ReturnType<typeof setTimeout>;
 	private pendingIndexFlushLastWriteMs = 0;
+	private clearIndexRestartPending = false;
+	private clearIndexAmbiguousDropRestartPending = false;
 	constructor(
 		readonly properties: {
 			store: Blocks;
@@ -560,6 +720,12 @@ export class EntryIndex<T> {
 		this._length = 0;
 		this.insertionPromises = new Map();
 		this.pendingIndexWrites = new Map();
+		this.pendingIndexWriteGenerations = new Map();
+		this.retainedBlockHashesForDrop = new Set();
+		this.nativeCommittedAppendFactsOwners = new Map();
+		this.hashMutationLockTails = new Map();
+		this.hashMutationLockOwners = new WeakMap();
+		this.failedNativeCommittedAppendFactsRollbacks = new Set();
 	}
 
 	/**
@@ -643,6 +809,402 @@ export class EntryIndex<T> {
 		return result;
 	}
 
+	private markNativeCommittedAppendFactsShared(
+		hash: string,
+		except?: NativeCommittedAppendFactsTransaction,
+	) {
+		for (const transaction of this.nativeCommittedAppendFactsOwners.get(hash) ??
+			[]) {
+			if (transaction === except) {
+				continue;
+			}
+			for (const row of transaction.rows) {
+				if (row.hash === hash) {
+					row.shared = true;
+					row.hasNewerPendingWrite = true;
+				}
+			}
+		}
+	}
+
+	/** Reject mutations while exact compensation remains incomplete. */
+	throwIfNativeCommittedAppendFactsRollbackFailed() {
+		if (this.nativeCommittedAppendFactsRollbackFailure !== undefined) {
+			throw new Error(
+				"Entry index is poisoned by an incomplete native transaction rollback",
+				{ cause: this.nativeCommittedAppendFactsRollbackFailure },
+			);
+		}
+	}
+
+	/** Reject new lower mutations while a durable intent needs recovery. */
+	poisonNativeDurableTransactionMutations(cause: unknown) {
+		this.nativeDurableTransactionMutationFailure ??= cause;
+	}
+
+	/** Recovery has retired the durable intent. */
+	clearNativeDurableTransactionMutationFailure() {
+		this.nativeDurableTransactionMutationFailure = undefined;
+	}
+
+	/** Reject new mutations while any native recovery is incomplete. */
+	throwIfNativeDurableTransactionMutationsFailed() {
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+		if (this.nativeDurableTransactionMutationFailure !== undefined) {
+			throw new Error(
+				"Entry index is poisoned by a retained native durable transaction intent",
+				{ cause: this.nativeDurableTransactionMutationFailure },
+			);
+		}
+	}
+
+	private claimHashMutationLocks(hashes: Iterable<string>): {
+		locks: Map<string, NativeCommittedAppendFactsHashLock>;
+		ready?: Promise<void>;
+	} {
+		const locks = new Map<string, NativeCommittedAppendFactsHashLock>();
+		const waits: Promise<void>[] = [];
+		for (const hash of [...new Set(hashes)].filter(Boolean).sort()) {
+			const previousTail = this.hashMutationLockTails.get(hash);
+			let release!: () => void;
+			const held = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const tail = previousTail ? previousTail.then(() => held) : held;
+			this.hashMutationLockTails.set(hash, tail);
+			void tail.then(() => {
+				if (this.hashMutationLockTails.get(hash) === tail) {
+					this.hashMutationLockTails.delete(hash);
+				}
+			});
+			locks.set(hash, {
+				hash,
+				tail,
+				ready: previousTail ?? Promise.resolve(),
+				waitsForPrevious: previousTail !== undefined,
+				release,
+			});
+			if (previousTail) {
+				waits.push(previousTail);
+			}
+		}
+		return {
+			locks,
+			ready:
+				waits.length > 0 ? Promise.all(waits).then(() => undefined) : undefined,
+		};
+	}
+
+	private getHashMutationLockOwnerState(
+		owner: EntryIndexHashMutationLockOwner,
+	): EntryIndexHashMutationLockOwnerState {
+		const state = this.hashMutationLockOwners.get(owner);
+		if (!state || state.released) {
+			throw new Error(
+				"Invalid or released entry-index hash mutation lock owner",
+			);
+		}
+		return state;
+	}
+
+	private acquireHashMutationLocksMaybe(
+		hashes: Iterable<string>,
+	): MaybePromise<EntryIndexHashMutationLockOwner> {
+		this.throwIfNativeDurableTransactionMutationsFailed();
+		const claimed = this.claimHashMutationLocks(hashes);
+		const owner = {} as EntryIndexHashMutationLockOwner;
+		const state: EntryIndexHashMutationLockOwnerState = {
+			locks: claimed.locks,
+			released: false,
+		};
+		this.hashMutationLockOwners.set(owner, state);
+		const afterReady = (): EntryIndexHashMutationLockOwner => {
+			try {
+				// A mutation may have queued before marker retirement failed. Recheck only
+				// after its predecessor releases the lease so it cannot slip into recovery.
+				this.throwIfNativeDurableTransactionMutationsFailed();
+				return owner;
+			} catch (error) {
+				this.releaseHashMutationLocks(owner);
+				throw error;
+			}
+		};
+		return claimed.ready ? claimed.ready.then(afterReady) : afterReady();
+	}
+
+	/** Acquire one sorted, deadlock-free lease before taking operation snapshots. */
+	async acquireHashMutationLocks(
+		hashes: Iterable<string>,
+	): Promise<EntryIndexHashMutationLockOwner> {
+		return this.acquireHashMutationLocksMaybe(hashes);
+	}
+
+	/** Verify that a trusted operation's lease covers every mutation. */
+	assertHashMutationLocks(
+		owner: EntryIndexHashMutationLockOwner,
+		hashes: Iterable<string>,
+	) {
+		const state = this.getHashMutationLockOwnerState(owner);
+		for (const hash of new Set([...hashes].filter(Boolean))) {
+			if (!state.locks.has(hash)) {
+				throw new Error(
+					`Entry-index hash mutation lock does not cover ${hash}`,
+				);
+			}
+		}
+	}
+
+	/** Release an operation lease after its lower finalizer settles. */
+	releaseHashMutationLocks(owner: EntryIndexHashMutationLockOwner) {
+		const state = this.getHashMutationLockOwnerState(owner);
+		state.released = true;
+		for (const lock of state.locks.values()) {
+			this.releaseHashMutationLock(lock);
+		}
+		state.locks.clear();
+	}
+
+	private releaseHashMutationLock(lock: NativeCommittedAppendFactsHashLock) {
+		lock.release();
+		if (this.hashMutationLockTails.get(lock.hash) === lock.tail) {
+			this.hashMutationLockTails.delete(lock.hash);
+		}
+	}
+
+	private reserveNativeCommittedAppendFactsHashLocks(
+		transaction: NativeCommittedAppendFactsTransaction,
+		hashes: Iterable<string>,
+	) {
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		const missing = [...new Set(hashes)].filter(
+			(hash) => !!hash && !transaction.hashLocks.has(hash),
+		);
+		if (missing.length === 0) {
+			return;
+		}
+		if (transaction.hashMutationLockOwner) {
+			const state = this.getHashMutationLockOwnerState(
+				transaction.hashMutationLockOwner,
+			);
+			for (const hash of missing) {
+				const lock = state.locks.get(hash);
+				if (!lock) {
+					throw new Error(
+						`Native transaction attempted an unlocked hash mutation: ${hash}; locked=${[
+							...state.locks.keys(),
+						].join(",")}`,
+					);
+				}
+				transaction.hashLocks.set(hash, lock);
+			}
+			return;
+		}
+		const claimed = this.claimHashMutationLocks(missing);
+		for (const [hash, lock] of claimed.locks) {
+			transaction.hashLocks.set(hash, lock);
+		}
+		if (claimed.ready) {
+			transaction.hashLocksReady = Promise.all([
+				transaction.hashLocksReady,
+				claimed.ready,
+			]).then(() => undefined);
+		}
+	}
+
+	private releaseNativeCommittedAppendFactsHashLocks(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		if (!transaction.hashMutationLockOwner) {
+			for (const lock of transaction.hashLocks.values()) {
+				this.releaseHashMutationLock(lock);
+			}
+		}
+		transaction.hashLocks.clear();
+	}
+
+	private withHashMutationLocks<TValue>(
+		hashes: Iterable<string>,
+		operation: (owner: EntryIndexHashMutationLockOwner) => MaybePromise<TValue>,
+		owner?: EntryIndexHashMutationLockOwner,
+	): MaybePromise<TValue> {
+		if (owner) {
+			this.assertHashMutationLocks(owner, hashes);
+			return operation(owner);
+		}
+		const execute = (
+			acquired: EntryIndexHashMutationLockOwner,
+		): MaybePromise<TValue> => {
+			let result: MaybePromise<TValue>;
+			try {
+				result = operation(acquired);
+			} catch (error) {
+				this.releaseHashMutationLocks(acquired);
+				throw error;
+			}
+			if (isPromiseLike(result)) {
+				return result.finally(() => this.releaseHashMutationLocks(acquired));
+			}
+			this.releaseHashMutationLocks(acquired);
+			return result;
+		};
+		return mapMaybePromise(this.acquireHashMutationLocksMaybe(hashes), execute);
+	}
+
+	private setPendingIndexWrite(
+		hash: string,
+		pending: PendingIndexWrite,
+		owner?: NativeCommittedAppendFactsTransaction,
+	): number {
+		this.markNativeCommittedAppendFactsShared(hash, owner);
+		const generation = ++this.nextPendingIndexWriteGeneration;
+		this.pendingIndexWrites.set(hash, pending);
+		this.pendingIndexWriteGenerations.set(hash, generation);
+		return generation;
+	}
+
+	private deletePendingIndexWrite(hash: string, generation?: number): boolean {
+		if (
+			generation !== undefined &&
+			this.pendingIndexWriteGenerations.get(hash) !== generation
+		) {
+			return false;
+		}
+		const deleted = this.pendingIndexWrites.delete(hash);
+		if (deleted) {
+			this.pendingIndexWriteGenerations.delete(hash);
+		}
+		return deleted;
+	}
+
+	private restorePendingIndexWrite(
+		hash: string,
+		pending: PendingIndexWrite,
+		generation: number,
+	) {
+		this.pendingIndexWrites.set(hash, pending);
+		this.pendingIndexWriteGenerations.set(hash, generation);
+	}
+
+	/** @internal */
+	beginNativeCommittedAppendFactsTransaction(
+		hashes: Iterable<string> = [],
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
+	): NativeCommittedAppendFactsTransaction {
+		this.throwIfNativeDurableTransactionMutationsFailed();
+		const transaction: NativeCommittedAppendFactsTransaction = {
+			id: ++this.nextNativeCommittedAppendFactsTransactionId,
+			state: "open",
+			rows: [],
+			externalNextHashes: new Set(),
+			headRows: [],
+			trimRows: [],
+			trimBatches: [],
+			hashLocks: new Map(),
+			hashLocksReady: Promise.resolve(),
+			hashMutationLockOwner,
+		};
+		this.reserveNativeCommittedAppendFactsHashLocks(transaction, hashes);
+		return transaction;
+	}
+
+	private stageNativeCommittedAppendExternalNextHashes(
+		transaction: NativeCommittedAppendFactsTransaction,
+		hashes: Iterable<string>,
+	) {
+		const normalized = [...new Set(hashes)].filter(Boolean);
+		if (normalized.length === 0) {
+			return;
+		}
+		this.reserveNativeCommittedAppendFactsHashLocks(transaction, normalized);
+		for (const hash of normalized) {
+			transaction.externalNextHashes.add(hash);
+		}
+	}
+
+	private stageNativeCommittedAppendFact(
+		transaction: NativeCommittedAppendFactsTransaction,
+		hash: string,
+		pending: PendingIndexWrite,
+		lengthIncremented: boolean,
+	): Promise<void> | void {
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		this.reserveNativeCommittedAppendFactsHashLocks(transaction, [hash]);
+		const lock = transaction.hashLocks.get(hash)!;
+		if (lock.waitsForPrevious) {
+			return lock.ready.then(() => {
+				this.stageNativeCommittedAppendFactAfterHashLock(
+					transaction,
+					hash,
+					pending,
+					lengthIncremented,
+				);
+			});
+		}
+		this.stageNativeCommittedAppendFactAfterHashLock(
+			transaction,
+			hash,
+			pending,
+			lengthIncremented,
+		);
+	}
+
+	private stageNativeCommittedAppendFactAfterHashLock(
+		transaction: NativeCommittedAppendFactsTransaction,
+		hash: string,
+		pending: PendingIndexWrite,
+		lengthIncremented: boolean,
+	) {
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		if (transaction.rows.length === 0) {
+			this.clearPendingIndexFlushTimer();
+		}
+		let owners = this.nativeCommittedAppendFactsOwners.get(hash);
+		if (!owners) {
+			owners = new Set();
+			this.nativeCommittedAppendFactsOwners.set(hash, owners);
+		}
+		const ownedByThisTransaction = owners.has(transaction);
+		const shared =
+			[...owners].some((owner) => owner !== transaction) ||
+			(this.pendingIndexWrites.has(hash) && !ownedByThisTransaction);
+		this.markNativeCommittedAppendFactsShared(hash, transaction);
+		const previousPending = this.pendingIndexWrites.get(hash);
+		const previousGeneration = this.pendingIndexWriteGenerations.get(hash);
+		owners.add(transaction);
+		const generation = this.setPendingIndexWrite(hash, pending, transaction);
+		transaction.rows.push({
+			hash,
+			pending,
+			generation,
+			previousPending,
+			previousGeneration,
+			lengthIncremented,
+			shared,
+			hasNewerPendingWrite: false,
+			pendingRemovedByFlush: false,
+			indexSnapshotTaken: false,
+			indexWriteAttempted: false,
+		});
+	}
+
+	private releaseNativeCommittedAppendFactsTransaction(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		for (const hash of new Set(transaction.rows.map((row) => row.hash))) {
+			const owners = this.nativeCommittedAppendFactsOwners.get(hash);
+			owners?.delete(transaction);
+			if (owners?.size === 0) {
+				this.nativeCommittedAppendFactsOwners.delete(hash);
+			}
+		}
+	}
+
 	private materializePendingIndexWrite(
 		hash: string,
 		pending: PendingIndexWrite,
@@ -652,6 +1214,18 @@ export class EntryIndex<T> {
 		}
 		const shallowEntry = pending();
 		this.pendingIndexWrites.set(hash, shallowEntry);
+		const generation = this.pendingIndexWriteGenerations.get(hash);
+		if (generation !== undefined) {
+			for (const transaction of this.nativeCommittedAppendFactsOwners.get(
+				hash,
+			) ?? []) {
+				for (const row of transaction.rows) {
+					if (row.hash === hash && row.generation === generation) {
+						row.pending = shallowEntry;
+					}
+				}
+			}
+		}
 		return shallowEntry;
 	}
 
@@ -696,37 +1270,539 @@ export class EntryIndex<T> {
 		this.pendingIndexFlushTimer = undefined;
 	}
 
-	async flushPendingWrites(hashes?: Iterable<string>) {
+	async flushPendingWrites(
+		hashes?: Iterable<string>,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
+	) {
 		const keys = hashes
 			? [...new Set([...hashes].filter((hash): hash is string => !!hash))]
 			: [...this.pendingIndexWrites.keys()];
 		if (keys.length === 0) {
 			return;
 		}
-		this.clearPendingIndexFlushTimer();
-		const writes: ShallowEntry[] = [];
-		for (const hash of keys) {
-			const pending = this.pendingIndexWrites.get(hash);
-			if (!pending) {
-				continue;
-			}
-			writes.push(this.materializePendingIndexWrite(hash, pending));
-		}
-		if (writes.length === 0) {
-			return;
-		}
-		if (writes.length > 1 && this.properties.index.putBatch) {
-			await this.properties.index.putBatch(writes);
-		} else {
-			for (const write of writes) {
-				await this.properties.index.put(write);
-			}
-		}
-		for (const write of writes) {
-			this.pendingIndexWrites.delete(write.hash);
-		}
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+		await this.withHashMutationLocks(
+			keys,
+			async () => {
+				this.throwIfNativeCommittedAppendFactsRollbackFailed();
+				this.clearPendingIndexFlushTimer();
+				const writes: Array<{
+					hash: string;
+					generation: number | undefined;
+					value: ShallowEntry;
+				}> = [];
+				for (const hash of keys) {
+					const pending = this.pendingIndexWrites.get(hash);
+					if (!pending) {
+						continue;
+					}
+					writes.push({
+						hash,
+						generation: this.pendingIndexWriteGenerations.get(hash),
+						value: this.materializePendingIndexWrite(hash, pending),
+					});
+				}
+				if (writes.length === 0) {
+					return;
+				}
+				if (writes.length > 1 && this.properties.index.putBatch) {
+					await this.properties.index.putBatch(
+						writes.map((write) => write.value),
+					);
+				} else {
+					for (const write of writes) {
+						await this.properties.index.put(write.value);
+					}
+				}
+				for (const write of writes) {
+					this.deletePendingIndexWrite(write.hash, write.generation);
+				}
+			},
+			hashMutationLockOwner,
+		);
 		if (this.pendingIndexWrites.size > 0) {
 			this.schedulePendingIndexWriteFlush();
+		}
+	}
+
+	private materializeNativeCommittedAppendFact(
+		row: NativeCommittedAppendFactsTransactionRow,
+	): ShallowEntry {
+		if (typeof row.pending !== "function") {
+			return row.pending;
+		}
+		const shallowEntry = row.pending();
+		row.pending = shallowEntry;
+		if (this.pendingIndexWriteGenerations.get(row.hash) === row.generation) {
+			this.pendingIndexWrites.set(row.hash, shallowEntry);
+		}
+		return shallowEntry;
+	}
+
+	private cloneShallowEntry(entry: ShallowEntry): ShallowEntry {
+		return deserialize(serialize(entry), ShallowEntry);
+	}
+
+	/** Publish existing-next head changes before the new append marker. */
+	async flushNativeCommittedExternalNextFacts(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		await transaction.hashLocksReady;
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+		for (const hash of transaction.externalNextHashes) {
+			if (transaction.headRows.some((row) => row.hash === hash)) {
+				continue;
+			}
+			const pending = this.pendingIndexWrites.get(hash);
+			const previousGeneration = this.pendingIndexWriteGenerations.get(hash);
+			const previousPending = pending
+				? this.cloneShallowEntry(
+						this.materializePendingIndexWrite(hash, pending),
+					)
+				: undefined;
+			const previousIndex = (await this.properties.index.get(toId(hash)))
+				?.value;
+			const source = previousPending ?? previousIndex;
+			if (!source) {
+				continue;
+			}
+			const value = this.cloneShallowEntry(source);
+			value.head = false;
+			const coveredByAppend = transaction.rows.some(
+				(row) =>
+					row.hash === hash &&
+					previousGeneration !== undefined &&
+					row.generation === previousGeneration,
+			);
+			const row: NativeCommittedAppendFactsHeadTransactionRow = {
+				hash,
+				previousPending,
+				previousGeneration,
+				previousIndex,
+				pendingRemoved: false,
+				pendingAfterCommit: value,
+				coveredByAppend,
+				indexWriteAttempted: false,
+			};
+			transaction.headRows.push(row);
+			if (coveredByAppend) {
+				const appendRow = transaction.rows.find(
+					(candidate) =>
+						candidate.hash === hash &&
+						candidate.generation === previousGeneration,
+				)!;
+				appendRow.pending = value;
+				if (
+					this.pendingIndexWriteGenerations.get(hash) === previousGeneration
+				) {
+					this.pendingIndexWrites.set(hash, value);
+				}
+				continue;
+			}
+			row.indexWriteAttempted = true;
+			await this.properties.index.put(value);
+			row.pendingRemoved = this.deletePendingIndexWrite(
+				hash,
+				previousGeneration,
+			);
+		}
+	}
+
+	/**
+	 * Flushes exactly the rows staged by a native no-next append. A later write
+	 * of the same CID owns a different generation and is never removed here.
+	 * @internal
+	 */
+	async flushNativeCommittedAppendFacts(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		if (transaction.rows.length === 0) {
+			return;
+		}
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+		this.reserveNativeCommittedAppendFactsHashLocks(
+			transaction,
+			transaction.rows.map((row) => row.hash),
+		);
+		await transaction.hashLocksReady;
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+		this.clearPendingIndexFlushTimer();
+		const transactionRowsByHash = new Map<
+			string,
+			NativeCommittedAppendFactsTransactionRow[]
+		>();
+		for (const row of transaction.rows) {
+			const matching = transactionRowsByHash.get(row.hash);
+			if (matching) {
+				matching.push(row);
+			} else {
+				transactionRowsByHash.set(row.hash, [row]);
+			}
+		}
+		const rows = [...transactionRowsByHash.values()].map(
+			(matching) => matching[matching.length - 1]!,
+		);
+		try {
+			for (const row of rows) {
+				const existing = await this.properties.index.get(toId(row.hash));
+				for (const matching of transactionRowsByHash.get(row.hash)!) {
+					matching.indexValueBefore = existing?.value;
+					matching.indexSnapshotTaken = true;
+				}
+			}
+			const writes = rows.map((row) =>
+				this.materializeNativeCommittedAppendFact(row),
+			);
+			if (writes.length > 1 && this.properties.index.putBatch) {
+				for (const row of transaction.rows) {
+					row.indexWriteAttempted = true;
+				}
+				await this.properties.index.putBatch(writes);
+			} else {
+				for (let index = 0; index < writes.length; index++) {
+					const row = rows[index]!;
+					for (const matching of transactionRowsByHash.get(row.hash)!) {
+						matching.indexWriteAttempted = true;
+					}
+					await this.properties.index.put(writes[index]!);
+				}
+			}
+			for (const row of transaction.rows) {
+				row.pendingRemovedByFlush = this.deletePendingIndexWrite(
+					row.hash,
+					row.generation,
+				);
+			}
+		} finally {
+			if (this.pendingIndexWrites.size > 0) {
+				this.schedulePendingIndexWriteFlush();
+			}
+		}
+	}
+
+	/** Apply transaction-owned trims after the new append facts are durable. */
+	async flushNativeCommittedTrimFacts(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		await transaction.hashLocksReady;
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+		for (const batch of transaction.trimBatches) {
+			const rows = batch.rows.filter((row) => !row.indexDeleteAttempted);
+			if (rows.length === 0) {
+				continue;
+			}
+			for (const row of rows) {
+				row.pendingRemoved = this.deletePendingIndexWrite(
+					row.hash,
+					row.previousGeneration,
+				);
+				row.indexDeleteAttempted = true;
+			}
+			await this.deleteNativeCommittedAppendFactsIndexHashes(
+				rows.map((row) => row.hash),
+			);
+			const store = this.properties.store;
+			if (batch.nativeBlocksDeleted && hasNativeDeleteMirror(store)) {
+				await mirrorNativeDelete(
+					store,
+					rows.map((row) => row.hash),
+					batch.nativeDeleteCleanupToken,
+				);
+			}
+			for (const row of rows) {
+				if (
+					row.previousPending !== undefined ||
+					row.previousIndex !== undefined
+				) {
+					row.lengthDecremented = true;
+				}
+			}
+		}
+	}
+
+	/** Persist the append marker first and perform trim deletion as post-marker GC. */
+	async commitNativeCommittedAppendFacts(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		await this.flushNativeCommittedExternalNextFacts(transaction);
+		await this.flushNativeCommittedAppendFacts(transaction);
+		await this.flushNativeCommittedTrimFacts(transaction);
+	}
+
+	/** @internal */
+	acknowledgeNativeCommittedAppendFacts(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		if (transaction.state !== "open") {
+			return;
+		}
+		const appendedHashes = new Set<string>();
+		for (const row of transaction.rows) {
+			if (
+				row.lengthIncremented &&
+				row.indexSnapshotTaken &&
+				row.indexValueBefore === undefined &&
+				!appendedHashes.has(row.hash)
+			) {
+				appendedHashes.add(row.hash);
+				this._length++;
+			}
+		}
+		const trimmedHashes = new Set<string>();
+		for (const row of transaction.trimRows) {
+			if (row.lengthDecremented && !trimmedHashes.has(row.hash)) {
+				trimmedHashes.add(row.hash);
+				this._length--;
+			}
+		}
+		for (const row of transaction.headRows) {
+			if (
+				row.pendingRemoved &&
+				!this.pendingIndexWrites.has(row.hash) &&
+				row.pendingAfterCommit &&
+				row.previousGeneration !== undefined
+			) {
+				this.restorePendingIndexWrite(
+					row.hash,
+					row.pendingAfterCommit,
+					row.previousGeneration,
+				);
+			}
+		}
+		transaction.state = "acknowledged";
+		this.releaseNativeCommittedAppendFactsTransaction(transaction);
+		this.releaseNativeCommittedAppendFactsHashLocks(transaction);
+		if (this.pendingIndexWrites.size > 0) {
+			this.schedulePendingIndexWriteFlush();
+		}
+	}
+
+	private async deleteNativeCommittedAppendFactsIndexHashes(hashes: string[]) {
+		if (hashes.length === 0) {
+			return;
+		}
+		if (hasExactDelete(this.properties.index)) {
+			await this.properties.index.delIds(hashes);
+			return;
+		}
+		await this.properties.index.del({
+			query: createHashMatchQuery(hashes),
+		});
+	}
+
+	private async restoreNativeCommittedAppendFactsIndexValue(
+		hash: string,
+		value: ShallowEntry | undefined,
+	) {
+		const readCurrent = async () =>
+			(await this.properties.index.get(toId(hash)))?.value;
+		if (shallowEntryEquals(await readCurrent(), value)) {
+			return;
+		}
+		try {
+			if (value) {
+				await this.properties.index.put(value);
+			} else {
+				await this.deleteNativeCommittedAppendFactsIndexHashes([hash]);
+			}
+		} catch (error) {
+			// Index adapters can reject after applying a write. Verify the exact row
+			// before recording rollback debt; a matching row is already compensated.
+			if (!shallowEntryEquals(await readCurrent(), value)) {
+				throw error;
+			}
+		}
+	}
+
+	private rebaseNativeCommittedAppendFactsDependents(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		for (const row of transaction.rows) {
+			for (const owner of this.nativeCommittedAppendFactsOwners.get(row.hash) ??
+				[]) {
+				if (owner === transaction) {
+					continue;
+				}
+				for (const dependent of owner.rows) {
+					if (
+						dependent.hash === row.hash &&
+						dependent.previousGeneration === row.generation
+					) {
+						dependent.previousPending = row.previousPending;
+						dependent.previousGeneration = row.previousGeneration;
+					}
+				}
+			}
+		}
+	}
+
+	private async performNativeCommittedAppendFactsRollback(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		transaction.state = "rolling-back";
+		this.clearPendingIndexFlushTimer();
+		try {
+			for (let index = transaction.trimRows.length - 1; index >= 0; index--) {
+				const row = transaction.trimRows[index]!;
+				if (!row.indexDeleteAttempted) {
+					continue;
+				}
+				await this.restoreNativeCommittedAppendFactsIndexValue(
+					row.hash,
+					row.previousIndex,
+				);
+			}
+
+			const restoredAppendHashes = new Set<string>();
+			for (let index = transaction.rows.length - 1; index >= 0; index--) {
+				const row = transaction.rows[index]!;
+				if (
+					!row.indexWriteAttempted ||
+					!row.indexSnapshotTaken ||
+					restoredAppendHashes.has(row.hash)
+				) {
+					continue;
+				}
+				restoredAppendHashes.add(row.hash);
+				await this.restoreNativeCommittedAppendFactsIndexValue(
+					row.hash,
+					row.indexValueBefore,
+				);
+			}
+			for (let index = transaction.headRows.length - 1; index >= 0; index--) {
+				const row = transaction.headRows[index]!;
+				if (!row.indexWriteAttempted || row.coveredByAppend) {
+					continue;
+				}
+				await this.restoreNativeCommittedAppendFactsIndexValue(
+					row.hash,
+					row.previousIndex,
+				);
+			}
+		} catch (error) {
+			transaction.state = "rollback-failed";
+			this.failedNativeCommittedAppendFactsRollbacks.add(transaction);
+			this.nativeCommittedAppendFactsRollbackFailure = error;
+			throw new Error(
+				"Failed to restore the entry index after a native transaction",
+				{ cause: error },
+			);
+		}
+
+		for (let index = transaction.trimRows.length - 1; index >= 0; index--) {
+			const row = transaction.trimRows[index]!;
+			const ownsCurrentPending =
+				row.previousGeneration !== undefined &&
+				this.pendingIndexWriteGenerations.get(row.hash) ===
+					row.previousGeneration;
+			if (
+				row.pendingRemoved &&
+				!ownsCurrentPending &&
+				!this.pendingIndexWrites.has(row.hash) &&
+				row.previousPending !== undefined &&
+				row.previousGeneration !== undefined
+			) {
+				this.restorePendingIndexWrite(
+					row.hash,
+					row.previousPending,
+					row.previousGeneration,
+				);
+			}
+		}
+		for (let index = transaction.headRows.length - 1; index >= 0; index--) {
+			const row = transaction.headRows[index]!;
+			if (
+				!row.coveredByAppend &&
+				row.pendingRemoved &&
+				!this.pendingIndexWrites.has(row.hash) &&
+				row.previousPending !== undefined &&
+				row.previousGeneration !== undefined
+			) {
+				this.restorePendingIndexWrite(
+					row.hash,
+					row.previousPending,
+					row.previousGeneration,
+				);
+			}
+		}
+
+		this.rebaseNativeCommittedAppendFactsDependents(transaction);
+		for (let index = transaction.rows.length - 1; index >= 0; index--) {
+			const row = transaction.rows[index]!;
+			const ownsCurrentPending =
+				this.pendingIndexWriteGenerations.get(row.hash) === row.generation;
+			const removedOwnPendingWithoutReplacement =
+				!this.pendingIndexWrites.has(row.hash) &&
+				row.pendingRemovedByFlush &&
+				!row.hasNewerPendingWrite;
+			if (ownsCurrentPending || removedOwnPendingWithoutReplacement) {
+				if (
+					row.previousPending !== undefined &&
+					row.previousGeneration !== undefined
+				) {
+					this.restorePendingIndexWrite(
+						row.hash,
+						row.previousPending,
+						row.previousGeneration,
+					);
+				} else {
+					this.deletePendingIndexWrite(row.hash, row.generation);
+				}
+			}
+		}
+
+		transaction.state = "rolled-back";
+		this.failedNativeCommittedAppendFactsRollbacks.delete(transaction);
+		if (this.failedNativeCommittedAppendFactsRollbacks.size === 0) {
+			this.nativeCommittedAppendFactsRollbackFailure = undefined;
+		}
+		this.releaseNativeCommittedAppendFactsTransaction(transaction);
+		this.releaseNativeCommittedAppendFactsHashLocks(transaction);
+		if (this.pendingIndexWrites.size > 0) {
+			this.schedulePendingIndexWriteFlush();
+		}
+	}
+
+	/** @internal */
+	async rollbackNativeCommittedAppendFacts(
+		transaction: NativeCommittedAppendFactsTransaction,
+	) {
+		if (
+			transaction.state === "acknowledged" ||
+			transaction.state === "rolled-back"
+		) {
+			return;
+		}
+		if (transaction.rollbackPromise) {
+			return transaction.rollbackPromise;
+		}
+		const rollbackPromise =
+			this.performNativeCommittedAppendFactsRollback(transaction);
+		transaction.rollbackPromise = rollbackPromise;
+		try {
+			await rollbackPromise;
+		} finally {
+			if (transaction.rollbackPromise === rollbackPromise) {
+				transaction.rollbackPromise = undefined;
+			}
+		}
+	}
+
+	/** Retry an incomplete idempotent compensation before accepting more work. */
+	async retryFailedNativeCommittedAppendFactsRollbacks() {
+		for (const transaction of [
+			...this.failedNativeCommittedAppendFactsRollbacks,
+		]) {
+			await this.rollbackNativeCommittedAppendFacts(transaction);
 		}
 	}
 
@@ -1568,50 +2644,66 @@ export class EntryIndex<T> {
 				throw new Error("Missing hash");
 			}
 		}
+		const hashMutationLockOwner = this.properties.nativeGraph
+			? await this.acquireHashMutationLocks([entry.hash, ...entry.meta.next])
+			: undefined;
 
-		const existingPromise = this.insertionPromises.get(entry.hash);
-		if (existingPromise) {
-			return existingPromise;
-		} else {
-			const fn = async () => {
-				if (properties.unique === true || !(await this.has(entry.hash))) {
-					this._length++;
-				}
+		try {
+			const existingPromise = this.insertionPromises.get(entry.hash);
+			if (existingPromise) {
+				return await existingPromise;
+			} else {
+				const fn = async () => {
+					if (properties.unique === true || !(await this.has(entry.hash))) {
+						this._length++;
+					}
 
-				// add cache after .has check before .has uses the cache
-				this.cache.add(entry.hash, entry);
-				const shallowEntry =
-					Entry.takePreparedShallowEntry(entry, properties.isHead) ??
-					entry.toShallow(properties.isHead);
-				const nativeEntry =
-					Entry.takePreparedNativeLogEntry(entry, properties.isHead) ??
-					toNativeLogEntry(shallowEntry);
-				const shouldDeferIndexWrite =
-					properties.deferIndexWrite === true &&
-					properties.isHead &&
-					entry.meta.type !== EntryType.CUT &&
-					entry.meta.next.length === 0;
+					// add cache after .has check before .has uses the cache
+					this.cache.add(entry.hash, entry);
+					const shallowEntry =
+						Entry.takePreparedShallowEntry(entry, properties.isHead) ??
+						entry.toShallow(properties.isHead);
+					const nativeEntry =
+						Entry.takePreparedNativeLogEntry(entry, properties.isHead) ??
+						toNativeLogEntry(shallowEntry);
+					const shouldDeferIndexWrite =
+						properties.deferIndexWrite === true &&
+						properties.isHead &&
+						entry.meta.type !== EntryType.CUT &&
+						entry.meta.next.length === 0;
 
-				if (shouldDeferIndexWrite) {
-					this.pendingIndexWrites.set(entry.hash, shallowEntry);
-					this.schedulePendingIndexWriteFlush();
-				} else {
-					await this.flushPendingWrites(entry.meta.next);
-					await this.properties.index.put(shallowEntry);
-				}
-				this.properties.nativeGraph?.graph.put(nativeEntry);
+					if (shouldDeferIndexWrite) {
+						this.setPendingIndexWrite(entry.hash, shallowEntry);
+						this.schedulePendingIndexWriteFlush();
+					} else {
+						await this.flushPendingWrites(
+							entry.meta.next,
+							hashMutationLockOwner,
+						);
+						await this.properties.index.put(shallowEntry);
+					}
+					this.properties.nativeGraph?.graph.put(nativeEntry);
 
-				// check if gids has been shadowed, by query all nexts that have a different gid
-				await this.notifyShadowedGids(entry);
+					// check if gids has been shadowed, by query all nexts that have a different gid
+					await this.notifyShadowedGids(entry);
 
-				// mark all next entries as not heads
-				await this.privateUpdateNextHeadProperty(entry, false);
+					// mark all next entries as not heads
+					await this.privateUpdateNextHeadProperty(
+						entry,
+						false,
+						hashMutationLockOwner,
+					);
 
-				this.insertionPromises.delete(entry.hash);
-			};
-			const promise = fn();
-			this.insertionPromises.set(entry.hash, promise);
-			return promise;
+					this.insertionPromises.delete(entry.hash);
+				};
+				const promise = fn();
+				this.insertionPromises.set(entry.hash, promise);
+				return await promise;
+			}
+		} finally {
+			if (hashMutationLockOwner) {
+				this.releaseHashMutationLocks(hashMutationLockOwner);
+			}
 		}
 	}
 
@@ -1655,68 +2747,109 @@ export class EntryIndex<T> {
 				await existingPromise;
 			}
 		}
+		const hashMutationLockOwner = this.properties.nativeGraph
+			? await this.acquireHashMutationLocks([
+					...entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+					...(properties.externalNextHashes ?? []),
+				])
+			: undefined;
 
-		const promise = (async () => {
-			const profile = properties.profile;
-			const prepareStartedAt = entryIndexProfileStart(profile);
-			const externalNexts = new Set<string>(
-				properties.externalNextHashes ?? [],
-			);
-			const shouldDiscoverExternalNexts = !properties.externalNextHashes;
-			const batchHashes = shouldDiscoverExternalNexts
-				? new Set(entries.map((entry) => entry.hash))
-				: undefined;
-			const putBatch =
-				!this.properties.onGidRemoved && this.properties.index.putBatch;
-			const shallowEntries: ShallowEntry[] = [];
-			const nativeGraphUpdated =
-				properties.prepared?.nativeGraphUpdated === true;
-			const nativeCommitOwnsHotIndex =
-				nativeGraphUpdated &&
-				properties.prepared?.nativeBlocksCommitted === true &&
-				!this.properties.onGidRemoved;
-			const nativeGraphPutAppendChain =
-				!nativeGraphUpdated &&
-				!this.properties.onGidRemoved &&
-				properties.externalNextHashes &&
-				this.properties.nativeGraph?.graph.putAppendChain
-					? this.properties.nativeGraph.graph.putAppendChain.bind(
-							this.properties.nativeGraph.graph,
-						)
+		try {
+			const promise = (async () => {
+				const profile = properties.profile;
+				const prepareStartedAt = entryIndexProfileStart(profile);
+				const externalNexts = new Set<string>(
+					properties.externalNextHashes ?? [],
+				);
+				const shouldDiscoverExternalNexts = !properties.externalNextHashes;
+				const batchHashes = shouldDiscoverExternalNexts
+					? new Set(entries.map((entry) => entry.hash))
 					: undefined;
-			const nativeGraphPutBatch =
-				!nativeGraphUpdated &&
-				!this.properties.onGidRemoved &&
-				this.properties.nativeGraph?.graph.putBatch
-					? this.properties.nativeGraph.graph.putBatch.bind(
-							this.properties.nativeGraph.graph,
-						)
-					: undefined;
-			const deferBatchIndexWrite =
-				properties.deferIndexWrite === true &&
-				!!putBatch &&
-				!!this.properties.nativeGraph &&
-				!this.properties.onGidRemoved &&
-				entries.every((entry) => entry.meta.type !== EntryType.CUT);
-			const nativeEntries: NativeLogEntry[] = [];
-			for (let i = 0; i < entries.length; i++) {
-				const entry = entries[i];
-				const isHead = properties.heads?.[i] ?? i === entries.length - 1;
-				if (properties.unique === true || !(await this.has(entry.hash))) {
-					this._length++;
-				}
+				const putBatch =
+					!this.properties.onGidRemoved && this.properties.index.putBatch;
+				const shallowEntries: ShallowEntry[] = [];
+				const nativeGraphUpdated =
+					properties.prepared?.nativeGraphUpdated === true;
+				const nativeCommitOwnsHotIndex =
+					nativeGraphUpdated &&
+					properties.prepared?.nativeBlocksCommitted === true &&
+					!this.properties.onGidRemoved;
+				const nativeGraphPutAppendChain =
+					!nativeGraphUpdated &&
+					!this.properties.onGidRemoved &&
+					properties.externalNextHashes &&
+					this.properties.nativeGraph?.graph.putAppendChain
+						? this.properties.nativeGraph.graph.putAppendChain.bind(
+								this.properties.nativeGraph.graph,
+							)
+						: undefined;
+				const nativeGraphPutBatch =
+					!nativeGraphUpdated &&
+					!this.properties.onGidRemoved &&
+					this.properties.nativeGraph?.graph.putBatch
+						? this.properties.nativeGraph.graph.putBatch.bind(
+								this.properties.nativeGraph.graph,
+							)
+						: undefined;
+				const deferBatchIndexWrite =
+					properties.deferIndexWrite === true &&
+					!!putBatch &&
+					!!this.properties.nativeGraph &&
+					!this.properties.onGidRemoved &&
+					entries.every((entry) => entry.meta.type !== EntryType.CUT);
+				const nativeEntries: NativeLogEntry[] = [];
+				for (let i = 0; i < entries.length; i++) {
+					const entry = entries[i];
+					const isHead = properties.heads?.[i] ?? i === entries.length - 1;
+					if (properties.unique === true || !(await this.has(entry.hash))) {
+						this._length++;
+					}
 
-				this.cache.add(entry.hash, entry);
-				const preparedShallowEntry = properties.prepared?.shallowEntries[i];
-				if (preparedShallowEntry) {
-					preparedShallowEntry.head = isHead;
-				}
-				const shallowEntry =
-					preparedShallowEntry ??
-					Entry.takePreparedShallowEntry(entry, isHead) ??
-					entry.toShallow(isHead);
-				if (nativeCommitOwnsHotIndex) {
-					this.pendingIndexWrites.set(entry.hash, shallowEntry);
+					this.cache.add(entry.hash, entry);
+					const preparedShallowEntry = properties.prepared?.shallowEntries[i];
+					if (preparedShallowEntry) {
+						preparedShallowEntry.head = isHead;
+					}
+					const shallowEntry =
+						preparedShallowEntry ??
+						Entry.takePreparedShallowEntry(entry, isHead) ??
+						entry.toShallow(isHead);
+					if (nativeCommitOwnsHotIndex) {
+						this.setPendingIndexWrite(entry.hash, shallowEntry);
+						if (batchHashes) {
+							for (const next of entry.meta.next) {
+								if (!batchHashes.has(next)) {
+									externalNexts.add(next);
+								}
+							}
+						}
+						continue;
+					}
+					const preparedNativeEntry = properties.prepared?.nativeEntries?.[i];
+					if (preparedNativeEntry) {
+						preparedNativeEntry.head = isHead;
+					}
+					const nativeEntry =
+						!nativeGraphUpdated &&
+						this.properties.nativeGraph &&
+						(preparedNativeEntry ??
+							Entry.takePreparedNativeLogEntry(entry, isHead) ??
+							toNativeLogEntry(shallowEntry));
+					if (putBatch) {
+						shallowEntries.push(shallowEntry);
+						nativeEntry && nativeEntries.push(nativeEntry);
+					} else {
+						await this.properties.index.put(shallowEntry);
+						if (nativeGraphPutAppendChain || nativeGraphPutBatch) {
+							nativeEntry && nativeEntries.push(nativeEntry);
+						} else {
+							if (nativeEntry) {
+								this.properties.nativeGraph?.graph.put(nativeEntry);
+								await this.notifyShadowedGids(entry);
+							}
+						}
+					}
+
 					if (batchHashes) {
 						for (const next of entry.meta.next) {
 							if (!batchHashes.has(next)) {
@@ -1724,147 +2857,122 @@ export class EntryIndex<T> {
 							}
 						}
 					}
-					continue;
 				}
-				const preparedNativeEntry = properties.prepared?.nativeEntries?.[i];
-				if (preparedNativeEntry) {
-					preparedNativeEntry.head = isHead;
-				}
-				const nativeEntry =
-					!nativeGraphUpdated &&
-					this.properties.nativeGraph &&
-					(preparedNativeEntry ??
-						Entry.takePreparedNativeLogEntry(entry, isHead) ??
-						toNativeLogEntry(shallowEntry));
-				if (putBatch) {
-					shallowEntries.push(shallowEntry);
-					nativeEntry && nativeEntries.push(nativeEntry);
-				} else {
-					await this.properties.index.put(shallowEntry);
-					if (nativeGraphPutAppendChain || nativeGraphPutBatch) {
-						nativeEntry && nativeEntries.push(nativeEntry);
-					} else {
-						if (nativeEntry) {
-							this.properties.nativeGraph?.graph.put(nativeEntry);
-							await this.notifyShadowedGids(entry);
-						}
+				emitEntryIndexProfileDuration(profile, prepareStartedAt, {
+					name: "log.entryIndex.putAppendBatch.prepare",
+					component: "log",
+					entries: entries.length,
+					messages: 1,
+					details: {
+						unique: properties.unique,
+						usedPreparedShallowEntries:
+							properties.prepared?.shallowEntries.length ?? 0,
+						usedPreparedNativeEntries:
+							properties.prepared?.nativeEntries?.length ?? 0,
+						nativeEntries: nativeEntries.length,
+						discoverExternalNexts: shouldDiscoverExternalNexts,
+					},
+				});
+
+				const putNativeEntries = (allowLoopFallback: boolean) => {
+					if (nativeEntries.length === 0) {
+						return;
 					}
+					if (nativeGraphPutAppendChain) {
+						const nativePutStartedAt = entryIndexProfileStart(profile);
+						nativeGraphPutAppendChain(nativeEntries);
+						emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+							name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+							component: "log",
+							entries: nativeEntries.length,
+							messages: 1,
+							details: { method: "putAppendChain" },
+						});
+					} else if (nativeGraphPutBatch) {
+						const nativePutStartedAt = entryIndexProfileStart(profile);
+						nativeGraphPutBatch(nativeEntries);
+						emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+							name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+							component: "log",
+							entries: nativeEntries.length,
+							messages: 1,
+							details: { method: "putBatch" },
+						});
+					} else if (allowLoopFallback) {
+						const nativePutStartedAt = entryIndexProfileStart(profile);
+						for (const nativeEntry of nativeEntries) {
+							this.properties.nativeGraph?.graph.put(nativeEntry);
+						}
+						emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+							name: "log.entryIndex.putAppendBatch.nativeGraphPut",
+							component: "log",
+							entries: nativeEntries.length,
+							messages: 1,
+							details: { method: "putLoop" },
+						});
+					}
+				};
+
+				if (nativeCommitOwnsHotIndex) {
+					this.schedulePendingIndexWriteFlush();
+				} else if (deferBatchIndexWrite) {
+					const indexPutStartedAt = entryIndexProfileStart(profile);
+					for (const shallowEntry of shallowEntries) {
+						this.setPendingIndexWrite(shallowEntry.hash, shallowEntry);
+					}
+					this.schedulePendingIndexWriteFlush();
+					emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.indexPut",
+						component: "log",
+						entries: shallowEntries.length,
+						messages: 1,
+						details: { deferred: true },
+					});
+					putNativeEntries(true);
+				} else if (putBatch) {
+					const indexPutStartedAt = entryIndexProfileStart(profile);
+					await putBatch.call(this.properties.index, shallowEntries);
+					emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+						name: "log.entryIndex.putAppendBatch.indexPut",
+						component: "log",
+						entries: shallowEntries.length,
+						messages: 1,
+					});
+					putNativeEntries(true);
+				} else if (nativeEntries.length > 0) {
+					putNativeEntries(false);
 				}
 
-				if (batchHashes) {
-					for (const next of entry.meta.next) {
-						if (!batchHashes.has(next)) {
-							externalNexts.add(next);
-						}
-					}
+				if (externalNexts.size > 0) {
+					const externalNextStartedAt = entryIndexProfileStart(profile);
+					await this.privateUpdateNextHeadHashes(
+						[...externalNexts],
+						false,
+						hashMutationLockOwner,
+					);
+					emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
+						name: "log.entryIndex.putAppendBatch.externalNexts",
+						component: "log",
+						entries: externalNexts.size,
+						messages: 1,
+					});
 				}
-			}
-			emitEntryIndexProfileDuration(profile, prepareStartedAt, {
-				name: "log.entryIndex.putAppendBatch.prepare",
-				component: "log",
-				entries: entries.length,
-				messages: 1,
-				details: {
-					unique: properties.unique,
-					usedPreparedShallowEntries:
-						properties.prepared?.shallowEntries.length ?? 0,
-					usedPreparedNativeEntries:
-						properties.prepared?.nativeEntries?.length ?? 0,
-					nativeEntries: nativeEntries.length,
-					discoverExternalNexts: shouldDiscoverExternalNexts,
-				},
+			})().finally(() => {
+				for (const entry of entries) {
+					this.insertionPromises.delete(entry.hash);
+				}
 			});
 
-			const putNativeEntries = (allowLoopFallback: boolean) => {
-				if (nativeEntries.length === 0) {
-					return;
-				}
-				if (nativeGraphPutAppendChain) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					nativeGraphPutAppendChain(nativeEntries);
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putAppendChain" },
-					});
-				} else if (nativeGraphPutBatch) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					nativeGraphPutBatch(nativeEntries);
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putBatch" },
-					});
-				} else if (allowLoopFallback) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					for (const nativeEntry of nativeEntries) {
-						this.properties.nativeGraph?.graph.put(nativeEntry);
-					}
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putLoop" },
-					});
-				}
-			};
-
-			if (nativeCommitOwnsHotIndex) {
-				this.schedulePendingIndexWriteFlush();
-			} else if (deferBatchIndexWrite) {
-				const indexPutStartedAt = entryIndexProfileStart(profile);
-				for (const shallowEntry of shallowEntries) {
-					this.pendingIndexWrites.set(shallowEntry.hash, shallowEntry);
-				}
-				this.schedulePendingIndexWriteFlush();
-				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
-					name: "log.entryIndex.putAppendBatch.indexPut",
-					component: "log",
-					entries: shallowEntries.length,
-					messages: 1,
-					details: { deferred: true },
-				});
-				putNativeEntries(true);
-			} else if (putBatch) {
-				const indexPutStartedAt = entryIndexProfileStart(profile);
-				await putBatch.call(this.properties.index, shallowEntries);
-				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
-					name: "log.entryIndex.putAppendBatch.indexPut",
-					component: "log",
-					entries: shallowEntries.length,
-					messages: 1,
-				});
-				putNativeEntries(true);
-			} else if (nativeEntries.length > 0) {
-				putNativeEntries(false);
-			}
-
-			if (externalNexts.size > 0) {
-				const externalNextStartedAt = entryIndexProfileStart(profile);
-				await this.privateUpdateNextHeadHashes([...externalNexts], false);
-				emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
-					name: "log.entryIndex.putAppendBatch.externalNexts",
-					component: "log",
-					entries: externalNexts.size,
-					messages: 1,
-				});
-			}
-		})().finally(() => {
 			for (const entry of entries) {
-				this.insertionPromises.delete(entry.hash);
+				this.insertionPromises.set(entry.hash, promise);
 			}
-		});
 
-		for (const entry of entries) {
-			this.insertionPromises.set(entry.hash, promise);
+			return await promise;
+		} finally {
+			if (hashMutationLockOwner) {
+				this.releaseHashMutationLocks(hashMutationLockOwner);
+			}
 		}
-
-		return promise;
 	}
 
 	// Internal trusted receive path for callers that can supply prepared append facts.
@@ -1897,195 +3005,211 @@ export class EntryIndex<T> {
 				await existingPromise;
 			}
 		}
+		const hashMutationLockOwner = this.properties.nativeGraph
+			? await this.acquireHashMutationLocks([
+					...entries.flatMap((entry) => [entry.hash, ...entry.meta.next]),
+					...(properties.externalNextHashes ?? []),
+				])
+			: undefined;
 
-		const promise = (async () => {
-			const profile = properties.profile;
-			const prepareStartedAt = entryIndexProfileStart(profile);
-			const externalNexts = new Set<string>(
-				properties.externalNextHashes ?? [],
-			);
-			const shouldDiscoverExternalNexts = !properties.externalNextHashes;
-			const batchHashes = shouldDiscoverExternalNexts
-				? new Set(entries.map((entry) => entry.hash))
-				: undefined;
-			const putBatch = this.properties.index.putBatch;
-			const shallowEntries: ShallowEntry[] = [];
-			const nativeEntries: NativeLogEntry[] = [];
-			const nativeGraphUpdated = properties.nativeGraphUpdated === true;
-			const nativeGraphPutAppendChain =
-				!nativeGraphUpdated &&
-				properties.externalNextHashes &&
-				this.properties.nativeGraph?.graph.putAppendChain
-					? this.properties.nativeGraph.graph.putAppendChain.bind(
-							this.properties.nativeGraph.graph,
-						)
+		try {
+			const promise = (async () => {
+				const profile = properties.profile;
+				const prepareStartedAt = entryIndexProfileStart(profile);
+				const externalNexts = new Set<string>(
+					properties.externalNextHashes ?? [],
+				);
+				const shouldDiscoverExternalNexts = !properties.externalNextHashes;
+				const batchHashes = shouldDiscoverExternalNexts
+					? new Set(entries.map((entry) => entry.hash))
 					: undefined;
-			const nativeGraphPutBatch =
-				!nativeGraphUpdated && this.properties.nativeGraph?.graph.putBatch
-					? this.properties.nativeGraph.graph.putBatch.bind(
-							this.properties.nativeGraph.graph,
-						)
-					: undefined;
-			const deferBatchIndexWrite =
-				properties.deferIndexWrite === true &&
-				!!this.properties.nativeGraph &&
-				entries.every((entry) => entry.meta.type !== EntryType.CUT);
-			const lazyNativeGraphUpdatedDeferredIndexWrite =
-				nativeGraphUpdated && deferBatchIndexWrite;
-
-			for (let i = 0; i < entries.length; i++) {
-				const entry = entries[i]!;
-				const isHead = properties.heads?.[i] ?? i === entries.length - 1;
-				if (properties.unique === true || !(await this.has(entry.hash))) {
-					this._length++;
-				}
-
-				let shallowEntry: ShallowEntry | undefined;
-				if (lazyNativeGraphUpdatedDeferredIndexWrite) {
-					this.pendingIndexWrites.set(entry.hash, () =>
-						materializePreparedAppendShallowEntry(entry, isHead),
-					);
-				} else {
-					shallowEntry = materializePreparedAppendShallowEntry(entry, isHead);
-				}
-				const nativeEntry =
+				const putBatch = this.properties.index.putBatch;
+				const shallowEntries: ShallowEntry[] = [];
+				const nativeEntries: NativeLogEntry[] = [];
+				const nativeGraphUpdated = properties.nativeGraphUpdated === true;
+				const nativeGraphPutAppendChain =
 					!nativeGraphUpdated &&
-					this.properties.nativeGraph &&
-					(entry.nativeEntry ??
-						toNativeLogEntry(
-							shallowEntry ??
-								materializePreparedAppendShallowEntry(entry, isHead),
-						));
-				if (nativeEntry) {
-					nativeEntry.head = isHead;
-				}
-				if (lazyNativeGraphUpdatedDeferredIndexWrite) {
-					// The native commit already updated blocks/graph; keep the JS
-					// compatibility index write lazy for later flushes.
-				} else if (deferBatchIndexWrite || putBatch) {
-					shallowEntries.push(shallowEntry!);
-					nativeEntry && nativeEntries.push(nativeEntry);
-				} else {
-					await this.properties.index.put(shallowEntry!);
-					nativeEntry && nativeEntries.push(nativeEntry);
-				}
+					properties.externalNextHashes &&
+					this.properties.nativeGraph?.graph.putAppendChain
+						? this.properties.nativeGraph.graph.putAppendChain.bind(
+								this.properties.nativeGraph.graph,
+							)
+						: undefined;
+				const nativeGraphPutBatch =
+					!nativeGraphUpdated && this.properties.nativeGraph?.graph.putBatch
+						? this.properties.nativeGraph.graph.putBatch.bind(
+								this.properties.nativeGraph.graph,
+							)
+						: undefined;
+				const deferBatchIndexWrite =
+					properties.deferIndexWrite === true &&
+					!!this.properties.nativeGraph &&
+					entries.every((entry) => entry.meta.type !== EntryType.CUT);
+				const lazyNativeGraphUpdatedDeferredIndexWrite =
+					nativeGraphUpdated && deferBatchIndexWrite;
 
-				if (batchHashes) {
-					for (const next of entry.meta.next) {
-						if (!batchHashes.has(next)) {
-							externalNexts.add(next);
+				for (let i = 0; i < entries.length; i++) {
+					const entry = entries[i]!;
+					const isHead = properties.heads?.[i] ?? i === entries.length - 1;
+					if (properties.unique === true || !(await this.has(entry.hash))) {
+						this._length++;
+					}
+
+					let shallowEntry: ShallowEntry | undefined;
+					if (lazyNativeGraphUpdatedDeferredIndexWrite) {
+						this.setPendingIndexWrite(entry.hash, () =>
+							materializePreparedAppendShallowEntry(entry, isHead),
+						);
+					} else {
+						shallowEntry = materializePreparedAppendShallowEntry(entry, isHead);
+					}
+					const nativeEntry =
+						!nativeGraphUpdated &&
+						this.properties.nativeGraph &&
+						(entry.nativeEntry ??
+							toNativeLogEntry(
+								shallowEntry ??
+									materializePreparedAppendShallowEntry(entry, isHead),
+							));
+					if (nativeEntry) {
+						nativeEntry.head = isHead;
+					}
+					if (lazyNativeGraphUpdatedDeferredIndexWrite) {
+						// The native commit already updated blocks/graph; keep the JS
+						// compatibility index write lazy for later flushes.
+					} else if (deferBatchIndexWrite || putBatch) {
+						shallowEntries.push(shallowEntry!);
+						nativeEntry && nativeEntries.push(nativeEntry);
+					} else {
+						await this.properties.index.put(shallowEntry!);
+						nativeEntry && nativeEntries.push(nativeEntry);
+					}
+
+					if (batchHashes) {
+						for (const next of entry.meta.next) {
+							if (!batchHashes.has(next)) {
+								externalNexts.add(next);
+							}
 						}
 					}
 				}
-			}
-			emitEntryIndexProfileDuration(profile, prepareStartedAt, {
-				name: "log.entryIndex.putAppendFactsBatch.prepare",
-				component: "log",
-				entries: entries.length,
-				messages: 1,
-				details: {
-					unique: properties.unique,
-					nativeEntries: nativeEntries.length,
-					discoverExternalNexts: shouldDiscoverExternalNexts,
-					nativeGraphUpdated,
-				},
-			});
-
-			const putNativeEntries = (allowLoopFallback: boolean) => {
-				if (nativeEntries.length === 0) {
-					return;
-				}
-				if (nativeGraphPutAppendChain) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					nativeGraphPutAppendChain(nativeEntries);
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putAppendChain" },
-					});
-				} else if (nativeGraphPutBatch) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					nativeGraphPutBatch(nativeEntries);
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putBatch" },
-					});
-				} else if (allowLoopFallback) {
-					const nativePutStartedAt = entryIndexProfileStart(profile);
-					for (const nativeEntry of nativeEntries) {
-						this.properties.nativeGraph?.graph.put(nativeEntry);
-					}
-					emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
-						name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
-						component: "log",
-						entries: nativeEntries.length,
-						messages: 1,
-						details: { method: "putLoop" },
-					});
-				}
-			};
-
-			if (deferBatchIndexWrite) {
-				const indexPutStartedAt = entryIndexProfileStart(profile);
-				if (!lazyNativeGraphUpdatedDeferredIndexWrite) {
-					for (const shallowEntry of shallowEntries) {
-						this.pendingIndexWrites.set(shallowEntry.hash, shallowEntry);
-					}
-				}
-				this.schedulePendingIndexWriteFlush();
-				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
-					name: "log.entryIndex.putAppendFactsBatch.indexPut",
+				emitEntryIndexProfileDuration(profile, prepareStartedAt, {
+					name: "log.entryIndex.putAppendFactsBatch.prepare",
 					component: "log",
-					entries: lazyNativeGraphUpdatedDeferredIndexWrite
-						? entries.length
-						: shallowEntries.length,
+					entries: entries.length,
 					messages: 1,
 					details: {
-						deferred: true,
-						lazy: lazyNativeGraphUpdatedDeferredIndexWrite,
+						unique: properties.unique,
+						nativeEntries: nativeEntries.length,
+						discoverExternalNexts: shouldDiscoverExternalNexts,
+						nativeGraphUpdated,
 					},
 				});
-				putNativeEntries(true);
-			} else if (putBatch) {
-				const indexPutStartedAt = entryIndexProfileStart(profile);
-				await putBatch.call(this.properties.index, shallowEntries);
-				emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
-					name: "log.entryIndex.putAppendFactsBatch.indexPut",
-					component: "log",
-					entries: shallowEntries.length,
-					messages: 1,
-				});
-				putNativeEntries(true);
-			} else if (nativeEntries.length > 0) {
-				putNativeEntries(true);
-			}
 
-			if (externalNexts.size > 0) {
-				const externalNextStartedAt = entryIndexProfileStart(profile);
-				await this.privateUpdateNextHeadHashes([...externalNexts], false);
-				emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
-					name: "log.entryIndex.putAppendFactsBatch.externalNexts",
-					component: "log",
-					entries: externalNexts.size,
-					messages: 1,
-				});
-			}
-		})().finally(() => {
+				const putNativeEntries = (allowLoopFallback: boolean) => {
+					if (nativeEntries.length === 0) {
+						return;
+					}
+					if (nativeGraphPutAppendChain) {
+						const nativePutStartedAt = entryIndexProfileStart(profile);
+						nativeGraphPutAppendChain(nativeEntries);
+						emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+							name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
+							component: "log",
+							entries: nativeEntries.length,
+							messages: 1,
+							details: { method: "putAppendChain" },
+						});
+					} else if (nativeGraphPutBatch) {
+						const nativePutStartedAt = entryIndexProfileStart(profile);
+						nativeGraphPutBatch(nativeEntries);
+						emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+							name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
+							component: "log",
+							entries: nativeEntries.length,
+							messages: 1,
+							details: { method: "putBatch" },
+						});
+					} else if (allowLoopFallback) {
+						const nativePutStartedAt = entryIndexProfileStart(profile);
+						for (const nativeEntry of nativeEntries) {
+							this.properties.nativeGraph?.graph.put(nativeEntry);
+						}
+						emitEntryIndexProfileDuration(profile, nativePutStartedAt, {
+							name: "log.entryIndex.putAppendFactsBatch.nativeGraphPut",
+							component: "log",
+							entries: nativeEntries.length,
+							messages: 1,
+							details: { method: "putLoop" },
+						});
+					}
+				};
+
+				if (deferBatchIndexWrite) {
+					const indexPutStartedAt = entryIndexProfileStart(profile);
+					if (!lazyNativeGraphUpdatedDeferredIndexWrite) {
+						for (const shallowEntry of shallowEntries) {
+							this.setPendingIndexWrite(shallowEntry.hash, shallowEntry);
+						}
+					}
+					this.schedulePendingIndexWriteFlush();
+					emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+						name: "log.entryIndex.putAppendFactsBatch.indexPut",
+						component: "log",
+						entries: lazyNativeGraphUpdatedDeferredIndexWrite
+							? entries.length
+							: shallowEntries.length,
+						messages: 1,
+						details: {
+							deferred: true,
+							lazy: lazyNativeGraphUpdatedDeferredIndexWrite,
+						},
+					});
+					putNativeEntries(true);
+				} else if (putBatch) {
+					const indexPutStartedAt = entryIndexProfileStart(profile);
+					await putBatch.call(this.properties.index, shallowEntries);
+					emitEntryIndexProfileDuration(profile, indexPutStartedAt, {
+						name: "log.entryIndex.putAppendFactsBatch.indexPut",
+						component: "log",
+						entries: shallowEntries.length,
+						messages: 1,
+					});
+					putNativeEntries(true);
+				} else if (nativeEntries.length > 0) {
+					putNativeEntries(true);
+				}
+
+				if (externalNexts.size > 0) {
+					const externalNextStartedAt = entryIndexProfileStart(profile);
+					await this.privateUpdateNextHeadHashes(
+						[...externalNexts],
+						false,
+						hashMutationLockOwner,
+					);
+					emitEntryIndexProfileDuration(profile, externalNextStartedAt, {
+						name: "log.entryIndex.putAppendFactsBatch.externalNexts",
+						component: "log",
+						entries: externalNexts.size,
+						messages: 1,
+					});
+				}
+			})().finally(() => {
+				for (const entry of entries) {
+					this.insertionPromises.delete(entry.hash);
+				}
+			});
+
 			for (const entry of entries) {
-				this.insertionPromises.delete(entry.hash);
+				this.insertionPromises.set(entry.hash, promise);
 			}
-		});
 
-		for (const entry of entries) {
-			this.insertionPromises.set(entry.hash, promise);
+			return await promise;
+		} finally {
+			if (hashMutationLockOwner) {
+				this.releaseHashMutationLocks(hashMutationLockOwner);
+			}
 		}
-
-		return promise;
 	}
 
 	/** @internal */
@@ -2101,62 +3225,123 @@ export class EntryIndex<T> {
 		if (!entry.hash) {
 			throw new Error("Missing hash");
 		}
-		const existingPromise = this.insertionPromises.get(entry.hash);
-		if (existingPromise) {
-			await existingPromise;
+		const hashMutationLockOwner = this.properties.nativeGraph
+			? await this.acquireHashMutationLocks([
+					entry.hash,
+					...properties.externalNextHashes,
+				])
+			: undefined;
+		try {
+			const existingPromise = this.insertionPromises.get(entry.hash);
+			if (existingPromise) {
+				await existingPromise;
+			}
+
+			const promise = (async () => {
+				const isHead = properties.isHead ?? true;
+				if (properties.unique === true || !(await this.has(entry.hash))) {
+					this._length++;
+				}
+
+				this.cache.add(entry.hash, entry);
+				const shallowEntry =
+					properties.shallowEntry ??
+					Entry.takePreparedShallowEntry(entry, isHead) ??
+					entry.toShallow(isHead);
+				shallowEntry.head = isHead;
+				this.setPendingIndexWrite(entry.hash, shallowEntry);
+				this.schedulePendingIndexWriteFlush();
+
+				if (properties.externalNextHashes.length > 0) {
+					await this.privateUpdateNextHeadHashes(
+						properties.externalNextHashes,
+						false,
+						hashMutationLockOwner,
+					);
+				}
+			})().finally(() => {
+				this.insertionPromises.delete(entry.hash);
+			});
+
+			this.insertionPromises.set(entry.hash, promise);
+			return await promise;
+		} finally {
+			if (hashMutationLockOwner) {
+				this.releaseHashMutationLocks(hashMutationLockOwner);
+			}
 		}
-
-		const promise = (async () => {
-			const isHead = properties.isHead ?? true;
-			if (properties.unique === true || !(await this.has(entry.hash))) {
-				this._length++;
-			}
-
-			this.cache.add(entry.hash, entry);
-			const shallowEntry =
-				properties.shallowEntry ??
-				Entry.takePreparedShallowEntry(entry, isHead) ??
-				entry.toShallow(isHead);
-			shallowEntry.head = isHead;
-			this.pendingIndexWrites.set(entry.hash, shallowEntry);
-			this.schedulePendingIndexWriteFlush();
-
-			if (properties.externalNextHashes.length > 0) {
-				await this.privateUpdateNextHeadHashes(
-					properties.externalNextHashes,
-					false,
-				);
-			}
-		})().finally(() => {
-			this.insertionPromises.delete(entry.hash);
-		});
-
-		this.insertionPromises.set(entry.hash, promise);
-		return promise;
 	}
 
 	/** @internal */
-	putNativeCommittedAppendFacts(properties: {
-		hash: string;
-		unique: boolean;
-		externalNextHashes: string[];
-		shallowEntry?: ShallowEntry;
-		getShallowEntry?: () => ShallowEntry;
-		isHead?: boolean;
-	}): Promise<void> | void {
+	putNativeCommittedAppendFacts(
+		properties: {
+			hash: string;
+			unique: boolean;
+			externalNextHashes: string[];
+			shallowEntry?: ShallowEntry;
+			getShallowEntry?: () => ShallowEntry;
+			isHead?: boolean;
+		},
+		transaction?: NativeCommittedAppendFactsTransaction,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
+	): Promise<void> | void {
 		if (!properties.hash) {
 			throw new Error("Missing hash");
+		}
+		if (!properties.shallowEntry && !properties.getShallowEntry) {
+			throw new Error("Missing shallow entry");
+		}
+		if (!transaction && hashMutationLockOwner) {
+			this.assertHashMutationLocks(hashMutationLockOwner, [
+				properties.hash,
+				...properties.externalNextHashes,
+			]);
+		}
+		if (!transaction && this.properties.nativeGraph && !hashMutationLockOwner) {
+			return this.withHashMutationLocks(
+				[properties.hash, ...properties.externalNextHashes],
+				(owner) =>
+					this.putNativeCommittedAppendFactsLocked(
+						properties,
+						undefined,
+						owner,
+					),
+			);
+		}
+		return this.putNativeCommittedAppendFactsLocked(
+			properties,
+			transaction,
+			hashMutationLockOwner,
+		);
+	}
+
+	private putNativeCommittedAppendFactsLocked(
+		properties: {
+			hash: string;
+			unique: boolean;
+			externalNextHashes: string[];
+			shallowEntry?: ShallowEntry;
+			getShallowEntry?: () => ShallowEntry;
+			isHead?: boolean;
+		},
+		transaction?: NativeCommittedAppendFactsTransaction,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
+	): Promise<void> | void {
+		if (transaction) {
+			this.stageNativeCommittedAppendExternalNextHashes(
+				transaction,
+				properties.externalNextHashes,
+			);
 		}
 		const existingPromise = this.insertionPromises.get(properties.hash);
 		if (
 			!existingPromise &&
 			properties.unique === true &&
-			properties.externalNextHashes.length === 0
+			(properties.externalNextHashes.length === 0 || transaction !== undefined)
 		) {
 			const isHead = properties.isHead ?? true;
-			this._length++;
-			if (!properties.shallowEntry && !properties.getShallowEntry) {
-				throw new Error("Missing shallow entry");
+			if (!transaction) {
+				this._length++;
 			}
 			const pending =
 				properties.shallowEntry ??
@@ -2168,12 +3353,26 @@ export class EntryIndex<T> {
 			if (properties.shallowEntry) {
 				properties.shallowEntry.head = isHead;
 			}
-			this.pendingIndexWrites.set(properties.hash, pending);
-			this.schedulePendingIndexWriteFlush();
+			if (transaction) {
+				return this.stageNativeCommittedAppendFact(
+					transaction,
+					properties.hash,
+					pending,
+					true,
+				);
+			} else {
+				this.setPendingIndexWrite(properties.hash, pending);
+				this.schedulePendingIndexWriteFlush();
+			}
 			return;
 		}
 
-		return this.putNativeCommittedAppendFactsAsync(properties, existingPromise);
+		return this.putNativeCommittedAppendFactsAsync(
+			properties,
+			existingPromise,
+			transaction,
+			hashMutationLockOwner,
+		);
 	}
 
 	/** @internal */
@@ -2186,23 +3385,66 @@ export class EntryIndex<T> {
 			getShallowEntry?: () => ShallowEntry;
 			isHead?: boolean;
 		}>,
+		transaction?: NativeCommittedAppendFactsTransaction,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
 	): Promise<void> | void {
 		if (rows.length === 0) {
 			return;
 		}
+		if (!transaction && hashMutationLockOwner) {
+			this.assertHashMutationLocks(
+				hashMutationLockOwner,
+				rows.flatMap((row) => [row.hash, ...row.externalNextHashes]),
+			);
+		}
+		if (!transaction && this.properties.nativeGraph && !hashMutationLockOwner) {
+			return this.withHashMutationLocks(
+				rows.flatMap((row) => [row.hash, ...row.externalNextHashes]),
+				(owner) =>
+					this.putNativeCommittedAppendFactsBatchLocked(rows, undefined, owner),
+			);
+		}
+		return this.putNativeCommittedAppendFactsBatchLocked(
+			rows,
+			transaction,
+			hashMutationLockOwner,
+		);
+	}
+
+	private putNativeCommittedAppendFactsBatchLocked(
+		rows: Array<{
+			hash: string;
+			unique: boolean;
+			externalNextHashes: string[];
+			shallowEntry?: ShallowEntry;
+			getShallowEntry?: () => ShallowEntry;
+			isHead?: boolean;
+		}>,
+		transaction?: NativeCommittedAppendFactsTransaction,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
+	): Promise<void> | void {
 		const asyncRows: typeof rows = [];
 		const externalNextHashes: string[] = [];
+		const stagedRows: Promise<void>[] = [];
 		let scheduledPendingFlush = false;
 		for (const row of rows) {
 			if (!row.hash) {
 				throw new Error("Missing hash");
 			}
+			if (transaction) {
+				this.stageNativeCommittedAppendExternalNextHashes(
+					transaction,
+					row.externalNextHashes,
+				);
+			}
 			const existingPromise = this.insertionPromises.get(row.hash);
 			if (!existingPromise && row.unique === true) {
 				const isHead = row.isHead ?? true;
-				this._length++;
 				if (!row.shallowEntry && !row.getShallowEntry) {
 					throw new Error("Missing shallow entry");
+				}
+				if (!transaction) {
+					this._length++;
 				}
 				const pending =
 					row.shallowEntry ??
@@ -2214,11 +3456,23 @@ export class EntryIndex<T> {
 				if (row.shallowEntry) {
 					row.shallowEntry.head = isHead;
 				}
-				this.pendingIndexWrites.set(row.hash, pending);
-				if (row.externalNextHashes.length > 0) {
+				if (transaction) {
+					const staged = this.stageNativeCommittedAppendFact(
+						transaction,
+						row.hash,
+						pending,
+						true,
+					);
+					if (staged) {
+						stagedRows.push(staged);
+					}
+				} else {
+					this.setPendingIndexWrite(row.hash, pending);
+				}
+				if (!transaction && row.externalNextHashes.length > 0) {
 					externalNextHashes.push(...row.externalNextHashes);
 				}
-				scheduledPendingFlush = true;
+				scheduledPendingFlush ||= transaction === undefined;
 			} else {
 				asyncRows.push(row);
 			}
@@ -2228,12 +3482,23 @@ export class EntryIndex<T> {
 		}
 		const batchedNextUpdate =
 			externalNextHashes.length > 0
-				? this.privateUpdateNextHeadHashes(externalNextHashes, false)
+				? this.privateUpdateNextHeadHashes(
+						externalNextHashes,
+						false,
+						hashMutationLockOwner,
+					)
 				: undefined;
-		if (asyncRows.length > 0 || batchedNextUpdate) {
+		if (asyncRows.length > 0 || batchedNextUpdate || stagedRows.length > 0) {
 			return Promise.all([
 				batchedNextUpdate,
-				...asyncRows.map((row) => this.putNativeCommittedAppendFacts(row)),
+				...stagedRows,
+				...asyncRows.map((row) =>
+					this.putNativeCommittedAppendFactsLocked(
+						row,
+						transaction,
+						hashMutationLockOwner,
+					),
+				),
 			]).then(() => undefined);
 		}
 	}
@@ -2248,19 +3513,22 @@ export class EntryIndex<T> {
 			isHead?: boolean;
 		},
 		existingPromise?: Promise<void>,
+		transaction?: NativeCommittedAppendFactsTransaction,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
 	) {
 		if (existingPromise) {
 			await existingPromise;
 		}
 		const promise = (async () => {
 			const isHead = properties.isHead ?? true;
+			let lengthIncremented = false;
 			if (properties.unique === true || !(await this.has(properties.hash))) {
-				this._length++;
+				if (!transaction) {
+					this._length++;
+				}
+				lengthIncremented = true;
 			}
 
-			if (!properties.shallowEntry && !properties.getShallowEntry) {
-				throw new Error("Missing shallow entry");
-			}
 			const pending =
 				properties.shallowEntry ??
 				(() => {
@@ -2271,13 +3539,23 @@ export class EntryIndex<T> {
 			if (properties.shallowEntry) {
 				properties.shallowEntry.head = isHead;
 			}
-			this.pendingIndexWrites.set(properties.hash, pending);
-			this.schedulePendingIndexWriteFlush();
+			if (transaction) {
+				await this.stageNativeCommittedAppendFact(
+					transaction,
+					properties.hash,
+					pending,
+					lengthIncremented,
+				);
+			} else {
+				this.setPendingIndexWrite(properties.hash, pending);
+				this.schedulePendingIndexWriteFlush();
+			}
 
-			if (properties.externalNextHashes.length > 0) {
+			if (!transaction && properties.externalNextHashes.length > 0) {
 				await this.privateUpdateNextHeadHashes(
 					properties.externalNextHashes,
 					false,
+					hashMutationLockOwner,
 				);
 			}
 		})().finally(() => {
@@ -2289,37 +3567,73 @@ export class EntryIndex<T> {
 	}
 
 	async delete(k: string, from?: Entry<any> | ShallowEntry) {
-		return this.withCacheInvalidation([k], async () => {
-			if (from && from.hash !== k) {
-				throw new Error("Shallow hash doesn't match the key");
+		if (from && from.hash !== k) {
+			throw new Error("Shallow hash doesn't match the key");
+		}
+		let hashMutationLockOwner: EntryIndexHashMutationLockOwner | undefined;
+		if (this.properties.nativeGraph) {
+			if (from) {
+				hashMutationLockOwner = await this.acquireHashMutationLocks([
+					k,
+					...from.meta.next,
+				]);
+			} else {
+				// First lock the content-addressed row before inspecting its immutable
+				// `next` set, then reacquire the complete sorted set in one lease.
+				hashMutationLockOwner = await this.acquireHashMutationLocks([k]);
+				const snapshot =
+					this.getPendingIndexWrite(k) ?? (await this.getShallow(k))?.value;
+				const nexts = snapshot?.meta.next ?? [];
+				if (nexts.length > 0) {
+					this.releaseHashMutationLocks(hashMutationLockOwner);
+					hashMutationLockOwner = await this.acquireHashMutationLocks([
+						k,
+						...nexts,
+					]);
+				}
 			}
+		}
+		try {
+			return await this.withCacheInvalidation([k], async () => {
+				const pending = this.getPendingIndexWrite(k);
+				from = from || pending || (await this.getShallow(k))?.value;
+				if (!from) {
+					return; // already deleted
+				}
+				if (pending) {
+					this.deletePendingIndexWrite(k);
+					await this.properties.store.rm(k);
+					this._length--;
+					this.properties.nativeGraph?.graph.delete(k);
+					await this.privateUpdateNextHeadProperty(
+						from,
+						true,
+						hashMutationLockOwner,
+					);
+					return from;
+				}
 
-			const pending = this.getPendingIndexWrite(k);
-			from = from || pending || (await this.getShallow(k))?.value;
-			if (!from) {
-				return; // already deleted
-			}
-			if (pending) {
-				this.pendingIndexWrites.delete(k);
+				let deleted = await this.properties.index.del({ query: { hash: k } });
 				await this.properties.store.rm(k);
-				this._length--;
-				this.properties.nativeGraph?.graph.delete(k);
-				await this.privateUpdateNextHeadProperty(from, true);
-				return from;
+
+				if (deleted.length > 0) {
+					this._length -= deleted.length;
+					this.properties.nativeGraph?.graph.delete(k);
+
+					// mark all next entries as new heads
+					await this.privateUpdateNextHeadProperty(
+						from,
+						true,
+						hashMutationLockOwner,
+					);
+					return from;
+				}
+			});
+		} finally {
+			if (hashMutationLockOwner) {
+				this.releaseHashMutationLocks(hashMutationLockOwner);
 			}
-
-			let deleted = await this.properties.index.del({ query: { hash: k } });
-			await this.properties.store.rm(k);
-
-			if (deleted.length > 0) {
-				this._length -= deleted.length;
-				this.properties.nativeGraph?.graph.delete(k);
-
-				// mark all next entries as new heads
-				await this.privateUpdateNextHeadProperty(from, true);
-				return from;
-			}
-		});
+		}
 	}
 
 	canDeleteMany(): boolean {
@@ -2331,27 +3645,40 @@ export class EntryIndex<T> {
 
 	async deleteMany(
 		from: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): Promise<ShallowEntry[]> {
 		return this.deleteManyMaybe(from, options);
 	}
 
 	deleteManyMaybe(
 		from: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): MaybePromise<ShallowEntry[]> {
 		if (from.length === 0) {
 			return [];
 		}
-		return this.withCacheInvalidation(
-			from.map((node) => node.hash),
-			() => this.deleteManyWithInvalidation(from, options),
-		);
+		const hashes = from.flatMap((node) => [node.hash, ...node.meta.next]);
+		const run = (hashMutationLockOwner?: EntryIndexHashMutationLockOwner) =>
+			this.withCacheInvalidation(
+				from.map((node) => node.hash),
+				() =>
+					this.deleteManyWithInvalidation(from, {
+						...options,
+						hashMutationLockOwner,
+					}),
+			);
+		return this.properties.nativeGraph
+			? this.withHashMutationLocks(
+					hashes,
+					(owner) => run(owner),
+					options?.hashMutationLockOwner,
+				)
+			: run();
 	}
 
 	private deleteManyWithInvalidation(
 		from: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): MaybePromise<ShallowEntry[]> {
 		if (from.length === 1) {
 			return this.deleteSingleMaybe(from[0]!, options);
@@ -2374,7 +3701,7 @@ export class EntryIndex<T> {
 		for (const node of nodes) {
 			const pending = this.getPendingIndexWrite(node.hash);
 			if (pending) {
-				this.pendingIndexWrites.delete(node.hash);
+				this.deletePendingIndexWrite(node.hash);
 				deletedByHash.set(node.hash, pending);
 				storeHashes.push(node.hash);
 			} else {
@@ -2424,7 +3751,7 @@ export class EntryIndex<T> {
 
 	consumeNativeTrimmedEntriesMaybe(
 		from: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): MaybePromise<ShallowEntry[]> {
 		if (from.length === 0) {
 			return [];
@@ -2445,7 +3772,7 @@ export class EntryIndex<T> {
 
 	consumeNativeTrimmedEntryHashesMaybe(
 		hashes: string[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): MaybePromise<ShallowEntry[]> {
 		if (hashes.length === 0) {
 			return [];
@@ -2466,7 +3793,7 @@ export class EntryIndex<T> {
 
 	consumeNativeTrimmedEntryHashesNoReturnMaybe(
 		hashes: string[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): MaybePromise<boolean> | undefined {
 		if (
 			!options?.skipNextHeadUpdates ||
@@ -2475,14 +3802,38 @@ export class EntryIndex<T> {
 		) {
 			return undefined;
 		}
-		return this.withCacheInvalidation(hashes, () =>
-			this.consumeNativeTrimmedEntryHashesNoReturnWithInvalidation(hashes),
-		);
+		const run = (hashMutationLockOwner?: EntryIndexHashMutationLockOwner) =>
+			this.withCacheInvalidation(hashes, () =>
+				this.consumeNativeTrimmedEntryHashesNoReturnWithInvalidation(hashes, {
+					...options,
+					hashMutationLockOwner,
+				}),
+			);
+		if (options.nativeCommittedAppendFactsTransaction) {
+			return run(
+				options.nativeCommittedAppendFactsTransaction.hashMutationLockOwner,
+			);
+		}
+		return this.properties.nativeGraph
+			? this.withHashMutationLocks(
+					hashes,
+					(owner) => run(owner),
+					options.hashMutationLockOwner,
+				)
+			: run();
 	}
 
 	private consumeNativeTrimmedEntryHashesNoReturnWithInvalidation(
 		hashes: string[],
+		options: NativeTrimConsumeOptions,
 	): MaybePromise<boolean> {
+		if (options.nativeCommittedAppendFactsTransaction) {
+			return this.consumeNativeTrimmedEntriesInTransaction(
+				hashes,
+				undefined,
+				options,
+			).then(() => true);
+		}
 		const indexedHashes: string[] = [];
 		let pendingDeleted = 0;
 		const seen = new Set<string>();
@@ -2491,16 +3842,33 @@ export class EntryIndex<T> {
 				continue;
 			}
 			seen.add(hash);
-			if (this.pendingIndexWrites.delete(hash)) {
+			if (this.deletePendingIndexWrite(hash)) {
 				pendingDeleted++;
 			} else {
 				indexedHashes.push(hash);
 			}
 		}
 
-		const finish = (indexedDeleted: number) => {
-			this._length -= pendingDeleted + indexedDeleted;
-			return true;
+		const finish = (indexedDeleted: number): MaybePromise<boolean> => {
+			const afterNativeDeleteMirror = () => {
+				this._length -= pendingDeleted + indexedDeleted;
+				return true;
+			};
+			const store = this.properties.store;
+			if (
+				options.nativeBlocksDeleted === true &&
+				hasNativeDeleteMirror(store)
+			) {
+				return mapMaybePromise(
+					mirrorNativeDelete(
+						store,
+						[...seen],
+						options.nativeDeleteCleanupToken,
+					),
+					afterNativeDeleteMirror,
+				);
+			}
+			return afterNativeDeleteMirror();
 		};
 		if (indexedHashes.length === 0) {
 			return finish(0);
@@ -2531,7 +3899,7 @@ export class EntryIndex<T> {
 
 	private async consumeNativeTrimmedEntryHashesNoReturnByQuery(
 		indexedHashes: string[],
-		finish: (indexedDeleted: number) => boolean,
+		finish: (indexedDeleted: number) => MaybePromise<boolean>,
 	): Promise<boolean> {
 		const batchSize = 64;
 		let deletedCount = 0;
@@ -2547,25 +3915,50 @@ export class EntryIndex<T> {
 
 	private consumeNativeTrimmedEntryNodesMaybe(
 		nodes: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): MaybePromise<ShallowEntry[]> {
-		return this.withCacheInvalidation(
-			nodes.map((node) => node.hash),
-			() => this.consumeNativeTrimmedEntryNodesWithInvalidation(nodes, options),
-		);
+		const hashes = nodes.flatMap((node) => [node.hash, ...node.meta.next]);
+		const run = (hashMutationLockOwner?: EntryIndexHashMutationLockOwner) =>
+			this.withCacheInvalidation(
+				nodes.map((node) => node.hash),
+				() =>
+					this.consumeNativeTrimmedEntryNodesWithInvalidation(nodes, {
+						...options,
+						hashMutationLockOwner,
+					}),
+			);
+		if (options?.nativeCommittedAppendFactsTransaction) {
+			return run(
+				options.nativeCommittedAppendFactsTransaction.hashMutationLockOwner,
+			);
+		}
+		return this.properties.nativeGraph
+			? this.withHashMutationLocks(
+					hashes,
+					(owner) => run(owner),
+					options?.hashMutationLockOwner,
+				)
+			: run();
 	}
 
 	private consumeNativeTrimmedEntryNodesWithInvalidation(
 		nodes: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): MaybePromise<ShallowEntry[]> {
+		if (options?.nativeCommittedAppendFactsTransaction) {
+			return this.consumeNativeTrimmedEntriesInTransaction(
+				nodes.map((node) => node.hash),
+				new Map(nodes.map((node) => [node.hash, node])),
+				options,
+			);
+		}
 		const indexedByHash = new Map(nodes.map((node) => [node.hash, node]));
 		const deletedByHash = new Map<string, ShallowEntry>();
 		const indexedHashes: string[] = [];
 		for (const node of nodes) {
 			const pending = this.getPendingIndexWrite(node.hash);
 			if (pending) {
-				this.pendingIndexWrites.delete(node.hash);
+				this.deletePendingIndexWrite(node.hash);
 				deletedByHash.set(node.hash, pending);
 			} else {
 				indexedHashes.push(node.hash);
@@ -2608,13 +4001,68 @@ export class EntryIndex<T> {
 		return finish();
 	}
 
+	private async consumeNativeTrimmedEntriesInTransaction(
+		hashes: string[],
+		nodesByHash: Map<string, ShallowEntry> | undefined,
+		options: NativeTrimConsumeOptions,
+	): Promise<ShallowEntry[]> {
+		const transaction = options.nativeCommittedAppendFactsTransaction;
+		if (!transaction) {
+			throw new Error("Missing native append-facts transaction");
+		}
+		if (transaction.state !== "open") {
+			throw new Error("Native append-facts transaction is not open");
+		}
+		const uniqueHashes = [...new Set(hashes.filter(Boolean))];
+		this.reserveNativeCommittedAppendFactsHashLocks(transaction, uniqueHashes);
+		await transaction.hashLocksReady;
+		this.throwIfNativeCommittedAppendFactsRollbackFailed();
+
+		const operationRows: NativeCommittedAppendFactsTrimTransactionRow[] = [];
+		const removed: ShallowEntry[] = [];
+		for (const hash of uniqueHashes) {
+			const previousPending = this.pendingIndexWrites.get(hash);
+			const previousGeneration = this.pendingIndexWriteGenerations.get(hash);
+			const previousIndex = (await this.properties.index.get(toId(hash)))
+				?.value;
+			const row: NativeCommittedAppendFactsTrimTransactionRow = {
+				hash,
+				previousPending,
+				previousGeneration,
+				previousIndex,
+				pendingRemoved: false,
+				indexDeleteAttempted: false,
+				lengthDecremented: false,
+			};
+			transaction.trimRows.push(row);
+			operationRows.push(row);
+			if (previousPending) {
+				removed.push(this.materializePendingIndexWrite(hash, previousPending));
+			} else if (previousIndex) {
+				removed.push(previousIndex);
+			} else if (nodesByHash?.has(hash)) {
+				// A native graph may have removed the durable row before returning its
+				// trim set. The supplied node is useful to callers, but it must not
+				// affect length unless this transaction owned an index fact.
+				removed.push(nodesByHash.get(hash)!);
+			}
+		}
+
+		transaction.trimBatches.push({
+			rows: operationRows,
+			nativeBlocksDeleted: options.nativeBlocksDeleted === true,
+			nativeDeleteCleanupToken: options.nativeDeleteCleanupToken,
+		});
+		return removed;
+	}
+
 	private deleteSingleMaybe(
 		node: ShallowEntry,
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): MaybePromise<ShallowEntry[]> {
 		const pending = this.getPendingIndexWrite(node.hash);
 		if (pending) {
-			this.pendingIndexWrites.delete(node.hash);
+			this.deletePendingIndexWrite(node.hash);
 			return this.finishDeleteSingle(pending, options);
 		}
 
@@ -2641,14 +4089,18 @@ export class EntryIndex<T> {
 
 	private finishDeleteSingle(
 		node: ShallowEntry,
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): MaybePromise<ShallowEntry[]> {
 		const afterStoreDelete = (): MaybePromise<ShallowEntry[]> => {
 			this._length--;
 			this.properties.nativeGraph?.graph.delete(node.hash);
 			if (!options?.skipNextHeadUpdates && node.meta.type !== EntryType.CUT) {
 				return mapMaybePromise(
-					this.privateUpdateNextHeadHashes(node.meta.next, true),
+					this.privateUpdateNextHeadHashes(
+						node.meta.next,
+						true,
+						options?.hashMutationLockOwner,
+					),
 					() => [node],
 				);
 			}
@@ -2666,7 +4118,7 @@ export class EntryIndex<T> {
 		deletedByHash: Map<string, ShallowEntry>,
 		nodes: ShallowEntry[],
 		storeHashes: string[],
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): Promise<ShallowEntry[]> {
 		const batchSize = 64;
 		for (let i = 0; i < indexedHashes.length; i += batchSize) {
@@ -2692,7 +4144,7 @@ export class EntryIndex<T> {
 		indexedByHash: Map<string, ShallowEntry>,
 		deletedByHash: Map<string, ShallowEntry>,
 		nodes: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): Promise<ShallowEntry[]> {
 		const batchSize = 64;
 		for (let i = 0; i < indexedHashes.length; i += batchSize) {
@@ -2719,16 +4171,16 @@ export class EntryIndex<T> {
 	private finishConsumeNativeTrimmedEntries(
 		deletedByHash: Map<string, ShallowEntry>,
 		nodes: ShallowEntry[],
-		options?: { skipNextHeadUpdates?: boolean; deleteBlocks?: boolean },
+		options?: NativeTrimConsumeOptions,
 	): MaybePromise<ShallowEntry[]> {
 		const deleted = nodes
 			.map((node) => deletedByHash.get(node.hash))
 			.filter((node): node is ShallowEntry => !!node);
-		if (deleted.length === 0) {
-			return [];
-		}
 
 		const afterStoreDelete = () => {
+			if (deleted.length === 0) {
+				return [];
+			}
 			this._length -= deleted.length;
 			if (!options?.skipNextHeadUpdates) {
 				const deletedNexts: string[] = [];
@@ -2738,21 +4190,35 @@ export class EntryIndex<T> {
 					}
 				}
 				return mapMaybePromise(
-					this.privateUpdateNextHeadHashes(deletedNexts, true),
+					this.privateUpdateNextHeadHashes(
+						deletedNexts,
+						true,
+						options?.hashMutationLockOwner,
+					),
 					() => deleted,
 				);
 			}
 			return deleted;
 		};
 
+		const store = this.properties.store;
 		if (options?.deleteBlocks) {
-			const store = this.properties.store;
 			const hashes = deleted.map((node) => node.hash);
 			const deleteResult =
 				hasRmMany(store) && store.rmMany
 					? store.rmMany(hashes)
 					: Promise.all(hashes.map((hash) => store.rm(hash))).then(() => {});
 			return mapMaybePromise(deleteResult, afterStoreDelete);
+		}
+		if (options?.nativeBlocksDeleted === true && hasNativeDeleteMirror(store)) {
+			return mapMaybePromise(
+				mirrorNativeDelete(
+					store,
+					nodes.map((node) => node.hash),
+					options.nativeDeleteCleanupToken,
+				),
+				afterStoreDelete,
+			);
 		}
 		return afterStoreDelete();
 	}
@@ -2761,7 +4227,7 @@ export class EntryIndex<T> {
 		deletedByHash: Map<string, ShallowEntry>,
 		nodes: ShallowEntry[],
 		storeHashes: string[],
-		options?: { skipNextHeadUpdates?: boolean },
+		options?: EntryIndexDeleteOptions,
 	): MaybePromise<ShallowEntry[]> {
 		const deleted = nodes
 			.map((node) => deletedByHash.get(node.hash))
@@ -2789,7 +4255,11 @@ export class EntryIndex<T> {
 					}
 				}
 				return mapMaybePromise(
-					this.privateUpdateNextHeadHashes(deletedNexts, true),
+					this.privateUpdateNextHeadHashes(
+						deletedNexts,
+						true,
+						options?.hashMutationLockOwner,
+					),
 					() => deleted,
 				);
 			}
@@ -2848,6 +4318,40 @@ export class EntryIndex<T> {
 		return entries.map((entry) => this.nativeLogEntryToShallowEntry(entry));
 	}
 
+	/** Republish authoritative lower index facts without clearing concurrent rows. */
+	async restoreNativeGraphFromIndex() {
+		const graph = this.properties.nativeGraph?.graph;
+		if (!graph) {
+			return;
+		}
+		const iterator = this.properties.index.iterate(
+			{ query: [] },
+			{
+				shape: {
+					hash: true,
+					meta: { clock: true, gid: true, next: true, type: true },
+					payloadSize: true,
+					head: true,
+				},
+			},
+		);
+		try {
+			while (!iterator.done()) {
+				const results = await iterator.next(NATIVE_GRAPH_REBUILD_BATCH_SIZE);
+				for (const result of results) {
+					graph.put(toNativeLogEntry(result.value));
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+		for (const [hash, pending] of this.pendingIndexWrites) {
+			graph.put(
+				toNativeLogEntry(this.materializePendingIndexWrite(hash, pending)),
+			);
+		}
+	}
+
 	async getMemoryUsage() {
 		if (this.properties.nativeGraph) {
 			return this.properties.nativeGraph.graph.payloadSizeSum();
@@ -2867,20 +4371,43 @@ export class EntryIndex<T> {
 	private async privateUpdateNextHeadProperty(
 		from: ShallowEntry | Entry<any>,
 		isHead: boolean,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
 	) {
 		if (from.meta.type === EntryType.CUT) {
 			// if the next is a cut, we can't update it, since it's not in the index
 			return;
 		}
 
-		await this.privateUpdateNextHeadHashes(from.meta.next, isHead);
+		await this.privateUpdateNextHeadHashes(
+			from.meta.next,
+			isHead,
+			hashMutationLockOwner,
+		);
 	}
 
-	private async privateUpdateNextHeadHashes(nexts: string[], isHead: boolean) {
+	private async privateUpdateNextHeadHashes(
+		nexts: string[],
+		isHead: boolean,
+		hashMutationLockOwner?: EntryIndexHashMutationLockOwner,
+	) {
 		const hashes = [...new Set(nexts.filter(Boolean))];
 		if (hashes.length === 0) {
 			return;
 		}
+		if (this.properties.nativeGraph) {
+			return this.withHashMutationLocks(
+				hashes,
+				() => this.privateUpdateNextHeadHashesLocked(hashes, isHead),
+				hashMutationLockOwner,
+			);
+		}
+		return this.privateUpdateNextHeadHashesLocked(hashes, isHead);
+	}
+
+	private async privateUpdateNextHeadHashesLocked(
+		hashes: string[],
+		isHead: boolean,
+	) {
 		const existingNexts =
 			isHead && this.properties.nativeGraph
 				? this.properties.nativeGraph.graph.hasMany(hashes)
@@ -2938,22 +4465,83 @@ export class EntryIndex<T> {
 		}
 	}
 
+	/** Preserve block identities across indexer shutdown so close followed by drop
+	 * can still erase an ephemeral indexer's blocks after its database is gone. */
+	async retainBlockHashesForDrop() {
+		await this.flushPendingWrites();
+		const iterator = this.iterate([], undefined, false);
+		try {
+			while (!iterator.done()) {
+				const results = await iterator.next(100);
+				for (const result of results) {
+					this.retainedBlockHashesForDrop.add(result.hash);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
+	}
+
 	async clear() {
 		this.clearPendingIndexFlushTimer();
-		const hashes = new Set<string>(this.pendingIndexWrites.keys());
-		const iterator = this.iterate([], undefined, false);
-		while (!iterator.done()) {
-			const results = await iterator.next(100);
-			for (const result of results) {
-				hashes.add(result.hash);
-			}
+		if (this.clearIndexAmbiguousDropRestartPending) {
+			await this.properties.index.start();
+			this.clearIndexAmbiguousDropRestartPending = false;
+			// The prior drop rejected, so its effect is unknown. Re-run the full
+			// idempotent clear/drop sequence after reopening instead of assuming it
+			// applied.
 		}
-		this.pendingIndexWrites.clear();
+		if (this.clearIndexRestartPending) {
+			await this.properties.index.start();
+			this.clearIndexRestartPending = false;
+			this.properties.nativeGraph?.graph.clear();
+			this.cache.clear();
+			this._length = 0;
+			return;
+		}
+		const hashes = new Set<string>([
+			...this.retainedBlockHashesForDrop,
+			...this.pendingIndexWrites.keys(),
+		]);
+		const iterator = this.iterate([], undefined, false);
+		try {
+			while (!iterator.done()) {
+				const results = await iterator.next(100);
+				for (const result of results) {
+					hashes.add(result.hash);
+				}
+			}
+		} finally {
+			await iterator.close();
+		}
 		for (const hash of hashes) {
 			await this.properties.store.rm(hash);
 		}
-		await this.properties.index.drop();
+		this.retainedBlockHashesForDrop.clear();
+		// Keep pending-only rows discoverable until every block was erased. A
+		// failed rm can then retry the complete erase instead of leaking bytes.
+		this.pendingIndexWrites.clear();
+		this.pendingIndexWriteGenerations.clear();
+		this.nativeCommittedAppendFactsOwners.clear();
+		try {
+			await this.properties.index.drop();
+		} catch (error) {
+			// A backend can reject after applying drop. Re-open it before surfacing
+			// the failure so a retry can deterministically finish the clear stage.
+			try {
+				await this.properties.index.start();
+			} catch (restartError) {
+				this.clearIndexAmbiguousDropRestartPending = true;
+				throw new AggregateError(
+					[error, restartError],
+					"Entry index drop and restart both failed",
+				);
+			}
+			throw error;
+		}
+		this.clearIndexRestartPending = true;
 		await this.properties.index.start();
+		this.clearIndexRestartPending = false;
 		this.properties.nativeGraph?.graph.clear();
 		this.cache.clear();
 		this._length = 0;
@@ -2968,7 +4556,10 @@ export class EntryIndex<T> {
 
 	async init() {
 		this.clearPendingIndexFlushTimer();
+		this.clearIndexRestartPending = false;
 		this.pendingIndexWrites.clear();
+		this.pendingIndexWriteGenerations.clear();
+		this.nativeCommittedAppendFactsOwners.clear();
 		this._length = await this.properties.index.getSize();
 		await this.rebuildNativeGraph();
 		this.initialied = true;
