@@ -1,5 +1,11 @@
 # Changelog
 
+## 13.2.9
+
+### Patch Changes
+
+- [#1062](https://github.com/dao-xyz/peerbit/pull/1062) [`4cd90bf`](https://github.com/dao-xyz/peerbit/commit/4cd90bf66218c48d59b13e89e1861268bc33291d) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Drain admitted pubsub subscription callbacks and abort generation-owned replication-info sends before terminal teardown. Old request snapshots can no longer publish after reopen, and subscription plus legacy-role replies reuse one replication snapshot.
+
 ## 13.2.8
 
 ### Patch Changes
