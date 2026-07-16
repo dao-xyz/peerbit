@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.1.4
+
+### Patch Changes
+
+- [#1070](https://github.com/dao-xyz/peerbit/pull/1070) [`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Declare `multiformats` and `uint8arrays` as runtime dependencies so clean and nested package installs can import the published crypto package without relying on dependency hoisting. Remove the unused runtime dependency on `@peerbit/cache`.
+
 ## 3.1.3
 
 ### Patch Changes

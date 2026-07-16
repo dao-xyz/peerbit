@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.2.50
+
+### Patch Changes
+
+- Updated dependencies [[`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b)]:
+  - @peerbit/crypto@3.1.4
+  - @peerbit/log@6.2.7
+  - @peerbit/indexer-interface@3.0.8
+
 ## 3.2.49
 
 ### Patch Changes

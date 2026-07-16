@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.3.8
+
+### Patch Changes
+
+- Updated dependencies [[`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b)]:
+  - @peerbit/crypto@3.1.4
+  - @peerbit/program@6.0.37
+  - @peerbit/blocks@4.2.4
+  - @peerbit/pubsub@5.3.2
+  - @peerbit/stream@5.1.2
+  - @peerbit/stream-interface@6.0.13
+  - @peerbit/any-store@2.2.12
+  - @peerbit/any-store-opfs@1.1.10
+  - @peerbit/indexer-interface@3.0.8
+  - @peerbit/indexer-sqlite3@3.0.11
+  - @peerbit/keychain@1.2.12
+  - @peerbit/indexer-simple@1.2.12
+
 ## 5.3.7
 
 ### Patch Changes

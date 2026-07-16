@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.49
+
+### Patch Changes
+
+- Updated dependencies [[`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b)]:
+  - @peerbit/crypto@3.1.4
+  - peerbit@5.3.8
+
 ## 1.0.48
 
 ### Patch Changes
