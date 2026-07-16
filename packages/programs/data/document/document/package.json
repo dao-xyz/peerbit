@@ -79,6 +79,7 @@
 		"@peerbit/rpc": "workspace:*",
 		"@peerbit/shared-log": "workspace:*",
 		"@peerbit/stream-interface": "workspace:*",
+		"@peerbit/time": "workspace:*",
 		"p-defer": "^4.0.0",
 		"uint8arrays": "^5.1.0"
 	},
@@ -91,7 +92,6 @@
 		"@peerbit/log-rust": "workspace:*",
 		"@peerbit/native-backbone": "workspace:*",
 		"@peerbit/test-utils": "workspace:*",
-		"@peerbit/time": "workspace:*",
 		"@types/pidusage": "^2.0.5",
 		"peerbit": "workspace:*",
 		"pidusage": "^4.0.1",

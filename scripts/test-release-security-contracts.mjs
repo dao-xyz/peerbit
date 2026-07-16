@@ -14,6 +14,22 @@ const readRepositoryFile = (path) =>
 
 const packageManifest = JSON.parse(await readRepositoryFile("package.json"));
 const scripts = packageManifest.scripts;
+const documentManifest = JSON.parse(
+	await readRepositoryFile(
+		"packages/programs/data/document/document/package.json",
+	),
+);
+
+assert.equal(
+	documentManifest.dependencies?.["@peerbit/time"],
+	"workspace:*",
+	"@peerbit/document must own its runtime @peerbit/time import",
+);
+assert.equal(
+	documentManifest.devDependencies?.["@peerbit/time"],
+	undefined,
+	"@peerbit/document must not hide @peerbit/time in devDependencies",
+);
 
 assert.equal(
 	scripts["release:security-gate"],

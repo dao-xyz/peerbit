@@ -142,6 +142,23 @@ try {
 			"secure-dependency-lines.md",
 		),
 	});
+	const packedDocument = packedPackages.get("@peerbit/document");
+	const workspaceTime = workspaceByName.get("@peerbit/time");
+	assert(
+		packedDocument,
+		"@peerbit/document must be included in the package smoke",
+	);
+	assert(workspaceTime, "@peerbit/time must be included in the package smoke");
+	assert.equal(
+		packedDocument.manifest.dependencies?.["@peerbit/time"],
+		workspaceTime.manifest.version,
+		"packed @peerbit/document must retain its exact runtime @peerbit/time edge",
+	);
+	assert.equal(
+		packedDocument.manifest.devDependencies?.["@peerbit/time"],
+		undefined,
+		"packed @peerbit/document must not hide @peerbit/time in devDependencies",
+	);
 	const isolatedCryptoSmoke = run(
 		process.execPath,
 		[
@@ -197,6 +214,9 @@ try {
 			"await store.put('key', new Uint8Array([1, 2, 3]));",
 			"assert.deepEqual(await store.get('key'), new Uint8Array([1, 2, 3]));",
 			"await store.close();",
+			"",
+			"const { Documents } = await import('@peerbit/document');",
+			"assert.equal(typeof Documents, 'function');",
 			"",
 			"const { getPort } = await import('@peerbit/server');",
 			"assert.equal(getPort('http:'), 8082);",
