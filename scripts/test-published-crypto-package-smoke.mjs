@@ -42,7 +42,7 @@ const repositoryManifest = JSON.parse(
 );
 assert.equal(
 	repositoryManifest.engines?.node,
-	">=18",
+	">=22",
 	"the isolated crypto smoke must track the repository's advertised Node floor",
 );
 const cryptoManifest = JSON.parse(

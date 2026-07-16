@@ -115,10 +115,14 @@ jobs:
           retention-days: 1
 
   security_dependency_contracts:
-    name: Security Dependency Contracts
+    name: Security Dependency Contracts (Node v${{ matrix.node-version }})
     needs: build_workspace
     runs-on: ubuntu-22.04
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22.x, 24.x]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -126,7 +130,7 @@ jobs:
           run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.x
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install exact dependency graph

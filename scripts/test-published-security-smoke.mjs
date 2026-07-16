@@ -144,6 +144,18 @@ try {
 	});
 	const packedDocument = packedPackages.get("@peerbit/document");
 	const workspaceTime = workspaceByName.get("@peerbit/time");
+	for (const packageName of ["peerbit", "@peerbit/stream"]) {
+		const packedPackage = packedPackages.get(packageName);
+		assert(
+			packedPackage,
+			`${packageName} must be included in the package smoke`,
+		);
+		assert.equal(
+			packedPackage.manifest.engines?.node,
+			">=22",
+			`${packageName}: packed Node engine must match its runtime dependency floor`,
+		);
+	}
 	assert(
 		packedDocument,
 		"@peerbit/document must be included in the package smoke",
@@ -242,6 +254,7 @@ try {
 
 	run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], {
 		cwd: consumerDirectory,
+		env: { NPM_CONFIG_ENGINE_STRICT: "true" },
 		status: 0,
 		timeout: 900_000,
 	});

@@ -60,7 +60,7 @@
 		"test:cov": "aegir test -t node --cov"
 	},
 	"engines": {
-		"node": ">=16.15.1"
+		"node": ">=22"
 	},
 	"repository": {
 		"type": "git",
