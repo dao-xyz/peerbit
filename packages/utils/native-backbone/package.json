@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/native-backbone",
-	"version": "0.1.4",
+	"version": "0.2.0",
 	"description": "Native transaction backbone for Peerbit",
 	"sideEffects": [
 		"./dist/wasm/native_backbone.js"

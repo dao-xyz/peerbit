@@ -1,5 +1,20 @@
 # @peerbit/any-store-rust
 
+## 0.1.2
+
+### Patch Changes
+
+- [#1040](https://github.com/dao-xyz/peerbit/pull/1040) [`2e145c3`](https://github.com/dao-xyz/peerbit/commit/2e145c316ccc275006b5daa160f2165ca1c9f1a6) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Avoid rewriting the complete native durable block snapshot on every program close. Rust-backed sublevels can now defer close-time compaction below an explicit journal threshold while preserving crash-safe WAL recovery, generic store defaults, and immutable cached-sublevel policies.
+
+- [#1063](https://github.com/dao-xyz/peerbit/pull/1063) [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make Node and OPFS journal appends crash-safe across short writes by rolling rejected records back to their original offset and poisoning the open store after journal failure until a verified reopen. Strict mutations already queued behind the failed append now reject with the same sticky first error before changing memory or the WAL.
+
+  Repair torn journals by durably truncating only their verified prefix instead of implicitly rewriting a checkpoint. Strict stores now remain WAL-backed even when close compaction or a threshold is forced, and OPFS checkpoint writes loop until every byte is written before publishing their manifest.
+
+  Only a structurally incomplete final frame is treated as a recoverable crash tail. A complete frame with invalid magic, checksum, or payload now fails closed without applying a partial replay or rewriting the WAL, and failed-open persistence handles are closed before a retry.
+
+- Updated dependencies [[`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33)]:
+  - @peerbit/any-store-interface@1.1.1
+
 ## 0.1.1
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # @peerbit/network-rust
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [[`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329)]:
+  - @peerbit/time@3.0.1
+
 ## 0.1.1
 
 ### Patch Changes

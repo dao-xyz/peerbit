@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.1.6
+
+### Patch Changes
+
+- Updated dependencies [[`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33)]:
+  - @peerbit/crypto@3.1.3
+  - @peerbit/stream-interface@6.0.12
+
 ## 5.1.5
 
 ### Patch Changes

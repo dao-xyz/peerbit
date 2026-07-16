@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.10
+
+### Patch Changes
+
+- Updated dependencies [[`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329)]:
+  - @peerbit/indexer-interface@3.0.7
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+
 ## 0.2.9
 
 ### Patch Changes

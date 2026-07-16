@@ -1,5 +1,71 @@
 # Changelog
 
+## 13.2.7
+
+### Patch Changes
+
+- [#1063](https://github.com/dao-xyz/peerbit/pull/1063) [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Require native local-append acknowledgements to wait for their durable block mirror. Durable mirror failures now raise a typed, unsafe-to-retry error and poison further mutations on that program instance.
+
+  Propagate native trim deletions to the durable mirror with staged tombstones and same-CID generation guards. Failed old-block deletion remains retryable cleanup debt so a fully durable replacement can publish one coherent new index/head state, while ownership-aware compensation preserves acknowledged, restored, shared, and otherwise uncertain content-addressed bytes. Retained orphans remain part of physical store size and therefore continue to count toward hard storage budgets until cleanup succeeds.
+
+  Publish strict native lower-index facts through an operation-scoped generation token before consuming trim results. An index write failure now retracts only that append, cancels its deferred publication, and restores the authoritative graph, document, and coordinate state without erasing concurrent same-CID facts.
+
+  Serialize lower-log close and drop with native append finalizers, retry incomplete rollback/index teardown stages, and erase blocks only after acknowledgements or compensation settle. Uncontended native hash mutation leases retain the synchronous commit-only fast path without recursive public bookkeeping.
+
+  Close and drop now fail before changing lifecycle state while an internal or user mutation callback is still running; callers must retry after that callback completes.
+
+  Advertise whether an indexer preserves rows across stop/start so ordinary close avoids duplicating every block hash for persistent or data-preserving backends, while destructive and unknown backends retain the exact drop set before stopping.
+
+  Persist strict native recovery intent in alternating checksummed generations so an interrupted journal write cannot erase the last recoverable state. A committed lower marker remains authoritative, later mutations are blocked until failed intent retirement is recovered, and committed trim block cleanup resumes from the durable intent after restart.
+
+  Make native coordinate, document, and signer acknowledgements wait for an explicit physical durability barrier, retain pending records after failures, reject torn or corrupt recovered WAL tails, and fail closed after ambiguous or short appends. Node barriers require `FileHandle.sync`; OPFS barriers require sync-access `flush`; buffered/custom adapters without the capability fail before a durable acknowledgement.
+
+  Native persistence drop is now tombstone-backed and resumable, with explicit underlying-removal and terminal-drop capabilities checked before lower state is mutated. Hydration, recovery, validation, and native loads share one lifecycle queue so close waits and drop rejects before erasure. Ordinary custom close is never invoked after terminal drop, and unsafe custom compaction thresholds are rejected even on memory-only nodes. Built-in snapshot compaction remains disabled until it can use a crash-atomic generation protocol.
+
+- [#1040](https://github.com/dao-xyz/peerbit/pull/1040) [`2e145c3`](https://github.com/dao-xyz/peerbit/commit/2e145c316ccc275006b5daa160f2165ca1c9f1a6) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Avoid rewriting the complete native durable block snapshot on every program close. Rust-backed sublevels can now defer close-time compaction below an explicit journal threshold while preserving crash-safe WAL recovery, generic store defaults, and immutable cached-sublevel policies.
+
+- [#1041](https://github.com/dao-xyz/peerbit/pull/1041) [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Retry timed-out replication announcements from an authoritative current-state snapshot while preserving explicit caller errors, adaptive scheduling, and shutdown ordering. Make fixed-interval debouncer shutdown terminal so queued work cannot restart after close.
+
+- [#1052](https://github.com/dao-xyz/peerbit/pull/1052) [`8f14ebb`](https://github.com/dao-xyz/peerbit/commit/8f14ebbbb2ee529317e27e1f810d5541bb17cf05) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Route new entries to strict range replicators when they intersect the entry coordinates, even when strict ranges are excluded from the full-replica fallback. This restores live document-stream delivery without broadcasting each append to every peer.
+
+- [#1067](https://github.com/dao-xyz/peerbit/pull/1067) [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make program graph open, close, drop, and handler stop race-safe and retryable
+  after partial failures; preserve parent/child ownership through rollback; fence
+  concurrent initialization and teardown; and retain cleanup ownership until all
+  terminal work completes. Lifecycle `onClose` and `onDrop` callbacks now run after
+  base child teardown and the closed-state transition, are awaited, and retry when
+  they reject; subclass cleanup performed after awaiting `super.close()` or
+  `super.drop()` can still follow those callbacks. Immediate reentry into the
+  owning handler stop or current terminal method now rejects, while synchronous
+  delegation to a captured pre-replacement wrapper is unwrapped safely only for the
+  same operation and owner. Cross-operation, changed-owner, and after-yield stale
+  wrapper cycles reject before mutation. Parent teardown also restores missing
+  inverse ownership edges and recognizes only validated stale-edge repair as
+  progress. After lifecycle code has yielded, it must schedule stop or terminal
+  work from its external owner rather than await its own teardown. SharedLog, RPC,
+  and StringIndex now preserve their resources for non-terminal owner releases and
+  invalid owners. RPC also becomes network-inert after a committed base close or
+  drop error and checkpoints subscription and listener cleanup for exact retry.
+  Interrupted native persistence drops can now resume their durable tombstone on
+  the same adapter generation. A markerless failed drop keeps ordinary native
+  persistence work fenced while still permitting destructive retry, and close
+  retries resume the first incomplete flush/store-close stage without flushing a
+  generation already admitted for drop.
+- Updated dependencies [[`643b045`](https://github.com/dao-xyz/peerbit/commit/643b045775bc166066a89ff2029e71e5c1263711), [`40b30f3`](https://github.com/dao-xyz/peerbit/commit/40b30f3df7fef918c0e091e31d8be044314d5444), [`d6d5990`](https://github.com/dao-xyz/peerbit/commit/d6d5990be931ebd46cd4b433b294bb93ce1f5f91), [`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329), [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197)]:
+  - @peerbit/pubsub@5.3.1
+  - @peerbit/rpc@6.1.4
+  - @peerbit/program@6.0.36
+  - @peerbit/log@6.2.6
+  - @peerbit/blocks@4.2.3
+  - @peerbit/indexer-interface@3.0.7
+  - @peerbit/indexer-sqlite3@3.0.10
+  - @peerbit/any-store@2.2.11
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+  - @peerbit/blocks-interface@2.1.1
+  - @peerbit/pubsub-interface@5.1.6
+  - @peerbit/stream-interface@6.0.12
+  - @peerbit/cache@3.1.0
+
 ## 13.2.6
 
 ### Patch Changes

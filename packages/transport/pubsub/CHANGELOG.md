@@ -1,5 +1,21 @@
 # Changelog
 
+## 5.3.1
+
+### Patch Changes
+
+- [#1044](https://github.com/dao-xyz/peerbit/pull/1044) [`643b045`](https://github.com/dao-xyz/peerbit/commit/643b045775bc166066a89ff2029e71e5c1263711) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reset peer connections when fanout KICK control delivery fails so removed children cannot retain a stale parent.
+
+- [#1043](https://github.com/dao-xyz/peerbit/pull/1043) [`40b30f3`](https://github.com/dao-xyz/peerbit/commit/40b30f3df7fef918c0e091e31d8be044314d5444) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Recover initial fanout joins when a direct root has not opened its shard yet or an apparently connected stream stops delivering control responses.
+
+- Updated dependencies [[`7f0805a`](https://github.com/dao-xyz/peerbit/commit/7f0805a523ddaa3bea7f0a11d4abb47e391997e9), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329)]:
+  - @peerbit/stream@5.1.1
+  - @peerbit/any-store-interface@1.1.1
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+  - @peerbit/pubsub-interface@5.1.6
+  - @peerbit/stream-interface@6.0.12
+
 ## 5.3.0
 
 ### Minor Changes
