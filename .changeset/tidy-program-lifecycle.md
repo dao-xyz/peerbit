@@ -1,5 +1,6 @@
 ---
 "@peerbit/program": patch
+"@peerbit/shared-log": patch
 "peerbit": patch
 ---
 

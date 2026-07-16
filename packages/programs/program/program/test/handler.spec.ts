@@ -2639,10 +2639,28 @@ describe(`shared`, () => {
 
 		expect(p1.nested.closed).to.be.false;
 		expect(p1.nested.address).to.exist;
+		expect(await client.services.blocks.has(p1.nested.address)).to.be.true;
 
 		await p1.close();
 		expect(p1.nested.closed).to.be.true;
 		expect(p1.closed).to.be.true;
+	});
+
+	it("reuses a persisted live child after its serialized value changes", async () => {
+		const handler = new ProgramHandler({ client });
+		const parent = await handler.open(new TestNestedProgram(470));
+		const child = await handler.open(new TestNestedProgram(471));
+		const address = child.address;
+		expect(await client.services.blocks.has(address)).to.be.true;
+
+		child.seed = 472;
+		expect(await handler.open(child, { parent, existing: "reuse" })).to.equal(
+			child,
+		);
+		expect(child.address).to.equal(address);
+		expect(child.parents).to.include(parent);
+
+		await handler.stop();
 	});
 
 	it("does not deadlock a reserved nested open behind an external waiter", async () => {

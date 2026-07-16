@@ -1475,9 +1475,10 @@ export class Handler<T extends Manageable<any>> {
 			// A program explicitly opened with a parent is a weak/addressable
 			// reference. Structural beforeOpen() may already have made the exact
 			// instance live without persisting its standalone block.
-			await existing.save(this.properties.client.services.blocks, {
-				skipOnAddress: false,
-			});
+			const blocks = this.properties.client.services.blocks;
+			if (!(await blocks.has(address))) {
+				await existing.save(blocks, { skipOnAddress: false });
+			}
 		} catch (error) {
 			const parentIndex = existing.parents?.lastIndexOf(parent) ?? -1;
 			if (parentIndex !== -1) existing.parents.splice(parentIndex, 1);

@@ -70,7 +70,12 @@ import type {
 	NativePeerbitBackbone,
 	NativeBackboneCoordinatePersistenceConfig as RuntimeNativeBackboneCoordinatePersistenceConfig,
 } from "@peerbit/native-backbone";
-import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
+import {
+	ClosedError,
+	Program,
+	type ProgramEvents,
+	TerminalOperationNotStartedError,
+} from "@peerbit/program";
 import {
 	FanoutChannel,
 	type FanoutProviderHandle,
@@ -14517,7 +14522,7 @@ export class SharedLog<
 				nativePersistence.dropIsTerminal !== true)
 		) {
 			// Reject before `super.drop()` can drop child programs or any lower index.
-			throw new Error(
+			throw new TerminalOperationNotStartedError(
 				"NativeBackbone coordinate persistence adapters must expose a terminal underlying drop capability and resumeDrop before SharedLog.drop() can erase their namespace",
 			);
 		}
