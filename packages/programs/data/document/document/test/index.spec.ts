@@ -11193,6 +11193,505 @@ describe("index", () => {
 				});
 
 				describe("v8+", () => {
+					const missingResponderTimeout = 1_000;
+					const setupMissingLaterPageResponder = async ({
+						throwOnMissing,
+						retryMissingResponses,
+					}: {
+						throwOnMissing: boolean;
+						retryMissingResponses: boolean;
+					}) => {
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{
+								args: {
+									replicate: true,
+								},
+							},
+						);
+
+						for (let i = 0; i < 3; i++) {
+							await stores[0].docs.put(
+								new Document({ id: `missing-later-page-${i}` }),
+							);
+						}
+
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{
+								args: {
+									replicate: false,
+								},
+							},
+						);
+
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const writerHash = stores[0].node.identity.publicKey.hashcode();
+						const requestSpy = sinon.spy(
+							stores[1].docs.index._query,
+							"request",
+						);
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+						const iterator = stores[1].docs.index.iterate(
+							{},
+							{
+								remote: {
+									from: [writerHash],
+									throwOnMissing,
+									retryMissingResponses,
+									timeout: missingResponderTimeout,
+								},
+							},
+						);
+
+						expect(await iterator.next(1)).to.have.length(1);
+						await stores[0].docs.index._query.close(stores[0].docs.index);
+
+						return { iterator, requestSpy, sendSpy, writerHash };
+					};
+
+					it("closes a directed remote iterator before its first response", async function () {
+						this.timeout(30_000);
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{ args: { replicate: true } },
+						);
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{ args: { replicate: false } },
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const writerHash = stores[0].node.identity.publicKey.hashcode();
+						await stores[0].docs.index._query.close(stores[0].docs.index);
+						const requestSpy = sinon.spy(
+							stores[1].docs.index._query,
+							"request",
+						);
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+						const iterator = stores[1].docs.index.iterate(
+							{},
+							{
+								local: false,
+								remote: {
+									from: [writerHash],
+									timeout: 5_000,
+								},
+							},
+						);
+						const nextResult = iterator.next(1).then(
+							() => undefined,
+							(error: unknown) => error,
+						);
+
+						let closed = false;
+						try {
+							await waitForResolved(
+								() =>
+									expect(
+										requestSpy
+											.getCalls()
+											.filter(
+												(call) => call.args[0] instanceof IterationRequest,
+											),
+									).to.have.length(1),
+								{ timeout: 5_000 },
+							);
+							const started = Date.now();
+							await iterator.close();
+							closed = true;
+							const failure = await nextResult;
+							expect(failure).to.be.instanceOf(Error);
+							expect(Date.now() - started).to.be.lessThan(2_000);
+							expect(
+								sendSpy
+									.getCalls()
+									.filter(
+										(call) => call.args[0] instanceof CloseIteratorRequest,
+									),
+							).to.have.length(1);
+						} finally {
+							if (!closed) {
+								await iterator.close();
+							}
+							requestSpy.restore();
+							sendSpy.restore();
+						}
+					});
+
+					it("closes a default-cover remote iterator before its response is introduced", async function () {
+						this.timeout(30_000);
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{ args: { replicate: true } },
+						);
+						for (let i = 0; i < 3; i++) {
+							await stores[0].docs.put(
+								new Document({ id: `default-cover-close-race-${i}` }),
+							);
+						}
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{ args: { replicate: false } },
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const responseReady = pDefer<void>();
+						const releaseResponse = pDefer<void>();
+						const requestFn = stores[1].docs.index._query.request.bind(
+							stores[1].docs.index._query,
+						);
+						let holdInitialResponse = true;
+						stores[1].docs.index._query.request = async (request, options) => {
+							const response = await requestFn(request, options);
+							if (holdInitialResponse && request instanceof IterationRequest) {
+								holdInitialResponse = false;
+								responseReady.resolve();
+								await releaseResponse.promise;
+							}
+							return response;
+						};
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+						const iterator = stores[1].docs.index.iterate(
+							{},
+							{
+								local: false,
+								remote: { timeout: 5_000 },
+							},
+						);
+						const nextResult = iterator.next(1).then(
+							() => undefined,
+							(error: unknown) => error,
+						);
+
+						try {
+							await responseReady.promise;
+							expect(stores[0].docs.index.countIteratorsInProgress).to.equal(1);
+
+							await iterator.close();
+							expect(
+								sendSpy
+									.getCalls()
+									.filter(
+										(call) => call.args[0] instanceof CloseIteratorRequest,
+									),
+							).to.have.length(1);
+							await waitForResolved(
+								() =>
+									expect(
+										stores[0].docs.index.countIteratorsInProgress,
+									).to.equal(0),
+								{ timeout: 5_000 },
+							);
+						} finally {
+							releaseResponse.resolve();
+							await nextResult;
+							await iterator.close();
+							stores[1].docs.index._query.request = requestFn;
+							sendSpy.restore();
+						}
+					});
+
+					it("does not close a remote iterator that drained successfully", async function () {
+						this.timeout(30_000);
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{ args: { replicate: true } },
+						);
+						await stores[0].docs.put(new Document({ id: "drained-remote" }));
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{ args: { replicate: false } },
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const writerHash = stores[0].node.identity.publicKey.hashcode();
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+						const iterator = stores[1].docs.index.iterate(
+							{},
+							{ local: false, remote: { from: [writerHash] } },
+						);
+						let closed = false;
+
+						try {
+							expect(await iterator.next(1)).to.have.length(1);
+							expect(stores[0].docs.index.countIteratorsInProgress).to.equal(0);
+							await iterator.close();
+							closed = true;
+							expect(
+								sendSpy
+									.getCalls()
+									.filter(
+										(call) => call.args[0] instanceof CloseIteratorRequest,
+									),
+							).to.have.length(0);
+						} finally {
+							if (!closed) {
+								await iterator.close();
+							}
+							sendSpy.restore();
+						}
+					});
+
+					it("closes remote state from implicit iterator consumers", async function () {
+						this.timeout(30_000);
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{ args: { replicate: true } },
+						);
+						for (let i = 0; i < 3; i++) {
+							await stores[0].docs.put(
+								new Document({ id: `implicit-close-${i}` }),
+							);
+						}
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{ args: { replicate: false } },
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const writerHash = stores[0].node.identity.publicKey.hashcode();
+						const remote = { from: [writerHash], timeout: 5_000 };
+						const expectRemoteClosed = () =>
+							waitForResolved(
+								() =>
+									expect(
+										stores[0].docs.index.countIteratorsInProgress,
+									).to.equal(0),
+								{ timeout: 5_000 },
+							);
+
+						const batchFailure = new Error("FAIL_IMPLICIT_SEARCH_BATCH");
+						let searchFailure: unknown;
+						try {
+							await stores[1].docs.index.search(
+								new IterationRequest({ fetch: 1 }),
+								{
+									local: false,
+									remote,
+									updates: {
+										merge: false,
+										onBatch: () => {
+											throw batchFailure;
+										},
+									},
+								},
+							);
+						} catch (error) {
+							searchFailure = error;
+						}
+						expect(searchFailure).to.equal(batchFailure);
+						await expectRemoteClosed();
+
+						const first = await stores[1].docs.index
+							.iterate({}, { local: false, remote })
+							.first();
+						expect(first).to.not.equal(undefined);
+						await expectRemoteClosed();
+
+						const all = await stores[1].docs.index
+							.iterate({}, { local: false, remote, closePolicy: "manual" })
+							.all();
+						expect(all).to.have.length(3);
+						await expectRemoteClosed();
+
+						let yielded = 0;
+						for await (const _entry of stores[1].docs.index.iterate(
+							{},
+							{ local: false, remote, closePolicy: "manual" },
+						)) {
+							yielded++;
+							break;
+						}
+						expect(yielded).to.equal(1);
+						await expectRemoteClosed();
+					});
+
+					it("sends remote iterator cleanup after the outer signal aborts", async function () {
+						this.timeout(30_000);
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{ args: { replicate: true } },
+						);
+						for (let i = 0; i < 3; i++) {
+							await stores[0].docs.put(
+								new Document({ id: `outer-abort-close-${i}` }),
+							);
+						}
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{ args: { replicate: false } },
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const writerHash = stores[0].node.identity.publicKey.hashcode();
+						const outerController = new AbortController();
+						const remoteController = new AbortController();
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+						const iterator = stores[1].docs.index.iterate(
+							{},
+							{
+								signal: outerController.signal,
+								remote: {
+									from: [writerHash],
+									signal: remoteController.signal,
+									timeout: 5_000,
+								},
+							},
+						);
+
+						try {
+							expect(await iterator.next(1)).to.have.length(1);
+							expect(stores[0].docs.index.countIteratorsInProgress).to.equal(1);
+
+							remoteController.abort(new Error("REMOTE_REQUEST_ABORT"));
+							outerController.abort(new Error("OUTER_ITERATOR_ABORT"));
+							let closeCall: ReturnType<typeof sendSpy.getCall> | undefined;
+							await waitForResolved(
+								() => {
+									closeCall = sendSpy
+										.getCalls()
+										.find(
+											(call) => call.args[0] instanceof CloseIteratorRequest,
+										);
+									expect(closeCall).to.not.equal(undefined);
+								},
+								{ timeout: 5_000 },
+							);
+							const closeSignal = closeCall!.args[1]?.signal as
+								| AbortSignal
+								| undefined;
+							expect(closeSignal).to.not.equal(outerController.signal);
+							expect(closeSignal).to.not.equal(remoteController.signal);
+							expect(closeSignal?.aborted).to.equal(false);
+							await waitForResolved(
+								() =>
+									expect(
+										stores[0].docs.index.countIteratorsInProgress,
+									).to.equal(0),
+								{ timeout: 5_000 },
+							);
+						} finally {
+							await iterator.close();
+							sendSpy.restore();
+						}
+					});
+
+					it("detaches the outer abort listener after iterator cleanup", async function () {
+						this.timeout(30_000);
+						stores[0] = await session.peers[0].open<TestStore>(
+							new TestStore({ docs: new Documents() }),
+							{ args: { replicate: true } },
+						);
+						for (let i = 0; i < 3; i++) {
+							await stores[0].docs.put(
+								new Document({ id: `outer-listener-cleanup-${i}` }),
+							);
+						}
+						stores[1] = await session.peers[1].open<TestStore>(
+							stores[0].clone(),
+							{ args: { replicate: false } },
+						);
+						await stores[1].docs.index.waitFor(
+							stores[0].node.identity.publicKey,
+						);
+
+						const writerHash = stores[0].node.identity.publicKey.hashcode();
+						const outerController = new AbortController();
+						const addListenerSpy = sinon.spy(
+							outerController.signal,
+							"addEventListener",
+						);
+						const removeListenerSpy = sinon.spy(
+							outerController.signal,
+							"removeEventListener",
+						);
+						const sendSpy = sinon.spy(stores[1].docs.index._query, "send");
+						const iterator = stores[1].docs.index.iterate(
+							{},
+							{
+								signal: outerController.signal,
+								local: false,
+								remote: { from: [writerHash], timeout: 5_000 },
+							},
+						);
+
+						try {
+							expect(await iterator.next(1)).to.have.length(1);
+							const abortRegistration = addListenerSpy
+								.getCalls()
+								.find((call) => call.args[0] === "abort");
+							expect(abortRegistration).to.not.equal(undefined);
+
+							await iterator.close();
+							await iterator.close();
+							expect(
+								removeListenerSpy.calledWith(
+									"abort",
+									abortRegistration!.args[1],
+								),
+							).to.equal(true);
+							const closeCalls = sendSpy
+								.getCalls()
+								.filter(
+									(call) => call.args[0] instanceof CloseIteratorRequest,
+								).length;
+							expect(closeCalls).to.equal(1);
+
+							outerController.abort(new Error("ABORT_AFTER_ITERATOR_CLOSE"));
+							await delay(10);
+							expect(
+								sendSpy
+									.getCalls()
+									.filter(
+										(call) => call.args[0] instanceof CloseIteratorRequest,
+									),
+							).to.have.length(closeCalls);
+
+							const alreadyAborted = new AbortController();
+							alreadyAborted.abort(new Error("ALREADY_ABORTED_ITERATOR"));
+							const abortedRemoveSpy = sinon.spy(
+								alreadyAborted.signal,
+								"removeEventListener",
+							);
+							try {
+								const abortedIterator = stores[1].docs.index.iterate(
+									{},
+									{
+										signal: alreadyAborted.signal,
+										local: false,
+										remote: { from: [writerHash], timeout: 5_000 },
+									},
+								);
+								expect(abortedIterator.done()).to.equal(true);
+								await abortedIterator.close();
+								expect(
+									abortedRemoveSpy.calledWith("abort", sinon.match.func),
+								).to.equal(true);
+							} finally {
+								abortedRemoveSpy.restore();
+							}
+						} finally {
+							await iterator.close();
+							sendSpy.restore();
+							removeListenerSpy.restore();
+							addListenerSpy.restore();
+						}
+					});
+
 					it("uses iteration request by default when compatibility is undefined", async () => {
 						stores[0] = await session.peers[0].open<TestStore>(
 							new TestStore({ docs: new Documents() }),
@@ -11332,6 +11831,119 @@ describe("index", () => {
 							);
 						} finally {
 							await iterator?.close();
+							requestSpy.restore();
+							sendSpy.restore();
+						}
+					});
+
+					it("rejects a missing later-page responder when throwOnMissing is true", async function () {
+						this.timeout(30_000);
+						const { iterator, requestSpy, sendSpy, writerHash } =
+							await setupMissingLaterPageResponder({
+								throwOnMissing: true,
+								retryMissingResponses: true,
+							});
+
+						try {
+							const started = Date.now();
+							let failure: unknown;
+							try {
+								await iterator.next(1);
+							} catch (error) {
+								failure = error;
+							}
+
+							expect(failure).to.be.instanceOf(MissingResponsesError);
+							expect(
+								(failure as MissingResponsesError).missingGroups,
+							).to.deep.equal([[writerHash]]);
+							const collectRequests = requestSpy
+								.getCalls()
+								.filter((call) => call.args[0] instanceof CollectNextRequest);
+							expect(collectRequests).to.have.length(1);
+							expect(collectRequests[0].args[1]?.timeout).to.equal(
+								missingResponderTimeout,
+							);
+							expect(Date.now() - started).to.be.lessThan(
+								missingResponderTimeout + 2_000,
+							);
+						} finally {
+							await iterator.close();
+							requestSpy.restore();
+							sendSpy.restore();
+						}
+					});
+
+					it("retires a missing later-page responder when retries are disabled", async function () {
+						this.timeout(30_000);
+						const { iterator, requestSpy, sendSpy } =
+							await setupMissingLaterPageResponder({
+								throwOnMissing: false,
+								retryMissingResponses: false,
+							});
+
+						const collectRequestCount = () =>
+							requestSpy
+								.getCalls()
+								.filter((call) => call.args[0] instanceof CollectNextRequest)
+								.length;
+
+						let closed = false;
+						try {
+							expect(await iterator.next(1)).to.deep.equal([]);
+							expect(collectRequestCount()).to.equal(1);
+							expect(await iterator.next(1)).to.deep.equal([]);
+							expect(collectRequestCount()).to.equal(1);
+							await iterator.close();
+							closed = true;
+							expect(
+								sendSpy
+									.getCalls()
+									.filter(
+										(call) => call.args[0] instanceof CloseIteratorRequest,
+									),
+							).to.have.length(1);
+						} finally {
+							if (!closed) {
+								await iterator.close();
+							}
+							requestSpy.restore();
+							sendSpy.restore();
+						}
+					});
+
+					it("retries a missing later page with a fresh iteration request", async function () {
+						this.timeout(30_000);
+						const { iterator, requestSpy, sendSpy } =
+							await setupMissingLaterPageResponder({
+								throwOnMissing: false,
+								retryMissingResponses: true,
+							});
+
+						const requestCount = (
+							requestType: typeof CollectNextRequest | typeof IterationRequest,
+						) =>
+							requestSpy
+								.getCalls()
+								.filter((call) => call.args[0] instanceof requestType).length;
+
+						try {
+							expect(await iterator.next(1)).to.deep.equal([]);
+							expect(iterator.done()).to.equal(false);
+							expect(requestCount(CollectNextRequest)).to.equal(1);
+							expect(requestCount(IterationRequest)).to.equal(1);
+
+							expect(await iterator.next(1)).to.deep.equal([]);
+							expect(iterator.done()).to.equal(false);
+							expect(requestCount(CollectNextRequest)).to.equal(1);
+							expect(requestCount(IterationRequest)).to.equal(2);
+
+							expect(await iterator.next(1)).to.deep.equal([]);
+							expect(iterator.done()).to.equal(true);
+							expect(requestCount(CollectNextRequest)).to.equal(1);
+							expect(requestCount(IterationRequest)).to.equal(3);
+						} finally {
+							await iterator.close();
 							requestSpy.restore();
 							sendSpy.restore();
 						}
@@ -15152,16 +15764,13 @@ describe("index", () => {
 								{},
 								{
 									local: false,
-									remote: {
-										wait: { timeout: 5_000, behavior: "keep-open" },
-									},
+									remote: { timeout: 5_000 },
 								},
 							);
 
 							await iterator.next(1); // initial
 							await iterator.next(1); // retry 1
 							await iterator.next(1); // retry 2 (max)
-							await iterator.next(1); // no additional retry beyond cap
 
 							expect(observedRemoteFrom).to.deep.equal([
 								undefined,
@@ -15169,7 +15778,7 @@ describe("index", () => {
 								[missingPeer],
 							]);
 							expect(missingCallbacks).to.equal(3);
-							expect(iterator.done()).to.equal(false);
+							expect(iterator.done()).to.equal(true);
 
 							await iterator.close();
 						});
@@ -19939,6 +20548,189 @@ describe("index", () => {
 			expect(sendSpy.callCount).to.eq(0); // even if we do a ".close()" on the iterator, we should not send a new request, because we only have 3 docs in total and we fetched all
 			expect(store.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
 			expect(store2.docs.index.countIteratorsInProgress).to.eq(0); // no iterators in progress
+		});
+
+		it("closes a partially consumed prefetched iterator by its remote id", async function () {
+			this.timeout(30_000);
+			const { store, store2 } = await setupInitialStoresAndPrefetch();
+			await waitForResolved(
+				() => expect(store2.docs.index.prefetch?.accumulator.size).to.equal(1),
+				{ timeout: 10_000 },
+			);
+
+			const iterator = store2.docs.index.iterate({}, { resolve: false });
+			let closed = false;
+			try {
+				expect(await iterator.next(1)).to.have.length(1);
+				expect(store.docs.index.countIteratorsInProgress).to.equal(1);
+
+				await iterator.close();
+				closed = true;
+				await waitForResolved(
+					() => expect(store.docs.index.countIteratorsInProgress).to.equal(0),
+					{ timeout: 5_000 },
+				);
+			} finally {
+				if (!closed) {
+					await iterator.close();
+				}
+			}
+		});
+
+		it("switches from a stale prefetched id when retrying a missing page", async function () {
+			this.timeout(30_000);
+			const { store, store2 } = await setupInitialStoresAndPrefetch();
+			await waitForResolved(
+				() => expect(store2.docs.index.prefetch?.accumulator.size).to.equal(1),
+				{ timeout: 10_000 },
+			);
+
+			const requestFn = store2.docs.index._query.request.bind(
+				store2.docs.index._query,
+			);
+			const observedRequests: AbstractSearchRequest[] = [];
+			let missFirstCollect = true;
+			store2.docs.index._query.request = async (request, options) => {
+				observedRequests.push(request);
+				if (missFirstCollect && request instanceof CollectNextRequest) {
+					missFirstCollect = false;
+					return [];
+				}
+				return requestFn(request, options);
+			};
+			const sendSpy = sinon.spy(store2.docs.index._query, "send");
+			const iterator = store2.docs.index.iterate({}, { resolve: false });
+
+			try {
+				expect((await iterator.next(1)).map((doc) => doc.id)).to.deep.equal([
+					"1",
+				]);
+				expect(await iterator.next(2)).to.deep.equal([]);
+				expect(iterator.done()).to.equal(false);
+
+				expect((await iterator.next(2)).map((doc) => doc.id)).to.deep.equal([
+					"2",
+				]);
+				expect((await iterator.next(1)).map((doc) => doc.id)).to.deep.equal([
+					"3",
+				]);
+
+				const iterationRequests = observedRequests.filter(
+					(request): request is IterationRequest =>
+						request instanceof IterationRequest,
+				);
+				const collectRequests = observedRequests.filter(
+					(request): request is CollectNextRequest =>
+						request instanceof CollectNextRequest,
+				);
+				expect(iterationRequests).to.have.length(1);
+				expect(collectRequests).to.have.length(2);
+				expect(equals(collectRequests[0].id, iterationRequests[0].id)).to.equal(
+					false,
+				);
+				expect(equals(collectRequests[1].id, iterationRequests[0].id)).to.equal(
+					true,
+				);
+
+				expect(store.docs.index.countIteratorsInProgress).to.equal(1);
+				await iterator.close();
+				await waitForResolved(
+					() => expect(store.docs.index.countIteratorsInProgress).to.equal(0),
+					{ timeout: 5_000 },
+				);
+				const closeRequests = sendSpy
+					.getCalls()
+					.map((call) => call.args[0])
+					.filter(
+						(request): request is CloseIteratorRequest =>
+							request instanceof CloseIteratorRequest,
+					);
+				expect(
+					closeRequests.some((request) =>
+						equals(request.id, collectRequests[0].id),
+					),
+				).to.equal(true);
+			} finally {
+				await iterator.close();
+				store2.docs.index._query.request = requestFn;
+				sendSpy.restore();
+			}
+		});
+
+		it("closes every stale prefetched id across repeated retries", async function () {
+			this.timeout(30_000);
+			const { store, store2 } = await setupInitialStoresAndPrefetch();
+			await waitForResolved(
+				() => expect(store2.docs.index.prefetch?.accumulator.size).to.equal(1),
+				{ timeout: 10_000 },
+			);
+
+			const writerHash = store.node.identity.publicKey.hashcode();
+			const requestFn = store2.docs.index._query.request.bind(
+				store2.docs.index._query,
+			);
+			const observedRequests: AbstractSearchRequest[] = [];
+			let missingCollectsRemaining = 2;
+			store2.docs.index._query.request = async (request, options) => {
+				observedRequests.push(request);
+				if (
+					missingCollectsRemaining > 0 &&
+					request instanceof CollectNextRequest
+				) {
+					missingCollectsRemaining--;
+					return [];
+				}
+				return requestFn(request, options);
+			};
+			const sendSpy = sinon.spy(store2.docs.index._query, "send");
+			const iterator = store2.docs.index.iterate({}, { resolve: false });
+
+			try {
+				expect(await iterator.next(1)).to.have.length(1);
+				expect(await iterator.next(2)).to.deep.equal([]);
+				expect(await iterator.next(2)).to.have.length(1);
+
+				const translationsByQuery = (
+					store2.docs.index.prefetch?.accumulator as any
+				).searchIdTranslationMap as Map<string, Map<string, Uint8Array>>;
+				const peerTranslations = [...translationsByQuery.values()][0];
+				expect(peerTranslations).to.not.equal(undefined);
+				const secondStaleId = randomBytes(32);
+				peerTranslations.set(writerHash, secondStaleId);
+
+				expect(await iterator.next(1)).to.deep.equal([]);
+				expect(iterator.done()).to.equal(false);
+				await iterator.next(1);
+
+				const collectRequests = observedRequests.filter(
+					(request): request is CollectNextRequest =>
+						request instanceof CollectNextRequest,
+				);
+				expect(collectRequests).to.have.length(2);
+				expect(equals(collectRequests[1].id, secondStaleId)).to.equal(true);
+
+				await iterator.close();
+				await waitForResolved(
+					() => expect(store.docs.index.countIteratorsInProgress).to.equal(0),
+					{ timeout: 5_000 },
+				);
+				const closeRequests = sendSpy
+					.getCalls()
+					.map((call) => call.args[0])
+					.filter(
+						(request): request is CloseIteratorRequest =>
+							request instanceof CloseIteratorRequest,
+					);
+				for (const staleId of [collectRequests[0].id, secondStaleId]) {
+					expect(
+						closeRequests.some((request) => equals(request.id, staleId)),
+					).to.equal(true);
+				}
+			} finally {
+				await iterator.close();
+				store2.docs.index._query.request = requestFn;
+				sendSpy.restore();
+			}
 		});
 
 		it("delivers prefetched batch to push-enabled iterator", async () => {

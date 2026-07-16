@@ -47,7 +47,7 @@ import {
 } from "@peerbit/stream-interface";
 import { AbortError, TimeoutError, waitFor } from "@peerbit/time";
 import pDefer, { type DeferredPromise } from "p-defer";
-import { concat, fromString } from "uint8arrays";
+import { concat, equals, fromString } from "uint8arrays";
 import { copySerialization } from "./borsh.js";
 import { MAX_BATCH_SIZE } from "./constants.js";
 import type { DocumentEvents, DocumentsChange } from "./events.js";
@@ -511,6 +511,7 @@ type QueryDetailedOptions<
 		from: PublicSignKey,
 	) => void | Promise<void>;
 	onMissingResponses?: (error: MissingResponsesError) => void | Promise<void>;
+	onRemoteTargets?: (targets: string[]) => void;
 	remote?: {
 		from?: string[]; // if specified, only query these peers
 	};
@@ -742,6 +743,7 @@ function isSubclassOf(
 const DEFAULT_TIMEOUT = 1e4;
 const DEFAULT_KEEP_REMOTE_ITERATOR_TIMEOUT = 3e5;
 const DISCOVER_TIMEOUT_FALLBACK = 500;
+const CLOSE_ITERATOR_REQUEST_TIMEOUT = 5e3;
 
 const DEFAULT_INDEX_BY = "id";
 
@@ -4283,6 +4285,7 @@ export class DocumentIndex<
 				let extraPromises: Promise<void>[] | undefined = undefined;
 
 				const seenRemoteHashes = new Set<string>();
+				const selectedRemoteHashes: string[] = [];
 				const groupHashes: string[][] = replicatorGroups
 					.filter((hash) => {
 						if (hash === this.node.identity.publicKey.hashcode()) {
@@ -4299,6 +4302,7 @@ export class DocumentIndex<
 							return false;
 						}
 						fetchFirstForRemote?.add(hash);
+						selectedRemoteHashes.push(hash);
 
 						const resultAlready = this._prefetch?.accumulator.consume(
 							queryRequest,
@@ -4324,6 +4328,7 @@ export class DocumentIndex<
 					})
 					.map((x) => [x]);
 
+				options?.onRemoteTargets?.(selectedRemoteHashes);
 				extraPromises && (await Promise.all(extraPromises));
 				let tearDown: (() => void) | undefined = undefined;
 				const search = this;
@@ -4482,23 +4487,25 @@ export class DocumentIndex<
 
 		const allResults: ValueTypeFromRequest<Resolve, T, I>[] = [];
 
-		while (
-			iterator.done() !== true &&
-			coercedRequest.fetch > allResults.length
-		) {
-			// We might need to pull .next multiple time due to data message size limitations
+		try {
+			while (
+				iterator.done() !== true &&
+				coercedRequest.fetch > allResults.length
+			) {
+				// We might need to pull .next multiple time due to data message size limitations
 
-			for (const result of await iterator.next(
-				coercedRequest.fetch - allResults.length,
-			)) {
-				allResults.push(result as ValueTypeFromRequest<Resolve, T, I>);
+				for (const result of await iterator.next(
+					coercedRequest.fetch - allResults.length,
+				)) {
+					allResults.push(result as ValueTypeFromRequest<Resolve, T, I>);
+				}
 			}
+
+			// Deduplicate and return values directly
+			return dedup(allResults, this.indexByResolver);
+		} finally {
+			await iterator.close();
 		}
-
-		await iterator.close();
-
-		// Deduplicate and return values directly
-		return dedup(allResults, this.indexByResolver);
 	}
 
 	private resolveIndexed<R>(
@@ -4790,6 +4797,50 @@ export class DocumentIndex<
 				buffer: BufferedResult<types.ResultTypeFromRequest<R, T, I> | I, I>[];
 			}
 		> = new Map();
+		const remoteIteratorPeersToClose = new Set<string>();
+		const staleRemoteIteratorIdsToClose = new Map<string, Uint8Array[]>();
+		const retiredRemoteIteratorPeers = new Set<string>();
+		const pendingMissingResponseRetryPeers = new Set<string>();
+		const missingResponseRetryAttempts = new Map<string, number>();
+		const maxMissingResponseRetryAttempts = 2;
+		const retireRemoteIteratorPeer = (peer: string) => {
+			remoteIteratorPeersToClose.add(peer);
+			retiredRemoteIteratorPeers.add(peer);
+			const peerBuffer = peerBufferMap.get(peer);
+			if (!peerBuffer || peerBuffer.buffer.length === 0) {
+				peerBufferMap.delete(peer);
+			} else {
+				// Keep already-received values available to the caller, but do not
+				// issue another CollectNextRequest until a fresh iteration succeeds.
+				peerBuffer.kept = 0;
+			}
+		};
+		const recordMissingResponseGroups = (missingGroups: string[][]) => {
+			const selfHash = this.node.identity.publicKey.hashcode();
+			for (const group of missingGroups) {
+				for (const hash of group) {
+					if (hash && hash !== selfHash) {
+						retireRemoteIteratorPeer(hash);
+					}
+				}
+
+				if (!retryMissingResponseGroups) {
+					continue;
+				}
+
+				const target = group.find((hash) => {
+					if (!hash || hash === selfHash) return false;
+					const attempts = missingResponseRetryAttempts.get(hash) ?? 0;
+					return attempts < maxMissingResponseRetryAttempts;
+				});
+				if (!target) continue;
+				pendingMissingResponseRetryPeers.add(target);
+				missingResponseRetryAttempts.set(
+					target,
+					(missingResponseRetryAttempts.get(target) ?? 0) + 1,
+				);
+			}
+		};
 		const visited = new Set<indexerTypes.IdPrimitive>();
 		let indexedPlaceholders:
 			| Map<
@@ -5021,6 +5072,17 @@ export class DocumentIndex<
 			n: number,
 			fetchOptions?: { from?: string[]; fetchedFirstForRemote?: Set<string> },
 		): Promise<boolean> => {
+			const remoteRequestOptions =
+				typeof options?.remote === "object" ? options.remote : undefined;
+			const fetchSignals = [
+				options?.signal,
+				remoteRequestOptions?.signal,
+				ensureController().signal,
+			].filter((signal): signal is AbortSignal => signal != null);
+			const fetchSignal =
+				fetchSignals.length === 1
+					? fetchSignals[0]
+					: AbortSignal.any(fetchSignals);
 			await warmupPromise;
 			let hasMore = false;
 			let missingResponses = false;
@@ -5036,33 +5098,43 @@ export class DocumentIndex<
 				typeof options?.remote === "object" &&
 				options.remote.reach?.discover &&
 				discoveredTargetHashes?.length === 0;
+			const queryRemote =
+				options?.remote !== false && !skipRemoteDueToDiscovery;
+			const remoteFrom =
+				fetchOptions?.from ??
+				initialRemoteTargets ??
+				remoteRequestOptions?.from;
+			if (queryRemote) {
+				const selfHash = this.node.identity.publicKey.hashcode();
+				for (const peer of remoteFrom ?? []) {
+					if (peer !== selfHash) {
+						remoteIteratorPeersToClose.add(peer);
+					}
+				}
+			}
 
 			queryRequestCoerced.fetch = n;
 			await this.queryCommence(
 				queryRequestCoerced,
 				{
 					local: fetchOptions?.from != null ? false : options?.local,
-					remote:
-						options?.remote !== false && !skipRemoteDueToDiscovery
-							? {
-									...(typeof options?.remote === "object"
-										? options.remote
-										: {}),
-									from:
-										fetchOptions?.from ??
-										initialRemoteTargets ??
-										(typeof options?.remote === "object"
-											? options.remote.from
-											: undefined),
-								}
-							: false,
+					remote: queryRemote
+						? {
+								...remoteRequestOptions,
+								from: remoteFrom,
+								signal: fetchSignal,
+							}
+						: false,
 					resolve,
-					signal: options?.signal,
+					signal: fetchSignal,
 					onResponse: async (response, from) => {
 						if (!from) {
 							logger.error("Missing response from");
 							return;
 						}
+						const fromHash = from.hashcode();
+						remoteIteratorPeersToClose.add(fromHash);
+						retiredRemoteIteratorPeers.delete(fromHash);
 						if (response instanceof types.NoAccess) {
 							logger.error("Dont have access");
 							return;
@@ -5071,7 +5143,7 @@ export class DocumentIndex<
 								types.ResultTypeFromRequest<R, T, I>
 							>;
 
-							const existingBuffer = peerBufferMap.get(from.hashcode());
+							const existingBuffer = peerBufferMap.get(fromHash);
 							const buffer: BufferedResult<
 								types.ResultTypeFromRequest<R, T, I> | I,
 								I
@@ -5079,10 +5151,12 @@ export class DocumentIndex<
 
 							if (results.kept === 0n && results.results.length === 0) {
 								if (keepRemoteAlive) {
-									peerBufferMap.set(from.hashcode(), {
+									peerBufferMap.set(fromHash, {
 										buffer,
 										kept: 0,
 									});
+								} else {
+									remoteIteratorPeersToClose.delete(fromHash);
 								}
 								return;
 							}
@@ -5097,6 +5171,8 @@ export class DocumentIndex<
 
 							if (effectiveKept > 0) {
 								hasMore = true;
+							} else if (!keepRemoteAlive) {
+								remoteIteratorPeersToClose.delete(fromHash);
 							}
 
 							for (const result of results.results) {
@@ -5160,7 +5236,7 @@ export class DocumentIndex<
 								}
 							}
 
-							peerBufferMap.set(from.hashcode(), {
+							peerBufferMap.set(fromHash, {
 								buffer,
 								kept: effectiveKept,
 							});
@@ -5172,9 +5248,6 @@ export class DocumentIndex<
 					},
 					onMissingResponses: (error) => {
 						missingResponses = true;
-						if (!retryMissingResponseGroups) {
-							return;
-						}
 						const missingGroups = (
 							error as MissingResponsesError & {
 								missingGroups?: string[][];
@@ -5183,27 +5256,22 @@ export class DocumentIndex<
 						if (!missingGroups?.length) {
 							return;
 						}
-
-						const selfHash = this.node.identity.publicKey.hashcode();
-						for (const group of missingGroups) {
-							const target = group.find((hash) => {
-								if (!hash || hash === selfHash) return false;
-								const attempts = missingResponseRetryAttempts.get(hash) ?? 0;
-								return attempts < maxMissingResponseRetryAttempts;
-							});
-							if (!target) continue;
-							pendingMissingResponseRetryPeers.add(target);
-							missingResponseRetryAttempts.set(
-								target,
-								(missingResponseRetryAttempts.get(target) ?? 0) + 1,
-							);
+						recordMissingResponseGroups(missingGroups);
+					},
+					onRemoteTargets: (targets) => {
+						for (const peer of targets) {
+							remoteIteratorPeersToClose.add(peer);
 						}
 					},
 				},
 				fetchOptions?.fetchedFirstForRemote,
 			);
 
-			if (missingResponses && retryMissingResponseGroups) {
+			if (
+				missingResponses &&
+				retryMissingResponseGroups &&
+				pendingMissingResponseRetryPeers.size > 0
+			) {
 				hasMore = true;
 				unsetDone();
 			}
@@ -5235,6 +5303,19 @@ export class DocumentIndex<
 			if (pendingMissingResponseRetryPeers.size > 0) {
 				const retryTargets = [...pendingMissingResponseRetryPeers];
 				pendingMissingResponseRetryPeers.clear();
+				const idTranslation =
+					this._prefetch?.accumulator.getTranslationMap(queryRequestCoerced);
+				for (const peer of retryTargets) {
+					const staleRemoteIteratorId = idTranslation?.get(peer);
+					if (staleRemoteIteratorId) {
+						const staleIds = staleRemoteIteratorIdsToClose.get(peer) ?? [];
+						if (!staleIds.some((id) => equals(id, staleRemoteIteratorId))) {
+							staleIds.push(staleRemoteIteratorId);
+							staleRemoteIteratorIdsToClose.set(peer, staleIds);
+						}
+						idTranslation!.delete(peer);
+					}
+				}
 				return setFetchPromise(
 					fetchFirst(n, {
 						from: retryTargets,
@@ -5248,6 +5329,12 @@ export class DocumentIndex<
 			let resultsLeft = 0;
 
 			for (const [peer, buffer] of peerBufferMap) {
+				if (retiredRemoteIteratorPeers.has(peer)) {
+					if (buffer.buffer.length === 0) {
+						peerBufferMap.delete(peer);
+					}
+					continue;
+				}
 				if (buffer.buffer.length < n) {
 					const hasExistingRemoteResults = buffer.kept > 0;
 					if (!hasExistingRemoteResults && !keepRemoteAlive) {
@@ -5390,10 +5477,11 @@ export class DocumentIndex<
 										"Failed to collect sorted results from self. " + e?.message,
 									);
 									peerBufferMap.delete(peer);
-								}),
+										}),
 						);
 					} else {
 						// Fetch remotely
+						remoteIteratorPeersToClose.add(peer);
 						const idTranslation =
 							this._prefetch?.accumulator.getTranslationMap(
 								queryRequestCoerced,
@@ -5405,22 +5493,45 @@ export class DocumentIndex<
 								amount: collectRequest.amount,
 							});
 						}
+						const remoteRequestOptions =
+							typeof options?.remote === "object" ? options.remote : undefined;
+						const collectSignals = [
+							options?.signal,
+							remoteRequestOptions?.signal,
+							ensureController().signal,
+						].filter((signal): signal is AbortSignal => signal != null);
+						const collectSignal =
+							collectSignals.length === 1
+								? collectSignals[0]
+								: AbortSignal.any(collectSignals);
 
 						promises.push(
 							this._query
 								.request(remoteCollectRequest, {
 									...options,
-									signal: options?.signal
-										? AbortSignal.any([
-												options.signal,
-												ensureController().signal,
-											])
-										: ensureController().signal,
+									...remoteRequestOptions,
+									signal: collectSignal,
 									priority: getRemoteQueryPriority(options?.remote),
 									mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
 								})
-								.then((response) =>
-									introduceEntries(
+								.then((response) => {
+									if (
+										!response.some((result) => result.from?.hashcode() === peer)
+									) {
+										const missingGroups = [[peer]];
+										if (remoteRequestOptions?.throwOnMissing) {
+											retireRemoteIteratorPeer(peer);
+											throw new MissingResponsesError(
+												"Did not receive responses from all shards: " +
+													JSON.stringify(missingGroups),
+												missingGroups,
+											);
+										}
+										recordMissingResponseGroups(missingGroups);
+										return;
+									}
+
+									return introduceEntries(
 										queryRequestCoerced,
 										response,
 										this.documentType,
@@ -5436,6 +5547,12 @@ export class DocumentIndex<
 													if (!from) {
 														logger.error("Missing from for sorted query");
 														return;
+													}
+													if (
+														!keepRemoteAlive &&
+														response.response.kept === 0n
+													) {
+														remoteIteratorPeersToClose.delete(peer);
 													}
 
 													if (response.response.results.length === 0) {
@@ -5557,8 +5674,8 @@ export class DocumentIndex<
 													e?.message,
 											);
 											peerBufferMap.delete(peer);
-										}),
-								),
+										});
+								}),
 						);
 					}
 				} else {
@@ -5584,7 +5701,9 @@ export class DocumentIndex<
 							}
 						}
 					}
-					return resultsLeft === 0; // 0 results left to fetch and 0 pending results
+					return (
+						resultsLeft === 0 && pendingMissingResponseRetryPeers.size === 0
+					); // 0 results left to fetch and 0 pending results
 				}),
 			);
 		};
@@ -5705,32 +5824,89 @@ export class DocumentIndex<
 			done = true;
 		};
 
-		let close = async () => {
+		const outerSignal = options?.signal;
+		let outerAbortListener: (() => void) | undefined;
+		let closeStarted = false;
+		let closePromise: Promise<void> | undefined;
+		const performClose = async () => {
+			const idTranslation =
+				this._prefetch?.accumulator.getTranslationMap(queryRequestCoerced);
+			const remoteIteratorIds = idTranslation
+				? new Map(idTranslation)
+				: undefined;
 			cleanupAndDone();
 
 			// Keep-open iterators can still have active remote state even when
 			// their pending count has already drained to zero.
-			const closeRequest = new types.CloseIteratorRequest({
-				id: queryRequestCoerced.id,
-			});
 			const selfHash = this.node.identity.publicKey.hashcode();
-			const remotePeers = keepRemoteAlive
-				? [...peerBufferMap.keys()].filter((peer) => peer !== selfHash)
-				: [...peerBufferMap.entries()]
-						.filter(([peer, buffer]) => peer !== selfHash && buffer.kept > 0)
-						.map(([peer]) => peer);
+			const activeRemotePeers = new Set(
+				keepRemoteAlive
+					? [...peerBufferMap.keys()].filter((peer) => peer !== selfHash)
+					: [...peerBufferMap.entries()]
+							.filter(
+								([peer, buffer]) => peer !== selfHash && buffer.kept > 0,
+							)
+							.map(([peer]) => peer),
+			);
+			for (const peer of remoteIteratorPeersToClose) {
+				if (peer !== selfHash) {
+					activeRemotePeers.add(peer);
+				}
+			}
+			const staleRemoteIteratorIds = new Map(
+				[...staleRemoteIteratorIdsToClose].map(([peer, ids]) => [
+					peer,
+					[...ids],
+				]),
+			);
+			const remotePeers = new Set([
+				...activeRemotePeers,
+				...staleRemoteIteratorIds.keys(),
+			]);
 			peerBufferMap.clear();
+			retiredRemoteIteratorPeers.clear();
+			remoteIteratorPeersToClose.clear();
+			staleRemoteIteratorIdsToClose.clear();
+			if (remotePeers.size === 0) {
+				return;
+			}
+			const remoteCloseOptions =
+				typeof options?.remote === "object" ? options.remote : undefined;
+			const closeSignal = AbortSignal.timeout(CLOSE_ITERATOR_REQUEST_TIMEOUT);
 			await Promise.allSettled(
-				remotePeers.map((peer) =>
-					this._query.send(closeRequest, {
-						...options,
-						priority: getRemoteQueryPriority(options?.remote),
-						mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
-					}),
-				),
+				[...remotePeers].flatMap((peer) => {
+					const ids: Uint8Array[] = [];
+					if (activeRemotePeers.has(peer)) {
+						ids.push(remoteIteratorIds?.get(peer) ?? queryRequestCoerced.id);
+					}
+					for (const staleRemoteIteratorId of
+						staleRemoteIteratorIds.get(peer) ?? []) {
+						if (!ids.some((id) => equals(id, staleRemoteIteratorId))) {
+							ids.push(staleRemoteIteratorId);
+						}
+					}
+					return ids.map((id) => {
+						const closeRequest = new types.CloseIteratorRequest({ id });
+						return this._query.send(closeRequest, {
+							...remoteCloseOptions,
+							signal: closeSignal,
+							priority: getRemoteQueryPriority(options?.remote),
+							mode: new SilentDelivery({ to: [peer], redundancy: 1 }),
+						});
+					});
+				}),
 			);
 		};
-		options?.signal && options.signal.addEventListener("abort", close);
+		const close = () => {
+			if (closeStarted) return closePromise!;
+			closeStarted = true;
+			if (outerAbortListener) {
+				outerSignal?.removeEventListener("abort", outerAbortListener);
+				outerAbortListener = undefined;
+			}
+			closePromise = performClose();
+			return closePromise;
+		};
 
 		let doneFn = () => {
 			return done;
@@ -5739,9 +5915,6 @@ export class DocumentIndex<
 		let joinListener: (() => void) | undefined;
 
 		let fetchedFirstForRemote: Set<string> | undefined = undefined;
-		const pendingMissingResponseRetryPeers = new Set<string>();
-		const missingResponseRetryAttempts = new Map<string, number>();
-		const maxMissingResponseRetryAttempts = 2;
 		let joinFetchesInFlight = 0;
 
 		let updateDeferred: ReturnType<typeof pDefer> | undefined;
@@ -6581,6 +6754,16 @@ export class DocumentIndex<
 			}
 		};
 
+		if (outerSignal) {
+			outerAbortListener = () => {
+				void close();
+			};
+			outerSignal.addEventListener("abort", outerAbortListener, { once: true });
+			if (outerSignal.aborted) {
+				void close();
+			}
+		}
+
 		return {
 			close,
 			next,
@@ -6654,53 +6837,62 @@ export class DocumentIndex<
 				const drainBatchSize = replicate ? 1000 : 100;
 				let result: ValueTypeFromRequest<Resolve, T, I>[] = [];
 				let c = 0;
-				while (doneFn() !== true) {
-					let batch = await next(drainBatchSize);
-					c += batch.length;
-					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
-						warn(
-							"Iterating for more than " +
-								WARNING_WHEN_ITERATING_FOR_MORE_THAN +
-								" results",
-						);
+				try {
+					while (doneFn() !== true) {
+						let batch = await next(drainBatchSize);
+						c += batch.length;
+						if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
+							warn(
+								"Iterating for more than " +
+									WARNING_WHEN_ITERATING_FOR_MORE_THAN +
+									" results",
+							);
+						}
+						if (batch.length > 0) {
+							result.push(...batch);
+							continue;
+						}
+						await waitForUpdateAndResetDeferred();
 					}
-					if (batch.length > 0) {
-						result.push(...batch);
-						continue;
-					}
-					await waitForUpdateAndResetDeferred();
+					return result;
+				} finally {
+					await close();
 				}
-				cleanupAndDone();
-				return result;
 			},
 			first: async () => {
-				if (doneFn()) {
-					return undefined;
+				try {
+					if (doneFn()) {
+						return undefined;
+					}
+					let batch = await next(1);
+					return batch[0];
+				} finally {
+					await close();
 				}
-				let batch = await next(1);
-				cleanupAndDone();
-				return batch[0];
 			},
 			[Symbol.asyncIterator]: async function* () {
 				drain = true;
 				const drainBatchSize = replicate ? 1000 : 100;
 				let c = 0;
-				while (doneFn() !== true) {
-					const batch = await next(drainBatchSize);
-					c += batch.length;
-					if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
-						warn(
-							"Iterating for more than " +
-								WARNING_WHEN_ITERATING_FOR_MORE_THAN +
-								" results",
-						);
+				try {
+					while (doneFn() !== true) {
+						const batch = await next(drainBatchSize);
+						c += batch.length;
+						if (c > WARNING_WHEN_ITERATING_FOR_MORE_THAN) {
+							warn(
+								"Iterating for more than " +
+									WARNING_WHEN_ITERATING_FOR_MORE_THAN +
+									" results",
+							);
+						}
+						for (const entry of batch) {
+							yield entry;
+						}
+						await waitForUpdateAndResetDeferred();
 					}
-					for (const entry of batch) {
-						yield entry;
-					}
-					await waitForUpdateAndResetDeferred();
+				} finally {
+					await close();
 				}
-				cleanupAndDone();
 			},
 		};
 	}

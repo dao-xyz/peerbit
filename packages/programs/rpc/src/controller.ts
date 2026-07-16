@@ -608,12 +608,45 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		request: Q,
 		options?: RPCRequestOptions<R>,
 	): Promise<RPCResponse<R>[]> {
-		// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
-		// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
-		const keypair = await X25519Keypair.create();
+		const requestSignal = options?.signal;
+		const getAbortReason = (signal?: AbortSignal): unknown =>
+			signal?.reason === undefined ? new AbortError() : signal.reason;
+		if (requestSignal?.aborted) {
+			throw getAbortReason(requestSignal);
+		}
 
-		const requestMessage = await this.seal(request, keypair.publicKey, options);
-		const requestBytes = serialize(requestMessage);
+		let rejectSetupForAbort!: (reason?: unknown) => void;
+		const setupAbortPromise = new Promise<never>((_resolve, reject) => {
+			rejectSetupForAbort = reject;
+		});
+		const setupAbortListener = () => {
+			rejectSetupForAbort(getAbortReason(requestSignal));
+		};
+		requestSignal?.addEventListener("abort", setupAbortListener, { once: true });
+		const setupPromise = (async () => {
+			// We are generatinga new encryption keypair for each send, so we now that when we get the responses, they are encrypted specifcally for me, and for this request
+			// this allows us to easily disregard a bunch of message just beacuse they are for a different receiver!
+			const keypair = await X25519Keypair.create();
+			if (requestSignal?.aborted) {
+				throw getAbortReason(requestSignal);
+			}
+			const requestMessage = await this.seal(
+				request,
+				keypair.publicKey,
+				options,
+			);
+			return { keypair, requestBytes: serialize(requestMessage) };
+		})();
+		let setup: Awaited<typeof setupPromise>;
+		try {
+			setup = await Promise.race([setupPromise, setupAbortPromise]);
+		} finally {
+			requestSignal?.removeEventListener("abort", setupAbortListener);
+		}
+		const { keypair, requestBytes } = setup;
+		if (requestSignal?.aborted) {
+			throw getAbortReason(requestSignal);
+		}
 
 		const allResults: RPCResponse<R>[] = [];
 
@@ -636,12 +669,24 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			options?.timeout || 10 * 1000,
 		);
 
-		const abortListener = (err: Event) => {
-			const reason = (err.target as any)?.["reason"] || new AbortError();
+		const rejectForAbort = (signal?: AbortSignal) => {
+			const reason = getAbortReason(signal);
 			abortPublish(reason);
 			deferredPromise.reject(reason);
 		};
-		options?.signal?.addEventListener("abort", abortListener);
+		const abortListener = (event: Event) => {
+			rejectForAbort(event.target as AbortSignal | undefined);
+		};
+		requestSignal?.addEventListener("abort", abortListener);
+		// Cover the narrow handoff between the setup listener and the active request
+		// listener before registering any resolver or transport side effects.
+		if (requestSignal?.aborted) {
+			const reason = getAbortReason(requestSignal);
+			abortPublish(reason);
+			clearTimeout(timeoutFn);
+			requestSignal.removeEventListener("abort", abortListener);
+			throw reason;
+		}
 
 		const closeListener = () => {
 			const reason = new AbortError("Closed");
@@ -679,30 +724,36 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 			})
 			.catch(() => {});
 
-		if (options?.responseInterceptor) {
-			options.responseInterceptor((response: RPCResponse<R>) => {
-				return this.handleDecodedResponse(
-					response,
-					deferredPromise,
-					allResults,
-					responders,
-					expectedResponders,
-					options,
-				);
-			});
-		}
-
 		try {
-			const publishPromise = Promise.resolve(
-				this.node.services.pubsub.publish(
-					requestBytes,
-					this.getPublishOptions(
-						messageId,
+			if (requestSignal?.aborted) {
+				throw getAbortReason(requestSignal);
+			}
+			if (options?.responseInterceptor) {
+				options.responseInterceptor((response: RPCResponse<R>) => {
+					return this.handleDecodedResponse(
+						response,
+						deferredPromise,
+						allResults,
+						responders,
+						expectedResponders,
 						options,
-						publishAbortController.signal,
+					);
+				});
+			}
+			if (requestSignal?.aborted) {
+				throw getAbortReason(requestSignal);
+			}
+			const publishPromise = Promise.resolve()
+				.then(() =>
+					this.node.services.pubsub.publish(
+						requestBytes,
+						this.getPublishOptions(
+							messageId,
+							options,
+							publishAbortController.signal,
+						),
 					),
-				),
-			)
+				)
 				.catch((error: any) => {
 					if (
 						publishAbortController.signal.aborted &&
@@ -719,16 +770,12 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 				});
 			await Promise.race([publishPromise, deferredPromise.promise]);
 			await deferredPromise.promise;
-		} catch (error: any) {
-			if (!(error instanceof TimeoutError)) {
-				throw error;
-			}
 		} finally {
 			abortPublish(new AbortError("RPC request finished"));
 			clearTimeout(timeoutFn);
 			this.events.removeEventListener("close", closeListener);
 			this.events.removeEventListener("drop", dropListener);
-			options?.signal?.removeEventListener("abort", abortListener);
+			requestSignal?.removeEventListener("abort", abortListener);
 			this._responseResolver.delete(id);
 		}
 
