@@ -142,7 +142,27 @@ try {
 			"secure-dependency-lines.md",
 		),
 	});
-
+	const isolatedCryptoSmoke = run(
+		process.execPath,
+		[
+			join(
+				repositoryRoot,
+				"scripts",
+				"test-published-crypto-package-smoke.mjs",
+			),
+		],
+		{ status: 0, timeout: 1_200_000 },
+	);
+	assert.match(isolatedCryptoSmoke.stdout, /isolated nested install/);
+	const cryptoSmokeFixture = await readFile(
+		join(
+			repositoryRoot,
+			"scripts",
+			"fixtures",
+			"published-crypto-node18-smoke.mjs",
+		),
+		"utf8",
+	);
 	await writeFile(
 		join(consumerDirectory, "package.json"),
 		JSON.stringify(
@@ -197,15 +217,7 @@ try {
 	);
 	await writeFile(
 		join(consumerDirectory, "crypto-node18-smoke.mjs"),
-		await readFile(
-			join(
-				repositoryRoot,
-				"scripts",
-				"fixtures",
-				"published-crypto-node18-smoke.mjs",
-			),
-			"utf8",
-		),
+		cryptoSmokeFixture,
 	);
 
 	run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"], {
@@ -306,7 +318,7 @@ try {
 	);
 	assert.match(node18.stdout, /Node 18\./);
 	console.log(
-		`Clean published-package consumer passed with ${packageDirectories.length} security roots and all ${publishablePackages.length} publishable workspace packages as exact local tarballs, zero production audit findings, esbuild ${esbuildVersions.join(", ")}, and the Node 18 crypto wire contract.`,
+		`Clean published-package consumer passed with ${packageDirectories.length} security roots and all ${publishablePackages.length} publishable workspace packages as exact local tarballs, zero production audit findings, esbuild ${esbuildVersions.join(", ")}, the isolated nested crypto install, and the Node 18 crypto wire contract.`,
 	);
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
