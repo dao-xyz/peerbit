@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.33
+
+### Patch Changes
+
+- Updated dependencies [[`e8c8699`](https://github.com/dao-xyz/peerbit/commit/e8c86998a3681e5c2294d346a639f8bdfcacc0a9)]:
+  - @peerbit/program-react@0.4.41
+
 ## 1.1.32
 
 ### Patch Changes
