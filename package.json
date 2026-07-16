@@ -67,7 +67,7 @@
 		"packages/utils/rateless-iblt"
 	],
 	"engines": {
-		"node": ">=18"
+		"node": ">=22"
 	},
 	"scripts": {
 		"reset": "aegir run clean && aegir clean interop/node_modules packages/**/node_modules node_modules package-lock.json packages/*/package-lock.json interop/*/package-lock.json",

@@ -61,7 +61,7 @@
 		"directory": "packages/clients/peerbit"
 	},
 	"engines": {
-		"node": ">=18"
+		"node": ">=22"
 	},
 	"browser": {
 		"./dist/src/transports.js": "./dist/src/transports.browser.js"

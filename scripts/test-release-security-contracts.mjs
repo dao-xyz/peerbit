@@ -95,6 +95,8 @@ const securityJobEnd = ciWorkflow.indexOf("\n  test_push:", securityJobStart);
 assert(securityJobStart >= 0 && securityJobEnd > securityJobStart);
 const securityJob = ciWorkflow.slice(securityJobStart, securityJobEnd);
 assert.match(securityJob, /needs: build_workspace/);
+assert.match(securityJob, /node-version: \[22\.x, 24\.x\]/);
+assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
 assert.match(securityJob, /pnpm install --frozen-lockfile/);
 const restoreIndex = securityJob.indexOf("Restore workspace build outputs");
 const gateIndex = securityJob.indexOf("pnpm run release:security-gate");
@@ -140,6 +142,30 @@ assert.match(
 	publishedSecuritySmoke,
 	/test-published-crypto-package-smoke\.mjs/,
 	"the full published-package gate must include the isolated crypto package smoke",
+);
+assert.match(
+	publishedSecuritySmoke,
+	/NPM_CONFIG_ENGINE_STRICT: "true"/,
+	"the clean published-package install must reject unsupported Node engines",
+);
+for (const packagePath of [
+	"packages/clients/peerbit/package.json",
+	"packages/transport/stream/package.json",
+]) {
+	const manifest = JSON.parse(await readRepositoryFile(packagePath));
+	assert.equal(
+		manifest.engines?.node,
+		">=22",
+		`${manifest.name}: declared Node engine must match its runtime dependency floor`,
+	);
+}
+const postReleaseWorkflow = await readRepositoryFile(
+	".github/workflows/post-release.yml",
+);
+assert.match(
+	postReleaseWorkflow,
+	/name: Use Node\.js[\s\S]*?node-version: 22/,
+	"post-release automation must use the supported Node floor",
 );
 const publishedCryptoPackageSmoke = await readRepositoryFile(
 	"scripts/test-published-crypto-package-smoke.mjs",
