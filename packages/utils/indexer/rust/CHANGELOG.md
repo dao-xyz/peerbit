@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/indexer-interface@3.0.8
+
 ## 1.0.5
 
 ### Patch Changes

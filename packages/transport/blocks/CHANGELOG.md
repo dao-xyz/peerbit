@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.2.4
+
+### Patch Changes
+
+- Updated dependencies [[`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b)]:
+  - @peerbit/crypto@3.1.4
+  - @peerbit/blocks-interface@2.1.2
+  - @peerbit/stream@5.1.2
+  - @peerbit/stream-interface@6.0.13
+  - @peerbit/any-store@2.2.12
+
 ## 4.2.3
 
 ### Patch Changes

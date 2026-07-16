@@ -1,5 +1,14 @@
 # @peerbit/document-react
 
+## 1.0.53
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/react@1.1.32
+  - @peerbit/document@13.1.8
+  - @peerbit/indexer-interface@3.0.8
+
 ## 1.0.52
 
 ### Patch Changes

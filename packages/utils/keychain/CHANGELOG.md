@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.12
+
+### Patch Changes
+
+- Updated dependencies [[`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b)]:
+  - @peerbit/crypto@3.1.4
+  - @peerbit/any-store@2.2.12
+
 ## 1.2.11
 
 ### Patch Changes

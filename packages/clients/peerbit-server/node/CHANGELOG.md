@@ -1,5 +1,16 @@
 # Changelog
 
+## 7.0.1
+
+### Patch Changes
+
+- Updated dependencies [[`a5e15b4`](https://github.com/dao-xyz/peerbit/commit/a5e15b421f39824a87322f4b88a51df120b8700b)]:
+  - @peerbit/crypto@3.1.4
+  - peerbit@5.3.8
+  - @peerbit/program@6.0.37
+  - @peerbit/blocks@4.2.4
+  - @peerbit/pubsub@5.3.2
+
 ## 7.0.0
 
 ### Major Changes
