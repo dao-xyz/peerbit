@@ -73,6 +73,7 @@ type OuterTerminalCall = {
 	from?: Manageable<any>;
 	terminal: boolean;
 	claimedOwnerReference: boolean;
+	invokedWrapper: (...args: any[]) => Promise<boolean>;
 	ownerReferencesBeforeInvoke?: number;
 	ownerReferencesAfterInvoke?: number;
 	promise: Promise<boolean>;
@@ -93,12 +94,18 @@ type TerminalOperationState<T extends Manageable<any>> = {
 	dropWrapper?: (...args: any[]) => Promise<boolean>;
 	closeOperation?: (...args: any[]) => Promise<boolean>;
 	dropOperation?: (...args: any[]) => Promise<boolean>;
+	synchronouslyInvokingWrapper?: {
+		type: TerminalOperation;
+		wrapper: (...args: any[]) => Promise<boolean>;
+		args: any[];
+	};
 	cleanupLease?: object;
 };
 
 type CleanupResidual = {
 	program: Manageable<any>;
 	failures: FailedTerminalCall[];
+	terminalState?: TerminalOperationState<any>;
 	cleanupLease?: object;
 	activeReservations: number;
 };
@@ -432,12 +439,19 @@ export class Handler<T extends Manageable<any>> {
 			state.terminalCompleted = false;
 		}
 		this._terminalOperationsByAddress.set(address, state);
+		this.refreshTerminalOperationWrappers(state);
+		return { state, newLifecycle };
+	}
 
+	private refreshTerminalOperationWrappers(
+		state: TerminalOperationState<T>,
+	): void {
+		const program = state.program;
 		if (program.close !== state.closeWrapper) {
 			const close = program.close;
 			state.closeOperation = close;
 			const closeWrapper = (...args: any[]) =>
-				this.runTerminalOperation(state!, "close", close, args);
+				this.runTerminalOperation(state, "close", close, args, closeWrapper);
 			state.closeWrapper = closeWrapper;
 			program.close = closeWrapper;
 		}
@@ -452,11 +466,10 @@ export class Handler<T extends Manageable<any>> {
 			const drop = droppable.drop;
 			state.dropOperation = drop;
 			const dropWrapper = (...args: any[]) =>
-				this.runTerminalOperation(state!, "drop", drop, args);
+				this.runTerminalOperation(state, "drop", drop, args, dropWrapper);
 			state.dropWrapper = dropWrapper;
 			droppable.drop = dropWrapper;
 		}
-		return { state, newLifecycle };
 	}
 
 	private runTerminalOperation(
@@ -464,8 +477,41 @@ export class Handler<T extends Manageable<any>> {
 		type: TerminalOperation,
 		operation: (...args: any[]) => Promise<boolean>,
 		args: any[],
+		invokedWrapper: (...args: any[]) => Promise<boolean>,
 	): Promise<boolean> {
 		const from = args[0] as Manageable<any> | undefined;
+		const synchronousInvocation = state.synchronouslyInvokingWrapper;
+		if (synchronousInvocation) {
+			if (type !== synchronousInvocation.type) {
+				return Promise.reject(
+					new TerminalOperationNotStartedError(
+						"Program terminal methods cannot synchronously invoke another terminal operation",
+					),
+				);
+			}
+			if (!this.sameTerminalArgs(args, synchronousInvocation.args)) {
+				return Promise.reject(
+					new TerminalOperationNotStartedError(
+						"A captured terminal wrapper cannot change the active operation owner",
+					),
+				);
+			}
+			if (invokedWrapper !== synchronousInvocation.wrapper) {
+				// A post-open replacement may delegate to the Handler wrapper it
+				// captured before being re-wrapped. Peel that stale wrapper back to its
+				// raw operation; the current outer wrapper still monitors the full promise.
+				try {
+					return Promise.resolve(operation.apply(state.program, args));
+				} catch (error) {
+					return Promise.reject(error);
+				}
+			}
+			return Promise.reject(
+				new TerminalOperationNotStartedError(
+					"Program terminal methods cannot wait for their own active operation",
+				),
+			);
+		}
 		if (
 			state.program.terminalLifecycleCallbackRunning ||
 			(this._terminalLifecycleCallbacks > 0 && state.activeCalls > 0)
@@ -482,6 +528,26 @@ export class Handler<T extends Manageable<any>> {
 			state.program.closed ||
 			parentIndex === -1 ||
 			(state.program.parents?.length ?? 0) === 1;
+		const currentWrapper =
+			type === "close" ? state.closeWrapper : state.dropWrapper;
+		if (
+			currentWrapper &&
+			invokedWrapper !== currentWrapper &&
+			[...state.outerCalls].some(
+				(call) => call.type === type && call.invokedWrapper === currentWrapper,
+			)
+		) {
+			// Once replacement code has yielded there is no portable async-call
+			// context that can distinguish its captured stale wrapper from an
+			// unrelated external stale call. Never return the active outer promise to
+			// code that may itself be awaiting this call: reject before base progress
+			// instead of forming a self-cycle that wedges Handler.stop().
+			return Promise.reject(
+				new TerminalOperationNotStartedError(
+					"A stale terminal wrapper cannot join its active replacement after yielding",
+				),
+			);
+		}
 		const matching = [...state.outerCalls].find(
 			(call) =>
 				call.terminal &&
@@ -544,6 +610,7 @@ export class Handler<T extends Manageable<any>> {
 			from,
 			terminal,
 			claimedOwnerReference: ownerReferences > 0,
+			invokedWrapper,
 			promise: tracked,
 		};
 		const hasPredecessor = state.outerCalls.size > 0;
@@ -587,11 +654,20 @@ export class Handler<T extends Manageable<any>> {
 						state.program.parents?.filter((parent) => parent === from).length ??
 						0;
 					let operationResult: Promise<boolean>;
+					const previousSynchronouslyInvokingWrapper =
+						state.synchronouslyInvokingWrapper;
+					state.synchronouslyInvokingWrapper = {
+						type,
+						wrapper: invokedWrapper,
+						args,
+					};
 					try {
 						operationResult = this.invokeLifecycleMethod(() =>
 							operation.apply(state.program, args),
 						);
 					} finally {
+						state.synchronouslyInvokingWrapper =
+							previousSynchronouslyInvokingWrapper;
 						outerCall.ownerReferencesAfterInvoke =
 							state.program.parents?.filter((parent) => parent === from)
 								.length ?? 0;
@@ -630,6 +706,7 @@ export class Handler<T extends Manageable<any>> {
 					state.failed = false;
 					state.failedOperation = undefined;
 					state.failedCall = undefined;
+					this.releaseRetainedTerminalIdentity(state);
 				} else {
 					const commit = this.terminalCommit(
 						state.program,
@@ -707,7 +784,16 @@ export class Handler<T extends Manageable<any>> {
 					releasedParentReferences,
 				};
 				state.terminalCompleted = false;
-				this.items.set(state.address, state.program);
+				const monitored = this.items.get(state.address);
+				if (!monitored || monitored === state.program) {
+					this.items.set(state.address, state.program);
+				} else {
+					// `items` is address-keyed, but embedded opening graphs may contain a
+					// distinct instance with the same address as a monitored root. Never
+					// orphan that root by replacing it with this failed cleanup identity.
+					const residual = this.reserveCleanupResidual(state.program);
+					residual.terminalState = state;
+				}
 				this._terminalOperationsByAddress.set(state.address, state);
 				throw error;
 			}
@@ -834,7 +920,11 @@ export class Handler<T extends Manageable<any>> {
 		if (residual.activeReservations < 0) {
 			throw new Error("Cleanup residual reservation underflow");
 		}
-		if (residual.activeReservations === 0 && residual.failures.length === 0) {
+		if (
+			residual.activeReservations === 0 &&
+			residual.failures.length === 0 &&
+			residual.terminalState == null
+		) {
 			this.releaseCleanupResidual(residual);
 		}
 	}
@@ -845,11 +935,29 @@ export class Handler<T extends Manageable<any>> {
 				"Cleanup residual cannot be released while rollback cleanup is active",
 			);
 		}
+		if (residual.terminalState != null) {
+			throw new Error(
+				"Cleanup residual cannot be released while terminal identity is retained",
+			);
+		}
 		if (residual.cleanupLease) {
 			residual.program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(residual.cleanupLease);
 			residual.cleanupLease = undefined;
 		}
 		this._cleanupResiduals.delete(residual.program);
+	}
+
+	private releaseRetainedTerminalIdentity(
+		state: TerminalOperationState<T>,
+	): void {
+		const residual = this._cleanupResiduals.get(state.program);
+		if (residual?.terminalState !== state) {
+			return;
+		}
+		residual.terminalState = undefined;
+		if (residual.activeReservations === 0 && residual.failures.length === 0) {
+			this.releaseCleanupResidual(residual);
+		}
 	}
 
 	private async retryCleanupResidual(
@@ -1143,6 +1251,12 @@ export class Handler<T extends Manageable<any>> {
 		await this.waitForTerminalOperations(program);
 		let terminalState = this._terminalOperationsByProgram.get(program);
 		while (!program.closed || terminalState?.failed) {
+			if (terminalState) {
+				// Applications/tests may replace a failed wrapped method before stop.
+				// Re-wrap any replacement in the existing identity-specific state before
+				// invoking it, so both a fresh failure and exact recovery remain monitored.
+				this.refreshTerminalOperationWrappers(terminalState);
+			}
 			const wasRecovering = terminalState?.failed === true;
 			const failedCall = terminalState?.failedCall;
 			const ownersBefore = [...(program.parents ?? [])];
@@ -1174,18 +1288,22 @@ export class Handler<T extends Manageable<any>> {
 			await this.waitForTerminalOperations(program);
 			terminalState = this._terminalOperationsByProgram.get(program);
 			if (
-				closed &&
-				program.closed &&
 				terminalState?.failed &&
-				terminalState.failedOperation === operationType
+				terminalState.failedCall === failedCall &&
+				terminalState.failedOperation === operationType &&
+				((closed && program.closed) ||
+					(failedCall?.commit != null && closed === failedCall.commit.result))
 			) {
 				// This also supports a test/application replacing the wrapped method
 				// after open: closeCompletely awaited the full replacement call, so it
-				// is safe to mark the previously retained cleanup as recovered.
+				// is safe to mark the previously retained cleanup as recovered. A
+				// committed non-terminal release must reproduce its recorded `false`;
+				// the fresh loop below then drains the owners that remain.
 				terminalState.failed = false;
 				terminalState.failedOperation = undefined;
 				terminalState.failedCall = undefined;
-				terminalState.terminalCompleted = true;
+				terminalState.terminalCompleted = closed && program.closed;
+				this.releaseRetainedTerminalIdentity(terminalState);
 				if (terminalState.cleanupLease) {
 					program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(terminalState.cleanupLease);
 					terminalState.cleanupLease = undefined;
@@ -1287,6 +1405,28 @@ export class Handler<T extends Manageable<any>> {
 		this._openingReservations.clear();
 		this._openingReservationsByAddress.clear();
 
+		// A failed child can have its wrapped terminal method replaced before stop.
+		// Refresh every retained failed identity before closing any parent root, so
+		// parent traversal consumes the recorded commit through the new wrapper
+		// instead of calling the replacement outside Handler monitoring.
+		const pendingTerminalGraphs: Manageable<any>[] = [
+			...this.items.values(),
+			...this._cleanupResiduals.keys(),
+		];
+		const visitedTerminalGraphs = new Set<Manageable<any>>();
+		while (pendingTerminalGraphs.length > 0) {
+			const candidate = pendingTerminalGraphs.pop()!;
+			if (visitedTerminalGraphs.has(candidate)) continue;
+			visitedTerminalGraphs.add(candidate);
+			const terminalState = this._terminalOperationsByProgram.get(candidate);
+			if (terminalState?.failed) {
+				this.refreshTerminalOperationWrappers(terminalState);
+			}
+			for (const child of candidate.children ?? []) {
+				pendingTerminalGraphs.push(child);
+			}
+		}
+
 		// A close can legitimately return false when it only releases one of several
 		// owners. Drain every ownership reference so stop cannot discard a still-live
 		// program from Handler state.
@@ -1329,6 +1469,7 @@ export class Handler<T extends Manageable<any>> {
 			if (
 				program.closed &&
 				residual.failures.length === 0 &&
+				residual.terminalState == null &&
 				!terminalState?.failed &&
 				(terminalState?.activeCalls ?? 0) === 0
 			) {

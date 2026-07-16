@@ -129,6 +129,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	private _responseType!: AbstractType<R>;
 	private _rpcTopic!: string;
 	private _onMessageBinded: ((arg: any) => any) | undefined = undefined;
+	private _listenerAttached = false;
 	private _keypair!: X25519Keypair;
 	private _getResponseValueFn!: (decrypted: DecryptedThing<R>) => R;
 	private _getRequestValueFn!: (decrypted: DecryptedThing<Q>) => Q;
@@ -148,24 +149,67 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		await this.subscribe();
 	}
 
-	private async _close(from?: Program): Promise<void> {
+	private async _close(): Promise<void> {
 		if (this._subscribed) {
 			await this.node.services.pubsub.unsubscribe(this.topic);
+			this._subscribed = false;
+		}
+		if (this._listenerAttached) {
 			await this.node.services.pubsub.removeEventListener(
 				"data",
 				this._onMessageBinded,
 			);
+			this._listenerAttached = false;
 		}
-		this._subscribed = false;
 	}
 	public async close(from?: Program): Promise<boolean> {
-		await this._close(from);
-		return super.close(from);
+		let firstError: unknown;
+		let closed = false;
+		try {
+			closed = await super.close(from);
+		} catch (error) {
+			if (!this.closed || this.pendingTerminalOperation !== "close") {
+				throw error;
+			}
+			firstError = error;
+		}
+		if (!closed && firstError === undefined) {
+			return false;
+		}
+		try {
+			await this._close();
+		} catch (error) {
+			firstError ??= error;
+		}
+		if (firstError !== undefined) {
+			throw firstError;
+		}
+		return true;
 	}
 
 	public async drop(from?: Program): Promise<boolean> {
-		await this._close(from);
-		return super.drop(from);
+		let firstError: unknown;
+		let dropped = false;
+		try {
+			dropped = await super.drop(from);
+		} catch (error) {
+			if (!this.closed || this.pendingTerminalOperation !== "drop") {
+				throw error;
+			}
+			firstError = error;
+		}
+		if (!dropped && firstError === undefined) {
+			return false;
+		}
+		try {
+			await this._close();
+		} catch (error) {
+			firstError ??= error;
+		}
+		if (firstError !== undefined) {
+			throw firstError;
+		}
+		return true;
 	}
 
 	private _subscribing: Promise<void> | void | undefined;
@@ -180,6 +224,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 		this._onMessageBinded = this._onMessageBinded || this._onMessage.bind(this);
 
 		this.node.services.pubsub.addEventListener("data", this._onMessageBinded!);
+		this._listenerAttached = true;
 
 		this._subscribing = this.node.services.pubsub.subscribe(this.topic);
 
@@ -188,6 +233,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 	}
 
 	private async _onMessage(evt: CustomEvent<DataEvent>): Promise<void> {
+		if (this.closed) {
+			return;
+		}
 		const { data, message } = evt.detail;
 
 		if (data?.topics.find((x) => x === this.topic) != null) {
@@ -232,6 +280,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 							);
 							request = this._getRequestValueFn(decrypted);
 						}
+						if (this.closed) {
+							return;
+						}
 						stage = "handle-request";
 						let from = message.header.signatures!.publicKeys[0];
 
@@ -253,7 +304,7 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 							transport,
 						});
 
-						if (response && rpcMessage.respondTo) {
+						if (!this.closed && response && rpcMessage.respondTo) {
 							// send query and wait for replies in a generator like behaviour
 							stage = "encode-response";
 							const serializedResponse = serialize(response);
@@ -274,6 +325,9 @@ export class RPC<Q, R> extends Program<RPCSetupOptions<Q, R>, RPCEvents<Q, R>> {
 								this._keypair,
 								[rpcMessage.respondTo],
 							);
+							if (this.closed) {
+								return;
+							}
 
 							await this.node.services.pubsub.publish(
 								serialize(

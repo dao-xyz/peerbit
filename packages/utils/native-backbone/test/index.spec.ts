@@ -3034,6 +3034,372 @@ describe("native peerbit backbone", () => {
 		expect(postCloseOperations).equal(0);
 	});
 
+	it("retries a transient active-close flush before closing the store", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let flushCalls = 0;
+		let closeCalls = 0;
+		const closeOptions: Array<{ flush?: boolean } | undefined> = [];
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: async () => {
+				flushCalls++;
+				if (flushCalls === 1) {
+					throw new Error("transient close flush failure");
+				}
+			},
+			close: async (options) => {
+				closeCalls++;
+				closeOptions.push(options);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		const firstClose = persistence.close();
+		expect(persistence.close()).equal(firstClose);
+		const firstError = await firstClose.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(firstError)).to.contain("transient close flush failure");
+		expect(flushCalls).equal(1);
+		expect(closeCalls).equal(0);
+
+		const retry = persistence.close();
+		expect(retry).not.equal(firstClose);
+		await retry;
+		expect(persistence.close()).equal(retry);
+		expect(flushCalls).equal(2);
+		expect(closeCalls).equal(1);
+		expect(closeOptions).to.deep.equal([undefined]);
+	});
+
+	it("retries only the incomplete store-close stage", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let flushCalls = 0;
+		let closeCalls = 0;
+		const closeOptions: Array<{ flush?: boolean } | undefined> = [];
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: async () => {
+				flushCalls++;
+			},
+			close: async (options) => {
+				closeCalls++;
+				closeOptions.push(options);
+				if (closeCalls === 1) {
+					throw new Error("transient store close failure");
+				}
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		const firstClose = persistence.close();
+		const firstError = await firstClose.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(firstError)).to.contain("transient store close failure");
+		expect(flushCalls).equal(1);
+		expect(closeCalls).equal(1);
+
+		const retry = persistence.close();
+		expect(retry).not.equal(firstClose);
+		await retry;
+		expect(flushCalls).equal(1);
+		expect(closeCalls).equal(2);
+		expect(closeOptions).to.deep.equal([undefined, undefined]);
+	});
+
+	it("fences ordinary operations after a markerless explicit drop failure", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let failTombstoneWrite = true;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: async (name, bytes) => {
+				if (name === "native-backbone-drop.tombstone" && failTombstoneWrite) {
+					failTombstoneWrite = false;
+					throw new Error("transient tombstone write failure");
+				}
+				await memory.write(name, bytes);
+			},
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: (name) => memory.flush(name),
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+		await memory.write("coordinates.wal", new Uint8Array([1, 2, 3]));
+
+		const dropError = await persistence.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(dropError)).to.contain("transient tombstone write failure");
+		expect(await persistence.resumeDrop()).equal(false);
+
+		const hydrateError = await persistence.hydrate(target).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(hydrateError)).to.contain(
+			"after drop was initiated; retry drop or resume drop first",
+		);
+		let flushError: unknown;
+		try {
+			await persistence.flushJournal(target);
+		} catch (error) {
+			flushError = error;
+		}
+		expect(String(flushError)).to.contain(
+			"after drop was initiated; retry drop or resume drop first",
+		);
+
+		// Only terminal recovery remains admitted on this generation.
+		await persistence.drop();
+		expect(memory.files.size).equal(0);
+	});
+
+	it("closes markerless explicit-drop debt without flushing", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let failTombstoneWrite = true;
+		let flushCalls = 0;
+		const closeOptions: Array<{ flush?: boolean } | undefined> = [];
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: async (name, bytes) => {
+				if (name === "native-backbone-drop.tombstone" && failTombstoneWrite) {
+					failTombstoneWrite = false;
+					throw new Error("transient tombstone write failure");
+				}
+				await memory.write(name, bytes);
+			},
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: async (name) => {
+				flushCalls++;
+				await memory.flush(name);
+			},
+			close: async (options) => {
+				closeOptions.push(options);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		await persistence.drop().then(
+			() => undefined,
+			() => undefined,
+		);
+		expect(await persistence.resumeDrop()).equal(false);
+		await persistence.close();
+
+		expect(flushCalls).equal(0);
+		expect(closeOptions).to.deep.equal([{ flush: false }]);
+		const hydrateError = await persistence.hydrate(target).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(hydrateError)).to.contain("while closed");
+	});
+
+	it("closes after a queued explicit drop rejection before admitting resume", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let writeEntered!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			writeEntered = resolve;
+		});
+		let releaseWrite!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			releaseWrite = resolve;
+		});
+		let closed = false;
+		let postCloseReads = 0;
+		const closeOptions: Array<{ flush?: boolean } | undefined> = [];
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => {
+				if (closed) {
+					postCloseReads++;
+					throw new Error("terminal store is closed");
+				}
+				return memory.read(name);
+			},
+			write: async (name, bytes) => {
+				if (name === "native-backbone-drop.tombstone") {
+					writeEntered();
+					await gate;
+					throw new Error("queued tombstone write failure");
+				}
+				await memory.write(name, bytes);
+			},
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: (name) => memory.flush(name),
+			close: async (options) => {
+				closeOptions.push(options);
+				closed = true;
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+
+		const dropping = persistence.drop();
+		await entered;
+		const closing = persistence.close();
+		const lateResume = persistence.resumeDrop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		releaseWrite();
+		const dropError = await dropping.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(dropError)).to.contain("queued tombstone write failure");
+		await closing;
+
+		const resumeError = await lateResume;
+		expect(String(resumeError)).to.contain("after close was initiated");
+		const retryDropError = await persistence.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(retryDropError)).to.contain("while closed");
+		expect(closeOptions).to.deep.equal([{ flush: false }]);
+		expect(postCloseReads).equal(0);
+	});
+
+	it("closes behind recovery-origin resume without leaving an active adapter", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let failRemoval = true;
+		const seedStore: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: async (name) => {
+				if (name === "coordinates.bin" && failRemoval) {
+					failRemoval = false;
+					throw new Error("seed interrupted drop");
+				}
+				await memory.remove(name);
+			},
+			flush: (name) => memory.flush(name),
+		};
+		await memory.write("coordinates.bin", new Uint8Array([1]));
+		const seed = new NativeBackboneCoordinatePersistence(seedStore);
+		await seed.drop().then(
+			() => undefined,
+			() => undefined,
+		);
+		expect(memory.files.has("native-backbone-drop.tombstone")).equal(true);
+
+		let readEntered!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			readEntered = resolve;
+		});
+		let releaseRead!: () => void;
+		const gate = new Promise<void>((resolve) => {
+			releaseRead = resolve;
+		});
+		let gateArmed = true;
+		let closed = false;
+		let postCloseReads = 0;
+		const closeOptions: Array<{ flush?: boolean } | undefined> = [];
+		const recoveryStore: NativeBackboneCoordinatePersistenceStore = {
+			read: async (name) => {
+				if (closed) {
+					postCloseReads++;
+					throw new Error("terminal store is closed");
+				}
+				if (name === "native-backbone-drop.tombstone" && gateArmed) {
+					gateArmed = false;
+					readEntered();
+					await gate;
+				}
+				return memory.read(name);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: (name) => memory.flush(name),
+			close: async (options) => {
+				closeOptions.push(options);
+				closed = true;
+			},
+		};
+		const recovering = new NativeBackboneCoordinatePersistence(recoveryStore);
+		const target = await createNativePeerbitBackbone({
+			clockId: publicKey,
+			privateKey,
+			publicKey,
+		});
+
+		const resuming = recovering.resumeDrop();
+		await entered;
+		const closing = recovering.close();
+		releaseRead();
+		expect(await resuming).equal(true);
+		await closing;
+
+		expect(closeOptions).to.deep.equal([{ flush: false }]);
+		const hydrateError = await recovering.hydrate(target).then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(hydrateError)).to.contain("while closed");
+		expect(postCloseReads).equal(0);
+	});
+
+	it("retries a drop-wins store close without flushing", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let closeCalls = 0;
+		const closeOptions: Array<{ flush?: boolean } | undefined> = [];
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: (name) => memory.remove(name),
+			flush: (name) => memory.flush(name),
+			close: async (options) => {
+				closeCalls++;
+				closeOptions.push(options);
+				if (closeCalls === 1) {
+					throw new Error("transient drop-wins close failure");
+				}
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await memory.write("coordinates.wal", new Uint8Array([1, 2, 3]));
+
+		const dropping = persistence.drop();
+		const firstClose = persistence.close();
+		await dropping;
+		const firstError = await firstClose.then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(firstError)).to.contain("transient drop-wins close failure");
+		expect(memory.files.size).equal(0);
+
+		const retry = persistence.close();
+		expect(retry).not.equal(firstClose);
+		await retry;
+		expect(closeCalls).equal(2);
+		expect(closeOptions).to.deep.equal([{ flush: false }, { flush: false }]);
+	});
+
 	it("lets an in-flight drop finish before terminal close", async () => {
 		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
 		let closed = false;
@@ -3229,6 +3595,55 @@ describe("native peerbit backbone", () => {
 		expect(memory.files.size).equal(0);
 	});
 
+	it("keeps a retried recovery-origin resume active", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let failRemoval = true;
+		let failTombstoneRead = false;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: async (name) => {
+				if (name === "native-backbone-drop.tombstone" && failTombstoneRead) {
+					failTombstoneRead = false;
+					throw new Error("transient tombstone read failure");
+				}
+				return memory.read(name);
+			},
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: async (name) => {
+				if (name === "coordinates.bin" && failRemoval) {
+					failRemoval = false;
+					throw new Error("seed interrupted drop");
+				}
+				await memory.remove(name);
+			},
+		};
+		await memory.append("coordinates.bin", new Uint8Array([1]));
+		const seed = new NativeBackboneCoordinatePersistence(store);
+		const seedError = await seed.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(seedError)).to.contain(
+			"Failed to erase native backbone coordinate persistence namespace",
+		);
+		expect(memory.files.has("native-backbone-drop.tombstone")).equal(true);
+
+		const recovering = new NativeBackboneCoordinatePersistence(store);
+		failTombstoneRead = true;
+		const resumeError = await recovering.resumeDrop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(String(resumeError)).to.contain("transient tombstone read failure");
+		expect(await recovering.resumeDrop()).equal(true);
+		expect(memory.files.size).equal(0);
+
+		// Recovery did not originate the erased generation, so this adapter remains
+		// active and can start a later explicit drop of its own.
+		await recovering.drop();
+		expect(memory.files.size).equal(0);
+	});
+
 	it("resumes a failed drop on the same persistence generation", async () => {
 		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
 		let failRemoval = true;
@@ -3257,6 +3672,14 @@ describe("native peerbit backbone", () => {
 
 		expect(await persistence.resumeDrop()).equal(true);
 		expect(memory.files.size).equal(0);
+
+		let secondDropError: unknown;
+		try {
+			await persistence.drop();
+		} catch (error) {
+			secondDropError = error;
+		}
+		expect(String(secondDropError)).to.contain("while dropped");
 	});
 
 	it("keeps journal records appended during a flush write for the next flush", async () => {

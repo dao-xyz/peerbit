@@ -690,6 +690,7 @@ export abstract class Program<
 			checkpoint: number;
 			startedClosed: boolean;
 			ownerReferencesBefore: number;
+			inverseOwnerReferencesBefore: number;
 			skipped: boolean;
 			cleanupLease?: object;
 		}[] = [];
@@ -707,6 +708,7 @@ export abstract class Program<
 				checkpoint: 0,
 				startedClosed: false,
 				ownerReferencesBefore: 0,
+				inverseOwnerReferencesBefore: 0,
 				skipped: false,
 				cleanupLease: previous?.cleanupLease,
 			};
@@ -715,6 +717,8 @@ export abstract class Program<
 				attempt.startedClosed = child.closed;
 				attempt.ownerReferencesBefore =
 					child.parents?.filter((parent) => parent === this).length ?? 0;
+				attempt.inverseOwnerReferencesBefore =
+					this.children?.filter((candidate) => candidate === child).length ?? 0;
 				if (
 					child.closed &&
 					(attempt.operation === "close" || retryingTerminalAttempt) &&
@@ -731,13 +735,41 @@ export abstract class Program<
 					: invoke());
 				const ownerReferencesAfter =
 					child.parents?.filter((parent) => parent === this).length ?? 0;
+				let inverseOwnerReferencesAfter =
+					this.children?.filter((candidate) => candidate === child).length ?? 0;
+				// A child override must not be able to hide a retained owner by deleting
+				// only the parent's inverse edge. Restore the minimum graph reachability
+				// required by the child's live owner references before validating progress.
+				while (inverseOwnerReferencesAfter < ownerReferencesAfter) {
+					this.children.push(child);
+					inverseOwnerReferencesAfter += 1;
+				}
+				// A successful retry may consume a previously committed parent release
+				// without changing the child's owner list again. Reconcile at most the one
+				// stale inverse edge represented by this occurrence before deciding whether
+				// the call made progress.
+				if (inverseOwnerReferencesAfter > ownerReferencesAfter) {
+					const childIndex = this.children.indexOf(child);
+					if (childIndex !== -1) {
+						this.children.splice(childIndex, 1);
+						inverseOwnerReferencesAfter -= 1;
+					}
+				}
 				const committedRelease =
 					(previous?.commit?.releasedParentReferences ?? 0) > 0;
+				const releasedOwnerReference =
+					ownerReferencesAfter < attempt.ownerReferencesBefore;
+				const repairedStaleInverseReference =
+					attempt.inverseOwnerReferencesBefore >
+						attempt.ownerReferencesBefore &&
+					ownerReferencesAfter === attempt.ownerReferencesBefore &&
+					inverseOwnerReferencesAfter < attempt.inverseOwnerReferencesBefore;
 				if (
 					!attempt.startedClosed &&
 					!child.closed &&
 					!committedRelease &&
-					ownerReferencesAfter >= attempt.ownerReferencesBefore
+					!releasedOwnerReference &&
+					!repairedStaleInverseReference
 				) {
 					throw new Error(
 						`Child program at ${child.address} did not release parent ownership during ${attempt.operation}`,

@@ -366,4 +366,49 @@ describe("load", () => {
 		await session.peers[0].open(store);
 		expect(await store.getValue()).to.deep.equal("hello world");
 	});
+
+	it("keeps the live index usable for a non-terminal owner release", async () => {
+		const hello = "hello";
+		await store.add(hello, new Range({ offset: 0, length: hello.length }));
+		const log = store._index._log;
+		await session.peers[0].open(store._index, {
+			parent: store as any,
+			existing: "reuse",
+		});
+		expect(store._index.parents).to.deep.equal([store, store]);
+
+		expect(await store._index.close(store)).to.be.false;
+		expect(store._index.closed).to.be.false;
+		expect(store._index.string).to.equal(hello);
+		expect(store._index._log).to.equal(log);
+
+		const world = " world";
+		await store.add(
+			world,
+			new Range({ offset: hello.length, length: world.length }),
+		);
+		expect(await store.getValue()).to.equal(hello + world);
+	});
+
+	it("keeps the live index unchanged for an invalid owner", async () => {
+		const hello = "hello";
+		await store.add(hello, new Range({ offset: 0, length: hello.length }));
+		const log = store._index._log;
+		const wrongOwner = new DString({});
+
+		await expect(store._index.close(wrongOwner)).to.be.rejectedWith(
+			"Could not find from in parents",
+		);
+		expect(store._index.closed).to.be.false;
+		expect(store._index.parents).to.deep.equal([store]);
+		expect(store._index.string).to.equal(hello);
+		expect(store._index._log).to.equal(log);
+
+		const world = " world";
+		await store.add(
+			world,
+			new Range({ offset: hello.length, length: world.length }),
+		);
+		expect(await store.getValue()).to.equal(hello + world);
+	});
 });

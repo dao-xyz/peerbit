@@ -1,4 +1,5 @@
 // Include test utilities
+import { TerminalOperationNotStartedError } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
@@ -31,6 +32,39 @@ describe("lifecycle", () => {
 			expect(closeLog.called).to.be.true;
 		});
 
+		for (const target of [
+			"entry coordinates index",
+			"replication range index",
+		] as const) {
+			it(`retains a failed ${target} stop for the exact close retry`, async () => {
+				session = await TestSession.connected(1);
+				const db = await session.peers[0].open(new EventStore());
+				const sharedLog = db.log as any;
+				const index =
+					target === "entry coordinates index"
+						? sharedLog.entryCoordinatesIndex
+						: sharedLog.replicationIndex;
+				const originalStop = index.stop.bind(index);
+				const cleanupError = new Error(`injected ${target} close failure`);
+				let attempts = 0;
+				index.stop = async () => {
+					attempts += 1;
+					if (attempts === 1) throw cleanupError;
+					await originalStop();
+				};
+
+				await expect(db.close()).to.be.rejectedWith(cleanupError.message);
+				expect(
+					target === "entry coordinates index"
+						? sharedLog._entryCoordinatesIndex
+						: sharedLog._replicationRangeIndex,
+				).to.equal(index);
+
+				await db.close();
+				expect(attempts).to.equal(2);
+			});
+		}
+
 		it("closing does not affect other instances", async () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
@@ -41,7 +75,154 @@ describe("lifecycle", () => {
 			expect((await db2.iterator({ limit: -1 })).collect()).to.have.length(1);
 		});
 	});
+
+	for (const operation of ["close", "drop"] as const) {
+		it(`${operation} rejects an invalid owner before SharedLog teardown`, async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore<string, any>());
+			const invalidOwner = new EventStore<string, any>();
+			const sharedLog = db.log;
+			const lowerLog = sharedLog.log;
+			const entryCoordinatesIndex = sharedLog.entryCoordinatesIndex;
+			const replicationIndex = sharedLog.replicationIndex;
+			const subscriptions = (sharedLog.node.services.pubsub as any)[
+				"subscriptions"
+			];
+			const subscriptionCounter = subscriptions.get(
+				sharedLog.rpc.topic,
+			)?.counter;
+			const replicationSegments = await sharedLog.getMyReplicationSegments();
+			const { entry: before } = await db.add("before");
+			const sandbox = sinon.createSandbox();
+			const lowerClose = sandbox.spy(lowerLog, "close");
+			const lowerDrop = sandbox.spy(lowerLog, "drop");
+			const entryStop = sandbox.spy(entryCoordinatesIndex, "stop");
+			const entryDrop = sandbox.spy(entryCoordinatesIndex, "drop");
+			const replicationStop = sandbox.spy(replicationIndex, "stop");
+			const replicationDrop = sandbox.spy(replicationIndex, "drop");
+
+			try {
+				await expect(sharedLog[operation](invalidOwner)).to.be.rejectedWith(
+					TerminalOperationNotStartedError,
+					"Could not find from in parents",
+				);
+				expect(sharedLog.closed).to.be.false;
+				expect(sharedLog.parents).to.deep.equal([db]);
+				expect(lowerClose.called).to.be.false;
+				expect(lowerDrop.called).to.be.false;
+				expect(entryStop.called).to.be.false;
+				expect(entryDrop.called).to.be.false;
+				expect(replicationStop.called).to.be.false;
+				expect(replicationDrop.called).to.be.false;
+				expect(sharedLog.entryCoordinatesIndex).to.equal(entryCoordinatesIndex);
+				expect(sharedLog.replicationIndex).to.equal(replicationIndex);
+				expect(await sharedLog.isReplicating()).to.be.true;
+				expect(await sharedLog.getMyReplicationSegments()).to.deep.equal(
+					replicationSegments,
+				);
+				expect(subscriptions.get(sharedLog.rpc.topic)?.counter).to.equal(
+					subscriptionCounter,
+				);
+
+				const { entry: after } = await db.add("after");
+				expect(await lowerLog.has(before.hash)).to.be.true;
+				expect(await lowerLog.has(after.hash)).to.be.true;
+				expect((await db.iterator({ limit: -1 })).collect()).to.have.length(2);
+				expect(await entryCoordinatesIndex.count()).to.equal(1);
+				expect(await replicationIndex.count()).to.equal(1);
+			} finally {
+				sandbox.restore();
+			}
+		});
+
+		it(`${operation} releases one owner reference without changing live SharedLog state`, async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore<string, any>());
+			const sharedLog = db.log;
+			await session.peers[0].open(sharedLog, {
+				parent: db as any,
+				existing: "reuse",
+			});
+			expect(sharedLog.parents).to.deep.equal([db, db]);
+			expect(db.children.filter((child) => child === sharedLog)).to.have.length(
+				2,
+			);
+
+			const lowerLog = sharedLog.log;
+			const entryCoordinatesIndex = sharedLog.entryCoordinatesIndex;
+			const replicationIndex = sharedLog.replicationIndex;
+			const subscriptions = (sharedLog.node.services.pubsub as any)[
+				"subscriptions"
+			];
+			const subscriptionCounter = subscriptions.get(
+				sharedLog.rpc.topic,
+			)?.counter;
+			const replicationSegments = await sharedLog.getMyReplicationSegments();
+			const { entry: before } = await db.add("before");
+			const sandbox = sinon.createSandbox();
+			const lowerClose = sandbox.spy(lowerLog, "close");
+			const lowerDrop = sandbox.spy(lowerLog, "drop");
+			const entryStop = sandbox.spy(entryCoordinatesIndex, "stop");
+			const entryDrop = sandbox.spy(entryCoordinatesIndex, "drop");
+			const replicationStop = sandbox.spy(replicationIndex, "stop");
+			const replicationDrop = sandbox.spy(replicationIndex, "drop");
+
+			try {
+				expect(await sharedLog[operation](db)).to.be.false;
+				expect(sharedLog.closed).to.be.false;
+				expect(sharedLog.parents).to.deep.equal([db]);
+				expect(
+					db.children.filter((child) => child === sharedLog),
+				).to.have.length(1);
+				expect(lowerClose.called).to.be.false;
+				expect(lowerDrop.called).to.be.false;
+				expect(entryStop.called).to.be.false;
+				expect(entryDrop.called).to.be.false;
+				expect(replicationStop.called).to.be.false;
+				expect(replicationDrop.called).to.be.false;
+				expect(sharedLog.entryCoordinatesIndex).to.equal(entryCoordinatesIndex);
+				expect(sharedLog.replicationIndex).to.equal(replicationIndex);
+				expect(await sharedLog.isReplicating()).to.be.true;
+				expect(await sharedLog.getMyReplicationSegments()).to.deep.equal(
+					replicationSegments,
+				);
+				expect(subscriptions.get(sharedLog.rpc.topic)?.counter).to.equal(
+					subscriptionCounter,
+				);
+
+				const { entry: after } = await db.add("after");
+				expect(await lowerLog.has(before.hash)).to.be.true;
+				expect(await lowerLog.has(after.hash)).to.be.true;
+				expect((await db.iterator({ limit: -1 })).collect()).to.have.length(2);
+				expect(await entryCoordinatesIndex.count()).to.equal(1);
+				expect(await replicationIndex.count()).to.equal(1);
+			} finally {
+				sandbox.restore();
+			}
+		});
+	}
+
 	describe("drop", () => {
+		it("rejects a fresh drop after clean close without erasing the lower log", async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const { entry } = await db.add("keep-after-close");
+			const sharedLog = db.log;
+			const lowerDrop = sinon.spy(sharedLog.log, "drop");
+			try {
+				await sharedLog.close(db);
+				expect(await sharedLog.log.has(entry.hash)).to.be.true;
+
+				await expect(sharedLog.drop()).to.be.rejectedWith(
+					"Program is closed, can not drop",
+				);
+				expect(lowerDrop.called).to.be.false;
+				expect(await sharedLog.log.has(entry.hash)).to.be.true;
+			} finally {
+				lowerDrop.restore();
+			}
+		});
+
 		it("will drop all data", async () => {
 			session = await TestSession.connected(1);
 			const store = new EventStore();
@@ -144,9 +325,10 @@ describe("lifecycle", () => {
 			});
 
 			await waitForResolved(async () => {
-				const subscribers = await session.peers[0].services.pubsub.getSubscribers(
-					db1.log.rpc.topic,
-				);
+				const subscribers =
+					await session.peers[0].services.pubsub.getSubscribers(
+						db1.log.rpc.topic,
+					);
 				expect((subscribers || []).map((x) => x.hashcode())).to.include(
 					session.peers[1].identity.publicKey.hashcode(),
 				);
@@ -203,33 +385,33 @@ describe("lifecycle", () => {
 			await db2.close();
 			// Closing a remote log propagates through unsubscribe + replication updates.
 			// Under full-suite load this can take longer than the default wait timeout.
-				await waitForResolved(
-					async () => expect((await db3.log.getReplicators()).size).to.equal(1),
-					{ timeout: 30e3, delayInterval: 100 },
-				);
-				// Close/unsubscribe ordering can vary under full-suite load. Ensure we
-				// validate the cleanup behavior deterministically for the departed peers.
-				sync.onPeerDisconnected(db1Hash);
-				sync.onPeerDisconnected(db2Hash);
+			await waitForResolved(
+				async () => expect((await db3.log.getReplicators()).size).to.equal(1),
+				{ timeout: 30e3, delayInterval: 100 },
+			);
+			// Close/unsubscribe ordering can vary under full-suite load. Ensure we
+			// validate the cleanup behavior deterministically for the departed peers.
+			sync.onPeerDisconnected(db1Hash);
+			sync.onPeerDisconnected(db2Hash);
 
-				// Under suite-wide load there can be unrelated in-flight sync state from
-				// concurrent background exchanges. Assert that the departed peers are cleared.
-				await waitForResolved(
-					() =>
-						expect(
-							(db3.log.syncronizer as SimpleSyncronizer<any>).syncInFlight.has(
-								db1Hash,
-							),
-						).to.be.false,
-				);
-				await waitForResolved(
-					() =>
-						expect(
-							(db3.log.syncronizer as SimpleSyncronizer<any>).syncInFlight.has(
-								db2Hash,
-							),
-						).to.be.false,
-				);
+			// Under suite-wide load there can be unrelated in-flight sync state from
+			// concurrent background exchanges. Assert that the departed peers are cleared.
+			await waitForResolved(
+				() =>
+					expect(
+						(db3.log.syncronizer as SimpleSyncronizer<any>).syncInFlight.has(
+							db1Hash,
+						),
+					).to.be.false,
+			);
+			await waitForResolved(
+				() =>
+					expect(
+						(db3.log.syncronizer as SimpleSyncronizer<any>).syncInFlight.has(
+							db2Hash,
+						),
+					).to.be.false,
+			);
 			await waitForResolved(
 				() =>
 					expect(
