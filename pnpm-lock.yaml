@@ -1268,6 +1268,9 @@ importers:
       '@peerbit/stream-interface':
         specifier: workspace:*
         version: link:../../../../transport/stream-interface
+      '@peerbit/time':
+        specifier: workspace:*
+        version: link:../../../../utils/time
       p-defer:
         specifier: ^4.0.0
         version: 4.0.1
@@ -1290,9 +1293,6 @@ importers:
       '@peerbit/test-utils':
         specifier: workspace:*
         version: link:../../../../clients/test-utils
-      '@peerbit/time':
-        specifier: workspace:*
-        version: link:../../../../utils/time
       '@types/pidusage':
         specifier: ^2.0.5
         version: 2.0.5
