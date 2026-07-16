@@ -3155,6 +3155,9 @@ export class SharedLog<
 
 	private _onSubscriptionFn!: (arg: any) => any;
 	private _onUnsubscriptionFn!: (arg: any) => any;
+	private _subscriptionChangeCallbacks?: Set<Promise<void>>;
+	private _acceptSubscriptionChangeCallbacks = false;
+	private _replicationLifecycleController?: AbortController;
 	private _onFanoutDataFn?: (arg: any) => void;
 	private _onFanoutUnicastFn?: (arg: any) => void;
 	private _fanoutChannel?: FanoutChannel;
@@ -5558,8 +5561,9 @@ export class SharedLog<
 	}
 
 	// @deprecated
-	private async getRole() {
-		const segments = await this.getMyReplicationSegments();
+	private getRoleFromReplicationSegments(
+		segments: ReplicationRangeIndexable<R>[],
+	) {
 		if (segments.length > 1) {
 			throw new Error(
 				"More than one replication segment found. Can only use one segment for compatbility with v8",
@@ -5576,6 +5580,92 @@ export class SharedLog<
 
 		// TODO this is not accurate but might be good enough
 		return new Observer();
+	}
+
+	private isTerminating() {
+		return (
+			this.acceptsParentAttachments === false ||
+			this.closed ||
+			this._closeController?.signal.aborted === true
+		);
+	}
+
+	private isReplicationLifecycleActive(
+		controller: AbortController | undefined,
+	) {
+		return (
+			controller != null &&
+			controller === this._replicationLifecycleController &&
+			!controller.signal.aborted &&
+			!this.isTerminating()
+		);
+	}
+
+	private resetSubscriptionChangeCallbackTracking() {
+		this._subscriptionChangeCallbacks = new Set();
+		this._acceptSubscriptionChangeCallbacks = true;
+		this._replicationLifecycleController = new AbortController();
+	}
+
+	private runSubscriptionChangeCallback(
+		callback: () => Promise<void>,
+	): Promise<void> | undefined {
+		if (!this._acceptSubscriptionChangeCallbacks || this.isTerminating()) {
+			return;
+		}
+
+		const running = (async () => callback())();
+		const observed = running.catch((error) => {
+			if (!(this.isTerminating() && isNotStartedError(error as Error))) {
+				logger.error(error?.toString?.() ?? String(error));
+			}
+		});
+		const callbacks = (this._subscriptionChangeCallbacks ??= new Set());
+		callbacks.add(observed);
+		void observed.finally(() => callbacks.delete(observed));
+		return observed;
+	}
+
+	private stopSubscriptionChangeCallbackAdmission() {
+		this._acceptSubscriptionChangeCallbacks = false;
+		if (!this._replicationLifecycleController?.signal.aborted) {
+			this._replicationLifecycleController?.abort(
+				new AbortError("SharedLog is terminating"),
+			);
+		}
+		if (this._onSubscriptionFn) {
+			this.node.services.pubsub.removeEventListener(
+				"subscribe",
+				this._onSubscriptionFn,
+			);
+		}
+		if (this._onUnsubscriptionFn) {
+			this.node.services.pubsub.removeEventListener(
+				"unsubscribe",
+				this._onUnsubscriptionFn,
+			);
+		}
+	}
+
+	private async drainSubscriptionChangeCallbacks() {
+		const callbacks = this._subscriptionChangeCallbacks;
+		while (callbacks && callbacks.size > 0) {
+			await Promise.all([...callbacks]);
+		}
+	}
+
+	private handleReplicationLifecycleSendError(
+		error: unknown,
+		controller = this._replicationLifecycleController,
+	) {
+		if (
+			(controller?.signal.aborted ||
+				!this.isReplicationLifecycleActive(controller)) &&
+			(error instanceof AbortError || isNotStartedError(error as Error))
+		) {
+			return;
+		}
+		logger.error((error as any)?.toString?.() ?? String(error));
 	}
 
 	async isReplicating() {
@@ -11987,6 +12077,7 @@ export class SharedLog<
 	async open(options?: Args<T, D, R>): Promise<void> {
 		this.ensureNativeDurabilityRuntimeState();
 		this._nativeStrictDurableTransactionsClosing = false;
+		this.resetSubscriptionChangeCallbackTracking();
 		const recoveringNativeDurableFailure =
 			this._nativeDurableCommitFailure !== undefined;
 		options = applySharedLogNativeDefaults(
@@ -12606,9 +12697,19 @@ export class SharedLog<
 
 		// Open for communcation
 		this._onSubscriptionFn =
-			this._onSubscriptionFn || this._onSubscription.bind(this);
+			this._onSubscriptionFn ||
+			((event) => {
+				void this.runSubscriptionChangeCallback(() =>
+					this._onSubscription(event),
+				);
+			});
 		this._onUnsubscriptionFn =
-			this._onUnsubscriptionFn || this._onUnsubscription.bind(this);
+			this._onUnsubscriptionFn ||
+			((event) => {
+				void this.runSubscriptionChangeCallback(() =>
+					this._onUnsubscription(event),
+				);
+			});
 		await Promise.all([
 			this.rpc.open({
 				queryType: TransportMessage,
@@ -13204,7 +13305,9 @@ export class SharedLog<
 			if (this.closed) {
 				return;
 			}
-			this.handleSubscriptionChange(v, [this.topic], true);
+			void this.runSubscriptionChangeCallback(() =>
+				this.handleSubscriptionChange(v, [this.topic], true),
+			);
 		});
 	}
 
@@ -14490,6 +14593,8 @@ export class SharedLog<
 		// Match Program.end()'s synchronous terminal admission fence before any
 		// SharedLog-specific await or observable teardown can admit a new owner.
 		this.preventParentAttachments();
+		this.stopSubscriptionChangeCallbackAdmission();
+		await this.drainSubscriptionChangeCallbacks();
 		this.ensureNativeDurabilityRuntimeState();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
@@ -14609,6 +14714,8 @@ export class SharedLog<
 		// Adapter capability validation above is explicitly unstarted. Establish
 		// the terminal fence only after that precondition succeeds.
 		this.preventParentAttachments();
+		this.stopSubscriptionChangeCallbackAdmission();
+		await this.drainSubscriptionChangeCallbacks();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state (same reasoning as in `close()`).
@@ -17012,37 +17119,81 @@ export class SharedLog<
 				if (context.from.equals(this.node.identity.publicKey)) {
 					return;
 				}
+				const replicationLifecycleController =
+					this._replicationLifecycleController;
+				if (
+					!replicationLifecycleController ||
+					!this.isReplicationLifecycleActive(replicationLifecycleController)
+				) {
+					return;
+				}
 
-				const segments = (await this.getMyReplicationSegments()).map((x) =>
-					x.toReplicationRange(),
-				);
+				let replicationSegments: ReplicationRangeIndexable<R>[];
+				try {
+					replicationSegments = await this.getMyReplicationSegments();
+				} catch (error) {
+					if (
+						!this.isReplicationLifecycleActive(
+							replicationLifecycleController,
+						) &&
+						isNotStartedError(error as Error)
+					) {
+						return;
+					}
+					throw error;
+				}
+				if (
+					!this.isReplicationLifecycleActive(replicationLifecycleController)
+				) {
+					return;
+				}
+				const segments = replicationSegments.map((x) => x.toReplicationRange());
 
-				this.rpc
+				await this.rpc
 					.send(new AllReplicatingSegmentsMessage({ segments }), {
 						mode: new AcknowledgeDelivery({
 							to: [context.from],
 							redundancy: 1,
 						}),
+						signal: replicationLifecycleController.signal,
 					})
-					.catch((e) => logger.error(e.toString()));
+					.catch((error) =>
+						this.handleReplicationLifecycleSendError(
+							error,
+							replicationLifecycleController,
+						),
+					);
+				if (
+					!this.isReplicationLifecycleActive(replicationLifecycleController)
+				) {
+					return;
+				}
 
 				// for backwards compatibility (v8) remove this when we are sure that all nodes are v9+
 				if (this.v8Behaviour) {
-					const role = this.getRole();
+					const role = this.getRoleFromReplicationSegments(replicationSegments);
 					if (role instanceof Replicator) {
 						const fixedSettings = !this._isAdaptiveReplicating;
 						if (fixedSettings) {
-							await this.rpc.send(
-								new ResponseRoleMessage({
-									role,
-								}),
-								{
-									mode: new SilentDelivery({
-										to: [context.from],
-										redundancy: 1,
+							await this.rpc
+								.send(
+									new ResponseRoleMessage({
+										role,
 									}),
-								},
-							);
+									{
+										mode: new SilentDelivery({
+											to: [context.from],
+											redundancy: 1,
+										}),
+										signal: replicationLifecycleController.signal,
+									},
+								)
+								.catch((error) =>
+									this.handleReplicationLifecycleSendError(
+										error,
+										replicationLifecycleController,
+									),
+								);
 						}
 					}
 				}
@@ -20917,16 +21068,35 @@ export class SharedLog<
 		this._replicationInfoRequestByPeer.delete(peerHash);
 	}
 
-	private scheduleReplicationInfoRequests(peer: PublicSignKey) {
+	private scheduleReplicationInfoRequests(
+		peer: PublicSignKey,
+		replicationLifecycleController = this._replicationLifecycleController,
+	) {
+		if (
+			!replicationLifecycleController ||
+			!this.isReplicationLifecycleActive(replicationLifecycleController)
+		) {
+			return;
+		}
 		const peerHash = peer.hashcode();
-		if (this._replicationInfoRequestByPeer.has(peerHash)) {
+		const requestStates = this._replicationInfoRequestByPeer;
+		if (requestStates.has(peerHash)) {
 			return;
 		}
 
 		const state: { attempts: number; timer?: ReturnType<typeof setTimeout> } = {
 			attempts: 0,
 		};
-		this._replicationInfoRequestByPeer.set(peerHash, state);
+		requestStates.set(peerHash, state);
+		const cancel = () => {
+			if (requestStates.get(peerHash) !== state) {
+				return;
+			}
+			if (state.timer) {
+				clearTimeout(state.timer);
+			}
+			requestStates.delete(peerHash);
+		};
 
 		const intervalMs = Math.max(50, this.waitForReplicatorRequestIntervalMs);
 		const maxAttempts =
@@ -20937,8 +21107,8 @@ export class SharedLog<
 			);
 
 		const tick = () => {
-			if (this.closed || this._closeController.signal.aborted) {
-				this.cancelReplicationInfoRequests(peerHash);
+			if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
+				cancel();
 				return;
 			}
 
@@ -20947,17 +21117,22 @@ export class SharedLog<
 			this.rpc
 				.send(new RequestReplicationInfoMessage(), {
 					mode: new AcknowledgeDelivery({ redundancy: 1, to: [peer] }),
+					signal: replicationLifecycleController.signal,
 				})
 				.catch((e) => {
 					// Best-effort: missing peers / unopened RPC should not fail join flows.
-					if (isNotStartedError(e as Error)) {
+					if (
+						isNotStartedError(e as Error) ||
+						(replicationLifecycleController.signal.aborted &&
+							e instanceof AbortError)
+					) {
 						return;
 					}
 					logger.error(e?.toString?.() ?? String(e));
 				});
 
 			if (state.attempts >= maxAttempts) {
-				this.cancelReplicationInfoRequests(peerHash);
+				cancel();
 				return;
 			}
 
@@ -20974,6 +21149,13 @@ export class SharedLog<
 		subscribed: boolean,
 	) {
 		if (!topics.includes(this.topic)) {
+			return;
+		}
+		const replicationLifecycleController = this._replicationLifecycleController;
+		if (
+			!replicationLifecycleController ||
+			!this.isReplicationLifecycleActive(replicationLifecycleController)
+		) {
 			return;
 		}
 
@@ -20996,6 +21178,9 @@ export class SharedLog<
 				if (!isNotStartedError(error as Error)) {
 					throw error;
 				}
+			}
+			if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
+				return;
 			}
 
 			this._replicatorJoinEmitted.delete(peerHash);
@@ -21026,38 +21211,86 @@ export class SharedLog<
 					}),
 					{
 						mode: new SilentDelivery({ redundancy: 1, to: [publicKey] }),
+						signal: replicationLifecycleController.signal,
 					},
 				)
-				.catch((e) => logger.error(e.toString()));
+				.catch((error) =>
+					this.handleReplicationLifecycleSendError(
+						error,
+						replicationLifecycleController,
+					),
+				);
 		}
 
-		const replicationSegments = await this.getMyReplicationSegments();
+		let replicationSegments: ReplicationRangeIndexable<R>[];
+		try {
+			replicationSegments = await this.getMyReplicationSegments();
+		} catch (error) {
+			if (
+				!this.isReplicationLifecycleActive(replicationLifecycleController) &&
+				isNotStartedError(error as Error)
+			) {
+				return;
+			}
+			throw error;
+		}
+		if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
+			return;
+		}
 		if (replicationSegments.length > 0) {
-			this.rpc
+			await this.rpc
 				.send(
 					new AllReplicatingSegmentsMessage({
 						segments: replicationSegments.map((x) => x.toReplicationRange()),
 					}),
 					{
 						mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
+						signal: replicationLifecycleController.signal,
 					},
 				)
-				.catch((e) => logger.error(e.toString()));
+				.catch((error) =>
+					this.handleReplicationLifecycleSendError(
+						error,
+						replicationLifecycleController,
+					),
+				);
+			if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
+				return;
+			}
 
 			if (this.v8Behaviour) {
 				// for backwards compatibility
-				this.rpc
-					.send(new ResponseRoleMessage({ role: await this.getRole() }), {
-						mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
-					})
-					.catch((e) => logger.error(e.toString()));
+				await this.rpc
+					.send(
+						new ResponseRoleMessage({
+							role: this.getRoleFromReplicationSegments(replicationSegments),
+						}),
+						{
+							mode: new AcknowledgeDelivery({
+								redundancy: 1,
+								to: [publicKey],
+							}),
+							signal: replicationLifecycleController.signal,
+						},
+					)
+					.catch((error) =>
+						this.handleReplicationLifecycleSendError(
+							error,
+							replicationLifecycleController,
+						),
+					);
 			}
 		}
 
 		// Request the remote peer's replication info. This makes joins resilient to
 		// timing-sensitive delivery/order issues where we may miss their initial
 		// replication announcement.
-		this.scheduleReplicationInfoRequests(publicKey);
+		if (this.isReplicationLifecycleActive(replicationLifecycleController)) {
+			this.scheduleReplicationInfoRequests(
+				publicKey,
+				replicationLifecycleController,
+			);
+		}
 	}
 
 	private getClampedReplicas(customValue?: MinReplicas) {

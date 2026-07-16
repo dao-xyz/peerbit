@@ -1,10 +1,17 @@
 // Include test utilities
+import { Ed25519Keypair } from "@peerbit/crypto";
 import { TerminalOperationNotStartedError } from "@peerbit/program";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import { createReplicationDomainHash } from "../src/replication-domain-hash.js";
+import {
+	AllReplicatingSegmentsMessage,
+	RequestReplicationInfoMessage,
+	ResponseRoleMessage,
+} from "../src/replication.js";
+import { Replicator } from "../src/role.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -74,6 +81,286 @@ describe("lifecycle", () => {
 			await db.close();
 			expect((await db2.iterator({ limit: -1 })).collect()).to.have.length(1);
 		});
+	});
+
+	for (const operation of ["close", "drop"] as const) {
+		it(`${operation} drains an admitted subscription callback before retiring replication state`, async () => {
+			session = await TestSession.connected(2);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: { replicate: { factor: 1 } },
+			});
+			const sharedLog = db.log;
+			const replicationSegments = await sharedLog.getMyReplicationSegments();
+			expect(replicationSegments).to.have.length(1);
+
+			let markLookupStarted!: () => void;
+			const lookupStarted = new Promise<void>((resolve) => {
+				markLookupStarted = resolve;
+			});
+			let releaseLookup!: () => void;
+			const lookupGate = new Promise<void>((resolve) => {
+				releaseLookup = resolve;
+			});
+			const lookup = sinon
+				.stub(sharedLog, "getMyReplicationSegments")
+				.callsFake(async () => {
+					markLookupStarted();
+					await lookupGate;
+					return replicationSegments;
+				});
+			const sent: unknown[] = [];
+			const send = sinon
+				.stub(sharedLog.rpc, "send")
+				.callsFake(async (message) => {
+					sent.push(message);
+					return [] as any;
+				});
+			const replicationIndex = sharedLog.replicationIndex;
+			const retire = sinon.spy(
+				replicationIndex,
+				operation === "close" ? "stop" : "drop",
+			);
+
+			try {
+				(sharedLog as any)._onSubscriptionFn(
+					new CustomEvent("subscribe", {
+						detail: {
+							from: session.peers[1].identity.publicKey,
+							topics: [sharedLog.topic],
+						},
+					}),
+				);
+				await lookupStarted;
+
+				const terminating = db[operation]();
+				await waitForResolved(
+					() => expect(sharedLog.acceptsParentAttachments).to.be.false,
+				);
+				expect(retire.called).to.be.false;
+
+				releaseLookup();
+				await terminating;
+
+				expect(lookup.calledOnce).to.be.true;
+				expect(retire.calledOnce).to.be.true;
+				expect(
+					sent.filter(
+						(message) =>
+							message instanceof AllReplicatingSegmentsMessage &&
+							message.segments.length > 0,
+					),
+				).to.have.length(0);
+				expect(
+					sent.filter((message) => message instanceof ResponseRoleMessage),
+				).to.have.length(0);
+				expect(
+					sent.filter(
+						(message) => message instanceof RequestReplicationInfoMessage,
+					),
+				).to.have.length(0);
+			} finally {
+				releaseLookup();
+				lookup.restore();
+				send.restore();
+			}
+		});
+	}
+
+	for (const operation of ["close", "drop"] as const) {
+		it(`${operation} publishes an admitted replication snapshot before the terminal reset`, async () => {
+			session = await TestSession.connected(2);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: { replicate: { factor: 1 } },
+			});
+			const sharedLog = db.log;
+			const order: string[] = [];
+			let markSnapshotStarted!: () => void;
+			const snapshotStarted = new Promise<void>((resolve) => {
+				markSnapshotStarted = resolve;
+			});
+			let releaseSnapshot!: () => void;
+			const snapshotGate = new Promise<void>((resolve) => {
+				releaseSnapshot = resolve;
+			});
+			let gateSnapshot = true;
+			const send = sinon
+				.stub(sharedLog.rpc, "send")
+				.callsFake(async (message) => {
+					if (
+						gateSnapshot &&
+						message instanceof AllReplicatingSegmentsMessage &&
+						message.segments.length > 0
+					) {
+						gateSnapshot = false;
+						order.push("snapshot-start");
+						markSnapshotStarted();
+						await snapshotGate;
+						order.push("snapshot-finish");
+					} else if (
+						message instanceof AllReplicatingSegmentsMessage &&
+						message.segments.length === 0
+					) {
+						order.push("terminal-reset");
+					}
+					return [] as any;
+				});
+			let terminating: Promise<unknown> | undefined;
+
+			try {
+				(sharedLog as any)._onSubscriptionFn(
+					new CustomEvent("subscribe", {
+						detail: {
+							from: session.peers[1].identity.publicKey,
+							topics: [sharedLog.topic],
+						},
+					}),
+				);
+				await snapshotStarted;
+
+				let terminalSettled = false;
+				terminating = db[operation]().then(() => {
+					terminalSettled = true;
+				});
+				await waitForResolved(
+					() => expect(sharedLog.acceptsParentAttachments).to.be.false,
+				);
+				expect(terminalSettled).to.be.false;
+				expect(order).to.deep.equal(["snapshot-start"]);
+
+				releaseSnapshot();
+				await terminating;
+				expect(order).to.deep.equal([
+					"snapshot-start",
+					"snapshot-finish",
+					"terminal-reset",
+				]);
+			} finally {
+				releaseSnapshot();
+				await terminating?.catch(() => {});
+				send.restore();
+			}
+		});
+	}
+
+	for (const compatibility of [8, 9]) {
+		it(`uses one replication-index snapshot for a v${compatibility} replication-info callback`, async () => {
+			session = await TestSession.connected(2);
+			const db = await session.peers[0].open(new EventStore(), {
+				args: { compatibility, replicate: { factor: 1 } },
+			});
+			const replicationSegments = await db.log.getMyReplicationSegments();
+			expect(replicationSegments).to.have.length(1);
+			const lookup = sinon
+				.stub(db.log, "getMyReplicationSegments")
+				.resolves(replicationSegments);
+			const sent: unknown[] = [];
+			const send = sinon.stub(db.log.rpc, "send").callsFake(async (message) => {
+				sent.push(message);
+				return [] as any;
+			});
+
+			try {
+				await db.log.handleSubscriptionChange(
+					session.peers[1].identity.publicKey,
+					[db.log.topic],
+					true,
+				);
+
+				expect(lookup.calledOnce).to.be.true;
+				const snapshots = sent.filter(
+					(message) => message instanceof AllReplicatingSegmentsMessage,
+				) as AllReplicatingSegmentsMessage[];
+				expect(snapshots).to.have.length(1);
+				expect(snapshots[0].segments).to.have.length(1);
+				expect(snapshots[0].segments[0].id).to.deep.equal(
+					replicationSegments[0].id,
+				);
+
+				const legacyRoles = sent.filter(
+					(message) => message instanceof ResponseRoleMessage,
+				) as ResponseRoleMessage[];
+				if (compatibility === 8) {
+					expect(legacyRoles).to.have.length(1);
+					expect(legacyRoles[0].role).to.be.instanceOf(Replicator);
+				} else {
+					expect(legacyRoles).to.have.length(0);
+				}
+			} finally {
+				lookup.restore();
+				send.restore();
+			}
+		});
+	}
+
+	it("does not publish a request snapshot from a closed generation after reopen", async () => {
+		session = await TestSession.connected(1);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: { factor: 1 } },
+		});
+		const sharedLog = db.log;
+		const getMyReplicationSegments =
+			sharedLog.getMyReplicationSegments.bind(sharedLog);
+		const capturedSegments = await getMyReplicationSegments();
+		expect(capturedSegments).to.have.length(1);
+		let markLookupStarted!: () => void;
+		const lookupStarted = new Promise<void>((resolve) => {
+			markLookupStarted = resolve;
+		});
+		let releaseLookup!: () => void;
+		const lookupGate = new Promise<void>((resolve) => {
+			releaseLookup = resolve;
+		});
+		let gateFirstLookup = true;
+		const lookup = sinon
+			.stub(sharedLog, "getMyReplicationSegments")
+			.callsFake(async () => {
+				if (!gateFirstLookup) {
+					return getMyReplicationSegments();
+				}
+				gateFirstLookup = false;
+				markLookupStarted();
+				await lookupGate;
+				return capturedSegments;
+			});
+		const sent: unknown[] = [];
+		const send = sinon
+			.stub(sharedLog.rpc, "send")
+			.callsFake(async (message) => {
+				sent.push(message);
+				return [] as any;
+			});
+		const requester = (await Ed25519Keypair.create()).publicKey;
+		let request: Promise<unknown> | undefined;
+
+		try {
+			request = sharedLog.onMessage(new RequestReplicationInfoMessage(), {
+				from: requester,
+			} as any);
+			await lookupStarted;
+
+			await db.close();
+			await session.peers[0].open(db);
+			const nonemptyBeforeRelease = sent.filter(
+				(message) =>
+					message instanceof AllReplicatingSegmentsMessage &&
+					message.segments.length > 0,
+			).length;
+
+			releaseLookup();
+			await request;
+			expect(
+				sent.filter(
+					(message) =>
+						message instanceof AllReplicatingSegmentsMessage &&
+						message.segments.length > 0,
+				).length,
+			).to.equal(nonemptyBeforeRelease);
+		} finally {
+			releaseLookup();
+			await request?.catch(() => {});
+			lookup.restore();
+			send.restore();
+		}
 	});
 
 	for (const operation of ["close", "drop"] as const) {
