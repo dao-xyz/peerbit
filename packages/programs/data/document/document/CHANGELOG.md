@@ -1,5 +1,12 @@
 # Changelog
 
+## 13.1.10
+
+### Patch Changes
+
+- [#1075](https://github.com/dao-xyz/peerbit/pull/1075) [`35a7f09`](https://github.com/dao-xyz/peerbit/commit/35a7f0994aae9cce6759e157efe7ec1a83089545) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Declare `@peerbit/time` as a runtime dependency so clean package consumers can
+  import document search without relying on a hoisted development dependency.
+
 ## 13.1.9
 
 ### Patch Changes
