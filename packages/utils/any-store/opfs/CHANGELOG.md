@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.9
+
+### Patch Changes
+
+- [#1056](https://github.com/dao-xyz/peerbit/pull/1056) [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Raise vulnerable direct runtime dependency floors and replace the legacy
+  elliptic secp256k1 implementation with the maintained noble-curves
+  implementation. Raw (`PreHash.NONE`) secp256k1 signing and recovery now require
+  an exact 32-byte prepared digest; verification rejects every other length.
+  The package's direct `@noble/curves` edge stays on the secure Node 18-compatible
+  1.9.7 line. The wider libp2p graph still carries an upstream transitive noble
+  2.0.1 engine constraint; removing that separate dependency debt is outside this
+  direct crypto replacement.
+
+  Repository development-tool pins are scoped to their compatible parent lines.
+  Those root `pnpm` overrides are not published, so applications upgrading these
+  packages should refresh their own lockfiles to pick up the patched transitive
+  versions.
+
+- Updated dependencies [[`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329)]:
+  - @peerbit/any-store-interface@1.1.1
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+
 ## 1.1.8
 
 ### Patch Changes

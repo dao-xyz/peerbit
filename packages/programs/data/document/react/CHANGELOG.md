@@ -1,5 +1,28 @@
 # @peerbit/document-react
 
+## 1.0.52
+
+### Patch Changes
+
+- [#1056](https://github.com/dao-xyz/peerbit/pull/1056) [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Raise vulnerable direct runtime dependency floors and replace the legacy
+  elliptic secp256k1 implementation with the maintained noble-curves
+  implementation. Raw (`PreHash.NONE`) secp256k1 signing and recovery now require
+  an exact 32-byte prepared digest; verification rejects every other length.
+  The package's direct `@noble/curves` edge stays on the secure Node 18-compatible
+  1.9.7 line. The wider libp2p graph still carries an upstream transitive noble
+  2.0.1 engine constraint; removing that separate dependency debt is outside this
+  direct crypto replacement.
+
+  Repository development-tool pins are scoped to their compatible parent lines.
+  Those root `pnpm` overrides are not published, so applications upgrading these
+  packages should refresh their own lockfiles to pick up the patched transitive
+  versions.
+
+- Updated dependencies [[`d108a6d`](https://github.com/dao-xyz/peerbit/commit/d108a6d0e6a9bae07c4e010546f8e41076373b1c), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`58cc923`](https://github.com/dao-xyz/peerbit/commit/58cc9237c08bdffbe37bf8fdb608f364b1ffe49f), [`d6d5990`](https://github.com/dao-xyz/peerbit/commit/d6d5990be931ebd46cd4b433b294bb93ce1f5f91), [`ae049b7`](https://github.com/dao-xyz/peerbit/commit/ae049b79b5aeffc147bb8c021c5f7a47147b8903), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33)]:
+  - @peerbit/react@1.1.31
+  - @peerbit/document@13.1.7
+  - @peerbit/indexer-interface@3.0.7
+
 ## 1.0.51
 
 ### Patch Changes

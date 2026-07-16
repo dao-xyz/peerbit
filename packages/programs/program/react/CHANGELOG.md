@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.39
+
+### Patch Changes
+
+- Updated dependencies [[`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197)]:
+  - @peerbit/program@6.0.36
+  - @peerbit/crypto@3.1.3
+
 ## 0.4.38
 
 ### Patch Changes

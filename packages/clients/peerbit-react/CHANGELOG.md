@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.1.31
+
+### Patch Changes
+
+- [#1042](https://github.com/dao-xyz/peerbit/pull/1042) [`d108a6d`](https://github.com/dao-xyz/peerbit/commit/d108a6d0e6a9bae07c4e010546f8e41076373b1c) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Use OPFS-backed browser storage even when persistent-storage permission is denied. The permission controls eviction protection, while the explicit `inMemory` option continues to select memory-only storage.
+
+- [#1047](https://github.com/dao-xyz/peerbit/pull/1047) [`58cc923`](https://github.com/dao-xyz/peerbit/commit/58cc9237c08bdffbe37bf8fdb608f364b1ffe49f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Reuse browser identities immediately after renderer crashes while keeping active tabs on separate identities.
+
+- [#1050](https://github.com/dao-xyz/peerbit/pull/1050) [`ae049b7`](https://github.com/dao-xyz/peerbit/commit/ae049b79b5aeffc147bb8c021c5f7a47147b8903) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Let Node exit while browser-style identity lock keep-alive timers are active,
+  and serialize the package's process-global storage/timer tests so coverage jobs
+  cannot hang after every assertion has passed.
+
+- [#1056](https://github.com/dao-xyz/peerbit/pull/1056) [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Raise vulnerable direct runtime dependency floors and replace the legacy
+  elliptic secp256k1 implementation with the maintained noble-curves
+  implementation. Raw (`PreHash.NONE`) secp256k1 signing and recovery now require
+  an exact 32-byte prepared digest; verification rejects every other length.
+  The package's direct `@noble/curves` edge stays on the secure Node 18-compatible
+  1.9.7 line. The wider libp2p graph still carries an upstream transitive noble
+  2.0.1 engine constraint; removing that separate dependency debt is outside this
+  direct crypto replacement.
+
+  Repository development-tool pins are scoped to their compatible parent lines.
+  Those root `pnpm` overrides are not published, so applications upgrading these
+  packages should refresh their own lockfiles to pick up the patched transitive
+  versions.
+
+- Updated dependencies [[`019cc7a`](https://github.com/dao-xyz/peerbit/commit/019cc7a270e51c4aaf83ac23bcad7e169f78e0b6), [`c57de9d`](https://github.com/dao-xyz/peerbit/commit/c57de9d4fbf5045f7a3ccbf9855ef34d6485a71a), [`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197)]:
+  - peerbit@5.3.7
+  - @peerbit/program@6.0.36
+  - @peerbit/indexer-interface@3.0.7
+  - @peerbit/crypto@3.1.3
+  - @peerbit/canonical-client@1.1.39
+  - @peerbit/program-react@0.4.39
+
 ## 1.1.30
 
 ### Patch Changes

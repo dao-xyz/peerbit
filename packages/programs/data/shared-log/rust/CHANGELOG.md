@@ -1,5 +1,13 @@
 # @peerbit/shared-log-rust
 
+## 0.1.3
+
+### Patch Changes
+
+- [#1051](https://github.com/dao-xyz/peerbit/pull/1051) [`03494dc`](https://github.com/dao-xyz/peerbit/commit/03494dc8d5631ee73a5c76b6cc94161ebb431cbe) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Let browser bundlers emit the lazy wasm-bindgen glue chunk so the native shared-log planner loads in Vite applications instead of requesting a missing `/wasm/shared_log_rust.js` path.
+
+- [#1052](https://github.com/dao-xyz/peerbit/pull/1052) [`8f14ebb`](https://github.com/dao-xyz/peerbit/commit/8f14ebbbb2ee529317e27e1f810d5541bb17cf05) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Route new entries to strict range replicators when they intersect the entry coordinates, even when strict ranges are excluded from the full-replica fallback. This restores live document-stream delivery without broadcasting each append to every peer.
+
 ## 0.1.2
 
 ### Patch Changes

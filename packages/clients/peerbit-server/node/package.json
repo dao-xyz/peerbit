@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/server",
-	"version": "6.0.42",
+	"version": "7.0.0",
 	"author": "Peerbit contributors",
 	"repository": {
 		"type": "git",

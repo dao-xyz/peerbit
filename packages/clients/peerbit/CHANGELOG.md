@@ -1,5 +1,53 @@
 # Changelog
 
+## 5.3.7
+
+### Patch Changes
+
+- [#1048](https://github.com/dao-xyz/peerbit/pull/1048) [`019cc7a`](https://github.com/dao-xyz/peerbit/commit/019cc7a270e51c4aaf83ac23bcad7e169f78e0b6) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Validate public bootstrap lists and fall back to the canonical repository source when the custom discovery endpoint is unavailable.
+
+- [#1053](https://github.com/dao-xyz/peerbit/pull/1053) [`c57de9d`](https://github.com/dao-xyz/peerbit/commit/c57de9d4fbf5045f7a3ccbf9855ef34d6485a71a) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Add opt-in automatic bootstrap recovery with single-flight attempts, bounded
+  exponential backoff and jitter, browser online wakeups, refreshed default
+  bootstrap discovery, and lifecycle-safe teardown. Recovery remains disabled by
+  default so creating a client does not introduce unexpected network activity.
+
+- [#1067](https://github.com/dao-xyz/peerbit/pull/1067) [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make program graph open, close, drop, and handler stop race-safe and retryable
+  after partial failures; preserve parent/child ownership through rollback; fence
+  concurrent initialization and teardown; and retain cleanup ownership until all
+  terminal work completes. Lifecycle `onClose` and `onDrop` callbacks now run after
+  base child teardown and the closed-state transition, are awaited, and retry when
+  they reject; subclass cleanup performed after awaiting `super.close()` or
+  `super.drop()` can still follow those callbacks. Immediate reentry into the
+  owning handler stop or current terminal method now rejects, while synchronous
+  delegation to a captured pre-replacement wrapper is unwrapped safely only for the
+  same operation and owner. Cross-operation, changed-owner, and after-yield stale
+  wrapper cycles reject before mutation. Parent teardown also restores missing
+  inverse ownership edges and recognizes only validated stale-edge repair as
+  progress. After lifecycle code has yielded, it must schedule stop or terminal
+  work from its external owner rather than await its own teardown. SharedLog, RPC,
+  and StringIndex now preserve their resources for non-terminal owner releases and
+  invalid owners. RPC also becomes network-inert after a committed base close or
+  drop error and checkpoints subscription and listener cleanup for exact retry.
+  Interrupted native persistence drops can now resume their durable tombstone on
+  the same adapter generation. A markerless failed drop keeps ordinary native
+  persistence work fenced while still permitting destructive retry, and close
+  retries resume the first incomplete flush/store-close stage without flushing a
+  generation already admitted for drop.
+- Updated dependencies [[`643b045`](https://github.com/dao-xyz/peerbit/commit/643b045775bc166066a89ff2029e71e5c1263711), [`40b30f3`](https://github.com/dao-xyz/peerbit/commit/40b30f3df7fef918c0e091e31d8be044314d5444), [`7f0805a`](https://github.com/dao-xyz/peerbit/commit/7f0805a523ddaa3bea7f0a11d4abb47e391997e9), [`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329), [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197)]:
+  - @peerbit/pubsub@5.3.1
+  - @peerbit/stream@5.1.1
+  - @peerbit/program@6.0.36
+  - @peerbit/blocks@4.2.3
+  - @peerbit/indexer-interface@3.0.7
+  - @peerbit/indexer-simple@1.2.11
+  - @peerbit/indexer-sqlite3@3.0.10
+  - @peerbit/any-store@2.2.11
+  - @peerbit/any-store-opfs@1.1.9
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+  - @peerbit/keychain@1.2.11
+  - @peerbit/stream-interface@6.0.12
+
 ## 5.3.6
 
 ### Patch Changes

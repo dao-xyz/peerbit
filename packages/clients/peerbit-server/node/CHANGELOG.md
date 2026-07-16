@@ -1,5 +1,39 @@
 # Changelog
 
+## 7.0.0
+
+### Major Changes
+
+- [#1049](https://github.com/dao-xyz/peerbit/pull/1049) [`05a9ebf`](https://github.com/dao-xyz/peerbit/commit/05a9ebfc8192231b44957e86edb17c40c51e5b41) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Retire provider-managed VM and DNS provisioning together with the hosted test-domain flow. Add a provider-neutral `peerbit domain configure` command for domains users control, retain cleanup of legacy Hetzner remotes, and report actionable manual cleanup details for legacy AWS remotes.
+
+  Make domain reconfiguration transactional: serialize concurrent replacements, preserve and recover the previous certificate container, verify stable Docker and HTTPS readiness before activation, and retain bounded configuration history for rollback diagnostics.
+
+  Add an invite-gated `peerbit domain lease` lifecycle for managed `nodes.peerchecker.com` names, including direct-IP ownership challenges, crash-safe local credentials, explicit renew/release/status commands, and background renewal while a configured node is running.
+
+### Patch Changes
+
+- [#1056](https://github.com/dao-xyz/peerbit/pull/1056) [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Raise vulnerable direct runtime dependency floors and replace the legacy
+  elliptic secp256k1 implementation with the maintained noble-curves
+  implementation. Raw (`PreHash.NONE`) secp256k1 signing and recovery now require
+  an exact 32-byte prepared digest; verification rejects every other length.
+  The package's direct `@noble/curves` edge stays on the secure Node 18-compatible
+  1.9.7 line. The wider libp2p graph still carries an upstream transitive noble
+  2.0.1 engine constraint; removing that separate dependency debt is outside this
+  direct crypto replacement.
+
+  Repository development-tool pins are scoped to their compatible parent lines.
+  Those root `pnpm` overrides are not published, so applications upgrading these
+  packages should refresh their own lockfiles to pick up the patched transitive
+  versions.
+
+- Updated dependencies [[`019cc7a`](https://github.com/dao-xyz/peerbit/commit/019cc7a270e51c4aaf83ac23bcad7e169f78e0b6), [`643b045`](https://github.com/dao-xyz/peerbit/commit/643b045775bc166066a89ff2029e71e5c1263711), [`40b30f3`](https://github.com/dao-xyz/peerbit/commit/40b30f3df7fef918c0e091e31d8be044314d5444), [`c57de9d`](https://github.com/dao-xyz/peerbit/commit/c57de9d4fbf5045f7a3ccbf9855ef34d6485a71a), [`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329), [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197)]:
+  - peerbit@5.3.7
+  - @peerbit/pubsub@5.3.1
+  - @peerbit/program@6.0.36
+  - @peerbit/blocks@4.2.3
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+
 ## 6.0.42
 
 ### Patch Changes

@@ -1,5 +1,45 @@
 # Changelog
 
+## 6.0.36
+
+### Patch Changes
+
+- [#1046](https://github.com/dao-xyz/peerbit/pull/1046) [`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Persist remotely loaded program manifests so their addresses can reopen from local storage after providers disconnect.
+
+- [#1067](https://github.com/dao-xyz/peerbit/pull/1067) [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Make program graph open, close, drop, and handler stop race-safe and retryable
+  after partial failures; preserve parent/child ownership through rollback; fence
+  concurrent initialization and teardown; and retain cleanup ownership until all
+  terminal work completes. Lifecycle `onClose` and `onDrop` callbacks now run after
+  base child teardown and the closed-state transition, are awaited, and retry when
+  they reject; subclass cleanup performed after awaiting `super.close()` or
+  `super.drop()` can still follow those callbacks. Immediate reentry into the
+  owning handler stop or current terminal method now rejects, while synchronous
+  delegation to a captured pre-replacement wrapper is unwrapped safely only for the
+  same operation and owner. Cross-operation, changed-owner, and after-yield stale
+  wrapper cycles reject before mutation. Parent teardown also restores missing
+  inverse ownership edges and recognizes only validated stale-edge repair as
+  progress. After lifecycle code has yielded, it must schedule stop or terminal
+  work from its external owner rather than await its own teardown. SharedLog, RPC,
+  and StringIndex now preserve their resources for non-terminal owner releases and
+  invalid owners. RPC also becomes network-inert after a committed base close or
+  drop error and checkpoints subscription and listener cleanup for exact retry.
+  Interrupted native persistence drops can now resume their durable tombstone on
+  the same adapter generation. A markerless failed drop keeps ordinary native
+  persistence work fenced while still permitting destructive retry, and close
+  retries resume the first incomplete flush/store-close stage without flushing a
+  generation already admitted for drop.
+- Updated dependencies [[`643b045`](https://github.com/dao-xyz/peerbit/commit/643b045775bc166066a89ff2029e71e5c1263711), [`40b30f3`](https://github.com/dao-xyz/peerbit/commit/40b30f3df7fef918c0e091e31d8be044314d5444), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0a5a9a0`](https://github.com/dao-xyz/peerbit/commit/0a5a9a0c0690a310e141b80bcb84ba04fd48b329)]:
+  - @peerbit/pubsub@5.3.1
+  - @peerbit/blocks@4.2.3
+  - @peerbit/indexer-interface@3.0.7
+  - @peerbit/any-store-interface@1.1.1
+  - @peerbit/crypto@3.1.3
+  - @peerbit/time@3.0.1
+  - @peerbit/keychain@1.2.11
+  - @peerbit/blocks-interface@2.1.1
+  - @peerbit/pubsub-interface@5.1.6
+  - @peerbit/stream-interface@6.0.12
+
 ## 6.0.35
 
 ### Patch Changes

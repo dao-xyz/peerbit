@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/stream-interface",
-	"version": "6.0.11",
+	"version": "6.0.12",
 	"description": "Block store streaming",
 	"sideEffects": false,
 	"type": "module",

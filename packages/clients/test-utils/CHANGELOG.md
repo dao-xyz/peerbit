@@ -1,5 +1,21 @@
 # Changelog
 
+## 3.1.7
+
+### Patch Changes
+
+- Updated dependencies [[`019cc7a`](https://github.com/dao-xyz/peerbit/commit/019cc7a270e51c4aaf83ac23bcad7e169f78e0b6), [`643b045`](https://github.com/dao-xyz/peerbit/commit/643b045775bc166066a89ff2029e71e5c1263711), [`40b30f3`](https://github.com/dao-xyz/peerbit/commit/40b30f3df7fef918c0e091e31d8be044314d5444), [`c57de9d`](https://github.com/dao-xyz/peerbit/commit/c57de9d4fbf5045f7a3ccbf9855ef34d6485a71a), [`7f0805a`](https://github.com/dao-xyz/peerbit/commit/7f0805a523ddaa3bea7f0a11d4abb47e391997e9), [`d2fc762`](https://github.com/dao-xyz/peerbit/commit/d2fc7626cb80ad0f5999e54099023f1e6e5c9c36), [`74dd442`](https://github.com/dao-xyz/peerbit/commit/74dd4424a9634446b2823ffea382d2fde6c3d82c), [`b0442bb`](https://github.com/dao-xyz/peerbit/commit/b0442bb95d4807acca64bd68c2223ecf8edc4f33), [`0f5210b`](https://github.com/dao-xyz/peerbit/commit/0f5210b0d547d81273c14c83e64ceb20f9818197)]:
+  - peerbit@5.3.7
+  - @peerbit/pubsub@5.3.1
+  - @peerbit/stream@5.1.1
+  - @peerbit/program@6.0.36
+  - @peerbit/blocks@4.2.3
+  - @peerbit/indexer-interface@3.0.7
+  - @peerbit/any-store@2.2.11
+  - @peerbit/crypto@3.1.3
+  - @peerbit/keychain@1.2.11
+  - @peerbit/libp2p-test-utils@3.0.7
+
 ## 3.1.6
 
 ### Patch Changes
