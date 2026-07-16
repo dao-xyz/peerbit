@@ -120,6 +120,17 @@ assert.doesNotMatch(
 	/expectedPublishedSecurityClosureNames|resolvePublishedSecurityClosure/,
 	"the consumer proof must not use a static forward closure",
 );
+assert.match(
+	publishedSecuritySmoke,
+	/test-published-crypto-package-smoke\.mjs/,
+	"the full published-package gate must include the isolated crypto package smoke",
+);
+const publishedCryptoPackageSmoke = await readRepositoryFile(
+	"scripts/test-published-crypto-package-smoke.mjs",
+);
+assert.match(publishedCryptoPackageSmoke, /--install-strategy=nested/);
+assert.match(publishedCryptoPackageSmoke, /node@18/);
+assert.match(publishedCryptoPackageSmoke, /"multiformats", "uint8arrays"/);
 const publicPackagePublisher = await readRepositoryFile(
 	"scripts/publish-public-packages.mjs",
 );
