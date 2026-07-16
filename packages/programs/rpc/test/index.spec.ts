@@ -19,7 +19,13 @@ import {
 	SilentDelivery,
 } from "@peerbit/stream-interface";
 import { TestSession } from "@peerbit/test-utils";
-import { AbortError, delay, waitFor, waitForResolved } from "@peerbit/time";
+import {
+	AbortError,
+	TimeoutError,
+	delay,
+	waitFor,
+	waitForResolved,
+} from "@peerbit/time";
 import { expect } from "chai";
 import sinon from "sinon";
 import {
@@ -355,6 +361,163 @@ describe("rpc", () => {
 				expect(Date.now() - started).to.be.lessThan(1_000);
 			} finally {
 				publishStub.restore();
+			}
+		});
+
+		it("ignores a synchronous transport TimeoutError", async () => {
+			const publishTimeout = new TimeoutError("SYNCHRONOUS_PUBLISH_TIMEOUT");
+			const publishStub = sinon
+				.stub(reader.node.services.pubsub, "publish")
+				.throws(publishTimeout);
+
+			try {
+				const result = await reader.query.request(
+					new Body({ arr: new Uint8Array([1, 2, 3]) }),
+					{ timeout: 25 },
+				);
+
+				expect(result).to.deep.equal([]);
+				expect(publishStub.calledOnce).to.be.true;
+			} finally {
+				publishStub.restore();
+			}
+		});
+
+		it("preserves an already-aborted request signal", async () => {
+			const controller = new AbortController();
+			const reason = new AbortError("ALREADY_ABORTED");
+			controller.abort(reason);
+			const publishSpy = sinon.spy(reader.node.services.pubsub, "publish");
+
+			try {
+				let failure: unknown;
+				try {
+					await reader.query.request(
+						new Body({ arr: new Uint8Array([1, 2, 3]) }),
+						{ signal: controller.signal, timeout: 5_000 },
+					);
+				} catch (error) {
+					failure = error;
+				}
+
+				expect(failure).to.equal(reason);
+				expect(publishSpy.notCalled).to.be.true;
+			} finally {
+				publishSpy.restore();
+			}
+		});
+
+		it("observes a request signal aborted during envelope setup", async () => {
+			const controller = new AbortController();
+			const reason = new AbortError("ABORTED_DURING_SETUP");
+			const query = reader.query as any;
+			const originalSeal = query.seal.bind(query);
+			const sealStub = sinon
+				.stub(query, "seal")
+				.callsFake(async (...args: any[]) => {
+					const sealed = await originalSeal(...args);
+					controller.abort(reason);
+					return sealed;
+				});
+			const publishSpy = sinon.spy(reader.node.services.pubsub, "publish");
+			const removeListenerSpy = sinon.spy(
+				controller.signal,
+				"removeEventListener",
+			);
+			const resolverCountBefore = query._responseResolver.size;
+
+			try {
+				let failure: unknown;
+				try {
+					await reader.query.request(
+						new Body({ arr: new Uint8Array([1, 2, 3]) }),
+						{ signal: controller.signal, timeout: 5_000 },
+					);
+				} catch (error) {
+					failure = error;
+				}
+
+				expect(failure).to.equal(reason);
+				expect(publishSpy.notCalled).to.be.true;
+				expect(query._responseResolver.size).to.equal(resolverCountBefore);
+				expect(removeListenerSpy.calledWith("abort")).to.be.true;
+			} finally {
+				removeListenerSpy.restore();
+				publishSpy.restore();
+				sealStub.restore();
+			}
+		});
+
+		it("settles an abort while request envelope setup remains pending", async () => {
+			const controller = new AbortController();
+			const reason = new AbortError("ABORTED_WHILE_SETUP_PENDING");
+			const query = reader.query as any;
+			const originalSeal = query.seal.bind(query);
+			let resolveSetupStarted!: () => void;
+			const setupStarted = new Promise<void>((resolve) => {
+				resolveSetupStarted = resolve;
+			});
+			let releaseSetup!: () => void;
+			const setupRelease = new Promise<void>((resolve) => {
+				releaseSetup = resolve;
+			});
+			const sealStub = sinon
+				.stub(query, "seal")
+				.callsFake(async (...args: any[]) => {
+					resolveSetupStarted();
+					await setupRelease;
+					return originalSeal(...args);
+				});
+			const publishSpy = sinon.spy(reader.node.services.pubsub, "publish");
+
+			const request = reader.query.request(
+				new Body({ arr: new Uint8Array([1, 2, 3]) }),
+				{ signal: controller.signal, timeout: 5_000 },
+			);
+			try {
+				await setupStarted;
+				controller.abort(reason);
+				const failure = await Promise.race([
+					request.then(
+						(): undefined => undefined,
+						(error: unknown) => error,
+					),
+					delay(500).then(() => new Error("SETUP_ABORT_DID_NOT_SETTLE")),
+				]);
+				expect(failure).to.equal(reason);
+				expect(publishSpy.notCalled).to.be.true;
+			} finally {
+				releaseSetup();
+				await request.catch((): undefined => undefined);
+				publishSpy.restore();
+				sealStub.restore();
+			}
+		});
+
+		it("preserves a TimeoutError used as the request abort reason", async () => {
+			const controller = new AbortController();
+			const reason = new TimeoutError("ABORT_TIMEOUT_REASON");
+			const publishSpy = sinon.spy(reader.node.services.pubsub, "publish");
+
+			try {
+				let failure: unknown;
+				try {
+					await reader.query.request(
+						new Body({ arr: new Uint8Array([1, 2, 3]) }),
+						{
+							signal: controller.signal,
+							timeout: 5_000,
+							responseInterceptor: () => controller.abort(reason),
+						},
+					);
+				} catch (error) {
+					failure = error;
+				}
+
+				expect(failure).to.equal(reason);
+				expect(publishSpy.notCalled).to.be.true;
+			} finally {
+				publishSpy.restore();
 			}
 		});
 
