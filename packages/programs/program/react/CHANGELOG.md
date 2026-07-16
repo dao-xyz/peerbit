@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.41
+
+### Patch Changes
+
+- [#1072](https://github.com/dao-xyz/peerbit/pull/1072) [`e8c8699`](https://github.com/dao-xyz/peerbit/commit/e8c86998a3681e5c2294d346a639f8bdfcacc0a9) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep `useProgram` opens, listeners, and cleanup owned by their React effect session. Address-bearing object targets remain equivalent by address, while inline targets without an address retain the legacy shared request identity and can opt into intentional replacement with `id`. Stale client or lifecycle-policy requests cannot publish a program, synchronous setup failures no longer strand opened programs, and transient close failures are retried before replacement opens.
+
 ## 0.4.40
 
 ### Patch Changes
