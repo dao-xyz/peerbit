@@ -384,6 +384,24 @@ describe(`shared`, () => {
 		expect(reopened.parents).to.deep.equal([parent]);
 	});
 
+	it("keeps a dynamic parent alive when an address-reused root releases first", async () => {
+		const parent = await client.open(new TestProgram(168));
+		const program = await client.open(new TestProgram(169), { parent });
+		expect(program.parents).to.deep.equal([parent]);
+
+		const root = await client.open(program.address, { existing: "reuse" });
+		expect(root).to.equal(program);
+		expect(program.parents).to.deep.equal([parent, undefined]);
+
+		expect(await root.close()).to.be.false;
+		expect(program.closed).to.be.false;
+		expect(program.parents).to.deep.equal([parent]);
+		expect(parent.children).to.include(program);
+
+		await parent.close();
+		expect(program.closed).to.be.true;
+	});
+
 	for (const route of reuseRoutes) {
 		it(`automatically fences ${route.name} reuse while child close drains`, async () => {
 			const program = await client.open(new TestProgram());
