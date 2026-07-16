@@ -14290,7 +14290,9 @@ export class SharedLog<
 		}
 	}
 
-	private async _close() {
+	private async _close(options?: { preserveDropRetryResources?: boolean }) {
+		const preserveDropRetryResources =
+			options?.preserveDropRetryResources === true;
 		let firstError: unknown;
 		const capture = async (operation: () => Promise<unknown> | unknown) => {
 			try {
@@ -14388,7 +14390,9 @@ export class SharedLog<
 		});
 		captureSync(() => this._checkedPrune.close());
 
-		await capture(() => this.remoteBlocks?.stop?.());
+		if (!preserveDropRetryResources) {
+			await capture(() => this.remoteBlocks?.stop?.());
+		}
 		captureSync(() => {
 			this._pendingIHave?.clear();
 			this.latestReplicationInfoMessage?.clear();
@@ -14406,10 +14410,12 @@ export class SharedLog<
 		captureSync(() => this.responseToPruneDebouncedFn?.close?.());
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
-		await capture(() => this._replicationRangeIndex?.stop?.());
-		await capture(() => this._entryCoordinatesIndex?.stop?.());
-		this._replicationRangeIndex = undefined as any;
-		this._entryCoordinatesIndex = undefined as any;
+		if (!preserveDropRetryResources) {
+			await capture(() => this._replicationRangeIndex?.stop?.());
+			await capture(() => this._entryCoordinatesIndex?.stop?.());
+			this._replicationRangeIndex = undefined as any;
+			this._entryCoordinatesIndex = undefined as any;
+		}
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
 		this._residentEntryCoordinatesByHash = undefined;
@@ -14593,19 +14599,30 @@ export class SharedLog<
 			throw firstError;
 		}
 		if (nativePersistence) {
-			this._nativeBackboneDropStarted = true;
 			try {
-				await nativePersistence.drop!(
-					this._nativeBackboneCoordinatePersistenceStore
-						? NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES
-						: [],
-				);
+				if (this._nativeBackboneDropStarted) {
+					const resumed = await nativePersistence.resumeDrop!();
+					if (!resumed) {
+						await nativePersistence.drop!(
+							this._nativeBackboneCoordinatePersistenceStore
+								? NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES
+								: [],
+						);
+					}
+				} else {
+					this._nativeBackboneDropStarted = true;
+					await nativePersistence.drop!(
+						this._nativeBackboneCoordinatePersistenceStore
+							? NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES
+							: [],
+					);
+				}
 			} catch (error) {
 				firstError ??= error;
-				// The adapter remains in its drop lifecycle, so this closes handles
-				// without flushing live journals over a partial erase.
+				// Quiesce the failed generation without closing the lower block/index
+				// handles: exact drop retry still owns their destructive cleanup.
 				await capture(() => this.log.close());
-				await capture(() => this._close());
+				await capture(() => this._close({ preserveDropRetryResources: true }));
 				throw firstError;
 			}
 			// These in-memory states only stop being recovery-authoritative after all

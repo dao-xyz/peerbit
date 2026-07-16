@@ -9267,9 +9267,21 @@ export class NativeBackboneCoordinatePersistence {
 	}
 
 	async resumeDrop(): Promise<boolean> {
-		this.assertActive("resume drop");
+		if (this.persistenceLifecycle === "dropped") {
+			return true;
+		}
+		if (this.persistenceLifecycle !== "dropping") {
+			this.assertActive("resume drop");
+		}
 		this.persistenceLifecycle = "dropping";
-		return this.enqueuePersistence(() => this.resumeDropInternal("active"));
+		return this.enqueuePersistence(async () => {
+			// A concurrent drop may have completed before this queued recovery runs.
+			// Preserve its terminal lifecycle instead of reactivating the generation.
+			if (this.persistenceLifecycle === "dropped") {
+				return true;
+			}
+			return this.resumeDropInternal("active");
+		});
 	}
 
 	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {

@@ -3217,13 +3217,7 @@ describe("native peerbit backbone", () => {
 		const resuming = persistence.resumeDrop();
 		releaseRemove();
 		await dropping;
-		let resumeError: unknown;
-		try {
-			await resuming;
-		} catch (error) {
-			resumeError = error;
-		}
-		expect(String(resumeError)).to.contain("while dropping");
+		expect(await resuming).equal(true);
 
 		let secondDropError: unknown;
 		try {
@@ -3232,6 +3226,36 @@ describe("native peerbit backbone", () => {
 			secondDropError = error;
 		}
 		expect(String(secondDropError)).to.contain("while dropped");
+		expect(memory.files.size).equal(0);
+	});
+
+	it("resumes a failed drop on the same persistence generation", async () => {
+		const memory = new NativeBackboneMemoryCoordinatePersistenceStore();
+		let failRemoval = true;
+		const store: NativeBackboneCoordinatePersistenceStore = {
+			read: (name) => memory.read(name),
+			write: (name, bytes) => memory.write(name, bytes),
+			append: (name, bytes) => memory.append(name, bytes),
+			remove: async (name) => {
+				if (name === "coordinates.bin" && failRemoval) {
+					failRemoval = false;
+					throw new Error("injected removal failure");
+				}
+				await memory.remove(name);
+			},
+		};
+		const persistence = new NativeBackboneCoordinatePersistence(store);
+		await memory.append("coordinates.bin", new Uint8Array([1]));
+
+		const dropError = await persistence.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		expect(dropError).to.be.instanceOf(AggregateError);
+		expect(memory.files.has("native-backbone-drop.tombstone")).equal(true);
+		expect(memory.files.has("coordinates.bin")).equal(true);
+
+		expect(await persistence.resumeDrop()).equal(true);
 		expect(memory.files.size).equal(0);
 	});
 

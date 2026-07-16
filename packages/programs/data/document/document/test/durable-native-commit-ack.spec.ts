@@ -674,6 +674,7 @@ describe("durable native commit acknowledgement", function () {
 			new Document({ id: "interrupted-drop", name: "erase-on-resume" }),
 			{ unique: true, replicate: false, target: "none" },
 		);
+		const acknowledgedHash = acknowledged.entry.hash;
 		const persistenceStore = first.sharedLog
 			._nativeBackboneCoordinatePersistenceStore as {
 			remove: (name: string) => Promise<void>;
@@ -708,10 +709,63 @@ describe("durable native commit acknowledgement", function () {
 		client = undefined;
 		const reopened = await createStore(directory!);
 		expect(await reopened.store.docs.get("interrupted-drop")).equal(undefined);
-		expect(
-			await reopened.sharedLog.log.entryIndex.has(acknowledged.entry.hash),
-		).equal(true);
+		expect(reopened.sharedLog.log.length).equal(0);
+		expect(await reopened.sharedLog.log.entryIndex.has(acknowledgedHash)).equal(
+			false,
+		);
+		expect(reopened.backbone.blocks.get(acknowledgedHash)).equal(undefined);
+		expect(await reopened.durable.has(acknowledgedHash)).equal(false);
 		expect(reopened.backbone.documentValueBytes("interrupted-drop")).equal(
+			undefined,
+		);
+		await expectNativePersistenceErased(directory!);
+	});
+
+	it("restarts native drop when failure precedes the durable tombstone", async () => {
+		const first = await openStore();
+		const acknowledged = await first.store.docs.put(
+			new Document({ id: "pre-tombstone-drop", name: "erase-on-retry" }),
+			{ unique: true, replicate: false, target: "none" },
+		);
+		const acknowledgedHash = acknowledged.entry.hash;
+		const persistenceStore = first.sharedLog
+			._nativeBackboneCoordinatePersistenceStore as {
+			write: (name: string, bytes: Uint8Array) => Promise<void>;
+		};
+		const originalWrite = persistenceStore.write.bind(persistenceStore);
+		const tombstoneFailure = new Error("injected drop tombstone write failure");
+		let injected = false;
+		persistenceStore.write = async (name, bytes) => {
+			if (name === "native-backbone-drop.tombstone" && !injected) {
+				injected = true;
+				throw tombstoneFailure;
+			}
+			await originalWrite(name, bytes);
+		};
+		const dropError = await first.store.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		persistenceStore.write = originalWrite;
+		expect(injected).equal(true);
+		expect(dropError).equal(tombstoneFailure);
+		await expectFileAbsent(
+			path.join(directory!, "coordinate-wal", "native-backbone-drop.tombstone"),
+		);
+
+		await client!.stop();
+		client = undefined;
+		const reopened = await createStore(directory!);
+		expect(await reopened.store.docs.get("pre-tombstone-drop")).equal(
+			undefined,
+		);
+		expect(reopened.sharedLog.log.length).equal(0);
+		expect(await reopened.sharedLog.log.entryIndex.has(acknowledgedHash)).equal(
+			false,
+		);
+		expect(reopened.backbone.blocks.get(acknowledgedHash)).equal(undefined);
+		expect(await reopened.durable.has(acknowledgedHash)).equal(false);
+		expect(reopened.backbone.documentValueBytes("pre-tombstone-drop")).equal(
 			undefined,
 		);
 		await expectNativePersistenceErased(directory!);
