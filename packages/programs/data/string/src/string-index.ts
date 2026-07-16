@@ -37,10 +37,13 @@ export class StringIndex extends Program {
 		this._log = store;
 	}
 
-	close(parent: any) {
-		this._string = "";
-		this._log = undefined!;
-		return super.close(parent);
+	async close(parent: any): Promise<boolean> {
+		const closed = await super.close(parent);
+		if (closed) {
+			this._string = "";
+			this._log = undefined!;
+		}
+		return closed;
 	}
 
 	async updateIndex(_change: Change<StringOperation>) {

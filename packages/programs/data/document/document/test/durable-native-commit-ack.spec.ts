@@ -674,6 +674,7 @@ describe("durable native commit acknowledgement", function () {
 			new Document({ id: "interrupted-drop", name: "erase-on-resume" }),
 			{ unique: true, replicate: false, target: "none" },
 		);
+		const acknowledgedHash = acknowledged.entry.hash;
 		const persistenceStore = first.sharedLog
 			._nativeBackboneCoordinatePersistenceStore as {
 			remove: (name: string) => Promise<void>;
@@ -708,14 +709,185 @@ describe("durable native commit acknowledgement", function () {
 		client = undefined;
 		const reopened = await createStore(directory!);
 		expect(await reopened.store.docs.get("interrupted-drop")).equal(undefined);
-		expect(
-			await reopened.sharedLog.log.entryIndex.has(acknowledged.entry.hash),
-		).equal(true);
+		expect(reopened.sharedLog.log.length).equal(0);
+		expect(await reopened.sharedLog.log.entryIndex.has(acknowledgedHash)).equal(
+			false,
+		);
+		expect(reopened.backbone.blocks.get(acknowledgedHash)).equal(undefined);
+		expect(await reopened.durable.has(acknowledgedHash)).equal(false);
 		expect(reopened.backbone.documentValueBytes("interrupted-drop")).equal(
 			undefined,
 		);
 		await expectNativePersistenceErased(directory!);
 	});
+
+	it("restarts native drop when failure precedes the durable tombstone", async () => {
+		const first = await openStore();
+		const acknowledged = await first.store.docs.put(
+			new Document({ id: "pre-tombstone-drop", name: "erase-on-retry" }),
+			{ unique: true, replicate: false, target: "none" },
+		);
+		const acknowledgedHash = acknowledged.entry.hash;
+		const persistenceStore = first.sharedLog
+			._nativeBackboneCoordinatePersistenceStore as {
+			write: (name: string, bytes: Uint8Array) => Promise<void>;
+		};
+		const originalWrite = persistenceStore.write.bind(persistenceStore);
+		const tombstoneFailure = new Error("injected drop tombstone write failure");
+		let injected = false;
+		persistenceStore.write = async (name, bytes) => {
+			if (name === "native-backbone-drop.tombstone" && !injected) {
+				injected = true;
+				throw tombstoneFailure;
+			}
+			await originalWrite(name, bytes);
+		};
+		const dropError = await first.store.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		persistenceStore.write = originalWrite;
+		expect(injected).equal(true);
+		expect(dropError).equal(tombstoneFailure);
+		await expectFileAbsent(
+			path.join(directory!, "coordinate-wal", "native-backbone-drop.tombstone"),
+		);
+
+		await client!.stop();
+		client = undefined;
+		const reopened = await createStore(directory!);
+		expect(await reopened.store.docs.get("pre-tombstone-drop")).equal(
+			undefined,
+		);
+		expect(reopened.sharedLog.log.length).equal(0);
+		expect(await reopened.sharedLog.log.entryIndex.has(acknowledgedHash)).equal(
+			false,
+		);
+		expect(reopened.backbone.blocks.get(acknowledgedHash)).equal(undefined);
+		expect(await reopened.durable.has(acknowledgedHash)).equal(false);
+		expect(reopened.backbone.documentValueBytes("pre-tombstone-drop")).equal(
+			undefined,
+		);
+		await expectNativePersistenceErased(directory!);
+	});
+
+	it("overwrites a partial native drop tombstone on exact retry", async () => {
+		const first = await openStore();
+		const acknowledged = await first.store.docs.put(
+			new Document({ id: "partial-tombstone-drop", name: "erase-on-retry" }),
+			{ unique: true, replicate: false, target: "none" },
+		);
+		const acknowledgedHash = acknowledged.entry.hash;
+		const persistenceStore = first.sharedLog
+			._nativeBackboneCoordinatePersistenceStore as {
+			write: (name: string, bytes: Uint8Array) => Promise<void>;
+		};
+		const originalWrite = persistenceStore.write.bind(persistenceStore);
+		const partialWriteFailure = new Error(
+			"injected partial drop tombstone write failure",
+		);
+		let injected = false;
+		persistenceStore.write = async (name, bytes) => {
+			if (name === "native-backbone-drop.tombstone" && !injected) {
+				injected = true;
+				await originalWrite(name, bytes.subarray(0, 1));
+				throw partialWriteFailure;
+			}
+			await originalWrite(name, bytes);
+		};
+		const dropError = await first.store.drop().then(
+			() => undefined,
+			(error: unknown) => error,
+		);
+		persistenceStore.write = originalWrite;
+		expect(injected).equal(true);
+		expect(dropError).equal(partialWriteFailure);
+		await fs.stat(
+			path.join(directory!, "coordinate-wal", "native-backbone-drop.tombstone"),
+		);
+
+		await client!.stop();
+		client = undefined;
+		const reopened = await createStore(directory!);
+		expect(await reopened.store.docs.get("partial-tombstone-drop")).equal(
+			undefined,
+		);
+		expect(reopened.sharedLog.log.length).equal(0);
+		expect(await reopened.sharedLog.log.entryIndex.has(acknowledgedHash)).equal(
+			false,
+		);
+		expect(reopened.backbone.blocks.get(acknowledgedHash)).equal(undefined);
+		expect(await reopened.durable.has(acknowledgedHash)).equal(false);
+		expect(
+			reopened.backbone.documentValueBytes("partial-tombstone-drop"),
+		).equal(undefined);
+		await expectNativePersistenceErased(directory!);
+	});
+
+	for (const target of [
+		"entry coordinates index",
+		"replication range index",
+		"log",
+		"post-drop close",
+	] as const) {
+		it(`retains failed ${target} cleanup for the exact terminal retry`, async () => {
+			const first = await openStore();
+			const id = `lower-cleanup-${target.replaceAll(" ", "-")}`;
+			const acknowledged = await first.store.docs.put(
+				new Document({ id, name: "erase-on-retry" }),
+				{ unique: true, replicate: false, target: "none" },
+			);
+			const acknowledgedHash = acknowledged.entry.hash;
+			const resource: {
+				drop?: () => Promise<void>;
+				stop?: () => Promise<void>;
+			} =
+				target === "entry coordinates index"
+					? first.sharedLog._entryCoordinatesIndex
+					: target === "replication range index"
+						? first.sharedLog._replicationRangeIndex
+						: target === "log"
+							? first.sharedLog.log
+							: first.sharedLog.remoteBlocks;
+			const method = target === "post-drop close" ? "stop" : "drop";
+			const original = resource[method]!.bind(resource);
+			const cleanupFailure = new Error(`injected ${target} cleanup failure`);
+			let attempts = 0;
+			resource[method] = async () => {
+				attempts++;
+				if (attempts === 1) {
+					throw cleanupFailure;
+				}
+				await original();
+			};
+
+			const dropError = await first.store.drop().then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(dropError).equal(cleanupFailure);
+			if (target === "entry coordinates index") {
+				expect(first.sharedLog._entryCoordinatesIndex).equal(resource);
+			}
+			if (target === "replication range index") {
+				expect(first.sharedLog._replicationRangeIndex).equal(resource);
+			}
+
+			await client!.stop();
+			client = undefined;
+			expect(attempts).equal(2);
+
+			const reopened = await createStore(directory!);
+			expect(await reopened.store.docs.get(id)).equal(undefined);
+			expect(reopened.sharedLog.log.length).equal(0);
+			expect(
+				await reopened.sharedLog.log.entryIndex.has(acknowledgedHash),
+			).equal(false);
+			expect(reopened.backbone.blocks.get(acknowledgedHash)).equal(undefined);
+			expect(await reopened.durable.has(acknowledgedHash)).equal(false);
+			await expectNativePersistenceErased(directory!);
+		});
+	}
 
 	it("rejects a durable custom adapter without drop before lower mutation", async () => {
 		directory = await fs.mkdtemp(
@@ -3138,6 +3310,54 @@ describe("durable native commit acknowledgement", function () {
 		}
 	});
 
+	it("completes an exact poisoned close with conservative trim debt", async () => {
+		const { store, wrapper, durable } = await openStore(true);
+		await store.docs.put(
+			new Document({ id: "poison-debt-old", name: "poison-debt-old" }),
+			{ unique: true, target: "none", replicate: false },
+		);
+		const cleanupFailure = new Error("persistent trim cleanup failure");
+		const durableRmManyStub = sinon
+			.stub(durable, "rmMany")
+			.rejects(cleanupFailure);
+		try {
+			const replacement = await store.docs.put(
+				new Document({ id: "poison-debt-new", name: "poison-debt-new" }),
+				{ unique: true, target: "none", replicate: false },
+			);
+			expect(wrapper.pendingNativeDeleteCleanup.size).to.be.greaterThan(0);
+			const bytes = await durable.get(replacement.entry.hash);
+			if (!bytes) throw new Error("Expected durable replacement block");
+
+			const mirrorFailure = new Error("durable mirror poison with trim debt");
+			const durablePutStub = sinon
+				.stub(durable, "putKnown")
+				.rejects(mirrorFailure);
+			const poison = await wrapper.putKnown(replacement.entry.hash, bytes).then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			durablePutStub.restore();
+			expect(poison).to.be.instanceOf(NativeDurableCommitError);
+
+			const closeFailure = await store.close().then(
+				() => undefined,
+				(error: unknown) => error,
+			);
+			expect(closeFailure).equal(poison);
+			expect(wrapper.pendingNativeDeleteCleanup.size).to.be.greaterThan(0);
+			expect(wrapper.stopCompleted).equal(true);
+			expect(durable.status()).equal("closed");
+
+			await store.close();
+			expect(store.closed).equal(true);
+			expect(wrapper.pendingNativeDeleteCleanup.size).to.be.greaterThan(0);
+			expect(durable.status()).equal("closed");
+		} finally {
+			durableRmManyStub.restore();
+		}
+	});
+
 	it("keeps the new batch state through partial trim cleanup and reopen", async () => {
 		const { store, sharedLog, wrapper, durable } = await openStore(true);
 		const old = await store.docs.put(
@@ -3505,11 +3725,11 @@ describe("durable native commit acknowledgement", function () {
 			expect(oldRemote.status).equal("closed");
 			expect(durable.status()).equal("closed");
 			// Program parents retain their own open flag when a child close rejects.
-			// The child itself is fully torn down; one idempotent close at each parent
-			// level completes their bookkeeping before reopening the same objects.
-			await store.docs.close();
+			// Retry through the same parent operation so Handler can resume every
+			// committed child release with its original owner identity.
 			await store.close();
 			expect(store.closed).equal(true);
+			expect(durableStopSpy.calledOnce).equal(true);
 
 			const reopened = await client!.open(store, {
 				args: createOpenArgs(directory!),

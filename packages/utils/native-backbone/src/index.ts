@@ -3002,8 +3002,21 @@ export type NativeBackboneCoordinatePersistenceAdapter = {
 	 * sharing the same namespace. A tombstone makes interrupted erases resumable.
 	 */
 	drop?(additionalFiles?: readonly string[]): Promise<void>;
-	/** Complete an interrupted drop before any native state is hydrated. */
+	/**
+	 * Complete an interrupted drop before hydration or on the same adapter
+	 * generation after `drop()` rejected. Returning `true` means the tombstoned
+	 * erase completed: this generation remains terminal only if it initiated that
+	 * drop, while recovery of a prior generation's marker returns to active.
+	 * Returning `false` means no durable marker exists and an explicit `drop()`
+	 * may start again; a generation that already initiated drop remains fenced
+	 * from ordinary hydrate/flush work until that destructive retry completes.
+	 * A corrupt/invalid marker rejection must likewise restore the adapter to an
+	 * explicit-drop-admitting state so drop can overwrite it; transient I/O
+	 * failures may keep the generation in its resumable dropping state. Once
+	 * close is admitted, no new resume may queue behind terminal store teardown.
+	 */
 	resumeDrop?(): Promise<boolean>;
+	/** A rejected close may be retried to resume its first incomplete store stage. */
 	close?(): Promise<void>;
 };
 
@@ -9110,7 +9123,11 @@ export class NativeBackboneCoordinatePersistence {
 		| "dropped"
 		| "closing"
 		| "closed" = "active";
+	private dropInitiatedOnGeneration = false;
 	private persistenceFailure: unknown;
+	private closeMode: "flush" | "withoutFlush" | undefined;
+	private closeFlushCompleted = false;
+	private closeStoreCompleted = false;
 	private closePromise: Promise<void> | undefined;
 
 	constructor(
@@ -9192,6 +9209,11 @@ export class NativeBackboneCoordinatePersistence {
 			throw this.persistenceFailure;
 		}
 		this.assertLifecycleActive(operation);
+		if (this.dropInitiatedOnGeneration) {
+			throw new Error(
+				`Native backbone coordinate persistence can not ${operation} after drop was initiated; retry drop or resume drop first`,
+			);
+		}
 	}
 
 	private resetJournalTracking(): void {
@@ -9247,6 +9269,7 @@ export class NativeBackboneCoordinatePersistence {
 		}
 		// Flip synchronously so no later append/compact can enqueue behind this
 		// erase and recreate a file after its removal.
+		this.dropInitiatedOnGeneration = true;
 		this.persistenceLifecycle = "dropping";
 		await this.enqueuePersistence(async () => {
 			await this.store.write(
@@ -9267,9 +9290,34 @@ export class NativeBackboneCoordinatePersistence {
 	}
 
 	async resumeDrop(): Promise<boolean> {
-		this.assertActive("resume drop");
+		if (this.persistenceLifecycle === "dropped") {
+			return true;
+		}
+		if (this.closeMode !== undefined) {
+			throw new Error(
+				"Native backbone coordinate persistence can not resume drop after close was initiated",
+			);
+		}
+		const resumesInProgress = this.persistenceLifecycle === "dropping";
+		const completesInitiatedDrop = this.dropInitiatedOnGeneration;
+		if (!resumesInProgress) {
+			if (completesInitiatedDrop) {
+				this.assertLifecycleActive("resume drop");
+			} else {
+				this.assertActive("resume drop");
+			}
+		}
 		this.persistenceLifecycle = "dropping";
-		return this.enqueuePersistence(() => this.resumeDropInternal("active"));
+		return this.enqueuePersistence(async () => {
+			// A concurrent drop may have completed before this queued recovery runs.
+			// Preserve its terminal lifecycle instead of reactivating the generation.
+			if (this.persistenceLifecycle === "dropped") {
+				return true;
+			}
+			return this.resumeDropInternal(
+				completesInitiatedDrop ? "dropped" : "active",
+			);
+		});
 	}
 
 	async hydrate(backbone: NativePeerbitBackbone): Promise<number> {
@@ -9370,12 +9418,15 @@ export class NativeBackboneCoordinatePersistence {
 	}
 
 	private async resumeDropInternal(
-		finalLifecycle: "active" | "hydrating",
+		finalLifecycle: "active" | "hydrating" | "dropped",
 	): Promise<boolean> {
 		const bytes = await this.store.read(
 			nativeBackboneCoordinateDropTombstoneFile,
 		);
 		if (!bytes) {
+			// A failed drop can stop before its tombstone is durable. Restore the
+			// generation to active so the caller can start a complete drop; only a
+			// tombstone-backed erase may finish it as dropped.
 			this.persistenceLifecycle =
 				finalLifecycle === "hydrating"
 					? "hydrating"
@@ -9404,11 +9455,13 @@ export class NativeBackboneCoordinatePersistence {
 		await this.eraseDropFiles(tombstone.files);
 		this.resetJournalTracking();
 		this.persistenceLifecycle =
-			finalLifecycle === "hydrating"
-				? "hydrating"
-				: this.closePromise
-					? "closing"
-					: "active";
+			finalLifecycle === "dropped"
+				? "dropped"
+				: finalLifecycle === "hydrating"
+					? "hydrating"
+					: this.closePromise
+						? "closing"
+						: "active";
 		return true;
 	}
 
@@ -9600,31 +9653,52 @@ export class NativeBackboneCoordinatePersistence {
 		if (this.closePromise) {
 			return this.closePromise;
 		}
+		const closeMode: "flush" | "withoutFlush" =
+			this.closeMode ??
+			(this.persistenceLifecycle === "active" && !this.dropInitiatedOnGeneration
+				? "flush"
+				: "withoutFlush");
+		this.closeMode = closeMode;
 		// Close wins once invoked from an active generation. The synchronous
 		// transition rejects any later drop/hydrate/flush before the terminal
 		// store close starts, including for stores that forbid all post-close I/O.
-		const closesActiveGeneration = this.persistenceLifecycle === "active";
-		if (closesActiveGeneration) {
+		if (this.persistenceLifecycle === "active") {
 			this.persistenceLifecycle = "closing";
 		}
-		this.closePromise = this.enqueuePersistence(async () => {
-			if (closesActiveGeneration || this.persistenceLifecycle === "active") {
+		const closeAttempt = this.enqueuePersistence(async () => {
+			if (closeMode === "flush") {
 				this.persistenceLifecycle = "closing";
-				await this.store.flush?.();
-				await this.store.close?.();
-				this.persistenceLifecycle = "closed";
-				return;
-			}
-			if (this.persistenceLifecycle === "closing") {
-				await this.store.close?.({ flush: false });
+				if (!this.closeFlushCompleted) {
+					await this.store.flush?.();
+					this.closeFlushCompleted = true;
+				}
+				if (!this.closeStoreCompleted) {
+					await this.store.close?.();
+					this.closeStoreCompleted = true;
+				}
 				this.persistenceLifecycle = "closed";
 				return;
 			}
 			// A drop already in flight wins. Drain no buffered bytes after its
 			// tombstone erase and preserve the dropped terminal lifecycle.
-			await this.store.close?.({ flush: false });
+			if (!this.closeStoreCompleted) {
+				await this.store.close?.({ flush: false });
+				this.closeStoreCompleted = true;
+			}
+			if (this.persistenceLifecycle !== "dropped") {
+				this.persistenceLifecycle = "closed";
+			}
 		});
-		return this.closePromise;
+		this.closePromise = closeAttempt;
+		void closeAttempt.catch(() => {
+			// A rejected close is only the failed attempt, not terminal progress.
+			// Retain completed stages above, but let the exact owner retry the first
+			// incomplete store operation.
+			if (this.closePromise === closeAttempt) {
+				this.closePromise = undefined;
+			}
+		});
+		return closeAttempt;
 	}
 }
 

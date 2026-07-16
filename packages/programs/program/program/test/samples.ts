@@ -143,12 +143,44 @@ export class TestProgram extends Program<{ dontOpenNested?: boolean }> {
 		this.nested = nested;
 	}
 
+	preventNewParents(): void {
+		this.preventParentAttachments();
+	}
+
 	async open(args?: { dontOpenNested?: boolean }): Promise<void> {
 		if (args?.dontOpenNested) {
 			this.nested.closed = true;
 			return;
 		}
 		return this.nested.open();
+	}
+}
+
+@variant("test-same-address-siblings")
+export class TestSameAddressSiblingsProgram extends Program {
+	nestedOpenResult?: TestNestedProgram;
+
+	@field({ type: "u32" })
+	id: number;
+
+	@field({ type: TestNestedProgram })
+	first: TestNestedProgram;
+
+	@field({ type: TestNestedProgram })
+	second: TestNestedProgram;
+
+	constructor(id: number = 0, seed: number = 0) {
+		super();
+		this.id = id;
+		this.first = new TestNestedProgram(seed);
+		this.second = new TestNestedProgram(seed);
+	}
+
+	async open(): Promise<void> {
+		this.nestedOpenResult = await this.node.open(this.first as any, {
+			parent: this as any,
+		});
+		await Promise.all([this.first.open(), this.second.open()]);
 	}
 }
 

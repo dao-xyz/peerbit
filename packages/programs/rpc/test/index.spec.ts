@@ -626,6 +626,150 @@ describe("rpc", () => {
 			expect(listenerCount).equal(0);
 		});
 
+		for (const operation of ["close", "drop"] as const) {
+			it(`${operation} keeps the subscription for a non-terminal owner release`, async () => {
+				await session.peers[1].open(reader.query, {
+					parent: reader as any,
+					existing: "reuse",
+				});
+				expect(reader.query.parents).to.deep.equal([reader, reader]);
+
+				expect(await reader.query[operation](reader)).to.be.false;
+				expect(reader.query.closed).to.be.false;
+				expect(
+					(reader.node.services.pubsub as any)["listenerCount"]("data"),
+				).equal(1);
+				expect(
+					await reader.query.request(
+						new Body({ arr: new Uint8Array([8, 9]) }),
+						{ amount: 1 },
+					),
+				).to.have.length(1);
+			});
+
+			it(`${operation} does not unsubscribe for an invalid owner`, async () => {
+				const wrongOwner = new RPCTest([]);
+				wrongOwner.query = new RPC();
+				await expect(reader.query[operation](wrongOwner)).to.be.rejectedWith(
+					"Could not find from in parents",
+				);
+				expect(reader.query.closed).to.be.false;
+				expect(
+					(reader.node.services.pubsub as any)["listenerCount"]("data"),
+				).equal(1);
+				expect(
+					await reader.query.request(
+						new Body({ arr: new Uint8Array([10, 11]) }),
+						{ amount: 1 },
+					),
+				).to.have.length(1);
+			});
+		}
+
+		for (const operation of ["close", "drop"] as const) {
+			it(`${operation} makes a committed base failure network-inert before exact retry`, async () => {
+				const cleanupError = new Error(
+					`synthetic committed ${operation} failure`,
+				);
+				let handled = 0;
+				(responder.query as any)._responseHandler = async (query: Body) => {
+					handled += 1;
+					return query;
+				};
+
+				if (operation === "close") {
+					const eventOptions = (responder.query as any)._eventOptions;
+					const originalOnClose = eventOptions.onClose;
+					let callbackAttempts = 0;
+					eventOptions.onClose = async (program: Program) => {
+						callbackAttempts += 1;
+						if (callbackAttempts === 1) {
+							throw cleanupError;
+						}
+						await originalOnClose?.(program);
+					};
+				} else {
+					const blocks = responder.node.services.blocks;
+					const originalRm = blocks.rm.bind(blocks);
+					let deleteAttempts = 0;
+					blocks.rm = async (address) => {
+						if (address === responder.query.address) {
+							deleteAttempts += 1;
+							if (deleteAttempts === 1) {
+								throw cleanupError;
+							}
+						}
+						return originalRm(address);
+					};
+				}
+
+				await expect(responder.query[operation](responder)).to.be.rejectedWith(
+					cleanupError.message,
+				);
+				expect(responder.query.closed).to.be.true;
+				expect((responder.query as any)._subscribed).to.be.false;
+				expect(
+					(responder.node.services.pubsub as any)["listenerCount"]("data"),
+				).equal(0);
+
+				const responses = await reader.query.request(
+					new Body({ arr: new Uint8Array([12, 13]) }),
+					{ timeout: 50 },
+				);
+				expect(responses).to.have.length(0);
+				expect(handled).to.equal(0);
+
+				expect(await responder.query[operation](responder)).to.be.true;
+				expect((responder.query as any)._subscribed).to.be.false;
+			});
+		}
+
+		it("retries listener removal without spending another topic subscription", async () => {
+			const pubsub = responder.node.services.pubsub as any;
+			await pubsub.subscribe(responder.query.topic);
+			expect(pubsub["subscriptions"].get("topic").counter).equal(2);
+			let handled = 0;
+			(responder.query as any)._responseHandler = async (query: Body) => {
+				handled += 1;
+				return query;
+			};
+
+			const originalRemoveEventListener =
+				pubsub.removeEventListener.bind(pubsub);
+			let dataRemovalAttempts = 0;
+			pubsub.removeEventListener = (type: string, listener: unknown) => {
+				if (type === "data") {
+					dataRemovalAttempts += 1;
+					if (dataRemovalAttempts === 1) {
+						throw new Error("synthetic listener removal failure");
+					}
+				}
+				return originalRemoveEventListener(type, listener);
+			};
+
+			await expect(responder.query.close(responder)).to.be.rejectedWith(
+				"synthetic listener removal failure",
+			);
+			expect(responder.query.closed).to.be.true;
+			expect((responder.query as any)._subscribed).to.be.false;
+			expect((responder.query as any)._listenerAttached).to.be.true;
+			expect(pubsub["subscriptions"].get("topic").counter).equal(1);
+
+			const responses = await reader.query.request(
+				new Body({ arr: new Uint8Array([14, 15]) }),
+				{ timeout: 50 },
+			);
+			expect(responses).to.have.length(0);
+			expect(handled).to.equal(0);
+
+			pubsub.removeEventListener = originalRemoveEventListener;
+			expect(await responder.query.close(responder)).to.be.true;
+			expect((responder.query as any)._listenerAttached).to.be.false;
+			expect(pubsub["subscriptions"].get("topic").counter).equal(1);
+			await pubsub.unsubscribe(responder.query.topic);
+			expect(pubsub["subscriptions"].has("topic")).to.be.false;
+		});
+
 		it("drop", async () => {
 			let listenerCount = (reader.node.services.pubsub as any)["listenerCount"](
 				"data",

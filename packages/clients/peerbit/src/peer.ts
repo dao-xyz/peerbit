@@ -861,6 +861,7 @@ export class Peerbit implements ProgramClient {
 	}
 
 	async start() {
+		this._handler?.assertCanStart();
 		await this._storage.open();
 		await this.indexer.start();
 
@@ -870,6 +871,7 @@ export class Peerbit implements ProgramClient {
 		}
 		this._bootstrapRecoveryPaused = false;
 		await this._bootstrapRecoveryTransition;
+		this._handler?.start();
 		this.startBootstrapRecovery();
 	}
 	async stop() {

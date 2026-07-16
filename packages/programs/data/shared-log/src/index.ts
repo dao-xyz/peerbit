@@ -70,7 +70,12 @@ import type {
 	NativePeerbitBackbone,
 	NativeBackboneCoordinatePersistenceConfig as RuntimeNativeBackboneCoordinatePersistenceConfig,
 } from "@peerbit/native-backbone";
-import { ClosedError, Program, type ProgramEvents } from "@peerbit/program";
+import {
+	ClosedError,
+	Program,
+	type ProgramEvents,
+	TerminalOperationNotStartedError,
+} from "@peerbit/program";
 import {
 	FanoutChannel,
 	type FanoutProviderHandle,
@@ -485,6 +490,7 @@ class NativeBackboneWriteThroughBlockStore {
 	// success. `.catch` also prevents unhandled-rejection noise.
 	private readonly pendingDurableWrites = new Set<Promise<unknown>>();
 	private nativeDurableCommitFailure?: NativeDurableCommitError;
+	private stopCompleted = false;
 	private readonly nativeDeleteTombstones = new Map<string, number>();
 	private nativeDeleteEpoch = 0;
 	private readonly nativeBlockWriteGenerations = new Map<string, number>();
@@ -892,14 +898,19 @@ class NativeBackboneWriteThroughBlockStore {
 	// persisted coordinate + signer facts without resolving the entry block.
 	async start(): Promise<void> {
 		await this.durable.start();
+		this.stopCompleted = false;
 	}
 
 	async stop(): Promise<void> {
+		if (this.stopCompleted) {
+			return;
+		}
 		// Surface any tracked (sync-path) durable write failure and ensure all
 		// mirror writes have settled before the durable store is torn down. Closing
 		// the durable store is unconditional: a prior columnar mirror failure must
 		// not leak the store lifecycle resource.
 		let firstError: unknown;
+		let shutdownError: unknown;
 		try {
 			await this.drainDurable();
 		} catch (error) {
@@ -913,11 +924,23 @@ class NativeBackboneWriteThroughBlockStore {
 			await this.retryNativeDeleteCleanup({ allowPoisoned: true });
 		} catch (error) {
 			firstError ??= error;
+			shutdownError ??= error;
 		}
 		try {
 			await this.durable.stop();
 		} catch (error) {
 			firstError ??= error;
+			shutdownError ??= error;
+		}
+		if (shutdownError === undefined) {
+			// A durable poison belongs to the generation being closed. Report it once
+			// so the owning terminal call observes the failed append, but remember that
+			// every mandatory shutdown stage completed. Conservative content-addressed
+			// trim debt may remain in this retired wrapper after best-effort cleanup; a
+			// fresh generation gets a new wrapper and must not be wedged by that debt.
+			// The exact terminal retry may therefore finish parent bookkeeping without
+			// rethrowing the same latched poison forever.
+			this.stopCompleted = true;
 		}
 		if (firstError !== undefined) {
 			throw firstError;
@@ -1879,6 +1902,11 @@ type NativeBackboneCoordinatePersistenceAdapter = {
 	flushJournalOnAppend?(backbone: unknown): number | Promise<number>;
 	compact?(backbone: unknown): Promise<void>;
 	drop?(additionalFiles?: readonly string[]): Promise<void>;
+	/**
+	 * Resume a failed tombstoned erase. `true` is terminal only when this adapter
+	 * initiated the drop; recovery of a prior generation returns active. `false`
+	 * restores explicit-drop admission, as must corrupt-marker rejection.
+	 */
 	resumeDrop?(): Promise<boolean>;
 	close?(): Promise<void>;
 };
@@ -14285,7 +14313,9 @@ export class SharedLog<
 		}
 	}
 
-	private async _close() {
+	private async _close(options?: { preserveDropRetryResources?: boolean }) {
+		const preserveDropRetryResources =
+			options?.preserveDropRetryResources === true;
 		let firstError: unknown;
 		const capture = async (operation: () => Promise<unknown> | unknown) => {
 			try {
@@ -14383,7 +14413,9 @@ export class SharedLog<
 		});
 		captureSync(() => this._checkedPrune.close());
 
-		await capture(() => this.remoteBlocks?.stop?.());
+		if (!preserveDropRetryResources) {
+			await capture(() => this.remoteBlocks?.stop?.());
+		}
 		captureSync(() => {
 			this._pendingIHave?.clear();
 			this.latestReplicationInfoMessage?.clear();
@@ -14401,10 +14433,28 @@ export class SharedLog<
 		captureSync(() => this.responseToPruneDebouncedFn?.close?.());
 		this.pruneDebouncedFn = undefined as any;
 		this.rebalanceParticipationDebounced = undefined;
-		await capture(() => this._replicationRangeIndex?.stop?.());
-		await capture(() => this._entryCoordinatesIndex?.stop?.());
-		this._replicationRangeIndex = undefined as any;
-		this._entryCoordinatesIndex = undefined as any;
+		if (!preserveDropRetryResources) {
+			const stopIndex = async (
+				index: Index<any> | undefined,
+				forget: () => void,
+			) => {
+				if (!index) {
+					return;
+				}
+				try {
+					await index.stop?.();
+					forget();
+				} catch (error) {
+					firstError ??= error;
+				}
+			};
+			await stopIndex(this._replicationRangeIndex, () => {
+				this._replicationRangeIndex = undefined as any;
+			});
+			await stopIndex(this._entryCoordinatesIndex, () => {
+				this._entryCoordinatesIndex = undefined as any;
+			});
+		}
 		this._nativeRangePlanner = undefined;
 		this._nativeSharedLogState = undefined;
 		this._residentEntryCoordinatesByHash = undefined;
@@ -14414,7 +14464,32 @@ export class SharedLog<
 			throw firstError;
 		}
 	}
+
+	private classifyTerminalOwnership(
+		from?: Program,
+	): "terminal" | "nonterminal" {
+		if (this.closed) {
+			return "terminal";
+		}
+		const parentIndex =
+			this.parents?.findIndex((parent) => parent === from) ?? -1;
+		if (from && parentIndex === -1) {
+			throw new TerminalOperationNotStartedError(
+				"Could not find from in parents",
+			);
+		}
+		return parentIndex !== -1 && (this.parents?.length ?? 0) > 1
+			? "nonterminal"
+			: "terminal";
+	}
+
 	async close(from?: Program): Promise<boolean> {
+		if (this.classifyTerminalOwnership(from) === "nonterminal") {
+			return super.close(from);
+		}
+		// Match Program.end()'s synchronous terminal admission fence before any
+		// SharedLog-specific await or observable teardown can admit a new owner.
+		this.preventParentAttachments();
 		this.ensureNativeDurabilityRuntimeState();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
@@ -14474,6 +14549,13 @@ export class SharedLog<
 		try {
 			superClosed = await super.close(from);
 		} catch (error) {
+			if (!this.closed || this.pendingTerminalOperation !== "close") {
+				// Child/base admission failed before Program committed this terminal
+				// transition (including a cleanly closed instance). Lower resources are
+				// still live data or belong to a completed generation, so do not mutate
+				// them while merely propagating the base error.
+				throw error;
+			}
 			firstError = error;
 		}
 		if (!superClosed && firstError === undefined) {
@@ -14507,6 +14589,9 @@ export class SharedLog<
 	}
 
 	async drop(from?: Program): Promise<boolean> {
+		if (this.classifyTerminalOwnership(from) === "nonterminal") {
+			return super.drop(from);
+		}
 		this.ensureNativeDurabilityRuntimeState();
 		const nativePersistence = this._nativeBackboneCoordinatePersistence;
 		if (
@@ -14517,10 +14602,13 @@ export class SharedLog<
 				nativePersistence.dropIsTerminal !== true)
 		) {
 			// Reject before `super.drop()` can drop child programs or any lower index.
-			throw new Error(
+			throw new TerminalOperationNotStartedError(
 				"NativeBackbone coordinate persistence adapters must expose a terminal underlying drop capability and resumeDrop before SharedLog.drop() can erase their namespace",
 			);
 		}
+		// Adapter capability validation above is explicitly unstarted. Establish
+		// the terminal fence only after that precondition succeeds.
+		this.preventParentAttachments();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state (same reasoning as in `close()`).
@@ -14564,6 +14652,12 @@ export class SharedLog<
 		try {
 			superDropped = await super.drop(from);
 		} catch (error) {
+			if (!this.closed || this.pendingTerminalOperation !== "drop") {
+				// A fresh drop on a cleanly closed Program is an API rejection, not
+				// permission to erase the already-closed lower log. Likewise, a child
+				// failure before the base drop commits must leave all lower data intact.
+				throw error;
+			}
 			firstError = error;
 		}
 		if (!superDropped && firstError === undefined) {
@@ -14588,19 +14682,42 @@ export class SharedLog<
 			throw firstError;
 		}
 		if (nativePersistence) {
-			this._nativeBackboneDropStarted = true;
 			try {
-				await nativePersistence.drop!(
-					this._nativeBackboneCoordinatePersistenceStore
-						? NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES
-						: [],
-				);
+				const additionalFiles = this._nativeBackboneCoordinatePersistenceStore
+					? NATIVE_STRICT_DURABLE_TRANSACTION_INTENT_FILES
+					: [];
+				if (this._nativeBackboneDropStarted) {
+					let resumed: boolean;
+					try {
+						resumed = await nativePersistence.resumeDrop!();
+					} catch (resumeError) {
+						try {
+							// A corrupt or partial tombstone deliberately restores the
+							// adapter to active so explicit drop can overwrite it. For
+							// transient read/remove failures the adapter stays dropping,
+							// this fallback rejects, and the original recovery error wins.
+							await nativePersistence.drop!(additionalFiles);
+							resumed = true;
+						} catch (restartError) {
+							throw new AggregateError(
+								[resumeError, restartError],
+								"Failed to resume or restart native backbone drop",
+							);
+						}
+					}
+					if (!resumed) {
+						await nativePersistence.drop!(additionalFiles);
+					}
+				} else {
+					this._nativeBackboneDropStarted = true;
+					await nativePersistence.drop!(additionalFiles);
+				}
 			} catch (error) {
 				firstError ??= error;
-				// The adapter remains in its drop lifecycle, so this closes handles
-				// without flushing live journals over a partial erase.
+				// Quiesce the failed generation without closing the lower block/index
+				// handles: exact drop retry still owns their destructive cleanup.
 				await capture(() => this.log.close());
-				await capture(() => this._close());
+				await capture(() => this._close({ preserveDropRetryResources: true }));
 				throw firstError;
 			}
 			// These in-memory states only stop being recovery-authoritative after all
@@ -14614,9 +14731,41 @@ export class SharedLog<
 			this._nativeDurableRecoveryReadyForReopen = false;
 			this._nativeDurableRecoveryCids.clear();
 		}
-		await capture(() => this._entryCoordinatesIndex?.drop());
-		await capture(() => this._replicationRangeIndex?.drop());
-		await capture(() => this.log.drop());
+		let destructiveCleanupFailed = false;
+		const dropIndex = async (
+			index: Index<any> | undefined,
+			forget: () => void,
+		) => {
+			if (!index) {
+				return;
+			}
+			try {
+				await index.drop();
+				forget();
+			} catch (error) {
+				firstError ??= error;
+				destructiveCleanupFailed = true;
+			}
+		};
+		await dropIndex(this._entryCoordinatesIndex, () => {
+			this._entryCoordinatesIndex = undefined as any;
+		});
+		await dropIndex(this._replicationRangeIndex, () => {
+			this._replicationRangeIndex = undefined as any;
+		});
+		try {
+			await this.log.drop();
+		} catch (error) {
+			firstError ??= error;
+			destructiveCleanupFailed = true;
+		}
+		if (destructiveCleanupFailed) {
+			// Exact drop retry still owns every failed destructive handle. Quiesce
+			// the rest of the generation without turning an erase failure into a
+			// successful close or forgetting the only object that can retry it.
+			await capture(() => this._close({ preserveDropRetryResources: true }));
+			throw firstError;
+		}
 		await capture(() => this._close());
 		if (firstError !== undefined) {
 			throw firstError;
