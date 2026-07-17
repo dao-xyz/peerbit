@@ -1,5 +1,16 @@
 # Changelog
 
+## 3.1.9
+
+### Patch Changes
+
+- Updated dependencies [[`ec50806`](https://github.com/dao-xyz/peerbit/commit/ec5080632ca5f352b47dd02d3e08a6f699e4a583)]:
+  - peerbit@5.3.9
+  - @peerbit/stream@5.1.3
+  - @peerbit/blocks@4.2.5
+  - @peerbit/pubsub@5.3.3
+  - @peerbit/program@6.0.38
+
 ## 3.1.8
 
 ### Patch Changes

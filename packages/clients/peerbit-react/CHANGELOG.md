@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.34
+
+### Patch Changes
+
+- Updated dependencies [[`ec50806`](https://github.com/dao-xyz/peerbit/commit/ec5080632ca5f352b47dd02d3e08a6f699e4a583)]:
+  - peerbit@5.3.9
+  - @peerbit/program@6.0.38
+  - @peerbit/canonical-client@1.1.41
+  - @peerbit/program-react@0.4.42
+
 ## 1.1.33
 
 ### Patch Changes

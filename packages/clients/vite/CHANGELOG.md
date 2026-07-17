@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.9
+
+### Patch Changes
+
+- [#1079](https://github.com/dao-xyz/peerbit/pull/1079) [`988269f`](https://github.com/dao-xyz/peerbit/commit/988269f2a00a4be75fb385c1015d6c335dd1d1bc) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Declare Vite 7's supported Node.js runtime range so engine-strict installs reject unsupported Node.js versions before the plugin is loaded.
+
 ## 2.0.8
 
 ### Patch Changes

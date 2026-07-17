@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.50
+
+### Patch Changes
+
+- Updated dependencies [[`ec50806`](https://github.com/dao-xyz/peerbit/commit/ec5080632ca5f352b47dd02d3e08a6f699e4a583)]:
+  - peerbit@5.3.9
+
 ## 1.0.49
 
 ### Patch Changes
