@@ -37,6 +37,7 @@ for (const name of templates) {
 			"diagnostics?.programAddress",
 			"diagnostics.programClosed === false",
 			"await hooks.setReplicationRole(role)",
+			"timeout: READY_TIMEOUT_MS",
 		]) {
 			assert.ok(
 				contents.includes(required),

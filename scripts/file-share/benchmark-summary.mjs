@@ -1,4 +1,6 @@
 const round = (value) => Number(value.toFixed(1));
+const TIMING_DISTRIBUTION_DEFINITION =
+	"avg/min/max and linearly interpolated p25/median/p75 over passed runs only";
 
 const average = (values) =>
 	values.length > 0
@@ -76,6 +78,7 @@ export const summarizeUploadPerformance = (results) => {
 		passedNumbers(results, (result) => result.downloadDurationMs),
 	);
 	return {
+		timingDistributionDefinition: TIMING_DISTRIBUTION_DEFINITION,
 		...flattenDistribution("uploadDurationMs", uploadDuration),
 		...flattenDistribution("timeToWriterReadyMs", timeToWriterReady),
 		...flattenDistribution("timeToReaderReadyMs", timeToReaderReady),

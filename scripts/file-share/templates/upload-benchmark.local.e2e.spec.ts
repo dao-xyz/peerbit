@@ -228,7 +228,7 @@ const waitForTestHooks = async (
 			requireRoleSetter: Boolean(options.requireRoleSetter),
 			role: options.role,
 		},
-		{ timeout: 60_000, polling: 100 },
+		{ timeout: READY_TIMEOUT_MS, polling: 100 },
 	);
 };
 

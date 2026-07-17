@@ -33,6 +33,8 @@ test("propagates end-to-end readiness and labels post-settlement listing", () =>
 	];
 
 	assert.deepEqual(summarizeUploadPerformance(results), {
+		timingDistributionDefinition:
+			"avg/min/max and linearly interpolated p25/median/p75 over passed runs only",
 		uploadDurationMsAvg: 100,
 		uploadDurationMsP25: 90,
 		uploadDurationMsMedian: 100,
