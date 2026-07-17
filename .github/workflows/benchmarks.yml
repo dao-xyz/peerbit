@@ -1,7 +1,5 @@
 name: Benchmarks
 on:
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       pr:
@@ -9,44 +7,73 @@ on:
         required: true
         type: number
 
-permissions:
-  contents: read
-  pull-requests: write
+permissions: {}
 
 jobs:
   bench:
-    if: |
-      (github.event_name == 'issue_comment' &&
-        github.event.issue.pull_request &&
-        startsWith(github.event.comment.body, '/bench') &&
-        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
-      ) ||
-      (github.event_name == 'workflow_dispatch')
-
     runs-on: ubuntu-22.04
+    # The slowest configured sweep can spend up to 120 seconds per batch size;
+    # two hours leaves ample install/build headroom without the default six-hour exposure.
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     concurrency:
-      group: bench-${{ github.event.issue.number || inputs.pr }}
+      group: bench-${{ inputs.pr }}
       cancel-in-progress: true
 
     steps:
       - name: Resolve PR details
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const prNumber = context.eventName === 'workflow_dispatch'
-              ? Number(context.payload.inputs?.pr)
-              : context.payload.issue.number;
+            const fs = require('node:fs');
+            const advisory =
+              'Advisory/untrusted benchmark output: this job executes same-repository PR head code in the same runner and workspace as the base benchmark. The head code can modify base results, metadata, and the report before upload. Reproduce material findings independently before merging.';
+            const writeMetadata = (metadata) => {
+              fs.mkdirSync('bench-results', { recursive: true });
+              fs.writeFileSync(
+                'bench-results/metadata.json',
+                JSON.stringify({ advisory, ...metadata }, null, 2) + '\n',
+              );
+            };
 
-            const { owner, repo } = context.repo;
-            const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-            core.setOutput('number', String(prNumber));
-            core.setOutput('base_sha', pr.data.base.sha);
-            core.setOutput('head_sha', pr.data.head.sha);
-            core.setOutput('head_repo', pr.data.head.repo.full_name);
+            const prNumber = Number(context.payload.inputs?.pr);
+            if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+              writeMetadata({
+                snapshot_status: 'rejected',
+                rejection_reason: 'The pr input was not a positive pull request number.',
+              });
+              core.setFailed('The pr input must be a positive pull request number.');
+              return;
+            }
 
-            const sameRepo = pr.data.head.repo.full_name === `${owner}/${repo}`;
-            core.setOutput('same_repo', sameRepo ? 'true' : 'false');
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+            const initialPr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const baseSha = initialPr.data.base.sha;
+            const headSha = initialPr.data.head.sha;
+            const headRepo = initialPr.data.head.repo?.full_name;
+            const changedFiles = initialPr.data.changed_files;
+
+            if (
+              typeof baseSha !== 'string' ||
+              typeof headSha !== 'string' ||
+              typeof headRepo !== 'string' ||
+              !Number.isSafeInteger(changedFiles) ||
+              changedFiles < 0
+            ) {
+              const rejectionReason = 'GitHub returned incomplete pull request snapshot metadata.';
+              writeMetadata({
+                pull_request: prNumber,
+                snapshot_status: 'rejected',
+                rejection_reason: rejectionReason,
+              });
+              core.setFailed(rejectionReason);
+              return;
+            }
 
             const files = await github.paginate(github.rest.pulls.listFiles, {
               owner,
@@ -54,27 +81,58 @@ jobs:
               pull_number: prNumber,
               per_page: 100,
             });
-            const filenames = files.map((f) => f.filename);
+            const refreshedPr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const filenames = files.map((f) => f?.filename);
+            const uniqueFilenameCount = new Set(filenames).size;
+            const snapshotStable =
+              refreshedPr.data.base.sha === baseSha &&
+              refreshedPr.data.head.sha === headSha &&
+              refreshedPr.data.head.repo?.full_name === headRepo &&
+              refreshedPr.data.changed_files === changedFiles;
 
-            const commentBody =
-              context.eventName === 'issue_comment' ? (context.payload.comment?.body || '') : '';
-            const argv = commentBody.trim().split(/\s+/).slice(1).filter(Boolean);
-            const hasArgs = argv.length > 0;
-            const wantAll = argv.includes('all');
-            const wantSharedLog =
-              wantAll || argv.includes('shared-log') || argv.includes('sharedlog') || argv.includes('shared');
-            const wantTransport =
-              wantAll ||
-              argv.includes('transport') ||
-              argv.includes('stream') ||
-              argv.includes('transfer') ||
-              argv.includes('ack');
-            const wantDocument =
-              wantAll ||
-              argv.includes('document') ||
-              argv.includes('doc') ||
-              argv.includes('ingest') ||
-              argv.includes('file-ingest');
+            let rejectionReason;
+            if (!snapshotStable) {
+              rejectionReason =
+                'The pull request base/head changed while its files were being listed; dispatch again for a coherent snapshot.';
+            } else if (files.length !== changedFiles) {
+              rejectionReason =
+                `GitHub advertised ${changedFiles} changed files but returned ${files.length}; refusing an incomplete file list.`;
+            } else if (filenames.some((filename) => typeof filename !== 'string')) {
+              rejectionReason = 'GitHub returned a pull request file without a valid filename.';
+            } else if (uniqueFilenameCount !== files.length) {
+              rejectionReason = 'GitHub returned duplicate pull request filenames; refusing an ambiguous file list.';
+            }
+
+            if (rejectionReason) {
+              writeMetadata({
+                pull_request: prNumber,
+                snapshot_status: 'rejected',
+                rejection_reason: rejectionReason,
+                initial_snapshot: {
+                  base_sha: baseSha,
+                  head_sha: headSha,
+                  head_repository: headRepo,
+                  changed_files: changedFiles,
+                },
+                refreshed_snapshot: {
+                  base_sha: refreshedPr.data.base.sha,
+                  head_sha: refreshedPr.data.head.sha,
+                  head_repository: refreshedPr.data.head.repo?.full_name,
+                  changed_files: refreshedPr.data.changed_files,
+                },
+                listed_files: files.length,
+                unique_listed_files: uniqueFilenameCount,
+              });
+              core.setFailed(rejectionReason);
+              return;
+            }
+
+            const sameRepo = headRepo === `${owner}/${repo}`;
+            core.setOutput('number', String(prNumber));
+            core.setOutput('base_sha', baseSha);
+            core.setOutput('head_sha', headSha);
+            core.setOutput('head_repo', headRepo);
+            core.setOutput('same_repo', sameRepo ? 'true' : 'false');
 
             const touchedSharedLog = filenames.some(
               (p) =>
@@ -100,9 +158,9 @@ jobs:
                 p.startsWith('packages/utils/crypto/'),
             );
 
-            const runSharedLog = wantSharedLog || (!hasArgs && touchedSharedLog);
-            const runTransport = wantTransport || (!hasArgs && touchedTransport);
-            const runDocument = wantDocument || (!hasArgs && touchedIngestStack);
+            const runSharedLog = touchedSharedLog;
+            const runTransport = touchedTransport;
+            const runDocument = touchedIngestStack;
 
             core.setOutput('run_shared_log', runSharedLog ? 'true' : 'false');
             core.setOutput('run_transport', runTransport ? 'true' : 'false');
@@ -113,11 +171,21 @@ jobs:
             if (runTransport) selected.push('transport');
             if (runDocument) selected.push('document');
             core.setOutput('selected', selected.join(',') || 'none');
-            core.setOutput('mode', hasArgs ? 'manual' : 'auto');
-            core.setOutput('args', argv.join(' '));
 
             const runAny = runSharedLog || runTransport || runDocument;
             core.setOutput('run_any', runAny ? 'true' : 'false');
+
+            writeMetadata({
+              pull_request: prNumber,
+              snapshot_status: 'coherent',
+              base_sha: baseSha,
+              head_sha: headSha,
+              head_repository: headRepo,
+              changed_files: changedFiles,
+              listed_files: files.length,
+              same_repository: sameRepo,
+              selected_suites: selected,
+            });
 
       - name: Skip forked PRs
         if: steps.pr.outputs.same_repo != 'true'
@@ -126,62 +194,37 @@ jobs:
 
       - name: Checkout base
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: bench-base
-
-      - name: Checkout head
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.head_sha }}
-          path: bench-head
+          persist-credentials: false
 
       - name: Setup Node
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.x
 
       - name: Setup pnpm
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
         with:
           version: 10.24.0
           run_install: false
 
       - name: Install wasm-pack
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        run: cargo install wasm-pack --version '=0.13.1' --locked
 
       - name: Install deps (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-base
         run: pnpm install --frozen-lockfile=false
 
-      - name: Install deps (head)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        working-directory: bench-head
-        run: pnpm install --frozen-lockfile=false
-
       - name: Build (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
         working-directory: bench-base
-        run: |
-          if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
-            pnpm --filter @peerbit/shared-log... run build
-          fi
-          if [ "${{ steps.pr.outputs.run_transport }}" = "true" ]; then
-            pnpm --filter @peerbit/stream... run build
-          fi
-          if [ "${{ steps.pr.outputs.run_document }}" = "true" ]; then
-            pnpm --filter @peerbit/document... run build
-          fi
-
-      - name: Build (head)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
-        working-directory: bench-head
         run: |
           if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
             pnpm --filter @peerbit/shared-log... run build
@@ -213,27 +256,6 @@ jobs:
           node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/base/rateless-iblt-sender-startsync.json"
           node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts > "$GITHUB_WORKSPACE/bench-results/base/sync-batch-sweep.json"
           node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/base/pid-convergence.json"
-
-      - name: Run shared-log benchmarks (head)
-        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
-        working-directory: bench-head/packages/programs/data/shared-log
-        env:
-          NODE_OPTIONS: --no-warnings
-          BENCH_JSON: "1"
-          RIBLT_SIZES: "1000,10000,50000"
-          RIBLT_WARMUP: "2"
-          RIBLT_ITERATIONS: "10"
-          SWEEP_BATCH_SIZES: "256,512,1024,4096,16384,65536"
-          SWEEP_ENTRY_COUNT: "20000"
-          SWEEP_WARMUP_RUNS: "0"
-          SWEEP_RUNS: "1"
-          SWEEP_TIMEOUT: "120000"
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
-          node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-startsync-cache.json"
-          node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-sender-startsync.json"
-          node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts > "$GITHUB_WORKSPACE/bench-results/head/sync-batch-sweep.json"
-          node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/head/pid-convergence.json"
 
       - name: Run document benchmarks (base)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_document == 'true'
@@ -280,6 +302,57 @@ jobs:
             echo "chunk-transfer benchmark not present in base; skipping."
           fi
 
+      # Do not execute any PR-head lifecycle code until every base benchmark has
+      # finished. This protects the measured base run, although the shared runner
+      # still means head code can alter files before the final artifact is uploaded.
+      - name: Checkout head
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: bench-head
+          persist-credentials: false
+
+      - name: Install deps (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
+        working-directory: bench-head
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_any == 'true'
+        working-directory: bench-head
+        run: |
+          if [ "${{ steps.pr.outputs.run_shared_log }}" = "true" ]; then
+            pnpm --filter @peerbit/shared-log... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_transport }}" = "true" ]; then
+            pnpm --filter @peerbit/stream... run build
+          fi
+          if [ "${{ steps.pr.outputs.run_document }}" = "true" ]; then
+            pnpm --filter @peerbit/document... run build
+          fi
+
+      - name: Run shared-log benchmarks (head)
+        if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_shared_log == 'true'
+        working-directory: bench-head/packages/programs/data/shared-log
+        env:
+          NODE_OPTIONS: --no-warnings
+          BENCH_JSON: "1"
+          RIBLT_SIZES: "1000,10000,50000"
+          RIBLT_WARMUP: "2"
+          RIBLT_ITERATIONS: "10"
+          SWEEP_BATCH_SIZES: "256,512,1024,4096,16384,65536"
+          SWEEP_ENTRY_COUNT: "20000"
+          SWEEP_WARMUP_RUNS: "0"
+          SWEEP_RUNS: "1"
+          SWEEP_TIMEOUT: "120000"
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/bench-results/head"
+          node --loader ts-node/esm ./benchmark/rateless-iblt-startsync-cache.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-startsync-cache.json"
+          node --loader ts-node/esm ./benchmark/rateless-iblt-sender-startsync.ts > "$GITHUB_WORKSPACE/bench-results/head/rateless-iblt-sender-startsync.json"
+          node --loader ts-node/esm ./benchmark/sync-batch-sweep.ts > "$GITHUB_WORKSPACE/bench-results/head/sync-batch-sweep.json"
+          node --loader ts-node/esm ./benchmark/pid-convergence.ts > "$GITHUB_WORKSPACE/bench-results/head/pid-convergence.json"
+
       - name: Run document benchmarks (head)
         if: steps.pr.outputs.same_repo == 'true' && steps.pr.outputs.run_document == 'true'
         working-directory: bench-head/packages/programs/data/document/document
@@ -325,23 +398,20 @@ jobs:
             echo "chunk-transfer benchmark not present in head; skipping."
           fi
 
-      - name: Comment results
+      - name: Prepare results report
         if: always() && steps.pr.outputs.same_repo == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
+        env:
+          BENCH_SELECTED_SUITES: ${{ steps.pr.outputs.selected }}
+        run: |
+          node <<'NODE'
             const fs = require('node:fs');
 
-            const { owner, repo } = context.repo;
-            const prNumber = Number('${{ steps.pr.outputs.number }}');
-
-            const marker = '<!-- PEERBIT_BENCHMARKS -->';
+            fs.mkdirSync('bench-results', { recursive: true });
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${owner}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-            const triggerLabel =
-              context.eventName === 'workflow_dispatch' ? '`workflow_dispatch`' : '`/bench`';
-            const selected = '${{ steps.pr.outputs.selected }}';
-            const mode = '${{ steps.pr.outputs.mode }}';
-            const args = '${{ steps.pr.outputs.args }}';
+            const selected = process.env.BENCH_SELECTED_SUITES || 'none';
+            const advisory =
+              '> [!WARNING]\n> Advisory/untrusted output: PR head code runs in the same runner and workspace as the base benchmark and can modify results, metadata, and this report before upload. Reproduce material findings independently before merging.\n\n';
 
             const suites = [
               {
@@ -404,8 +474,10 @@ jobs:
             };
 
             const formatSuite = (baseJson, headJson) => {
-              const baseMap = new Map((baseJson.tasks || []).map((t) => [t.name, t]));
-              const headMap = new Map((headJson.tasks || []).map((t) => [t.name, t]));
+              const baseTasks = Array.isArray(baseJson.tasks) ? baseJson.tasks : [];
+              const headTasks = Array.isArray(headJson.tasks) ? headJson.tasks : [];
+              const baseMap = new Map(baseTasks.filter((t) => typeof t?.name === 'string').map((t) => [t.name, t]));
+              const headMap = new Map(headTasks.filter((t) => typeof t?.name === 'string').map((t) => [t.name, t]));
               const taskNames = Array.from(new Set([...baseMap.keys(), ...headMap.keys()]));
               taskNames.sort();
 
@@ -434,18 +506,16 @@ jobs:
             };
 
             let body =
-              marker +
-              '\n## Benchmarks\n\nTriggered by ' +
-              triggerLabel +
-              ' - Run: ' +
+              '# Benchmarks\n\n' +
+              advisory +
+              'Run: ' +
               runUrl +
-              '\n\n' +
-              'Mode: ' +
-              mode +
-              (args ? ' (' + args + ')' : '') +
-              ' • Selected: ' +
+              '\n\nSelected: ' +
               selected +
               '\n\n';
+            // Write the warning before parsing any PR-produced JSON so even a
+            // malformed benchmark result leaves an advisory report to upload.
+            fs.writeFileSync('bench-results/report.md', body);
 
             let includedSuites = 0;
             for (const suite of suites) {
@@ -472,26 +542,14 @@ jobs:
               body += '_No matching benchmark suites ran for this PR._\n';
             }
 
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner,
-              repo,
-              issue_number: prNumber,
-              per_page: 100,
-            });
+            fs.writeFileSync('bench-results/report.md', body);
+          NODE
 
-            const existing = comments.find((c) => typeof c.body === 'string' && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner,
-                repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: advisory-benchmarks-pr-${{ inputs.pr }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: bench-results
+          if-no-files-found: error
+          retention-days: 14
