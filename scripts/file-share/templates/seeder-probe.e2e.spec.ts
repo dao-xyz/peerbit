@@ -14,13 +14,17 @@ const SAMPLE_COUNT = Number(process.env.PW_SAMPLE_COUNT || "4");
 const TARGET_SEEDERS = Number(process.env.PW_TARGET_SEEDERS || "2");
 const SAMPLE_COUNT_DEFINITION =
 	"observation-density divisor: planned interval is min(sampleMs, floor(readyTimeoutMs/sampleCount)) clamped to 1ms; convergence may finish early";
+const ERROR_COLLECTION_DEFINITION =
+	"from collector attachment through result snapshot: every uncaught pageerror; every console.error; every console message at any level containing a known Peerbit failure signature; plus scenario-recorded operation failures";
+const REQUEST_FAILURE_COLLECTION_DEFINITION =
+	"from collector attachment through result snapshot: every Playwright requestfailed event, retained as non-fatal diagnostics and excluded from errorCount";
 const EFFECTIVE_SAMPLE_INTERVAL_MS = Math.max(
 	1,
 	Math.min(SAMPLE_MS, Math.max(1, Math.floor(READY_TIMEOUT_MS / SAMPLE_COUNT))),
 );
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 2,
+	version: 3,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -104,7 +108,7 @@ const ROLE_BY_MODE: Record<string, any> = {
 	observer: false,
 };
 
-const MATCHED_ERRORS = [
+const KNOWN_PEERBIT_FAILURE_SIGNATURES = [
 	"Failed to resolve block",
 	"DeliveryError",
 	"Failed to get message",
@@ -123,18 +127,34 @@ const getRole = () => {
 	return role;
 };
 
-const attachErrorCollector = (page: Page, label: string, output: string[]) => {
+const attachErrorCollector = (
+	page: Page,
+	label: string,
+	errors: string[],
+	requestFailures: string[],
+) => {
 	page.on("pageerror", (error) => {
 		const text = String(error?.message || error);
-		if (MATCHED_ERRORS.some((match) => text.includes(match))) {
-			output.push(`${label}:pageerror:${text}`);
-		}
+		errors.push(`${label}:pageerror:${text}`);
 	});
 	page.on("console", (message) => {
 		const text = message.text();
-		if (MATCHED_ERRORS.some((match) => text.includes(match))) {
-			output.push(`${label}:console.${message.type()}:${text}`);
+		if (
+			message.type() === "error" ||
+			KNOWN_PEERBIT_FAILURE_SIGNATURES.some((match) => text.includes(match))
+		) {
+			errors.push(`${label}:console.${message.type()}:${text}`);
 		}
+	});
+	page.on("requestfailed", (request) => {
+		requestFailures.push(
+			`${label}:requestfailed:${JSON.stringify({
+				method: request.method(),
+				resourceType: request.resourceType(),
+				url: request.url(),
+				errorText: request.failure()?.errorText ?? null,
+			})}`,
+		);
 	});
 };
 
@@ -294,6 +314,7 @@ test.describe("generated seeder probe", () => {
 		const writer = await writerContext.newPage();
 		const reader = await readerContext.newPage();
 		const errors: string[] = [];
+		const requestFailures: string[] = [];
 		const samples: Array<Record<string, unknown>> = [];
 		let stage = "setup";
 		let shareUrl: string | undefined;
@@ -303,8 +324,8 @@ test.describe("generated seeder probe", () => {
 		let probeStartedAt: number | undefined;
 		let readyDeadlineAt: number | undefined;
 		let probeFinishedAt: number | undefined;
-		attachErrorCollector(writer, "writer", errors);
-		attachErrorCollector(reader, "reader", errors);
+		attachErrorCollector(writer, "writer", errors, requestFailures);
+		attachErrorCollector(reader, "reader", errors, requestFailures);
 
 		const readSeederCount = async (page: Page, label: string) => {
 			try {
@@ -433,6 +454,8 @@ test.describe("generated seeder probe", () => {
 					`Observed seeder probe errors: ${JSON.stringify(errors)}`,
 				);
 			}
+			const collectedErrors = [...errors];
+			const collectedRequestFailures = [...requestFailures];
 
 			const result = {
 				schema: RESULT_SCHEMA,
@@ -457,8 +480,16 @@ test.describe("generated seeder probe", () => {
 				reachedTarget,
 				timeToTargetMs,
 				targetSampleLabel,
-				errorCount: errors.length,
-				errors,
+				errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+				knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+				errorCollectionComplete: true,
+				errorCount: collectedErrors.length,
+				errors: collectedErrors,
+				requestFailureCollectionDefinition:
+					REQUEST_FAILURE_COLLECTION_DEFINITION,
+				requestFailureCollectionComplete: true,
+				requestFailureCount: collectedRequestFailures.length,
+				requestFailures: collectedRequestFailures,
 				samples,
 			};
 
@@ -472,6 +503,8 @@ test.describe("generated seeder probe", () => {
 			}
 		} catch (error: any) {
 			probeFinishedAt ??= Date.now();
+			const collectedErrors = [...errors];
+			const collectedRequestFailures = [...requestFailures];
 			const result = {
 				schema: RESULT_SCHEMA,
 				runNonce: RUN_NONCE,
@@ -496,8 +529,16 @@ test.describe("generated seeder probe", () => {
 				reachedTarget,
 				timeToTargetMs,
 				targetSampleLabel,
-				errorCount: errors.length,
-				errors,
+				errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+				knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+				errorCollectionComplete: true,
+				errorCount: collectedErrors.length,
+				errors: collectedErrors,
+				requestFailureCollectionDefinition:
+					REQUEST_FAILURE_COLLECTION_DEFINITION,
+				requestFailureCollectionComplete: true,
+				requestFailureCount: collectedRequestFailures.length,
+				requestFailures: collectedRequestFailures,
 				samples,
 				failure: {
 					message:
