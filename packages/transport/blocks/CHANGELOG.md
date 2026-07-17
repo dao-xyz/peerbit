@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.2.5
+
+### Patch Changes
+
+- Updated dependencies [[`ec50806`](https://github.com/dao-xyz/peerbit/commit/ec5080632ca5f352b47dd02d3e08a6f699e4a583)]:
+  - @peerbit/stream@5.1.3
+
 ## 4.2.4
 
 ### Patch Changes

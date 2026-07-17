@@ -1,5 +1,17 @@
 # Changelog
 
+## 13.1.11
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/shared-log@13.2.10
+  - @peerbit/pubsub@5.3.3
+  - @peerbit/log@6.2.8
+  - @peerbit/rpc@6.1.6
+  - @peerbit/program@6.0.38
+  - @peerbit/document-interface@3.2.51
+
 ## 13.1.10
 
 ### Patch Changes

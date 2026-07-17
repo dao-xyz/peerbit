@@ -1,5 +1,11 @@
 # Changelog
 
+## 5.1.3
+
+### Patch Changes
+
+- [#1077](https://github.com/dao-xyz/peerbit/pull/1077) [`ec50806`](https://github.com/dao-xyz/peerbit/commit/ec5080632ca5f352b47dd02d3e08a6f699e4a583) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Require Node.js 22 or newer to match the supported runtime dependency graph.
+
 ## 5.1.2
 
 ### Patch Changes
