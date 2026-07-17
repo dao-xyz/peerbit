@@ -84,6 +84,16 @@ test("resolves every default and requested optional knob", () => {
 	);
 });
 
+test("uses the same ready-seeder baseline for comparable replication modes", () => {
+	assert.equal(invocation({ mode: "adaptive" }).minReadySeeders, 2);
+	assert.equal(invocation({ mode: "fixed1" }).minReadySeeders, 2);
+	assert.equal(invocation({ mode: "observer" }).minReadySeeders, 0);
+	assert.equal(
+		invocation({ mode: "fixed1", minReadySeeders: 4 }).minReadySeeders,
+		4,
+	);
+});
+
 test("removes all ambient PW variables and installs the exact invocation", () => {
 	const resolved = invocation();
 	const environment = createPlaywrightBenchmarkEnvironment({

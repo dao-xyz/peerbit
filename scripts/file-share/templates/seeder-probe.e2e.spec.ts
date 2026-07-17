@@ -140,33 +140,61 @@ const attachErrorCollector = (page: Page, label: string, output: string[]) => {
 
 const waitForTestHooks = async (
 	page: Page,
-	options: { requireRoleSetter?: boolean } = {},
+	options: {
+		requireRoleSetter?: boolean;
+		role?: ReturnType<typeof getRole>;
+	} = {},
 ) => {
 	await page.waitForFunction(
-		(requireRoleSetter) => {
+		async ({ requireRoleSetter, role }) => {
 			const hooks = (window as any).__peerbitFileShareTestHooks;
-			return requireRoleSetter
-				? Boolean(hooks?.setReplicationRole && hooks?.getDiagnostics)
-				: Boolean(hooks?.getDiagnostics);
+			if (!hooks?.getDiagnostics) {
+				return false;
+			}
+			if (!requireRoleSetter) {
+				return true;
+			}
+			if (!hooks.setReplicationRole) {
+				return false;
+			}
+			try {
+				const diagnostics = hooks.getLightweightSnapshot
+					? hooks.getLightweightSnapshot()
+					: await hooks.getDiagnostics();
+				const programReady =
+					typeof diagnostics?.programAddress === "string" &&
+					diagnostics.programClosed === false;
+				if (!programReady) {
+					return false;
+				}
+				await hooks.setReplicationRole(role);
+				return true;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message.includes("Program is not ready")) {
+					return false;
+				}
+				throw error;
+			}
 		},
-		Boolean(options.requireRoleSetter),
-		{ timeout: 60_000 },
+		{
+			requireRoleSetter: Boolean(options.requireRoleSetter),
+			role: options.role,
+		},
+		{ timeout: READY_TIMEOUT_MS, polling: 100 },
 	);
 };
 
 const applyRole = async (page: Page, shareUrl: string) => {
 	await page.goto(shareUrl, { waitUntil: "domcontentloaded" });
-	await waitForTestHooks(page, { requireRoleSetter: MODE !== "adaptive" });
 	if (MODE === "adaptive") {
+		await waitForTestHooks(page);
 		return;
 	}
-	await page.evaluate(async (role) => {
-		const hooks = (window as any).__peerbitFileShareTestHooks;
-		if (!hooks?.setReplicationRole) {
-			throw new Error("Missing __peerbitFileShareTestHooks.setReplicationRole");
-		}
-		await hooks.setReplicationRole(role);
-	}, getRole());
+	await waitForTestHooks(page, {
+		requireRoleSetter: true,
+		role: getRole(),
+	});
 };
 
 const getDiagnostics = async (page: Page) =>
@@ -250,7 +278,7 @@ test.describe("generated seeder probe", () => {
 		test.setTimeout(
 			Math.max(
 				15 * 60 * 1000,
-				READY_TIMEOUT_MS + SAMPLE_MS * (SAMPLE_COUNT + 2) + 60_000,
+				2 * READY_TIMEOUT_MS + SAMPLE_MS * (SAMPLE_COUNT + 2) + 60_000,
 			),
 		);
 		if (!baseURL) {

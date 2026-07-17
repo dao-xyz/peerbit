@@ -13,6 +13,12 @@ const POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(250ms, pollMs + 250ms) for the final poll and event-loop scheduling";
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(5000ms, pollMs + 1000ms) for browser actions and event-loop scheduling";
+const TIME_TO_WRITER_READY_DEFINITION =
+	"upload-input-set-to-writer-ready-manifest-listed";
+const TIME_TO_READER_READY_DEFINITION =
+	"upload-input-set-to-reader-ready-manifest-listed";
+const LISTING_DURATION_DEFINITION =
+	"post-upload-settlement-to-both-writer-and-reader-ready-manifests-listed; excludes upload time";
 
 const isRecord = (value) =>
 	value != null && typeof value === "object" && !Array.isArray(value);
@@ -174,6 +180,22 @@ const validateUploadTimings = (result, invocation) => {
 		phases.timeToUploadSettled,
 		"phaseDurationsMs.timeToUploadSettled",
 	);
+	const phaseTimeToWriterReadyMs = requireNonNegativeNumber(
+		phases.timeToWriterReady,
+		"phaseDurationsMs.timeToWriterReady",
+	);
+	const phaseTimeToReaderReadyMs = requireNonNegativeNumber(
+		phases.timeToReaderReady,
+		"phaseDurationsMs.timeToReaderReady",
+	);
+	const timeToWriterReadyMs = requireNonNegativeNumber(
+		result.timeToWriterReadyMs,
+		"timeToWriterReadyMs",
+	);
+	const timeToReaderReadyMs = requireNonNegativeNumber(
+		result.timeToReaderReadyMs,
+		"timeToReaderReadyMs",
+	);
 	requireNonNegativeNumber(
 		phases.writerListingLag,
 		"phaseDurationsMs.writerListingLag",
@@ -196,6 +218,13 @@ const validateUploadTimings = (result, invocation) => {
 		throw new Error(
 			"uploadDurationMs must end at upload settlement and exclude listing/post-monitor/download",
 		);
+	}
+	if (
+		result.timeToWriterReadyDefinition !== TIME_TO_WRITER_READY_DEFINITION ||
+		result.timeToReaderReadyDefinition !== TIME_TO_READER_READY_DEFINITION ||
+		result.listingDurationDefinition !== LISTING_DURATION_DEFINITION
+	) {
+		throw new Error("Benchmark readiness duration definitions are invalid");
 	}
 	const timestamps = requireRecord(result.timestamps, "timestamps");
 	const uploadStartedAt = requirePositiveNumber(
@@ -268,6 +297,10 @@ const validateUploadTimings = (result, invocation) => {
 	);
 	if (
 		uploadDurationMs !== uploadSettledAt - uploadStartedAt ||
+		timeToWriterReadyMs !== writerListedAt - uploadStartedAt ||
+		timeToReaderReadyMs !== readerListedAt - uploadStartedAt ||
+		phaseTimeToWriterReadyMs !== timeToWriterReadyMs ||
+		phaseTimeToReaderReadyMs !== timeToReaderReadyMs ||
 		result.listingDurationMs !== expectedListingDuration ||
 		result.postUploadMonitorDurationMs !==
 			postMonitorFinishedAt - postMonitorStartedAt ||
@@ -415,6 +448,7 @@ const validateRequestedUploadKnobs = (result, invocation) => {
 		["uploadTimeoutMs", "uploadTimeoutMs"],
 		["downloadTimeoutMs", "downloadTimeoutMs"],
 		["minReadySeeders", "minReadySeeders"],
+		["readyTimeoutMs", "readyTimeoutMs"],
 	]) {
 		if (result[resultKey] !== invocation[invocationKey]) {
 			throw new Error(

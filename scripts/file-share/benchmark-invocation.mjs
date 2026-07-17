@@ -192,7 +192,7 @@ export const createBenchmarkInvocation = ({
 		"pollMs",
 	);
 	const resolvedMinReadySeeders = requireNonNegativeSafeInteger(
-		minReadySeeders ?? (mode === "adaptive" ? 2 : 0),
+		minReadySeeders ?? (mode === "observer" ? 0 : 2),
 		"minReadySeeders",
 	);
 	const resolvedReadyTimeoutMs = requirePositiveSafeInteger(
