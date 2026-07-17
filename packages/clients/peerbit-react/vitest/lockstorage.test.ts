@@ -371,12 +371,28 @@ describe("FastMutex", () => {
 		}
 	});
 
-	it("can keep lock with callback function", async () => {
+	it("can release and reacquire without stale ownership", async () => {
+		// This test covers marker cleanup, not wall-clock expiry. Keep time fixed so
+		// synchronous disk-backed localStorage calls cannot consume the deliberately
+		// short lease while a coverage runner is under load.
+		sandbox.useFakeTimers({ now: 50_000 });
 		const fm1 = new FastMutex({ localStorage: localStorage, timeout: 50 });
-		await fm1.lock("x");
-		await fm1.release("x");
-		expect(fm1.isLocked("x")).to.be.false;
-		await fm1.lock("x").then(() => fm1.release("x"));
+		try {
+			expect(await fm1.lock("x")).to.deep.equal({
+				restartCount: 0,
+				contentionCount: 0,
+				locksLost: 0,
+			});
+			fm1.release("x");
+			expect(fm1.isLocked("x")).to.be.false;
+			expect(await fm1.lock("x")).to.deep.equal({
+				restartCount: 0,
+				contentionCount: 0,
+				locksLost: 0,
+			});
+		} finally {
+			fm1.release("x");
+		}
 	});
 
 	it("can reacquire after the lock and its legacy grace period expire", async () => {
