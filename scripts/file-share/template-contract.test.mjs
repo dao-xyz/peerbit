@@ -32,6 +32,17 @@ for (const name of templates) {
 		]) {
 			assert.ok(contents.includes(required), `missing ${required}`);
 		}
+		for (const required of [
+			"getLightweightSnapshot",
+			"diagnostics?.programAddress",
+			"diagnostics.programClosed === false",
+			"await hooks.setReplicationRole(role)",
+		]) {
+			assert.ok(
+				contents.includes(required),
+				`${name} must wait for a live program before applying a role`,
+			);
+		}
 		assert.ok(
 			contents.indexOf("await writeFile(temporaryPath") <
 				contents.indexOf("await rename(temporaryPath, RESULT_FILE)"),
@@ -87,10 +98,39 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	for (const required of [
 		"readSeederCount(writer",
 		"readSeederCount(reader",
+		"timeToWriterReadyMs",
+		"timeToReaderReadyMs",
+		"writerListedAt - uploadStartedAt",
+		"readerListedAt - uploadStartedAt",
+		"readyTimeoutMs: READY_TIMEOUT_MS",
+		"READY_TIMEOUT_MS +",
 		"POST_MONITOR_SCHEDULING_TOLERANCE_MS",
 		"TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS",
 		"Measured transfer duration exceeded",
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
+	}
+	assert.ok(
+		contents.includes(
+			"const MIN_READY_SEEDERS = Number(process.env.PW_MIN_READY_SEEDERS)",
+		),
+		"the template must consume the resolved invocation value",
+	);
+	assert.ok(
+		!contents.includes('MODE === "adaptive" ? "2" : "0"'),
+		"the template must not redefine mode-specific ready-seeder defaults",
+	);
+	assert.ok(
+		!contents.includes("MIN_READY_SEEDERS, 180_000"),
+		"the upload probe must honor the invocation readiness timeout",
+	);
+	for (const peer of ["writer", "reader"]) {
+		assert.match(
+			contents,
+			new RegExp(
+				`expectSeedersAtLeast\\(\\s*${peer},\\s*MIN_READY_SEEDERS,\\s*READY_TIMEOUT_MS,?\\s*\\)`,
+			),
+			`${peer} readiness must use the invocation timeout`,
+		);
 	}
 });

@@ -28,6 +28,7 @@ const DOWNLOAD_TIMEOUT_MS = Number(
 		process.env.PW_UPLOAD_TIMEOUT_MS ||
 		"600000",
 );
+const READY_TIMEOUT_MS = Number(process.env.PW_READY_TIMEOUT_MS);
 const POST_MONITOR_SCHEDULING_TOLERANCE_MS = Math.max(250, POLL_MS + 250);
 const POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(250ms, pollMs + 250ms) for the final poll and event-loop scheduling";
@@ -37,6 +38,12 @@ const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS = Math.max(
 );
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(5000ms, pollMs + 1000ms) for browser actions and event-loop scheduling";
+const TIME_TO_WRITER_READY_DEFINITION =
+	"upload-input-set-to-writer-ready-manifest-listed";
+const TIME_TO_READER_READY_DEFINITION =
+	"upload-input-set-to-reader-ready-manifest-listed";
+const LISTING_DURATION_DEFINITION =
+	"post-upload-settlement-to-both-writer-and-reader-ready-manifests-listed; excludes upload time";
 const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
@@ -61,9 +68,7 @@ const MODE = process.env.PW_REPLICATION_MODE || "adaptive";
 const NETWORK_MODE = process.env.PW_NETWORK_MODE || "local";
 const RESULT_FILE = process.env.PW_RESULT_FILE;
 const ENABLE_VISIBILITY_PROBE = process.env.PW_ENABLE_VISIBILITY_PROBE === "1";
-const MIN_READY_SEEDERS = Number(
-	process.env.PW_MIN_READY_SEEDERS || (MODE === "adaptive" ? "2" : "0"),
-);
+const MIN_READY_SEEDERS = Number(process.env.PW_MIN_READY_SEEDERS);
 const VERBOSE = process.env.PW_VERBOSE === "1";
 
 if (!Number.isSafeInteger(FILE_SIZE_BYTES) || FILE_SIZE_BYTES < 0) {
@@ -71,6 +76,24 @@ if (!Number.isSafeInteger(FILE_SIZE_BYTES) || FILE_SIZE_BYTES < 0) {
 }
 if (!RUN_NONCE) {
 	throw new Error("Missing PW_BENCHMARK_RUN_NONCE");
+}
+if (
+	process.env.PW_MIN_READY_SEEDERS == null ||
+	!Number.isSafeInteger(MIN_READY_SEEDERS) ||
+	MIN_READY_SEEDERS < 0
+) {
+	throw new Error(
+		`Invalid PW_MIN_READY_SEEDERS='${process.env.PW_MIN_READY_SEEDERS}'`,
+	);
+}
+if (
+	process.env.PW_READY_TIMEOUT_MS == null ||
+	!Number.isSafeInteger(READY_TIMEOUT_MS) ||
+	READY_TIMEOUT_MS <= 0
+) {
+	throw new Error(
+		`Invalid PW_READY_TIMEOUT_MS='${process.env.PW_READY_TIMEOUT_MS}'`,
+	);
 }
 if (process.env.PW_BENCH !== "1") {
 	throw new Error("Upload benchmark must run against the production preview");
@@ -91,6 +114,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
 	pollMs: POLL_MS,
 	minReadySeeders: MIN_READY_SEEDERS,
+	readyTimeoutMs: READY_TIMEOUT_MS,
 	baseUrl: process.env.PW_BASE_URL || null,
 	protocol: process.env.PW_PROTOCOL || null,
 	viteMode: process.env.PW_VITE_MODE || null,
@@ -163,33 +187,61 @@ const attachTransferErrorCollector = (
 
 const waitForTestHooks = async (
 	page: Page,
-	options: { requireRoleSetter?: boolean } = {},
+	options: {
+		requireRoleSetter?: boolean;
+		role?: ReturnType<typeof getRole>;
+	} = {},
 ) => {
 	await page.waitForFunction(
-		(requireRoleSetter) => {
+		async ({ requireRoleSetter, role }) => {
 			const hooks = (window as any).__peerbitFileShareTestHooks;
-			return requireRoleSetter
-				? Boolean(hooks?.setReplicationRole && hooks?.getDiagnostics)
-				: Boolean(hooks?.getDiagnostics);
+			if (!hooks?.getDiagnostics) {
+				return false;
+			}
+			if (!requireRoleSetter) {
+				return true;
+			}
+			if (!hooks.setReplicationRole) {
+				return false;
+			}
+			try {
+				const diagnostics = hooks.getLightweightSnapshot
+					? hooks.getLightweightSnapshot()
+					: await hooks.getDiagnostics();
+				const programReady =
+					typeof diagnostics?.programAddress === "string" &&
+					diagnostics.programClosed === false;
+				if (!programReady) {
+					return false;
+				}
+				await hooks.setReplicationRole(role);
+				return true;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				if (message.includes("Program is not ready")) {
+					return false;
+				}
+				throw error;
+			}
 		},
-		Boolean(options.requireRoleSetter),
-		{ timeout: 60_000 },
+		{
+			requireRoleSetter: Boolean(options.requireRoleSetter),
+			role: options.role,
+		},
+		{ timeout: 60_000, polling: 100 },
 	);
 };
 
 const applyRole = async (page: Page, shareUrl: string) => {
 	await page.goto(shareUrl, { waitUntil: "domcontentloaded" });
-	await waitForTestHooks(page, { requireRoleSetter: MODE !== "adaptive" });
 	if (MODE === "adaptive") {
+		await waitForTestHooks(page);
 		return;
 	}
-	await page.evaluate(async (role) => {
-		const hooks = (window as any).__peerbitFileShareTestHooks;
-		if (!hooks?.setReplicationRole) {
-			throw new Error("Missing __peerbitFileShareTestHooks.setReplicationRole");
-		}
-		await hooks.setReplicationRole(role);
-	}, getRole());
+	await waitForTestHooks(page, {
+		requireRoleSetter: true,
+		role: getRole(),
+	});
 };
 
 const getDiagnostics = async (page: Page) => {
@@ -335,7 +387,8 @@ test.describe("generated transfer-validity benchmark", () => {
 		test.setTimeout(
 			Math.max(
 				20 * 60 * 1000,
-				UPLOAD_TIMEOUT_MS +
+				READY_TIMEOUT_MS +
+					UPLOAD_TIMEOUT_MS +
 					DOWNLOAD_TIMEOUT_MS +
 					POST_UPLOAD_MONITOR_MS +
 					5 * 60 * 1000,
@@ -469,6 +522,14 @@ test.describe("generated transfer-validity benchmark", () => {
 							uploadSettledAt != null
 								? uploadSettledAt - uploadStartedAt
 								: undefined,
+						timeToWriterReady:
+							writerListedAt != null
+								? writerListedAt - uploadStartedAt
+								: undefined,
+						timeToReaderReady:
+							readerListedAt != null
+								? readerListedAt - uploadStartedAt
+								: undefined,
 						writerListingLag:
 							uploadSettledAt != null && writerListedAt != null
 								? Math.max(0, writerListedAt - uploadSettledAt)
@@ -517,10 +578,15 @@ test.describe("generated transfer-validity benchmark", () => {
 			]);
 
 			stage = "wait-for-seeders";
-			logStage(stage, { minReadySeeders: MIN_READY_SEEDERS });
+			logStage(stage, {
+				minReadySeeders: MIN_READY_SEEDERS,
+				readyTimeoutMs: READY_TIMEOUT_MS,
+			});
 			if (MIN_READY_SEEDERS > 0) {
-				await expectSeedersAtLeast(writer, MIN_READY_SEEDERS, 180_000);
-				await expectSeedersAtLeast(reader, MIN_READY_SEEDERS, 180_000);
+				await Promise.all([
+					expectSeedersAtLeast(writer, MIN_READY_SEEDERS, READY_TIMEOUT_MS),
+					expectSeedersAtLeast(reader, MIN_READY_SEEDERS, READY_TIMEOUT_MS),
+				]);
 			} else {
 				await Promise.all([
 					readSeederCount(writer, "writer"),
@@ -753,6 +819,8 @@ test.describe("generated transfer-validity benchmark", () => {
 			}
 			if (
 				phaseDurationsMs.timeToUploadSettled == null ||
+				phaseDurationsMs.timeToWriterReady == null ||
+				phaseDurationsMs.timeToReaderReady == null ||
 				phaseDurationsMs.download == null ||
 				phaseDurationsMs.timeToUploadSettled >
 					UPLOAD_TIMEOUT_MS + TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS ||
@@ -777,12 +845,15 @@ test.describe("generated transfer-validity benchmark", () => {
 				uploadDurationMs: phaseDurationsMs.timeToUploadSettled,
 				uploadDurationDefinition:
 					"input-set-to-writer-ready-manifest-and-upload-progress-settled; excludes reader discovery, post-monitor, and download",
+				timeToWriterReadyMs: phaseDurationsMs.timeToWriterReady,
+				timeToWriterReadyDefinition: TIME_TO_WRITER_READY_DEFINITION,
+				timeToReaderReadyMs: phaseDurationsMs.timeToReaderReady,
+				timeToReaderReadyDefinition: TIME_TO_READER_READY_DEFINITION,
 				listingDurationMs: Math.max(
 					0,
 					Math.max(writerListedAt, readerListedAt) - uploadSettledAt,
 				),
-				listingDurationDefinition:
-					"upload-settled-to-both-writer-and-reader-listed",
+				listingDurationDefinition: LISTING_DURATION_DEFINITION,
 				postUploadMonitorDurationMs:
 					postMonitorFinishedAt - postMonitorStartedAt,
 				postUploadMonitorDurationDefinition:
@@ -819,6 +890,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
 				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
 				minReadySeeders: MIN_READY_SEEDERS,
+				readyTimeoutMs: READY_TIMEOUT_MS,
 				baselineWriterSeeders,
 				baselineReaderSeeders,
 				shareUrl,
@@ -860,6 +932,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
 				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
 				minReadySeeders: MIN_READY_SEEDERS,
+				readyTimeoutMs: READY_TIMEOUT_MS,
 				baselineWriterSeeders,
 				baselineReaderSeeders,
 				shareUrl,

@@ -18,6 +18,11 @@ import {
 	getPeerbitProvenance,
 	resolveGitCommitAt,
 } from "./benchmark-provenance.mjs";
+import {
+	compareUploadPerformanceModes,
+	summarizeUploadPerformance,
+	uploadTimingTableColumns,
+} from "./benchmark-summary.mjs";
 import { loadAndValidateBenchmarkResult } from "./benchmark-validity.mjs";
 import {
 	buildPeerbitPackages,
@@ -304,21 +309,11 @@ const summarizeUploadResults = (results) => {
 		runs: items.length,
 		passed: items.filter((item) => item.status === "passed").length,
 		failed: items.filter((item) => item.status !== "passed").length,
-		uploadDurationMsAvg: average(
-			items
-				.filter((item) => item.status === "passed")
-				.map((item) => item.uploadDurationMs)
-				.filter((value) => typeof value === "number"),
-		),
+		...summarizeUploadPerformance(items),
 		uploadSettledMsAvg: average(
 			items
 				.filter((item) => item.status === "passed")
 				.map((item) => item.phaseDurationsMs?.timeToUploadSettled)
-				.filter((value) => typeof value === "number"),
-		),
-		listingDurationMsAvg: average(
-			items
-				.map((item) => item.listingDurationMs)
 				.filter((value) => typeof value === "number"),
 		),
 		writerListingLagMsAvg: average(
@@ -336,11 +331,6 @@ const summarizeUploadResults = (results) => {
 		postUploadMonitorDurationMsAvg: average(
 			items
 				.map((item) => item.postUploadMonitorDurationMs)
-				.filter((value) => typeof value === "number"),
-		),
-		downloadDurationMsAvg: average(
-			items
-				.map((item) => item.downloadDurationMs)
 				.filter((value) => typeof value === "number"),
 		),
 		errorCount: items.reduce((sum, item) => sum + item.errorCount, 0),
@@ -407,35 +397,6 @@ const summarizeResults = (results, scenario) =>
 	scenario === "seeder-probe"
 		? summarizeSeederProbeResults(results)
 		: summarizeUploadResults(results);
-
-const compareUploadModes = (results) => {
-	const byMode = new Map();
-	for (const result of results) {
-		if (result.status !== "passed") {
-			continue;
-		}
-		const arr = byMode.get(result.mode) ?? [];
-		arr.push(result);
-		byMode.set(result.mode, arr);
-	}
-	const adaptive = byMode.get("adaptive");
-	const fixed = byMode.get("fixed1");
-	if (!adaptive?.length || !fixed?.length) {
-		return null;
-	}
-	const adaptiveAvg =
-		adaptive.reduce((sum, item) => sum + item.uploadDurationMs, 0) /
-		adaptive.length;
-	const fixedAvg =
-		fixed.reduce((sum, item) => sum + item.uploadDurationMs, 0) / fixed.length;
-	const deltaMs = adaptiveAvg - fixedAvg;
-	return {
-		adaptiveAvgMs: Number(adaptiveAvg.toFixed(1)),
-		fixed1AvgMs: Number(fixedAvg.toFixed(1)),
-		deltaMs: Number(deltaMs.toFixed(1)),
-		adaptiveVsFixed1Pct: Number(((deltaMs / fixedAvg) * 100).toFixed(1)),
-	};
-};
 
 const runPlaywright = ({
 	frontendRoot,
@@ -881,7 +842,7 @@ const main = async () => {
 					: null,
 			uploadDurationMs: result.uploadDurationMs,
 			uploadSettledMs: result.phaseDurationsMs?.timeToUploadSettled ?? null,
-			listingDurationMs: result.listingDurationMs ?? null,
+			...uploadTimingTableColumns(result),
 			writerListingLagMs: result.phaseDurationsMs?.writerListingLag ?? null,
 			readerListingLagMs: result.phaseDurationsMs?.readerListingLag ?? null,
 			postUploadMonitorDurationMs: result.postUploadMonitorDurationMs ?? null,
@@ -896,7 +857,8 @@ const main = async () => {
 	);
 	console.log("\nSummary");
 	console.table(summarizeResults(results, scenario));
-	const comparison = scenario === "upload" ? compareUploadModes(results) : null;
+	const comparison =
+		scenario === "upload" ? compareUploadPerformanceModes(results) : null;
 	if (comparison) {
 		console.log("\nAdaptive vs fixed1");
 		console.table([comparison]);

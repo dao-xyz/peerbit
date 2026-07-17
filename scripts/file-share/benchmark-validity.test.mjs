@@ -21,6 +21,12 @@ const POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(250ms, pollMs + 250ms) for the final poll and event-loop scheduling";
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(5000ms, pollMs + 1000ms) for browser actions and event-loop scheduling";
+const TIME_TO_WRITER_READY_DEFINITION =
+	"upload-input-set-to-writer-ready-manifest-listed";
+const TIME_TO_READER_READY_DEFINITION =
+	"upload-input-set-to-reader-ready-manifest-listed";
+const LISTING_DURATION_DEFINITION =
+	"post-upload-settlement-to-both-writer-and-reader-ready-manifests-listed; excludes upload time";
 const PROVENANCE = {
 	harness: {
 		requestedRef: "harness-worktree",
@@ -55,6 +61,7 @@ const INVOCATION = createBenchmarkInvocation({
 	postUploadMonitorMs: 50,
 	pollMs: 1_000,
 	minReadySeeders: 2,
+	readyTimeoutMs: 180_000,
 });
 
 const options = {
@@ -98,7 +105,12 @@ const validResult = () => ({
 		verified: true,
 	},
 	uploadDurationMs: 101,
+	timeToWriterReadyMs: 100,
+	timeToWriterReadyDefinition: TIME_TO_WRITER_READY_DEFINITION,
+	timeToReaderReadyMs: 120,
+	timeToReaderReadyDefinition: TIME_TO_READER_READY_DEFINITION,
 	listingDurationMs: 19,
+	listingDurationDefinition: LISTING_DURATION_DEFINITION,
 	postUploadMonitorDurationMs: 50,
 	postUploadMonitorSchedulingToleranceMs: 1_250,
 	postUploadMonitorSchedulingToleranceDefinition:
@@ -108,6 +120,7 @@ const validResult = () => ({
 	uploadTimeoutMs: 600_000,
 	downloadTimeoutMs: 600_000,
 	minReadySeeders: 2,
+	readyTimeoutMs: 180_000,
 	downloadDurationMs: 30,
 	transferTimeoutSchedulingToleranceMs: 5_000,
 	transferTimeoutSchedulingToleranceDefinition:
@@ -115,6 +128,8 @@ const validResult = () => ({
 	downloadSink: "node-file",
 	phaseDurationsMs: {
 		timeToUploadSettled: 101,
+		timeToWriterReady: 100,
+		timeToReaderReady: 120,
 		writerListingLag: 0,
 		readerListingLag: 19,
 		readerAfterWriter: 20,
@@ -264,6 +279,27 @@ for (const [name, mutate, pattern] of [
 		/not monotonic/,
 	],
 	[
+		"writer readiness arithmetic",
+		(result) => {
+			result.timeToWriterReadyMs += 1;
+		},
+		/phase duration arithmetic is inconsistent/,
+	],
+	[
+		"reader readiness phase propagation",
+		(result) => {
+			result.phaseDurationsMs.timeToReaderReady += 1;
+		},
+		/phase duration arithmetic is inconsistent/,
+	],
+	[
+		"readiness definition",
+		(result) => {
+			result.timeToReaderReadyDefinition = "post-settlement-only";
+		},
+		/readiness duration definitions are invalid/,
+	],
+	[
 		"provenance",
 		(result) => {
 			result.provenance.peerbit.resolvedCommit = "d".repeat(40);
@@ -276,6 +312,13 @@ for (const [name, mutate, pattern] of [
 			result.invocation.postUploadMonitorMs = 1;
 		},
 		/invocation does not match/,
+	],
+	[
+		"ready timeout propagation",
+		(result) => {
+			result.readyTimeoutMs -= 1;
+		},
+		/readyTimeoutMs does not match the requested invocation/,
 	],
 	[
 		"short monitor",

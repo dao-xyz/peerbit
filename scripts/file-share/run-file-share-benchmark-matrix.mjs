@@ -15,6 +15,10 @@ import {
 	resolveGitCommitAt,
 } from "./benchmark-provenance.mjs";
 import {
+	compareUploadPerformanceModes,
+	summarizeUploadPerformance,
+} from "./benchmark-summary.mjs";
+import {
 	collectLocalPeerbitPackages,
 	defaultExamplesSource,
 	defaultFileShareLocalPackages,
@@ -128,20 +132,26 @@ const resolveVariantSpecs = async (variantSpecs) => {
 };
 
 const summarizeUploadMatrix = (variantSummaries) => {
-	return variantSummaries.map((summary) => ({
-		variant: summary.variant,
-		adaptiveAvgMs: summary.comparison?.adaptiveAvgMs ?? null,
-		fixed1AvgMs: summary.comparison?.fixed1AvgMs ?? null,
-		adaptiveVsFixed1Pct: summary.comparison?.adaptiveVsFixed1Pct ?? null,
-		adaptiveStatus:
-			summary.summary.find((entry) => entry.mode === "adaptive")?.failed === 0
-				? "passed"
-				: "failed",
-		fixed1Status:
-			summary.summary.find((entry) => entry.mode === "fixed1")?.failed === 0
-				? "passed"
-				: "failed",
-	}));
+	return variantSummaries.map((summary) => {
+		const adaptive = summary.summary.find((entry) => entry.mode === "adaptive");
+		const fixed1 = summary.summary.find((entry) => entry.mode === "fixed1");
+		return {
+			variant: summary.variant,
+			adaptiveAvgMs: summary.comparison?.adaptiveAvgMs ?? null,
+			fixed1AvgMs: summary.comparison?.fixed1AvgMs ?? null,
+			adaptiveVsFixed1Pct: summary.comparison?.adaptiveVsFixed1Pct ?? null,
+			adaptiveWriterReadyMsAvg: adaptive?.timeToWriterReadyMsAvg ?? null,
+			fixed1WriterReadyMsAvg: fixed1?.timeToWriterReadyMsAvg ?? null,
+			adaptiveWriterReadyMsMedian: adaptive?.timeToWriterReadyMsMedian ?? null,
+			fixed1WriterReadyMsMedian: fixed1?.timeToWriterReadyMsMedian ?? null,
+			adaptiveReaderReadyMsAvg: adaptive?.timeToReaderReadyMsAvg ?? null,
+			fixed1ReaderReadyMsAvg: fixed1?.timeToReaderReadyMsAvg ?? null,
+			adaptiveReaderReadyMsMedian: adaptive?.timeToReaderReadyMsMedian ?? null,
+			fixed1ReaderReadyMsMedian: fixed1?.timeToReaderReadyMsMedian ?? null,
+			adaptiveStatus: adaptive?.failed === 0 ? "passed" : "failed",
+			fixed1Status: fixed1?.failed === 0 ? "passed" : "failed",
+		};
+	});
 };
 
 const summarizeSeederProbeMatrix = (variantSummaries) => {
@@ -186,6 +196,10 @@ const compareAdaptiveAcrossVariants = (variantSummaries, scenario) => {
 					? {
 							variant: summary.variant,
 							adaptiveAvgMs: adaptive.uploadDurationMsAvg,
+							adaptiveWriterReadyMsAvg: adaptive.timeToWriterReadyMsAvg,
+							adaptiveWriterReadyMsMedian: adaptive.timeToWriterReadyMsMedian,
+							adaptiveReaderReadyMsAvg: adaptive.timeToReaderReadyMsAvg,
+							adaptiveReaderReadyMsMedian: adaptive.timeToReaderReadyMsMedian,
 						}
 					: null;
 		})
@@ -249,11 +263,10 @@ const summarizeInvocationResults = (results, scenario) => {
 				.filter((value) => typeof value === "number");
 		return {
 			...base,
-			uploadDurationMsAvg: average(numbers((item) => item.uploadDurationMs)),
+			...summarizeUploadPerformance(items),
 			uploadSettledMsAvg: average(
 				numbers((item) => item.phaseDurationsMs?.timeToUploadSettled),
 			),
-			listingDurationMsAvg: average(numbers((item) => item.listingDurationMs)),
 			writerListingLagMsAvg: average(
 				numbers((item) => item.phaseDurationsMs?.writerListingLag),
 			),
@@ -263,30 +276,9 @@ const summarizeInvocationResults = (results, scenario) => {
 			postUploadMonitorDurationMsAvg: average(
 				numbers((item) => item.postUploadMonitorDurationMs),
 			),
-			downloadDurationMsAvg: average(
-				numbers((item) => item.downloadDurationMs),
-			),
 			seederDrops: items.filter((item) => item.droppedSeeders).length,
 		};
 	});
-};
-
-const compareCombinedUploadModes = (results) => {
-	const passed = results.filter((result) => result.status === "passed");
-	const adaptive = passed.filter((result) => result.mode === "adaptive");
-	const fixed = passed.filter((result) => result.mode === "fixed1");
-	if (adaptive.length === 0 || fixed.length === 0) {
-		return null;
-	}
-	const adaptiveAvg = average(adaptive.map((item) => item.uploadDurationMs));
-	const fixedAvg = average(fixed.map((item) => item.uploadDurationMs));
-	const delta = adaptiveAvg - fixedAvg;
-	return {
-		adaptiveAvgMs: adaptiveAvg,
-		fixed1AvgMs: fixedAvg,
-		deltaMs: Number(delta.toFixed(1)),
-		adaptiveVsFixed1Pct: Number(((delta / fixedAvg) * 100).toFixed(1)),
-	};
 };
 
 const prepareVariant = async ({ variantSpec, variantRoot }) => {
@@ -711,7 +703,7 @@ const main = async () => {
 			results,
 			summary: summarizeInvocationResults(results, scenario),
 			comparison:
-				scenario === "upload" ? compareCombinedUploadModes(results) : null,
+				scenario === "upload" ? compareUploadPerformanceModes(results) : null,
 		};
 	});
 
