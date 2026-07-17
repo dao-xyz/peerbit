@@ -1,5 +1,16 @@
 # Changelog
 
+## 13.2.10
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/blocks@4.2.5
+  - @peerbit/pubsub@5.3.3
+  - @peerbit/log@6.2.8
+  - @peerbit/rpc@6.1.6
+  - @peerbit/program@6.0.38
+
 ## 13.2.9
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # Changelog
 
+## 6.2.8
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/blocks@4.2.5
+
 ## 6.2.7
 
 ### Patch Changes
