@@ -19,6 +19,10 @@ const documentManifest = JSON.parse(
 		"packages/programs/data/document/document/package.json",
 	),
 );
+const viteManifest = JSON.parse(
+	await readRepositoryFile("packages/clients/vite/package.json"),
+);
+const viteNodeEngine = "^20.19.0 || >=22.12.0";
 
 assert.equal(
 	documentManifest.dependencies?.["@peerbit/time"],
@@ -29,6 +33,11 @@ assert.equal(
 	documentManifest.devDependencies?.["@peerbit/time"],
 	undefined,
 	"@peerbit/document must not hide @peerbit/time in devDependencies",
+);
+assert.equal(
+	viteManifest.engines?.node,
+	viteNodeEngine,
+	"@peerbit/vite must declare the Node.js floor imposed by Vite 7",
 );
 
 assert.equal(
@@ -166,6 +175,11 @@ assert.match(
 	postReleaseWorkflow,
 	/name: Use Node\.js[\s\S]*?node-version: 22/,
 	"post-release automation must use the supported Node floor",
+);
+assert.match(
+	publishedSecuritySmoke,
+	/packedPackages\.get\("@peerbit\/vite"\)/,
+	"the published-package gate must inspect the packed @peerbit/vite manifest",
 );
 const publishedCryptoPackageSmoke = await readRepositoryFile(
 	"scripts/test-published-crypto-package-smoke.mjs",

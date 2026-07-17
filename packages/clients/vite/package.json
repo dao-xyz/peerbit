@@ -61,7 +61,7 @@
 		"url": "https://github.com/dao-xyz/peerbit"
 	},
 	"engines": {
-		"node": ">=16.15.1"
+		"node": "^20.19.0 || >=22.12.0"
 	},
 	"author": "Peerbit contributors",
 	"license": "MIT",

@@ -15,6 +15,7 @@ import {
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+const viteNodeEngine = "^20.19.0 || >=22.12.0";
 
 const run = (command, args, options = {}) => {
 	const result = spawnSync(command, args, {
@@ -142,6 +143,16 @@ try {
 			"secure-dependency-lines.md",
 		),
 	});
+	const packedPeerbitVite = packedPackages.get("@peerbit/vite");
+	assert(
+		packedPeerbitVite,
+		"@peerbit/vite must be included in the package smoke",
+	);
+	assert.equal(
+		packedPeerbitVite.manifest.engines?.node,
+		viteNodeEngine,
+		"packed @peerbit/vite must declare the Node.js floor imposed by Vite 7",
+	);
 	const packedDocument = packedPackages.get("@peerbit/document");
 	const workspaceTime = workspaceByName.get("@peerbit/time");
 	for (const packageName of ["peerbit", "@peerbit/stream"]) {
@@ -284,6 +295,19 @@ try {
 	);
 	assert.deepEqual(lockfile.packages[""].dependencies, dependencies);
 	const lockfilePackages = Object.entries(lockfile.packages);
+	const installedViteEntries = lockfilePackages.filter(([packagePath]) =>
+		packagePath.endsWith("node_modules/vite"),
+	);
+	assert.equal(
+		installedViteEntries.length,
+		1,
+		"the clean consumer must install exactly one Vite runtime",
+	);
+	assert.equal(
+		installedViteEntries[0][1].engines?.node,
+		viteNodeEngine,
+		"the clean consumer must retain Vite 7's Node.js engine contract",
+	);
 	for (const { manifest } of publishablePackages) {
 		const topLevelPath = `node_modules/${manifest.name}`;
 		const topLevelEntry = lockfile.packages[topLevelPath];
