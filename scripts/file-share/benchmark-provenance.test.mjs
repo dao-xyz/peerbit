@@ -33,8 +33,19 @@ const createExamplesRepository = async () => {
 			"export const createSyntheticFileOnDisk = () => {};",
 			"export const sha256AndCrc32File = () => {};",
 			"export const armSavedViaPicker = () => {};",
+			"export const crc32SavedViaPicker = () => {};",
+			"export const installHashOnlyMockSaveFilePicker = () => {};",
+			"export const installMockSaveFilePicker = () => {};",
 			"export const installNodeBackedMockSaveFilePicker = () => {};",
 			"export const waitForUploadComplete = () => {};",
+			"",
+		].join("\n"),
+	);
+	await writeFile(
+		path.join(frontend, "tests", "transfer-benchmark.ts"),
+		[
+			"export const resolveBenchmarkDownloadSink = () => 'hash-only';",
+			"export const summarizeReadTransferDiagnostics = () => ({});",
 			"",
 		].join("\n"),
 	);

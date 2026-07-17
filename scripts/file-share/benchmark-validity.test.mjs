@@ -12,6 +12,7 @@ import {
 } from "./benchmark-orchestration.mjs";
 import {
 	assertPlaywrightSucceeded,
+	calculateSinkAwaitSubtractedDiagnosticMs,
 	loadAndValidateBenchmarkResult,
 	parseBenchmarkResult,
 	validateBenchmarkResult,
@@ -19,7 +20,10 @@ import {
 } from "./benchmark-validity.mjs";
 
 const RUN_NONCE = "123e4567-e89b-42d3-a456-426614174000";
+const FILE_NAME = `file-share-benchmark-adaptive-${RUN_NONCE}.bin`;
+const FILE_ID = "benchmark-large-file-id";
 const SHA256 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+const OTHER_SHA256 = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
 const FILE_MB = 5;
 const FILE_SIZE_BYTES = FILE_MB * 1024 * 1024;
 const SAMPLE_COUNT_DEFINITION =
@@ -34,6 +38,20 @@ const TIME_TO_READER_READY_DEFINITION =
 	"upload-input-set-to-reader-ready-manifest-listed";
 const LISTING_DURATION_DEFINITION =
 	"post-upload-settlement-to-both-writer-and-reader-ready-manifests-listed; excludes upload time";
+const DOWNLOAD_DURATION_DEFINITION =
+	"reader-download-click-to-selected-backpressured-sink-complete";
+const SINK_WRITE_DURATION_DEFINITION =
+	"sum of browser writable.write wall-clock durations; library read diagnostics provide the authoritative awaited sink-write interval";
+const LIBRARY_STREAM_WALL_DEFINITION =
+	"library-large-file-stream-start-to-finish including awaited sink writes";
+const SINK_WRITE_AWAIT_DEFINITION =
+	"sum of per-chunk library wall-clock intervals awaiting writable.write";
+const SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION =
+	"arithmetic library stream wall-clock duration minus summed awaited writable.write intervals; overlap-sensitive and not a sink-independent Peerbit duration";
+const PRIMARY_DOWNLOAD_METRIC_DEFINITION =
+	"authoritative only within one fixed download-sink cohort; hash-only is the standardized primary cohort and includes awaited sink writes plus any overlapping read-ahead";
+const DEMAND_WAIT_DEFINITION =
+	"wall-clock time each sequential stream consumer awaited its scheduled chunk";
 const PROVENANCE = {
 	harness: {
 		requestedRef: "harness-worktree",
@@ -90,6 +108,7 @@ const validResult = () => ({
 	status: "passed",
 	mode: "adaptive",
 	networkMode: "local",
+	fileName: FILE_NAME,
 	fileSizeMb: FILE_MB,
 	integrityVerified: true,
 	integrity: {
@@ -102,12 +121,18 @@ const validResult = () => ({
 		downloadedSizeBytes: FILE_SIZE_BYTES,
 		sourceSha256Base64: SHA256,
 		manifestSha256Base64: SHA256,
-		downloadedSha256Base64: SHA256,
+		libraryComputedSha256Base64: SHA256,
+		downloadedSha256Base64: null,
 		sourceCrc32Hex: "00000000",
 		downloadedCrc32Hex: "00000000",
+		downloadSink: "hash-only",
+		sinkPersistence: "none",
+		sinkPersistenceVerified: null,
 		sizeVerified: true,
 		manifestVerified: true,
 		sha256Verified: true,
+		librarySha256Verified: true,
+		persistedSinkSha256Verified: null,
 		crc32Verified: true,
 		verified: true,
 	},
@@ -129,10 +154,54 @@ const validResult = () => ({
 	minReadySeeders: 2,
 	readyTimeoutMs: 180_000,
 	downloadDurationMs: 30,
+	downloadDurationDefinition: DOWNLOAD_DURATION_DEFINITION,
 	transferTimeoutSchedulingToleranceMs: 5_000,
 	transferTimeoutSchedulingToleranceDefinition:
 		TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
-	downloadSink: "node-file",
+	downloadSink: "hash-only",
+	requestedDownloadSink: "hash-only",
+	sinkWriteCalls: 2,
+	sinkWriteDurationMs: 8.5,
+	sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
+	sinkServerWriteCalls: null,
+	sinkServerWriteDurationMs: null,
+	sinkServerWriteDurationDefinition: null,
+	readTransfer: {
+		chunkCount: 2,
+		totalBytes: FILE_SIZE_BYTES,
+		sources: { remote: { chunkCount: 2, bytes: FILE_SIZE_BYTES } },
+		demandWait: {
+			definition: DEMAND_WAIT_DEFINITION,
+			sampleCount: 2,
+			sumMs: 12,
+			p50Ms: 4,
+			p95Ms: 8,
+			p99Ms: 8,
+			maxMs: 8,
+			over1sCount: 0,
+			over5sCount: 0,
+			over10sCount: 0,
+		},
+		stages: {
+			libraryStreamWallMs: 30,
+			sinkWriteAwaitMs: 9,
+			sinkAwaitSubtractedDiagnosticMs: 21,
+			demandWaitMs: 12,
+			materializeMs: 4,
+			contentHashMs: 3,
+			otherStreamReadMs: 2,
+		},
+	},
+	libraryStreamWallMs: 30,
+	libraryStreamWallDefinition: LIBRARY_STREAM_WALL_DEFINITION,
+	primaryDownloadMetric: "libraryStreamWallMs",
+	primaryDownloadAuthoritative: true,
+	primaryDownloadMetricDefinition: PRIMARY_DOWNLOAD_METRIC_DEFINITION,
+	sinkWriteAwaitMs: 9,
+	sinkWriteAwaitDefinition: SINK_WRITE_AWAIT_DEFINITION,
+	sinkAwaitSubtractedDiagnosticMs: 21,
+	sinkAwaitSubtractedDiagnosticDefinition:
+		SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION,
 	phaseDurationsMs: {
 		timeToUploadSettled: 101,
 		timeToWriterReady: 100,
@@ -153,6 +222,7 @@ const validResult = () => ({
 		postMonitorFinishedAt: 1170,
 		downloadStartedAt: 1170,
 		downloadFinishedAt: 1200,
+		downloadCompletionObservedAt: 1201,
 	},
 	baselineWriterSeeders: 2,
 	baselineReaderSeeders: 2,
@@ -166,6 +236,39 @@ const validResult = () => ({
 	requestFailureCollectionComplete: true,
 	requestFailureCount: 0,
 	requestFailures: [],
+	readerDiagnostics: {
+		lastReadDiagnostics: {
+			transferId: "benchmark-read-transfer-id",
+			fileId: FILE_ID,
+			fileName: FILE_NAME,
+			startedAt: 1_170,
+			finishedAt: 1_200,
+			computedFinalHash: SHA256,
+			chunkResolved: { 0: "remote", 1: "remote" },
+			chunkByteLength: { 0: 3 * 1024 * 1024, 1: 2 * 1024 * 1024 },
+			chunkDemandWaitMs: { 0: 8, 1: 4 },
+			chunkWriteStartedAt: { 0: 1_180, 1: 1_192 },
+			chunkWriteFinishedAt: { 0: 1_185, 1: 1_196 },
+			chunkMaterializeStartedAt: { 0: 1_171, 1: 1_186 },
+			chunkMaterializeFinishedAt: { 0: 1_173, 1: 1_188 },
+			chunkHashStartedAt: { 0: 1_173, 1: 1_188 },
+			chunkHashFinishedAt: { 0: 1_174, 1: 1_190 },
+		},
+	},
+	writerManifestEvidence: {
+		capturedAt: 1_100,
+		fileId: FILE_ID,
+		fileName: FILE_NAME,
+		sizeBytes: FILE_SIZE_BYTES,
+		finalHash: SHA256,
+	},
+	readerManifestEvidence: {
+		capturedAt: 1_120,
+		fileId: FILE_ID,
+		fileName: FILE_NAME,
+		sizeBytes: FILE_SIZE_BYTES,
+		finalHash: SHA256,
+	},
 	snapshots: [
 		{
 			label: "seeders-ready",
@@ -182,6 +285,46 @@ const validResult = () => ({
 	],
 });
 
+const createSinkFixture = (downloadSink) => {
+	const invocation = createBenchmarkInvocation({
+		scenario: "upload",
+		mode: "adaptive",
+		network: "local",
+		integrationMode: "link",
+		fileMb: FILE_MB,
+		fixtureSeed: "fixture-seed",
+		downloadSink,
+		uploadTimeoutMs: 600_000,
+		downloadTimeoutMs: 600_000,
+		postUploadMonitorMs: 50,
+		pollMs: 1_000,
+		minReadySeeders: 2,
+		readyTimeoutMs: 180_000,
+	});
+	const result = validResult();
+	result.invocation = structuredClone(invocation);
+	result.downloadSink = downloadSink;
+	result.requestedDownloadSink = downloadSink;
+	result.integrity.downloadSink = downloadSink;
+	result.primaryDownloadAuthoritative = downloadSink === "hash-only";
+	if (["opfs", "node-file"].includes(downloadSink)) {
+		result.integrity.downloadedSha256Base64 = SHA256;
+		result.integrity.persistedSinkSha256Verified = true;
+		result.integrity.sinkPersistence = downloadSink;
+		result.integrity.sinkPersistenceVerified = true;
+	}
+	if (downloadSink === "node-file") {
+		result.sinkServerWriteCalls = 2;
+		result.sinkServerWriteDurationMs = 7;
+		result.sinkServerWriteDurationDefinition =
+			"loopback-request-body-receive-and-node-filesystem-write-only";
+	}
+	return {
+		result,
+		options: { ...options, expectedInvocation: invocation },
+	};
+};
+
 test("accepts a complete deterministic transfer result", () => {
 	assert.equal(
 		validateBenchmarkResult(validResult(), options).status,
@@ -189,14 +332,133 @@ test("accepts a complete deterministic transfer result", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v3 evidence envelope", () => {
+test("rejects stale read diagnostics outside the clicked download window", () => {
+	for (const mutate of [
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.startedAt = 1_100;
+			result.readerDiagnostics.lastReadDiagnostics.finishedAt = 1_130;
+		},
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.finishedAt = 1_201;
+		},
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(
+			() => validateBenchmarkResult(result, options),
+			/outside the clicked download window/,
+		);
+	}
+});
+
+test("rejects read diagnostics for a different file name or manifest id", () => {
+	for (const mutate of [
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.fileName = "other.bin";
+		},
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.fileId = "other-file-id";
+		},
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(
+			() => validateBenchmarkResult(result, options),
+			/read identity does not match the clicked file manifest/,
+		);
+	}
+});
+
+test("accepts hash-only, OPFS, and Node-file integrity cohorts", () => {
+	for (const downloadSink of ["hash-only", "opfs", "node-file"]) {
+		const fixture = createSinkFixture(downloadSink);
+		assert.equal(
+			validateBenchmarkResult(fixture.result, fixture.options).status,
+			"passed",
+		);
+	}
+});
+
+test("enforces hash-only result-level primary download authority", () => {
+	for (const [downloadSink, invalidAuthority] of [
+		["hash-only", false],
+		["opfs", true],
+		["node-file", true],
+	]) {
+		const fixture = createSinkFixture(downloadSink);
+		fixture.result.primaryDownloadAuthoritative = invalidAuthority;
+		assert.throws(
+			() => validateBenchmarkResult(fixture.result, fixture.options),
+			/read-transfer timing definitions are invalid/,
+		);
+	}
+});
+
+test("requires persisted SHA-256 for OPFS and Node-file cohorts", () => {
+	for (const downloadSink of ["opfs", "node-file"]) {
+		const fixture = createSinkFixture(downloadSink);
+		fixture.result.integrity.downloadedSha256Base64 = null;
+		assert.throws(
+			() => validateBenchmarkResult(fixture.result, fixture.options),
+			/integrity.downloadedSha256Base64/,
+		);
+	}
+});
+
+test("rejects a tampered persisted OPFS SHA-256 readback", () => {
+	const fixture = createSinkFixture("opfs");
+	fixture.result.integrity.downloadedSha256Base64 = OTHER_SHA256;
+	assert.throws(
+		() => validateBenchmarkResult(fixture.result, fixture.options),
+		/persisted opfs SHA-256 integrity gate/,
+	);
+});
+
+test("rejects an unverified persisted OPFS readback", () => {
+	const fixture = createSinkFixture("opfs");
+	fixture.result.integrity.persistedSinkSha256Verified = false;
+	fixture.result.integrity.sinkPersistenceVerified = false;
+	assert.throws(
+		() => validateBenchmarkResult(fixture.result, fixture.options),
+		/persisted opfs SHA-256 integrity gate/,
+	);
+});
+
+test("models sink-await subtraction as an overlap-sensitive diagnostic", () => {
+	const noSinkDelay = calculateSinkAwaitSubtractedDiagnosticMs({
+		libraryStreamWallMs: 50,
+		sinkWriteAwaitMs: 0,
+	});
+	// In this controlled timeline, 30ms of the same 50ms read path progresses
+	// during a 40ms sink wait. Wall time becomes 60ms, not 90ms; subtracting the
+	// whole wait therefore reports 20ms and proves this is not a counterfactual
+	// sink-free duration.
+	const overlappingSinkDelay = calculateSinkAwaitSubtractedDiagnosticMs({
+		libraryStreamWallMs: 60,
+		sinkWriteAwaitMs: 40,
+	});
+	assert.equal(noSinkDelay, 50);
+	assert.equal(overlappingSinkDelay, 20);
+	assert.ok(overlappingSinkDelay < noSinkDelay);
+});
+
+test("bounds Node-file server timing against its browser sink timing", () => {
+	const fixture = createSinkFixture("node-file");
+	fixture.result.sinkServerWriteDurationMs = 10.501;
+	assert.throws(
+		() => validateBenchmarkResult(fixture.result, fixture.options),
+		/Node-file server duration exceeds its browser sink duration/,
+	);
+});
+
+test("rejects a status-only passed payload at the v4 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v3 envelopes", () => {
+test("requires explicit error evidence on failed v4 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };
@@ -321,6 +583,166 @@ for (const [name, mutate, pattern] of [
 		/aggregate integrity/,
 	],
 	[
+		"download sink mismatch",
+		(result) => {
+			result.downloadSink = "opfs";
+		},
+		/download sink does not match/,
+	],
+	[
+		"library SHA-256 evidence",
+		(result) => {
+			result.integrity.libraryComputedSha256Base64 = null;
+		},
+		/integrity.libraryComputedSha256Base64/,
+	],
+	[
+		"hash-only persistence claim",
+		(result) => {
+			result.integrity.downloadedSha256Base64 = SHA256;
+			result.integrity.persistedSinkSha256Verified = true;
+		},
+		/must not claim persisted SHA-256/,
+	],
+	[
+		"non-Node server timing",
+		(result) => {
+			result.sinkServerWriteCalls = 1;
+		},
+		/Node-only server timing/,
+	],
+	[
+		"sink write count",
+		(result) => {
+			result.sinkWriteCalls = 3;
+		},
+		/sink write count/,
+	],
+	[
+		"inflated sink helper timing",
+		(result) => {
+			result.sinkWriteDurationMs = 11.001;
+		},
+		/helper duration exceeds canonical read evidence/,
+	],
+	[
+		"stream timing decomposition",
+		(result) => {
+			result.sinkAwaitSubtractedDiagnosticMs += 1;
+		},
+		/timing decomposition is inconsistent/,
+	],
+	[
+		"raw demand-tail summary",
+		(result) => {
+			result.readTransfer.demandWait.p95Ms += 1;
+		},
+		/timing decomposition is inconsistent/,
+	],
+	[
+		"raw demand-tail threshold count",
+		(result) => {
+			result.readTransfer.demandWait.over1sCount += 1;
+		},
+		/timing decomposition is inconsistent/,
+	],
+	[
+		"read source byte attribution",
+		(result) => {
+			result.readTransfer.sources.remote.bytes -= 1;
+		},
+		/timing decomposition is inconsistent/,
+	],
+	[
+		"raw materialization summary",
+		(result) => {
+			result.readTransfer.stages.materializeMs += 1;
+		},
+		/timing decomposition is inconsistent/,
+	],
+	[
+		"extra read-transfer field",
+		(result) => {
+			result.readTransfer.unverified = true;
+		},
+		/timing decomposition is inconsistent/,
+	],
+	[
+		"noncanonical resolved chunk key",
+		(result) => {
+			const resolved =
+				result.readerDiagnostics.lastReadDiagnostics.chunkResolved;
+			resolved["01"] = resolved[1];
+			delete resolved[1];
+		},
+		/contiguous canonical chunk indices/,
+	],
+	[
+		"single giant large-file chunk",
+		(result) => {
+			delete result.readerDiagnostics.lastReadDiagnostics.chunkResolved[1];
+		},
+		/at least two contiguous canonical chunk indices/,
+	],
+	[
+		"empty resolved chunk source",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkResolved[0] = "";
+		},
+		/invalid readerDiagnostics\.chunkResolved\[0\]/,
+	],
+	[
+		"missing canonical demand key",
+		(result) => {
+			delete result.readerDiagnostics.lastReadDiagnostics.chunkDemandWaitMs[1];
+		},
+		/exact canonical chunk keys/,
+	],
+	[
+		"extra noncanonical timing key",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkHashStartedAt["01"] =
+				1_188;
+		},
+		/exact canonical chunk keys/,
+	],
+	[
+		"chunk write before read window",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkWriteStartedAt[0] = 1_169;
+		},
+		/outside the library read window/,
+	],
+	[
+		"chunk write after read window",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkWriteFinishedAt[1] = 1_201;
+		},
+		/outside the library read window/,
+	],
+	[
+		"overlapping chunk writes",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkWriteStartedAt[1] = 1_184;
+		},
+		/ordered and non-overlapping/,
+	],
+	[
+		"raw read byte coverage",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkByteLength[0] -= 1;
+		},
+		/do not cover the requested file size/,
+	],
+	[
+		"raw reader SHA-256 contradiction",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.computedFinalHash =
+				SHA256.replace(/^A/, "B");
+		},
+		/raw reader SHA-256 contradicts/,
+	],
+	[
 		"upload arithmetic",
 		(result) => {
 			result.uploadDurationMs += result.postUploadMonitorDurationMs;
@@ -331,6 +753,34 @@ for (const [name, mutate, pattern] of [
 		"phase ordering",
 		(result) => {
 			result.timestamps.downloadStartedAt = 1100;
+		},
+		/not monotonic/,
+	],
+	[
+		"missing completion-observation timestamp",
+		(result) => {
+			delete result.timestamps.downloadCompletionObservedAt;
+		},
+		/downloadCompletionObservedAt/,
+	],
+	[
+		"unsafe sink-completion epoch",
+		(result) => {
+			result.timestamps.downloadFinishedAt = Number.MAX_SAFE_INTEGER + 1;
+		},
+		/invalid timestamps.downloadFinishedAt/,
+	],
+	[
+		"sink completion after observation",
+		(result) => {
+			result.timestamps.downloadFinishedAt = 1_202;
+		},
+		/not monotonic/,
+	],
+	[
+		"sink completion before download start",
+		(result) => {
+			result.timestamps.downloadFinishedAt = 1_169;
 		},
 		/not monotonic/,
 	],
@@ -395,6 +845,7 @@ for (const [name, mutate, pattern] of [
 			result.timestamps.postMonitorFinishedAt = 2_421;
 			result.timestamps.downloadStartedAt = 2_421;
 			result.timestamps.downloadFinishedAt = 2_451;
+			result.timestamps.downloadCompletionObservedAt = 2_452;
 		},
 		/outside the requested duration/,
 	],
@@ -418,6 +869,7 @@ for (const [name, mutate, pattern] of [
 			result.timestamps.postMonitorFinishedAt = 606_051;
 			result.timestamps.downloadStartedAt = 606_051;
 			result.timestamps.downloadFinishedAt = 606_081;
+			result.timestamps.downloadCompletionObservedAt = 606_082;
 		},
 		/requested timeout/,
 	],
@@ -428,6 +880,8 @@ for (const [name, mutate, pattern] of [
 			result.phaseDurationsMs.download = 605_001;
 			result.timestamps.downloadFinishedAt =
 				result.timestamps.downloadStartedAt + 605_001;
+			result.timestamps.downloadCompletionObservedAt =
+				result.timestamps.downloadFinishedAt + 1;
 		},
 		/requested timeout/,
 	],

@@ -1,6 +1,8 @@
 const round = (value) => Number(value.toFixed(1));
 const TIMING_DISTRIBUTION_DEFINITION =
 	"avg/min/max and linearly interpolated p25/median/p75 over passed runs only";
+export const PRIMARY_DOWNLOAD_METRIC = "libraryStreamWallMs";
+export const STANDARD_PRIMARY_DOWNLOAD_SINK = "hash-only";
 
 const average = (values) =>
 	values.length > 0
@@ -77,8 +79,28 @@ export const summarizeUploadPerformance = (results) => {
 	const downloadDuration = summarizeDistribution(
 		passedNumbers(results, (result) => result.downloadDurationMs),
 	);
+	const libraryStreamWall = summarizeDistribution(
+		passedNumbers(results, (result) => result.libraryStreamWallMs),
+	);
+	const sinkWriteAwait = summarizeDistribution(
+		passedNumbers(results, (result) => result.sinkWriteAwaitMs),
+	);
+	const sinkAwaitSubtractedDiagnostic = summarizeDistribution(
+		passedNumbers(results, (result) => result.sinkAwaitSubtractedDiagnosticMs),
+	);
+	const passedDownloadSinks = new Set(
+		results
+			.filter((result) => result.status === "passed")
+			.map((result) => result.downloadSink),
+	);
+	const downloadSink =
+		passedDownloadSinks.size === 1 ? [...passedDownloadSinks][0] : null;
 	return {
 		timingDistributionDefinition: TIMING_DISTRIBUTION_DEFINITION,
+		primaryDownloadMetric: PRIMARY_DOWNLOAD_METRIC,
+		downloadSink,
+		primaryDownloadAuthoritative:
+			downloadSink === STANDARD_PRIMARY_DOWNLOAD_SINK,
 		...flattenDistribution("uploadDurationMs", uploadDuration),
 		...flattenDistribution("timeToWriterReadyMs", timeToWriterReady),
 		...flattenDistribution("timeToReaderReadyMs", timeToReaderReady),
@@ -89,6 +111,12 @@ export const summarizeUploadPerformance = (results) => {
 			postSettlementListingDuration,
 		),
 		...flattenDistribution("downloadDurationMs", downloadDuration),
+		...flattenDistribution("libraryStreamWallMs", libraryStreamWall),
+		...flattenDistribution("sinkWriteAwaitMs", sinkWriteAwait),
+		...flattenDistribution(
+			"sinkAwaitSubtractedDiagnosticMs",
+			sinkAwaitSubtractedDiagnostic,
+		),
 	};
 };
 
@@ -109,6 +137,14 @@ const compareModeMetric = (adaptiveResults, fixedResults, getter) => {
 };
 
 export const compareUploadPerformanceModes = (results) => {
+	const passedResults = results.filter((result) => result.status === "passed");
+	const downloadSinks = new Set(
+		passedResults.map((result) => result.downloadSink),
+	);
+	if (downloadSinks.size !== 1) {
+		return null;
+	}
+	const downloadSink = [...downloadSinks][0];
 	const adaptive = results.filter((result) => result.mode === "adaptive");
 	const fixed1 = results.filter((result) => result.mode === "fixed1");
 	const upload = compareModeMetric(
@@ -126,10 +162,19 @@ export const compareUploadPerformanceModes = (results) => {
 		fixed1,
 		(result) => result.timeToReaderReadyMs,
 	);
-	if (!upload || !writerReady || !readerReady) {
+	const primaryDownload = compareModeMetric(
+		adaptive,
+		fixed1,
+		(result) => result.libraryStreamWallMs,
+	);
+	if (!upload || !writerReady || !readerReady || !primaryDownload) {
 		return null;
 	}
 	return {
+		downloadSink,
+		primaryDownloadMetric: PRIMARY_DOWNLOAD_METRIC,
+		primaryDownloadAuthoritative:
+			downloadSink === STANDARD_PRIMARY_DOWNLOAD_SINK,
 		adaptiveAvgMs: upload.adaptiveAvgMs,
 		fixed1AvgMs: upload.fixed1AvgMs,
 		deltaMs: upload.deltaMs,
@@ -142,8 +187,30 @@ export const compareUploadPerformanceModes = (results) => {
 		fixed1ReaderReadyAvgMs: readerReady.fixed1AvgMs,
 		readerReadyDeltaMs: readerReady.deltaMs,
 		adaptiveVsFixed1ReaderReadyPct: readerReady.adaptiveVsFixed1Pct,
+		adaptiveLibraryStreamWallAvgMs: primaryDownload.adaptiveAvgMs,
+		fixed1LibraryStreamWallAvgMs: primaryDownload.fixed1AvgMs,
+		libraryStreamWallDeltaMs: primaryDownload.deltaMs,
+		adaptiveVsFixed1LibraryStreamWallPct: primaryDownload.adaptiveVsFixed1Pct,
 	};
 };
+
+export const isCompletePassedBenchmarkPlan = (results, outcomeCounts) =>
+	Array.isArray(results) &&
+	Number.isSafeInteger(outcomeCounts?.planned) &&
+	outcomeCounts.planned > 0 &&
+	outcomeCounts.completed === outcomeCounts.planned &&
+	outcomeCounts.passed === outcomeCounts.planned &&
+	outcomeCounts.failed === 0 &&
+	results.length === outcomeCounts.planned &&
+	results.every((result) => result.status === "passed");
+
+export const compareUploadPerformanceModesForCompletePlan = (
+	results,
+	outcomeCounts,
+) =>
+	isCompletePassedBenchmarkPlan(results, outcomeCounts)
+		? compareUploadPerformanceModes(results)
+		: null;
 
 export const uploadTimingTableColumns = (result) => ({
 	timeToWriterReadyMs: result.timeToWriterReadyMs ?? null,

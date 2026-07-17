@@ -9,20 +9,21 @@ import {
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
 	createBenchmarkInvocation,
+	resolveBenchmarkDownloadSink,
 	resolveBenchmarkPreviewOptions,
 } from "./benchmark-invocation.mjs";
 import {
 	BENCHMARK_RESULT_SCHEMA,
 	BENCHMARK_SUMMARY_SCHEMA,
-	classifySubprocessSummary,
-	countBenchmarkOutcomes,
 	ERROR_COLLECTION_DEFINITION,
-	extractCollectedErrorEvidence,
-	inspectSingleInvocationSummary,
 	KNOWN_PEERBIT_FAILURE_SIGNATURES,
 	MATRIX_SUMMARY_SCHEMA,
-	readJsonEvidence,
 	REQUEST_FAILURE_COLLECTION_DEFINITION,
+	classifySubprocessSummary,
+	countBenchmarkOutcomes,
+	extractCollectedErrorEvidence,
+	inspectSingleInvocationSummary,
+	readJsonEvidence,
 	serializeError,
 } from "./benchmark-orchestration.mjs";
 import {
@@ -31,7 +32,8 @@ import {
 	resolveGitCommitAt,
 } from "./benchmark-provenance.mjs";
 import {
-	compareUploadPerformanceModes,
+	compareUploadPerformanceModesForCompletePlan,
+	isCompletePassedBenchmarkPlan,
 	summarizeUploadPerformance,
 } from "./benchmark-summary.mjs";
 import {
@@ -160,6 +162,21 @@ const summarizeUploadMatrix = (variantSummaries) => {
 		const fixed1 = summary.summary.find((entry) => entry.mode === "fixed1");
 		return {
 			variant: summary.variant,
+			downloadSink:
+				summary.comparison?.downloadSink ??
+				adaptive?.downloadSink ??
+				fixed1?.downloadSink ??
+				null,
+			primaryDownloadMetric:
+				summary.comparison?.primaryDownloadMetric ??
+				adaptive?.primaryDownloadMetric ??
+				fixed1?.primaryDownloadMetric ??
+				null,
+			primaryDownloadAuthoritative:
+				summary.comparison?.primaryDownloadAuthoritative ??
+				adaptive?.primaryDownloadAuthoritative ??
+				fixed1?.primaryDownloadAuthoritative ??
+				null,
 			adaptiveAvgMs: summary.comparison?.adaptiveAvgMs ?? null,
 			fixed1AvgMs: summary.comparison?.fixed1AvgMs ?? null,
 			adaptiveVsFixed1Pct: summary.comparison?.adaptiveVsFixed1Pct ?? null,
@@ -171,6 +188,16 @@ const summarizeUploadMatrix = (variantSummaries) => {
 			fixed1ReaderReadyMsAvg: fixed1?.timeToReaderReadyMsAvg ?? null,
 			adaptiveReaderReadyMsMedian: adaptive?.timeToReaderReadyMsMedian ?? null,
 			fixed1ReaderReadyMsMedian: fixed1?.timeToReaderReadyMsMedian ?? null,
+			adaptiveLibraryStreamWallMsAvg: adaptive?.libraryStreamWallMsAvg ?? null,
+			fixed1LibraryStreamWallMsAvg: fixed1?.libraryStreamWallMsAvg ?? null,
+			adaptiveLibraryStreamWallMsMedian:
+				adaptive?.libraryStreamWallMsMedian ?? null,
+			fixed1LibraryStreamWallMsMedian:
+				fixed1?.libraryStreamWallMsMedian ?? null,
+			libraryStreamWallDeltaMs:
+				summary.comparison?.libraryStreamWallDeltaMs ?? null,
+			adaptiveVsFixed1LibraryStreamWallPct:
+				summary.comparison?.adaptiveVsFixed1LibraryStreamWallPct ?? null,
 			adaptiveStatus: adaptive?.failed === 0 ? "passed" : "failed",
 			fixed1Status: fixed1?.failed === 0 ? "passed" : "failed",
 			adaptiveErrorCount: adaptive?.errorCount ?? null,
@@ -228,11 +255,18 @@ const compareAdaptiveAcrossVariants = (variantSummaries, scenario) => {
 				: adaptive.uploadDurationMsAvg != null
 					? {
 							variant: summary.variant,
+							downloadSink: adaptive.downloadSink ?? null,
+							primaryDownloadMetric: adaptive.primaryDownloadMetric ?? null,
+							primaryDownloadAuthoritative:
+								adaptive.primaryDownloadAuthoritative ?? null,
 							adaptiveAvgMs: adaptive.uploadDurationMsAvg,
 							adaptiveWriterReadyMsAvg: adaptive.timeToWriterReadyMsAvg,
 							adaptiveWriterReadyMsMedian: adaptive.timeToWriterReadyMsMedian,
 							adaptiveReaderReadyMsAvg: adaptive.timeToReaderReadyMsAvg,
 							adaptiveReaderReadyMsMedian: adaptive.timeToReaderReadyMsMedian,
+							adaptiveLibraryStreamWallMsAvg: adaptive.libraryStreamWallMsAvg,
+							adaptiveLibraryStreamWallMsMedian:
+								adaptive.libraryStreamWallMsMedian,
 						}
 					: null;
 		})
@@ -370,6 +404,7 @@ const runVariantBenchmark = async ({
 	installExamples,
 	uploadTimeoutMs,
 	downloadTimeoutMs,
+	downloadSink,
 	postUploadMonitorMs,
 	pollMs,
 	minReadySeeders,
@@ -435,6 +470,7 @@ const runVariantBenchmark = async ({
 		...(downloadTimeoutMs != null
 			? ["--download-timeout-ms", String(downloadTimeoutMs)]
 			: []),
+		...(downloadSink != null ? ["--download-sink", downloadSink] : []),
 		...(postUploadMonitorMs != null
 			? ["--post-upload-monitor-ms", String(postUploadMonitorMs)]
 			: []),
@@ -552,6 +588,9 @@ const main = async () => {
 	const mode = args.mode ?? "both";
 	const modes = mode === "both" ? ["adaptive", "fixed1"] : [mode];
 	const scenario = args.scenario ?? "upload";
+	const downloadSink = resolveBenchmarkDownloadSink(args["download-sink"], {
+		scenario,
+	});
 	const integrationMode = args["integration-mode"] ?? "link";
 	const localPackages =
 		args["local-packages"] ?? defaultFileShareLocalPackages.join(",");
@@ -717,6 +756,7 @@ const main = async () => {
 				installExamples: false,
 				uploadTimeoutMs,
 				downloadTimeoutMs,
+				downloadSink,
 				postUploadMonitorMs,
 				pollMs,
 				minReadySeeders,
@@ -759,6 +799,7 @@ const main = async () => {
 				integrationMode,
 				fileMb,
 				fixtureSeed: fixtureSeed ?? DEFAULT_FIXTURE_SEED,
+				downloadSink,
 				uploadTimeoutMs: optionalNumber(uploadTimeoutMs),
 				downloadTimeoutMs: optionalNumber(downloadTimeoutMs),
 				postUploadMonitorMs: optionalNumber(postUploadMonitorMs),
@@ -952,11 +993,27 @@ const main = async () => {
 		});
 	}
 
+	const allResults = [...resultsByVariant.values()].flat();
+	const outcomeCounts = countBenchmarkOutcomes(
+		allResults,
+		executionOrder.length,
+	);
+	const matrixPlanPassed = isCompletePassedBenchmarkPlan(
+		allResults,
+		outcomeCounts,
+	);
 	const variantSummaries = variantSpecs.map((variantSpec) => {
 		const prepared = preparedVariants.get(variantSpec.name);
 		const results = resultsByVariant
 			.get(variantSpec.name)
 			.toSorted((left, right) => left.matrixSequence - right.matrixSequence);
+		const variantPlanned = executionOrder.filter(
+			(plan) => plan.variant === variantSpec.name,
+		).length;
+		const variantOutcomeCounts = countBenchmarkOutcomes(
+			results,
+			variantPlanned,
+		);
 		return {
 			variant: variantSpec.name,
 			variantRef: prepared.variantRef,
@@ -966,20 +1023,20 @@ const main = async () => {
 			peerbitProvenance: prepared.peerbitProvenance,
 			examplesProvenance: benchmarkExamplesProvenance,
 			results,
+			outcomeCounts: variantOutcomeCounts,
 			summary: summarizeInvocationResults(results, scenario),
 			comparison:
-				scenario === "upload" ? compareUploadPerformanceModes(results) : null,
+				scenario === "upload"
+					? compareUploadPerformanceModesForCompletePlan(
+							results,
+							variantOutcomeCounts,
+						)
+					: null,
 		};
 	});
-
-	const allResults = [...resultsByVariant.values()].flat();
-	const outcomeCounts = countBenchmarkOutcomes(
-		allResults,
-		executionOrder.length,
-	);
 	const matrixSummary = {
 		schema: MATRIX_SUMMARY_SCHEMA,
-		status: outcomeCounts.failed === 0 ? "passed" : "failed",
+		status: matrixPlanPassed ? "passed" : "failed",
 		outcomeCounts,
 		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
 		knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
@@ -995,6 +1052,7 @@ const main = async () => {
 		mode,
 		modes,
 		scenario,
+		downloadSink,
 		integrationMode,
 		localPackages,
 		requestedLocalPackageNames:
@@ -1009,10 +1067,9 @@ const main = async () => {
 		executionOrder: invocationRecords,
 		variantSummaries,
 		summary: summarizeMatrix(variantSummaries, scenario),
-		adaptiveComparison: compareAdaptiveAcrossVariants(
-			variantSummaries,
-			scenario,
-		),
+		adaptiveComparison: matrixPlanPassed
+			? compareAdaptiveAcrossVariants(variantSummaries, scenario)
+			: null,
 	};
 	const matrixSummaryFile = path.join(
 		matrixRoot,
@@ -1025,10 +1082,12 @@ const main = async () => {
 	console.table(matrixSummary.summary);
 	console.log("\nOutcome counts");
 	console.table([outcomeCounts]);
-	console.log("\nAdaptive across variants");
-	console.table(matrixSummary.adaptiveComparison);
+	if (matrixSummary.adaptiveComparison) {
+		console.log("\nAdaptive across variants");
+		console.table(matrixSummary.adaptiveComparison);
+	}
 	console.log(`\nMatrix summary: ${matrixSummaryFile}`);
-	if (outcomeCounts.failed > 0) {
+	if (!matrixPlanPassed) {
 		process.exitCode = 1;
 	}
 };
