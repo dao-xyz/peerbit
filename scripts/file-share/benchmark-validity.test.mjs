@@ -5,10 +5,17 @@ import path from "node:path";
 import test from "node:test";
 import { createBenchmarkInvocation } from "./benchmark-invocation.mjs";
 import {
+	BENCHMARK_RESULT_SCHEMA,
+	ERROR_COLLECTION_DEFINITION,
+	KNOWN_PEERBIT_FAILURE_SIGNATURES,
+	REQUEST_FAILURE_COLLECTION_DEFINITION,
+} from "./benchmark-orchestration.mjs";
+import {
 	assertPlaywrightSucceeded,
 	loadAndValidateBenchmarkResult,
 	parseBenchmarkResult,
 	validateBenchmarkResult,
+	validateBenchmarkResultEnvelope,
 } from "./benchmark-validity.mjs";
 
 const RUN_NONCE = "123e4567-e89b-42d3-a456-426614174000";
@@ -76,7 +83,7 @@ const options = {
 };
 
 const validResult = () => ({
-	schema: { id: "peerbit-file-share-benchmark", version: 2 },
+	schema: { ...BENCHMARK_RESULT_SCHEMA },
 	runNonce: RUN_NONCE,
 	invocation: structuredClone(INVOCATION),
 	provenance: structuredClone(PROVENANCE),
@@ -150,8 +157,15 @@ const validResult = () => ({
 	baselineWriterSeeders: 2,
 	baselineReaderSeeders: 2,
 	droppedSeeders: false,
+	errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+	knownPeerbitFailureSignatures: [...KNOWN_PEERBIT_FAILURE_SIGNATURES],
+	errorCollectionComplete: true,
 	errorCount: 0,
 	errors: [],
+	requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
+	requestFailureCollectionComplete: true,
+	requestFailureCount: 0,
+	requestFailures: [],
 	snapshots: [
 		{
 			label: "seeders-ready",
@@ -173,6 +187,48 @@ test("accepts a complete deterministic transfer result", () => {
 		validateBenchmarkResult(validResult(), options).status,
 		"passed",
 	);
+});
+
+test("rejects a status-only passed payload at the v3 evidence envelope", () => {
+	assert.throws(
+		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
+		/missing schema/,
+	);
+});
+
+test("requires explicit error evidence on failed v3 envelopes", () => {
+	const completeFailure = validResult();
+	completeFailure.status = "failed";
+	completeFailure.failure = { message: "synthetic browser failure" };
+	assert.equal(
+		validateBenchmarkResultEnvelope(completeFailure, options).status,
+		"failed",
+	);
+
+	const incompleteFailure = structuredClone(completeFailure);
+	incompleteFailure.errorCollectionComplete = false;
+	incompleteFailure.errorCount = null;
+	incompleteFailure.errors = null;
+	incompleteFailure.requestFailureCollectionComplete = false;
+	incompleteFailure.requestFailureCount = null;
+	incompleteFailure.requestFailures = null;
+	assert.equal(
+		validateBenchmarkResultEnvelope(incompleteFailure, options).status,
+		"failed",
+	);
+
+	delete incompleteFailure.errorCollectionComplete;
+	assert.throws(
+		() => validateBenchmarkResultEnvelope(incompleteFailure, options),
+		/incomplete error collection/,
+	);
+});
+
+test("retains request failures as non-fatal diagnostics", () => {
+	const result = validResult();
+	result.requestFailures.push("writer:requestfailed:{}");
+	result.requestFailureCount = result.requestFailures.length;
+	assert.equal(validateBenchmarkResult(result, options).status, "passed");
 });
 
 test("rejects failed, malformed, and stale Playwright outcomes", async () => {
@@ -390,6 +446,55 @@ for (const [name, mutate, pattern] of [
 		/recorded errors/,
 	],
 	[
+		"error collection definition",
+		(result) => {
+			result.errorCollectionDefinition = "selected errors only";
+		},
+		/invalid error collection definition/,
+	],
+	[
+		"error collection completeness",
+		(result) => {
+			result.errorCollectionComplete = false;
+		},
+		/incomplete error collection/,
+	],
+	[
+		"known Peerbit signatures",
+		(result) => {
+			result.knownPeerbitFailureSignatures.pop();
+		},
+		/invalid known Peerbit failure signatures/,
+	],
+	[
+		"error count arithmetic",
+		(result) => {
+			result.errorCount = 1;
+		},
+		/inconsistent recorded errors/,
+	],
+	[
+		"request-failure definition",
+		(result) => {
+			result.requestFailureCollectionDefinition = "fatal network failures";
+		},
+		/invalid request-failure collection definition/,
+	],
+	[
+		"request-failure completeness",
+		(result) => {
+			result.requestFailureCollectionComplete = false;
+		},
+		/incomplete request-failure collection/,
+	],
+	[
+		"request-failure count arithmetic",
+		(result) => {
+			result.requestFailureCount = 1;
+		},
+		/inconsistent request-failure diagnostics/,
+	],
+	[
 		"non-numeric seeder sample",
 		(result) => {
 			result.snapshots[0].writerSeeders = "error:failed";
@@ -503,7 +608,7 @@ const createSeederProbeFixture = () => {
 		targetSeeders: 2,
 	});
 	const seederResult = {
-		schema: { id: "peerbit-file-share-benchmark", version: 2 },
+		schema: { ...BENCHMARK_RESULT_SCHEMA },
 		runNonce: RUN_NONCE,
 		invocation,
 		provenance: structuredClone(PROVENANCE),
@@ -523,8 +628,15 @@ const createSeederProbeFixture = () => {
 		reachedTarget: true,
 		timeToTargetMs: 2,
 		targetSampleLabel: "sample-1",
+		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+		knownPeerbitFailureSignatures: [...KNOWN_PEERBIT_FAILURE_SIGNATURES],
+		errorCollectionComplete: true,
 		errorCount: 0,
 		errors: [],
+		requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
+		requestFailureCollectionComplete: true,
+		requestFailureCount: 0,
+		requestFailures: [],
 		samples: [
 			{
 				index: 1,

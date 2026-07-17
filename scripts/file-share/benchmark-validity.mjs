@@ -1,5 +1,11 @@
 import fsp from "node:fs/promises";
 import { isDeepStrictEqual } from "node:util";
+import {
+	BENCHMARK_RESULT_SCHEMA,
+	ERROR_COLLECTION_DEFINITION,
+	KNOWN_PEERBIT_FAILURE_SIGNATURES,
+	REQUEST_FAILURE_COLLECTION_DEFINITION,
+} from "./benchmark-orchestration.mjs";
 
 const SHA256_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -396,7 +402,10 @@ const validateEnvelope = (
 	{ expectedRunNonce, expectedProvenance, expectedNetwork, expectedInvocation },
 ) => {
 	const schema = requireRecord(result.schema, "schema");
-	if (schema.id !== "peerbit-file-share-benchmark" || schema.version !== 2) {
+	if (
+		schema.id !== BENCHMARK_RESULT_SCHEMA.id ||
+		schema.version !== BENCHMARK_RESULT_SCHEMA.version
+	) {
 		throw new Error("Benchmark result has an unsupported schema");
 	}
 	if (
@@ -458,12 +467,85 @@ const validateRequestedUploadKnobs = (result, invocation) => {
 	}
 };
 
-const validateZeroErrors = (result, label) => {
+const validateCollectedStringEvidence = ({
+	result,
+	completeKey,
+	countKey,
+	itemsKey,
+	label,
+	inconsistentLabel = label,
+	allowIncomplete,
+}) => {
+	if (result[completeKey] === false && allowIncomplete) {
+		if (result[countKey] !== null || result[itemsKey] !== null) {
+			throw new Error(
+				`Incomplete ${label} must use null count and evidence fields`,
+			);
+		}
+		return;
+	}
+	if (result[completeKey] !== true) {
+		throw new Error(`Benchmark result has an incomplete ${label}`);
+	}
+	const count = requireNonNegativeSafeInteger(result[countKey], countKey);
 	if (
-		result.errorCount !== 0 ||
-		!Array.isArray(result.errors) ||
-		result.errors.length !== 0
+		!Array.isArray(result[itemsKey]) ||
+		result[itemsKey].length !== count ||
+		result[itemsKey].some(
+			(entry) => typeof entry !== "string" || entry.length === 0,
+		)
 	) {
+		throw new Error(`Benchmark result has inconsistent ${inconsistentLabel}`);
+	}
+};
+
+const validateErrorCollection = (result, { allowIncomplete = false } = {}) => {
+	if (result.errorCollectionDefinition !== ERROR_COLLECTION_DEFINITION) {
+		throw new Error(
+			"Benchmark result has an invalid error collection definition",
+		);
+	}
+	if (
+		!isDeepStrictEqual(
+			result.knownPeerbitFailureSignatures,
+			KNOWN_PEERBIT_FAILURE_SIGNATURES,
+		)
+	) {
+		throw new Error(
+			"Benchmark result has invalid known Peerbit failure signatures",
+		);
+	}
+	validateCollectedStringEvidence({
+		result,
+		completeKey: "errorCollectionComplete",
+		countKey: "errorCount",
+		itemsKey: "errors",
+		label: "error collection",
+		inconsistentLabel: "recorded errors",
+		allowIncomplete,
+	});
+	if (
+		result.requestFailureCollectionDefinition !==
+		REQUEST_FAILURE_COLLECTION_DEFINITION
+	) {
+		throw new Error(
+			"Benchmark result has an invalid request-failure collection definition",
+		);
+	}
+	validateCollectedStringEvidence({
+		result,
+		completeKey: "requestFailureCollectionComplete",
+		countKey: "requestFailureCount",
+		itemsKey: "requestFailures",
+		label: "request-failure collection",
+		inconsistentLabel: "request-failure diagnostics",
+		allowIncomplete,
+	});
+};
+
+const validateZeroErrors = (result, label) => {
+	validateErrorCollection(result);
+	if (result.errorCount !== 0 || result.errors.length !== 0) {
 		throw new Error(`Passed ${label} contains recorded errors`);
 	}
 };
@@ -721,14 +803,12 @@ const validateSeederProbe = (result, invocation) => {
 	}
 };
 
-export const validateBenchmarkResult = (
+export const validateBenchmarkResultEnvelope = (
 	result,
 	{
-		scenario,
 		expectedMode,
 		expectedFileMb,
 		expectedNetwork,
-		expectedFixtureSeed,
 		expectedRunNonce,
 		expectedProvenance,
 		expectedInvocation,
@@ -743,6 +823,49 @@ export const validateBenchmarkResult = (
 		expectedNetwork,
 		expectedInvocation,
 	});
+	if (!["passed", "failed"].includes(result.status)) {
+		throw new Error("Benchmark result has an unsupported status");
+	}
+	if (result.mode !== expectedMode) {
+		throw new Error(
+			`Benchmark result mode mismatch (expected ${expectedMode}, got ${String(result.mode)})`,
+		);
+	}
+	if (
+		expectedInvocation.scenario === "upload" &&
+		result.fileSizeMb !== expectedFileMb
+	) {
+		throw new Error(
+			`Benchmark result size mismatch (expected ${expectedFileMb} MiB, got ${String(result.fileSizeMb)})`,
+		);
+	}
+	validateErrorCollection(result, {
+		allowIncomplete: result.status === "failed",
+	});
+	return result;
+};
+
+export const validateBenchmarkResult = (
+	result,
+	{
+		scenario,
+		expectedMode,
+		expectedFileMb,
+		expectedNetwork,
+		expectedFixtureSeed,
+		expectedRunNonce,
+		expectedProvenance,
+		expectedInvocation,
+	},
+) => {
+	validateBenchmarkResultEnvelope(result, {
+		expectedMode,
+		expectedFileMb,
+		expectedNetwork,
+		expectedRunNonce,
+		expectedProvenance,
+		expectedInvocation,
+	});
 	if (result.status !== "passed") {
 		const detail =
 			typeof result.failure?.message === "string"
@@ -750,17 +873,7 @@ export const validateBenchmarkResult = (
 				: "";
 		throw new Error(`Benchmark result status is not passed${detail}`);
 	}
-	if (result.mode !== expectedMode) {
-		throw new Error(
-			`Benchmark result mode mismatch (expected ${expectedMode}, got ${String(result.mode)})`,
-		);
-	}
 	if (scenario === "upload") {
-		if (result.fileSizeMb !== expectedFileMb) {
-			throw new Error(
-				`Benchmark result size mismatch (expected ${expectedFileMb} MiB, got ${String(result.fileSizeMb)})`,
-			);
-		}
 		validateUploadIntegrity(result, expectedFileMb, expectedFixtureSeed);
 		validateUploadTimings(result, expectedInvocation);
 		validateRequestedUploadKnobs(result, expectedInvocation);

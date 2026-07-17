@@ -14,6 +14,16 @@ import {
 	resolveBenchmarkPreviewOptions,
 } from "./benchmark-invocation.mjs";
 import {
+	BENCHMARK_SUMMARY_SCHEMA,
+	countBenchmarkOutcomes,
+	createInvocationFailureEvidence,
+	ERROR_COLLECTION_DEFINITION,
+	executePlanContinuing,
+	KNOWN_PEERBIT_FAILURE_SIGNATURES,
+	readJsonEvidence,
+	REQUEST_FAILURE_COLLECTION_DEFINITION,
+} from "./benchmark-orchestration.mjs";
+import {
 	getExamplesProvenance,
 	getPeerbitProvenance,
 	resolveGitCommitAt,
@@ -333,7 +343,17 @@ const summarizeUploadResults = (results) => {
 				.map((item) => item.postUploadMonitorDurationMs)
 				.filter((value) => typeof value === "number"),
 		),
-		errorCount: items.reduce((sum, item) => sum + item.errorCount, 0),
+		errorCount: items.reduce(
+			(sum, item) => sum + (Number(item.errorCount) || 0),
+			0,
+		),
+		incompleteErrorCollections: items.filter(
+			(item) => item.errorCollectionComplete !== true,
+		).length,
+		requestFailureCount: items.reduce(
+			(sum, item) => sum + (Number(item.requestFailureCount) || 0),
+			0,
+		),
 		seederDrops: items.filter((item) => item.droppedSeeders).length,
 	}));
 };
@@ -389,7 +409,17 @@ const summarizeSeederProbeResults = (results) => {
 				})
 				.filter((value) => typeof value === "number"),
 		),
-		errorCount: items.reduce((sum, item) => sum + item.errorCount, 0),
+		errorCount: items.reduce(
+			(sum, item) => sum + (Number(item.errorCount) || 0),
+			0,
+		),
+		incompleteErrorCollections: items.filter(
+			(item) => item.errorCollectionComplete !== true,
+		).length,
+		requestFailureCount: items.reduce(
+			(sum, item) => sum + (Number(item.requestFailureCount) || 0),
+			0,
+		),
 	}));
 };
 
@@ -478,6 +508,36 @@ const writeJsonAtomic = async (filePath, value) => {
 	const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
 	await fsp.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
 	await fsp.rename(temporaryPath, filePath);
+};
+
+const assertSafeInvocationUnchanged = (actual, expected, label) => {
+	try {
+		assertInvocationUnchanged(actual, expected, label);
+	} catch (error) {
+		const unsafeError = new Error(
+			`${label} changed during the benchmark; remaining invocations are unsafe`,
+			{ cause: error },
+		);
+		unsafeError.stopBenchmarkPlan = true;
+		throw unsafeError;
+	}
+};
+
+const readAndAssertSafeInvocationUnchanged = async (
+	readActual,
+	expected,
+	label,
+) => {
+	try {
+		assertInvocationUnchanged(await readActual(), expected, label);
+	} catch (error) {
+		const unsafeError = new Error(
+			`${label} changed during the benchmark; remaining invocations are unsafe`,
+			{ cause: error },
+		);
+		unsafeError.stopBenchmarkPlan = true;
+		throw unsafeError;
+	}
 };
 
 const main = async () => {
@@ -708,118 +768,200 @@ const main = async () => {
 	const sessionNonce = randomUUID();
 	const resultsDir = path.join(resultsRoot, `session-${sessionNonce}`);
 	await fsp.mkdir(resultsDir, { recursive: false });
+	const aggregateSummaryFile =
+		requestedSummaryFile ?? path.join(resultsDir, "summary.json");
 	const results = [];
 	let benchmarkInvocationCount = 0;
 	const executionOrder = createCounterbalancedModePlan({ modes, runs });
-
-	for (const { sequence, mode, run: runIndex } of executionOrder) {
-		if (freshEachRun && benchmarkInvocationCount > 0) {
-			({ frontendRoot, examplesProvenance } = await prepareBenchmarkCheckout({
-				fresh: true,
-			}));
-			assertInvocationUnchanged(
-				examplesProvenance,
-				expectedExamplesProvenance,
-				"Pre-instrumentation examples provenance",
-			);
+	const invocationContexts = new Map();
+	const outcomes = await executePlanContinuing({
+		plan: executionOrder,
+		shouldStop: (error) => error?.stopBenchmarkPlan === true,
+		execute: async ({ sequence, mode, run: runIndex }) => {
+			const runNonce = randomUUID();
+			const invocation = createBenchmarkInvocation({
+				scenario,
+				mode,
+				network,
+				integrationMode,
+				fileMb,
+				fixtureSeed: resolvedFixtureSeed,
+				uploadTimeoutMs,
+				downloadTimeoutMs,
+				postUploadMonitorMs,
+				pollMs,
+				minReadySeeders,
+				readyTimeoutMs,
+				sampleMs,
+				sampleCount,
+				targetSeeders,
+				baseUrl,
+				protocol,
+				viteMode,
+				viteConfig,
+				localPackages: effectiveLocalPackageNames,
+				enableVisibilityProbe: Boolean(args["enable-visibility-probe"]),
+				verbose: Boolean(args.verbose),
+			});
+			const resultFile = createNonceIsolatedResultPath({
+				resultsDir,
+				runNonce,
+			});
+			const context = {
+				runNonce,
+				invocation,
+				resultFile,
+				processOutcome: null,
+				provenance: {
+					harness: harnessProvenance,
+					peerbit: peerbitProvenance,
+					examples: examplesProvenance,
+				},
+			};
+			invocationContexts.set(sequence, context);
+			try {
+				if (freshEachRun && benchmarkInvocationCount > 0) {
+					({ frontendRoot, examplesProvenance } =
+						await prepareBenchmarkCheckout({
+							fresh: true,
+						}));
+					assertSafeInvocationUnchanged(
+						examplesProvenance,
+						expectedExamplesProvenance,
+						"Pre-instrumentation examples provenance",
+					);
+					context.provenance = {
+						harness: harnessProvenance,
+						peerbit: peerbitProvenance,
+						examples: examplesProvenance,
+					};
+				}
+				console.log(
+					`Running file-share benchmark sequence=${sequence}/${executionOrder.length} scenario=${scenario} network=${network} mode=${mode} run=${runIndex}/${runs} fileMb=${fileMb}`,
+				);
+				await cleanupFrontendBenchmarkArtifacts(frontendRoot);
+				await fsp.rm(resultFile, { force: true });
+				const processOutcome = runPlaywright({
+					frontendRoot,
+					generatedSpecPath: scenarioConfig.generatedSpecPath,
+					resultFile,
+					runNonce,
+					provenance: context.provenance,
+					invocation,
+				});
+				context.processOutcome = processOutcome;
+				const { wallTimeMs, exitCode, signal, spawnError } = processOutcome;
+				let result;
+				let invocationFailure;
+				try {
+					if (spawnError) {
+						throw new Error(
+							`Could not start Playwright benchmark: ${spawnError.message}`,
+							{ cause: spawnError },
+						);
+					}
+					if (signal) {
+						throw new Error(
+							`Playwright benchmark terminated by signal ${signal}`,
+						);
+					}
+					result = await loadAndValidateBenchmarkResult({
+						resultFile,
+						exitCode,
+						scenario,
+						expectedMode: mode,
+						expectedFileMb: fileMb,
+						expectedNetwork: network,
+						expectedFixtureSeed: resolvedFixtureSeed,
+						expectedRunNonce: runNonce,
+						expectedProvenance: context.provenance,
+						expectedInvocation: invocation,
+					});
+				} catch (error) {
+					invocationFailure = error;
+				}
+				let unsafeProvenanceFailure;
+				for (const [readActual, expected, label] of [
+					[
+						() =>
+							getPeerbitProvenance({
+								root: repoRoot,
+								requestedRef: "harness-worktree",
+							}),
+						harnessProvenance,
+						"Harness provenance",
+					],
+					[
+						() =>
+							getPeerbitProvenance({
+								root: peerbitRoot,
+								requestedRef: peerbitRefLabel,
+								requireClean: Boolean(args["require-clean-peerbit"]),
+								expectedResolvedCommit: expectedPeerbitCommit,
+							}),
+						peerbitProvenance,
+						"Peerbit provenance",
+					],
+				]) {
+					try {
+						await readAndAssertSafeInvocationUnchanged(
+							readActual,
+							expected,
+							label,
+						);
+					} catch (error) {
+						unsafeProvenanceFailure ??= error;
+					}
+				}
+				if (unsafeProvenanceFailure) {
+					throw unsafeProvenanceFailure;
+				}
+				if (invocationFailure) {
+					throw invocationFailure;
+				}
+				return {
+					...result,
+					run: runIndex,
+					invocationSequence: sequence,
+					resultFile,
+					playwrightWallTimeMs: wallTimeMs,
+					playwrightExitCode: exitCode,
+				};
+			} finally {
+				benchmarkInvocationCount++;
+			}
+		},
+	});
+	for (const outcome of outcomes) {
+		if (outcome.status === "fulfilled") {
+			results.push(outcome.value);
+			continue;
 		}
-		const runNonce = randomUUID();
-		const invocation = createBenchmarkInvocation({
+		const { sequence, mode, run: runIndex } = outcome.entry;
+		const context = invocationContexts.get(sequence);
+		if (!context) {
+			throw new Error(`Missing invocation context for sequence ${sequence}`);
+		}
+		const resultEvidence = await readJsonEvidence(context.resultFile);
+		const failedResult = createInvocationFailureEvidence({
 			scenario,
 			mode,
 			network,
-			integrationMode,
 			fileMb,
-			fixtureSeed: resolvedFixtureSeed,
-			uploadTimeoutMs,
-			downloadTimeoutMs,
-			postUploadMonitorMs,
-			pollMs,
-			minReadySeeders,
-			readyTimeoutMs,
-			sampleMs,
-			sampleCount,
-			targetSeeders,
-			baseUrl,
-			protocol,
-			viteMode,
-			viteConfig,
-			localPackages: effectiveLocalPackageNames,
-			enableVisibilityProbe: Boolean(args["enable-visibility-probe"]),
-			verbose: Boolean(args.verbose),
+			runNonce: context.runNonce,
+			invocation: context.invocation,
+			provenance: context.provenance,
+			resultFile: context.resultFile,
+			processOutcome: context.processOutcome,
+			resultEvidence,
+			failure: outcome.error,
 		});
-		const resultFile = createNonceIsolatedResultPath({
-			resultsDir,
-			runNonce,
-		});
-		console.log(
-			`Running file-share benchmark sequence=${sequence}/${executionOrder.length} scenario=${scenario} network=${network} mode=${mode} run=${runIndex}/${runs} fileMb=${fileMb}`,
-		);
-		await cleanupFrontendBenchmarkArtifacts(frontendRoot);
-		await fsp.rm(resultFile, { force: true });
-		const provenance = {
-			harness: harnessProvenance,
-			peerbit: peerbitProvenance,
-			examples: examplesProvenance,
-		};
-		const { wallTimeMs, exitCode, signal, spawnError } = runPlaywright({
-			frontendRoot,
-			generatedSpecPath: scenarioConfig.generatedSpecPath,
-			resultFile,
-			runNonce,
-			provenance,
-			invocation,
-		});
-		if (spawnError) {
-			throw new Error(
-				`Could not start Playwright benchmark: ${spawnError.message}`,
-				{
-					cause: spawnError,
-				},
-			);
-		}
-		if (signal) {
-			throw new Error(`Playwright benchmark terminated by signal ${signal}`);
-		}
-		const result = await loadAndValidateBenchmarkResult({
-			resultFile,
-			exitCode,
-			scenario,
-			expectedMode: mode,
-			expectedFileMb: fileMb,
-			expectedNetwork: network,
-			expectedFixtureSeed: resolvedFixtureSeed,
-			expectedRunNonce: runNonce,
-			expectedProvenance: provenance,
-			expectedInvocation: invocation,
-		});
-		assertInvocationUnchanged(
-			await getPeerbitProvenance({
-				root: repoRoot,
-				requestedRef: "harness-worktree",
-			}),
-			harnessProvenance,
-			"Harness provenance",
-		);
-		assertInvocationUnchanged(
-			await getPeerbitProvenance({
-				root: peerbitRoot,
-				requestedRef: peerbitRefLabel,
-				requireClean: Boolean(args["require-clean-peerbit"]),
-				expectedResolvedCommit: expectedPeerbitCommit,
-			}),
-			peerbitProvenance,
-			"Peerbit provenance",
-		);
 		results.push({
-			...result,
+			...failedResult,
 			run: runIndex,
 			invocationSequence: sequence,
-			resultFile,
-			playwrightWallTimeMs: wallTimeMs,
-			playwrightExitCode: exitCode,
+			playwrightWallTimeMs: context.processOutcome?.wallTimeMs ?? null,
 		});
-		benchmarkInvocationCount++;
 	}
 
 	console.log("\nPer-run results");
@@ -851,8 +993,14 @@ const main = async () => {
 			playwrightWallTimeMs: result.playwrightWallTimeMs,
 			playwrightExitCode: result.playwrightExitCode,
 			droppedSeeders: result.droppedSeeders,
+			errorCollectionComplete: result.errorCollectionComplete === true,
 			errorCount: result.errorCount,
-			failure: result.failure?.message ?? "",
+			requestFailureCount: result.requestFailureCount ?? null,
+			failure:
+				result.browserFailure?.message ??
+				result.runnerFailure?.message ??
+				result.failure?.message ??
+				"",
 		})),
 	);
 	console.log("\nSummary");
@@ -863,11 +1011,16 @@ const main = async () => {
 		console.log("\nAdaptive vs fixed1");
 		console.table([comparison]);
 	}
+	const outcomeCounts = countBenchmarkOutcomes(results, executionOrder.length);
+	console.log("\nOutcome counts");
+	console.table([outcomeCounts]);
 	const summary = {
-		schema: {
-			id: "peerbit-file-share-benchmark-summary",
-			version: 2,
-		},
+		schema: BENCHMARK_SUMMARY_SCHEMA,
+		status: outcomeCounts.failed === 0 ? "passed" : "failed",
+		outcomeCounts,
+		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+		knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+		requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
 		sessionNonce,
 		harnessProvenance,
 		peerbitRoot,
@@ -885,14 +1038,17 @@ const main = async () => {
 		executionOrder,
 		resultsRoot,
 		resultsDir,
+		aggregateSummaryFile,
 		results,
 		summary: summarizeResults(results, scenario),
 		comparison,
 	};
-	if (requestedSummaryFile) {
-		await writeJsonAtomic(requestedSummaryFile, summary);
-	}
+	await writeJsonAtomic(aggregateSummaryFile, summary);
 	console.log(`\nRaw results: ${resultsDir}`);
+	console.log(`Aggregate summary: ${aggregateSummaryFile}`);
+	if (outcomeCounts.failed > 0) {
+		process.exitCode = 1;
+	}
 };
 
 main().catch((error) => {

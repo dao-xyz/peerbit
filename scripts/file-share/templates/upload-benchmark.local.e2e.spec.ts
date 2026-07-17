@@ -44,11 +44,15 @@ const TIME_TO_READER_READY_DEFINITION =
 	"upload-input-set-to-reader-ready-manifest-listed";
 const LISTING_DURATION_DEFINITION =
 	"post-upload-settlement-to-both-writer-and-reader-ready-manifests-listed; excludes upload time";
+const ERROR_COLLECTION_DEFINITION =
+	"from collector attachment through result snapshot: every uncaught pageerror; every console.error; every console message at any level containing a known Peerbit failure signature; plus scenario-recorded operation failures";
+const REQUEST_FAILURE_COLLECTION_DEFINITION =
+	"from collector attachment through result snapshot: every Playwright requestfailed event, retained as non-fatal diagnostics and excluded from errorCount";
 const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 2,
+	version: 3,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -151,11 +155,15 @@ const ROLE_BY_MODE: Record<string, any> = {
 	observer: false,
 };
 
-const MATCHED_ERRORS = [
+const KNOWN_PEERBIT_FAILURE_SIGNATURES = [
 	"Failed to resolve block",
 	"DeliveryError",
 	"Failed to get message",
 	"delivery acknowledges",
+	"Failed to bootstrap",
+	"failed to open",
+	"BorshError",
+	"Failed to create space",
 ];
 
 const getRole = () => {
@@ -169,19 +177,31 @@ const getRole = () => {
 const attachTransferErrorCollector = (
 	page: Page,
 	label: string,
-	output: string[],
+	errors: string[],
+	requestFailures: string[],
 ) => {
 	page.on("pageerror", (error) => {
 		const text = String(error?.message || error);
-		if (MATCHED_ERRORS.some((match) => text.includes(match))) {
-			output.push(`${label}:pageerror:${text}`);
-		}
+		errors.push(`${label}:pageerror:${text}`);
 	});
 	page.on("console", (message) => {
 		const text = message.text();
-		if (MATCHED_ERRORS.some((match) => text.includes(match))) {
-			output.push(`${label}:console.${message.type()}:${text}`);
+		if (
+			message.type() === "error" ||
+			KNOWN_PEERBIT_FAILURE_SIGNATURES.some((match) => text.includes(match))
+		) {
+			errors.push(`${label}:console.${message.type()}:${text}`);
 		}
+	});
+	page.on("requestfailed", (request) => {
+		requestFailures.push(
+			`${label}:requestfailed:${JSON.stringify({
+				method: request.method(),
+				resourceType: request.resourceType(),
+				url: request.url(),
+				errorText: request.failure()?.errorText ?? null,
+			})}`,
+		);
 	});
 };
 
@@ -408,6 +428,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		const writer = await writerContext.newPage();
 		const reader = await readerContext.newPage();
 		const errors: string[] = [];
+		const requestFailures: string[] = [];
 		const snapshots: Array<Record<string, unknown>> = [];
 		let preparedFile:
 			| Awaited<ReturnType<typeof createSyntheticFileOnDisk>>
@@ -435,8 +456,8 @@ test.describe("generated transfer-validity benchmark", () => {
 		let dropped = false;
 		let baselineWriterSeeders = MIN_READY_SEEDERS;
 		let baselineReaderSeeders = MIN_READY_SEEDERS;
-		attachTransferErrorCollector(writer, "writer", errors);
-		attachTransferErrorCollector(reader, "reader", errors);
+		attachTransferErrorCollector(writer, "writer", errors, requestFailures);
+		attachTransferErrorCollector(reader, "reader", errors, requestFailures);
 
 		const readSeederCount = async (page: Page, label: string) => {
 			try {
@@ -831,6 +852,15 @@ test.describe("generated transfer-validity benchmark", () => {
 					"Measured transfer duration exceeded its requested timeout and scheduling tolerance",
 				);
 			}
+			const writerDiagnostics = await getDiagnostics(writer);
+			const readerDiagnostics = await getDiagnostics(reader);
+			if (errors.length > 0) {
+				throw new Error(
+					`Observed transfer/delivery errors while collecting diagnostics: ${JSON.stringify(errors)}`,
+				);
+			}
+			const collectedErrors = [...errors];
+			const collectedRequestFailures = [...requestFailures];
 			const result = {
 				schema: RESULT_SCHEMA,
 				runNonce: RUN_NONCE,
@@ -897,16 +927,28 @@ test.describe("generated transfer-validity benchmark", () => {
 				droppedSeeders: dropped,
 				writerVisibilityProbe,
 				readerVisibilityProbe,
-				errorCount: errors.length,
-				errors,
+				errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+				knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+				errorCollectionComplete: true,
+				errorCount: collectedErrors.length,
+				errors: collectedErrors,
+				requestFailureCollectionDefinition:
+					REQUEST_FAILURE_COLLECTION_DEFINITION,
+				requestFailureCollectionComplete: true,
+				requestFailureCount: collectedRequestFailures.length,
+				requestFailures: collectedRequestFailures,
 				snapshots,
-				writerDiagnostics: await getDiagnostics(writer),
-				readerDiagnostics: await getDiagnostics(reader),
+				writerDiagnostics,
+				readerDiagnostics,
 			};
 			await persistResult(result);
 			console.log(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
 		} catch (error: any) {
 			await snapshot(`failure-${stage}`).catch(() => {});
+			const writerDiagnostics = await getDiagnostics(writer);
+			const readerDiagnostics = await getDiagnostics(reader);
+			const collectedErrors = [...errors];
+			const collectedRequestFailures = [...requestFailures];
 			const result = {
 				schema: RESULT_SCHEMA,
 				runNonce: RUN_NONCE,
@@ -939,11 +981,19 @@ test.describe("generated transfer-validity benchmark", () => {
 				droppedSeeders: dropped,
 				writerVisibilityProbe,
 				readerVisibilityProbe,
-				errorCount: errors.length,
-				errors,
+				errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+				knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+				errorCollectionComplete: true,
+				errorCount: collectedErrors.length,
+				errors: collectedErrors,
+				requestFailureCollectionDefinition:
+					REQUEST_FAILURE_COLLECTION_DEFINITION,
+				requestFailureCollectionComplete: true,
+				requestFailureCount: collectedRequestFailures.length,
+				requestFailures: collectedRequestFailures,
 				snapshots,
-				writerDiagnostics: await getDiagnostics(writer),
-				readerDiagnostics: await getDiagnostics(reader),
+				writerDiagnostics,
+				readerDiagnostics,
 				failure: {
 					message:
 						typeof error?.message === "string" ? error.message : String(error),

@@ -4,11 +4,27 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
+	createBenchmarkInvocation,
 	resolveBenchmarkPreviewOptions,
 } from "./benchmark-invocation.mjs";
+import {
+	BENCHMARK_RESULT_SCHEMA,
+	BENCHMARK_SUMMARY_SCHEMA,
+	classifySubprocessSummary,
+	countBenchmarkOutcomes,
+	ERROR_COLLECTION_DEFINITION,
+	extractCollectedErrorEvidence,
+	inspectSingleInvocationSummary,
+	KNOWN_PEERBIT_FAILURE_SIGNATURES,
+	MATRIX_SUMMARY_SCHEMA,
+	readJsonEvidence,
+	REQUEST_FAILURE_COLLECTION_DEFINITION,
+	serializeError,
+} from "./benchmark-orchestration.mjs";
 import {
 	getExamplesProvenance,
 	getPeerbitProvenance,
@@ -18,6 +34,10 @@ import {
 	compareUploadPerformanceModes,
 	summarizeUploadPerformance,
 } from "./benchmark-summary.mjs";
+import {
+	validateBenchmarkResult,
+	validateBenchmarkResultEnvelope,
+} from "./benchmark-validity.mjs";
 import {
 	collectLocalPeerbitPackages,
 	defaultExamplesSource,
@@ -42,6 +62,9 @@ const RUNNER_PATH = path.join(
 	"file-share",
 	"run-file-share-benchmark.mjs",
 );
+const DEFAULT_FIXTURE_SEED = "peerbit-file-share-benchmark-v1";
+
+const optionalNumber = (value) => (value == null ? undefined : Number(value));
 
 const runGit = (args, { cwd = repoRoot, capture = false } = {}) => {
 	console.log(`$ git ${args.join(" ")}`);
@@ -150,6 +173,14 @@ const summarizeUploadMatrix = (variantSummaries) => {
 			fixed1ReaderReadyMsMedian: fixed1?.timeToReaderReadyMsMedian ?? null,
 			adaptiveStatus: adaptive?.failed === 0 ? "passed" : "failed",
 			fixed1Status: fixed1?.failed === 0 ? "passed" : "failed",
+			adaptiveErrorCount: adaptive?.errorCount ?? null,
+			fixed1ErrorCount: fixed1?.errorCount ?? null,
+			adaptiveIncompleteErrorCollections:
+				adaptive?.incompleteErrorCollections ?? null,
+			fixed1IncompleteErrorCollections:
+				fixed1?.incompleteErrorCollections ?? null,
+			adaptiveRequestFailureCount: adaptive?.requestFailureCount ?? null,
+			fixed1RequestFailureCount: fixed1?.requestFailureCount ?? null,
 		};
 	});
 };
@@ -166,6 +197,8 @@ const summarizeSeederProbeMatrix = (variantSummaries) => {
 			writerSeedersMaxAvg: adaptive?.writerSeedersMaxAvg ?? null,
 			readerSeedersMaxAvg: adaptive?.readerSeedersMaxAvg ?? null,
 			errorCount: adaptive?.errorCount ?? null,
+			incompleteErrorCollections: adaptive?.incompleteErrorCollections ?? null,
+			requestFailureCount: adaptive?.requestFailureCount ?? null,
 		};
 	});
 };
@@ -230,6 +263,13 @@ const summarizeInvocationResults = (results, scenario) => {
 			failed: items.filter((item) => item.status !== "passed").length,
 			errorCount: items.reduce(
 				(total, item) => total + (Number(item.errorCount) || 0),
+				0,
+			),
+			incompleteErrorCollections: items.filter(
+				(item) => item.errorCollectionComplete !== true,
+			).length,
+			requestFailureCount: items.reduce(
+				(total, item) => total + (Number(item.requestFailureCount) || 0),
 				0,
 			),
 		};
@@ -299,7 +339,7 @@ const prepareVariant = async ({ variantSpec, variantRoot }) => {
 		commit: materialization.cloneCommit,
 	});
 	await ensureDependenciesInstalled(materialization.peerbitRoot);
-	await getPeerbitProvenance({
+	const peerbitProvenance = await getPeerbitProvenance({
 		root: materialization.peerbitRoot,
 		requestedRef: materialization.requestedRef,
 		requireClean: true,
@@ -308,6 +348,7 @@ const prepareVariant = async ({ variantSpec, variantRoot }) => {
 	return {
 		peerbitRoot: materialization.peerbitRoot,
 		resolvedCommit: materialization.cloneCommit,
+		peerbitProvenance,
 	};
 };
 
@@ -348,85 +389,149 @@ const runVariantBenchmark = async ({
 	examplesRef,
 }) => {
 	await fsp.rm(summaryFile, { force: true });
-	run(
-		"node",
-		[
-			RUNNER_PATH,
-			"--scenario",
-			scenario,
-			"--integration-mode",
-			integrationMode,
-			"--peerbit-root",
-			peerbitRoot,
-			"--examples-root",
-			examplesRoot,
-			"--source",
-			examplesSource,
-			"--examples-ref",
-			examplesRef,
-			"--peerbit-ref-label",
-			variantRef,
-			"--expected-peerbit-commit",
-			resolvedCommit,
-			"--require-clean-peerbit",
-			"--expected-examples-commit",
-			pinnedExamplesProvenance.resolvedCommit,
-			"--expected-examples-lockfile-sha256",
-			pinnedExamplesProvenance.lockfileSha256,
-			...(localPackages ? ["--local-packages", localPackages] : []),
-			...(examplesTemplate ? ["--template", examplesTemplate] : []),
-			"--results-dir",
-			resultsDir,
-			"--summary-file",
-			summaryFile,
-			"--file-mb",
-			String(fileMb),
-			"--runs",
-			String(runs),
-			"--mode",
-			mode,
-			"--network",
-			network,
-			...(freshExamples ? ["--fresh"] : []),
-			...(freshExamplesEachRun ? ["--fresh-each-run"] : []),
-			...(installExamples ? ["--install"] : []),
-			...(uploadTimeoutMs != null
-				? ["--upload-timeout-ms", String(uploadTimeoutMs)]
-				: []),
-			...(downloadTimeoutMs != null
-				? ["--download-timeout-ms", String(downloadTimeoutMs)]
-				: []),
-			...(postUploadMonitorMs != null
-				? ["--post-upload-monitor-ms", String(postUploadMonitorMs)]
-				: []),
-			...(pollMs != null ? ["--poll-ms", String(pollMs)] : []),
-			...(minReadySeeders != null
-				? ["--min-ready-seeders", String(minReadySeeders)]
-				: []),
-			...(readyTimeoutMs != null
-				? ["--ready-timeout-ms", String(readyTimeoutMs)]
-				: []),
-			...(sampleMs != null ? ["--sample-ms", String(sampleMs)] : []),
-			...(sampleCount != null ? ["--sample-count", String(sampleCount)] : []),
-			...(targetSeeders != null
-				? ["--target-seeders", String(targetSeeders)]
-				: []),
-			...(protocol ? ["--protocol", protocol] : []),
-			...(fixtureSeed ? ["--fixture-seed", fixtureSeed] : []),
-			...(enableVisibilityProbe ? ["--enable-visibility-probe"] : []),
-			...(verbose ? ["--verbose"] : []),
-		],
-		{
-			cwd: repoRoot,
-			env: process.env,
-		},
-	);
-	const summary = JSON.parse(await fsp.readFile(summaryFile, "utf8"));
+	const runnerArgs = [
+		RUNNER_PATH,
+		"--scenario",
+		scenario,
+		"--integration-mode",
+		integrationMode,
+		"--peerbit-root",
+		peerbitRoot,
+		"--examples-root",
+		examplesRoot,
+		"--source",
+		examplesSource,
+		"--examples-ref",
+		examplesRef,
+		"--peerbit-ref-label",
+		variantRef,
+		"--expected-peerbit-commit",
+		resolvedCommit,
+		"--require-clean-peerbit",
+		"--expected-examples-commit",
+		pinnedExamplesProvenance.resolvedCommit,
+		"--expected-examples-lockfile-sha256",
+		pinnedExamplesProvenance.lockfileSha256,
+		...(localPackages ? ["--local-packages", localPackages] : []),
+		...(examplesTemplate ? ["--template", examplesTemplate] : []),
+		"--results-dir",
+		resultsDir,
+		"--summary-file",
+		summaryFile,
+		"--file-mb",
+		String(fileMb),
+		"--runs",
+		String(runs),
+		"--mode",
+		mode,
+		"--network",
+		network,
+		...(freshExamples ? ["--fresh"] : []),
+		...(freshExamplesEachRun ? ["--fresh-each-run"] : []),
+		...(installExamples ? ["--install"] : []),
+		...(uploadTimeoutMs != null
+			? ["--upload-timeout-ms", String(uploadTimeoutMs)]
+			: []),
+		...(downloadTimeoutMs != null
+			? ["--download-timeout-ms", String(downloadTimeoutMs)]
+			: []),
+		...(postUploadMonitorMs != null
+			? ["--post-upload-monitor-ms", String(postUploadMonitorMs)]
+			: []),
+		...(pollMs != null ? ["--poll-ms", String(pollMs)] : []),
+		...(minReadySeeders != null
+			? ["--min-ready-seeders", String(minReadySeeders)]
+			: []),
+		...(readyTimeoutMs != null
+			? ["--ready-timeout-ms", String(readyTimeoutMs)]
+			: []),
+		...(sampleMs != null ? ["--sample-ms", String(sampleMs)] : []),
+		...(sampleCount != null ? ["--sample-count", String(sampleCount)] : []),
+		...(targetSeeders != null
+			? ["--target-seeders", String(targetSeeders)]
+			: []),
+		...(protocol ? ["--protocol", protocol] : []),
+		...(fixtureSeed ? ["--fixture-seed", fixtureSeed] : []),
+		...(enableVisibilityProbe ? ["--enable-visibility-probe"] : []),
+		...(verbose ? ["--verbose"] : []),
+	];
+	console.log(`$ node ${runnerArgs.join(" ")}`);
+	const startedAt = Date.now();
+	const child = spawnSync("node", runnerArgs, {
+		cwd: repoRoot,
+		env: process.env,
+		stdio: "inherit",
+	});
+	const processOutcome = {
+		wallTimeMs: Date.now() - startedAt,
+		exitCode: child.status,
+		signal: child.signal,
+		spawnError: child.error ? serializeError(child.error) : null,
+	};
+	const summaryEvidence = await readJsonEvidence(summaryFile);
+	const classification = classifySubprocessSummary({
+		processOutcome,
+		summaryEvidence,
+		expectedSchema: BENCHMARK_SUMMARY_SCHEMA,
+	});
 	return {
 		variant,
 		variantRef,
 		resolvedCommit,
-		...summary,
+		summaryFile,
+		processOutcome,
+		summaryEvidenceKind: summaryEvidence.kind,
+		subprocessFailures: classification.failures,
+		subprocessSucceeded: classification.processSucceeded,
+		summary: classification.summary,
+	};
+};
+
+const createMatrixInvocationFailure = ({
+	plan,
+	scenario,
+	network,
+	fileMb,
+	summaryFile,
+	processOutcome,
+	expectedInvocation,
+	expectedProvenance,
+	failures,
+	browserResult,
+}) => {
+	const collectedErrorEvidence = extractCollectedErrorEvidence(browserResult);
+	return {
+		schema: BENCHMARK_RESULT_SCHEMA,
+		runNonce: browserResult?.runNonce ?? null,
+		invocation: expectedInvocation ?? null,
+		provenance: expectedProvenance,
+		status: "failed",
+		scenario,
+		mode: plan.mode,
+		networkMode: network,
+		fileSizeMb: fileMb,
+		stage: "matrix-orchestration",
+		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+		knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+		errorCollectionComplete: collectedErrorEvidence.errorCollectionComplete,
+		errorCount: collectedErrorEvidence.errorCount,
+		errors: collectedErrorEvidence.errors,
+		requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
+		requestFailureCollectionComplete:
+			collectedErrorEvidence.requestFailureCollectionComplete,
+		requestFailureCount: collectedErrorEvidence.requestFailureCount,
+		requestFailures: collectedErrorEvidence.requestFailures,
+		variant: plan.variant,
+		run: plan.run,
+		matrixSequence: plan.sequence,
+		subRunSummaryFile: summaryFile,
+		subprocess: processOutcome ?? null,
+		orchestrationFailures: failures,
+		failure: {
+			kind: "matrix-subrun",
+			message: failures.map((failure) => failure.message).join("; "),
+		},
+		browserResult: browserResult ?? null,
 	};
 };
 
@@ -499,6 +604,10 @@ const main = async () => {
 		requestedNames: requestedLocalPackageNames,
 		requiredNames: defaultFileShareLocalPackages,
 	});
+	const expectedHarnessProvenance = await getPeerbitProvenance({
+		root: repoRoot,
+		requestedRef: "harness-worktree",
+	});
 	const variantSpecs = await resolveVariantSpecs(requestedVariantSpecs);
 	const matrixSession = await createExclusiveMatrixSession({
 		baseDir: requestedMatrixBase,
@@ -518,10 +627,11 @@ const main = async () => {
 			`\n=== Variant: ${variant}${variantSpec.ref ? ` (${variantSpec.ref})` : " (worktree)"} ===`,
 		);
 		const variantRoot = path.join(matrixRoot, "variants", variant);
-		const { peerbitRoot, resolvedCommit } = await prepareVariant({
-			variantSpec,
-			variantRoot,
-		});
+		const { peerbitRoot, resolvedCommit, peerbitProvenance } =
+			await prepareVariant({
+				variantSpec,
+				variantRoot,
+			});
 		const effectiveLocalPackageNames = [
 			...(
 				await collectLocalPeerbitPackages(peerbitRoot, {
@@ -546,6 +656,7 @@ const main = async () => {
 				variantSpec.kind === "worktree" ? "worktree" : variantSpec.ref,
 			resolvedCommit,
 			peerbitRoot,
+			peerbitProvenance,
 			effectiveLocalPackageNames,
 		});
 	}
@@ -557,8 +668,8 @@ const main = async () => {
 	});
 	const resultsByVariant = new Map(variantSpecs.map((spec) => [spec.name, []]));
 	const invocationRecords = [];
-	let benchmarkExamplesProvenance;
-	let benchmarkHarnessProvenance;
+	const benchmarkExamplesProvenance = pinnedExamples.provenance;
+	const benchmarkHarnessProvenance = expectedHarnessProvenance;
 
 	for (const plan of executionOrder) {
 		const prepared = preparedVariants.get(plan.variant);
@@ -582,106 +693,260 @@ const main = async () => {
 			invocationSlug,
 		);
 		const summaryFile = path.join(resultsDir, "summary.json");
-		const invocationSummary = await runVariantBenchmark({
-			...prepared,
-			examplesSource,
-			examplesRef,
-			examplesTemplate,
-			pinnedExamplesProvenance: pinnedExamples.provenance,
-			examplesRoot,
-			resultsDir,
-			summaryFile,
-			fileMb,
-			runs: 1,
-			mode: plan.mode,
-			network,
-			scenario,
-			integrationMode,
-			localPackages,
-			freshExamples: true,
-			freshExamplesEachRun: false,
-			installExamples: false,
-			uploadTimeoutMs,
-			downloadTimeoutMs,
-			postUploadMonitorMs,
-			pollMs,
-			minReadySeeders,
-			readyTimeoutMs,
-			sampleMs,
-			sampleCount,
-			targetSeeders,
-			protocol,
-			fixtureSeed,
-			enableVisibilityProbe,
-			verbose,
-		});
-		if (
-			invocationSummary.peerbitProvenance?.resolvedCommit !==
-				prepared.resolvedCommit ||
-			invocationSummary.peerbitProvenance?.dirty !== false
-		) {
-			throw new Error(
-				`Variant ${plan.variant} did not report its exact clean resolved HEAD`,
-			);
+		let subRun;
+		const structuralFailures = [];
+		try {
+			subRun = await runVariantBenchmark({
+				...prepared,
+				examplesSource,
+				examplesRef,
+				examplesTemplate,
+				pinnedExamplesProvenance: pinnedExamples.provenance,
+				examplesRoot,
+				resultsDir,
+				summaryFile,
+				fileMb,
+				runs: 1,
+				mode: plan.mode,
+				network,
+				scenario,
+				integrationMode,
+				localPackages,
+				freshExamples: true,
+				freshExamplesEachRun: false,
+				installExamples: false,
+				uploadTimeoutMs,
+				downloadTimeoutMs,
+				postUploadMonitorMs,
+				pollMs,
+				minReadySeeders,
+				readyTimeoutMs,
+				sampleMs,
+				sampleCount,
+				targetSeeders,
+				protocol,
+				fixtureSeed,
+				enableVisibilityProbe,
+				verbose,
+			});
+		} catch (error) {
+			structuralFailures.push({
+				kind: "subrun-orchestration",
+				...serializeError(error),
+			});
 		}
-		if (
-			invocationSummary.examplesProvenance?.resolvedCommit !==
-				pinnedExamples.provenance.resolvedCommit ||
-			invocationSummary.examplesProvenance?.lockfileSha256 !==
-				pinnedExamples.provenance.lockfileSha256
-		) {
-			throw new Error(
-				`Variant ${plan.variant} did not use the pinned examples commit and lockfile`,
-			);
+		const invocationSummary = subRun?.summary;
+		const subprocessFailures = subRun?.subprocessFailures ?? [];
+		const processFailures = [];
+		for (const failure of subprocessFailures) {
+			if (["spawn-error", "signal", "nonzero-exit"].includes(failure.kind)) {
+				processFailures.push(failure);
+			} else {
+				structuralFailures.push(failure);
+			}
 		}
-		const [rawResult] = invocationSummary.results ?? [];
-		if (!rawResult || invocationSummary.results.length !== 1) {
-			throw new Error("Matrix invocation did not produce exactly one result");
-		}
-		if (rawResult.invocation?.baseUrl !== null) {
-			throw new Error(
-				"Matrix invocation used an effective remote PW_BASE_URL instead of its local app",
-			);
-		}
-		if (
-			JSON.stringify(rawResult.invocation?.localPackages) !==
-			JSON.stringify(prepared.effectiveLocalPackageNames)
-		) {
-			throw new Error(
-				`Variant ${plan.variant} did not bind its exact effective local package set`,
-			);
-		}
-		if (
-			rawResult.invocation?.serverMode !== "production-preview" ||
-			rawResult.invocation?.serverHost !== "127.0.0.1"
-		) {
-			throw new Error(
-				"Matrix invocation did not use the required local production preview server",
-			);
-		}
-		benchmarkExamplesProvenance ??= invocationSummary.examplesProvenance;
-		benchmarkHarnessProvenance ??= invocationSummary.harnessProvenance;
-		if (
-			JSON.stringify(benchmarkExamplesProvenance) !==
-				JSON.stringify(invocationSummary.examplesProvenance) ||
-			JSON.stringify(benchmarkHarnessProvenance) !==
-				JSON.stringify(invocationSummary.harnessProvenance)
-		) {
-			throw new Error(
-				"Matrix invocations changed harness or examples provenance",
-			);
-		}
-		const result = {
-			...rawResult,
-			variant: plan.variant,
-			run: plan.run,
-			matrixSequence: plan.sequence,
+		const expectedProvenance = {
+			harness: expectedHarnessProvenance,
+			peerbit: prepared.peerbitProvenance,
+			examples: pinnedExamples.provenance,
 		};
+		let expectedInvocation;
+		try {
+			expectedInvocation = createBenchmarkInvocation({
+				scenario,
+				mode: plan.mode,
+				network,
+				integrationMode,
+				fileMb,
+				fixtureSeed: fixtureSeed ?? DEFAULT_FIXTURE_SEED,
+				uploadTimeoutMs: optionalNumber(uploadTimeoutMs),
+				downloadTimeoutMs: optionalNumber(downloadTimeoutMs),
+				postUploadMonitorMs: optionalNumber(postUploadMonitorMs),
+				pollMs: optionalNumber(pollMs),
+				minReadySeeders: optionalNumber(minReadySeeders),
+				readyTimeoutMs: optionalNumber(readyTimeoutMs),
+				sampleMs: optionalNumber(sampleMs),
+				sampleCount: optionalNumber(sampleCount),
+				targetSeeders: optionalNumber(targetSeeders),
+				baseUrl: null,
+				protocol,
+				viteMode: null,
+				viteConfig: null,
+				localPackages: prepared.effectiveLocalPackageNames,
+				enableVisibilityProbe,
+				verbose,
+			});
+		} catch (error) {
+			structuralFailures.push({
+				kind: "expected-invocation",
+				...serializeError(error),
+			});
+		}
+		let rawResult;
+		let rawResultEvidence;
+		if (invocationSummary) {
+			const inspection = inspectSingleInvocationSummary(invocationSummary);
+			rawResult = inspection.result;
+			rawResultEvidence = inspection.resultEvidence;
+			structuralFailures.push(...inspection.failures);
+			if (
+				!isDeepStrictEqual(
+					invocationSummary.harnessProvenance,
+					expectedHarnessProvenance,
+				)
+			) {
+				structuralFailures.push({
+					kind: "harness-provenance",
+					message:
+						"Benchmark subprocess did not report the matrix harness's exact pinned provenance",
+				});
+			}
+			if (
+				!isDeepStrictEqual(
+					invocationSummary.peerbitProvenance,
+					prepared.peerbitProvenance,
+				)
+			) {
+				structuralFailures.push({
+					kind: "peerbit-provenance",
+					message: `Variant ${plan.variant} did not report its exact clean pinned provenance`,
+				});
+			}
+			if (
+				!isDeepStrictEqual(
+					invocationSummary.examplesProvenance,
+					pinnedExamples.provenance,
+				)
+			) {
+				structuralFailures.push({
+					kind: "examples-provenance",
+					message: `Variant ${plan.variant} did not report the exact clean pinned examples provenance`,
+				});
+			}
+			if (
+				rawResult &&
+				(!isDeepStrictEqual(
+					invocationSummary.harnessProvenance,
+					rawResult.provenance?.harness,
+				) ||
+					!isDeepStrictEqual(
+						invocationSummary.peerbitProvenance,
+						rawResult.provenance?.peerbit,
+					) ||
+					!isDeepStrictEqual(
+						invocationSummary.examplesProvenance,
+						rawResult.provenance?.examples,
+					))
+			) {
+				structuralFailures.push({
+					kind: "summary-result-provenance",
+					message:
+						"Benchmark subprocess summary provenance contradicts its result envelope",
+				});
+			}
+			if (rawResult && expectedInvocation) {
+				let envelopeValid = false;
+				try {
+					validateBenchmarkResultEnvelope(rawResult, {
+						expectedMode: plan.mode,
+						expectedFileMb: fileMb,
+						expectedNetwork: network,
+						expectedRunNonce: rawResult.runNonce,
+						expectedProvenance,
+						expectedInvocation,
+					});
+					envelopeValid = true;
+				} catch (error) {
+					structuralFailures.push({
+						kind: "invalid-result-envelope",
+						...serializeError(error),
+					});
+				}
+				if (envelopeValid && rawResult.status === "passed") {
+					try {
+						validateBenchmarkResult(rawResult, {
+							scenario,
+							expectedMode: plan.mode,
+							expectedFileMb: fileMb,
+							expectedNetwork: network,
+							expectedFixtureSeed: fixtureSeed ?? DEFAULT_FIXTURE_SEED,
+							expectedRunNonce: rawResult.runNonce,
+							expectedProvenance,
+							expectedInvocation,
+						});
+					} catch (error) {
+						structuralFailures.push({
+							kind: "invalid-passed-result",
+							...serializeError(error),
+						});
+					}
+				}
+			}
+		}
+		if (
+			rawResult?.status === "passed" &&
+			subRun?.subprocessSucceeded === false
+		) {
+			structuralFailures.push({
+				kind: "passed-result-nonzero-exit",
+				message:
+					"Benchmark subprocess returned a passed result with an unsuccessful process outcome",
+			});
+		}
+		if (
+			rawResult?.status !== "passed" &&
+			subRun?.subprocessSucceeded === true
+		) {
+			structuralFailures.push({
+				kind: "failed-result-zero-exit",
+				message:
+					"Benchmark subprocess returned a failed result with a successful process outcome",
+			});
+		}
+		const allFailures = [...processFailures, ...structuralFailures];
+		const result =
+			rawResult && structuralFailures.length === 0
+				? {
+						...rawResult,
+						variant: plan.variant,
+						run: plan.run,
+						matrixSequence: plan.sequence,
+						subRunSummaryFile: summaryFile,
+						subprocess: subRun.processOutcome,
+						subprocessFailures,
+					}
+				: createMatrixInvocationFailure({
+						plan,
+						scenario,
+						network,
+						fileMb,
+						summaryFile,
+						processOutcome: subRun?.processOutcome,
+						expectedInvocation,
+						expectedProvenance,
+						failures:
+							allFailures.length > 0
+								? allFailures
+								: [
+										{
+											kind: "missing-summary",
+											message:
+												"Matrix invocation did not return usable summary evidence",
+										},
+									],
+						browserResult: rawResultEvidence,
+					});
 		resultsByVariant.get(plan.variant).push(result);
 		invocationRecords.push({
 			...plan,
+			status: result.status,
 			runNonce: result.runNonce,
-			resultFile: result.resultFile,
+			resultFile: result.resultFile ?? null,
+			subRunSummaryFile: summaryFile,
+			subRunSummary: invocationSummary ?? null,
+			subprocess: subRun?.processOutcome ?? null,
+			subprocessFailures,
+			orchestrationFailures: structuralFailures,
 			peerbitResolvedCommit: prepared.resolvedCommit,
 			effectiveLocalPackageNames: prepared.effectiveLocalPackageNames,
 		});
@@ -698,7 +963,7 @@ const main = async () => {
 			resolvedCommit: prepared.resolvedCommit,
 			effectiveLocalPackageNames: prepared.effectiveLocalPackageNames,
 			harnessProvenance: benchmarkHarnessProvenance,
-			peerbitProvenance: results[0]?.provenance?.peerbit,
+			peerbitProvenance: prepared.peerbitProvenance,
 			examplesProvenance: benchmarkExamplesProvenance,
 			results,
 			summary: summarizeInvocationResults(results, scenario),
@@ -707,11 +972,18 @@ const main = async () => {
 		};
 	});
 
+	const allResults = [...resultsByVariant.values()].flat();
+	const outcomeCounts = countBenchmarkOutcomes(
+		allResults,
+		executionOrder.length,
+	);
 	const matrixSummary = {
-		schema: {
-			id: "peerbit-file-share-matrix-summary",
-			version: 2,
-		},
+		schema: MATRIX_SUMMARY_SCHEMA,
+		status: outcomeCounts.failed === 0 ? "passed" : "failed",
+		outcomeCounts,
+		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+		knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+		requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
 		matrixBase: matrixSession.matrixBase,
 		matrixRoot,
 		matrixSessionNonce: matrixSession.nonce,
@@ -751,9 +1023,14 @@ const main = async () => {
 
 	console.log("\nVariant summary");
 	console.table(matrixSummary.summary);
+	console.log("\nOutcome counts");
+	console.table([outcomeCounts]);
 	console.log("\nAdaptive across variants");
 	console.table(matrixSummary.adaptiveComparison);
 	console.log(`\nMatrix summary: ${matrixSummaryFile}`);
+	if (outcomeCounts.failed > 0) {
+		process.exitCode = 1;
+	}
 };
 
 main().catch((error) => {

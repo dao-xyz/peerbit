@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import {
+	ERROR_COLLECTION_DEFINITION,
+	KNOWN_PEERBIT_FAILURE_SIGNATURES,
+	REQUEST_FAILURE_COLLECTION_DEFINITION,
+} from "./benchmark-orchestration.mjs";
 import { repoRoot } from "./common.mjs";
 
 const templates = [
@@ -10,14 +15,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v2 invocation envelope`, async () => {
+	test(`${name} emits the atomic v3 invocation envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 2",
+			"version: 3",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -27,6 +32,14 @@ for (const name of templates) {
 			"runNonce: RUN_NONCE",
 			"invocation: INVOCATION",
 			"provenance: PROVENANCE",
+			"errorCollectionDefinition: ERROR_COLLECTION_DEFINITION",
+			"knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES",
+			"errorCollectionComplete: true",
+			"requestFailureCollectionDefinition:",
+			"requestFailureCollectionComplete: true",
+			"requestFailureCount:",
+			"requestFailures:",
+			'page.on("requestfailed"',
 			"await rename(temporaryPath, RESULT_FILE)",
 			"await rm(temporaryPath, { force: true })",
 		]) {
@@ -58,6 +71,21 @@ for (const name of templates) {
 		assert.ok(
 			!contents.includes("`error:${error.message}`"),
 			"seeder-count failures must reject instead of becoming sample strings",
+		);
+		assert.ok(contents.includes(ERROR_COLLECTION_DEFINITION));
+		assert.ok(contents.includes(REQUEST_FAILURE_COLLECTION_DEFINITION));
+		for (const signature of KNOWN_PEERBIT_FAILURE_SIGNATURES) {
+			assert.ok(contents.includes(`"${signature}"`));
+		}
+		assert.match(
+			contents,
+			/page\.on\("pageerror", \(error\) => \{[\s\S]*?errors\.push\(`\$\{label\}:pageerror:/,
+			"every uncaught page error must be recorded without signature filtering",
+		);
+		assert.match(
+			contents,
+			/message\.type\(\) === "error" \|\|[\s\S]*?KNOWN_PEERBIT_FAILURE_SIGNATURES\.some/,
+			"every console.error and matched Peerbit signature must be recorded",
 		);
 	});
 }
@@ -135,4 +163,50 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 			`${peer} readiness must use the invocation timeout`,
 		);
 	}
+});
+
+test("matrix fail-closes every result envelope and fully validates passes", async () => {
+	const contents = await readFile(
+		path.join(
+			repoRoot,
+			"scripts",
+			"file-share",
+			"run-file-share-benchmark-matrix.mjs",
+		),
+		"utf8",
+	);
+	for (const required of [
+		"validateBenchmarkResultEnvelope(rawResult",
+		"validateBenchmarkResult(rawResult",
+		"expectedInvocation = createBenchmarkInvocation",
+		"expectedProvenance",
+		"invocation: expectedInvocation ?? null",
+		"provenance: expectedProvenance",
+		"peerbitProvenance: prepared.peerbitProvenance",
+	]) {
+		assert.ok(contents.includes(required), `missing ${required}`);
+	}
+	assert.ok(
+		!contents.includes("results[0]?.provenance?.peerbit"),
+		"rejected result provenance must not become canonical variant provenance",
+	);
+});
+
+test("standalone runner rechecks provenance even after result failure", async () => {
+	const contents = await readFile(
+		path.join(
+			repoRoot,
+			"scripts",
+			"file-share",
+			"run-file-share-benchmark.mjs",
+		),
+		"utf8",
+	);
+	assert.ok(contents.includes("readAndAssertSafeInvocationUnchanged"));
+	assert.ok(contents.includes("unsafeProvenanceFailure ??= error"));
+	assert.ok(
+		contents.indexOf("if (unsafeProvenanceFailure)") <
+			contents.indexOf("if (invocationFailure)"),
+		"unsafe provenance drift must supersede an ordinary result failure",
+	);
 });
