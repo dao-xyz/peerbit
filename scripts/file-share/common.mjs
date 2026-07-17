@@ -12,7 +12,13 @@ export const repoRoot = path.resolve(__dirname, "..", "..");
 
 export const defaultExamplesSource = () => {
 	const sibling = path.resolve(repoRoot, "..", "peerbit-examples");
-	if (fs.existsSync(sibling)) {
+	if (
+		fs.existsSync(path.join(sibling, "package.json")) &&
+		fs.existsSync(path.join(sibling, "pnpm-lock.yaml")) &&
+		fs.existsSync(
+			path.join(sibling, "packages", "file-share", "frontend", "package.json"),
+		)
+	) {
 		return sibling;
 	}
 	return "https://github.com/dao-xyz/peerbit-examples.git";
@@ -30,10 +36,8 @@ export const defaultFileShareLocalPackages = [
 	"@peerbit/shared-log",
 	"@peerbit/stream",
 	"@peerbit/react",
-	"@peerbit/crypto",
 	"@peerbit/trusted-network",
 	"@peerbit/vite",
-	"@peerbit/test-utils",
 ];
 
 const BOOLEAN_ARGS = new Set([
@@ -42,6 +46,9 @@ const BOOLEAN_ARGS = new Set([
 	"build-peerbit",
 	"fresh-each-run",
 	"isolated-examples",
+	"enable-visibility-probe",
+	"verbose",
+	"require-clean-peerbit",
 ]);
 
 export const parseArgs = (argv) => {
@@ -81,6 +88,56 @@ export const run = (command, args, options = {}) => {
 		},
 	});
 };
+
+const removeNodeModulesTrees = async (root) => {
+	const entries = await fsp.readdir(root, { withFileTypes: true });
+	await Promise.all(
+		entries.map(async (entry) => {
+			const entryPath = path.join(root, entry.name);
+			if (entry.name === "node_modules") {
+				await fsp.rm(entryPath, { recursive: true, force: true });
+				return;
+			}
+			if (entry.name === ".git" || !entry.isDirectory()) {
+				return;
+			}
+			await removeNodeModulesTrees(entryPath);
+		}),
+	);
+};
+
+export const installPinnedExamplesDependencies = async (examplesRoot) => {
+	for (const required of ["package.json", "pnpm-lock.yaml"]) {
+		if (!fs.existsSync(path.join(examplesRoot, required))) {
+			throw new Error(
+				`Cannot install pinned examples dependencies: missing ${required} in ${examplesRoot}`,
+			);
+		}
+	}
+	await removeNodeModulesTrees(examplesRoot);
+	run("pnpm", ["install", "--frozen-lockfile"], { cwd: examplesRoot });
+	if (!fs.existsSync(path.join(examplesRoot, "node_modules"))) {
+		throw new Error(
+			`Pinned examples install did not produce ${path.join(examplesRoot, "node_modules")}`,
+		);
+	}
+};
+
+export const buildPeerbitPackages = (peerbitRoot, packageNames) => {
+	if (!Array.isArray(packageNames) || packageNames.length === 0) {
+		throw new Error("A clean Peerbit build requires at least one package");
+	}
+	run(
+		"pnpm",
+		[...packageNames.flatMap((name) => ["--filter", `${name}...`]), "build"],
+		{ cwd: peerbitRoot },
+	);
+};
+
+export const getFileShareConsumerRoots = (examplesRoot) => [
+	path.join(examplesRoot, "packages", "file-share", "frontend"),
+	path.join(examplesRoot, "packages", "file-share", "library"),
+];
 
 const walkPackageJsonFiles = async (root) => {
 	const pending = [path.join(root, "packages")];
@@ -138,8 +195,11 @@ const expandWorkspacePackageSelection = ({
 	selectedNames,
 	includeTransitive = true,
 }) => {
-	if (!selectedNames || selectedNames.size === 0) {
+	if (selectedNames == null) {
 		return new Set(workspacePackages.keys());
+	}
+	if (selectedNames.size === 0) {
+		return new Set();
 	}
 	if (!includeTransitive) {
 		return new Set(
@@ -179,9 +239,31 @@ export const collectLocalPeerbitPackages = async (
 ) => {
 	const workspacePackages = await loadWorkspacePeerbitPackages(peerbitRoot);
 	const mappings = new Map();
-	const selectedNames = Array.isArray(options.names)
-		? new Set(options.names)
+	const normalizedNames = Array.isArray(options.names)
+		? options.names.map((name) => {
+				if (typeof name !== "string" || name.trim().length === 0) {
+					throw new Error("Local package names must be non-empty strings");
+				}
+				return name.trim();
+			})
 		: undefined;
+	if (
+		normalizedNames &&
+		new Set(normalizedNames).size !== normalizedNames.length
+	) {
+		throw new Error("Duplicate local Peerbit package names are not allowed");
+	}
+	const selectedNames = normalizedNames ? new Set(normalizedNames) : undefined;
+	if (selectedNames) {
+		const unknownNames = [...selectedNames]
+			.filter((name) => !workspacePackages.has(name))
+			.sort((left, right) => left.localeCompare(right));
+		if (unknownNames.length > 0) {
+			throw new Error(
+				`Unknown local Peerbit package${unknownNames.length === 1 ? "" : "s"}: ${unknownNames.join(", ")}`,
+			);
+		}
+	}
 	const expandedSelection = expandWorkspacePackageSelection({
 		workspacePackages,
 		selectedNames,
@@ -193,46 +275,91 @@ export const collectLocalPeerbitPackages = async (
 		}
 		mappings.set(name, info.dir);
 	}
-	return new Map([...mappings.entries()].sort(([a], [b]) => a.localeCompare(b)));
+	return new Map(
+		[...mappings.entries()].sort(([a], [b]) => a.localeCompare(b)),
+	);
 };
 
-const getInstalledPackagePath = ({ root, packageName }) => {
-	if (packageName === "peerbit") {
-		return path.join(root, "node_modules", "peerbit");
-	}
-	const [scope, name] = packageName.split("/");
-	if (!scope || !name) {
-		throw new Error(`Unsupported package name "${packageName}"`);
-	}
-	return path.join(root, "node_modules", scope, name);
-};
-
-export const ensureExamplesAssetPackageLinks = async ({
-	examplesRoot,
+export const cleanPeerbitBuildArtifacts = async ({
 	peerbitRoot = repoRoot,
 	packageNames,
 }) => {
 	const localPackages = await collectLocalPeerbitPackages(peerbitRoot, {
 		names: packageNames,
 	});
-	const nodeModulesDir = path.join(examplesRoot, "node_modules");
-	const scopedDir = path.join(nodeModulesDir, "@peerbit");
-	await fsp.mkdir(scopedDir, { recursive: true });
-
-	for (const [packageName, packageDir] of localPackages) {
-		const linkPath =
-			packageName === "peerbit"
-				? path.join(nodeModulesDir, "peerbit")
-				: path.join(scopedDir, packageName.split("/")[1]);
-		const existing = await fsp.lstat(linkPath).catch(() => undefined);
-		if (existing) {
-			await fsp.rm(linkPath, {
+	await Promise.all(
+		[...localPackages.values()].map((packageDir) =>
+			fsp.rm(path.join(packageDir, "dist"), {
 				recursive: true,
 				force: true,
-			});
+			}),
+		),
+	);
+	return localPackages;
+};
+
+export const ensureExamplesAssetPackageLinks = async ({
+	examplesRoot,
+	peerbitRoot = repoRoot,
+	packageNames,
+	consumerRoots = [],
+}) => {
+	const localPackages = await collectLocalPeerbitPackages(peerbitRoot, {
+		names: packageNames,
+	});
+	for (const [packageName, packageDir] of localPackages) {
+		const builtDistPath = path.join(packageDir, "dist");
+		const builtDist = await fsp.stat(builtDistPath).catch(() => undefined);
+		if (!builtDist?.isDirectory()) {
+			throw new Error(
+				`Cannot link ${packageName}: the mandatory clean build did not produce ${builtDistPath}`,
+			);
 		}
-		await fsp.symlink(packageDir, linkPath, "dir");
 	}
+
+	const examplesRealPath = await fsp.realpath(examplesRoot);
+	const linkRoots = [examplesRoot, ...consumerRoots].map((root) =>
+		path.resolve(root),
+	);
+	for (const consumerRoot of linkRoots.slice(1)) {
+		const consumerRealPath = await fsp.realpath(consumerRoot);
+		const relative = path.relative(examplesRealPath, consumerRealPath);
+		if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
+			throw new Error(
+				`Refusing to install benchmark package links outside ${examplesRealPath}: ${consumerRealPath}`,
+			);
+		}
+	}
+
+	for (const linkRoot of [...new Set(linkRoots)]) {
+		const nodeModulesDir = path.join(linkRoot, "node_modules");
+		const scopedDir = path.join(nodeModulesDir, "@peerbit");
+		await fsp.mkdir(scopedDir, { recursive: true });
+		for (const [packageName, packageDir] of localPackages) {
+			const linkPath =
+				packageName === "peerbit"
+					? path.join(nodeModulesDir, "peerbit")
+					: path.join(scopedDir, packageName.split("/")[1]);
+			const existing = await fsp.lstat(linkPath).catch(() => undefined);
+			if (existing) {
+				await fsp.rm(linkPath, {
+					recursive: true,
+					force: true,
+				});
+			}
+			await fsp.symlink(packageDir, linkPath, "dir");
+			const [linkedRealPath, packageRealPath] = await Promise.all([
+				fsp.realpath(linkPath),
+				fsp.realpath(packageDir),
+			]);
+			if (linkedRealPath !== packageRealPath) {
+				throw new Error(
+					`Linked package ${packageName} resolved to ${linkedRealPath}, not ${packageRealPath}`,
+				);
+			}
+		}
+	}
+	return localPackages;
 };
 
 const copyExamplesTemplate = async ({ template, dest }) => {
@@ -248,6 +375,9 @@ const copyExamplesTemplate = async ({ template, dest }) => {
 				"(",
 				"-name",
 				".git",
+				"-o",
+				"-name",
+				"node_modules",
 				"-o",
 				"-name",
 				"test-results",
@@ -270,6 +400,7 @@ const copyExamplesTemplate = async ({ template, dest }) => {
 		return;
 	} catch {
 		// Fall back to a filtered recursive copy on platforms without clonefile support.
+		await fsp.rm(dest, { recursive: true, force: true });
 	}
 	await fsp.cp(template, dest, {
 		recursive: true,
@@ -282,6 +413,7 @@ const copyExamplesTemplate = async ({ template, dest }) => {
 			return !segments.some((segment) =>
 				[
 					".git",
+					"node_modules",
 					"test-results",
 					"playwright-report",
 					".playwright-artifacts-0",
@@ -291,15 +423,33 @@ const copyExamplesTemplate = async ({ template, dest }) => {
 	});
 };
 
-const cloneExamplesRepo = async ({ source, dest, fresh }) => {
+const resolveCommit = (root, ref) =>
+	execFileSync("git", ["rev-parse", "--verify", `${ref}^{commit}`], {
+		cwd: root,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "pipe"],
+	}).trim();
+
+const cloneExamplesRepo = async ({ source, dest, fresh, ref = "HEAD" }) => {
 	if (fresh && fs.existsSync(dest)) {
 		await fsp.rm(dest, { recursive: true, force: true });
 	}
 	if (fs.existsSync(dest)) {
+		if (fs.existsSync(path.join(dest, ".git"))) {
+			const currentCommit = resolveCommit(dest, "HEAD");
+			const requestedCommit = resolveCommit(dest, ref);
+			if (currentCommit !== requestedCommit) {
+				throw new Error(
+					`Existing examples checkout is ${currentCommit}, not requested ${ref} (${requestedCommit}); rerun with --fresh`,
+				);
+			}
+		}
 		return;
 	}
 	await fsp.mkdir(path.dirname(dest), { recursive: true });
-	run("git", ["clone", "--depth", "1", source, dest]);
+	run("git", ["clone", "--no-checkout", source, dest]);
+	const commit = resolveCommit(dest, ref);
+	run("git", ["checkout", "--detach", commit], { cwd: dest });
 };
 
 export const prepareExamplesRepo = async ({
@@ -311,6 +461,7 @@ export const prepareExamplesRepo = async ({
 	install = false,
 	localPackageNames,
 	applyOverrides = true,
+	ref = "HEAD",
 } = {}) => {
 	if (fresh && fs.existsSync(dest)) {
 		await fsp.rm(dest, { recursive: true, force: true });
@@ -319,8 +470,14 @@ export const prepareExamplesRepo = async ({
 		if (template) {
 			await copyExamplesTemplate({ template, dest });
 		} else {
-			await cloneExamplesRepo({ source, dest, fresh: false });
+			await cloneExamplesRepo({ source, dest, fresh: false, ref });
 		}
+	} else if (template) {
+		throw new Error(
+			"A template-backed examples checkout must be recreated with --fresh so its pinned source cannot be confused with stale files",
+		);
+	} else {
+		await cloneExamplesRepo({ source, dest, fresh: false, ref });
 	}
 
 	const allLocalPackages = await collectLocalPeerbitPackages(peerbitRoot);
@@ -329,28 +486,31 @@ export const prepareExamplesRepo = async ({
 				names: localPackageNames,
 			})
 		: allLocalPackages;
-	const packageJsonPath = path.join(dest, "package.json");
-	const packageJson = JSON.parse(await fsp.readFile(packageJsonPath, "utf8"));
-	const currentOverrides = packageJson?.pnpm?.overrides ?? {};
-	const nextOverrides = { ...currentOverrides };
-	for (const name of allLocalPackages.keys()) {
-		delete nextOverrides[name];
-	}
 	if (applyOverrides) {
+		const packageJsonPath = path.join(dest, "package.json");
+		const packageJson = JSON.parse(await fsp.readFile(packageJsonPath, "utf8"));
+		const currentOverrides = packageJson?.pnpm?.overrides ?? {};
+		const nextOverrides = { ...currentOverrides };
+		for (const name of allLocalPackages.keys()) {
+			delete nextOverrides[name];
+		}
 		for (const [name, packageDir] of localPackages) {
 			nextOverrides[name] = `link:${packageDir}`;
 		}
-	}
-	packageJson.pnpm = packageJson.pnpm ?? {};
-	packageJson.pnpm.overrides = Object.fromEntries(
-		Object.entries(nextOverrides).sort(([a], [b]) => a.localeCompare(b)),
-	);
-	await fsp.writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 4)}\n`);
-	const patchesDir = path.join(dest, "patches");
-	if (fs.existsSync(patchesDir)) {
-		for (const entry of await fsp.readdir(patchesDir)) {
-			if (/^@peerbit\+shared-log\+.*\.patch$/.test(entry)) {
-				await fsp.rm(path.join(patchesDir, entry), { force: true });
+		packageJson.pnpm = packageJson.pnpm ?? {};
+		packageJson.pnpm.overrides = Object.fromEntries(
+			Object.entries(nextOverrides).sort(([a], [b]) => a.localeCompare(b)),
+		);
+		await fsp.writeFile(
+			packageJsonPath,
+			`${JSON.stringify(packageJson, null, 4)}\n`,
+		);
+		const patchesDir = path.join(dest, "patches");
+		if (fs.existsSync(patchesDir)) {
+			for (const entry of await fsp.readdir(patchesDir)) {
+				if (/^@peerbit\+shared-log\+.*\.patch$/.test(entry)) {
+					await fsp.rm(path.join(patchesDir, entry), { force: true });
+				}
 			}
 		}
 	}
@@ -363,6 +523,7 @@ export const prepareExamplesRepo = async ({
 				peerbitRoot,
 				source,
 				template,
+				ref,
 				packages: Object.fromEntries(localPackages),
 			},
 			null,
@@ -371,7 +532,11 @@ export const prepareExamplesRepo = async ({
 	);
 
 	if (install) {
-		run("pnpm", ["install"], { cwd: dest });
+		if (applyOverrides) {
+			run("pnpm", ["install"], { cwd: dest });
+		} else {
+			await installPinnedExamplesDependencies(dest);
+		}
 	}
 
 	return {
@@ -382,46 +547,11 @@ export const prepareExamplesRepo = async ({
 	};
 };
 
-export const overlayInstalledPackages = async ({
-	examplesRoot,
-	peerbitRoot = repoRoot,
-	packageNames,
+export const copyTemplate = async ({
+	templatePath,
+	outputPath,
+	replacements = {},
 }) => {
-	const skipMissing = !Array.isArray(packageNames);
-	const localPackages = await collectLocalPeerbitPackages(peerbitRoot, {
-		names: packageNames,
-	});
-	for (const [packageName, packageDir] of localPackages) {
-		const installedPackagePath = getInstalledPackagePath({
-			root: examplesRoot,
-			packageName,
-		});
-		if (!fs.existsSync(installedPackagePath)) {
-			if (skipMissing) {
-				continue;
-			}
-			throw new Error(
-				`Cannot overlay ${packageName}: missing installed package at ${installedPackagePath}`,
-			);
-		}
-		const installedRealPath = await fsp.realpath(installedPackagePath);
-		const packageRealPath = await fsp.realpath(packageDir);
-		if (installedRealPath === packageRealPath) {
-			continue;
-		}
-		for (const entry of ["dist", "src"]) {
-			const sourcePath = path.join(packageDir, entry);
-			if (!fs.existsSync(sourcePath)) {
-				continue;
-			}
-			const destPath = path.join(installedPackagePath, entry);
-			await fsp.rm(destPath, { recursive: true, force: true });
-			await fsp.cp(sourcePath, destPath, { recursive: true });
-		}
-	}
-};
-
-export const copyTemplate = async ({ templatePath, outputPath, replacements = {} }) => {
 	let contents = await fsp.readFile(templatePath, "utf8");
 	for (const [pattern, replacement] of Object.entries(replacements)) {
 		contents = contents.replaceAll(pattern, replacement);

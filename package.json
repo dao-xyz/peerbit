@@ -124,6 +124,7 @@
 		"bench:file-share:prepare": "node ./scripts/file-share/prepare-peerbit-examples.mjs",
 		"bench:file-share:local": "node ./scripts/file-share/run-file-share-benchmark.mjs",
 		"bench:file-share:matrix": "node ./scripts/file-share/run-file-share-benchmark-matrix.mjs",
+		"bench:file-share:test": "node --test ./scripts/file-share/*.test.mjs",
 		"site:sync-updates": "node apps/peerbit-org/scripts/syncUpdatesEmail.mjs",
 		"dep-check": "aegir run dep-check",
 		"doc-check": "aegir run doc-check",

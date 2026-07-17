@@ -1,13 +1,9 @@
-import { test, type Page } from "@playwright/test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { type Page, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
-import {
-	createSpace,
-	getSeederCount,
-	rootUrl,
-	withBootstrap,
-} from "./helpers";
+import { createSpace, getSeederCount, rootUrl, withBootstrap } from "./helpers";
 
 const MODE = process.env.PW_REPLICATION_MODE || "adaptive";
 const NETWORK_MODE = process.env.PW_NETWORK_MODE || "local";
@@ -16,9 +12,84 @@ const READY_TIMEOUT_MS = Number(process.env.PW_READY_TIMEOUT_MS || "180000");
 const SAMPLE_MS = Number(process.env.PW_SAMPLE_MS || "15000");
 const SAMPLE_COUNT = Number(process.env.PW_SAMPLE_COUNT || "4");
 const TARGET_SEEDERS = Number(process.env.PW_TARGET_SEEDERS || "2");
+const SAMPLE_COUNT_DEFINITION =
+	"observation-density divisor: planned interval is min(sampleMs, floor(readyTimeoutMs/sampleCount)) clamped to 1ms; convergence may finish early";
+const EFFECTIVE_SAMPLE_INTERVAL_MS = Math.max(
+	1,
+	Math.min(SAMPLE_MS, Math.max(1, Math.floor(READY_TIMEOUT_MS / SAMPLE_COUNT))),
+);
+const RESULT_SCHEMA = {
+	id: "peerbit-file-share-benchmark",
+	version: 2,
+} as const;
+const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
+const parseJsonEnvironment = (name: string) => {
+	const encoded = process.env[name];
+	if (!encoded) {
+		throw new Error(`Missing ${name}`);
+	}
+	try {
+		return JSON.parse(encoded) as Record<string, unknown>;
+	} catch (error) {
+		throw new Error(`Malformed ${name}`, { cause: error });
+	}
+};
+const PROVENANCE = parseJsonEnvironment("PW_BENCHMARK_PROVENANCE");
+const INVOCATION = parseJsonEnvironment("PW_BENCHMARK_INVOCATION");
 
 if (!["local", "remote"].includes(NETWORK_MODE)) {
 	throw new Error(`Unsupported PW_NETWORK_MODE='${NETWORK_MODE}'`);
+}
+if (!RUN_NONCE) {
+	throw new Error("Missing PW_BENCHMARK_RUN_NONCE");
+}
+if (process.env.PW_BENCH !== "1") {
+	throw new Error("Seeder benchmark must run against the production preview");
+}
+if (!Number.isSafeInteger(READY_TIMEOUT_MS) || READY_TIMEOUT_MS <= 0) {
+	throw new Error(
+		`Invalid PW_READY_TIMEOUT_MS='${process.env.PW_READY_TIMEOUT_MS}'`,
+	);
+}
+if (!Number.isSafeInteger(SAMPLE_MS) || SAMPLE_MS <= 0) {
+	throw new Error(`Invalid PW_SAMPLE_MS='${process.env.PW_SAMPLE_MS}'`);
+}
+if (!Number.isSafeInteger(SAMPLE_COUNT) || SAMPLE_COUNT <= 0) {
+	throw new Error(`Invalid PW_SAMPLE_COUNT='${process.env.PW_SAMPLE_COUNT}'`);
+}
+if (!Number.isSafeInteger(TARGET_SEEDERS) || TARGET_SEEDERS < 0) {
+	throw new Error(
+		`Invalid PW_TARGET_SEEDERS='${process.env.PW_TARGET_SEEDERS}'`,
+	);
+}
+if (
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
+		"peerbit-file-share-benchmark-invocation" ||
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 1
+) {
+	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
+}
+const expectedInvocationValues: Record<string, unknown> = {
+	scenario: "seeder-probe",
+	mode: MODE,
+	networkMode: NETWORK_MODE,
+	readyTimeoutMs: READY_TIMEOUT_MS,
+	sampleMs: SAMPLE_MS,
+	sampleCount: SAMPLE_COUNT,
+	targetSeeders: TARGET_SEEDERS,
+	baseUrl: process.env.PW_BASE_URL || null,
+	protocol: process.env.PW_PROTOCOL || null,
+	viteMode: process.env.PW_VITE_MODE || null,
+	viteConfig: process.env.PW_VITE_CONFIG || null,
+	serverMode: "production-preview",
+	serverHost: process.env.HOST || null,
+};
+for (const [key, expected] of Object.entries(expectedInvocationValues)) {
+	if (INVOCATION[key] !== expected) {
+		throw new Error(
+			`PW_BENCHMARK_INVOCATION.${key} does not match the effective environment`,
+		);
+	}
 }
 
 const ROLE_BY_MODE: Record<string, any> = {
@@ -116,12 +187,49 @@ const getBodyText = async (page: Page) =>
 		.then((text) => text.slice(0, 500))
 		.catch(() => null);
 
+const withDeadline = async <T>(
+	promise: Promise<T>,
+	deadlineAt: number,
+	label: string,
+): Promise<T> => {
+	const remainingMs = deadlineAt - Date.now();
+	if (remainingMs <= 0) {
+		throw new Error(`${label} exceeded the seeder convergence deadline`);
+	}
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_resolve, reject) => {
+				timeout = setTimeout(
+					() =>
+						reject(
+							new Error(`${label} exceeded the seeder convergence deadline`),
+						),
+					remainingMs,
+				);
+			}),
+		]);
+	} finally {
+		if (timeout) {
+			clearTimeout(timeout);
+		}
+	}
+};
+
 const persistResult = async (result: Record<string, unknown>) => {
 	if (!RESULT_FILE) {
 		return;
 	}
 	await mkdir(path.dirname(RESULT_FILE), { recursive: true });
-	await writeFile(RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`);
+	const temporaryPath = `${RESULT_FILE}.${process.pid}.${randomUUID()}.tmp`;
+	try {
+		await writeFile(temporaryPath, `${JSON.stringify(result, null, 2)}\n`);
+		await rename(temporaryPath, RESULT_FILE);
+	} catch (error) {
+		await rm(temporaryPath, { force: true }).catch(() => {});
+		throw error;
+	}
 };
 
 const logStage = (stage: string, details: Record<string, unknown> = {}) => {
@@ -135,7 +243,10 @@ const logStage = (stage: string, details: Record<string, unknown> = {}) => {
 };
 
 test.describe("generated seeder probe", () => {
-	test("tracks seeder convergence before upload", async ({ browser, baseURL }) => {
+	test("tracks seeder convergence before upload", async ({
+		browser,
+		baseURL,
+	}) => {
 		test.setTimeout(
 			Math.max(
 				15 * 60 * 1000,
@@ -147,8 +258,9 @@ test.describe("generated seeder probe", () => {
 		}
 
 		const usesLocalBootstrap = NETWORK_MODE === "local";
-		const bootstrap: Awaited<ReturnType<typeof startBootstrapPeer>> | undefined =
-			usesLocalBootstrap ? await startBootstrapPeer() : undefined;
+		const bootstrap:
+			| Awaited<ReturnType<typeof startBootstrapPeer>>
+			| undefined = usesLocalBootstrap ? await startBootstrapPeer() : undefined;
 		const writerContext = await browser.newContext({ acceptDownloads: true });
 		const readerContext = await browser.newContext({ acceptDownloads: true });
 		const writer = await writerContext.newPage();
@@ -159,10 +271,35 @@ test.describe("generated seeder probe", () => {
 		let shareUrl: string | undefined;
 		let reachedTarget = false;
 		let timeToTargetMs: number | undefined;
+		let targetSampleLabel: string | undefined;
+		let probeStartedAt: number | undefined;
+		let readyDeadlineAt: number | undefined;
+		let probeFinishedAt: number | undefined;
 		attachErrorCollector(writer, "writer", errors);
 		attachErrorCollector(reader, "reader", errors);
 
-		const sample = async (label: string, startedAt: number) => {
+		const readSeederCount = async (page: Page, label: string) => {
+			try {
+				const count = await getSeederCount(page);
+				if (!Number.isSafeInteger(count) || count < 0) {
+					throw new Error(`returned invalid count ${String(count)}`);
+				}
+				return count;
+			} catch (error: any) {
+				const message = `${label}:seeder-count:${
+					typeof error?.message === "string" ? error.message : String(error)
+				}`;
+				errors.push(message);
+				throw new Error(message, { cause: error });
+			}
+		};
+
+		const sample = async (
+			label: string,
+			index: number,
+			startedAt: number,
+			deadlineAt: number,
+		) => {
 			const [
 				writerSeeders,
 				readerSeeders,
@@ -170,17 +307,29 @@ test.describe("generated seeder probe", () => {
 				readerDiagnostics,
 				writerBodyText,
 				readerBodyText,
-			] = await Promise.all([
-				getSeederCount(writer).catch((error) => `error:${error.message}`),
-				getSeederCount(reader).catch((error) => `error:${error.message}`),
-				getDiagnostics(writer),
-				getDiagnostics(reader),
-				getBodyText(writer),
-				getBodyText(reader),
-			]);
-			const current = {
+			] = await withDeadline(
+				Promise.all([
+					readSeederCount(writer, "writer"),
+					readSeederCount(reader, "reader"),
+					getDiagnostics(writer),
+					getDiagnostics(reader),
+					getBodyText(writer),
+					getBodyText(reader),
+				]),
+				deadlineAt,
 				label,
-				atMs: Date.now() - startedAt,
+			);
+			const capturedAt = Date.now();
+			if (capturedAt > deadlineAt) {
+				throw new Error(
+					`${label} completed after the seeder convergence deadline`,
+				);
+			}
+			const current = {
+				index,
+				label,
+				capturedAt,
+				elapsedMs: capturedAt - startedAt,
 				writerSeeders,
 				readerSeeders,
 				writerDiagnostics,
@@ -217,23 +366,51 @@ test.describe("generated seeder probe", () => {
 				targetSeeders: TARGET_SEEDERS,
 				sampleMs: SAMPLE_MS,
 				sampleCount: SAMPLE_COUNT,
+				effectiveSampleIntervalMs: EFFECTIVE_SAMPLE_INTERVAL_MS,
+				readyTimeoutMs: READY_TIMEOUT_MS,
 			});
-			const startedAt = Date.now();
-			for (let sampleIndex = 1; sampleIndex <= SAMPLE_COUNT; sampleIndex++) {
-				await writer.waitForTimeout(SAMPLE_MS);
-				const current = await sample(`sample-${sampleIndex}`, startedAt);
+			probeStartedAt = Date.now();
+			readyDeadlineAt = probeStartedAt + READY_TIMEOUT_MS;
+			let sampleIndex = 0;
+			while (Date.now() <= readyDeadlineAt) {
+				sampleIndex += 1;
+				const current = await sample(
+					`sample-${sampleIndex}`,
+					sampleIndex,
+					probeStartedAt,
+					readyDeadlineAt,
+				);
 				if (
 					!reachedTarget &&
-					current.writerSeeders === TARGET_SEEDERS &&
-					current.readerSeeders === TARGET_SEEDERS
+					current.writerSeeders >= TARGET_SEEDERS &&
+					current.readerSeeders >= TARGET_SEEDERS
 				) {
 					reachedTarget = true;
-					timeToTargetMs = current.atMs as number;
+					timeToTargetMs = current.elapsedMs;
+					targetSampleLabel = current.label;
+					probeFinishedAt = current.capturedAt;
 					break;
 				}
+				const remainingMs = readyDeadlineAt - Date.now();
+				if (remainingMs <= 0) {
+					break;
+				}
+				await writer.waitForTimeout(
+					Math.min(EFFECTIVE_SAMPLE_INTERVAL_MS, remainingMs),
+				);
+			}
+			probeFinishedAt ??= Date.now();
+			if (errors.length > 0) {
+				throw new Error(
+					`Observed seeder probe errors: ${JSON.stringify(errors)}`,
+				);
 			}
 
 			const result = {
+				schema: RESULT_SCHEMA,
+				runNonce: RUN_NONCE,
+				invocation: INVOCATION,
+				provenance: PROVENANCE,
 				status: reachedTarget ? "passed" : "failed",
 				mode: MODE,
 				networkMode: NETWORK_MODE,
@@ -243,8 +420,15 @@ test.describe("generated seeder probe", () => {
 				sampleMs: SAMPLE_MS,
 				sampleCount: SAMPLE_COUNT,
 				readyTimeoutMs: READY_TIMEOUT_MS,
+				effectiveSampleIntervalMs: EFFECTIVE_SAMPLE_INTERVAL_MS,
+				sampleCountDefinition: SAMPLE_COUNT_DEFINITION,
+				probeStartedAt,
+				readyDeadlineAt,
+				probeFinishedAt,
+				probeDurationMs: probeFinishedAt - probeStartedAt,
 				reachedTarget,
 				timeToTargetMs,
+				targetSampleLabel,
 				errorCount: errors.length,
 				errors,
 				samples,
@@ -259,7 +443,12 @@ test.describe("generated seeder probe", () => {
 				);
 			}
 		} catch (error: any) {
+			probeFinishedAt ??= Date.now();
 			const result = {
+				schema: RESULT_SCHEMA,
+				runNonce: RUN_NONCE,
+				invocation: INVOCATION,
+				provenance: PROVENANCE,
 				status: "failed",
 				mode: MODE,
 				networkMode: NETWORK_MODE,
@@ -269,18 +458,23 @@ test.describe("generated seeder probe", () => {
 				sampleMs: SAMPLE_MS,
 				sampleCount: SAMPLE_COUNT,
 				readyTimeoutMs: READY_TIMEOUT_MS,
+				effectiveSampleIntervalMs: EFFECTIVE_SAMPLE_INTERVAL_MS,
+				sampleCountDefinition: SAMPLE_COUNT_DEFINITION,
+				probeStartedAt,
+				readyDeadlineAt,
+				probeFinishedAt,
+				probeDurationMs:
+					probeStartedAt == null ? undefined : probeFinishedAt - probeStartedAt,
 				reachedTarget,
 				timeToTargetMs,
+				targetSampleLabel,
 				errorCount: errors.length,
 				errors,
 				samples,
 				failure: {
 					message:
-						typeof error?.message === "string"
-							? error.message
-							: String(error),
-					stack:
-						typeof error?.stack === "string" ? error.stack : undefined,
+						typeof error?.message === "string" ? error.message : String(error),
+					stack: typeof error?.stack === "string" ? error.stack : undefined,
 				},
 			};
 			await persistResult(result);
