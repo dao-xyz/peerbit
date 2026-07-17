@@ -1,20 +1,42 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+	assertBenchmarkFileSize,
+	assertCoreBenchmarkUsesLocalApp,
+	assertInvocationUnchanged,
+	createBenchmarkInvocation,
+	createNonceIsolatedResultPath,
+	createPlaywrightBenchmarkEnvironment,
+	resolveBenchmarkPreviewOptions,
+} from "./benchmark-invocation.mjs";
+import {
+	getExamplesProvenance,
+	getPeerbitProvenance,
+	resolveGitCommitAt,
+} from "./benchmark-provenance.mjs";
+import { loadAndValidateBenchmarkResult } from "./benchmark-validity.mjs";
+import {
+	buildPeerbitPackages,
+	cleanPeerbitBuildArtifacts,
+	collectLocalPeerbitPackages,
 	copyTemplate,
 	defaultExamplesDest,
 	defaultExamplesSource,
 	defaultFileShareLocalPackages,
 	ensureExamplesAssetPackageLinks,
-	overlayInstalledPackages,
+	getFileShareConsumerRoots,
+	installPinnedExamplesDependencies,
 	parseArgs,
 	prepareExamplesRepo,
 	repoRoot,
 	run,
 } from "./common.mjs";
+import { createCounterbalancedModePlan } from "./matrix-variants.mjs";
+import { instrumentFileShareViteConfigs } from "./vite-instrumentation.mjs";
 
 const SCENARIOS = {
 	upload: {
@@ -38,20 +60,11 @@ const SCENARIOS = {
 			"templates",
 			"seeder-probe.e2e.spec.ts",
 		),
-		generatedSpecPath: path.join(
-			"tests",
-			"generated.seeder-probe.e2e.spec.ts",
-		),
+		generatedSpecPath: path.join("tests", "generated.seeder-probe.e2e.spec.ts"),
 	},
 };
 const DROP_HOOK_MARKER = "/* peerbit-benchmark-hook */";
 const DROP_UPDATE_LIST_MARKER = "/* peerbit-benchmark-update-list */";
-const VITE_BENCHMARK_MARKER = "/* peerbit-benchmark-vite */";
-const REMOTE_NETWORK_DEFAULTS = {
-	viteMode: "staging",
-	viteConfig: "vite.config.remote.ts",
-};
-
 const getScenarioConfig = (scenario) => {
 	const config = SCENARIOS[scenario];
 	if (!config) {
@@ -60,70 +73,6 @@ const getScenarioConfig = (scenario) => {
 		);
 	}
 	return config;
-};
-
-const injectViteBenchmarkResolveGuards = (contents, filePath, frontendRoot) => {
-	let next = contents;
-	if (!next.includes("resolve: {")) {
-		throw new Error(`Could not find resolve block in ${filePath}`);
-	}
-	const examplesNodeModules = path.resolve(frontendRoot, "..", "..", "..", "node_modules");
-	const reactAliasBlock = `        ${VITE_BENCHMARK_MARKER}
-        alias: {
-            react: ${JSON.stringify(path.join(examplesNodeModules, "react"))},
-            "react-dom": ${JSON.stringify(path.join(examplesNodeModules, "react-dom"))},
-            "@dao-xyz/borsh": ${JSON.stringify(
-				path.join(examplesNodeModules, "@dao-xyz", "borsh"),
-			)},
-        },\n`;
-		next = next.replace(
-			/ {8}\/\* peerbit-benchmark-vite \*\/\n {8}alias: \{\n[\s\S]*? {8}\},\n/,
-			reactAliasBlock,
-		);
-	if (next.includes(`${VITE_BENCHMARK_MARKER}\n        preserveSymlinks: true,\n`)) {
-		next = next.replace(
-			`${VITE_BENCHMARK_MARKER}\n        preserveSymlinks: true,\n`,
-			reactAliasBlock,
-		);
-	}
-	if (!next.includes(VITE_BENCHMARK_MARKER)) {
-		next = next.replace("    resolve: {\n", `    resolve: {\n${reactAliasBlock}`);
-	}
-	if (!next.includes('"react",')) {
-		next = next.replace(
-			"        dedupe: [\n",
-			`        dedupe: [\n            "react",\n            "react-dom",\n`,
-		);
-	}
-	if (!next.includes('"@dao-xyz/borsh",')) {
-		next = next.replace(
-			'            "react-dom",\n',
-			'            "react-dom",\n            "@dao-xyz/borsh",\n',
-		);
-	}
-	next = next.replace(
-		'        include: [\n            "react",\n            "react-dom",\n',
-		"        include: [\n",
-	);
-	return next;
-};
-
-const instrumentFileShareViteConfigs = async (frontendRoot) => {
-	for (const configName of ["vite.config.ts", "vite.config.remote.ts"]) {
-		const configPath = path.join(frontendRoot, configName);
-		if (!fs.existsSync(configPath)) {
-			continue;
-		}
-		const contents = await fsp.readFile(configPath, "utf8");
-		const next = injectViteBenchmarkResolveGuards(
-			contents,
-			configPath,
-			frontendRoot,
-		);
-		if (next !== contents) {
-			await fsp.writeFile(configPath, next);
-		}
-	}
 };
 
 const maybeCopyFrontendCerts = async ({
@@ -337,10 +286,10 @@ const cleanupFrontendBenchmarkArtifacts = async (frontendRoot) => {
 const average = (values) =>
 	values.length > 0
 		? Number(
-				(
-					values.reduce((sum, value) => sum + value, 0) / values.length
-				).toFixed(1),
-		  )
+				(values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(
+					1,
+				),
+			)
 		: null;
 
 const summarizeUploadResults = (results) => {
@@ -367,6 +316,11 @@ const summarizeUploadResults = (results) => {
 				.map((item) => item.phaseDurationsMs?.timeToUploadSettled)
 				.filter((value) => typeof value === "number"),
 		),
+		listingDurationMsAvg: average(
+			items
+				.map((item) => item.listingDurationMs)
+				.filter((value) => typeof value === "number"),
+		),
 		writerListingLagMsAvg: average(
 			items
 				.filter((item) => item.status === "passed")
@@ -377,6 +331,16 @@ const summarizeUploadResults = (results) => {
 			items
 				.filter((item) => item.status === "passed")
 				.map((item) => item.phaseDurationsMs?.readerListingLag)
+				.filter((value) => typeof value === "number"),
+		),
+		postUploadMonitorDurationMsAvg: average(
+			items
+				.map((item) => item.postUploadMonitorDurationMs)
+				.filter((value) => typeof value === "number"),
+		),
+		downloadDurationMsAvg: average(
+			items
+				.map((item) => item.downloadDurationMs)
 				.filter((value) => typeof value === "number"),
 		),
 		errorCount: items.reduce((sum, item) => sum + item.errorCount, 0),
@@ -392,9 +356,7 @@ const summarizeSeederProbeResults = (results) => {
 		grouped.set(result.mode, arr);
 	}
 	const sampleMetric = (result, fn) =>
-		(result.samples ?? [])
-			.map(fn)
-			.filter((value) => typeof value === "number");
+		(result.samples ?? []).map(fn).filter((value) => typeof value === "number");
 	return [...grouped.entries()].map(([mode, items]) => ({
 		mode,
 		runs: items.length,
@@ -475,47 +437,13 @@ const compareUploadModes = (results) => {
 	};
 };
 
-const buildPeerbitForFileShare = (peerbitRoot) => {
-	run(
-		"pnpm",
-		[
-			"--filter", "@peerbit/build-assets...",
-			"--filter", "@peerbit/any-store-opfs...",
-			"--filter", "peerbit...",
-			"--filter", "@peerbit/react...",
-			"--filter", "@peerbit/document...",
-			"--filter", "@peerbit/shared-log...",
-			"--filter", "@peerbit/stream...",
-			"--filter", "@peerbit/crypto...",
-			"--filter", "@peerbit/trusted-network...",
-			"--filter", "@peerbit/vite...",
-			"--filter", "@peerbit/test-utils...",
-			"build",
-		],
-		{ cwd: peerbitRoot },
-	);
-};
-
 const runPlaywright = ({
 	frontendRoot,
-	scenario,
 	generatedSpecPath,
-	mode,
-	fileMb,
 	resultFile,
-	network,
-	uploadTimeoutMs,
-	postUploadMonitorMs,
-	pollMs,
-	minReadySeeders,
-	readyTimeoutMs,
-	sampleMs,
-	sampleCount,
-	targetSeeders,
-	baseUrl,
-	protocol,
-	viteMode,
-	viteConfig,
+	runNonce,
+	provenance,
+	invocation,
 }) => {
 	const startedAt = Date.now();
 	const child = spawnSync(
@@ -534,68 +462,142 @@ const runPlaywright = ({
 		{
 			cwd: frontendRoot,
 			stdio: "inherit",
-			env: {
-				...process.env,
-				PW_FILE_MB: String(fileMb),
-				PW_REPLICATION_MODE: mode,
-				PW_RESULT_FILE: resultFile,
-				PW_BENCHMARK_SCENARIO: scenario,
-				PW_NETWORK_MODE: network,
-				...(minReadySeeders != null
-					? { PW_MIN_READY_SEEDERS: String(minReadySeeders) }
-					: {}),
-				...(uploadTimeoutMs
-					? { PW_UPLOAD_TIMEOUT_MS: String(uploadTimeoutMs) }
-					: {}),
-				...(postUploadMonitorMs
-					? { PW_POST_UPLOAD_MONITOR_MS: String(postUploadMonitorMs) }
-					: {}),
-				...(pollMs ? { PW_POLL_MS: String(pollMs) } : {}),
-				...(readyTimeoutMs
-					? { PW_READY_TIMEOUT_MS: String(readyTimeoutMs) }
-					: {}),
-				...(sampleMs ? { PW_SAMPLE_MS: String(sampleMs) } : {}),
-				...(sampleCount ? { PW_SAMPLE_COUNT: String(sampleCount) } : {}),
-				...(targetSeeders
-					? { PW_TARGET_SEEDERS: String(targetSeeders) }
-					: {}),
-				...(baseUrl ? { PW_BASE_URL: baseUrl } : {}),
-				...(protocol ? { PW_PROTOCOL: protocol } : {}),
-				...(viteMode ? { PW_VITE_MODE: viteMode } : {}),
-				...(viteConfig ? { PW_VITE_CONFIG: viteConfig } : {}),
-			},
+			env: createPlaywrightBenchmarkEnvironment({
+				baseEnvironment: process.env,
+				invocation,
+				resultFile,
+				runNonce,
+				provenance,
+			}),
 		},
 	);
 	return {
 		wallTimeMs: Date.now() - startedAt,
-		exitCode: child.status ?? (child.error ? 1 : 0),
+		exitCode: child.status,
+		signal: child.signal,
+		spawnError: child.error,
 	};
+};
+
+const parsePositiveInteger = (value, label) => {
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+		throw new Error(`${label} must be a positive safe integer`);
+	}
+	return parsed;
+};
+
+const parseNonNegativeNumber = (value, label) => {
+	if (value == null) {
+		return undefined;
+	}
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed < 0) {
+		throw new Error(`${label} must be a finite non-negative number`);
+	}
+	return parsed;
+};
+
+const parseNonNegativeInteger = (value, label) => {
+	if (value == null) {
+		return undefined;
+	}
+	const parsed = Number(value);
+	if (!Number.isSafeInteger(parsed) || parsed < 0) {
+		throw new Error(`${label} must be a non-negative safe integer`);
+	}
+	return parsed;
+};
+
+const parseOptionalPositiveInteger = (value, label) =>
+	value == null ? undefined : parsePositiveInteger(value, label);
+
+const writeJsonAtomic = async (filePath, value) => {
+	await fsp.mkdir(path.dirname(filePath), { recursive: true });
+	const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+	await fsp.writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`);
+	await fsp.rename(temporaryPath, filePath);
 };
 
 const main = async () => {
 	const args = parseArgs(process.argv.slice(2));
-	const peerbitRoot = args["peerbit-root"] ?? repoRoot;
-	const examplesRoot = args["examples-root"] ?? defaultExamplesDest();
-	const freshEachRun = Boolean(args["fresh-each-run"]);
-	const fileMb = Number(args["file-mb"] ?? "25");
-	const runs = Number(args.runs ?? "1");
-	const requestedMode = args.mode ?? "both";
-	const modes = requestedMode === "both" ? ["adaptive", "fixed1"] : [requestedMode];
-	const scenario = args.scenario ?? "upload";
-	const network = args.network ?? "local";
-	const uploadTimeoutMs = args["upload-timeout-ms"];
-	const postUploadMonitorMs = args["post-upload-monitor-ms"];
-	const pollMs = args["poll-ms"];
-	const minReadySeeders = args["min-ready-seeders"];
-	const readyTimeoutMs = args["ready-timeout-ms"];
-	const sampleMs = args["sample-ms"];
-	const sampleCount = args["sample-count"];
-	const targetSeeders = args["target-seeders"];
 	const baseUrl = args["base-url"];
+	assertCoreBenchmarkUsesLocalApp(baseUrl);
+	const previewOptions = resolveBenchmarkPreviewOptions({
+		protocol: args.protocol,
+		viteMode: args["vite-mode"],
+		viteConfig: args["vite-config"],
+	});
+	const requestedSummaryFile = args["summary-file"]
+		? path.resolve(args["summary-file"])
+		: undefined;
+	const peerbitRoot = path.resolve(args["peerbit-root"] ?? repoRoot);
+	const examplesRoot = path.resolve(
+		args["examples-root"] ?? defaultExamplesDest(),
+	);
+	const freshEachRun = Boolean(args["fresh-each-run"]);
+	const fileMb = parseNonNegativeNumber(args["file-mb"] ?? "25", "--file-mb");
+	if (!Number.isSafeInteger(fileMb * 1024 * 1024)) {
+		throw new Error("--file-mb must resolve to a safe integer byte count");
+	}
+	if (fileMb <= 0) {
+		throw new Error("--file-mb must be greater than zero");
+	}
+	const runs = parsePositiveInteger(args.runs ?? "1", "--runs");
+	const requestedMode = args.mode ?? "both";
+	const modes =
+		requestedMode === "both" ? ["adaptive", "fixed1"] : [requestedMode];
+	const scenario = args.scenario ?? "upload";
+	assertBenchmarkFileSize({ scenario, fileMb });
+	const network = args.network ?? "local";
+	const uploadTimeoutMs = parseOptionalPositiveInteger(
+		args["upload-timeout-ms"],
+		"--upload-timeout-ms",
+	);
+	const downloadTimeoutMs = parseOptionalPositiveInteger(
+		args["download-timeout-ms"],
+		"--download-timeout-ms",
+	);
+	const postUploadMonitorMs = parseNonNegativeInteger(
+		args["post-upload-monitor-ms"],
+		"--post-upload-monitor-ms",
+	);
+	const pollMs = parseOptionalPositiveInteger(args["poll-ms"], "--poll-ms");
+	const minReadySeeders = parseNonNegativeInteger(
+		args["min-ready-seeders"],
+		"--min-ready-seeders",
+	);
+	const readyTimeoutMs = parseOptionalPositiveInteger(
+		args["ready-timeout-ms"],
+		"--ready-timeout-ms",
+	);
+	const sampleMs = parseOptionalPositiveInteger(
+		args["sample-ms"],
+		"--sample-ms",
+	);
+	const sampleCount = args["sample-count"]
+		? parsePositiveInteger(args["sample-count"], "--sample-count")
+		: undefined;
+	const targetSeeders = parseNonNegativeInteger(
+		args["target-seeders"],
+		"--target-seeders",
+	);
 	const examplesSource = args.source ?? defaultExamplesSource();
-	const requestedProtocol = args.protocol;
+	const fixtureSeed = args["fixture-seed"];
+	const resolvedFixtureSeed = fixtureSeed ?? "peerbit-file-share-benchmark-v1";
+	const peerbitRefLabel = args["peerbit-ref-label"] ?? "worktree";
+	const expectedPeerbitCommit =
+		args["expected-peerbit-commit"] ??
+		resolveGitCommitAt(
+			peerbitRoot,
+			peerbitRefLabel === "worktree" ? "HEAD" : peerbitRefLabel,
+		);
+	const examplesRequestedRef = args["examples-ref"] ?? "HEAD";
+	const expectedExamplesCommit = args["expected-examples-commit"];
+	const expectedExamplesLockfileSha256 =
+		args["expected-examples-lockfile-sha256"];
 	const scenarioConfig = getScenarioConfig(scenario);
-	const integrationMode = args["integration-mode"] ?? "overlay";
+	const integrationMode = args["integration-mode"] ?? "link";
 	const localPackagesArg = args["local-packages"];
 	const localPackageNames =
 		integrationMode === "none"
@@ -606,26 +608,70 @@ const main = async () => {
 						.split(",")
 						.map((value) => value.trim())
 						.filter(Boolean);
+	const effectiveLocalPackageNames = [
+		...(
+			await collectLocalPeerbitPackages(peerbitRoot, {
+				names: localPackageNames,
+			})
+		).keys(),
+	];
 
 	if (!["local", "remote"].includes(network)) {
-		throw new Error(`Unsupported --network "${network}". Expected "local" or "remote".`);
-	}
-	if (!["none", "link", "overlay"].includes(integrationMode)) {
 		throw new Error(
-			`Unsupported --integration-mode "${integrationMode}". Expected "none", "link", or "overlay".`,
+			`Unsupported --network "${network}". Expected "local" or "remote".`,
 		);
 	}
-
-	const viteMode =
-		args["vite-mode"] ??
-		(network === "remote" ? REMOTE_NETWORK_DEFAULTS.viteMode : undefined);
-	const viteConfig =
-		args["vite-config"] ??
-		(network === "remote" ? REMOTE_NETWORK_DEFAULTS.viteConfig : undefined);
-
-	if (args["build-peerbit"]) {
-		buildPeerbitForFileShare(peerbitRoot);
+	if (
+		modes.some((mode) => !["adaptive", "fixed1", "observer"].includes(mode))
+	) {
+		throw new Error(
+			`Unsupported --mode "${requestedMode}". Expected adaptive, fixed1, observer, or both.`,
+		);
 	}
+	if (!["none", "link"].includes(integrationMode)) {
+		throw new Error(
+			`Unsupported --integration-mode "${integrationMode}". Evidence-producing benchmarks require "link" so package metadata and dependencies match the selected Peerbit checkout; "none" benchmarks only the pinned published dependencies.`,
+		);
+	}
+	if (integrationMode === "link" && effectiveLocalPackageNames.length === 0) {
+		throw new Error(
+			"link integration requires at least one local Peerbit package",
+		);
+	}
+	if (requestedSummaryFile) {
+		await fsp.rm(requestedSummaryFile, { force: true });
+	}
+
+	const { protocol, viteMode, viteConfig } = previewOptions;
+	if (integrationMode === "link") {
+		run("pnpm", ["install", "--frozen-lockfile"], { cwd: peerbitRoot });
+		await cleanPeerbitBuildArtifacts({
+			peerbitRoot,
+			packageNames: effectiveLocalPackageNames,
+		});
+		buildPeerbitPackages(peerbitRoot, effectiveLocalPackageNames);
+	} else if (args["build-peerbit"]) {
+		buildPeerbitPackages(peerbitRoot, defaultFileShareLocalPackages);
+	}
+	const harnessProvenance = await getPeerbitProvenance({
+		root: repoRoot,
+		requestedRef: "harness-worktree",
+	});
+	const peerbitProvenance = await getPeerbitProvenance({
+		root: peerbitRoot,
+		requestedRef: peerbitRefLabel,
+		requireClean: Boolean(args["require-clean-peerbit"]),
+		expectedResolvedCommit: expectedPeerbitCommit,
+	});
+	const templateProvenance = args.template
+		? await getExamplesProvenance({
+				root: path.resolve(args.template),
+				requestedRef: examplesRequestedRef,
+				fallbackResolvedCommit: expectedExamplesCommit,
+				expectedResolvedCommit: expectedExamplesCommit,
+				expectedLockfileSha256: expectedExamplesLockfileSha256,
+			})
+		: undefined;
 
 	const prepareBenchmarkCheckout = async ({ fresh }) => {
 		await prepareExamplesRepo({
@@ -634,9 +680,10 @@ const main = async () => {
 			dest: examplesRoot,
 			peerbitRoot,
 			fresh,
-			install: Boolean(args.install),
+			install: false,
 			localPackageNames,
-			applyOverrides: integrationMode === "link",
+			applyOverrides: false,
+			ref: examplesRequestedRef,
 		});
 
 		const frontendRoot = path.join(
@@ -645,6 +692,17 @@ const main = async () => {
 			"file-share",
 			"frontend",
 		);
+		const examplesProvenance = await getExamplesProvenance({
+			root: examplesRoot,
+			requestedRef: examplesRequestedRef,
+			fallbackProvenance: templateProvenance,
+			fallbackResolvedCommit: expectedExamplesCommit,
+			expectedResolvedCommit:
+				expectedExamplesCommit ?? templateProvenance?.resolvedCommit,
+			expectedLockfileSha256:
+				expectedExamplesLockfileSha256 ?? templateProvenance?.lockfileSha256,
+		});
+		await installPinnedExamplesDependencies(examplesRoot);
 		await maybeCopyFrontendCerts({
 			frontendRoot,
 			sourceRoot: examplesSource,
@@ -661,98 +719,146 @@ const main = async () => {
 			outputPath: generatedSpec,
 		});
 
-		if (!fs.existsSync(path.join(examplesRoot, "node_modules"))) {
-			run("pnpm", ["install"], { cwd: examplesRoot });
-		}
 		if (integrationMode === "link") {
 			await ensureExamplesAssetPackageLinks({
 				examplesRoot,
 				peerbitRoot,
-				packageNames: localPackageNames,
-			});
-		} else if (integrationMode === "overlay") {
-			await overlayInstalledPackages({
-				examplesRoot,
-				peerbitRoot,
-				packageNames: localPackageNames,
+				packageNames: effectiveLocalPackageNames,
+				consumerRoots: getFileShareConsumerRoots(examplesRoot),
 			});
 		}
-		return { frontendRoot };
+		return { frontendRoot, examplesProvenance };
 	};
 
-	let { frontendRoot } = await prepareBenchmarkCheckout({
+	let { frontendRoot, examplesProvenance } = await prepareBenchmarkCheckout({
 		fresh: Boolean(args.fresh),
 	});
-	let protocol =
-		requestedProtocol ??
-		(network === "remote" && !baseUrl
-			? fs.existsSync(path.join(frontendRoot, ".cert", "key.pem"))
-				? "https"
-				: "http"
-			: undefined);
+	const expectedExamplesProvenance = { ...examplesProvenance };
 
 	const requestedResultsDir = args["results-dir"];
-	const resultsDir = requestedResultsDir
+	const resultsRoot = requestedResultsDir
 		? path.resolve(requestedResultsDir)
-		: await fsp.mkdtemp(path.join(os.tmpdir(), "peerbit-file-share-benchmark-"));
+		: await fsp.mkdtemp(
+				path.join(os.tmpdir(), "peerbit-file-share-benchmark-"),
+			);
 	if (requestedResultsDir) {
-		await fsp.mkdir(resultsDir, { recursive: true });
+		await fsp.mkdir(resultsRoot, { recursive: true });
 	}
+	const sessionNonce = randomUUID();
+	const resultsDir = path.join(resultsRoot, `session-${sessionNonce}`);
+	await fsp.mkdir(resultsDir, { recursive: false });
 	const results = [];
 	let benchmarkInvocationCount = 0;
+	const executionOrder = createCounterbalancedModePlan({ modes, runs });
 
-	for (const mode of modes) {
-		for (let runIndex = 1; runIndex <= runs; runIndex++) {
-			if (freshEachRun && benchmarkInvocationCount > 0) {
-				({ frontendRoot } = await prepareBenchmarkCheckout({ fresh: true }));
-				protocol =
-					requestedProtocol ??
-					(network === "remote" && !baseUrl
-						? fs.existsSync(path.join(frontendRoot, ".cert", "key.pem"))
-							? "https"
-							: "http"
-						: undefined);
-			}
-			const resultFile = path.join(resultsDir, `${mode}-${runIndex}.json`);
-			console.log(
-				`Running file-share benchmark scenario=${scenario} network=${network} mode=${mode} run=${runIndex}/${runs} fileMb=${fileMb}`,
+	for (const { sequence, mode, run: runIndex } of executionOrder) {
+		if (freshEachRun && benchmarkInvocationCount > 0) {
+			({ frontendRoot, examplesProvenance } = await prepareBenchmarkCheckout({
+				fresh: true,
+			}));
+			assertInvocationUnchanged(
+				examplesProvenance,
+				expectedExamplesProvenance,
+				"Pre-instrumentation examples provenance",
 			);
-			await cleanupFrontendBenchmarkArtifacts(frontendRoot);
-			const { wallTimeMs, exitCode } = runPlaywright({
-				frontendRoot,
-				scenario,
-				generatedSpecPath: scenarioConfig.generatedSpecPath,
-				mode,
-				fileMb,
-				resultFile,
-				network,
-				uploadTimeoutMs,
-				postUploadMonitorMs,
-				pollMs,
-				minReadySeeders,
-				readyTimeoutMs,
-				sampleMs,
-				sampleCount,
-				targetSeeders,
-				baseUrl,
-				protocol,
-				viteMode,
-				viteConfig,
-			});
-			if (!fs.existsSync(resultFile)) {
-				throw new Error(
-					`Benchmark run did not produce ${resultFile} (mode=${mode}, exitCode=${exitCode})`,
-				);
-			}
-			const result = JSON.parse(await fsp.readFile(resultFile, "utf8"));
-			results.push({
-				...result,
-				run: runIndex,
-				playwrightWallTimeMs: wallTimeMs,
-				playwrightExitCode: exitCode,
-			});
-			benchmarkInvocationCount++;
 		}
+		const runNonce = randomUUID();
+		const invocation = createBenchmarkInvocation({
+			scenario,
+			mode,
+			network,
+			integrationMode,
+			fileMb,
+			fixtureSeed: resolvedFixtureSeed,
+			uploadTimeoutMs,
+			downloadTimeoutMs,
+			postUploadMonitorMs,
+			pollMs,
+			minReadySeeders,
+			readyTimeoutMs,
+			sampleMs,
+			sampleCount,
+			targetSeeders,
+			baseUrl,
+			protocol,
+			viteMode,
+			viteConfig,
+			localPackages: effectiveLocalPackageNames,
+			enableVisibilityProbe: Boolean(args["enable-visibility-probe"]),
+			verbose: Boolean(args.verbose),
+		});
+		const resultFile = createNonceIsolatedResultPath({
+			resultsDir,
+			runNonce,
+		});
+		console.log(
+			`Running file-share benchmark sequence=${sequence}/${executionOrder.length} scenario=${scenario} network=${network} mode=${mode} run=${runIndex}/${runs} fileMb=${fileMb}`,
+		);
+		await cleanupFrontendBenchmarkArtifacts(frontendRoot);
+		await fsp.rm(resultFile, { force: true });
+		const provenance = {
+			harness: harnessProvenance,
+			peerbit: peerbitProvenance,
+			examples: examplesProvenance,
+		};
+		const { wallTimeMs, exitCode, signal, spawnError } = runPlaywright({
+			frontendRoot,
+			generatedSpecPath: scenarioConfig.generatedSpecPath,
+			resultFile,
+			runNonce,
+			provenance,
+			invocation,
+		});
+		if (spawnError) {
+			throw new Error(
+				`Could not start Playwright benchmark: ${spawnError.message}`,
+				{
+					cause: spawnError,
+				},
+			);
+		}
+		if (signal) {
+			throw new Error(`Playwright benchmark terminated by signal ${signal}`);
+		}
+		const result = await loadAndValidateBenchmarkResult({
+			resultFile,
+			exitCode,
+			scenario,
+			expectedMode: mode,
+			expectedFileMb: fileMb,
+			expectedNetwork: network,
+			expectedFixtureSeed: resolvedFixtureSeed,
+			expectedRunNonce: runNonce,
+			expectedProvenance: provenance,
+			expectedInvocation: invocation,
+		});
+		assertInvocationUnchanged(
+			await getPeerbitProvenance({
+				root: repoRoot,
+				requestedRef: "harness-worktree",
+			}),
+			harnessProvenance,
+			"Harness provenance",
+		);
+		assertInvocationUnchanged(
+			await getPeerbitProvenance({
+				root: peerbitRoot,
+				requestedRef: peerbitRefLabel,
+				requireClean: Boolean(args["require-clean-peerbit"]),
+				expectedResolvedCommit: expectedPeerbitCommit,
+			}),
+			peerbitProvenance,
+			"Peerbit provenance",
+		);
+		results.push({
+			...result,
+			run: runIndex,
+			invocationSequence: sequence,
+			resultFile,
+			playwrightWallTimeMs: wallTimeMs,
+			playwrightExitCode: exitCode,
+		});
+		benchmarkInvocationCount++;
 	}
 
 	console.log("\nPer-run results");
@@ -775,8 +881,12 @@ const main = async () => {
 					: null,
 			uploadDurationMs: result.uploadDurationMs,
 			uploadSettledMs: result.phaseDurationsMs?.timeToUploadSettled ?? null,
+			listingDurationMs: result.listingDurationMs ?? null,
 			writerListingLagMs: result.phaseDurationsMs?.writerListingLag ?? null,
 			readerListingLagMs: result.phaseDurationsMs?.readerListingLag ?? null,
+			postUploadMonitorDurationMs: result.postUploadMonitorDurationMs ?? null,
+			downloadDurationMs: result.downloadDurationMs ?? null,
+			integrityVerified: result.integrityVerified ?? null,
 			playwrightWallTimeMs: result.playwrightWallTimeMs,
 			playwrightExitCode: result.playwrightExitCode,
 			droppedSeeders: result.droppedSeeders,
@@ -792,25 +902,33 @@ const main = async () => {
 		console.table([comparison]);
 	}
 	const summary = {
+		schema: {
+			id: "peerbit-file-share-benchmark-summary",
+			version: 2,
+		},
+		sessionNonce,
+		harnessProvenance,
 		peerbitRoot,
+		peerbitProvenance,
 		examplesRoot,
+		examplesProvenance: expectedExamplesProvenance,
 		frontendRoot,
 		scenario,
 		integrationMode,
-		localPackageNames: localPackageNames ?? "all",
+		localPackageNames: effectiveLocalPackageNames,
 		network,
 		fileMb,
-			runs,
-			modes,
-			resultsDir,
-			results,
-			summary: summarizeResults(results, scenario),
-			comparison,
+		runs,
+		modes,
+		executionOrder,
+		resultsRoot,
+		resultsDir,
+		results,
+		summary: summarizeResults(results, scenario),
+		comparison,
 	};
-	if (args["summary-file"]) {
-		const summaryFile = path.resolve(args["summary-file"]);
-		await fsp.mkdir(path.dirname(summaryFile), { recursive: true });
-		await fsp.writeFile(summaryFile, `${JSON.stringify(summary, null, 2)}\n`);
+	if (requestedSummaryFile) {
+		await writeJsonAtomic(requestedSummaryFile, summary);
 	}
 	console.log(`\nRaw results: ${resultsDir}`);
 };
