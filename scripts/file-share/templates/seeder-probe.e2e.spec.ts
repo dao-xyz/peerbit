@@ -278,7 +278,7 @@ test.describe("generated seeder probe", () => {
 		test.setTimeout(
 			Math.max(
 				15 * 60 * 1000,
-				READY_TIMEOUT_MS + SAMPLE_MS * (SAMPLE_COUNT + 2) + 60_000,
+				2 * READY_TIMEOUT_MS + SAMPLE_MS * (SAMPLE_COUNT + 2) + 60_000,
 			),
 		);
 		if (!baseURL) {

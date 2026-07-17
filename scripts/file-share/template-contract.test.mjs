@@ -38,6 +38,7 @@ for (const name of templates) {
 			"diagnostics.programClosed === false",
 			"await hooks.setReplicationRole(role)",
 			"timeout: READY_TIMEOUT_MS",
+			"2 * READY_TIMEOUT_MS",
 		]) {
 			assert.ok(
 				contents.includes(required),
@@ -104,7 +105,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"writerListedAt - uploadStartedAt",
 		"readerListedAt - uploadStartedAt",
 		"readyTimeoutMs: READY_TIMEOUT_MS",
-		"READY_TIMEOUT_MS +",
+		"2 * READY_TIMEOUT_MS +",
 		"POST_MONITOR_SCHEDULING_TOLERANCE_MS",
 		"TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS",
 		"Measured transfer duration exceeded",

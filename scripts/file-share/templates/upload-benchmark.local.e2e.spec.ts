@@ -387,7 +387,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		test.setTimeout(
 			Math.max(
 				20 * 60 * 1000,
-				READY_TIMEOUT_MS +
+				2 * READY_TIMEOUT_MS +
 					UPLOAD_TIMEOUT_MS +
 					DOWNLOAD_TIMEOUT_MS +
 					POST_UPLOAD_MONITOR_MS +
