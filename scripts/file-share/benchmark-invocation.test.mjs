@@ -11,6 +11,7 @@ import {
 	createBenchmarkInvocation,
 	createNonceIsolatedResultPath,
 	createPlaywrightBenchmarkEnvironment,
+	resolveBenchmarkDownloadSink,
 	resolveBenchmarkPreviewOptions,
 	resolveBenchmarkPreviewProtocol,
 } from "./benchmark-invocation.mjs";
@@ -44,6 +45,7 @@ test("resolves every default and requested optional knob", () => {
 	});
 	assert.deepEqual(
 		{
+			downloadSink: resolved.downloadSink,
 			uploadTimeoutMs: resolved.uploadTimeoutMs,
 			downloadTimeoutMs: resolved.downloadTimeoutMs,
 			postUploadMonitorMs: resolved.postUploadMonitorMs,
@@ -63,6 +65,7 @@ test("resolves every default and requested optional knob", () => {
 			serverHost: resolved.serverHost,
 		},
 		{
+			downloadSink: "hash-only",
 			uploadTimeoutMs: 101,
 			downloadTimeoutMs: 202,
 			postUploadMonitorMs: 303,
@@ -104,6 +107,7 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 			E2E_PORT: "9998",
 			PW_BASE_URL: "https://attacker.invalid",
 			PW_FILE_MB: "999",
+			PW_DOWNLOAD_SINK: "node-file",
 			PW_POST_UPLOAD_MONITOR_MS: "0",
 			PW_PORT: "4444",
 			PW_PROTOCOL: "https",
@@ -123,6 +127,7 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.PW_BASE_URL, "");
 	assert.equal(environment.HOST, "127.0.0.1");
 	assert.equal(environment.PW_FILE_MB, "5");
+	assert.equal(environment.PW_DOWNLOAD_SINK, "hash-only");
 	assert.equal(environment.PW_POST_UPLOAD_MONITOR_MS, "5000");
 	assert.equal(environment.PW_FUTURE_BYPASS, undefined);
 	assert.equal(environment.PW_PORT, undefined);
@@ -131,6 +136,33 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.PW_VITE_CONFIG, "");
 	assert.equal(environment.PW_VITE_MODE, "");
 	assert.deepEqual(JSON.parse(environment.PW_BENCHMARK_INVOCATION), resolved);
+});
+
+test("defaults to the hash-only sink and validates explicit sink cohorts", () => {
+	assert.equal(
+		resolveBenchmarkDownloadSink(undefined, { scenario: "upload" }),
+		"hash-only",
+	);
+	for (const sink of ["hash-only", "opfs", "node-file"]) {
+		assert.equal(invocation({ downloadSink: sink }).downloadSink, sink);
+	}
+	assert.throws(
+		() => invocation({ downloadSink: "browser-download" }),
+		/Unsupported benchmark download sink/,
+	);
+	assert.equal(
+		invocation({ scenario: "seeder-probe", fileMb: 1 }).downloadSink,
+		null,
+	);
+	assert.throws(
+		() =>
+			invocation({
+				scenario: "seeder-probe",
+				fileMb: 1,
+				downloadSink: "hash-only",
+			}),
+		/only supported by upload benchmarks/,
+	);
 });
 
 test("upload benchmarks cannot exercise the TinyFile path", () => {
@@ -276,6 +308,10 @@ test("standalone runner rejects invalid integration modes before mutating output
 	try {
 		for (const [args, error] of [
 			[["--integration-mode", "overlay"], /Unsupported --integration-mode/],
+			[
+				["--download-sink", "browser-download"],
+				/Unsupported benchmark download sink/,
+			],
 			[
 				["--integration-mode", "link", "--local-packages", ","],
 				/link integration requires at least one local Peerbit package/,

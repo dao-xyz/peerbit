@@ -1,20 +1,29 @@
 import { type Page, expect, test } from "@playwright/test";
+import { SHA256 } from "@stablelib/sha256";
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
+import { sha256AndCrc32OpfsSavedViaPicker } from "./generated.opfs-readback.mjs";
 import {
 	armSavedViaPicker,
+	crc32SavedViaPicker,
 	createSpace,
 	createSyntheticFileOnDisk,
 	expectSeedersAtLeast,
 	getSeederCount,
+	installHashOnlyMockSaveFilePicker,
+	installMockSaveFilePicker,
 	installNodeBackedMockSaveFilePicker,
 	rootUrl,
 	sha256AndCrc32File,
 	waitForUploadComplete,
 	withBootstrap,
 } from "./helpers";
+import {
+	resolveBenchmarkDownloadSink,
+	summarizeReadTransferDiagnostics,
+} from "./transfer-benchmark";
 
 const FILE_SIZE_MB = Number(process.env.PW_FILE_MB || "100");
 const FILE_SIZE_BYTES = FILE_SIZE_MB * 1024 * 1024;
@@ -48,11 +57,32 @@ const ERROR_COLLECTION_DEFINITION =
 	"from collector attachment through result snapshot: every uncaught pageerror; every console.error; every console message at any level containing a known Peerbit failure signature; plus scenario-recorded operation failures";
 const REQUEST_FAILURE_COLLECTION_DEFINITION =
 	"from collector attachment through result snapshot: every Playwright requestfailed event, retained as non-fatal diagnostics and excluded from errorCount";
+const DOWNLOAD_DURATION_DEFINITION =
+	"reader-download-click-to-selected-backpressured-sink-complete";
+const SINK_WRITE_DURATION_DEFINITION =
+	"sum of browser writable.write wall-clock durations; library read diagnostics provide the authoritative awaited sink-write interval";
+const SINK_SERVER_WRITE_DURATION_DEFINITION =
+	"loopback-request-body-receive-and-node-filesystem-write-only";
+const LIBRARY_STREAM_WALL_DEFINITION =
+	"library-large-file-stream-start-to-finish including awaited sink writes";
+const SINK_WRITE_AWAIT_DEFINITION =
+	"sum of per-chunk library wall-clock intervals awaiting writable.write";
+const SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION =
+	"arithmetic library stream wall-clock duration minus summed awaited writable.write intervals; overlap-sensitive and not a sink-independent Peerbit duration";
+const PRIMARY_DOWNLOAD_METRIC = "libraryStreamWallMs";
+const PRIMARY_DOWNLOAD_METRIC_DEFINITION =
+	"authoritative only within one fixed download-sink cohort; hash-only is the standardized primary cohort and includes awaited sink writes plus any overlapping read-ahead";
+// Date.now() endpoints can undercount the nested performance.now() helper
+// interval by less than one millisecond for each chunk.
+const SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK = 1;
+// Browser performance.now() and Node hrtime measure nested intervals on
+// independent monotonic clocks; keep their aggregate drift finite per call.
+const SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK = 1;
 const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 3,
+	version: 4,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -70,6 +100,9 @@ const PROVENANCE = parseJsonEnvironment("PW_BENCHMARK_PROVENANCE");
 const INVOCATION = parseJsonEnvironment("PW_BENCHMARK_INVOCATION");
 const MODE = process.env.PW_REPLICATION_MODE || "adaptive";
 const NETWORK_MODE = process.env.PW_NETWORK_MODE || "local";
+const DOWNLOAD_SINK = resolveBenchmarkDownloadSink(
+	process.env.PW_DOWNLOAD_SINK,
+);
 const RESULT_FILE = process.env.PW_RESULT_FILE;
 const ENABLE_VISIBILITY_PROBE = process.env.PW_ENABLE_VISIBILITY_PROBE === "1";
 const MIN_READY_SEEDERS = Number(process.env.PW_MIN_READY_SEEDERS);
@@ -113,6 +146,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	fileSizeMb: FILE_SIZE_MB,
 	fileSizeBytes: FILE_SIZE_BYTES,
 	fixtureSeed: FIXTURE_SEED,
+	downloadSink: DOWNLOAD_SINK,
 	uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
 	downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
 	postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
@@ -131,7 +165,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 1
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 2
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -297,6 +331,8 @@ const probeVisibilityPath = async (page: Page) => {
 
 type ReadyManifestEvidence = {
 	capturedAt: number;
+	fileId: string;
+	fileName: string;
 	sizeBytes: number;
 	finalHash: string;
 };
@@ -329,6 +365,9 @@ const waitForReadyManifest = async (
 			if (file.finalHash !== expectedHash) {
 				throw new Error("Ready manifest hash does not match fixture SHA-256");
 			}
+			if (typeof file.id !== "string" || file.id.length === 0) {
+				throw new Error("Ready manifest is missing its stable file id");
+			}
 			const row = Array.from(document.querySelectorAll("li")).find(
 				(candidate) =>
 					Array.from(candidate.querySelectorAll("span")).some(
@@ -345,6 +384,8 @@ const waitForReadyManifest = async (
 			}
 			return {
 				capturedAt: Date.now(),
+				fileId: file.id,
+				fileName: expectedName,
 				sizeBytes: expectedSize,
 				finalHash: file.finalHash,
 			};
@@ -422,7 +463,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		const bootstrap:
 			| Awaited<ReturnType<typeof startBootstrapPeer>>
 			| undefined = usesLocalBootstrap ? await startBootstrapPeer() : undefined;
-		const fileName = `file-share-benchmark-${MODE}-${Date.now()}.bin`;
+		const fileName = `file-share-benchmark-${MODE}-${RUN_NONCE}.bin`;
 		const writerContext = await browser.newContext({ acceptDownloads: true });
 		const readerContext = await browser.newContext({ acceptDownloads: true });
 		const writer = await writerContext.newPage();
@@ -448,6 +489,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		let postMonitorFinishedAt: number | undefined;
 		let downloadStartedAt: number | undefined;
 		let downloadFinishedAt: number | undefined;
+		let downloadCompletionObservedAt: number | undefined;
 		let shareUrl: string | undefined;
 		let writerVisibilityProbe: Record<string, unknown> | null = null;
 		let readerVisibilityProbe: Record<string, unknown> | null = null;
@@ -574,11 +616,20 @@ test.describe("generated transfer-validity benchmark", () => {
 					};
 
 		try {
-			stage = "install-node-download-sink";
-			nodeSinkController = await installNodeBackedMockSaveFilePicker(reader, {
-				expectedName: fileName,
-				expectedSizeBytes: FILE_SIZE_BYTES,
-			});
+			stage = `install-${DOWNLOAD_SINK}-download-sink`;
+			if (DOWNLOAD_SINK === "node-file") {
+				nodeSinkController = await installNodeBackedMockSaveFilePicker(reader, {
+					expectedName: fileName,
+					expectedSizeBytes: FILE_SIZE_BYTES,
+				});
+			} else if (DOWNLOAD_SINK === "hash-only") {
+				await installHashOnlyMockSaveFilePicker(reader, {
+					expectedName: fileName,
+					expectedSizeBytes: FILE_SIZE_BYTES,
+				});
+			} else {
+				await installMockSaveFilePicker(reader);
+			}
 			stage = "create-space";
 			logStage(stage, { networkMode: NETWORK_MODE });
 			const entryUrl =
@@ -748,8 +799,8 @@ test.describe("generated transfer-validity benchmark", () => {
 				);
 			}
 
-			stage = "persisted-download";
-			logStage(stage);
+			stage = "download-to-selected-sink";
+			logStage(stage, { downloadSink: DOWNLOAD_SINK });
 			const row = reader.locator("li", { hasText: fileName }).first();
 			await expect(row).toBeVisible({ timeout: DOWNLOAD_TIMEOUT_MS });
 			const byTestId = row.getByTestId("download-file");
@@ -764,32 +815,202 @@ test.describe("generated transfer-validity benchmark", () => {
 				FILE_SIZE_MB,
 				DOWNLOAD_TIMEOUT_MS,
 			);
-			downloadStartedAt = Date.now();
+			const downloadClickStartedAt = Date.now();
+			downloadStartedAt = downloadClickStartedAt;
 			await downloadButton.click();
 			const download = await downloadCompletion;
-			downloadFinishedAt = Date.now();
-			cleanupDownload = download.cleanup;
-			if (download.sink !== "node-file" || !download.downloadPath) {
+			downloadCompletionObservedAt = Date.now();
+			if (
+				!Number.isSafeInteger(download.sinkCompletedAt) ||
+				download.sinkCompletedAt < downloadClickStartedAt ||
+				download.sinkCompletedAt > downloadCompletionObservedAt
+			) {
 				throw new Error(
-					"Download did not complete through the persisted Node file sink",
+					"Download sink completion timestamp is outside the click-to-observation window",
+				);
+			}
+			downloadFinishedAt = download.sinkCompletedAt;
+			cleanupDownload = download.cleanup;
+			if (download.sink !== DOWNLOAD_SINK) {
+				throw new Error(
+					`Download completed through ${download.sink}, expected ${DOWNLOAD_SINK}`,
+				);
+			}
+			if (DOWNLOAD_SINK === "node-file" && !download.downloadPath) {
+				throw new Error("Node-file download did not expose its persisted path");
+			}
+			if (DOWNLOAD_SINK !== "node-file" && download.downloadPath != null) {
+				throw new Error(
+					`${DOWNLOAD_SINK} download unexpectedly exposed a Node file path`,
 				);
 			}
 
 			stage = "verify-integrity";
-			const downloadedDigests = await sha256AndCrc32File(download.downloadPath);
+			const readerDiagnostics = await getDiagnostics(reader);
+			if (!readerDiagnostics) {
+				throw new Error("Missing reader diagnostics after sink completion");
+			}
+			const rawReadDiagnosticsValue = (
+				readerDiagnostics as Record<string, unknown>
+			).lastReadDiagnostics;
+			if (
+				rawReadDiagnosticsValue == null ||
+				typeof rawReadDiagnosticsValue !== "object" ||
+				Array.isArray(rawReadDiagnosticsValue)
+			) {
+				throw new Error("Missing completed library read diagnostics");
+			}
+			const rawReadDiagnostics = rawReadDiagnosticsValue as Record<
+				string,
+				unknown
+			>;
+			const libraryReadStartedAt = rawReadDiagnostics.startedAt;
+			const libraryReadFinishedAt = rawReadDiagnostics.finishedAt;
+			if (
+				!Number.isSafeInteger(libraryReadStartedAt) ||
+				!Number.isSafeInteger(libraryReadFinishedAt) ||
+				downloadStartedAt == null ||
+				downloadFinishedAt == null ||
+				(libraryReadStartedAt as number) < downloadStartedAt ||
+				(libraryReadFinishedAt as number) < (libraryReadStartedAt as number) ||
+				(libraryReadFinishedAt as number) > downloadFinishedAt
+			) {
+				throw new Error(
+					"Library read diagnostics are outside the clicked download window",
+				);
+			}
+			if (
+				rawReadDiagnostics.fileName !== fileName ||
+				rawReadDiagnostics.fileId !== readerManifestEvidence?.fileId ||
+				writerManifestEvidence?.fileId !== readerManifestEvidence?.fileId ||
+				typeof rawReadDiagnostics.transferId !== "string" ||
+				rawReadDiagnostics.transferId.length === 0
+			) {
+				throw new Error(
+					"Library read diagnostics do not match the clicked file manifest",
+				);
+			}
+			const summarizedReadTransfer = summarizeReadTransferDiagnostics(
+				rawReadDiagnostics,
+				expectedSizeBytes,
+			);
+			const {
+				streamReadExclusiveMs: sinkAwaitSubtractedDiagnosticMs,
+				...readTransferStages
+			} = summarizedReadTransfer.stages;
+			const readTransfer = {
+				...summarizedReadTransfer,
+				stages: {
+					...readTransferStages,
+					sinkAwaitSubtractedDiagnosticMs,
+				},
+			};
+			const libraryComputedSha256Base64 = rawReadDiagnostics.computedFinalHash;
+			if (typeof libraryComputedSha256Base64 !== "string") {
+				throw new Error("Missing library-computed download SHA-256");
+			}
+			if (
+				!Number.isSafeInteger(download.sinkWriteCalls) ||
+				(download.sinkWriteCalls ?? -1) <= 0 ||
+				download.sinkWriteCalls !== readTransfer.chunkCount ||
+				typeof download.sinkWriteDurationMs !== "number" ||
+				!Number.isFinite(download.sinkWriteDurationMs) ||
+				download.sinkWriteDurationMs < 0
+			) {
+				throw new Error("Download sink timing evidence is incomplete");
+			}
+			if (
+				download.sinkWriteDurationMs >
+				readTransfer.stages.sinkWriteAwaitMs +
+					readTransfer.chunkCount *
+						SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK
+			) {
+				throw new Error(
+					"Download sink helper duration exceeds canonical read evidence plus its bounded clock allowance",
+				);
+			}
+			if (DOWNLOAD_SINK === "node-file") {
+				if (
+					!Number.isSafeInteger(download.serverWriteCalls) ||
+					download.serverWriteCalls !== download.sinkWriteCalls ||
+					typeof download.serverWriteDurationMs !== "number" ||
+					!Number.isFinite(download.serverWriteDurationMs) ||
+					download.serverWriteDurationMs < 0
+				) {
+					throw new Error("Node-file server timing evidence is incomplete");
+				}
+				if (
+					download.serverWriteDurationMs >
+					download.sinkWriteDurationMs +
+						readTransfer.chunkCount * SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK
+				) {
+					throw new Error(
+						"Node-file server duration exceeds its browser sink duration plus the bounded clock tolerance",
+					);
+				}
+			} else if (
+				download.serverWriteCalls != null ||
+				download.serverWriteDurationMs != null
+			) {
+				throw new Error(
+					`${DOWNLOAD_SINK} download reported Node-only server timing evidence`,
+				);
+			}
+			const nodePersistedSinkDigests = download.downloadPath
+				? await sha256AndCrc32File(download.downloadPath)
+				: null;
+			const opfsPersistedSinkDigests =
+				DOWNLOAD_SINK === "opfs"
+					? await sha256AndCrc32OpfsSavedViaPicker(
+							reader,
+							fileName,
+							expectedSizeBytes,
+							() => new SHA256(),
+						)
+					: null;
+			if (
+				opfsPersistedSinkDigests &&
+				opfsPersistedSinkDigests.sizeBytes !== expectedSizeBytes
+			) {
+				throw new Error("Persisted OPFS readback size does not match fixture");
+			}
+			const persistedSinkDigests =
+				nodePersistedSinkDigests ?? opfsPersistedSinkDigests;
+			const downloadedCrc32Hex = persistedSinkDigests
+				? persistedSinkDigests.crc32Hex
+				: await crc32SavedViaPicker(reader, fileName);
 			const sizeVerified = download.size === expectedSizeBytes;
+			const librarySha256Verified =
+				libraryComputedSha256Base64 === preparedFile.fixture.sha256Base64;
+			const persistedSinkSha256Verified = persistedSinkDigests
+				? persistedSinkDigests.sha256Base64 ===
+					preparedFile.fixture.sha256Base64
+				: null;
 			const sha256Verified =
-				downloadedDigests.sha256Base64 === preparedFile.fixture.sha256Base64;
+				librarySha256Verified &&
+				(DOWNLOAD_SINK === "hash-only" || persistedSinkSha256Verified === true);
 			const crc32Verified =
-				downloadedDigests.crc32Hex === preparedFile.fixture.crc32Hex;
+				downloadedCrc32Hex === preparedFile.fixture.crc32Hex;
 			const manifestVerified =
 				writerManifestEvidence?.sizeBytes === expectedSizeBytes &&
 				readerManifestEvidence?.sizeBytes === expectedSizeBytes &&
 				writerManifestEvidence?.finalHash ===
 					preparedFile.fixture.sha256Base64 &&
 				readerManifestEvidence?.finalHash === preparedFile.fixture.sha256Base64;
+			const sinkPersistence =
+				DOWNLOAD_SINK === "hash-only" ? "none" : DOWNLOAD_SINK;
+			const sinkPersistenceVerified =
+				DOWNLOAD_SINK === "hash-only"
+					? null
+					: sizeVerified &&
+						crc32Verified &&
+						persistedSinkSha256Verified === true;
 			const integrityVerified =
-				sizeVerified && sha256Verified && crc32Verified && manifestVerified;
+				sizeVerified &&
+				sha256Verified &&
+				crc32Verified &&
+				manifestVerified &&
+				sinkPersistenceVerified !== false;
 			const integrity = {
 				fixtureMode: "deterministic",
 				fixtureFormat: preparedFile.fixture.mode,
@@ -799,12 +1020,18 @@ test.describe("generated transfer-validity benchmark", () => {
 				manifestSizeBytes: readerManifestEvidence?.sizeBytes,
 				downloadedSizeBytes: download.size,
 				sourceSha256Base64: preparedFile.fixture.sha256Base64,
-				downloadedSha256Base64: downloadedDigests.sha256Base64,
+				libraryComputedSha256Base64,
+				downloadedSha256Base64: persistedSinkDigests?.sha256Base64 ?? null,
 				manifestSha256Base64: readerManifestEvidence?.finalHash,
 				sourceCrc32Hex: preparedFile.fixture.crc32Hex,
-				downloadedCrc32Hex: downloadedDigests.crc32Hex,
+				downloadedCrc32Hex,
+				downloadSink: DOWNLOAD_SINK,
+				sinkPersistence,
+				sinkPersistenceVerified,
 				sizeVerified,
 				sha256Verified,
+				librarySha256Verified,
+				persistedSinkSha256Verified,
 				crc32Verified,
 				manifestVerified,
 				verified: integrityVerified,
@@ -834,7 +1061,8 @@ test.describe("generated transfer-validity benchmark", () => {
 				postMonitorStartedAt == null ||
 				postMonitorFinishedAt == null ||
 				downloadStartedAt == null ||
-				downloadFinishedAt == null
+				downloadFinishedAt == null ||
+				downloadCompletionObservedAt == null
 			) {
 				throw new Error("Benchmark completed without all phase timestamps");
 			}
@@ -853,7 +1081,6 @@ test.describe("generated transfer-validity benchmark", () => {
 				);
 			}
 			const writerDiagnostics = await getDiagnostics(writer);
-			const readerDiagnostics = await getDiagnostics(reader);
 			if (errors.length > 0) {
 				throw new Error(
 					`Observed transfer/delivery errors while collecting diagnostics: ${JSON.stringify(errors)}`,
@@ -869,6 +1096,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				status: "passed",
 				mode: MODE,
 				networkMode: NETWORK_MODE,
+				fileName,
 				fileSizeMb: FILE_SIZE_MB,
 				integrity,
 				integrityVerified,
@@ -893,13 +1121,34 @@ test.describe("generated transfer-validity benchmark", () => {
 				postUploadMonitorSchedulingToleranceDefinition:
 					POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION,
 				downloadDurationMs: downloadFinishedAt - downloadStartedAt,
-				downloadDurationDefinition:
-					"reader-download-click-to-backpressured-node-file-sink-complete",
+				downloadDurationDefinition: DOWNLOAD_DURATION_DEFINITION,
 				transferTimeoutSchedulingToleranceMs:
 					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
 				transferTimeoutSchedulingToleranceDefinition:
 					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
 				downloadSink: download.sink,
+				requestedDownloadSink: DOWNLOAD_SINK,
+				sinkWriteCalls: download.sinkWriteCalls,
+				sinkWriteDurationMs: download.sinkWriteDurationMs,
+				sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
+				sinkServerWriteCalls: download.serverWriteCalls ?? null,
+				sinkServerWriteDurationMs: download.serverWriteDurationMs ?? null,
+				sinkServerWriteDurationDefinition:
+					download.sink === "node-file"
+						? SINK_SERVER_WRITE_DURATION_DEFINITION
+						: null,
+				readTransfer,
+				libraryStreamWallMs: readTransfer.stages.libraryStreamWallMs,
+				libraryStreamWallDefinition: LIBRARY_STREAM_WALL_DEFINITION,
+				primaryDownloadMetric: PRIMARY_DOWNLOAD_METRIC,
+				primaryDownloadAuthoritative: DOWNLOAD_SINK === "hash-only",
+				primaryDownloadMetricDefinition: PRIMARY_DOWNLOAD_METRIC_DEFINITION,
+				sinkWriteAwaitMs: readTransfer.stages.sinkWriteAwaitMs,
+				sinkWriteAwaitDefinition: SINK_WRITE_AWAIT_DEFINITION,
+				sinkAwaitSubtractedDiagnosticMs:
+					readTransfer.stages.sinkAwaitSubtractedDiagnosticMs,
+				sinkAwaitSubtractedDiagnosticDefinition:
+					SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION,
 				phaseDurationsMs,
 				timestamps: {
 					uploadStartedAt,
@@ -912,6 +1161,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					postMonitorFinishedAt,
 					downloadStartedAt,
 					downloadFinishedAt,
+					downloadCompletionObservedAt,
 				},
 				writerManifestEvidence,
 				readerManifestEvidence,
@@ -959,6 +1209,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				networkMode: NETWORK_MODE,
 				fileSizeMb: FILE_SIZE_MB,
 				stage,
+				requestedDownloadSink: DOWNLOAD_SINK,
 				integrityVerified: false,
 				phaseDurationsMs: getPhaseDurations(),
 				postUploadMonitorSchedulingToleranceMs:

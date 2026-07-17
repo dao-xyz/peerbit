@@ -2,17 +2,17 @@ import fsp from "node:fs/promises";
 
 export const BENCHMARK_RESULT_SCHEMA = Object.freeze({
 	id: "peerbit-file-share-benchmark",
-	version: 3,
+	version: 4,
 });
 
 export const BENCHMARK_SUMMARY_SCHEMA = Object.freeze({
 	id: "peerbit-file-share-benchmark-summary",
-	version: 3,
+	version: 4,
 });
 
 export const MATRIX_SUMMARY_SCHEMA = Object.freeze({
 	id: "peerbit-file-share-matrix-summary",
-	version: 3,
+	version: 4,
 });
 
 export const KNOWN_PEERBIT_FAILURE_SIGNATURES = Object.freeze([

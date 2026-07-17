@@ -24,7 +24,7 @@ const EFFECTIVE_SAMPLE_INTERVAL_MS = Math.max(
 );
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 3,
+	version: 4,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -69,7 +69,7 @@ if (!Number.isSafeInteger(TARGET_SEEDERS) || TARGET_SEEDERS < 0) {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 1
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 2
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }

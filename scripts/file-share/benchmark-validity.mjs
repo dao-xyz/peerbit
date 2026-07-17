@@ -25,6 +25,29 @@ const TIME_TO_READER_READY_DEFINITION =
 	"upload-input-set-to-reader-ready-manifest-listed";
 const LISTING_DURATION_DEFINITION =
 	"post-upload-settlement-to-both-writer-and-reader-ready-manifests-listed; excludes upload time";
+const DOWNLOAD_DURATION_DEFINITION =
+	"reader-download-click-to-selected-backpressured-sink-complete";
+const SINK_WRITE_DURATION_DEFINITION =
+	"sum of browser writable.write wall-clock durations; library read diagnostics provide the authoritative awaited sink-write interval";
+const SINK_SERVER_WRITE_DURATION_DEFINITION =
+	"loopback-request-body-receive-and-node-filesystem-write-only";
+const LIBRARY_STREAM_WALL_DEFINITION =
+	"library-large-file-stream-start-to-finish including awaited sink writes";
+const SINK_WRITE_AWAIT_DEFINITION =
+	"sum of per-chunk library wall-clock intervals awaiting writable.write";
+const SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION =
+	"arithmetic library stream wall-clock duration minus summed awaited writable.write intervals; overlap-sensitive and not a sink-independent Peerbit duration";
+const PRIMARY_DOWNLOAD_METRIC = "libraryStreamWallMs";
+const PRIMARY_DOWNLOAD_METRIC_DEFINITION =
+	"authoritative only within one fixed download-sink cohort; hash-only is the standardized primary cohort and includes awaited sink writes plus any overlapping read-ahead";
+const DEMAND_WAIT_DEFINITION =
+	"wall-clock time each sequential stream consumer awaited its scheduled chunk";
+// Date.now() endpoints can undercount the nested performance.now() helper
+// interval by less than one millisecond for each chunk.
+const SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK = 1;
+// Browser performance.now() and Node hrtime measure nested intervals on
+// independent monotonic clocks; keep their aggregate drift finite per call.
+const SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK = 1;
 
 const isRecord = (value) =>
 	value != null && typeof value === "object" && !Array.isArray(value);
@@ -50,6 +73,20 @@ const requireNonNegativeNumber = (value, label) => {
 	return value;
 };
 
+export const calculateSinkAwaitSubtractedDiagnosticMs = ({
+	libraryStreamWallMs,
+	sinkWriteAwaitMs,
+}) => {
+	requireNonNegativeNumber(libraryStreamWallMs, "libraryStreamWallMs");
+	requireNonNegativeNumber(sinkWriteAwaitMs, "sinkWriteAwaitMs");
+	if (sinkWriteAwaitMs > libraryStreamWallMs) {
+		throw new Error(
+			"Benchmark sink-write intervals exceed the library stream wall time",
+		);
+	}
+	return libraryStreamWallMs - sinkWriteAwaitMs;
+};
+
 const requirePositiveNumber = (value, label) => {
 	const parsed = requireNonNegativeNumber(value, label);
 	if (parsed <= 0) {
@@ -70,6 +107,14 @@ const requireNonNegativeSafeInteger = (value, label) => {
 		throw new Error(`Benchmark result has invalid ${label}`);
 	}
 	return value;
+};
+
+const requirePositiveSafeInteger = (value, label) => {
+	const parsed = requireNonNegativeSafeInteger(value, label);
+	if (parsed <= 0) {
+		throw new Error(`Benchmark result has non-positive ${label}`);
+	}
+	return parsed;
 };
 
 const requirePattern = (value, pattern, label) => {
@@ -108,6 +153,7 @@ const validateUploadIntegrity = (
 	result,
 	expectedFileMb,
 	expectedFixtureSeed,
+	invocation,
 ) => {
 	const integrity = requireRecord(result.integrity, "integrity");
 	if (integrity.fixtureMode !== "deterministic") {
@@ -144,17 +190,62 @@ const validateUploadIntegrity = (
 		SHA256_BASE64_PATTERN,
 		"integrity.manifestSha256Base64",
 	);
-	const downloadedSha256 = requirePattern(
-		integrity.downloadedSha256Base64,
+	const librarySha256 = requirePattern(
+		integrity.libraryComputedSha256Base64,
 		SHA256_BASE64_PATTERN,
-		"integrity.downloadedSha256Base64",
+		"integrity.libraryComputedSha256Base64",
 	);
 	if (
 		integrity.sha256Verified !== true ||
+		integrity.librarySha256Verified !== true ||
 		sourceSha256 !== manifestSha256 ||
-		sourceSha256 !== downloadedSha256
+		sourceSha256 !== librarySha256
 	) {
 		throw new Error("Benchmark result failed its SHA-256 integrity gate");
+	}
+	if (
+		result.downloadSink !== invocation.downloadSink ||
+		result.requestedDownloadSink !== invocation.downloadSink ||
+		integrity.downloadSink !== invocation.downloadSink
+	) {
+		throw new Error(
+			"Benchmark result download sink does not match the requested invocation",
+		);
+	}
+	if (["opfs", "node-file"].includes(invocation.downloadSink)) {
+		const downloadedSha256 = requirePattern(
+			integrity.downloadedSha256Base64,
+			SHA256_BASE64_PATTERN,
+			"integrity.downloadedSha256Base64",
+		);
+		if (
+			downloadedSha256 !== sourceSha256 ||
+			integrity.persistedSinkSha256Verified !== true ||
+			integrity.sinkPersistence !== invocation.downloadSink ||
+			integrity.sinkPersistenceVerified !== true
+		) {
+			throw new Error(
+				`Benchmark result failed its persisted ${invocation.downloadSink} SHA-256 integrity gate`,
+			);
+		}
+	} else {
+		if (
+			integrity.downloadedSha256Base64 !== null ||
+			integrity.persistedSinkSha256Verified !== null
+		) {
+			throw new Error(
+				"Hash-only benchmark sink must not claim persisted SHA-256 evidence",
+			);
+		}
+		if (
+			invocation.downloadSink !== "hash-only" ||
+			integrity.sinkPersistence !== "none" ||
+			integrity.sinkPersistenceVerified !== null
+		) {
+			throw new Error(
+				"Hash-only benchmark sink must not claim file persistence",
+			);
+		}
 	}
 
 	const sourceCrc32 = requirePattern(
@@ -175,11 +266,362 @@ const validateUploadIntegrity = (
 	}
 };
 
-const validateUploadTimings = (result, invocation) => {
-	if (result.downloadSink !== "node-file") {
+const requireExactDiagnosticSeries = (
+	diagnostics,
+	name,
+	indices,
+	requireValue = requireNonNegativeNumber,
+) => {
+	const record = requireRecord(diagnostics[name], `readerDiagnostics.${name}`);
+	const expectedKeys = indices.map(String);
+	const expectedKeySet = new Set(expectedKeys);
+	const actualKeys = Object.keys(record);
+	if (
+		actualKeys.length !== expectedKeys.length ||
+		expectedKeys.some((key) => !Object.hasOwn(record, key)) ||
+		actualKeys.some((key) => !expectedKeySet.has(key))
+	) {
 		throw new Error(
-			"Benchmark result did not use the persisted Node file sink",
+			`Benchmark readerDiagnostics.${name} must use the exact canonical chunk keys`,
 		);
+	}
+	return indices.map((index) =>
+		requireValue(record[index], `readerDiagnostics.${name}[${index}]`),
+	);
+};
+
+const nearestRank = (values, percentile) => {
+	const sorted = [...values].toSorted((left, right) => left - right);
+	return sorted[Math.ceil((percentile / 100) * sorted.length) - 1];
+};
+
+const sum = (values) => values.reduce((total, value) => total + value, 0);
+
+const requireBoundedDiagnosticIntervals = ({
+	diagnostics,
+	indices,
+	startedName,
+	finishedName,
+	readStartedAt,
+	readFinishedAt,
+	ordered = false,
+}) => {
+	const started = requireExactDiagnosticSeries(
+		diagnostics,
+		startedName,
+		indices,
+		requireNonNegativeSafeInteger,
+	);
+	const finished = requireExactDiagnosticSeries(
+		diagnostics,
+		finishedName,
+		indices,
+		requireNonNegativeSafeInteger,
+	);
+	const durations = [];
+	for (const [offset, index] of indices.entries()) {
+		if (
+			started[offset] < readStartedAt ||
+			finished[offset] > readFinishedAt ||
+			finished[offset] < started[offset]
+		) {
+			throw new Error(
+				`Benchmark ${startedName}/${finishedName} interval for chunk ${index} is outside the library read window`,
+			);
+		}
+		if (ordered && offset > 0 && started[offset] < finished[offset - 1]) {
+			throw new Error(
+				"Benchmark chunk sink-write intervals must be ordered and non-overlapping",
+			);
+		}
+		durations.push(finished[offset] - started[offset]);
+	}
+	return { started, finished, durations };
+};
+
+const validateReadTransferEvidence = (
+	result,
+	invocation,
+	{ downloadStartedAt, downloadFinishedAt },
+) => {
+	const readerDiagnostics = requireRecord(
+		result.readerDiagnostics,
+		"readerDiagnostics",
+	);
+	const diagnostics = requireRecord(
+		readerDiagnostics.lastReadDiagnostics,
+		"readerDiagnostics.lastReadDiagnostics",
+	);
+	const resolved = requireRecord(
+		diagnostics.chunkResolved,
+		"readerDiagnostics.chunkResolved",
+	);
+	const resolvedKeys = Object.keys(resolved);
+	const indices = resolvedKeys
+		.map((key) => Number(key))
+		.toSorted((left, right) => left - right);
+	if (
+		indices.length < 2 ||
+		resolvedKeys.some((key) => !/^(?:0|[1-9]\d*)$/.test(key)) ||
+		indices.some(
+			(index, offset) => !Number.isSafeInteger(index) || index !== offset,
+		)
+	) {
+		throw new Error(
+			"Benchmark large-file read diagnostics must contain at least two contiguous canonical chunk indices",
+		);
+	}
+	const startedAt = requirePositiveSafeInteger(
+		diagnostics.startedAt,
+		"readerDiagnostics.startedAt",
+	);
+	const finishedAt = requirePositiveSafeInteger(
+		diagnostics.finishedAt,
+		"readerDiagnostics.finishedAt",
+	);
+	if (
+		startedAt < downloadStartedAt ||
+		finishedAt < startedAt ||
+		finishedAt > downloadFinishedAt
+	) {
+		throw new Error(
+			"Benchmark library read window is outside the clicked download window",
+		);
+	}
+	const expectedFileName = `file-share-benchmark-${result.mode}-${result.runNonce}.bin`;
+	const writerManifest = requireRecord(
+		result.writerManifestEvidence,
+		"writerManifestEvidence",
+	);
+	const readerManifest = requireRecord(
+		result.readerManifestEvidence,
+		"readerManifestEvidence",
+	);
+	const writerFileId = requireString(
+		writerManifest.fileId,
+		"writerManifestEvidence.fileId",
+	);
+	const readerFileId = requireString(
+		readerManifest.fileId,
+		"readerManifestEvidence.fileId",
+	);
+	if (
+		result.fileName !== expectedFileName ||
+		diagnostics.fileName !== expectedFileName ||
+		writerManifest.fileName !== expectedFileName ||
+		readerManifest.fileName !== expectedFileName ||
+		writerFileId !== readerFileId ||
+		diagnostics.fileId !== readerFileId
+	) {
+		throw new Error(
+			"Benchmark library read identity does not match the clicked file manifest",
+		);
+	}
+	requireString(diagnostics.transferId, "readerDiagnostics.transferId");
+
+	const chunkBytes = requireExactDiagnosticSeries(
+		diagnostics,
+		"chunkByteLength",
+		indices,
+		requireNonNegativeSafeInteger,
+	);
+	if (chunkBytes.some((value) => value <= 0)) {
+		throw new Error(
+			"Benchmark read diagnostics contain invalid chunk byte lengths",
+		);
+	}
+	const totalBytes = chunkBytes.reduce((sum, value) => sum + value, 0);
+	if (totalBytes !== invocation.fileSizeBytes) {
+		throw new Error(
+			"Benchmark read diagnostics do not cover the requested file size",
+		);
+	}
+	const sourceSummary = {};
+	for (const [offset, index] of indices.entries()) {
+		const source = requireString(
+			resolved[index],
+			`readerDiagnostics.chunkResolved[${index}]`,
+		);
+		const current = (sourceSummary[source] ??= { chunkCount: 0, bytes: 0 });
+		current.chunkCount += 1;
+		current.bytes += chunkBytes[offset];
+	}
+	const demandWaitMs = requireExactDiagnosticSeries(
+		diagnostics,
+		"chunkDemandWaitMs",
+		indices,
+		requireNonNegativeSafeInteger,
+	);
+	const writeIntervals = requireBoundedDiagnosticIntervals({
+		diagnostics,
+		indices,
+		startedName: "chunkWriteStartedAt",
+		finishedName: "chunkWriteFinishedAt",
+		readStartedAt: startedAt,
+		readFinishedAt: finishedAt,
+		ordered: true,
+	});
+	const materializeIntervals = requireBoundedDiagnosticIntervals({
+		diagnostics,
+		indices,
+		startedName: "chunkMaterializeStartedAt",
+		finishedName: "chunkMaterializeFinishedAt",
+		readStartedAt: startedAt,
+		readFinishedAt: finishedAt,
+	});
+	const hashIntervals = requireBoundedDiagnosticIntervals({
+		diagnostics,
+		indices,
+		startedName: "chunkHashStartedAt",
+		finishedName: "chunkHashFinishedAt",
+		readStartedAt: startedAt,
+		readFinishedAt: finishedAt,
+	});
+	const libraryStreamWallMs = finishedAt - startedAt;
+	const sinkWriteAwaitMs = sum(writeIntervals.durations);
+	const sinkAwaitSubtractedDiagnosticMs =
+		calculateSinkAwaitSubtractedDiagnosticMs({
+			libraryStreamWallMs,
+			sinkWriteAwaitMs,
+		});
+	const demandWaitSumMs = sum(demandWaitMs);
+	const materializeSumMs = sum(materializeIntervals.durations);
+	const contentHashSumMs = sum(hashIntervals.durations);
+	const sortedSourceSummary = Object.fromEntries(
+		Object.entries(sourceSummary).sort(([left], [right]) =>
+			left.localeCompare(right),
+		),
+	);
+	const expectedReadTransfer = {
+		chunkCount: indices.length,
+		totalBytes,
+		sources: sortedSourceSummary,
+		demandWait: {
+			definition: DEMAND_WAIT_DEFINITION,
+			sampleCount: demandWaitMs.length,
+			sumMs: demandWaitSumMs,
+			p50Ms: nearestRank(demandWaitMs, 50),
+			p95Ms: nearestRank(demandWaitMs, 95),
+			p99Ms: nearestRank(demandWaitMs, 99),
+			maxMs: Math.max(...demandWaitMs),
+			over1sCount: demandWaitMs.filter((value) => value > 1_000).length,
+			over5sCount: demandWaitMs.filter((value) => value > 5_000).length,
+			over10sCount: demandWaitMs.filter((value) => value > 10_000).length,
+		},
+		stages: {
+			libraryStreamWallMs,
+			sinkWriteAwaitMs,
+			sinkAwaitSubtractedDiagnosticMs,
+			demandWaitMs: demandWaitSumMs,
+			materializeMs: materializeSumMs,
+			contentHashMs: contentHashSumMs,
+			otherStreamReadMs: Math.max(
+				0,
+				sinkAwaitSubtractedDiagnosticMs -
+					demandWaitSumMs -
+					materializeSumMs -
+					contentHashSumMs,
+			),
+		},
+	};
+	if (
+		!isDeepStrictEqual(result.readTransfer, expectedReadTransfer) ||
+		result.libraryStreamWallMs !== libraryStreamWallMs ||
+		result.sinkWriteAwaitMs !== sinkWriteAwaitMs ||
+		result.sinkAwaitSubtractedDiagnosticMs !== sinkAwaitSubtractedDiagnosticMs
+	) {
+		throw new Error(
+			"Benchmark result read-transfer timing decomposition is inconsistent",
+		);
+	}
+	const computedFinalHash = requirePattern(
+		diagnostics.computedFinalHash,
+		SHA256_BASE64_PATTERN,
+		"readerDiagnostics.computedFinalHash",
+	);
+	if (computedFinalHash !== result.integrity.libraryComputedSha256Base64) {
+		throw new Error(
+			"Benchmark raw reader SHA-256 contradicts its integrity evidence",
+		);
+	}
+	if (
+		result.libraryStreamWallDefinition !== LIBRARY_STREAM_WALL_DEFINITION ||
+		result.sinkWriteAwaitDefinition !== SINK_WRITE_AWAIT_DEFINITION ||
+		result.sinkAwaitSubtractedDiagnosticDefinition !==
+			SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION ||
+		result.primaryDownloadMetric !== PRIMARY_DOWNLOAD_METRIC ||
+		result.primaryDownloadAuthoritative !==
+			(invocation.downloadSink === "hash-only") ||
+		result.primaryDownloadMetricDefinition !==
+			PRIMARY_DOWNLOAD_METRIC_DEFINITION
+	) {
+		throw new Error(
+			"Benchmark result read-transfer timing definitions are invalid",
+		);
+	}
+	const sinkWriteCalls = requireNonNegativeSafeInteger(
+		result.sinkWriteCalls,
+		"sinkWriteCalls",
+	);
+	if (sinkWriteCalls !== indices.length || sinkWriteCalls === 0) {
+		throw new Error(
+			"Benchmark sink write count does not match the read chunk count",
+		);
+	}
+	if (result.sinkWriteDurationDefinition !== SINK_WRITE_DURATION_DEFINITION) {
+		throw new Error("Benchmark sink-write duration definition is invalid");
+	}
+	const sinkWriteDurationMs = requireNonNegativeNumber(
+		result.sinkWriteDurationMs,
+		"sinkWriteDurationMs",
+	);
+	if (
+		sinkWriteDurationMs >
+		sinkWriteAwaitMs +
+			indices.length * SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK
+	) {
+		throw new Error(
+			"Benchmark sink-write helper duration exceeds canonical read evidence plus its per-chunk clock allowance",
+		);
+	}
+	if (invocation.downloadSink === "node-file") {
+		if (
+			requireNonNegativeSafeInteger(
+				result.sinkServerWriteCalls,
+				"sinkServerWriteCalls",
+			) !== sinkWriteCalls ||
+			result.sinkServerWriteDurationDefinition !==
+				SINK_SERVER_WRITE_DURATION_DEFINITION
+		) {
+			throw new Error("Benchmark Node-file server write evidence is invalid");
+		}
+		const sinkServerWriteDurationMs = requireNonNegativeNumber(
+			result.sinkServerWriteDurationMs,
+			"sinkServerWriteDurationMs",
+		);
+		if (
+			sinkServerWriteDurationMs >
+			sinkWriteDurationMs +
+				indices.length * SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK
+		) {
+			throw new Error(
+				"Benchmark Node-file server duration exceeds its browser sink duration plus the bounded clock tolerance",
+			);
+		}
+	} else if (
+		result.sinkServerWriteCalls !== null ||
+		result.sinkServerWriteDurationMs !== null ||
+		result.sinkServerWriteDurationDefinition !== null
+	) {
+		throw new Error(
+			"Non-Node benchmark sink contains Node-only server timing evidence",
+		);
+	}
+};
+
+const validateUploadTimings = (result, invocation) => {
+	if (result.downloadDurationDefinition !== DOWNLOAD_DURATION_DEFINITION) {
+		throw new Error("Benchmark download duration definition is invalid");
 	}
 	const phases = requireRecord(result.phaseDurationsMs, "phaseDurationsMs");
 	const uploadSettledMs = requireNonNegativeNumber(
@@ -261,13 +703,17 @@ const validateUploadTimings = (result, invocation) => {
 		timestamps.postMonitorFinishedAt,
 		"timestamps.postMonitorFinishedAt",
 	);
-	const downloadStartedAt = requirePositiveNumber(
+	const downloadStartedAt = requirePositiveSafeInteger(
 		timestamps.downloadStartedAt,
 		"timestamps.downloadStartedAt",
 	);
-	const downloadFinishedAt = requirePositiveNumber(
+	const downloadFinishedAt = requirePositiveSafeInteger(
 		timestamps.downloadFinishedAt,
 		"timestamps.downloadFinishedAt",
+	);
+	const downloadCompletionObservedAt = requirePositiveSafeInteger(
+		timestamps.downloadCompletionObservedAt,
+		"timestamps.downloadCompletionObservedAt",
 	);
 	if (
 		uploadSettledAt <= uploadStartedAt ||
@@ -280,7 +726,8 @@ const validateUploadTimings = (result, invocation) => {
 			Math.max(uploadSettledAt, writerListedAt, readerListedAt) ||
 		postMonitorFinishedAt < postMonitorStartedAt ||
 		downloadStartedAt < postMonitorFinishedAt ||
-		downloadFinishedAt <= downloadStartedAt
+		downloadFinishedAt < downloadStartedAt ||
+		downloadFinishedAt > downloadCompletionObservedAt
 	) {
 		throw new Error("Benchmark phase timestamps are not monotonic");
 	}
@@ -372,6 +819,10 @@ const validateUploadTimings = (result, invocation) => {
 			"Measured transfer duration exceeded its requested timeout and scheduling tolerance",
 		);
 	}
+	validateReadTransferEvidence(result, invocation, {
+		downloadStartedAt,
+		downloadFinishedAt,
+	});
 };
 
 const validateGitProvenance = (value, label) => {
@@ -427,7 +878,7 @@ const validateEnvelope = (
 	);
 	if (
 		invocationSchema.id !== "peerbit-file-share-benchmark-invocation" ||
-		invocationSchema.version !== 1
+		invocationSchema.version !== 2
 	) {
 		throw new Error("Benchmark result has an unsupported invocation schema");
 	}
@@ -874,7 +1325,12 @@ export const validateBenchmarkResult = (
 		throw new Error(`Benchmark result status is not passed${detail}`);
 	}
 	if (scenario === "upload") {
-		validateUploadIntegrity(result, expectedFileMb, expectedFixtureSeed);
+		validateUploadIntegrity(
+			result,
+			expectedFileMb,
+			expectedFixtureSeed,
+			expectedInvocation,
+		);
 		validateUploadTimings(result, expectedInvocation);
 		validateRequestedUploadKnobs(result, expectedInvocation);
 		validateZeroErrors(result, "upload result");

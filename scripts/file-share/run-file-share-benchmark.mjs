@@ -11,17 +11,18 @@ import {
 	createBenchmarkInvocation,
 	createNonceIsolatedResultPath,
 	createPlaywrightBenchmarkEnvironment,
+	resolveBenchmarkDownloadSink,
 	resolveBenchmarkPreviewOptions,
 } from "./benchmark-invocation.mjs";
 import {
 	BENCHMARK_SUMMARY_SCHEMA,
+	ERROR_COLLECTION_DEFINITION,
+	KNOWN_PEERBIT_FAILURE_SIGNATURES,
+	REQUEST_FAILURE_COLLECTION_DEFINITION,
 	countBenchmarkOutcomes,
 	createInvocationFailureEvidence,
-	ERROR_COLLECTION_DEFINITION,
 	executePlanContinuing,
-	KNOWN_PEERBIT_FAILURE_SIGNATURES,
 	readJsonEvidence,
-	REQUEST_FAILURE_COLLECTION_DEFINITION,
 } from "./benchmark-orchestration.mjs";
 import {
 	getExamplesProvenance,
@@ -29,7 +30,8 @@ import {
 	resolveGitCommitAt,
 } from "./benchmark-provenance.mjs";
 import {
-	compareUploadPerformanceModes,
+	compareUploadPerformanceModesForCompletePlan,
+	isCompletePassedBenchmarkPlan,
 	summarizeUploadPerformance,
 	uploadTimingTableColumns,
 } from "./benchmark-summary.mjs";
@@ -66,6 +68,18 @@ const SCENARIOS = {
 			"tests",
 			"generated.upload-benchmark.e2e.spec.ts",
 		),
+		supportFiles: [
+			{
+				templatePath: path.join(
+					repoRoot,
+					"scripts",
+					"file-share",
+					"templates",
+					"opfs-readback.mjs",
+				),
+				generatedPath: path.join("tests", "generated.opfs-readback.mjs"),
+			},
+		],
 	},
 	"seeder-probe": {
 		templatePath: path.join(
@@ -570,6 +584,9 @@ const main = async () => {
 		requestedMode === "both" ? ["adaptive", "fixed1"] : [requestedMode];
 	const scenario = args.scenario ?? "upload";
 	assertBenchmarkFileSize({ scenario, fileMb });
+	const downloadSink = resolveBenchmarkDownloadSink(args["download-sink"], {
+		scenario,
+	});
 	const network = args.network ?? "local";
 	const uploadTimeoutMs = parseOptionalPositiveInteger(
 		args["upload-timeout-ms"],
@@ -739,6 +756,12 @@ const main = async () => {
 			templatePath: scenarioConfig.templatePath,
 			outputPath: generatedSpec,
 		});
+		for (const supportFile of scenarioConfig.supportFiles ?? []) {
+			await copyTemplate({
+				templatePath: supportFile.templatePath,
+				outputPath: path.join(frontendRoot, supportFile.generatedPath),
+			});
+		}
 
 		if (integrationMode === "link") {
 			await ensureExamplesAssetPackageLinks({
@@ -786,6 +809,7 @@ const main = async () => {
 				integrationMode,
 				fileMb,
 				fixtureSeed: resolvedFixtureSeed,
+				downloadSink,
 				uploadTimeoutMs,
 				downloadTimeoutMs,
 				postUploadMonitorMs,
@@ -988,7 +1012,12 @@ const main = async () => {
 			writerListingLagMs: result.phaseDurationsMs?.writerListingLag ?? null,
 			readerListingLagMs: result.phaseDurationsMs?.readerListingLag ?? null,
 			postUploadMonitorDurationMs: result.postUploadMonitorDurationMs ?? null,
+			downloadSink: result.downloadSink ?? null,
 			downloadDurationMs: result.downloadDurationMs ?? null,
+			libraryStreamWallMs: result.libraryStreamWallMs ?? null,
+			sinkWriteAwaitMs: result.sinkWriteAwaitMs ?? null,
+			sinkAwaitSubtractedDiagnosticMs:
+				result.sinkAwaitSubtractedDiagnosticMs ?? null,
 			integrityVerified: result.integrityVerified ?? null,
 			playwrightWallTimeMs: result.playwrightWallTimeMs,
 			playwrightExitCode: result.playwrightExitCode,
@@ -1005,18 +1034,21 @@ const main = async () => {
 	);
 	console.log("\nSummary");
 	console.table(summarizeResults(results, scenario));
+	const outcomeCounts = countBenchmarkOutcomes(results, executionOrder.length);
+	const planPassed = isCompletePassedBenchmarkPlan(results, outcomeCounts);
 	const comparison =
-		scenario === "upload" ? compareUploadPerformanceModes(results) : null;
+		scenario === "upload"
+			? compareUploadPerformanceModesForCompletePlan(results, outcomeCounts)
+			: null;
 	if (comparison) {
 		console.log("\nAdaptive vs fixed1");
 		console.table([comparison]);
 	}
-	const outcomeCounts = countBenchmarkOutcomes(results, executionOrder.length);
 	console.log("\nOutcome counts");
 	console.table([outcomeCounts]);
 	const summary = {
 		schema: BENCHMARK_SUMMARY_SCHEMA,
-		status: outcomeCounts.failed === 0 ? "passed" : "failed",
+		status: planPassed ? "passed" : "failed",
 		outcomeCounts,
 		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
 		knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
@@ -1029,6 +1061,7 @@ const main = async () => {
 		examplesProvenance: expectedExamplesProvenance,
 		frontendRoot,
 		scenario,
+		downloadSink,
 		integrationMode,
 		localPackageNames: effectiveLocalPackageNames,
 		network,
@@ -1046,7 +1079,7 @@ const main = async () => {
 	await writeJsonAtomic(aggregateSummaryFile, summary);
 	console.log(`\nRaw results: ${resultsDir}`);
 	console.log(`Aggregate summary: ${aggregateSummaryFile}`);
-	if (outcomeCounts.failed > 0) {
+	if (!planPassed) {
 		process.exitCode = 1;
 	}
 };

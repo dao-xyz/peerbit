@@ -3,12 +3,18 @@ import { isDeepStrictEqual } from "node:util";
 
 export const BENCHMARK_INVOCATION_SCHEMA = {
 	id: "peerbit-file-share-benchmark-invocation",
-	version: 1,
+	version: 2,
 };
 
 export const TINY_FILE_CUTOFF_BYTES = 5_000_000;
 export const BENCHMARK_SERVER_MODE = "production-preview";
 export const BENCHMARK_SERVER_HOST = "127.0.0.1";
+export const BENCHMARK_DOWNLOAD_SINKS = Object.freeze([
+	"hash-only",
+	"opfs",
+	"node-file",
+]);
+export const DEFAULT_BENCHMARK_DOWNLOAD_SINK = "hash-only";
 
 const DEPLOYED_APP_HARNESS_MESSAGE =
 	"The locally instrumented core benchmark harness cannot use --base-url because it cannot attribute an external deployment to the selected Peerbit checkout; use a dedicated deployed-app benchmark harness that records deployment provenance";
@@ -28,6 +34,23 @@ const asNullableString = (value) => {
 		return null;
 	}
 	return String(value);
+};
+
+export const resolveBenchmarkDownloadSink = (requestedSink, { scenario }) => {
+	const sink = asNullableString(requestedSink);
+	if (scenario !== "upload") {
+		if (sink !== null) {
+			throw new Error("--download-sink is only supported by upload benchmarks");
+		}
+		return null;
+	}
+	const resolved = sink ?? DEFAULT_BENCHMARK_DOWNLOAD_SINK;
+	if (!BENCHMARK_DOWNLOAD_SINKS.includes(resolved)) {
+		throw new Error(
+			`Unsupported benchmark download sink ${JSON.stringify(resolved)}; expected one of ${BENCHMARK_DOWNLOAD_SINKS.join(", ")}`,
+		);
+	}
+	return resolved;
 };
 
 export const resolveBenchmarkPreviewProtocol = (requestedProtocol) => {
@@ -133,6 +156,7 @@ export const createBenchmarkInvocation = ({
 	integrationMode,
 	fileMb,
 	fixtureSeed,
+	downloadSink,
 	uploadTimeoutMs,
 	downloadTimeoutMs,
 	postUploadMonitorMs,
@@ -171,6 +195,9 @@ export const createBenchmarkInvocation = ({
 		viteConfig,
 	});
 	const sizeBytes = assertBenchmarkFileSize({ scenario, fileMb });
+	const resolvedDownloadSink = resolveBenchmarkDownloadSink(downloadSink, {
+		scenario,
+	});
 	if (typeof fixtureSeed !== "string" || fixtureSeed.length === 0) {
 		throw new Error("fixtureSeed must be a non-empty string");
 	}
@@ -221,6 +248,7 @@ export const createBenchmarkInvocation = ({
 		fileSizeMb: fileMb,
 		fileSizeBytes: sizeBytes,
 		fixtureSeed,
+		downloadSink: resolvedDownloadSink,
 		uploadTimeoutMs: resolvedUploadTimeoutMs,
 		downloadTimeoutMs: resolvedDownloadTimeoutMs,
 		postUploadMonitorMs: resolvedPostUploadMonitorMs,
@@ -270,6 +298,7 @@ export const createPlaywrightBenchmarkEnvironment = ({
 		PW_BENCHMARK_PROVENANCE: JSON.stringify(provenance),
 		PW_BENCHMARK_RUN_NONCE: runNonce,
 		PW_BENCHMARK_SCENARIO: invocation.scenario,
+		PW_DOWNLOAD_SINK: stringValue(invocation.downloadSink),
 		PW_DOWNLOAD_TIMEOUT_MS: String(invocation.downloadTimeoutMs),
 		PW_ENABLE_VISIBILITY_PROBE: invocation.enableVisibilityProbe ? "1" : "0",
 		PW_FILE_MB: String(invocation.fileSizeMb),

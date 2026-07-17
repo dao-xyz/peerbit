@@ -110,6 +110,13 @@ export const assertExamplesBenchmarkContract = async (examplesRoot) => {
 		"package.json",
 		"pnpm-lock.yaml",
 		path.join("packages", "file-share", "frontend", "tests", "helpers.ts"),
+		path.join(
+			"packages",
+			"file-share",
+			"frontend",
+			"tests",
+			"transfer-benchmark.ts",
+		),
 		path.join("packages", "file-share", "frontend", "src", "Drop.tsx"),
 	];
 	for (const relativePath of requiredFiles) {
@@ -134,6 +141,9 @@ export const assertExamplesBenchmarkContract = async (examplesRoot) => {
 		"createSyntheticFileOnDisk",
 		"sha256AndCrc32File",
 		"armSavedViaPicker",
+		"crc32SavedViaPicker",
+		"installHashOnlyMockSaveFilePicker",
+		"installMockSaveFilePicker",
 		"installNodeBackedMockSaveFilePicker",
 		"waitForUploadComplete",
 	]) {
@@ -143,6 +153,31 @@ export const assertExamplesBenchmarkContract = async (examplesRoot) => {
 			).test(helpers)
 		) {
 			throw new Error(`Examples source is missing benchmark helper ${helper}`);
+		}
+	}
+	const transferBenchmark = await fsp.readFile(
+		path.join(
+			examplesRoot,
+			"packages",
+			"file-share",
+			"frontend",
+			"tests",
+			"transfer-benchmark.ts",
+		),
+		"utf8",
+	);
+	for (const helper of [
+		"resolveBenchmarkDownloadSink",
+		"summarizeReadTransferDiagnostics",
+	]) {
+		if (
+			!new RegExp(
+				`export\\s+(?:async\\s+)?(?:function|const)\\s+${helper}\\b`,
+			).test(transferBenchmark)
+		) {
+			throw new Error(
+				`Examples source is missing benchmark transfer helper ${helper}`,
+			);
 		}
 	}
 	const drop = await fsp.readFile(
