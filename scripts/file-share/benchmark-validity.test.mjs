@@ -827,6 +827,30 @@ for (const [name, mutate, pattern] of [
 		/readyTimeoutMs does not match the requested invocation/,
 	],
 	[
+		"reader readiness after the post-writer deadline",
+		(result) => {
+			const readerListedAt =
+				result.timestamps.uploadSettledAt +
+				result.invocation.readyTimeoutMs +
+				1;
+			result.timestamps.readerListedAt = readerListedAt;
+			result.timeToReaderReadyMs =
+				readerListedAt - result.timestamps.uploadStartedAt;
+			result.phaseDurationsMs.timeToReaderReady = result.timeToReaderReadyMs;
+			result.phaseDurationsMs.readerListingLag =
+				readerListedAt - result.timestamps.uploadSettledAt;
+			result.phaseDurationsMs.readerAfterWriter =
+				readerListedAt - result.timestamps.writerListedAt;
+			result.listingDurationMs = result.phaseDurationsMs.readerListingLag;
+			result.timestamps.postMonitorStartedAt = readerListedAt;
+			result.timestamps.postMonitorFinishedAt = readerListedAt + 50;
+			result.timestamps.downloadStartedAt = readerListedAt + 50;
+			result.timestamps.downloadFinishedAt = readerListedAt + 80;
+			result.timestamps.downloadCompletionObservedAt = readerListedAt + 81;
+		},
+		/requested post-writer deadline/,
+	],
+	[
 		"short monitor",
 		(result) => {
 			result.postUploadMonitorDurationMs = 49;

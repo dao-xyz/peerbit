@@ -75,6 +75,16 @@ const SCENARIOS = {
 					"scripts",
 					"file-share",
 					"templates",
+					"promise-deadline.mjs",
+				),
+				generatedPath: path.join("tests", "generated.promise-deadline.mjs"),
+			},
+			{
+				templatePath: path.join(
+					repoRoot,
+					"scripts",
+					"file-share",
+					"templates",
 					"opfs-readback.mjs",
 				),
 				generatedPath: path.join("tests", "generated.opfs-readback.mjs"),

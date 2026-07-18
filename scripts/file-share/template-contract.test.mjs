@@ -51,7 +51,9 @@ for (const name of templates) {
 			"diagnostics.programClosed === false",
 			"await hooks.setReplicationRole(role)",
 			"timeout: READY_TIMEOUT_MS",
-			"2 * READY_TIMEOUT_MS",
+			name === "upload-benchmark.local.e2e.spec.ts"
+				? "3 * READY_TIMEOUT_MS"
+				: "2 * READY_TIMEOUT_MS",
 		]) {
 			assert.ok(
 				contents.includes(required),
@@ -133,7 +135,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"writerListedAt - uploadStartedAt",
 		"readerListedAt - uploadStartedAt",
 		"readyTimeoutMs: READY_TIMEOUT_MS",
-		"2 * READY_TIMEOUT_MS +",
+		"3 * READY_TIMEOUT_MS +",
 		"POST_MONITOR_SCHEDULING_TOLERANCE_MS",
 		"TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS",
 		"Measured transfer duration exceeded",
@@ -143,6 +145,14 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"installNodeBackedMockSaveFilePicker",
 		"summarizeReadTransferDiagnostics",
 		"libraryComputedSha256Base64",
+		'import { withDeadline } from "./generated.promise-deadline.mjs"',
+		"UPLOAD_TIMEOUT_MS +",
+		"READY_TIMEOUT_MS +",
+		"const boundedReaderListedPromise =",
+		"const readerManifest = await boundedReaderListedPromise",
+		"readerListedPromise,",
+		"readerReadyRemainingMs,",
+		"Reader ready manifest was not listed within ${READY_TIMEOUT_MS}ms after writer readiness",
 		"sinkAwaitSubtractedDiagnosticMs",
 		"primaryDownloadMetric: PRIMARY_DOWNLOAD_METRIC",
 		'primaryDownloadAuthoritative: DOWNLOAD_SINK === "hash-only"',
@@ -186,6 +196,16 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	assert.ok(
 		!contents.includes('crypto.subtle.digest("SHA-256"'),
 		"OPFS SHA-256 readback must remain bounded rather than buffering the file",
+	);
+	assert.match(
+		contents,
+		/const readerListedPromise = waitForReadyManifest\(\s*reader,\s*fileName,\s*expectedSizeBytes,\s*preparedFile\.fixture\.sha256Base64,\s*UPLOAD_TIMEOUT_MS \+\s*READY_TIMEOUT_MS \+\s*TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,\s*\)/,
+		"the early reader observation must remain alive through upload plus the post-writer readiness window",
+	);
+	assert.match(
+		contents,
+		/uploadSettledAt = writerReady\.readyAt;[\s\S]*?const boundedReaderListedPromise =[\s\S]*?withDeadline\(\s*readerListedPromise,\s*readerReadyRemainingMs,[\s\S]*?if \(ENABLE_VISIBILITY_PROBE\)/,
+		"reader listing must arm its Node-side deadline before optional diagnostics",
 	);
 	const opfsReadback = await readFile(
 		path.join(
@@ -238,6 +258,7 @@ test("aggregate comparisons require every planned invocation to pass", async () 
 	for (const required of [
 		"compareUploadPerformanceModesForCompletePlan(results, outcomeCounts)",
 		"if (comparison)",
+		'generatedPath: path.join("tests", "generated.promise-deadline.mjs")',
 		'generatedPath: path.join("tests", "generated.opfs-readback.mjs")',
 		"scenarioConfig.supportFiles ?? []",
 	]) {
