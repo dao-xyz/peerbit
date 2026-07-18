@@ -12,6 +12,7 @@ import type http from "http";
 
 const SIGNATURE_KEY = "X-Peerbit-Signature";
 const SIGNATURE_TIME_KEY = "X-Peerbit-Signature-Time";
+const MAX_REQUEST_AGE_SECONDS = 300;
 
 export const signRequest = async (
 	headers: Record<string, string>,
@@ -60,6 +61,12 @@ export const verifyRequest = async (
 		headers[SIGNATURE_TIME_KEY] || headers[SIGNATURE_TIME_KEY.toLowerCase()];
 	if (typeof timestamp !== "string") {
 		throw new Error("Unexpected timestamp type: " + typeof timestamp);
+	}
+
+	const now = Math.round(new Date().getTime() / 1000);
+	const requestTime = parseInt(timestamp, 10);
+	if (isNaN(requestTime) || Math.abs(now - requestTime) > MAX_REQUEST_AGE_SECONDS) {
+		throw new Error("Request timestamp expired or invalid");
 	}
 
 	const write = new BinaryWriter();
