@@ -18,6 +18,19 @@ import {
 	validateBenchmarkResult,
 	validateBenchmarkResultEnvelope,
 } from "./benchmark-validity.mjs";
+import {
+	DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
+	DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
+	DOWNLOAD_MEMORY_HOST_SCOPE,
+	DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES,
+	DOWNLOAD_MEMORY_NODE_SCOPE,
+	DOWNLOAD_MEMORY_PROFILE,
+	DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+	DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS,
+	DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS,
+	DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+	calculateDownloadMemoryMaxSamples,
+} from "./templates/download-memory-telemetry.mjs";
 
 const RUN_NONCE = "123e4567-e89b-42d3-a456-426614174000";
 const FILE_NAME = `file-share-benchmark-adaptive-${RUN_NONCE}.bin`;
@@ -100,6 +113,138 @@ const options = {
 	expectedInvocation: INVOCATION,
 };
 
+const createDownloadMemoryTelemetry = (
+	readStartedAt,
+	readFinishedAt,
+	invocation = INVOCATION,
+) => {
+	const maxSamplesPerSeries = calculateDownloadMemoryMaxSamples({
+		downloadTimeoutMs: invocation.downloadTimeoutMs,
+		schedulingToleranceMs: Math.max(5_000, invocation.pollMs + 1_000),
+	});
+	const heap = (scope, startedOffset, finishedOffset, bytes) => ({
+		memoryKind: "javascript-heap",
+		scope,
+		metric: "JSHeapUsedSize",
+		unit: "bytes",
+		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+		startedAt: readStartedAt - startedOffset,
+		finishedAt: readFinishedAt + finishedOffset,
+		sampleCount: 2,
+		startBytes: bytes,
+		endBytes: bytes + 20,
+		peakBytes: bytes + 20,
+		samples: [
+			{ capturedAt: readStartedAt - 1, usedBytes: bytes },
+			{ capturedAt: readFinishedAt + 1, usedBytes: bytes + 20 },
+		],
+		samplingErrors: [],
+		samplingErrorOverflowCount: 0,
+	});
+	const readerJsHeap = heap("reader-renderer", 3, 2, 100);
+	const writerJsHeap = heap("writer-renderer", 2, 3, 200);
+	const hostSamples = [
+		{
+			capturedAt: readStartedAt - 1,
+			browserBytes: 1_000,
+			nodeBytes: 500,
+			combinedBytes: 1_500,
+			browserProcessCount: 2,
+			browserRoleBytes: { browser: 400, renderer: 600 },
+		},
+		{
+			capturedAt: readFinishedAt + 1,
+			browserBytes: 1_200,
+			nodeBytes: 550,
+			combinedBytes: 1_750,
+			browserProcessCount: 3,
+			browserRoleBytes: { browser: 450, renderer: 750 },
+		},
+	];
+	const hostRss = {
+		memoryKind: "resident-set-size",
+		scope: DOWNLOAD_MEMORY_HOST_SCOPE,
+		nodeScope: DOWNLOAD_MEMORY_NODE_SCOPE,
+		metric: "RSS",
+		attribution: DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
+		attributionLimitations: DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
+		unit: "bytes",
+		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+		startedAt: readStartedAt - 1,
+		finishedAt: readFinishedAt + 4,
+		sampleCount: hostSamples.length,
+		startBrowserBytes: 1_000,
+		endBrowserBytes: 1_200,
+		peakBrowserBytes: 1_200,
+		startNodeBytes: 500,
+		endNodeBytes: 550,
+		peakNodeBytes: 550,
+		startCombinedBytes: 1_500,
+		endCombinedBytes: 1_750,
+		peakCombinedBytes: 1_750,
+		startBrowserProcessCount: 2,
+		endBrowserProcessCount: 3,
+		peakBrowserProcessCount: 3,
+		startBrowserRoleBytes: { browser: 400, renderer: 600 },
+		endBrowserRoleBytes: { browser: 450, renderer: 750 },
+		peakBrowserRoleBytes: { browser: 450, renderer: 750 },
+		samples: hostSamples,
+		samplingErrors: [],
+		samplingErrorOverflowCount: 0,
+	};
+	return {
+		profile: DOWNLOAD_MEMORY_PROFILE,
+		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+		windowDefinition: DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+		maxSamplesPerSeries,
+		complete: true,
+		startedAt: readerJsHeap.startedAt,
+		finishedAt: hostRss.finishedAt,
+		readerJsHeap,
+		writerJsHeap,
+		hostRss,
+	};
+};
+
+const shiftTimedDownloadEvidence = (result, offset) => {
+	for (const key of [
+		"downloadStartedAt",
+		"downloadFinishedAt",
+		"downloadCompletionObservedAt",
+	]) {
+		result.timestamps[key] += offset;
+	}
+	const diagnostics = result.readerDiagnostics.lastReadDiagnostics;
+	diagnostics.startedAt += offset;
+	diagnostics.finishedAt += offset;
+	for (const key of [
+		"chunkWriteStartedAt",
+		"chunkWriteFinishedAt",
+		"chunkMaterializeStartedAt",
+		"chunkMaterializeFinishedAt",
+		"chunkHashStartedAt",
+		"chunkHashFinishedAt",
+	]) {
+		for (const index of Object.keys(diagnostics[key])) {
+			diagnostics[key][index] += offset;
+		}
+	}
+	const telemetry = result.downloadMemoryTelemetry;
+	telemetry.startedAt += offset;
+	telemetry.finishedAt += offset;
+	for (const series of [
+		telemetry.readerJsHeap,
+		telemetry.writerJsHeap,
+		telemetry.hostRss,
+	]) {
+		series.startedAt += offset;
+		series.finishedAt += offset;
+		for (const sample of series.samples) {
+			sample.capturedAt += offset;
+		}
+	}
+};
+
 const validResult = () => ({
 	schema: { ...BENCHMARK_RESULT_SCHEMA },
 	runNonce: RUN_NONCE,
@@ -166,6 +311,7 @@ const validResult = () => ({
 		TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
 	downloadSink: "hash-only",
 	requestedDownloadSink: "hash-only",
+	downloadMemoryTelemetry: createDownloadMemoryTelemetry(1_170, 1_200),
 	sinkWriteCalls: 2,
 	sinkWriteDurationMs: 8.5,
 	sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
@@ -443,6 +589,11 @@ const createReaderLocalityFixture = ({
 	result.timestamps.downloadStartedAt = 1_400;
 	result.timestamps.downloadFinishedAt = 1_430;
 	result.timestamps.downloadCompletionObservedAt = 1_431;
+	result.downloadMemoryTelemetry = createDownloadMemoryTelemetry(
+		1_400,
+		1_430,
+		invocation,
+	);
 	result.readerLocalityControl = {
 		profile: "observer-topology-persistent-read-preloaded-prefix",
 		requestedYieldedChunkCount: target,
@@ -573,6 +724,160 @@ test("accepts a complete deterministic transfer result", () => {
 		validateBenchmarkResult(validResult(), options).status,
 		"passed",
 	);
+});
+
+test("requires bounded, error-free memory telemetry covering the canonical read", () => {
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				delete result.downloadMemoryTelemetry;
+			},
+			/missing downloadMemoryTelemetry/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.complete = false;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.samplingErrors.push("boom");
+			},
+			/contains memory sampling errors/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.samplingErrors = Array.from(
+					{ length: 17 },
+					() => "bounded-message",
+				);
+			},
+			/contains unbounded sampling errors/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.samplingErrors = [
+					"x".repeat(513),
+				];
+			},
+			/contains unbounded sampling errors/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.sampleCount = 3;
+			},
+			/invalid bounded sample series/,
+		],
+		[
+			(result) => {
+				const samples = result.downloadMemoryTelemetry.readerJsHeap.samples;
+				samples[0].capturedAt = 1_199;
+				samples[1].capturedAt = 1_171;
+			},
+			/reorder the sampler window/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.samples[0].capturedAt =
+					1_171;
+			},
+			/does not bracket the click-to-sink observation window/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.writerJsHeap.samples[1].capturedAt =
+					1_199;
+			},
+			/does not bracket the click-to-sink observation window/,
+		],
+		[
+			(result) => {
+				shiftTimedDownloadEvidence(result, 100_000);
+				const series = result.downloadMemoryTelemetry.readerJsHeap;
+				series.startedAt =
+					result.timestamps.downloadStartedAt -
+					DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS -
+					1;
+				series.samples[0].capturedAt = series.startedAt;
+			},
+			/begins before the bounded telemetry setup window/,
+		],
+		[
+			(result) => {
+				const series = result.downloadMemoryTelemetry.writerJsHeap;
+				series.samples[1].capturedAt =
+					result.timestamps.downloadCompletionObservedAt +
+					DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS +
+					1;
+				series.finishedAt = series.samples[1].capturedAt + 1;
+			},
+			/ends after the bounded telemetry cleanup window/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.peakBytes += 1;
+			},
+			/heap summaries are inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[0].combinedBytes += 1;
+			},
+			/RSS totals are inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[0].browserRoleBytes.renderer +=
+					1;
+			},
+			/RSS totals are inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[0].browserRoleBytes =
+					Object.fromEntries(
+						Array.from({ length: 33 }, (_, index) => [`role-${index}`, 1]),
+					);
+			},
+			/invalid browser-role count/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[0].browserProcessCount =
+					DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES + 1;
+			},
+			/browser-process count cap/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.finishedAt += 1;
+			},
+			/window summary is inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.samples[0].unbounded =
+					"x";
+			},
+			/unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				const series = result.downloadMemoryTelemetry.readerJsHeap;
+				series.samples = Array.from(
+					{ length: result.downloadMemoryTelemetry.maxSamplesPerSeries + 1 },
+					() => ({ capturedAt: 1_170, usedBytes: 100 }),
+				);
+				series.sampleCount = series.samples.length;
+			},
+			/invalid bounded sample series/,
+		],
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(() => validateBenchmarkResult(result, options), pattern);
+	}
 });
 
 test("accepts exact observer-locality control and rejects contradictory evidence", () => {
@@ -944,14 +1249,14 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v4 evidence envelope", () => {
+test("rejects a status-only passed payload at the v5 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v4 envelopes", () => {
+test("requires explicit error evidence on failed v5 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };

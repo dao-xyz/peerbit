@@ -3,7 +3,7 @@
 Run a single checkout with `pnpm bench:file-share:local` or compare pinned
 Peerbit revisions with `pnpm bench:file-share:matrix`.
 
-Result schema v4 defines `errorCount` as every uncaught browser `pageerror`,
+Result schema v5 defines `errorCount` as every uncaught browser `pageerror`,
 every browser `console.error`, every console message at any level that contains
 a declared Peerbit failure signature, and scenario-recorded operation failures.
 Each result embeds the exact `errorCollectionDefinition` and signature list.
@@ -32,6 +32,33 @@ cohorts require persisted size, SHA-256, and CRC-32 readback. Compare different
 sinks only in separate benchmark sessions; aggregate comparison objects fail
 closed on mixed sinks, and every passed result and aggregate labels
 non-hash-only cohorts non-authoritative.
+
+Schema v5 upload results also record bounded download-window memory telemetry. After any
+controlled-locality stabilization, the harness arms serial samplers immediately
+before the timed click and forces a final sample as soon as the selected sink
+completion is observed, before integrity readback or terminal-topology checks.
+Reader and writer renderer JavaScript heaps use CDP `JSHeapUsedSize` samples.
+Host RSS combines all Chromium processes, grouped by Chromium process role,
+with the Playwright worker Node process; for local runs that Node value also
+includes the in-process bootstrap peer. Chromium RSS cannot be assigned
+reliably to one page and RSS is not PSS or USS, so page-level comparisons should
+use the renderer heap series. Samples run serially every five seconds, include
+forced initial/final endpoints, reserve one endpoint slot, cap each series at
+4,096 entries, and cap sampling errors. Passed evidence requires at least two
+error-free samples in every series and coverage of the canonical library read
+window. The validator recomputes all start, end, peak, process-role, and combined
+RSS summaries and rejects reordered, oversized, partial, or contradictory
+telemetry. Failed runs retain whatever bounded telemetry was collected, but are
+never accepted as performance evidence.
+
+Every CDP sample and setup operation has a four-second deadline; sampler
+cleanup has a nine-second aggregate deadline, late-created CDP sessions are
+detached best-effort, and a timed-out probe becomes terminal so another sample
+cannot overlap it. Result validation binds every series to the actual click and
+completion-observation timestamps: setup may begin at most 30 seconds before
+the click, and the terminal sample plus cleanup must finish within 30 seconds
+after completion is observed. Host samples are additionally capped at 256
+Chromium processes and 32 process-role groups.
 
 For a controlled reader-locality download cohort, run an upload with
 `--mode fixed1`, `--reader-local-chunk-target <N>`, and
