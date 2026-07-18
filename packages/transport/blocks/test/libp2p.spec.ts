@@ -11,7 +11,11 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { DirectBlock } from "../src/libp2p.js";
-import { BlockRequest, BlockResponse, type RemoteBlocks } from "../src/remote.js";
+import {
+	BlockRequest,
+	BlockResponse,
+	type RemoteBlocks,
+} from "../src/remote.js";
 
 const store = (s: TestSession<{ blocks: DirectBlock }>, i: number) =>
 	s.peers[i].services.blocks;
@@ -143,7 +147,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
-		const readData = await store(session, 1).get(cid, { remote: { timeout: 5000 } });
+		const readData = await store(session, 1).get(cid, {
+			remote: { timeout: 5000 },
+		});
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
 	});
 
@@ -188,7 +194,8 @@ describe("transport", function () {
 		});
 		await store(session, 0).start();
 
-		const remoteBlocks = (store(session, 0) as any).remoteBlocks as RemoteBlocks;
+		const remoteBlocks = (store(session, 0) as any)
+			.remoteBlocks as RemoteBlocks;
 		const cid = "zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J";
 		const secondCid = "zb2rhf3riC3q7Fxv2JtBMJw77QzZnDgNEQMk9GVK31qH4gcLx";
 
@@ -231,7 +238,9 @@ describe("transport", function () {
 		expect(new Uint8Array(read1!)).to.deep.equal(data);
 
 		// Second read uses the learned provider cache (no explicit `from`).
-		const read2 = await store(session, 2).get(cid, { remote: { timeout: 5000 } });
+		const read2 = await store(session, 2).get(cid, {
+			remote: { timeout: 5000 },
+		});
 		expect(new Uint8Array(read2!)).to.deep.equal(data);
 	});
 
@@ -253,7 +262,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
-		const readPromise = store(session, 1).get(cid, { remote: { timeout: 10_000 } });
+		const readPromise = store(session, 1).get(cid, {
+			remote: { timeout: 10_000 },
+		});
 
 		// Connect after the get is already waiting (no explicit `remote.from`).
 		await session.connect([[session.peers[0], session.peers[1]]]);
@@ -429,7 +440,10 @@ describe("transport", function () {
 		let requestsToProvider = 0;
 		const staleRequestSeen = pDefer<void>();
 
-		requesterRemoteBlocks.options.publish = async (message: any, options: any) => {
+		requesterRemoteBlocks.options.publish = async (
+			message: any,
+			options: any,
+		) => {
 			if (message instanceof BlockRequest) {
 				const to = (options?.mode as any)?.to ?? [];
 				if (to.includes(store(session, 2).publicKeyHash)) {
@@ -446,9 +460,14 @@ describe("transport", function () {
 			return originalRequesterPublish(message, options);
 		};
 
-		providerRemoteBlocks.options.publish = async (message: any, options: any) => {
+		providerRemoteBlocks.options.publish = async (
+			message: any,
+			options: any,
+		) => {
 			if (message instanceof BlockResponse) {
-				const to = (options?.to ?? (options?.mode as any)?.to ?? []) as string[];
+				const to = (options?.to ??
+					(options?.mode as any)?.to ??
+					[]) as string[];
 				if (to.includes(store(session, 1).publicKeyHash)) {
 					await requesterRemoteBlocks.onMessage(message, {
 						from: store(session, 0).publicKeyHash,
@@ -508,35 +527,38 @@ describe("transport", function () {
 		const originalPublish = requesterRemoteBlocks.options.publish;
 		let forwardedToSource = 0;
 
-			requesterRemoteBlocks.options.publish = (message: any, options: any) => {
-				if (message instanceof BlockRequest) {
-					const to = (options?.mode as any)?.to ?? [];
-					const redundancy = Math.max(1, (options?.mode as any)?.redundancy ?? 1);
-					const selected = to.slice(0, redundancy);
-					return (async (): Promise<void> => {
-						const sourceRemoteBlocks = (store(session, 0) as any)[
-							"remoteBlocks"
-						] as RemoteBlocks;
-						await Promise.all(
-							selected.map(async (target: string): Promise<void> => {
-								if (target === store(session, 0).publicKeyHash) {
-									forwardedToSource++;
-									await sourceRemoteBlocks.onMessage(message, {
-										from: store(session, 1).publicKeyHash,
-									});
-								}
-							}),
-						);
-					})();
-				}
-				return originalPublish(message, options);
-			};
+		requesterRemoteBlocks.options.publish = (message: any, options: any) => {
+			if (message instanceof BlockRequest) {
+				const to = (options?.mode as any)?.to ?? [];
+				const redundancy = Math.max(1, (options?.mode as any)?.redundancy ?? 1);
+				const selected = to.slice(0, redundancy);
+				return (async (): Promise<void> => {
+					const sourceRemoteBlocks = (store(session, 0) as any)[
+						"remoteBlocks"
+					] as RemoteBlocks;
+					await Promise.all(
+						selected.map(async (target: string): Promise<void> => {
+							if (target === store(session, 0).publicKeyHash) {
+								forwardedToSource++;
+								await sourceRemoteBlocks.onMessage(message, {
+									from: store(session, 1).publicKeyHash,
+								});
+							}
+						}),
+					);
+				})();
+			}
+			return originalPublish(message, options);
+		};
 
 		try {
 			const read = await store(session, 1).get(cid, {
 				remote: {
 					timeout: 5_000,
-					from: [store(session, 2).publicKeyHash, store(session, 0).publicKeyHash],
+					from: [
+						store(session, 2).publicKeyHash,
+						store(session, 0).publicKeyHash,
+					],
 				},
 			});
 			expect(new Uint8Array(read!)).to.deep.equal(data);
@@ -669,8 +691,12 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
-		const requesterRemoteBlocks = (store(session, 1) as any)["remoteBlocks"] as RemoteBlocks;
-		const providerRemoteBlocks = (store(session, 0) as any)["remoteBlocks"] as RemoteBlocks;
+		const requesterRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const providerRemoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
 		const requestPublish = sinon.spy(requesterRemoteBlocks.options, "publish");
 		const responsePublish = sinon.spy(providerRemoteBlocks.options, "publish");
 
@@ -765,10 +791,173 @@ describe("transport", function () {
 		);
 
 		releaseActive.resolve();
-		await (remoteBlocks as any)._loadFetchQueue.onIdle();
+		await Promise.all([
+			(remoteBlocks as any)._backgroundLoadFetchQueue.onIdle(),
+			(remoteBlocks as any)._loadFetchQueue.onIdle(),
+		]);
 
 		expect(order).to.deep.equal(["active", "foreground", "background"]);
 		handleFetchRequest.restore();
+	});
+
+	it("reserves provider capacity for foreground block requests", async () => {
+		session = await TestSession.disconnected(1, {
+			services: {
+				blocks: (components) =>
+					new DirectBlock(components, { messageProcessingConcurrency: 2 }),
+			},
+		});
+		await store(session, 0).start();
+
+		const remoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const activeStarted = pDefer<void>();
+		const foregroundStarted = pDefer<void>();
+		const releaseBackground = pDefer<void>();
+		const order: string[] = [];
+		const handleFetchRequest = sinon
+			.stub(remoteBlocks as any, "handleFetchRequest")
+			.callsFake(async (...args: unknown[]) => {
+				const request = args[0] as BlockRequest;
+				order.push(request.cid);
+				if (request.cid === "active") {
+					activeStarted.resolve();
+				}
+				if (request.cid === "active" || request.cid === "background") {
+					await releaseBackground.promise;
+				}
+				if (request.cid === "foreground") {
+					foregroundStarted.resolve();
+				}
+			});
+		const context = (requestPriority: number) => ({
+			from: "requester",
+			transport: {
+				expiresAt: Date.now() + 5_000,
+				requestPriority,
+				responsePriority: requestPriority,
+				remainingTime: () => 5_000,
+				withResponseOptions: <T extends object>(options: T) => ({
+					...options,
+					priority: requestPriority,
+					expiresAt: Date.now() + 5_000,
+				}),
+			},
+		});
+
+		try {
+			await remoteBlocks.onMessage(
+				new BlockRequest("active"),
+				context(BACKGROUND_MESSAGE_PRIORITY),
+			);
+			await activeStarted.promise;
+			await remoteBlocks.onMessage(
+				new BlockRequest("background"),
+				context(BACKGROUND_MESSAGE_PRIORITY),
+			);
+			await remoteBlocks.onMessage(
+				new BlockRequest("foreground"),
+				context(FOREGROUND_READ_MESSAGE_PRIORITY),
+			);
+
+			const startedBeforeBackgroundReleased = await Promise.race([
+				foregroundStarted.promise.then(() => true),
+				delay(100).then(() => false),
+			]);
+			expect(startedBeforeBackgroundReleased).to.equal(true);
+			expect(order).to.deep.equal(["active", "foreground"]);
+		} finally {
+			releaseBackground.resolve();
+			await Promise.all([
+				(remoteBlocks as any)._backgroundLoadFetchQueue.onIdle(),
+				(remoteBlocks as any)._loadFetchQueue.onIdle(),
+			]);
+			handleFetchRequest.restore();
+		}
+
+		expect(order).to.deep.equal(["active", "foreground", "background"]);
+	});
+
+	it("drains nested provider queues without leaking work across restart", async () => {
+		session = await TestSession.disconnected(1, {
+			services: {
+				blocks: (components) =>
+					new DirectBlock(components, { messageProcessingConcurrency: 1 }),
+			},
+		});
+		await store(session, 0).start();
+
+		const remoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const activeStarted = pDefer<void>();
+		const releaseActive = pDefer<void>();
+		const handled: string[] = [];
+		const handleFetchRequest = sinon
+			.stub(remoteBlocks as any, "handleFetchRequest")
+			.callsFake(async (...args: unknown[]) => {
+				const request = args[0] as BlockRequest;
+				handled.push(request.cid);
+				if (request.cid === "active") {
+					activeStarted.resolve();
+					await releaseActive.promise;
+				}
+			});
+		const context = (requestPriority: number) => ({
+			from: "requester",
+			transport: {
+				expiresAt: Date.now() + 5_000,
+				requestPriority,
+				responsePriority: requestPriority,
+				remainingTime: () => 5_000,
+				withResponseOptions: <T extends object>(options: T) => ({
+					...options,
+					priority: requestPriority,
+					expiresAt: Date.now() + 5_000,
+				}),
+			},
+		});
+
+		let stopSettled = false;
+		let stopping: Promise<void> | undefined;
+		try {
+			await remoteBlocks.onMessage(
+				new BlockRequest("active"),
+				context(BACKGROUND_MESSAGE_PRIORITY),
+			);
+			await activeStarted.promise;
+			await remoteBlocks.onMessage(
+				new BlockRequest("queued-background"),
+				context(BACKGROUND_MESSAGE_PRIORITY),
+			);
+			await remoteBlocks.onMessage(
+				new BlockRequest("queued-foreground"),
+				context(FOREGROUND_READ_MESSAGE_PRIORITY),
+			);
+
+			stopping = remoteBlocks.stop().then(() => {
+				stopSettled = true;
+			});
+			await delay(25);
+			expect(stopSettled).to.equal(false);
+
+			releaseActive.resolve();
+			await stopping;
+			expect(handled).to.deep.equal(["active"]);
+
+			await remoteBlocks.start();
+			await remoteBlocks.onMessage(
+				new BlockRequest("after-restart"),
+				context(FOREGROUND_READ_MESSAGE_PRIORITY),
+			);
+			await (remoteBlocks as any)._loadFetchQueue.onIdle();
+			expect(handled).to.deep.equal(["active", "after-restart"]);
+		} finally {
+			releaseActive.resolve();
+			await stopping;
+			handleFetchRequest.restore();
+		}
 	});
 
 	it("relay proxy honors request timeout when upstream response is slow", async () => {
@@ -792,25 +981,50 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
-		const providerRemoteBlocks = (store(session, 0) as any)["remoteBlocks"] as RemoteBlocks;
+		const providerRemoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const proxyRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
 		const originalPublish = providerRemoteBlocks.options.publish.bind(
 			providerRemoteBlocks.options,
 		);
+		const originalProxyPublish = proxyRemoteBlocks.options.publish.bind(
+			proxyRemoteBlocks.options,
+		);
+		const proxiedRequestOptions: Array<{
+			priority: number | undefined;
+			responsePriority: number | undefined;
+		}> = [];
 		providerRemoteBlocks.options.publish = async (message, options) => {
 			if (message instanceof BlockResponse) {
 				await delay(1_500);
 			}
 			return originalPublish(message, options);
 		};
+		proxyRemoteBlocks.options.publish = async (message, options) => {
+			if (message instanceof BlockRequest) {
+				proxiedRequestOptions.push({
+					priority: options.priority,
+					responsePriority: options.responsePriority,
+				});
+			}
+			return originalProxyPublish(message, options);
+		};
 
 		const readData = await store(session, 2).get(cid, {
 			remote: {
 				timeout: 5_000,
 				from: [store(session, 1).publicKeyHash],
-				priority: CONVERGENCE_MESSAGE_PRIORITY,
+				priority: FOREGROUND_READ_MESSAGE_PRIORITY,
 			},
 		});
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
+		expect(proxiedRequestOptions[0]).to.deep.equal({
+			priority: FOREGROUND_READ_MESSAGE_PRIORITY,
+			responsePriority: FOREGROUND_READ_MESSAGE_PRIORITY,
+		});
 	});
 
 	it("cancels a relay proxy read when its provider lookup outlives stop", async () => {
@@ -877,6 +1091,8 @@ describe("transport", function () {
 
 		expect(proxySignal?.aborted).to.equal(true);
 		expect(downstreamReadCalls).to.equal(0);
+		expect((remoteBlocks as any)._backgroundLoadFetchQueue.pending).to.equal(0);
+		expect((remoteBlocks as any)._backgroundLoadFetchQueue.size).to.equal(0);
 		expect((remoteBlocks as any)._loadFetchQueue.pending).to.equal(0);
 		expect((remoteBlocks as any)._loadFetchQueue.size).to.equal(0);
 		expect((remoteBlocks as any)._readFromPeersPromises.size).to.equal(0);
@@ -893,7 +1109,9 @@ describe("transport", function () {
 		const cid = await store(session, 0).put(data);
 		expect(cid).equal("zb2rhbnwihVzMMEGAPf9EwTZBsQz9fszCnM4Y8mJmBFgiyN7J");
 
-		const providerRemoteBlocks = (store(session, 0) as any)["remoteBlocks"] as RemoteBlocks;
+		const providerRemoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
 		const originalPublish = providerRemoteBlocks.options.publish.bind(
 			providerRemoteBlocks.options,
 		);

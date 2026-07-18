@@ -19,6 +19,7 @@ import {
 } from "@peerbit/stream";
 import {
 	BACKGROUND_MESSAGE_PRIORITY,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
 	type PeerRefs,
 	type RequestTransportContext,
 	SilentDelivery,
@@ -129,6 +130,7 @@ export class RemoteBlocks implements IBlocks {
 	private readonly maxRequeryOnReachable: number;
 
 	private _loadFetchQueue: PQueue;
+	private _backgroundLoadFetchQueue: PQueue;
 	private _readFromPeersPromises: Map<string, InFlightRead>;
 	private _deferredStoredNotificationCids?: Set<string>;
 	private _deferredStoredNotificationTimer?: ReturnType<typeof setTimeout>;
@@ -221,8 +223,19 @@ export class RemoteBlocks implements IBlocks {
 		const localTimeout = options?.localTimeout || 1000;
 		this.publicKeyHash = options.publicKey.hashcode();
 		this.rustExchange = options.rust?.exchange;
+		const messageProcessingConcurrency =
+			options?.messageProcessingConcurrency || 10;
 		this._loadFetchQueue = new PQueue({
-			concurrency: options?.messageProcessingConcurrency || 10,
+			concurrency: messageProcessingConcurrency,
+		});
+		// A provider handler includes the response publication. When every handler
+		// is publishing bulk/background blocks under backpressure, a single priority
+		// queue cannot preempt that already-active work. Admit at most N-1 background
+		// handlers so foreground reads can use the reserved slot whenever the
+		// configured concurrency is at least two. Foreground-only traffic can still
+		// use the full configured concurrency.
+		this._backgroundLoadFetchQueue = new PQueue({
+			concurrency: Math.max(1, messageProcessingConcurrency - 1),
 		});
 		this.localStore = options?.local;
 		const localPutKnownManyColumns = (
@@ -359,22 +372,34 @@ export class RemoteBlocks implements IBlocks {
 		) => {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
-					this._loadFetchQueue
-						.add(
-							() => this.handleFetchRequest(message, localTimeout, context),
+					const priority =
+						context?.transport?.requestPriority ?? BACKGROUND_MESSAGE_PRIORITY;
+					const queueSignal = this.closeController.signal;
+					const run = () =>
+						this._loadFetchQueue.add(
+							() =>
+								queueSignal.aborted
+									? undefined
+									: this.handleFetchRequest(message, localTimeout, context),
 							{
-								priority:
-									context?.transport?.requestPriority ??
-									BACKGROUND_MESSAGE_PRIORITY,
+								priority,
 							},
-						)
-						.catch((e) => {
-							try {
-								dontThrowIfDeliveryError(e);
-							} catch (error) {
-								logger.error("Got error for libp2p block transport: ", error);
-							}
-						});
+						);
+					const scheduled =
+						priority >= FOREGROUND_READ_MESSAGE_PRIORITY
+							? run()
+							: this._backgroundLoadFetchQueue.add(
+									() => (queueSignal.aborted ? undefined : run()),
+									{ priority },
+								);
+					scheduled.catch((e) => {
+						if (queueSignal.aborted) return;
+						try {
+							dontThrowIfDeliveryError(e);
+						} catch (error) {
+							logger.error("Got error for libp2p block transport: ", error);
+						}
+					});
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
 					if (context?.from) {
@@ -801,6 +826,7 @@ export class RemoteBlocks implements IBlocks {
 							signal: controller.signal,
 							timeout: proxyTimeoutMs,
 							from: providers,
+							priority: context?.transport?.requestPriority,
 						});
 					}
 				} finally {
@@ -1199,7 +1225,10 @@ export class RemoteBlocks implements IBlocks {
 			this._deferredStoredNotificationTimer = undefined;
 		}
 		await capture(() => this.flushDeferredStoredNotifications());
-		await capture(() => this._loadFetchQueue.clear());
+		// Queued wrappers observe the aborted generation and drain without starting
+		// new work. Avoid PQueue.clear(): it would strand promises already returned
+		// by the nested background-admission queue.
+		await capture(() => this._backgroundLoadFetchQueue.onIdle());
 		await capture(() => this._loadFetchQueue.onIdle());
 		await capture(() => this.localStore?.stop());
 		this._readFromPeersPromises.clear();
