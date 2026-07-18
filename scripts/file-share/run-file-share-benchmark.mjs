@@ -113,6 +113,137 @@ const DROP_LOCALITY_TOPOLOGY_MARKER =
 	"/* peerbit-benchmark-locality-replicator-hashes */";
 const DROP_LOCALITY_INDEXED_SEARCH_MARKER =
 	"/* peerbit-benchmark-locality-indexed-search */";
+const DROP_LOCALITY_PRELOAD_DEADLINE_MARKER =
+	"/* peerbit-benchmark-locality-preload-aggregate-deadline */";
+const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {
+                ${DROP_LOCALITY_HOOK_MARKER}
+                ${DROP_LOCALITY_PRELOAD_DEADLINE_MARKER}
+                if (!program || program.closed) {
+                    throw new Error("Program is not ready");
+                }
+                const file = list.find((candidate) => candidate.name === fileName);
+                if (!file) {
+                    throw new Error("Locality preload file is not listed");
+                }
+                if (!isLargeFileLike(file)) {
+                    throw new Error("Locality control target is not a large file");
+                }
+                if (
+                    !Number.isSafeInteger(target) ||
+                    target < 0 ||
+                    target >= file.chunkCount
+                ) {
+                    throw new Error(
+                        "Locality preload target must be a non-negative partial chunk prefix"
+                    );
+                }
+                if (
+                    !Number.isSafeInteger(timeoutMs) ||
+                    timeoutMs <= 0
+                ) {
+                    throw new Error(
+                        "Locality preload timeout must be a positive safe integer"
+                    );
+                }
+                program.persistChunkReads = true;
+                const startedAt = Date.now();
+                const transferId =
+                    target > 0
+                        ? "benchmark-locality-preload-" + startedAt + "-" + target
+                        : null;
+                const aggregateTimeoutMs = transferId ? timeoutMs : null;
+                const aggregateDeadlineAt = transferId
+                    ? startedAt + timeoutMs
+                    : null;
+                if (
+                    aggregateDeadlineAt !== null &&
+                    !Number.isSafeInteger(aggregateDeadlineAt)
+                ) {
+                    throw new Error("Locality preload deadline is not a safe integer");
+                }
+                let aggregateTimedOut = false;
+                let yieldedChunkCount = 0;
+                let yieldedByteCount = 0;
+                if (transferId) {
+                    const aggregateController = new AbortController();
+                    const aggregateTimeoutError = new Error(
+                        "Locality prefix preload exceeded its aggregate deadline"
+                    );
+                    let aggregateTimeoutHandle: number | undefined;
+                    let iterator: AsyncIterator<Uint8Array> | undefined;
+                    aggregateTimeoutHandle = window.setTimeout(() => {
+                        aggregateTimedOut = true;
+                        if (!aggregateController.signal.aborted) {
+                            aggregateController.abort(aggregateTimeoutError);
+                        }
+                    }, Math.max(0, aggregateDeadlineAt! - Date.now()));
+                    try {
+                        iterator = file
+                            .streamFile(program, {
+                                timeout: timeoutMs,
+                                transferId,
+                                signal: aggregateController.signal,
+                            })
+                            [Symbol.asyncIterator]();
+                        while (yieldedChunkCount < target) {
+                            const next = await iterator.next();
+                            if (
+                                Date.now() > aggregateDeadlineAt! &&
+                                !aggregateController.signal.aborted
+                            ) {
+                                aggregateTimedOut = true;
+                                aggregateController.abort(aggregateTimeoutError);
+                            }
+                            if (aggregateController.signal.aborted) {
+                                throw (
+                                    aggregateController.signal.reason ??
+                                    aggregateTimeoutError
+                                );
+                            }
+                            if (next.done) {
+                                throw new Error(
+                                    "Locality preload stream ended before the requested prefix"
+                                );
+                            }
+                            yieldedChunkCount += 1;
+                            yieldedByteCount += next.value.byteLength;
+                        }
+                    } finally {
+                        try {
+                            await iterator?.return?.();
+                        } finally {
+                            if (aggregateTimeoutHandle !== undefined) {
+                                window.clearTimeout(aggregateTimeoutHandle);
+                            }
+                        }
+                    }
+                    if (aggregateController.signal.aborted) {
+                        throw (
+                            aggregateController.signal.reason ??
+                            aggregateTimeoutError
+                        );
+                    }
+                }
+                const finishedAt = Date.now();
+                return {
+                    startedAt,
+                    finishedAt,
+                    fileId: file.id,
+                    transferId,
+                    aggregateTimeoutMs,
+                    aggregateDeadlineAt,
+                    aggregateTimedOut,
+                    yieldedChunkCount,
+                    yieldedByteCount,
+                    persistChunkReads: program.persistChunkReads,
+                    activeTransfersAfterClose: program.getActiveTransfers(),
+                    downloadSchedulerAfterClose:
+                        program.getTransferSchedulerDiagnostics().download,
+                    readDiagnostics: transferId
+                        ? program.getReadDiagnostics(transferId) ?? null
+                        : null,
+                };
+            },`;
 const getScenarioConfig = (scenario) => {
 	const config = SCENARIOS[scenario];
 	if (!config) {
@@ -180,6 +311,7 @@ export const instrumentFileShareFrontend = async (
 			hasExistingUpdateListStats) &&
 		(!requireLocalityHook ||
 			(contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
+				contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) &&
 				contents.includes(DROP_LOCALITY_TOPOLOGY_MARKER) &&
 				contents.includes(DROP_LOCALITY_INDEXED_SEARCH_MARKER)))
 	) {
@@ -330,6 +462,27 @@ export const instrumentFileShareFrontend = async (
 	if (
 		requireLocalityHook &&
 		contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
+		!contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER)
+	) {
+		const preloadHookAnchor =
+			"            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {";
+		const observationHookAnchor =
+			"            getLocalChunkPrefixObservation: async (fileName) => {";
+		const preloadHookStart = contents.indexOf(preloadHookAnchor);
+		const observationHookStart = contents.indexOf(
+			observationHookAnchor,
+			preloadHookStart + preloadHookAnchor.length,
+		);
+		if (preloadHookStart < 0 || observationHookStart < 0) {
+			throw new Error(
+				`File-share benchmark locality migration requires the exact preload hook boundaries in ${dropPath}`,
+			);
+		}
+		contents = `${contents.slice(0, preloadHookStart)}${localityPreloadHookImplementation}\n${contents.slice(observationHookStart)}`;
+	}
+	if (
+		requireLocalityHook &&
+		contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
 		!contents.includes(DROP_LOCALITY_INDEXED_SEARCH_MARKER)
 	) {
 		const searchImportAnchor =
@@ -413,70 +566,7 @@ ${topologyAnchor}`,
 		);
 		contents = contents.replace(
 			implementationAnchor,
-			`            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {
-                ${DROP_LOCALITY_HOOK_MARKER}
-                if (!program || program.closed) {
-                    throw new Error("Program is not ready");
-                }
-                const file = list.find((candidate) => candidate.name === fileName);
-                if (!file) {
-                    throw new Error("Locality preload file is not listed");
-                }
-                if (!isLargeFileLike(file)) {
-                    throw new Error("Locality control target is not a large file");
-                }
-                if (
-                    !Number.isSafeInteger(target) ||
-                    target < 0 ||
-                    target >= file.chunkCount
-                ) {
-                    throw new Error(
-                        "Locality preload target must be a non-negative partial chunk prefix"
-                    );
-                }
-                program.persistChunkReads = true;
-                const startedAt = Date.now();
-                const transferId =
-                    target > 0
-                        ? "benchmark-locality-preload-" + startedAt + "-" + target
-                        : null;
-                let yieldedChunkCount = 0;
-                let yieldedByteCount = 0;
-                if (transferId) {
-                    const iterator = file
-                        .streamFile(program, { timeout: timeoutMs, transferId })
-                        [Symbol.asyncIterator]();
-                    try {
-                        while (yieldedChunkCount < target) {
-                            const next = await iterator.next();
-                            if (next.done) {
-                                throw new Error(
-                                    "Locality preload stream ended before the requested prefix"
-                                );
-                            }
-                            yieldedChunkCount += 1;
-                            yieldedByteCount += next.value.byteLength;
-                        }
-                    } finally {
-                        await iterator.return?.();
-                    }
-                }
-                return {
-                    startedAt,
-                    finishedAt: Date.now(),
-                    fileId: file.id,
-                    transferId,
-                    yieldedChunkCount,
-                    yieldedByteCount,
-                    persistChunkReads: program.persistChunkReads,
-                    activeTransfersAfterClose: program.getActiveTransfers(),
-                    downloadSchedulerAfterClose:
-                        program.getTransferSchedulerDiagnostics().download,
-                    readDiagnostics: transferId
-                        ? program.getReadDiagnostics(transferId) ?? null
-                        : null,
-                };
-            },
+			`${localityPreloadHookImplementation}
             getLocalChunkPrefixObservation: async (fileName) => {
                 const capturedAt = Date.now();
                 if (!program || program.closed) {

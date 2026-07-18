@@ -1273,15 +1273,44 @@ const validateReaderLocalityControl = (result, invocation) => {
 		preload.downloadSchedulerAfterClose,
 		"readerLocalityControl.preloadEvidence.downloadSchedulerAfterClose",
 	);
+	if (preload.aggregateTimedOut !== false) {
+		throw new Error(
+			"Benchmark reader locality preload aggregate deadline evidence is invalid",
+		);
+	}
 	if (target === 0) {
 		if (
 			preload.transferId !== null ||
 			preload.readDiagnostics !== null ||
+			preload.aggregateTimeoutMs !== null ||
+			preload.aggregateDeadlineAt !== null ||
 			yieldedByteCount !== 0
 		) {
 			throw new Error("Zero-prefix locality preload opened a read transfer");
 		}
 	} else {
+		const aggregateTimeoutMs = requirePositiveSafeInteger(
+			preload.aggregateTimeoutMs,
+			"readerLocalityControl.preloadEvidence.aggregateTimeoutMs",
+		);
+		const aggregateDeadlineAt = requirePositiveSafeInteger(
+			preload.aggregateDeadlineAt,
+			"readerLocalityControl.preloadEvidence.aggregateDeadlineAt",
+		);
+		const aggregateSchedulingToleranceMs = Math.max(
+			5_000,
+			invocation.pollMs + 1_000,
+		);
+		if (
+			aggregateTimeoutMs !== invocation.downloadTimeoutMs ||
+			aggregateDeadlineAt !== preloadStartedAt + aggregateTimeoutMs ||
+			preloadFinishedAt - preloadStartedAt >
+				aggregateTimeoutMs + aggregateSchedulingToleranceMs
+		) {
+			throw new Error(
+				"Benchmark reader locality preload aggregate deadline evidence is invalid",
+			);
+		}
 		const preloadTransferId = requireString(
 			preload.transferId,
 			"readerLocalityControl.preloadEvidence.transferId",

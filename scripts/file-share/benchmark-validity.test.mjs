@@ -475,6 +475,10 @@ const createReaderLocalityFixture = ({
 			finishedAt: 1_175,
 			fileId: FILE_ID,
 			transferId: target === 0 ? null : "locality-preload-transfer",
+			aggregateTimeoutMs: target === 0 ? null : invocation.downloadTimeoutMs,
+			aggregateDeadlineAt:
+				target === 0 ? null : 1_172 + invocation.downloadTimeoutMs,
+			aggregateTimedOut: false,
 			yieldedChunkCount: target,
 			yieldedByteCount: target === 0 ? 0 : 3 * 1024 * 1024,
 			persistChunkReads: true,
@@ -747,6 +751,34 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 					["still-active"];
 			},
 			/locality preload evidence is invalid/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preloadEvidence.aggregateTimedOut = true;
+			},
+			/preload aggregate deadline evidence is invalid/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preloadEvidence.aggregateTimeoutMs += 1;
+			},
+			/preload aggregate deadline evidence is invalid/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preloadEvidence.aggregateDeadlineAt += 1;
+			},
+			/preload aggregate deadline evidence is invalid/,
+		],
+		[
+			(result) => {
+				const preload = result.readerLocalityControl.preloadEvidence;
+				preload.finishedAt =
+					preload.aggregateDeadlineAt +
+					result.transferTimeoutSchedulingToleranceMs +
+					1;
+			},
+			/preload aggregate deadline evidence is invalid/,
 		],
 		[
 			(result) => {

@@ -57,6 +57,26 @@ const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS = Math.max(
 );
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(5000ms, pollMs + 1000ms) for browser actions and event-loop scheduling";
+// Controlled locality can spend a full download deadline preloading the prefix,
+// then one readiness deadline each stabilizing that prefix, waiting for the
+// completed transfer to become idle, and stabilizing terminal topology. The
+// measured download retains its separate DOWNLOAD_TIMEOUT_MS budget below.
+const LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS =
+	READER_LOCAL_CHUNK_TARGET === null
+		? 0
+		: 3 * READY_TIMEOUT_MS +
+			(READER_LOCAL_CHUNK_TARGET > 0
+				? DOWNLOAD_TIMEOUT_MS + TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS
+				: 0);
+const TEST_OUTER_TIMEOUT_MS = Math.max(
+	20 * 60 * 1000,
+	3 * READY_TIMEOUT_MS +
+		UPLOAD_TIMEOUT_MS +
+		DOWNLOAD_TIMEOUT_MS +
+		LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS +
+		POST_UPLOAD_MONITOR_MS +
+		5 * 60 * 1000,
+);
 const TIME_TO_WRITER_READY_DEFINITION =
 	"upload-input-set-to-writer-ready-manifest-listed";
 const TIME_TO_READER_READY_DEFINITION =
@@ -502,8 +522,8 @@ const preloadLocalChunkPrefix = async (
 	fileName: string,
 	target: number,
 	timeoutMs: number,
-) =>
-	await page.evaluate(
+) => {
+	const evaluation = page.evaluate(
 		async ({ expectedFileName, requestedTarget, timeout }) => {
 			const hooks = (window as any).__peerbitFileShareTestHooks;
 			if (!hooks?.preloadLocalChunkPrefix) {
@@ -519,6 +539,14 @@ const preloadLocalChunkPrefix = async (
 		},
 		{ expectedFileName: fileName, requestedTarget: target, timeout: timeoutMs },
 	);
+	return target > 0
+		? await withDeadline(
+				evaluation,
+				timeoutMs + TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
+				`Reader locality preload did not settle within ${timeoutMs}ms plus scheduling tolerance`,
+			)
+		: await evaluation;
+};
 
 const getTopologySnapshot = async (page: Page) =>
 	await page.evaluate(async () => {
@@ -726,16 +754,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		browser,
 		baseURL,
 	}) => {
-		test.setTimeout(
-			Math.max(
-				20 * 60 * 1000,
-				3 * READY_TIMEOUT_MS +
-					UPLOAD_TIMEOUT_MS +
-					DOWNLOAD_TIMEOUT_MS +
-					POST_UPLOAD_MONITOR_MS +
-					5 * 60 * 1000,
-			),
-		);
+		test.setTimeout(TEST_OUTER_TIMEOUT_MS);
 		if (!baseURL) {
 			throw new Error("Missing baseURL");
 		}
@@ -1406,6 +1425,8 @@ test.describe("generated transfer-validity benchmark", () => {
 					| undefined;
 				const preloadReadDiagnostics =
 					preloadEvidence.readDiagnostics as Record<string, unknown> | null;
+				const preloadStartedAt = preloadEvidence.startedAt as number;
+				const preloadFinishedAt = preloadEvidence.finishedAt as number;
 				if (
 					preloadEvidence.fileId !== readerManifestEvidence.fileId ||
 					preloadEvidence.yieldedChunkCount !== READER_LOCAL_CHUNK_TARGET ||
@@ -1419,8 +1440,8 @@ test.describe("generated transfer-validity benchmark", () => {
 					preloadScheduler.queuedCount !== 0 ||
 					!Number.isSafeInteger(preloadEvidence.startedAt) ||
 					!Number.isSafeInteger(preloadEvidence.finishedAt) ||
-					(preloadEvidence.finishedAt as number) <
-						(preloadEvidence.startedAt as number)
+					preloadFinishedAt < preloadStartedAt ||
+					preloadEvidence.aggregateTimedOut !== false
 				) {
 					throw new Error(
 						"Reader locality preload did not close with clean transfer resources",
@@ -1429,11 +1450,18 @@ test.describe("generated transfer-validity benchmark", () => {
 				if (READER_LOCAL_CHUNK_TARGET === 0) {
 					if (
 						preloadEvidence.transferId !== null ||
-						preloadReadDiagnostics !== null
+						preloadReadDiagnostics !== null ||
+						preloadEvidence.aggregateTimeoutMs !== null ||
+						preloadEvidence.aggregateDeadlineAt !== null
 					) {
 						throw new Error("Zero-prefix preload unexpectedly opened a read");
 					}
 				} else if (
+					preloadEvidence.aggregateTimeoutMs !== DOWNLOAD_TIMEOUT_MS ||
+					preloadEvidence.aggregateDeadlineAt !==
+						preloadStartedAt + DOWNLOAD_TIMEOUT_MS ||
+					preloadFinishedAt - preloadStartedAt >
+						DOWNLOAD_TIMEOUT_MS + TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS ||
 					typeof preloadEvidence.transferId !== "string" ||
 					preloadEvidence.transferId.length === 0 ||
 					!preloadReadDiagnostics ||
@@ -1444,7 +1472,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					preloadReadDiagnostics.failureMessage !== null
 				) {
 					throw new Error(
-						"Partial-prefix preload diagnostics do not prove a clean iterator close",
+						"Partial-prefix preload diagnostics do not prove a bounded clean iterator close",
 					);
 				}
 

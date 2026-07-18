@@ -45,10 +45,12 @@ singleton replicator identity, and that identity must be the writer.
 
 After the normal upload and post-upload monitor finish, the harness enables
 persistent reader chunk reads and performs an untimed sequential prefix preload
-that yields exactly `N` chunks. It explicitly closes the iterator and requires
-no active transfer or queued download work afterward. `N=0` is the cold
-observer-persistent cohort and opens no preload stream. The harness then records
-three identical exact locality samples, spaced by
+that yields exactly `N` chunks. A nonzero preload has one aggregate download
+deadline enforced through an abort signal, rather than resetting the deadline
+for every chunk. It explicitly closes the iterator within the bounded cleanup
+tolerance and requires no active transfer or queued download work afterward.
+`N=0` is the cold observer-persistent cohort and opens no preload stream. The
+harness then records three identical exact locality samples, spaced by
 `min(--poll-ms, 100ms)`. Each sample includes both the manifest-entry blocks
 available in the local block store (`K`) and the local Documents index rows
 (`J`). Both sets must be contiguous prefixes, `N <= K <= N + M`, `J <= K`, and

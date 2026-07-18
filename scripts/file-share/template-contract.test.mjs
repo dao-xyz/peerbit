@@ -139,6 +139,11 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"readerListedAt - uploadStartedAt",
 		"readyTimeoutMs: READY_TIMEOUT_MS",
 		"3 * READY_TIMEOUT_MS +",
+		"const LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS =",
+		"READER_LOCAL_CHUNK_TARGET > 0",
+		"DOWNLOAD_TIMEOUT_MS + TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS",
+		"LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS +",
+		"test.setTimeout(TEST_OUTER_TIMEOUT_MS)",
 		"POST_MONITOR_SCHEDULING_TOLERANCE_MS",
 		"TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS",
 		"Measured transfer duration exceeded",
@@ -178,6 +183,9 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"openWithSeededReplicationRole",
 		"readerInitialRoleEvidence",
 		"preloadLocalChunkPrefix",
+		"Reader locality preload did not settle within ${timeoutMs}ms plus scheduling tolerance",
+		"aggregateTimeoutMs !== DOWNLOAD_TIMEOUT_MS",
+		"aggregateTimedOut !== false",
 		"readLocalChunkPrefixObservation",
 		"getTopologySnapshot",
 		"topologyHasExactWriterSingleton",
@@ -201,6 +209,11 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
 	}
+	assert.match(
+		contents,
+		/const LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS =\s*READER_LOCAL_CHUNK_TARGET === null\s*\? 0\s*:\s*3 \* READY_TIMEOUT_MS \+\s*\(READER_LOCAL_CHUNK_TARGET > 0\s*\? DOWNLOAD_TIMEOUT_MS \+ TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS\s*: 0\);/,
+		"controlled locality must reserve three readiness phases and a nonzero-prefix aggregate preload deadline plus cleanup tolerance",
+	);
 	assert.match(
 		contents,
 		/hooks\.preloadLocalChunkPrefix\(\s*expectedFileName,\s*requestedTarget,\s*timeout,\s*\)/,
@@ -291,12 +304,20 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	for (const required of [
 		"peerbit-benchmark-locality-prefix-preload",
+		"peerbit-benchmark-locality-preload-aggregate-deadline",
 		"peerbit-benchmark-locality-replicator-hashes",
 		"peerbit-benchmark-locality-indexed-search",
 		"replicatorHashes: replicatorHashes",
 		"preloadLocalChunkPrefix",
 		"getLocalChunkPrefixObservation",
-		"await iterator.return?.()",
+		"const localityPreloadHookImplementation =",
+		"const aggregateController = new AbortController()",
+		"signal: aggregateController.signal",
+		"aggregateController.abort(aggregateTimeoutError)",
+		"await iterator?.return?.()",
+		"window.clearTimeout(aggregateTimeoutHandle)",
+		"aggregateDeadlineAt",
+		"aggregateTimedOut",
 		"SearchRequestIndexed",
 		"new SearchRequestIndexed({ fetch: 0xffffffff })",
 		"resolve: false",
@@ -366,15 +387,46 @@ test("locality instrumentation migrates a reused legacy query idempotently", asy
 	await writeFile(
 		dropPath,
 		`import { IsNull, SearchRequest } from "@peerbit/document";
-const __peerbitFileShareTestHooks = { setReplicationRole, getDiagnostics };
+const __peerbitFileShareTestHooks = {
+    setReplicationRole,
+    getDiagnostics,
+            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {
+                /* peerbit-benchmark-locality-prefix-preload */
+                const startedAt = Date.now();
+                const transferId = "legacy-locality-preload";
+                let yieldedChunkCount = 0;
+                let yieldedByteCount = 0;
+                const iterator = file
+                    .streamFile(program, { timeout: timeoutMs, transferId })
+                    [Symbol.asyncIterator]();
+                try {
+                    while (yieldedChunkCount < target) {
+                        const next = await iterator.next();
+                        yieldedChunkCount += 1;
+                        yieldedByteCount += next.value.byteLength;
+                    }
+                } finally {
+                    await iterator.return?.();
+                }
+                return {
+                    startedAt,
+                    finishedAt: Date.now(),
+                    transferId,
+                    yieldedChunkCount,
+                    yieldedByteCount,
+                };
+            },
+            getLocalChunkPrefixObservation: async (fileName) => {
+                const local = await program.files.index.search(
+                    new SearchRequest({ fetch: 0xffffffff }),
+                    { local: true, remote: false, resolve: false }
+                );
+                return { fileName, local };
+            },
+};
 const __peerbitFileShareBenchmarkStats = { updateListStats };
 updateListCalls.push(updateListStats);
-/* peerbit-benchmark-locality-prefix-preload */
 /* peerbit-benchmark-locality-replicator-hashes */
-const local = await program.files.index.search(
-    new SearchRequest({ fetch: 0xffffffff }),
-    { local: true, remote: false, resolve: false }
-);
 `,
 	);
 	await instrumentFileShareFrontend(frontendRoot, {
@@ -393,6 +445,37 @@ const local = await program.files.index.search(
 		migrated.includes("new SearchRequestIndexed({ fetch: 0xffffffff })"),
 	);
 	assert.ok(!migrated.includes("new SearchRequest({ fetch: 0xffffffff })"));
+	for (const required of [
+		"/* peerbit-benchmark-locality-preload-aggregate-deadline */",
+		"const aggregateController = new AbortController()",
+		"signal: aggregateController.signal",
+		"aggregateTimeoutMs",
+		"aggregateDeadlineAt",
+		"aggregateTimedOut",
+	]) {
+		assert.ok(migrated.includes(required), `missing migrated ${required}`);
+	}
+	assert.ok(
+		migrated.indexOf("await iterator?.return?.()") <
+			migrated.indexOf("window.clearTimeout(aggregateTimeoutHandle)"),
+		"the aggregate timeout must remain armed through iterator cleanup",
+	);
+	assert.equal(
+		[...migrated.matchAll(/preloadLocalChunkPrefix: async/g)].length,
+		1,
+	);
+	assert.equal(
+		[...migrated.matchAll(/getLocalChunkPrefixObservation: async/g)].length,
+		1,
+	);
+	assert.equal(
+		[
+			...migrated.matchAll(
+				/import \{ IsNull, SearchRequest, SearchRequestIndexed \} from "@peerbit\/document";/g,
+			),
+		].length,
+		1,
+	);
 	await instrumentFileShareFrontend(frontendRoot, {
 		requireLocalityHook: true,
 	});
