@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
@@ -8,6 +9,7 @@ import {
 	REQUEST_FAILURE_COLLECTION_DEFINITION,
 } from "./benchmark-orchestration.mjs";
 import { repoRoot } from "./common.mjs";
+import { instrumentFileShareFrontend } from "./run-file-share-benchmark.mjs";
 
 const templates = [
 	"upload-benchmark.local.e2e.spec.ts",
@@ -26,6 +28,7 @@ for (const name of templates) {
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
+			"PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT",
 			'process.env.PW_BENCH !== "1"',
 			'serverMode: "production-preview"',
 			"schema: RESULT_SCHEMA",
@@ -168,9 +171,51 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"download.sinkCompletedAt > downloadCompletionObservedAt",
 		"SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK",
 		"SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK",
+		"PW_READER_LOCAL_CHUNK_TARGET",
+		"PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT",
+		"LOCALITY_CONTROL_POLL_MS",
+		"seedReplicationRole",
+		"openWithSeededReplicationRole",
+		"readerInitialRoleEvidence",
+		"preloadLocalChunkPrefix",
+		"readLocalChunkPrefixObservation",
+		"getTopologySnapshot",
+		"topologyHasExactWriterSingleton",
+		"topologyHasExactWriterReaderPair",
+		"writerTopology.replicatorHashes[0] === writerPeerHash",
+		"readerTopology.replicatorHashes[0] === writerPeerHash",
+		"writerTopologyBeforeUpload",
+		"readerTopologyBeforeTimedRead",
+		"requestedYieldedChunkCount",
+		"stabilityObservations",
+		"preDownloadObservation",
+		"waitForTerminalReaderIdle",
+		"collectStableTerminalTopology",
+		"terminalIdleObservation",
+		"terminalTopologyObservations",
+		'terminalTopologyRole = "replicator"',
+		"readerJoinedReplicationDuringTimedRead = true",
+		'readerLocalityControl.status = "complete"',
+		"exact contiguous prefix",
+		"unexpectedSeederDrop",
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
 	}
+	assert.match(
+		contents,
+		/hooks\.preloadLocalChunkPrefix\(\s*expectedFileName,\s*requestedTarget,\s*timeout,\s*\)/,
+		"the nonzero locality preload must pass the requested download timeout in the hook's third argument",
+	);
+	assert.match(
+		contents,
+		/const preloadLocalChunkPrefix = async \(\s*page: Page,\s*fileName: string,\s*target: number,\s*timeoutMs: number,\s*\)/,
+		"the Playwright locality helper must keep page, file, target, and timeout in a fixed order",
+	);
+	assert.match(
+		contents,
+		/preloadLocalChunkPrefix\(\s*reader,\s*fileName,\s*READER_LOCAL_CHUNK_TARGET,\s*DOWNLOAD_TIMEOUT_MS,\s*\)/,
+		"the nonzero locality call site must pass the configured download timeout after its target",
+	);
 	assert.ok(
 		contents.includes(
 			"const MIN_READY_SEEDERS = Number(process.env.PW_MIN_READY_SEEDERS)",
@@ -206,6 +251,71 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		contents,
 		/uploadSettledAt = writerReady\.readyAt;[\s\S]*?const boundedReaderListedPromise =[\s\S]*?withDeadline\(\s*readerListedPromise,\s*readerReadyRemainingMs,[\s\S]*?if \(ENABLE_VISIBILITY_PROBE\)/,
 		"reader listing must arm its Node-side deadline before optional diagnostics",
+	);
+	assert.match(
+		contents,
+		/await seedReplicationRole\(reader, shareAddress, false\);[\s\S]*?readerLocalityControl\s*\? openWithSeededReplicationRole\(reader, shareUrl\)\s*: applyRole\(reader, shareUrl\)[\s\S]*?readInitialReaderRoleEvidence\(reader\)[\s\S]*?writerTopologyBeforeUpload[\s\S]*?uploadStartedAt = Date\.now\(\);[\s\S]*?setInputFiles/,
+		"the reader observer role must be seeded before navigation and proven before upload",
+	);
+	assert.match(
+		contents,
+		/const openWithSeededReplicationRole =[\s\S]*?page\.goto\(shareUrl,[\s\S]*?await waitForTestHooks\(page\);\s*};/,
+		"the controlled reader must not invoke the post-open role setter",
+	);
+	assert.ok(
+		contents.includes("/[/?#]/.test(shareAddress)"),
+		"the seeded role key must come from exactly one non-empty share-address segment",
+	);
+	assert.match(
+		contents,
+		/postMonitorFinishedAt = Date\.now\(\);[\s\S]*?beforePreloadObservation[\s\S]*?preloadLocalChunkPrefix\([\s\S]*?collectStableReaderLocality\(\)[\s\S]*?writerTopologyBeforeTimedRead[\s\S]*?stage = "download-to-selected-sink"/,
+		"preload closure, stable exact-prefix evidence, and topology must precede the timed read",
+	);
+	assert.match(
+		contents,
+		/if \(!integrityVerified\)[\s\S]*?integrityVerifiedAt = Date\.now\(\);[\s\S]*?waitForTerminalReaderIdle\(\)[\s\S]*?collectStableTerminalTopology\(\s*terminalTopologyStartedAt,\s*terminalTopologyDeadlineAt,\s*\)[\s\S]*?readerJoinedReplicationDuringTimedRead = true[\s\S]*?stage = "complete"/,
+		"terminal topology must be collected after integrity and transfer-idle, outside the measured download",
+	);
+	assert.ok(
+		!contents.includes("monitorAndFreezeReaderLocality"),
+		"controlled locality must not race a role switch against upload replication",
+	);
+	const standalone = await readFile(
+		path.join(
+			repoRoot,
+			"scripts",
+			"file-share",
+			"run-file-share-benchmark.mjs",
+		),
+		"utf8",
+	);
+	for (const required of [
+		"peerbit-benchmark-locality-prefix-preload",
+		"peerbit-benchmark-locality-replicator-hashes",
+		"peerbit-benchmark-locality-indexed-search",
+		"replicatorHashes: replicatorHashes",
+		"preloadLocalChunkPrefix",
+		"getLocalChunkPrefixObservation",
+		"await iterator.return?.()",
+		"SearchRequestIndexed",
+		"new SearchRequestIndexed({ fetch: 0xffffffff })",
+		"resolve: false",
+		"program.countLocalChunks(file)",
+		"requireLocalityHook: readerLocalChunkTarget != null",
+	]) {
+		assert.ok(
+			standalone.includes(required),
+			`standalone locality instrumentation missing ${required}`,
+		);
+	}
+	assert.equal(
+		[
+			...standalone.matchAll(
+				/benchmarkStats: testWindow\.__peerbitFileShareBenchmarkStats \?\? null,/g,
+			),
+		].length,
+		1,
+		"the fallback benchmark hook must emit exactly one benchmarkStats field",
 	);
 	const opfsReadback = await readFile(
 		path.join(
@@ -245,6 +355,50 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	}
 });
 
+test("locality instrumentation migrates a reused legacy query idempotently", async (t) => {
+	const frontendRoot = await mkdtemp(
+		path.join(os.tmpdir(), "peerbit-locality-instrumentation-"),
+	);
+	t.after(async () => rm(frontendRoot, { recursive: true, force: true }));
+	const src = path.join(frontendRoot, "src");
+	await mkdir(src);
+	const dropPath = path.join(src, "Drop.tsx");
+	await writeFile(
+		dropPath,
+		`import { IsNull, SearchRequest } from "@peerbit/document";
+const __peerbitFileShareTestHooks = { setReplicationRole, getDiagnostics };
+const __peerbitFileShareBenchmarkStats = { updateListStats };
+updateListCalls.push(updateListStats);
+/* peerbit-benchmark-locality-prefix-preload */
+/* peerbit-benchmark-locality-replicator-hashes */
+const local = await program.files.index.search(
+    new SearchRequest({ fetch: 0xffffffff }),
+    { local: true, remote: false, resolve: false }
+);
+`,
+	);
+	await instrumentFileShareFrontend(frontendRoot, {
+		requireLocalityHook: true,
+	});
+	const migrated = await readFile(dropPath, "utf8");
+	assert.ok(
+		migrated.includes(
+			'import { IsNull, SearchRequest, SearchRequestIndexed } from "@peerbit/document";',
+		),
+	);
+	assert.ok(
+		migrated.includes("/* peerbit-benchmark-locality-indexed-search */"),
+	);
+	assert.ok(
+		migrated.includes("new SearchRequestIndexed({ fetch: 0xffffffff })"),
+	);
+	assert.ok(!migrated.includes("new SearchRequest({ fetch: 0xffffffff })"));
+	await instrumentFileShareFrontend(frontendRoot, {
+		requireLocalityHook: true,
+	});
+	assert.equal(await readFile(dropPath, "utf8"), migrated);
+});
+
 test("aggregate comparisons require every planned invocation to pass", async () => {
 	const standalone = await readFile(
 		path.join(
@@ -257,6 +411,8 @@ test("aggregate comparisons require every planned invocation to pass", async () 
 	);
 	for (const required of [
 		"compareUploadPerformanceModesForCompletePlan(results, outcomeCounts)",
+		"groupUploadResultsByLocalityCohort(results)",
+		"readerLocalityCohorts",
 		"if (comparison)",
 		'generatedPath: path.join("tests", "generated.promise-deadline.mjs")',
 		'generatedPath: path.join("tests", "generated.opfs-readback.mjs")',
@@ -281,6 +437,9 @@ test("aggregate comparisons require every planned invocation to pass", async () 
 	);
 	for (const required of [
 		"compareUploadPerformanceModesForCompletePlan(",
+		"groupUploadResultsByLocalityCohort(results)",
+		"readerLocalityCohortKey",
+		"readerLocalityCohorts",
 		"variantOutcomeCounts",
 		"const matrixPlanPassed = isCompletePassedBenchmarkPlan(",
 		"adaptiveComparison: matrixPlanPassed",

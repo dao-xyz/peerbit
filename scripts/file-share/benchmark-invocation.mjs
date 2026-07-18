@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 export const BENCHMARK_INVOCATION_SCHEMA = {
 	id: "peerbit-file-share-benchmark-invocation",
-	version: 2,
+	version: 3,
 };
 
 export const TINY_FILE_CUTOFF_BYTES = 5_000_000;
@@ -15,6 +15,7 @@ export const BENCHMARK_DOWNLOAD_SINKS = Object.freeze([
 	"node-file",
 ]);
 export const DEFAULT_BENCHMARK_DOWNLOAD_SINK = "hash-only";
+export const MAX_READER_LOCAL_CHUNK_OVERSHOOT = 8;
 
 const DEPLOYED_APP_HARNESS_MESSAGE =
 	"The locally instrumented core benchmark harness cannot use --base-url because it cannot attribute an external deployment to the selected Peerbit checkout; use a dedicated deployed-app benchmark harness that records deployment provenance";
@@ -166,6 +167,8 @@ export const createBenchmarkInvocation = ({
 	sampleMs,
 	sampleCount,
 	targetSeeders,
+	readerLocalChunkTarget,
+	readerLocalChunkMaxOvershoot,
 	baseUrl,
 	protocol,
 	viteMode,
@@ -218,8 +221,43 @@ export const createBenchmarkInvocation = ({
 		pollMs ?? DEFAULTS.pollMs,
 		"pollMs",
 	);
+	const resolvedReaderLocalChunkTarget =
+		readerLocalChunkTarget == null
+			? null
+			: requireNonNegativeSafeInteger(
+					readerLocalChunkTarget,
+					"readerLocalChunkTarget",
+				);
+	const resolvedReaderLocalChunkMaxOvershoot =
+		readerLocalChunkMaxOvershoot == null
+			? null
+			: requireNonNegativeSafeInteger(
+					readerLocalChunkMaxOvershoot,
+					"readerLocalChunkMaxOvershoot",
+				);
+	if (
+		(resolvedReaderLocalChunkTarget === null) !==
+		(resolvedReaderLocalChunkMaxOvershoot === null)
+	) {
+		throw new Error(
+			"readerLocalChunkTarget and readerLocalChunkMaxOvershoot must be provided together",
+		);
+	}
+	if (
+		resolvedReaderLocalChunkMaxOvershoot !== null &&
+		resolvedReaderLocalChunkMaxOvershoot > MAX_READER_LOCAL_CHUNK_OVERSHOOT
+	) {
+		throw new Error(
+			`readerLocalChunkMaxOvershoot must not exceed ${MAX_READER_LOCAL_CHUNK_OVERSHOOT}`,
+		);
+	}
 	const resolvedMinReadySeeders = requireNonNegativeSafeInteger(
-		minReadySeeders ?? (mode === "observer" ? 0 : 2),
+		minReadySeeders ??
+			(mode === "observer"
+				? 0
+				: resolvedReaderLocalChunkTarget === null
+					? 2
+					: 1),
 		"minReadySeeders",
 	);
 	const resolvedReadyTimeoutMs = requirePositiveSafeInteger(
@@ -238,6 +276,23 @@ export const createBenchmarkInvocation = ({
 		targetSeeders ?? DEFAULTS.targetSeeders,
 		"targetSeeders",
 	);
+	if (resolvedReaderLocalChunkTarget !== null) {
+		if (scenario !== "upload") {
+			throw new Error(
+				"readerLocalChunkTarget is only supported by upload benchmarks",
+			);
+		}
+		if (mode !== "fixed1") {
+			throw new Error(
+				"readerLocalChunkTarget requires fixed1 mode for the writer baseline",
+			);
+		}
+		if (resolvedMinReadySeeders !== 1) {
+			throw new Error(
+				"readerLocalChunkTarget requires minReadySeeders = 1 because the reader starts as an observer",
+			);
+		}
+	}
 
 	return {
 		schema: BENCHMARK_INVOCATION_SCHEMA,
@@ -258,6 +313,8 @@ export const createBenchmarkInvocation = ({
 		sampleMs: resolvedSampleMs,
 		sampleCount: resolvedSampleCount,
 		targetSeeders: resolvedTargetSeeders,
+		readerLocalChunkTarget: resolvedReaderLocalChunkTarget,
+		readerLocalChunkMaxOvershoot: resolvedReaderLocalChunkMaxOvershoot,
 		baseUrl: resolvedBaseUrl,
 		protocol: previewOptions.protocol,
 		viteMode: previewOptions.viteMode,
@@ -315,6 +372,12 @@ export const createPlaywrightBenchmarkEnvironment = ({
 		PW_SAMPLE_COUNT: String(invocation.sampleCount),
 		PW_SAMPLE_MS: String(invocation.sampleMs),
 		PW_TARGET_SEEDERS: String(invocation.targetSeeders),
+		PW_READER_LOCAL_CHUNK_TARGET: stringValue(
+			invocation.readerLocalChunkTarget,
+		),
+		PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: stringValue(
+			invocation.readerLocalChunkMaxOvershoot,
+		),
 		PW_UPLOAD_TIMEOUT_MS: String(invocation.uploadTimeoutMs),
 		PW_VERBOSE: invocation.verbose ? "1" : "0",
 		PW_VITE_CONFIG: stringValue(invocation.viteConfig),

@@ -883,7 +883,7 @@ const validateEnvelope = (
 	);
 	if (
 		invocationSchema.id !== "peerbit-file-share-benchmark-invocation" ||
-		invocationSchema.version !== 2
+		invocationSchema.version !== 3
 	) {
 		throw new Error("Benchmark result has an unsupported invocation schema");
 	}
@@ -921,6 +921,663 @@ const validateRequestedUploadKnobs = (result, invocation) => {
 			);
 		}
 	}
+	if (result.readerLocalChunkTarget !== invocation.readerLocalChunkTarget) {
+		throw new Error(
+			"Benchmark result readerLocalChunkTarget does not match the requested invocation",
+		);
+	}
+	if (
+		result.readerLocalChunkMaxOvershoot !==
+		invocation.readerLocalChunkMaxOvershoot
+	) {
+		throw new Error(
+			"Benchmark result readerLocalChunkMaxOvershoot does not match the requested invocation",
+		);
+	}
+};
+
+const validateIdleDownloadScheduler = (value, label) => {
+	const scheduler = requireRecord(value, label);
+	for (const key of ["activeCount", "activeBytes", "queuedCount"]) {
+		if (
+			requireNonNegativeSafeInteger(scheduler[key], `${label}.${key}`) !== 0
+		) {
+			throw new Error(`${label} is not idle`);
+		}
+	}
+};
+
+const validateExactChunkIndexSet = (value, chunkCount, label) => {
+	if (!Array.isArray(value)) {
+		throw new Error(`${label} must be an array`);
+	}
+	let previous = -1;
+	for (const [offset, index] of value.entries()) {
+		if (
+			!Number.isSafeInteger(index) ||
+			index < 0 ||
+			index >= chunkCount ||
+			index <= previous
+		) {
+			throw new Error(`${label}[${offset}] is not a sorted unique chunk index`);
+		}
+		previous = index;
+	}
+	return value;
+};
+
+const validateLocalChunkPrefixObservation = (value, label) => {
+	const observation = requireRecord(value, label);
+	const capturedAt = requirePositiveSafeInteger(
+		observation.capturedAt,
+		`${label}.capturedAt`,
+	);
+	const fileId = requireString(observation.fileId, `${label}.fileId`);
+	const chunkCount = requirePositiveSafeInteger(
+		observation.chunkCount,
+		`${label}.chunkCount`,
+	);
+	const indexRowCount = requireNonNegativeSafeInteger(
+		observation.indexRowCount,
+		`${label}.indexRowCount`,
+	);
+	const blockCount = requireNonNegativeSafeInteger(
+		observation.blockCount,
+		`${label}.blockCount`,
+	);
+	const indexedChunkIndices = validateExactChunkIndexSet(
+		observation.indexedChunkIndices,
+		chunkCount,
+		`${label}.indexedChunkIndices`,
+	);
+	const blockChunkIndices = validateExactChunkIndexSet(
+		observation.blockChunkIndices,
+		chunkCount,
+		`${label}.blockChunkIndices`,
+	);
+	if (
+		indexRowCount !== indexedChunkIndices.length ||
+		blockCount !== blockChunkIndices.length ||
+		typeof observation.persistChunkReads !== "boolean" ||
+		!Array.isArray(observation.activeTransfers) ||
+		observation.activeTransfers.length !== 0
+	) {
+		throw new Error(`${label} has inconsistent or non-idle locality evidence`);
+	}
+	validateIdleDownloadScheduler(
+		observation.downloadScheduler,
+		`${label}.downloadScheduler`,
+	);
+	return {
+		observation,
+		capturedAt,
+		fileId,
+		chunkCount,
+		indexRowCount,
+		blockCount,
+		indexedChunkIndices,
+		blockChunkIndices,
+		persistChunkReads: observation.persistChunkReads,
+	};
+};
+
+const validateTopology = (
+	value,
+	label,
+	expectedSelfInReplicatorSet,
+	expectedReplicatorCount = 1,
+) => {
+	const topology = requireRecord(value, label);
+	const capturedAt = requirePositiveSafeInteger(
+		topology.capturedAt,
+		`${label}.capturedAt`,
+	);
+	const peerHash = requireString(topology.peerHash, `${label}.peerHash`);
+	const replicatorCount = requireNonNegativeSafeInteger(
+		topology.replicatorCount,
+		`${label}.replicatorCount`,
+	);
+	if (
+		!Array.isArray(topology.replicatorHashes) ||
+		topology.replicatorHashes.length !== replicatorCount
+	) {
+		throw new Error(
+			`${label} does not contain the exact replicator identities`,
+		);
+	}
+	const replicatorHashes = topology.replicatorHashes.map((hash, index) =>
+		requireString(hash, `${label}.replicatorHashes[${index}]`),
+	);
+	if (
+		replicatorCount !== expectedReplicatorCount ||
+		topology.selfInReplicatorSet !== expectedSelfInReplicatorSet ||
+		!isDeepStrictEqual(
+			replicatorHashes,
+			[...replicatorHashes].toSorted((left, right) =>
+				left.localeCompare(right),
+			),
+		)
+	) {
+		throw new Error(`${label} does not prove the requested topology role`);
+	}
+	return { capturedAt, peerHash, replicatorCount, replicatorHashes };
+};
+
+const validateReaderLocalityControl = (result, invocation) => {
+	const target = invocation.readerLocalChunkTarget;
+	const maxOvershoot = invocation.readerLocalChunkMaxOvershoot;
+	if (target == null) {
+		if (
+			maxOvershoot !== null ||
+			result.readerLocalityControl !== null ||
+			result.readerLocalChunkBlockCount !== null ||
+			result.readerLocalChunkIndexRowCount !== null ||
+			result.readerLocalityCohortKey !== null
+		) {
+			throw new Error(
+				"Benchmark result contains unrequested reader locality control evidence",
+			);
+		}
+		return null;
+	}
+	if (
+		!Number.isSafeInteger(maxOvershoot) ||
+		maxOvershoot < 0 ||
+		invocation.mode !== "fixed1" ||
+		invocation.minReadySeeders !== 1
+	) {
+		throw new Error("Benchmark reader locality invocation is invalid");
+	}
+	const control = requireRecord(
+		result.readerLocalityControl,
+		"readerLocalityControl",
+	);
+	if (
+		control.profile !== "observer-topology-persistent-read-preloaded-prefix" ||
+		control.requestedYieldedChunkCount !== target ||
+		control.maxReadAheadOvershootChunkCount !== maxOvershoot ||
+		control.countMetric !==
+			"exact local Documents index rows and manifest entry blocks" ||
+		control.writerUploadRole !== "fixed1" ||
+		control.readerUploadRole !== "observer" ||
+		control.readerTimedReadPolicy !== "persist-chunk-reads" ||
+		control.stabilityPollIntervalMs !== Math.min(invocation.pollMs, 100) ||
+		control.requiredStableObservationCount !== 3 ||
+		control.status !== "complete" ||
+		control.failure !== null
+	) {
+		throw new Error("Benchmark reader locality control contract is invalid");
+	}
+	const timestamps = requireRecord(result.timestamps, "timestamps");
+	const uploadStartedAt = requirePositiveSafeInteger(
+		timestamps.uploadStartedAt,
+		"timestamps.uploadStartedAt",
+	);
+	const postMonitorFinishedAt = requirePositiveSafeInteger(
+		timestamps.postMonitorFinishedAt,
+		"timestamps.postMonitorFinishedAt",
+	);
+	const downloadStartedAt = requirePositiveSafeInteger(
+		timestamps.downloadStartedAt,
+		"timestamps.downloadStartedAt",
+	);
+	const downloadFinishedAt = requirePositiveSafeInteger(
+		timestamps.downloadFinishedAt,
+		"timestamps.downloadFinishedAt",
+	);
+	const downloadCompletionObservedAt = requirePositiveSafeInteger(
+		timestamps.downloadCompletionObservedAt,
+		"timestamps.downloadCompletionObservedAt",
+	);
+	const initialRoleEvidence = requireRecord(
+		control.readerInitialRoleEvidence,
+		"readerLocalityControl.readerInitialRoleEvidence",
+	);
+	const initialRoleCapturedAt = requirePositiveSafeInteger(
+		initialRoleEvidence.capturedAt,
+		"readerLocalityControl.readerInitialRoleEvidence.capturedAt",
+	);
+	const initialProgramAddress = requireString(
+		initialRoleEvidence.programAddress,
+		"readerLocalityControl.readerInitialRoleEvidence.programAddress",
+	);
+	if (
+		initialRoleEvidence.persistChunkReads !== false ||
+		initialRoleEvidence.initialRole !== "observer" ||
+		initialRoleEvidence.updateRoleCount !== 0 ||
+		initialRoleEvidence.lastAppliedRole !== null
+	) {
+		throw new Error(
+			"Benchmark reader locality did not initialize the reader as an observer",
+		);
+	}
+	const writerTopologyBeforeUpload = validateTopology(
+		control.writerTopologyBeforeUpload,
+		"readerLocalityControl.writerTopologyBeforeUpload",
+		true,
+	);
+	const readerTopologyBeforeUpload = validateTopology(
+		control.readerTopologyBeforeUpload,
+		"readerLocalityControl.readerTopologyBeforeUpload",
+		false,
+	);
+	const writerTopologyBeforeTimedRead = validateTopology(
+		control.writerTopologyBeforeTimedRead,
+		"readerLocalityControl.writerTopologyBeforeTimedRead",
+		true,
+	);
+	const readerTopologyBeforeTimedRead = validateTopology(
+		control.readerTopologyBeforeTimedRead,
+		"readerLocalityControl.readerTopologyBeforeTimedRead",
+		false,
+	);
+	if (
+		writerTopologyBeforeUpload.replicatorCount !==
+			readerTopologyBeforeUpload.replicatorCount ||
+		writerTopologyBeforeTimedRead.replicatorCount !==
+			readerTopologyBeforeTimedRead.replicatorCount ||
+		writerTopologyBeforeUpload.peerHash ===
+			readerTopologyBeforeUpload.peerHash ||
+		writerTopologyBeforeTimedRead.peerHash ===
+			readerTopologyBeforeTimedRead.peerHash ||
+		writerTopologyBeforeUpload.peerHash !==
+			writerTopologyBeforeTimedRead.peerHash ||
+		readerTopologyBeforeUpload.peerHash !==
+			readerTopologyBeforeTimedRead.peerHash
+	) {
+		throw new Error(
+			"Benchmark topology evidence does not preserve two distinct peer identities",
+		);
+	}
+	const expectedReplicatorHashes = [writerTopologyBeforeUpload.peerHash];
+	if (
+		[
+			writerTopologyBeforeUpload,
+			readerTopologyBeforeUpload,
+			writerTopologyBeforeTimedRead,
+			readerTopologyBeforeTimedRead,
+		].some(
+			(topology) =>
+				!isDeepStrictEqual(topology.replicatorHashes, expectedReplicatorHashes),
+		)
+	) {
+		throw new Error(
+			"Benchmark topology evidence does not agree on the writer as the exact singleton replicator",
+		);
+	}
+	const beforePreload = validateLocalChunkPrefixObservation(
+		control.beforePreloadObservation,
+		"readerLocalityControl.beforePreloadObservation",
+	);
+	const readerManifest = requireRecord(
+		result.readerManifestEvidence,
+		"readerManifestEvidence",
+	);
+	const manifestFileId = requireString(
+		readerManifest.fileId,
+		"readerManifestEvidence.fileId",
+	);
+	const canonicalChunkCount = requirePositiveSafeInteger(
+		requireRecord(result.readTransfer, "readTransfer").chunkCount,
+		"readTransfer.chunkCount",
+	);
+	if (beforePreload.chunkCount !== canonicalChunkCount) {
+		throw new Error(
+			"Benchmark reader locality manifest chunk count contradicts the canonical completed read",
+		);
+	}
+	if (target >= canonicalChunkCount) {
+		throw new Error(
+			"Benchmark reader locality target must be a partial prefix of the canonical completed read",
+		);
+	}
+	if (
+		beforePreload.fileId !== manifestFileId ||
+		beforePreload.indexRowCount !== 0 ||
+		beforePreload.blockCount !== 0 ||
+		beforePreload.indexedChunkIndices.length !== 0 ||
+		beforePreload.blockChunkIndices.length !== 0 ||
+		beforePreload.persistChunkReads !== false
+	) {
+		throw new Error(
+			"Benchmark reader locality did not begin as an empty observer cache",
+		);
+	}
+	const preload = requireRecord(
+		control.preloadEvidence,
+		"readerLocalityControl.preloadEvidence",
+	);
+	const preloadStartedAt = requirePositiveSafeInteger(
+		preload.startedAt,
+		"readerLocalityControl.preloadEvidence.startedAt",
+	);
+	const preloadFinishedAt = requirePositiveSafeInteger(
+		preload.finishedAt,
+		"readerLocalityControl.preloadEvidence.finishedAt",
+	);
+	const yieldedByteCount = requireNonNegativeSafeInteger(
+		preload.yieldedByteCount,
+		"readerLocalityControl.preloadEvidence.yieldedByteCount",
+	);
+	if (
+		preload.fileId !== manifestFileId ||
+		preload.yieldedChunkCount !== target ||
+		preload.persistChunkReads !== true ||
+		!Array.isArray(preload.activeTransfersAfterClose) ||
+		preload.activeTransfersAfterClose.length !== 0 ||
+		preloadFinishedAt < preloadStartedAt
+	) {
+		throw new Error("Benchmark reader locality preload evidence is invalid");
+	}
+	validateIdleDownloadScheduler(
+		preload.downloadSchedulerAfterClose,
+		"readerLocalityControl.preloadEvidence.downloadSchedulerAfterClose",
+	);
+	if (target === 0) {
+		if (
+			preload.transferId !== null ||
+			preload.readDiagnostics !== null ||
+			yieldedByteCount !== 0
+		) {
+			throw new Error("Zero-prefix locality preload opened a read transfer");
+		}
+	} else {
+		const preloadTransferId = requireString(
+			preload.transferId,
+			"readerLocalityControl.preloadEvidence.transferId",
+		);
+		const preloadDiagnostics = requireRecord(
+			preload.readDiagnostics,
+			"readerLocalityControl.preloadEvidence.readDiagnostics",
+		);
+		if (
+			preloadDiagnostics.transferId !== preloadTransferId ||
+			preloadDiagnostics.fileId !== manifestFileId ||
+			preloadDiagnostics.fileName !== result.fileName ||
+			preloadDiagnostics.persistChunkReads !== true ||
+			preloadDiagnostics.programPersistChunkReads !== true ||
+			preloadDiagnostics.initialLocalChunkIndexRowCount !== 0 ||
+			preloadDiagnostics.initialLocalChunkCount !== 0 ||
+			preloadDiagnostics.initialLocalChunkBlockCount !== 0 ||
+			preloadDiagnostics.finishedAt !== null ||
+			preloadDiagnostics.failureAt !== null ||
+			preloadDiagnostics.failureMessage !== null
+		) {
+			throw new Error(
+				"Benchmark partial preload diagnostics do not prove a clean persistent read",
+			);
+		}
+		const chunkBytes = requireRecord(
+			preloadDiagnostics.chunkByteLength,
+			"readerLocalityControl.preloadEvidence.readDiagnostics.chunkByteLength",
+		);
+		const expectedKeys = Array.from({ length: target }, (_, index) =>
+			String(index),
+		);
+		if (
+			Object.keys(chunkBytes).length !== target ||
+			expectedKeys.some((key) => !Object.hasOwn(chunkBytes, key))
+		) {
+			throw new Error(
+				"Benchmark partial preload did not yield the exact requested prefix",
+			);
+		}
+		const recomputedYieldedBytes = expectedKeys.reduce(
+			(total, key) =>
+				total +
+				requirePositiveSafeInteger(
+					chunkBytes[key],
+					`readerLocalityControl.preloadEvidence.readDiagnostics.chunkByteLength[${key}]`,
+				),
+			0,
+		);
+		if (recomputedYieldedBytes !== yieldedByteCount) {
+			throw new Error("Benchmark partial preload byte count is inconsistent");
+		}
+	}
+	if (
+		!Array.isArray(control.stabilityObservations) ||
+		control.stabilityObservations.length !== 3
+	) {
+		throw new Error(
+			"Benchmark reader locality requires exactly three stable observations",
+		);
+	}
+	const stable = control.stabilityObservations.map((observation, index) =>
+		validateLocalChunkPrefixObservation(
+			observation,
+			`readerLocalityControl.stabilityObservations[${index}]`,
+		),
+	);
+	const actualLocalChunkBlockCount = requireNonNegativeSafeInteger(
+		control.actualLocalChunkBlockCount,
+		"readerLocalityControl.actualLocalChunkBlockCount",
+	);
+	const actualLocalChunkIndexRowCount = requireNonNegativeSafeInteger(
+		control.actualLocalChunkIndexRowCount,
+		"readerLocalityControl.actualLocalChunkIndexRowCount",
+	);
+	const expectedBlockPrefix = Array.from(
+		{ length: actualLocalChunkBlockCount },
+		(_, index) => index,
+	);
+	const expectedIndexPrefix = Array.from(
+		{ length: actualLocalChunkIndexRowCount },
+		(_, index) => index,
+	);
+	for (const [index, observation] of stable.entries()) {
+		if (
+			observation.fileId !== manifestFileId ||
+			observation.chunkCount !== canonicalChunkCount ||
+			observation.indexRowCount !== actualLocalChunkIndexRowCount ||
+			observation.blockCount !== actualLocalChunkBlockCount ||
+			observation.persistChunkReads !== true ||
+			!isDeepStrictEqual(
+				observation.indexedChunkIndices,
+				expectedIndexPrefix,
+			) ||
+			!isDeepStrictEqual(observation.blockChunkIndices, expectedBlockPrefix) ||
+			(index > 0 &&
+				observation.capturedAt - stable[index - 1].capturedAt <
+					control.stabilityPollIntervalMs)
+		) {
+			throw new Error(
+				"Benchmark stable locality observations do not prove one exact prefix",
+			);
+		}
+	}
+	const preDownload = validateLocalChunkPrefixObservation(
+		control.preDownloadObservation,
+		"readerLocalityControl.preDownloadObservation",
+	);
+	const expectedCohortKey = `observer-persistent-prefix-b${actualLocalChunkBlockCount}-i${actualLocalChunkIndexRowCount}`;
+	if (
+		actualLocalChunkBlockCount < target ||
+		actualLocalChunkBlockCount > target + maxOvershoot ||
+		actualLocalChunkBlockCount >= canonicalChunkCount ||
+		actualLocalChunkIndexRowCount > actualLocalChunkBlockCount ||
+		control.readAheadOvershootChunkCount !==
+			actualLocalChunkBlockCount - target ||
+		control.cohortKey !== expectedCohortKey ||
+		result.readerLocalChunkBlockCount !== actualLocalChunkBlockCount ||
+		result.readerLocalChunkIndexRowCount !== actualLocalChunkIndexRowCount ||
+		result.readerLocalityCohortKey !== expectedCohortKey ||
+		preDownload.chunkCount !== canonicalChunkCount ||
+		!isDeepStrictEqual(preDownload.observation, stable.at(-1).observation)
+	) {
+		throw new Error(
+			"Benchmark reader locality cohort count or key is inconsistent",
+		);
+	}
+	const readerDiagnostics = requireRecord(
+		result.readerDiagnostics,
+		"readerDiagnostics",
+	);
+	const readerTimings = requireRecord(
+		readerDiagnostics.timings,
+		"readerDiagnostics.timings",
+	);
+	const timedRead = requireRecord(
+		readerDiagnostics.lastReadDiagnostics,
+		"readerDiagnostics.lastReadDiagnostics",
+	);
+	if (
+		readerDiagnostics.persistChunkReads !== true ||
+		readerDiagnostics.programAddress !== initialProgramAddress ||
+		readerTimings.initialRole !== initialRoleEvidence.initialRole ||
+		readerTimings.updateRoleCount !== initialRoleEvidence.updateRoleCount ||
+		readerTimings.lastAppliedRole !== initialRoleEvidence.lastAppliedRole
+	) {
+		throw new Error(
+			"Benchmark reader diagnostics contradict its initial observer-role evidence",
+		);
+	}
+	if (
+		timedRead.persistChunkReads !== true ||
+		timedRead.programPersistChunkReads !== true ||
+		timedRead.initialLocalChunkIndexRowCount !==
+			actualLocalChunkIndexRowCount ||
+		timedRead.initialLocalChunkCount !== actualLocalChunkIndexRowCount ||
+		timedRead.initialLocalChunkBlockCount !== actualLocalChunkBlockCount
+	) {
+		throw new Error(
+			"Benchmark timed read diagnostics do not match its exact locality cohort",
+		);
+	}
+	const integrityVerifiedAt = requirePositiveSafeInteger(
+		control.integrityVerifiedAt,
+		"readerLocalityControl.integrityVerifiedAt",
+	);
+	const terminalIdle = validateLocalChunkPrefixObservation(
+		control.terminalIdleObservation,
+		"readerLocalityControl.terminalIdleObservation",
+	);
+	if (
+		terminalIdle.fileId !== manifestFileId ||
+		terminalIdle.chunkCount !== canonicalChunkCount ||
+		terminalIdle.blockCount !== canonicalChunkCount ||
+		terminalIdle.persistChunkReads !== true ||
+		control.terminalTopologyRole !== "replicator" ||
+		control.readerJoinedReplicationDuringTimedRead !== true
+	) {
+		throw new Error(
+			"Benchmark terminal reader evidence does not prove an idle persistent replicator",
+		);
+	}
+	const terminalTopologyStartedAt = requirePositiveSafeInteger(
+		control.terminalTopologyStartedAt,
+		"readerLocalityControl.terminalTopologyStartedAt",
+	);
+	const terminalTopologyDeadlineAt = requirePositiveSafeInteger(
+		control.terminalTopologyDeadlineAt,
+		"readerLocalityControl.terminalTopologyDeadlineAt",
+	);
+	const terminalTopologyFinishedAt = requirePositiveSafeInteger(
+		control.terminalTopologyFinishedAt,
+		"readerLocalityControl.terminalTopologyFinishedAt",
+	);
+	if (
+		!Array.isArray(control.terminalTopologyObservations) ||
+		control.terminalTopologyObservations.length !== 3
+	) {
+		throw new Error(
+			"Benchmark reader locality requires exactly three stable terminal topology observations",
+		);
+	}
+	const expectedTerminalReplicatorHashes = [
+		writerTopologyBeforeUpload.peerHash,
+		readerTopologyBeforeUpload.peerHash,
+	].toSorted((left, right) => left.localeCompare(right));
+	const terminalTopologyObservations = control.terminalTopologyObservations.map(
+		(value, index) => {
+			const label = `readerLocalityControl.terminalTopologyObservations[${index}]`;
+			const observation = requireRecord(value, label);
+			const capturedAt = requirePositiveSafeInteger(
+				observation.capturedAt,
+				`${label}.capturedAt`,
+			);
+			const writerTopology = validateTopology(
+				observation.writerTopology,
+				`${label}.writerTopology`,
+				true,
+				2,
+			);
+			const readerTopology = validateTopology(
+				observation.readerTopology,
+				`${label}.readerTopology`,
+				true,
+				2,
+			);
+			if (
+				writerTopology.peerHash !== writerTopologyBeforeUpload.peerHash ||
+				readerTopology.peerHash !== readerTopologyBeforeUpload.peerHash ||
+				!isDeepStrictEqual(
+					writerTopology.replicatorHashes,
+					expectedTerminalReplicatorHashes,
+				) ||
+				!isDeepStrictEqual(
+					readerTopology.replicatorHashes,
+					expectedTerminalReplicatorHashes,
+				) ||
+				writerTopology.capturedAt > capturedAt ||
+				readerTopology.capturedAt > capturedAt ||
+				writerTopology.capturedAt < terminalTopologyStartedAt ||
+				readerTopology.capturedAt < terminalTopologyStartedAt ||
+				capturedAt > terminalTopologyFinishedAt ||
+				(index > 0 &&
+					capturedAt -
+						control.terminalTopologyObservations[index - 1].capturedAt <
+						control.stabilityPollIntervalMs)
+			) {
+				throw new Error(
+					"Benchmark terminal topology observations do not prove one stable writer-reader replicator pair",
+				);
+			}
+			return { capturedAt, writerTopology, readerTopology };
+		},
+	);
+	const writerDiagnostics = requireRecord(
+		result.writerDiagnostics,
+		"writerDiagnostics",
+	);
+	if (
+		writerDiagnostics.peerHash !== writerTopologyBeforeUpload.peerHash ||
+		readerDiagnostics.peerHash !== readerTopologyBeforeUpload.peerHash ||
+		writerDiagnostics.replicatorCount !== 2 ||
+		readerDiagnostics.replicatorCount !== 2
+	) {
+		throw new Error(
+			"Benchmark final peer diagnostics contradict the terminal topology evidence",
+		);
+	}
+	if (
+		initialRoleCapturedAt > uploadStartedAt ||
+		writerTopologyBeforeUpload.capturedAt > uploadStartedAt ||
+		readerTopologyBeforeUpload.capturedAt > uploadStartedAt ||
+		beforePreload.capturedAt < postMonitorFinishedAt ||
+		preloadStartedAt < beforePreload.capturedAt ||
+		preloadFinishedAt < preloadStartedAt ||
+		stable[0].capturedAt < preloadFinishedAt ||
+		preDownload.capturedAt > writerTopologyBeforeTimedRead.capturedAt ||
+		preDownload.capturedAt > readerTopologyBeforeTimedRead.capturedAt ||
+		writerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
+		readerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
+		downloadFinishedAt > downloadCompletionObservedAt ||
+		integrityVerifiedAt < downloadCompletionObservedAt ||
+		terminalIdle.capturedAt < integrityVerifiedAt ||
+		terminalTopologyStartedAt < terminalIdle.capturedAt ||
+		terminalTopologyDeadlineAt !==
+			terminalTopologyStartedAt + invocation.readyTimeoutMs ||
+		terminalTopologyFinishedAt < terminalTopologyStartedAt ||
+		terminalTopologyFinishedAt > terminalTopologyDeadlineAt ||
+		terminalTopologyObservations[0].capturedAt < terminalTopologyStartedAt ||
+		terminalTopologyObservations.at(-1).capturedAt > terminalTopologyFinishedAt
+	) {
+		throw new Error(
+			"Benchmark reader locality control timestamps are inconsistent",
+		);
+	}
+	return { actualLocalChunkBlockCount, actualLocalChunkIndexRowCount };
 };
 
 const validateCollectedStringEvidence = ({
@@ -1061,7 +1718,12 @@ const validateUploadSnapshots = (result, invocation) => {
 			}
 			hasPostMonitorSample = true;
 		}
-		parsedSnapshots.push({ label, writerSeeders, readerSeeders });
+		parsedSnapshots.push({
+			label,
+			writerSeeders,
+			readerSeeders,
+			capturedAt,
+		});
 		previousAt = capturedAt;
 	}
 	if (invocation.postUploadMonitorMs > 0 && !hasPostMonitorSample) {
@@ -1115,6 +1777,12 @@ const validateUploadSnapshots = (result, invocation) => {
 	if (result.droppedSeeders !== recomputedDroppedSeeders) {
 		throw new Error(
 			"Upload droppedSeeders claim contradicts its numeric snapshot evidence",
+		);
+	}
+	const recomputedUnexpectedSeederDrop = recomputedDroppedSeeders;
+	if (result.unexpectedSeederDrop !== recomputedUnexpectedSeederDrop) {
+		throw new Error(
+			"Upload unexpectedSeederDrop claim contradicts its numeric snapshot evidence",
 		);
 	}
 };
@@ -1339,7 +2007,13 @@ export const validateBenchmarkResult = (
 		validateUploadTimings(result, expectedInvocation);
 		validateRequestedUploadKnobs(result, expectedInvocation);
 		validateZeroErrors(result, "upload result");
+		validateReaderLocalityControl(result, expectedInvocation);
 		validateUploadSnapshots(result, expectedInvocation);
+		if (result.unexpectedSeederDrop !== false) {
+			throw new Error(
+				"Passed upload result contains an unexpected seeder drop",
+			);
+		}
 		if (result.droppedSeeders !== false) {
 			throw new Error("Passed upload result contains seeder drops");
 		}

@@ -4,7 +4,9 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+	MAX_READER_LOCAL_CHUNK_OVERSHOOT,
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
 	assertInvocationUnchanged,
@@ -31,6 +33,7 @@ import {
 } from "./benchmark-provenance.mjs";
 import {
 	compareUploadPerformanceModesForCompletePlan,
+	groupUploadResultsByLocalityCohort,
 	isCompletePassedBenchmarkPlan,
 	summarizeUploadPerformance,
 	uploadTimingTableColumns,
@@ -104,6 +107,12 @@ const SCENARIOS = {
 };
 const DROP_HOOK_MARKER = "/* peerbit-benchmark-hook */";
 const DROP_UPDATE_LIST_MARKER = "/* peerbit-benchmark-update-list */";
+const DROP_LOCALITY_HOOK_MARKER =
+	"/* peerbit-benchmark-locality-prefix-preload */";
+const DROP_LOCALITY_TOPOLOGY_MARKER =
+	"/* peerbit-benchmark-locality-replicator-hashes */";
+const DROP_LOCALITY_INDEXED_SEARCH_MARKER =
+	"/* peerbit-benchmark-locality-indexed-search */";
 const getScenarioConfig = (scenario) => {
 	const config = SCENARIOS[scenario];
 	if (!config) {
@@ -146,7 +155,10 @@ const maybeCopyFrontendCerts = async ({
 	}
 };
 
-const instrumentFileShareFrontend = async (frontendRoot) => {
+export const instrumentFileShareFrontend = async (
+	frontendRoot,
+	{ requireLocalityHook = false } = {},
+) => {
 	const dropPath = path.join(frontendRoot, "src", "Drop.tsx");
 	let contents = await fsp.readFile(dropPath, "utf8");
 	const hasExistingBenchmarkHook =
@@ -157,9 +169,19 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
 		contents.includes("__peerbitFileShareBenchmarkStats") &&
 		contents.includes("updateListStats") &&
 		contents.includes("updateListCalls.push(updateListStats)");
+	if (requireLocalityHook && !hasExistingBenchmarkHook) {
+		throw new Error(
+			`Controlled-locality benchmarks require the modern rich test-hook contract in ${dropPath}`,
+		);
+	}
 	if (
 		(contents.includes(DROP_HOOK_MARKER) || hasExistingBenchmarkHook) &&
-		(contents.includes(DROP_UPDATE_LIST_MARKER) || hasExistingUpdateListStats)
+		(contents.includes(DROP_UPDATE_LIST_MARKER) ||
+			hasExistingUpdateListStats) &&
+		(!requireLocalityHook ||
+			(contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
+				contents.includes(DROP_LOCALITY_TOPOLOGY_MARKER) &&
+				contents.includes(DROP_LOCALITY_INDEXED_SEARCH_MARKER)))
 	) {
 		return;
 	}
@@ -217,7 +239,7 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
     }, [files.program?.address, files.program?.closed]);
 
 `;
-	if (!contents.includes(DROP_HOOK_MARKER)) {
+	if (!contents.includes(DROP_HOOK_MARKER) && !hasExistingBenchmarkHook) {
 		if (!contents.includes(anchor)) {
 			throw new Error(`Could not find benchmark hook anchor in ${dropPath}`);
 		}
@@ -244,7 +266,10 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
         // TODO don't reload the whole list, just add the new elements..
         try {
 `;
-	if (!contents.includes(DROP_UPDATE_LIST_MARKER)) {
+	if (
+		!contents.includes(DROP_UPDATE_LIST_MARKER) &&
+		!hasExistingUpdateListStats
+	) {
 		if (!contents.includes(updateListAnchor)) {
 			throw new Error(`Could not find updateList anchor in ${dropPath}`);
 		}
@@ -302,6 +327,259 @@ const instrumentFileShareFrontend = async (frontendRoot) => {
             forceUpdate();
 `,
 	);
+	if (
+		requireLocalityHook &&
+		contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
+		!contents.includes(DROP_LOCALITY_INDEXED_SEARCH_MARKER)
+	) {
+		const searchImportAnchor =
+			'import { IsNull, SearchRequest } from "@peerbit/document";';
+		const indexedSearchImport =
+			'import { IsNull, SearchRequest, SearchRequestIndexed } from "@peerbit/document";';
+		if (!contents.includes(indexedSearchImport)) {
+			if (!contents.includes(searchImportAnchor)) {
+				throw new Error(
+					`File-share benchmark locality migration requires the indexed-search import anchor in ${dropPath}`,
+				);
+			}
+			contents = contents.replace(searchImportAnchor, indexedSearchImport);
+		}
+		const legacySearchAnchor = "new SearchRequest({ fetch: 0xffffffff }),";
+		const indexedSearchAnchor =
+			"new SearchRequestIndexed({ fetch: 0xffffffff }),";
+		if (contents.includes(legacySearchAnchor)) {
+			contents = contents.replace(legacySearchAnchor, indexedSearchAnchor);
+		}
+		if (!contents.includes(indexedSearchAnchor)) {
+			throw new Error(
+				`File-share benchmark locality migration requires the exact indexed-search query in ${dropPath}`,
+			);
+		}
+		contents = contents.replace(
+			indexedSearchAnchor,
+			`${DROP_LOCALITY_INDEXED_SEARCH_MARKER}\n                    ${indexedSearchAnchor}`,
+		);
+	}
+	if (
+		requireLocalityHook &&
+		!contents.includes(DROP_LOCALITY_TOPOLOGY_MARKER)
+	) {
+		const topologyAnchor = `                    selfInReplicatorSet:
+                        peerHash && replicatorHashes
+                            ? replicatorHashes.includes(peerHash)
+                            : null,`;
+		if (!contents.includes(topologyAnchor)) {
+			throw new Error(
+				`File-share benchmark locality control requires the exact-replicator topology anchor in ${dropPath}`,
+			);
+		}
+		contents = contents.replace(
+			topologyAnchor,
+			`                    ${DROP_LOCALITY_TOPOLOGY_MARKER}
+                    replicatorHashes: replicatorHashes
+                        ? [...replicatorHashes].sort((left, right) =>
+                              left.localeCompare(right)
+                          )
+                        : null,
+${topologyAnchor}`,
+		);
+	}
+	if (requireLocalityHook && !contents.includes(DROP_LOCALITY_HOOK_MARKER)) {
+		const searchImportAnchor =
+			'import { IsNull, SearchRequest } from "@peerbit/document";';
+		if (!contents.includes(searchImportAnchor)) {
+			throw new Error(
+				`File-share benchmark locality control requires the indexed-search import anchor in ${dropPath}`,
+			);
+		}
+		contents = contents.replace(
+			searchImportAnchor,
+			'import { IsNull, SearchRequest, SearchRequestIndexed } from "@peerbit/document";',
+		);
+		const typeAnchor =
+			"                getLightweightSnapshot: () => Record<string, unknown>;";
+		const implementationAnchor = "            getLightweightSnapshot: () => ({";
+		if (
+			!contents.includes(typeAnchor) ||
+			!contents.includes(implementationAnchor)
+		) {
+			throw new Error(
+				`File-share benchmark locality control requires the rich test-hook contract in ${dropPath}`,
+			);
+		}
+		contents = contents.replace(
+			typeAnchor,
+			`${typeAnchor}\n                preloadLocalChunkPrefix: (fileName: string, target: number, timeoutMs: number) => Promise<Record<string, unknown>>;\n                getLocalChunkPrefixObservation: (fileName: string) => Promise<Record<string, unknown>>;`,
+		);
+		contents = contents.replace(
+			implementationAnchor,
+			`            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {
+                ${DROP_LOCALITY_HOOK_MARKER}
+                if (!program || program.closed) {
+                    throw new Error("Program is not ready");
+                }
+                const file = list.find((candidate) => candidate.name === fileName);
+                if (!file) {
+                    throw new Error("Locality preload file is not listed");
+                }
+                if (!isLargeFileLike(file)) {
+                    throw new Error("Locality control target is not a large file");
+                }
+                if (
+                    !Number.isSafeInteger(target) ||
+                    target < 0 ||
+                    target >= file.chunkCount
+                ) {
+                    throw new Error(
+                        "Locality preload target must be a non-negative partial chunk prefix"
+                    );
+                }
+                program.persistChunkReads = true;
+                const startedAt = Date.now();
+                const transferId =
+                    target > 0
+                        ? "benchmark-locality-preload-" + startedAt + "-" + target
+                        : null;
+                let yieldedChunkCount = 0;
+                let yieldedByteCount = 0;
+                if (transferId) {
+                    const iterator = file
+                        .streamFile(program, { timeout: timeoutMs, transferId })
+                        [Symbol.asyncIterator]();
+                    try {
+                        while (yieldedChunkCount < target) {
+                            const next = await iterator.next();
+                            if (next.done) {
+                                throw new Error(
+                                    "Locality preload stream ended before the requested prefix"
+                                );
+                            }
+                            yieldedChunkCount += 1;
+                            yieldedByteCount += next.value.byteLength;
+                        }
+                    } finally {
+                        await iterator.return?.();
+                    }
+                }
+                return {
+                    startedAt,
+                    finishedAt: Date.now(),
+                    fileId: file.id,
+                    transferId,
+                    yieldedChunkCount,
+                    yieldedByteCount,
+                    persistChunkReads: program.persistChunkReads,
+                    activeTransfersAfterClose: program.getActiveTransfers(),
+                    downloadSchedulerAfterClose:
+                        program.getTransferSchedulerDiagnostics().download,
+                    readDiagnostics: transferId
+                        ? program.getReadDiagnostics(transferId) ?? null
+                        : null,
+                };
+            },
+            getLocalChunkPrefixObservation: async (fileName) => {
+                const capturedAt = Date.now();
+                if (!program || program.closed) {
+                    throw new Error("Program is not ready");
+                }
+                const file = list.find((candidate) => candidate.name === fileName);
+                if (!file) {
+                    return {
+                        capturedAt,
+                        fileId: null,
+                        chunkCount: null,
+                        indexRowCount: null,
+                        indexedChunkIndices: null,
+                        blockCount: null,
+                        blockChunkIndices: null,
+                    };
+                }
+                if (!isLargeFileLike(file)) {
+                    throw new Error("Locality control target is not a large file");
+                }
+				const local = await program.files.index.search(
+					${DROP_LOCALITY_INDEXED_SEARCH_MARKER}
+					new SearchRequestIndexed({ fetch: 0xffffffff }),
+                    { local: true, remote: false, resolve: false } as any
+                );
+                const indexedChunkIndices = Array.from(
+                    new Set<number>(
+                        local
+                            .filter((candidate) => candidate.parentId === file.id)
+                            .map((candidate) => {
+                                const prefix = file.name + "/";
+                                if (
+                                    typeof candidate.name !== "string" ||
+                                    !candidate.name.startsWith(prefix)
+                                ) {
+                                    throw new Error(
+                                        "Local chunk metadata has an invalid name"
+                                    );
+                                }
+                                const suffix = candidate.name.slice(
+                                    prefix.length
+                                );
+                                const index = Number(suffix);
+                                if (
+                                    !/^\\d+$/.test(suffix) ||
+                                    !Number.isSafeInteger(index) ||
+                                    index < 0 ||
+                                    index >= file.chunkCount
+                                ) {
+                                    throw new Error(
+                                        "Local chunk metadata has an invalid index suffix"
+                                    );
+                                }
+                                return index;
+                            })
+                    )
+                ).sort((left, right) => left - right);
+                const candidateHeads = (
+                    file as { chunkEntryHeads?: unknown }
+                ).chunkEntryHeads;
+                const heads =
+                    Array.isArray(candidateHeads) &&
+                    candidateHeads.length === file.chunkCount &&
+                    candidateHeads.every((head) => typeof head === "string")
+                        ? (candidateHeads as string[])
+                        : null;
+                const blockPresence = heads
+                    ? typeof program.files.log.log.blocks.hasMany === "function"
+                        ? await program.files.log.log.blocks.hasMany(heads)
+                        : await Promise.all(
+                              heads.map((head) =>
+                                  program.files.log.log.blocks.has(head)
+                              )
+                          )
+                    : null;
+                const blockChunkIndices = blockPresence
+                    ? blockPresence.flatMap((present, index) =>
+                          present ? [index] : []
+                      )
+                    : null;
+                const indexRowCount = await program.countLocalChunks(file);
+                if (indexRowCount !== indexedChunkIndices.length) {
+                    throw new Error(
+                        "Local indexed chunk count disagrees with the exact index set"
+                    );
+                }
+                return {
+                    capturedAt,
+                    fileId: file.id,
+                    chunkCount: file.chunkCount,
+                    indexRowCount,
+                    indexedChunkIndices,
+                    blockCount: blockChunkIndices?.length ?? null,
+                    blockChunkIndices,
+                    persistChunkReads: program.persistChunkReads,
+                    activeTransfers: program.getActiveTransfers(),
+                    downloadScheduler:
+                        program.getTransferSchedulerDiagnostics().download,
+                };
+            },
+${implementationAnchor}`,
+		);
+	}
 	await fsp.writeFile(dropPath, contents);
 };
 
@@ -332,54 +610,50 @@ const average = (values) =>
 		: null;
 
 const summarizeUploadResults = (results) => {
-	const grouped = new Map();
-	for (const result of results) {
-		const arr = grouped.get(result.mode) ?? [];
-		arr.push(result);
-		grouped.set(result.mode, arr);
-	}
-	return [...grouped.entries()].map(([mode, items]) => ({
-		mode,
-		runs: items.length,
-		passed: items.filter((item) => item.status === "passed").length,
-		failed: items.filter((item) => item.status !== "passed").length,
-		...summarizeUploadPerformance(items),
-		uploadSettledMsAvg: average(
-			items
-				.filter((item) => item.status === "passed")
-				.map((item) => item.phaseDurationsMs?.timeToUploadSettled)
-				.filter((value) => typeof value === "number"),
-		),
-		writerListingLagMsAvg: average(
-			items
-				.filter((item) => item.status === "passed")
-				.map((item) => item.phaseDurationsMs?.writerListingLag)
-				.filter((value) => typeof value === "number"),
-		),
-		readerListingLagMsAvg: average(
-			items
-				.filter((item) => item.status === "passed")
-				.map((item) => item.phaseDurationsMs?.readerListingLag)
-				.filter((value) => typeof value === "number"),
-		),
-		postUploadMonitorDurationMsAvg: average(
-			items
-				.map((item) => item.postUploadMonitorDurationMs)
-				.filter((value) => typeof value === "number"),
-		),
-		errorCount: items.reduce(
-			(sum, item) => sum + (Number(item.errorCount) || 0),
-			0,
-		),
-		incompleteErrorCollections: items.filter(
-			(item) => item.errorCollectionComplete !== true,
-		).length,
-		requestFailureCount: items.reduce(
-			(sum, item) => sum + (Number(item.requestFailureCount) || 0),
-			0,
-		),
-		seederDrops: items.filter((item) => item.droppedSeeders).length,
-	}));
+	return groupUploadResultsByLocalityCohort(results).map(
+		({ dimensions, results: items }) => ({
+			...dimensions,
+			runs: items.length,
+			passed: items.filter((item) => item.status === "passed").length,
+			failed: items.filter((item) => item.status !== "passed").length,
+			...summarizeUploadPerformance(items),
+			uploadSettledMsAvg: average(
+				items
+					.filter((item) => item.status === "passed")
+					.map((item) => item.phaseDurationsMs?.timeToUploadSettled)
+					.filter((value) => typeof value === "number"),
+			),
+			writerListingLagMsAvg: average(
+				items
+					.filter((item) => item.status === "passed")
+					.map((item) => item.phaseDurationsMs?.writerListingLag)
+					.filter((value) => typeof value === "number"),
+			),
+			readerListingLagMsAvg: average(
+				items
+					.filter((item) => item.status === "passed")
+					.map((item) => item.phaseDurationsMs?.readerListingLag)
+					.filter((value) => typeof value === "number"),
+			),
+			postUploadMonitorDurationMsAvg: average(
+				items
+					.map((item) => item.postUploadMonitorDurationMs)
+					.filter((value) => typeof value === "number"),
+			),
+			errorCount: items.reduce(
+				(sum, item) => sum + (Number(item.errorCount) || 0),
+				0,
+			),
+			incompleteErrorCollections: items.filter(
+				(item) => item.errorCollectionComplete !== true,
+			).length,
+			requestFailureCount: items.reduce(
+				(sum, item) => sum + (Number(item.requestFailureCount) || 0),
+				0,
+			),
+			seederDrops: items.filter((item) => item.droppedSeeders).length,
+		}),
+	);
 };
 
 const summarizeSeederProbeResults = (results) => {
@@ -630,6 +904,14 @@ const main = async () => {
 		args["target-seeders"],
 		"--target-seeders",
 	);
+	const readerLocalChunkTarget = parseNonNegativeInteger(
+		args["reader-local-chunk-target"],
+		"--reader-local-chunk-target",
+	);
+	const readerLocalChunkMaxOvershoot = parseNonNegativeInteger(
+		args["reader-local-chunk-max-overshoot"],
+		"--reader-local-chunk-max-overshoot",
+	);
 	const examplesSource = args.source ?? defaultExamplesSource();
 	const fixtureSeed = args["fixture-seed"];
 	const resolvedFixtureSeed = fixtureSeed ?? "peerbit-file-share-benchmark-v1";
@@ -674,6 +956,39 @@ const main = async () => {
 	) {
 		throw new Error(
 			`Unsupported --mode "${requestedMode}". Expected adaptive, fixed1, observer, or both.`,
+		);
+	}
+	if (
+		readerLocalChunkTarget != null &&
+		(scenario !== "upload" || modes.length !== 1 || modes[0] !== "fixed1")
+	) {
+		throw new Error(
+			"--reader-local-chunk-target requires --scenario upload --mode fixed1",
+		);
+	}
+	if (
+		(readerLocalChunkTarget == null) !==
+		(readerLocalChunkMaxOvershoot == null)
+	) {
+		throw new Error(
+			"--reader-local-chunk-target and --reader-local-chunk-max-overshoot must be provided together",
+		);
+	}
+	if (
+		readerLocalChunkMaxOvershoot != null &&
+		readerLocalChunkMaxOvershoot > MAX_READER_LOCAL_CHUNK_OVERSHOOT
+	) {
+		throw new Error(
+			`--reader-local-chunk-max-overshoot must not exceed ${MAX_READER_LOCAL_CHUNK_OVERSHOOT}`,
+		);
+	}
+	if (
+		readerLocalChunkTarget != null &&
+		minReadySeeders != null &&
+		minReadySeeders !== 1
+	) {
+		throw new Error(
+			"--reader-local-chunk-target requires --min-ready-seeders 1 because the reader starts as an observer",
 		);
 	}
 	if (!["none", "link"].includes(integrationMode)) {
@@ -756,7 +1071,9 @@ const main = async () => {
 			sourceRoot: examplesSource,
 			templateRoot: args.template,
 		});
-		await instrumentFileShareFrontend(frontendRoot);
+		await instrumentFileShareFrontend(frontendRoot, {
+			requireLocalityHook: readerLocalChunkTarget != null,
+		});
 		await instrumentFileShareViteConfigs(frontendRoot);
 		const generatedSpec = path.join(
 			frontendRoot,
@@ -829,6 +1146,8 @@ const main = async () => {
 				sampleMs,
 				sampleCount,
 				targetSeeders,
+				readerLocalChunkTarget,
+				readerLocalChunkMaxOvershoot,
 				baseUrl,
 				protocol,
 				viteMode,
@@ -1022,6 +1341,18 @@ const main = async () => {
 			writerListingLagMs: result.phaseDurationsMs?.writerListingLag ?? null,
 			readerListingLagMs: result.phaseDurationsMs?.readerListingLag ?? null,
 			postUploadMonitorDurationMs: result.postUploadMonitorDurationMs ?? null,
+			readerLocalChunkTarget:
+				result.readerLocalChunkTarget ??
+				result.invocation?.readerLocalChunkTarget ??
+				null,
+			readerLocalChunkMaxOvershoot:
+				result.readerLocalChunkMaxOvershoot ??
+				result.invocation?.readerLocalChunkMaxOvershoot ??
+				null,
+			readerLocalChunkBlockCount: result.readerLocalChunkBlockCount ?? null,
+			readerLocalChunkIndexRowCount:
+				result.readerLocalChunkIndexRowCount ?? null,
+			readerLocalityCohortKey: result.readerLocalityCohortKey ?? null,
 			downloadSink: result.downloadSink ?? null,
 			downloadDurationMs: result.downloadDurationMs ?? null,
 			libraryStreamWallMs: result.libraryStreamWallMs ?? null,
@@ -1042,8 +1373,9 @@ const main = async () => {
 				"",
 		})),
 	);
+	const aggregateRows = summarizeResults(results, scenario);
 	console.log("\nSummary");
-	console.table(summarizeResults(results, scenario));
+	console.table(aggregateRows);
 	const outcomeCounts = countBenchmarkOutcomes(results, executionOrder.length);
 	const planPassed = isCompletePassedBenchmarkPlan(results, outcomeCounts);
 	const comparison =
@@ -1076,6 +1408,14 @@ const main = async () => {
 		localPackageNames: effectiveLocalPackageNames,
 		network,
 		fileMb,
+		readerLocalChunkTarget: readerLocalChunkTarget ?? null,
+		readerLocalChunkMaxOvershoot: readerLocalChunkMaxOvershoot ?? null,
+		readerLocalityCohorts:
+			scenario === "upload"
+				? aggregateRows
+						.map((row) => row.readerLocalityCohortKey)
+						.filter((value) => typeof value === "string")
+				: [],
 		runs,
 		modes,
 		executionOrder,
@@ -1083,7 +1423,7 @@ const main = async () => {
 		resultsDir,
 		aggregateSummaryFile,
 		results,
-		summary: summarizeResults(results, scenario),
+		summary: aggregateRows,
 		comparison,
 	};
 	await writeJsonAtomic(aggregateSummaryFile, summary);
@@ -1094,7 +1434,12 @@ const main = async () => {
 	}
 };
 
-main().catch((error) => {
-	console.error(error);
-	process.exit(1);
-});
+if (
+	process.argv[1] &&
+	path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+	main().catch((error) => {
+		console.error(error);
+		process.exit(1);
+	});
+}

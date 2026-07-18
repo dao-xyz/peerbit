@@ -40,6 +40,13 @@ const parseJsonEnvironment = (name: string) => {
 };
 const PROVENANCE = parseJsonEnvironment("PW_BENCHMARK_PROVENANCE");
 const INVOCATION = parseJsonEnvironment("PW_BENCHMARK_INVOCATION");
+const READER_LOCAL_CHUNK_TARGET = process.env.PW_READER_LOCAL_CHUNK_TARGET
+	? Number(process.env.PW_READER_LOCAL_CHUNK_TARGET)
+	: null;
+const READER_LOCAL_CHUNK_MAX_OVERSHOOT = process.env
+	.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT
+	? Number(process.env.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT)
+	: null;
 
 if (!["local", "remote"].includes(NETWORK_MODE)) {
 	throw new Error(`Unsupported PW_NETWORK_MODE='${NETWORK_MODE}'`);
@@ -69,7 +76,7 @@ if (!Number.isSafeInteger(TARGET_SEEDERS) || TARGET_SEEDERS < 0) {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 2
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 3
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -81,6 +88,8 @@ const expectedInvocationValues: Record<string, unknown> = {
 	sampleMs: SAMPLE_MS,
 	sampleCount: SAMPLE_COUNT,
 	targetSeeders: TARGET_SEEDERS,
+	readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
+	readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
 	baseUrl: process.env.PW_BASE_URL || null,
 	protocol: process.env.PW_PROTOCOL || null,
 	viteMode: process.env.PW_VITE_MODE || null,

@@ -107,6 +107,12 @@ const validResult = () => ({
 	provenance: structuredClone(PROVENANCE),
 	status: "passed",
 	mode: "adaptive",
+	readerLocalChunkTarget: null,
+	readerLocalChunkMaxOvershoot: null,
+	readerLocalChunkBlockCount: null,
+	readerLocalChunkIndexRowCount: null,
+	readerLocalityCohortKey: null,
+	readerLocalityControl: null,
 	networkMode: "local",
 	fileName: FILE_NAME,
 	fileSizeMb: FILE_MB,
@@ -227,6 +233,7 @@ const validResult = () => ({
 	baselineWriterSeeders: 2,
 	baselineReaderSeeders: 2,
 	droppedSeeders: false,
+	unexpectedSeederDrop: false,
 	errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
 	knownPeerbitFailureSignatures: [...KNOWN_PEERBIT_FAILURE_SIGNATURES],
 	errorCollectionComplete: true,
@@ -325,9 +332,463 @@ const createSinkFixture = (downloadSink) => {
 	};
 };
 
+const createReaderLocalityFixture = ({
+	target = 1,
+	maxOvershoot = 1,
+	actualBlockCount = 1,
+	actualIndexRowCount = 0,
+} = {}) => {
+	const invocation = createBenchmarkInvocation({
+		scenario: "upload",
+		mode: "fixed1",
+		network: "local",
+		integrationMode: "link",
+		fileMb: FILE_MB,
+		fixtureSeed: "fixture-seed",
+		uploadTimeoutMs: 600_000,
+		downloadTimeoutMs: 600_000,
+		postUploadMonitorMs: 50,
+		pollMs: 1_000,
+		minReadySeeders: 1,
+		readyTimeoutMs: 180_000,
+		readerLocalChunkTarget: target,
+		readerLocalChunkMaxOvershoot: maxOvershoot,
+	});
+	const result = validResult();
+	const fileName = `file-share-benchmark-fixed1-${RUN_NONCE}.bin`;
+	const idleScheduler = {
+		activeCount: 0,
+		activeBytes: 0,
+		queuedCount: 0,
+	};
+	const observation = ({
+		capturedAt,
+		persistChunkReads,
+		blocks = [],
+		indexed = [],
+	}) => ({
+		capturedAt,
+		fileId: FILE_ID,
+		chunkCount: 2,
+		indexRowCount: indexed.length,
+		indexedChunkIndices: indexed,
+		blockCount: blocks.length,
+		blockChunkIndices: blocks,
+		persistChunkReads,
+		activeTransfers: [],
+		downloadScheduler: { ...idleScheduler },
+	});
+	const topology = (
+		capturedAt,
+		selfInReplicatorSet,
+		{
+			peerHash = selfInReplicatorSet ? "writer-peer" : "reader-peer",
+			replicatorCount = 1,
+			replicatorHashes = ["writer-peer"],
+		} = {},
+	) => ({
+		capturedAt,
+		peerHash,
+		replicatorCount,
+		replicatorHashes,
+		selfInReplicatorSet,
+	});
+	const terminalTopology = (capturedAt, peerHash) =>
+		topology(capturedAt, true, {
+			peerHash,
+			replicatorCount: 2,
+			replicatorHashes: ["reader-peer", "writer-peer"],
+		});
+	result.invocation = structuredClone(invocation);
+	result.mode = "fixed1";
+	result.fileName = fileName;
+	result.readerLocalChunkTarget = target;
+	result.readerLocalChunkMaxOvershoot = maxOvershoot;
+	result.readerLocalChunkBlockCount = actualBlockCount;
+	result.readerLocalChunkIndexRowCount = actualIndexRowCount;
+	const cohortKey = `observer-persistent-prefix-b${actualBlockCount}-i${actualIndexRowCount}`;
+	result.readerLocalityCohortKey = cohortKey;
+	result.minReadySeeders = 1;
+	result.readerDiagnostics.lastReadDiagnostics.fileName = fileName;
+	result.readerDiagnostics.programAddress = "reader-program-address";
+	result.readerDiagnostics.persistChunkReads = true;
+	result.readerDiagnostics.peerHash = "reader-peer";
+	result.readerDiagnostics.replicatorCount = 2;
+	result.readerDiagnostics.timings = {
+		initialRole: "observer",
+		updateRoleCount: 0,
+		lastAppliedRole: null,
+	};
+	Object.assign(result.readerDiagnostics.lastReadDiagnostics, {
+		persistChunkReads: true,
+		programPersistChunkReads: true,
+		initialLocalChunkIndexRowCount: actualIndexRowCount,
+		initialLocalChunkCount: actualIndexRowCount,
+		initialLocalChunkBlockCount: actualBlockCount,
+		startedAt: 1_400,
+		finishedAt: 1_430,
+		chunkWriteStartedAt: { 0: 1_410, 1: 1_422 },
+		chunkWriteFinishedAt: { 0: 1_415, 1: 1_426 },
+		chunkMaterializeStartedAt: { 0: 1_401, 1: 1_416 },
+		chunkMaterializeFinishedAt: { 0: 1_403, 1: 1_418 },
+		chunkHashStartedAt: { 0: 1_403, 1: 1_418 },
+		chunkHashFinishedAt: { 0: 1_404, 1: 1_420 },
+	});
+	result.writerManifestEvidence.fileName = fileName;
+	result.readerManifestEvidence.fileName = fileName;
+	result.writerDiagnostics = {
+		peerHash: "writer-peer",
+		replicatorCount: 2,
+	};
+	result.timestamps.downloadStartedAt = 1_400;
+	result.timestamps.downloadFinishedAt = 1_430;
+	result.timestamps.downloadCompletionObservedAt = 1_431;
+	result.readerLocalityControl = {
+		profile: "observer-topology-persistent-read-preloaded-prefix",
+		requestedYieldedChunkCount: target,
+		maxReadAheadOvershootChunkCount: maxOvershoot,
+		countMetric: "exact local Documents index rows and manifest entry blocks",
+		writerUploadRole: "fixed1",
+		readerUploadRole: "observer",
+		readerTimedReadPolicy: "persist-chunk-reads",
+		stabilityPollIntervalMs: 100,
+		requiredStableObservationCount: 3,
+		status: "complete",
+		readerInitialRoleEvidence: {
+			capturedAt: 989,
+			programAddress: "reader-program-address",
+			persistChunkReads: false,
+			initialRole: "observer",
+			updateRoleCount: 0,
+			lastAppliedRole: null,
+		},
+		writerTopologyBeforeUpload: topology(990, true),
+		readerTopologyBeforeUpload: topology(991, false),
+		writerTopologyBeforeTimedRead: topology(1_380, true),
+		readerTopologyBeforeTimedRead: topology(1_381, false),
+		beforePreloadObservation: observation({
+			capturedAt: 1_171,
+			persistChunkReads: false,
+		}),
+		preloadEvidence: {
+			startedAt: 1_172,
+			finishedAt: 1_175,
+			fileId: FILE_ID,
+			transferId: target === 0 ? null : "locality-preload-transfer",
+			yieldedChunkCount: target,
+			yieldedByteCount: target === 0 ? 0 : 3 * 1024 * 1024,
+			persistChunkReads: true,
+			activeTransfersAfterClose: [],
+			downloadSchedulerAfterClose: { ...idleScheduler },
+			readDiagnostics:
+				target === 0
+					? null
+					: {
+							transferId: "locality-preload-transfer",
+							fileId: FILE_ID,
+							fileName,
+							persistChunkReads: true,
+							programPersistChunkReads: true,
+							initialLocalChunkIndexRowCount: 0,
+							initialLocalChunkCount: 0,
+							initialLocalChunkBlockCount: 0,
+							finishedAt: null,
+							failureAt: null,
+							failureMessage: null,
+							chunkByteLength: { 0: 3 * 1024 * 1024 },
+						},
+		},
+		stabilityObservations: [1_176, 1_276, 1_376].map((capturedAt) =>
+			observation({
+				capturedAt,
+				persistChunkReads: true,
+				blocks: Array.from({ length: actualBlockCount }, (_, index) => index),
+				indexed: Array.from(
+					{ length: actualIndexRowCount },
+					(_, index) => index,
+				),
+			}),
+		),
+		preDownloadObservation: observation({
+			capturedAt: 1_376,
+			persistChunkReads: true,
+			blocks: Array.from({ length: actualBlockCount }, (_, index) => index),
+			indexed: Array.from({ length: actualIndexRowCount }, (_, index) => index),
+		}),
+		integrityVerifiedAt: 1_432,
+		terminalIdleObservation: observation({
+			capturedAt: 1_433,
+			persistChunkReads: true,
+			blocks: [0, 1],
+		}),
+		terminalTopologyStartedAt: 1_433,
+		terminalTopologyDeadlineAt: 181_433,
+		terminalTopologyFinishedAt: 1_635,
+		terminalTopologyRole: "replicator",
+		readerJoinedReplicationDuringTimedRead: true,
+		terminalTopologyObservations: [1_434, 1_534, 1_634].map((capturedAt) => ({
+			capturedAt,
+			writerTopology: terminalTopology(capturedAt - 1, "writer-peer"),
+			readerTopology: terminalTopology(capturedAt - 1, "reader-peer"),
+		})),
+		actualLocalChunkBlockCount: actualBlockCount,
+		actualLocalChunkIndexRowCount: actualIndexRowCount,
+		readAheadOvershootChunkCount: 0,
+		cohortKey,
+		failure: null,
+	};
+	result.snapshots = [
+		{
+			...result.snapshots[0],
+			writerSeeders: 1,
+			readerSeeders: 1,
+		},
+		{
+			label: "after-1",
+			writerSeeders: 1,
+			readerSeeders: 1,
+			at: 1_130,
+		},
+	];
+	result.baselineWriterSeeders = 1;
+	result.baselineReaderSeeders = 1;
+	result.droppedSeeders = false;
+	result.unexpectedSeederDrop = false;
+	return {
+		result,
+		options: {
+			...options,
+			expectedMode: "fixed1",
+			expectedInvocation: invocation,
+		},
+	};
+};
+
 test("accepts a complete deterministic transfer result", () => {
 	assert.equal(
 		validateBenchmarkResult(validResult(), options).status,
+		"passed",
+	);
+});
+
+test("accepts exact observer-locality control and rejects contradictory evidence", () => {
+	const fixture = createReaderLocalityFixture();
+	assert.equal(
+		validateBenchmarkResult(fixture.result, fixture.options).status,
+		"passed",
+	);
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				result.readerLocalityControl.beforePreloadObservation.chunkCount = 3;
+				for (const observation of [
+					...result.readerLocalityControl.stabilityObservations,
+					result.readerLocalityControl.preDownloadObservation,
+				]) {
+					observation.chunkCount = 3;
+				}
+			},
+			/manifest chunk count contradicts the canonical completed read/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerInitialRoleEvidence.initialRole =
+					"replicator-default";
+			},
+			/did not initialize the reader as an observer/,
+		],
+		[
+			(result) => {
+				result.readerDiagnostics.timings.updateRoleCount = 1;
+			},
+			/diagnostics contradict its initial observer-role evidence/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerTopologyBeforeTimedRead.peerHash =
+					"writer-peer";
+			},
+			/does not preserve two distinct peer identities/,
+		],
+		[
+			(result) => {
+				const control = result.readerLocalityControl;
+				control.writerTopologyBeforeTimedRead.peerHash = "new-writer";
+				control.writerTopologyBeforeTimedRead.replicatorHashes = ["new-writer"];
+				control.readerTopologyBeforeTimedRead.peerHash = "new-reader";
+				control.readerTopologyBeforeTimedRead.replicatorHashes = ["new-writer"];
+			},
+			/does not preserve two distinct peer identities/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerTopologyBeforeTimedRead.replicatorHashes =
+					["third-peer"];
+			},
+			/does not agree on the writer as the exact singleton replicator/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.stabilityObservations[1].capturedAt = 1_200;
+			},
+			/stable locality observations do not prove one exact prefix/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.stabilityObservations[0].blockChunkIndices =
+					[1];
+			},
+			/stable locality observations do not prove one exact prefix/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readAheadOvershootChunkCount = 1;
+			},
+			/locality cohort count or key is inconsistent/,
+		],
+		[
+			(result) => {
+				const control = result.readerLocalityControl;
+				for (const observation of [
+					...control.stabilityObservations,
+					control.preDownloadObservation,
+				]) {
+					observation.blockCount = 2;
+					observation.blockChunkIndices = [0, 1];
+				}
+				control.actualLocalChunkBlockCount = 2;
+				control.readAheadOvershootChunkCount = 1;
+				control.cohortKey = "observer-persistent-prefix-b2-i0";
+				result.readerLocalChunkBlockCount = 2;
+				result.readerLocalityCohortKey = control.cohortKey;
+				result.readerDiagnostics.lastReadDiagnostics.initialLocalChunkBlockCount = 2;
+			},
+			/locality cohort count or key is inconsistent/,
+		],
+		[
+			(result) => {
+				result.readerDiagnostics.lastReadDiagnostics.initialLocalChunkBlockCount = 0;
+			},
+			/timed read diagnostics do not match its exact locality cohort/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerJoinedReplicationDuringTimedRead = false;
+			},
+			/terminal reader evidence does not prove an idle persistent replicator/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.terminalIdleObservation.activeTransfers = [
+					"still-active",
+				];
+			},
+			/terminalIdleObservation has inconsistent or non-idle locality evidence/,
+		],
+		[
+			(result) => {
+				const terminalIdle =
+					result.readerLocalityControl.terminalIdleObservation;
+				terminalIdle.blockCount = 1;
+				terminalIdle.blockChunkIndices = [0];
+			},
+			/terminal reader evidence does not prove an idle persistent replicator/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.terminalTopologyObservations.pop();
+			},
+			/exactly three stable terminal topology observations/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.terminalTopologyObservations[1].readerTopology.replicatorHashes =
+					["reader-peer", "third-peer"];
+			},
+			/terminal topology observations do not prove one stable writer-reader replicator pair/,
+		],
+		[
+			(result) => {
+				const observation =
+					result.readerLocalityControl.terminalTopologyObservations[1];
+				observation.capturedAt = 1_500;
+				observation.writerTopology.capturedAt = 1_499;
+				observation.readerTopology.capturedAt = 1_499;
+			},
+			/terminal topology observations do not prove one stable writer-reader replicator pair/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.peerHash = "other-writer";
+			},
+			/final peer diagnostics contradict the terminal topology evidence/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.integrityVerifiedAt = 1_430;
+			},
+			/locality control timestamps are inconsistent/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.terminalTopologyDeadlineAt -= 1;
+			},
+			/locality control timestamps are inconsistent/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerTopologyBeforeTimedRead.selfInReplicatorSet = true;
+			},
+			/does not prove the requested topology role/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preloadEvidence.activeTransfersAfterClose =
+					["still-active"];
+			},
+			/locality preload evidence is invalid/,
+		],
+		[
+			(result) => {
+				result.snapshots[1].writerSeeders = 0;
+				result.droppedSeeders = true;
+				result.unexpectedSeederDrop = true;
+			},
+			/seeder drop/i,
+		],
+	]) {
+		const rejected = createReaderLocalityFixture();
+		mutate(rejected.result);
+		assert.throws(
+			() => validateBenchmarkResult(rejected.result, rejected.options),
+			pattern,
+		);
+	}
+	const fullFileTarget = createReaderLocalityFixture();
+	for (const invocation of [
+		fullFileTarget.result.invocation,
+		fullFileTarget.options.expectedInvocation,
+	]) {
+		invocation.readerLocalChunkTarget = 2;
+	}
+	fullFileTarget.result.readerLocalChunkTarget = 2;
+	fullFileTarget.result.readerLocalityControl.requestedYieldedChunkCount = 2;
+	assert.throws(
+		() =>
+			validateBenchmarkResult(fullFileTarget.result, fullFileTarget.options),
+		/target must be a partial prefix of the canonical completed read/,
+	);
+});
+
+test("accepts the explicit cold observer-persistent b0-i0 locality cohort", () => {
+	const fixture = createReaderLocalityFixture({
+		target: 0,
+		maxOvershoot: 0,
+		actualBlockCount: 0,
+		actualIndexRowCount: 0,
+	});
+	assert.equal(
+		validateBenchmarkResult(fixture.result, fixture.options).status,
 		"passed",
 	);
 });
@@ -1061,8 +1522,9 @@ for (const [name, mutate, pattern] of [
 		(result) => {
 			result.snapshots[1].readerSeeders = 1;
 			result.droppedSeeders = true;
+			result.unexpectedSeederDrop = true;
 		},
-		/contains seeder drops/,
+		/contains an unexpected seeder drop/,
 	],
 ]) {
 	test(`rejects invalid ${name}`, () => {

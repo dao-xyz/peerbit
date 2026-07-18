@@ -33,6 +33,48 @@ sinks only in separate benchmark sessions; aggregate comparison objects fail
 closed on mixed sinks, and every passed result and aggregate labels
 non-hash-only cohorts non-authoritative.
 
+For a controlled reader-locality download cohort, run an upload with
+`--mode fixed1`, `--reader-local-chunk-target <N>`, and
+`--reader-local-chunk-max-overshoot <M>`. The two locality options are a required
+pair, `M` is capped at eight chunks, and this profile uses a one-replicator
+readiness baseline. The writer is fixed at factor one and the reader is an
+observer before upload starts; topology evidence must show exactly one
+replicator, with the writer in and reader out of that set, both before upload and
+again immediately before the timed read. Both peers must report the same exact
+singleton replicator identity, and that identity must be the writer.
+
+After the normal upload and post-upload monitor finish, the harness enables
+persistent reader chunk reads and performs an untimed sequential prefix preload
+that yields exactly `N` chunks. It explicitly closes the iterator and requires
+no active transfer or queued download work afterward. `N=0` is the cold
+observer-persistent cohort and opens no preload stream. The harness then records
+three identical exact locality samples, spaced by
+`min(--poll-ms, 100ms)`. Each sample includes both the manifest-entry blocks
+available in the local block store (`K`) and the local Documents index rows
+(`J`). Both sets must be contiguous prefixes, `N <= K <= N + M`, `J <= K`, and
+`K` must remain smaller than the file's full chunk count. `K` can exceed `N`
+because Peerbit may read ahead; a cached entry block also need not have a local
+index row yet.
+
+The measured cohort key is therefore
+`observer-persistent-prefix-b<K>-i<J>`, not merely the requested target. Timed
+read diagnostics must report those exact initial block and index-row counts.
+Here, `observer` describes the upload and timed-read **start** topology, not the
+entire persistent transfer. A persistent timed read is expected to promote the
+reader into replication. After sink completion, integrity verification, and an
+idle transfer scheduler, the harness collects three additional stable topology
+samples outside the measured download duration. Both peers must then report the
+same exact sorted `[writer, reader]` replicator set, both must report themselves
+in that set, and the peer identities must match the pre-upload and pre-read
+checkpoints. Non-convergence fails the run rather than creating or mixing an
+implicit terminal-topology cohort.
+
+Repeated standalone and matrix results are grouped by the exact key, so timings
+from different read-ahead outcomes are never averaged together. Raw canonical
+per-chunk timings remain in each result and can be rebucketed into 5% progress
+windows without losing the underlying samples. Without the paired locality
+options, roles, persistence policy, and seeder-drop gates are unchanged.
+
 The standalone runner continues counterbalanced repetitions after an individual
 Playwright or result-validation failure when setup remains usable. Once
 invocation execution begins, it writes a summary with planned, completed,
