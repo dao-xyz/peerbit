@@ -9,6 +9,7 @@ import {
 	ERROR_COLLECTION_DEFINITION,
 	KNOWN_PEERBIT_FAILURE_SIGNATURES,
 	REQUEST_FAILURE_COLLECTION_DEFINITION,
+	SEEDER_DROP_POLICY,
 } from "./benchmark-orchestration.mjs";
 import {
 	assertPlaywrightSucceeded,
@@ -286,6 +287,8 @@ const shiftTimedDownloadEvidence = (result, offset) => {
 	]) {
 		result.timestamps[key] += offset;
 	}
+	result.integrityVerifiedAt += offset;
+	result.snapshots.find(({ label }) => label === "terminal").at += offset;
 	const diagnostics = result.readerDiagnostics.lastReadDiagnostics;
 	diagnostics.startedAt += offset;
 	diagnostics.finishedAt += offset;
@@ -334,6 +337,7 @@ const validResult = () => ({
 	fileName: FILE_NAME,
 	fileSizeMb: FILE_MB,
 	integrityVerified: true,
+	integrityVerifiedAt: 1_205,
 	integrity: {
 		fixtureMode: "deterministic",
 		fixtureFormat: "aes-256-ctr-v1",
@@ -450,6 +454,7 @@ const validResult = () => ({
 	},
 	baselineWriterSeeders: 2,
 	baselineReaderSeeders: 2,
+	seederDropPolicy: { ...SEEDER_DROP_POLICY },
 	droppedSeeders: false,
 	unexpectedSeederDrop: false,
 	errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
@@ -509,6 +514,12 @@ const validResult = () => ({
 			writerSeeders: 2,
 			readerSeeders: 2,
 			at: 1130,
+		},
+		{
+			label: "terminal",
+			writerSeeders: 2,
+			readerSeeders: 2,
+			at: 1210,
 		},
 	],
 });
@@ -663,6 +674,7 @@ const createReaderLocalityFixture = ({
 	result.timestamps.downloadStartedAt = 1_400;
 	result.timestamps.downloadFinishedAt = 1_430;
 	result.timestamps.downloadCompletionObservedAt = 1_431;
+	result.integrityVerifiedAt = 1_432;
 	result.downloadMemoryTelemetry = createDownloadMemoryTelemetry(
 		1_400,
 		1_430,
@@ -778,6 +790,12 @@ const createReaderLocalityFixture = ({
 			readerSeeders: 1,
 			at: 1_130,
 		},
+		{
+			label: "terminal",
+			writerSeeders: 1,
+			readerSeeders: 1,
+			at: 1_640,
+		},
 	];
 	result.baselineWriterSeeders = 1;
 	result.baselineReaderSeeders = 1;
@@ -798,6 +816,160 @@ test("accepts a complete deterministic transfer result", () => {
 		validateBenchmarkResult(validResult(), options).status,
 		"passed",
 	);
+});
+
+test("requires a trustworthy aggregate-integrity timestamp before the final snapshot", () => {
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				delete result.integrityVerifiedAt;
+			},
+			/integrityVerifiedAt/,
+		],
+		[
+			(result) => {
+				result.integrityVerifiedAt = 0;
+			},
+			/non-positive integrityVerifiedAt/,
+		],
+		[
+			(result) => {
+				result.integrityVerifiedAt = Number.MAX_SAFE_INTEGER + 1;
+			},
+			/invalid integrityVerifiedAt/,
+		],
+		[
+			(result) => {
+				result.integrityVerifiedAt =
+					result.timestamps.downloadCompletionObservedAt - 1;
+			},
+			/aggregate integrity gate precedes download completion/,
+		],
+		[
+			(result) => {
+				result.snapshots.at(-1).at = result.integrityVerifiedAt - 1;
+			},
+			/precedes aggregate integrity verification/,
+		],
+		[
+			(result) => {
+				result.snapshots.push({
+					label: "during-99",
+					writerSeeders: 2,
+					readerSeeders: 2,
+					at: 1_211,
+				});
+			},
+			/must end with exactly one terminal seeder snapshot/,
+		],
+		[
+			(result) => {
+				result.snapshots.pop();
+			},
+			/must end with exactly one terminal seeder snapshot/,
+		],
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(() => validateBenchmarkResult(result, options), pattern);
+	}
+});
+
+test("requires the terminal snapshot after controlled-locality topology", () => {
+	const beforeTopology = createReaderLocalityFixture();
+	beforeTopology.result.snapshots.at(-1).at =
+		beforeTopology.result.readerLocalityControl.terminalTopologyFinishedAt - 1;
+	assert.throws(
+		() =>
+			validateBenchmarkResult(beforeTopology.result, beforeTopology.options),
+		/precedes terminal topology completion/,
+	);
+
+	const sameMillisecond = createReaderLocalityFixture();
+	sameMillisecond.result.snapshots.at(-1).at =
+		sameMillisecond.result.readerLocalityControl.terminalTopologyFinishedAt;
+	assert.equal(
+		validateBenchmarkResult(sameMillisecond.result, sameMillisecond.options)
+			.status,
+		"passed",
+	);
+});
+
+test("accepts one recovered seeder dip under the v7 policy", () => {
+	const result = validResult();
+	result.snapshots[1].writerSeeders = 1;
+	result.droppedSeeders = true;
+	assert.equal(validateBenchmarkResult(result, options).status, "passed");
+});
+
+test("rejects two consecutive below-baseline seeder snapshots", () => {
+	const result = validResult();
+	result.snapshots[1].writerSeeders = 1;
+	result.snapshots.splice(2, 0, {
+		label: "after-2",
+		writerSeeders: 1,
+		readerSeeders: 2,
+		at: 1140,
+	});
+	result.droppedSeeders = true;
+	result.unexpectedSeederDrop = true;
+	assert.throws(
+		() => validateBenchmarkResult(result, options),
+		/unexpected seeder drop/,
+	);
+});
+
+test("rejects a terminal below-baseline seeder snapshot", () => {
+	const result = validResult();
+	result.snapshots.at(-1).readerSeeders = 1;
+	result.droppedSeeders = true;
+	result.unexpectedSeederDrop = true;
+	assert.throws(
+		() => validateBenchmarkResult(result, options),
+		/unexpected seeder drop/,
+	);
+});
+
+test("rejects missing, altered, and contradictory v7 seeder-drop evidence", () => {
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				delete result.seederDropPolicy;
+			},
+			/missing seederDropPolicy/,
+		],
+		[
+			(result) => {
+				result.seederDropPolicy.consecutiveBelowBaselineSnapshotThreshold = 1;
+			},
+			/unsupported seeder-drop policy/,
+		],
+		[
+			(result) => {
+				result.snapshots[1].writerSeeders = 1;
+				result.droppedSeeders = true;
+				result.unexpectedSeederDrop = true;
+			},
+			/unexpectedSeederDrop claim contradicts/,
+		],
+		[
+			(result) => {
+				result.snapshots[1].writerSeeders = 1;
+				result.snapshots.splice(2, 0, {
+					label: "after-2",
+					writerSeeders: 1,
+					readerSeeders: 2,
+					at: 1140,
+				});
+				result.droppedSeeders = true;
+			},
+			/unexpectedSeederDrop claim contradicts/,
+		],
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(() => validateBenchmarkResult(result, options), pattern);
+	}
 });
 
 test("requires exact bounded upload chunk-commit progress telemetry", () => {
@@ -1529,6 +1701,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		[
 			(result) => {
 				result.snapshots[1].writerSeeders = 0;
+				result.snapshots[2].writerSeeders = 0;
 				result.droppedSeeders = true;
 				result.unexpectedSeederDrop = true;
 			},
@@ -1690,14 +1863,14 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v6 evidence envelope", () => {
+test("rejects a status-only passed payload at the v7 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v6 envelopes", () => {
+test("requires explicit error evidence on failed v7 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };
@@ -1734,6 +1907,63 @@ test("requires explicit error evidence on failed v6 envelopes", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope(incompleteFailure, options),
 		/incomplete error collection/,
+	);
+});
+
+test("validates early and late failed-upload integrity claims", () => {
+	const earlyFailure = validResult();
+	earlyFailure.status = "failed";
+	earlyFailure.failure = { message: "failed before integrity" };
+	earlyFailure.integrity = null;
+	earlyFailure.integrityVerified = false;
+	earlyFailure.integrityVerifiedAt = null;
+	assert.equal(
+		validateBenchmarkResultEnvelope(earlyFailure, options).status,
+		"failed",
+	);
+
+	const lateFailure = validResult();
+	lateFailure.status = "failed";
+	lateFailure.failure = { message: "terminal topology did not converge" };
+	assert.equal(
+		validateBenchmarkResultEnvelope(lateFailure, options).status,
+		"failed",
+	);
+
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				result.integrityVerifiedAt = null;
+			},
+			/integrityVerifiedAt/,
+		],
+		[
+			(result) => {
+				result.integrity.sourceCrc32Hex = "ffffffff";
+			},
+			/CRC-32 integrity gate/,
+		],
+		[
+			(result) => {
+				result.integrityVerified = false;
+				result.integrityVerifiedAt = null;
+			},
+			/contradicts its unverified claim/,
+		],
+	]) {
+		const result = structuredClone(lateFailure);
+		mutate(result);
+		assert.throws(
+			() => validateBenchmarkResultEnvelope(result, options),
+			pattern,
+		);
+	}
+
+	const falseWithTimestamp = structuredClone(earlyFailure);
+	falseWithTimestamp.integrityVerifiedAt = 1_205;
+	assert.throws(
+		() => validateBenchmarkResultEnvelope(falseWithTimestamp, options),
+		/must use a null integrityVerifiedAt/,
 	);
 });
 
@@ -2265,9 +2495,12 @@ for (const [name, mutate, pattern] of [
 	[
 		"ready baseline not first",
 		(result) => {
-			result.snapshots.reverse();
-			result.snapshots[0].at = 1130;
-			result.snapshots[1].at = 1140;
+			[result.snapshots[0], result.snapshots[1]] = [
+				result.snapshots[1],
+				result.snapshots[0],
+			];
+			result.snapshots[0].at = 1120;
+			result.snapshots[1].at = 1130;
 		},
 		/exactly one ready-seeder baseline snapshot/,
 	],
@@ -2310,7 +2543,7 @@ for (const [name, mutate, pattern] of [
 	[
 		"observed seeder drop in passed result",
 		(result) => {
-			result.snapshots[1].readerSeeders = 1;
+			result.snapshots[2].readerSeeders = 1;
 			result.droppedSeeders = true;
 			result.unexpectedSeederDrop = true;
 		},

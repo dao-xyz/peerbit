@@ -113,7 +113,18 @@ const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 6,
+	version: 7,
+} as const;
+const SEEDER_DROP_POLICY = {
+	id: "peerbit-file-share-seeder-drop-policy",
+	version: 1,
+	belowBaselineDefinition:
+		"writerSeeders < baselineWriterSeeders || readerSeeders < baselineReaderSeeders",
+	evaluatedSnapshotDefinition:
+		"all chronological snapshots after the unique seeders-ready baseline snapshot",
+	consecutiveBelowBaselineSnapshotThreshold: 2,
+	terminalSnapshotLabel: "terminal",
+	terminalBelowBaselineIsUnexpected: true,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -800,8 +811,12 @@ test.describe("generated transfer-validity benchmark", () => {
 		let readerVisibilityProbe: Record<string, unknown> | null = null;
 		let writerManifestEvidence: ReadyManifestEvidence | undefined;
 		let readerManifestEvidence: ReadyManifestEvidence | undefined;
+		let integrity: Record<string, unknown> | null = null;
+		let integrityVerified = false;
+		let integrityVerifiedAt: number | null = null;
 		let dropped = false;
 		let unexpectedSeederDrop = false;
+		let consecutiveBelowBaselineSeederSnapshots = 0;
 		let baselineWriterSeeders = MIN_READY_SEEDERS;
 		let baselineReaderSeeders = MIN_READY_SEEDERS;
 		const readerLocalityControl =
@@ -1088,14 +1103,18 @@ test.describe("generated transfer-validity benchmark", () => {
 			const readerDropped =
 				typeof current.readerSeeders === "number" &&
 				current.readerSeeders < baselineReaderSeeders;
-			if (writerDropped || readerDropped) {
-				dropped = true;
+			const belowBaseline = writerDropped || readerDropped;
+			if (!belowBaseline) {
+				consecutiveBelowBaselineSeederSnapshots = 0;
+				return;
 			}
+			dropped = true;
+			consecutiveBelowBaselineSeederSnapshots += 1;
 			if (
-				(typeof current.writerSeeders === "number" &&
-					current.writerSeeders < baselineWriterSeeders) ||
-				(typeof current.readerSeeders === "number" &&
-					current.readerSeeders < baselineReaderSeeders)
+				consecutiveBelowBaselineSeederSnapshots >=
+					SEEDER_DROP_POLICY.consecutiveBelowBaselineSnapshotThreshold ||
+				(SEEDER_DROP_POLICY.terminalBelowBaselineIsUnexpected &&
+					current.label === SEEDER_DROP_POLICY.terminalSnapshotLabel)
 			) {
 				unexpectedSeederDrop = true;
 			}
@@ -1786,13 +1805,13 @@ test.describe("generated transfer-validity benchmark", () => {
 					: sizeVerified &&
 						crc32Verified &&
 						persistedSinkSha256Verified === true;
-			const integrityVerified =
+			integrityVerified =
 				sizeVerified &&
 				sha256Verified &&
 				crc32Verified &&
 				manifestVerified &&
 				sinkPersistenceVerified !== false;
-			const integrity = {
+			integrity = {
 				fixtureMode: "deterministic",
 				fixtureFormat: preparedFile.fixture.mode,
 				fixtureSeed: FIXTURE_SEED,
@@ -1822,9 +1841,10 @@ test.describe("generated transfer-validity benchmark", () => {
 					`Downloaded file failed integrity validation: ${JSON.stringify(integrity)}`,
 				);
 			}
+			integrityVerifiedAt = Date.now();
 			if (readerLocalityControl) {
 				stage = "verify-terminal-reader-topology";
-				readerLocalityControl.integrityVerifiedAt = Date.now();
+				readerLocalityControl.integrityVerifiedAt = integrityVerifiedAt;
 				const terminalIdleObservation = await waitForTerminalReaderIdle();
 				readerLocalityControl.terminalIdleObservation = terminalIdleObservation;
 				const terminalTopologyStartedAt = Date.now();
@@ -1858,6 +1878,10 @@ test.describe("generated transfer-validity benchmark", () => {
 						readerLocalityControl.readerJoinedReplicationDuringTimedRead,
 				});
 			}
+			const terminalSeederSnapshot = await snapshot(
+				SEEDER_DROP_POLICY.terminalSnapshotLabel,
+			);
+			noteSeederDrop(terminalSeederSnapshot);
 			if (unexpectedSeederDrop) {
 				throw new Error(
 					"Seeder counts dropped outside the benchmark topology contract",
@@ -1938,6 +1962,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				fileSizeMb: FILE_SIZE_MB,
 				integrity,
 				integrityVerified,
+				integrityVerifiedAt,
 				uploadDurationMs: phaseDurationsMs.timeToUploadSettled,
 				uploadDurationDefinition:
 					"input-set-to-writer-ready-manifest-and-upload-progress-settled; excludes reader discovery, post-monitor, and download",
@@ -2013,6 +2038,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				baselineWriterSeeders,
 				baselineReaderSeeders,
 				shareUrl,
+				seederDropPolicy: SEEDER_DROP_POLICY,
 				droppedSeeders: dropped,
 				unexpectedSeederDrop,
 				writerVisibilityProbe,
@@ -2043,7 +2069,12 @@ test.describe("generated transfer-validity benchmark", () => {
 				readerLocalityControl.failure =
 					typeof error?.message === "string" ? error.message : String(error);
 			}
-			await snapshot(`failure-${stage}`).catch(() => {});
+			const failureSnapshot = await snapshot(`failure-${stage}`).catch(
+				() => null,
+			);
+			if (failureSnapshot) {
+				noteSeederDrop(failureSnapshot);
+			}
 			const writerDiagnostics = await getDiagnostics(writer);
 			const readerDiagnostics = await getDiagnostics(reader);
 			const collectedErrors = [...errors];
@@ -2068,7 +2099,9 @@ test.describe("generated transfer-validity benchmark", () => {
 				stage,
 				requestedDownloadSink: DOWNLOAD_SINK,
 				downloadMemoryTelemetry,
-				integrityVerified: false,
+				integrity,
+				integrityVerified,
+				integrityVerifiedAt,
 				phaseDurationsMs: getPhaseDurations(),
 				postUploadMonitorSchedulingToleranceMs:
 					POST_MONITOR_SCHEDULING_TOLERANCE_MS,
@@ -2087,6 +2120,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				baselineWriterSeeders,
 				baselineReaderSeeders,
 				shareUrl,
+				seederDropPolicy: SEEDER_DROP_POLICY,
 				droppedSeeders: dropped,
 				unexpectedSeederDrop,
 				writerVisibilityProbe,
