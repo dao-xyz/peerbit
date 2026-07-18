@@ -16269,6 +16269,7 @@ export class SharedLog<
 						);
 						return allToMergeMaterializedEntries;
 					};
+					let admittedMergeHashes: ReadonlySet<string> = new Set();
 					let nativePreparedCommittedHashes: Set<string> | undefined;
 					if (allToMerge.length > 0) {
 						const validateStartedAt = syncProfileStart(syncProfile);
@@ -16377,9 +16378,9 @@ export class SharedLog<
 						const entriesToPersist = usedNativeAllKeptJoinPlan
 							? allToMergeShallowEntries
 							: joinPlans.flatMap((plan) => plan.toPersist);
-						const coordinatePersistFallbackEntries: ShallowOrFullEntry<any>[] =
+						let coordinatePersistFallbackEntries: ShallowOrFullEntry<any>[] =
 							[];
-						const reusableCoordinatePersistItems: CoordinatePersistBatchItem<R>[] =
+						let reusableCoordinatePersistItems: CoordinatePersistBatchItem<R>[] =
 							[];
 						for (const entry of entriesToPersist) {
 							const reusablePlan = reusableCoordinatePlans.get(entry.hash);
@@ -16397,8 +16398,6 @@ export class SharedLog<
 								prepared: reusablePlan.prepared,
 							});
 						}
-						const reusableCoordinatePersistItemCount =
-							reusableCoordinatePersistItems.length;
 						let nativePreparedCoordinateBatch:
 							| NativeBackboneReceiveCoordinateBatch<R>
 							| undefined;
@@ -16501,6 +16500,34 @@ export class SharedLog<
 								__peerbitProfile: syncProfile,
 							});
 						}
+						// A recursive lower-log join can resolve successfully while declining
+						// an individual top-level entry (for example, when one of its parents
+						// is temporarily unavailable). The public Log.join() API intentionally
+						// does not expose that per-entry result, so make local index presence the
+						// authority before publishing any SharedLog-side effects. A successful
+						// prepared-facts batch is atomic and already proves every input hash.
+						const admittedHashes = joinedPreparedFacts
+							? new Set(allToMergeHashes)
+							: await this.log.hasMany(allToMergeHashes);
+						admittedMergeHashes = admittedHashes;
+						const admittedShallowEntries =
+							admittedHashes.size === allToMergeShallowEntries.length
+								? allToMergeShallowEntries
+								: allToMergeShallowEntries.filter((entry) =>
+										admittedHashes.has(entry.hash),
+									);
+						if (!joinedPreparedFacts) {
+							reusableCoordinatePersistItems =
+								reusableCoordinatePersistItems.filter((item) =>
+									admittedHashes.has(item.entry.hash),
+								);
+							coordinatePersistFallbackEntries =
+								coordinatePersistFallbackEntries.filter((entry) =>
+									admittedHashes.has(entry.hash),
+								);
+						}
+						const reusableCoordinatePersistItemCount =
+							reusableCoordinatePersistItems.length;
 						if (syncProfile) {
 							emitSyncProfileDuration(syncProfile, lowerLogJoinStartedAt, {
 								name: "sharedLog.receive.lowerLogJoin",
@@ -16512,6 +16539,7 @@ export class SharedLog<
 									batchHashOnlyEntryAdded,
 									programOnChange,
 									joinedPreparedFacts,
+									admittedEntries: admittedHashes.size,
 									nativePreparedCoordinatesFinished,
 								},
 							});
@@ -16586,11 +16614,11 @@ export class SharedLog<
 								},
 							});
 						}
-						for (const hash of allToMergeHashes) {
+						for (const hash of admittedHashes) {
 							confirmedHashes.add(hash);
 						}
 						const checkedPruneStartedAt = syncProfileStart(syncProfile);
-						await this.pruneJoinedEntriesNoLongerLed(allToMergeShallowEntries, {
+						await this.pruneJoinedEntriesNoLongerLed(admittedShallowEntries, {
 							decodedReplicaCounts: receiveReplicaCounts,
 							reusableLeaderPlans: reusableCoordinatePlans,
 							profile: syncProfile,
@@ -16605,15 +16633,17 @@ export class SharedLog<
 						}
 
 						for (const plan of joinPlans) {
-							plan.toDelete?.map((x) =>
-								this.pruneDebouncedFnAddIfNotKeeping({
-									key: x.hash,
-									value: {
-										entry: x,
-										leaders: plan.leaders as Map<string, any>,
-									},
-								}),
-							);
+							plan.toDelete
+								?.filter((entry) => admittedMergeHashes.has(entry.hash))
+								.map((entry) =>
+									this.pruneDebouncedFnAddIfNotKeeping({
+										key: entry.hash,
+										value: {
+											entry,
+											leaders: plan.leaders as Map<string, any>,
+										},
+									}),
+								);
 						}
 						this.rebalanceParticipationDebounced?.call();
 					}
@@ -16623,17 +16653,23 @@ export class SharedLog<
 							continue;
 						}
 						for (const entries of plan.maybeDelete) {
+							const admittedEntries = entries.filter((entry) =>
+								admittedMergeHashes.has(getExchangeHeadHash(entry)),
+							);
+							if (admittedEntries.length === 0) {
+								continue;
+							}
 							const minReplicas = await this.getMaxReplicasFromHeads(
-								this.getEntryGid(entries[0].entry),
+								this.getEntryGid(admittedEntries[0].entry),
 							);
 							if (minReplicas != null) {
 								const isLeader = await this.isLeader({
-									entry: entries[0].entry,
+									entry: admittedEntries[0].entry,
 									replicas: minReplicas,
 								});
 
 								if (!isLeader) {
-									for (const x of entries) {
+									for (const x of admittedEntries) {
 										this.pruneDebouncedFnAddIfNotKeeping({
 											key: x.entry.hash,
 											value: {
