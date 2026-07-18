@@ -3,13 +3,27 @@
 Run a single checkout with `pnpm bench:file-share:local` or compare pinned
 Peerbit revisions with `pnpm bench:file-share:matrix`.
 
-Result schema v5 defines `errorCount` as every uncaught browser `pageerror`,
+Result schema v6 defines `errorCount` as every uncaught browser `pageerror`,
 every browser `console.error`, every console message at any level that contains
 a declared Peerbit failure signature, and scenario-recorded operation failures.
 Each result embeds the exact `errorCollectionDefinition` and signature list.
 Playwright `requestfailed` events are retained separately under
 `requestFailures`; they are diagnostics and are not automatically fatal because
 peer-to-peer discovery can legitimately exercise failed network candidates.
+
+Passed schema v6 upload results require `writerDiagnostics.lastUploadDiagnostics`
+to contain exactly 21 bounded progress milestones from 0% through 100% in 5%
+increments. Each point records the aggregate bytes whose application-level
+chunk puts completed, using the library upload clock and exact ceil-rounded byte
+target. This is local chunk-commit throughput, not wire-byte progress, remote
+acknowledgement throughput, or a contiguous source prefix. Concurrent puts may
+finish out of index order, and one completion may cross multiple milestones.
+The 0% point includes manifest/startup overhead; the 100% point precedes the
+ready-manifest commit. The validator binds the series to the canonical file,
+requires a clean completed upload lifecycle, and rejects missing, partial,
+unbounded, stale, reordered-byte, or contradictory passed evidence. Failed
+runs may retain a bounded partial milestone prefix for diagnosis but are never
+accepted as performance evidence.
 
 Upload benchmarks default to `--download-sink hash-only`, which verifies the
 deterministic stream with library SHA-256 plus an independent browser CRC-32
@@ -33,7 +47,7 @@ sinks only in separate benchmark sessions; aggregate comparison objects fail
 closed on mixed sinks, and every passed result and aggregate labels
 non-hash-only cohorts non-authoritative.
 
-Schema v5 upload results also record bounded download-window memory telemetry. After any
+Schema v6 upload results also record bounded download-window memory telemetry. After any
 controlled-locality stabilization, the harness arms serial samplers immediately
 before the timed click and forces a final sample as soon as the selected sink
 completion is observed, before integrity readback or terminal-topology checks.

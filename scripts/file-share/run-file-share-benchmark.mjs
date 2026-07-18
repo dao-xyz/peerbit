@@ -120,6 +120,8 @@ const SCENARIOS = {
 };
 const DROP_HOOK_MARKER = "/* peerbit-benchmark-hook */";
 const DROP_UPDATE_LIST_MARKER = "/* peerbit-benchmark-update-list */";
+const DROP_UPLOAD_DIAGNOSTICS_MARKER =
+	"/* peerbit-benchmark-upload-diagnostics */";
 const DROP_LOCALITY_HOOK_MARKER =
 	"/* peerbit-benchmark-locality-prefix-preload */";
 const DROP_LOCALITY_TOPOLOGY_MARKER =
@@ -301,7 +303,7 @@ const maybeCopyFrontendCerts = async ({
 
 export const instrumentFileShareFrontend = async (
 	frontendRoot,
-	{ requireLocalityHook = false } = {},
+	{ requireLocalityHook = false, requireUploadDiagnostics = false } = {},
 ) => {
 	const dropPath = path.join(frontendRoot, "src", "Drop.tsx");
 	let contents = await fsp.readFile(dropPath, "utf8");
@@ -313,6 +315,9 @@ export const instrumentFileShareFrontend = async (
 		contents.includes("__peerbitFileShareBenchmarkStats") &&
 		contents.includes("updateListStats") &&
 		contents.includes("updateListCalls.push(updateListStats)");
+	const hasUploadDiagnosticsHook = (source) =>
+		source.includes("lastUploadDiagnostics:") &&
+		source.includes(".lastUploadDiagnostics ?? null");
 	if (requireLocalityHook && !hasExistingBenchmarkHook) {
 		throw new Error(
 			`Controlled-locality benchmarks require the modern rich test-hook contract in ${dropPath}`,
@@ -322,6 +327,7 @@ export const instrumentFileShareFrontend = async (
 		(contents.includes(DROP_HOOK_MARKER) || hasExistingBenchmarkHook) &&
 		(contents.includes(DROP_UPDATE_LIST_MARKER) ||
 			hasExistingUpdateListStats) &&
+		(!requireUploadDiagnostics || hasUploadDiagnosticsHook(contents)) &&
 		(!requireLocalityHook ||
 			(contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
 				contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) &&
@@ -364,9 +370,12 @@ export const instrumentFileShareFrontend = async (
                     programAddress: program?.address ?? null,
                     programClosed: program?.closed ?? null,
                     peerHash: peer?.identity?.publicKey?.hashcode?.() ?? null,
-                    connectionCount: connections.length,
-                    connectionPeers: connections,
-                    replicatorCount:
+					connectionCount: connections.length,
+					connectionPeers: connections,
+					${DROP_UPLOAD_DIAGNOSTICS_MARKER}
+					lastUploadDiagnostics:
+						(program as any)?.lastUploadDiagnostics ?? null,
+					replicatorCount:
                         replicators && typeof replicators.size === "number"
                             ? replicators.size
                             : null,
@@ -389,6 +398,19 @@ export const instrumentFileShareFrontend = async (
 			throw new Error(`Could not find benchmark hook anchor in ${dropPath}`);
 		}
 		contents = contents.replace(anchor, `${hook}${anchor}`);
+	}
+	if (requireUploadDiagnostics && !hasUploadDiagnosticsHook(contents)) {
+		const uploadDiagnosticsAnchor =
+			"                    connectionPeers: connections,\n";
+		if (!contents.includes(uploadDiagnosticsAnchor)) {
+			throw new Error(
+				`File-share upload benchmarks require the upload-diagnostics hook in ${dropPath}`,
+			);
+		}
+		contents = contents.replace(
+			uploadDiagnosticsAnchor,
+			`${uploadDiagnosticsAnchor}                    ${DROP_UPLOAD_DIAGNOSTICS_MARKER}\n                    lastUploadDiagnostics:\n                        (program as any)?.lastUploadDiagnostics ?? null,\n`,
+		);
 	}
 
 	const updateListAnchor = `    const updateList = async () => {\n        if (files.program.files.log.closed) {\n            return;\n        }\n\n        // TODO don't reload the whole list, just add the new elements..\n        try {\n`;
@@ -1176,6 +1198,7 @@ const main = async () => {
 		});
 		await instrumentFileShareFrontend(frontendRoot, {
 			requireLocalityHook: readerLocalChunkTarget != null,
+			requireUploadDiagnostics: scenario === "upload",
 		});
 		await instrumentFileShareViteConfigs(frontendRoot);
 		const generatedSpec = path.join(

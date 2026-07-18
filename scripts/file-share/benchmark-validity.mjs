@@ -65,6 +65,22 @@ const SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK = 1;
 // Browser performance.now() and Node hrtime measure nested intervals on
 // independent monotonic clocks; keep their aggregate drift finite per call.
 const SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK = 1;
+const UPLOAD_PROGRESS_MILESTONE_BASIS_POINTS = Object.freeze(
+	Array.from({ length: 21 }, (_, index) => index * 500),
+);
+const UPLOAD_PROGRESS_TELEMETRY_KEYS = Object.freeze([
+	"schemaVersion",
+	"kind",
+	"clock",
+	"milestones",
+]);
+const UPLOAD_PROGRESS_MILESTONE_KEYS = Object.freeze([
+	"basisPoints",
+	"targetBytes",
+	"completedBytes",
+	"reachedAt",
+	"chunkIndex",
+]);
 
 const isRecord = (value) =>
 	value != null && typeof value === "object" && !Array.isArray(value);
@@ -368,11 +384,7 @@ const requireBoundedDiagnosticIntervals = ({
 const validateReadTransferEvidence = (
 	result,
 	invocation,
-	{
-		downloadStartedAt,
-		downloadFinishedAt,
-		downloadCompletionObservedAt,
-	},
+	{ downloadStartedAt, downloadFinishedAt, downloadCompletionObservedAt },
 ) => {
 	const readerDiagnostics = requireRecord(
 		result.readerDiagnostics,
@@ -742,8 +754,7 @@ const validateMemorySeriesWindow = (
 	}
 	if (
 		startedAt < downloadStartedAt - DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS ||
-		firstCapturedAt <
-			downloadStartedAt - DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS
+		firstCapturedAt < downloadStartedAt - DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS
 	) {
 		throw new Error(
 			`Benchmark ${label} begins before the bounded telemetry setup window`,
@@ -859,11 +870,7 @@ const validateBrowserRoleBytes = (value, label) => {
 	return { roles, total };
 };
 
-const validateHostRssSeries = (
-	seriesValue,
-	maxSamples,
-	readWindow,
-) => {
+const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 	const label = "downloadMemoryTelemetry.hostRss";
 	const series = requireRecord(seriesValue, label);
 	requireExactRecordKeys(
@@ -964,9 +971,7 @@ const validateHostRssSeries = (
 			combinedBytes !== browserBytes + nodeBytes ||
 			roleTotal !== browserBytes
 		) {
-			throw new Error(
-				`Benchmark ${sampleLabel} RSS totals are inconsistent`,
-			);
+			throw new Error(`Benchmark ${sampleLabel} RSS totals are inconsistent`);
 		}
 		for (const [role, bytes] of Object.entries(browserRoleBytes)) {
 			peakBrowserRoleBytes[role] = Math.max(
@@ -1295,6 +1300,398 @@ const validateUploadTimings = (result, invocation) => {
 		downloadFinishedAt,
 		downloadCompletionObservedAt,
 	});
+};
+
+const validateUploadProgressTelemetry = (result, invocation) => {
+	const writerDiagnostics = requireRecord(
+		result.writerDiagnostics,
+		"writerDiagnostics",
+	);
+	const diagnostics = requireRecord(
+		writerDiagnostics.lastUploadDiagnostics,
+		"writerDiagnostics.lastUploadDiagnostics",
+	);
+	const writerManifest = requireRecord(
+		result.writerManifestEvidence,
+		"writerManifestEvidence",
+	);
+	const timestamps = requireRecord(result.timestamps, "timestamps");
+	const manifestFileId = requireString(
+		writerManifest.fileId,
+		"writerManifestEvidence.fileId",
+	);
+	const resultFileName = requireString(result.fileName, "fileName");
+	requireString(
+		diagnostics.transferId,
+		"writerDiagnostics.lastUploadDiagnostics.transferId",
+	);
+	const uploadId = requireString(
+		diagnostics.uploadId,
+		"writerDiagnostics.lastUploadDiagnostics.uploadId",
+	);
+	const fileName = requireString(
+		diagnostics.fileName,
+		"writerDiagnostics.lastUploadDiagnostics.fileName",
+	);
+	const sizeBytes = requirePositiveSafeInteger(
+		invocation.fileSizeBytes,
+		"invocation.fileSizeBytes",
+	);
+	const chunkSize = requirePositiveSafeInteger(
+		diagnostics.chunkSize,
+		"writerDiagnostics.lastUploadDiagnostics.chunkSize",
+	);
+	const chunkCount = requirePositiveSafeInteger(
+		diagnostics.chunkCount,
+		"writerDiagnostics.lastUploadDiagnostics.chunkCount",
+	);
+	const chunkPutCount = requireNonNegativeSafeInteger(
+		diagnostics.chunkPutCount,
+		"writerDiagnostics.lastUploadDiagnostics.chunkPutCount",
+	);
+	const readTransfer = requireRecord(result.readTransfer, "readTransfer");
+	const readChunkCount = requirePositiveSafeInteger(
+		readTransfer.chunkCount,
+		"readTransfer.chunkCount",
+	);
+	const readerDiagnostics = requireRecord(
+		result.readerDiagnostics,
+		"readerDiagnostics",
+	);
+	const lastReadDiagnostics = requireRecord(
+		readerDiagnostics.lastReadDiagnostics,
+		"readerDiagnostics.lastReadDiagnostics",
+	);
+	const readChunkByteLength = requireRecord(
+		lastReadDiagnostics.chunkByteLength,
+		"readerDiagnostics.lastReadDiagnostics.chunkByteLength",
+	);
+	const uploadStartedAt = requirePositiveSafeInteger(
+		timestamps.uploadStartedAt,
+		"timestamps.uploadStartedAt",
+	);
+	const uploadSettledAt = requirePositiveSafeInteger(
+		timestamps.uploadSettledAt,
+		"timestamps.uploadSettledAt",
+	);
+	const startedAt = requirePositiveSafeInteger(
+		diagnostics.startedAt,
+		"writerDiagnostics.lastUploadDiagnostics.startedAt",
+	);
+	const manifestStartedAt = requirePositiveSafeInteger(
+		diagnostics.manifestStartedAt,
+		"writerDiagnostics.lastUploadDiagnostics.manifestStartedAt",
+	);
+	const manifestFinishedAt = requirePositiveSafeInteger(
+		diagnostics.manifestFinishedAt,
+		"writerDiagnostics.lastUploadDiagnostics.manifestFinishedAt",
+	);
+	const firstChunkStartedAt = requirePositiveSafeInteger(
+		diagnostics.firstChunkStartedAt,
+		"writerDiagnostics.lastUploadDiagnostics.firstChunkStartedAt",
+	);
+	const firstChunkFinishedAt = requirePositiveSafeInteger(
+		diagnostics.firstChunkFinishedAt,
+		"writerDiagnostics.lastUploadDiagnostics.firstChunkFinishedAt",
+	);
+	const lastChunkFinishedAt = requirePositiveSafeInteger(
+		diagnostics.lastChunkFinishedAt,
+		"writerDiagnostics.lastUploadDiagnostics.lastChunkFinishedAt",
+	);
+	const readyManifestStartedAt = requirePositiveSafeInteger(
+		diagnostics.readyManifestStartedAt,
+		"writerDiagnostics.lastUploadDiagnostics.readyManifestStartedAt",
+	);
+	const readyManifestFinishedAt = requirePositiveSafeInteger(
+		diagnostics.readyManifestFinishedAt,
+		"writerDiagnostics.lastUploadDiagnostics.readyManifestFinishedAt",
+	);
+	const finishedAt = requirePositiveSafeInteger(
+		diagnostics.finishedAt,
+		"writerDiagnostics.lastUploadDiagnostics.finishedAt",
+	);
+	if (
+		uploadId !== manifestFileId ||
+		fileName !== resultFileName ||
+		diagnostics.sizeBytes !== sizeBytes
+	) {
+		throw new Error(
+			"Benchmark upload diagnostics do not identify the canonical uploaded file",
+		);
+	}
+	if (
+		chunkCount !== Math.ceil(sizeBytes / chunkSize) ||
+		chunkPutCount !== chunkCount ||
+		diagnostics.failureAt !== null ||
+		diagnostics.failureMessage !== null
+	) {
+		throw new Error(
+			"Benchmark upload diagnostics do not prove a successful complete chunk upload",
+		);
+	}
+	if (chunkCount !== readChunkCount) {
+		throw new Error(
+			"Benchmark upload chunk geometry contradicts canonical read evidence",
+		);
+	}
+	for (let index = 0; index < chunkCount; index++) {
+		const expectedChunkBytes =
+			index === chunkCount - 1 ? sizeBytes - index * chunkSize : chunkSize;
+		const observedChunkBytes = requirePositiveSafeInteger(
+			readChunkByteLength[index],
+			`readerDiagnostics.lastReadDiagnostics.chunkByteLength[${index}]`,
+		);
+		if (observedChunkBytes !== expectedChunkBytes) {
+			throw new Error(
+				"Benchmark upload chunk geometry contradicts canonical read evidence",
+			);
+		}
+	}
+	if (
+		uploadStartedAt > startedAt ||
+		startedAt > manifestStartedAt ||
+		manifestStartedAt > manifestFinishedAt ||
+		manifestFinishedAt > firstChunkStartedAt ||
+		firstChunkStartedAt > firstChunkFinishedAt ||
+		firstChunkFinishedAt > lastChunkFinishedAt ||
+		lastChunkFinishedAt > readyManifestStartedAt ||
+		readyManifestStartedAt > readyManifestFinishedAt ||
+		readyManifestFinishedAt > finishedAt ||
+		// The DOM progress helper may return before React renders the progress
+		// element. Writer readiness also awaits the canonical ready manifest, so
+		// uploadSettledAt is the reliable harness-side upper bound.
+		finishedAt > uploadSettledAt
+	) {
+		throw new Error(
+			"Benchmark upload diagnostics lifecycle timestamps are inconsistent",
+		);
+	}
+
+	const telemetry = requireExactRecordKeys(
+		requireRecord(
+			diagnostics.progressTelemetry,
+			"writerDiagnostics.lastUploadDiagnostics.progressTelemetry",
+		),
+		UPLOAD_PROGRESS_TELEMETRY_KEYS,
+		"upload progress telemetry",
+	);
+	if (
+		telemetry.schemaVersion !== 1 ||
+		telemetry.kind !== "upload-chunk-commit" ||
+		telemetry.clock !== "unix-epoch-ms"
+	) {
+		throw new Error("Benchmark upload progress telemetry contract is invalid");
+	}
+	if (
+		!Array.isArray(telemetry.milestones) ||
+		telemetry.milestones.length !==
+			UPLOAD_PROGRESS_MILESTONE_BASIS_POINTS.length
+	) {
+		throw new Error(
+			"Benchmark upload progress telemetry must contain exactly 21 milestones",
+		);
+	}
+
+	const partialTailBytes = sizeBytes % chunkSize;
+	const hasPartialTail = partialTailBytes !== 0;
+	const fullChunkCount = chunkCount - (hasPartialTail ? 1 : 0);
+	const decodeCompletionState = (completedBytes, label) => {
+		if (completedBytes === 0) {
+			return { includedFullChunks: 0, tailIncluded: false };
+		}
+		const remainder = completedBytes % chunkSize;
+		let includedFullChunks;
+		let tailIncluded;
+		if (remainder === 0) {
+			includedFullChunks = completedBytes / chunkSize;
+			tailIncluded = false;
+		} else if (hasPartialTail && remainder === partialTailBytes) {
+			includedFullChunks = (completedBytes - partialTailBytes) / chunkSize;
+			tailIncluded = true;
+		} else {
+			throw new Error(
+				`Benchmark ${label} is not a possible aggregate of completed chunks`,
+			);
+		}
+		if (
+			!Number.isSafeInteger(includedFullChunks) ||
+			includedFullChunks < 0 ||
+			includedFullChunks > fullChunkCount
+		) {
+			throw new Error(
+				`Benchmark ${label} is not a possible aggregate of completed chunks`,
+			);
+		}
+		return { includedFullChunks, tailIncluded };
+	};
+
+	let previousCompletedBytes = 0;
+	let previousReachedAt = startedAt;
+	let previousChunkIndex = null;
+	let previousCompletionState = {
+		includedFullChunks: 0,
+		tailIncluded: false,
+	};
+	const recordedTriggerEvents = new Map();
+	for (const [index, value] of telemetry.milestones.entries()) {
+		const label = `upload progress milestone ${index}`;
+		const milestone = requireExactRecordKeys(
+			requireRecord(value, label),
+			UPLOAD_PROGRESS_MILESTONE_KEYS,
+			label,
+		);
+		const basisPoints = UPLOAD_PROGRESS_MILESTONE_BASIS_POINTS[index];
+		const expectedTargetBytes = Number(
+			(BigInt(sizeBytes) * BigInt(basisPoints) + 9_999n) / 10_000n,
+		);
+		const targetBytes = requireNonNegativeSafeInteger(
+			milestone.targetBytes,
+			`${label}.targetBytes`,
+		);
+		const completedBytes = requireNonNegativeSafeInteger(
+			milestone.completedBytes,
+			`${label}.completedBytes`,
+		);
+		const reachedAt = requirePositiveSafeInteger(
+			milestone.reachedAt,
+			`${label}.reachedAt`,
+		);
+		if (
+			milestone.basisPoints !== basisPoints ||
+			targetBytes !== expectedTargetBytes
+		) {
+			throw new Error(`Benchmark ${label} does not use the exact 5% target`);
+		}
+		if (
+			completedBytes < targetBytes ||
+			completedBytes > sizeBytes ||
+			completedBytes - targetBytes >= chunkSize ||
+			completedBytes < previousCompletedBytes
+		) {
+			throw new Error(
+				`Benchmark ${label} has invalid aggregate completed bytes`,
+			);
+		}
+		if (
+			reachedAt < startedAt ||
+			reachedAt > lastChunkFinishedAt ||
+			reachedAt < previousReachedAt
+		) {
+			throw new Error(`Benchmark ${label} has invalid completion time`);
+		}
+		const completionState = decodeCompletionState(completedBytes, label);
+		if (index === 0) {
+			if (
+				targetBytes !== 0 ||
+				completedBytes !== 0 ||
+				reachedAt !== startedAt ||
+				milestone.chunkIndex !== null
+			) {
+				throw new Error(
+					"Benchmark upload progress telemetry has an invalid zero milestone",
+				);
+			}
+		} else {
+			if (reachedAt < firstChunkFinishedAt) {
+				throw new Error(
+					`Benchmark ${label} predates the first completed chunk`,
+				);
+			}
+			const chunkIndex = requireNonNegativeSafeInteger(
+				milestone.chunkIndex,
+				`${label}.chunkIndex`,
+			);
+			if (chunkIndex >= chunkCount) {
+				throw new Error(`Benchmark ${label} has an out-of-range chunk index`);
+			}
+			if (
+				completedBytes === previousCompletedBytes &&
+				(reachedAt !== previousReachedAt || chunkIndex !== previousChunkIndex)
+			) {
+				throw new Error(
+					`Benchmark ${label} contradicts its shared chunk-completion event`,
+				);
+			}
+			const triggerChunkBytes = requirePositiveSafeInteger(
+				readChunkByteLength[chunkIndex],
+				`readerDiagnostics.lastReadDiagnostics.chunkByteLength[${chunkIndex}]`,
+			);
+			const preTriggerBytes = completedBytes - triggerChunkBytes;
+			if (preTriggerBytes >= targetBytes) {
+				throw new Error(
+					`Benchmark ${label} was already crossed before its triggering chunk completion`,
+				);
+			}
+			if (
+				completedBytes !== previousCompletedBytes &&
+				preTriggerBytes === 0 &&
+				reachedAt !== firstChunkFinishedAt
+			) {
+				throw new Error(
+					`Benchmark ${label} contradicts the first completed chunk timestamp`,
+				);
+			}
+			if (
+				previousCompletedBytes >= targetBytes &&
+				completedBytes !== previousCompletedBytes
+			) {
+				throw new Error(
+					`Benchmark ${label} was not recorded at its first qualifying chunk-completion event`,
+				);
+			}
+			if (completedBytes !== previousCompletedBytes) {
+				if (
+					completionState.includedFullChunks <
+						previousCompletionState.includedFullChunks ||
+					(previousCompletionState.tailIncluded &&
+						!completionState.tailIncluded)
+				) {
+					throw new Error(
+						`Benchmark ${label} regresses its completed-chunk set`,
+					);
+				}
+				const triggersPartialTail =
+					hasPartialTail && chunkIndex === chunkCount - 1;
+				if (
+					triggersPartialTail
+						? !completionState.tailIncluded ||
+							previousCompletionState.tailIncluded
+						: chunkIndex >= fullChunkCount ||
+							completionState.includedFullChunks <=
+								previousCompletionState.includedFullChunks
+				) {
+					throw new Error(
+						`Benchmark ${label} contradicts its triggering chunk completion`,
+					);
+				}
+				if (recordedTriggerEvents.has(chunkIndex)) {
+					throw new Error(
+						`Benchmark ${label} reuses a completed chunk as a later trigger`,
+					);
+				}
+				recordedTriggerEvents.set(chunkIndex, {
+					completedBytes,
+					reachedAt,
+				});
+				previousCompletionState = completionState;
+			}
+		}
+		previousCompletedBytes = completedBytes;
+		previousReachedAt = reachedAt;
+		previousChunkIndex = milestone.chunkIndex;
+	}
+
+	const finalMilestone = telemetry.milestones.at(-1);
+	if (
+		finalMilestone.targetBytes !== sizeBytes ||
+		finalMilestone.completedBytes !== sizeBytes ||
+		finalMilestone.reachedAt !== lastChunkFinishedAt
+	) {
+		throw new Error(
+			"Benchmark upload progress telemetry has an invalid completion milestone",
+		);
+	}
+	return telemetry;
 };
 
 const validateGitProvenance = (value, label) => {
@@ -2501,11 +2898,8 @@ export const validateBenchmarkResult = (
 			expectedInvocation,
 		);
 		const readWindow = validateUploadTimings(result, expectedInvocation);
-		validateDownloadMemoryTelemetry(
-			result,
-			expectedInvocation,
-			readWindow,
-		);
+		validateUploadProgressTelemetry(result, expectedInvocation);
+		validateDownloadMemoryTelemetry(result, expectedInvocation, readWindow);
 		validateRequestedUploadKnobs(result, expectedInvocation);
 		validateZeroErrors(result, "upload result");
 		validateReaderLocalityControl(result, expectedInvocation);

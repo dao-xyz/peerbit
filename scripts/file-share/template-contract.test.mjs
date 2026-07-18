@@ -17,14 +17,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v5 result envelope`, async () => {
+	test(`${name} emits the atomic v6 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 5",
+			"version: 6",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -326,6 +326,10 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"utf8",
 	);
 	for (const required of [
+		"peerbit-benchmark-upload-diagnostics",
+		"lastUploadDiagnostics:",
+		"(program as any)?.lastUploadDiagnostics ?? null",
+		'requireUploadDiagnostics: scenario === "upload"',
 		"peerbit-benchmark-locality-prefix-preload",
 		"peerbit-benchmark-locality-preload-aggregate-deadline",
 		"peerbit-benchmark-locality-replicator-hashes",
@@ -505,6 +509,52 @@ updateListCalls.push(updateListStats);
 	assert.equal(await readFile(dropPath, "utf8"), migrated);
 });
 
+test("upload diagnostics instrumentation migrates a reused v5 fallback idempotently", async (t) => {
+	const frontendRoot = await mkdtemp(
+		path.join(os.tmpdir(), "peerbit-upload-diagnostics-instrumentation-"),
+	);
+	t.after(async () => rm(frontendRoot, { recursive: true, force: true }));
+	const src = path.join(frontendRoot, "src");
+	await mkdir(src);
+	const dropPath = path.join(src, "Drop.tsx");
+	await writeFile(
+		dropPath,
+		`/* peerbit-benchmark-hook */
+const __peerbitFileShareTestHooks = {
+    setReplicationRole,
+    getDiagnostics: async () => {
+        const program = files.program;
+        const connections = [];
+        return {
+                    programAddress: program?.address ?? null,
+                    programClosed: program?.closed ?? null,
+                    connectionCount: connections.length,
+                    connectionPeers: connections,
+                    replicatorCount: null,
+        };
+    },
+};
+/* peerbit-benchmark-update-list */
+const __peerbitFileShareBenchmarkStats = { updateListStats };
+const updateListStats = {};
+updateListCalls.push(updateListStats);
+`,
+	);
+	await instrumentFileShareFrontend(frontendRoot, {
+		requireUploadDiagnostics: true,
+	});
+	const migrated = await readFile(dropPath, "utf8");
+	assert.ok(migrated.includes("/* peerbit-benchmark-upload-diagnostics */"));
+	assert.ok(
+		migrated.includes("(program as any)?.lastUploadDiagnostics ?? null"),
+	);
+	assert.equal([...migrated.matchAll(/lastUploadDiagnostics:/g)].length, 1);
+	await instrumentFileShareFrontend(frontendRoot, {
+		requireUploadDiagnostics: true,
+	});
+	assert.equal(await readFile(dropPath, "utf8"), migrated);
+});
+
 test("aggregate comparisons require every planned invocation to pass", async () => {
 	const standalone = await readFile(
 		path.join(
@@ -588,19 +638,22 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"samples.length >= maxSamples - 1",
 		"await activeSample",
 		"await takeSample(true)",
-		'newCDPSession(page)',
+		"newCDPSession(page)",
 		'"Page JS heap CDP session creation"',
-		'Performance.getMetrics',
+		"Performance.getMetrics",
 		'metric.name === "JSHeapUsedSize"',
 		"newBrowserCDPSession()",
 		'"Browser RSS CDP session creation"',
-		'SystemInfo.getProcessInfo',
+		"SystemInfo.getProcessInfo",
 		'"ps"',
 		"process.memoryUsage().rss",
 		"playwright-worker-node-including-in-process-local-bootstrap",
 		"samplingErrorOverflowCount",
 	]) {
-		assert.ok(contents.includes(required), `memory support missing ${required}`);
+		assert.ok(
+			contents.includes(required),
+			`memory support missing ${required}`,
+		);
 	}
 	assert.ok(
 		contents.indexOf("await activeSample") <

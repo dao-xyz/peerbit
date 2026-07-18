@@ -4,9 +4,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
+import { startDownloadMemoryTelemetry } from "./generated.download-memory-telemetry.mjs";
 import { sha256AndCrc32OpfsSavedViaPicker } from "./generated.opfs-readback.mjs";
 import { withDeadline } from "./generated.promise-deadline.mjs";
-import { startDownloadMemoryTelemetry } from "./generated.download-memory-telemetry.mjs";
 import {
 	armSavedViaPicker,
 	crc32SavedViaPicker,
@@ -113,7 +113,7 @@ const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 5,
+	version: 6,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -1523,17 +1523,14 @@ test.describe("generated transfer-validity benchmark", () => {
 			await expect(downloadButton).toBeEnabled({
 				timeout: DOWNLOAD_TIMEOUT_MS,
 			});
-			downloadMemoryTelemetryController =
-				await startDownloadMemoryTelemetry({
-					browser,
-					reader,
-					writer,
-					downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
-					schedulingToleranceMs:
-						TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
-				});
-			downloadMemoryTelemetry =
-				downloadMemoryTelemetryController.snapshot();
+			downloadMemoryTelemetryController = await startDownloadMemoryTelemetry({
+				browser,
+				reader,
+				writer,
+				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
+				schedulingToleranceMs: TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
+			});
+			downloadMemoryTelemetry = downloadMemoryTelemetryController.snapshot();
 			const initialMemorySeries = [
 				downloadMemoryTelemetry.readerJsHeap,
 				downloadMemoryTelemetry.writerJsHeap,
@@ -1562,8 +1559,7 @@ test.describe("generated transfer-validity benchmark", () => {
 			await downloadButton.click();
 			const download = await downloadCompletion;
 			downloadCompletionObservedAt = Date.now();
-			downloadMemoryTelemetry =
-				await downloadMemoryTelemetryController.stop();
+			downloadMemoryTelemetry = await downloadMemoryTelemetryController.stop();
 			const memorySeries = [
 				downloadMemoryTelemetry.readerJsHeap,
 				downloadMemoryTelemetry.writerJsHeap,
