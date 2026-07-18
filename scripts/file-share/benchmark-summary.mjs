@@ -35,6 +35,41 @@ const passedNumbers = (results, getter) =>
 		.map(getter)
 		.filter((value) => typeof value === "number" && Number.isFinite(value));
 
+const optionalLocalityValue = (result, key) =>
+	result?.[key] ?? result?.invocation?.[key] ?? null;
+
+export const uploadLocalityCohortDimensions = (result) => ({
+	mode: result.mode,
+	readerLocalChunkTarget: optionalLocalityValue(
+		result,
+		"readerLocalChunkTarget",
+	),
+	readerLocalChunkMaxOvershoot: optionalLocalityValue(
+		result,
+		"readerLocalChunkMaxOvershoot",
+	),
+	readerLocalChunkBlockCount: result.readerLocalChunkBlockCount ?? null,
+	readerLocalChunkIndexRowCount: result.readerLocalChunkIndexRowCount ?? null,
+	readerLocalityCohortKey: result.readerLocalityCohortKey ?? null,
+});
+
+/**
+ * Read-ahead may make repeated controlled-locality runs settle at different
+ * exact block/index prefixes. Keep those cohorts separate so an aggregate can
+ * never hide that difference in a single timing distribution.
+ */
+export const groupUploadResultsByLocalityCohort = (results) => {
+	const grouped = new Map();
+	for (const result of results) {
+		const dimensions = uploadLocalityCohortDimensions(result);
+		const key = JSON.stringify(dimensions);
+		const group = grouped.get(key) ?? { dimensions, results: [] };
+		group.results.push(result);
+		grouped.set(key, group);
+	}
+	return [...grouped.values()];
+};
+
 export const summarizeDistribution = (values) => {
 	const sortedValues = values
 		.filter((value) => typeof value === "number" && Number.isFinite(value))

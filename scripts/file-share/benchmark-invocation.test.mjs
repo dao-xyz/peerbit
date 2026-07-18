@@ -55,6 +55,8 @@ test("resolves every default and requested optional knob", () => {
 			sampleMs: resolved.sampleMs,
 			sampleCount: resolved.sampleCount,
 			targetSeeders: resolved.targetSeeders,
+			readerLocalChunkTarget: resolved.readerLocalChunkTarget,
+			readerLocalChunkMaxOvershoot: resolved.readerLocalChunkMaxOvershoot,
 			protocol: resolved.protocol,
 			viteMode: resolved.viteMode,
 			viteConfig: resolved.viteConfig,
@@ -75,6 +77,8 @@ test("resolves every default and requested optional knob", () => {
 			sampleMs: 7,
 			sampleCount: 8,
 			targetSeeders: 9,
+			readerLocalChunkTarget: null,
+			readerLocalChunkMaxOvershoot: null,
 			protocol: "http",
 			viteMode: null,
 			viteConfig: null,
@@ -129,6 +133,8 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.PW_FILE_MB, "5");
 	assert.equal(environment.PW_DOWNLOAD_SINK, "hash-only");
 	assert.equal(environment.PW_POST_UPLOAD_MONITOR_MS, "5000");
+	assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "");
+	assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "");
 	assert.equal(environment.PW_FUTURE_BYPASS, undefined);
 	assert.equal(environment.PW_PORT, undefined);
 	assert.equal(environment.PW_BENCH, "1");
@@ -136,6 +142,84 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.PW_VITE_CONFIG, "");
 	assert.equal(environment.PW_VITE_MODE, "");
 	assert.deepEqual(JSON.parse(environment.PW_BENCHMARK_INVOCATION), resolved);
+});
+
+test("binds optional observer-prefix locality control to a fixed1 writer", () => {
+	const resolved = invocation({
+		mode: "fixed1",
+		readerLocalChunkTarget: 0,
+		readerLocalChunkMaxOvershoot: 0,
+	});
+	assert.equal(resolved.readerLocalChunkTarget, 0);
+	assert.equal(resolved.readerLocalChunkMaxOvershoot, 0);
+	assert.equal(resolved.minReadySeeders, 1);
+	const environment = createPlaywrightBenchmarkEnvironment({
+		baseEnvironment: {
+			PW_READER_LOCAL_CHUNK_TARGET: "attacker",
+			PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: "attacker",
+		},
+		invocation: resolved,
+		resultFile: "/tmp/result.json",
+		runNonce: "123e4567-e89b-42d3-a456-426614174000",
+		provenance: { bound: true },
+	});
+	assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "0");
+	assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "0");
+	for (const [overrides, pattern] of [
+		[
+			{
+				mode: "adaptive",
+				readerLocalChunkTarget: 4,
+				readerLocalChunkMaxOvershoot: 2,
+			},
+			/requires fixed1 mode/,
+		],
+		[
+			{
+				mode: "observer",
+				readerLocalChunkTarget: 4,
+				readerLocalChunkMaxOvershoot: 2,
+			},
+			/requires fixed1 mode/,
+		],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 4,
+				readerLocalChunkMaxOvershoot: 2,
+				minReadySeeders: 2,
+			},
+			/requires minReadySeeders = 1/,
+		],
+		[
+			{
+				scenario: "seeder-probe",
+				mode: "fixed1",
+				fileMb: 1,
+				readerLocalChunkTarget: 1,
+				readerLocalChunkMaxOvershoot: 1,
+			},
+			/only supported by upload benchmarks/,
+		],
+		[
+			{ mode: "fixed1", readerLocalChunkTarget: 4 },
+			/must be provided together/,
+		],
+		[
+			{ mode: "fixed1", readerLocalChunkMaxOvershoot: 2 },
+			/must be provided together/,
+		],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 4,
+				readerLocalChunkMaxOvershoot: 9,
+			},
+			/must not exceed 8/,
+		],
+	]) {
+		assert.throws(() => invocation(overrides), pattern);
+	}
 });
 
 test("defaults to the hash-only sink and validates explicit sink cohorts", () => {
@@ -315,6 +399,30 @@ test("standalone runner rejects invalid integration modes before mutating output
 			[
 				["--integration-mode", "link", "--local-packages", ","],
 				/link integration requires at least one local Peerbit package/,
+			],
+			[
+				[
+					"--reader-local-chunk-target",
+					"1",
+					"--reader-local-chunk-max-overshoot",
+					"1",
+					"--mode",
+					"adaptive",
+				],
+				/requires --scenario upload --mode fixed1/,
+			],
+			[
+				[
+					"--reader-local-chunk-target",
+					"1",
+					"--reader-local-chunk-max-overshoot",
+					"1",
+					"--mode",
+					"fixed1",
+					"--min-ready-seeders",
+					"2",
+				],
+				/requires --min-ready-seeders 1/,
 			],
 		]) {
 			const child = spawnSync(

@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
+	MAX_READER_LOCAL_CHUNK_OVERSHOOT,
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
 	createBenchmarkInvocation,
@@ -33,6 +34,7 @@ import {
 } from "./benchmark-provenance.mjs";
 import {
 	compareUploadPerformanceModesForCompletePlan,
+	groupUploadResultsByLocalityCohort,
 	isCompletePassedBenchmarkPlan,
 	summarizeUploadPerformance,
 } from "./benchmark-summary.mjs";
@@ -157,11 +159,30 @@ const resolveVariantSpecs = async (variantSpecs) => {
 };
 
 const summarizeUploadMatrix = (variantSummaries) => {
-	return variantSummaries.map((summary) => {
+	return variantSummaries.flatMap((summary) => {
 		const adaptive = summary.summary.find((entry) => entry.mode === "adaptive");
-		const fixed1 = summary.summary.find((entry) => entry.mode === "fixed1");
-		return {
+		const fixed1Entries = summary.summary.filter(
+			(entry) => entry.mode === "fixed1",
+		);
+		const controlledFixed1Entries = fixed1Entries.filter(
+			(entry) => entry.readerLocalChunkTarget != null,
+		);
+		const cohorts =
+			controlledFixed1Entries.length > 0
+				? controlledFixed1Entries
+				: [fixed1Entries[0]];
+		return cohorts.map((fixed1) => ({
 			variant: summary.variant,
+			readerLocalChunkTarget: fixed1?.readerLocalChunkTarget ?? null,
+			readerLocalChunkMaxOvershoot:
+				fixed1?.readerLocalChunkMaxOvershoot ?? null,
+			readerLocalChunkBlockCount: fixed1?.readerLocalChunkBlockCount ?? null,
+			readerLocalChunkIndexRowCount:
+				fixed1?.readerLocalChunkIndexRowCount ?? null,
+			readerLocalityCohortKey: fixed1?.readerLocalityCohortKey ?? null,
+			cohortRuns: fixed1?.runs ?? null,
+			cohortPassed: fixed1?.passed ?? null,
+			cohortFailed: fixed1?.failed ?? null,
 			downloadSink:
 				summary.comparison?.downloadSink ??
 				adaptive?.downloadSink ??
@@ -178,7 +199,8 @@ const summarizeUploadMatrix = (variantSummaries) => {
 				fixed1?.primaryDownloadAuthoritative ??
 				null,
 			adaptiveAvgMs: summary.comparison?.adaptiveAvgMs ?? null,
-			fixed1AvgMs: summary.comparison?.fixed1AvgMs ?? null,
+			fixed1AvgMs:
+				summary.comparison?.fixed1AvgMs ?? fixed1?.uploadDurationMsAvg ?? null,
 			adaptiveVsFixed1Pct: summary.comparison?.adaptiveVsFixed1Pct ?? null,
 			adaptiveWriterReadyMsAvg: adaptive?.timeToWriterReadyMsAvg ?? null,
 			fixed1WriterReadyMsAvg: fixed1?.timeToWriterReadyMsAvg ?? null,
@@ -198,8 +220,10 @@ const summarizeUploadMatrix = (variantSummaries) => {
 				summary.comparison?.libraryStreamWallDeltaMs ?? null,
 			adaptiveVsFixed1LibraryStreamWallPct:
 				summary.comparison?.adaptiveVsFixed1LibraryStreamWallPct ?? null,
-			adaptiveStatus: adaptive?.failed === 0 ? "passed" : "failed",
-			fixed1Status: fixed1?.failed === 0 ? "passed" : "failed",
+			adaptiveStatus:
+				adaptive == null ? null : adaptive.failed === 0 ? "passed" : "failed",
+			fixed1Status:
+				fixed1 == null ? null : fixed1.failed === 0 ? "passed" : "failed",
 			adaptiveErrorCount: adaptive?.errorCount ?? null,
 			fixed1ErrorCount: fixed1?.errorCount ?? null,
 			adaptiveIncompleteErrorCollections:
@@ -208,7 +232,7 @@ const summarizeUploadMatrix = (variantSummaries) => {
 				fixed1?.incompleteErrorCollections ?? null,
 			adaptiveRequestFailureCount: adaptive?.requestFailureCount ?? null,
 			fixed1RequestFailureCount: fixed1?.requestFailureCount ?? null,
-		};
+		}));
 	});
 };
 
@@ -283,15 +307,24 @@ const average = (values) =>
 			);
 
 const summarizeInvocationResults = (results, scenario) => {
-	const grouped = new Map();
-	for (const result of results) {
-		const items = grouped.get(result.mode) ?? [];
-		items.push(result);
-		grouped.set(result.mode, items);
-	}
-	return [...grouped.entries()].map(([mode, items]) => {
+	const groups =
+		scenario === "seeder-probe"
+			? (() => {
+					const grouped = new Map();
+					for (const result of results) {
+						const items = grouped.get(result.mode) ?? [];
+						items.push(result);
+						grouped.set(result.mode, items);
+					}
+					return [...grouped.entries()].map(([mode, items]) => ({
+						dimensions: { mode },
+						results: items,
+					}));
+				})()
+			: groupUploadResultsByLocalityCohort(results);
+	return groups.map(({ dimensions, results: items }) => {
 		const base = {
-			mode,
+			...dimensions,
 			runs: items.length,
 			passed: items.filter((item) => item.status === "passed").length,
 			failed: items.filter((item) => item.status !== "passed").length,
@@ -415,6 +448,8 @@ const runVariantBenchmark = async ({
 	sampleMs,
 	sampleCount,
 	targetSeeders,
+	readerLocalChunkTarget,
+	readerLocalChunkMaxOvershoot,
 	protocol,
 	fixtureSeed,
 	enableVisibilityProbe,
@@ -485,6 +520,15 @@ const runVariantBenchmark = async ({
 		...(sampleCount != null ? ["--sample-count", String(sampleCount)] : []),
 		...(targetSeeders != null
 			? ["--target-seeders", String(targetSeeders)]
+			: []),
+		...(readerLocalChunkTarget != null
+			? ["--reader-local-chunk-target", String(readerLocalChunkTarget)]
+			: []),
+		...(readerLocalChunkMaxOvershoot != null
+			? [
+					"--reader-local-chunk-max-overshoot",
+					String(readerLocalChunkMaxOvershoot),
+				]
 			: []),
 		...(protocol ? ["--protocol", protocol] : []),
 		...(fixtureSeed ? ["--fixture-seed", fixtureSeed] : []),
@@ -608,6 +652,8 @@ const main = async () => {
 	const sampleMs = args["sample-ms"];
 	const sampleCount = args["sample-count"];
 	const targetSeeders = args["target-seeders"];
+	const readerLocalChunkTarget = args["reader-local-chunk-target"];
+	const readerLocalChunkMaxOvershoot = args["reader-local-chunk-max-overshoot"];
 	const { protocol } = previewOptions;
 	const fixtureSeed = args["fixture-seed"];
 	const enableVisibilityProbe = Boolean(args["enable-visibility-probe"]);
@@ -632,6 +678,50 @@ const main = async () => {
 	) {
 		throw new Error(
 			`Unsupported --mode "${mode}". Expected adaptive, fixed1, observer, or both.`,
+		);
+	}
+	if (
+		readerLocalChunkTarget != null &&
+		(scenario !== "upload" || modes.length !== 1 || modes[0] !== "fixed1")
+	) {
+		throw new Error(
+			"--reader-local-chunk-target requires --scenario upload --mode fixed1",
+		);
+	}
+	if (
+		readerLocalChunkTarget != null &&
+		(!Number.isSafeInteger(Number(readerLocalChunkTarget)) ||
+			Number(readerLocalChunkTarget) < 0)
+	) {
+		throw new Error(
+			"--reader-local-chunk-target must be a non-negative safe integer",
+		);
+	}
+	if (
+		(readerLocalChunkTarget == null) !==
+		(readerLocalChunkMaxOvershoot == null)
+	) {
+		throw new Error(
+			"--reader-local-chunk-target and --reader-local-chunk-max-overshoot must be provided together",
+		);
+	}
+	if (
+		readerLocalChunkMaxOvershoot != null &&
+		(!Number.isSafeInteger(Number(readerLocalChunkMaxOvershoot)) ||
+			Number(readerLocalChunkMaxOvershoot) < 0 ||
+			Number(readerLocalChunkMaxOvershoot) > MAX_READER_LOCAL_CHUNK_OVERSHOOT)
+	) {
+		throw new Error(
+			`--reader-local-chunk-max-overshoot must be a non-negative safe integer no greater than ${MAX_READER_LOCAL_CHUNK_OVERSHOOT}`,
+		);
+	}
+	if (
+		readerLocalChunkTarget != null &&
+		minReadySeeders != null &&
+		Number(minReadySeeders) !== 1
+	) {
+		throw new Error(
+			"--reader-local-chunk-target requires --min-ready-seeders 1 because the reader starts as an observer",
 		);
 	}
 	if (!["upload", "seeder-probe"].includes(scenario)) {
@@ -764,6 +854,8 @@ const main = async () => {
 				sampleMs,
 				sampleCount,
 				targetSeeders,
+				readerLocalChunkTarget,
+				readerLocalChunkMaxOvershoot,
 				protocol,
 				fixtureSeed,
 				enableVisibilityProbe,
@@ -809,6 +901,10 @@ const main = async () => {
 				sampleMs: optionalNumber(sampleMs),
 				sampleCount: optionalNumber(sampleCount),
 				targetSeeders: optionalNumber(targetSeeders),
+				readerLocalChunkTarget: optionalNumber(readerLocalChunkTarget),
+				readerLocalChunkMaxOvershoot: optionalNumber(
+					readerLocalChunkMaxOvershoot,
+				),
 				baseUrl: null,
 				protocol,
 				viteMode: null,
@@ -981,6 +1077,18 @@ const main = async () => {
 		invocationRecords.push({
 			...plan,
 			status: result.status,
+			readerLocalChunkTarget:
+				result.readerLocalChunkTarget ??
+				result.invocation?.readerLocalChunkTarget ??
+				null,
+			readerLocalChunkMaxOvershoot:
+				result.readerLocalChunkMaxOvershoot ??
+				result.invocation?.readerLocalChunkMaxOvershoot ??
+				null,
+			readerLocalChunkBlockCount: result.readerLocalChunkBlockCount ?? null,
+			readerLocalChunkIndexRowCount:
+				result.readerLocalChunkIndexRowCount ?? null,
+			readerLocalityCohortKey: result.readerLocalityCohortKey ?? null,
 			runNonce: result.runNonce,
 			resultFile: result.resultFile ?? null,
 			subRunSummaryFile: summaryFile,
@@ -1014,6 +1122,7 @@ const main = async () => {
 			results,
 			variantPlanned,
 		);
+		const summary = summarizeInvocationResults(results, scenario);
 		return {
 			variant: variantSpec.name,
 			variantRef: prepared.variantRef,
@@ -1024,7 +1133,10 @@ const main = async () => {
 			examplesProvenance: benchmarkExamplesProvenance,
 			results,
 			outcomeCounts: variantOutcomeCounts,
-			summary: summarizeInvocationResults(results, scenario),
+			readerLocalityCohorts: summary
+				.map((row) => row.readerLocalityCohortKey)
+				.filter((value) => typeof value === "string"),
+			summary,
 			comparison:
 				scenario === "upload"
 					? compareUploadPerformanceModesForCompletePlan(
@@ -1048,6 +1160,16 @@ const main = async () => {
 		variants: variantSpecs,
 		network,
 		fileMb,
+		readerLocalChunkTarget: optionalNumber(readerLocalChunkTarget) ?? null,
+		readerLocalChunkMaxOvershoot:
+			optionalNumber(readerLocalChunkMaxOvershoot) ?? null,
+		readerLocalityCohorts: [
+			...new Set(
+				allResults
+					.map((result) => result.readerLocalityCohortKey)
+					.filter((value) => typeof value === "string"),
+			),
+		],
 		runs,
 		mode,
 		modes,

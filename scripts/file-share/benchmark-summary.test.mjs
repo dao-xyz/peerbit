@@ -3,10 +3,112 @@ import test from "node:test";
 import {
 	compareUploadPerformanceModes,
 	compareUploadPerformanceModesForCompletePlan,
+	groupUploadResultsByLocalityCohort,
 	isCompletePassedBenchmarkPlan,
 	summarizeUploadPerformance,
 	uploadTimingTableColumns,
 } from "./benchmark-summary.mjs";
+
+test("keeps exact observer-locality cohorts separate in aggregates", () => {
+	const uncontrolled = {
+		status: "passed",
+		mode: "adaptive",
+	};
+	const cold = {
+		status: "passed",
+		mode: "fixed1",
+		readerLocalChunkTarget: 0,
+		readerLocalChunkMaxOvershoot: 0,
+		readerLocalChunkBlockCount: 0,
+		readerLocalChunkIndexRowCount: 0,
+		readerLocalityCohortKey: "observer-persistent-prefix-b0-i0",
+	};
+	const warmBlockOnly = {
+		status: "passed",
+		mode: "fixed1",
+		readerLocalChunkTarget: 1,
+		readerLocalChunkMaxOvershoot: 1,
+		readerLocalChunkBlockCount: 1,
+		readerLocalChunkIndexRowCount: 0,
+		readerLocalityCohortKey: "observer-persistent-prefix-b1-i0",
+	};
+	const warmIndexed = {
+		...warmBlockOnly,
+		readerLocalChunkIndexRowCount: 1,
+		readerLocalityCohortKey: "observer-persistent-prefix-b1-i1",
+	};
+	const failedBeforeObservation = {
+		status: "failed",
+		mode: "fixed1",
+		invocation: {
+			readerLocalChunkTarget: 1,
+			readerLocalChunkMaxOvershoot: 1,
+		},
+	};
+	const groups = groupUploadResultsByLocalityCohort([
+		uncontrolled,
+		cold,
+		warmBlockOnly,
+		{ ...warmBlockOnly },
+		warmIndexed,
+		failedBeforeObservation,
+	]);
+
+	assert.equal(groups.length, 5);
+	assert.deepEqual(
+		groups.map(({ dimensions, results }) => ({
+			...dimensions,
+			runs: results.length,
+		})),
+		[
+			{
+				mode: "adaptive",
+				readerLocalChunkTarget: null,
+				readerLocalChunkMaxOvershoot: null,
+				readerLocalChunkBlockCount: null,
+				readerLocalChunkIndexRowCount: null,
+				readerLocalityCohortKey: null,
+				runs: 1,
+			},
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 0,
+				readerLocalChunkMaxOvershoot: 0,
+				readerLocalChunkBlockCount: 0,
+				readerLocalChunkIndexRowCount: 0,
+				readerLocalityCohortKey: "observer-persistent-prefix-b0-i0",
+				runs: 1,
+			},
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 1,
+				readerLocalChunkMaxOvershoot: 1,
+				readerLocalChunkBlockCount: 1,
+				readerLocalChunkIndexRowCount: 0,
+				readerLocalityCohortKey: "observer-persistent-prefix-b1-i0",
+				runs: 2,
+			},
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 1,
+				readerLocalChunkMaxOvershoot: 1,
+				readerLocalChunkBlockCount: 1,
+				readerLocalChunkIndexRowCount: 1,
+				readerLocalityCohortKey: "observer-persistent-prefix-b1-i1",
+				runs: 1,
+			},
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 1,
+				readerLocalChunkMaxOvershoot: 1,
+				readerLocalChunkBlockCount: null,
+				readerLocalChunkIndexRowCount: null,
+				readerLocalityCohortKey: null,
+				runs: 1,
+			},
+		],
+	);
+});
 
 test("propagates end-to-end readiness and labels post-settlement listing", () => {
 	const results = [
