@@ -163,6 +163,17 @@ const markPromiseHandled = <T>(promise: Promise<T>): Promise<T> => {
 	return promise;
 };
 
+const closeRawStreamBestEffort = (stream: Stream): void => {
+	try {
+		// WebRTC close can reject later while waiting for FIN_ACK. These lifecycle
+		// paths are intentionally fire-and-forget, so observe the rejection without
+		// delaying pruning or shutdown.
+		void Promise.resolve(stream.close?.()).catch(() => {});
+	} catch {
+		// Closing discarded streams is best-effort, including synchronous failures.
+	}
+};
+
 const logError = (e?: any) => {
 	if (e?.message === "Cannot push value onto an ended pushable") {
 		return; // ignore since we are trying to push to a closed stream
@@ -478,7 +489,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 						await waitForDrain(raw, this.outboundAbortController.signal);
 					}
 				}
-				raw.close?.();
+				closeRawStreamBestEffort(raw);
 			} catch (err) {
 				candidate.aborted = true;
 				try {
@@ -692,9 +703,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 					try {
 						f.raw.abort?.(new AbortError("Failed write" as any));
 					} catch {}
-					try {
-						f.raw.close?.();
-					} catch {}
+					closeRawStreamBestEffort(f.raw);
 				}
 				// If more than one remains schedule prune; else ensure outbound event raised
 				if (this.outboundStreams.length > 1) this._scheduleOutboundPrune(true);
@@ -805,11 +814,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			} catch {
 				logger.error("Failed to abort inbound stream");
 			}
-			try {
-				drop.raw.close?.();
-			} catch {
-				logger.error("Failed to close inbound stream");
-			}
+			closeRawStreamBestEffort(drop.raw);
 		}
 		const abortController = new AbortController();
 		const decoded = pipe(stream, (source) =>
@@ -868,9 +873,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			try {
 				candidate.abortController.abort();
 			} catch {}
-			try {
-				candidate.raw.close?.();
-			} catch {}
+			closeRawStreamBestEffort(candidate.raw);
 		}
 		this.inboundStreams = survivors;
 		// update legacy references if they were pruned
@@ -903,7 +906,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 			try {
 				record.raw.abort?.(reason);
 			} catch {}
-			void Promise.resolve(record.raw.close?.()).catch(() => {});
+			closeRawStreamBestEffort(record.raw);
 		}
 		if (this.rawInboundStream === record.raw) {
 			const next = this.inboundStreams[0];
@@ -971,11 +974,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 				} catch {
 					logger.error("Failed to close outbound pushable");
 				}
-				try {
-					c.raw.close?.();
-				} catch {
-					logger.error("Failed to close outbound stream");
-				}
+				closeRawStreamBestEffort(c.raw);
 			}
 			this.outboundStreams = [chosen];
 		} catch (e) {
@@ -1071,7 +1070,7 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 						} catch {
 							// ignore
 						}
-						void Promise.resolve(inbound.raw.close?.()).catch(() => {});
+						closeRawStreamBestEffort(inbound.raw);
 					} catch {
 						logger.error("Failed to close inbound stream");
 					}
