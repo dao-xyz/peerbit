@@ -105,6 +105,7 @@ import {
 	BACKGROUND_MESSAGE_PRIORITY,
 	CONVERGENCE_MESSAGE_PRIORITY,
 	DataMessage,
+	DeliveryError,
 	MessageHeader,
 	NotStartedError,
 	type RouteHint,
@@ -2307,6 +2308,64 @@ const isTransientReplicationAnnouncementError = (
 	return constructorName === "TimeoutError" || name === "TimeoutError";
 };
 
+/**
+ * Directed transport-delivery repair is allowed to retry explicit delivery
+ * failures in addition to timeouts. A DirectStream ACK confirms receipt of the
+ * signed envelope, not successful application by the receiver. Keep this
+ * separate from the primary fanout classifier above so replicate() rejection
+ * semantics remain unchanged for programming, serialization, and lifecycle
+ * errors.
+ */
+const isTransientReplicationAnnouncementRepairError = (
+	error: unknown,
+	seen = new Set<unknown>(),
+): boolean => {
+	if (
+		error != null &&
+		(typeof error === "object" || typeof error === "function")
+	) {
+		if (seen.has(error)) {
+			return false;
+		}
+		seen.add(error);
+	}
+
+	if (error instanceof DeliveryError || error instanceof TimeoutError) {
+		return true;
+	}
+
+	const nested = (error as { errors?: unknown })?.errors;
+	if (Array.isArray(nested) && nested.length > 0) {
+		return nested.every((item) =>
+			isTransientReplicationAnnouncementRepairError(item, new Set(seen)),
+		);
+	}
+
+	const cause = (error as { cause?: unknown })?.cause;
+	if (
+		cause != null &&
+		isTransientReplicationAnnouncementRepairError(cause, seen)
+	) {
+		return true;
+	}
+
+	const constructorName =
+		typeof (error as { constructor?: { name?: unknown } })?.constructor
+			?.name === "string"
+			? (error as { constructor: { name: string } }).constructor.name
+			: "";
+	const name =
+		typeof (error as { name?: unknown })?.name === "string"
+			? (error as { name: string }).name
+			: "";
+	return (
+		constructorName === "DeliveryError" ||
+		name === "DeliveryError" ||
+		constructorName === "TimeoutError" ||
+		name === "TimeoutError"
+	);
+};
+
 interface IndexableDomain<R extends "u32" | "u64"> {
 	numbers: Numbers<R>;
 	constructorEntry: new (properties: {
@@ -2582,6 +2641,14 @@ const CHECKED_PRUNE_RETRY_MAX_DELAY_MS = 30_000;
 // DONT SET THIS ANY LOWER, because it will make the pid controller unstable as the system responses are not fast enough to updates from the pid controller
 const RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL = 1000;
 const REPLICATION_ANNOUNCEMENT_RETRY_INTERVAL = 1000;
+const REPLICATION_ANNOUNCEMENT_REPAIR_INTERVAL = 1000;
+const REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS = 3;
+// Repair one bounded cohort per mutation generation. The subscriber snapshot
+// is a best-effort cache and can contain thousands of entries, so attempting
+// the whole cache after every role mutation would turn convergence repair into
+// an unbounded burst of separately signed, acknowledged messages. A cursor
+// retained across generations rotates best-effort coverage over later changes.
+const REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION = 8;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
@@ -2618,6 +2685,13 @@ const NATIVE_ED25519_VERIFY_BATCH_MIN_ENTRIES = 16;
 const hasPreverifiedSignature = (entry: Entry<any>) =>
 	(entry as { __peerbitSignatureVerified?: unknown })
 		.__peerbitSignatureVerified === true;
+
+type ReplicationAnnouncementRepairTarget = {
+	key: PublicSignKey;
+	generation: number;
+	attempts: number;
+	done: boolean;
+};
 // In sparse topologies (browser/relay), peers can learn about replicators via broadcast
 // replication announcements without having a direct connection that emits unsubscribe
 // on abrupt churn. Probe conservatively so a single missed ACK does not evict a
@@ -4180,6 +4254,20 @@ export class SharedLog<
 	private _replicationAnnouncementRetryPending!: boolean;
 	private _replicationAnnouncementRetryGeneration!: number;
 	private _replicationAnnouncementRetryController!: AbortController;
+	private replicationAnnouncementRepairDebounced:
+		| ReturnType<typeof debounceFixedInterval>
+		| undefined;
+	private _replicationAnnouncementRepairPending!: boolean;
+	private _replicationAnnouncementRepairGeneration!: number;
+	private _replicationAnnouncementRepairGenerationController!: AbortController;
+	private _replicationAnnouncementRepairTargets!: Map<
+		string,
+		ReplicationAnnouncementRepairTarget
+	>;
+	private _replicationAnnouncementRepairCohortSelected!: boolean;
+	private _replicationAnnouncementRepairFairCursorHash!: string | undefined;
+	private _replicationAnnouncementRepairMaxAttempts!: number;
+	private _replicationAnnouncementRepairController!: AbortController;
 
 	// A fn for debouncing the calls for pruning
 	pruneDebouncedFn!: DebouncedAccumulatorMap<{
@@ -4332,6 +4420,16 @@ export class SharedLog<
 		this._replicationAnnouncementRetryPending = false;
 		this._replicationAnnouncementRetryGeneration = 0;
 		this._replicationAnnouncementRetryController = new AbortController();
+		this._replicationAnnouncementRepairPending = false;
+		this._replicationAnnouncementRepairGeneration = 0;
+		this._replicationAnnouncementRepairGenerationController =
+			new AbortController();
+		this._replicationAnnouncementRepairTargets = new Map();
+		this._replicationAnnouncementRepairCohortSelected = false;
+		this._replicationAnnouncementRepairFairCursorHash = undefined;
+		this._replicationAnnouncementRepairMaxAttempts =
+			REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS;
+		this._replicationAnnouncementRepairController = new AbortController();
 		this.pendingMaturity = new Map();
 		this._closeController = new AbortController();
 	}
@@ -5778,11 +5876,301 @@ export class SharedLog<
 		);
 	}
 
+	private setupReplicationAnnouncementRepairFunction(
+		interval = REPLICATION_ANNOUNCEMENT_REPAIR_INTERVAL,
+		maxAttempts = REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS,
+	): void {
+		if (!Number.isSafeInteger(maxAttempts) || maxAttempts <= 0) {
+			throw new RangeError(
+				"Replication announcement repair attempts must be positive",
+			);
+		}
+		this.replicationAnnouncementRepairDebounced?.close();
+		this._replicationAnnouncementRepairController?.abort();
+		this._replicationAnnouncementRepairGenerationController?.abort();
+		this._replicationAnnouncementRepairController = new AbortController();
+		this._replicationAnnouncementRepairGenerationController =
+			new AbortController();
+		this._replicationAnnouncementRepairPending = false;
+		this._replicationAnnouncementRepairGeneration =
+			this._replicationAnnouncementRetryGeneration;
+		this._replicationAnnouncementRepairTargets = new Map();
+		this._replicationAnnouncementRepairCohortSelected = false;
+		this._replicationAnnouncementRepairFairCursorHash = undefined;
+		this._replicationAnnouncementRepairMaxAttempts = maxAttempts;
+		this.replicationAnnouncementRepairDebounced = debounceFixedInterval(
+			() => this.runCurrentReplicationStateAnnouncementRepair(),
+			interval,
+			{
+				leading: false,
+				// The wrapper catches worker failures while it still owns the generation
+				// context. Keep this boundary visibility-only: it must never mutate a
+				// possibly newer generation's pending state.
+				onError: (error) => logger.error(error),
+			},
+		);
+	}
+
+	private cancelCurrentReplicationStateAnnouncementRepair(): void {
+		this._replicationAnnouncementRepairPending = false;
+		this._replicationAnnouncementRepairController?.abort();
+		this._replicationAnnouncementRepairGenerationController?.abort();
+		this.replicationAnnouncementRepairDebounced?.close();
+		this._replicationAnnouncementRepairTargets?.clear();
+	}
+
+	private advanceCurrentReplicationStateAnnouncementRepairGeneration(): void {
+		const generation = this._replicationAnnouncementRetryGeneration;
+		if (generation === this._replicationAnnouncementRepairGeneration) {
+			return;
+		}
+
+		// Abort acknowledged sends carrying the old full-state snapshot before the
+		// primary announcement for the new mutation waits on transport. Otherwise a
+		// stale batch can hold the current state behind DirectStream's seek timeout.
+		this._replicationAnnouncementRepairGenerationController?.abort();
+		this._replicationAnnouncementRepairGenerationController =
+			new AbortController();
+		this._replicationAnnouncementRepairGeneration = generation;
+		this._replicationAnnouncementRepairPending = false;
+		this._replicationAnnouncementRepairTargets.clear();
+		this._replicationAnnouncementRepairCohortSelected = false;
+	}
+
+	private queueCurrentReplicationStateAnnouncementRepair(): void {
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			this._replicationAnnouncementRepairController.signal.aborted ||
+			!this.replicationAnnouncementRepairDebounced
+		) {
+			return;
+		}
+
+		this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
+		this._replicationAnnouncementRepairPending = true;
+		void this.replicationAnnouncementRepairDebounced.call();
+	}
+
+	private async runCurrentReplicationStateAnnouncementRepair(): Promise<void> {
+		const generation = this._replicationAnnouncementRetryGeneration;
+		const lifecycleController = this._replicationAnnouncementRepairController;
+		const generationController =
+			this._replicationAnnouncementRepairGenerationController;
+		try {
+			await this.repairCurrentReplicationStateAnnouncement({
+				generation,
+				lifecycleController,
+				generationController,
+			});
+		} catch (error) {
+			if (
+				this.closed ||
+				this._closeController.signal.aborted ||
+				lifecycleController.signal.aborted ||
+				generationController.signal.aborted ||
+				generation !== this._replicationAnnouncementRetryGeneration ||
+				generationController !==
+					this._replicationAnnouncementRepairGenerationController
+			) {
+				return;
+			}
+			if (isNotStartedError(error as Error)) {
+				return;
+			}
+
+			// Only the worker that still owns the current generation may conclude
+			// that its repair failed. A stale worker must not clear a newer call's
+			// pending flag or attribute its error to the new generation.
+			this._replicationAnnouncementRepairPending = false;
+			logger.error(error);
+		}
+	}
+
+	private async repairCurrentReplicationStateAnnouncement(context?: {
+		generation: number;
+		lifecycleController: AbortController;
+		generationController: AbortController;
+	}): Promise<void> {
+		if (!this._replicationAnnouncementRepairPending) {
+			return;
+		}
+		const generation =
+			context?.generation ?? this._replicationAnnouncementRetryGeneration;
+		const lifecycleController =
+			context?.lifecycleController ??
+			this._replicationAnnouncementRepairController;
+		const generationController =
+			context?.generationController ??
+			this._replicationAnnouncementRepairGenerationController;
+		const segments = (await this.getMyReplicationSegments()).map((range) =>
+			range.toReplicationRange(),
+		);
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			lifecycleController.signal.aborted ||
+			generationController.signal.aborted
+		) {
+			return;
+		}
+		if (generation !== this._replicationAnnouncementRetryGeneration) {
+			this.queueCurrentReplicationStateAnnouncementRepair();
+			return;
+		}
+
+		const subscribers =
+			(await this.node.services.pubsub.getSubscribers(this.topic)) ?? [];
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			lifecycleController.signal.aborted ||
+			generationController.signal.aborted
+		) {
+			return;
+		}
+		if (generation !== this._replicationAnnouncementRetryGeneration) {
+			this.queueCurrentReplicationStateAnnouncementRepair();
+			return;
+		}
+
+		const selfHash = this.node.identity.publicKey.hashcode();
+		const currentTargets = new Map<string, PublicSignKey>();
+		for (const key of subscribers) {
+			const hash = key.hashcode();
+			if (
+				hash !== selfHash &&
+				!this._replicationInfoBlockedPeers.has(hash) &&
+				!currentTargets.has(hash)
+			) {
+				currentTargets.set(hash, key);
+			}
+		}
+
+		for (const [hash, target] of this._replicationAnnouncementRepairTargets) {
+			if (target.generation !== generation || !currentTargets.has(hash)) {
+				this._replicationAnnouncementRepairTargets.delete(hash);
+			} else {
+				target.key = currentTargets.get(hash)!;
+			}
+		}
+		if (!this._replicationAnnouncementRepairCohortSelected) {
+			const candidates = [...currentTargets.entries()].sort(([left], [right]) =>
+				left.localeCompare(right),
+			);
+			const cursorIndex = this._replicationAnnouncementRepairFairCursorHash
+				? candidates.findIndex(
+						([hash]) =>
+							hash.localeCompare(
+								this._replicationAnnouncementRepairFairCursorHash!,
+							) > 0,
+					)
+				: 0;
+			const fairStart = cursorIndex < 0 ? 0 : cursorIndex;
+			const fairOrder = [
+				...candidates.slice(fairStart),
+				...candidates.slice(0, fairStart),
+			];
+			const cohort = fairOrder.slice(
+				0,
+				REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION,
+			);
+			for (const [hash, key] of cohort) {
+				this._replicationAnnouncementRepairTargets.set(hash, {
+					key,
+					generation,
+					attempts: 0,
+					done: false,
+				});
+			}
+			if (cohort.length > 0) {
+				this._replicationAnnouncementRepairFairCursorHash =
+					cohort[cohort.length - 1][0];
+			}
+			this._replicationAnnouncementRepairCohortSelected = true;
+		}
+
+		const batch = [
+			...this._replicationAnnouncementRepairTargets.entries(),
+		].filter(([, target]) => !target.done);
+		const snapshot = new AllReplicatingSegmentsMessage({ segments });
+		const results = await Promise.allSettled(
+			batch.map(([, target]) =>
+				this.rpc.send(snapshot, {
+					mode: new AcknowledgeDelivery({
+						to: [target.key],
+						redundancy: 1,
+					}),
+					priority: CONVERGENCE_MESSAGE_PRIORITY,
+					signal: generationController.signal,
+				}),
+			),
+		);
+		if (
+			this.closed ||
+			this._closeController.signal.aborted ||
+			lifecycleController.signal.aborted ||
+			generationController.signal.aborted
+		) {
+			return;
+		}
+		if (generation !== this._replicationAnnouncementRetryGeneration) {
+			this.queueCurrentReplicationStateAnnouncementRepair();
+			return;
+		}
+
+		for (const [index, result] of results.entries()) {
+			const [hash, attemptedTarget] = batch[index];
+			const target = this._replicationAnnouncementRepairTargets.get(hash);
+			if (target !== attemptedTarget || target.generation !== generation) {
+				continue;
+			}
+			if (result.status === "fulfilled") {
+				// DirectStream ACKs confirm that the signed transport envelope reached
+				// the target. Applying the contained replication state remains a
+				// receiver-local, best-effort operation.
+				target.done = true;
+				continue;
+			}
+
+			target.attempts += 1;
+			if (!isTransientReplicationAnnouncementRepairError(result.reason)) {
+				target.done = true;
+				logger.error(result.reason);
+			} else if (
+				target.attempts >= this._replicationAnnouncementRepairMaxAttempts
+			) {
+				target.done = true;
+				logger.trace(
+					"Acknowledged replication announcement repair exhausted for %s",
+					hash,
+				);
+			}
+		}
+
+		if (generation !== this._replicationAnnouncementRetryGeneration) {
+			this.queueCurrentReplicationStateAnnouncementRepair();
+			return;
+		}
+		if (
+			[...this._replicationAnnouncementRepairTargets.values()].some(
+				(target) => !target.done,
+			)
+		) {
+			void this.replicationAnnouncementRepairDebounced?.call();
+			return;
+		}
+
+		this._replicationAnnouncementRepairPending = false;
+		this._replicationAnnouncementRepairTargets.clear();
+	}
+
 	private cancelCurrentReplicationStateAnnouncementRetry(): void {
 		this._replicationAnnouncementRetryGeneration += 1;
 		this._replicationAnnouncementRetryPending = false;
 		this._replicationAnnouncementRetryController?.abort();
 		this.replicationAnnouncementRetryDebounced?.close();
+		this.cancelCurrentReplicationStateAnnouncementRepair();
 	}
 
 	private async sendReplicationAnnouncement(
@@ -5796,10 +6184,12 @@ export class SharedLog<
 		// local state; the generation mismatch forces one more current snapshot
 		// after that stale send settles.
 		this._replicationAnnouncementRetryGeneration += 1;
+		this.advanceCurrentReplicationStateAnnouncementRepairGeneration();
 		try {
 			await this.rpc.send(message, {
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
 			});
+			this.queueCurrentReplicationStateAnnouncementRepair();
 		} catch (error) {
 			// The local replication-index mutation precedes all calls to this
 			// wrapper. Preserve the explicit caller's rejection, but independently
@@ -5833,6 +6223,7 @@ export class SharedLog<
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
 				signal: controller.signal,
 			});
+			this.queueCurrentReplicationStateAnnouncementRepair();
 		} catch (error) {
 			if (
 				this.closed ||
@@ -12229,6 +12620,7 @@ export class SharedLog<
 
 		this._closeController = new AbortController();
 		this.setupReplicationAnnouncementRetryFunction();
+		this.setupReplicationAnnouncementRepairFunction();
 		this._closeController.signal.addEventListener("abort", () => {
 			for (const [_peer, state] of this._replicationInfoRequestByPeer) {
 				if (state.timer) clearTimeout(state.timer);
