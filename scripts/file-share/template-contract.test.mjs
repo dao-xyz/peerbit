@@ -17,14 +17,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v4 invocation envelope`, async () => {
+	test(`${name} emits the atomic v5 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 4",
+			"version: 5",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -154,6 +154,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"summarizeReadTransferDiagnostics",
 		"libraryComputedSha256Base64",
 		'import { withDeadline } from "./generated.promise-deadline.mjs"',
+		'import { startDownloadMemoryTelemetry } from "./generated.download-memory-telemetry.mjs"',
 		"UPLOAD_TIMEOUT_MS +",
 		"READY_TIMEOUT_MS +",
 		"const boundedReaderListedPromise =",
@@ -206,6 +207,12 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		'readerLocalityControl.status = "complete"',
 		"exact contiguous prefix",
 		"unexpectedSeederDrop",
+		"downloadMemoryTelemetryController =",
+		"downloadMemoryTelemetryController.snapshot()",
+		"await downloadMemoryTelemetryController.stop()",
+		"downloadMemoryTelemetry.complete !== true",
+		"series.samplingErrors.length > 0",
+		"downloadMemoryTelemetry,",
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
 	}
@@ -238,6 +245,22 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	assert.ok(
 		!contents.includes('MODE === "adaptive" ? "2" : "0"'),
 		"the template must not redefine mode-specific ready-seeder defaults",
+	);
+	assert.ok(
+		contents.indexOf("downloadMemoryTelemetryController =") <
+			contents.indexOf("const initialMemorySeries =") &&
+			contents.indexOf("const initialMemorySeries =") <
+				contents.indexOf("const downloadCompletion = armSavedViaPicker(") &&
+			contents.indexOf("const downloadCompletion = armSavedViaPicker(") <
+				contents.indexOf("const downloadClickStartedAt = Date.now()"),
+		"memory telemetry must collect clean initial samples before the sink waiter is armed and the timed click begins",
+	);
+	assert.ok(
+		contents.indexOf("const download = await downloadCompletion") <
+			contents.indexOf("await downloadMemoryTelemetryController.stop()") &&
+			contents.indexOf("await downloadMemoryTelemetryController.stop()") <
+				contents.indexOf('stage = "verify-integrity"'),
+		"memory telemetry must stop at sink completion before integrity and topology work",
 	);
 	assert.ok(
 		!contents.includes("MIN_READY_SEEDERS, 180_000"),
@@ -499,6 +522,7 @@ test("aggregate comparisons require every planned invocation to pass", async () 
 		"if (comparison)",
 		'generatedPath: path.join("tests", "generated.promise-deadline.mjs")',
 		'generatedPath: path.join("tests", "generated.opfs-readback.mjs")',
+		'"generated.download-memory-telemetry.mjs"',
 		"scenarioConfig.supportFiles ?? []",
 	]) {
 		assert.ok(standalone.includes(required), `standalone missing ${required}`);
@@ -533,6 +557,56 @@ test("aggregate comparisons require every planned invocation to pass", async () 
 	]) {
 		assert.ok(matrix.includes(required), `matrix missing ${required}`);
 	}
+});
+
+test("download memory support is bounded, serial, and cleanup-safe", async () => {
+	const contents = await readFile(
+		path.join(
+			repoRoot,
+			"scripts",
+			"file-share",
+			"templates",
+			"download-memory-telemetry.mjs",
+		),
+		"utf8",
+	);
+	for (const required of [
+		'DOWNLOAD_MEMORY_PROFILE = "download-memory-v1"',
+		"DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS = 5_000",
+		"DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS = 4_000",
+		"DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS = 9_000",
+		"DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS = 30_000",
+		"DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS = 30_000",
+		"DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES = 4_096",
+		"DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES = 256",
+		"DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16",
+		"DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512",
+		"startBoundedSerialSampler",
+		"withDownloadMemoryOperationDeadline",
+		"onLateResolution",
+		"terminalSampleFailure = true",
+		"samples.length >= maxSamples - 1",
+		"await activeSample",
+		"await takeSample(true)",
+		'newCDPSession(page)',
+		'"Page JS heap CDP session creation"',
+		'Performance.getMetrics',
+		'metric.name === "JSHeapUsedSize"',
+		"newBrowserCDPSession()",
+		'"Browser RSS CDP session creation"',
+		'SystemInfo.getProcessInfo',
+		'"ps"',
+		"process.memoryUsage().rss",
+		"playwright-worker-node-including-in-process-local-bootstrap",
+		"samplingErrorOverflowCount",
+	]) {
+		assert.ok(contents.includes(required), `memory support missing ${required}`);
+	}
+	assert.ok(
+		contents.indexOf("await activeSample") <
+			contents.indexOf("await takeSample(true)"),
+		"stop must drain an active sample before the forced terminal sample",
+	);
 });
 
 test("matrix fail-closes every result envelope and fully validates passes", async () => {

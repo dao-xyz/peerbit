@@ -6,6 +6,23 @@ import {
 	KNOWN_PEERBIT_FAILURE_SIGNATURES,
 	REQUEST_FAILURE_COLLECTION_DEFINITION,
 } from "./benchmark-orchestration.mjs";
+import {
+	DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
+	DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
+	DOWNLOAD_MEMORY_HOST_SCOPE,
+	DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES,
+	DOWNLOAD_MEMORY_MAX_BROWSER_ROLES,
+	DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH,
+	DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
+	DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS,
+	DOWNLOAD_MEMORY_NODE_SCOPE,
+	DOWNLOAD_MEMORY_PROFILE,
+	DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+	DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS,
+	DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS,
+	DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+	calculateDownloadMemoryMaxSamples,
+} from "./templates/download-memory-telemetry.mjs";
 
 const SHA256_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -55,6 +72,15 @@ const isRecord = (value) =>
 const requireRecord = (value, label) => {
 	if (!isRecord(value)) {
 		throw new Error(`Benchmark result is missing ${label}`);
+	}
+	return value;
+};
+
+const requireExactRecordKeys = (value, expectedKeys, label) => {
+	const actualKeys = Object.keys(value).toSorted();
+	const sortedExpectedKeys = [...expectedKeys].toSorted();
+	if (!isDeepStrictEqual(actualKeys, sortedExpectedKeys)) {
+		throw new Error(`Benchmark ${label} contains unexpected or missing fields`);
 	}
 	return value;
 };
@@ -342,7 +368,11 @@ const requireBoundedDiagnosticIntervals = ({
 const validateReadTransferEvidence = (
 	result,
 	invocation,
-	{ downloadStartedAt, downloadFinishedAt },
+	{
+		downloadStartedAt,
+		downloadFinishedAt,
+		downloadCompletionObservedAt,
+	},
 ) => {
 	const readerDiagnostics = requireRecord(
 		result.readerDiagnostics,
@@ -617,6 +647,442 @@ const validateReadTransferEvidence = (
 			"Non-Node benchmark sink contains Node-only server timing evidence",
 		);
 	}
+	return {
+		startedAt,
+		finishedAt,
+		downloadStartedAt,
+		downloadFinishedAt,
+		downloadCompletionObservedAt,
+	};
+};
+
+const validateMemorySamplingErrors = (series, label) => {
+	if (
+		!Array.isArray(series.samplingErrors) ||
+		series.samplingErrors.length > DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS ||
+		series.samplingErrors.some(
+			(message) =>
+				typeof message !== "string" ||
+				message.length === 0 ||
+				message.length > DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
+		) ||
+		!Number.isSafeInteger(series.samplingErrorOverflowCount) ||
+		series.samplingErrorOverflowCount < 0
+	) {
+		throw new Error(`Benchmark ${label} contains unbounded sampling errors`);
+	}
+	if (
+		series.samplingErrors.length !== 0 ||
+		series.samplingErrorOverflowCount !== 0
+	) {
+		throw new Error(`Benchmark ${label} contains memory sampling errors`);
+	}
+};
+
+const validateMemorySeriesWindow = (
+	series,
+	label,
+	maxSamples,
+	{
+		startedAt: readStartedAt,
+		finishedAt: readFinishedAt,
+		downloadStartedAt,
+		downloadFinishedAt,
+		downloadCompletionObservedAt,
+	},
+) => {
+	const startedAt = requirePositiveSafeInteger(
+		series.startedAt,
+		`${label}.startedAt`,
+	);
+	const finishedAt = requirePositiveSafeInteger(
+		series.finishedAt,
+		`${label}.finishedAt`,
+	);
+	if (
+		series.sampleIntervalMs !== DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS ||
+		!Array.isArray(series.samples) ||
+		series.sampleCount !== series.samples.length ||
+		!Number.isSafeInteger(series.sampleCount) ||
+		series.sampleCount < 2 ||
+		series.sampleCount > maxSamples ||
+		finishedAt < startedAt
+	) {
+		throw new Error(`Benchmark ${label} has an invalid bounded sample series`);
+	}
+	let previousCapturedAt = null;
+	for (const [index, sampleValue] of series.samples.entries()) {
+		const sample = requireRecord(sampleValue, `${label}.samples[${index}]`);
+		const capturedAt = requirePositiveSafeInteger(
+			sample.capturedAt,
+			`${label}.samples[${index}].capturedAt`,
+		);
+		if (
+			capturedAt < startedAt ||
+			capturedAt > finishedAt ||
+			(previousCapturedAt !== null && capturedAt < previousCapturedAt)
+		) {
+			throw new Error(
+				`Benchmark ${label} sample timestamps are outside or reorder the sampler window`,
+			);
+		}
+		previousCapturedAt = capturedAt;
+	}
+	const firstCapturedAt = series.samples[0].capturedAt;
+	const lastCapturedAt = series.samples.at(-1).capturedAt;
+	if (
+		startedAt > downloadStartedAt ||
+		firstCapturedAt > downloadStartedAt ||
+		lastCapturedAt < downloadCompletionObservedAt ||
+		finishedAt < downloadCompletionObservedAt
+	) {
+		throw new Error(
+			`Benchmark ${label} does not bracket the click-to-sink observation window`,
+		);
+	}
+	if (
+		startedAt < downloadStartedAt - DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS ||
+		firstCapturedAt <
+			downloadStartedAt - DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS
+	) {
+		throw new Error(
+			`Benchmark ${label} begins before the bounded telemetry setup window`,
+		);
+	}
+	if (
+		lastCapturedAt >
+			downloadCompletionObservedAt + DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS ||
+		finishedAt >
+			downloadCompletionObservedAt + DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS
+	) {
+		throw new Error(
+			`Benchmark ${label} ends after the bounded telemetry cleanup window`,
+		);
+	}
+	if (lastCapturedAt < downloadFinishedAt) {
+		throw new Error(
+			`Benchmark ${label} does not cover the selected sink download window`,
+		);
+	}
+	if (firstCapturedAt > readStartedAt || lastCapturedAt < readFinishedAt) {
+		throw new Error(
+			`Benchmark ${label} does not cover the canonical library read window`,
+		);
+	}
+	validateMemorySamplingErrors(series, label);
+	return { startedAt, finishedAt };
+};
+
+const validateHeapMemorySeries = (
+	seriesValue,
+	label,
+	expectedScope,
+	maxSamples,
+	readWindow,
+) => {
+	const series = requireRecord(seriesValue, label);
+	requireExactRecordKeys(
+		series,
+		[
+			"memoryKind",
+			"scope",
+			"metric",
+			"unit",
+			"sampleIntervalMs",
+			"startedAt",
+			"finishedAt",
+			"sampleCount",
+			"startBytes",
+			"endBytes",
+			"peakBytes",
+			"samples",
+			"samplingErrors",
+			"samplingErrorOverflowCount",
+		],
+		label,
+	);
+	if (
+		series.memoryKind !== "javascript-heap" ||
+		series.scope !== expectedScope ||
+		series.metric !== "JSHeapUsedSize" ||
+		series.unit !== "bytes"
+	) {
+		throw new Error(`Benchmark ${label} has invalid heap attribution`);
+	}
+	const window = validateMemorySeriesWindow(
+		series,
+		label,
+		maxSamples,
+		readWindow,
+	);
+	const values = series.samples.map((sample, index) => {
+		requireExactRecordKeys(
+			sample,
+			["capturedAt", "usedBytes"],
+			`${label}.samples[${index}]`,
+		);
+		return requireNonNegativeNumber(
+			sample.usedBytes,
+			`${label}.samples[${index}].usedBytes`,
+		);
+	});
+	if (
+		series.startBytes !== values[0] ||
+		series.endBytes !== values.at(-1) ||
+		series.peakBytes !== Math.max(...values)
+	) {
+		throw new Error(`Benchmark ${label} heap summaries are inconsistent`);
+	}
+	return window;
+};
+
+const validateBrowserRoleBytes = (value, label) => {
+	const roles = requireRecord(value, label);
+	const entries = Object.entries(roles);
+	if (
+		entries.length === 0 ||
+		entries.length > DOWNLOAD_MEMORY_MAX_BROWSER_ROLES
+	) {
+		throw new Error(`Benchmark ${label} has an invalid browser-role count`);
+	}
+	let total = 0;
+	for (const [role, bytes] of entries) {
+		if (
+			role.length === 0 ||
+			role.length > DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH ||
+			!/^[\x20-\x7e]+$/.test(role)
+		) {
+			throw new Error(`Benchmark ${label} has an invalid browser-role name`);
+		}
+		total += requirePositiveSafeInteger(bytes, `${label}.${role}`);
+	}
+	return { roles, total };
+};
+
+const validateHostRssSeries = (
+	seriesValue,
+	maxSamples,
+	readWindow,
+) => {
+	const label = "downloadMemoryTelemetry.hostRss";
+	const series = requireRecord(seriesValue, label);
+	requireExactRecordKeys(
+		series,
+		[
+			"memoryKind",
+			"scope",
+			"nodeScope",
+			"metric",
+			"attribution",
+			"attributionLimitations",
+			"unit",
+			"sampleIntervalMs",
+			"startedAt",
+			"finishedAt",
+			"sampleCount",
+			"startBrowserBytes",
+			"endBrowserBytes",
+			"peakBrowserBytes",
+			"startNodeBytes",
+			"endNodeBytes",
+			"peakNodeBytes",
+			"startCombinedBytes",
+			"endCombinedBytes",
+			"peakCombinedBytes",
+			"startBrowserProcessCount",
+			"endBrowserProcessCount",
+			"peakBrowserProcessCount",
+			"startBrowserRoleBytes",
+			"endBrowserRoleBytes",
+			"peakBrowserRoleBytes",
+			"samples",
+			"samplingErrors",
+			"samplingErrorOverflowCount",
+		],
+		label,
+	);
+	if (
+		series.memoryKind !== "resident-set-size" ||
+		series.scope !== DOWNLOAD_MEMORY_HOST_SCOPE ||
+		series.nodeScope !== DOWNLOAD_MEMORY_NODE_SCOPE ||
+		series.metric !== "RSS" ||
+		series.attribution !== DOWNLOAD_MEMORY_HOST_ATTRIBUTION ||
+		series.attributionLimitations !==
+			DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS ||
+		series.unit !== "bytes"
+	) {
+		throw new Error("Benchmark host RSS attribution contract is invalid");
+	}
+	const window = validateMemorySeriesWindow(
+		series,
+		label,
+		maxSamples,
+		readWindow,
+	);
+	const peakBrowserRoleBytes = {};
+	const samples = series.samples.map((sample, index) => {
+		const sampleLabel = `${label}.samples[${index}]`;
+		requireExactRecordKeys(
+			sample,
+			[
+				"capturedAt",
+				"browserBytes",
+				"nodeBytes",
+				"combinedBytes",
+				"browserProcessCount",
+				"browserRoleBytes",
+			],
+			sampleLabel,
+		);
+		const browserBytes = requirePositiveSafeInteger(
+			sample.browserBytes,
+			`${sampleLabel}.browserBytes`,
+		);
+		const nodeBytes = requirePositiveSafeInteger(
+			sample.nodeBytes,
+			`${sampleLabel}.nodeBytes`,
+		);
+		const combinedBytes = requirePositiveSafeInteger(
+			sample.combinedBytes,
+			`${sampleLabel}.combinedBytes`,
+		);
+		const browserProcessCount = requirePositiveSafeInteger(
+			sample.browserProcessCount,
+			`${sampleLabel}.browserProcessCount`,
+		);
+		if (browserProcessCount > DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES) {
+			throw new Error(
+				`Benchmark ${sampleLabel} exceeds the browser-process count cap`,
+			);
+		}
+		const { roles: browserRoleBytes, total: roleTotal } =
+			validateBrowserRoleBytes(
+				sample.browserRoleBytes,
+				`${sampleLabel}.browserRoleBytes`,
+			);
+		if (
+			combinedBytes !== browserBytes + nodeBytes ||
+			roleTotal !== browserBytes
+		) {
+			throw new Error(
+				`Benchmark ${sampleLabel} RSS totals are inconsistent`,
+			);
+		}
+		for (const [role, bytes] of Object.entries(browserRoleBytes)) {
+			peakBrowserRoleBytes[role] = Math.max(
+				peakBrowserRoleBytes[role] ?? 0,
+				bytes,
+			);
+		}
+		return {
+			browserBytes,
+			nodeBytes,
+			combinedBytes,
+			browserProcessCount,
+			browserRoleBytes,
+		};
+	});
+	const first = samples[0];
+	const last = samples.at(-1);
+	const peak = (name) => Math.max(...samples.map((sample) => sample[name]));
+	if (
+		series.startBrowserBytes !== first.browserBytes ||
+		series.endBrowserBytes !== last.browserBytes ||
+		series.peakBrowserBytes !== peak("browserBytes") ||
+		series.startNodeBytes !== first.nodeBytes ||
+		series.endNodeBytes !== last.nodeBytes ||
+		series.peakNodeBytes !== peak("nodeBytes") ||
+		series.startCombinedBytes !== first.combinedBytes ||
+		series.endCombinedBytes !== last.combinedBytes ||
+		series.peakCombinedBytes !== peak("combinedBytes") ||
+		series.startBrowserProcessCount !== first.browserProcessCount ||
+		series.endBrowserProcessCount !== last.browserProcessCount ||
+		series.peakBrowserProcessCount !== peak("browserProcessCount") ||
+		!isDeepStrictEqual(series.startBrowserRoleBytes, first.browserRoleBytes) ||
+		!isDeepStrictEqual(series.endBrowserRoleBytes, last.browserRoleBytes) ||
+		!isDeepStrictEqual(series.peakBrowserRoleBytes, peakBrowserRoleBytes)
+	) {
+		throw new Error("Benchmark host RSS summaries are inconsistent");
+	}
+	return window;
+};
+
+export const validateDownloadMemoryTelemetry = (
+	result,
+	invocation,
+	readWindow,
+) => {
+	const telemetry = requireRecord(
+		result.downloadMemoryTelemetry,
+		"downloadMemoryTelemetry",
+	);
+	requireExactRecordKeys(
+		telemetry,
+		[
+			"profile",
+			"sampleIntervalMs",
+			"windowDefinition",
+			"maxSamplesPerSeries",
+			"complete",
+			"startedAt",
+			"finishedAt",
+			"readerJsHeap",
+			"writerJsHeap",
+			"hostRss",
+		],
+		"downloadMemoryTelemetry",
+	);
+	const expectedMaxSamples = calculateDownloadMemoryMaxSamples({
+		downloadTimeoutMs: invocation.downloadTimeoutMs,
+		schedulingToleranceMs: Math.max(5_000, invocation.pollMs + 1_000),
+	});
+	if (
+		telemetry.profile !== DOWNLOAD_MEMORY_PROFILE ||
+		telemetry.sampleIntervalMs !== DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS ||
+		telemetry.windowDefinition !== DOWNLOAD_MEMORY_WINDOW_DEFINITION ||
+		telemetry.maxSamplesPerSeries !== expectedMaxSamples ||
+		telemetry.complete !== true
+	) {
+		throw new Error("Benchmark download memory telemetry contract is invalid");
+	}
+	const readerWindow = validateHeapMemorySeries(
+		telemetry.readerJsHeap,
+		"downloadMemoryTelemetry.readerJsHeap",
+		"reader-renderer",
+		expectedMaxSamples,
+		readWindow,
+	);
+	const writerWindow = validateHeapMemorySeries(
+		telemetry.writerJsHeap,
+		"downloadMemoryTelemetry.writerJsHeap",
+		"writer-renderer",
+		expectedMaxSamples,
+		readWindow,
+	);
+	const hostWindow = validateHostRssSeries(
+		telemetry.hostRss,
+		expectedMaxSamples,
+		readWindow,
+	);
+	const expectedStartedAt = Math.min(
+		readerWindow.startedAt,
+		writerWindow.startedAt,
+		hostWindow.startedAt,
+	);
+	const expectedFinishedAt = Math.max(
+		readerWindow.finishedAt,
+		writerWindow.finishedAt,
+		hostWindow.finishedAt,
+	);
+	if (
+		telemetry.startedAt !== expectedStartedAt ||
+		telemetry.finishedAt !== expectedFinishedAt
+	) {
+		throw new Error(
+			"Benchmark download memory telemetry window summary is inconsistent",
+		);
+	}
+	return telemetry;
 };
 
 const validateUploadTimings = (result, invocation) => {
@@ -824,9 +1290,10 @@ const validateUploadTimings = (result, invocation) => {
 			"Measured transfer duration exceeded its requested timeout and scheduling tolerance",
 		);
 	}
-	validateReadTransferEvidence(result, invocation, {
+	return validateReadTransferEvidence(result, invocation, {
 		downloadStartedAt,
 		downloadFinishedAt,
+		downloadCompletionObservedAt,
 	});
 };
 
@@ -2033,7 +2500,12 @@ export const validateBenchmarkResult = (
 			expectedFixtureSeed,
 			expectedInvocation,
 		);
-		validateUploadTimings(result, expectedInvocation);
+		const readWindow = validateUploadTimings(result, expectedInvocation);
+		validateDownloadMemoryTelemetry(
+			result,
+			expectedInvocation,
+			readWindow,
+		);
 		validateRequestedUploadKnobs(result, expectedInvocation);
 		validateZeroErrors(result, "upload result");
 		validateReaderLocalityControl(result, expectedInvocation);

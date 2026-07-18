@@ -6,6 +6,7 @@ import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
 import { sha256AndCrc32OpfsSavedViaPicker } from "./generated.opfs-readback.mjs";
 import { withDeadline } from "./generated.promise-deadline.mjs";
+import { startDownloadMemoryTelemetry } from "./generated.download-memory-telemetry.mjs";
 import {
 	armSavedViaPicker,
 	crc32SavedViaPicker,
@@ -112,7 +113,7 @@ const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 4,
+	version: 5,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -775,6 +776,10 @@ test.describe("generated transfer-validity benchmark", () => {
 			| Awaited<ReturnType<typeof createSyntheticFileOnDisk>>
 			| undefined;
 		let cleanupDownload: (() => Promise<void>) | undefined;
+		let downloadMemoryTelemetryController:
+			| Awaited<ReturnType<typeof startDownloadMemoryTelemetry>>
+			| undefined;
+		let downloadMemoryTelemetry: Record<string, any> | null = null;
 		let nodeSinkController:
 			| Awaited<ReturnType<typeof installNodeBackedMockSaveFilePicker>>
 			| undefined;
@@ -1518,6 +1523,34 @@ test.describe("generated transfer-validity benchmark", () => {
 			await expect(downloadButton).toBeEnabled({
 				timeout: DOWNLOAD_TIMEOUT_MS,
 			});
+			downloadMemoryTelemetryController =
+				await startDownloadMemoryTelemetry({
+					browser,
+					reader,
+					writer,
+					downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
+					schedulingToleranceMs:
+						TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
+				});
+			downloadMemoryTelemetry =
+				downloadMemoryTelemetryController.snapshot();
+			const initialMemorySeries = [
+				downloadMemoryTelemetry.readerJsHeap,
+				downloadMemoryTelemetry.writerJsHeap,
+				downloadMemoryTelemetry.hostRss,
+			];
+			if (
+				initialMemorySeries.some(
+					(series) =>
+						series.sampleCount < 1 ||
+						series.samplingErrors.length > 0 ||
+						series.samplingErrorOverflowCount !== 0,
+				)
+			) {
+				throw new Error(
+					"Download memory telemetry did not collect clean initial samples",
+				);
+			}
 			const downloadCompletion = armSavedViaPicker(
 				reader,
 				fileName,
@@ -1529,6 +1562,27 @@ test.describe("generated transfer-validity benchmark", () => {
 			await downloadButton.click();
 			const download = await downloadCompletion;
 			downloadCompletionObservedAt = Date.now();
+			downloadMemoryTelemetry =
+				await downloadMemoryTelemetryController.stop();
+			const memorySeries = [
+				downloadMemoryTelemetry.readerJsHeap,
+				downloadMemoryTelemetry.writerJsHeap,
+				downloadMemoryTelemetry.hostRss,
+			];
+			if (
+				downloadMemoryTelemetry.complete !== true ||
+				downloadMemoryTelemetry.finishedAt == null ||
+				memorySeries.some(
+					(series) =>
+						series.sampleCount < 2 ||
+						series.samplingErrors.length > 0 ||
+						series.samplingErrorOverflowCount !== 0,
+				)
+			) {
+				throw new Error(
+					"Download memory telemetry did not complete without sampling errors",
+				);
+			}
 			if (
 				!Number.isSafeInteger(download.sinkCompletedAt) ||
 				download.sinkCompletedAt < downloadClickStartedAt ||
@@ -1916,6 +1970,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
 				downloadSink: download.sink,
 				requestedDownloadSink: DOWNLOAD_SINK,
+				downloadMemoryTelemetry,
 				sinkWriteCalls: download.sinkWriteCalls,
 				sinkWriteDurationMs: download.sinkWriteDurationMs,
 				sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
@@ -1983,6 +2038,10 @@ test.describe("generated transfer-validity benchmark", () => {
 			await persistResult(result);
 			console.log(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
 		} catch (error: any) {
+			if (downloadMemoryTelemetryController) {
+				downloadMemoryTelemetry =
+					await downloadMemoryTelemetryController.stop();
+			}
 			if (readerLocalityControl) {
 				readerLocalityControl.status = "failed";
 				readerLocalityControl.failure =
@@ -2012,6 +2071,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				fileSizeMb: FILE_SIZE_MB,
 				stage,
 				requestedDownloadSink: DOWNLOAD_SINK,
+				downloadMemoryTelemetry,
 				integrityVerified: false,
 				phaseDurationsMs: getPhaseDurations(),
 				postUploadMonitorSchedulingToleranceMs:
@@ -2058,6 +2118,7 @@ test.describe("generated transfer-validity benchmark", () => {
 			console.error(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
 			throw error;
 		} finally {
+			await downloadMemoryTelemetryController?.stop().catch(() => {});
 			await cleanupDownload?.().catch(() => {});
 			await nodeSinkController?.cleanup().catch(() => {});
 			if (preparedFile) {

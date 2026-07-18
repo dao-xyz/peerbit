@@ -78,6 +78,19 @@ const SCENARIOS = {
 					"scripts",
 					"file-share",
 					"templates",
+					"download-memory-telemetry.mjs",
+				),
+				generatedPath: path.join(
+					"tests",
+					"generated.download-memory-telemetry.mjs",
+				),
+			},
+			{
+				templatePath: path.join(
+					repoRoot,
+					"scripts",
+					"file-share",
+					"templates",
 					"promise-deadline.mjs",
 				),
 				generatedPath: path.join("tests", "generated.promise-deadline.mjs"),
