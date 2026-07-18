@@ -5,6 +5,7 @@ import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
 import { sha256AndCrc32OpfsSavedViaPicker } from "./generated.opfs-readback.mjs";
+import { withDeadline } from "./generated.promise-deadline.mjs";
 import {
 	armSavedViaPicker,
 	crc32SavedViaPicker,
@@ -448,7 +449,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		test.setTimeout(
 			Math.max(
 				20 * 60 * 1000,
-				2 * READY_TIMEOUT_MS +
+				3 * READY_TIMEOUT_MS +
 					UPLOAD_TIMEOUT_MS +
 					DOWNLOAD_TIMEOUT_MS +
 					POST_UPLOAD_MONITOR_MS +
@@ -717,7 +718,9 @@ test.describe("generated transfer-validity benchmark", () => {
 				fileName,
 				expectedSizeBytes,
 				preparedFile.fixture.sha256Base64,
-				UPLOAD_TIMEOUT_MS,
+				UPLOAD_TIMEOUT_MS +
+					READY_TIMEOUT_MS +
+					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
 			).then((evidence) => ({ evidence, listedAt: evidence.capturedAt }));
 			void readerListedPromise.catch(() => {});
 			const writerReadyPromise = Promise.all([
@@ -760,6 +763,18 @@ test.describe("generated transfer-validity benchmark", () => {
 			// Writer readiness is the primary endpoint. A hidden progress element is
 			// only diagnostic because it can disappear before a ready manifest exists.
 			uploadSettledAt = writerReady.readyAt;
+			const readerReadyDeadlineAt = writerReady.readyAt + READY_TIMEOUT_MS;
+			const readerReadyDeadlineMessage = `Reader ready manifest was not listed within ${READY_TIMEOUT_MS}ms after writer readiness`;
+			const readerReadyRemainingMs = readerReadyDeadlineAt - Date.now();
+			const boundedReaderListedPromise =
+				readerReadyRemainingMs > 0
+					? withDeadline(
+							readerListedPromise,
+							readerReadyRemainingMs,
+							readerReadyDeadlineMessage,
+						)
+					: Promise.reject(new Error(readerReadyDeadlineMessage));
+			void boundedReaderListedPromise.catch(() => {});
 
 			if (ENABLE_VISIBILITY_PROBE) {
 				stage = "probe-visibility-path";
@@ -771,7 +786,12 @@ test.describe("generated transfer-validity benchmark", () => {
 
 			stage = "wait-for-reader-listing";
 			logStage(stage);
-			const readerManifest = await readerListedPromise;
+			const readerManifest = await boundedReaderListedPromise;
+			if (readerManifest.listedAt > readerReadyDeadlineAt) {
+				throw new Error(
+					`Reader ready manifest evidence was captured after its writer-readiness deadline (${readerManifest.listedAt} > ${readerReadyDeadlineAt})`,
+				);
+			}
 			readerManifestEvidence = readerManifest.evidence;
 			readerListedAt = readerManifest.listedAt;
 

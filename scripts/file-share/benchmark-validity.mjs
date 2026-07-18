@@ -731,6 +731,11 @@ const validateUploadTimings = (result, invocation) => {
 	) {
 		throw new Error("Benchmark phase timestamps are not monotonic");
 	}
+	if (readerListedAt > uploadSettledAt + invocation.readyTimeoutMs) {
+		throw new Error(
+			"Benchmark reader readiness exceeded the requested post-writer deadline",
+		);
+	}
 	const progressVisibleAt =
 		timestamps.progressVisibleAt == null
 			? undefined
