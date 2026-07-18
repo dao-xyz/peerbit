@@ -206,6 +206,78 @@ const createDownloadMemoryTelemetry = (
 	};
 };
 
+const createUploadDiagnostics = (fileName = FILE_NAME) => {
+	const chunkSize = 3 * 1024 * 1024;
+	const chunkCount = Math.ceil(FILE_SIZE_BYTES / chunkSize);
+	const startedAt = 1_001;
+	const firstChunkFinishedAt = 1_030;
+	const lastChunkFinishedAt = 1_040;
+	const milestones = [
+		{
+			basisPoints: 0,
+			targetBytes: 0,
+			completedBytes: 0,
+			reachedAt: startedAt,
+			chunkIndex: null,
+		},
+	];
+	let completedBytes = 0;
+	let nextMilestoneIndex = 1;
+	for (const completion of [
+		{ chunkIndex: 0, bytes: chunkSize, reachedAt: firstChunkFinishedAt },
+		{
+			chunkIndex: 1,
+			bytes: FILE_SIZE_BYTES - chunkSize,
+			reachedAt: lastChunkFinishedAt,
+		},
+	]) {
+		completedBytes += completion.bytes;
+		while (nextMilestoneIndex < 21) {
+			const basisPoints = nextMilestoneIndex * 500;
+			const targetBytes = Number(
+				(BigInt(FILE_SIZE_BYTES) * BigInt(basisPoints) + 9_999n) / 10_000n,
+			);
+			if (completedBytes < targetBytes) {
+				break;
+			}
+			milestones.push({
+				basisPoints,
+				targetBytes,
+				completedBytes,
+				reachedAt: completion.reachedAt,
+				chunkIndex: completion.chunkIndex,
+			});
+			nextMilestoneIndex += 1;
+		}
+	}
+	return {
+		transferId: FILE_ID,
+		uploadId: FILE_ID,
+		fileName,
+		sizeBytes: FILE_SIZE_BYTES,
+		chunkSize,
+		chunkCount,
+		startedAt,
+		manifestStartedAt: 1_002,
+		manifestFinishedAt: 1_003,
+		firstChunkStartedAt: 1_004,
+		firstChunkFinishedAt,
+		lastChunkFinishedAt,
+		chunkPutCount: chunkCount,
+		readyManifestStartedAt: 1_041,
+		readyManifestFinishedAt: 1_042,
+		finishedAt: 1_043,
+		failureAt: null,
+		failureMessage: null,
+		progressTelemetry: {
+			schemaVersion: 1,
+			kind: "upload-chunk-commit",
+			clock: "unix-epoch-ms",
+			milestones,
+		},
+	};
+};
+
 const shiftTimedDownloadEvidence = (result, offset) => {
 	for (const key of [
 		"downloadStartedAt",
@@ -389,6 +461,9 @@ const validResult = () => ({
 	requestFailureCollectionComplete: true,
 	requestFailureCount: 0,
 	requestFailures: [],
+	writerDiagnostics: {
+		lastUploadDiagnostics: createUploadDiagnostics(),
+	},
 	readerDiagnostics: {
 		lastReadDiagnostics: {
 			transferId: "benchmark-read-transfer-id",
@@ -582,10 +657,9 @@ const createReaderLocalityFixture = ({
 	});
 	result.writerManifestEvidence.fileName = fileName;
 	result.readerManifestEvidence.fileName = fileName;
-	result.writerDiagnostics = {
-		peerHash: "writer-peer",
-		replicatorCount: 2,
-	};
+	result.writerDiagnostics.peerHash = "writer-peer";
+	result.writerDiagnostics.replicatorCount = 2;
+	result.writerDiagnostics.lastUploadDiagnostics.fileName = fileName;
 	result.timestamps.downloadStartedAt = 1_400;
 	result.timestamps.downloadFinishedAt = 1_430;
 	result.timestamps.downloadCompletionObservedAt = 1_431;
@@ -726,6 +800,377 @@ test("accepts a complete deterministic transfer result", () => {
 	);
 });
 
+test("requires exact bounded upload chunk-commit progress telemetry", () => {
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				delete result.writerDiagnostics;
+			},
+			/missing writerDiagnostics/,
+		],
+		[
+			(result) => {
+				delete result.writerDiagnostics.lastUploadDiagnostics;
+			},
+			/missing writerDiagnostics\.lastUploadDiagnostics/,
+		],
+		[
+			(result) => {
+				delete result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry;
+			},
+			/missing writerDiagnostics\.lastUploadDiagnostics\.progressTelemetry/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.extra = true;
+			},
+			/upload progress telemetry contains unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.milestones[1].extra = true;
+			},
+			/upload progress milestone 1 contains unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.schemaVersion = 2;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.kind =
+					"wire-bytes";
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.milestones.pop();
+			},
+			/exactly 21 milestones/,
+		],
+		[
+			(result) => {
+				const telemetry =
+					result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry;
+				telemetry.milestones.push(structuredClone(telemetry.milestones.at(-1)));
+			},
+			/exactly 21 milestones/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.milestones[5].basisPoints += 1;
+			},
+			/exact 5% target/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.milestones[5].targetBytes += 1;
+			},
+			/exact 5% target/,
+		],
+		[
+			(result) => {
+				const milestone =
+					result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry
+						.milestones[5];
+				milestone.completedBytes = milestone.targetBytes - 1;
+			},
+			/invalid aggregate completed bytes/,
+		],
+		[
+			(result) => {
+				const milestone =
+					result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry
+						.milestones[1];
+				milestone.completedBytes = milestone.targetBytes;
+			},
+			/not a possible aggregate of completed chunks/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				const milestone = diagnostics.progressTelemetry.milestones[1];
+				milestone.completedBytes =
+					milestone.targetBytes + diagnostics.chunkSize;
+			},
+			/invalid aggregate completed bytes/,
+		],
+		[
+			(result) => {
+				const milestones =
+					result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry
+						.milestones;
+				milestones[2].completedBytes = 2 * 1024 * 1024;
+			},
+			/invalid aggregate completed bytes/,
+		],
+		[
+			(result) => {
+				const milestones =
+					result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry
+						.milestones;
+				milestones[2].reachedAt = milestones[0].reachedAt;
+			},
+			/invalid completion time/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				diagnostics.progressTelemetry.milestones[1].reachedAt =
+					diagnostics.startedAt;
+			},
+			/predates the first completed chunk/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				for (const milestone of diagnostics.progressTelemetry.milestones.slice(
+					1,
+					13,
+				)) {
+					milestone.reachedAt = diagnostics.firstChunkFinishedAt + 5;
+				}
+			},
+			/contradicts the first completed chunk timestamp/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				const milestone = diagnostics.progressTelemetry.milestones[1];
+				milestone.completedBytes = 2 * 1024 * 1024;
+				milestone.chunkIndex = 0;
+			},
+			/contradicts its triggering chunk completion/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.milestones[2].chunkIndex = 1;
+			},
+			/contradicts its shared chunk-completion event/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				for (const milestone of diagnostics.progressTelemetry.milestones.slice(
+					9,
+				)) {
+					milestone.completedBytes = FILE_SIZE_BYTES;
+					milestone.reachedAt = diagnostics.lastChunkFinishedAt;
+					milestone.chunkIndex = 1;
+				}
+			},
+			/already crossed before its triggering chunk completion/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.progressTelemetry.milestones[1].chunkIndex =
+					null;
+			},
+			/invalid upload progress milestone 1\.chunkIndex/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				diagnostics.progressTelemetry.milestones[1].chunkIndex =
+					diagnostics.chunkCount;
+			},
+			/out-of-range chunk index/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.lastChunkFinishedAt += 1;
+			},
+			/invalid completion milestone/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.uploadId = "stale-file";
+			},
+			/do not identify the canonical uploaded file/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.fileName = "stale.bin";
+			},
+			/do not identify the canonical uploaded file/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.sizeBytes -= 1;
+			},
+			/do not identify the canonical uploaded file/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.chunkPutCount -= 1;
+			},
+			/do not prove a successful complete chunk upload/,
+		],
+		[
+			(result) => {
+				const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+				diagnostics.chunkSize = FILE_SIZE_BYTES;
+				diagnostics.chunkCount = 1;
+				diagnostics.chunkPutCount = 1;
+				for (const milestone of diagnostics.progressTelemetry.milestones.slice(
+					1,
+				)) {
+					milestone.completedBytes = FILE_SIZE_BYTES;
+					milestone.reachedAt = diagnostics.lastChunkFinishedAt;
+					milestone.chunkIndex = 0;
+				}
+			},
+			/upload chunk geometry contradicts canonical read evidence/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.failureAt = 1_044;
+			},
+			/do not prove a successful complete chunk upload/,
+		],
+		[
+			(result) => {
+				result.writerDiagnostics.lastUploadDiagnostics.finishedAt =
+					result.timestamps.uploadSettledAt + 1;
+			},
+			/lifecycle timestamps are inconsistent/,
+		],
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(() => validateBenchmarkResult(result, options), pattern);
+	}
+});
+
+test("accepts upload progress milestones with out-of-order chunk completion", () => {
+	const result = validResult();
+	const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+	const milestones = diagnostics.progressTelemetry.milestones;
+	for (let index = 1; index <= 8; index++) {
+		milestones[index].completedBytes = 2 * 1024 * 1024;
+		milestones[index].chunkIndex = 1;
+	}
+	for (let index = 9; index < milestones.length; index++) {
+		milestones[index].completedBytes = FILE_SIZE_BYTES;
+		milestones[index].reachedAt = diagnostics.lastChunkFinishedAt;
+		milestones[index].chunkIndex = 0;
+	}
+	assert.equal(validateBenchmarkResult(result, options).status, "passed");
+});
+
+test("rejects milestones crossed before a partial-tail trigger", () => {
+	const result = validResult();
+	const chunkSize = 1_700_000;
+	const chunkByteLengths = [
+		chunkSize,
+		chunkSize,
+		chunkSize,
+		FILE_SIZE_BYTES - 3 * chunkSize,
+	];
+	const reader = result.readerDiagnostics.lastReadDiagnostics;
+	const indices = chunkByteLengths.map((_, index) => index);
+	reader.chunkResolved = Object.fromEntries(
+		indices.map((index) => [index, "remote"]),
+	);
+	reader.chunkByteLength = Object.fromEntries(
+		chunkByteLengths.map((bytes, index) => [index, bytes]),
+	);
+	reader.chunkDemandWaitMs = Object.fromEntries(
+		indices.map((index) => [index, 0]),
+	);
+	for (const key of [
+		"chunkWriteStartedAt",
+		"chunkWriteFinishedAt",
+		"chunkMaterializeStartedAt",
+		"chunkMaterializeFinishedAt",
+		"chunkHashStartedAt",
+		"chunkHashFinishedAt",
+	]) {
+		reader[key] = Object.fromEntries(indices.map((index) => [index, 1_171]));
+	}
+	result.readTransfer = {
+		chunkCount: 4,
+		totalBytes: FILE_SIZE_BYTES,
+		sources: { remote: { chunkCount: 4, bytes: FILE_SIZE_BYTES } },
+		demandWait: {
+			definition: DEMAND_WAIT_DEFINITION,
+			sampleCount: 4,
+			sumMs: 0,
+			p50Ms: 0,
+			p95Ms: 0,
+			p99Ms: 0,
+			maxMs: 0,
+			over1sCount: 0,
+			over5sCount: 0,
+			over10sCount: 0,
+		},
+		stages: {
+			libraryStreamWallMs: 30,
+			sinkWriteAwaitMs: 0,
+			sinkAwaitSubtractedDiagnosticMs: 30,
+			demandWaitMs: 0,
+			materializeMs: 0,
+			contentHashMs: 0,
+			otherStreamReadMs: 30,
+		},
+	};
+	result.sinkWriteCalls = 4;
+	result.sinkWriteDurationMs = 0;
+	result.sinkWriteAwaitMs = 0;
+	result.sinkAwaitSubtractedDiagnosticMs = 30;
+
+	const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
+	diagnostics.chunkSize = chunkSize;
+	diagnostics.chunkCount = 4;
+	diagnostics.chunkPutCount = 4;
+	diagnostics.firstChunkFinishedAt = 1_029;
+	diagnostics.lastChunkFinishedAt = 1_040;
+	const completionEvents = [
+		{
+			completedBytes: chunkSize + chunkByteLengths[3],
+			reachedAt: 1_030,
+			chunkIndex: 3,
+		},
+		{
+			completedBytes: 2 * chunkSize + chunkByteLengths[3],
+			reachedAt: 1_035,
+			chunkIndex: 1,
+		},
+		{
+			completedBytes: FILE_SIZE_BYTES,
+			reachedAt: 1_040,
+			chunkIndex: 2,
+		},
+	];
+	diagnostics.progressTelemetry.milestones = [
+		{
+			basisPoints: 0,
+			targetBytes: 0,
+			completedBytes: 0,
+			reachedAt: diagnostics.startedAt,
+			chunkIndex: null,
+		},
+		...Array.from({ length: 20 }, (_, offset) => {
+			const basisPoints = (offset + 1) * 500;
+			const targetBytes = Number(
+				(BigInt(FILE_SIZE_BYTES) * BigInt(basisPoints) + 9_999n) / 10_000n,
+			);
+			const event = completionEvents.find(
+				(value) => value.completedBytes >= targetBytes,
+			);
+			return { basisPoints, targetBytes, ...event };
+		}),
+	];
+
+	assert.throws(
+		() => validateBenchmarkResult(result, options),
+		/already crossed before its triggering chunk completion/,
+	);
+});
+
 test("requires bounded, error-free memory telemetry covering the canonical read", () => {
 	for (const [mutate, pattern] of [
 		[
@@ -779,15 +1224,13 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
-				result.downloadMemoryTelemetry.readerJsHeap.samples[0].capturedAt =
-					1_171;
+				result.downloadMemoryTelemetry.readerJsHeap.samples[0].capturedAt = 1_171;
 			},
 			/does not bracket the click-to-sink observation window/,
 		],
 		[
 			(result) => {
-				result.downloadMemoryTelemetry.writerJsHeap.samples[1].capturedAt =
-					1_199;
+				result.downloadMemoryTelemetry.writerJsHeap.samples[1].capturedAt = 1_199;
 			},
 			/does not bracket the click-to-sink observation window/,
 		],
@@ -828,8 +1271,7 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
-				result.downloadMemoryTelemetry.hostRss.samples[0].browserRoleBytes.renderer +=
-					1;
+				result.downloadMemoryTelemetry.hostRss.samples[0].browserRoleBytes.renderer += 1;
 			},
 			/RSS totals are inconsistent/,
 		],
@@ -857,8 +1299,7 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
-				result.downloadMemoryTelemetry.readerJsHeap.samples[0].unbounded =
-					"x";
+				result.downloadMemoryTelemetry.readerJsHeap.samples[0].unbounded = "x";
 			},
 			/unexpected or missing fields/,
 		],
@@ -1249,19 +1690,31 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v5 evidence envelope", () => {
+test("rejects a status-only passed payload at the v6 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v5 envelopes", () => {
+test("requires explicit error evidence on failed v6 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };
 	assert.equal(
 		validateBenchmarkResultEnvelope(completeFailure, options).status,
+		"failed",
+	);
+	const partialUploadFailure = structuredClone(completeFailure);
+	const partialDiagnostics =
+		partialUploadFailure.writerDiagnostics.lastUploadDiagnostics;
+	partialDiagnostics.progressTelemetry.milestones =
+		partialDiagnostics.progressTelemetry.milestones.slice(0, 4);
+	partialDiagnostics.failureAt = 1_020;
+	partialDiagnostics.failureMessage = "synthetic chunk failure";
+	partialDiagnostics.finishedAt = null;
+	assert.equal(
+		validateBenchmarkResultEnvelope(partialUploadFailure, options).status,
 		"failed",
 	);
 
