@@ -1,5 +1,9 @@
 import { type PeerId } from "@libp2p/interface";
 import { Ed25519Keypair } from "@peerbit/crypto";
+import {
+	CONVERGENCE_MESSAGE_PRIORITY,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
+} from "@peerbit/stream-interface";
 import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { PeerStreams } from "../src/index.js";
@@ -72,6 +76,48 @@ describe("priority lanes", () => {
 
 		// Drain the rest (sanity).
 		for (let expected = 3; expected <= 6; expected++) {
+			outbound.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outbound.sentPayloads.length).to.equal(expected),
+			);
+		}
+
+		await streams.close();
+	});
+
+	it("bounds foreground delivery behind a convergence backlog", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+		});
+
+		const outbound = new TestOutboundStream();
+		await streams.attachOutboundStream(outbound as any);
+
+		// Model queued shared-log repair messages followed by a ready manifest.
+		for (let i = 0; i < 5; i++) {
+			streams.write(new Uint8Array([i + 1]), CONVERGENCE_MESSAGE_PRIORITY);
+		}
+		await waitForResolved(() =>
+			expect(outbound.sentPayloads).to.deep.equal([1]),
+		);
+
+		streams.write(new Uint8Array([200]), FOREGROUND_READ_MESSAGE_PRIORITY);
+
+		// WRR may finish its current convergence slot, but the foreground frame
+		// must be selected before the remaining convergence backlog drains.
+		for (let expected = 2; expected <= 3; expected++) {
+			outbound.dispatchEvent(new Event("drain"));
+			await waitForResolved(() =>
+				expect(outbound.sentPayloads.length).to.equal(expected),
+			);
+		}
+		expect(outbound.sentPayloads).to.deep.equal([1, 2, 200]);
+
+		for (let expected = 4; expected <= 6; expected++) {
 			outbound.dispatchEvent(new Event("drain"));
 			await waitForResolved(() =>
 				expect(outbound.sentPayloads.length).to.equal(expected),

@@ -2816,6 +2816,11 @@ export type DeliveryOptions = {
 	reliability?: DeliveryReliability;
 	minAcks?: number;
 	requireRecipients?: boolean;
+	/**
+	 * Transport priority for directed RPC delivery. Fanout unicast already uses
+	 * its control lane, so this only changes the direct/fallback RPC path.
+	 */
+	priority?: number;
 	timeout?: number;
 	signal?: AbortSignal;
 };
@@ -4689,9 +4694,11 @@ export class SharedLog<
 		peer: string;
 		message: ExchangeHeadsMessage<any>;
 		payload: Uint8Array;
+		priority?: number;
 		fanoutUnicastOptions?: { timeoutMs?: number; signal?: AbortSignal };
 	}): Promise<void> {
-		const { peer, message, payload, fanoutUnicastOptions } = properties;
+		const { peer, message, payload, priority, fanoutUnicastOptions } =
+			properties;
 		const hints = await this._getSortedRouteHints(peer);
 		const hasDirectHint = hints.some(
 			(hint) => hint.kind === "directstream-ack",
@@ -4708,6 +4715,7 @@ export class SharedLog<
 						redundancy: 1,
 						to: [peer],
 					}),
+					priority,
 				});
 				return;
 			} catch {
@@ -4746,6 +4754,7 @@ export class SharedLog<
 				redundancy: 1,
 				to: [peer],
 			}),
+			priority,
 		});
 	}
 
@@ -5146,6 +5155,7 @@ export class SharedLog<
 									peer,
 									message,
 									payload,
+									priority: delivery.priority,
 									fanoutUnicastOptions,
 								});
 							})(),
@@ -5160,6 +5170,7 @@ export class SharedLog<
 								redundancy: 1,
 								to: nativeDeliveryPlan.silentTo,
 							}),
+							priority: delivery.priority,
 						})
 						.catch((error) => logger.error(error));
 				}
@@ -5300,6 +5311,7 @@ export class SharedLog<
 								peer,
 								message,
 								payload,
+								priority: delivery.priority,
 								fanoutUnicastOptions,
 							});
 						})(),
@@ -5311,6 +5323,7 @@ export class SharedLog<
 				this.rpc
 					.send(message, {
 						mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
+						priority: delivery.priority,
 					})
 					.catch((error) => logger.error(error));
 			}
