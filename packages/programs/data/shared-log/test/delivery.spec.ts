@@ -2,6 +2,7 @@ import {
 	ACK,
 	AcknowledgeDelivery,
 	DataMessage,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
 	SilentDelivery,
 } from "@peerbit/stream-interface";
 import type { FanoutTree } from "@peerbit/pubsub";
@@ -28,7 +29,7 @@ describe("append delivery options", () => {
 		await session?.stop();
 	});
 
-	it("awaits transport acks when delivery is set for target=replicators", async () => {
+	it("awaits transport acks and applies an explicit priority for target=replicators", async () => {
 		session = await TestSession.connected(2);
 
 		const db1 = await session.peers[0].open(new EventStore<string, any>(), {
@@ -68,7 +69,9 @@ describe("append delivery options", () => {
 
 		const gate = pDefer<void>();
 		const ackAttempted = pDefer<void>();
-		const expectedAckedMessageIds = new Set<string>();
+		const deliveryPriorityByMessageId = new Map<string, number | undefined>();
+		let foregroundMessageId: string | undefined;
+		let foregroundAckedMessageId: string | undefined;
 		const toB64 = (id: Uint8Array) => Buffer.from(id).toString("base64");
 
 		const remotePubsub: any = session.peers[1].services.pubsub;
@@ -77,9 +80,14 @@ describe("append delivery options", () => {
 		remotePubsub.publishMessage = async (...args: any[]) => {
 			const message = args[1];
 			if (message instanceof ACK) {
-				// Only gate the ACKs that correspond to the message(s) produced by this test's `db1.add(...)`.
-				// There can be unrelated ACK traffic during session setup in the full test suite.
-				if (expectedAckedMessageIds.has(toB64(message.messageIdToAcknowledge))) {
+				const acknowledgedId = toB64(message.messageIdToAcknowledge);
+				// Native convergence can emit unrelated acknowledged traffic during
+				// this append. Gate only the exact foreground delivery under test.
+				if (
+					deliveryPriorityByMessageId.get(acknowledgedId) ===
+					FOREGROUND_READ_MESSAGE_PRIORITY
+				) {
+					foregroundAckedMessageId = acknowledgedId;
 					ackAttempted.resolve();
 					await gate.promise;
 				}
@@ -97,7 +105,11 @@ describe("append delivery options", () => {
 				message.header.mode instanceof AcknowledgeDelivery &&
 				message.header.mode.to?.includes(remoteHash)
 			) {
-				expectedAckedMessageIds.add(toB64(message.id));
+				const messageId = toB64(message.id);
+				deliveryPriorityByMessageId.set(messageId, message.header.priority);
+				if (message.header.priority === FOREGROUND_READ_MESSAGE_PRIORITY) {
+					foregroundMessageId = messageId;
+				}
 			}
 			return originalLocalPublishMessage(...args);
 		};
@@ -106,7 +118,7 @@ describe("append delivery options", () => {
 		const promise = db1
 			.add("hello", {
 				target: "replicators",
-				delivery: true,
+				delivery: { priority: FOREGROUND_READ_MESSAGE_PRIORITY },
 			})
 			.then((result) => {
 				resolved = true;
@@ -115,6 +127,10 @@ describe("append delivery options", () => {
 
 		await ackAttempted.promise;
 		expect(resolved).to.equal(false);
+		expect(foregroundAckedMessageId).to.equal(foregroundMessageId);
+		expect(deliveryPriorityByMessageId.get(foregroundAckedMessageId!)).to.equal(
+			FOREGROUND_READ_MESSAGE_PRIORITY,
+		);
 
 		gate.resolve();
 		await promise;
