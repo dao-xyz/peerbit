@@ -18,6 +18,7 @@ import {
 	dontThrowIfDeliveryError,
 } from "@peerbit/stream";
 import {
+	BACKGROUND_MESSAGE_PRIORITY,
 	type PeerRefs,
 	type RequestTransportContext,
 	SilentDelivery,
@@ -70,6 +71,7 @@ type BlockMessageContext = {
 type InFlightRead = {
 	promise: Promise<Block<any, any, any, 1> | undefined>;
 	addProviders: (providers: string[]) => void;
+	promotePriority: (priority: number | undefined) => void;
 };
 
 type RemoteReadOptions = Exclude<GetOptions["remote"], boolean | undefined> & {
@@ -358,7 +360,14 @@ export class RemoteBlocks implements IBlocks {
 			try {
 				if (message instanceof BlockRequest && this.localStore) {
 					this._loadFetchQueue
-						.add(() => this.handleFetchRequest(message, localTimeout, context))
+						.add(
+							() => this.handleFetchRequest(message, localTimeout, context),
+							{
+								priority:
+									context?.transport?.requestPriority ??
+									BACKGROUND_MESSAGE_PRIORITY,
+							},
+						)
 						.catch((e) => {
 							try {
 								dontThrowIfDeliveryError(e);
@@ -878,6 +887,7 @@ export class RemoteBlocks implements IBlocks {
 
 		let inFlight = this._readFromPeersPromises.get(cidString);
 		if (!inFlight) {
+			let requestPriority = options.priority ?? BACKGROUND_MESSAGE_PRIORITY;
 			let publishAdditionalProviders: (providers: string[]) => void = () => {};
 			const promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
@@ -976,8 +986,8 @@ export class RemoteBlocks implements IBlocks {
 							: this.pickRequestBatch(providers, requeryCount);
 					if (requestProviders.length === 0) return;
 					await this.options.publish(new BlockRequest(cidString), {
-						priority: options.priority,
-						responsePriority: options.priority,
+						priority: requestPriority,
+						responsePriority: requestPriority,
 						expiresAt,
 						mode: new SilentDelivery({
 							to: requestProviders,
@@ -1017,6 +1027,20 @@ export class RemoteBlocks implements IBlocks {
 				promise,
 				addProviders: (nextProviders) =>
 					publishAdditionalProviders(nextProviders),
+				promotePriority: (nextPriority) => {
+					if (!this._resolvers.has(cidString)) return;
+					// A background replication read may win CID coalescing before a
+					// foreground waiter arrives. Reissue only on a strict priority upgrade.
+					const promotedPriority = nextPriority ?? BACKGROUND_MESSAGE_PRIORITY;
+					if (
+						!Number.isFinite(promotedPriority) ||
+						promotedPriority <= requestPriority
+					) {
+						return;
+					}
+					requestPriority = promotedPriority;
+					tryPublishRequest({ force: true }).catch(dontThrowIfDeliveryError);
+				},
 			};
 			this._readFromPeersPromises.set(cidString, inFlight);
 
@@ -1101,6 +1125,7 @@ export class RemoteBlocks implements IBlocks {
 				}
 			}
 		} else {
+			inFlight.promotePriority(options.priority);
 			if (providers.length > 0) {
 				inFlight.addProviders(providers);
 			}

@@ -1,7 +1,11 @@
 import { serialize } from "@dao-xyz/borsh";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForNeighbour } from "@peerbit/stream";
-import { CONVERGENCE_MESSAGE_PRIORITY } from "@peerbit/stream-interface";
+import {
+	BACKGROUND_MESSAGE_PRIORITY,
+	CONVERGENCE_MESSAGE_PRIORITY,
+	FOREGROUND_READ_MESSAGE_PRIORITY,
+} from "@peerbit/stream-interface";
 import { delay } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
@@ -706,6 +710,67 @@ describe("transport", function () {
 		);
 	});
 
+	it("serves queued foreground block requests before background requests", async () => {
+		session = await TestSession.disconnected(1, {
+			services: {
+				blocks: (components) =>
+					new DirectBlock(components, { messageProcessingConcurrency: 1 }),
+			},
+		});
+		await store(session, 0).start();
+
+		const remoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const activeStarted = pDefer<void>();
+		const releaseActive = pDefer<void>();
+		const order: string[] = [];
+		const handleFetchRequest = sinon
+			.stub(remoteBlocks as any, "handleFetchRequest")
+			.callsFake(async (...args: unknown[]) => {
+				const request = args[0] as BlockRequest;
+				order.push(request.cid);
+				if (request.cid === "active") {
+					activeStarted.resolve();
+					await releaseActive.promise;
+				}
+			});
+		const context = (requestPriority: number) => ({
+			from: "requester",
+			transport: {
+				expiresAt: Date.now() + 5_000,
+				requestPriority,
+				responsePriority: requestPriority,
+				remainingTime: () => 5_000,
+				withResponseOptions: <T extends object>(options: T) => ({
+					...options,
+					priority: requestPriority,
+					expiresAt: Date.now() + 5_000,
+				}),
+			},
+		});
+
+		await remoteBlocks.onMessage(
+			new BlockRequest("active"),
+			context(BACKGROUND_MESSAGE_PRIORITY),
+		);
+		await activeStarted.promise;
+		await remoteBlocks.onMessage(
+			new BlockRequest("background"),
+			context(BACKGROUND_MESSAGE_PRIORITY),
+		);
+		await remoteBlocks.onMessage(
+			new BlockRequest("foreground"),
+			context(FOREGROUND_READ_MESSAGE_PRIORITY),
+		);
+
+		releaseActive.resolve();
+		await (remoteBlocks as any)._loadFetchQueue.onIdle();
+
+		expect(order).to.deep.equal(["active", "foreground", "background"]);
+		handleFetchRequest.restore();
+	});
+
 	it("relay proxy honors request timeout when upstream response is slow", async () => {
 		session = await TestSession.disconnected(3, {
 			services: { blocks: (c) => new DirectBlock(c) },
@@ -892,6 +957,78 @@ describe("transport", function () {
 		expect(secondRead).equal(undefined);
 		expect(t2 - t1).to.be.lessThan(500);
 		await firstRead;
+	});
+
+	it("promotes a shared in-flight block request for a foreground reader", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const requesterRemoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const originalPublish = requesterRemoteBlocks.options.publish.bind(
+			requesterRemoteBlocks.options,
+		);
+		const firstRequestPublished = pDefer<void>();
+		const requestTransportOptions: Array<{
+			priority: number | undefined;
+			responsePriority: number | undefined;
+		}> = [];
+		requesterRemoteBlocks.options.publish = async (message, options) => {
+			if (message instanceof BlockRequest) {
+				requestTransportOptions.push({
+					priority: options.priority,
+					responsePriority: options.responsePriority,
+				});
+				if (requestTransportOptions.length === 1) {
+					firstRequestPublished.resolve();
+				}
+			}
+			return originalPublish(message, options);
+		};
+
+		const missingCid = "zb3we1BmfxpFg6bCXmrsuEo8JuQrGEf7RyFBdRxEHLuqc4CSr";
+		const backgroundRead = store(session, 0).get(missingCid, {
+			remote: {
+				timeout: 1_000,
+				from: [store(session, 1).publicKeyHash],
+				priority: BACKGROUND_MESSAGE_PRIORITY,
+			},
+		});
+		await firstRequestPublished.promise;
+
+		const foregroundRead = store(session, 0).get(missingCid, {
+			remote: {
+				timeout: 100,
+				from: [store(session, 1).publicKeyHash],
+				priority: FOREGROUND_READ_MESSAGE_PRIORITY,
+			},
+		});
+
+		expect(await foregroundRead).to.equal(undefined);
+		expect(requestTransportOptions.slice(0, 2)).to.deep.equal([
+			{
+				priority: BACKGROUND_MESSAGE_PRIORITY,
+				responsePriority: BACKGROUND_MESSAGE_PRIORITY,
+			},
+			{
+				priority: FOREGROUND_READ_MESSAGE_PRIORITY,
+				responsePriority: FOREGROUND_READ_MESSAGE_PRIORITY,
+			},
+		]);
+		expect(
+			await store(session, 0).get(missingCid, {
+				remote: {
+					timeout: 50,
+					from: [store(session, 1).publicKeyHash],
+					priority: CONVERGENCE_MESSAGE_PRIORITY,
+				},
+			}),
+		).to.equal(undefined);
+		expect(requestTransportOptions).to.have.length(2);
+		await backgroundRead;
 	});
 
 	it("iterate", async () => {
