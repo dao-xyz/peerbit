@@ -17,14 +17,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v6 result envelope`, async () => {
+	test(`${name} emits the atomic v7 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 6",
+			"version: 7",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -206,6 +206,10 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"readerJoinedReplicationDuringTimedRead = true",
 		'readerLocalityControl.status = "complete"',
 		"exact contiguous prefix",
+		"SEEDER_DROP_POLICY",
+		"consecutiveBelowBaselineSeederSnapshots",
+		"seederDropPolicy: SEEDER_DROP_POLICY",
+		"terminalSeederSnapshot",
 		"unexpectedSeederDrop",
 		"downloadMemoryTelemetryController =",
 		"downloadMemoryTelemetryController.snapshot()",
@@ -213,9 +217,28 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"downloadMemoryTelemetry.complete !== true",
 		"series.samplingErrors.length > 0",
 		"downloadMemoryTelemetry,",
+		"let integrityVerifiedAt: number | null = null",
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
 	}
+	assert.match(
+		contents,
+		/const terminalSeederSnapshot = await snapshot\([\s\S]*?noteSeederDrop\(terminalSeederSnapshot\);[\s\S]*?if \(unexpectedSeederDrop\)/,
+		"the final numeric seeder snapshot must participate in the v7 drop policy before acceptance",
+	);
+	const lateFailureCatch = contents.slice(
+		contents.lastIndexOf("\t\t} catch (error: any) {"),
+	);
+	assert.ok(
+		lateFailureCatch.includes(
+			"\n\t\t\t\tintegrity,\n\t\t\t\tintegrityVerified,\n\t\t\t\tintegrityVerifiedAt,",
+		),
+		"late failures must preserve completed integrity evidence and its gate timestamp",
+	);
+	assert.ok(
+		!lateFailureCatch.includes("integrityVerified: false"),
+		"the catch path must not overwrite completed integrity state",
+	);
 	assert.match(
 		contents,
 		/const LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS =\s*READER_LOCAL_CHUNK_TARGET === null\s*\? 0\s*:\s*3 \* READY_TIMEOUT_MS \+\s*\(READER_LOCAL_CHUNK_TARGET > 0\s*\? DOWNLOAD_TIMEOUT_MS \+ TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS\s*: 0\);/,
@@ -309,8 +332,8 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.match(
 		contents,
-		/if \(!integrityVerified\)[\s\S]*?integrityVerifiedAt = Date\.now\(\);[\s\S]*?waitForTerminalReaderIdle\(\)[\s\S]*?collectStableTerminalTopology\(\s*terminalTopologyStartedAt,\s*terminalTopologyDeadlineAt,\s*\)[\s\S]*?readerJoinedReplicationDuringTimedRead = true[\s\S]*?stage = "complete"/,
-		"terminal topology must be collected after integrity and transfer-idle, outside the measured download",
+		/if \(!integrityVerified\)[\s\S]*?integrityVerifiedAt = Date\.now\(\);[\s\S]*?readerLocalityControl\.integrityVerifiedAt = integrityVerifiedAt;[\s\S]*?waitForTerminalReaderIdle\(\)[\s\S]*?collectStableTerminalTopology\(\s*terminalTopologyStartedAt,\s*terminalTopologyDeadlineAt,\s*\)[\s\S]*?readerJoinedReplicationDuringTimedRead = true[\s\S]*?const terminalSeederSnapshot = await snapshot\([\s\S]*?stage = "complete"/,
+		"terminal topology and the final seeder snapshot must follow the aggregate integrity gate outside the measured download",
 	);
 	assert.ok(
 		!contents.includes("monitorAndFreezeReaderLocality"),
@@ -680,6 +703,8 @@ test("matrix fail-closes every result envelope and fully validates passes", asyn
 		"invocation: expectedInvocation ?? null",
 		"provenance: expectedProvenance",
 		"peerbitProvenance: prepared.peerbitProvenance",
+		"projectUploadIntegrityEvidence(browserResult, {",
+		"seederDropPolicy: SEEDER_DROP_POLICY",
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
 	}

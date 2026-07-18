@@ -4,6 +4,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
 	MAX_READER_LOCAL_CHUNK_OVERSHOOT,
@@ -20,10 +21,12 @@ import {
 	KNOWN_PEERBIT_FAILURE_SIGNATURES,
 	MATRIX_SUMMARY_SCHEMA,
 	REQUEST_FAILURE_COLLECTION_DEFINITION,
+	SEEDER_DROP_POLICY,
 	classifySubprocessSummary,
 	countBenchmarkOutcomes,
 	extractCollectedErrorEvidence,
 	inspectSingleInvocationSummary,
+	projectUploadIntegrityEvidence,
 	readJsonEvidence,
 	serializeError,
 } from "./benchmark-orchestration.mjs";
@@ -567,7 +570,7 @@ const runVariantBenchmark = async ({
 	};
 };
 
-const createMatrixInvocationFailure = ({
+export const createMatrixInvocationFailure = ({
 	plan,
 	scenario,
 	network,
@@ -580,6 +583,17 @@ const createMatrixInvocationFailure = ({
 	browserResult,
 }) => {
 	const collectedErrorEvidence = extractCollectedErrorEvidence(browserResult);
+	const uploadEvidence =
+		scenario === "upload"
+			? {
+					seederDropPolicy: SEEDER_DROP_POLICY,
+					...projectUploadIntegrityEvidence(browserResult, {
+						fileMb,
+						fixtureSeed: expectedInvocation?.fixtureSeed,
+						downloadSink: expectedInvocation?.downloadSink,
+					}),
+				}
+			: {};
 	return {
 		schema: BENCHMARK_RESULT_SCHEMA,
 		runNonce: browserResult?.runNonce ?? null,
@@ -590,6 +604,7 @@ const createMatrixInvocationFailure = ({
 		mode: plan.mode,
 		networkMode: network,
 		fileSizeMb: fileMb,
+		...uploadEvidence,
 		stage: "matrix-orchestration",
 		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
 		knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
@@ -1214,7 +1229,12 @@ const main = async () => {
 	}
 };
 
-main().catch((error) => {
-	console.error(error);
-	process.exit(1);
-});
+if (
+	process.argv[1] &&
+	path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+	main().catch((error) => {
+		console.error(error);
+		process.exit(1);
+	});
+}

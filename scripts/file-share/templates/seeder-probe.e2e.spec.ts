@@ -24,7 +24,7 @@ const EFFECTIVE_SAMPLE_INTERVAL_MS = Math.max(
 );
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 6,
+	version: 7,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {

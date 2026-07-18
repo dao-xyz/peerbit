@@ -5,6 +5,8 @@ import {
 	ERROR_COLLECTION_DEFINITION,
 	KNOWN_PEERBIT_FAILURE_SIGNATURES,
 	REQUEST_FAILURE_COLLECTION_DEFINITION,
+	SEEDER_DROP_POLICY,
+	projectUploadIntegrityEvidence,
 } from "./benchmark-orchestration.mjs";
 import {
 	DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
@@ -81,6 +83,7 @@ const UPLOAD_PROGRESS_MILESTONE_KEYS = Object.freeze([
 	"reachedAt",
 	"chunkIndex",
 ]);
+const SEEDER_DROP_POLICY_KEYS = Object.freeze(Object.keys(SEEDER_DROP_POLICY));
 
 const isRecord = (value) =>
 	value != null && typeof value === "object" && !Array.isArray(value);
@@ -167,6 +170,18 @@ const requirePattern = (value, pattern, label) => {
 	return string;
 };
 
+const validateSeederDropPolicy = (result) => {
+	const policy = requireExactRecordKeys(
+		requireRecord(result.seederDropPolicy, "seederDropPolicy"),
+		SEEDER_DROP_POLICY_KEYS,
+		"seederDropPolicy",
+	);
+	if (!isDeepStrictEqual(policy, SEEDER_DROP_POLICY)) {
+		throw new Error("Benchmark result has an unsupported seeder-drop policy");
+	}
+	return policy;
+};
+
 export const assertPlaywrightSucceeded = (exitCode) => {
 	if (!Number.isInteger(exitCode) || exitCode !== 0) {
 		throw new Error(
@@ -196,6 +211,7 @@ const validateUploadIntegrity = (
 	expectedFileMb,
 	expectedFixtureSeed,
 	invocation,
+	{ requireCompletedEvidence = true } = {},
 ) => {
 	const integrity = requireRecord(result.integrity, "integrity");
 	if (integrity.fixtureMode !== "deterministic") {
@@ -246,8 +262,9 @@ const validateUploadIntegrity = (
 		throw new Error("Benchmark result failed its SHA-256 integrity gate");
 	}
 	if (
-		result.downloadSink !== invocation.downloadSink ||
-		result.requestedDownloadSink !== invocation.downloadSink ||
+		(requireCompletedEvidence &&
+			(result.downloadSink !== invocation.downloadSink ||
+				result.requestedDownloadSink !== invocation.downloadSink)) ||
 		integrity.downloadSink !== invocation.downloadSink
 	) {
 		throw new Error(
@@ -305,6 +322,91 @@ const validateUploadIntegrity = (
 	}
 	if (integrity.verified !== true || result.integrityVerified !== true) {
 		throw new Error("Benchmark result is missing the aggregate integrity gate");
+	}
+	const integrityVerifiedAt = requirePositiveSafeInteger(
+		result.integrityVerifiedAt,
+		"integrityVerifiedAt",
+	);
+	return integrityVerifiedAt;
+};
+
+const validateFailedUploadIntegrityEvidence = (
+	result,
+	expectedFileMb,
+	expectedInvocation,
+) => {
+	const hasRunnerProjection =
+		Object.hasOwn(result, "browserResult") ||
+		Object.hasOwn(result, "resultEvidence");
+	if (hasRunnerProjection) {
+		const hasExplicitResultEvidence = Object.hasOwn(result, "resultEvidence");
+		const hasParsedResultEvidence =
+			isRecord(result.resultEvidence) &&
+			result.resultEvidence.kind === "parsed";
+		if (hasExplicitResultEvidence && !hasParsedResultEvidence) {
+			if (
+				result.browserResult !== null ||
+				result.integrity !== null ||
+				result.integrityVerified !== false ||
+				result.integrityVerifiedAt !== null
+			) {
+				throw new Error(
+					"Runner failure without parsed browser evidence must use a null integrity projection",
+				);
+			}
+		} else if (isRecord(result.browserResult)) {
+			const projected = projectUploadIntegrityEvidence(result.browserResult, {
+				fileMb: expectedFileMb,
+				fixtureSeed: expectedInvocation.fixtureSeed,
+				downloadSink: expectedInvocation.downloadSink,
+			});
+			if (
+				!isDeepStrictEqual(result.integrity, projected.integrity) ||
+				result.integrityVerified !== projected.integrityVerified ||
+				result.integrityVerifiedAt !== projected.integrityVerifiedAt
+			) {
+				throw new Error(
+					"Runner failure integrity projection does not exactly match its parsed browser result",
+				);
+			}
+		} else if (
+			hasParsedResultEvidence ||
+			result.browserResult !== null ||
+			result.integrity !== null ||
+			result.integrityVerified !== false ||
+			result.integrityVerifiedAt !== null
+		) {
+			throw new Error(
+				"Runner failure without parsed browser evidence must use a null integrity projection",
+			);
+		}
+	}
+
+	if (typeof result.integrityVerified !== "boolean") {
+		throw new Error("Failed upload has an invalid integrityVerified claim");
+	}
+	if (result.integrityVerified) {
+		validateUploadIntegrity(
+			result,
+			expectedFileMb,
+			expectedInvocation.fixtureSeed,
+			expectedInvocation,
+			{ requireCompletedEvidence: false },
+		);
+		return;
+	}
+	if (result.integrityVerifiedAt !== null) {
+		throw new Error(
+			"Failed upload without verified integrity must use a null integrityVerifiedAt",
+		);
+	}
+	if (result.integrity !== null) {
+		const integrity = requireRecord(result.integrity, "integrity");
+		if (integrity.verified !== false) {
+			throw new Error(
+				"Failed upload integrity evidence contradicts its unverified claim",
+			);
+		}
 	}
 };
 
@@ -1751,6 +1853,9 @@ const validateEnvelope = (
 	) {
 		throw new Error("Benchmark result has an unsupported invocation schema");
 	}
+	if (invocation.scenario === "upload") {
+		validateSeederDropPolicy(result);
+	}
 	if (!isDeepStrictEqual(result.provenance, expectedProvenance)) {
 		throw new Error(
 			"Benchmark result provenance does not match the invocation",
@@ -2456,6 +2561,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		writerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
 		readerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
 		downloadFinishedAt > downloadCompletionObservedAt ||
+		integrityVerifiedAt !== result.integrityVerifiedAt ||
 		integrityVerifiedAt < downloadCompletionObservedAt ||
 		terminalIdle.capturedAt < integrityVerifiedAt ||
 		terminalTopologyStartedAt < terminalIdle.capturedAt ||
@@ -2470,7 +2576,11 @@ const validateReaderLocalityControl = (result, invocation) => {
 			"Benchmark reader locality control timestamps are inconsistent",
 		);
 	}
-	return { actualLocalChunkBlockCount, actualLocalChunkIndexRowCount };
+	return {
+		actualLocalChunkBlockCount,
+		actualLocalChunkIndexRowCount,
+		terminalTopologyFinishedAt,
+	};
 };
 
 const validateCollectedStringEvidence = ({
@@ -2556,7 +2666,11 @@ const validateZeroErrors = (result, label) => {
 	}
 };
 
-const validateUploadSnapshots = (result, invocation) => {
+const validateUploadSnapshots = (
+	result,
+	invocation,
+	{ integrityVerifiedAt, terminalTopologyFinishedAt },
+) => {
 	if (!Array.isArray(result.snapshots) || result.snapshots.length === 0) {
 		throw new Error("Passed upload result is missing seeder snapshots");
 	}
@@ -2569,6 +2683,10 @@ const validateUploadSnapshots = (result, invocation) => {
 		timestamps.postMonitorFinishedAt,
 		"timestamps.postMonitorFinishedAt",
 	);
+	const downloadCompletionObservedAt = requirePositiveNumber(
+		timestamps.downloadCompletionObservedAt,
+		"timestamps.downloadCompletionObservedAt",
+	);
 	let previousAt = -1;
 	let hasPostMonitorSample = false;
 	const labels = new Set();
@@ -2578,7 +2696,7 @@ const validateUploadSnapshots = (result, invocation) => {
 		const label = requireString(snapshot.label, `snapshots[${index}].label`);
 		if (
 			labels.has(label) ||
-			!/^(?:seeders-ready|during-\d+|after-\d+)$/.test(label)
+			!/^(?:seeders-ready|during-\d+|after-\d+|terminal)$/.test(label)
 		) {
 			throw new Error(
 				"Upload seeder snapshot labels are invalid or duplicated",
@@ -2635,6 +2753,36 @@ const validateUploadSnapshots = (result, invocation) => {
 			"Passed upload result must begin with exactly one ready-seeder baseline snapshot",
 		);
 	}
+	const terminalSnapshots = parsedSnapshots.filter(
+		(snapshot) => snapshot.label === SEEDER_DROP_POLICY.terminalSnapshotLabel,
+	);
+	if (
+		terminalSnapshots.length !== 1 ||
+		parsedSnapshots.at(-1)?.label !== SEEDER_DROP_POLICY.terminalSnapshotLabel
+	) {
+		throw new Error(
+			"Passed upload result must end with exactly one terminal seeder snapshot",
+		);
+	}
+	const terminalSnapshot = terminalSnapshots[0];
+	if (terminalSnapshot.capturedAt < downloadCompletionObservedAt) {
+		throw new Error(
+			"Upload terminal seeder snapshot precedes download completion",
+		);
+	}
+	if (terminalSnapshot.capturedAt < integrityVerifiedAt) {
+		throw new Error(
+			"Upload terminal seeder snapshot precedes aggregate integrity verification",
+		);
+	}
+	if (
+		terminalTopologyFinishedAt !== null &&
+		terminalSnapshot.capturedAt < terminalTopologyFinishedAt
+	) {
+		throw new Error(
+			"Upload terminal seeder snapshot precedes terminal topology completion",
+		);
+	}
 	const baselineWriterSeeders = requireNonNegativeSafeInteger(
 		result.baselineWriterSeeders,
 		"baselineWriterSeeders",
@@ -2660,19 +2808,33 @@ const validateUploadSnapshots = (result, invocation) => {
 			"Upload ready-seeder baseline is below the requested minimum",
 		);
 	}
-	const recomputedDroppedSeeders = parsedSnapshots
-		.slice(1)
-		.some(
-			(snapshot) =>
-				snapshot.writerSeeders < baselineWriterSeeders ||
-				snapshot.readerSeeders < baselineReaderSeeders,
-		);
+	let recomputedDroppedSeeders = false;
+	let recomputedUnexpectedSeederDrop = false;
+	let consecutiveBelowBaselineSnapshots = 0;
+	for (const snapshot of parsedSnapshots.slice(1)) {
+		const belowBaseline =
+			snapshot.writerSeeders < baselineWriterSeeders ||
+			snapshot.readerSeeders < baselineReaderSeeders;
+		if (belowBaseline) {
+			recomputedDroppedSeeders = true;
+			consecutiveBelowBaselineSnapshots += 1;
+			if (
+				consecutiveBelowBaselineSnapshots >=
+					SEEDER_DROP_POLICY.consecutiveBelowBaselineSnapshotThreshold ||
+				(SEEDER_DROP_POLICY.terminalBelowBaselineIsUnexpected &&
+					snapshot.label === SEEDER_DROP_POLICY.terminalSnapshotLabel)
+			) {
+				recomputedUnexpectedSeederDrop = true;
+			}
+		} else {
+			consecutiveBelowBaselineSnapshots = 0;
+		}
+	}
 	if (result.droppedSeeders !== recomputedDroppedSeeders) {
 		throw new Error(
 			"Upload droppedSeeders claim contradicts its numeric snapshot evidence",
 		);
 	}
-	const recomputedUnexpectedSeederDrop = recomputedDroppedSeeders;
 	if (result.unexpectedSeederDrop !== recomputedUnexpectedSeederDrop) {
 		throw new Error(
 			"Upload unexpectedSeederDrop claim contradicts its numeric snapshot evidence",
@@ -2859,6 +3021,13 @@ export const validateBenchmarkResultEnvelope = (
 	validateErrorCollection(result, {
 		allowIncomplete: result.status === "failed",
 	});
+	if (expectedInvocation.scenario === "upload" && result.status === "failed") {
+		validateFailedUploadIntegrityEvidence(
+			result,
+			expectedFileMb,
+			expectedInvocation,
+		);
+	}
 	return result;
 };
 
@@ -2891,26 +3060,35 @@ export const validateBenchmarkResult = (
 		throw new Error(`Benchmark result status is not passed${detail}`);
 	}
 	if (scenario === "upload") {
-		validateUploadIntegrity(
+		const integrityVerifiedAt = validateUploadIntegrity(
 			result,
 			expectedFileMb,
 			expectedFixtureSeed,
 			expectedInvocation,
 		);
 		const readWindow = validateUploadTimings(result, expectedInvocation);
+		if (integrityVerifiedAt < readWindow.downloadCompletionObservedAt) {
+			throw new Error(
+				"Benchmark aggregate integrity gate precedes download completion",
+			);
+		}
 		validateUploadProgressTelemetry(result, expectedInvocation);
 		validateDownloadMemoryTelemetry(result, expectedInvocation, readWindow);
 		validateRequestedUploadKnobs(result, expectedInvocation);
 		validateZeroErrors(result, "upload result");
-		validateReaderLocalityControl(result, expectedInvocation);
-		validateUploadSnapshots(result, expectedInvocation);
+		const readerLocalityControl = validateReaderLocalityControl(
+			result,
+			expectedInvocation,
+		);
+		validateUploadSnapshots(result, expectedInvocation, {
+			integrityVerifiedAt,
+			terminalTopologyFinishedAt:
+				readerLocalityControl?.terminalTopologyFinishedAt ?? null,
+		});
 		if (result.unexpectedSeederDrop !== false) {
 			throw new Error(
 				"Passed upload result contains an unexpected seeder drop",
 			);
-		}
-		if (result.droppedSeeders !== false) {
-			throw new Error("Passed upload result contains seeder drops");
 		}
 	} else if (scenario === "seeder-probe") {
 		validateSeederProbe(result, expectedInvocation);

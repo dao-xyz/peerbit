@@ -2,7 +2,19 @@ import fsp from "node:fs/promises";
 
 export const BENCHMARK_RESULT_SCHEMA = Object.freeze({
 	id: "peerbit-file-share-benchmark",
-	version: 6,
+	version: 7,
+});
+
+export const SEEDER_DROP_POLICY = Object.freeze({
+	id: "peerbit-file-share-seeder-drop-policy",
+	version: 1,
+	belowBaselineDefinition:
+		"writerSeeders < baselineWriterSeeders || readerSeeders < baselineReaderSeeders",
+	evaluatedSnapshotDefinition:
+		"all chronological snapshots after the unique seeders-ready baseline snapshot",
+	consecutiveBelowBaselineSnapshotThreshold: 2,
+	terminalSnapshotLabel: "terminal",
+	terminalBelowBaselineIsUnexpected: true,
 });
 
 export const BENCHMARK_SUMMARY_SCHEMA = Object.freeze({
@@ -34,6 +46,103 @@ export const REQUEST_FAILURE_COLLECTION_DEFINITION =
 
 const isRecord = (value) =>
 	value != null && typeof value === "object" && !Array.isArray(value);
+
+const SHA256_BASE64_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+const CRC32_HEX_PATTERN = /^[0-9a-f]{8}$/;
+
+const hasCompleteVerifiedUploadIntegrityEvidence = (
+	integrity,
+	{ fileMb, fixtureSeed, downloadSink },
+) => {
+	const expectedSizeBytes = fileMb * 1024 * 1024;
+	if (
+		!isRecord(integrity) ||
+		!Number.isSafeInteger(expectedSizeBytes) ||
+		expectedSizeBytes <= 0 ||
+		!["hash-only", "opfs", "node-file"].includes(downloadSink) ||
+		integrity.fixtureMode !== "deterministic" ||
+		integrity.fixtureFormat !== "aes-256-ctr-v1" ||
+		integrity.fixtureSeed !== fixtureSeed ||
+		integrity.expectedSizeBytes !== expectedSizeBytes ||
+		integrity.sourceSizeBytes !== expectedSizeBytes ||
+		integrity.manifestSizeBytes !== expectedSizeBytes ||
+		integrity.downloadedSizeBytes !== expectedSizeBytes ||
+		integrity.sizeVerified !== true ||
+		integrity.manifestVerified !== true ||
+		integrity.downloadSink !== downloadSink ||
+		integrity.verified !== true
+	) {
+		return false;
+	}
+	const sourceSha256 = integrity.sourceSha256Base64;
+	const sourceCrc32 = integrity.sourceCrc32Hex;
+	if (
+		typeof sourceSha256 !== "string" ||
+		!SHA256_BASE64_PATTERN.test(sourceSha256) ||
+		integrity.manifestSha256Base64 !== sourceSha256 ||
+		integrity.libraryComputedSha256Base64 !== sourceSha256 ||
+		integrity.sha256Verified !== true ||
+		integrity.librarySha256Verified !== true ||
+		typeof sourceCrc32 !== "string" ||
+		!CRC32_HEX_PATTERN.test(sourceCrc32) ||
+		integrity.downloadedCrc32Hex !== sourceCrc32 ||
+		integrity.crc32Verified !== true
+	) {
+		return false;
+	}
+	if (downloadSink === "hash-only") {
+		return (
+			integrity.downloadedSha256Base64 === null &&
+			integrity.persistedSinkSha256Verified === null &&
+			integrity.sinkPersistence === "none" &&
+			integrity.sinkPersistenceVerified === null
+		);
+	}
+	return (
+		integrity.downloadedSha256Base64 === sourceSha256 &&
+		integrity.persistedSinkSha256Verified === true &&
+		integrity.sinkPersistence === downloadSink &&
+		integrity.sinkPersistenceVerified === true
+	);
+};
+
+export const projectUploadIntegrityEvidence = (
+	browserResult,
+	{ fileMb, fixtureSeed, downloadSink } = {},
+) => {
+	if (!isRecord(browserResult)) {
+		return {
+			integrity: null,
+			integrityVerified: false,
+			integrityVerifiedAt: null,
+		};
+	}
+	const integrity = browserResult.integrity ?? null;
+	const integrityVerified = browserResult.integrityVerified ?? false;
+	const integrityVerifiedAt = browserResult.integrityVerifiedAt ?? null;
+	const validUnverifiedEvidence =
+		integrityVerified === false &&
+		integrityVerifiedAt === null &&
+		(integrity === null ||
+			(isRecord(integrity) && integrity.verified === false));
+	const validVerifiedEvidence =
+		integrityVerified === true &&
+		Number.isSafeInteger(integrityVerifiedAt) &&
+		integrityVerifiedAt > 0 &&
+		hasCompleteVerifiedUploadIntegrityEvidence(integrity, {
+			fileMb,
+			fixtureSeed,
+			downloadSink,
+		});
+	if (!validUnverifiedEvidence && !validVerifiedEvidence) {
+		return {
+			integrity: null,
+			integrityVerified: false,
+			integrityVerifiedAt: null,
+		};
+	}
+	return { integrity, integrityVerified, integrityVerifiedAt };
+};
 
 export const serializeError = (error) => {
 	if (error instanceof Error) {
@@ -189,6 +298,17 @@ export const createInvocationFailureEvidence = ({
 					kind: "result-validation",
 					...serializeError(failure),
 				});
+	const uploadEvidence =
+		scenario === "upload"
+			? {
+					seederDropPolicy: SEEDER_DROP_POLICY,
+					...projectUploadIntegrityEvidence(browserResult, {
+						fileMb,
+						fixtureSeed: invocation?.fixtureSeed,
+						downloadSink: invocation?.downloadSink,
+					}),
+				}
+			: {};
 	return {
 		schema: BENCHMARK_RESULT_SCHEMA,
 		runNonce,
@@ -199,6 +319,7 @@ export const createInvocationFailureEvidence = ({
 		mode,
 		networkMode: network,
 		fileSizeMb: fileMb,
+		...uploadEvidence,
 		stage: "runner-evidence",
 		browserStatus: browserResult?.status ?? null,
 		browserStage: browserResult?.stage ?? null,
