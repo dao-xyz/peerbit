@@ -17,6 +17,44 @@ describe(`dial`, function () {
 	});
 
 	if (isNode) {
+		it("applies the configured upload limit to live root and node shard channels", async function () {
+			this.timeout(60_000);
+			const root = await Peerbit.create({
+				pubsubUploadLimitBps: 20_000_000,
+			});
+			const node = await Peerbit.create({
+				pubsubUploadLimitBps: 20_000_000,
+			});
+
+			try {
+				await node.dial(root.getMultiaddrs()[0]!);
+				const rootHash = root.services.fanout.publicKeyHash;
+				root.services.pubsub.setTopicRootCandidates([rootHash]);
+				node.services.pubsub.setTopicRootCandidates([rootHash]);
+				node.services.fanout.setBootstraps(root.getMultiaddrs());
+
+				const topic = "configured-upload-limit";
+				await root.services.pubsub.subscribe(topic);
+				await node.services.pubsub.subscribe(topic);
+				const shardTopic = (
+					root.services.pubsub as any
+				).getShardTopicForUserTopic(topic);
+
+				await waitForResolved(() => {
+					expect(
+						root.services.fanout.getChannelStats(shardTopic, rootHash)
+							?.uploadLimitBps,
+					).to.equal(20_000_000);
+					expect(
+						node.services.fanout.getChannelStats(shardTopic, rootHash)
+							?.uploadLimitBps,
+					).to.equal(20_000_000);
+				});
+			} finally {
+				await Promise.all([root.stop(), node.stop()]);
+			}
+		});
+
 		it("waits for blocks", async () => {
 			const cid = await clients[0].services.blocks.put(new Uint8Array([1]));
 			await clients[1].dial(clients[0].getMultiaddrs()[0]);

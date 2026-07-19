@@ -2575,20 +2575,48 @@ export type SharedLogOptions<
 };
 
 /**
- * Native defaults a client can advertise for shared-log programs opened on
- * it (the peerbit client's native network preset sets these; see
- * `peerbit/rust`). They fill in open options the caller left undefined;
- * explicit per-open options (including `false`) always win. Without the
- * property on the client, behavior is unchanged.
+ * Runtime defaults a client can advertise for shared-log programs opened on
+ * it. The historical name is retained because the peerbit native network
+ * preset introduced this hook. Defaults fill in open options the caller left
+ * undefined; explicit per-open options (including `false`) always win.
+ * Without the property on the client, behavior is unchanged.
  */
 export type SharedLogNativeDefaults = {
 	nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
 	nativeGraph?: LogProperties<any>["nativeGraph"];
 	sync?: Pick<SyncOptions<any>, "rawExchangeHeads" | "nativeWireSync">;
+	/**
+	 * Per-channel defaults applied only when the caller opts into SharedLog
+	 * fanout. Explicit per-open channel options take precedence.
+	 */
+	fanout?: Pick<SharedLogFanoutOptions, "channel">;
 };
 
 type NodeWithSharedLogNativeDefaults = {
 	sharedLogNativeDefaults?: SharedLogNativeDefaults;
+};
+
+type SharedLogFanoutChannelOptions = NonNullable<
+	SharedLogFanoutOptions["channel"]
+>;
+
+const mergeDefinedFanoutChannelOptions = (
+	...sources: Array<SharedLogFanoutChannelOptions | undefined>
+): SharedLogFanoutChannelOptions | undefined => {
+	let merged: Record<string, unknown> | undefined;
+	for (const source of sources) {
+		if (!source) {
+			continue;
+		}
+		for (const [key, value] of Object.entries(source)) {
+			if (value === undefined) {
+				continue;
+			}
+			merged ??= {};
+			merged[key] = value;
+		}
+	}
+	return merged as SharedLogFanoutChannelOptions | undefined;
 };
 
 const applySharedLogNativeDefaults = <
@@ -2596,6 +2624,7 @@ const applySharedLogNativeDefaults = <
 		nativeBackbone?: SharedLogOptions<any, any, any>["nativeBackbone"];
 		nativeGraph?: LogProperties<any>["nativeGraph"];
 		sync?: SyncOptions<any>;
+		fanout?: SharedLogFanoutOptions;
 	},
 >(
 	options: O | undefined,
@@ -2614,11 +2643,21 @@ const applySharedLogNativeDefaults = <
 						options?.sync?.nativeWireSync ?? defaults.sync?.nativeWireSync,
 				}
 			: undefined;
+	const fanout = options?.fanout
+		? {
+				...options.fanout,
+				channel: mergeDefinedFanoutChannelOptions(
+					defaults.fanout?.channel,
+					options.fanout.channel,
+				),
+			}
+		: undefined;
 	return {
 		...options,
 		nativeBackbone: options?.nativeBackbone ?? defaults.nativeBackbone,
 		nativeGraph: options?.nativeGraph ?? defaults.nativeGraph,
 		sync,
+		fanout,
 	} as O;
 };
 
