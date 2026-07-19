@@ -173,7 +173,10 @@ describe("PeerProvider bootstrap handling", () => {
 		}
 	});
 
-	const renderStorageProvider = async (inMemory?: boolean) => {
+	const renderStorageProvider = async (
+		inMemory?: boolean,
+		pubsubUploadLimitBps?: number,
+	) => {
 		mocks.create.mockResolvedValue(createPeerInstance());
 
 		await act(async () => {
@@ -185,6 +188,9 @@ describe("PeerProvider bootstrap handling", () => {
 						waitForConnected: true,
 						keypair: createFakeKeypair(),
 						...(inMemory === undefined ? {} : { inMemory }),
+						...(pubsubUploadLimitBps === undefined
+							? {}
+							: { pubsubUploadLimitBps }),
 					}}
 				>
 					<StatusView />
@@ -486,6 +492,14 @@ describe("PeerProvider bootstrap handling", () => {
 		expect(mocks.persist).not.toHaveBeenCalled();
 		expect(mocks.create).toHaveBeenCalledWith(
 			expect.objectContaining({ directory: undefined }),
+		);
+	});
+
+	it("forwards the pubsub upload limit through the browser node provider", async () => {
+		await renderStorageProvider(true, 20_000_000);
+
+		expect(mocks.create).toHaveBeenCalledWith(
+			expect.objectContaining({ pubsubUploadLimitBps: 20_000_000 }),
 		);
 	});
 

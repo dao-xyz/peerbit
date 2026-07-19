@@ -102,6 +102,11 @@ export type PeerRuntime = "node" | "canonical";
 export type NodePeerProviderConfig = {
 	runtime: "node";
 	network: "local" | "remote" | NetworkOption;
+	/**
+	 * Local per-channel upload budget for pubsub and opted-in SharedLog fanout
+	 * channels. Defaults to 5_000_000 bytes per second.
+	 */
+	pubsubUploadLimitBps?: number;
 	waitForConnected?: boolean | "in-flight";
 	keypair?: Ed25519Keypair;
 	singleton?: boolean;
@@ -499,6 +504,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 
 			clientLog("create", { directory });
 			const created = await Peerbit.create({
+				pubsubUploadLimitBps: nodeOptions.pubsubUploadLimitBps,
 				libp2p: {
 					privateKey,
 					streamMuxers: createPeerbitStreamMuxers(),

@@ -76,6 +76,29 @@ See wire-level details in:
 - Channel helper: `peer.fanoutChannel(topic, root)`
 - Root resolution helper: topic root control plane
 
+Peerbit-created runtimes can set the local per-channel budget for pubsub
+fanout with `Peerbit.create({ pubsubUploadLimitBps: 20_000_000 })`. Browser
+node runtimes use the same option on `PeerProvider`:
+
+```tsx
+<PeerProvider
+	config={{
+		runtime: "node",
+		network: "remote",
+		pubsubUploadLimitBps: 20_000_000,
+	}}
+>
+	{children}
+</PeerProvider>
+```
+
+The value must be a positive safe integer in bytes per second and defaults to
+`5_000_000`. It applies independently to every pubsub shard channel opened in
+the root or node role. It also becomes the default for SharedLog fanout
+channels that a program explicitly enables; a per-open
+`fanout.channel.uploadLimitBps` still wins. The setting is local runtime policy
+and does not change the wire protocol or advertise capacity to remote peers.
+
 Minimal channel usage pattern:
 - Root: `openChannel(topic, rootId, { role: "root", ... })`, then `publishData(...)`
 - Subscriber/relay: `joinChannel(topic, rootId, { ... })`, consume `"fanout:data"`

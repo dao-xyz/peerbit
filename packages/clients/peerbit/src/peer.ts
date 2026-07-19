@@ -119,9 +119,10 @@ export type NativeWireSyncSessionLike = {
 };
 
 /**
- * Native shared-log defaults advertised to programs opened on this client
- * (the `SharedLogNativeDefaults` hook of `@peerbit/shared-log`). Structural
- * copy so the client does not depend on the shared-log package.
+ * Shared-log runtime defaults advertised to programs opened on this client
+ * (the historically named `SharedLogNativeDefaults` hook of
+ * `@peerbit/shared-log`). Structural copy so the client does not depend on the
+ * shared-log package.
  */
 export type SharedLogNativeDefaultsLike = {
 	nativeBackbone?:
@@ -136,6 +137,13 @@ export type SharedLogNativeDefaultsLike = {
 	sync?: {
 		rawExchangeHeads?: boolean;
 		nativeWireSync?: NativeWireSyncSessionLike;
+	};
+	/**
+	 * Per-channel defaults for SharedLog fanout data planes that a program opts
+	 * into. Explicit `fanout.channel` open options take precedence.
+	 */
+	fanout?: {
+		channel?: Partial<Omit<FanoutTreeChannelOptions, "role">>;
 	};
 };
 
@@ -174,6 +182,16 @@ export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	directory?: string;
 	indexer?: (directory?: string) => Promise<Indices> | Indices;
 	storage?: StorageCreateOptions;
+	/**
+	 * Local upload budget, in bytes per second, for each pubsub fanout channel
+	 * opened in either the root or node role. The same default also applies to
+	 * SharedLog fanout channels unless an explicit per-open
+	 * `fanout.channel.uploadLimitBps` is provided.
+	 *
+	 * This is local runtime policy and does not change any wire protocol.
+	 * Default: 5_000_000 B/s.
+	 */
+	pubsubUploadLimitBps?: number;
 	network?: NativeNetworkCreateOptions;
 	/**
 	 * Opt-in automatic bootstrap recovery. `true` uses bounded defaults; an
@@ -182,6 +200,23 @@ export type CreateInstanceOptions = (SimpleLibp2pOptions | Libp2pOptions) & {
 	 */
 	bootstrapRecovery?: boolean | BootstrapRecoveryOptions;
 } & OptionalCreateOptions;
+
+const DEFAULT_PUBSUB_UPLOAD_LIMIT_BPS = 5_000_000;
+
+const resolvePubsubUploadLimitBps = (value: unknown): number => {
+	const resolved =
+		value === undefined ? DEFAULT_PUBSUB_UPLOAD_LIMIT_BPS : value;
+	if (
+		typeof resolved !== "number" ||
+		!Number.isSafeInteger(resolved) ||
+		resolved <= 0
+	) {
+		throw new RangeError(
+			"pubsubUploadLimitBps must be a positive safe integer in bytes per second",
+		);
+	}
+	return resolved;
+};
 
 export type DialReadiness =
 	| "connection"
@@ -258,9 +293,11 @@ export class Peerbit implements ProgramClient {
 	private _bootstrapRecoveryPaused = false;
 
 	/**
-	 * Native shared-log defaults advertised to programs opened on this
-	 * client; read by `@peerbit/shared-log` (`SharedLogNativeDefaults`).
-	 * Set by `CreateInstanceOptions.network` (the `peerbit/rust` preset).
+	 * Shared-log runtime defaults advertised to programs opened on this client;
+	 * read by `@peerbit/shared-log` (`SharedLogNativeDefaults`, whose historical
+	 * name is retained for compatibility). Native defaults come from
+	 * `CreateInstanceOptions.network`; explicit pubsub upload policy contributes
+	 * the fanout channel default.
 	 */
 	public readonly sharedLogNativeDefaults?: SharedLogNativeDefaultsLike;
 
@@ -299,6 +336,37 @@ export class Peerbit implements ProgramClient {
 	}
 
 	static async create(options: CreateInstanceOptions = {}): Promise<Peerbit> {
+		const configuredPubsubUploadLimitBps = options.pubsubUploadLimitBps;
+		const pubsubUploadLimitBps = resolvePubsubUploadLimitBps(
+			configuredPubsubUploadLimitBps,
+		);
+
+		let libp2pExtended: Libp2pExtended | undefined = (options as Libp2pOptions)
+			.libp2p as Libp2pExtended;
+		const suppliedExternalLibp2p =
+			libp2pExtended && isLibp2pInstance(libp2pExtended);
+		if (configuredPubsubUploadLimitBps !== undefined) {
+			if (suppliedExternalLibp2p) {
+				throw new Error(
+					"The 'pubsubUploadLimitBps' option requires Peerbit.create to build the pubsub service; it cannot be combined with an external libp2p instance.",
+				);
+			}
+			const configuredServices = (
+				libp2pExtended as unknown as ClientCreateOptions | undefined
+			)?.services;
+			const hasOwnPubsubService =
+				configuredServices !== undefined &&
+				Object.prototype.hasOwnProperty.call(configuredServices, "pubsub");
+			const configuredPubsubService = hasOwnPubsubService
+				? (configuredServices as { pubsub?: unknown }).pubsub
+				: undefined;
+			if (configuredPubsubService !== undefined) {
+				throw new Error(
+					"The 'pubsubUploadLimitBps' option requires 'libp2p.services.pubsub' to be omitted or undefined; custom, null, and false values are not supported.",
+				);
+			}
+		}
+
 		const bootstrapRecoveryOptions = options.bootstrapRecovery;
 		if (
 			bootstrapRecoveryOptions &&
@@ -308,9 +376,6 @@ export class Peerbit implements ProgramClient {
 			validateBootstrapRecoveryOptions(bootstrapRecoveryOptions);
 		}
 		await sodium.ready; // Some of the modules depends on sodium to be readyy
-
-		let libp2pExtended: Libp2pExtended | undefined = (options as Libp2pOptions)
-			.libp2p as Libp2pExtended;
 
 		const asRelay = (options as SimpleLibp2pOptions).relay ?? true;
 
@@ -445,6 +510,19 @@ export class Peerbit implements ProgramClient {
 					}
 				}
 
+				if (configuredPubsubUploadLimitBps !== undefined) {
+					sharedLogNativeDefaults = {
+						...sharedLogNativeDefaults,
+						fanout: {
+							...sharedLogNativeDefaults?.fanout,
+							channel: {
+								...sharedLogNativeDefaults?.fanout?.channel,
+								uploadLimitBps: pubsubUploadLimitBps,
+							},
+						},
+					};
+				}
+
 				const topicRootControlPlane = new TopicRootControlPlane();
 
 				// Keep a single FanoutTree instance per peer so pubsub sharding + provider
@@ -466,6 +544,24 @@ export class Peerbit implements ProgramClient {
 				};
 
 				const blockProviderNamespace = (cid: string) => `cid:${cid}`;
+
+				const createDefaultPubsubService = (c: any) =>
+					new TopicControlPlane(c, {
+						canRelayMessage: asRelay,
+						topicRootControlPlane,
+						fanout: getOrCreateFanout(c),
+						fanoutRootChannel: {
+							uploadLimitBps: pubsubUploadLimitBps,
+						},
+						fanoutNodeChannel: {
+							uploadLimitBps: pubsubUploadLimitBps,
+						},
+						rustCore: nativeNetwork?.rustCore,
+						// The wire-sync session decodes+verifies inbound
+						// frames natively and stashes shared-log raw
+						// exchange-head payloads for the fused receive.
+						nativeWire: nativeNetwork?.wireSync,
+					});
 
 				const services: any = {
 					keychain: (components: KeychainComponents) =>
@@ -555,18 +651,14 @@ export class Peerbit implements ProgramClient {
 						});
 						return blocksService;
 					},
-					pubsub: (c: any) =>
-						new TopicControlPlane(c, {
-							canRelayMessage: asRelay,
-							topicRootControlPlane,
-							fanout: getOrCreateFanout(c),
-							rustCore: nativeNetwork?.rustCore,
-							// The wire-sync session decodes+verifies inbound
-							// frames natively and stashes shared-log raw
-							// exchange-head payloads for the fused receive.
-							nativeWire: nativeNetwork?.wireSync,
-						}),
+					pubsub: createDefaultPubsubService,
 					...extendedOptions?.services,
+					// With an explicit upload policy, an own `pubsub: undefined`
+					// is treated as absent. Re-apply our factory after the spread
+					// so the configured limit cannot be silently bypassed.
+					...(configuredPubsubUploadLimitBps !== undefined
+						? { pubsub: createDefaultPubsubService }
+						: {}),
 				};
 
 			if (!asRelay) {
