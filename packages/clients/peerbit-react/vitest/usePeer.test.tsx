@@ -23,7 +23,8 @@ const mocks = vi.hoisted(() => {
 		]),
 		privateKeyFromRaw: vi.fn(() => ({})),
 		noise: vi.fn(() => ({})),
-		yamux: vi.fn(() => ({})),
+		streamMuxers: [vi.fn(), vi.fn()],
+		createPeerbitStreamMuxers: vi.fn(),
 		webSockets: vi.fn(() => ({})),
 	};
 });
@@ -41,16 +42,13 @@ vi.mock("peerbit", () => ({
 	Peerbit: {
 		create: mocks.create,
 	},
+	createPeerbitStreamMuxers: mocks.createPeerbitStreamMuxers,
 	getBootstrapPeerId: mocks.getBootstrapPeerId,
 	resolveBootstrapAddresses: mocks.resolveBootstrapAddresses,
 }));
 
 vi.mock("@chainsafe/libp2p-noise", () => ({
 	noise: mocks.noise,
-}));
-
-vi.mock("@chainsafe/libp2p-yamux", () => ({
-	yamux: mocks.yamux,
 }));
 
 vi.mock("@libp2p/websockets", () => ({
@@ -137,6 +135,8 @@ describe("PeerProvider bootstrap handling", () => {
 	let originalStorage: PropertyDescriptor | undefined;
 
 	beforeEach(() => {
+		mocks.createPeerbitStreamMuxers.mockReset();
+		mocks.createPeerbitStreamMuxers.mockReturnValue(mocks.streamMuxers);
 		container = document.createElement("div");
 		document.body.appendChild(container);
 		root = ReactDOM.createRoot(container);
@@ -386,6 +386,19 @@ describe("PeerProvider bootstrap handling", () => {
 			"Browser storage is not protected from eviction; continuing with OPFS-backed storage.",
 		);
 		expect((window as any).__peerInfo.persisted).toBe(false);
+	});
+
+	it("uses the shared Peerbit stream-muxer profile", async () => {
+		await renderStorageProvider();
+
+		expect(mocks.createPeerbitStreamMuxers).toHaveBeenCalledTimes(1);
+		expect(mocks.create).toHaveBeenCalledWith(
+			expect.objectContaining({
+				libp2p: expect.objectContaining({
+					streamMuxers: mocks.streamMuxers,
+				}),
+			}),
+		);
 	});
 
 	it("reports granted eviction protection while using OPFS", async () => {
