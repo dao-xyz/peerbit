@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 export const BENCHMARK_INVOCATION_SCHEMA = {
 	id: "peerbit-file-share-benchmark-invocation",
-	version: 5,
+	version: 6,
 };
 
 export const TINY_FILE_CUTOFF_BYTES = 5_000_000;
@@ -15,6 +15,11 @@ export const BENCHMARK_DOWNLOAD_SINKS = Object.freeze([
 	"node-file",
 ]);
 export const DEFAULT_BENCHMARK_DOWNLOAD_SINK = "hash-only";
+export const BENCHMARK_BROWSER_STORAGE_MODES = Object.freeze([
+	"memory",
+	"opfs",
+]);
+export const DEFAULT_BENCHMARK_BROWSER_STORAGE_MODE = "memory";
 export const MAX_READER_LOCAL_CHUNK_OVERSHOOT = 8;
 export const READER_TERMINAL_TOPOLOGIES = Object.freeze([
 	"observer",
@@ -54,6 +59,28 @@ export const resolveBenchmarkDownloadSink = (requestedSink, { scenario }) => {
 	if (!BENCHMARK_DOWNLOAD_SINKS.includes(resolved)) {
 		throw new Error(
 			`Unsupported benchmark download sink ${JSON.stringify(resolved)}; expected one of ${BENCHMARK_DOWNLOAD_SINKS.join(", ")}`,
+		);
+	}
+	return resolved;
+};
+
+export const resolveBenchmarkBrowserStorageMode = (
+	requestedMode,
+	{ scenario },
+) => {
+	const mode = asNullableString(requestedMode);
+	if (scenario !== "upload") {
+		if (mode !== null) {
+			throw new Error(
+				"--browser-storage is only supported by upload benchmarks",
+			);
+		}
+		return null;
+	}
+	const resolved = mode ?? DEFAULT_BENCHMARK_BROWSER_STORAGE_MODE;
+	if (!BENCHMARK_BROWSER_STORAGE_MODES.includes(resolved)) {
+		throw new Error(
+			`Unsupported benchmark browser storage ${JSON.stringify(resolved)}; expected one of ${BENCHMARK_BROWSER_STORAGE_MODES.join(", ")}`,
 		);
 	}
 	return resolved;
@@ -163,6 +190,7 @@ export const createBenchmarkInvocation = ({
 	fileMb,
 	fixtureSeed,
 	downloadSink,
+	browserStorageMode,
 	uploadTimeoutMs,
 	downloadTimeoutMs,
 	postTransferSoakMs,
@@ -176,6 +204,7 @@ export const createBenchmarkInvocation = ({
 	readerLocalChunkTarget,
 	readerLocalChunkMaxOvershoot,
 	readerTerminalTopology,
+	readerPersistChunkReads,
 	baseUrl,
 	protocol,
 	viteMode,
@@ -208,6 +237,10 @@ export const createBenchmarkInvocation = ({
 	const resolvedDownloadSink = resolveBenchmarkDownloadSink(downloadSink, {
 		scenario,
 	});
+	const resolvedBrowserStorageMode = resolveBenchmarkBrowserStorageMode(
+		browserStorageMode,
+		{ scenario },
+	);
 	if (typeof fixtureSeed !== "string" || fixtureSeed.length === 0) {
 		throw new Error("fixtureSeed must be a non-empty string");
 	}
@@ -256,6 +289,18 @@ export const createBenchmarkInvocation = ({
 		readerTerminalTopology == null || readerTerminalTopology === ""
 			? null
 			: String(readerTerminalTopology);
+	const resolvedReaderPersistChunkReads =
+		readerPersistChunkReads == null
+			? resolvedReaderLocalChunkTarget === null
+				? null
+				: true
+			: readerPersistChunkReads;
+	if (
+		resolvedReaderPersistChunkReads !== null &&
+		typeof resolvedReaderPersistChunkReads !== "boolean"
+	) {
+		throw new Error("readerPersistChunkReads must be a boolean when provided");
+	}
 	if (
 		resolvedReaderTerminalTopology !== null &&
 		!READER_TERMINAL_TOPOLOGIES.includes(resolvedReaderTerminalTopology)
@@ -278,6 +323,14 @@ export const createBenchmarkInvocation = ({
 	) {
 		throw new Error(
 			"readerTerminalTopology must be provided exactly when readerLocalChunkTarget is provided",
+		);
+	}
+	if (
+		(resolvedReaderLocalChunkTarget === null) !==
+		(resolvedReaderPersistChunkReads === null)
+	) {
+		throw new Error(
+			"readerPersistChunkReads must be provided exactly when readerLocalChunkTarget is provided",
 		);
 	}
 	if (
@@ -329,6 +382,22 @@ export const createBenchmarkInvocation = ({
 				"readerLocalChunkTarget requires minReadySeeders = 1 because the reader starts as an observer",
 			);
 		}
+		if (
+			resolvedReaderPersistChunkReads === false &&
+			resolvedReaderLocalChunkTarget !== 0
+		) {
+			throw new Error(
+				"Transient reader benchmarks require readerLocalChunkTarget = 0",
+			);
+		}
+		if (
+			resolvedReaderPersistChunkReads === false &&
+			resolvedReaderTerminalTopology !== "observer"
+		) {
+			throw new Error(
+				"Transient reader benchmarks require readerTerminalTopology = observer",
+			);
+		}
 	}
 
 	return {
@@ -341,6 +410,7 @@ export const createBenchmarkInvocation = ({
 		fileSizeBytes: sizeBytes,
 		fixtureSeed,
 		downloadSink: resolvedDownloadSink,
+		browserStorageMode: resolvedBrowserStorageMode,
 		uploadTimeoutMs: resolvedUploadTimeoutMs,
 		downloadTimeoutMs: resolvedDownloadTimeoutMs,
 		postTransferSoakMs: resolvedPostTransferSoakMs,
@@ -354,6 +424,7 @@ export const createBenchmarkInvocation = ({
 		readerLocalChunkTarget: resolvedReaderLocalChunkTarget,
 		readerLocalChunkMaxOvershoot: resolvedReaderLocalChunkMaxOvershoot,
 		readerTerminalTopology: resolvedReaderTerminalTopology,
+		readerPersistChunkReads: resolvedReaderPersistChunkReads,
 		baseUrl: resolvedBaseUrl,
 		protocol: previewOptions.protocol,
 		viteMode: previewOptions.viteMode,
@@ -395,6 +466,7 @@ export const createPlaywrightBenchmarkEnvironment = ({
 		PW_BENCHMARK_RUN_NONCE: runNonce,
 		PW_BENCHMARK_SCENARIO: invocation.scenario,
 		PW_DOWNLOAD_SINK: stringValue(invocation.downloadSink),
+		PW_BROWSER_STORAGE_MODE: stringValue(invocation.browserStorageMode),
 		PW_DOWNLOAD_TIMEOUT_MS: String(invocation.downloadTimeoutMs),
 		PW_ENABLE_VISIBILITY_PROBE: invocation.enableVisibilityProbe ? "1" : "0",
 		PW_FILE_MB: String(invocation.fileSizeMb),
@@ -419,6 +491,12 @@ export const createPlaywrightBenchmarkEnvironment = ({
 			invocation.readerLocalChunkMaxOvershoot,
 		),
 		PW_READER_TERMINAL_TOPOLOGY: stringValue(invocation.readerTerminalTopology),
+		PW_READER_PERSIST_CHUNK_READS:
+			invocation.readerPersistChunkReads == null
+				? ""
+				: invocation.readerPersistChunkReads
+					? "1"
+					: "0",
 		PW_UPLOAD_TIMEOUT_MS: String(invocation.uploadTimeoutMs),
 		PW_VERBOSE: invocation.verbose ? "1" : "0",
 		PW_VITE_CONFIG: stringValue(invocation.viteConfig),

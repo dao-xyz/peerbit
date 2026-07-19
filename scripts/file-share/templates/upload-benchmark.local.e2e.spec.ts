@@ -1,7 +1,8 @@
-import { type Page, expect, test } from "@playwright/test";
+import { type Page, chromium, expect, test } from "@playwright/test";
 import { SHA256 } from "@stablelib/sha256";
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
 import {
@@ -45,6 +46,13 @@ const READER_LOCAL_CHUNK_MAX_OVERSHOOT = process.env
 	: null;
 const READER_TERMINAL_TOPOLOGY =
 	process.env.PW_READER_TERMINAL_TOPOLOGY || null;
+const READER_PERSIST_CHUNK_READS =
+	process.env.PW_READER_PERSIST_CHUNK_READS === "1"
+		? true
+		: process.env.PW_READER_PERSIST_CHUNK_READS === "0"
+			? false
+			: null;
+const BROWSER_STORAGE_MODE = process.env.PW_BROWSER_STORAGE_MODE;
 const LOCALITY_CONTROL_POLL_MS = Math.min(POLL_MS, 100);
 const LOCALITY_CONTROL_STABLE_SAMPLE_COUNT = 3;
 const TRANSPORT_COUNTER_STABILITY_POLL_MS = 100;
@@ -140,7 +148,7 @@ const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 10,
+	version: 11,
 } as const;
 const SEEDER_DROP_POLICY = {
 	id: "peerbit-file-share-seeder-drop-policy",
@@ -183,6 +191,11 @@ if (!Number.isSafeInteger(FILE_SIZE_BYTES) || FILE_SIZE_BYTES < 0) {
 if (!RUN_NONCE) {
 	throw new Error("Missing PW_BENCHMARK_RUN_NONCE");
 }
+if (BROWSER_STORAGE_MODE !== "memory" && BROWSER_STORAGE_MODE !== "opfs") {
+	throw new Error(
+		`Invalid PW_BROWSER_STORAGE_MODE='${process.env.PW_BROWSER_STORAGE_MODE}'`,
+	);
+}
 if (
 	READER_LOCAL_CHUNK_TARGET !== null &&
 	(!Number.isSafeInteger(READER_LOCAL_CHUNK_TARGET) ||
@@ -206,6 +219,22 @@ if (
 ) {
 	throw new Error(
 		"PW_READER_TERMINAL_TOPOLOGY must be provided exactly when PW_READER_LOCAL_CHUNK_TARGET is provided",
+	);
+}
+if (
+	(READER_LOCAL_CHUNK_TARGET === null) !==
+	(READER_PERSIST_CHUNK_READS === null)
+) {
+	throw new Error(
+		"PW_READER_PERSIST_CHUNK_READS must be provided exactly when PW_READER_LOCAL_CHUNK_TARGET is provided",
+	);
+}
+if (
+	process.env.PW_READER_PERSIST_CHUNK_READS !== "" &&
+	READER_PERSIST_CHUNK_READS === null
+) {
+	throw new Error(
+		`Invalid PW_READER_PERSIST_CHUNK_READS='${process.env.PW_READER_PERSIST_CHUNK_READS}'`,
 	);
 }
 if (
@@ -271,6 +300,14 @@ if (
 		"PW_READER_LOCAL_CHUNK_TARGET requires fixed1 writer mode and exactly one ready seeder because the reader starts as an observer",
 	);
 }
+if (
+	READER_PERSIST_CHUNK_READS === false &&
+	(READER_LOCAL_CHUNK_TARGET !== 0 || READER_TERMINAL_TOPOLOGY !== "observer")
+) {
+	throw new Error(
+		"Transient reader benchmarks require a zero local prefix and observer terminal topology",
+	);
+}
 
 const expectedInvocationValues: Record<string, unknown> = {
 	scenario: "upload",
@@ -280,6 +317,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	fileSizeBytes: FILE_SIZE_BYTES,
 	fixtureSeed: FIXTURE_SEED,
 	downloadSink: DOWNLOAD_SINK,
+	browserStorageMode: BROWSER_STORAGE_MODE,
 	uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
 	downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
 	postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
@@ -290,6 +328,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
 	readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
 	readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
+	readerPersistChunkReads: READER_PERSIST_CHUNK_READS,
 	baseUrl: process.env.PW_BASE_URL || null,
 	protocol: process.env.PW_PROTOCOL || null,
 	viteMode: process.env.PW_VITE_MODE || null,
@@ -302,7 +341,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 5
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 6
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -592,9 +631,10 @@ const preloadLocalChunkPrefix = async (
 	fileName: string,
 	target: number,
 	timeoutMs: number,
+	persistChunkReads: boolean,
 ) => {
 	const evaluation = page.evaluate(
-		async ({ expectedFileName, requestedTarget, timeout }) => {
+		async ({ expectedFileName, requestedTarget, timeout, persist }) => {
 			const hooks = (window as any).__peerbitFileShareTestHooks;
 			if (!hooks?.preloadLocalChunkPrefix) {
 				throw new Error(
@@ -605,9 +645,15 @@ const preloadLocalChunkPrefix = async (
 				expectedFileName,
 				requestedTarget,
 				timeout,
+				persist,
 			);
 		},
-		{ expectedFileName: fileName, requestedTarget: target, timeout: timeoutMs },
+		{
+			expectedFileName: fileName,
+			requestedTarget: target,
+			timeout: timeoutMs,
+			persist: persistChunkReads,
+		},
 	);
 	return target > 0
 		? await withDeadline(
@@ -1492,9 +1538,146 @@ const logSnapshot = (snapshot: Record<string, unknown>) => {
 	}
 };
 
+type PersistentBenchmarkBrowserContext = Awaited<
+	ReturnType<typeof chromium.launchPersistentContext>
+>;
+
+const rejectedCleanupReasons = (
+	results: PromiseSettledResult<unknown>[],
+): unknown[] =>
+	results.flatMap((result) =>
+		result.status === "rejected" ? [result.reason] : [],
+	);
+
+const throwCleanupFailures = (failures: unknown[], message: string) => {
+	if (failures.length > 0) {
+		throw new AggregateError(failures, message);
+	}
+};
+
+const cleanupPersistentBenchmarkBrowsers = async ({
+	writerProfileDir,
+	readerProfileDir,
+	writerContext,
+	readerContext,
+}: {
+	writerProfileDir?: string;
+	readerProfileDir?: string;
+	writerContext?: PersistentBenchmarkBrowserContext;
+	readerContext?: PersistentBenchmarkBrowserContext;
+}) => {
+	const contexts = [writerContext, readerContext].filter(
+		(context): context is PersistentBenchmarkBrowserContext =>
+			context !== undefined,
+	);
+	const contextBrowsers = contexts.map((context) => context.browser());
+	const contextCloseResults = await Promise.allSettled(
+		contexts.map((context) => context.close()),
+	);
+	const failures = rejectedCleanupReasons(contextCloseResults);
+	// A persistent context normally owns and closes its browser. Calling close on
+	// the captured Browser object is a best-effort fallback only when that
+	// context's close rejected partway through.
+	const fallbackBrowsers = [
+		...new Set(
+			contextCloseResults.flatMap((result, index) => {
+				const browser = contextBrowsers[index];
+				return result.status === "rejected" && browser !== null
+					? [browser]
+					: [];
+			}),
+		),
+	];
+	failures.push(
+		...rejectedCleanupReasons(
+			await Promise.allSettled(
+				fallbackBrowsers.map((browser) => browser.close()),
+			),
+		),
+	);
+
+	const profileDirs = [writerProfileDir, readerProfileDir].filter(
+		(profileDir): profileDir is string => profileDir !== undefined,
+	);
+	failures.push(
+		...rejectedCleanupReasons(
+			await Promise.allSettled(
+				profileDirs.map((profileDir) =>
+					rm(profileDir, { recursive: true, force: true }),
+				),
+			),
+		),
+	);
+	throwCleanupFailures(
+		failures,
+		"Persistent benchmark browser cleanup did not complete",
+	);
+};
+
+const launchPersistentBenchmarkBrowsers = async () => {
+	let writerProfileDir: string | undefined;
+	let readerProfileDir: string | undefined;
+	let writerContext: PersistentBenchmarkBrowserContext | undefined;
+	let readerContext: PersistentBenchmarkBrowserContext | undefined;
+	try {
+		writerProfileDir = await mkdtemp(
+			path.join(os.tmpdir(), "peerbit-file-share-writer-profile-"),
+		);
+		readerProfileDir = await mkdtemp(
+			path.join(os.tmpdir(), "peerbit-file-share-reader-profile-"),
+		);
+		const persistentContextOptions = {
+			acceptDownloads: true,
+			headless: true,
+		};
+		writerContext = await chromium.launchPersistentContext(
+			writerProfileDir,
+			persistentContextOptions,
+		);
+		readerContext = await chromium.launchPersistentContext(
+			readerProfileDir,
+			persistentContextOptions,
+		);
+		for (const context of [writerContext, readerContext]) {
+			await context.addInitScript((storageMode) => {
+				(window as any).__peerbitFileShareBenchmarkStorageMode = storageMode;
+			}, BROWSER_STORAGE_MODE);
+		}
+		const writerBrowser = writerContext.browser();
+		const readerBrowser = readerContext.browser();
+		if (!writerBrowser || !readerBrowser || writerBrowser === readerBrowser) {
+			throw new Error(
+				"Persistent writer and reader contexts must expose separate browser instances",
+			);
+		}
+		return {
+			writerProfileDir,
+			readerProfileDir,
+			writerContext,
+			readerContext,
+			writerBrowser,
+			readerBrowser,
+		};
+	} catch (error) {
+		try {
+			await cleanupPersistentBenchmarkBrowsers({
+				writerProfileDir,
+				readerProfileDir,
+				writerContext,
+				readerContext,
+			});
+		} catch (cleanupError) {
+			throw new AggregateError(
+				[error, cleanupError],
+				"Persistent benchmark browser launch and cleanup failed",
+			);
+		}
+		throw error;
+	}
+};
+
 test.describe("generated transfer-validity benchmark", () => {
 	test("measures upload, discovery, monitoring, and persisted download", async ({
-		browser,
 		baseURL,
 	}) => {
 		test.setTimeout(TEST_OUTER_TIMEOUT_MS);
@@ -1507,10 +1690,45 @@ test.describe("generated transfer-validity benchmark", () => {
 			| Awaited<ReturnType<typeof startBootstrapPeer>>
 			| undefined = usesLocalBootstrap ? await startBootstrapPeer() : undefined;
 		const fileName = `file-share-benchmark-${MODE}-${RUN_NONCE}.bin`;
-		const writerContext = await browser.newContext({ acceptDownloads: true });
-		const readerContext = await browser.newContext({ acceptDownloads: true });
-		const writer = await writerContext.newPage();
-		const reader = await readerContext.newPage();
+		let browserPair: Awaited<
+			ReturnType<typeof launchPersistentBenchmarkBrowsers>
+		>;
+		try {
+			browserPair = await launchPersistentBenchmarkBrowsers();
+		} catch (error) {
+			const cleanupFailures = rejectedCleanupReasons(
+				await Promise.allSettled([bootstrap?.stop()]),
+			);
+			if (cleanupFailures.length > 0) {
+				throw new AggregateError(
+					[error, ...cleanupFailures],
+					"Benchmark browser launch and bootstrap cleanup failed",
+				);
+			}
+			throw error;
+		}
+		const { writerContext, readerContext, writerBrowser, readerBrowser } =
+			browserPair;
+		let writer: Page;
+		let reader: Page;
+		try {
+			writer = writerContext.pages()[0] ?? (await writerContext.newPage());
+			reader = readerContext.pages()[0] ?? (await readerContext.newPage());
+		} catch (error) {
+			const cleanupFailures = rejectedCleanupReasons(
+				await Promise.allSettled([
+					cleanupPersistentBenchmarkBrowsers(browserPair),
+					bootstrap?.stop(),
+				]),
+			);
+			if (cleanupFailures.length > 0) {
+				throw new AggregateError(
+					[error, ...cleanupFailures],
+					"Benchmark page acquisition and ownership cleanup failed",
+				);
+			}
+			throw error;
+		}
 		const errors: string[] = [];
 		const requestFailures: string[] = [];
 		const snapshots: Array<Record<string, unknown>> = [];
@@ -1526,6 +1744,7 @@ test.describe("generated transfer-validity benchmark", () => {
 			| Awaited<ReturnType<typeof installNodeBackedMockSaveFilePicker>>
 			| undefined;
 		let stage = "setup";
+		let benchmarkFailure: unknown;
 		let uploadStartedAt: number | undefined;
 		let uploadSettledAt: number | undefined;
 		let progressSettledAt: number | undefined;
@@ -1577,7 +1796,9 @@ test.describe("generated transfer-validity benchmark", () => {
 							"exact local Documents index rows and manifest entry blocks",
 						writerUploadRole: "fixed1",
 						readerUploadRole: "observer",
-						readerTimedReadPolicy: "persist-chunk-reads",
+						readerTimedReadPolicy: READER_PERSIST_CHUNK_READS
+							? "persist-chunk-reads"
+							: "transient-chunk-reads",
 						expectedTerminalTopology: READER_TERMINAL_TOPOLOGY,
 						stabilityPollIntervalMs: LOCALITY_CONTROL_POLL_MS,
 						requiredStableObservationCount:
@@ -1786,7 +2007,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					observation.blockCount <=
 						READER_LOCAL_CHUNK_TARGET + READER_LOCAL_CHUNK_MAX_OVERSHOOT &&
 					observation.blockCount < observation.chunkCount! &&
-					observation.persistChunkReads === true &&
+					observation.persistChunkReads === READER_PERSIST_CHUNK_READS &&
 					localityObservationIsIdle(observation);
 				if (!exactSetsAreValid) {
 					stable = [];
@@ -1831,27 +2052,30 @@ test.describe("generated transfer-validity benchmark", () => {
 					READER_TERMINAL_TOPOLOGY === "replicator"
 						? lastObservation.chunkCount
 						: 0;
+				const expectedTerminalBlockCount = READER_PERSIST_CHUNK_READS
+					? lastObservation.chunkCount
+					: 0;
 				if (
 					localityObservationIsIdle(lastObservation) &&
 					lastObservation.fileId === readerManifestEvidence?.fileId &&
 					lastObservation.chunkCount !== null &&
 					lastObservation.blockCount !== null &&
 					lastObservation.blockChunkIndices !== null &&
-					lastObservation.blockCount === lastObservation.chunkCount &&
+					lastObservation.blockCount === expectedTerminalBlockCount &&
 					lastObservation.indexRowCount === expectedTerminalIndexRowCount &&
 					Array.isArray(lastObservation.indexedChunkIndices) &&
 					lastObservation.indexedChunkIndices.length ===
 						expectedTerminalIndexRowCount &&
 					isContiguousPrefix(lastObservation.indexedChunkIndices) &&
 					isContiguousPrefix(lastObservation.blockChunkIndices) &&
-					lastObservation.persistChunkReads === true
+					lastObservation.persistChunkReads === READER_PERSIST_CHUNK_READS
 				) {
 					return lastObservation;
 				}
 				await reader.waitForTimeout(LOCALITY_CONTROL_POLL_MS);
 			}
 			throw new Error(
-				`Timed reader did not become transfer-idle with every manifest chunk local: ${JSON.stringify(lastObservation)}`,
+				`Timed reader did not become transfer-idle with the requested persistence policy: ${JSON.stringify(lastObservation)}`,
 			);
 		};
 
@@ -2267,6 +2491,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					fileName,
 					READER_LOCAL_CHUNK_TARGET,
 					DOWNLOAD_TIMEOUT_MS,
+					READER_PERSIST_CHUNK_READS!,
 				)) as Record<string, unknown>;
 				readerLocalityControl.preloadEvidence = preloadEvidence;
 				const preloadScheduler = preloadEvidence.downloadSchedulerAfterClose as
@@ -2293,7 +2518,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					!Number.isSafeInteger(preloadEvidence.rawFetchedByteCount) ||
 					(preloadEvidence.rawFetchedByteCount as number) < 0 ||
 					preloadEvidence.maxConcurrentImports !== 8 ||
-					preloadEvidence.persistChunkReads !== true ||
+					preloadEvidence.persistChunkReads !== READER_PERSIST_CHUNK_READS ||
 					!Array.isArray(preloadEvidence.activeTransfersAfterClose) ||
 					preloadEvidence.activeTransfersAfterClose.length !== 0 ||
 					preloadScheduler?.activeCount !== 0 ||
@@ -2342,7 +2567,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					preDownloadObservation.indexRowCount;
 				readerLocalityControl.speculativeOvershootChunkCount =
 					preDownloadObservation.blockCount! - READER_LOCAL_CHUNK_TARGET;
-				readerLocalityControl.cohortKey = `observer-persistent-prefix-b${preDownloadObservation.blockCount}-i${preDownloadObservation.indexRowCount}`;
+				readerLocalityControl.cohortKey = `observer-${READER_PERSIST_CHUNK_READS ? "persistent" : "transient"}-${BROWSER_STORAGE_MODE}-prefix-b${preDownloadObservation.blockCount}-i${preDownloadObservation.indexRowCount}`;
 				logStage("reader-locality-prefix-stable", {
 					actualLocalChunkBlockCount:
 						readerLocalityControl.actualLocalChunkBlockCount,
@@ -2363,7 +2588,8 @@ test.describe("generated transfer-validity benchmark", () => {
 				timeout: DOWNLOAD_TIMEOUT_MS,
 			});
 			downloadMemoryTelemetryController = await startDownloadMemoryTelemetry({
-				browser,
+				browsers: [writerBrowser, readerBrowser],
+				expectedBrowserCount: 2,
 				reader,
 				writer,
 				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
@@ -2647,17 +2873,23 @@ test.describe("generated transfer-validity benchmark", () => {
 					readerLocalityControl.actualLocalChunkBlockCount;
 				const actualLocalChunkIndexRowCount =
 					readerLocalityControl.actualLocalChunkIndexRowCount;
+				const expectedInitialDiagnosticIndexRowCount =
+					READER_PERSIST_CHUNK_READS ? actualLocalChunkIndexRowCount : null;
+				const expectedInitialDiagnosticBlockCount = READER_PERSIST_CHUNK_READS
+					? actualLocalChunkBlockCount
+					: null;
 				if (
 					!Number.isSafeInteger(actualLocalChunkBlockCount) ||
 					!Number.isSafeInteger(actualLocalChunkIndexRowCount) ||
-					rawReadDiagnostics.persistChunkReads !== true ||
-					rawReadDiagnostics.programPersistChunkReads !== true ||
+					rawReadDiagnostics.persistChunkReads !== READER_PERSIST_CHUNK_READS ||
+					rawReadDiagnostics.programPersistChunkReads !==
+						READER_PERSIST_CHUNK_READS ||
 					rawReadDiagnostics.initialLocalChunkIndexRowCount !==
-						actualLocalChunkIndexRowCount ||
+						expectedInitialDiagnosticIndexRowCount ||
 					rawReadDiagnostics.initialLocalChunkCount !==
-						actualLocalChunkIndexRowCount ||
+						expectedInitialDiagnosticIndexRowCount ||
 					rawReadDiagnostics.initialLocalChunkBlockCount !==
-						actualLocalChunkBlockCount
+						expectedInitialDiagnosticBlockCount
 				) {
 					throw new Error(
 						"Timed read diagnostics do not match the controlled pre-download locality cohort",
@@ -3127,6 +3359,8 @@ test.describe("generated transfer-validity benchmark", () => {
 				readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
 				readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
 				readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
+				readerPersistChunkReads: READER_PERSIST_CHUNK_READS,
+				browserStorageMode: BROWSER_STORAGE_MODE,
 				readerLocalChunkBlockCount:
 					readerLocalityControl?.actualLocalChunkBlockCount ?? null,
 				readerLocalChunkIndexRowCount:
@@ -3249,109 +3483,122 @@ test.describe("generated transfer-validity benchmark", () => {
 			await persistResult(result);
 			console.log(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
 		} catch (error: any) {
-			if (downloadMemoryTelemetryController) {
-				downloadMemoryTelemetry =
-					await downloadMemoryTelemetryController.cleanup();
+			benchmarkFailure = error;
+			try {
+				if (downloadMemoryTelemetryController) {
+					downloadMemoryTelemetry =
+						await downloadMemoryTelemetryController.cleanup();
+				}
+				if (readerLocalityControl) {
+					readerLocalityControl.status = "failed";
+					readerLocalityControl.failure =
+						typeof error?.message === "string" ? error.message : String(error);
+				}
+				const failureSnapshot = await snapshot(`failure-${stage}`).catch(
+					() => null,
+				);
+				if (failureSnapshot) {
+					noteSeederDrop(failureSnapshot);
+				}
+				const writerDiagnostics = await getDiagnostics(writer);
+				const readerDiagnostics = await getDiagnostics(reader);
+				const collectedErrors = [...errors];
+				const collectedRequestFailures = [...requestFailures];
+				const result = {
+					schema: RESULT_SCHEMA,
+					runNonce: RUN_NONCE,
+					invocation: INVOCATION,
+					provenance: PROVENANCE,
+					status: "failed",
+					mode: MODE,
+					readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
+					readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
+					readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
+					readerPersistChunkReads: READER_PERSIST_CHUNK_READS,
+					browserStorageMode: BROWSER_STORAGE_MODE,
+					readerLocalChunkBlockCount:
+						readerLocalityControl?.actualLocalChunkBlockCount ?? null,
+					readerLocalChunkIndexRowCount:
+						readerLocalityControl?.actualLocalChunkIndexRowCount ?? null,
+					readerLocalityCohortKey: readerLocalityControl?.cohortKey ?? null,
+					readerLocalityControl,
+					networkMode: NETWORK_MODE,
+					fileSizeMb: FILE_SIZE_MB,
+					stage,
+					requestedDownloadSink: DOWNLOAD_SINK,
+					downloadMemoryTelemetry,
+					resourceEvidence: resourceEvidence ?? {
+						schemaVersion: 2,
+						snapshots: resourceSnapshots,
+						intervals: null,
+					},
+					shutdownOutcomes,
+					integrity,
+					integrityVerified,
+					integrityVerifiedAt,
+					phaseDurationsMs: getPhaseDurations(),
+					postUploadMonitorSchedulingToleranceMs:
+						POST_MONITOR_SCHEDULING_TOLERANCE_MS,
+					postUploadMonitorSchedulingToleranceDefinition:
+						POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION,
+					transferTimeoutSchedulingToleranceMs:
+						TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
+					transferTimeoutSchedulingToleranceDefinition:
+						TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
+					postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
+					postTransferSoakMs: POST_TRANSFER_SOAK_MS,
+					postTransferSoakActualMs:
+						postTransferSoakStartedAt != null &&
+						postTransferSoakFinishedAt != null
+							? postTransferSoakFinishedAt - postTransferSoakStartedAt
+							: null,
+					postTransferSoakSchedulingToleranceMs:
+						POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_MS,
+					postTransferSoakSchedulingToleranceDefinition:
+						POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION,
+					pollMs: POLL_MS,
+					uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
+					downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
+					minReadySeeders: MIN_READY_SEEDERS,
+					readyTimeoutMs: READY_TIMEOUT_MS,
+					baselineWriterSeeders,
+					baselineReaderSeeders,
+					shareUrl,
+					seederDropPolicy: SEEDER_DROP_POLICY,
+					droppedSeeders: dropped,
+					unexpectedSeederDrop,
+					writerVisibilityProbe,
+					readerVisibilityProbe,
+					errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+					knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
+					errorCollectionComplete: true,
+					errorCount: collectedErrors.length,
+					errors: collectedErrors,
+					requestFailureCollectionDefinition:
+						REQUEST_FAILURE_COLLECTION_DEFINITION,
+					requestFailureCollectionComplete: true,
+					requestFailureCount: collectedRequestFailures.length,
+					requestFailures: collectedRequestFailures,
+					snapshots,
+					writerDiagnostics,
+					readerDiagnostics,
+					failure: {
+						message:
+							typeof error?.message === "string"
+								? error.message
+								: String(error),
+						stack: typeof error?.stack === "string" ? error.stack : undefined,
+					},
+				};
+				await persistResult(result);
+				console.error(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
+			} catch (failureHandlingError) {
+				benchmarkFailure = new AggregateError(
+					[error, failureHandlingError],
+					"Benchmark execution and failed-result handling both failed",
+				);
+				throw benchmarkFailure;
 			}
-			if (readerLocalityControl) {
-				readerLocalityControl.status = "failed";
-				readerLocalityControl.failure =
-					typeof error?.message === "string" ? error.message : String(error);
-			}
-			const failureSnapshot = await snapshot(`failure-${stage}`).catch(
-				() => null,
-			);
-			if (failureSnapshot) {
-				noteSeederDrop(failureSnapshot);
-			}
-			const writerDiagnostics = await getDiagnostics(writer);
-			const readerDiagnostics = await getDiagnostics(reader);
-			const collectedErrors = [...errors];
-			const collectedRequestFailures = [...requestFailures];
-			const result = {
-				schema: RESULT_SCHEMA,
-				runNonce: RUN_NONCE,
-				invocation: INVOCATION,
-				provenance: PROVENANCE,
-				status: "failed",
-				mode: MODE,
-				readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
-				readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
-				readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
-				readerLocalChunkBlockCount:
-					readerLocalityControl?.actualLocalChunkBlockCount ?? null,
-				readerLocalChunkIndexRowCount:
-					readerLocalityControl?.actualLocalChunkIndexRowCount ?? null,
-				readerLocalityCohortKey: readerLocalityControl?.cohortKey ?? null,
-				readerLocalityControl,
-				networkMode: NETWORK_MODE,
-				fileSizeMb: FILE_SIZE_MB,
-				stage,
-				requestedDownloadSink: DOWNLOAD_SINK,
-				downloadMemoryTelemetry,
-				resourceEvidence: resourceEvidence ?? {
-					schemaVersion: 2,
-					snapshots: resourceSnapshots,
-					intervals: null,
-				},
-				shutdownOutcomes,
-				integrity,
-				integrityVerified,
-				integrityVerifiedAt,
-				phaseDurationsMs: getPhaseDurations(),
-				postUploadMonitorSchedulingToleranceMs:
-					POST_MONITOR_SCHEDULING_TOLERANCE_MS,
-				postUploadMonitorSchedulingToleranceDefinition:
-					POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION,
-				transferTimeoutSchedulingToleranceMs:
-					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
-				transferTimeoutSchedulingToleranceDefinition:
-					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
-				postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
-				postTransferSoakMs: POST_TRANSFER_SOAK_MS,
-				postTransferSoakActualMs:
-					postTransferSoakStartedAt != null &&
-					postTransferSoakFinishedAt != null
-						? postTransferSoakFinishedAt - postTransferSoakStartedAt
-						: null,
-				postTransferSoakSchedulingToleranceMs:
-					POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_MS,
-				postTransferSoakSchedulingToleranceDefinition:
-					POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION,
-				pollMs: POLL_MS,
-				uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
-				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
-				minReadySeeders: MIN_READY_SEEDERS,
-				readyTimeoutMs: READY_TIMEOUT_MS,
-				baselineWriterSeeders,
-				baselineReaderSeeders,
-				shareUrl,
-				seederDropPolicy: SEEDER_DROP_POLICY,
-				droppedSeeders: dropped,
-				unexpectedSeederDrop,
-				writerVisibilityProbe,
-				readerVisibilityProbe,
-				errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
-				knownPeerbitFailureSignatures: KNOWN_PEERBIT_FAILURE_SIGNATURES,
-				errorCollectionComplete: true,
-				errorCount: collectedErrors.length,
-				errors: collectedErrors,
-				requestFailureCollectionDefinition:
-					REQUEST_FAILURE_COLLECTION_DEFINITION,
-				requestFailureCollectionComplete: true,
-				requestFailureCount: collectedRequestFailures.length,
-				requestFailures: collectedRequestFailures,
-				snapshots,
-				writerDiagnostics,
-				readerDiagnostics,
-				failure: {
-					message:
-						typeof error?.message === "string" ? error.message : String(error),
-					stack: typeof error?.stack === "string" ? error.stack : undefined,
-				},
-			};
-			await persistResult(result);
-			console.error(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
 			throw error;
 		} finally {
 			await downloadMemoryTelemetryController?.cleanup().catch(() => {});
@@ -3362,9 +3609,20 @@ test.describe("generated transfer-validity benchmark", () => {
 					() => {},
 				);
 			}
-			await writerContext.close().catch(() => {});
-			await readerContext.close().catch(() => {});
-			await bootstrap?.stop().catch(() => {});
+			const ownershipCleanupFailures = rejectedCleanupReasons(
+				await Promise.allSettled([
+					cleanupPersistentBenchmarkBrowsers(browserPair),
+					bootstrap?.stop(),
+				]),
+			);
+			if (ownershipCleanupFailures.length > 0) {
+				throw new AggregateError(
+					benchmarkFailure === undefined
+						? ownershipCleanupFailures
+						: [benchmarkFailure, ...ownershipCleanupFailures],
+					"Benchmark browser or bootstrap cleanup did not complete",
+				);
+			}
 		}
 	});
 });

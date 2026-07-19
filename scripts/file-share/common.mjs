@@ -190,24 +190,31 @@ const loadWorkspacePeerbitPackages = async (peerbitRoot = repoRoot) => {
 	return workspacePackages;
 };
 
+const isPublishablePeerbitPackage = (info) =>
+	info?.packageJson?.private !== true;
+
 const expandWorkspacePackageSelection = ({
 	workspacePackages,
 	selectedNames,
 	includeTransitive = true,
 }) => {
-	if (selectedNames == null) {
-		return new Set(workspacePackages.keys());
-	}
-	if (selectedNames.size === 0) {
+	const effectiveSelectedNames =
+		selectedNames ??
+		new Set(
+			[...workspacePackages.entries()]
+				.filter(([, info]) => isPublishablePeerbitPackage(info))
+				.map(([name]) => name),
+		);
+	if (effectiveSelectedNames.size === 0) {
 		return new Set();
 	}
 	if (!includeTransitive) {
 		return new Set(
-			[...selectedNames].filter((name) => workspacePackages.has(name)),
+			[...effectiveSelectedNames].filter((name) => workspacePackages.has(name)),
 		);
 	}
 	const expanded = new Set();
-	const pending = [...selectedNames];
+	const pending = [...effectiveSelectedNames];
 	while (pending.length > 0) {
 		const name = pending.pop();
 		if (!name || expanded.has(name)) {
@@ -220,11 +227,17 @@ const expandWorkspacePackageSelection = ({
 		expanded.add(name);
 		for (const field of WORKSPACE_DEP_FIELDS) {
 			for (const depName of Object.keys(info.packageJson?.[field] ?? {})) {
+				const dependency = workspacePackages.get(depName);
 				if (
 					(depName === "peerbit" || depName.startsWith("@peerbit/")) &&
-					workspacePackages.has(depName) &&
+					dependency &&
 					!expanded.has(depName)
 				) {
+					if (!isPublishablePeerbitPackage(dependency)) {
+						throw new Error(
+							`Local Peerbit package ${name} depends on private workspace package ${depName}, which is not publishable or linkable`,
+						);
+					}
 					pending.push(depName);
 				}
 			}
@@ -263,6 +276,16 @@ export const collectLocalPeerbitPackages = async (
 				`Unknown local Peerbit package${unknownNames.length === 1 ? "" : "s"}: ${unknownNames.join(", ")}`,
 			);
 		}
+		const privateNames = [...selectedNames]
+			.filter(
+				(name) => workspacePackages.get(name)?.packageJson?.private === true,
+			)
+			.sort((left, right) => left.localeCompare(right));
+		if (privateNames.length > 0) {
+			throw new Error(
+				`Private local Peerbit package${privateNames.length === 1 ? " is" : "s are"} not publishable or linkable: ${privateNames.join(", ")}`,
+			);
+		}
 	}
 	const expandedSelection = expandWorkspacePackageSelection({
 		workspacePackages,
@@ -278,6 +301,92 @@ export const collectLocalPeerbitPackages = async (
 	return new Map(
 		[...mappings.entries()].sort(([a], [b]) => a.localeCompare(b)),
 	);
+};
+
+const BETTER_SQLITE3_PREFLIGHT_SCRIPT = String.raw`
+const { createRequire } = require("node:module");
+const packageJsonPath = process.argv[1];
+const requireFromPackage = createRequire(packageJsonPath);
+const resolvedPath = requireFromPackage.resolve("better-sqlite3");
+const Database = requireFromPackage("better-sqlite3");
+let database;
+try {
+	database = new Database(":memory:");
+	const row = database.prepare("SELECT 1 AS ok").get();
+	if (row?.ok !== 1) {
+		throw new Error("in-memory query returned an unexpected result");
+	}
+} finally {
+	database?.close();
+}
+process.stdout.write(JSON.stringify({
+	node: process.version,
+	modules: process.versions.modules,
+	napi: process.versions.napi,
+	resolvedPath,
+}));
+`;
+
+const childProcessOutput = (value) => {
+	if (typeof value === "string") {
+		return value.trim();
+	}
+	if (Buffer.isBuffer(value)) {
+		return value.toString("utf8").trim();
+	}
+	return "";
+};
+
+export const preflightBetterSqlite3Runtime = async (
+	peerbitRoot = repoRoot,
+	{ packageNames } = {},
+) => {
+	if (
+		Array.isArray(packageNames) &&
+		!packageNames.includes("@peerbit/indexer-sqlite3")
+	) {
+		return null;
+	}
+	const workspacePackages = await loadWorkspacePeerbitPackages(peerbitRoot);
+	const sqliteIndexer = workspacePackages.get("@peerbit/indexer-sqlite3");
+	if (!sqliteIndexer) {
+		throw new Error(
+			`better-sqlite3 runtime preflight could not find @peerbit/indexer-sqlite3 under ${peerbitRoot}`,
+		);
+	}
+	const packageJsonPath = path.join(sqliteIndexer.dir, "package.json");
+	try {
+		const output = execFileSync(
+			process.execPath,
+			["--eval", BETTER_SQLITE3_PREFLIGHT_SCRIPT, packageJsonPath],
+			{
+				cwd: sqliteIndexer.dir,
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
+		const evidence = JSON.parse(output);
+		if (
+			evidence.node !== process.version ||
+			evidence.modules !== process.versions.modules ||
+			typeof evidence.resolvedPath !== "string" ||
+			evidence.resolvedPath.length === 0
+		) {
+			throw new Error("child runtime evidence was incomplete or inconsistent");
+		}
+		return evidence;
+	} catch (error) {
+		const detail =
+			childProcessOutput(error?.stderr) ||
+			childProcessOutput(error?.stdout) ||
+			String(error?.message ?? error);
+		const failure = new Error(
+			`better-sqlite3 runtime preflight failed for ${process.version} (NODE_MODULE_VERSION ${process.versions.modules ?? "unknown"}) in ${sqliteIndexer.dir}. Reinstall the Peerbit workspace with this Node runtime before building. ${detail}`,
+			{ cause: error },
+		);
+		failure.stopBenchmarkPlan = true;
+		throw failure;
+	}
 };
 
 export const cleanPeerbitBuildArtifacts = async ({

@@ -1448,6 +1448,8 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			"attribution",
 			"attributionLimitations",
 			"unit",
+			"browserInstanceCount",
+			"browserSessionCount",
 			"sampleIntervalMs",
 			"startedAt",
 			"finishedAt",
@@ -1499,7 +1501,9 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 		series.attribution !== DOWNLOAD_MEMORY_HOST_ATTRIBUTION ||
 		series.attributionLimitations !==
 			DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS ||
-		series.unit !== "bytes"
+		series.unit !== "bytes" ||
+		series.browserInstanceCount !== 2 ||
+		series.browserSessionCount !== 2
 	) {
 		throw new Error("Benchmark host RSS attribution contract is invalid");
 	}
@@ -1517,6 +1521,8 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			[
 				"capturedAt",
 				"sampleKind",
+				"browserInstanceCount",
+				"browserRootProcessCount",
 				"browserBytes",
 				"nodeBytes",
 				"nodeExternalBytes",
@@ -1527,6 +1533,14 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			],
 			sampleLabel,
 		);
+		if (
+			sample.browserInstanceCount !== 2 ||
+			sample.browserRootProcessCount !== 2
+		) {
+			throw new Error(
+				`Benchmark ${sampleLabel} does not prove both browser instances and root processes were sampled`,
+			);
+		}
 		const browserBytes = requirePositiveSafeInteger(
 			sample.browserBytes,
 			`${sampleLabel}.browserBytes`,
@@ -1556,6 +1570,11 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 				`Benchmark ${sampleLabel} exceeds the browser-process count cap`,
 			);
 		}
+		if (browserProcessCount < sample.browserRootProcessCount) {
+			throw new Error(
+				`Benchmark ${sampleLabel} browser-process count excludes a browser root`,
+			);
+		}
 		const { roles: browserRoleBytes, total: roleTotal } =
 			validateBrowserRoleBytes(
 				sample.browserRoleBytes,
@@ -1574,6 +1593,8 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			);
 		}
 		return {
+			browserInstanceCount: sample.browserInstanceCount,
+			browserRootProcessCount: sample.browserRootProcessCount,
 			browserBytes,
 			nodeBytes,
 			nodeExternalBytes,
@@ -2424,7 +2445,7 @@ const validateEnvelope = (
 	);
 	if (
 		invocationSchema.id !== "peerbit-file-share-benchmark-invocation" ||
-		invocationSchema.version !== 5
+		invocationSchema.version !== 6
 	) {
 		throw new Error("Benchmark result has an unsupported invocation schema");
 	}
@@ -2484,6 +2505,11 @@ const validateRequestedUploadKnobs = (result, invocation) => {
 			"Benchmark result readerTerminalTopology does not match the requested invocation",
 		);
 	}
+	if (result.browserStorageMode !== invocation.browserStorageMode) {
+		throw new Error(
+			"Benchmark result browserStorageMode does not match the requested invocation",
+		);
+	}
 };
 
 const validateStorageUsageDetails = (value, label) => {
@@ -2513,11 +2539,11 @@ const validateStorageUsageDetails = (value, label) => {
 const validateStorageResourceSnapshot = (
 	value,
 	label,
-	{ setStartedAt, pageCapturedAt },
+	{ setStartedAt, pageCapturedAt, browserStorageMode },
 ) => {
 	const storage = requireExactRecordKeys(
 		requireRecord(value, label),
-		["capturedAt", "origin", "peerbitLog", "backingStorage"],
+		["capturedAt", "origin", "backend", "peerbitLog", "backingStorage"],
 		label,
 	);
 	const capturedAt = requirePositiveSafeInteger(
@@ -2539,6 +2565,76 @@ const validateStorageResourceSnapshot = (
 	if (parsedOrigin !== origin) {
 		throw new Error(`Benchmark result has invalid ${label}.origin`);
 	}
+	const backend = requireExactRecordKeys(
+		requireRecord(storage.backend, `${label}.backend`),
+		[
+			"requestedMode",
+			"directoryConfigured",
+			"directoryConfigurationError",
+			"persistence",
+		],
+		`${label}.backend`,
+	);
+	if (
+		!["memory", "opfs"].includes(browserStorageMode) ||
+		backend.requestedMode !== browserStorageMode ||
+		backend.directoryConfigured !== (browserStorageMode === "opfs") ||
+		backend.directoryConfigurationError !== null
+	) {
+		throw new Error(`Benchmark ${label}.backend contract is invalid`);
+	}
+	const persistence = requireExactRecordKeys(
+		requireRecord(backend.persistence, `${label}.backend.persistence`),
+		["navigatorStorage", "peerStorage", "peerBlocks", "peerIndexer"],
+		`${label}.backend.persistence`,
+	);
+	const validatePersistedProbe = (
+		value,
+		probeLabel,
+		expectedApi,
+		expectedPersisted,
+	) => {
+		const probe = requireExactRecordKeys(
+			requireRecord(value, probeLabel),
+			["api", "available", "persisted", "error"],
+			probeLabel,
+		);
+		if (
+			probe.api !== expectedApi ||
+			probe.available !== true ||
+			typeof probe.persisted !== "boolean" ||
+			probe.error !== null ||
+			(expectedPersisted !== null && probe.persisted !== expectedPersisted)
+		) {
+			throw new Error(`Benchmark ${probeLabel} contract is invalid`);
+		}
+		return probe;
+	};
+	validatePersistedProbe(
+		persistence.navigatorStorage,
+		`${label}.backend.persistence.navigatorStorage`,
+		"navigator.storage.persisted",
+		null,
+	);
+	const expectedPeerPersistence = browserStorageMode === "opfs";
+	validatePersistedProbe(
+		persistence.peerStorage,
+		`${label}.backend.persistence.peerStorage`,
+		"peer.storage.persisted",
+		expectedPeerPersistence,
+	);
+	validatePersistedProbe(
+		persistence.peerBlocks,
+		`${label}.backend.persistence.peerBlocks`,
+		"peer.services.blocks.persisted",
+		expectedPeerPersistence,
+	);
+	validatePersistedProbe(
+		persistence.peerIndexer,
+		`${label}.backend.persistence.peerIndexer`,
+		"peer.indexer.persisted",
+		expectedPeerPersistence,
+	);
 	const peerbitLog = requireExactRecordKeys(
 		requireRecord(storage.peerbitLog, `${label}.peerbitLog`),
 		["api", "scope", "available", "usageBytes", "error"],
@@ -2748,7 +2844,7 @@ const validateRuntimeResourceSnapshot = (
 const validatePageResourceSnapshot = (
 	value,
 	role,
-	{ setStartedAt, setFinishedAt, setLabel },
+	{ setStartedAt, setFinishedAt, setLabel, browserStorageMode },
 ) => {
 	const label = `resourceEvidence.snapshots.${setLabel}.${role}`;
 	const page = requireExactRecordKeys(
@@ -2770,6 +2866,7 @@ const validatePageResourceSnapshot = (
 	validateStorageResourceSnapshot(page.storage, `${label}.storage`, {
 		setStartedAt,
 		pageCapturedAt: capturedAt,
+		browserStorageMode,
 	});
 	validateRuntimeResourceSnapshot(page.runtime, `${label}.runtime`, {
 		setStartedAt,
@@ -2808,11 +2905,13 @@ const validateResourceSnapshotSet = (value, expectedLabel, invocation) => {
 		setStartedAt: startedAt,
 		setFinishedAt: finishedAt,
 		setLabel: expectedLabel,
+		browserStorageMode: invocation.browserStorageMode,
 	});
 	validatePageResourceSnapshot(snapshot.reader, "reader", {
 		setStartedAt: startedAt,
 		setFinishedAt: finishedAt,
 		setLabel: expectedLabel,
+		browserStorageMode: invocation.browserStorageMode,
 	});
 	return snapshot;
 };
@@ -3554,13 +3653,16 @@ const validateReaderLocalityControl = (result, invocation) => {
 	const target = invocation.readerLocalChunkTarget;
 	const maxOvershoot = invocation.readerLocalChunkMaxOvershoot;
 	const expectedTerminalTopology = invocation.readerTerminalTopology;
+	const persistChunkReads = invocation.readerPersistChunkReads;
 	if (target == null) {
 		if (
 			maxOvershoot !== null ||
 			expectedTerminalTopology !== null ||
+			persistChunkReads !== null ||
 			result.readerLocalityControl !== null ||
 			result.readerLocalChunkBlockCount !== null ||
 			result.readerLocalChunkIndexRowCount !== null ||
+			result.readerPersistChunkReads !== null ||
 			result.readerLocalityCohortKey !== null
 		) {
 			throw new Error(
@@ -3573,10 +3675,19 @@ const validateReaderLocalityControl = (result, invocation) => {
 		!Number.isSafeInteger(maxOvershoot) ||
 		maxOvershoot < 0 ||
 		!["observer", "replicator"].includes(expectedTerminalTopology) ||
+		typeof persistChunkReads !== "boolean" ||
 		invocation.mode !== "fixed1" ||
 		invocation.minReadySeeders !== 1
 	) {
 		throw new Error("Benchmark reader locality invocation is invalid");
+	}
+	if (
+		persistChunkReads === false &&
+		(target !== 0 || expectedTerminalTopology !== "observer")
+	) {
+		throw new Error(
+			"Benchmark transient reader invocation requires a zero prefix and observer topology",
+		);
 	}
 	const control = requireRecord(
 		result.readerLocalityControl,
@@ -3591,7 +3702,8 @@ const validateReaderLocalityControl = (result, invocation) => {
 			"exact local Documents index rows and manifest entry blocks" ||
 		control.writerUploadRole !== "fixed1" ||
 		control.readerUploadRole !== "observer" ||
-		control.readerTimedReadPolicy !== "persist-chunk-reads" ||
+		control.readerTimedReadPolicy !==
+			(persistChunkReads ? "persist-chunk-reads" : "transient-chunk-reads") ||
 		control.expectedTerminalTopology !== expectedTerminalTopology ||
 		control.stabilityPollIntervalMs !== Math.min(invocation.pollMs, 100) ||
 		control.requiredStableObservationCount !== 3 ||
@@ -3886,7 +3998,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 			expectedImportedIndices,
 		) ||
 		preload.maxConcurrentImports !== 8 ||
-		preload.persistChunkReads !== true ||
+		preload.persistChunkReads !== persistChunkReads ||
 		!Array.isArray(preload.activeTransfersAfterClose) ||
 		preload.activeTransfersAfterClose.length !== 0 ||
 		preloadFinishedAt < preloadStartedAt
@@ -3971,7 +4083,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 			observation.chunkCount !== canonicalChunkCount ||
 			observation.indexRowCount !== actualLocalChunkIndexRowCount ||
 			observation.blockCount !== actualLocalChunkBlockCount ||
-			observation.persistChunkReads !== true ||
+			observation.persistChunkReads !== persistChunkReads ||
 			!isDeepStrictEqual(
 				observation.indexedChunkIndices,
 				expectedIndexPrefix,
@@ -3990,7 +4102,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		control.preDownloadObservation,
 		"readerLocalityControl.preDownloadObservation",
 	);
-	const expectedCohortKey = `observer-persistent-prefix-b${actualLocalChunkBlockCount}-i${actualLocalChunkIndexRowCount}`;
+	const expectedCohortKey = `observer-${persistChunkReads ? "persistent" : "transient"}-${invocation.browserStorageMode}-prefix-b${actualLocalChunkBlockCount}-i${actualLocalChunkIndexRowCount}`;
 	if (
 		actualLocalChunkBlockCount < target ||
 		actualLocalChunkBlockCount > target + maxOvershoot ||
@@ -4001,6 +4113,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		control.cohortKey !== expectedCohortKey ||
 		result.readerLocalChunkBlockCount !== actualLocalChunkBlockCount ||
 		result.readerLocalChunkIndexRowCount !== actualLocalChunkIndexRowCount ||
+		result.readerPersistChunkReads !== persistChunkReads ||
 		result.readerLocalityCohortKey !== expectedCohortKey ||
 		preDownload.chunkCount !== canonicalChunkCount ||
 		!isDeepStrictEqual(preDownload.observation, stable.at(-1).observation)
@@ -4022,7 +4135,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		"readerDiagnostics.lastReadDiagnostics",
 	);
 	if (
-		readerDiagnostics.persistChunkReads !== true ||
+		readerDiagnostics.persistChunkReads !== persistChunkReads ||
 		readerDiagnostics.programAddress !== initialProgramAddress ||
 		readerTimings.initialRole !== initialRoleEvidence.initialRole ||
 		readerTimings.updateRoleCount !== initialRoleEvidence.updateRoleCount ||
@@ -4032,13 +4145,21 @@ const validateReaderLocalityControl = (result, invocation) => {
 			"Benchmark reader diagnostics contradict its initial observer-role evidence",
 		);
 	}
+	const expectedInitialDiagnosticIndexRowCount = persistChunkReads
+		? actualLocalChunkIndexRowCount
+		: null;
+	const expectedInitialDiagnosticBlockCount = persistChunkReads
+		? actualLocalChunkBlockCount
+		: null;
 	if (
-		timedRead.persistChunkReads !== true ||
-		timedRead.programPersistChunkReads !== true ||
+		timedRead.persistChunkReads !== persistChunkReads ||
+		timedRead.programPersistChunkReads !== persistChunkReads ||
 		timedRead.initialLocalChunkIndexRowCount !==
-			actualLocalChunkIndexRowCount ||
-		timedRead.initialLocalChunkCount !== actualLocalChunkIndexRowCount ||
-		timedRead.initialLocalChunkBlockCount !== actualLocalChunkBlockCount
+			expectedInitialDiagnosticIndexRowCount ||
+		timedRead.initialLocalChunkCount !==
+			expectedInitialDiagnosticIndexRowCount ||
+		timedRead.initialLocalChunkBlockCount !==
+			expectedInitialDiagnosticBlockCount
 	) {
 		throw new Error(
 			"Benchmark timed read diagnostics do not match its exact locality cohort",
@@ -4062,18 +4183,21 @@ const validateReaderLocalityControl = (result, invocation) => {
 	);
 	const expectedTerminalIndexRowCount =
 		expectedTerminalTopology === "replicator" ? canonicalChunkCount : 0;
+	const expectedTerminalBlockCount = persistChunkReads
+		? canonicalChunkCount
+		: 0;
 	if (
 		terminalIdle.fileId !== manifestFileId ||
 		terminalIdle.chunkCount !== canonicalChunkCount ||
-		terminalIdle.blockCount !== canonicalChunkCount ||
+		terminalIdle.blockCount !== expectedTerminalBlockCount ||
 		terminalIdle.indexRowCount !== expectedTerminalIndexRowCount ||
 		terminalIdle.indexedChunkIndices.length !== expectedTerminalIndexRowCount ||
-		terminalIdle.persistChunkReads !== true ||
+		terminalIdle.persistChunkReads !== persistChunkReads ||
 		control.terminalTopologyRole !== expectedTerminalTopology ||
 		control.terminalTopologyExpectationSatisfied !== true
 	) {
 		throw new Error(
-			"Benchmark terminal reader evidence does not match the requested persistent-reader topology",
+			"Benchmark terminal reader evidence does not match the requested persistence and topology policy",
 		);
 	}
 	const terminalTopologyStartedAt = requirePositiveSafeInteger(
@@ -4166,7 +4290,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		writerDiagnostics.replicatorCount !== expectedTerminalReplicatorCount ||
 		readerDiagnostics.replicatorCount !== expectedTerminalReplicatorCount ||
 		writerDiagnostics.replicationSetSize !== 1 ||
-		readerDiagnostics.replicationSetSize !== 1
+		readerDiagnostics.replicationSetSize !== (persistChunkReads ? 1 : 0)
 	) {
 		throw new Error(
 			"Benchmark final peer diagnostics contradict the terminal topology evidence",

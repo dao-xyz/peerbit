@@ -14,6 +14,7 @@ import {
 	createBenchmarkInvocation,
 	createNonceIsolatedResultPath,
 	createPlaywrightBenchmarkEnvironment,
+	resolveBenchmarkBrowserStorageMode,
 	resolveBenchmarkDownloadSink,
 	resolveBenchmarkPreviewOptions,
 } from "./benchmark-invocation.mjs";
@@ -52,6 +53,7 @@ import {
 	getFileShareConsumerRoots,
 	installPinnedExamplesDependencies,
 	parseArgs,
+	preflightBetterSqlite3Runtime,
 	prepareExamplesRepo,
 	repoRoot,
 	run,
@@ -133,10 +135,13 @@ const DROP_LOCALITY_PRELOAD_DEADLINE_MARKER =
 	"/* peerbit-benchmark-locality-preload-aggregate-deadline */";
 const DROP_LOCALITY_EXACT_MANIFEST_MARKER =
 	"/* peerbit-benchmark-locality-exact-manifest-import */";
-const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {
+const DROP_READER_PERSISTENCE_POLICY_MARKER =
+	"/* peerbit-benchmark-reader-persistence-policy */";
+const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: async (fileName, target, timeoutMs, persistChunkReads) => {
                 ${DROP_LOCALITY_HOOK_MARKER}
                 ${DROP_LOCALITY_PRELOAD_DEADLINE_MARKER}
 				${DROP_LOCALITY_EXACT_MANIFEST_MARKER}
+				${DROP_READER_PERSISTENCE_POLICY_MARKER}
                 if (!program || program.closed) {
                     throw new Error("Program is not ready");
                 }
@@ -164,6 +169,16 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
                         "Locality preload timeout must be a positive safe integer"
                     );
                 }
+				if (typeof persistChunkReads !== "boolean") {
+					throw new Error(
+						"Reader persistence policy must be an explicit boolean"
+					);
+				}
+				if (!persistChunkReads && target !== 0) {
+					throw new Error(
+						"Transient reader locality requires a zero-chunk prefix"
+					);
+				}
 				const manifestEntryHeads = (file as any).chunkEntryHeads;
 				if (
 					!Array.isArray(manifestEntryHeads) ||
@@ -177,7 +192,7 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
 						"Locality preload requires one unique manifest entry head per chunk"
 					);
 				}
-                program.persistChunkReads = true;
+                program.persistChunkReads = persistChunkReads;
                 const startedAt = Date.now();
                 const aggregateTimeoutMs = target > 0 ? timeoutMs : null;
                 const aggregateDeadlineAt = target > 0
@@ -400,6 +415,7 @@ export const instrumentFileShareFrontend = async (
 			(contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
 				contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) &&
 				contents.includes(DROP_LOCALITY_EXACT_MANIFEST_MARKER) &&
+				contents.includes(DROP_READER_PERSISTENCE_POLICY_MARKER) &&
 				contents.includes(DROP_LOCALITY_TOPOLOGY_MARKER) &&
 				contents.includes(DROP_LOCALITY_INDEXED_SEARCH_MARKER)))
 	) {
@@ -567,13 +583,19 @@ export const instrumentFileShareFrontend = async (
 		requireLocalityHook &&
 		contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
 		(!contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) ||
-			!contents.includes(DROP_LOCALITY_EXACT_MANIFEST_MARKER))
+			!contents.includes(DROP_LOCALITY_EXACT_MANIFEST_MARKER) ||
+			!contents.includes(DROP_READER_PERSISTENCE_POLICY_MARKER))
 	) {
 		const preloadHookAnchor =
 			"            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {";
+		const currentPreloadHookAnchor =
+			"            preloadLocalChunkPrefix: async (fileName, target, timeoutMs, persistChunkReads) => {";
 		const observationHookAnchor =
 			"            getLocalChunkPrefixObservation: async (fileName) => {";
-		const preloadHookStart = contents.indexOf(preloadHookAnchor);
+		const preloadHookStart = Math.max(
+			contents.indexOf(preloadHookAnchor),
+			contents.indexOf(currentPreloadHookAnchor),
+		);
 		const observationHookStart = contents.indexOf(
 			observationHookAnchor,
 			preloadHookStart + preloadHookAnchor.length,
@@ -584,6 +606,10 @@ export const instrumentFileShareFrontend = async (
 			);
 		}
 		contents = `${contents.slice(0, preloadHookStart)}${localityPreloadHookImplementation}\n${contents.slice(observationHookStart)}`;
+		contents = contents.replace(
+			"preloadLocalChunkPrefix: (fileName: string, target: number, timeoutMs: number) => Promise<Record<string, unknown>>;",
+			"preloadLocalChunkPrefix: (fileName: string, target: number, timeoutMs: number, persistChunkReads: boolean) => Promise<Record<string, unknown>>;",
+		);
 	}
 	if (
 		requireLocalityHook &&
@@ -667,7 +693,7 @@ ${topologyAnchor}`,
 		}
 		contents = contents.replace(
 			typeAnchor,
-			`${typeAnchor}\n                preloadLocalChunkPrefix: (fileName: string, target: number, timeoutMs: number) => Promise<Record<string, unknown>>;\n                getLocalChunkPrefixObservation: (fileName: string) => Promise<Record<string, unknown>>;`,
+			`${typeAnchor}\n                preloadLocalChunkPrefix: (fileName: string, target: number, timeoutMs: number, persistChunkReads: boolean) => Promise<Record<string, unknown>>;\n                getLocalChunkPrefixObservation: (fileName: string) => Promise<Record<string, unknown>>;`,
 		);
 		contents = contents.replace(
 			implementationAnchor,
@@ -996,6 +1022,19 @@ const parseNonNegativeInteger = (value, label) => {
 const parseOptionalPositiveInteger = (value, label) =>
 	value == null ? undefined : parsePositiveInteger(value, label);
 
+const parseOptionalBoolean = (value, label) => {
+	if (value == null) {
+		return undefined;
+	}
+	if (value === "true") {
+		return true;
+	}
+	if (value === "false") {
+		return false;
+	}
+	throw new Error(`${label} must be exactly "true" or "false"`);
+};
+
 const writeJsonAtomic = async (filePath, value) => {
 	await fsp.mkdir(path.dirname(filePath), { recursive: true });
 	const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -1066,6 +1105,10 @@ const main = async () => {
 	const downloadSink = resolveBenchmarkDownloadSink(args["download-sink"], {
 		scenario,
 	});
+	const browserStorageMode = resolveBenchmarkBrowserStorageMode(
+		args["browser-storage"],
+		{ scenario },
+	);
 	const network = args.network ?? "local";
 	const uploadTimeoutMs = parseOptionalPositiveInteger(
 		args["upload-timeout-ms"],
@@ -1115,6 +1158,10 @@ const main = async () => {
 		args["reader-terminal-topology"] == null
 			? null
 			: String(args["reader-terminal-topology"]);
+	const readerPersistChunkReads = parseOptionalBoolean(
+		args["reader-persist-chunk-reads"],
+		"--reader-persist-chunk-reads",
+	);
 	const examplesSource = args.source ?? defaultExamplesSource();
 	const fixtureSeed = args["fixture-seed"];
 	const resolvedFixtureSeed = fixtureSeed ?? "peerbit-file-share-benchmark-v1";
@@ -1182,6 +1229,19 @@ const main = async () => {
 			"--reader-terminal-topology must be provided exactly when --reader-local-chunk-target is provided",
 		);
 	}
+	if (readerPersistChunkReads != null && readerLocalChunkTarget == null) {
+		throw new Error(
+			"--reader-persist-chunk-reads requires --reader-local-chunk-target",
+		);
+	}
+	if (
+		readerPersistChunkReads === false &&
+		(readerLocalChunkTarget !== 0 || readerTerminalTopology !== "observer")
+	) {
+		throw new Error(
+			"--reader-persist-chunk-reads false requires --reader-local-chunk-target 0 and --reader-terminal-topology observer",
+		);
+	}
 	if (
 		readerTerminalTopology != null &&
 		!READER_TERMINAL_TOPOLOGIES.includes(readerTerminalTopology)
@@ -1224,6 +1284,9 @@ const main = async () => {
 	const { protocol, viteMode, viteConfig } = previewOptions;
 	if (integrationMode === "link") {
 		run("pnpm", ["install", "--frozen-lockfile"], { cwd: peerbitRoot });
+		await preflightBetterSqlite3Runtime(peerbitRoot, {
+			packageNames: effectiveLocalPackageNames,
+		});
 		await cleanPeerbitBuildArtifacts({
 			peerbitRoot,
 			packageNames: effectiveLocalPackageNames,
@@ -1355,6 +1418,7 @@ const main = async () => {
 				fileMb,
 				fixtureSeed: resolvedFixtureSeed,
 				downloadSink,
+				browserStorageMode,
 				uploadTimeoutMs,
 				downloadTimeoutMs,
 				postTransferSoakMs,
@@ -1368,6 +1432,7 @@ const main = async () => {
 				readerLocalChunkTarget,
 				readerLocalChunkMaxOvershoot,
 				readerTerminalTopology,
+				readerPersistChunkReads,
 				baseUrl,
 				protocol,
 				viteMode,
@@ -1573,6 +1638,14 @@ const main = async () => {
 				result.readerTerminalTopology ??
 				result.invocation?.readerTerminalTopology ??
 				null,
+			readerPersistChunkReads:
+				result.readerPersistChunkReads ??
+				result.invocation?.readerPersistChunkReads ??
+				null,
+			browserStorageMode:
+				result.browserStorageMode ??
+				result.invocation?.browserStorageMode ??
+				null,
 			readerLocalChunkBlockCount: result.readerLocalChunkBlockCount ?? null,
 			readerLocalChunkIndexRowCount:
 				result.readerLocalChunkIndexRowCount ?? null,
@@ -1628,6 +1701,7 @@ const main = async () => {
 		frontendRoot,
 		scenario,
 		downloadSink,
+		browserStorageMode,
 		integrationMode,
 		localPackageNames: effectiveLocalPackageNames,
 		network,
@@ -1635,6 +1709,8 @@ const main = async () => {
 		readerLocalChunkTarget: readerLocalChunkTarget ?? null,
 		readerLocalChunkMaxOvershoot: readerLocalChunkMaxOvershoot ?? null,
 		readerTerminalTopology,
+		readerPersistChunkReads:
+			readerLocalChunkTarget == null ? null : (readerPersistChunkReads ?? true),
 		readerLocalityCohorts:
 			scenario === "upload"
 				? aggregateRows

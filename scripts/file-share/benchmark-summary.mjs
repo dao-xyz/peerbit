@@ -38,6 +38,13 @@ const passedNumbers = (results, getter) =>
 const optionalLocalityValue = (result, key) =>
 	result?.[key] ?? result?.invocation?.[key] ?? null;
 
+const explicitBenchmarkDimension = (result, key) => ({
+	present:
+		Object.hasOwn(result ?? {}, key) ||
+		Object.hasOwn(result?.invocation ?? {}, key),
+	value: optionalLocalityValue(result, key),
+});
+
 export const uploadLocalityCohortDimensions = (result) => ({
 	mode: result.mode,
 	readerLocalChunkTarget: optionalLocalityValue(
@@ -66,10 +73,30 @@ export const groupUploadResultsByLocalityCohort = (results) => {
 	const anyRuntimeEvidence = runtimeEvidence.some(
 		(evidence) => evidence.present,
 	);
+	const browserStorageEvidence = results.map((result) =>
+		explicitBenchmarkDimension(result, "browserStorageMode"),
+	);
+	const readerPersistenceEvidence = results.map((result) =>
+		explicitBenchmarkDimension(result, "readerPersistChunkReads"),
+	);
+	const anyBrowserStorageEvidence = browserStorageEvidence.some(
+		(evidence) => evidence.present,
+	);
+	const anyReaderPersistenceEvidence = readerPersistenceEvidence.some(
+		(evidence) => evidence.present,
+	);
 	const grouped = new Map();
 	for (const [index, result] of results.entries()) {
 		const dimensions = {
 			...uploadLocalityCohortDimensions(result),
+			...(anyBrowserStorageEvidence
+				? { browserStorageMode: browserStorageEvidence[index].value }
+				: {}),
+			...(anyReaderPersistenceEvidence
+				? {
+						readerPersistChunkReads: readerPersistenceEvidence[index].value,
+					}
+				: {}),
 			...(anyRuntimeEvidence
 				? {
 						runtimeConfigurationCohortKey: runtimeEvidence[index].cohortKey,
@@ -709,6 +736,22 @@ const comparableRuntimeConfigurationCohortKey = (passedResults) => {
 	return { legacy: false, cohortKey: evidence[0].cohortKey };
 };
 
+const comparableExplicitBenchmarkDimension = (passedResults, key) => {
+	const evidence = passedResults.map((result) =>
+		explicitBenchmarkDimension(result, key),
+	);
+	if (evidence.every((entry) => !entry.present)) {
+		return { legacy: true, value: null };
+	}
+	if (
+		evidence.some((entry) => !entry.present) ||
+		new Set(evidence.map((entry) => JSON.stringify(entry.value))).size !== 1
+	) {
+		return null;
+	}
+	return { legacy: false, value: evidence[0].value };
+};
+
 export const compareUploadPerformanceModes = (results) => {
 	const passedResults = results.filter((result) => result.status === "passed");
 	const downloadSinks = new Set(
@@ -720,6 +763,17 @@ export const compareUploadPerformanceModes = (results) => {
 	const runtimeConfiguration =
 		comparableRuntimeConfigurationCohortKey(passedResults);
 	if (!runtimeConfiguration) {
+		return null;
+	}
+	const browserStorage = comparableExplicitBenchmarkDimension(
+		passedResults,
+		"browserStorageMode",
+	);
+	const readerPersistence = comparableExplicitBenchmarkDimension(
+		passedResults,
+		"readerPersistChunkReads",
+	);
+	if (!browserStorage || !readerPersistence) {
 		return null;
 	}
 	const downloadSink = [...downloadSinks][0];
@@ -750,6 +804,12 @@ export const compareUploadPerformanceModes = (results) => {
 	}
 	return {
 		downloadSink,
+		...(browserStorage.legacy
+			? {}
+			: { browserStorageMode: browserStorage.value }),
+		...(readerPersistence.legacy
+			? {}
+			: { readerPersistChunkReads: readerPersistence.value }),
 		...(runtimeConfiguration.legacy
 			? {}
 			: {

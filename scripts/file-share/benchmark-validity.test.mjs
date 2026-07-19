@@ -269,6 +269,8 @@ const createDownloadMemoryTelemetry = (
 		{
 			capturedAt: readStartedAt - 1,
 			sampleKind: "initial",
+			browserInstanceCount: 2,
+			browserRootProcessCount: 2,
 			browserBytes: 1_000,
 			nodeBytes: 500,
 			nodeExternalBytes: 100,
@@ -280,6 +282,8 @@ const createDownloadMemoryTelemetry = (
 		{
 			capturedAt: readFinishedAt + 1,
 			sampleKind: "periodic",
+			browserInstanceCount: 2,
+			browserRootProcessCount: 2,
 			browserBytes: 1_200,
 			nodeBytes: 550,
 			nodeExternalBytes: 120,
@@ -291,6 +295,8 @@ const createDownloadMemoryTelemetry = (
 		{
 			capturedAt: manualSampleAt,
 			sampleKind: "manual",
+			browserInstanceCount: 2,
+			browserRootProcessCount: 2,
 			browserBytes: 1_150,
 			nodeBytes: 540,
 			nodeExternalBytes: 115,
@@ -302,6 +308,8 @@ const createDownloadMemoryTelemetry = (
 		{
 			capturedAt: terminalSampleAt,
 			sampleKind: "terminal",
+			browserInstanceCount: 2,
+			browserRootProcessCount: 2,
 			browserBytes: 1_100,
 			nodeBytes: 525,
 			nodeExternalBytes: 110,
@@ -319,6 +327,8 @@ const createDownloadMemoryTelemetry = (
 		attribution: DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
 		attributionLimitations: DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
 		unit: "bytes",
+		browserInstanceCount: 2,
+		browserSessionCount: 2,
 		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 		startedAt: readStartedAt - 1,
 		finishedAt: shutdownFinishedAt + 5,
@@ -588,6 +598,37 @@ const createResourcePage = ({ role, startedAt, capturedAt, step }) => ({
 	storage: {
 		capturedAt: startedAt,
 		origin: "http://127.0.0.1:4173",
+		backend: {
+			requestedMode: "memory",
+			directoryConfigured: false,
+			directoryConfigurationError: null,
+			persistence: {
+				navigatorStorage: {
+					api: "navigator.storage.persisted",
+					available: true,
+					persisted: false,
+					error: null,
+				},
+				peerStorage: {
+					api: "peer.storage.persisted",
+					available: true,
+					persisted: false,
+					error: null,
+				},
+				peerBlocks: {
+					api: "peer.services.blocks.persisted",
+					available: true,
+					persisted: false,
+					error: null,
+				},
+				peerIndexer: {
+					api: "peer.indexer.persisted",
+					available: true,
+					persisted: false,
+					error: null,
+				},
+			},
+		},
 		peerbitLog: {
 			api: "SharedLog.getMemoryUsage",
 			scope: "file-share-log-logical-usage",
@@ -828,6 +869,8 @@ const validResult = () => {
 		readerLocalChunkTarget: null,
 		readerLocalChunkMaxOvershoot: null,
 		readerTerminalTopology: null,
+		readerPersistChunkReads: null,
+		browserStorageMode: "memory",
 		readerLocalChunkBlockCount: null,
 		readerLocalChunkIndexRowCount: null,
 		readerLocalityCohortKey: null,
@@ -1089,6 +1132,7 @@ const createReaderLocalityFixture = ({
 	actualBlockCount = 1,
 	actualIndexRowCount = 0,
 	readerTerminalTopology = "observer",
+	readerPersistChunkReads = true,
 } = {}) => {
 	const invocation = createBenchmarkInvocation({
 		scenario: "upload",
@@ -1107,6 +1151,7 @@ const createReaderLocalityFixture = ({
 		readerLocalChunkTarget: target,
 		readerLocalChunkMaxOvershoot: maxOvershoot,
 		readerTerminalTopology,
+		readerPersistChunkReads,
 	});
 	const result = validResult();
 	const fileName = `file-share-benchmark-fixed1-${RUN_NONCE}.bin`;
@@ -1252,28 +1297,35 @@ const createReaderLocalityFixture = ({
 	result.readerLocalChunkTarget = target;
 	result.readerLocalChunkMaxOvershoot = maxOvershoot;
 	result.readerTerminalTopology = readerTerminalTopology;
+	result.readerPersistChunkReads = readerPersistChunkReads;
 	result.readerLocalChunkBlockCount = actualBlockCount;
 	result.readerLocalChunkIndexRowCount = actualIndexRowCount;
-	const cohortKey = `observer-persistent-prefix-b${actualBlockCount}-i${actualIndexRowCount}`;
+	const cohortKey = `observer-${readerPersistChunkReads ? "persistent" : "transient"}-memory-prefix-b${actualBlockCount}-i${actualIndexRowCount}`;
 	result.readerLocalityCohortKey = cohortKey;
 	result.minReadySeeders = 1;
 	result.readerDiagnostics.lastReadDiagnostics.fileName = fileName;
 	result.readerDiagnostics.programAddress = "reader-program-address";
-	result.readerDiagnostics.persistChunkReads = true;
+	result.readerDiagnostics.persistChunkReads = readerPersistChunkReads;
 	result.readerDiagnostics.peerHash = "reader-peer";
 	result.readerDiagnostics.replicatorCount = terminalReplicatorCount;
-	result.readerDiagnostics.replicationSetSize = 1;
+	result.readerDiagnostics.replicationSetSize = readerPersistChunkReads ? 1 : 0;
 	result.readerDiagnostics.timings = {
 		initialRole: "observer",
 		updateRoleCount: 0,
 		lastAppliedRole: null,
 	};
 	Object.assign(result.readerDiagnostics.lastReadDiagnostics, {
-		persistChunkReads: true,
-		programPersistChunkReads: true,
-		initialLocalChunkIndexRowCount: actualIndexRowCount,
-		initialLocalChunkCount: actualIndexRowCount,
-		initialLocalChunkBlockCount: actualBlockCount,
+		persistChunkReads: readerPersistChunkReads,
+		programPersistChunkReads: readerPersistChunkReads,
+		initialLocalChunkIndexRowCount: readerPersistChunkReads
+			? actualIndexRowCount
+			: null,
+		initialLocalChunkCount: readerPersistChunkReads
+			? actualIndexRowCount
+			: null,
+		initialLocalChunkBlockCount: readerPersistChunkReads
+			? actualBlockCount
+			: null,
 		startedAt: 1_600,
 		finishedAt: 1_630,
 		chunkResolveStartedAt: { 0: 1_600, 1: 1_615 },
@@ -1284,11 +1336,15 @@ const createReaderLocalityFixture = ({
 		chunkMaterializeFinishedAt: { 0: 1_603, 1: 1_618 },
 		chunkHashStartedAt: { 0: 1_603, 1: 1_618 },
 		chunkHashFinishedAt: { 0: 1_604, 1: 1_620 },
-		chunkPersistenceConfirmedAt: { 0: 1_605, 1: 1_621 },
-		chunkPersistenceConfirmationSource: {
-			0: "manifest-head-batch-local",
-			1: "manifest-head-batch-remote",
-		},
+		chunkPersistenceConfirmedAt: readerPersistChunkReads
+			? { 0: 1_605, 1: 1_621 }
+			: {},
+		chunkPersistenceConfirmationSource: readerPersistChunkReads
+			? {
+					0: "manifest-head-batch-local",
+					1: "manifest-head-batch-remote",
+				}
+			: {},
 	});
 	result.writerManifestEvidence.fileName = fileName;
 	result.readerManifestEvidence.fileName = fileName;
@@ -1337,7 +1393,9 @@ const createReaderLocalityFixture = ({
 		countMetric: "exact local Documents index rows and manifest entry blocks",
 		writerUploadRole: "fixed1",
 		readerUploadRole: "observer",
-		readerTimedReadPolicy: "persist-chunk-reads",
+		readerTimedReadPolicy: readerPersistChunkReads
+			? "persist-chunk-reads"
+			: "transient-chunk-reads",
 		expectedTerminalTopology: readerTerminalTopology,
 		stabilityPollIntervalMs: 100,
 		requiredStableObservationCount: 3,
@@ -1406,7 +1464,7 @@ const createReaderLocalityFixture = ({
 			),
 			rawFetchedByteCount: target === 0 ? 0 : 3 * 1024 * 1024,
 			maxConcurrentImports: 8,
-			persistChunkReads: true,
+			persistChunkReads: readerPersistChunkReads,
 			activeTransfersAfterClose: [],
 			downloadSchedulerAfterClose: { ...idleScheduler },
 			readDiagnostics: null,
@@ -1414,7 +1472,7 @@ const createReaderLocalityFixture = ({
 		stabilityObservations: [1_176, 1_276, 1_376].map((capturedAt) =>
 			observation({
 				capturedAt,
-				persistChunkReads: true,
+				persistChunkReads: readerPersistChunkReads,
 				blocks: Array.from({ length: actualBlockCount }, (_, index) => index),
 				indexed: Array.from(
 					{ length: actualIndexRowCount },
@@ -1424,16 +1482,19 @@ const createReaderLocalityFixture = ({
 		),
 		preDownloadObservation: observation({
 			capturedAt: 1_376,
-			persistChunkReads: true,
+			persistChunkReads: readerPersistChunkReads,
 			blocks: Array.from({ length: actualBlockCount }, (_, index) => index),
 			indexed: Array.from({ length: actualIndexRowCount }, (_, index) => index),
 		}),
 		integrityVerifiedAt: 1_837,
 		terminalIdleObservation: observation({
 			capturedAt: 1_838,
-			persistChunkReads: true,
-			blocks: [0, 1],
-			indexed: readerTerminalTopology === "replicator" ? [0, 1] : [],
+			persistChunkReads: readerPersistChunkReads,
+			blocks: readerPersistChunkReads ? [0, 1] : [],
+			indexed:
+				readerPersistChunkReads && readerTerminalTopology === "replicator"
+					? [0, 1]
+					: [],
 		}),
 		terminalTopologyStartedAt: 1_838,
 		terminalTopologyDeadlineAt: 181_838,
@@ -1677,6 +1738,50 @@ test("accepts explicit disabled eager-cache evidence", () => {
 		interval.readerEager = null;
 	}
 	assert.equal(validateBenchmarkResult(result, options).status, "passed");
+});
+
+test("requires measured memory and OPFS backend evidence", () => {
+	const opfs = validResult();
+	const opfsInvocation = {
+		...structuredClone(INVOCATION),
+		browserStorageMode: "opfs",
+	};
+	opfs.invocation = structuredClone(opfsInvocation);
+	opfs.browserStorageMode = "opfs";
+	for (const snapshot of Object.values(opfs.resourceEvidence.snapshots)) {
+		for (const role of ["writer", "reader"]) {
+			const backend = snapshot[role].storage.backend;
+			backend.requestedMode = "opfs";
+			backend.directoryConfigured = true;
+			for (const key of ["peerStorage", "peerBlocks", "peerIndexer"]) {
+				backend.persistence[key].persisted = true;
+			}
+			// OPFS availability and eviction protection are separate facts.
+			backend.persistence.navigatorStorage.persisted = false;
+		}
+	}
+	const opfsOptions = { ...options, expectedInvocation: opfsInvocation };
+	assert.equal(validateBenchmarkResult(opfs, opfsOptions).status, "passed");
+
+	for (const mutate of [
+		(result) => {
+			result.resourceEvidence.snapshots.afterSink.reader.storage.backend.directoryConfigured = false;
+		},
+		(result) => {
+			result.resourceEvidence.snapshots.afterSink.reader.storage.backend.persistence.peerBlocks.persisted = false;
+		},
+		(result) => {
+			result.resourceEvidence.snapshots.afterSink.reader.storage.backend.requestedMode =
+				"memory";
+		},
+	]) {
+		const invalid = structuredClone(opfs);
+		mutate(invalid);
+		assert.throws(
+			() => validateBenchmarkResult(invalid, opfsOptions),
+			/backend.*contract is invalid|peerBlocks.*contract is invalid/,
+		);
+	}
 });
 
 test("requires ordered exact resource, soak, and shutdown evidence", () => {
@@ -1944,7 +2049,7 @@ test("requires ordered exact resource, soak, and shutdown evidence", () => {
 	}
 });
 
-test("accepts one recovered seeder dip under the v10 policy", () => {
+test("accepts one recovered seeder dip under the v11 policy", () => {
 	const result = validResult();
 	result.snapshots[1].writerSeeders = 1;
 	result.droppedSeeders = true;
@@ -1979,7 +2084,7 @@ test("rejects a terminal below-baseline seeder snapshot", () => {
 	);
 });
 
-test("rejects missing, altered, and contradictory v10 seeder-drop evidence", () => {
+test("rejects missing, altered, and contradictory v11 seeder-drop evidence", () => {
 	for (const [mutate, pattern] of [
 		[
 			(result) => {
@@ -2587,6 +2692,18 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
+				result.downloadMemoryTelemetry.hostRss.browserSessionCount = 1;
+			},
+			/host RSS attribution contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[0].browserRootProcessCount = 1;
+			},
+			/does not prove both browser instances and root processes were sampled/,
+		],
+		[
+			(result) => {
 				result.downloadMemoryTelemetry.hostRss.samples[0].browserProcessCount =
 					DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES + 1;
 			},
@@ -3081,7 +3198,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 				}
 				control.actualLocalChunkBlockCount = 2;
 				control.speculativeOvershootChunkCount = 1;
-				control.cohortKey = "observer-persistent-prefix-b2-i0";
+				control.cohortKey = "observer-persistent-memory-prefix-b2-i0";
 				result.readerLocalChunkBlockCount = 2;
 				result.readerLocalityCohortKey = control.cohortKey;
 				result.readerDiagnostics.lastReadDiagnostics.initialLocalChunkBlockCount = 2;
@@ -3098,7 +3215,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 			(result) => {
 				result.readerLocalityControl.terminalTopologyExpectationSatisfied = false;
 			},
-			/terminal reader evidence does not match the requested persistent-reader topology/,
+			/terminal reader evidence does not match the requested persistence and topology policy/,
 		],
 		[
 			(result) => {
@@ -3115,7 +3232,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 				terminalIdle.blockCount = 1;
 				terminalIdle.blockChunkIndices = [0];
 			},
-			/terminal reader evidence does not match the requested persistent-reader topology/,
+			/terminal reader evidence does not match the requested persistence and topology policy/,
 		],
 		[
 			(result) => {
@@ -3124,7 +3241,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 				terminalIdle.indexRowCount = 1;
 				terminalIdle.indexedChunkIndices = [0];
 			},
-			/terminal reader evidence does not match the requested persistent-reader topology/,
+			/terminal reader evidence does not match the requested persistence and topology policy/,
 		],
 		[
 			(result) => {
@@ -3278,6 +3395,44 @@ test("accepts the explicit cold observer-persistent b0-i0 locality cohort", () =
 	);
 });
 
+test("accepts the explicit cold observer-transient memory cohort", () => {
+	const fixture = createReaderLocalityFixture({
+		target: 0,
+		maxOvershoot: 0,
+		actualBlockCount: 0,
+		actualIndexRowCount: 0,
+		readerPersistChunkReads: false,
+	});
+	assert.equal(
+		validateBenchmarkResult(fixture.result, fixture.options).status,
+		"passed",
+	);
+	assert.equal(
+		fixture.result.readerLocalityCohortKey,
+		"observer-transient-memory-prefix-b0-i0",
+	);
+	assert.equal(
+		fixture.result.readTransfer.receiverProgress.peerbitDurable.claimed,
+		false,
+	);
+	assert.deepEqual(
+		fixture.result.readerDiagnostics.lastReadDiagnostics
+			.chunkPersistenceConfirmedAt,
+		{},
+	);
+	assert.equal(
+		fixture.result.readerDiagnostics.lastReadDiagnostics
+			.initialLocalChunkBlockCount,
+		null,
+	);
+	assert.equal(fixture.result.readerDiagnostics.replicationSetSize, 0);
+	fixture.result.readerDiagnostics.lastReadDiagnostics.initialLocalChunkBlockCount = 0;
+	assert.throws(
+		() => validateBenchmarkResult(fixture.result, fixture.options),
+		/timed read diagnostics do not match its exact locality cohort/,
+	);
+});
+
 test("rejects stale read diagnostics outside the clicked download window", () => {
 	for (const mutate of [
 		(result) => {
@@ -3397,14 +3552,14 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v10 evidence envelope", () => {
+test("rejects a status-only passed payload at the v11 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v10 envelopes", () => {
+test("requires explicit error evidence on failed v11 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };

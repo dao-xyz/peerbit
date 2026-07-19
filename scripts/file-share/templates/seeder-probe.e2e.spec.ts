@@ -27,7 +27,7 @@ const EFFECTIVE_SAMPLE_INTERVAL_MS = Math.max(
 );
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 10,
+	version: 11,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -84,7 +84,7 @@ if (POST_TRANSFER_SOAK_MS !== 0) {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 5
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 6
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -100,6 +100,8 @@ const expectedInvocationValues: Record<string, unknown> = {
 	readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
 	readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
 	readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
+	readerPersistChunkReads: null,
+	browserStorageMode: process.env.PW_BROWSER_STORAGE_MODE || null,
 	baseUrl: process.env.PW_BASE_URL || null,
 	protocol: process.env.PW_PROTOCOL || null,
 	viteMode: process.env.PW_VITE_MODE || null,

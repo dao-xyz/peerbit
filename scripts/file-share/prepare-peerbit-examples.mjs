@@ -9,6 +9,7 @@ import {
 	getFileShareConsumerRoots,
 	installPinnedExamplesDependencies,
 	parseArgs,
+	preflightBetterSqlite3Runtime,
 	prepareExamplesRepo,
 	repoRoot,
 	run,
@@ -26,7 +27,7 @@ Options:
   --dest <path>              output directory (default: ${defaultExamplesDest()})
   --peerbit-root <path>      peerbit workspace root (default: ${repoRoot})
   --integration-mode <mode>  one of none, link (default: link)
-  --local-packages <csv>     package names to link (default: ${defaultFileShareLocalPackages.join(",")}; use "all" for every installed local package)
+  --local-packages <csv>     publishable package names to link (default: ${defaultFileShareLocalPackages.join(",")}; use "all" for every publishable local package; private workspace packages are rejected)
   --fresh                    delete the destination before cloning
 `);
 };
@@ -66,6 +67,9 @@ const main = async () => {
 	if (integrationMode === "link") {
 		run("pnpm", ["install", "--frozen-lockfile"], {
 			cwd: prepared.peerbitRoot,
+		});
+		await preflightBetterSqlite3Runtime(prepared.peerbitRoot, {
+			packageNames: effectiveLocalPackageNames,
 		});
 		await cleanPeerbitBuildArtifacts({
 			peerbitRoot: prepared.peerbitRoot,

@@ -15,6 +15,7 @@ import {
 	cleanPeerbitBuildArtifacts,
 	collectLocalPeerbitPackages,
 	ensureExamplesAssetPackageLinks,
+	preflightBetterSqlite3Runtime,
 	prepareExamplesRepo,
 } from "./common.mjs";
 
@@ -141,6 +142,113 @@ test("local package selection is exact and rejects unknown names", async () => {
 		);
 	} finally {
 		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("automatic local package selection excludes private workspace packages", async () => {
+	const fixture = await createFixture();
+	const privatePackageDir = path.join(fixture.root, "packages", "private-e2e");
+	const publicPackageDir = path.join(fixture.root, "packages", "public");
+	try {
+		await mkdir(privatePackageDir, { recursive: true });
+		await mkdir(publicPackageDir, { recursive: true });
+		await writeFile(
+			path.join(privatePackageDir, "package.json"),
+			'{"name":"@peerbit/private-e2e","private":true}\n',
+		);
+		await writeFile(
+			path.join(publicPackageDir, "package.json"),
+			'{"name":"@peerbit/public"}\n',
+		);
+
+		assert.deepEqual(
+			[...(await collectLocalPeerbitPackages(fixture.root)).keys()],
+			["@peerbit/public", "peerbit"],
+		);
+		await assert.rejects(
+			collectLocalPeerbitPackages(fixture.root, {
+				names: ["@peerbit/private-e2e"],
+			}),
+			/Private local Peerbit package is not publishable or linkable: @peerbit\/private-e2e/,
+		);
+		await writeFile(
+			path.join(publicPackageDir, "package.json"),
+			'{"name":"@peerbit/public","dependencies":{"@peerbit/private-e2e":"workspace:*"}}\n',
+		);
+		await assert.rejects(
+			collectLocalPeerbitPackages(fixture.root, {
+				names: ["@peerbit/public"],
+			}),
+			/@peerbit\/public depends on private workspace package @peerbit\/private-e2e/,
+		);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+const createBetterSqlite3Fixture = async ({ loadFailure } = {}) => {
+	const root = await mkdtemp(
+		path.join(os.tmpdir(), "peerbit-sqlite-preflight-test-"),
+	);
+	const indexerDir = path.join(root, "packages", "indexer-sqlite3");
+	const moduleDir = path.join(indexerDir, "node_modules", "better-sqlite3");
+	await mkdir(moduleDir, { recursive: true });
+	await writeFile(
+		path.join(indexerDir, "package.json"),
+		'{"name":"@peerbit/indexer-sqlite3"}\n',
+	);
+	await writeFile(
+		path.join(moduleDir, "package.json"),
+		'{"name":"better-sqlite3","main":"index.js"}\n',
+	);
+	await writeFile(
+		path.join(moduleDir, "index.js"),
+		loadFailure
+			? `throw new Error(${JSON.stringify(loadFailure)});\n`
+			: `module.exports = class Database {
+	constructor(filename) {
+		if (filename !== ":memory:") throw new Error("unexpected filename");
+	}
+	prepare(sql) {
+		if (sql !== "SELECT 1 AS ok") throw new Error("unexpected query");
+		return { get: () => ({ ok: 1 }) };
+	}
+	close() {}
+};\n`,
+	);
+	return root;
+};
+
+test("better-sqlite3 preflight loads and queries the native runtime", async () => {
+	const root = await createBetterSqlite3Fixture();
+	try {
+		const evidence = await preflightBetterSqlite3Runtime(root);
+		assert.equal(evidence.node, process.version);
+		assert.equal(evidence.modules, process.versions.modules);
+		assert.match(evidence.resolvedPath, /better-sqlite3\/index\.js$/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("better-sqlite3 preflight fails clearly on a runtime ABI load error", async () => {
+	const root = await createBetterSqlite3Fixture({
+		loadFailure:
+			"compiled against a different Node.js version using NODE_MODULE_VERSION 137",
+	});
+	try {
+		await assert.rejects(preflightBetterSqlite3Runtime(root), (error) => {
+			assert.match(error.message, /better-sqlite3 runtime preflight failed/);
+			assert.match(error.message, /NODE_MODULE_VERSION/);
+			assert.match(error.message, /Reinstall the Peerbit workspace/);
+			assert.match(
+				error.message,
+				/compiled against a different Node\.js version/,
+			);
+			return true;
+		});
+	} finally {
+		await rm(root, { recursive: true, force: true });
 	}
 });
 

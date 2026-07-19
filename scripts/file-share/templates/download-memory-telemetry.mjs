@@ -20,6 +20,7 @@ export const DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS = 16;
 export const DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512;
 export const DOWNLOAD_MEMORY_MAX_BROWSER_ROLES = 32;
 export const DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES = 256;
+export const DOWNLOAD_MEMORY_MAX_BROWSERS = 2;
 export const DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH = 128;
 export const DOWNLOAD_MEMORY_HOST_ATTRIBUTION =
 	"aggregate-rss-with-chromium-process-role-groups";
@@ -667,7 +668,10 @@ const readProcessRssBytes = async (processIds) => {
 	return processBytes;
 };
 
-const summarizeHostRss = (state) => {
+const summarizeHostRss = (
+	state,
+	{ browserInstanceCount, browserSessionCount },
+) => {
 	const first = state.samples[0] ?? null;
 	const last = state.samples.at(-1) ?? null;
 	const peak = (name) =>
@@ -691,6 +695,8 @@ const summarizeHostRss = (state) => {
 		attribution: DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
 		attributionLimitations: DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
 		unit: "bytes",
+		browserInstanceCount,
+		browserSessionCount,
 		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 		startedAt: state.startedAt,
 		finishedAt: state.finishedAt,
@@ -734,31 +740,143 @@ const summarizeHostRss = (state) => {
 	};
 };
 
+const normalizeBrowsers = (browsers, expectedBrowserCount) => {
+	if (
+		!Number.isSafeInteger(expectedBrowserCount) ||
+		expectedBrowserCount <= 0 ||
+		expectedBrowserCount > DOWNLOAD_MEMORY_MAX_BROWSERS ||
+		!Array.isArray(browsers) ||
+		browsers.length !== expectedBrowserCount
+	) {
+		throw new Error(
+			`Download memory telemetry requires exactly ${expectedBrowserCount} browser${expectedBrowserCount === 1 ? "" : "s"}`,
+		);
+	}
+	const uniqueBrowsers = new Set();
+	for (const browser of browsers) {
+		if (
+			browser == null ||
+			(typeof browser !== "object" && typeof browser !== "function") ||
+			typeof browser.newBrowserCDPSession !== "function"
+		) {
+			throw new Error("Download memory telemetry received an invalid browser");
+		}
+		if (uniqueBrowsers.has(browser)) {
+			throw new Error(
+				"Download memory telemetry requires unique browser instances",
+			);
+		}
+		uniqueBrowsers.add(browser);
+	}
+	return [...browsers];
+};
+
+const mergeChromiumProcessInfo = (responses) => {
+	const processInfoById = new Map();
+	const browserRootProcessIds = new Set();
+	for (const response of responses) {
+		if (!Array.isArray(response?.processInfo)) {
+			throw new Error("Chromium returned invalid process information");
+		}
+		const responseBrowserRootProcessIds = new Set();
+		for (const processEntry of response.processInfo) {
+			if (
+				processEntry == null ||
+				typeof processEntry !== "object" ||
+				Array.isArray(processEntry)
+			) {
+				throw new Error("Chromium returned an invalid process entry");
+			}
+			const processId = Number(processEntry.id);
+			if (!Number.isSafeInteger(processId) || processId <= 0) {
+				continue;
+			}
+			const role = String(processEntry.type || "unknown");
+			if (
+				role.length === 0 ||
+				role.length > DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH ||
+				!/^[\x20-\x7e]+$/.test(role)
+			) {
+				throw new Error("Chromium exposed an invalid process role name");
+			}
+			const existing = processInfoById.get(processId);
+			if (existing !== undefined && existing.type !== role) {
+				throw new Error(
+					`Chromium PID ${processId} has conflicting process types`,
+				);
+			}
+			if (existing === undefined) {
+				processInfoById.set(processId, { id: processId, type: role });
+				if (processInfoById.size > DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES) {
+					throw new Error("Chromium process count exceeds the telemetry cap");
+				}
+			}
+			if (role === "browser") {
+				responseBrowserRootProcessIds.add(processId);
+			}
+		}
+		if (responseBrowserRootProcessIds.size !== 1) {
+			throw new Error(
+				"Each Chromium CDP session must expose exactly one browser root process",
+			);
+		}
+		const [browserRootProcessId] = responseBrowserRootProcessIds;
+		if (browserRootProcessIds.has(browserRootProcessId)) {
+			throw new Error(
+				"Chromium CDP sessions must expose distinct browser root processes",
+			);
+		}
+		browserRootProcessIds.add(browserRootProcessId);
+	}
+	return {
+		processInfo: [...processInfoById.values()],
+		browserRootProcessIds: [...browserRootProcessIds],
+	};
+};
+
 const startHostRssSampler = async ({
-	browser,
+	browsers,
 	maxSamples,
 	operationTimeoutMs,
 	cleanupTimeoutMs,
 }) => {
-	let session;
+	let sessions = [];
 	let setupError;
-	try {
-		session = await withDownloadMemoryOperationDeadline(
-			browser.newBrowserCDPSession(),
-			"Browser RSS CDP session creation",
-			operationTimeoutMs,
-			{
-				onLateResolution: async (lateSession) => {
-					await withDownloadMemoryOperationDeadline(
-						lateSession.detach(),
-						"Late browser RSS CDP detach",
-						operationTimeoutMs,
-					);
-				},
-			},
+	const setupResults = await Promise.allSettled(
+		browsers.map(
+			async (browser) =>
+				await withDownloadMemoryOperationDeadline(
+					Promise.resolve().then(() => browser.newBrowserCDPSession()),
+					"Browser RSS CDP session creation",
+					operationTimeoutMs,
+					{
+						onLateResolution: async (lateSession) => {
+							await withDownloadMemoryOperationDeadline(
+								Promise.resolve().then(() => lateSession.detach()),
+								"Late browser RSS CDP detach",
+								operationTimeoutMs,
+							);
+						},
+					},
+				),
+		),
+	);
+	const setupErrors = [];
+	for (const result of setupResults) {
+		if (result.status === "fulfilled") {
+			sessions.push(result.value);
+		} else {
+			setupErrors.push(result.reason);
+		}
+	}
+	const browserSessionCount = sessions.length;
+	if (setupErrors.length === 1) {
+		[setupError] = setupErrors;
+	} else if (setupErrors.length > 1) {
+		setupError = new AggregateError(
+			setupErrors,
+			setupErrors.map(boundedErrorMessage).join("; "),
 		);
-	} catch (error) {
-		setupError = error;
 	}
 	const sampler = await startBoundedSerialSampler({
 		intervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
@@ -769,23 +887,30 @@ const startHostRssSampler = async ({
 			if (setupError) {
 				throw setupError;
 			}
-			if (!session) {
-				throw new Error("Browser RSS CDP session is unavailable");
+			if (sessions.length !== browsers.length) {
+				throw new Error("Browser RSS CDP sessions are unavailable");
 			}
-			const { processInfo } = await session.send("SystemInfo.getProcessInfo");
-			const processIds = [
-				...new Set(
-					processInfo
-						.map((process) => Number(process.id))
-						.filter(
-							(processId) => Number.isSafeInteger(processId) && processId > 0,
-						),
+			const { processInfo, browserRootProcessIds } = mergeChromiumProcessInfo(
+				await Promise.all(
+					sessions.map((session) => session.send("SystemInfo.getProcessInfo")),
 				),
-			];
-			if (processIds.length > DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES) {
-				throw new Error("Chromium process count exceeds the telemetry cap");
+			);
+			if (browserRootProcessIds.length !== browsers.length) {
+				throw new Error(
+					"Browser RSS telemetry did not capture every browser root process",
+				);
 			}
+			const processIds = processInfo.map((processEntry) => processEntry.id);
 			const browserProcessBytes = await readProcessRssBytes(processIds);
+			if (
+				!browserRootProcessIds.every((processId) =>
+					browserProcessBytes.has(processId),
+				)
+			) {
+				throw new Error(
+					"Browser RSS telemetry is missing a browser root process",
+				);
+			}
 			const nodeMemory = process.memoryUsage();
 			const nodeBytes = nodeMemory.rss;
 			const nodeExternalBytes = nodeMemory.external;
@@ -804,18 +929,11 @@ const startHostRssSampler = async ({
 			}
 			const browserRoleBytes = {};
 			for (const processEntry of processInfo) {
-				const bytes = browserProcessBytes.get(Number(processEntry.id));
+				const bytes = browserProcessBytes.get(processEntry.id);
 				if (bytes == null) {
 					continue;
 				}
-				const role = String(processEntry.type || "unknown");
-				if (
-					role.length === 0 ||
-					role.length > DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH ||
-					!/^[\x20-\x7e]+$/.test(role)
-				) {
-					throw new Error("Chromium exposed an invalid process role name");
-				}
+				const role = processEntry.type;
 				browserRoleBytes[role] = (browserRoleBytes[role] ?? 0) + bytes;
 			}
 			if (
@@ -835,6 +953,8 @@ const startHostRssSampler = async ({
 				throw new Error("Host RSS totals exceed the safe byte range");
 			}
 			return {
+				browserInstanceCount: browsers.length,
+				browserRootProcessCount: browserRootProcessIds.length,
 				browserBytes,
 				nodeBytes,
 				nodeExternalBytes,
@@ -845,30 +965,49 @@ const startHostRssSampler = async ({
 			};
 		},
 		cleanup: async () => {
-			if (session) {
-				try {
-					await withDownloadMemoryOperationDeadline(
-						session.detach(),
-						"Browser RSS CDP detach",
-						operationTimeoutMs,
-					);
-				} finally {
-					session = undefined;
-				}
+			const sessionsToDetach = sessions;
+			sessions = [];
+			const detachResults = await Promise.allSettled(
+				sessionsToDetach.map(
+					async (session) =>
+						await withDownloadMemoryOperationDeadline(
+							Promise.resolve().then(() => session.detach()),
+							"Browser RSS CDP detach",
+							operationTimeoutMs,
+						),
+				),
+			);
+			const detachErrors = detachResults
+				.filter((result) => result.status === "rejected")
+				.map((result) => result.reason);
+			if (detachErrors.length === 1) {
+				throw detachErrors[0];
+			}
+			if (detachErrors.length > 1) {
+				throw new AggregateError(
+					detachErrors,
+					detachErrors.map(boundedErrorMessage).join("; "),
+				);
 			}
 		},
 	});
+	const summarize = (state) =>
+		summarizeHostRss(state, {
+			browserInstanceCount: browsers.length,
+			browserSessionCount,
+		});
 	return {
-		snapshot: () => summarizeHostRss(sampler.snapshot()),
-		sampleNow: async () => summarizeHostRss(await sampler.sampleNow()),
-		stopSampling: async () => summarizeHostRss(await sampler.stopSampling()),
-		cleanup: async () => summarizeHostRss(await sampler.cleanup()),
-		stop: async () => summarizeHostRss(await sampler.stop()),
+		snapshot: () => summarize(sampler.snapshot()),
+		sampleNow: async () => summarize(await sampler.sampleNow()),
+		stopSampling: async () => summarize(await sampler.stopSampling()),
+		cleanup: async () => summarize(await sampler.cleanup()),
+		stop: async () => summarize(await sampler.stop()),
 	};
 };
 
 export const startDownloadMemoryTelemetry = async ({
-	browser,
+	browsers,
+	expectedBrowserCount,
 	reader,
 	writer,
 	downloadTimeoutMs,
@@ -878,6 +1017,7 @@ export const startDownloadMemoryTelemetry = async ({
 	operationTimeoutMs = DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
 	cleanupTimeoutMs = DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS,
 }) => {
+	const normalizedBrowsers = normalizeBrowsers(browsers, expectedBrowserCount);
 	const maxSamplesPerSeries = calculateDownloadMemoryMaxSamples({
 		samplingWindowBudgetMs,
 	});
@@ -901,7 +1041,7 @@ export const startDownloadMemoryTelemetry = async ({
 			cleanupTimeoutMs,
 		}),
 		startHostRssSampler({
-			browser,
+			browsers: normalizedBrowsers,
 			maxSamples: maxSamplesPerSeries,
 			operationTimeoutMs,
 			cleanupTimeoutMs,

@@ -3,13 +3,15 @@
 Run a single checkout with `pnpm bench:file-share:local` or compare pinned
 Peerbit revisions with `pnpm bench:file-share:matrix`.
 
-Result schema v10, summary and matrix-summary schema v6, and invocation schema
-v5 bind each result to the exact effective benchmark inputs. Invocation v5 adds
-`postTransferSoakMs`; uploads default to 60,000 ms and preserve an explicit
+Result schema v11, summary and matrix-summary schema v7, and invocation schema
+v6 bind each result to the exact effective benchmark inputs. Invocation v6
+binds the reader chunk-persistence policy and the actual browser-storage cohort
+in addition to the v5 `postTransferSoakMs` input. Uploads default to 60,000 ms
+and preserve an explicit
 `--post-transfer-soak-ms 0` for
 fast smoke runs, while seeder probes resolve zero and reject a nonzero soak
 because they have no transfer. The value is exported as
-`PW_POST_TRANSFER_SOAK_MS`. Result schema v10 defines
+`PW_POST_TRANSFER_SOAK_MS`. Result schema v11 defines
 `errorCount` as every uncaught browser `pageerror`,
 every browser `console.error`, every console message at any level that contains
 a declared Peerbit failure signature, and scenario-recorded operation failures.
@@ -18,7 +20,7 @@ Playwright `requestfailed` events are retained separately under
 `requestFailures`; they are diagnostics and are not automatically fatal because
 peer-to-peer discovery can legitimately exercise failed network candidates.
 
-Passed schema v10 upload results require `writerDiagnostics.lastUploadDiagnostics`
+Passed schema v11 upload results require `writerDiagnostics.lastUploadDiagnostics`
 to contain exactly 21 bounded progress milestones from 0% through 100% in 5%
 increments. Each point records the aggregate bytes whose application-level
 chunk puts completed, using the library upload clock and exact ceil-rounded byte
@@ -54,6 +56,19 @@ sinks only in separate benchmark sessions; aggregate comparison objects fail
 closed on mixed sinks, and every passed result and aggregate labels
 non-hash-only cohorts non-authoritative.
 
+`--browser-storage memory|opfs` selects Peerbit's own writer and reader backing
+stores and defaults to `memory`. This is independent of `--download-sink`: the
+former controls where Peerbit stores blocks and indexes, while the latter
+controls what consumes the completed downloaded byte stream. Every upload cell
+uses two separate persistent Chromium processes and fresh profile directories,
+including memory cells, so context topology is held constant. The page-init
+hook configures `PeerProvider` before it starts. Four resource checkpoints must
+then prove the requested mode, whether a Peerbit directory was configured, and
+the measured `persisted()` state of Peerbit storage, block storage, and indexer.
+An OPFS label is rejected unless all three Peerbit components report persistent;
+`navigator.storage.persisted()` is recorded separately because eviction
+protection can be false even when OPFS is available and in use.
+
 `readTransfer.receiverProgress` keeps three receiver boundaries separate over
 the exact 0%, 5%, …, 100% milestone set.
 `available` means a contiguous file prefix was materialized and available to
@@ -74,7 +89,7 @@ but the `sinkAccepted` milestones themselves are neither Peerbit nor filesystem
 durability evidence. None of these three series is a wire acknowledgement or
 proof that another peer retained the bytes.
 
-Schema v10 upload results record the `download-memory-v3` bounded telemetry
+Schema v11 upload results record the `download-memory-v3` bounded telemetry
 contract. After any controlled-locality prefix stabilization, the harness arms
 serial samplers before the bounded pre-read transport-counter gate and timed
 click. Sampling remains armed through sink completion, integrity and terminal
@@ -84,7 +99,7 @@ before detaching the CDP sessions. The default soak is 60 seconds, so retained
 memory and storage that keep growing or fail to settle are visible separately
 from transfer-time peaks.
 
-Result v10 records bounded `shutdownOutcomes` for writer and reader separately;
+Result v11 records bounded `shutdownOutcomes` for writer and reader separately;
 a passed upload requires both shutdown hooks to prove that the program closed
 and the Peerbit/libp2p peer stopped. Each shutdown outcome repeats the exact
 program, peer, and per-page session identity captured by that role's four
@@ -95,12 +110,16 @@ be distinguished.
 
 Reader and writer renderers use CDP `Runtime.getHeapUsage`. Every sample records
 V8 used and total bytes, embedder heap used bytes, and backing-storage bytes.
-Host RSS combines all Chromium processes, grouped by Chromium process role,
+Host RSS combines the deduplicated processes from both Chromium instances,
+grouped by Chromium process role,
 with the Playwright worker Node process; for local runs that Node value also
 includes the in-process bootstrap peer. Chromium RSS cannot be assigned
 reliably to one page and RSS is not PSS or USS, so page-level comparisons should
 use the renderer series. Node `external` and `arrayBuffers` are recorded as
 overlapping allocation diagnostics; neither is added to Node or combined RSS.
+Every accepted upload result must prove that exactly two unique browser CDP
+sessions exposed two distinct Chromium root PIDs and that both root processes
+were present in every host-RSS sample.
 Samples run serially, scheduling the next periodic read five seconds after the
 previous read completes, and reserve three endpoints: the initial sample, one
 live manual checkpoint immediately after the exact requested soak timer and
@@ -175,13 +194,15 @@ checkpoint after soak supplies the soak endpoint without folding teardown into
 the phase.
 `resourceStorageDeltas`, `effectiveRuntimeConfiguration`, and `eagerCache`
 retain the corresponding storage, effective-policy, and eager-cache summaries.
-Older result objects that do not carry v10/v3 resource evidence retain the
+Older result objects that do not carry v11/v3 resource evidence retain the
 pre-existing aggregate output shape without empty placeholder fields.
 
 For a controlled reader-locality download cohort, run an upload with
 `--mode fixed1`, `--reader-local-chunk-target <N>`, and
 `--reader-local-chunk-max-overshoot <M>`, and
-`--reader-terminal-topology <observer|replicator>`. All three locality options
+`--reader-terminal-topology <observer|replicator>`. Add
+`--reader-persist-chunk-reads false` for the transient-read cohort; omitting it
+preserves the historical persistent-read behavior. The three locality options
 are required together, `M` is capped at eight chunks, and this profile uses a one-replicator
 readiness baseline. The writer is fixed at factor one and the reader is an
 observer before upload starts; topology evidence must show exactly one
@@ -189,16 +210,19 @@ replicator, with the writer in and reader out of that set, both before upload an
 again immediately before the timed read. Both peers must report the same exact
 singleton replicator identity, and that identity must be the writer.
 
-After the normal upload and post-upload monitor finish, the harness enables
-persistent reader chunk reads and imports exactly the first `N` entry blocks
+After the normal upload and post-upload monitor finish, the harness applies the
+requested reader chunk-persistence policy and imports exactly the first `N`
+entry blocks
 from the ready root manifest. This benchmark-only provisioning bypasses the
 product stream read-ahead path, uses bounded batches of eight raw block
 requests, retains every imported head under its exact `${file.id}:${index}`
 document identity so adaptive pruning cannot classify a current manifest entry
 as stale, and applies one aggregate download deadline. It asserts that the
 only local manifest-entry heads afterward are indices `0..N-1` and that no
-active transfer or queued download work remains. `N=0` is the cold
-observer-persistent cohort and imports no entry block. The harness then records
+active transfer or queued download work remains. `N=0` with persistence enabled
+is the cold observer-persistent cohort and imports no entry block. Transient
+reads require `N=0` and terminal `observer`; they must retain zero manifest-entry
+blocks and zero local chunk index rows after the timed read. The harness then records
 three identical exact locality samples, spaced by
 `min(--poll-ms, 100ms)`. Each sample includes both the manifest-entry blocks
 available in the local block store (`K`) and the local Documents index rows
@@ -209,8 +233,13 @@ unexpected locality change before the timed read. A cached entry block need not
 have a local index row yet.
 
 The measured cohort key is therefore
-`observer-persistent-prefix-b<K>-i<J>`, not merely the requested target. Timed
-read diagnostics must report those exact initial block and index-row counts.
+`observer-<persistent|transient>-<memory|opfs>-prefix-b<K>-i<J>`, not merely the
+requested target. Timed
+read diagnostics must report those exact initial block and index-row counts for
+persistent reads. The product intentionally skips those count queries for a
+transient read, so its timed-read diagnostic fields remain null while the
+independent pre-download and terminal observations must each prove exact zero
+blocks and index rows.
 After download-memory telemetry is armed, a bounded pre-read gate samples
 writer and reader topology in parallel every 100 ms for at most five seconds.
 It requires three consecutive samples in which the writer's outbound and the
@@ -248,8 +277,9 @@ post-read checkpoint also preserves the original two peer identities, retains
 the writer in the replication set, and contains either the writer
 singleton or the exact writer+reader pair.
 
-After integrity verification and an idle transfer scheduler, the harness
-requires every manifest-entry block to be local. The explicit
+After integrity verification and an idle transfer scheduler, a persistent-read
+cohort requires every manifest-entry block to be local; a transient-read cohort
+requires none to be local. The explicit
 terminal expectation keeps historical and fixed implementations in separate,
 fail-closed cohorts: `observer` requires zero local chunk index rows and the
 writer as the exact singleton replicator; `replicator` requires the complete
@@ -266,9 +296,10 @@ Repeated standalone and matrix results are grouped by the exact key, so timings
 from different read-ahead outcomes are never averaged together. Raw canonical
 per-chunk timings remain in each result and can be rebucketed into 5% progress
 windows without losing the underlying samples. Without the paired locality
-options, roles, persistence policy, and seeder-drop gates are unchanged.
+options, reader chunk persistence is not changed by this control and its
+locality evidence fields remain null.
 
-Schema v10 records the exact versioned `seederDropPolicy` and a final numeric
+Schema v11 records the exact versioned `seederDropPolicy` and a final numeric
 `terminal` seeder snapshot after download and integrity verification. Every
 upload cohort also records top-level `integrityVerifiedAt`: it remains `null`
 until the aggregate size, SHA-256, CRC-32, manifest, and persistence gates have
