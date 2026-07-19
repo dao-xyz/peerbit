@@ -6,13 +6,19 @@ import {
 } from "@peerbit/stream-interface";
 import { AbortError, delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import sinon from "sinon";
 import { PeerStreams } from "../src/index.js";
 
 class TestOutboundStream extends EventTarget {
-	id = "test-outbound";
+	id: string;
 	sentPayloads: number[] = [];
 	private expectedLength?: number;
 	private currentPayloadLength = 0;
+
+	constructor(id = "test-outbound") {
+		super();
+		this.id = id;
+	}
 
 	send(bytes: Uint8Array): boolean {
 		let completedFrame = false;
@@ -40,6 +46,71 @@ class TestOutboundStream extends EventTarget {
 }
 
 describe("priority lanes", () => {
+	it("distinguishes outbound streams with the same mux-local id", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+		});
+		const first = new TestOutboundStream();
+		const second = new TestOutboundStream();
+
+		try {
+			expect(first.id).to.equal(second.id);
+
+			await streams.attachOutboundStream(first as any);
+			await streams.attachOutboundStream(first as any);
+			expect(streams.rawOutboundStreams).to.have.length(1);
+			expect(streams.rawOutboundStreams[0]).to.equal(first);
+
+			await streams.attachOutboundStream(second as any);
+			await streams.attachOutboundStream(second as any);
+			expect(streams.rawOutboundStreams).to.have.length(2);
+			expect(streams.rawOutboundStreams[0]).to.equal(first);
+			expect(streams.rawOutboundStreams[1]).to.equal(second);
+		} finally {
+			await streams.close();
+		}
+	});
+
+	it("reschedules outbound pruning when candidates arrive during the grace period", async () => {
+		const keypair = await Ed25519Keypair.create();
+		const clock = sinon.useFakeTimers();
+		const streams = new PeerStreams({
+			peerId: { toString: () => "test-peer" } as unknown as PeerId,
+			publicKey: keypair.publicKey,
+			protocol: "/test",
+			connId: "test-conn",
+		});
+		const first = new TestOutboundStream("first");
+		const second = new TestOutboundStream("second");
+		const third = new TestOutboundStream("third");
+		const fourth = new TestOutboundStream("fourth");
+
+		try {
+			await streams.attachOutboundStream(first as any);
+			await streams.attachOutboundStream(second as any);
+			await clock.tickAsync(250);
+			await streams.attachOutboundStream(third as any);
+
+			await clock.tickAsync(499);
+			expect(streams.rawOutboundStreams).to.deep.equal([first, second, third]);
+
+			await clock.tickAsync(1);
+			expect(streams.rawOutboundStreams).to.deep.equal([third]);
+
+			await streams.attachOutboundStream(fourth as any);
+			expect(streams.rawOutboundStreams).to.deep.equal([third, fourth]);
+			await clock.tickAsync(500);
+			expect(streams.rawOutboundStreams).to.deep.equal([fourth]);
+		} finally {
+			await streams.close();
+			clock.restore();
+		}
+	});
+
 	it("preempts queued low-priority traffic with higher priority", async () => {
 		const keypair = await Ed25519Keypair.create();
 		const streams = new PeerStreams({
