@@ -2,7 +2,7 @@ import fsp from "node:fs/promises";
 
 export const BENCHMARK_RESULT_SCHEMA = Object.freeze({
 	id: "peerbit-file-share-benchmark",
-	version: 8,
+	version: 9,
 });
 
 export const SEEDER_DROP_POLICY = Object.freeze({

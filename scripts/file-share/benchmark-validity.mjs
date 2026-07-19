@@ -60,6 +60,14 @@ const SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION =
 const PRIMARY_DOWNLOAD_METRIC = "libraryStreamWallMs";
 const PRIMARY_DOWNLOAD_METRIC_DEFINITION =
 	"authoritative only within one fixed download-sink cohort; hash-only is the standardized primary cohort and includes awaited sink writes plus any overlapping read-ahead";
+const TRANSPORT_COUNTER_STABILITY_POLL_MS = 100;
+const TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS = 5_000;
+const TRANSPORT_COUNTER_STABLE_SAMPLE_COUNT = 3;
+const TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW = 1024 * 1024;
+const TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS = 1;
+const TRANSPORT_COUNTER_PRE_READ_START_TOLERANCE_MS = 1_000;
+const TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS = 9_000;
+const PUBSUB_PROTOCOL = "/peerbit/topic-control-plane/2.0.0";
 const DEMAND_WAIT_DEFINITION =
 	"wall-clock time each sequential stream consumer awaited its scheduled chunk";
 // Date.now() endpoints can undercount the nested performance.now() helper
@@ -2019,18 +2027,14 @@ const validateLocalChunkPrefixObservation = (value, label) => {
 	};
 };
 
-const validateTopology = (
-	value,
-	label,
-	expectedSelfInReplicatorSet,
-	expectedReplicatorCount = 1,
-) => {
+const validateTopologyEvidence = (value, label) => {
 	const topology = requireRecord(value, label);
 	const capturedAt = requirePositiveSafeInteger(
 		topology.capturedAt,
 		`${label}.capturedAt`,
 	);
 	const peerHash = requireString(topology.peerHash, `${label}.peerHash`);
+	const peerId = requireString(topology.peerId, `${label}.peerId`);
 	const replicatorCount = requireNonNegativeSafeInteger(
 		topology.replicatorCount,
 		`${label}.replicatorCount`,
@@ -2047,18 +2051,319 @@ const validateTopology = (
 		requireString(hash, `${label}.replicatorHashes[${index}]`),
 	);
 	if (
-		replicatorCount !== expectedReplicatorCount ||
-		topology.selfInReplicatorSet !== expectedSelfInReplicatorSet ||
+		typeof topology.selfInReplicatorSet !== "boolean" ||
 		!isDeepStrictEqual(
 			replicatorHashes,
 			[...replicatorHashes].toSorted((left, right) =>
 				left.localeCompare(right),
 			),
+		) ||
+		new Set(replicatorHashes).size !== replicatorHashes.length
+	) {
+		throw new Error(`${label} contains inconsistent topology evidence`);
+	}
+	return {
+		observation: topology,
+		capturedAt,
+		peerHash,
+		peerId,
+		replicatorCount,
+		replicatorHashes,
+		selfInReplicatorSet: topology.selfInReplicatorSet,
+	};
+};
+
+const summarizeCounterpartPubsubTransport = (
+	topology,
+	{
+		direction,
+		expectedPeerHash,
+		expectedRemotePeerId,
+		label,
+	},
+) => {
+	if (!Array.isArray(topology.observation.transportStreams)) {
+		throw new Error(`Benchmark ${label} is missing transport stream diagnostics`);
+	}
+	if (topology.observation.transportStreams.some((stream) => !isRecord(stream))) {
+		throw new Error(
+			`Benchmark ${label} contains malformed transport stream diagnostics`,
+		);
+	}
+	const streams = topology.observation.transportStreams.filter(
+		(stream) =>
+			stream.service === "pubsub" &&
+			stream.direction === direction &&
+			(stream.remotePeerHash === expectedPeerHash ||
+				stream.remotePeer === expectedRemotePeerId),
+	);
+	if (streams.length === 0) {
+		throw new Error(
+			`Benchmark ${label} has no relevant counterpart pubsub stream`,
+		);
+	}
+	const counters = new Map();
+	let totalBytes = 0;
+	for (const [index, stream] of streams.entries()) {
+		if (
+			stream.remotePeerHash !== expectedPeerHash ||
+			stream.remotePeer !== expectedRemotePeerId ||
+			stream.peerHashIdentityMatch !== true ||
+			stream.serviceProtocol !== PUBSUB_PROTOCOL ||
+			stream.expectedProtocol !== PUBSUB_PROTOCOL ||
+			stream.protocol !== PUBSUB_PROTOCOL ||
+			stream.protocolIdentityMatch !== true ||
+			stream.counterStreamIdentityMatch !== true ||
+			stream.connectionIdentityMatchCount !== 1 ||
+			typeof stream.connectionId !== "string" ||
+			stream.connectionId.length === 0 ||
+			typeof stream.multiplexer !== "string" ||
+			stream.multiplexer.length === 0 ||
+			typeof stream.id !== "string" ||
+			stream.id.length === 0 ||
+			!Number.isSafeInteger(stream.bytes) ||
+			stream.bytes < 0 ||
+			(direction === "outbound"
+				? stream.aborted !== false
+				: stream.aborted !== null)
+		) {
+			throw new Error(
+				`Benchmark ${label} relevant pubsub stream ${index} is not authoritative`,
+			);
+		}
+		const key = JSON.stringify([
+			stream.service,
+			stream.remotePeerHash,
+			stream.remotePeer,
+			stream.direction,
+			stream.connectionId,
+			stream.id,
+			stream.multiplexer,
+			stream.protocol,
+		]);
+		if (counters.has(key)) {
+			throw new Error(
+				`Benchmark ${label} contains a duplicate pubsub counter key`,
+			);
+		}
+		counters.set(key, stream.bytes);
+		totalBytes += stream.bytes;
+	}
+	if (!Number.isSafeInteger(totalBytes)) {
+		throw new Error(`Benchmark ${label} has invalid pubsub counter totals`);
+	}
+	return {
+		counters: [...counters.entries()]
+			.map(([key, bytes]) => ({ key, bytes }))
+			.toSorted((left, right) => left.key.localeCompare(right.key)),
+		streamCount: streams.length,
+		totalBytes,
+	};
+};
+
+const requireMonotonicTransportCounterDelta = (before, after, label) => {
+	const beforeKeys = before.counters.map(({ key }) => key);
+	const afterKeys = after.counters.map(({ key }) => key);
+	if (!isDeepStrictEqual(beforeKeys, afterKeys)) {
+		throw new Error(
+			`Benchmark ${label} pubsub counter key set changed during timed read`,
+		);
+	}
+	for (const [index, afterCounter] of after.counters.entries()) {
+		if (afterCounter.bytes < before.counters[index].bytes) {
+			throw new Error(
+				`Benchmark ${label} pubsub counter decreased during timed read`,
+			);
+		}
+	}
+	return after.totalBytes - before.totalBytes;
+};
+
+const validateTransportTopologyStability = ({
+	control,
+	phase,
+	writerTopology,
+	readerTopology,
+	expectedWriterPeerHash,
+	expectedReaderPeerHash,
+	expectedWriterPeerId,
+	expectedReaderPeerId,
+	latestFinishedAt = null,
+}) => {
+	const phaseLabel = `${phase}TimedReadTopology`;
+	const startedAt = requirePositiveSafeInteger(
+		control[`${phaseLabel}StartedAt`],
+		`readerLocalityControl.${phaseLabel}StartedAt`,
+	);
+	const deadlineAt = requirePositiveSafeInteger(
+		control[`${phaseLabel}DeadlineAt`],
+		`readerLocalityControl.${phaseLabel}DeadlineAt`,
+	);
+	const finishedAt = requirePositiveSafeInteger(
+		control[`${phaseLabel}FinishedAt`],
+		`readerLocalityControl.${phaseLabel}FinishedAt`,
+	);
+	const observations = control[`${phaseLabel}Observations`];
+	if (latestFinishedAt !== null && finishedAt > latestFinishedAt) {
+		throw new Error(
+			`Benchmark ${phaseLabel} exceeded its bounded post-read capture delay`,
+		);
+	}
+	const expectedDeadlineAt =
+		latestFinishedAt === null
+			? startedAt + TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS
+			: Math.min(
+					startedAt + TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS,
+					latestFinishedAt,
+				);
+	const maxObservations =
+		Math.floor(
+			Math.max(0, deadlineAt - startedAt) /
+				(TRANSPORT_COUNTER_STABILITY_POLL_MS -
+					TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS),
+		) + 1;
+	if (
+		deadlineAt !== expectedDeadlineAt ||
+		deadlineAt <= startedAt ||
+		finishedAt < startedAt ||
+		finishedAt > deadlineAt ||
+		!Array.isArray(observations) ||
+		observations.length < TRANSPORT_COUNTER_STABLE_SAMPLE_COUNT ||
+		observations.length > maxObservations
+	) {
+		throw new Error(
+			`Benchmark ${phaseLabel} stability window is invalid or unbounded`,
+		);
+	}
+	let previous = null;
+	const validated = observations.map((value, index) => {
+		const label = `readerLocalityControl.${phaseLabel}Observations[${index}]`;
+		const observation = requireRecord(value, label);
+		const capturedAt = requirePositiveSafeInteger(
+			observation.capturedAt,
+			`${label}.capturedAt`,
+		);
+		const writer = validateTopologyEvidence(
+			observation.writerTopology,
+			`${label}.writerTopology`,
+		);
+		const reader = validateTopologyEvidence(
+			observation.readerTopology,
+			`${label}.readerTopology`,
+		);
+		if (
+			writer.peerHash !== expectedWriterPeerHash ||
+			reader.peerHash !== expectedReaderPeerHash ||
+			writer.peerId !== expectedWriterPeerId ||
+			reader.peerId !== expectedReaderPeerId ||
+			writer.capturedAt < startedAt ||
+			reader.capturedAt < startedAt ||
+			writer.capturedAt > capturedAt ||
+			reader.capturedAt > capturedAt ||
+			capturedAt > finishedAt ||
+			(index > 0 &&
+				capturedAt - observations[index - 1].capturedAt <
+					TRANSPORT_COUNTER_STABILITY_POLL_MS -
+						TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS)
+		) {
+			throw new Error(
+				`Benchmark ${phaseLabel} observations have inconsistent identities or timestamps`,
+			);
+		}
+		const writerSummary = summarizeCounterpartPubsubTransport(writer, {
+			direction: "outbound",
+			expectedPeerHash: expectedReaderPeerHash,
+			expectedRemotePeerId: expectedReaderPeerId,
+			label: `${label}.writerTopology`,
+		});
+		const readerSummary = summarizeCounterpartPubsubTransport(reader, {
+			direction: "inbound",
+			expectedPeerHash: expectedWriterPeerHash,
+			expectedRemotePeerId: expectedWriterPeerId,
+			label: `${label}.readerTopology`,
+		});
+		if (previous) {
+			for (const side of ["writer", "reader"]) {
+				const current = side === "writer" ? writerSummary : readerSummary;
+				const previousKeys = previous[side].counters.map(({ key }) => key);
+				const currentKeys = current.counters.map(({ key }) => key);
+				if (isDeepStrictEqual(previousKeys, currentKeys)) {
+					for (const [counterIndex, counter] of current.counters.entries()) {
+						if (counter.bytes < previous[side].counters[counterIndex].bytes) {
+							throw new Error(
+								`Benchmark ${phaseLabel} counters decrease for an unchanged key set`,
+							);
+						}
+					}
+				}
+			}
+		}
+		previous = { writer: writerSummary, reader: readerSummary };
+		return {
+			observation,
+			capturedAt,
+			writer,
+			reader,
+			writerSummary,
+			readerSummary,
+		};
+	});
+	const stable = validated.slice(-TRANSPORT_COUNTER_STABLE_SAMPLE_COUNT);
+	const stableSignature = (entry) => ({
+		writer: entry.writerSummary,
+		reader: entry.readerSummary,
+	});
+	if (
+		stable.some(
+			(entry) =>
+				Math.abs(
+					entry.writerSummary.totalBytes - entry.readerSummary.totalBytes,
+				) > TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW,
+		) ||
+		stable.slice(1).some(
+			(entry) =>
+				!isDeepStrictEqual(
+					stableSignature(entry),
+					stableSignature(stable[0]),
+				),
+		) ||
+		!isDeepStrictEqual(
+			validated.at(-1).observation.writerTopology,
+			writerTopology.observation,
+		) ||
+		!isDeepStrictEqual(
+			validated.at(-1).observation.readerTopology,
+			readerTopology.observation,
 		)
+	) {
+		throw new Error(
+			`Benchmark ${phaseLabel} observations do not prove stable counterpart pubsub counters`,
+		);
+	}
+	return {
+		startedAt,
+		deadlineAt,
+		finishedAt,
+		observations: validated,
+		writerSummary: stable.at(-1).writerSummary,
+		readerSummary: stable.at(-1).readerSummary,
+	};
+};
+
+const validateTopology = (
+	value,
+	label,
+	expectedSelfInReplicatorSet,
+	expectedReplicatorCount = 1,
+) => {
+	const topology = validateTopologyEvidence(value, label);
+	if (
+		topology.replicatorCount !== expectedReplicatorCount ||
+		topology.selfInReplicatorSet !== expectedSelfInReplicatorSet
 	) {
 		throw new Error(`${label} does not prove the requested topology role`);
 	}
-	return { capturedAt, peerHash, replicatorCount, replicatorHashes };
+	return topology;
 };
 
 const validateReaderLocalityControl = (result, invocation) => {
@@ -2106,6 +2411,20 @@ const validateReaderLocalityControl = (result, invocation) => {
 		control.expectedTerminalTopology !== expectedTerminalTopology ||
 		control.stabilityPollIntervalMs !== Math.min(invocation.pollMs, 100) ||
 		control.requiredStableObservationCount !== 3 ||
+		control.transportCounterStabilityPollIntervalMs !==
+			TRANSPORT_COUNTER_STABILITY_POLL_MS ||
+		control.transportCounterStabilityTimeoutMs !==
+			TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS ||
+		control.transportCounterRequiredStableObservationCount !==
+			TRANSPORT_COUNTER_STABLE_SAMPLE_COUNT ||
+		control.transportCounterMaxCounterpartByteSkew !==
+			TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW ||
+		control.transportCounterSampleClockToleranceMs !==
+			TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS ||
+		control.transportCounterPreReadStartToleranceMs !==
+			TRANSPORT_COUNTER_PRE_READ_START_TOLERANCE_MS ||
+		control.transportCounterPostReadCaptureMaxDelayMs !==
+			TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS ||
 		control.status !== "complete" ||
 		control.failure !== null
 	) {
@@ -2174,6 +2493,14 @@ const validateReaderLocalityControl = (result, invocation) => {
 		"readerLocalityControl.readerTopologyBeforeTimedRead",
 		false,
 	);
+	const writerTopologyAfterTimedRead = validateTopologyEvidence(
+		control.writerTopologyAfterTimedRead,
+		"readerLocalityControl.writerTopologyAfterTimedRead",
+	);
+	const readerTopologyAfterTimedRead = validateTopologyEvidence(
+		control.readerTopologyAfterTimedRead,
+		"readerLocalityControl.readerTopologyAfterTimedRead",
+	);
 	if (
 		writerTopologyBeforeUpload.replicatorCount !==
 			readerTopologyBeforeUpload.replicatorCount ||
@@ -2186,7 +2513,16 @@ const validateReaderLocalityControl = (result, invocation) => {
 		writerTopologyBeforeUpload.peerHash !==
 			writerTopologyBeforeTimedRead.peerHash ||
 		readerTopologyBeforeUpload.peerHash !==
-			readerTopologyBeforeTimedRead.peerHash
+			readerTopologyBeforeTimedRead.peerHash ||
+		writerTopologyBeforeUpload.peerHash !==
+			writerTopologyAfterTimedRead.peerHash ||
+		readerTopologyBeforeUpload.peerHash !==
+			readerTopologyAfterTimedRead.peerHash ||
+		writerTopologyBeforeUpload.peerId === readerTopologyBeforeUpload.peerId ||
+		writerTopologyBeforeUpload.peerId !== writerTopologyBeforeTimedRead.peerId ||
+		readerTopologyBeforeUpload.peerId !== readerTopologyBeforeTimedRead.peerId ||
+		writerTopologyBeforeUpload.peerId !== writerTopologyAfterTimedRead.peerId ||
+		readerTopologyBeforeUpload.peerId !== readerTopologyAfterTimedRead.peerId
 	) {
 		throw new Error(
 			"Benchmark topology evidence does not preserve two distinct peer identities",
@@ -2206,6 +2542,90 @@ const validateReaderLocalityControl = (result, invocation) => {
 	) {
 		throw new Error(
 			"Benchmark topology evidence does not agree on the writer as the exact singleton replicator",
+		);
+	}
+	const postTimedReadSingleton = [writerTopologyBeforeUpload.peerHash];
+	const postTimedReadPair = [
+		writerTopologyBeforeUpload.peerHash,
+		readerTopologyBeforeUpload.peerHash,
+	].toSorted((left, right) => left.localeCompare(right));
+	if (
+		!isDeepStrictEqual(
+			writerTopologyAfterTimedRead.replicatorHashes,
+			readerTopologyAfterTimedRead.replicatorHashes,
+		) ||
+		writerTopologyAfterTimedRead.selfInReplicatorSet !== true ||
+		readerTopologyAfterTimedRead.selfInReplicatorSet !==
+			readerTopologyAfterTimedRead.replicatorHashes.includes(
+				readerTopologyAfterTimedRead.peerHash,
+			) ||
+		![postTimedReadSingleton, postTimedReadPair].some((expectedHashes) =>
+			isDeepStrictEqual(
+				writerTopologyAfterTimedRead.replicatorHashes,
+				expectedHashes,
+			),
+		)
+	) {
+		throw new Error(
+			"Benchmark immediate post-read topology evidence is inconsistent",
+		);
+	}
+	const preTimedReadTransportStability =
+		validateTransportTopologyStability({
+			control,
+			phase: "pre",
+			writerTopology: writerTopologyBeforeTimedRead,
+			readerTopology: readerTopologyBeforeTimedRead,
+			expectedWriterPeerHash: writerTopologyBeforeUpload.peerHash,
+			expectedReaderPeerHash: readerTopologyBeforeUpload.peerHash,
+			expectedWriterPeerId: writerTopologyBeforeUpload.peerId,
+			expectedReaderPeerId: readerTopologyBeforeUpload.peerId,
+		});
+	const postTimedReadTransportStability =
+		validateTransportTopologyStability({
+			control,
+			phase: "post",
+			writerTopology: writerTopologyAfterTimedRead,
+			readerTopology: readerTopologyAfterTimedRead,
+			expectedWriterPeerHash: writerTopologyBeforeUpload.peerHash,
+			expectedReaderPeerHash: readerTopologyBeforeUpload.peerHash,
+			expectedWriterPeerId: writerTopologyBeforeUpload.peerId,
+			expectedReaderPeerId: readerTopologyBeforeUpload.peerId,
+			latestFinishedAt:
+				downloadCompletionObservedAt +
+				TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS,
+		});
+	const postTimedReadTopologyCaptureDelayMs = requireNonNegativeSafeInteger(
+		control.postTimedReadTopologyCaptureDelayMs,
+		"readerLocalityControl.postTimedReadTopologyCaptureDelayMs",
+	);
+	if (
+		postTimedReadTopologyCaptureDelayMs !==
+			postTimedReadTransportStability.finishedAt -
+				downloadCompletionObservedAt ||
+		postTimedReadTopologyCaptureDelayMs >
+			TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS
+	) {
+		throw new Error(
+			"Benchmark post-timed-read topology capture delay is inconsistent or unbounded",
+		);
+	}
+	const writerCounterDelta = requireMonotonicTransportCounterDelta(
+		preTimedReadTransportStability.writerSummary,
+		postTimedReadTransportStability.writerSummary,
+		"writer",
+	);
+	const readerCounterDelta = requireMonotonicTransportCounterDelta(
+		preTimedReadTransportStability.readerSummary,
+		postTimedReadTransportStability.readerSummary,
+		"reader",
+	);
+	if (
+		Math.abs(writerCounterDelta - readerCounterDelta) >
+		TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW
+	) {
+		throw new Error(
+			"Benchmark writer outbound and reader inbound pubsub counter deltas exceed the byte-skew bound",
 		);
 	}
 	const beforePreload = validateLocalChunkPrefixObservation(
@@ -2444,6 +2864,18 @@ const validateReaderLocalityControl = (result, invocation) => {
 		control.integrityVerifiedAt,
 		"readerLocalityControl.integrityVerifiedAt",
 	);
+	const downloadMemoryTelemetry = requireRecord(
+		result.downloadMemoryTelemetry,
+		"downloadMemoryTelemetry",
+	);
+	const downloadMemoryStartedAt = requirePositiveSafeInteger(
+		downloadMemoryTelemetry.startedAt,
+		"downloadMemoryTelemetry.startedAt",
+	);
+	const downloadMemoryStoppedAt = requirePositiveSafeInteger(
+		downloadMemoryTelemetry.finishedAt,
+		"downloadMemoryTelemetry.finishedAt",
+	);
 	const terminalIdle = validateLocalChunkPrefixObservation(
 		control.terminalIdleObservation,
 		"readerLocalityControl.terminalIdleObservation",
@@ -2569,11 +3001,26 @@ const validateReaderLocalityControl = (result, invocation) => {
 		preloadStartedAt < beforePreload.capturedAt ||
 		preloadFinishedAt < preloadStartedAt ||
 		stable[0].capturedAt < preloadFinishedAt ||
+		preTimedReadTransportStability.startedAt < preDownload.capturedAt ||
+		preTimedReadTransportStability.startedAt < downloadMemoryStartedAt ||
+		preTimedReadTransportStability.finishedAt > downloadStartedAt ||
+		downloadStartedAt - preTimedReadTransportStability.finishedAt >
+			TRANSPORT_COUNTER_PRE_READ_START_TOLERANCE_MS ||
 		preDownload.capturedAt > writerTopologyBeforeTimedRead.capturedAt ||
 		preDownload.capturedAt > readerTopologyBeforeTimedRead.capturedAt ||
 		writerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
 		readerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
 		downloadFinishedAt > downloadCompletionObservedAt ||
+		postTimedReadTransportStability.startedAt <
+			downloadCompletionObservedAt ||
+		postTimedReadTransportStability.startedAt < downloadMemoryStoppedAt ||
+		postTimedReadTransportStability.finishedAt > integrityVerifiedAt ||
+		writerTopologyAfterTimedRead.capturedAt < downloadCompletionObservedAt ||
+		readerTopologyAfterTimedRead.capturedAt < downloadCompletionObservedAt ||
+		writerTopologyAfterTimedRead.capturedAt < downloadMemoryStoppedAt ||
+		readerTopologyAfterTimedRead.capturedAt < downloadMemoryStoppedAt ||
+		writerTopologyAfterTimedRead.capturedAt > integrityVerifiedAt ||
+		readerTopologyAfterTimedRead.capturedAt > integrityVerifiedAt ||
 		integrityVerifiedAt !== result.integrityVerifiedAt ||
 		integrityVerifiedAt < downloadCompletionObservedAt ||
 		terminalIdle.capturedAt < integrityVerifiedAt ||

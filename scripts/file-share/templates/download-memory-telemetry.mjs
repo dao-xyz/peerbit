@@ -10,7 +10,7 @@ export const DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS = 9_000;
 export const DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS = 30_000;
 export const DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS = 30_000;
 export const DOWNLOAD_MEMORY_WINDOW_DEFINITION =
-	"samplers-armed-after-reader-locality-stabilization-immediately-before-download-click-through-selected-sink-completion";
+	"samplers-armed-after-any-requested-reader-locality-prefix-stabilization-before-any-requested-bounded-pre-read-transport-counter-gate-and-download-click-through-selected-sink-completion";
 export const DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES = 4_096;
 export const DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE = 2;
 export const DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16;

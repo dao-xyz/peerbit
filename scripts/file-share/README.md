@@ -3,7 +3,7 @@
 Run a single checkout with `pnpm bench:file-share:local` or compare pinned
 Peerbit revisions with `pnpm bench:file-share:matrix`.
 
-Result schema v8 defines `errorCount` as every uncaught browser `pageerror`,
+Result schema v9 defines `errorCount` as every uncaught browser `pageerror`,
 every browser `console.error`, every console message at any level that contains
 a declared Peerbit failure signature, and scenario-recorded operation failures.
 Each result embeds the exact `errorCollectionDefinition` and signature list.
@@ -11,7 +11,7 @@ Playwright `requestfailed` events are retained separately under
 `requestFailures`; they are diagnostics and are not automatically fatal because
 peer-to-peer discovery can legitimately exercise failed network candidates.
 
-Passed schema v8 upload results require `writerDiagnostics.lastUploadDiagnostics`
+Passed schema v9 upload results require `writerDiagnostics.lastUploadDiagnostics`
 to contain exactly 21 bounded progress milestones from 0% through 100% in 5%
 increments. Each point records the aggregate bytes whose application-level
 chunk puts completed, using the library upload clock and exact ceil-rounded byte
@@ -47,11 +47,13 @@ sinks only in separate benchmark sessions; aggregate comparison objects fail
 closed on mixed sinks, and every passed result and aggregate labels
 non-hash-only cohorts non-authoritative.
 
-Schema v8 upload results also record the `download-memory-v2` bounded
+Schema v9 upload results also record the `download-memory-v2` bounded
 download-window memory telemetry contract. After any
-controlled-locality stabilization, the harness arms serial samplers immediately
-before the timed click and forces a final sample as soon as the selected sink
-completion is observed, before integrity readback or terminal-topology checks.
+controlled-locality prefix stabilization, the harness arms serial samplers
+before the bounded pre-read transport-counter gate and timed click, then forces
+a final sample as soon as the selected sink completion is observed, before
+post-read counter stabilization, integrity readback, or terminal-topology
+checks.
 Reader and writer renderer JavaScript heaps use CDP `JSHeapUsedSize` samples.
 Host RSS combines all Chromium processes, grouped by Chromium process role,
 with the Playwright worker Node process; for local runs that Node value also
@@ -111,8 +113,45 @@ have a local index row yet.
 The measured cohort key is therefore
 `observer-persistent-prefix-b<K>-i<J>`, not merely the requested target. Timed
 read diagnostics must report those exact initial block and index-row counts.
-After sink completion, integrity verification, and an idle transfer scheduler,
-the harness requires every manifest-entry block to be local. The explicit
+After download-memory telemetry is armed, a bounded pre-read gate samples
+writer and reader topology in parallel every 100 ms for at most five seconds.
+It requires three consecutive samples in which the writer's outbound and the
+reader's inbound TopicControlPlane pubsub stream key sets and per-key byte
+counters are unchanged (with 1 ms of timestamp quantization tolerance). The
+final accepted sample becomes
+`writerTopologyBeforeTimedRead` and `readerTopologyBeforeTimedRead`; the timed
+click must start within the recorded one-second handoff tolerance. This excludes
+late preload control traffic from the measured counter delta.
+
+Immediately after sink completion is observed and download-memory sampling has
+stopped, the same bounded gate captures post-read topology before integrity
+readback, idle waiting, terminal-topology stabilization, or the transport's
+ten-second inbound idle pruning. Its deadline is capped so an accepted gate
+finishes no later than nine seconds after sink completion, leaving one second
+of pruning margin even when memory-telemetry shutdown is delayed; the actual
+completion-to-gate-finish delay is recorded and validated. The final accepted
+sample becomes
+`writerTopologyAfterTimedRead` and `readerTopologyAfterTimedRead`, so later
+convergence cannot erase the transport diagnostics visible at the end of the
+measured read. Both gates require exact counterpart peer hashes and peer IDs,
+the TopicControlPlane service and negotiated protocols, raw-counter/stream
+identity, and a unique live connection identity. They reject aborted outbound
+streams, duplicate audit keys, decreasing counters for an unchanged local key
+set, more than 1 MiB of aggregate writer/reader byte skew, malformed counters,
+capture errors, and deadline overruns. Each local audit key includes service,
+remote peer hash and ID, direction, connection and stream IDs, multiplexer, and
+protocol. Across the timed read, each endpoint must preserve its own exact key
+set and every post-read counter must be at least its pre-read value; only the
+writer-outbound and reader-inbound total deltas are compared, with at most 1 MiB
+of skew. Local stream, connection, and multiplexer identifiers are not compared
+across endpoints because libp2p assigns them independently. Every completed
+observation is retained in the result, including on a later failure. A valid
+post-read checkpoint also preserves the original two peer identities, retains
+the writer in the replication set, and contains either the writer
+singleton or the exact writer+reader pair.
+
+After integrity verification and an idle transfer scheduler, the harness
+requires every manifest-entry block to be local. The explicit
 terminal expectation keeps historical and fixed implementations in separate,
 fail-closed cohorts: `observer` requires zero local chunk index rows and the
 writer as the exact singleton replicator; `replicator` requires the complete
@@ -131,7 +170,7 @@ per-chunk timings remain in each result and can be rebucketed into 5% progress
 windows without losing the underlying samples. Without the paired locality
 options, roles, persistence policy, and seeder-drop gates are unchanged.
 
-Schema v8 records the exact versioned `seederDropPolicy` and a final numeric
+Schema v9 records the exact versioned `seederDropPolicy` and a final numeric
 `terminal` seeder snapshot after download and integrity verification. Every
 upload cohort also records top-level `integrityVerifiedAt`: it remains `null`
 until the aggregate size, SHA-256, CRC-32, manifest, and persistence gates have
