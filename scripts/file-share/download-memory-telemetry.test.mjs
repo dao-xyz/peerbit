@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import {
 	DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
-	DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS,
 	DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES,
+	DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS,
 	calculateDownloadMemoryMaxSamples,
 	startBoundedSerialSampler,
 	startDownloadMemoryTelemetry,
@@ -85,8 +85,7 @@ test("bounds and truncates repeated sampling failures", async () => {
 	assert.equal(result.samplingErrorOverflowCount > 0, true);
 	assert.equal(
 		result.samplingErrors.every(
-			(message) =>
-				message.length === DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
+			(message) => message.length === DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
 		),
 		true,
 	);
@@ -144,11 +143,46 @@ test("bounds never-settling initial, active, and cleanup operations", async () =
 	});
 	const cleanupResult = await cleanup.stop();
 	assert.equal(cleanupResult.samples.length, 2);
-	assert.equal(cleanupResult.samplingErrors.length, 1);
+	assert.deepEqual(cleanupResult.samplingErrors, []);
+	assert.equal(cleanupResult.cleanupWarnings.length, 1);
 	assert.match(
-		cleanupResult.samplingErrors[0],
+		cleanupResult.cleanupWarnings[0],
 		/Memory sampler cleanup exceeded 5ms/,
 	);
+});
+
+test("finalizes the terminal sample before post-sampling cleanup", async () => {
+	let cleanupCount = 0;
+	const sampler = await startBoundedSerialSampler({
+		intervalMs: 100,
+		maxSamples: 3,
+		readSample: async () => ({ value: 1 }),
+		cleanup: async () => {
+			cleanupCount += 1;
+		},
+	});
+	const sampled = await sampler.stopSampling();
+	assert.equal(sampled.samples.length, 2);
+	assert.equal(sampled.finishedAt >= sampled.startedAt, true);
+	assert.equal(cleanupCount, 0);
+
+	const cleaned = await sampler.cleanup();
+	assert.equal(cleaned.finishedAt, sampled.finishedAt);
+	assert.equal(cleanupCount, 1);
+});
+
+test("keeps non-timeout cleanup failures fatal", async () => {
+	const sampler = await startBoundedSerialSampler({
+		intervalMs: 100,
+		maxSamples: 3,
+		readSample: async () => ({ value: 1 }),
+		cleanup: async () => {
+			throw new Error("detach rejected");
+		},
+	});
+	const result = await sampler.cleanup();
+	assert.deepEqual(result.cleanupWarnings, []);
+	assert.deepEqual(result.samplingErrors, ["detach rejected"]);
 });
 
 test("absorbs late operation settlement and cleans late-created values", async () => {
@@ -219,6 +253,7 @@ test("collects forced endpoint heap and attributed RSS samples", async () => {
 	});
 	const result = await telemetry.stop();
 	assert.equal(result.complete, true);
+	assert.equal(result.cleanupComplete, true);
 	assert.equal(result.readerJsHeap.sampleCount, 2);
 	assert.equal(result.writerJsHeap.sampleCount, 2);
 	assert.equal(result.hostRss.sampleCount, 2);
@@ -230,6 +265,62 @@ test("collects forced endpoint heap and attributed RSS samples", async () => {
 	);
 	assert.equal(detachedPageSessions, 2);
 	assert.equal(detachedBrowserSessions, 1);
+});
+
+test("records post-sampling CDP timeouts as cleanup warnings", async () => {
+	let detachStarted = 0;
+	const page = (hangOnCleanup) => ({
+		context: () => ({
+			newCDPSession: async () => ({
+				send: async (method) => {
+					if (method === "Performance.getMetrics") {
+						return { metrics: [{ name: "JSHeapUsedSize", value: 100 }] };
+					}
+					if (method === "Performance.disable" && hangOnCleanup) {
+						return await new Promise(() => {});
+					}
+					return {};
+				},
+				detach: async () => {
+					detachStarted += 1;
+					if (hangOnCleanup) {
+						return await new Promise(() => {});
+					}
+				},
+			}),
+		}),
+	});
+	const browser = {
+		newBrowserCDPSession: async () => ({
+			send: async () => ({
+				processInfo: [{ id: process.pid, type: "browser" }],
+			}),
+			detach: async () => {},
+		}),
+	};
+	const telemetry = await startDownloadMemoryTelemetry({
+		browser,
+		reader: page(true),
+		writer: page(false),
+		downloadTimeoutMs: 60_000,
+		schedulingToleranceMs: 5_000,
+		operationTimeoutMs: 3,
+		cleanupTimeoutMs: 8,
+	});
+	const sampled = await telemetry.stopSampling();
+	assert.equal(sampled.complete, true);
+	assert.equal(sampled.cleanupComplete, false);
+	assert.equal(detachStarted, 0);
+
+	const result = await telemetry.cleanup();
+	assert.equal(result.cleanupComplete, true);
+	assert.deepEqual(result.readerJsHeap.samplingErrors, []);
+	assert.equal(result.readerJsHeap.cleanupWarnings.length, 1);
+	assert.match(
+		result.readerJsHeap.cleanupWarnings[0],
+		/Performance\.disable exceeded 3ms; Page JS heap CDP detach exceeded 3ms/,
+	);
+	assert.equal(detachStarted, 2);
 });
 
 test("bounds setup and detaches a CDP session created after its deadline", async () => {
@@ -275,9 +366,11 @@ test("bounds setup and detaches a CDP session created after its deadline", async
 		cleanupTimeoutMs: 8,
 	});
 	assert.equal(
-		telemetry.snapshot().readerJsHeap.samplingErrors.some((message) =>
-			message.includes("CDP session creation exceeded 3ms"),
-		),
+		telemetry
+			.snapshot()
+			.readerJsHeap.samplingErrors.some((message) =>
+				message.includes("CDP session creation exceeded 3ms"),
+			),
 		true,
 	);
 	await telemetry.stop();

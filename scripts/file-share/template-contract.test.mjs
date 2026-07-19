@@ -17,18 +17,19 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v7 result envelope`, async () => {
+	test(`${name} emits the atomic v8 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 7",
+			"version: 8",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
 			"PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT",
+			"PW_READER_TERMINAL_TOPOLOGY",
 			'process.env.PW_BENCH !== "1"',
 			'serverMode: "production-preview"',
 			"schema: RESULT_SCHEMA",
@@ -179,6 +180,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"SINK_SERVER_CLOCK_TOLERANCE_MS_PER_CHUNK",
 		"PW_READER_LOCAL_CHUNK_TARGET",
 		"PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT",
+		"PW_READER_TERMINAL_TOPOLOGY",
 		"LOCALITY_CONTROL_POLL_MS",
 		"seedReplicationRole",
 		"openWithSeededReplicationRole",
@@ -190,20 +192,21 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"readLocalChunkPrefixObservation",
 		"getTopologySnapshot",
 		"topologyHasExactWriterSingleton",
-		"topologyHasExactWriterReaderPair",
 		"writerTopology.replicatorHashes[0] === writerPeerHash",
 		"readerTopology.replicatorHashes[0] === writerPeerHash",
 		"writerTopologyBeforeUpload",
 		"readerTopologyBeforeTimedRead",
-		"requestedYieldedChunkCount",
+		"requestedLocalChunkBlockCount",
+		'provisioningMethod: "exact-manifest-head-import"',
 		"stabilityObservations",
 		"preDownloadObservation",
 		"waitForTerminalReaderIdle",
 		"collectStableTerminalTopology",
 		"terminalIdleObservation",
 		"terminalTopologyObservations",
-		'terminalTopologyRole = "replicator"',
-		"readerJoinedReplicationDuringTimedRead = true",
+		"expectedTerminalTopology: READER_TERMINAL_TOPOLOGY",
+		"topologyMatchesTerminalExpectation",
+		"terminalTopologyExpectationSatisfied = true",
 		'readerLocalityControl.status = "complete"',
 		"exact contiguous prefix",
 		"SEEDER_DROP_POLICY",
@@ -213,7 +216,8 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"unexpectedSeederDrop",
 		"downloadMemoryTelemetryController =",
 		"downloadMemoryTelemetryController.snapshot()",
-		"await downloadMemoryTelemetryController.stop()",
+		"await downloadMemoryTelemetryController.stopSampling()",
+		"await downloadMemoryTelemetryController.cleanup()",
 		"downloadMemoryTelemetry.complete !== true",
 		"series.samplingErrors.length > 0",
 		"downloadMemoryTelemetry,",
@@ -224,7 +228,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	assert.match(
 		contents,
 		/const terminalSeederSnapshot = await snapshot\([\s\S]*?noteSeederDrop\(terminalSeederSnapshot\);[\s\S]*?if \(unexpectedSeederDrop\)/,
-		"the final numeric seeder snapshot must participate in the v7 drop policy before acceptance",
+		"the final numeric seeder snapshot must participate in the v8 drop policy before acceptance",
 	);
 	const lateFailureCatch = contents.slice(
 		contents.lastIndexOf("\t\t} catch (error: any) {"),
@@ -280,10 +284,18 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.ok(
 		contents.indexOf("const download = await downloadCompletion") <
-			contents.indexOf("await downloadMemoryTelemetryController.stop()") &&
-			contents.indexOf("await downloadMemoryTelemetryController.stop()") <
-				contents.indexOf('stage = "verify-integrity"'),
-		"memory telemetry must stop at sink completion before integrity and topology work",
+			contents.indexOf(
+				"await downloadMemoryTelemetryController.stopSampling()",
+			) &&
+			contents.indexOf(
+				"await downloadMemoryTelemetryController.stopSampling()",
+			) < contents.indexOf('stage = "verify-integrity"'),
+		"memory telemetry sampling must stop at sink completion before integrity and topology work",
+	);
+	assert.ok(
+		contents.indexOf("integrityVerifiedAt = Date.now()") <
+			contents.indexOf("await downloadMemoryTelemetryController.cleanup()"),
+		"CDP cleanup must start only after transfer integrity evidence is finalized",
 	);
 	assert.ok(
 		!contents.includes("MIN_READY_SEEDERS, 180_000"),
@@ -332,7 +344,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.match(
 		contents,
-		/if \(!integrityVerified\)[\s\S]*?integrityVerifiedAt = Date\.now\(\);[\s\S]*?readerLocalityControl\.integrityVerifiedAt = integrityVerifiedAt;[\s\S]*?waitForTerminalReaderIdle\(\)[\s\S]*?collectStableTerminalTopology\(\s*terminalTopologyStartedAt,\s*terminalTopologyDeadlineAt,\s*\)[\s\S]*?readerJoinedReplicationDuringTimedRead = true[\s\S]*?const terminalSeederSnapshot = await snapshot\([\s\S]*?stage = "complete"/,
+		/if \(!integrityVerified\)[\s\S]*?integrityVerifiedAt = Date\.now\(\);[\s\S]*?readerLocalityControl\.integrityVerifiedAt = integrityVerifiedAt;[\s\S]*?waitForTerminalReaderIdle\(\)[\s\S]*?collectStableTerminalTopology\(\s*terminalTopologyStartedAt,\s*terminalTopologyDeadlineAt,\s*\)[\s\S]*?terminalTopologyExpectationSatisfied = true[\s\S]*?const terminalSeederSnapshot = await snapshot\([\s\S]*?stage = "complete"/,
 		"terminal topology and the final seeder snapshot must follow the aggregate integrity gate outside the measured download",
 	);
 	assert.ok(
@@ -355,6 +367,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		'requireUploadDiagnostics: scenario === "upload"',
 		"peerbit-benchmark-locality-prefix-preload",
 		"peerbit-benchmark-locality-preload-aggregate-deadline",
+		"peerbit-benchmark-locality-exact-manifest-import",
 		"peerbit-benchmark-locality-replicator-hashes",
 		"peerbit-benchmark-locality-indexed-search",
 		"replicatorHashes: replicatorHashes",
@@ -364,7 +377,12 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"const aggregateController = new AbortController()",
 		"signal: aggregateController.signal",
 		"aggregateController.abort(aggregateTimeoutError)",
-		"await iterator?.return?.()",
+		"const manifestEntryHeads = (file as any).chunkEntryHeads",
+		'const documentId = \\`\\${file.id}:\\${index}\\`',
+		"program.retainChunkRead(documentId, file.id)",
+		"program.retainChunkEntryHead(\n\t\t\t\t\t\t\t\t\t\t\thead,\n\t\t\t\t\t\t\t\t\t\t\tfile.id,\n\t\t\t\t\t\t\t\t\t\t\tdocumentId",
+		"const rawEntry = await blocks.get(head",
+		"localManifestEntryIndicesAfter",
 		"window.clearTimeout(aggregateTimeoutHandle)",
 		"aggregateDeadlineAt",
 		"aggregateTimedOut",
@@ -497,8 +515,15 @@ updateListCalls.push(updateListStats);
 	assert.ok(!migrated.includes("new SearchRequest({ fetch: 0xffffffff })"));
 	for (const required of [
 		"/* peerbit-benchmark-locality-preload-aggregate-deadline */",
+		"/* peerbit-benchmark-locality-exact-manifest-import */",
 		"const aggregateController = new AbortController()",
 		"signal: aggregateController.signal",
+		"const manifestEntryHeads = (file as any).chunkEntryHeads",
+		"const documentId = `${file.id}:${index}`",
+		"program.retainChunkRead(documentId, file.id)",
+		"program.retainChunkEntryHead(",
+		"const rawEntry = await blocks.get(head",
+		"localManifestEntryIndicesAfter",
 		"aggregateTimeoutMs",
 		"aggregateDeadlineAt",
 		"aggregateTimedOut",
@@ -506,9 +531,8 @@ updateListCalls.push(updateListStats);
 		assert.ok(migrated.includes(required), `missing migrated ${required}`);
 	}
 	assert.ok(
-		migrated.indexOf("await iterator?.return?.()") <
-			migrated.indexOf("window.clearTimeout(aggregateTimeoutHandle)"),
-		"the aggregate timeout must remain armed through iterator cleanup",
+		!migrated.includes(".streamFile(program"),
+		"exact locality provisioning must not start the product stream read-ahead path",
 	);
 	assert.equal(
 		[...migrated.matchAll(/preloadLocalChunkPrefix: async/g)].length,
@@ -644,7 +668,7 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"utf8",
 	);
 	for (const required of [
-		'DOWNLOAD_MEMORY_PROFILE = "download-memory-v1"',
+		'DOWNLOAD_MEMORY_PROFILE = "download-memory-v2"',
 		"DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS = 5_000",
 		"DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS = 4_000",
 		"DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS = 9_000",
@@ -653,6 +677,7 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES = 4_096",
 		"DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES = 256",
 		"DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16",
+		"DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS = 16",
 		"DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512",
 		"startBoundedSerialSampler",
 		"withDownloadMemoryOperationDeadline",
@@ -672,6 +697,8 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"process.memoryUsage().rss",
 		"playwright-worker-node-including-in-process-local-bootstrap",
 		"samplingErrorOverflowCount",
+		"cleanupWarningOverflowCount",
+		"stopSampling",
 	]) {
 		assert.ok(
 			contents.includes(required),

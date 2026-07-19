@@ -15,6 +15,7 @@ import {
 	DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES,
 	DOWNLOAD_MEMORY_MAX_BROWSER_ROLES,
 	DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH,
+	DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS,
 	DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
 	DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS,
 	DOWNLOAD_MEMORY_NODE_SCOPE,
@@ -791,6 +792,23 @@ const validateMemorySamplingErrors = (series, label) => {
 	) {
 		throw new Error(`Benchmark ${label} contains memory sampling errors`);
 	}
+	if (
+		!Array.isArray(series.cleanupWarnings) ||
+		series.cleanupWarnings.length > DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS ||
+		series.cleanupWarnings.some(
+			(message) =>
+				typeof message !== "string" ||
+				message.length === 0 ||
+				message.length > DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH ||
+				!/^cleanup-timeout: .+ exceeded [1-9]\d*ms(?:; .+ exceeded [1-9]\d*ms)*$/.test(
+					message,
+				),
+		) ||
+		!Number.isSafeInteger(series.cleanupWarningOverflowCount) ||
+		series.cleanupWarningOverflowCount < 0
+	) {
+		throw new Error(`Benchmark ${label} contains invalid cleanup warnings`);
+	}
 };
 
 const validateMemorySeriesWindow = (
@@ -911,6 +929,8 @@ const validateHeapMemorySeries = (
 			"samples",
 			"samplingErrors",
 			"samplingErrorOverflowCount",
+			"cleanupWarnings",
+			"cleanupWarningOverflowCount",
 		],
 		label,
 	);
@@ -1007,6 +1027,8 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			"samples",
 			"samplingErrors",
 			"samplingErrorOverflowCount",
+			"cleanupWarnings",
+			"cleanupWarningOverflowCount",
 		],
 		label,
 	);
@@ -1131,6 +1153,7 @@ export const validateDownloadMemoryTelemetry = (
 			"windowDefinition",
 			"maxSamplesPerSeries",
 			"complete",
+			"cleanupComplete",
 			"startedAt",
 			"finishedAt",
 			"readerJsHeap",
@@ -1148,7 +1171,8 @@ export const validateDownloadMemoryTelemetry = (
 		telemetry.sampleIntervalMs !== DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS ||
 		telemetry.windowDefinition !== DOWNLOAD_MEMORY_WINDOW_DEFINITION ||
 		telemetry.maxSamplesPerSeries !== expectedMaxSamples ||
-		telemetry.complete !== true
+		telemetry.complete !== true ||
+		telemetry.cleanupComplete !== true
 	) {
 		throw new Error("Benchmark download memory telemetry contract is invalid");
 	}
@@ -1849,7 +1873,7 @@ const validateEnvelope = (
 	);
 	if (
 		invocationSchema.id !== "peerbit-file-share-benchmark-invocation" ||
-		invocationSchema.version !== 3
+		invocationSchema.version !== 4
 	) {
 		throw new Error("Benchmark result has an unsupported invocation schema");
 	}
@@ -1901,6 +1925,11 @@ const validateRequestedUploadKnobs = (result, invocation) => {
 	) {
 		throw new Error(
 			"Benchmark result readerLocalChunkMaxOvershoot does not match the requested invocation",
+		);
+	}
+	if (result.readerTerminalTopology !== invocation.readerTerminalTopology) {
+		throw new Error(
+			"Benchmark result readerTerminalTopology does not match the requested invocation",
 		);
 	}
 };
@@ -2035,9 +2064,11 @@ const validateTopology = (
 const validateReaderLocalityControl = (result, invocation) => {
 	const target = invocation.readerLocalChunkTarget;
 	const maxOvershoot = invocation.readerLocalChunkMaxOvershoot;
+	const expectedTerminalTopology = invocation.readerTerminalTopology;
 	if (target == null) {
 		if (
 			maxOvershoot !== null ||
+			expectedTerminalTopology !== null ||
 			result.readerLocalityControl !== null ||
 			result.readerLocalChunkBlockCount !== null ||
 			result.readerLocalChunkIndexRowCount !== null ||
@@ -2052,6 +2083,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 	if (
 		!Number.isSafeInteger(maxOvershoot) ||
 		maxOvershoot < 0 ||
+		!["observer", "replicator"].includes(expectedTerminalTopology) ||
 		invocation.mode !== "fixed1" ||
 		invocation.minReadySeeders !== 1
 	) {
@@ -2062,14 +2094,16 @@ const validateReaderLocalityControl = (result, invocation) => {
 		"readerLocalityControl",
 	);
 	if (
-		control.profile !== "observer-topology-persistent-read-preloaded-prefix" ||
-		control.requestedYieldedChunkCount !== target ||
-		control.maxReadAheadOvershootChunkCount !== maxOvershoot ||
+		control.profile !== "observer-topology-exact-manifest-prefix" ||
+		control.provisioningMethod !== "exact-manifest-head-import" ||
+		control.requestedLocalChunkBlockCount !== target ||
+		control.maxSpeculativeOvershootChunkCount !== maxOvershoot ||
 		control.countMetric !==
 			"exact local Documents index rows and manifest entry blocks" ||
 		control.writerUploadRole !== "fixed1" ||
 		control.readerUploadRole !== "observer" ||
 		control.readerTimedReadPolicy !== "persist-chunk-reads" ||
+		control.expectedTerminalTopology !== expectedTerminalTopology ||
 		control.stabilityPollIntervalMs !== Math.min(invocation.pollMs, 100) ||
 		control.requiredStableObservationCount !== 3 ||
 		control.status !== "complete" ||
@@ -2224,13 +2258,30 @@ const validateReaderLocalityControl = (result, invocation) => {
 		preload.finishedAt,
 		"readerLocalityControl.preloadEvidence.finishedAt",
 	);
-	const yieldedByteCount = requireNonNegativeSafeInteger(
-		preload.yieldedByteCount,
-		"readerLocalityControl.preloadEvidence.yieldedByteCount",
+	const rawFetchedByteCount = requireNonNegativeSafeInteger(
+		preload.rawFetchedByteCount,
+		"readerLocalityControl.preloadEvidence.rawFetchedByteCount",
+	);
+	const expectedImportedIndices = Array.from(
+		{ length: target },
+		(_, index) => index,
 	);
 	if (
 		preload.fileId !== manifestFileId ||
-		preload.yieldedChunkCount !== target ||
+		preload.provisioningMethod !== "exact-manifest-head-import" ||
+		preload.transferId !== null ||
+		preload.readDiagnostics !== null ||
+		preload.requestedManifestEntryCount !== target ||
+		preload.importedManifestEntryCount !== target ||
+		!isDeepStrictEqual(
+			preload.importedManifestEntryIndices,
+			expectedImportedIndices,
+		) ||
+		!isDeepStrictEqual(
+			preload.localManifestEntryIndicesAfter,
+			expectedImportedIndices,
+		) ||
+		preload.maxConcurrentImports !== 8 ||
 		preload.persistChunkReads !== true ||
 		!Array.isArray(preload.activeTransfersAfterClose) ||
 		preload.activeTransfersAfterClose.length !== 0 ||
@@ -2249,13 +2300,11 @@ const validateReaderLocalityControl = (result, invocation) => {
 	}
 	if (target === 0) {
 		if (
-			preload.transferId !== null ||
-			preload.readDiagnostics !== null ||
 			preload.aggregateTimeoutMs !== null ||
 			preload.aggregateDeadlineAt !== null ||
-			yieldedByteCount !== 0
+			rawFetchedByteCount !== 0
 		) {
-			throw new Error("Zero-prefix locality preload opened a read transfer");
+			throw new Error("Zero-prefix locality preload imported a manifest entry");
 		}
 	} else {
 		const aggregateTimeoutMs = requirePositiveSafeInteger(
@@ -2274,63 +2323,12 @@ const validateReaderLocalityControl = (result, invocation) => {
 			aggregateTimeoutMs !== invocation.downloadTimeoutMs ||
 			aggregateDeadlineAt !== preloadStartedAt + aggregateTimeoutMs ||
 			preloadFinishedAt - preloadStartedAt >
-				aggregateTimeoutMs + aggregateSchedulingToleranceMs
+				aggregateTimeoutMs + aggregateSchedulingToleranceMs ||
+			rawFetchedByteCount === 0
 		) {
 			throw new Error(
 				"Benchmark reader locality preload aggregate deadline evidence is invalid",
 			);
-		}
-		const preloadTransferId = requireString(
-			preload.transferId,
-			"readerLocalityControl.preloadEvidence.transferId",
-		);
-		const preloadDiagnostics = requireRecord(
-			preload.readDiagnostics,
-			"readerLocalityControl.preloadEvidence.readDiagnostics",
-		);
-		if (
-			preloadDiagnostics.transferId !== preloadTransferId ||
-			preloadDiagnostics.fileId !== manifestFileId ||
-			preloadDiagnostics.fileName !== result.fileName ||
-			preloadDiagnostics.persistChunkReads !== true ||
-			preloadDiagnostics.programPersistChunkReads !== true ||
-			preloadDiagnostics.initialLocalChunkIndexRowCount !== 0 ||
-			preloadDiagnostics.initialLocalChunkCount !== 0 ||
-			preloadDiagnostics.initialLocalChunkBlockCount !== 0 ||
-			preloadDiagnostics.finishedAt !== null ||
-			preloadDiagnostics.failureAt !== null ||
-			preloadDiagnostics.failureMessage !== null
-		) {
-			throw new Error(
-				"Benchmark partial preload diagnostics do not prove a clean persistent read",
-			);
-		}
-		const chunkBytes = requireRecord(
-			preloadDiagnostics.chunkByteLength,
-			"readerLocalityControl.preloadEvidence.readDiagnostics.chunkByteLength",
-		);
-		const expectedKeys = Array.from({ length: target }, (_, index) =>
-			String(index),
-		);
-		if (
-			Object.keys(chunkBytes).length !== target ||
-			expectedKeys.some((key) => !Object.hasOwn(chunkBytes, key))
-		) {
-			throw new Error(
-				"Benchmark partial preload did not yield the exact requested prefix",
-			);
-		}
-		const recomputedYieldedBytes = expectedKeys.reduce(
-			(total, key) =>
-				total +
-				requirePositiveSafeInteger(
-					chunkBytes[key],
-					`readerLocalityControl.preloadEvidence.readDiagnostics.chunkByteLength[${key}]`,
-				),
-			0,
-		);
-		if (recomputedYieldedBytes !== yieldedByteCount) {
-			throw new Error("Benchmark partial preload byte count is inconsistent");
 		}
 	}
 	if (
@@ -2394,7 +2392,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		actualLocalChunkBlockCount > target + maxOvershoot ||
 		actualLocalChunkBlockCount >= canonicalChunkCount ||
 		actualLocalChunkIndexRowCount > actualLocalChunkBlockCount ||
-		control.readAheadOvershootChunkCount !==
+		control.speculativeOvershootChunkCount !==
 			actualLocalChunkBlockCount - target ||
 		control.cohortKey !== expectedCohortKey ||
 		result.readerLocalChunkBlockCount !== actualLocalChunkBlockCount ||
@@ -2450,16 +2448,21 @@ const validateReaderLocalityControl = (result, invocation) => {
 		control.terminalIdleObservation,
 		"readerLocalityControl.terminalIdleObservation",
 	);
+	const expectedTerminalIndexRowCount =
+		expectedTerminalTopology === "replicator" ? canonicalChunkCount : 0;
 	if (
 		terminalIdle.fileId !== manifestFileId ||
 		terminalIdle.chunkCount !== canonicalChunkCount ||
 		terminalIdle.blockCount !== canonicalChunkCount ||
+		terminalIdle.indexRowCount !== expectedTerminalIndexRowCount ||
+		terminalIdle.indexedChunkIndices.length !==
+			expectedTerminalIndexRowCount ||
 		terminalIdle.persistChunkReads !== true ||
-		control.terminalTopologyRole !== "replicator" ||
-		control.readerJoinedReplicationDuringTimedRead !== true
+		control.terminalTopologyRole !== expectedTerminalTopology ||
+		control.terminalTopologyExpectationSatisfied !== true
 	) {
 		throw new Error(
-			"Benchmark terminal reader evidence does not prove an idle persistent replicator",
+			"Benchmark terminal reader evidence does not match the requested persistent-reader topology",
 		);
 	}
 	const terminalTopologyStartedAt = requirePositiveSafeInteger(
@@ -2482,10 +2485,18 @@ const validateReaderLocalityControl = (result, invocation) => {
 			"Benchmark reader locality requires exactly three stable terminal topology observations",
 		);
 	}
-	const expectedTerminalReplicatorHashes = [
-		writerTopologyBeforeUpload.peerHash,
-		readerTopologyBeforeUpload.peerHash,
-	].toSorted((left, right) => left.localeCompare(right));
+	const expectedTerminalReplicatorCount =
+		expectedTerminalTopology === "replicator" ? 2 : 1;
+	const expectedReaderSelfInReplicatorSet =
+		expectedTerminalTopology === "replicator";
+	const expectedTerminalReplicatorHashes = (
+		expectedTerminalTopology === "replicator"
+			? [
+					writerTopologyBeforeUpload.peerHash,
+					readerTopologyBeforeUpload.peerHash,
+				]
+			: [writerTopologyBeforeUpload.peerHash]
+	).toSorted((left, right) => left.localeCompare(right));
 	const terminalTopologyObservations = control.terminalTopologyObservations.map(
 		(value, index) => {
 			const label = `readerLocalityControl.terminalTopologyObservations[${index}]`;
@@ -2498,13 +2509,13 @@ const validateReaderLocalityControl = (result, invocation) => {
 				observation.writerTopology,
 				`${label}.writerTopology`,
 				true,
-				2,
+				expectedTerminalReplicatorCount,
 			);
 			const readerTopology = validateTopology(
 				observation.readerTopology,
 				`${label}.readerTopology`,
-				true,
-				2,
+				expectedReaderSelfInReplicatorSet,
+				expectedTerminalReplicatorCount,
 			);
 			if (
 				writerTopology.peerHash !== writerTopologyBeforeUpload.peerHash ||
@@ -2528,7 +2539,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 						control.stabilityPollIntervalMs)
 			) {
 				throw new Error(
-					"Benchmark terminal topology observations do not prove one stable writer-reader replicator pair",
+					"Benchmark terminal topology observations do not prove the requested stable topology",
 				);
 			}
 			return { capturedAt, writerTopology, readerTopology };
@@ -2541,8 +2552,10 @@ const validateReaderLocalityControl = (result, invocation) => {
 	if (
 		writerDiagnostics.peerHash !== writerTopologyBeforeUpload.peerHash ||
 		readerDiagnostics.peerHash !== readerTopologyBeforeUpload.peerHash ||
-		writerDiagnostics.replicatorCount !== 2 ||
-		readerDiagnostics.replicatorCount !== 2
+		writerDiagnostics.replicatorCount !== expectedTerminalReplicatorCount ||
+		readerDiagnostics.replicatorCount !== expectedTerminalReplicatorCount ||
+		writerDiagnostics.replicationSetSize !== 1 ||
+		readerDiagnostics.replicationSetSize !== 1
 	) {
 		throw new Error(
 			"Benchmark final peer diagnostics contradict the terminal topology evidence",

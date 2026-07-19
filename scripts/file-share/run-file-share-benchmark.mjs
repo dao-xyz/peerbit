@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	MAX_READER_LOCAL_CHUNK_OVERSHOOT,
+	READER_TERMINAL_TOPOLOGIES,
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
 	assertInvocationUnchanged,
@@ -130,9 +131,12 @@ const DROP_LOCALITY_INDEXED_SEARCH_MARKER =
 	"/* peerbit-benchmark-locality-indexed-search */";
 const DROP_LOCALITY_PRELOAD_DEADLINE_MARKER =
 	"/* peerbit-benchmark-locality-preload-aggregate-deadline */";
+const DROP_LOCALITY_EXACT_MANIFEST_MARKER =
+	"/* peerbit-benchmark-locality-exact-manifest-import */";
 const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {
                 ${DROP_LOCALITY_HOOK_MARKER}
                 ${DROP_LOCALITY_PRELOAD_DEADLINE_MARKER}
+				${DROP_LOCALITY_EXACT_MANIFEST_MARKER}
                 if (!program || program.closed) {
                     throw new Error("Program is not ready");
                 }
@@ -160,14 +164,23 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
                         "Locality preload timeout must be a positive safe integer"
                     );
                 }
+				const manifestEntryHeads = (file as any).chunkEntryHeads;
+				if (
+					!Array.isArray(manifestEntryHeads) ||
+					manifestEntryHeads.length !== file.chunkCount ||
+					manifestEntryHeads.some(
+						(head) => typeof head !== "string" || head.length === 0
+					) ||
+					new Set(manifestEntryHeads).size !== manifestEntryHeads.length
+				) {
+					throw new Error(
+						"Locality preload requires one unique manifest entry head per chunk"
+					);
+				}
                 program.persistChunkReads = true;
                 const startedAt = Date.now();
-                const transferId =
-                    target > 0
-                        ? "benchmark-locality-preload-" + startedAt + "-" + target
-                        : null;
-                const aggregateTimeoutMs = transferId ? timeoutMs : null;
-                const aggregateDeadlineAt = transferId
+                const aggregateTimeoutMs = target > 0 ? timeoutMs : null;
+                const aggregateDeadlineAt = target > 0
                     ? startedAt + timeoutMs
                     : null;
                 if (
@@ -177,15 +190,16 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
                     throw new Error("Locality preload deadline is not a safe integer");
                 }
                 let aggregateTimedOut = false;
-                let yieldedChunkCount = 0;
-                let yieldedByteCount = 0;
-                if (transferId) {
+				let rawFetchedByteCount = 0;
+				const importedManifestEntryIndices: number[] = [];
+				const maxConcurrentImports = 8;
+				const blocks = program.files.log.log.blocks;
+				if (target > 0) {
                     const aggregateController = new AbortController();
                     const aggregateTimeoutError = new Error(
                         "Locality prefix preload exceeded its aggregate deadline"
                     );
                     let aggregateTimeoutHandle: number | undefined;
-                    let iterator: AsyncIterator<Uint8Array> | undefined;
                     aggregateTimeoutHandle = window.setTimeout(() => {
                         aggregateTimedOut = true;
                         if (!aggregateController.signal.aborted) {
@@ -193,15 +207,11 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
                         }
                     }, Math.max(0, aggregateDeadlineAt! - Date.now()));
                     try {
-                        iterator = file
-                            .streamFile(program, {
-                                timeout: timeoutMs,
-                                transferId,
-                                signal: aggregateController.signal,
-                            })
-                            [Symbol.asyncIterator]();
-                        while (yieldedChunkCount < target) {
-                            const next = await iterator.next();
+						for (
+							let batchStart = 0;
+							batchStart < target;
+							batchStart += maxConcurrentImports
+						) {
                             if (
                                 Date.now() > aggregateDeadlineAt! &&
                                 !aggregateController.signal.aborted
@@ -215,21 +225,51 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
                                     aggregateTimeoutError
                                 );
                             }
-                            if (next.done) {
-                                throw new Error(
-                                    "Locality preload stream ended before the requested prefix"
-                                );
-                            }
-                            yieldedChunkCount += 1;
-                            yieldedByteCount += next.value.byteLength;
+							const batchEnd = Math.min(
+								target,
+								batchStart + maxConcurrentImports
+							);
+							await Promise.all(
+								manifestEntryHeads
+									.slice(batchStart, batchEnd)
+									.map(async (head, offset) => {
+										const index = batchStart + offset;
+										const remainingMs = aggregateDeadlineAt! - Date.now();
+										if (remainingMs <= 0) {
+											aggregateTimedOut = true;
+											aggregateController.abort(aggregateTimeoutError);
+											throw aggregateTimeoutError;
+										}
+										const documentId = \`\${file.id}:\${index}\`;
+										program.retainChunkRead(documentId, file.id);
+										program.retainChunkEntryHead(
+											head,
+											file.id,
+											documentId
+										);
+										const rawEntry = await blocks.get(head, {
+											remote: {
+												timeout: remainingMs,
+												replicate: true,
+												signal: aggregateController.signal,
+											},
+										});
+										if (!rawEntry || !(await blocks.has(head))) {
+											throw new Error(
+												"Exact manifest entry import did not persist chunk " +
+													(index + 1) +
+													"/" +
+													file.chunkCount
+											);
+										}
+										rawFetchedByteCount += rawEntry.byteLength ?? 0;
+										importedManifestEntryIndices.push(index);
+									})
+							);
                         }
                     } finally {
-                        try {
-                            await iterator?.return?.();
-                        } finally {
-                            if (aggregateTimeoutHandle !== undefined) {
-                                window.clearTimeout(aggregateTimeoutHandle);
-                            }
+						if (aggregateTimeoutHandle !== undefined) {
+							window.clearTimeout(aggregateTimeoutHandle);
                         }
                     }
                     if (aggregateController.signal.aborted) {
@@ -239,24 +279,38 @@ const localityPreloadHookImplementation = `            preloadLocalChunkPrefix: 
                         );
                     }
                 }
+				importedManifestEntryIndices.sort((left, right) => left - right);
+				const localManifestHeadPresence =
+					typeof blocks.hasMany === "function"
+						? await blocks.hasMany(manifestEntryHeads)
+						: await Promise.all(
+							  manifestEntryHeads.map((head) => blocks.has(head))
+						  );
+				const localManifestEntryIndicesAfter = localManifestHeadPresence.flatMap(
+					(present, index) => (present ? [index] : [])
+				);
                 const finishedAt = Date.now();
                 return {
                     startedAt,
                     finishedAt,
                     fileId: file.id,
-                    transferId,
+					provisioningMethod: "exact-manifest-head-import",
+					transferId: null,
                     aggregateTimeoutMs,
                     aggregateDeadlineAt,
                     aggregateTimedOut,
-                    yieldedChunkCount,
-                    yieldedByteCount,
+					requestedManifestEntryCount: target,
+					importedManifestEntryCount:
+						importedManifestEntryIndices.length,
+					importedManifestEntryIndices,
+					localManifestEntryIndicesAfter,
+					rawFetchedByteCount,
+					maxConcurrentImports,
                     persistChunkReads: program.persistChunkReads,
                     activeTransfersAfterClose: program.getActiveTransfers(),
                     downloadSchedulerAfterClose:
                         program.getTransferSchedulerDiagnostics().download,
-                    readDiagnostics: transferId
-                        ? program.getReadDiagnostics(transferId) ?? null
-                        : null,
+					readDiagnostics: null,
                 };
             },`;
 const getScenarioConfig = (scenario) => {
@@ -331,6 +385,7 @@ export const instrumentFileShareFrontend = async (
 		(!requireLocalityHook ||
 			(contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
 				contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) &&
+				contents.includes(DROP_LOCALITY_EXACT_MANIFEST_MARKER) &&
 				contents.includes(DROP_LOCALITY_TOPOLOGY_MARKER) &&
 				contents.includes(DROP_LOCALITY_INDEXED_SEARCH_MARKER)))
 	) {
@@ -497,7 +552,8 @@ export const instrumentFileShareFrontend = async (
 	if (
 		requireLocalityHook &&
 		contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
-		!contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER)
+		(!contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) ||
+			!contents.includes(DROP_LOCALITY_EXACT_MANIFEST_MARKER))
 	) {
 		const preloadHookAnchor =
 			"            preloadLocalChunkPrefix: async (fileName, target, timeoutMs) => {";
@@ -1037,6 +1093,10 @@ const main = async () => {
 		args["reader-local-chunk-max-overshoot"],
 		"--reader-local-chunk-max-overshoot",
 	);
+	const readerTerminalTopology =
+		args["reader-terminal-topology"] == null
+			? null
+			: String(args["reader-terminal-topology"]);
 	const examplesSource = args.source ?? defaultExamplesSource();
 	const fixtureSeed = args["fixture-seed"];
 	const resolvedFixtureSeed = fixtureSeed ?? "peerbit-file-share-benchmark-v1";
@@ -1097,6 +1157,21 @@ const main = async () => {
 	) {
 		throw new Error(
 			"--reader-local-chunk-target and --reader-local-chunk-max-overshoot must be provided together",
+		);
+	}
+	if (
+		(readerLocalChunkTarget == null) !== (readerTerminalTopology == null)
+	) {
+		throw new Error(
+			"--reader-terminal-topology must be provided exactly when --reader-local-chunk-target is provided",
+		);
+	}
+	if (
+		readerTerminalTopology != null &&
+		!READER_TERMINAL_TOPOLOGIES.includes(readerTerminalTopology)
+	) {
+		throw new Error(
+			`Unsupported --reader-terminal-topology ${JSON.stringify(readerTerminalTopology)}. Expected one of ${READER_TERMINAL_TOPOLOGIES.join(", ")}`,
 		);
 	}
 	if (
@@ -1274,6 +1349,7 @@ const main = async () => {
 				targetSeeders,
 				readerLocalChunkTarget,
 				readerLocalChunkMaxOvershoot,
+				readerTerminalTopology,
 				baseUrl,
 				protocol,
 				viteMode,
@@ -1475,6 +1551,10 @@ const main = async () => {
 				result.readerLocalChunkMaxOvershoot ??
 				result.invocation?.readerLocalChunkMaxOvershoot ??
 				null,
+			readerTerminalTopology:
+				result.readerTerminalTopology ??
+				result.invocation?.readerTerminalTopology ??
+				null,
 			readerLocalChunkBlockCount: result.readerLocalChunkBlockCount ?? null,
 			readerLocalChunkIndexRowCount:
 				result.readerLocalChunkIndexRowCount ?? null,
@@ -1536,6 +1616,7 @@ const main = async () => {
 		fileMb,
 		readerLocalChunkTarget: readerLocalChunkTarget ?? null,
 		readerLocalChunkMaxOvershoot: readerLocalChunkMaxOvershoot ?? null,
+		readerTerminalTopology,
 		readerLocalityCohorts:
 			scenario === "upload"
 				? aggregateRows

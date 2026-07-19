@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import {
 	MAX_READER_LOCAL_CHUNK_OVERSHOOT,
+	READER_TERMINAL_TOPOLOGIES,
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
 	createBenchmarkInvocation,
@@ -453,6 +454,7 @@ const runVariantBenchmark = async ({
 	targetSeeders,
 	readerLocalChunkTarget,
 	readerLocalChunkMaxOvershoot,
+	readerTerminalTopology,
 	protocol,
 	fixtureSeed,
 	enableVisibilityProbe,
@@ -532,6 +534,9 @@ const runVariantBenchmark = async ({
 					"--reader-local-chunk-max-overshoot",
 					String(readerLocalChunkMaxOvershoot),
 				]
+			: []),
+		...(readerTerminalTopology != null
+			? ["--reader-terminal-topology", readerTerminalTopology]
 			: []),
 		...(protocol ? ["--protocol", protocol] : []),
 		...(fixtureSeed ? ["--fixture-seed", fixtureSeed] : []),
@@ -669,6 +674,7 @@ const main = async () => {
 	const targetSeeders = args["target-seeders"];
 	const readerLocalChunkTarget = args["reader-local-chunk-target"];
 	const readerLocalChunkMaxOvershoot = args["reader-local-chunk-max-overshoot"];
+	const readerTerminalTopology = args["reader-terminal-topology"];
 	const { protocol } = previewOptions;
 	const fixtureSeed = args["fixture-seed"];
 	const enableVisibilityProbe = Boolean(args["enable-visibility-probe"]);
@@ -718,6 +724,21 @@ const main = async () => {
 	) {
 		throw new Error(
 			"--reader-local-chunk-target and --reader-local-chunk-max-overshoot must be provided together",
+		);
+	}
+	if (
+		(readerLocalChunkTarget == null) !== (readerTerminalTopology == null)
+	) {
+		throw new Error(
+			"--reader-terminal-topology must be provided exactly when --reader-local-chunk-target is provided",
+		);
+	}
+	if (
+		readerTerminalTopology != null &&
+		!READER_TERMINAL_TOPOLOGIES.includes(readerTerminalTopology)
+	) {
+		throw new Error(
+			`Unsupported --reader-terminal-topology ${JSON.stringify(readerTerminalTopology)}. Expected one of ${READER_TERMINAL_TOPOLOGIES.join(", ")}`,
 		);
 	}
 	if (
@@ -871,6 +892,7 @@ const main = async () => {
 				targetSeeders,
 				readerLocalChunkTarget,
 				readerLocalChunkMaxOvershoot,
+				readerTerminalTopology,
 				protocol,
 				fixtureSeed,
 				enableVisibilityProbe,
@@ -920,6 +942,7 @@ const main = async () => {
 				readerLocalChunkMaxOvershoot: optionalNumber(
 					readerLocalChunkMaxOvershoot,
 				),
+				readerTerminalTopology,
 				baseUrl: null,
 				protocol,
 				viteMode: null,
@@ -1100,6 +1123,10 @@ const main = async () => {
 				result.readerLocalChunkMaxOvershoot ??
 				result.invocation?.readerLocalChunkMaxOvershoot ??
 				null,
+			readerTerminalTopology:
+				result.readerTerminalTopology ??
+				result.invocation?.readerTerminalTopology ??
+				null,
 			readerLocalChunkBlockCount: result.readerLocalChunkBlockCount ?? null,
 			readerLocalChunkIndexRowCount:
 				result.readerLocalChunkIndexRowCount ?? null,
@@ -1178,6 +1205,7 @@ const main = async () => {
 		readerLocalChunkTarget: optionalNumber(readerLocalChunkTarget) ?? null,
 		readerLocalChunkMaxOvershoot:
 			optionalNumber(readerLocalChunkMaxOvershoot) ?? null,
+		readerTerminalTopology: readerTerminalTopology ?? null,
 		readerLocalityCohorts: [
 			...new Set(
 				allResults

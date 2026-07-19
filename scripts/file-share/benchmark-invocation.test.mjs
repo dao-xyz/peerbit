@@ -57,6 +57,7 @@ test("resolves every default and requested optional knob", () => {
 			targetSeeders: resolved.targetSeeders,
 			readerLocalChunkTarget: resolved.readerLocalChunkTarget,
 			readerLocalChunkMaxOvershoot: resolved.readerLocalChunkMaxOvershoot,
+			readerTerminalTopology: resolved.readerTerminalTopology,
 			protocol: resolved.protocol,
 			viteMode: resolved.viteMode,
 			viteConfig: resolved.viteConfig,
@@ -79,6 +80,7 @@ test("resolves every default and requested optional knob", () => {
 			targetSeeders: 9,
 			readerLocalChunkTarget: null,
 			readerLocalChunkMaxOvershoot: null,
+			readerTerminalTopology: null,
 			protocol: "http",
 			viteMode: null,
 			viteConfig: null,
@@ -135,6 +137,7 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.PW_POST_UPLOAD_MONITOR_MS, "5000");
 	assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "");
 	assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "");
+	assert.equal(environment.PW_READER_TERMINAL_TOPOLOGY, "");
 	assert.equal(environment.PW_FUTURE_BYPASS, undefined);
 	assert.equal(environment.PW_PORT, undefined);
 	assert.equal(environment.PW_BENCH, "1");
@@ -144,33 +147,43 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.deepEqual(JSON.parse(environment.PW_BENCHMARK_INVOCATION), resolved);
 });
 
-test("binds optional observer-prefix locality control to a fixed1 writer", () => {
-	const resolved = invocation({
-		mode: "fixed1",
-		readerLocalChunkTarget: 0,
-		readerLocalChunkMaxOvershoot: 0,
-	});
-	assert.equal(resolved.readerLocalChunkTarget, 0);
-	assert.equal(resolved.readerLocalChunkMaxOvershoot, 0);
-	assert.equal(resolved.minReadySeeders, 1);
-	const environment = createPlaywrightBenchmarkEnvironment({
-		baseEnvironment: {
-			PW_READER_LOCAL_CHUNK_TARGET: "attacker",
-			PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: "attacker",
-		},
-		invocation: resolved,
-		resultFile: "/tmp/result.json",
-		runNonce: "123e4567-e89b-42d3-a456-426614174000",
-		provenance: { bound: true },
-	});
-	assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "0");
-	assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "0");
+test("binds both terminal topology expectations to one observer-prefix cohort", () => {
+	for (const readerTerminalTopology of ["observer", "replicator"]) {
+		const resolved = invocation({
+			mode: "fixed1",
+			readerLocalChunkTarget: 0,
+			readerLocalChunkMaxOvershoot: 0,
+			readerTerminalTopology,
+		});
+		assert.equal(resolved.readerLocalChunkTarget, 0);
+		assert.equal(resolved.readerLocalChunkMaxOvershoot, 0);
+		assert.equal(resolved.readerTerminalTopology, readerTerminalTopology);
+		assert.equal(resolved.minReadySeeders, 1);
+		const environment = createPlaywrightBenchmarkEnvironment({
+			baseEnvironment: {
+				PW_READER_LOCAL_CHUNK_TARGET: "attacker",
+				PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: "attacker",
+				PW_READER_TERMINAL_TOPOLOGY: "attacker",
+			},
+			invocation: resolved,
+			resultFile: "/tmp/result.json",
+			runNonce: "123e4567-e89b-42d3-a456-426614174000",
+			provenance: { bound: true },
+		});
+		assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "0");
+		assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "0");
+		assert.equal(
+			environment.PW_READER_TERMINAL_TOPOLOGY,
+			readerTerminalTopology,
+		);
+	}
 	for (const [overrides, pattern] of [
 		[
 			{
 				mode: "adaptive",
 				readerLocalChunkTarget: 4,
 				readerLocalChunkMaxOvershoot: 2,
+				readerTerminalTopology: "observer",
 			},
 			/requires fixed1 mode/,
 		],
@@ -179,6 +192,7 @@ test("binds optional observer-prefix locality control to a fixed1 writer", () =>
 				mode: "observer",
 				readerLocalChunkTarget: 4,
 				readerLocalChunkMaxOvershoot: 2,
+				readerTerminalTopology: "observer",
 			},
 			/requires fixed1 mode/,
 		],
@@ -187,6 +201,7 @@ test("binds optional observer-prefix locality control to a fixed1 writer", () =>
 				mode: "fixed1",
 				readerLocalChunkTarget: 4,
 				readerLocalChunkMaxOvershoot: 2,
+				readerTerminalTopology: "observer",
 				minReadySeeders: 2,
 			},
 			/requires minReadySeeders = 1/,
@@ -198,15 +213,24 @@ test("binds optional observer-prefix locality control to a fixed1 writer", () =>
 				fileMb: 1,
 				readerLocalChunkTarget: 1,
 				readerLocalChunkMaxOvershoot: 1,
+				readerTerminalTopology: "observer",
 			},
 			/only supported by upload benchmarks/,
 		],
 		[
-			{ mode: "fixed1", readerLocalChunkTarget: 4 },
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 4,
+				readerTerminalTopology: "observer",
+			},
 			/must be provided together/,
 		],
 		[
-			{ mode: "fixed1", readerLocalChunkMaxOvershoot: 2 },
+			{
+				mode: "fixed1",
+				readerLocalChunkMaxOvershoot: 2,
+				readerTerminalTopology: "observer",
+			},
 			/must be provided together/,
 		],
 		[
@@ -214,8 +238,26 @@ test("binds optional observer-prefix locality control to a fixed1 writer", () =>
 				mode: "fixed1",
 				readerLocalChunkTarget: 4,
 				readerLocalChunkMaxOvershoot: 9,
+				readerTerminalTopology: "observer",
 			},
 			/must not exceed 8/,
+		],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 4,
+				readerLocalChunkMaxOvershoot: 2,
+			},
+			/readerTerminalTopology must be provided/,
+		],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 4,
+				readerLocalChunkMaxOvershoot: 2,
+				readerTerminalTopology: "adaptive",
+			},
+			/Unsupported readerTerminalTopology/,
 		],
 	]) {
 		assert.throws(() => invocation(overrides), pattern);
@@ -406,6 +448,8 @@ test("standalone runner rejects invalid integration modes before mutating output
 					"1",
 					"--reader-local-chunk-max-overshoot",
 					"1",
+					"--reader-terminal-topology",
+					"observer",
 					"--mode",
 					"adaptive",
 				],
@@ -417,12 +461,38 @@ test("standalone runner rejects invalid integration modes before mutating output
 					"1",
 					"--reader-local-chunk-max-overshoot",
 					"1",
+					"--reader-terminal-topology",
+					"observer",
 					"--mode",
 					"fixed1",
 					"--min-ready-seeders",
 					"2",
 				],
 				/requires --min-ready-seeders 1/,
+			],
+			[
+				[
+					"--reader-local-chunk-target",
+					"1",
+					"--reader-local-chunk-max-overshoot",
+					"0",
+					"--mode",
+					"fixed1",
+				],
+				/--reader-terminal-topology must be provided/,
+			],
+			[
+				[
+					"--reader-local-chunk-target",
+					"1",
+					"--reader-local-chunk-max-overshoot",
+					"0",
+					"--reader-terminal-topology",
+					"adaptive",
+					"--mode",
+					"fixed1",
+				],
+				/Unsupported --reader-terminal-topology/,
 			],
 		]) {
 			const child = spawnSync(

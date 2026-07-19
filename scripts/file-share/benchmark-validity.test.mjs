@@ -141,6 +141,8 @@ const createDownloadMemoryTelemetry = (
 		],
 		samplingErrors: [],
 		samplingErrorOverflowCount: 0,
+		cleanupWarnings: [],
+		cleanupWarningOverflowCount: 0,
 	});
 	const readerJsHeap = heap("reader-renderer", 3, 2, 100);
 	const writerJsHeap = heap("writer-renderer", 2, 3, 200);
@@ -192,6 +194,8 @@ const createDownloadMemoryTelemetry = (
 		samples: hostSamples,
 		samplingErrors: [],
 		samplingErrorOverflowCount: 0,
+		cleanupWarnings: [],
+		cleanupWarningOverflowCount: 0,
 	};
 	return {
 		profile: DOWNLOAD_MEMORY_PROFILE,
@@ -199,6 +203,7 @@ const createDownloadMemoryTelemetry = (
 		windowDefinition: DOWNLOAD_MEMORY_WINDOW_DEFINITION,
 		maxSamplesPerSeries,
 		complete: true,
+		cleanupComplete: true,
 		startedAt: readerJsHeap.startedAt,
 		finishedAt: hostRss.finishedAt,
 		readerJsHeap,
@@ -329,6 +334,7 @@ const validResult = () => ({
 	mode: "adaptive",
 	readerLocalChunkTarget: null,
 	readerLocalChunkMaxOvershoot: null,
+	readerTerminalTopology: null,
 	readerLocalChunkBlockCount: null,
 	readerLocalChunkIndexRowCount: null,
 	readerLocalityCohortKey: null,
@@ -569,6 +575,7 @@ const createReaderLocalityFixture = ({
 	maxOvershoot = 1,
 	actualBlockCount = 1,
 	actualIndexRowCount = 0,
+	readerTerminalTopology = "observer",
 } = {}) => {
 	const invocation = createBenchmarkInvocation({
 		scenario: "upload",
@@ -585,6 +592,7 @@ const createReaderLocalityFixture = ({
 		readyTimeoutMs: 180_000,
 		readerLocalChunkTarget: target,
 		readerLocalChunkMaxOvershoot: maxOvershoot,
+		readerTerminalTopology,
 	});
 	const result = validResult();
 	const fileName = `file-share-benchmark-fixed1-${RUN_NONCE}.bin`;
@@ -625,17 +633,27 @@ const createReaderLocalityFixture = ({
 		replicatorHashes,
 		selfInReplicatorSet,
 	});
+	const terminalReplicatorHashes =
+		readerTerminalTopology === "replicator"
+			? ["reader-peer", "writer-peer"]
+			: ["writer-peer"];
+	const terminalReplicatorCount = terminalReplicatorHashes.length;
 	const terminalTopology = (capturedAt, peerHash) =>
-		topology(capturedAt, true, {
-			peerHash,
-			replicatorCount: 2,
-			replicatorHashes: ["reader-peer", "writer-peer"],
-		});
+		topology(
+			capturedAt,
+			peerHash === "writer-peer" || readerTerminalTopology === "replicator",
+			{
+				peerHash,
+				replicatorCount: terminalReplicatorCount,
+				replicatorHashes: terminalReplicatorHashes,
+			},
+		);
 	result.invocation = structuredClone(invocation);
 	result.mode = "fixed1";
 	result.fileName = fileName;
 	result.readerLocalChunkTarget = target;
 	result.readerLocalChunkMaxOvershoot = maxOvershoot;
+	result.readerTerminalTopology = readerTerminalTopology;
 	result.readerLocalChunkBlockCount = actualBlockCount;
 	result.readerLocalChunkIndexRowCount = actualIndexRowCount;
 	const cohortKey = `observer-persistent-prefix-b${actualBlockCount}-i${actualIndexRowCount}`;
@@ -645,7 +663,8 @@ const createReaderLocalityFixture = ({
 	result.readerDiagnostics.programAddress = "reader-program-address";
 	result.readerDiagnostics.persistChunkReads = true;
 	result.readerDiagnostics.peerHash = "reader-peer";
-	result.readerDiagnostics.replicatorCount = 2;
+	result.readerDiagnostics.replicatorCount = terminalReplicatorCount;
+	result.readerDiagnostics.replicationSetSize = 1;
 	result.readerDiagnostics.timings = {
 		initialRole: "observer",
 		updateRoleCount: 0,
@@ -669,7 +688,8 @@ const createReaderLocalityFixture = ({
 	result.writerManifestEvidence.fileName = fileName;
 	result.readerManifestEvidence.fileName = fileName;
 	result.writerDiagnostics.peerHash = "writer-peer";
-	result.writerDiagnostics.replicatorCount = 2;
+	result.writerDiagnostics.replicatorCount = terminalReplicatorCount;
+	result.writerDiagnostics.replicationSetSize = 1;
 	result.writerDiagnostics.lastUploadDiagnostics.fileName = fileName;
 	result.timestamps.downloadStartedAt = 1_400;
 	result.timestamps.downloadFinishedAt = 1_430;
@@ -681,13 +701,15 @@ const createReaderLocalityFixture = ({
 		invocation,
 	);
 	result.readerLocalityControl = {
-		profile: "observer-topology-persistent-read-preloaded-prefix",
-		requestedYieldedChunkCount: target,
-		maxReadAheadOvershootChunkCount: maxOvershoot,
+		profile: "observer-topology-exact-manifest-prefix",
+		provisioningMethod: "exact-manifest-head-import",
+		requestedLocalChunkBlockCount: target,
+		maxSpeculativeOvershootChunkCount: maxOvershoot,
 		countMetric: "exact local Documents index rows and manifest entry blocks",
 		writerUploadRole: "fixed1",
 		readerUploadRole: "observer",
 		readerTimedReadPolicy: "persist-chunk-reads",
+		expectedTerminalTopology: readerTerminalTopology,
 		stabilityPollIntervalMs: 100,
 		requiredStableObservationCount: 3,
 		status: "complete",
@@ -711,33 +733,28 @@ const createReaderLocalityFixture = ({
 			startedAt: 1_172,
 			finishedAt: 1_175,
 			fileId: FILE_ID,
-			transferId: target === 0 ? null : "locality-preload-transfer",
+			provisioningMethod: "exact-manifest-head-import",
+			transferId: null,
 			aggregateTimeoutMs: target === 0 ? null : invocation.downloadTimeoutMs,
 			aggregateDeadlineAt:
 				target === 0 ? null : 1_172 + invocation.downloadTimeoutMs,
 			aggregateTimedOut: false,
-			yieldedChunkCount: target,
-			yieldedByteCount: target === 0 ? 0 : 3 * 1024 * 1024,
+			requestedManifestEntryCount: target,
+			importedManifestEntryCount: target,
+			importedManifestEntryIndices: Array.from(
+				{ length: target },
+				(_, index) => index,
+			),
+			localManifestEntryIndicesAfter: Array.from(
+				{ length: target },
+				(_, index) => index,
+			),
+			rawFetchedByteCount: target === 0 ? 0 : 3 * 1024 * 1024,
+			maxConcurrentImports: 8,
 			persistChunkReads: true,
 			activeTransfersAfterClose: [],
 			downloadSchedulerAfterClose: { ...idleScheduler },
-			readDiagnostics:
-				target === 0
-					? null
-					: {
-							transferId: "locality-preload-transfer",
-							fileId: FILE_ID,
-							fileName,
-							persistChunkReads: true,
-							programPersistChunkReads: true,
-							initialLocalChunkIndexRowCount: 0,
-							initialLocalChunkCount: 0,
-							initialLocalChunkBlockCount: 0,
-							finishedAt: null,
-							failureAt: null,
-							failureMessage: null,
-							chunkByteLength: { 0: 3 * 1024 * 1024 },
-						},
+			readDiagnostics: null,
 		},
 		stabilityObservations: [1_176, 1_276, 1_376].map((capturedAt) =>
 			observation({
@@ -761,12 +778,13 @@ const createReaderLocalityFixture = ({
 			capturedAt: 1_433,
 			persistChunkReads: true,
 			blocks: [0, 1],
+			indexed: readerTerminalTopology === "replicator" ? [0, 1] : [],
 		}),
 		terminalTopologyStartedAt: 1_433,
 		terminalTopologyDeadlineAt: 181_433,
 		terminalTopologyFinishedAt: 1_635,
-		terminalTopologyRole: "replicator",
-		readerJoinedReplicationDuringTimedRead: true,
+		terminalTopologyRole: readerTerminalTopology,
+		terminalTopologyExpectationSatisfied: true,
 		terminalTopologyObservations: [1_434, 1_534, 1_634].map((capturedAt) => ({
 			capturedAt,
 			writerTopology: terminalTopology(capturedAt - 1, "writer-peer"),
@@ -774,7 +792,7 @@ const createReaderLocalityFixture = ({
 		})),
 		actualLocalChunkBlockCount: actualBlockCount,
 		actualLocalChunkIndexRowCount: actualIndexRowCount,
-		readAheadOvershootChunkCount: 0,
+		speculativeOvershootChunkCount: 0,
 		cohortKey,
 		failure: null,
 	};
@@ -820,6 +838,12 @@ test("accepts a complete deterministic transfer result", () => {
 
 test("requires a trustworthy aggregate-integrity timestamp before the final snapshot", () => {
 	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				result.readerTerminalTopology = "replicator";
+			},
+			/readerTerminalTopology does not match the requested invocation/,
+		],
 		[
 			(result) => {
 				delete result.integrityVerifiedAt;
@@ -895,7 +919,7 @@ test("requires the terminal snapshot after controlled-locality topology", () => 
 	);
 });
 
-test("accepts one recovered seeder dip under the v7 policy", () => {
+test("accepts one recovered seeder dip under the v8 policy", () => {
 	const result = validResult();
 	result.snapshots[1].writerSeeders = 1;
 	result.droppedSeeders = true;
@@ -930,7 +954,7 @@ test("rejects a terminal below-baseline seeder snapshot", () => {
 	);
 });
 
-test("rejects missing, altered, and contradictory v7 seeder-drop evidence", () => {
+test("rejects missing, altered, and contradictory v8 seeder-drop evidence", () => {
 	for (const [mutate, pattern] of [
 		[
 			(result) => {
@@ -1344,6 +1368,14 @@ test("rejects milestones crossed before a partial-tail trigger", () => {
 });
 
 test("requires bounded, error-free memory telemetry covering the canonical read", () => {
+	const cleanupTimeoutWarning = validResult();
+	cleanupTimeoutWarning.downloadMemoryTelemetry.readerJsHeap.cleanupWarnings.push(
+		"cleanup-timeout: Page JS heap Performance.disable exceeded 4000ms",
+	);
+	assert.equal(
+		validateBenchmarkResult(cleanupTimeoutWarning, options).status,
+		"passed",
+	);
 	for (const [mutate, pattern] of [
 		[
 			(result) => {
@@ -1354,6 +1386,12 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		[
 			(result) => {
 				result.downloadMemoryTelemetry.complete = false;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.cleanupComplete = false;
 			},
 			/telemetry contract is invalid/,
 		],
@@ -1379,6 +1417,14 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 				];
 			},
 			/contains unbounded sampling errors/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.cleanupWarnings = [
+					"ordinary cleanup failure",
+				];
+			},
+			/contains invalid cleanup warnings/,
 		],
 		[
 			(result) => {
@@ -1502,6 +1548,12 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 	for (const [mutate, pattern] of [
 		[
 			(result) => {
+				result.readerLocalityControl.expectedTerminalTopology = "replicator";
+			},
+			/locality control contract is invalid/,
+		],
+		[
+			(result) => {
 				result.readerLocalityControl.beforePreloadObservation.chunkCount = 3;
 				for (const observation of [
 					...result.readerLocalityControl.stabilityObservations,
@@ -1564,7 +1616,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		],
 		[
 			(result) => {
-				result.readerLocalityControl.readAheadOvershootChunkCount = 1;
+				result.readerLocalityControl.speculativeOvershootChunkCount = 1;
 			},
 			/locality cohort count or key is inconsistent/,
 		],
@@ -1579,7 +1631,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 					observation.blockChunkIndices = [0, 1];
 				}
 				control.actualLocalChunkBlockCount = 2;
-				control.readAheadOvershootChunkCount = 1;
+				control.speculativeOvershootChunkCount = 1;
 				control.cohortKey = "observer-persistent-prefix-b2-i0";
 				result.readerLocalChunkBlockCount = 2;
 				result.readerLocalityCohortKey = control.cohortKey;
@@ -1595,9 +1647,9 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		],
 		[
 			(result) => {
-				result.readerLocalityControl.readerJoinedReplicationDuringTimedRead = false;
+				result.readerLocalityControl.terminalTopologyExpectationSatisfied = false;
 			},
-			/terminal reader evidence does not prove an idle persistent replicator/,
+			/terminal reader evidence does not match the requested persistent-reader topology/,
 		],
 		[
 			(result) => {
@@ -1614,7 +1666,16 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 				terminalIdle.blockCount = 1;
 				terminalIdle.blockChunkIndices = [0];
 			},
-			/terminal reader evidence does not prove an idle persistent replicator/,
+			/terminal reader evidence does not match the requested persistent-reader topology/,
+		],
+		[
+			(result) => {
+				const terminalIdle =
+					result.readerLocalityControl.terminalIdleObservation;
+				terminalIdle.indexRowCount = 1;
+				terminalIdle.indexedChunkIndices = [0];
+			},
+			/terminal reader evidence does not match the requested persistent-reader topology/,
 		],
 		[
 			(result) => {
@@ -1625,9 +1686,9 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		[
 			(result) => {
 				result.readerLocalityControl.terminalTopologyObservations[1].readerTopology.replicatorHashes =
-					["reader-peer", "third-peer"];
+					["reader-peer"];
 			},
-			/terminal topology observations do not prove one stable writer-reader replicator pair/,
+			/terminal topology observations do not prove the requested stable topology/,
 		],
 		[
 			(result) => {
@@ -1637,11 +1698,17 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 				observation.writerTopology.capturedAt = 1_499;
 				observation.readerTopology.capturedAt = 1_499;
 			},
-			/terminal topology observations do not prove one stable writer-reader replicator pair/,
+			/terminal topology observations do not prove the requested stable topology/,
 		],
 		[
 			(result) => {
 				result.writerDiagnostics.peerHash = "other-writer";
+			},
+			/final peer diagnostics contradict the terminal topology evidence/,
+		],
+		[
+			(result) => {
+				result.readerDiagnostics.replicationSetSize = 2;
 			},
 			/final peer diagnostics contradict the terminal topology evidence/,
 		],
@@ -1723,11 +1790,29 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		invocation.readerLocalChunkTarget = 2;
 	}
 	fullFileTarget.result.readerLocalChunkTarget = 2;
-	fullFileTarget.result.readerLocalityControl.requestedYieldedChunkCount = 2;
+	fullFileTarget.result.readerLocalityControl.requestedLocalChunkBlockCount = 2;
 	assert.throws(
 		() =>
 			validateBenchmarkResult(fullFileTarget.result, fullFileTarget.options),
 		/target must be a partial prefix of the canonical completed read/,
+	);
+});
+
+test("accepts the historical reader-replicator terminal topology as an explicit cohort", () => {
+	const fixture = createReaderLocalityFixture({
+		readerTerminalTopology: "replicator",
+	});
+	assert.equal(
+		validateBenchmarkResult(fixture.result, fixture.options).status,
+		"passed",
+	);
+	assert.equal(
+		fixture.result.readerLocalityControl.preDownloadObservation.indexRowCount,
+		0,
+	);
+	assert.equal(
+		fixture.result.readerLocalityControl.terminalIdleObservation.indexRowCount,
+		2,
 	);
 });
 
@@ -1863,14 +1948,14 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v7 evidence envelope", () => {
+test("rejects a status-only passed payload at the v8 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v7 envelopes", () => {
+test("requires explicit error evidence on failed v8 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };
