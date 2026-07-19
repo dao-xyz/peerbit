@@ -524,9 +524,6 @@ importers:
       '@chainsafe/libp2p-noise':
         specifier: ^17.0.0
         version: 17.0.0
-      '@chainsafe/libp2p-yamux':
-        specifier: ^8.0.1
-        version: 8.0.1
       '@dao-xyz/borsh':
         specifier: 6.0.1
         version: 6.0.1

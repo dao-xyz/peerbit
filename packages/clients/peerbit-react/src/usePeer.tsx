@@ -327,9 +327,13 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			const [
 				{ detectIncognito },
 				sodiumModule,
-				{ Peerbit, getBootstrapPeerId, resolveBootstrapAddresses },
+				{
+					Peerbit,
+					createPeerbitStreamMuxers,
+					getBootstrapPeerId,
+					resolveBootstrapAddresses,
+				},
 				{ noise },
-				{ yamux },
 				{ webSockets },
 				{ circuitRelayTransport },
 				{ webRTC },
@@ -339,7 +343,6 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 				import("libsodium-wrappers"),
 				import("peerbit"),
 				import("@chainsafe/libp2p-noise"),
-				import("@chainsafe/libp2p-yamux"),
 				import("@libp2p/websockets"),
 				import("@libp2p/circuit-relay-v2"),
 				import("@libp2p/webrtc"),
@@ -498,7 +501,7 @@ export const PeerProvider = ({ config, children }: PeerProviderProps) => {
 			const created = await Peerbit.create({
 				libp2p: {
 					privateKey,
-					streamMuxers: [yamux()],
+					streamMuxers: createPeerbitStreamMuxers(),
 					connectionEncrypters: [noise()],
 					connectionManager: { maxConnections: 100 },
 					connectionMonitor: { enabled: false },
