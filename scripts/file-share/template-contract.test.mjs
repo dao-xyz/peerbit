@@ -17,14 +17,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v8 result envelope`, async () => {
+	test(`${name} emits the atomic v9 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 8",
+			"version: 9",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -196,6 +196,34 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"readerTopology.replicatorHashes[0] === writerPeerHash",
 		"writerTopologyBeforeUpload",
 		"readerTopologyBeforeTimedRead",
+		"writerTopologyAfterTimedRead",
+		"readerTopologyAfterTimedRead",
+		"preTimedReadTopologyObservations",
+		"postTimedReadTopologyObservations",
+		"postTimedReadTopologyCaptureDelayMs",
+		"collectStableCounterpartTransportTopology",
+		"TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS = 5_000",
+		"TRANSPORT_COUNTER_STABILITY_POLL_MS = 100",
+		"TRANSPORT_COUNTER_STABLE_SAMPLE_COUNT = 3",
+		"TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW = 1024 * 1024",
+		"TRANSPORT_COUNTER_SAMPLE_CLOCK_TOLERANCE_MS = 1",
+		"TRANSPORT_COUNTER_PRE_READ_START_TOLERANCE_MS = 1_000",
+		"TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS = 9_000",
+		"transportCounterSampleClockToleranceMs:",
+		"transportCounterPreReadStartToleranceMs:",
+		"transportCounterPostReadCaptureMaxDelayMs:",
+		"requireMonotonicTransportCounterDelta",
+		"Timed read did not start within the bounded pre-read transport-counter handoff",
+		'stream.service === "pubsub"',
+		"stream.remotePeerHash === expectedPeerHash",
+		"stream.remotePeerHash !== expectedPeerHash",
+		"stream.remotePeer !== expectedRemotePeerId",
+		"contains malformed transport stream diagnostics",
+		"stream.peerHashIdentityMatch !== true",
+		"stream.serviceProtocol !== PUBSUB_PROTOCOL",
+		"stream.protocolIdentityMatch !== true",
+		"stream.counterStreamIdentityMatch !== true",
+		"stream.connectionIdentityMatchCount !== 1",
 		"requestedLocalChunkBlockCount",
 		'provisioningMethod: "exact-manifest-head-import"',
 		"stabilityObservations",
@@ -228,7 +256,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	assert.match(
 		contents,
 		/const terminalSeederSnapshot = await snapshot\([\s\S]*?noteSeederDrop\(terminalSeederSnapshot\);[\s\S]*?if \(unexpectedSeederDrop\)/,
-		"the final numeric seeder snapshot must participate in the v8 drop policy before acceptance",
+		"the final numeric seeder snapshot must participate in the v9 drop policy before acceptance",
 	);
 	const lateFailureCatch = contents.slice(
 		contents.lastIndexOf("\t\t} catch (error: any) {"),
@@ -243,10 +271,16 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		!lateFailureCatch.includes("integrityVerified: false"),
 		"the catch path must not overwrite completed integrity state",
 	);
+	assert.ok(
+		lateFailureCatch.includes("readerLocalityControl,") &&
+			!lateFailureCatch.includes("preTimedReadTopologyObservations = []") &&
+			!lateFailureCatch.includes("postTimedReadTopologyObservations = []"),
+		"late failures must preserve every completed pre/post transport topology observation",
+	);
 	assert.match(
 		contents,
-		/const LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS =\s*READER_LOCAL_CHUNK_TARGET === null\s*\? 0\s*:\s*3 \* READY_TIMEOUT_MS \+\s*\(READER_LOCAL_CHUNK_TARGET > 0\s*\? DOWNLOAD_TIMEOUT_MS \+ TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS\s*: 0\);/,
-		"controlled locality must reserve three readiness phases and a nonzero-prefix aggregate preload deadline plus cleanup tolerance",
+		/const LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS =\s*READER_LOCAL_CHUNK_TARGET === null\s*\? 0\s*:\s*3 \* READY_TIMEOUT_MS \+\s*2 \* TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS \+\s*\(READER_LOCAL_CHUNK_TARGET > 0\s*\? DOWNLOAD_TIMEOUT_MS \+ TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS\s*: 0\);/,
+		"controlled locality must reserve three readiness phases, both bounded transport gates, and a nonzero-prefix aggregate preload deadline plus cleanup tolerance",
 	);
 	assert.match(
 		contents,
@@ -283,14 +317,54 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"memory telemetry must collect clean initial samples before the sink waiter is armed and the timed click begins",
 	);
 	assert.ok(
+		contents.lastIndexOf('phase: "pre-timed-read",') <
+				contents.indexOf("writerTopologyBeforeTimedRead =") &&
+			contents.indexOf("writerTopologyBeforeTimedRead =") <
+				contents.indexOf("const downloadCompletion = armSavedViaPicker(") &&
+			contents.indexOf("const downloadCompletion = armSavedViaPicker(") <
+				contents.indexOf("const downloadClickStartedAt = Date.now()"),
+		"pre-read pubsub counters must stabilize after telemetry setup and immediately before the timed click",
+	);
+	assert.ok(
 		contents.indexOf("const download = await downloadCompletion") <
 			contents.indexOf(
 				"await downloadMemoryTelemetryController.stopSampling()",
 			) &&
 			contents.indexOf(
 				"await downloadMemoryTelemetryController.stopSampling()",
-			) < contents.indexOf('stage = "verify-integrity"'),
-		"memory telemetry sampling must stop at sink completion before integrity and topology work",
+			) < contents.indexOf("writerTopologyAfterTimedRead =") &&
+			contents.indexOf("writerTopologyAfterTimedRead =") <
+				contents.indexOf('stage = "verify-integrity"'),
+		"memory telemetry sampling must stop at sink completion before the immediate topology snapshot and integrity work",
+	);
+	assert.ok(
+		contents.indexOf("writerTopologyAfterTimedRead =") <
+			contents.indexOf("waitForTerminalReaderIdle()") &&
+			contents.indexOf("readerTopologyAfterTimedRead =") <
+				contents.indexOf("waitForTerminalReaderIdle()"),
+		"post-read topology must be captured before terminal locality waits can change the observed state",
+	);
+	assert.ok(
+		contents.indexOf("writerTopologyAfterTimedRead =") <
+			contents.lastIndexOf(
+				"requireMonotonicTransportCounterDelta(",
+			) &&
+			contents.lastIndexOf("requireMonotonicTransportCounterDelta(") <
+				contents.indexOf('stage = "verify-integrity"'),
+		"the immediate post-read gate must enforce local per-key monotonicity before integrity work",
+	);
+	assert.ok(
+		contents.indexOf(
+			"await downloadMemoryTelemetryController.stopSampling()",
+		) < contents.lastIndexOf('phase: "post-timed-read",') &&
+			contents.lastIndexOf('phase: "post-timed-read",') <
+				contents.indexOf("writerTopologyAfterTimedRead ="),
+		"post-read pubsub counters must stabilize immediately after memory sampling stops",
+	);
+	assert.match(
+		contents,
+		/const latestAcceptedFinishedAt =\s*downloadCompletionObservedAt \+\s*TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS;[\s\S]*?const deadlineAt = Math\.min\(\s*startedAt \+ TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS,\s*latestAcceptedFinishedAt,\s*\);/,
+		"the post-read gate deadline must retain a one-second margin before inbound pruning",
 	);
 	assert.ok(
 		contents.indexOf("integrityVerifiedAt = Date.now()") <
@@ -339,8 +413,8 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.match(
 		contents,
-		/postMonitorFinishedAt = Date\.now\(\);[\s\S]*?beforePreloadObservation[\s\S]*?preloadLocalChunkPrefix\([\s\S]*?collectStableReaderLocality\(\)[\s\S]*?writerTopologyBeforeTimedRead[\s\S]*?stage = "download-to-selected-sink"/,
-		"preload closure, stable exact-prefix evidence, and topology must precede the timed read",
+		/postMonitorFinishedAt = Date\.now\(\);[\s\S]*?beforePreloadObservation[\s\S]*?preloadLocalChunkPrefix\([\s\S]*?collectStableReaderLocality\(\)[\s\S]*?stage = "download-to-selected-sink"[\s\S]*?phase: "pre-timed-read"[\s\S]*?writerTopologyBeforeTimedRead[\s\S]*?downloadClickStartedAt = Date\.now\(\)/,
+		"preload closure and exact-prefix evidence must precede the final pre-read transport stability gate and timed read",
 	);
 	assert.match(
 		contents,

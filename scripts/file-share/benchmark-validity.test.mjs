@@ -623,16 +623,100 @@ const createReaderLocalityFixture = ({
 		selfInReplicatorSet,
 		{
 			peerHash = selfInReplicatorSet ? "writer-peer" : "reader-peer",
+			peerId = `${peerHash}-id`,
 			replicatorCount = 1,
 			replicatorHashes = ["writer-peer"],
+			transportStreams,
 		} = {},
 	) => ({
 		capturedAt,
 		peerHash,
+		peerId,
 		replicatorCount,
 		replicatorHashes,
 		selfInReplicatorSet,
+		...(transportStreams ? { transportStreams } : {}),
 	});
+	const pubsubTransportStream = ({
+		direction,
+		remotePeerHash,
+		remotePeer,
+		bytes,
+		connectionId,
+		id,
+		multiplexer = "/webrtc",
+	}) => ({
+		service: "pubsub",
+		remotePeerHash,
+		peerHashIdentityMatch: true,
+		serviceProtocol: "/peerbit/topic-control-plane/2.0.0",
+		protocol: "/peerbit/topic-control-plane/2.0.0",
+		expectedProtocol: "/peerbit/topic-control-plane/2.0.0",
+		protocolIdentityMatch: true,
+		remotePeer,
+		id,
+		direction,
+		bytes,
+		aborted: direction === "outbound" ? false : null,
+		counterStreamIdentityMatch: true,
+		connectionIdentityMatchCount: 1,
+		connectionId,
+		multiplexer,
+	});
+	const transportTopologyObservation = (capturedAt, bytes) => ({
+		capturedAt,
+		writerTopology: topology(capturedAt - 1, true, {
+			peerHash: "writer-peer",
+			transportStreams: [
+				pubsubTransportStream({
+					direction: "outbound",
+					remotePeerHash: "reader-peer",
+					remotePeer: "reader-peer-id",
+					bytes,
+					connectionId: "writer-connection",
+					id: "writer-stream-id",
+				}),
+				pubsubTransportStream({
+					direction: "outbound",
+					remotePeerHash: "reader-peer",
+					remotePeer: "reader-peer-id",
+					bytes: bytes + 50,
+					connectionId: "writer-connection-2",
+					id: "writer-stream-id-2",
+					multiplexer: "/peerbit/yamux/1.0.0",
+				}),
+			],
+		}),
+		readerTopology: topology(capturedAt - 1, false, {
+			peerHash: "reader-peer",
+			transportStreams: [
+				pubsubTransportStream({
+					direction: "inbound",
+					remotePeerHash: "writer-peer",
+					remotePeer: "writer-peer-id",
+					bytes,
+					connectionId: "reader-connection",
+					id: "reader-stream-id",
+					multiplexer: "/peerbit/yamux/1.0.0",
+				}),
+				pubsubTransportStream({
+					direction: "inbound",
+					remotePeerHash: "writer-peer",
+					remotePeer: "writer-peer-id",
+					bytes: bytes + 50,
+					connectionId: "reader-connection-2",
+					id: "reader-stream-id-2",
+					multiplexer: "/webrtc",
+				}),
+			],
+		}),
+	});
+	const preTimedReadTopologyObservations = [1_382, 1_481, 1_580].map(
+		(capturedAt) => transportTopologyObservation(capturedAt, 100),
+	);
+	const postTimedReadTopologyObservations = [1_635, 1_734, 1_833].map(
+		(capturedAt) => transportTopologyObservation(capturedAt, 200),
+	);
 	const terminalReplicatorHashes =
 		readerTerminalTopology === "replicator"
 			? ["reader-peer", "writer-peer"]
@@ -676,14 +760,14 @@ const createReaderLocalityFixture = ({
 		initialLocalChunkIndexRowCount: actualIndexRowCount,
 		initialLocalChunkCount: actualIndexRowCount,
 		initialLocalChunkBlockCount: actualBlockCount,
-		startedAt: 1_400,
-		finishedAt: 1_430,
-		chunkWriteStartedAt: { 0: 1_410, 1: 1_422 },
-		chunkWriteFinishedAt: { 0: 1_415, 1: 1_426 },
-		chunkMaterializeStartedAt: { 0: 1_401, 1: 1_416 },
-		chunkMaterializeFinishedAt: { 0: 1_403, 1: 1_418 },
-		chunkHashStartedAt: { 0: 1_403, 1: 1_418 },
-		chunkHashFinishedAt: { 0: 1_404, 1: 1_420 },
+		startedAt: 1_600,
+		finishedAt: 1_630,
+		chunkWriteStartedAt: { 0: 1_610, 1: 1_622 },
+		chunkWriteFinishedAt: { 0: 1_615, 1: 1_626 },
+		chunkMaterializeStartedAt: { 0: 1_601, 1: 1_616 },
+		chunkMaterializeFinishedAt: { 0: 1_603, 1: 1_618 },
+		chunkHashStartedAt: { 0: 1_603, 1: 1_618 },
+		chunkHashFinishedAt: { 0: 1_604, 1: 1_620 },
 	});
 	result.writerManifestEvidence.fileName = fileName;
 	result.readerManifestEvidence.fileName = fileName;
@@ -691,15 +775,24 @@ const createReaderLocalityFixture = ({
 	result.writerDiagnostics.replicatorCount = terminalReplicatorCount;
 	result.writerDiagnostics.replicationSetSize = 1;
 	result.writerDiagnostics.lastUploadDiagnostics.fileName = fileName;
-	result.timestamps.downloadStartedAt = 1_400;
-	result.timestamps.downloadFinishedAt = 1_430;
-	result.timestamps.downloadCompletionObservedAt = 1_431;
-	result.integrityVerifiedAt = 1_432;
+	result.timestamps.downloadStartedAt = 1_600;
+	result.timestamps.downloadFinishedAt = 1_630;
+	result.timestamps.downloadCompletionObservedAt = 1_631;
+	result.integrityVerifiedAt = 1_837;
 	result.downloadMemoryTelemetry = createDownloadMemoryTelemetry(
-		1_400,
-		1_430,
+		1_600,
+		1_630,
 		invocation,
 	);
+	result.downloadMemoryTelemetry.startedAt = 1_380;
+	for (const series of [
+		result.downloadMemoryTelemetry.readerJsHeap,
+		result.downloadMemoryTelemetry.writerJsHeap,
+		result.downloadMemoryTelemetry.hostRss,
+	]) {
+		series.startedAt = 1_380;
+		series.samples[0].capturedAt = 1_381;
+	}
 	result.readerLocalityControl = {
 		profile: "observer-topology-exact-manifest-prefix",
 		provisioningMethod: "exact-manifest-head-import",
@@ -712,6 +805,13 @@ const createReaderLocalityFixture = ({
 		expectedTerminalTopology: readerTerminalTopology,
 		stabilityPollIntervalMs: 100,
 		requiredStableObservationCount: 3,
+		transportCounterStabilityPollIntervalMs: 100,
+		transportCounterStabilityTimeoutMs: 5_000,
+		transportCounterRequiredStableObservationCount: 3,
+		transportCounterMaxCounterpartByteSkew: 1024 * 1024,
+		transportCounterSampleClockToleranceMs: 1,
+		transportCounterPreReadStartToleranceMs: 1_000,
+		transportCounterPostReadCaptureMaxDelayMs: 9_000,
 		status: "complete",
 		readerInitialRoleEvidence: {
 			capturedAt: 989,
@@ -723,8 +823,31 @@ const createReaderLocalityFixture = ({
 		},
 		writerTopologyBeforeUpload: topology(990, true),
 		readerTopologyBeforeUpload: topology(991, false),
-		writerTopologyBeforeTimedRead: topology(1_380, true),
-		readerTopologyBeforeTimedRead: topology(1_381, false),
+		writerTopologyBeforeTimedRead:
+			structuredClone(
+				preTimedReadTopologyObservations.at(-1).writerTopology,
+			),
+		readerTopologyBeforeTimedRead:
+			structuredClone(
+				preTimedReadTopologyObservations.at(-1).readerTopology,
+			),
+		preTimedReadTopologyStartedAt: 1_381,
+		preTimedReadTopologyDeadlineAt: 6_381,
+		preTimedReadTopologyFinishedAt: 1_583,
+		preTimedReadTopologyObservations,
+		writerTopologyAfterTimedRead:
+			structuredClone(
+				postTimedReadTopologyObservations.at(-1).writerTopology,
+			),
+		readerTopologyAfterTimedRead:
+			structuredClone(
+				postTimedReadTopologyObservations.at(-1).readerTopology,
+			),
+		postTimedReadTopologyStartedAt: 1_634,
+		postTimedReadTopologyDeadlineAt: 6_634,
+		postTimedReadTopologyFinishedAt: 1_836,
+		postTimedReadTopologyCaptureDelayMs: 205,
+		postTimedReadTopologyObservations,
 		beforePreloadObservation: observation({
 			capturedAt: 1_171,
 			persistChunkReads: false,
@@ -773,19 +896,19 @@ const createReaderLocalityFixture = ({
 			blocks: Array.from({ length: actualBlockCount }, (_, index) => index),
 			indexed: Array.from({ length: actualIndexRowCount }, (_, index) => index),
 		}),
-		integrityVerifiedAt: 1_432,
+		integrityVerifiedAt: 1_837,
 		terminalIdleObservation: observation({
-			capturedAt: 1_433,
+			capturedAt: 1_838,
 			persistChunkReads: true,
 			blocks: [0, 1],
 			indexed: readerTerminalTopology === "replicator" ? [0, 1] : [],
 		}),
-		terminalTopologyStartedAt: 1_433,
-		terminalTopologyDeadlineAt: 181_433,
-		terminalTopologyFinishedAt: 1_635,
+		terminalTopologyStartedAt: 1_838,
+		terminalTopologyDeadlineAt: 181_838,
+		terminalTopologyFinishedAt: 2_040,
 		terminalTopologyRole: readerTerminalTopology,
 		terminalTopologyExpectationSatisfied: true,
-		terminalTopologyObservations: [1_434, 1_534, 1_634].map((capturedAt) => ({
+		terminalTopologyObservations: [1_839, 1_939, 2_039].map((capturedAt) => ({
 			capturedAt,
 			writerTopology: terminalTopology(capturedAt - 1, "writer-peer"),
 			readerTopology: terminalTopology(capturedAt - 1, "reader-peer"),
@@ -812,7 +935,7 @@ const createReaderLocalityFixture = ({
 			label: "terminal",
 			writerSeeders: 1,
 			readerSeeders: 1,
-			at: 1_640,
+			at: 2_041,
 		},
 	];
 	result.baselineWriterSeeders = 1;
@@ -919,7 +1042,7 @@ test("requires the terminal snapshot after controlled-locality topology", () => 
 	);
 });
 
-test("accepts one recovered seeder dip under the v8 policy", () => {
+test("accepts one recovered seeder dip under the v9 policy", () => {
 	const result = validResult();
 	result.snapshots[1].writerSeeders = 1;
 	result.droppedSeeders = true;
@@ -954,7 +1077,7 @@ test("rejects a terminal below-baseline seeder snapshot", () => {
 	);
 });
 
-test("rejects missing, altered, and contradictory v8 seeder-drop evidence", () => {
+test("rejects missing, altered, and contradictory v9 seeder-drop evidence", () => {
 	for (const [mutate, pattern] of [
 		[
 			(result) => {
@@ -1554,6 +1677,26 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		],
 		[
 			(result) => {
+				result.readerLocalityControl.transportCounterSampleClockToleranceMs = 2;
+			},
+			/locality control contract is invalid/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.transportCounterPreReadStartToleranceMs =
+					999;
+			},
+			/locality control contract is invalid/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.transportCounterPostReadCaptureMaxDelayMs =
+					10_000;
+			},
+			/locality control contract is invalid/,
+		],
+		[
+			(result) => {
 				result.readerLocalityControl.beforePreloadObservation.chunkCount = 3;
 				for (const observation of [
 					...result.readerLocalityControl.stabilityObservations,
@@ -1600,6 +1743,176 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 					["third-peer"];
 			},
 			/does not agree on the writer as the exact singleton replicator/,
+		],
+		[
+			(result) => {
+				delete result.readerLocalityControl.writerTopologyAfterTimedRead;
+			},
+			/writerTopologyAfterTimedRead/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerTopologyAfterTimedRead.peerHash =
+					"other-reader";
+			},
+			/does not preserve two distinct peer identities/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.writerTopologyAfterTimedRead.replicatorHashes =
+					["reader-peer", "writer-peer"];
+				result.readerLocalityControl.writerTopologyAfterTimedRead.replicatorCount =
+					2;
+			},
+			/immediate post-read topology evidence is inconsistent/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].protocol =
+					"/wrong/protocol";
+			},
+			/relevant pubsub stream 0 is not authoritative/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].readerTopology.transportStreams[0].remotePeerHash =
+					"wrong-writer-hash";
+			},
+			/relevant pubsub stream 0 is not authoritative/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].remotePeer =
+					"wrong-reader-id";
+			},
+			/relevant pubsub stream 0 is not authoritative/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams.push(
+					null,
+				);
+			},
+			/contains malformed transport stream diagnostics/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].peerHashIdentityMatch =
+					false;
+			},
+			/relevant pubsub stream 0 is not authoritative/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].connectionId =
+					"changed-writer-connection";
+			},
+			/do not prove stable counterpart pubsub counters/,
+		],
+		[
+			(result) => {
+				const streams =
+					result.readerLocalityControl.preTimedReadTopologyObservations[1]
+						.writerTopology.transportStreams;
+				streams[1] = structuredClone(streams[0]);
+			},
+			/contains a duplicate pubsub counter key/,
+		],
+		[
+			(result) => {
+				const observations =
+					result.readerLocalityControl.preTimedReadTopologyObservations;
+				observations[0].writerTopology.transportStreams[0].bytes = 101;
+				observations[1].writerTopology.transportStreams[0].bytes = 100;
+			},
+			/counters decrease for an unchanged key set/,
+		],
+		[
+			(result) => {
+				const control = result.readerLocalityControl;
+				for (const observation of control.postTimedReadTopologyObservations) {
+					observation.writerTopology.transportStreams[0].connectionId =
+						"replacement-writer-connection";
+				}
+				control.writerTopologyAfterTimedRead.transportStreams[0].connectionId =
+					"replacement-writer-connection";
+			},
+			/writer pubsub counter key set changed during timed read/,
+		],
+		[
+			(result) => {
+				const control = result.readerLocalityControl;
+				for (const observation of control.postTimedReadTopologyObservations) {
+					observation.writerTopology.transportStreams[0].bytes = 90;
+					observation.writerTopology.transportStreams[1].bytes = 360;
+				}
+				control.writerTopologyAfterTimedRead.transportStreams[0].bytes = 90;
+				control.writerTopologyAfterTimedRead.transportStreams[1].bytes = 360;
+			},
+			/writer pubsub counter decreased during timed read/,
+		],
+		[
+			(result) => {
+				const control = result.readerLocalityControl;
+				for (const observation of control.postTimedReadTopologyObservations) {
+					observation.readerTopology.transportStreams[0].bytes =
+						2 * 1024 * 1024;
+				}
+				control.readerTopologyAfterTimedRead.transportStreams[0].bytes =
+					2 * 1024 * 1024;
+			},
+			/do not prove stable counterpart pubsub counters/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.postTimedReadTopologyObservations.pop();
+			},
+			/stability window is invalid or unbounded/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.preTimedReadTopologyDeadlineAt -= 1;
+			},
+			/stability window is invalid or unbounded/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.postTimedReadTopologyFinishedAt =
+					result.timestamps.downloadCompletionObservedAt + 9_001;
+			},
+			/exceeded its bounded post-read capture delay/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.postTimedReadTopologyCaptureDelayMs += 1;
+			},
+			/post-timed-read topology capture delay is inconsistent or unbounded/,
+		],
+		[
+			(result) => {
+				const observations =
+					result.readerLocalityControl.preTimedReadTopologyObservations;
+				observations[1].capturedAt = observations[0].capturedAt + 98;
+				observations[1].writerTopology.capturedAt =
+					observations[1].capturedAt - 1;
+				observations[1].readerTopology.capturedAt =
+					observations[1].capturedAt - 1;
+			},
+			/observations have inconsistent identities or timestamps/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.readerTopologyAfterTimedRead.capturedAt =
+					result.timestamps.downloadCompletionObservedAt - 1;
+			},
+			/postTimedReadTopology observations do not prove stable counterpart pubsub counters/,
+		],
+		[
+			(result) => {
+				result.readerLocalityControl.writerTopologyAfterTimedRead.capturedAt =
+					result.integrityVerifiedAt + 1;
+			},
+			/postTimedReadTopology observations do not prove stable counterpart pubsub counters/,
 		],
 		[
 			(result) => {
@@ -1948,14 +2261,14 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v8 evidence envelope", () => {
+test("rejects a status-only passed payload at the v9 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v8 envelopes", () => {
+test("requires explicit error evidence on failed v9 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };
