@@ -32,6 +32,7 @@ export class Trust {
 		const existing = this.trusted.findIndex((x) => x === hashcode);
 		if (existing >= 0) {
 			this.trusted.splice(existing, 1);
+			this.save();
 			return true;
 		}
 		return false;
