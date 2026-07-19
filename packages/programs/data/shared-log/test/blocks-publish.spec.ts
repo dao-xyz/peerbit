@@ -41,8 +41,15 @@ describe("shared-log block publish adapter", () => {
 	it("does not retain unsolicited blocks unless eager mode is explicit", async () => {
 		session = await TestSession.connected(1);
 		db = await session.peers[0].open(new EventStore<string, any>());
-		const remoteBlocks = (db.log as any).remoteBlocks;
-		expect(remoteBlocks.getEagerBlockCacheTelemetry()).to.equal(undefined);
+		expect(db.log.getEagerBlockCacheTelemetry()).to.equal(undefined);
+		const runtime = db.log.getRuntimeSnapshot();
+		expect(runtime.nativeGraph.active).to.be.a("boolean");
+		expect(runtime.nativeGraph.useHeads).to.equal(
+			runtime.nativeGraph.active &&
+				db.log.log.entryIndex.properties.nativeGraph?.useHeads === true,
+		);
+		expect(Object.isFrozen(runtime)).to.equal(true);
+		expect(Object.isFrozen(runtime.nativeGraph)).to.equal(true);
 	});
 
 	it("keeps explicit eager mode available with bounded defaults", async () => {
@@ -50,8 +57,7 @@ describe("shared-log block publish adapter", () => {
 		db = await session.peers[0].open(new EventStore<string, any>(), {
 			args: { eagerBlocks: true },
 		});
-		const remoteBlocks = (db.log as any).remoteBlocks;
-		const telemetry = remoteBlocks.getEagerBlockCacheTelemetry();
+		const telemetry = db.log.getEagerBlockCacheTelemetry()!;
 		expect(telemetry.limits).to.include({
 			maxEntries: 1_000,
 			maxBytes: 32 * 1024 * 1024,

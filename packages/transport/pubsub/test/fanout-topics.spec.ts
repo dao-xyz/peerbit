@@ -245,6 +245,46 @@ describe("pubsub (fanout topics)", function () {
 		});
 	};
 
+	it("reports the same normalized upload limits that fanout channels enforce", async () => {
+		const { session, configureBootstraps, configureShards } =
+			await createSession(2, {
+				pubsub: {
+					fanoutRootChannel: { uploadLimitBps: 1_000_000.75 },
+					fanoutNodeChannel: { uploadLimitBps: -1 },
+				},
+			});
+
+		try {
+			const root = session.peers[0]!.services.pubsub;
+			const node = session.peers[1]!.services.pubsub;
+			const expectedSnapshot = {
+				fanout: {
+					root: { uploadLimitBps: 1_000_000 },
+					node: { uploadLimitBps: 0 },
+				},
+			};
+			expect(root.getRuntimeSnapshot()).to.deep.equal(expectedSnapshot);
+			expect(node.getRuntimeSnapshot()).to.deep.equal(expectedSnapshot);
+
+			await configureShards([0]);
+			configureBootstraps([0]);
+			const topic = "normalized-runtime-upload-limits";
+			await Promise.all([root.subscribe(topic), node.subscribe(topic)]);
+			const shardTopic = (root as any).getShardTopicForUserTopic(topic);
+			const rootHash = root.publicKeyHash;
+			await waitForResolved(() => {
+				expect(
+					root.fanout.getChannelStats(shardTopic, rootHash)?.uploadLimitBps,
+				).to.equal(expectedSnapshot.fanout.root.uploadLimitBps);
+				expect(
+					node.fanout.getChannelStats(shardTopic, rootHash)?.uploadLimitBps,
+				).to.equal(expectedSnapshot.fanout.node.uploadLimitBps);
+			});
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("delivers over sharded fanout (no direct subscription gossip)", async () => {
 		const { session, configureBootstraps, configureShards } =
 			await createSession(4);
@@ -924,7 +964,10 @@ describe("pubsub (fanout topics)", function () {
 					rootHash,
 				);
 				expect(statsAfterDirect?.parent).to.equal(relayHash);
-				const metrics = publisher.fanout.getChannelMetrics(shardTopic, rootHash);
+				const metrics = publisher.fanout.getChannelMetrics(
+					shardTopic,
+					rootHash,
+				);
 				expect(metrics.reparentUpgrade).to.equal(0);
 				if (options.parentUpgradeIntervalMs === undefined) {
 					expect(metrics.parentProbeReqSent).to.equal(0);
@@ -1128,7 +1171,9 @@ describe("pubsub (fanout topics)", function () {
 				expect(rootFanout.peers.has(publisherHash)).to.equal(true),
 			);
 			await waitForResolved(() =>
-				expect(publisherPeer.services.fanout.peers.has(rootHash)).to.equal(true),
+				expect(publisherPeer.services.fanout.peers.has(rootHash)).to.equal(
+					true,
+				),
 			);
 			await waitForResolved(() => {
 				const metrics = publisherPeer.services.fanout.getChannelMetrics(
@@ -1157,7 +1202,9 @@ describe("pubsub (fanout topics)", function () {
 						parentDataLatencyMaxMs: ch?.parentDataLatencyMaxMs,
 						rootChildren: rootStats?.children,
 						rootChildHashes:
-							rootChannel == null ? undefined : [...rootChannel.children.keys()],
+							rootChannel == null
+								? undefined
+								: [...rootChannel.children.keys()],
 						rootEffectiveMaxChildren: rootStats?.effectiveMaxChildren,
 						sampleScore:
 							ch == null
