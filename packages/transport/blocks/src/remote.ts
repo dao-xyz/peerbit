@@ -3,10 +3,10 @@ import { TypedEventEmitter } from "@libp2p/interface";
 import {
 	type GetOptions,
 	type Blocks as IBlocks,
-	checkDecodeBlock,
 	cidifyString,
 	codecCodes,
 	stringifyCid,
+	verifyBlockBytes,
 } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import { PublicSignKey } from "@peerbit/crypto";
@@ -871,13 +871,18 @@ export class RemoteBlocks implements IBlocks {
 
 		const codec = codecCodes[cidObject.code as keyof typeof codecCodes];
 
-		const tryDecode = async (bytes: Uint8Array) => {
-			const value = await checkDecodeBlock(cidObject, bytes, {
+		const tryVerify = async (bytes: Uint8Array) => {
+			const verifiedCid = await verifyBlockBytes(cidObject, bytes, {
 				codec,
 				hasher: options?.hasher,
 			});
-
-			return value;
+			// This block-shaped value is internal bookkeeping only. RemoteBlocks moves
+			// opaque bytes and must not invoke the logical codec at this boundary.
+			return {
+				bytes,
+				cid: verifiedCid,
+				value: bytes,
+			} as Block<Uint8Array, any, any, 1>;
 		};
 		const cachedValue = this.options.eagerBlocks
 			? this._blockCache?.get(cidString)
@@ -885,7 +890,7 @@ export class RemoteBlocks implements IBlocks {
 		if (cachedValue) {
 			this._blockCache!.del(cidString);
 			try {
-				const result = await tryDecode(cachedValue);
+				const result = await tryVerify(cachedValue);
 				return result.bytes;
 			} catch (error) {
 				// ignore
@@ -962,7 +967,7 @@ export class RemoteBlocks implements IBlocks {
 					);
 
 					resolver = async (bytes: Uint8Array, providerHash?: string) => {
-						const value = await tryDecode(bytes);
+						const value = await tryVerify(bytes);
 						if (settled) return;
 						if (providerHash) {
 							// A response is only evidence that its sender can provide this CID

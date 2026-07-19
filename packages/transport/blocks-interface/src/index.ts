@@ -65,7 +65,9 @@ export {
 	getBlockValue,
 	calculateRawCid,
 	checkDecodeBlock,
+	verifyBlockBytes,
 	codecCodes,
 	defaultHasher,
 	codecMap,
 } from "./block.js";
+export type { VerifyBlockBytesOptions } from "./block.js";
