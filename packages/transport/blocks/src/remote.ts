@@ -120,7 +120,10 @@ export class RemoteBlocks implements IBlocks {
 		data: BlockMessage,
 		context?: BlockMessageContext,
 	) => any;
-	private _resolvers: Map<string, (data: Uint8Array) => Promise<void>>;
+	private _resolvers: Map<
+		string,
+		(data: Uint8Array, providerHash?: string) => Promise<void>
+	>;
 	private _blockCache?: EagerBlockCache;
 	private _providerCache?: Cache<string[]>;
 	private _rustProviderCache?: RustBlockProviderCache;
@@ -402,9 +405,6 @@ export class RemoteBlocks implements IBlocks {
 					});
 				} else if (message instanceof BlockResponse) {
 					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-					if (context?.from) {
-						this.rememberProvider(message.cid, context.from);
-					}
 					let resolver = this._resolvers.get(message.cid);
 					if (!resolver) {
 						if (options.eagerBlocks) {
@@ -412,7 +412,7 @@ export class RemoteBlocks implements IBlocks {
 							this._blockCache!.add(message.cid, message.bytes);
 						}
 					} else {
-						await resolver(message.bytes);
+						await resolver(message.bytes, context?.from);
 					}
 				}
 			} catch (error) {
@@ -920,7 +920,9 @@ export class RemoteBlocks implements IBlocks {
 			const promise = new Promise<Block<any, any, any, 1> | undefined>(
 				(resolve, reject) => {
 					let timeoutCallback: ReturnType<typeof setTimeout> | undefined;
-					let resolver: ((bytes: Uint8Array) => Promise<void>) | undefined;
+					let resolver:
+						| ((bytes: Uint8Array, providerHash?: string) => Promise<void>)
+						| undefined;
 					let settled = false;
 					const abortHandler = () => {
 						cleanup();
@@ -959,9 +961,14 @@ export class RemoteBlocks implements IBlocks {
 						options.timeout || 30 * 1000,
 					);
 
-					resolver = async (bytes: Uint8Array) => {
+					resolver = async (bytes: Uint8Array, providerHash?: string) => {
 						const value = await tryDecode(bytes);
 						if (settled) return;
+						if (providerHash) {
+							// A response is only evidence that its sender can provide this CID
+							// after the payload has passed the requested CID's integrity check.
+							this.rememberProvider(cidString, providerHash);
+						}
 						settled = true;
 						cleanup();
 						resolve(value);
