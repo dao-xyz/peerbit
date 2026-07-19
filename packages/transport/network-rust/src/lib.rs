@@ -593,15 +593,19 @@ pub struct DirectBlockEagerIndex {
 #[wasm_bindgen]
 impl DirectBlockEagerIndex {
     #[wasm_bindgen(constructor)]
-    pub fn new(max: u32, ttl_ms: f64) -> DirectBlockEagerIndex {
+    pub fn new(max_entries: u32, max_bytes: f64, ttl_ms: f64) -> DirectBlockEagerIndex {
         DirectBlockEagerIndex {
-            inner: EagerBlockIndex::new(max as usize, ttl_ms.max(1.0) as u64),
+            inner: EagerBlockIndex::new(
+                max_entries as usize,
+                max_bytes.max(1.0) as usize,
+                ttl_ms.max(1.0) as u64,
+            ),
         }
     }
 
     /// Track a cid; returns the cids evicted by the insert (ttl/max bound).
-    pub fn add(&mut self, cid: &str, now_ms: f64) -> Vec<String> {
-        self.inner.add(cid, now_ms as u64)
+    pub fn add(&mut self, cid: &str, size: u32, now_ms: f64) -> Vec<String> {
+        self.inner.add(cid, size as usize, now_ms as u64)
     }
 
     /// Evict expired entries and return their cids.
@@ -615,6 +619,14 @@ impl DirectBlockEagerIndex {
 
     pub fn del(&mut self, cid: &str) {
         self.inner.del(cid);
+    }
+
+    pub fn len(&self) -> u32 {
+        self.inner.len() as u32
+    }
+
+    pub fn current_bytes(&self) -> f64 {
+        self.inner.current_bytes() as f64
     }
 
     pub fn clear(&mut self) {

@@ -126,6 +126,7 @@ export {
 	type RustDecodedFanoutUnicast,
 	type RustDecodedPubSubMessage,
 	type RustEagerBlockCache,
+	type RustEagerBlockCacheStats,
 	type RustFanoutTree,
 	type RustLanesInit,
 	type RustParentUpgradeGateOptions,

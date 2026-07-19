@@ -82,6 +82,7 @@ export type Args<
 	nativeBackbone?: SharedLogOptions<Operation<T>, D, R>["nativeBackbone"];
 	nativeRangePlanner?: SharedLogOptions<Operation<T>, D, R>["nativeRangePlanner"];
 	strictFullReplicaFallback?: boolean;
+	eagerBlocks?: SharedLogOptions<Operation<T>, D, R>["eagerBlocks"];
 };
 @variant("event_store")
 export class EventStore<
@@ -159,6 +160,7 @@ export class EventStore<
 			nativeBackbone: properties?.nativeBackbone,
 			nativeRangePlanner: properties?.nativeRangePlanner,
 			strictFullReplicaFallback: properties?.strictFullReplicaFallback,
+			eagerBlocks: properties?.eagerBlocks,
 
 			// staticArgs was unused; keep open args explicit in tests
 		});

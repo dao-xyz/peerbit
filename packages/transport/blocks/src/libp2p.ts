@@ -15,6 +15,7 @@ import {
 } from "@peerbit/stream-interface";
 import type { Block } from "multiformats/block";
 import { AnyBlockStore } from "./any-blockstore.js";
+import type { EagerBlocksSetting } from "./eager-cache.js";
 import { BlockMessage, BlockRequest, BlockResponse, RemoteBlocks } from "./remote.js";
 
 export type DirectBlockComponents = DirectStreamComponents;
@@ -32,7 +33,7 @@ export class DirectBlock extends DirectStream implements IBlocks {
 			canRelayMessage?: boolean;
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
-			eagerBlocks?: boolean | { cacheSize?: number };
+			eagerBlocks?: EagerBlocksSetting;
 			resolveProviders?: (
 				cid: string,
 				options?: { signal?: AbortSignal },
@@ -173,6 +174,14 @@ export class DirectBlock extends DirectStream implements IBlocks {
 		};
 		this.onPeerConnectedFn = (evt: CustomEvent<PublicSignKey>) =>
 			this.remoteBlocks.onReachable(evt.detail);
+	}
+
+	getEagerBlockCacheTelemetry() {
+		return this.remoteBlocks.getEagerBlockCacheTelemetry();
+	}
+
+	waitForEagerBlockValidation(): Promise<void> {
+		return this.remoteBlocks.waitForEagerBlockValidation();
 	}
 
 	private encodeBlockMessage(message: BlockRequest | BlockResponse): Uint8Array {

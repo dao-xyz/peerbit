@@ -5,7 +5,7 @@
 //! host keeps sockets, promises and byte buffers; block bytes only cross the
 //! boundary inside serialized payloads.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use crate::wire::{Reader, WireResult, Writer};
 
@@ -150,15 +150,13 @@ struct FifoEntry<V> {
     value: V,
 }
 
-/// Port of the `@peerbit/cache` FIFO cache (`packages/utils/cache`) with the
-/// lazy-delete set, specialized to string keys and per-entry size 1 (the
-/// only shape the block exchange uses).
+/// FIFO/TTL cache specialized to string keys and per-entry size 1 (the
+/// provider-hint cache is its only user).
 struct FifoCache<V> {
     max: usize,
     ttl_ms: u64,
     map: HashMap<String, FifoEntry<V>>,
     list: VecDeque<String>,
-    deleted: HashSet<String>,
     current_size: usize,
 }
 
@@ -169,7 +167,6 @@ impl<V> FifoCache<V> {
             ttl_ms: ttl_ms.max(1),
             map: HashMap::new(),
             list: VecDeque::new(),
-            deleted: HashSet::new(),
             current_size: 0,
         }
     }
@@ -191,17 +188,7 @@ impl<V> FifoCache<V> {
             if out_of_date || self.current_size > self.max {
                 let key = self.list.pop_front().expect("head exists");
                 self.map.remove(&key);
-                let was_deleted = self.deleted.remove(&key);
-                if !was_deleted {
-                    // saturating: the TS cache lets `currentSize` drift below
-                    // the live-entry count when a lazily-deleted key is
-                    // re-added (add() un-deletes without restoring the count),
-                    // and can even go negative. usize cannot go negative, so
-                    // saturate at 0 — matching TS's benign `currentSize > max`
-                    // stays-false effect instead of wrapping to usize::MAX
-                    // (which would evict every entry forever).
-                    self.current_size = self.current_size.saturating_sub(1);
-                }
+                self.current_size = self.current_size.saturating_sub(1);
                 if let Some(sink) = sink.as_mut() {
                     sink.push(key);
                 }
@@ -213,17 +200,18 @@ impl<V> FifoCache<V> {
 
     fn get(&mut self, key: &str, now_ms: u64) -> Option<&V> {
         self.trim(now_ms, None);
-        if self.deleted.contains(key) {
-            return None;
-        }
         self.map.get(key).map(|entry| &entry.value)
     }
 
     fn add(&mut self, key: &str, value: V, now_ms: u64) -> Vec<String> {
-        self.deleted.remove(key);
         if !self.map.contains_key(key) {
             self.list.push_back(key.to_string());
             self.current_size += 1;
+        } else {
+            // Refreshing the timestamp must also refresh FIFO/TTL order;
+            // otherwise a refreshed head can hide older expired entries.
+            self.list.retain(|existing| existing != key);
+            self.list.push_back(key.to_string());
         }
         self.map.insert(
             key.to_string(),
@@ -237,31 +225,9 @@ impl<V> FifoCache<V> {
         evicted
     }
 
-    fn del(&mut self, key: &str) {
-        if self.map.contains_key(key) && !self.deleted.contains(key) {
-            self.deleted.insert(key.to_string());
-            // saturating: see the note in trim(). A del/add/del cycle on the
-            // same key (add un-deletes without restoring the count) would
-            // otherwise drive this usize below 0 and wrap to usize::MAX,
-            // permanently breaking the cache.
-            self.current_size = self.current_size.saturating_sub(1);
-        }
-    }
-
-    fn contains(&self, key: &str) -> bool {
-        !self.deleted.contains(key) && self.map.contains_key(key)
-    }
-
-    fn sweep(&mut self, now_ms: u64) -> Vec<String> {
-        let mut evicted = Vec::new();
-        self.trim(now_ms, Some(&mut evicted));
-        evicted
-    }
-
     fn clear(&mut self) {
         self.map.clear();
         self.list.clear();
-        self.deleted.clear();
         self.current_size = 0;
     }
 }
@@ -322,39 +288,106 @@ impl ProviderHintCache {
     }
 }
 
-/// Eager-block bookkeeping (`_blockCache` in `RemoteBlocks`): which
-/// unresolved `BlockResponse` cids to keep and for how long. The block bytes
-/// themselves stay host-side; eviction notices tell the host which byte
-/// buffers to drop.
+struct EagerBlockEntry {
+    time: u64,
+    size: usize,
+}
+
+/// Exact eager-block bookkeeping (`_blockCache` in `RemoteBlocks`). The host
+/// owns the buffers; this index enforces the same entry/byte/TTL limits as the
+/// pure TypeScript cache and reports which host buffers must be released.
 pub struct EagerBlockIndex {
-    cache: FifoCache<()>,
+    max_entries: usize,
+    max_bytes: usize,
+    ttl_ms: u64,
+    entries: HashMap<String, EagerBlockEntry>,
+    order: VecDeque<String>,
+    current_bytes: usize,
 }
 
 impl EagerBlockIndex {
-    pub fn new(max: usize, ttl_ms: u64) -> Self {
+    pub fn new(max_entries: usize, max_bytes: usize, ttl_ms: u64) -> Self {
         EagerBlockIndex {
-            cache: FifoCache::new(max, ttl_ms),
+            max_entries: max_entries.max(1),
+            max_bytes: max_bytes.max(1),
+            ttl_ms: ttl_ms.max(1),
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            current_bytes: 0,
         }
     }
 
-    pub fn add(&mut self, cid: &str, now_ms: u64) -> Vec<String> {
-        self.cache.add(cid, (), now_ms)
+    fn remove(&mut self, cid: &str) -> bool {
+        let Some(entry) = self.entries.remove(cid) else {
+            return false;
+        };
+        self.current_bytes = self.current_bytes.saturating_sub(entry.size);
+        self.order.retain(|existing| existing != cid);
+        true
+    }
+
+    pub fn add(&mut self, cid: &str, size: usize, now_ms: u64) -> Vec<String> {
+        let mut evicted = self.sweep(now_ms);
+        if size > self.max_bytes {
+            return evicted;
+        }
+
+        self.remove(cid);
+        // Make room before adding so `current_bytes + size` cannot overflow the
+        // wasm32 `usize` when callers configure a near-u32 byte budget.
+        while self.entries.len() >= self.max_entries || self.current_bytes > self.max_bytes - size {
+            let Some(oldest) = self.order.front().cloned() else {
+                break;
+            };
+            self.remove(&oldest);
+            evicted.push(oldest);
+        }
+        self.entries
+            .insert(cid.to_string(), EagerBlockEntry { time: now_ms, size });
+        self.order.push_back(cid.to_string());
+        self.current_bytes += size;
+        evicted
     }
 
     pub fn sweep(&mut self, now_ms: u64) -> Vec<String> {
-        self.cache.sweep(now_ms)
+        let mut evicted = Vec::new();
+        loop {
+            let Some(cid) = self.order.front().cloned() else {
+                break;
+            };
+            let Some(entry) = self.entries.get(&cid) else {
+                self.order.pop_front();
+                continue;
+            };
+            if now_ms < entry.time.saturating_add(self.ttl_ms) {
+                break;
+            }
+            self.remove(&cid);
+            evicted.push(cid);
+        }
+        evicted
     }
 
     pub fn contains(&self, cid: &str) -> bool {
-        self.cache.contains(cid)
+        self.entries.contains_key(cid)
     }
 
     pub fn del(&mut self, cid: &str) {
-        self.cache.del(cid);
+        self.remove(cid);
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn current_bytes(&self) -> usize {
+        self.current_bytes
     }
 
     pub fn clear(&mut self) {
-        self.cache.clear();
+        self.entries.clear();
+        self.order.clear();
+        self.current_bytes = 0;
     }
 }
 
@@ -523,49 +556,91 @@ mod tests {
     }
 
     #[test]
+    fn provider_cache_refresh_preserves_ttl_order() {
+        let mut cache = ProviderHintCache::new("me".to_string(), 8, 1_000, 8);
+        cache.remember_hints("a", &strings(&["provider-a"]), NOW);
+        cache.remember_hints("b", &strings(&["provider-b"]), NOW + 500);
+        cache.remember_hints("a", &strings(&["provider-a2"]), NOW + 900);
+
+        assert_eq!(cache.get("b", NOW + 1_600), None);
+        assert_eq!(cache.get("a", NOW + 1_600), Some(strings(&["provider-a2"])));
+    }
+
+    #[test]
     fn eager_index_reports_evictions() {
-        let mut index = EagerBlockIndex::new(2, 10_000);
-        assert!(index.add("a", NOW).is_empty());
-        assert!(index.add("b", NOW).is_empty());
-        assert_eq!(index.add("c", NOW), strings(&["a"]));
+        let mut index = EagerBlockIndex::new(2, 8, 10_000);
+        assert!(index.add("a", 4, NOW).is_empty());
+        assert!(index.add("b", 4, NOW).is_empty());
+        assert_eq!(index.add("c", 4, NOW), strings(&["a"]));
         assert!(index.contains("b"));
         assert!(index.contains("c"));
         assert!(!index.contains("a"));
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.current_bytes(), 8);
 
         // ttl expiry surfaces through sweep
-        assert_eq!(index.sweep(NOW + 10_001), strings(&["b", "c"]));
+        assert_eq!(index.sweep(NOW + 10_000), strings(&["b", "c"]));
         assert!(!index.contains("b"));
+        assert_eq!(index.current_bytes(), 0);
 
-        // lazy delete frees capacity without breaking fifo order
-        let mut index = EagerBlockIndex::new(2, 10_000);
-        index.add("a", NOW);
+        // Immediate delete frees both entry and byte capacity.
+        let mut index = EagerBlockIndex::new(2, 8, 10_000);
+        index.add("a", 8, NOW);
         index.del("a");
         assert!(!index.contains("a"));
-        assert!(index.add("b", NOW).is_empty());
-        assert!(index.add("c", NOW).is_empty());
+        assert_eq!(index.current_bytes(), 0);
+        assert!(index.add("b", 4, NOW).is_empty());
+        assert!(index.add("c", 4, NOW).is_empty());
+    }
+
+    #[test]
+    fn eager_index_enforces_byte_bound_and_replacement_accounting() {
+        let mut index = EagerBlockIndex::new(10, 6, 10_000);
+        assert!(index.add("a", 4, NOW).is_empty());
+        assert_eq!(index.add("b", 3, NOW), strings(&["a"]));
+        assert_eq!(index.current_bytes(), 3);
+
+        // Replacing a cid subtracts its previous byte length before admission.
+        assert!(index.add("b", 5, NOW + 1).is_empty());
+        assert_eq!(index.len(), 1);
+        assert_eq!(index.current_bytes(), 5);
+
+        // The native adapter rejects oversized inserts before calling add;
+        // direct callers still cannot make the index exceed its byte budget.
+        assert!(index.add("oversized", 7, NOW + 2).is_empty());
+        assert!(!index.contains("oversized"));
+        assert_eq!(index.current_bytes(), 5);
+    }
+
+    #[test]
+    fn eager_index_entry_bounds_zero_byte_replacements() {
+        let mut index = EagerBlockIndex::new(2, 2, 10_000);
+        assert!(index.add("bytes", 2, NOW).is_empty());
+        assert!(index.add("zero", 0, NOW).is_empty());
+        assert!(index.add("zero", 0, NOW + 1).is_empty());
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.current_bytes(), 2);
+
+        assert_eq!(index.add("zero-2", 0, NOW + 2), strings(&["bytes"]));
+        assert_eq!(index.len(), 2);
+        assert_eq!(index.current_bytes(), 0);
+        assert!(index.contains("zero"));
+        assert!(index.contains("zero-2"));
     }
 
     #[test]
     fn add_del_readd_del_does_not_break_the_cache() {
-        // Regression: two providers answer the same BlockRequest, so the same
-        // cid is consumed (del) after being re-added by the second response.
-        // add() un-deletes the key without restoring current_size, so a
-        // second del of a now-live entry used to drive the usize below zero
-        // and wrap to usize::MAX — after which every trim() evicted the whole
-        // cache forever. current_size must stay bounded and the cache must
-        // keep serving.
-        let mut index = EagerBlockIndex::new(1, 10_000);
-        assert!(index.add("c", NOW).is_empty());
-        index.del("c"); // consumed by a read (size -> 0)
-        index.add("c", NOW); // second (duplicate) response re-adds it
-        index.del("c"); // consumed again — this used to underflow-wrap
+        let mut index = EagerBlockIndex::new(1, 8, 10_000);
+        assert!(index.add("c", 4, NOW).is_empty());
+        index.del("c");
+        index.add("c", 5, NOW);
+        index.del("c");
         assert!(!index.contains("c"));
+        assert_eq!(index.len(), 0);
+        assert_eq!(index.current_bytes(), 0);
 
-        // The cache is still usable: a freshly added entry is served rather
-        // than being evicted instantly (the wrap symptom was current_size >
-        // max on every trim, wiping the cache on the next add).
         assert!(
-            index.add("d", NOW).is_empty(),
+            index.add("d", 8, NOW).is_empty(),
             "add must not trigger a mass eviction after the del/add/del cycle"
         );
         assert!(index.contains("d"), "freshly added entry must be served");

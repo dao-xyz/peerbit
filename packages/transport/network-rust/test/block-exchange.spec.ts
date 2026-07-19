@@ -18,6 +18,7 @@ import {
 	waitForNeighbour,
 } from "@peerbit/stream";
 import { expect } from "chai";
+import sinon from "sinon";
 import { createRustCoreStream } from "../src/index.js";
 
 type Session = TestSession<{ blocks: DirectBlock }>;
@@ -132,6 +133,112 @@ describe("direct-block rust-core", () => {
 		});
 	});
 
+	describe("eager-cache contract", () => {
+		it("enforces byte/entry/ttl bounds with exact delete accounting", () => {
+			const clock = sinon.useFakeTimers({ now: 1_000 });
+			try {
+				const cache = exchange.createEagerCache({
+					maxEntries: 2,
+					maxBytes: 6,
+					ttlMs: 100,
+				});
+				expect(cache.add("a", new Uint8Array(4))).to.equal(true);
+				expect(cache.add("b", new Uint8Array(3))).to.equal(true);
+				expect(cache.get("a")).to.equal(undefined);
+				expect(cache.stats()).to.include({
+					entries: 1,
+					bytes: 3,
+					evictions: 1,
+				});
+
+				cache.del("b");
+				expect(cache.stats()).to.include({ entries: 0, bytes: 0 });
+				expect(cache.add("b", new Uint8Array(5))).to.equal(true);
+				cache.del("b");
+				expect(cache.add("c", new Uint8Array(6))).to.equal(true);
+				expect(cache.add("oversized", new Uint8Array(7))).to.equal(false);
+				expect(cache.stats()).to.include({ entries: 1, bytes: 6 });
+
+				clock.tick(100);
+				expect(cache.stats()).to.include({
+					entries: 0,
+					bytes: 0,
+					expirations: 1,
+				});
+			} finally {
+				clock.restore();
+			}
+		});
+
+		it("copies aliased views and entry-bounds zero-byte replacements", () => {
+			const cache = exchange.createEagerCache({
+				maxEntries: 2,
+				maxBytes: 2,
+				ttlMs: 10_000,
+			});
+			const backing = new Uint8Array(1024);
+			backing.set([1, 2], 100);
+			expect(cache.add("aliased", backing.subarray(100, 102))).to.equal(true);
+			const retained = cache.get("aliased")!;
+			expect(retained).to.deep.equal(new Uint8Array([1, 2]));
+			expect(retained.buffer.byteLength).to.equal(2);
+
+			expect(cache.add("zero", new Uint8Array())).to.equal(true);
+			expect(cache.add("zero", new Uint8Array())).to.equal(true);
+			expect(cache.stats()).to.include({ entries: 2, bytes: 2 });
+			expect(cache.add("zero-2", new Uint8Array())).to.equal(true);
+			expect(cache.stats()).to.include({ entries: 2, bytes: 0 });
+			expect(cache.get("aliased")).to.equal(undefined);
+			cache.clear();
+
+			expect(() =>
+				exchange.createEagerCache({
+					maxEntries: 1,
+					maxBytes: 1,
+					ttlMs: 0x8000_0000,
+				}),
+			).to.throw(RangeError);
+		});
+
+		it("copies length-tracking views over resizable buffers", function () {
+			type ResizableBuffer = ArrayBuffer & {
+				readonly resizable: boolean;
+				resize(byteLength: number): void;
+			};
+			let backing: ResizableBuffer;
+			try {
+				const Constructor = ArrayBuffer as unknown as new (
+					byteLength: number,
+					options: { maxByteLength: number },
+				) => ResizableBuffer;
+				backing = new Constructor(2, { maxByteLength: 8 });
+			} catch {
+				this.skip();
+				return;
+			}
+			if (backing.resizable !== true || typeof backing.resize !== "function") {
+				this.skip();
+				return;
+			}
+
+			const source = new Uint8Array(backing);
+			source.set([1, 2]);
+			const cache = exchange.createEagerCache({
+				maxEntries: 1,
+				maxBytes: 2,
+				ttlMs: 10_000,
+			});
+			expect(cache.add("resizable", source)).to.equal(true);
+			backing.resize(8);
+
+			const retained = cache.get("resizable")!;
+			expect(retained).to.deep.equal(new Uint8Array([1, 2]));
+			expect(retained.buffer.byteLength).to.equal(2);
+			expect(cache.stats()).to.include({ entries: 1, bytes: 2 });
+			cache.clear();
+		});
+	});
+
 	describe("mixed topology", () => {
 		let session: Session;
 
@@ -172,9 +279,8 @@ describe("direct-block rust-core", () => {
 			// routing table and the native provider cache
 			expect(store(session, 0).routes).to.not.be.instanceOf(Routes);
 			expect(store(session, 1).routes).to.be.instanceOf(Routes);
-			expect(
-				(store(session, 0) as any).remoteBlocks._rustProviderCache,
-			).to.exist;
+			expect((store(session, 0) as any).remoteBlocks._rustProviderCache).to
+				.exist;
 			expect((store(session, 2) as any).remoteBlocks._rustProviderCache).to.be
 				.undefined;
 

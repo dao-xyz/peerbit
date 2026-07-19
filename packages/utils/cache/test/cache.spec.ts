@@ -119,4 +119,67 @@ describe("cache", () => {
 		cache.del("2");
 		expect(cache.size).equal(0);
 	});
+
+	it("delete releases values and delete/re-add accounting stays exact", () => {
+		const cache = new Cache<Uint8Array>({ max: 2, ttl: 1e6 });
+		const retained = new Uint8Array(1024);
+		cache.add("same", retained);
+		expect(cache.del("same")?.value).to.equal(retained);
+		expect(cache.map.has("same")).to.equal(false);
+		expect(cache.size).to.equal(0);
+
+		cache.add("same", new Uint8Array(1));
+		cache.del("same");
+		expect(cache.size).to.equal(0);
+		expect(cache.map.size).to.equal(0);
+
+		cache.add("a");
+		cache.add("b");
+		cache.add("c");
+		expect(cache.size).to.equal(2);
+		expect(cache.has("a")).to.equal(false);
+		expect(cache.has("b")).to.equal(true);
+		expect(cache.has("c")).to.equal(true);
+	});
+
+	it("replacement adjusts custom-size accounting", () => {
+		const cache = new Cache<string>({ max: 10, ttl: 1e6 });
+		cache.add("a", "small", 3);
+		cache.add("a", "large", 8);
+		expect(cache.size).to.equal(8);
+		expect(cache.get("a")).to.equal("large");
+		cache.add("b", "value", 3);
+		expect(cache.size).to.equal(3);
+		expect(cache.has("a")).to.equal(false);
+		expect(cache.has("b")).to.equal(true);
+	});
+
+	it("replacement refreshes FIFO/TTL order", async () => {
+		await withFakeNow(({ now }) => {
+			now(0);
+			const cache = new Cache<string>({ max: 2, ttl: 1_000 });
+			cache.add("a", "a-old");
+			now(500);
+			cache.add("b", "b");
+			now(900);
+			cache.add("a", "a-new");
+
+			// Refresh moves `a` behind `b`; a new entry evicts the true oldest.
+			cache.add("c", "c");
+			expect(cache.has("a")).to.equal(true);
+			expect(cache.has("b")).to.equal(false);
+			expect(cache.has("c")).to.equal(true);
+
+			const ttlCache = new Cache<string>({ max: 3, ttl: 1_000 });
+			now(0);
+			ttlCache.add("head", "old");
+			now(500);
+			ttlCache.add("behind", "expires-first");
+			now(900);
+			ttlCache.add("head", "refreshed");
+			now(1_600);
+			expect(ttlCache.has("behind")).to.equal(false);
+			expect(ttlCache.has("head")).to.equal(true);
+		});
+	});
 });

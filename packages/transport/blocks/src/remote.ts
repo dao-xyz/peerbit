@@ -5,6 +5,8 @@ import {
 	type Blocks as IBlocks,
 	cidifyString,
 	codecCodes,
+	codecMap,
+	defaultHasher,
 	stringifyCid,
 	verifyBlockBytes,
 } from "@peerbit/blocks-interface";
@@ -31,6 +33,14 @@ import { AbortError } from "@peerbit/time";
 import { CID } from "multiformats";
 import { type Block } from "multiformats/block";
 import PQueue from "p-queue";
+import {
+	BoundedEagerBlockCache,
+	type EagerBlockCache,
+	type EagerBlocksSetting,
+	MAX_EAGER_BLOCK_CID_LENGTH,
+	type NormalizedEagerBlocksOptions,
+	normalizeEagerBlocksOptions,
+} from "./eager-cache.js";
 import type { BlockStore } from "./interface.js";
 
 export const logger = loggerFn("peerbit:transport:blocks");
@@ -79,16 +89,38 @@ type RemoteReadOptions = Exclude<GetOptions["remote"], boolean | undefined> & {
 	hasher?: any;
 };
 
-/**
- * Shared shape of the TS eager-block cache (`Cache<Uint8Array>`) and the
- * native-backed one (`RustEagerBlockCache`).
- */
-type EagerBlockCache = {
-	add(cid: string, bytes: Uint8Array): void;
-	get(cid: string): Uint8Array | null | undefined;
-	del(cid: string): unknown;
-	clear(): void;
+export type EagerBlockCacheTelemetry = {
+	entries: number;
+	bytes: number;
+	peakEntries: number;
+	peakBytes: number;
+	evictions: number;
+	expirations: number;
+	pendingEntries: number;
+	pendingBytes: number;
+	peakPendingEntries: number;
+	peakPendingBytes: number;
+	admitted: number;
+	hits: number;
+	rejectedCid: number;
+	rejectedCodec: number;
+	rejectedSize: number;
+	rejectedPending: number;
+	rejectedIntegrity: number;
+	rejectedLifecycle: number;
+	limits: NormalizedEagerBlocksOptions;
 };
+
+type EagerAdmissionCounters = Omit<
+	EagerBlockCacheTelemetry,
+	| "entries"
+	| "bytes"
+	| "peakEntries"
+	| "peakBytes"
+	| "evictions"
+	| "expirations"
+	| "limits"
+>;
 
 export class RemoteBlocks implements IBlocks {
 	localStore: BlockStore;
@@ -125,6 +157,22 @@ export class RemoteBlocks implements IBlocks {
 		(data: Uint8Array, providerHash?: string) => Promise<void>
 	>;
 	private _blockCache?: EagerBlockCache;
+	private _eagerBlocksOptions?: NormalizedEagerBlocksOptions;
+	private _eagerValidationQueue?: PQueue;
+	private _eagerAdmission: EagerAdmissionCounters = {
+		pendingEntries: 0,
+		pendingBytes: 0,
+		peakPendingEntries: 0,
+		peakPendingBytes: 0,
+		admitted: 0,
+		hits: 0,
+		rejectedCid: 0,
+		rejectedCodec: 0,
+		rejectedSize: 0,
+		rejectedPending: 0,
+		rejectedIntegrity: 0,
+		rejectedLifecycle: 0,
+	};
 	private _providerCache?: Cache<string[]>;
 	private _rustProviderCache?: RustBlockProviderCache;
 	private readonly rustExchange?: RustBlockExchange;
@@ -150,7 +198,7 @@ export class RemoteBlocks implements IBlocks {
 			localTimeout?: number;
 			messageProcessingConcurrency?: number;
 			publicKey: PublicSignKey;
-			eagerBlocks?: boolean | { cacheSize?: number };
+			eagerBlocks?: EagerBlocksSetting;
 			/**
 			 * Optional provider resolver used when `remote: true` is used without `remote.from`.
 			 *
@@ -332,13 +380,23 @@ export class RemoteBlocks implements IBlocks {
 		this._resolvers = new Map();
 		this._readFromPeersPromises = new Map();
 		if (options?.eagerBlocks) {
-			const eagerBlocksMax =
-				typeof options.eagerBlocks === "boolean"
-					? 1e3
-					: (options.eagerBlocks.cacheSize ?? 1e3);
+			this._eagerBlocksOptions = normalizeEagerBlocksOptions(
+				options.eagerBlocks,
+			);
+			this._eagerValidationQueue = new PQueue({
+				concurrency: this._eagerBlocksOptions.validationConcurrency,
+			});
 			this._blockCache = this.rustExchange
-				? this.rustExchange.createEagerCache({ max: eagerBlocksMax, ttl: 1e4 })
-				: new Cache<Uint8Array>({ max: eagerBlocksMax, ttl: 1e4 });
+				? this.rustExchange.createEagerCache({
+						maxEntries: this._eagerBlocksOptions.maxEntries,
+						maxBytes: this._eagerBlocksOptions.maxBytes,
+						ttlMs: this._eagerBlocksOptions.ttlMs,
+					})
+				: new BoundedEagerBlockCache({
+						maxEntries: this._eagerBlocksOptions.maxEntries,
+						maxBytes: this._eagerBlocksOptions.maxBytes,
+						ttlMs: this._eagerBlocksOptions.ttlMs,
+					});
 		}
 		type ProviderCacheOptions = {
 			maxEntries?: number;
@@ -404,13 +462,9 @@ export class RemoteBlocks implements IBlocks {
 						}
 					});
 				} else if (message instanceof BlockResponse) {
-					// TODO make sure we are not storing too much bytes in ram (like filter large blocks)
-					let resolver = this._resolvers.get(message.cid);
+					const resolver = this._resolvers.get(message.cid);
 					if (!resolver) {
-						if (options.eagerBlocks) {
-							// wait for the resolve to exist
-							this._blockCache!.add(message.cid, message.bytes);
-						}
+						this.queueEagerBlock(message.cid, message.bytes, context?.from);
 					} else {
 						await resolver(message.bytes, context?.from);
 					}
@@ -424,6 +478,170 @@ export class RemoteBlocks implements IBlocks {
 
 	getNativeLogBlockStoreHandle(): unknown {
 		return this.localStore.getNativeLogBlockStoreHandle?.();
+	}
+
+	/** Snapshot of bounded eager-response admission and retention state. */
+	getEagerBlockCacheTelemetry(): EagerBlockCacheTelemetry | undefined {
+		if (!this._blockCache || !this._eagerBlocksOptions) return undefined;
+		return {
+			...this._blockCache.stats(),
+			...this._eagerAdmission,
+			limits: { ...this._eagerBlocksOptions },
+		};
+	}
+
+	/** Primarily useful for diagnostics and deterministic tests. */
+	waitForEagerBlockValidation(): Promise<void> {
+		return this._eagerValidationQueue?.onIdle() ?? Promise.resolve();
+	}
+
+	private queueEagerBlock(
+		cidString: string,
+		incomingBytes: Uint8Array,
+		providerHash?: string,
+	): void {
+		const limits = this._eagerBlocksOptions;
+		const queue = this._eagerValidationQueue;
+		const cache = this._blockCache;
+		if (!limits || !queue || !cache) return;
+
+		const generationSignal = this.closeController.signal;
+		if (generationSignal.aborted) {
+			this._eagerAdmission.rejectedLifecycle += 1;
+			return;
+		}
+		if (!cidString || cidString.length > MAX_EAGER_BLOCK_CID_LENGTH) {
+			this._eagerAdmission.rejectedCid += 1;
+			return;
+		}
+
+		let cidObject: CID;
+		let canonicalCid: string;
+		try {
+			cidObject = cidifyString(cidString);
+			canonicalCid = stringifyCid(cidObject);
+			if (
+				cidObject.multihash.code !== defaultHasher.code ||
+				canonicalCid.length > MAX_EAGER_BLOCK_CID_LENGTH
+			) {
+				throw new Error("unsupported eager block cid");
+			}
+		} catch {
+			this._eagerAdmission.rejectedCid += 1;
+			return;
+		}
+		// Logical DAG-CBOR decoding can materialize even hash-valid attacker-
+		// controlled object graphs and expand a small wire payload by orders of
+		// magnitude. Eager admission therefore verifies only raw bytes; all other
+		// codecs remain available through the requested-response path.
+		if (cidObject.code !== codecMap.raw.code) {
+			this._eagerAdmission.rejectedCodec += 1;
+			return;
+		}
+		const codec = codecMap.raw;
+
+		const byteLength = incomingBytes.byteLength;
+		if (
+			byteLength > limits.maxBlockBytes ||
+			byteLength > limits.maxBytes ||
+			byteLength > limits.maxPendingBytes
+		) {
+			this._eagerAdmission.rejectedSize += 1;
+			return;
+		}
+		if (
+			this._eagerAdmission.pendingEntries >= limits.maxPendingEntries ||
+			this._eagerAdmission.pendingBytes + byteLength > limits.maxPendingBytes
+		) {
+			this._eagerAdmission.rejectedPending += 1;
+			return;
+		}
+
+		// The decoder commonly returns a subarray into the complete network frame.
+		// Copy exactly the block bytes before queuing so no larger backing buffer or
+		// response object remains retained while integrity validation is pending.
+		const bytes = new Uint8Array(byteLength);
+		bytes.set(incomingBytes);
+		this._eagerAdmission.pendingEntries += 1;
+		this._eagerAdmission.pendingBytes += byteLength;
+		this._eagerAdmission.peakPendingEntries = Math.max(
+			this._eagerAdmission.peakPendingEntries,
+			this._eagerAdmission.pendingEntries,
+		);
+		this._eagerAdmission.peakPendingBytes = Math.max(
+			this._eagerAdmission.peakPendingBytes,
+			this._eagerAdmission.pendingBytes,
+		);
+
+		let released = false;
+		const releaseReservation = () => {
+			if (released) return;
+			released = true;
+			this._eagerAdmission.pendingEntries -= 1;
+			this._eagerAdmission.pendingBytes -= byteLength;
+		};
+		const validateAndAdmit = async () => {
+			try {
+				if (generationSignal.aborted) {
+					this._eagerAdmission.rejectedLifecycle += 1;
+					return;
+				}
+				try {
+					await this.validateEagerBlock(cidObject, bytes, codec);
+				} catch {
+					this._eagerAdmission.rejectedIntegrity += 1;
+					return;
+				}
+				if (generationSignal.aborted) {
+					this._eagerAdmission.rejectedLifecycle += 1;
+					return;
+				}
+				const resolver =
+					this._resolvers.get(canonicalCid) ?? this._resolvers.get(cidString);
+				if (resolver) {
+					try {
+						// A read can install its resolver while eager validation is in
+						// progress. Let that resolver enforce its own (possibly custom)
+						// hasher contract and learn the provider only if it succeeds.
+						await resolver(bytes, providerHash);
+					} catch {
+						// Match an invalid active response: drop it and leave the read open.
+					}
+					return;
+				}
+				if (!cache.add(canonicalCid, bytes)) {
+					this._eagerAdmission.rejectedSize += 1;
+					return;
+				}
+				this._eagerAdmission.admitted += 1;
+				if (providerHash) {
+					// An unsolicited response is only a provider signal after both its
+					// CID and payload have passed the integrity gate.
+					this.rememberProvider(canonicalCid, providerHash);
+				}
+			} finally {
+				releaseReservation();
+			}
+		};
+		try {
+			void queue.add(validateAndAdmit).catch(() => {
+				releaseReservation();
+				if (!generationSignal.aborted) {
+					this._eagerAdmission.rejectedLifecycle += 1;
+				}
+			});
+		} catch {
+			releaseReservation();
+			this._eagerAdmission.rejectedLifecycle += 1;
+		}
+	}
+
+	private validateEagerBlock(
+		cid: CID,
+		bytes: Uint8Array,
+		codec: (typeof codecCodes)[keyof typeof codecCodes],
+	) {
+		return verifyBlockBytes(cid, bytes, { codec });
 	}
 
 	private normalizeProviderHints(
@@ -884,18 +1102,25 @@ export class RemoteBlocks implements IBlocks {
 				value: bytes,
 			} as Block<Uint8Array, any, any, 1>;
 		};
-		const cachedValue = this.options.eagerBlocks
-			? this._blockCache?.get(cidString)
-			: undefined;
-		if (cachedValue) {
-			this._blockCache!.del(cidString);
-			try {
-				const result = await tryVerify(cachedValue);
-				return result.bytes;
-			} catch (error) {
-				// ignore
+		const eagerCacheKey = stringifyCid(cidObject);
+		const consumeCachedValue = (): Uint8Array | undefined => {
+			if (options.hasher && options.hasher !== defaultHasher) {
+				// Eager admission proves the built-in SHA-256 contract only. Keep this
+				// lookup synchronous and leave custom hashers on the requested-response
+				// path; asynchronously revalidating cached entries would reopen a race
+				// before the read resolver is installed.
+				return undefined;
 			}
-		}
+			const cachedValue = this._blockCache?.get(eagerCacheKey);
+			if (cachedValue === undefined) return undefined;
+			this._blockCache!.del(eagerCacheKey);
+			this._eagerAdmission.hits += 1;
+			// Eager entries are inserted only after verifyBlockBytes succeeds. The
+			// one-shot cache hit therefore does not hash the full block a second time.
+			return cachedValue;
+		};
+		let cachedResult = consumeCachedValue();
+		if (cachedResult) return cachedResult;
 
 		const explicitFrom = this.normalizeProviderHints(options.from);
 		let providers =
@@ -907,6 +1132,11 @@ export class RemoteBlocks implements IBlocks {
 		// A resolver may observe abort and still complete normally. Do not create a
 		// timeout-backed read from the candidates it returns after shutdown.
 		throwIfReadWasAborted();
+		// Provider resolution is asynchronous. An eager validation can complete and
+		// cache the response during that await, so consume it before either returning
+		// for lack of providers or installing a resolver that would otherwise wait.
+		cachedResult = consumeCachedValue();
+		if (cachedResult) return cachedResult;
 		const canResolveLater = typeof this.options.resolveProviders === "function";
 		if (providers.length === 0 && !canResolveLater) {
 			// Without an explicit provider set (or a resolver), we intentionally do not
@@ -1244,6 +1474,7 @@ export class RemoteBlocks implements IBlocks {
 		// by the nested background-admission queue.
 		await capture(() => this._backgroundLoadFetchQueue.onIdle());
 		await capture(() => this._loadFetchQueue.onIdle());
+		await capture(() => this._eagerValidationQueue?.onIdle());
 		await capture(() => this.localStore?.stop());
 		this._readFromPeersPromises.clear();
 		this._resolvers.clear();
