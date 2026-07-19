@@ -146,17 +146,12 @@ describe("server", () => {
 		let session: TestSession, serverPeer: Peerbit, server: http.Server;
 		let db: PermissionedString;
 		let apiAddress: string;
+		let directory: string;
 		before(async () => {});
 
 		beforeEach(async () => {
 			const dirnameResolved = dirname(fileURLToPath(import.meta.url));
-			let directory = path.join(
-				dirnameResolved,
-				"tmp",
-				"api-test",
-				"api",
-				uuid(),
-			);
+			directory = path.join(dirnameResolved, "tmp", "api-test", "api", uuid());
 			session = await TestSession.disconnected(2, {
 				libp2p: { transports: [tcp(), webSockets()] },
 			});
@@ -252,6 +247,23 @@ describe("server", () => {
 					);
 					await c.access.allow(kp2.publicKey);
 					await c2.access.allow(kp3.publicKey); // now c2 can add since it is trusted by c
+				});
+
+				it("reports and persists access revocation", async () => {
+					const c = await client(session.peers[0].identity, apiAddress);
+					const revoked = (await Ed25519Keypair.create()).publicKey;
+					const revokedHash = revoked.hashcode();
+
+					expect(await c.access.allow(revoked)).to.equal(true);
+					expect(
+						new Trust(getTrustPath(directory)).isTrusted(revokedHash),
+					).to.equal(true);
+
+					expect(await c.access.deny(revoked)).to.equal(true);
+					expect(await c.access.deny(revoked)).to.equal(false);
+
+					const reloaded = new Trust(getTrustPath(directory));
+					expect(reloaded.isTrusted(revokedHash)).to.equal(false);
 				});
 			});
 			describe("close/drop", () => {

@@ -884,8 +884,8 @@ export const startApiServer = async (
 							}
 							case "DELETE": {
 								const removed = properties.trust.remove(getPathValue(req, 1));
-								res.writeHead(200);
-								res.end(removed);
+								res.writeHead(removed ? 200 : 404);
+								res.end();
 								break;
 							}
 							default:
