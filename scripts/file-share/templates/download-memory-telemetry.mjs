@@ -3,16 +3,18 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export const DOWNLOAD_MEMORY_PROFILE = "download-memory-v2";
+export const DOWNLOAD_MEMORY_PROFILE = "download-memory-v3";
 export const DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS = 5_000;
 export const DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS = 4_000;
 export const DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS = 9_000;
 export const DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS = 30_000;
 export const DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS = 30_000;
 export const DOWNLOAD_MEMORY_WINDOW_DEFINITION =
-	"samplers-armed-after-any-requested-reader-locality-prefix-stabilization-before-any-requested-bounded-pre-read-transport-counter-gate-and-download-click-through-selected-sink-completion";
+	"samplers-armed-after-any-requested-reader-locality-prefix-stabilization-before-any-requested-bounded-pre-read-transport-counter-gate-and-download-click-through-selected-sink-completion-requested-post-transfer-soak-live-checkpoint-bounded-peer-shutdown-and-terminal-sample";
+export const DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION =
+	"for each exact transfer or soak phase, the last non-terminal sample at or before phase start through the first non-terminal sample at or after phase finish must exist and every adjacent capturedAt gap must be at most sampleIntervalMs + operationTimeoutMs + schedulingToleranceMs";
 export const DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES = 4_096;
-export const DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE = 2;
+export const DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE = 3;
 export const DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16;
 export const DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS = 16;
 export const DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512;
@@ -26,27 +28,135 @@ export const DOWNLOAD_MEMORY_HOST_SCOPE =
 export const DOWNLOAD_MEMORY_NODE_SCOPE =
 	"playwright-worker-node-including-in-process-local-bootstrap";
 export const DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS =
-	"Chromium RSS is grouped by process role and cannot be attributed reliably to the reader or writer page; Node RSS is the Playwright worker process and includes the in-process bootstrap peer in local mode; RSS is not PSS or USS.";
+	"Chromium RSS is grouped by process role and cannot be attributed reliably to the reader or writer page; Node RSS is the Playwright worker process and includes the in-process bootstrap peer in local mode; RSS is not PSS or USS; Node external and ArrayBuffer bytes are overlapping allocation diagnostics that are not additive with RSS and are never added to the combined RSS total.";
 
 export const calculateDownloadMemoryMaxSamples = ({
-	downloadTimeoutMs,
-	schedulingToleranceMs,
+	samplingWindowBudgetMs,
 }) => {
 	if (
-		!Number.isSafeInteger(downloadTimeoutMs) ||
-		downloadTimeoutMs <= 0 ||
-		!Number.isSafeInteger(schedulingToleranceMs) ||
-		schedulingToleranceMs < 0
+		!Number.isSafeInteger(samplingWindowBudgetMs) ||
+		samplingWindowBudgetMs <= 0
 	) {
-		throw new Error("Download memory sampling requires bounded timeout values");
+		throw new Error(
+			"Download memory sampling requires a positive bounded sampling window budget",
+		);
 	}
-	return Math.min(
-		DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES,
-		Math.ceil(
-			(downloadTimeoutMs + schedulingToleranceMs) /
-				DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
-		) + DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE,
+	const totalWindowMs = BigInt(samplingWindowBudgetMs);
+	const intervalMs = BigInt(DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS);
+	const intervalSamples = (totalWindowMs + intervalMs - 1n) / intervalMs;
+	return Number(
+		intervalSamples + BigInt(DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE) >
+			BigInt(DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES)
+			? BigInt(DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES)
+			: intervalSamples + BigInt(DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE),
 	);
+};
+
+export const calculateDownloadMemoryMaxLiveSampleGapMs = ({
+	schedulingToleranceMs,
+	operationTimeoutMs = DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
+}) => {
+	if (
+		!Number.isSafeInteger(schedulingToleranceMs) ||
+		schedulingToleranceMs < 0 ||
+		!Number.isSafeInteger(operationTimeoutMs) ||
+		operationTimeoutMs <= 0
+	) {
+		throw new Error(
+			"Download memory live-sample coverage requires bounded scheduling and operation tolerances",
+		);
+	}
+	const maxGapMs =
+		DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS +
+		operationTimeoutMs +
+		schedulingToleranceMs;
+	if (!Number.isSafeInteger(maxGapMs) || maxGapMs <= 0) {
+		throw new Error("Download memory live-sample gap exceeds the safe range");
+	}
+	return maxGapMs;
+};
+
+export const assertDownloadMemoryLiveSampleCoverage = ({
+	samples,
+	phaseStartedAt,
+	phaseFinishedAt,
+	maxGapMs,
+	label,
+}) => {
+	if (
+		!Array.isArray(samples) ||
+		!Number.isSafeInteger(phaseStartedAt) ||
+		phaseStartedAt < 0 ||
+		!Number.isSafeInteger(phaseFinishedAt) ||
+		phaseFinishedAt < phaseStartedAt ||
+		!Number.isSafeInteger(maxGapMs) ||
+		maxGapMs <= 0 ||
+		typeof label !== "string" ||
+		label.length === 0
+	) {
+		throw new Error("Download memory live-sample coverage input is invalid");
+	}
+	const liveSamples = [];
+	let previousCapturedAt = null;
+	for (const [index, sample] of samples.entries()) {
+		if (sample == null || typeof sample !== "object" || Array.isArray(sample)) {
+			throw new Error(`${label} memory sample ${index} is invalid`);
+		}
+		if (
+			!Number.isSafeInteger(sample.capturedAt) ||
+			sample.capturedAt < 0 ||
+			(previousCapturedAt !== null && sample.capturedAt < previousCapturedAt)
+		) {
+			throw new Error(`${label} memory sample timestamps are invalid`);
+		}
+		if (
+			!new Set(["initial", "periodic", "manual", "terminal"]).has(
+				sample.sampleKind,
+			)
+		) {
+			throw new Error(`${label} memory sample kind is invalid`);
+		}
+		previousCapturedAt = sample.capturedAt;
+		if (sample.sampleKind !== "terminal") {
+			liveSamples.push(sample);
+		}
+	}
+	let firstIndex = -1;
+	for (let index = 0; index < liveSamples.length; index += 1) {
+		if (liveSamples[index].capturedAt <= phaseStartedAt) {
+			firstIndex = index;
+		} else {
+			break;
+		}
+	}
+	const lastIndex = liveSamples.findIndex(
+		(sample) => sample.capturedAt >= phaseFinishedAt,
+	);
+	if (firstIndex < 0 || lastIndex < firstIndex) {
+		throw new Error(
+			`${label} memory samples do not bracket the exact phase window`,
+		);
+	}
+	const coverageSamples = liveSamples.slice(firstIndex, lastIndex + 1);
+	let maxObservedGapMs = 0;
+	for (let index = 1; index < coverageSamples.length; index += 1) {
+		const gapMs =
+			coverageSamples[index].capturedAt - coverageSamples[index - 1].capturedAt;
+		maxObservedGapMs = Math.max(maxObservedGapMs, gapMs);
+		if (gapMs > maxGapMs) {
+			throw new Error(
+				`${label} memory live-sample gap ${gapMs}ms exceeds ${maxGapMs}ms`,
+			);
+		}
+	}
+	return {
+		firstSampleAt: coverageSamples[0].capturedAt,
+		lastSampleAt: coverageSamples.at(-1).capturedAt,
+		startOverhangMs: phaseStartedAt - coverageSamples[0].capturedAt,
+		endOverhangMs: coverageSamples.at(-1).capturedAt - phaseFinishedAt,
+		maxObservedGapMs,
+		sampleCount: coverageSamples.length,
+	};
 };
 
 const cloneValue = (value) => structuredClone(value);
@@ -112,10 +222,11 @@ export const withDownloadMemoryOperationDeadline = async (
 };
 
 /**
- * Runs one sample at a time, reserves one bounded slot for the forced terminal
- * sample, and makes stop idempotent. Errors are evidence rather than detached
- * promise rejections, and are themselves bounded so a failed probe cannot make
- * the benchmark result grow without limit.
+ * Runs one sample at a time, reserves one bounded slot for a live checkpoint and
+ * one for the forced terminal sample, and makes checkpoint/stop operations
+ * concurrency-safe. Errors are evidence rather than detached promise
+ * rejections, and are themselves bounded so a failed probe cannot make the
+ * benchmark result grow without limit.
  */
 export const startBoundedSerialSampler = async ({
 	intervalMs,
@@ -131,8 +242,13 @@ export const startBoundedSerialSampler = async ({
 	if (!Number.isSafeInteger(intervalMs) || intervalMs <= 0) {
 		throw new Error("Serial sampler interval must be a positive safe integer");
 	}
-	if (!Number.isSafeInteger(maxSamples) || maxSamples < 2) {
-		throw new Error("Serial sampler must reserve initial and final samples");
+	if (
+		!Number.isSafeInteger(maxSamples) ||
+		maxSamples < DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE
+	) {
+		throw new Error(
+			"Serial sampler must reserve initial, live checkpoint, and final samples",
+		);
 	}
 	if (typeof readSample !== "function" || typeof cleanup !== "function") {
 		throw new Error("Serial sampler requires read and cleanup functions");
@@ -154,11 +270,22 @@ export const startBoundedSerialSampler = async ({
 	let cleanupWarningOverflowCount = 0;
 	let finishedAt = null;
 	let timer;
-	let activeSample;
+	let serialSampleChain = Promise.resolve();
+	let scheduledSamplePromise;
+	let sampleNowPromise;
 	let stopped = false;
-	let terminalSampleFailure = false;
+	let samplingDisabledAfterTimeout = false;
+	let capacityExhaustedBeforeTerminal = false;
+	let periodicSampleCount = 0;
+	let manualSampleCount = 0;
+	let lastManualSampleAt = null;
+	let terminalSampleAttempted = false;
+	let terminalSampleCaptured = false;
+	let terminalSampleAt = null;
 	let stopSamplingPromise;
 	let cleanupPromise;
+	const periodicSampleLimit =
+		maxSamples - DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE;
 
 	const recordError = (error) => {
 		if (samplingErrors.length < DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS) {
@@ -179,10 +306,23 @@ export const startBoundedSerialSampler = async ({
 		}
 	};
 
-	const takeSample = async (forceTerminal = false) => {
-		const limit = forceTerminal ? maxSamples : maxSamples - 1;
-		if (samples.length >= limit || terminalSampleFailure) {
-			return;
+	const takeSample = async (sampleKind) => {
+		const terminal = sampleKind === "terminal";
+		if (terminal) {
+			terminalSampleAttempted = true;
+		}
+		const sampleCapacityReached =
+			sampleKind === "periodic"
+				? periodicSampleCount >= periodicSampleLimit
+				: samples.length >= (terminal ? maxSamples : maxSamples - 1);
+		if (sampleCapacityReached) {
+			if (!terminal) {
+				capacityExhaustedBeforeTerminal = true;
+			}
+			return false;
+		}
+		if (samplingDisabledAfterTimeout) {
+			return false;
 		}
 		try {
 			const values = await withDownloadMemoryOperationDeadline(
@@ -197,26 +337,64 @@ export const startBoundedSerialSampler = async ({
 			) {
 				throw new Error("Memory sampler returned a non-object sample");
 			}
-			samples.push({ capturedAt: now(), ...values });
+			const capturedAt = now();
+			samples.push({
+				...values,
+				capturedAt,
+				sampleKind,
+			});
+			if (sampleKind === "manual") {
+				manualSampleCount += 1;
+				lastManualSampleAt = capturedAt;
+			}
+			if (sampleKind === "periodic") {
+				periodicSampleCount += 1;
+			}
+			if (terminal) {
+				terminalSampleCaptured = true;
+				terminalSampleAt = capturedAt;
+			}
+			return true;
 		} catch (error) {
 			recordError(error);
 			if (error?.code === "DOWNLOAD_MEMORY_OPERATION_TIMEOUT") {
-				terminalSampleFailure = true;
+				samplingDisabledAfterTimeout = true;
 			}
+			return false;
 		}
 	};
 
+	const enqueueSample = (sampleKind) => {
+		const samplePromise = serialSampleChain.then(() => takeSample(sampleKind));
+		serialSampleChain = samplePromise.catch(recordError);
+		return samplePromise;
+	};
+
 	const schedule = () => {
-		if (stopped || terminalSampleFailure || samples.length >= maxSamples - 1) {
+		if (stopped || samplingDisabledAfterTimeout || timer !== undefined) {
 			return;
 		}
 		timer = setTimer(() => {
-			activeSample = takeSample()
-				.catch(recordError)
-				.finally(() => {
-					activeSample = undefined;
-					schedule();
-				});
+			timer = undefined;
+			if (stopped || samplingDisabledAfterTimeout) {
+				return;
+			}
+			if (periodicSampleCount >= periodicSampleLimit) {
+				capacityExhaustedBeforeTerminal = true;
+				return;
+			}
+			const currentSample = enqueueSample("periodic");
+			scheduledSamplePromise = currentSample;
+			const finishScheduledSample = () => {
+				if (scheduledSamplePromise === currentSample) {
+					scheduledSamplePromise = undefined;
+				}
+				schedule();
+			};
+			currentSample.then(finishScheduledSample, (error) => {
+				recordError(error);
+				finishScheduledSample();
+			});
 		}, intervalMs);
 	};
 
@@ -228,10 +406,41 @@ export const startBoundedSerialSampler = async ({
 		samplingErrorOverflowCount,
 		cleanupWarnings: [...cleanupWarnings],
 		cleanupWarningOverflowCount,
+		maxSamples,
+		periodicSampleLimit,
+		periodicSampleCount,
+		capacityExhaustedBeforeTerminal,
+		samplingCapacitySufficient: !capacityExhaustedBeforeTerminal,
+		manualSampleCount,
+		lastManualSampleAt,
+		terminalSampleAttempted,
+		terminalSampleCaptured,
+		terminalSampleAt,
 	});
 
-	await takeSample();
+	await takeSample("initial");
 	schedule();
+
+	const sampleNow = () => {
+		if (stopSamplingPromise) {
+			return stopSamplingPromise;
+		}
+		if (sampleNowPromise) {
+			return sampleNowPromise;
+		}
+		if (timer !== undefined) {
+			clearTimer(timer);
+			timer = undefined;
+		}
+		const currentSample = enqueueSample("manual");
+		const currentSnapshot = currentSample.then(() => snapshot());
+		sampleNowPromise = currentSnapshot;
+		currentSnapshot.then(schedule, (error) => {
+			recordError(error);
+			schedule();
+		});
+		return currentSnapshot;
+	};
 
 	const stopSampling = () => {
 		if (stopSamplingPromise) {
@@ -243,8 +452,9 @@ export const startBoundedSerialSampler = async ({
 				clearTimer(timer);
 				timer = undefined;
 			}
-			await activeSample;
-			await takeSample(true);
+			await sampleNowPromise;
+			await scheduledSamplePromise;
+			await enqueueSample("terminal");
 			finishedAt = now();
 			return snapshot();
 		})();
@@ -276,6 +486,7 @@ export const startBoundedSerialSampler = async ({
 
 	return {
 		snapshot,
+		sampleNow,
 		stopSampling,
 		cleanup: runCleanup,
 		stop: runCleanup,
@@ -283,24 +494,51 @@ export const startBoundedSerialSampler = async ({
 };
 
 const summarizeHeap = (scope, state) => {
-	const usedBytes = state.samples.map((sample) => sample.usedBytes);
+	const first = state.samples[0] ?? null;
+	const last = state.samples.at(-1) ?? null;
+	const peak = (name) =>
+		state.samples.length > 0
+			? Math.max(...state.samples.map((sample) => sample[name]))
+			: null;
 	return {
-		memoryKind: "javascript-heap",
+		memoryKind: "runtime-heap",
 		scope,
-		metric: "JSHeapUsedSize",
+		metric: "Runtime.getHeapUsage",
 		unit: "bytes",
 		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 		startedAt: state.startedAt,
 		finishedAt: state.finishedAt,
 		sampleCount: state.samples.length,
-		startBytes: usedBytes[0] ?? null,
-		endBytes: usedBytes.at(-1) ?? null,
-		peakBytes: usedBytes.length > 0 ? Math.max(...usedBytes) : null,
+		startBytes: first?.usedBytes ?? null,
+		endBytes: last?.usedBytes ?? null,
+		peakBytes: peak("usedBytes"),
+		startUsedBytes: first?.usedBytes ?? null,
+		endUsedBytes: last?.usedBytes ?? null,
+		peakUsedBytes: peak("usedBytes"),
+		startTotalBytes: first?.totalBytes ?? null,
+		endTotalBytes: last?.totalBytes ?? null,
+		peakTotalBytes: peak("totalBytes"),
+		startEmbedderHeapUsedBytes: first?.embedderHeapUsedBytes ?? null,
+		endEmbedderHeapUsedBytes: last?.embedderHeapUsedBytes ?? null,
+		peakEmbedderHeapUsedBytes: peak("embedderHeapUsedBytes"),
+		startBackingStorageBytes: first?.backingStorageBytes ?? null,
+		endBackingStorageBytes: last?.backingStorageBytes ?? null,
+		peakBackingStorageBytes: peak("backingStorageBytes"),
 		samples: state.samples,
 		samplingErrors: state.samplingErrors,
 		samplingErrorOverflowCount: state.samplingErrorOverflowCount,
 		cleanupWarnings: state.cleanupWarnings,
 		cleanupWarningOverflowCount: state.cleanupWarningOverflowCount,
+		maxSamples: state.maxSamples,
+		periodicSampleLimit: state.periodicSampleLimit,
+		periodicSampleCount: state.periodicSampleCount,
+		capacityExhaustedBeforeTerminal: state.capacityExhaustedBeforeTerminal,
+		samplingCapacitySufficient: state.samplingCapacitySufficient,
+		manualSampleCount: state.manualSampleCount,
+		lastManualSampleAt: state.lastManualSampleAt,
+		terminalSampleAttempted: state.terminalSampleAttempted,
+		terminalSampleCaptured: state.terminalSampleCaptured,
+		terminalSampleAt: state.terminalSampleAt,
 	};
 };
 
@@ -328,11 +566,6 @@ const startPageJsHeapSampler = async ({
 				},
 			},
 		);
-		await withDownloadMemoryOperationDeadline(
-			session.send("Performance.enable"),
-			"Page JS heap Performance.enable",
-			operationTimeoutMs,
-		);
 	} catch (error) {
 		setupError = error;
 	}
@@ -348,33 +581,27 @@ const startPageJsHeapSampler = async ({
 			if (!session) {
 				throw new Error("Page JS heap CDP session is unavailable");
 			}
-			const response = await session.send("Performance.getMetrics");
-			const heapMetric = response.metrics.find(
-				(metric) => metric.name === "JSHeapUsedSize",
-			);
+			const response = await session.send("Runtime.getHeapUsage");
+			const values = {
+				usedBytes: response.usedSize,
+				totalBytes: response.totalSize,
+				embedderHeapUsedBytes: response.embedderHeapUsedSize,
+				backingStorageBytes: response.backingStorageSize,
+			};
 			if (
-				!heapMetric ||
-				!Number.isFinite(heapMetric.value) ||
-				heapMetric.value < 0
+				Object.values(values).some(
+					(value) => !Number.isSafeInteger(value) || value < 0,
+				)
 			) {
-				throw new Error("Performance.getMetrics omitted JSHeapUsedSize");
+				throw new Error("Runtime.getHeapUsage returned invalid heap values");
 			}
-			return { usedBytes: heapMetric.value };
+			return values;
 		},
 		cleanup: async () => {
 			if (!session) {
 				return;
 			}
 			const cleanupErrors = [];
-			try {
-				await withDownloadMemoryOperationDeadline(
-					session.send("Performance.disable"),
-					"Page JS heap Performance.disable",
-					operationTimeoutMs,
-				);
-			} catch (error) {
-				cleanupErrors.push(error);
-			}
 			try {
 				await withDownloadMemoryOperationDeadline(
 					session.detach(),
@@ -396,6 +623,7 @@ const startPageJsHeapSampler = async ({
 	});
 	return {
 		snapshot: () => summarizeHeap(scope, sampler.snapshot()),
+		sampleNow: async () => summarizeHeap(scope, await sampler.sampleNow()),
 		stopSampling: async () =>
 			summarizeHeap(scope, await sampler.stopSampling()),
 		cleanup: async () => summarizeHeap(scope, await sampler.cleanup()),
@@ -473,6 +701,12 @@ const summarizeHostRss = (state) => {
 		startNodeBytes: first?.nodeBytes ?? null,
 		endNodeBytes: last?.nodeBytes ?? null,
 		peakNodeBytes: peak("nodeBytes"),
+		startNodeExternalBytes: first?.nodeExternalBytes ?? null,
+		endNodeExternalBytes: last?.nodeExternalBytes ?? null,
+		peakNodeExternalBytes: peak("nodeExternalBytes"),
+		startNodeArrayBuffersBytes: first?.nodeArrayBuffersBytes ?? null,
+		endNodeArrayBuffersBytes: last?.nodeArrayBuffersBytes ?? null,
+		peakNodeArrayBuffersBytes: peak("nodeArrayBuffersBytes"),
 		startCombinedBytes: first?.combinedBytes ?? null,
 		endCombinedBytes: last?.combinedBytes ?? null,
 		peakCombinedBytes: peak("combinedBytes"),
@@ -487,6 +721,16 @@ const summarizeHostRss = (state) => {
 		samplingErrorOverflowCount: state.samplingErrorOverflowCount,
 		cleanupWarnings: state.cleanupWarnings,
 		cleanupWarningOverflowCount: state.cleanupWarningOverflowCount,
+		maxSamples: state.maxSamples,
+		periodicSampleLimit: state.periodicSampleLimit,
+		periodicSampleCount: state.periodicSampleCount,
+		capacityExhaustedBeforeTerminal: state.capacityExhaustedBeforeTerminal,
+		samplingCapacitySufficient: state.samplingCapacitySufficient,
+		manualSampleCount: state.manualSampleCount,
+		lastManualSampleAt: state.lastManualSampleAt,
+		terminalSampleAttempted: state.terminalSampleAttempted,
+		terminalSampleCaptured: state.terminalSampleCaptured,
+		terminalSampleAt: state.terminalSampleAt,
 	};
 };
 
@@ -542,9 +786,21 @@ const startHostRssSampler = async ({
 				throw new Error("Chromium process count exceeds the telemetry cap");
 			}
 			const browserProcessBytes = await readProcessRssBytes(processIds);
-			const nodeBytes = process.memoryUsage().rss;
-			if (!Number.isSafeInteger(nodeBytes) || nodeBytes <= 0) {
-				throw new Error("Playwright worker returned invalid Node RSS");
+			const nodeMemory = process.memoryUsage();
+			const nodeBytes = nodeMemory.rss;
+			const nodeExternalBytes = nodeMemory.external;
+			const nodeArrayBuffersBytes = nodeMemory.arrayBuffers;
+			if (
+				!Number.isSafeInteger(nodeBytes) ||
+				nodeBytes <= 0 ||
+				!Number.isSafeInteger(nodeExternalBytes) ||
+				nodeExternalBytes < 0 ||
+				!Number.isSafeInteger(nodeArrayBuffersBytes) ||
+				nodeArrayBuffersBytes < 0
+			) {
+				throw new Error(
+					"Playwright worker returned invalid Node memory values",
+				);
 			}
 			const browserRoleBytes = {};
 			for (const processEntry of processInfo) {
@@ -581,6 +837,8 @@ const startHostRssSampler = async ({
 			return {
 				browserBytes,
 				nodeBytes,
+				nodeExternalBytes,
+				nodeArrayBuffersBytes,
 				combinedBytes: browserBytes + nodeBytes,
 				browserProcessCount: browserProcessBytes.size,
 				browserRoleBytes,
@@ -602,6 +860,7 @@ const startHostRssSampler = async ({
 	});
 	return {
 		snapshot: () => summarizeHostRss(sampler.snapshot()),
+		sampleNow: async () => summarizeHostRss(await sampler.sampleNow()),
 		stopSampling: async () => summarizeHostRss(await sampler.stopSampling()),
 		cleanup: async () => summarizeHostRss(await sampler.cleanup()),
 		stop: async () => summarizeHostRss(await sampler.stop()),
@@ -614,12 +873,17 @@ export const startDownloadMemoryTelemetry = async ({
 	writer,
 	downloadTimeoutMs,
 	schedulingToleranceMs,
+	postTransferSoakMs,
+	samplingWindowBudgetMs,
 	operationTimeoutMs = DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
 	cleanupTimeoutMs = DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS,
 }) => {
 	const maxSamplesPerSeries = calculateDownloadMemoryMaxSamples({
-		downloadTimeoutMs,
+		samplingWindowBudgetMs,
+	});
+	const liveSampleMaxGapMs = calculateDownloadMemoryMaxLiveSampleGapMs({
 		schedulingToleranceMs,
+		operationTimeoutMs,
 	});
 	const [readerSampler, writerSampler, hostSampler] = await Promise.all([
 		startPageJsHeapSampler({
@@ -645,34 +909,75 @@ export const startDownloadMemoryTelemetry = async ({
 	]);
 	let complete = false;
 	let cleanupComplete = false;
+	let sampleNowPromise;
 	let stopSamplingPromise;
 	let cleanupPromise;
-	const build = ({ readerJsHeap, writerJsHeap, hostRss }) => ({
-		profile: DOWNLOAD_MEMORY_PROFILE,
-		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
-		windowDefinition: DOWNLOAD_MEMORY_WINDOW_DEFINITION,
-		maxSamplesPerSeries,
-		complete,
-		cleanupComplete,
-		startedAt: Math.min(
-			readerJsHeap.startedAt,
-			writerJsHeap.startedAt,
-			hostRss.startedAt,
-		),
-		finishedAt:
-			readerJsHeap.finishedAt == null ||
-			writerJsHeap.finishedAt == null ||
-			hostRss.finishedAt == null
-				? null
-				: Math.max(
-						readerJsHeap.finishedAt,
-						writerJsHeap.finishedAt,
-						hostRss.finishedAt,
-					),
-		readerJsHeap,
-		writerJsHeap,
-		hostRss,
-	});
+	const build = ({ readerJsHeap, writerJsHeap, hostRss }) => {
+		const series = [readerJsHeap, writerJsHeap, hostRss];
+		const capacityExhaustedBeforeTerminal = series.some(
+			(value) => value.capacityExhaustedBeforeTerminal,
+		);
+		return {
+			profile: DOWNLOAD_MEMORY_PROFILE,
+			sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+			windowDefinition: DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+			downloadTimeoutMs,
+			schedulingToleranceMs,
+			operationTimeoutMs,
+			postTransferSoakMs,
+			samplingWindowBudgetMs,
+			liveSampleMaxGapMs,
+			liveSampleCoverageDefinition:
+				DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
+			endpointSampleAllowance: DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE,
+			maxSamplesPerSeries,
+			capacityExhaustedBeforeTerminal,
+			samplingCapacitySufficient: !capacityExhaustedBeforeTerminal,
+			manualCheckpointComplete: series.every(
+				(value) => value.manualSampleCount > 0,
+			),
+			terminalCheckpointComplete: series.every(
+				(value) => value.terminalSampleCaptured,
+			),
+			complete,
+			cleanupComplete,
+			startedAt: Math.min(
+				readerJsHeap.startedAt,
+				writerJsHeap.startedAt,
+				hostRss.startedAt,
+			),
+			finishedAt:
+				readerJsHeap.finishedAt == null ||
+				writerJsHeap.finishedAt == null ||
+				hostRss.finishedAt == null
+					? null
+					: Math.max(
+							readerJsHeap.finishedAt,
+							writerJsHeap.finishedAt,
+							hostRss.finishedAt,
+						),
+			readerJsHeap,
+			writerJsHeap,
+			hostRss,
+		};
+	};
+	const sampleNow = () => {
+		if (stopSamplingPromise) {
+			return stopSamplingPromise;
+		}
+		if (sampleNowPromise) {
+			return sampleNowPromise;
+		}
+		const currentSample = Promise.all([
+			readerSampler.sampleNow(),
+			writerSampler.sampleNow(),
+			hostSampler.sampleNow(),
+		]).then(([readerJsHeap, writerJsHeap, hostRss]) =>
+			build({ readerJsHeap, writerJsHeap, hostRss }),
+		);
+		sampleNowPromise = currentSample;
+		return currentSample;
+	};
 	const stopSampling = () => {
 		if (stopSamplingPromise) {
 			return stopSamplingPromise;
@@ -709,6 +1014,7 @@ export const startDownloadMemoryTelemetry = async ({
 				writerJsHeap: writerSampler.snapshot(),
 				hostRss: hostSampler.snapshot(),
 			}),
+		sampleNow,
 		stopSampling,
 		cleanup: runCleanup,
 		stop: runCleanup,

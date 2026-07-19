@@ -3,7 +3,14 @@
 Run a single checkout with `pnpm bench:file-share:local` or compare pinned
 Peerbit revisions with `pnpm bench:file-share:matrix`.
 
-Result schema v9 defines `errorCount` as every uncaught browser `pageerror`,
+Result schema v10, summary and matrix-summary schema v6, and invocation schema
+v5 bind each result to the exact effective benchmark inputs. Invocation v5 adds
+`postTransferSoakMs`; uploads default to 60,000 ms and preserve an explicit
+`--post-transfer-soak-ms 0` for
+fast smoke runs, while seeder probes resolve zero and reject a nonzero soak
+because they have no transfer. The value is exported as
+`PW_POST_TRANSFER_SOAK_MS`. Result schema v10 defines
+`errorCount` as every uncaught browser `pageerror`,
 every browser `console.error`, every console message at any level that contains
 a declared Peerbit failure signature, and scenario-recorded operation failures.
 Each result embeds the exact `errorCollectionDefinition` and signature list.
@@ -11,7 +18,7 @@ Playwright `requestfailed` events are retained separately under
 `requestFailures`; they are diagnostics and are not automatically fatal because
 peer-to-peer discovery can legitimately exercise failed network candidates.
 
-Passed schema v9 upload results require `writerDiagnostics.lastUploadDiagnostics`
+Passed schema v10 upload results require `writerDiagnostics.lastUploadDiagnostics`
 to contain exactly 21 bounded progress milestones from 0% through 100% in 5%
 increments. Each point records the aggregate bytes whose application-level
 chunk puts completed, using the library upload clock and exact ceil-rounded byte
@@ -47,38 +54,129 @@ sinks only in separate benchmark sessions; aggregate comparison objects fail
 closed on mixed sinks, and every passed result and aggregate labels
 non-hash-only cohorts non-authoritative.
 
-Schema v9 upload results also record the `download-memory-v2` bounded
-download-window memory telemetry contract. After any
-controlled-locality prefix stabilization, the harness arms serial samplers
-before the bounded pre-read transport-counter gate and timed click, then forces
-a final sample as soon as the selected sink completion is observed, before
-post-read counter stabilization, integrity readback, or terminal-topology
-checks.
-Reader and writer renderer JavaScript heaps use CDP `JSHeapUsedSize` samples.
+`readTransfer.receiverProgress` keeps three receiver boundaries separate over
+the exact 0%, 5%, …, 100% milestone set.
+`available` means a contiguous file prefix was materialized and available to
+the receiver library (`chunkMaterializeFinishedAt`). `peerbitDurable` means the
+exact signed manifest-entry blocks for a contiguous prefix were confirmed in
+the receiver's local Peerbit block store (`chunkPersistenceConfirmedAt`), with
+the confirmation sources counted separately. Observer/non-persisting reads
+therefore make no `peerbitDurable` claim. This is local Peerbit persistence
+evidence, not remote replication, remote acknowledgement, filesystem `fsync`,
+or stable-media proof.
+
+`sinkAccepted` means a contiguous prefix was accepted by the configured
+benchmark sink (`chunkWriteFinishedAt`) and always carries `durable: false`. For
+the hash-only sink it means the bytes were accepted by the streaming
+SHA-256/CRC-32 consumer; for OPFS or Node-file it means the configured sink write
+resolved. The later persisted readback is a whole-file benchmark integrity gate,
+but the `sinkAccepted` milestones themselves are neither Peerbit nor filesystem
+durability evidence. None of these three series is a wire acknowledgement or
+proof that another peer retained the bytes.
+
+Schema v10 upload results record the `download-memory-v3` bounded telemetry
+contract. After any controlled-locality prefix stabilization, the harness arms
+serial samplers before the bounded pre-read transport-counter gate and timed
+click. Sampling remains armed through sink completion, integrity and terminal
+topology checks, the requested post-transfer soak, final diagnostics, and
+explicit writer/reader Peerbit shutdown. Cleanup then forces the terminal sample
+before detaching the CDP sessions. The default soak is 60 seconds, so retained
+memory and storage that keep growing or fail to settle are visible separately
+from transfer-time peaks.
+
+Result v10 records bounded `shutdownOutcomes` for writer and reader separately;
+a passed upload requires both shutdown hooks to prove that the program closed
+and the Peerbit/libp2p peer stopped. Each shutdown outcome repeats the exact
+program, peer, and per-page session identity captured by that role's four
+resource snapshots, preventing a stale or replaced hook from satisfying the
+gate. The memory terminal sample is captured only after both hooks finish,
+allowing the live-peer after-soak checkpoint and the post-shutdown endpoint to
+be distinguished.
+
+Reader and writer renderers use CDP `Runtime.getHeapUsage`. Every sample records
+V8 used and total bytes, embedder heap used bytes, and backing-storage bytes.
 Host RSS combines all Chromium processes, grouped by Chromium process role,
 with the Playwright worker Node process; for local runs that Node value also
 includes the in-process bootstrap peer. Chromium RSS cannot be assigned
 reliably to one page and RSS is not PSS or USS, so page-level comparisons should
-use the renderer heap series. Samples run serially every five seconds, include
-forced initial/final endpoints, reserve one endpoint slot, cap each series at
-4,096 entries, and cap sampling errors. Passed evidence requires at least two
-error-free samples in every series and coverage of the canonical library read
-window. The validator recomputes all start, end, peak, process-role, and combined
-RSS summaries and rejects reordered, oversized, partial, or contradictory
-telemetry. Failed runs retain whatever bounded telemetry was collected, but are
-never accepted as performance evidence.
+use the renderer series. Node `external` and `arrayBuffers` are recorded as
+overlapping allocation diagnostics; neither is added to Node or combined RSS.
+Samples run serially, scheduling the next periodic read five seconds after the
+previous read completes, and reserve three endpoints: the initial sample, one
+live manual checkpoint immediately after the exact requested soak timer and
+before the `afterSoak` resource capture, and one terminal checkpoint after peer
+shutdown. For both the transfer and soak phase, passed evidence must have a live
+sample at or before the phase start and another at or after the phase finish,
+with no adjacent live-sample gap above the exact five-second interval plus the
+four-second sampling-operation deadline plus the recorded scheduling tolerance.
+Consequently a short phase may validly have no periodic sample, while a long
+phase cannot pass on endpoint samples alone. Capacity is derived from the full
+Playwright lifecycle timeout, not just the download deadline, and is capped at
+4,096 entries per series. Premature exhaustion is explicit and fatal. Passed
+evidence requires all three ordered, error-free checkpoint kinds plus bounded
+coverage of the canonical transfer, soak, and shutdown window. The validator
+recomputes all start, end, peak,
+process-role, and combined RSS summaries and rejects reordered, oversized,
+partial, or contradictory telemetry. Failed runs retain whatever bounded
+telemetry was collected, but are never accepted as performance evidence.
 
 Every CDP sample and setup operation has a four-second deadline; sampler
 cleanup has a nine-second aggregate deadline, late-created CDP sessions are
 detached best-effort, and a timed-out probe becomes terminal so another sample
-cannot overlap it. Sampling is finalized at sink completion. CDP disable and
-detach run only after transfer integrity is finalized; cleanup timeouts are
-bounded warnings, while setup, sampling, and non-timeout cleanup errors remain
-fatal. Result validation binds every series to the actual click and
-completion-observation timestamps: setup may begin at most 30 seconds before
-the click, and the terminal sample must finish within 30 seconds after
-completion is observed. Host samples are additionally capped at 256 Chromium
-processes and 32 process-role groups.
+cannot overlap it. Cleanup timeouts are bounded warnings, while setup, sampling,
+and non-timeout cleanup errors remain fatal. Host samples are additionally
+capped at 256 Chromium processes and 32 process-role groups.
+
+Four resource checkpoints—`beforeTimedRead`, `afterSink`, `beforeSoak`, and
+`afterSoak`—also record writer and reader storage and effective runtime state.
+Resource-evidence schema v2 derives four later-minus-earlier intervals:
+`timedReadEnvelope` is `beforeTimedRead`→`afterSink`, `postTransferWork` is
+`afterSink`→`beforeSoak`, `soak` is `beforeSoak`→`afterSoak`, and `total` is
+`beforeTimedRead`→`afterSoak`. `timedReadEnvelope` deliberately includes the
+bounded pre-read and post-read transport-counter gates around the primary timed
+read, so it must not be mislabeled as the exact download window. The exact
+memory phase remains `downloadStartedAt`→`downloadFinishedAt`. The resource
+`soak` interval begins at the dedicated `beforeSoak` checkpoint after integrity
+and terminal-topology work, while the memory soak phase uses the exact requested
+soak timestamps. Because `afterSoak` is intentionally captured only after the
+manual memory checkpoint completes, the resource `soak` interval envelopes the
+requested timer plus that bounded checkpoint operation; it is not an exact
+timer-duration metric.
+
+Storage intervals report Peerbit logical-log usage and browser origin-wide
+`navigator.storage` estimates; these are distinct scopes and should not be
+added together. Runtime evidence preserves each page's effective
+`nativeGraph.active`/`useHeads`, eager-cache enabled/availability state and
+limits, and root/node pubsub upload limits. Writer and reader configurations are
+kept separate and normalized as one ordered writer/reader pair. Each role must
+retain one browser origin and one exact program/peer/session identity across all
+four snapshots; the roles must share the program address while exposing distinct
+peer IDs, peer hashes, and session IDs. Upload timing
+rows are split by that pair in addition to reader locality. A runtime cohort key
+is emitted only when every passed repetition has the same complete pair; mode
+comparisons return no value when pairs differ or runtime-evidence availability
+is mixed. If every result predates runtime evidence, the legacy grouping and
+comparison shape is preserved. When eager telemetry is enabled, aggregate
+summaries include after-soak current entries, bytes, pending entries, and
+pending bytes; lifetime peaks; and `timedReadEnvelope`, `postTransferWork`,
+`soak`, and `total` deltas for admitted blocks, hits, evictions, expirations, and
+every rejection category.
+
+Aggregate upload summaries expose this evidence under `runtimeEvidence`.
+`memoryPhases` reports the exact transfer and soak peak and end-minus-start
+distributions for renderer used/embedder/backing storage, combined host RSS, and
+Node external/ArrayBuffer bytes. Because telemetry is sampled every five
+seconds, each phase uses the last live sample at or before its start through the
+first live sample at or after its end and records that boundary-overhang
+definition. The same recorded maximum-gap contract bounds the boundary
+overhang and every adjacent captured-sample gap. Terminal post-shutdown samples
+are excluded from both transfer and soak summaries; the required live manual
+checkpoint after soak supplies the soak endpoint without folding teardown into
+the phase.
+`resourceStorageDeltas`, `effectiveRuntimeConfiguration`, and `eagerCache`
+retain the corresponding storage, effective-policy, and eager-cache summaries.
+Older result objects that do not carry v10/v3 resource evidence retain the
+pre-existing aggregate output shape without empty placeholder fields.
 
 For a controlled reader-locality download cohort, run an upload with
 `--mode fixed1`, `--reader-local-chunk-target <N>`, and
@@ -123,8 +221,8 @@ final accepted sample becomes
 click must start within the recorded one-second handoff tolerance. This excludes
 late preload control traffic from the measured counter delta.
 
-Immediately after sink completion is observed and download-memory sampling has
-stopped, the same bounded gate captures post-read topology before integrity
+Immediately after sink completion is observed, while download-memory sampling
+remains armed, the same bounded gate captures post-read topology before integrity
 readback, idle waiting, terminal-topology stabilization, or the transport's
 ten-second inbound idle pruning. Its deadline is capped so an accepted gate
 finishes no later than nine seconds after sink completion, leaving one second
@@ -170,7 +268,7 @@ per-chunk timings remain in each result and can be rebucketed into 5% progress
 windows without losing the underlying samples. Without the paired locality
 options, roles, persistence policy, and seeder-drop gates are unchanged.
 
-Schema v9 records the exact versioned `seederDropPolicy` and a final numeric
+Schema v10 records the exact versioned `seederDropPolicy` and a final numeric
 `terminal` seeder snapshot after download and integrity verification. Every
 upload cohort also records top-level `integrityVerifiedAt`: it remains `null`
 until the aggregate size, SHA-256, CRC-32, manifest, and persistence gates have

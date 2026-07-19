@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
+	BENCHMARK_INVOCATION_SCHEMA,
 	TINY_FILE_CUTOFF_BYTES,
 	assertBenchmarkFileSize,
 	assertMatrixInvocationUsesLocalApp,
@@ -31,6 +32,7 @@ test("resolves every default and requested optional knob", () => {
 	const resolved = invocation({
 		uploadTimeoutMs: 101,
 		downloadTimeoutMs: 202,
+		postTransferSoakMs: 0,
 		postUploadMonitorMs: 303,
 		pollMs: 4,
 		minReadySeeders: 5,
@@ -48,6 +50,7 @@ test("resolves every default and requested optional knob", () => {
 			downloadSink: resolved.downloadSink,
 			uploadTimeoutMs: resolved.uploadTimeoutMs,
 			downloadTimeoutMs: resolved.downloadTimeoutMs,
+			postTransferSoakMs: resolved.postTransferSoakMs,
 			postUploadMonitorMs: resolved.postUploadMonitorMs,
 			pollMs: resolved.pollMs,
 			minReadySeeders: resolved.minReadySeeders,
@@ -71,6 +74,7 @@ test("resolves every default and requested optional knob", () => {
 			downloadSink: "hash-only",
 			uploadTimeoutMs: 101,
 			downloadTimeoutMs: 202,
+			postTransferSoakMs: 0,
 			postUploadMonitorMs: 303,
 			pollMs: 4,
 			minReadySeeders: 5,
@@ -91,6 +95,7 @@ test("resolves every default and requested optional knob", () => {
 			serverHost: "127.0.0.1",
 		},
 	);
+	assert.equal(BENCHMARK_INVOCATION_SCHEMA.version, 5);
 });
 
 test("uses the same ready-seeder baseline for comparable replication modes", () => {
@@ -114,6 +119,7 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 			PW_BASE_URL: "https://attacker.invalid",
 			PW_FILE_MB: "999",
 			PW_DOWNLOAD_SINK: "node-file",
+			PW_POST_TRANSFER_SOAK_MS: "1",
 			PW_POST_UPLOAD_MONITOR_MS: "0",
 			PW_PORT: "4444",
 			PW_PROTOCOL: "https",
@@ -134,6 +140,7 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.HOST, "127.0.0.1");
 	assert.equal(environment.PW_FILE_MB, "5");
 	assert.equal(environment.PW_DOWNLOAD_SINK, "hash-only");
+	assert.equal(environment.PW_POST_TRANSFER_SOAK_MS, "60000");
 	assert.equal(environment.PW_POST_UPLOAD_MONITOR_MS, "5000");
 	assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "");
 	assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "");
@@ -280,6 +287,19 @@ test("defaults to the hash-only sink and validates explicit sink cohorts", () =>
 		invocation({ scenario: "seeder-probe", fileMb: 1 }).downloadSink,
 		null,
 	);
+	assert.equal(
+		invocation({ scenario: "seeder-probe", fileMb: 1 }).postTransferSoakMs,
+		0,
+	);
+	assert.throws(
+		() =>
+			invocation({
+				scenario: "seeder-probe",
+				fileMb: 1,
+				postTransferSoakMs: 1,
+			}),
+		/only supported by upload benchmarks/,
+	);
 	assert.throws(
 		() =>
 			invocation({
@@ -357,6 +377,14 @@ test("rejects non-comparable timeout and seeder knobs before Playwright", () => 
 			{ downloadTimeoutMs: 1.5 },
 			/downloadTimeoutMs must be a positive safe integer/,
 		],
+		[
+			{ postTransferSoakMs: 0.5 },
+			/postTransferSoakMs must be a non-negative safe integer/,
+		],
+		[
+			{ postTransferSoakMs: -1 },
+			/postTransferSoakMs must be a non-negative safe integer/,
+		],
 		[{ pollMs: 0 }, /pollMs must be a positive safe integer/],
 		[
 			{ postUploadMonitorMs: 0.5 },
@@ -425,7 +453,7 @@ test("standalone runner rejects external origins before mutating outputs", async
 	}
 });
 
-test("standalone runner rejects invalid integration modes before mutating outputs", async () => {
+test("standalone runner rejects invalid benchmark knobs before mutating outputs", async () => {
 	const temporaryRoot = await mkdtemp(
 		path.join(os.tmpdir(), "peerbit-integration-preflight-"),
 	);
@@ -434,6 +462,10 @@ test("standalone runner rejects invalid integration modes before mutating output
 	try {
 		for (const [args, error] of [
 			[["--integration-mode", "overlay"], /Unsupported --integration-mode/],
+			[
+				["--post-transfer-soak-ms", "-1"],
+				/--post-transfer-soak-ms must be a non-negative safe integer/,
+			],
 			[
 				["--download-sink", "browser-download"],
 				/Unsupported benchmark download sink/,

@@ -357,7 +357,11 @@ const maybeCopyFrontendCerts = async ({
 
 export const instrumentFileShareFrontend = async (
 	frontendRoot,
-	{ requireLocalityHook = false, requireUploadDiagnostics = false } = {},
+	{
+		requireLocalityHook = false,
+		requireUploadDiagnostics = false,
+		requireRuntimeEvidence = false,
+	} = {},
 ) => {
 	const dropPath = path.join(frontendRoot, "src", "Drop.tsx");
 	let contents = await fsp.readFile(dropPath, "utf8");
@@ -372,9 +376,18 @@ export const instrumentFileShareFrontend = async (
 	const hasUploadDiagnosticsHook = (source) =>
 		source.includes("lastUploadDiagnostics:") &&
 		source.includes(".lastUploadDiagnostics ?? null");
+	const hasRuntimeEvidenceHook =
+		contents.includes("getStorageSnapshot") &&
+		contents.includes("getBenchmarkRuntimeSnapshot") &&
+		contents.includes("shutdown:");
 	if (requireLocalityHook && !hasExistingBenchmarkHook) {
 		throw new Error(
 			`Controlled-locality benchmarks require the modern rich test-hook contract in ${dropPath}`,
+		);
+	}
+	if (requireRuntimeEvidence && !hasRuntimeEvidenceHook) {
+		throw new Error(
+			`Upload benchmarks require storage, runtime-provenance, and shutdown hooks in ${dropPath}`,
 		);
 	}
 	if (
@@ -382,6 +395,7 @@ export const instrumentFileShareFrontend = async (
 		(contents.includes(DROP_UPDATE_LIST_MARKER) ||
 			hasExistingUpdateListStats) &&
 		(!requireUploadDiagnostics || hasUploadDiagnosticsHook(contents)) &&
+		(!requireRuntimeEvidence || hasRuntimeEvidenceHook) &&
 		(!requireLocalityHook ||
 			(contents.includes(DROP_LOCALITY_HOOK_MARKER) &&
 				contents.includes(DROP_LOCALITY_PRELOAD_DEADLINE_MARKER) &&
@@ -1061,6 +1075,10 @@ const main = async () => {
 		args["download-timeout-ms"],
 		"--download-timeout-ms",
 	);
+	const postTransferSoakMs = parseNonNegativeInteger(
+		args["post-transfer-soak-ms"],
+		"--post-transfer-soak-ms",
+	);
 	const postUploadMonitorMs = parseNonNegativeInteger(
 		args["post-upload-monitor-ms"],
 		"--post-upload-monitor-ms",
@@ -1159,9 +1177,7 @@ const main = async () => {
 			"--reader-local-chunk-target and --reader-local-chunk-max-overshoot must be provided together",
 		);
 	}
-	if (
-		(readerLocalChunkTarget == null) !== (readerTerminalTopology == null)
-	) {
+	if ((readerLocalChunkTarget == null) !== (readerTerminalTopology == null)) {
 		throw new Error(
 			"--reader-terminal-topology must be provided exactly when --reader-local-chunk-target is provided",
 		);
@@ -1274,6 +1290,7 @@ const main = async () => {
 		await instrumentFileShareFrontend(frontendRoot, {
 			requireLocalityHook: readerLocalChunkTarget != null,
 			requireUploadDiagnostics: scenario === "upload",
+			requireRuntimeEvidence: scenario === "upload",
 		});
 		await instrumentFileShareViteConfigs(frontendRoot);
 		const generatedSpec = path.join(
@@ -1340,6 +1357,7 @@ const main = async () => {
 				downloadSink,
 				uploadTimeoutMs,
 				downloadTimeoutMs,
+				postTransferSoakMs,
 				postUploadMonitorMs,
 				pollMs,
 				minReadySeeders,

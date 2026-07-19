@@ -234,6 +234,20 @@ export type TopicControlPlaneComponents = DirectStreamComponents;
 
 export type PeerId = Libp2pPeerId | PublicSignKey;
 
+/**
+ * Bounded, serializable snapshot of effective topic-control-plane settings.
+ *
+ * The snapshot intentionally contains values rather than the live fanout
+ * option objects so diagnostics can expose it without leaking mutable runtime
+ * state or native/WASM handles.
+ */
+export type TopicControlPlaneRuntimeSnapshot = Readonly<{
+	fanout: Readonly<{
+		root: Readonly<{ uploadLimitBps: number }>;
+		node: Readonly<{ uploadLimitBps: number }>;
+	}>;
+}>;
+
 const topicHash32 = (topic: string) => {
 	let hash = 0x811c9dc5; // FNV-1a
 	for (let index = 0; index < topic.length; index++) {
@@ -451,6 +465,28 @@ export class TopicControlPlane
 					`Debounced unsubscribe announce failed: ${error?.message ?? error}`,
 				),
 		);
+	}
+
+	/**
+	 * Return a detached, read-only snapshot of effective runtime settings.
+	 */
+	public getRuntimeSnapshot(): TopicControlPlaneRuntimeSnapshot {
+		return Object.freeze({
+			fanout: Object.freeze({
+				root: Object.freeze({
+					uploadLimitBps: Math.max(
+						0,
+						Math.floor(this.fanoutRootChannelOptions.uploadLimitBps),
+					),
+				}),
+				node: Object.freeze({
+					uploadLimitBps: Math.max(
+						0,
+						Math.floor(this.fanoutNodeChannelOptions.uploadLimitBps),
+					),
+				}),
+			}),
+		});
 	}
 
 	/**

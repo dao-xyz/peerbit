@@ -140,13 +140,17 @@ describe("Create", function () {
 	it("uses the default pubsub upload limit for root and node fanout channels", async () => {
 		const client = await Peerbit.create();
 		try {
-			const pubsub = client.services.pubsub as any;
-			expect(pubsub.fanoutRootChannelOptions.uploadLimitBps).to.equal(
-				5_000_000,
-			);
-			expect(pubsub.fanoutNodeChannelOptions.uploadLimitBps).to.equal(
-				5_000_000,
-			);
+			const snapshot = client.services.pubsub.getRuntimeSnapshot();
+			expect(snapshot).to.deep.equal({
+				fanout: {
+					root: { uploadLimitBps: 5_000_000 },
+					node: { uploadLimitBps: 5_000_000 },
+				},
+			});
+			expect(Object.isFrozen(snapshot)).to.equal(true);
+			expect(Object.isFrozen(snapshot.fanout)).to.equal(true);
+			expect(Object.isFrozen(snapshot.fanout.root)).to.equal(true);
+			expect(Object.isFrozen(snapshot.fanout.node)).to.equal(true);
 			expect(client.sharedLogNativeDefaults).to.equal(undefined);
 		} finally {
 			await client.stop();
@@ -158,13 +162,12 @@ describe("Create", function () {
 			pubsubUploadLimitBps: 20_000_000,
 		});
 		try {
-			const pubsub = client.services.pubsub as any;
-			expect(pubsub.fanoutRootChannelOptions.uploadLimitBps).to.equal(
-				20_000_000,
-			);
-			expect(pubsub.fanoutNodeChannelOptions.uploadLimitBps).to.equal(
-				20_000_000,
-			);
+			expect(client.services.pubsub.getRuntimeSnapshot()).to.deep.equal({
+				fanout: {
+					root: { uploadLimitBps: 20_000_000 },
+					node: { uploadLimitBps: 20_000_000 },
+				},
+			});
 			expect(
 				client.sharedLogNativeDefaults?.fanout?.channel?.uploadLimitBps,
 			).to.equal(20_000_000);
@@ -203,14 +206,13 @@ describe("Create", function () {
 			},
 		});
 		try {
-			const pubsub = client.services.pubsub as any;
-			expect(pubsub).to.exist;
-			expect(pubsub.fanoutRootChannelOptions.uploadLimitBps).to.equal(
-				20_000_000,
-			);
-			expect(pubsub.fanoutNodeChannelOptions.uploadLimitBps).to.equal(
-				20_000_000,
-			);
+			expect(client.services.pubsub).to.exist;
+			expect(client.services.pubsub.getRuntimeSnapshot()).to.deep.equal({
+				fanout: {
+					root: { uploadLimitBps: 20_000_000 },
+					node: { uploadLimitBps: 20_000_000 },
+				},
+			});
 		} finally {
 			await client.stop();
 		}
@@ -220,14 +222,9 @@ describe("Create", function () {
 		for (const value of [1, Number.MAX_SAFE_INTEGER]) {
 			const client = await Peerbit.create({ pubsubUploadLimitBps: value });
 			try {
-				expect(
-					(client.services.pubsub as any).fanoutRootChannelOptions
-						.uploadLimitBps,
-				).to.equal(value);
-				expect(
-					(client.services.pubsub as any).fanoutNodeChannelOptions
-						.uploadLimitBps,
-				).to.equal(value);
+				const snapshot = client.services.pubsub.getRuntimeSnapshot();
+				expect(snapshot.fanout.root.uploadLimitBps).to.equal(value);
+				expect(snapshot.fanout.node.uploadLimitBps).to.equal(value);
 			} finally {
 				await client.stop();
 			}

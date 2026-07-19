@@ -9,9 +9,11 @@ import {
 	projectUploadIntegrityEvidence,
 } from "./benchmark-orchestration.mjs";
 import {
+	DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE,
 	DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
 	DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
 	DOWNLOAD_MEMORY_HOST_SCOPE,
+	DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
 	DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES,
 	DOWNLOAD_MEMORY_MAX_BROWSER_ROLES,
 	DOWNLOAD_MEMORY_MAX_BROWSER_ROLE_NAME_LENGTH,
@@ -19,11 +21,14 @@ import {
 	DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
 	DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS,
 	DOWNLOAD_MEMORY_NODE_SCOPE,
+	DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
 	DOWNLOAD_MEMORY_PROFILE,
 	DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 	DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS,
 	DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS,
 	DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+	assertDownloadMemoryLiveSampleCoverage,
+	calculateDownloadMemoryMaxLiveSampleGapMs,
 	calculateDownloadMemoryMaxSamples,
 } from "./templates/download-memory-telemetry.mjs";
 
@@ -37,6 +42,10 @@ const SAMPLE_COUNT_DEFINITION =
 	"observation-density divisor: planned interval is min(sampleMs, floor(readyTimeoutMs/sampleCount)) clamped to 1ms; convergence may finish early";
 const POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(250ms, pollMs + 250ms) for the final poll and event-loop scheduling";
+const POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION =
+	"max(250ms, pollMs + 250ms) for the requested post-transfer timer and event-loop scheduling";
+const POST_TRANSFER_SOAK_DEFINITION =
+	"idle observation window beginning after transfer integrity and any requested terminal-topology validation, ending before terminal resource capture and peer shutdown";
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(5000ms, pollMs + 1000ms) for browser actions and event-loop scheduling";
 const TIME_TO_WRITER_READY_DEFINITION =
@@ -70,6 +79,91 @@ const TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS = 9_000;
 const PUBSUB_PROTOCOL = "/peerbit/topic-control-plane/2.0.0";
 const DEMAND_WAIT_DEFINITION =
 	"wall-clock time each sequential stream consumer awaited its scheduled chunk";
+const RECEIVER_PROGRESS_PERCENTAGES = Object.freeze(
+	Array.from({ length: 21 }, (_, index) => index * 5),
+);
+const RECEIVER_PROGRESS_MILESTONE_KEYS = Object.freeze([
+	"percent",
+	"targetBytes",
+	"contiguousBytes",
+	"chunkIndex",
+	"confirmedAt",
+	"elapsedMs",
+]);
+const PERSISTENCE_CONFIRMATION_SOURCES = new Set([
+	"manifest-head-batch-local",
+	"manifest-head-batch-remote",
+	"manifest-entry-local",
+	"manifest-entry-import",
+]);
+const RESOURCE_SNAPSHOT_TIMEOUT_MS = 15_000;
+const PAGE_SHUTDOWN_TIMEOUT_MS = 30_000;
+const RESOURCE_STORAGE_DEFINITION =
+	"Peerbit logical usage and browser origin-wide navigator.storage estimates; deltas are later minus earlier";
+const RESOURCE_EAGER_DEFINITION =
+	"deltas of monotonic eager-cache admission, hit, eviction, expiration, and rejection counters; null when eager telemetry is disabled or unavailable";
+const RESOURCE_MAX_STORAGE_DETAIL_KEYS = 64;
+const RESOURCE_MAX_STORAGE_DETAIL_KEY_LENGTH = 128;
+const EAGER_MONOTONIC_COUNTERS = Object.freeze([
+	"evictions",
+	"expirations",
+	"admitted",
+	"hits",
+	"rejectedCid",
+	"rejectedCodec",
+	"rejectedSize",
+	"rejectedPending",
+	"rejectedIntegrity",
+	"rejectedLifecycle",
+]);
+const EAGER_TELEMETRY_KEYS = Object.freeze([
+	"entries",
+	"bytes",
+	"peakEntries",
+	"peakBytes",
+	...EAGER_MONOTONIC_COUNTERS.slice(0, 2),
+	"pendingEntries",
+	"pendingBytes",
+	"peakPendingEntries",
+	"peakPendingBytes",
+	...EAGER_MONOTONIC_COUNTERS.slice(2),
+	"limits",
+]);
+const EAGER_LIMIT_KEYS = Object.freeze([
+	"maxEntries",
+	"maxBytes",
+	"maxBlockBytes",
+	"ttlMs",
+	"validationConcurrency",
+	"maxPendingBytes",
+	"maxPendingEntries",
+]);
+const BENCHMARK_MIN_OUTER_TIMEOUT_MS = 20 * 60 * 1_000;
+const BENCHMARK_OUTER_TIMEOUT_SAFETY_MS = 5 * 60 * 1_000;
+
+const calculateUploadSamplingWindowBudgetMs = (invocation) => {
+	const transferToleranceMs = Math.max(5_000, invocation.pollMs + 1_000);
+	const localityBudgetMs =
+		invocation.readerLocalChunkTarget === null
+			? 0
+			: 3 * invocation.readyTimeoutMs +
+				2 * TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS +
+				(invocation.readerLocalChunkTarget > 0
+					? invocation.downloadTimeoutMs + transferToleranceMs
+					: 0);
+	const requestedBudgetMs =
+		3 * invocation.readyTimeoutMs +
+		invocation.uploadTimeoutMs +
+		invocation.downloadTimeoutMs +
+		localityBudgetMs +
+		invocation.postUploadMonitorMs +
+		invocation.postTransferSoakMs +
+		BENCHMARK_OUTER_TIMEOUT_SAFETY_MS;
+	return requirePositiveSafeInteger(
+		Math.max(BENCHMARK_MIN_OUTER_TIMEOUT_MS, requestedBudgetMs),
+		"download memory sampling window budget",
+	);
+};
 // Date.now() endpoints can undercount the nested performance.now() helper
 // interval by less than one millisecond for each chunk.
 const SINK_WRITE_QUANTIZATION_ALLOWANCE_MS_PER_CHUNK = 1;
@@ -151,6 +245,13 @@ const requirePositiveNumber = (value, label) => {
 
 const requireFiniteNumber = (value, label) => {
 	if (typeof value !== "number" || !Number.isFinite(value)) {
+		throw new Error(`Benchmark result has invalid ${label}`);
+	}
+	return value;
+};
+
+const requireSafeInteger = (value, label) => {
+	if (!Number.isSafeInteger(value)) {
 		throw new Error(`Benchmark result has invalid ${label}`);
 	}
 	return value;
@@ -492,6 +593,69 @@ const requireBoundedDiagnosticIntervals = ({
 	return { started, finished, durations };
 };
 
+const buildReceiverProgressMilestones = ({
+	chunkBytes,
+	confirmedAt,
+	readStartedAt,
+	readFinishedAt,
+	label,
+}) => {
+	if (confirmedAt.length !== chunkBytes.length) {
+		throw new Error(`Benchmark ${label} must cover every read chunk`);
+	}
+	const prefixBytes = [];
+	const prefixConfirmedAt = [];
+	let cumulativeBytes = 0;
+	let cumulativeConfirmedAt = readStartedAt;
+	for (const [index, bytes] of chunkBytes.entries()) {
+		const timestamp = requireNonNegativeSafeInteger(
+			confirmedAt[index],
+			`${label}[${index}]`,
+		);
+		if (timestamp < readStartedAt || timestamp > readFinishedAt) {
+			throw new Error(
+				`Benchmark ${label}[${index}] is outside the canonical library read window`,
+			);
+		}
+		cumulativeBytes += bytes;
+		cumulativeConfirmedAt = Math.max(cumulativeConfirmedAt, timestamp);
+		prefixBytes.push(cumulativeBytes);
+		prefixConfirmedAt.push(cumulativeConfirmedAt);
+	}
+	const totalBytes = sum(chunkBytes);
+	return RECEIVER_PROGRESS_PERCENTAGES.map((percent) => {
+		if (percent === 0) {
+			return {
+				percent,
+				targetBytes: 0,
+				contiguousBytes: 0,
+				chunkIndex: null,
+				confirmedAt: readStartedAt,
+				elapsedMs: 0,
+			};
+		}
+		const targetBytes = Math.ceil((totalBytes * percent) / 100);
+		const chunkIndex = prefixBytes.findIndex((bytes) => bytes >= targetBytes);
+		if (chunkIndex < 0) {
+			throw new Error(`Benchmark ${label} did not reach ${percent}%`);
+		}
+		const milestone = {
+			percent,
+			targetBytes,
+			contiguousBytes: prefixBytes[chunkIndex],
+			chunkIndex,
+			confirmedAt: prefixConfirmedAt[chunkIndex],
+			elapsedMs: prefixConfirmedAt[chunkIndex] - readStartedAt,
+		};
+		requireExactRecordKeys(
+			milestone,
+			RECEIVER_PROGRESS_MILESTONE_KEYS,
+			`${label} ${percent}% milestone`,
+		);
+		return milestone;
+	});
+};
+
 const validateReadTransferEvidence = (
 	result,
 	invocation,
@@ -605,6 +769,14 @@ const validateReadTransferEvidence = (
 		indices,
 		requireNonNegativeSafeInteger,
 	);
+	const resolveIntervals = requireBoundedDiagnosticIntervals({
+		diagnostics,
+		indices,
+		startedName: "chunkResolveStartedAt",
+		finishedName: "chunkResolveFinishedAt",
+		readStartedAt: startedAt,
+		readFinishedAt: finishedAt,
+	});
 	const writeIntervals = requireBoundedDiagnosticIntervals({
 		diagnostics,
 		indices,
@@ -630,6 +802,21 @@ const validateReadTransferEvidence = (
 		readStartedAt: startedAt,
 		readFinishedAt: finishedAt,
 	});
+	for (const [offset, index] of indices.entries()) {
+		if (
+			resolveIntervals.finished[offset] >
+				materializeIntervals.started[offset] ||
+			materializeIntervals.finished[offset] > hashIntervals.started[offset] ||
+			hashIntervals.finished[offset] > writeIntervals.started[offset] ||
+			(offset > 0 &&
+				materializeIntervals.started[offset] <
+					writeIntervals.finished[offset - 1])
+		) {
+			throw new Error(
+				`Benchmark chunk ${index} resolve/materialize/hash/write lifecycle is not causal`,
+			);
+		}
+	}
 	const libraryStreamWallMs = finishedAt - startedAt;
 	const sinkWriteAwaitMs = sum(writeIntervals.durations);
 	const sinkAwaitSubtractedDiagnosticMs =
@@ -645,6 +832,75 @@ const validateReadTransferEvidence = (
 			left.localeCompare(right),
 		),
 	);
+	if (typeof diagnostics.persistChunkReads !== "boolean") {
+		throw new Error(
+			"Benchmark readerDiagnostics.persistChunkReads must be a boolean",
+		);
+	}
+	const availableMilestones = buildReceiverProgressMilestones({
+		chunkBytes,
+		confirmedAt: materializeIntervals.finished,
+		readStartedAt: startedAt,
+		readFinishedAt: finishedAt,
+		label: "readerDiagnostics.chunkMaterializeFinishedAt",
+	});
+	const sinkAcceptedMilestones = buildReceiverProgressMilestones({
+		chunkBytes,
+		confirmedAt: writeIntervals.finished,
+		readStartedAt: startedAt,
+		readFinishedAt: finishedAt,
+		label: "readerDiagnostics.chunkWriteFinishedAt",
+	});
+	let peerbitDurableMilestones = null;
+	const peerbitDurableSourceCounts = {};
+	if (diagnostics.persistChunkReads) {
+		const peerbitDurableAt = requireExactDiagnosticSeries(
+			diagnostics,
+			"chunkPersistenceConfirmedAt",
+			indices,
+			requireNonNegativeSafeInteger,
+		);
+		const persistenceSources = requireRecord(
+			diagnostics.chunkPersistenceConfirmationSource,
+			"readerDiagnostics.chunkPersistenceConfirmationSource",
+		);
+		requireExactRecordKeys(
+			persistenceSources,
+			indices.map(String),
+			"readerDiagnostics.chunkPersistenceConfirmationSource",
+		);
+		for (const index of indices) {
+			const source = requireString(
+				persistenceSources[index],
+				`readerDiagnostics.chunkPersistenceConfirmationSource[${index}]`,
+			);
+			if (!PERSISTENCE_CONFIRMATION_SOURCES.has(source)) {
+				throw new Error(
+					`Benchmark readerDiagnostics.chunkPersistenceConfirmationSource[${index}] is not a recognized persistence source`,
+				);
+			}
+			peerbitDurableSourceCounts[source] =
+				(peerbitDurableSourceCounts[source] ?? 0) + 1;
+		}
+		peerbitDurableMilestones = buildReceiverProgressMilestones({
+			chunkBytes,
+			confirmedAt: peerbitDurableAt,
+			readStartedAt: startedAt,
+			readFinishedAt: finishedAt,
+			label: "readerDiagnostics.chunkPersistenceConfirmedAt",
+		});
+	} else {
+		for (const name of [
+			"chunkPersistenceConfirmedAt",
+			"chunkPersistenceConfirmationSource",
+		]) {
+			requireExactRecordKeys(
+				requireRecord(diagnostics[name], `readerDiagnostics.${name}`),
+				[],
+				`readerDiagnostics.${name}`,
+			);
+		}
+	}
 	const expectedReadTransfer = {
 		chunkCount: indices.length,
 		totalBytes,
@@ -675,6 +931,35 @@ const validateReadTransferEvidence = (
 					materializeSumMs -
 					contentHashSumMs,
 			),
+		},
+		receiverProgress: {
+			percentages: [...RECEIVER_PROGRESS_PERCENTAGES],
+			available: {
+				definition:
+					"contiguous file-prefix bytes materialized and available to the receiver library",
+				source: "chunkMaterializeFinishedAt",
+				milestones: availableMilestones,
+			},
+			peerbitDurable: {
+				definition:
+					"contiguous file-prefix bytes whose exact signed manifest-entry blocks were confirmed in the receiver's local Peerbit block store",
+				source: "chunkPersistenceConfirmedAt",
+				claimed: diagnostics.persistChunkReads,
+				sourceCounts: Object.fromEntries(
+					Object.entries(peerbitDurableSourceCounts).sort(([left], [right]) =>
+						left.localeCompare(right),
+					),
+				),
+				milestones: peerbitDurableMilestones,
+			},
+			sinkAccepted: {
+				definition:
+					"contiguous file-prefix bytes accepted by the configured benchmark sink; this is not a Peerbit or filesystem durability claim",
+				source: "chunkWriteFinishedAt",
+				sink: invocation.downloadSink,
+				durable: false,
+				milestones: sinkAcceptedMilestones,
+			},
 		},
 	};
 	if (
@@ -829,6 +1114,12 @@ const validateMemorySeriesWindow = (
 		downloadStartedAt,
 		downloadFinishedAt,
 		downloadCompletionObservedAt,
+		postTransferSoakStartedAt,
+		postTransferSoakFinishedAt,
+		afterSoakStartedAt,
+		shutdownStartedAt,
+		shutdownFinishedAt,
+		liveSampleMaxGapMs,
 	},
 ) => {
 	const startedAt = requirePositiveSafeInteger(
@@ -844,13 +1135,30 @@ const validateMemorySeriesWindow = (
 		!Array.isArray(series.samples) ||
 		series.sampleCount !== series.samples.length ||
 		!Number.isSafeInteger(series.sampleCount) ||
-		series.sampleCount < 2 ||
+		series.sampleCount < DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE ||
 		series.sampleCount > maxSamples ||
+		series.maxSamples !== maxSamples ||
+		series.periodicSampleLimit !==
+			maxSamples - DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE ||
+		!Number.isSafeInteger(series.periodicSampleCount) ||
+		series.periodicSampleCount < 0 ||
+		series.periodicSampleCount > series.periodicSampleLimit ||
+		series.sampleCount !==
+			series.periodicSampleCount + DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE ||
+		series.capacityExhaustedBeforeTerminal !== false ||
+		series.samplingCapacitySufficient !== true ||
+		series.manualSampleCount !== 1 ||
+		series.terminalSampleAttempted !== true ||
+		series.terminalSampleCaptured !== true ||
 		finishedAt < startedAt
 	) {
 		throw new Error(`Benchmark ${label} has an invalid bounded sample series`);
 	}
 	let previousCapturedAt = null;
+	let initialSampleCount = 0;
+	let periodicSampleCount = 0;
+	let manualSample = null;
+	let terminalSample = null;
 	for (const [index, sampleValue] of series.samples.entries()) {
 		const sample = requireRecord(sampleValue, `${label}.samples[${index}]`);
 		const capturedAt = requirePositiveSafeInteger(
@@ -866,7 +1174,58 @@ const validateMemorySeriesWindow = (
 				`Benchmark ${label} sample timestamps are outside or reorder the sampler window`,
 			);
 		}
+		if (sample.sampleKind === "initial") {
+			initialSampleCount += 1;
+		} else if (sample.sampleKind === "periodic") {
+			periodicSampleCount += 1;
+		} else if (sample.sampleKind === "manual") {
+			if (manualSample !== null) {
+				throw new Error(`Benchmark ${label} contains duplicate manual samples`);
+			}
+			manualSample = { index, capturedAt };
+		} else if (sample.sampleKind === "terminal") {
+			if (terminalSample !== null) {
+				throw new Error(
+					`Benchmark ${label} contains duplicate terminal samples`,
+				);
+			}
+			terminalSample = { index, capturedAt };
+		} else {
+			throw new Error(`Benchmark ${label} contains an invalid sample kind`);
+		}
 		previousCapturedAt = capturedAt;
+	}
+	const lastManualSampleAt = requirePositiveSafeInteger(
+		series.lastManualSampleAt,
+		`${label}.lastManualSampleAt`,
+	);
+	const terminalSampleAt = requirePositiveSafeInteger(
+		series.terminalSampleAt,
+		`${label}.terminalSampleAt`,
+	);
+	if (
+		initialSampleCount !== 1 ||
+		series.samples[0].sampleKind !== "initial" ||
+		periodicSampleCount !== series.periodicSampleCount ||
+		manualSample === null ||
+		manualSample.index === 0 ||
+		manualSample.index === series.samples.length - 1 ||
+		manualSample.capturedAt !== lastManualSampleAt ||
+		manualSample.capturedAt < postTransferSoakFinishedAt ||
+		manualSample.capturedAt > afterSoakStartedAt ||
+		manualSample.capturedAt - postTransferSoakFinishedAt >
+			liveSampleMaxGapMs - DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS ||
+		manualSample.capturedAt > shutdownStartedAt ||
+		terminalSample === null ||
+		terminalSample.index !== series.samples.length - 1 ||
+		series.samples.at(-1).sampleKind !== "terminal" ||
+		terminalSample.capturedAt !== terminalSampleAt ||
+		terminalSample.capturedAt < shutdownFinishedAt ||
+		manualSample.index >= terminalSample.index
+	) {
+		throw new Error(
+			`Benchmark ${label} has invalid live or terminal checkpoint ordering`,
+		);
 	}
 	const firstCapturedAt = series.samples[0].capturedAt;
 	const lastCapturedAt = series.samples.at(-1).capturedAt;
@@ -874,10 +1233,12 @@ const validateMemorySeriesWindow = (
 		startedAt > downloadStartedAt ||
 		firstCapturedAt > downloadStartedAt ||
 		lastCapturedAt < downloadCompletionObservedAt ||
-		finishedAt < downloadCompletionObservedAt
+		finishedAt < downloadCompletionObservedAt ||
+		lastCapturedAt < shutdownFinishedAt ||
+		finishedAt < shutdownFinishedAt
 	) {
 		throw new Error(
-			`Benchmark ${label} does not bracket the click-to-sink observation window`,
+			`Benchmark ${label} does not bracket the click-to-post-shutdown observation window`,
 		);
 	}
 	if (
@@ -890,9 +1251,8 @@ const validateMemorySeriesWindow = (
 	}
 	if (
 		lastCapturedAt >
-			downloadCompletionObservedAt + DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS ||
-		finishedAt >
-			downloadCompletionObservedAt + DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS
+			shutdownFinishedAt + DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS ||
+		finishedAt > shutdownFinishedAt + DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS
 	) {
 		throw new Error(
 			`Benchmark ${label} ends after the bounded telemetry cleanup window`,
@@ -909,6 +1269,18 @@ const validateMemorySeriesWindow = (
 		);
 	}
 	validateMemorySamplingErrors(series, label);
+	for (const [phase, phaseStartedAt, phaseFinishedAt] of [
+		["transfer", downloadStartedAt, downloadFinishedAt],
+		["soak", postTransferSoakStartedAt, postTransferSoakFinishedAt],
+	]) {
+		assertDownloadMemoryLiveSampleCoverage({
+			samples: series.samples,
+			phaseStartedAt,
+			phaseFinishedAt,
+			maxGapMs: liveSampleMaxGapMs,
+			label: `${label}.${phase}`,
+		});
+	}
 	return { startedAt, finishedAt };
 };
 
@@ -934,18 +1306,40 @@ const validateHeapMemorySeries = (
 			"startBytes",
 			"endBytes",
 			"peakBytes",
+			"startUsedBytes",
+			"endUsedBytes",
+			"peakUsedBytes",
+			"startTotalBytes",
+			"endTotalBytes",
+			"peakTotalBytes",
+			"startEmbedderHeapUsedBytes",
+			"endEmbedderHeapUsedBytes",
+			"peakEmbedderHeapUsedBytes",
+			"startBackingStorageBytes",
+			"endBackingStorageBytes",
+			"peakBackingStorageBytes",
 			"samples",
 			"samplingErrors",
 			"samplingErrorOverflowCount",
 			"cleanupWarnings",
 			"cleanupWarningOverflowCount",
+			"maxSamples",
+			"periodicSampleLimit",
+			"periodicSampleCount",
+			"capacityExhaustedBeforeTerminal",
+			"samplingCapacitySufficient",
+			"manualSampleCount",
+			"lastManualSampleAt",
+			"terminalSampleAttempted",
+			"terminalSampleCaptured",
+			"terminalSampleAt",
 		],
 		label,
 	);
 	if (
-		series.memoryKind !== "javascript-heap" ||
+		series.memoryKind !== "runtime-heap" ||
 		series.scope !== expectedScope ||
-		series.metric !== "JSHeapUsedSize" ||
+		series.metric !== "Runtime.getHeapUsage" ||
 		series.unit !== "bytes"
 	) {
 		throw new Error(`Benchmark ${label} has invalid heap attribution`);
@@ -956,21 +1350,62 @@ const validateHeapMemorySeries = (
 		maxSamples,
 		readWindow,
 	);
-	const values = series.samples.map((sample, index) => {
+	const samples = series.samples.map((sample, index) => {
 		requireExactRecordKeys(
 			sample,
-			["capturedAt", "usedBytes"],
+			[
+				"capturedAt",
+				"sampleKind",
+				"usedBytes",
+				"totalBytes",
+				"embedderHeapUsedBytes",
+				"backingStorageBytes",
+			],
 			`${label}.samples[${index}]`,
 		);
-		return requireNonNegativeNumber(
-			sample.usedBytes,
-			`${label}.samples[${index}].usedBytes`,
-		);
+		const sampleLabel = `${label}.samples[${index}]`;
+		const values = {
+			usedBytes: requireNonNegativeSafeInteger(
+				sample.usedBytes,
+				`${sampleLabel}.usedBytes`,
+			),
+			totalBytes: requireNonNegativeSafeInteger(
+				sample.totalBytes,
+				`${sampleLabel}.totalBytes`,
+			),
+			embedderHeapUsedBytes: requireNonNegativeSafeInteger(
+				sample.embedderHeapUsedBytes,
+				`${sampleLabel}.embedderHeapUsedBytes`,
+			),
+			backingStorageBytes: requireNonNegativeSafeInteger(
+				sample.backingStorageBytes,
+				`${sampleLabel}.backingStorageBytes`,
+			),
+		};
+		if (values.usedBytes > values.totalBytes) {
+			throw new Error(`Benchmark ${sampleLabel} heap totals are inconsistent`);
+		}
+		return values;
 	});
+	const first = samples[0];
+	const last = samples.at(-1);
+	const peak = (name) => Math.max(...samples.map((sample) => sample[name]));
 	if (
-		series.startBytes !== values[0] ||
-		series.endBytes !== values.at(-1) ||
-		series.peakBytes !== Math.max(...values)
+		series.startBytes !== first.usedBytes ||
+		series.endBytes !== last.usedBytes ||
+		series.peakBytes !== peak("usedBytes") ||
+		series.startUsedBytes !== first.usedBytes ||
+		series.endUsedBytes !== last.usedBytes ||
+		series.peakUsedBytes !== peak("usedBytes") ||
+		series.startTotalBytes !== first.totalBytes ||
+		series.endTotalBytes !== last.totalBytes ||
+		series.peakTotalBytes !== peak("totalBytes") ||
+		series.startEmbedderHeapUsedBytes !== first.embedderHeapUsedBytes ||
+		series.endEmbedderHeapUsedBytes !== last.embedderHeapUsedBytes ||
+		series.peakEmbedderHeapUsedBytes !== peak("embedderHeapUsedBytes") ||
+		series.startBackingStorageBytes !== first.backingStorageBytes ||
+		series.endBackingStorageBytes !== last.backingStorageBytes ||
+		series.peakBackingStorageBytes !== peak("backingStorageBytes")
 	) {
 		throw new Error(`Benchmark ${label} heap summaries are inconsistent`);
 	}
@@ -1023,6 +1458,12 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			"startNodeBytes",
 			"endNodeBytes",
 			"peakNodeBytes",
+			"startNodeExternalBytes",
+			"endNodeExternalBytes",
+			"peakNodeExternalBytes",
+			"startNodeArrayBuffersBytes",
+			"endNodeArrayBuffersBytes",
+			"peakNodeArrayBuffersBytes",
 			"startCombinedBytes",
 			"endCombinedBytes",
 			"peakCombinedBytes",
@@ -1037,6 +1478,16 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			"samplingErrorOverflowCount",
 			"cleanupWarnings",
 			"cleanupWarningOverflowCount",
+			"maxSamples",
+			"periodicSampleLimit",
+			"periodicSampleCount",
+			"capacityExhaustedBeforeTerminal",
+			"samplingCapacitySufficient",
+			"manualSampleCount",
+			"lastManualSampleAt",
+			"terminalSampleAttempted",
+			"terminalSampleCaptured",
+			"terminalSampleAt",
 		],
 		label,
 	);
@@ -1065,8 +1516,11 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 			sample,
 			[
 				"capturedAt",
+				"sampleKind",
 				"browserBytes",
 				"nodeBytes",
+				"nodeExternalBytes",
+				"nodeArrayBuffersBytes",
 				"combinedBytes",
 				"browserProcessCount",
 				"browserRoleBytes",
@@ -1080,6 +1534,14 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 		const nodeBytes = requirePositiveSafeInteger(
 			sample.nodeBytes,
 			`${sampleLabel}.nodeBytes`,
+		);
+		const nodeExternalBytes = requireNonNegativeSafeInteger(
+			sample.nodeExternalBytes,
+			`${sampleLabel}.nodeExternalBytes`,
+		);
+		const nodeArrayBuffersBytes = requireNonNegativeSafeInteger(
+			sample.nodeArrayBuffersBytes,
+			`${sampleLabel}.nodeArrayBuffersBytes`,
 		);
 		const combinedBytes = requirePositiveSafeInteger(
 			sample.combinedBytes,
@@ -1114,6 +1576,8 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 		return {
 			browserBytes,
 			nodeBytes,
+			nodeExternalBytes,
+			nodeArrayBuffersBytes,
 			combinedBytes,
 			browserProcessCount,
 			browserRoleBytes,
@@ -1129,6 +1593,12 @@ const validateHostRssSeries = (seriesValue, maxSamples, readWindow) => {
 		series.startNodeBytes !== first.nodeBytes ||
 		series.endNodeBytes !== last.nodeBytes ||
 		series.peakNodeBytes !== peak("nodeBytes") ||
+		series.startNodeExternalBytes !== first.nodeExternalBytes ||
+		series.endNodeExternalBytes !== last.nodeExternalBytes ||
+		series.peakNodeExternalBytes !== peak("nodeExternalBytes") ||
+		series.startNodeArrayBuffersBytes !== first.nodeArrayBuffersBytes ||
+		series.endNodeArrayBuffersBytes !== last.nodeArrayBuffersBytes ||
+		series.peakNodeArrayBuffersBytes !== peak("nodeArrayBuffersBytes") ||
 		series.startCombinedBytes !== first.combinedBytes ||
 		series.endCombinedBytes !== last.combinedBytes ||
 		series.peakCombinedBytes !== peak("combinedBytes") ||
@@ -1159,7 +1629,19 @@ export const validateDownloadMemoryTelemetry = (
 			"profile",
 			"sampleIntervalMs",
 			"windowDefinition",
+			"downloadTimeoutMs",
+			"schedulingToleranceMs",
+			"operationTimeoutMs",
+			"postTransferSoakMs",
+			"samplingWindowBudgetMs",
+			"liveSampleMaxGapMs",
+			"liveSampleCoverageDefinition",
+			"endpointSampleAllowance",
 			"maxSamplesPerSeries",
+			"capacityExhaustedBeforeTerminal",
+			"samplingCapacitySufficient",
+			"manualCheckpointComplete",
+			"terminalCheckpointComplete",
 			"complete",
 			"cleanupComplete",
 			"startedAt",
@@ -1170,15 +1652,37 @@ export const validateDownloadMemoryTelemetry = (
 		],
 		"downloadMemoryTelemetry",
 	);
+	const expectedSchedulingToleranceMs = Math.max(
+		5_000,
+		invocation.pollMs + 1_000,
+	);
+	const expectedSamplingWindowBudgetMs =
+		calculateUploadSamplingWindowBudgetMs(invocation);
+	const expectedLiveSampleMaxGapMs = calculateDownloadMemoryMaxLiveSampleGapMs({
+		schedulingToleranceMs: expectedSchedulingToleranceMs,
+	});
 	const expectedMaxSamples = calculateDownloadMemoryMaxSamples({
-		downloadTimeoutMs: invocation.downloadTimeoutMs,
-		schedulingToleranceMs: Math.max(5_000, invocation.pollMs + 1_000),
+		samplingWindowBudgetMs: expectedSamplingWindowBudgetMs,
 	});
 	if (
 		telemetry.profile !== DOWNLOAD_MEMORY_PROFILE ||
 		telemetry.sampleIntervalMs !== DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS ||
 		telemetry.windowDefinition !== DOWNLOAD_MEMORY_WINDOW_DEFINITION ||
+		telemetry.downloadTimeoutMs !== invocation.downloadTimeoutMs ||
+		telemetry.schedulingToleranceMs !== expectedSchedulingToleranceMs ||
+		telemetry.operationTimeoutMs !== DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS ||
+		telemetry.postTransferSoakMs !== invocation.postTransferSoakMs ||
+		telemetry.samplingWindowBudgetMs !== expectedSamplingWindowBudgetMs ||
+		telemetry.liveSampleMaxGapMs !== expectedLiveSampleMaxGapMs ||
+		telemetry.liveSampleCoverageDefinition !==
+			DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION ||
+		telemetry.endpointSampleAllowance !==
+			DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE ||
 		telemetry.maxSamplesPerSeries !== expectedMaxSamples ||
+		telemetry.capacityExhaustedBeforeTerminal !== false ||
+		telemetry.samplingCapacitySufficient !== true ||
+		telemetry.manualCheckpointComplete !== true ||
+		telemetry.terminalCheckpointComplete !== true ||
 		telemetry.complete !== true ||
 		telemetry.cleanupComplete !== true
 	) {
@@ -1189,19 +1693,19 @@ export const validateDownloadMemoryTelemetry = (
 		"downloadMemoryTelemetry.readerJsHeap",
 		"reader-renderer",
 		expectedMaxSamples,
-		readWindow,
+		{ ...readWindow, liveSampleMaxGapMs: expectedLiveSampleMaxGapMs },
 	);
 	const writerWindow = validateHeapMemorySeries(
 		telemetry.writerJsHeap,
 		"downloadMemoryTelemetry.writerJsHeap",
 		"writer-renderer",
 		expectedMaxSamples,
-		readWindow,
+		{ ...readWindow, liveSampleMaxGapMs: expectedLiveSampleMaxGapMs },
 	);
 	const hostWindow = validateHostRssSeries(
 		telemetry.hostRss,
 		expectedMaxSamples,
-		readWindow,
+		{ ...readWindow, liveSampleMaxGapMs: expectedLiveSampleMaxGapMs },
 	);
 	const expectedStartedAt = Math.min(
 		readerWindow.startedAt,
@@ -1224,7 +1728,7 @@ export const validateDownloadMemoryTelemetry = (
 	return telemetry;
 };
 
-const validateUploadTimings = (result, invocation) => {
+const validateUploadTimings = (result, invocation, integrityVerifiedAt) => {
 	if (result.downloadDurationDefinition !== DOWNLOAD_DURATION_DEFINITION) {
 		throw new Error("Benchmark download duration definition is invalid");
 	}
@@ -1319,6 +1823,14 @@ const validateUploadTimings = (result, invocation) => {
 	const downloadCompletionObservedAt = requirePositiveSafeInteger(
 		timestamps.downloadCompletionObservedAt,
 		"timestamps.downloadCompletionObservedAt",
+	);
+	const postTransferSoakStartedAt = requirePositiveSafeInteger(
+		timestamps.postTransferSoakStartedAt,
+		"timestamps.postTransferSoakStartedAt",
+	);
+	const postTransferSoakFinishedAt = requirePositiveSafeInteger(
+		timestamps.postTransferSoakFinishedAt,
+		"timestamps.postTransferSoakFinishedAt",
 	);
 	if (
 		uploadSettledAt <= uploadStartedAt ||
@@ -1429,11 +1941,42 @@ const validateUploadTimings = (result, invocation) => {
 			"Measured transfer duration exceeded its requested timeout and scheduling tolerance",
 		);
 	}
-	return validateReadTransferEvidence(result, invocation, {
-		downloadStartedAt,
-		downloadFinishedAt,
-		downloadCompletionObservedAt,
-	});
+	const expectedPostTransferSoakTolerance = Math.max(
+		250,
+		invocation.pollMs + 250,
+	);
+	const postTransferSoakActualMs = requireNonNegativeSafeInteger(
+		result.postTransferSoakActualMs,
+		"postTransferSoakActualMs",
+	);
+	if (
+		postTransferSoakStartedAt < downloadCompletionObservedAt ||
+		postTransferSoakStartedAt < integrityVerifiedAt ||
+		postTransferSoakFinishedAt < postTransferSoakStartedAt ||
+		result.postTransferSoakDefinition !== POST_TRANSFER_SOAK_DEFINITION ||
+		result.postTransferSoakSchedulingToleranceMs !==
+			expectedPostTransferSoakTolerance ||
+		result.postTransferSoakSchedulingToleranceDefinition !==
+			POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION ||
+		postTransferSoakActualMs !==
+			postTransferSoakFinishedAt - postTransferSoakStartedAt ||
+		postTransferSoakActualMs < invocation.postTransferSoakMs ||
+		postTransferSoakActualMs >
+			invocation.postTransferSoakMs + expectedPostTransferSoakTolerance
+	) {
+		throw new Error(
+			"Benchmark post-transfer soak duration or scheduling contract is invalid",
+		);
+	}
+	return {
+		...validateReadTransferEvidence(result, invocation, {
+			downloadStartedAt,
+			downloadFinishedAt,
+			downloadCompletionObservedAt,
+		}),
+		postTransferSoakStartedAt,
+		postTransferSoakFinishedAt,
+	};
 };
 
 const validateUploadProgressTelemetry = (result, invocation) => {
@@ -1881,7 +2424,7 @@ const validateEnvelope = (
 	);
 	if (
 		invocationSchema.id !== "peerbit-file-share-benchmark-invocation" ||
-		invocationSchema.version !== 4
+		invocationSchema.version !== 5
 	) {
 		throw new Error("Benchmark result has an unsupported invocation schema");
 	}
@@ -1910,6 +2453,7 @@ const validateEnvelope = (
 const validateRequestedUploadKnobs = (result, invocation) => {
 	for (const [resultKey, invocationKey] of [
 		["postUploadMonitorMs", "postUploadMonitorMs"],
+		["postTransferSoakMs", "postTransferSoakMs"],
 		["pollMs", "pollMs"],
 		["uploadTimeoutMs", "uploadTimeoutMs"],
 		["downloadTimeoutMs", "downloadTimeoutMs"],
@@ -1940,6 +2484,645 @@ const validateRequestedUploadKnobs = (result, invocation) => {
 			"Benchmark result readerTerminalTopology does not match the requested invocation",
 		);
 	}
+};
+
+const validateStorageUsageDetails = (value, label) => {
+	if (value === null) {
+		return null;
+	}
+	const details = requireRecord(value, label);
+	const entries = Object.entries(details);
+	if (entries.length > RESOURCE_MAX_STORAGE_DETAIL_KEYS) {
+		throw new Error(`Benchmark ${label} contains too many storage categories`);
+	}
+	for (const [key, bytes] of entries) {
+		if (
+			key.length === 0 ||
+			key.length > RESOURCE_MAX_STORAGE_DETAIL_KEY_LENGTH ||
+			!/^\S(?:.*\S)?$/.test(key)
+		) {
+			throw new Error(
+				`Benchmark ${label} contains an invalid storage category`,
+			);
+		}
+		requireNonNegativeSafeInteger(bytes, `${label}.${key}`);
+	}
+	return details;
+};
+
+const validateStorageResourceSnapshot = (
+	value,
+	label,
+	{ setStartedAt, pageCapturedAt },
+) => {
+	const storage = requireExactRecordKeys(
+		requireRecord(value, label),
+		["capturedAt", "origin", "peerbitLog", "backingStorage"],
+		label,
+	);
+	const capturedAt = requirePositiveSafeInteger(
+		storage.capturedAt,
+		`${label}.capturedAt`,
+	);
+	if (capturedAt < setStartedAt || capturedAt > pageCapturedAt) {
+		throw new Error(
+			`Benchmark ${label} is outside its resource capture window`,
+		);
+	}
+	const origin = requireString(storage.origin, `${label}.origin`);
+	let parsedOrigin;
+	try {
+		parsedOrigin = new URL(origin).origin;
+	} catch {
+		throw new Error(`Benchmark result has invalid ${label}.origin`);
+	}
+	if (parsedOrigin !== origin) {
+		throw new Error(`Benchmark result has invalid ${label}.origin`);
+	}
+	const peerbitLog = requireExactRecordKeys(
+		requireRecord(storage.peerbitLog, `${label}.peerbitLog`),
+		["api", "scope", "available", "usageBytes", "error"],
+		`${label}.peerbitLog`,
+	);
+	if (
+		peerbitLog.api !== "SharedLog.getMemoryUsage" ||
+		peerbitLog.scope !== "file-share-log-logical-usage" ||
+		peerbitLog.available !== true ||
+		peerbitLog.error !== null
+	) {
+		throw new Error(`Benchmark ${label}.peerbitLog contract is invalid`);
+	}
+	requireNonNegativeSafeInteger(
+		peerbitLog.usageBytes,
+		`${label}.peerbitLog.usageBytes`,
+	);
+	const backingStorage = requireExactRecordKeys(
+		requireRecord(storage.backingStorage, `${label}.backingStorage`),
+		[
+			"api",
+			"scope",
+			"available",
+			"usageBytes",
+			"quotaBytes",
+			"usageDetails",
+			"error",
+		],
+		`${label}.backingStorage`,
+	);
+	if (
+		backingStorage.api !== "navigator.storage.estimate" ||
+		backingStorage.scope !== "browser-origin-aggregate" ||
+		backingStorage.available !== true ||
+		backingStorage.error !== null
+	) {
+		throw new Error(`Benchmark ${label}.backingStorage contract is invalid`);
+	}
+	const usageBytes = requireNonNegativeSafeInteger(
+		backingStorage.usageBytes,
+		`${label}.backingStorage.usageBytes`,
+	);
+	const quotaBytes = requireNonNegativeSafeInteger(
+		backingStorage.quotaBytes,
+		`${label}.backingStorage.quotaBytes`,
+	);
+	if (quotaBytes < usageBytes) {
+		throw new Error(`Benchmark ${label}.backingStorage exceeds its quota`);
+	}
+	validateStorageUsageDetails(
+		backingStorage.usageDetails,
+		`${label}.backingStorage.usageDetails`,
+	);
+	return storage;
+};
+
+const validateEagerTelemetry = (value, label) => {
+	const telemetry = requireExactRecordKeys(
+		requireRecord(value, label),
+		EAGER_TELEMETRY_KEYS,
+		label,
+	);
+	for (const key of EAGER_TELEMETRY_KEYS.filter((key) => key !== "limits")) {
+		requireNonNegativeSafeInteger(telemetry[key], `${label}.${key}`);
+	}
+	const limits = requireExactRecordKeys(
+		requireRecord(telemetry.limits, `${label}.limits`),
+		EAGER_LIMIT_KEYS,
+		`${label}.limits`,
+	);
+	for (const key of EAGER_LIMIT_KEYS) {
+		requirePositiveSafeInteger(limits[key], `${label}.limits.${key}`);
+	}
+	if (
+		telemetry.entries > telemetry.peakEntries ||
+		telemetry.peakEntries > limits.maxEntries ||
+		telemetry.bytes > telemetry.peakBytes ||
+		telemetry.peakBytes > limits.maxBytes ||
+		telemetry.pendingEntries > telemetry.peakPendingEntries ||
+		telemetry.peakPendingEntries > limits.maxPendingEntries ||
+		telemetry.pendingBytes > telemetry.peakPendingBytes ||
+		telemetry.peakPendingBytes > limits.maxPendingBytes
+	) {
+		throw new Error(
+			`Benchmark ${label} eager-cache gauges exceed their bounds`,
+		);
+	}
+	return telemetry;
+};
+
+const RUNTIME_IDENTITY_KEYS = Object.freeze([
+	"programAddress",
+	"peerId",
+	"peerHash",
+	"sessionId",
+]);
+
+const validateRuntimeIdentity = (value, label) => {
+	const identity = requireExactRecordKeys(
+		requireRecord(value, label),
+		RUNTIME_IDENTITY_KEYS,
+		label,
+	);
+	for (const key of RUNTIME_IDENTITY_KEYS) {
+		requireString(identity[key], `${label}.${key}`);
+	}
+	return identity;
+};
+
+const validateRuntimeResourceSnapshot = (
+	value,
+	label,
+	{ setStartedAt, pageCapturedAt },
+) => {
+	const runtime = requireExactRecordKeys(
+		requireRecord(value, label),
+		[
+			"capturedAt",
+			"programReady",
+			"identity",
+			"nativeGraph",
+			"eagerBlocks",
+			"pubsub",
+		],
+		label,
+	);
+	const capturedAt = requirePositiveSafeInteger(
+		runtime.capturedAt,
+		`${label}.capturedAt`,
+	);
+	if (capturedAt < setStartedAt || capturedAt > pageCapturedAt) {
+		throw new Error(
+			`Benchmark ${label} is outside its resource capture window`,
+		);
+	}
+	if (runtime.programReady !== true) {
+		throw new Error(`Benchmark ${label} did not capture a ready program`);
+	}
+	validateRuntimeIdentity(runtime.identity, `${label}.identity`);
+	const nativeGraph = requireExactRecordKeys(
+		requireRecord(runtime.nativeGraph, `${label}.nativeGraph`),
+		["active", "useHeads"],
+		`${label}.nativeGraph`,
+	);
+	if (
+		typeof nativeGraph.active !== "boolean" ||
+		typeof nativeGraph.useHeads !== "boolean" ||
+		(nativeGraph.active === false && nativeGraph.useHeads !== false)
+	) {
+		throw new Error(`Benchmark ${label}.nativeGraph contract is invalid`);
+	}
+	const eagerBlocks = requireExactRecordKeys(
+		requireRecord(runtime.eagerBlocks, `${label}.eagerBlocks`),
+		["telemetryAvailable", "enabled", "telemetry"],
+		`${label}.eagerBlocks`,
+	);
+	if (
+		eagerBlocks.telemetryAvailable !== true ||
+		typeof eagerBlocks.enabled !== "boolean"
+	) {
+		throw new Error(`Benchmark ${label}.eagerBlocks contract is invalid`);
+	}
+	if (eagerBlocks.enabled) {
+		validateEagerTelemetry(
+			eagerBlocks.telemetry,
+			`${label}.eagerBlocks.telemetry`,
+		);
+	} else if (eagerBlocks.telemetry !== null) {
+		throw new Error(
+			`Benchmark ${label}.eagerBlocks disabled state contains telemetry`,
+		);
+	}
+	const pubsub = requireExactRecordKeys(
+		requireRecord(runtime.pubsub, `${label}.pubsub`),
+		["runtimeSnapshotAvailable", "snapshot", "error"],
+		`${label}.pubsub`,
+	);
+	if (pubsub.runtimeSnapshotAvailable !== true || pubsub.error !== null) {
+		throw new Error(
+			`Benchmark ${label}.pubsub runtime evidence is unavailable`,
+		);
+	}
+	const pubsubSnapshot = requireExactRecordKeys(
+		requireRecord(pubsub.snapshot, `${label}.pubsub.snapshot`),
+		["fanout"],
+		`${label}.pubsub.snapshot`,
+	);
+	const fanout = requireExactRecordKeys(
+		requireRecord(pubsubSnapshot.fanout, `${label}.pubsub.snapshot.fanout`),
+		["root", "node"],
+		`${label}.pubsub.snapshot.fanout`,
+	);
+	for (const tier of ["root", "node"]) {
+		const tierSnapshot = requireExactRecordKeys(
+			requireRecord(fanout[tier], `${label}.pubsub.snapshot.fanout.${tier}`),
+			["uploadLimitBps"],
+			`${label}.pubsub.snapshot.fanout.${tier}`,
+		);
+		requirePositiveSafeInteger(
+			tierSnapshot.uploadLimitBps,
+			`${label}.pubsub.snapshot.fanout.${tier}.uploadLimitBps`,
+		);
+	}
+	return runtime;
+};
+
+const validatePageResourceSnapshot = (
+	value,
+	role,
+	{ setStartedAt, setFinishedAt, setLabel },
+) => {
+	const label = `resourceEvidence.snapshots.${setLabel}.${role}`;
+	const page = requireExactRecordKeys(
+		requireRecord(value, label),
+		["role", "capturedAt", "storage", "runtime"],
+		label,
+	);
+	const capturedAt = requirePositiveSafeInteger(
+		page.capturedAt,
+		`${label}.capturedAt`,
+	);
+	if (
+		page.role !== role ||
+		capturedAt < setStartedAt ||
+		capturedAt > setFinishedAt
+	) {
+		throw new Error(`Benchmark ${label} capture ordering is invalid`);
+	}
+	validateStorageResourceSnapshot(page.storage, `${label}.storage`, {
+		setStartedAt,
+		pageCapturedAt: capturedAt,
+	});
+	validateRuntimeResourceSnapshot(page.runtime, `${label}.runtime`, {
+		setStartedAt,
+		pageCapturedAt: capturedAt,
+	});
+	return page;
+};
+
+const validateResourceSnapshotSet = (value, expectedLabel, invocation) => {
+	const label = `resourceEvidence.snapshots.${expectedLabel}`;
+	const snapshot = requireExactRecordKeys(
+		requireRecord(value, label),
+		["label", "startedAt", "finishedAt", "writer", "reader"],
+		label,
+	);
+	const startedAt = requirePositiveSafeInteger(
+		snapshot.startedAt,
+		`${label}.startedAt`,
+	);
+	const finishedAt = requirePositiveSafeInteger(
+		snapshot.finishedAt,
+		`${label}.finishedAt`,
+	);
+	const schedulingToleranceMs = Math.max(250, invocation.pollMs + 250);
+	if (
+		snapshot.label !== expectedLabel ||
+		finishedAt < startedAt ||
+		finishedAt - startedAt >
+			RESOURCE_SNAPSHOT_TIMEOUT_MS + schedulingToleranceMs
+	) {
+		throw new Error(
+			`Benchmark ${label} capture window is invalid or unbounded`,
+		);
+	}
+	validatePageResourceSnapshot(snapshot.writer, "writer", {
+		setStartedAt: startedAt,
+		setFinishedAt: finishedAt,
+		setLabel: expectedLabel,
+	});
+	validatePageResourceSnapshot(snapshot.reader, "reader", {
+		setStartedAt: startedAt,
+		setFinishedAt: finishedAt,
+		setLabel: expectedLabel,
+	});
+	return snapshot;
+};
+
+const validateResourceRoleSequence = (snapshots, role) => {
+	const pages = [
+		snapshots.beforeTimedRead[role],
+		snapshots.afterSink[role],
+		snapshots.beforeSoak[role],
+		snapshots.afterSoak[role],
+	];
+	const firstRuntime = pages[0].runtime;
+	const firstOrigin = pages[0].storage.origin;
+	for (const page of pages.slice(1)) {
+		if (
+			page.storage.origin !== firstOrigin ||
+			!isDeepStrictEqual(page.runtime.identity, firstRuntime.identity) ||
+			!isDeepStrictEqual(page.runtime.nativeGraph, firstRuntime.nativeGraph) ||
+			page.runtime.eagerBlocks.telemetryAvailable !==
+				firstRuntime.eagerBlocks.telemetryAvailable ||
+			page.runtime.eagerBlocks.enabled !== firstRuntime.eagerBlocks.enabled ||
+			!isDeepStrictEqual(
+				page.runtime.pubsub.snapshot,
+				firstRuntime.pubsub.snapshot,
+			) ||
+			(page.runtime.eagerBlocks.enabled &&
+				!isDeepStrictEqual(
+					page.runtime.eagerBlocks.telemetry.limits,
+					firstRuntime.eagerBlocks.telemetry.limits,
+				))
+		) {
+			throw new Error(
+				`Benchmark ${role} runtime provenance changed across resource snapshots`,
+			);
+		}
+	}
+	if (!firstRuntime.eagerBlocks.enabled) {
+		return;
+	}
+	for (let index = 1; index < pages.length; index += 1) {
+		const before = pages[index - 1].runtime.eagerBlocks.telemetry;
+		const after = pages[index].runtime.eagerBlocks.telemetry;
+		for (const key of [
+			...EAGER_MONOTONIC_COUNTERS,
+			"peakEntries",
+			"peakBytes",
+			"peakPendingEntries",
+			"peakPendingBytes",
+		]) {
+			if (after[key] < before[key]) {
+				throw new Error(
+					`Benchmark ${role} eager-cache ${key} regressed across resource snapshots`,
+				);
+			}
+		}
+	}
+};
+
+const buildStorageResourceDelta = (before, after, role) => ({
+	role,
+	peerbitLogUsageDeltaBytes:
+		after.storage.peerbitLog.usageBytes - before.storage.peerbitLog.usageBytes,
+	backingStorageUsageDeltaBytes:
+		after.storage.backingStorage.usageBytes -
+		before.storage.backingStorage.usageBytes,
+});
+
+const buildEagerResourceDelta = (before, after) => {
+	const beforeTelemetry = before.runtime.eagerBlocks.telemetry;
+	const afterTelemetry = after.runtime.eagerBlocks.telemetry;
+	if (beforeTelemetry === null && afterTelemetry === null) {
+		return null;
+	}
+	if (beforeTelemetry === null || afterTelemetry === null) {
+		throw new Error(
+			"Benchmark eager-cache availability changed across resource snapshots",
+		);
+	}
+	return Object.fromEntries(
+		EAGER_MONOTONIC_COUNTERS.map((key) => {
+			const delta = afterTelemetry[key] - beforeTelemetry[key];
+			requireNonNegativeSafeInteger(delta, `resource eager delta ${key}`);
+			return [key, delta];
+		}),
+	);
+};
+
+const buildResourceInterval = (before, after) => ({
+	from: before.label,
+	to: after.label,
+	writerStorage: buildStorageResourceDelta(
+		before.writer,
+		after.writer,
+		"writer",
+	),
+	readerStorage: buildStorageResourceDelta(
+		before.reader,
+		after.reader,
+		"reader",
+	),
+	writerEager: buildEagerResourceDelta(before.writer, after.writer),
+	readerEager: buildEagerResourceDelta(before.reader, after.reader),
+});
+
+const validateShutdownOutcome = (
+	value,
+	role,
+	{ terminalSeederCapturedAt, schedulingToleranceMs },
+) => {
+	const label = `shutdownOutcomes.${role}`;
+	const outcome = requireExactRecordKeys(
+		requireRecord(value, label),
+		[
+			"role",
+			"status",
+			"startedAt",
+			"finishedAt",
+			"durationMs",
+			"programClosed",
+			"peerStopped",
+			"identity",
+			"error",
+		],
+		label,
+	);
+	const startedAt = requirePositiveSafeInteger(
+		outcome.startedAt,
+		`${label}.startedAt`,
+	);
+	const finishedAt = requirePositiveSafeInteger(
+		outcome.finishedAt,
+		`${label}.finishedAt`,
+	);
+	const durationMs = requireNonNegativeSafeInteger(
+		outcome.durationMs,
+		`${label}.durationMs`,
+	);
+	const identity = validateRuntimeIdentity(
+		outcome.identity,
+		`${label}.identity`,
+	);
+	if (
+		outcome.role !== role ||
+		outcome.status !== "fulfilled" ||
+		outcome.programClosed !== true ||
+		outcome.peerStopped !== true ||
+		outcome.error !== null ||
+		startedAt < terminalSeederCapturedAt ||
+		finishedAt < startedAt ||
+		durationMs !== finishedAt - startedAt ||
+		durationMs > PAGE_SHUTDOWN_TIMEOUT_MS + schedulingToleranceMs
+	) {
+		throw new Error(`Benchmark ${label} is not a successful bounded shutdown`);
+	}
+	return { ...outcome, identity };
+};
+
+const validateResourceAndShutdownEvidence = (
+	result,
+	invocation,
+	readWindow,
+	{ integrityVerifiedAt, terminalTopologyFinishedAt },
+) => {
+	const evidence = requireExactRecordKeys(
+		requireRecord(result.resourceEvidence, "resourceEvidence"),
+		[
+			"schemaVersion",
+			"storageDefinition",
+			"eagerDefinition",
+			"snapshots",
+			"intervals",
+		],
+		"resourceEvidence",
+	);
+	if (
+		evidence.schemaVersion !== 2 ||
+		evidence.storageDefinition !== RESOURCE_STORAGE_DEFINITION ||
+		evidence.eagerDefinition !== RESOURCE_EAGER_DEFINITION
+	) {
+		throw new Error("Benchmark resource evidence contract is invalid");
+	}
+	const snapshotValues = requireExactRecordKeys(
+		requireRecord(evidence.snapshots, "resourceEvidence.snapshots"),
+		["beforeTimedRead", "afterSink", "beforeSoak", "afterSoak"],
+		"resourceEvidence.snapshots",
+	);
+	const snapshots = {
+		beforeTimedRead: validateResourceSnapshotSet(
+			snapshotValues.beforeTimedRead,
+			"beforeTimedRead",
+			invocation,
+		),
+		afterSink: validateResourceSnapshotSet(
+			snapshotValues.afterSink,
+			"afterSink",
+			invocation,
+		),
+		beforeSoak: validateResourceSnapshotSet(
+			snapshotValues.beforeSoak,
+			"beforeSoak",
+			invocation,
+		),
+		afterSoak: validateResourceSnapshotSet(
+			snapshotValues.afterSoak,
+			"afterSoak",
+			invocation,
+		),
+	};
+	const terminalSnapshot = Array.isArray(result.snapshots)
+		? result.snapshots.at(-1)
+		: null;
+	const terminalSeederCapturedAt = requirePositiveSafeInteger(
+		terminalSnapshot?.at,
+		"terminal seeder snapshot timestamp",
+	);
+	const downloadMemoryStartedAt = requirePositiveSafeInteger(
+		requireRecord(result.downloadMemoryTelemetry, "downloadMemoryTelemetry")
+			.startedAt,
+		"downloadMemoryTelemetry.startedAt",
+	);
+	if (
+		downloadMemoryStartedAt > snapshots.beforeTimedRead.startedAt ||
+		snapshots.beforeTimedRead.finishedAt > readWindow.downloadStartedAt ||
+		snapshots.afterSink.startedAt < readWindow.downloadCompletionObservedAt ||
+		snapshots.afterSink.finishedAt > integrityVerifiedAt ||
+		snapshots.afterSink.finishedAt > snapshots.beforeSoak.startedAt ||
+		snapshots.beforeSoak.startedAt < integrityVerifiedAt ||
+		(terminalTopologyFinishedAt !== null &&
+			snapshots.beforeSoak.startedAt < terminalTopologyFinishedAt) ||
+		snapshots.beforeSoak.finishedAt > readWindow.postTransferSoakStartedAt ||
+		readWindow.postTransferSoakFinishedAt > snapshots.afterSoak.startedAt ||
+		snapshots.afterSoak.finishedAt > terminalSeederCapturedAt
+	) {
+		throw new Error(
+			"Benchmark resource snapshots, soak, integrity, and terminal evidence are out of order",
+		);
+	}
+	validateResourceRoleSequence(snapshots, "writer");
+	validateResourceRoleSequence(snapshots, "reader");
+	const writerIdentity = snapshots.beforeTimedRead.writer.runtime.identity;
+	const readerIdentity = snapshots.beforeTimedRead.reader.runtime.identity;
+	if (
+		writerIdentity.programAddress !== readerIdentity.programAddress ||
+		writerIdentity.peerId === readerIdentity.peerId ||
+		writerIdentity.peerHash === readerIdentity.peerHash ||
+		writerIdentity.sessionId === readerIdentity.sessionId
+	) {
+		throw new Error(
+			"Benchmark resource evidence does not identify two distinct peers in one program",
+		);
+	}
+	const expectedIntervals = {
+		timedReadEnvelope: buildResourceInterval(
+			snapshots.beforeTimedRead,
+			snapshots.afterSink,
+		),
+		postTransferWork: buildResourceInterval(
+			snapshots.afterSink,
+			snapshots.beforeSoak,
+		),
+		soak: buildResourceInterval(snapshots.beforeSoak, snapshots.afterSoak),
+		total: buildResourceInterval(
+			snapshots.beforeTimedRead,
+			snapshots.afterSoak,
+		),
+	};
+	if (!isDeepStrictEqual(evidence.intervals, expectedIntervals)) {
+		throw new Error(
+			"Benchmark resource interval deltas contradict their snapshots",
+		);
+	}
+	for (const interval of Object.values(expectedIntervals)) {
+		for (const role of ["writerStorage", "readerStorage"]) {
+			requireSafeInteger(
+				interval[role].peerbitLogUsageDeltaBytes,
+				`resourceEvidence.intervals.${interval.from}-${interval.to}.${role}.peerbitLogUsageDeltaBytes`,
+			);
+			requireSafeInteger(
+				interval[role].backingStorageUsageDeltaBytes,
+				`resourceEvidence.intervals.${interval.from}-${interval.to}.${role}.backingStorageUsageDeltaBytes`,
+			);
+		}
+	}
+	const shutdownOutcomes = requireExactRecordKeys(
+		requireRecord(result.shutdownOutcomes, "shutdownOutcomes"),
+		["writer", "reader"],
+		"shutdownOutcomes",
+	);
+	const schedulingToleranceMs = Math.max(250, invocation.pollMs + 250);
+	const writer = validateShutdownOutcome(shutdownOutcomes.writer, "writer", {
+		terminalSeederCapturedAt,
+		schedulingToleranceMs,
+	});
+	const reader = validateShutdownOutcome(shutdownOutcomes.reader, "reader", {
+		terminalSeederCapturedAt,
+		schedulingToleranceMs,
+	});
+	if (
+		!isDeepStrictEqual(writer.identity, writerIdentity) ||
+		!isDeepStrictEqual(reader.identity, readerIdentity)
+	) {
+		throw new Error(
+			"Benchmark shutdown identities do not match their resource snapshot sessions",
+		);
+	}
+	return {
+		afterSoakStartedAt: snapshots.afterSoak.startedAt,
+		shutdownStartedAt: Math.min(writer.startedAt, reader.startedAt),
+		shutdownFinishedAt: Math.max(writer.finishedAt, reader.finishedAt),
+	};
 };
 
 const validateIdleDownloadScheduler = (value, label) => {
@@ -2075,17 +3258,16 @@ const validateTopologyEvidence = (value, label) => {
 
 const summarizeCounterpartPubsubTransport = (
 	topology,
-	{
-		direction,
-		expectedPeerHash,
-		expectedRemotePeerId,
-		label,
-	},
+	{ direction, expectedPeerHash, expectedRemotePeerId, label },
 ) => {
 	if (!Array.isArray(topology.observation.transportStreams)) {
-		throw new Error(`Benchmark ${label} is missing transport stream diagnostics`);
+		throw new Error(
+			`Benchmark ${label} is missing transport stream diagnostics`,
+		);
 	}
-	if (topology.observation.transportStreams.some((stream) => !isRecord(stream))) {
+	if (
+		topology.observation.transportStreams.some((stream) => !isRecord(stream))
+	) {
 		throw new Error(
 			`Benchmark ${label} contains malformed transport stream diagnostics`,
 		);
@@ -2320,13 +3502,15 @@ const validateTransportTopologyStability = ({
 					entry.writerSummary.totalBytes - entry.readerSummary.totalBytes,
 				) > TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW,
 		) ||
-		stable.slice(1).some(
-			(entry) =>
-				!isDeepStrictEqual(
-					stableSignature(entry),
-					stableSignature(stable[0]),
-				),
-		) ||
+		stable
+			.slice(1)
+			.some(
+				(entry) =>
+					!isDeepStrictEqual(
+						stableSignature(entry),
+						stableSignature(stable[0]),
+					),
+			) ||
 		!isDeepStrictEqual(
 			validated.at(-1).observation.writerTopology,
 			writerTopology.observation,
@@ -2519,8 +3703,10 @@ const validateReaderLocalityControl = (result, invocation) => {
 		readerTopologyBeforeUpload.peerHash !==
 			readerTopologyAfterTimedRead.peerHash ||
 		writerTopologyBeforeUpload.peerId === readerTopologyBeforeUpload.peerId ||
-		writerTopologyBeforeUpload.peerId !== writerTopologyBeforeTimedRead.peerId ||
-		readerTopologyBeforeUpload.peerId !== readerTopologyBeforeTimedRead.peerId ||
+		writerTopologyBeforeUpload.peerId !==
+			writerTopologyBeforeTimedRead.peerId ||
+		readerTopologyBeforeUpload.peerId !==
+			readerTopologyBeforeTimedRead.peerId ||
 		writerTopologyBeforeUpload.peerId !== writerTopologyAfterTimedRead.peerId ||
 		readerTopologyBeforeUpload.peerId !== readerTopologyAfterTimedRead.peerId
 	) {
@@ -2570,31 +3756,29 @@ const validateReaderLocalityControl = (result, invocation) => {
 			"Benchmark immediate post-read topology evidence is inconsistent",
 		);
 	}
-	const preTimedReadTransportStability =
-		validateTransportTopologyStability({
-			control,
-			phase: "pre",
-			writerTopology: writerTopologyBeforeTimedRead,
-			readerTopology: readerTopologyBeforeTimedRead,
-			expectedWriterPeerHash: writerTopologyBeforeUpload.peerHash,
-			expectedReaderPeerHash: readerTopologyBeforeUpload.peerHash,
-			expectedWriterPeerId: writerTopologyBeforeUpload.peerId,
-			expectedReaderPeerId: readerTopologyBeforeUpload.peerId,
-		});
-	const postTimedReadTransportStability =
-		validateTransportTopologyStability({
-			control,
-			phase: "post",
-			writerTopology: writerTopologyAfterTimedRead,
-			readerTopology: readerTopologyAfterTimedRead,
-			expectedWriterPeerHash: writerTopologyBeforeUpload.peerHash,
-			expectedReaderPeerHash: readerTopologyBeforeUpload.peerHash,
-			expectedWriterPeerId: writerTopologyBeforeUpload.peerId,
-			expectedReaderPeerId: readerTopologyBeforeUpload.peerId,
-			latestFinishedAt:
-				downloadCompletionObservedAt +
-				TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS,
-		});
+	const preTimedReadTransportStability = validateTransportTopologyStability({
+		control,
+		phase: "pre",
+		writerTopology: writerTopologyBeforeTimedRead,
+		readerTopology: readerTopologyBeforeTimedRead,
+		expectedWriterPeerHash: writerTopologyBeforeUpload.peerHash,
+		expectedReaderPeerHash: readerTopologyBeforeUpload.peerHash,
+		expectedWriterPeerId: writerTopologyBeforeUpload.peerId,
+		expectedReaderPeerId: readerTopologyBeforeUpload.peerId,
+	});
+	const postTimedReadTransportStability = validateTransportTopologyStability({
+		control,
+		phase: "post",
+		writerTopology: writerTopologyAfterTimedRead,
+		readerTopology: readerTopologyAfterTimedRead,
+		expectedWriterPeerHash: writerTopologyBeforeUpload.peerHash,
+		expectedReaderPeerHash: readerTopologyBeforeUpload.peerHash,
+		expectedWriterPeerId: writerTopologyBeforeUpload.peerId,
+		expectedReaderPeerId: readerTopologyBeforeUpload.peerId,
+		latestFinishedAt:
+			downloadCompletionObservedAt +
+			TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS,
+	});
 	const postTimedReadTopologyCaptureDelayMs = requireNonNegativeSafeInteger(
 		control.postTimedReadTopologyCaptureDelayMs,
 		"readerLocalityControl.postTimedReadTopologyCaptureDelayMs",
@@ -2872,10 +4056,6 @@ const validateReaderLocalityControl = (result, invocation) => {
 		downloadMemoryTelemetry.startedAt,
 		"downloadMemoryTelemetry.startedAt",
 	);
-	const downloadMemoryStoppedAt = requirePositiveSafeInteger(
-		downloadMemoryTelemetry.finishedAt,
-		"downloadMemoryTelemetry.finishedAt",
-	);
 	const terminalIdle = validateLocalChunkPrefixObservation(
 		control.terminalIdleObservation,
 		"readerLocalityControl.terminalIdleObservation",
@@ -2887,8 +4067,7 @@ const validateReaderLocalityControl = (result, invocation) => {
 		terminalIdle.chunkCount !== canonicalChunkCount ||
 		terminalIdle.blockCount !== canonicalChunkCount ||
 		terminalIdle.indexRowCount !== expectedTerminalIndexRowCount ||
-		terminalIdle.indexedChunkIndices.length !==
-			expectedTerminalIndexRowCount ||
+		terminalIdle.indexedChunkIndices.length !== expectedTerminalIndexRowCount ||
 		terminalIdle.persistChunkReads !== true ||
 		control.terminalTopologyRole !== expectedTerminalTopology ||
 		control.terminalTopologyExpectationSatisfied !== true
@@ -3011,14 +4190,10 @@ const validateReaderLocalityControl = (result, invocation) => {
 		writerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
 		readerTopologyBeforeTimedRead.capturedAt > downloadStartedAt ||
 		downloadFinishedAt > downloadCompletionObservedAt ||
-		postTimedReadTransportStability.startedAt <
-			downloadCompletionObservedAt ||
-		postTimedReadTransportStability.startedAt < downloadMemoryStoppedAt ||
+		postTimedReadTransportStability.startedAt < downloadCompletionObservedAt ||
 		postTimedReadTransportStability.finishedAt > integrityVerifiedAt ||
 		writerTopologyAfterTimedRead.capturedAt < downloadCompletionObservedAt ||
 		readerTopologyAfterTimedRead.capturedAt < downloadCompletionObservedAt ||
-		writerTopologyAfterTimedRead.capturedAt < downloadMemoryStoppedAt ||
-		readerTopologyAfterTimedRead.capturedAt < downloadMemoryStoppedAt ||
 		writerTopologyAfterTimedRead.capturedAt > integrityVerifiedAt ||
 		readerTopologyAfterTimedRead.capturedAt > integrityVerifiedAt ||
 		integrityVerifiedAt !== result.integrityVerifiedAt ||
@@ -3526,14 +4701,17 @@ export const validateBenchmarkResult = (
 			expectedFixtureSeed,
 			expectedInvocation,
 		);
-		const readWindow = validateUploadTimings(result, expectedInvocation);
+		const readWindow = validateUploadTimings(
+			result,
+			expectedInvocation,
+			integrityVerifiedAt,
+		);
 		if (integrityVerifiedAt < readWindow.downloadCompletionObservedAt) {
 			throw new Error(
 				"Benchmark aggregate integrity gate precedes download completion",
 			);
 		}
 		validateUploadProgressTelemetry(result, expectedInvocation);
-		validateDownloadMemoryTelemetry(result, expectedInvocation, readWindow);
 		validateRequestedUploadKnobs(result, expectedInvocation);
 		validateZeroErrors(result, "upload result");
 		const readerLocalityControl = validateReaderLocalityControl(
@@ -3544,6 +4722,20 @@ export const validateBenchmarkResult = (
 			integrityVerifiedAt,
 			terminalTopologyFinishedAt:
 				readerLocalityControl?.terminalTopologyFinishedAt ?? null,
+		});
+		const shutdownWindow = validateResourceAndShutdownEvidence(
+			result,
+			expectedInvocation,
+			readWindow,
+			{
+				integrityVerifiedAt,
+				terminalTopologyFinishedAt:
+					readerLocalityControl?.terminalTopologyFinishedAt ?? null,
+			},
+		);
+		validateDownloadMemoryTelemetry(result, expectedInvocation, {
+			...readWindow,
+			...shutdownWindow,
 		});
 		if (result.unexpectedSeederDrop !== false) {
 			throw new Error(

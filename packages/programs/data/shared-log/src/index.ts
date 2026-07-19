@@ -3216,6 +3216,13 @@ export interface SharedLogEvents extends ProgramEvents {
 	"replicator:mature": CustomEvent<ReplicatorMatureEvent>;
 }
 
+export type SharedLogRuntimeSnapshot = Readonly<{
+	nativeGraph: Readonly<{
+		active: boolean;
+		useHeads: boolean;
+	}>;
+}>;
+
 @variant("shared_log")
 export class SharedLog<
 	T,
@@ -14170,6 +14177,26 @@ export class SharedLog<
 	async getMemoryUsage() {
 		return this.log.blocks.size();
 		/* ((await this.log.entryIndex?.getMemoryUsage()) || 0) */ // + (await this.log.blocks.size())
+	}
+
+	/** Return a detached snapshot of effective shared-log runtime settings. */
+	getRuntimeSnapshot(): SharedLogRuntimeSnapshot {
+		const nativeGraph = this.log.entryIndex.properties.nativeGraph;
+		const active = nativeGraph?.graph != null;
+		return Object.freeze({
+			nativeGraph: Object.freeze({
+				active,
+				useHeads: active && nativeGraph?.useHeads === true,
+			}),
+		});
+	}
+
+	/**
+	 * Return a detached snapshot of the optional eager-response cache.
+	 * Undefined means eager response retention is disabled for this log.
+	 */
+	getEagerBlockCacheTelemetry() {
+		return this.remoteBlocks?.getEagerBlockCacheTelemetry();
 	}
 
 	private clampReplicas(value: number) {

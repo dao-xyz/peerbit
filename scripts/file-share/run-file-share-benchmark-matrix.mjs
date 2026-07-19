@@ -162,81 +162,168 @@ const resolveVariantSpecs = async (variantSpecs) => {
 	return assertUniqueResolvedVariantCommits(resolved);
 };
 
-const summarizeUploadMatrix = (variantSummaries) => {
+const hasRuntimeConfigurationCohortKey = (entry) =>
+	entry != null &&
+	typeof entry === "object" &&
+	Object.hasOwn(entry, "runtimeConfigurationCohortKey");
+
+const runtimeConfigurationCohortKey = (entry) =>
+	typeof entry?.runtimeConfigurationCohortKey === "string"
+		? entry.runtimeConfigurationCohortKey
+		: null;
+
+const createUploadMatrixRow = ({
+	summary,
+	adaptive,
+	fixed1,
+	runtimeAware,
+	runtimeKey,
+}) => {
+	const comparison = (() => {
+		if (!summary.comparison || !adaptive || !fixed1) {
+			return null;
+		}
+		if (!runtimeAware) {
+			return summary.comparison;
+		}
+		return runtimeKey !== null &&
+			summary.comparison.runtimeConfigurationCohortKey === runtimeKey
+			? summary.comparison
+			: null;
+	})();
+	return {
+		variant: summary.variant,
+		...(runtimeAware ? { runtimeConfigurationCohortKey: runtimeKey } : {}),
+		readerLocalChunkTarget: fixed1?.readerLocalChunkTarget ?? null,
+		readerLocalChunkMaxOvershoot: fixed1?.readerLocalChunkMaxOvershoot ?? null,
+		readerLocalChunkBlockCount: fixed1?.readerLocalChunkBlockCount ?? null,
+		readerLocalChunkIndexRowCount:
+			fixed1?.readerLocalChunkIndexRowCount ?? null,
+		readerLocalityCohortKey: fixed1?.readerLocalityCohortKey ?? null,
+		cohortRuns: fixed1?.runs ?? null,
+		cohortPassed: fixed1?.passed ?? null,
+		cohortFailed: fixed1?.failed ?? null,
+		downloadSink:
+			comparison?.downloadSink ??
+			adaptive?.downloadSink ??
+			fixed1?.downloadSink ??
+			null,
+		primaryDownloadMetric:
+			comparison?.primaryDownloadMetric ??
+			adaptive?.primaryDownloadMetric ??
+			fixed1?.primaryDownloadMetric ??
+			null,
+		primaryDownloadAuthoritative:
+			comparison?.primaryDownloadAuthoritative ??
+			adaptive?.primaryDownloadAuthoritative ??
+			fixed1?.primaryDownloadAuthoritative ??
+			null,
+		adaptiveAvgMs:
+			comparison?.adaptiveAvgMs ?? adaptive?.uploadDurationMsAvg ?? null,
+		fixed1AvgMs: comparison?.fixed1AvgMs ?? fixed1?.uploadDurationMsAvg ?? null,
+		adaptiveVsFixed1Pct: comparison?.adaptiveVsFixed1Pct ?? null,
+		adaptiveWriterReadyMsAvg: adaptive?.timeToWriterReadyMsAvg ?? null,
+		fixed1WriterReadyMsAvg: fixed1?.timeToWriterReadyMsAvg ?? null,
+		adaptiveWriterReadyMsMedian: adaptive?.timeToWriterReadyMsMedian ?? null,
+		fixed1WriterReadyMsMedian: fixed1?.timeToWriterReadyMsMedian ?? null,
+		adaptiveReaderReadyMsAvg: adaptive?.timeToReaderReadyMsAvg ?? null,
+		fixed1ReaderReadyMsAvg: fixed1?.timeToReaderReadyMsAvg ?? null,
+		adaptiveReaderReadyMsMedian: adaptive?.timeToReaderReadyMsMedian ?? null,
+		fixed1ReaderReadyMsMedian: fixed1?.timeToReaderReadyMsMedian ?? null,
+		adaptiveLibraryStreamWallMsAvg: adaptive?.libraryStreamWallMsAvg ?? null,
+		fixed1LibraryStreamWallMsAvg: fixed1?.libraryStreamWallMsAvg ?? null,
+		adaptiveLibraryStreamWallMsMedian:
+			adaptive?.libraryStreamWallMsMedian ?? null,
+		fixed1LibraryStreamWallMsMedian: fixed1?.libraryStreamWallMsMedian ?? null,
+		libraryStreamWallDeltaMs: comparison?.libraryStreamWallDeltaMs ?? null,
+		adaptiveVsFixed1LibraryStreamWallPct:
+			comparison?.adaptiveVsFixed1LibraryStreamWallPct ?? null,
+		adaptiveStatus:
+			adaptive == null ? null : adaptive.failed === 0 ? "passed" : "failed",
+		fixed1Status:
+			fixed1 == null ? null : fixed1.failed === 0 ? "passed" : "failed",
+		adaptiveErrorCount: adaptive?.errorCount ?? null,
+		fixed1ErrorCount: fixed1?.errorCount ?? null,
+		adaptiveIncompleteErrorCollections:
+			adaptive?.incompleteErrorCollections ?? null,
+		fixed1IncompleteErrorCollections:
+			fixed1?.incompleteErrorCollections ?? null,
+		adaptiveRequestFailureCount: adaptive?.requestFailureCount ?? null,
+		fixed1RequestFailureCount: fixed1?.requestFailureCount ?? null,
+	};
+};
+
+export const summarizeUploadMatrix = (variantSummaries) => {
 	return variantSummaries.flatMap((summary) => {
-		const adaptive = summary.summary.find((entry) => entry.mode === "adaptive");
+		const adaptiveEntries = summary.summary.filter(
+			(entry) => entry.mode === "adaptive",
+		);
 		const fixed1Entries = summary.summary.filter(
 			(entry) => entry.mode === "fixed1",
 		);
 		const controlledFixed1Entries = fixed1Entries.filter(
 			(entry) => entry.readerLocalChunkTarget != null,
 		);
-		const cohorts =
+		const fixed1Cohorts =
 			controlledFixed1Entries.length > 0
 				? controlledFixed1Entries
-				: [fixed1Entries[0]];
-		return cohorts.map((fixed1) => ({
-			variant: summary.variant,
-			readerLocalChunkTarget: fixed1?.readerLocalChunkTarget ?? null,
-			readerLocalChunkMaxOvershoot:
-				fixed1?.readerLocalChunkMaxOvershoot ?? null,
-			readerLocalChunkBlockCount: fixed1?.readerLocalChunkBlockCount ?? null,
-			readerLocalChunkIndexRowCount:
-				fixed1?.readerLocalChunkIndexRowCount ?? null,
-			readerLocalityCohortKey: fixed1?.readerLocalityCohortKey ?? null,
-			cohortRuns: fixed1?.runs ?? null,
-			cohortPassed: fixed1?.passed ?? null,
-			cohortFailed: fixed1?.failed ?? null,
-			downloadSink:
-				summary.comparison?.downloadSink ??
-				adaptive?.downloadSink ??
-				fixed1?.downloadSink ??
-				null,
-			primaryDownloadMetric:
-				summary.comparison?.primaryDownloadMetric ??
-				adaptive?.primaryDownloadMetric ??
-				fixed1?.primaryDownloadMetric ??
-				null,
-			primaryDownloadAuthoritative:
-				summary.comparison?.primaryDownloadAuthoritative ??
-				adaptive?.primaryDownloadAuthoritative ??
-				fixed1?.primaryDownloadAuthoritative ??
-				null,
-			adaptiveAvgMs: summary.comparison?.adaptiveAvgMs ?? null,
-			fixed1AvgMs:
-				summary.comparison?.fixed1AvgMs ?? fixed1?.uploadDurationMsAvg ?? null,
-			adaptiveVsFixed1Pct: summary.comparison?.adaptiveVsFixed1Pct ?? null,
-			adaptiveWriterReadyMsAvg: adaptive?.timeToWriterReadyMsAvg ?? null,
-			fixed1WriterReadyMsAvg: fixed1?.timeToWriterReadyMsAvg ?? null,
-			adaptiveWriterReadyMsMedian: adaptive?.timeToWriterReadyMsMedian ?? null,
-			fixed1WriterReadyMsMedian: fixed1?.timeToWriterReadyMsMedian ?? null,
-			adaptiveReaderReadyMsAvg: adaptive?.timeToReaderReadyMsAvg ?? null,
-			fixed1ReaderReadyMsAvg: fixed1?.timeToReaderReadyMsAvg ?? null,
-			adaptiveReaderReadyMsMedian: adaptive?.timeToReaderReadyMsMedian ?? null,
-			fixed1ReaderReadyMsMedian: fixed1?.timeToReaderReadyMsMedian ?? null,
-			adaptiveLibraryStreamWallMsAvg: adaptive?.libraryStreamWallMsAvg ?? null,
-			fixed1LibraryStreamWallMsAvg: fixed1?.libraryStreamWallMsAvg ?? null,
-			adaptiveLibraryStreamWallMsMedian:
-				adaptive?.libraryStreamWallMsMedian ?? null,
-			fixed1LibraryStreamWallMsMedian:
-				fixed1?.libraryStreamWallMsMedian ?? null,
-			libraryStreamWallDeltaMs:
-				summary.comparison?.libraryStreamWallDeltaMs ?? null,
-			adaptiveVsFixed1LibraryStreamWallPct:
-				summary.comparison?.adaptiveVsFixed1LibraryStreamWallPct ?? null,
-			adaptiveStatus:
-				adaptive == null ? null : adaptive.failed === 0 ? "passed" : "failed",
-			fixed1Status:
-				fixed1 == null ? null : fixed1.failed === 0 ? "passed" : "failed",
-			adaptiveErrorCount: adaptive?.errorCount ?? null,
-			fixed1ErrorCount: fixed1?.errorCount ?? null,
-			adaptiveIncompleteErrorCollections:
-				adaptive?.incompleteErrorCollections ?? null,
-			fixed1IncompleteErrorCollections:
-				fixed1?.incompleteErrorCollections ?? null,
-			adaptiveRequestFailureCount: adaptive?.requestFailureCount ?? null,
-			fixed1RequestFailureCount: fixed1?.requestFailureCount ?? null,
-		}));
+				: fixed1Entries;
+		const runtimeAware = [...adaptiveEntries, ...fixed1Cohorts].some(
+			hasRuntimeConfigurationCohortKey,
+		);
+		if (!runtimeAware) {
+			const legacyFixed1Cohorts =
+				fixed1Cohorts.length > 0 ? fixed1Cohorts : [undefined];
+			return legacyFixed1Cohorts.map((fixed1) =>
+				createUploadMatrixRow({
+					summary,
+					adaptive: adaptiveEntries[0],
+					fixed1,
+					runtimeAware: false,
+					runtimeKey: null,
+				}),
+			);
+		}
+
+		const rows = [];
+		const matchedAdaptiveEntries = new Set();
+		for (const fixed1 of fixed1Cohorts) {
+			const runtimeKey = runtimeConfigurationCohortKey(fixed1);
+			const matches =
+				runtimeKey === null
+					? []
+					: adaptiveEntries.filter(
+							(entry) => runtimeConfigurationCohortKey(entry) === runtimeKey,
+						);
+			const adaptive = matches.length === 1 ? matches[0] : undefined;
+			if (adaptive) {
+				matchedAdaptiveEntries.add(adaptive);
+			}
+			rows.push(
+				createUploadMatrixRow({
+					summary,
+					adaptive,
+					fixed1,
+					runtimeAware: true,
+					runtimeKey,
+				}),
+			);
+		}
+		for (const adaptive of adaptiveEntries) {
+			if (matchedAdaptiveEntries.has(adaptive)) {
+				continue;
+			}
+			rows.push(
+				createUploadMatrixRow({
+					summary,
+					adaptive,
+					fixed1: undefined,
+					runtimeAware: true,
+					runtimeKey: runtimeConfigurationCohortKey(adaptive),
+				}),
+			);
+		}
+		return rows;
 	});
 };
 
@@ -263,18 +350,37 @@ const summarizeMatrix = (variantSummaries, scenario) =>
 		? summarizeSeederProbeMatrix(variantSummaries)
 		: summarizeUploadMatrix(variantSummaries);
 
-const compareAdaptiveAcrossVariants = (variantSummaries, scenario) => {
-	return variantSummaries
-		.map((summary) => {
-			const adaptive = summary.summary.find(
-				(entry) => entry.mode === "adaptive",
-			);
+export const compareAdaptiveAcrossVariants = (variantSummaries, scenario) => {
+	const adaptiveByVariant = variantSummaries.map((summary) => ({
+		variant: summary.variant,
+		entries: summary.summary.filter((entry) => entry.mode === "adaptive"),
+	}));
+	const runtimeAware = adaptiveByVariant.some(({ entries }) =>
+		entries.some(hasRuntimeConfigurationCohortKey),
+	);
+	if (runtimeAware) {
+		if (adaptiveByVariant.some(({ entries }) => entries.length !== 1)) {
+			return null;
+		}
+		const runtimeKeys = adaptiveByVariant.map(({ entries }) =>
+			runtimeConfigurationCohortKey(entries[0]),
+		);
+		if (
+			runtimeKeys.some((runtimeKey) => runtimeKey === null) ||
+			new Set(runtimeKeys).size !== 1
+		) {
+			return null;
+		}
+	}
+	return adaptiveByVariant
+		.map(({ variant, entries }) => {
+			const adaptive = entries[0];
 			if (!adaptive) {
 				return null;
 			}
 			return scenario === "seeder-probe"
 				? {
-						variant: summary.variant,
+						variant,
 						reachedTargetRuns: adaptive.reachedTargetRuns ?? null,
 						writerSeedersLastAvg: adaptive.writerSeedersLastAvg ?? null,
 						readerSeedersLastAvg: adaptive.readerSeedersLastAvg ?? null,
@@ -282,7 +388,13 @@ const compareAdaptiveAcrossVariants = (variantSummaries, scenario) => {
 					}
 				: adaptive.uploadDurationMsAvg != null
 					? {
-							variant: summary.variant,
+							variant,
+							...(runtimeAware
+								? {
+										runtimeConfigurationCohortKey:
+											adaptive.runtimeConfigurationCohortKey,
+									}
+								: {}),
 							downloadSink: adaptive.downloadSink ?? null,
 							primaryDownloadMetric: adaptive.primaryDownloadMetric ?? null,
 							primaryDownloadAuthoritative:
@@ -442,6 +554,7 @@ const runVariantBenchmark = async ({
 	uploadTimeoutMs,
 	downloadTimeoutMs,
 	downloadSink,
+	postTransferSoakMs,
 	postUploadMonitorMs,
 	pollMs,
 	minReadySeeders,
@@ -511,6 +624,9 @@ const runVariantBenchmark = async ({
 			? ["--download-timeout-ms", String(downloadTimeoutMs)]
 			: []),
 		...(downloadSink != null ? ["--download-sink", downloadSink] : []),
+		...(postTransferSoakMs != null
+			? ["--post-transfer-soak-ms", String(postTransferSoakMs)]
+			: []),
 		...(postUploadMonitorMs != null
 			? ["--post-upload-monitor-ms", String(postUploadMonitorMs)]
 			: []),
@@ -665,6 +781,7 @@ const main = async () => {
 	const network = args.network ?? "local";
 	const uploadTimeoutMs = args["upload-timeout-ms"];
 	const downloadTimeoutMs = args["download-timeout-ms"];
+	const postTransferSoakMs = args["post-transfer-soak-ms"];
 	const postUploadMonitorMs = args["post-upload-monitor-ms"];
 	const pollMs = args["poll-ms"];
 	const minReadySeeders = args["min-ready-seeders"];
@@ -726,9 +843,7 @@ const main = async () => {
 			"--reader-local-chunk-target and --reader-local-chunk-max-overshoot must be provided together",
 		);
 	}
-	if (
-		(readerLocalChunkTarget == null) !== (readerTerminalTopology == null)
-	) {
+	if ((readerLocalChunkTarget == null) !== (readerTerminalTopology == null)) {
 		throw new Error(
 			"--reader-terminal-topology must be provided exactly when --reader-local-chunk-target is provided",
 		);
@@ -883,6 +998,7 @@ const main = async () => {
 				uploadTimeoutMs,
 				downloadTimeoutMs,
 				downloadSink,
+				postTransferSoakMs,
 				postUploadMonitorMs,
 				pollMs,
 				minReadySeeders,
@@ -931,6 +1047,7 @@ const main = async () => {
 				downloadSink,
 				uploadTimeoutMs: optionalNumber(uploadTimeoutMs),
 				downloadTimeoutMs: optionalNumber(downloadTimeoutMs),
+				postTransferSoakMs: optionalNumber(postTransferSoakMs),
 				postUploadMonitorMs: optionalNumber(postUploadMonitorMs),
 				pollMs: optionalNumber(pollMs),
 				minReadySeeders: optionalNumber(minReadySeeders),

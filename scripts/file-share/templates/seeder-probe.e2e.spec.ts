@@ -12,6 +12,9 @@ const READY_TIMEOUT_MS = Number(process.env.PW_READY_TIMEOUT_MS || "180000");
 const SAMPLE_MS = Number(process.env.PW_SAMPLE_MS || "15000");
 const SAMPLE_COUNT = Number(process.env.PW_SAMPLE_COUNT || "4");
 const TARGET_SEEDERS = Number(process.env.PW_TARGET_SEEDERS || "2");
+const POST_TRANSFER_SOAK_MS = Number(
+	process.env.PW_POST_TRANSFER_SOAK_MS ?? "0",
+);
 const SAMPLE_COUNT_DEFINITION =
 	"observation-density divisor: planned interval is min(sampleMs, floor(readyTimeoutMs/sampleCount)) clamped to 1ms; convergence may finish early";
 const ERROR_COLLECTION_DEFINITION =
@@ -24,7 +27,7 @@ const EFFECTIVE_SAMPLE_INTERVAL_MS = Math.max(
 );
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 9,
+	version: 10,
 } as const;
 const RUN_NONCE = process.env.PW_BENCHMARK_RUN_NONCE;
 const parseJsonEnvironment = (name: string) => {
@@ -75,10 +78,13 @@ if (!Number.isSafeInteger(TARGET_SEEDERS) || TARGET_SEEDERS < 0) {
 		`Invalid PW_TARGET_SEEDERS='${process.env.PW_TARGET_SEEDERS}'`,
 	);
 }
+if (POST_TRANSFER_SOAK_MS !== 0) {
+	throw new Error("Seeder benchmarks require PW_POST_TRANSFER_SOAK_MS=0");
+}
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 4
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 5
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -87,6 +93,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	mode: MODE,
 	networkMode: NETWORK_MODE,
 	readyTimeoutMs: READY_TIMEOUT_MS,
+	postTransferSoakMs: POST_TRANSFER_SOAK_MS,
 	sampleMs: SAMPLE_MS,
 	sampleCount: SAMPLE_COUNT,
 	targetSeeders: TARGET_SEEDERS,
@@ -249,11 +256,10 @@ const getBodyText = async (page: Page) =>
 
 const withDeadline = async <T>(
 	promise: Promise<T>,
-	deadlineAt: number,
+	timeoutMs: number,
 	label: string,
 ): Promise<T> => {
-	const remainingMs = deadlineAt - Date.now();
-	if (remainingMs <= 0) {
+	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new Error(`${label} exceeded the seeder convergence deadline`);
 	}
 	let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -266,7 +272,7 @@ const withDeadline = async <T>(
 						reject(
 							new Error(`${label} exceeded the seeder convergence deadline`),
 						),
-					remainingMs,
+					timeoutMs,
 				);
 			}),
 		]);
@@ -361,6 +367,10 @@ test.describe("generated seeder probe", () => {
 			startedAt: number,
 			deadlineAt: number,
 		) => {
+			const remainingMs = deadlineAt - Date.now();
+			if (!Number.isSafeInteger(remainingMs) || remainingMs <= 0) {
+				throw new Error(`${label} began after the seeder convergence deadline`);
+			}
 			const [
 				writerSeeders,
 				readerSeeders,
@@ -377,7 +387,7 @@ test.describe("generated seeder probe", () => {
 					getBodyText(writer),
 					getBodyText(reader),
 				]),
-				deadlineAt,
+				remainingMs,
 				label,
 			);
 			const capturedAt = Date.now();
