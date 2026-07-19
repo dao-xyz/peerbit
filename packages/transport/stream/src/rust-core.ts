@@ -112,15 +112,25 @@ export interface RustBlockProviderCache {
 	clear(): void;
 }
 
+export type RustEagerBlockCacheStats = {
+	entries: number;
+	bytes: number;
+	peakEntries: number;
+	peakBytes: number;
+	evictions: number;
+	expirations: number;
+};
+
 /**
  * Eager-block cache with native bookkeeping. Block bytes stay host-side;
  * the native index decides retention/eviction.
  */
 export interface RustEagerBlockCache {
-	add(cid: string, bytes: Uint8Array): void;
+	add(cid: string, bytes: Uint8Array): boolean;
 	get(cid: string): Uint8Array | undefined;
 	del(cid: string): void;
 	clear(): void;
+	stats(): RustEagerBlockCacheStats;
 }
 
 /**
@@ -150,7 +160,11 @@ export interface RustBlockExchange {
 		ttlMs: number;
 		maxProvidersPerCid: number;
 	}): RustBlockProviderCache;
-	createEagerCache(init: { max: number; ttl: number }): RustEagerBlockCache;
+	createEagerCache(init: {
+		maxEntries: number;
+		maxBytes: number;
+		ttlMs: number;
+	}): RustEagerBlockCache;
 }
 
 /**

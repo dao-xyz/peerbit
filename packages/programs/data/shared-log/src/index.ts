@@ -6,7 +6,11 @@ import {
 	variant,
 } from "@dao-xyz/borsh";
 import type { AnyStore } from "@peerbit/any-store";
-import { AnyBlockStore, RemoteBlocks } from "@peerbit/blocks";
+import {
+	AnyBlockStore,
+	type EagerBlocksSetting,
+	RemoteBlocks,
+} from "@peerbit/blocks";
 import { cidifyString } from "@peerbit/blocks-interface";
 import { Cache } from "@peerbit/cache";
 import {
@@ -2570,7 +2574,7 @@ export type SharedLogOptions<
 	strictFullReplicaFallback?: boolean;
 	compatibility?: number;
 	domain?: ReplicationDomainConstructor<D>;
-	eagerBlocks?: boolean | { cacheSize?: number };
+	eagerBlocks?: EagerBlocksSetting;
 	fanout?: SharedLogFanoutOptions;
 };
 
@@ -12766,7 +12770,9 @@ export class SharedLog<
 				this.rpc.send(new BlocksMessage(message), options),
 			waitFor: this.rpc.waitFor.bind(this.rpc),
 			publicKey: this.node.identity.publicKey,
-			eagerBlocks: options?.eagerBlocks ?? true,
+			// Unsolicited block retention is opt-in. Explicit `true` retains the
+			// compatible eager path with bounded validation and storage budgets.
+			eagerBlocks: options?.eagerBlocks ?? false,
 			resolveProviders: async (cid, opts) => {
 				// 1) tracker-backed provider directory (best-effort, bounded)
 				try {

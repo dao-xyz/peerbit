@@ -37,4 +37,25 @@ describe("shared-log block publish adapter", () => {
 		]);
 		expect(sent[0].options.mode).to.equal(undefined);
 	});
+
+	it("does not retain unsolicited blocks unless eager mode is explicit", async () => {
+		session = await TestSession.connected(1);
+		db = await session.peers[0].open(new EventStore<string, any>());
+		const remoteBlocks = (db.log as any).remoteBlocks;
+		expect(remoteBlocks.getEagerBlockCacheTelemetry()).to.equal(undefined);
+	});
+
+	it("keeps explicit eager mode available with bounded defaults", async () => {
+		session = await TestSession.connected(1);
+		db = await session.peers[0].open(new EventStore<string, any>(), {
+			args: { eagerBlocks: true },
+		});
+		const remoteBlocks = (db.log as any).remoteBlocks;
+		const telemetry = remoteBlocks.getEagerBlockCacheTelemetry();
+		expect(telemetry.limits).to.include({
+			maxEntries: 1_000,
+			maxBytes: 32 * 1024 * 1024,
+			maxBlockBytes: 10 * 1024 * 1024,
+		});
+	});
 });

@@ -1,5 +1,5 @@
 // Fifo
-import { Yallist } from "yallist";
+import { Node, Yallist } from "yallist";
 
 export interface CacheData<T> {
 	value?: T | null;
@@ -9,10 +9,9 @@ export interface CacheData<T> {
 type Key = string | bigint | number;
 export class Cache<T = undefined> {
 	private _map: Map<Key, CacheData<T>>;
-	private deleted: Set<Key>;
 	private list: Yallist<Key>;
+	private nodes: Map<Key, Node<Key>>;
 	currentSize: number;
-	deletedSize: number;
 
 	max: number;
 	ttl?: number;
@@ -27,9 +26,6 @@ export class Cache<T = undefined> {
 
 	has(key: Key): boolean {
 		this.trim();
-		if (this.deleted.has(key)) {
-			return false;
-		}
 		return this._map.has(key);
 	}
 
@@ -39,9 +35,6 @@ export class Cache<T = undefined> {
 
 	get(key: Key): T | null | undefined {
 		this.trim();
-		if (this.deleted.has(key)) {
-			return undefined;
-		}
 		return this._map.get(key)?.value;
 	}
 
@@ -51,16 +44,14 @@ export class Cache<T = undefined> {
 			if (headKey?.value != null) {
 				const cacheValue = this._map.get(headKey.value);
 				if (!cacheValue) {
-					throw new Error("Cache value not found");
+					throw new Error("Cache list/map invariant broken");
 				}
 				const outOfDate = this.ttl != null && cacheValue.time < time - this.ttl;
 				if (outOfDate || this.currentSize > this.max) {
 					this.list.shift();
 					this._map.delete(headKey.value);
-					const wasDeleted = this.deleted.delete(headKey.value);
-					if (!wasDeleted) {
-						this.currentSize -= cacheValue.size;
-					}
+					this.nodes.delete(headKey.value);
+					this.currentSize -= cacheValue.size;
 				} else {
 					break;
 				}
@@ -72,33 +63,53 @@ export class Cache<T = undefined> {
 
 	del(key: Key): CacheData<T> | undefined {
 		const cacheValue = this._map.get(key);
-		if (cacheValue && !this.deleted.has(key)) {
-			this.deleted.add(key);
-			this.currentSize -= cacheValue.size;
-			return cacheValue;
-		}
-		return undefined;
+		if (!cacheValue) return undefined;
+		const node = this.nodes.get(key);
+		if (!node) throw new Error("Cache node not found");
+		this.list.removeNode(node);
+		this.nodes.delete(key);
+		this._map.delete(key);
+		this.currentSize -= cacheValue.size;
+		return cacheValue;
 	}
 
 	add(key: Key, value?: T, size = 1): void {
-		this.deleted.delete(key);
 		const time = Date.now();
-		if (!this._map.has(key)) {
-			this.list.push(key);
+		const previous = this._map.get(key);
+		if (!previous) {
+			const node = new Node(key);
+			this.list.pushNode(node);
+			this.nodes.set(key, node);
 			this.currentSize += size;
+		} else {
+			const node = this.nodes.get(key);
+			if (!node) throw new Error("Cache node not found");
+			this.list.removeNode(node);
+			this.list.pushNode(node);
+			this.currentSize += size - previous.size;
 		}
 		this._map.set(key, { time, value: value ?? null, size });
 		this.trim(time);
 	}
 
-	addMany(entries: Iterable<readonly [key: Key, value?: T, size?: number]>): void {
+	addMany(
+		entries: Iterable<readonly [key: Key, value?: T, size?: number]>,
+	): void {
 		const time = Date.now();
 		let changed = false;
 		for (const [key, value, size = 1] of entries) {
-			this.deleted.delete(key);
-			if (!this._map.has(key)) {
-				this.list.push(key);
+			const previous = this._map.get(key);
+			if (!previous) {
+				const node = new Node(key);
+				this.list.pushNode(node);
+				this.nodes.set(key, node);
 				this.currentSize += size;
+			} else {
+				const node = this.nodes.get(key);
+				if (!node) throw new Error("Cache node not found");
+				this.list.removeNode(node);
+				this.list.pushNode(node);
+				this.currentSize += size - previous.size;
 			}
 			this._map.set(key, { time, value: value ?? null, size });
 			changed = true;
@@ -111,7 +122,7 @@ export class Cache<T = undefined> {
 	clear(): void {
 		this.list = Yallist.create();
 		this._map = new Map();
-		this.deleted = new Set();
+		this.nodes = new Map();
 		this.currentSize = 0;
 	}
 

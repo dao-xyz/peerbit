@@ -171,9 +171,12 @@ Same ingress as 2.2 (`rustCore` implies `nativeWire`). In addition:
   tracker/provider directories stay host-side.
 - **DirectBlock / RemoteBlocks**: `BlockMessage` codec, default provider
   resolution (negotiated→connected, capped 32), provider-hint cache and
-  eager-block index (FIFO cache port with the lazy-delete semantics and
-  verbatim constants of `@peerbit/cache`). Natively stored blocks are served
-  via `block_response_payload` (in `peerbit_log_rust`): the borsh
+  eager-block index. The native eager index keeps exact entry and byte
+  accounting with immediate delete/replacement and TTL eviction; the host
+  keeps exact-size byte buffers and owns the expiry timer. Unsolicited bytes
+  enter either cache only after the host's bounded CID integrity gate, and
+  provider learning occurs only after validation. Natively stored blocks are
+  served via `block_response_payload` (in `peerbit_log_rust`): the borsh
   `BlockResponse` is serialized inside wasm, so served block bytes never
   materialize as a JS value.
 

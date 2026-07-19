@@ -1,5 +1,9 @@
 import { serialize } from "@dao-xyz/borsh";
-import { createBlock, stringifyCid } from "@peerbit/blocks-interface";
+import {
+	calculateRawCid,
+	createBlock,
+	stringifyCid,
+} from "@peerbit/blocks-interface";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForNeighbour } from "@peerbit/stream";
 import {
@@ -1440,6 +1444,7 @@ describe("transport", function () {
 			{ to: [session.peers[1].peerId] },
 		);
 		await db2ReceivedBlockResponse.promise;
+		await db2.waitForEagerBlockValidation();
 
 		// now try to fetch the block and make sure no requests are sent
 		let sent = false;
@@ -1453,6 +1458,96 @@ describe("transport", function () {
 		);
 		expect(bytes).to.deep.equal(data);
 		expect(sent).to.be.false;
+	});
+
+	it("bounds and integrity-gates unsolicited eager blocks", async () => {
+		session = await TestSession.disconnected(1, {
+			services: {
+				blocks: (components) =>
+					new DirectBlock(components, {
+						eagerBlocks: {
+							cacheSize: 2,
+							maxBytes: 8,
+							maxBlockBytes: 4,
+							ttlMs: 10_000,
+							validationConcurrency: 1,
+							maxPendingEntries: 1,
+							maxPendingBytes: 4,
+						},
+					}),
+			},
+		});
+		await store(session, 0).start();
+
+		const db = store(session, 0);
+		const remote = (db as any).remoteBlocks as RemoteBlocks;
+		const firstBytes = new Uint8Array([1, 2, 3, 4]);
+		const first = await calculateRawCid(firstBytes);
+		const backing = new Uint8Array(1024 * 1024);
+		backing.set(firstBytes, 123);
+		const aliased = backing.subarray(123, 127);
+
+		await remote.onMessage(new BlockResponse(first.cid, aliased), {
+			from: "validated-provider",
+		});
+		// Admission copied synchronously, before the decoder's large frame can be
+		// released or reused by the transport.
+		backing.fill(9);
+		await db.waitForEagerBlockValidation();
+		const cachedFirst = (remote as any)._blockCache.get(
+			first.cid,
+		) as Uint8Array;
+		expect(cachedFirst).to.deep.equal(firstBytes);
+		expect(cachedFirst.buffer.byteLength).to.equal(firstBytes.byteLength);
+
+		const secondBytes = new Uint8Array([5, 6, 7, 8]);
+		const thirdBytes = new Uint8Array([9, 10, 11, 12]);
+		const second = await calculateRawCid(secondBytes);
+		const third = await calculateRawCid(thirdBytes);
+		await Promise.all([
+			remote.onMessage(new BlockResponse(second.cid, secondBytes)),
+			remote.onMessage(new BlockResponse(third.cid, thirdBytes)),
+		]);
+		await db.waitForEagerBlockValidation();
+
+		let telemetry = db.getEagerBlockCacheTelemetry()!;
+		expect(telemetry.entries).to.equal(2);
+		expect(telemetry.bytes).to.equal(8);
+		expect(telemetry.peakBytes).to.equal(8);
+		expect(telemetry.rejectedPending).to.equal(1);
+		expect(telemetry.evictions).to.equal(0);
+
+		// Once the bounded validation slot drains, the rejected response can be
+		// retried and normal FIFO eviction still observes both retention limits.
+		await remote.onMessage(new BlockResponse(third.cid, thirdBytes));
+		await db.waitForEagerBlockValidation();
+		telemetry = db.getEagerBlockCacheTelemetry()!;
+		expect(telemetry.evictions).to.equal(1);
+		expect((remote as any)._blockCache.get(first.cid)).to.equal(undefined);
+
+		const invalidExpected = await calculateRawCid(
+			new Uint8Array([13, 14, 15, 16]),
+		);
+		await remote.onMessage(
+			new BlockResponse(invalidExpected.cid, new Uint8Array([0, 0, 0, 0])),
+		);
+		const oversizedBytes = new Uint8Array([1, 2, 3, 4, 5]);
+		const oversized = await calculateRawCid(oversizedBytes);
+		await remote.onMessage(new BlockResponse(oversized.cid, oversizedBytes));
+		await remote.onMessage(
+			new BlockResponse("x".repeat(257), new Uint8Array()),
+		);
+		await db.waitForEagerBlockValidation();
+
+		telemetry = db.getEagerBlockCacheTelemetry()!;
+		expect(telemetry.rejectedIntegrity).to.equal(1);
+		expect(telemetry.rejectedSize).to.equal(1);
+		expect(telemetry.rejectedCid).to.equal(1);
+		expect(telemetry.entries).to.equal(2);
+		expect(await db.get(second.cid, { remote: true })).to.deep.equal(
+			secondBytes,
+		);
+		expect(db.getEagerBlockCacheTelemetry()!.hits).to.equal(1);
 	});
 
 	/* it('can handle conurrent read/write', async () => {
