@@ -20,16 +20,20 @@ import {
 	validateBenchmarkResultEnvelope,
 } from "./benchmark-validity.mjs";
 import {
+	DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE,
 	DOWNLOAD_MEMORY_HOST_ATTRIBUTION,
 	DOWNLOAD_MEMORY_HOST_ATTRIBUTION_LIMITATIONS,
 	DOWNLOAD_MEMORY_HOST_SCOPE,
+	DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
 	DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES,
 	DOWNLOAD_MEMORY_NODE_SCOPE,
+	DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
 	DOWNLOAD_MEMORY_PROFILE,
 	DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 	DOWNLOAD_MEMORY_SETUP_ALLOWANCE_MS,
 	DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS,
 	DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+	calculateDownloadMemoryMaxLiveSampleGapMs,
 	calculateDownloadMemoryMaxSamples,
 } from "./templates/download-memory-telemetry.mjs";
 
@@ -44,6 +48,10 @@ const SAMPLE_COUNT_DEFINITION =
 	"observation-density divisor: planned interval is min(sampleMs, floor(readyTimeoutMs/sampleCount)) clamped to 1ms; convergence may finish early";
 const POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(250ms, pollMs + 250ms) for the final poll and event-loop scheduling";
+const POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION =
+	"max(250ms, pollMs + 250ms) for the requested post-transfer timer and event-loop scheduling";
+const POST_TRANSFER_SOAK_DEFINITION =
+	"idle observation window beginning after transfer integrity and any requested terminal-topology validation, ending before terminal resource capture and peer shutdown";
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(5000ms, pollMs + 1000ms) for browser actions and event-loop scheduling";
 const TIME_TO_WRITER_READY_DEFINITION =
@@ -66,6 +74,22 @@ const PRIMARY_DOWNLOAD_METRIC_DEFINITION =
 	"authoritative only within one fixed download-sink cohort; hash-only is the standardized primary cohort and includes awaited sink writes plus any overlapping read-ahead";
 const DEMAND_WAIT_DEFINITION =
 	"wall-clock time each sequential stream consumer awaited its scheduled chunk";
+const RESOURCE_STORAGE_DEFINITION =
+	"Peerbit logical usage and browser origin-wide navigator.storage estimates; deltas are later minus earlier";
+const RESOURCE_EAGER_DEFINITION =
+	"deltas of monotonic eager-cache admission, hit, eviction, expiration, and rejection counters; null when eager telemetry is disabled or unavailable";
+const EAGER_COUNTERS = [
+	"evictions",
+	"expirations",
+	"admitted",
+	"hits",
+	"rejectedCid",
+	"rejectedCodec",
+	"rejectedSize",
+	"rejectedPending",
+	"rejectedIntegrity",
+	"rejectedLifecycle",
+];
 const PROVENANCE = {
 	harness: {
 		requestedRef: "harness-worktree",
@@ -98,6 +122,7 @@ const INVOCATION = createBenchmarkInvocation({
 	uploadTimeoutMs: 600_000,
 	downloadTimeoutMs: 600_000,
 	postUploadMonitorMs: 50,
+	postTransferSoakMs: 50,
 	pollMs: 1_000,
 	minReadySeeders: 2,
 	readyTimeoutMs: 180_000,
@@ -114,54 +139,176 @@ const options = {
 	expectedInvocation: INVOCATION,
 };
 
+const calculateSamplingWindowBudgetMs = (invocation) => {
+	const transferToleranceMs = Math.max(5_000, invocation.pollMs + 1_000);
+	const localityBudgetMs =
+		invocation.readerLocalChunkTarget === null
+			? 0
+			: 3 * invocation.readyTimeoutMs +
+				2 * 5_000 +
+				(invocation.readerLocalChunkTarget > 0
+					? invocation.downloadTimeoutMs + transferToleranceMs
+					: 0);
+	return Math.max(
+		20 * 60 * 1_000,
+		3 * invocation.readyTimeoutMs +
+			invocation.uploadTimeoutMs +
+			invocation.downloadTimeoutMs +
+			localityBudgetMs +
+			invocation.postUploadMonitorMs +
+			invocation.postTransferSoakMs +
+			5 * 60 * 1_000,
+	);
+};
+
 const createDownloadMemoryTelemetry = (
 	readStartedAt,
 	readFinishedAt,
 	invocation = INVOCATION,
+	{
+		afterSoakStartedAt = readFinishedAt + 61,
+		shutdownFinishedAt = readFinishedAt + 73,
+	} = {},
 ) => {
+	const schedulingToleranceMs = Math.max(5_000, invocation.pollMs + 1_000);
+	const samplingWindowBudgetMs = calculateSamplingWindowBudgetMs(invocation);
 	const maxSamplesPerSeries = calculateDownloadMemoryMaxSamples({
-		downloadTimeoutMs: invocation.downloadTimeoutMs,
-		schedulingToleranceMs: Math.max(5_000, invocation.pollMs + 1_000),
+		samplingWindowBudgetMs,
 	});
-	const heap = (scope, startedOffset, finishedOffset, bytes) => ({
-		memoryKind: "javascript-heap",
-		scope,
-		metric: "JSHeapUsedSize",
-		unit: "bytes",
-		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
-		startedAt: readStartedAt - startedOffset,
-		finishedAt: readFinishedAt + finishedOffset,
-		sampleCount: 2,
-		startBytes: bytes,
-		endBytes: bytes + 20,
-		peakBytes: bytes + 20,
-		samples: [
-			{ capturedAt: readStartedAt - 1, usedBytes: bytes },
-			{ capturedAt: readFinishedAt + 1, usedBytes: bytes + 20 },
-		],
-		samplingErrors: [],
-		samplingErrorOverflowCount: 0,
-		cleanupWarnings: [],
-		cleanupWarningOverflowCount: 0,
+	const liveSampleMaxGapMs = calculateDownloadMemoryMaxLiveSampleGapMs({
+		schedulingToleranceMs,
 	});
-	const readerJsHeap = heap("reader-renderer", 3, 2, 100);
-	const writerJsHeap = heap("writer-renderer", 2, 3, 200);
+	const manualSampleAt = afterSoakStartedAt - 1;
+	const terminalSampleAt = shutdownFinishedAt + 1;
+	const seriesSamplingFields = {
+		maxSamples: maxSamplesPerSeries,
+		periodicSampleLimit:
+			maxSamplesPerSeries - DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE,
+		periodicSampleCount: 1,
+		capacityExhaustedBeforeTerminal: false,
+		samplingCapacitySufficient: true,
+		manualSampleCount: 1,
+		lastManualSampleAt: manualSampleAt,
+		terminalSampleAttempted: true,
+		terminalSampleCaptured: true,
+		terminalSampleAt,
+	};
+	const heap = (scope, startedOffset, finishedOffset, bytes) => {
+		const samples = [
+			{
+				capturedAt: readStartedAt - 1,
+				sampleKind: "initial",
+				usedBytes: bytes,
+				totalBytes: bytes + 200,
+				embedderHeapUsedBytes: bytes + 20,
+				backingStorageBytes: bytes + 30,
+			},
+			{
+				capturedAt: readFinishedAt + 1,
+				sampleKind: "periodic",
+				usedBytes: bytes + 20,
+				totalBytes: bytes + 240,
+				embedderHeapUsedBytes: bytes + 25,
+				backingStorageBytes: bytes + 35,
+			},
+			{
+				capturedAt: manualSampleAt,
+				sampleKind: "manual",
+				usedBytes: bytes + 15,
+				totalBytes: bytes + 230,
+				embedderHeapUsedBytes: bytes + 24,
+				backingStorageBytes: bytes + 34,
+			},
+			{
+				capturedAt: terminalSampleAt,
+				sampleKind: "terminal",
+				usedBytes: bytes + 10,
+				totalBytes: bytes + 220,
+				embedderHeapUsedBytes: bytes + 22,
+				backingStorageBytes: bytes + 32,
+			},
+		];
+		const first = samples[0];
+		const last = samples.at(-1);
+		const peak = (key) => Math.max(...samples.map((sample) => sample[key]));
+		return {
+			memoryKind: "runtime-heap",
+			scope,
+			metric: "Runtime.getHeapUsage",
+			unit: "bytes",
+			sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+			startedAt: readStartedAt - startedOffset,
+			finishedAt: shutdownFinishedAt + finishedOffset,
+			sampleCount: samples.length,
+			startBytes: first.usedBytes,
+			endBytes: last.usedBytes,
+			peakBytes: peak("usedBytes"),
+			startUsedBytes: first.usedBytes,
+			endUsedBytes: last.usedBytes,
+			peakUsedBytes: peak("usedBytes"),
+			startTotalBytes: first.totalBytes,
+			endTotalBytes: last.totalBytes,
+			peakTotalBytes: peak("totalBytes"),
+			startEmbedderHeapUsedBytes: first.embedderHeapUsedBytes,
+			endEmbedderHeapUsedBytes: last.embedderHeapUsedBytes,
+			peakEmbedderHeapUsedBytes: peak("embedderHeapUsedBytes"),
+			startBackingStorageBytes: first.backingStorageBytes,
+			endBackingStorageBytes: last.backingStorageBytes,
+			peakBackingStorageBytes: peak("backingStorageBytes"),
+			samples,
+			samplingErrors: [],
+			samplingErrorOverflowCount: 0,
+			cleanupWarnings: [],
+			cleanupWarningOverflowCount: 0,
+			...seriesSamplingFields,
+		};
+	};
+	const readerJsHeap = heap("reader-renderer", 3, 3, 100);
+	const writerJsHeap = heap("writer-renderer", 2, 4, 200);
 	const hostSamples = [
 		{
 			capturedAt: readStartedAt - 1,
+			sampleKind: "initial",
 			browserBytes: 1_000,
 			nodeBytes: 500,
+			nodeExternalBytes: 100,
+			nodeArrayBuffersBytes: 50,
 			combinedBytes: 1_500,
 			browserProcessCount: 2,
 			browserRoleBytes: { browser: 400, renderer: 600 },
 		},
 		{
 			capturedAt: readFinishedAt + 1,
+			sampleKind: "periodic",
 			browserBytes: 1_200,
 			nodeBytes: 550,
+			nodeExternalBytes: 120,
+			nodeArrayBuffersBytes: 60,
 			combinedBytes: 1_750,
 			browserProcessCount: 3,
 			browserRoleBytes: { browser: 450, renderer: 750 },
+		},
+		{
+			capturedAt: manualSampleAt,
+			sampleKind: "manual",
+			browserBytes: 1_150,
+			nodeBytes: 540,
+			nodeExternalBytes: 115,
+			nodeArrayBuffersBytes: 58,
+			combinedBytes: 1_690,
+			browserProcessCount: 3,
+			browserRoleBytes: { browser: 440, renderer: 710 },
+		},
+		{
+			capturedAt: terminalSampleAt,
+			sampleKind: "terminal",
+			browserBytes: 1_100,
+			nodeBytes: 525,
+			nodeExternalBytes: 110,
+			nodeArrayBuffersBytes: 55,
+			combinedBytes: 1_625,
+			browserProcessCount: 2,
+			browserRoleBytes: { browser: 425, renderer: 675 },
 		},
 	];
 	const hostRss = {
@@ -174,34 +321,54 @@ const createDownloadMemoryTelemetry = (
 		unit: "bytes",
 		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 		startedAt: readStartedAt - 1,
-		finishedAt: readFinishedAt + 4,
+		finishedAt: shutdownFinishedAt + 5,
 		sampleCount: hostSamples.length,
 		startBrowserBytes: 1_000,
-		endBrowserBytes: 1_200,
+		endBrowserBytes: 1_100,
 		peakBrowserBytes: 1_200,
 		startNodeBytes: 500,
-		endNodeBytes: 550,
+		endNodeBytes: 525,
 		peakNodeBytes: 550,
+		startNodeExternalBytes: 100,
+		endNodeExternalBytes: 110,
+		peakNodeExternalBytes: 120,
+		startNodeArrayBuffersBytes: 50,
+		endNodeArrayBuffersBytes: 55,
+		peakNodeArrayBuffersBytes: 60,
 		startCombinedBytes: 1_500,
-		endCombinedBytes: 1_750,
+		endCombinedBytes: 1_625,
 		peakCombinedBytes: 1_750,
 		startBrowserProcessCount: 2,
-		endBrowserProcessCount: 3,
+		endBrowserProcessCount: 2,
 		peakBrowserProcessCount: 3,
 		startBrowserRoleBytes: { browser: 400, renderer: 600 },
-		endBrowserRoleBytes: { browser: 450, renderer: 750 },
+		endBrowserRoleBytes: { browser: 425, renderer: 675 },
 		peakBrowserRoleBytes: { browser: 450, renderer: 750 },
 		samples: hostSamples,
 		samplingErrors: [],
 		samplingErrorOverflowCount: 0,
 		cleanupWarnings: [],
 		cleanupWarningOverflowCount: 0,
+		...seriesSamplingFields,
 	};
 	return {
 		profile: DOWNLOAD_MEMORY_PROFILE,
 		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 		windowDefinition: DOWNLOAD_MEMORY_WINDOW_DEFINITION,
+		downloadTimeoutMs: invocation.downloadTimeoutMs,
+		schedulingToleranceMs,
+		operationTimeoutMs: DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
+		postTransferSoakMs: invocation.postTransferSoakMs,
+		samplingWindowBudgetMs,
+		liveSampleMaxGapMs,
+		liveSampleCoverageDefinition:
+			DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
+		endpointSampleAllowance: DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE,
 		maxSamplesPerSeries,
+		capacityExhaustedBeforeTerminal: false,
+		samplingCapacitySufficient: true,
+		manualCheckpointComplete: true,
+		terminalCheckpointComplete: true,
 		complete: true,
 		cleanupComplete: true,
 		startedAt: readerJsHeap.startedAt,
@@ -284,11 +451,314 @@ const createUploadDiagnostics = (fileName = FILE_NAME) => {
 	};
 };
 
+const createReceiverProgress = (diagnostics, downloadSink) => {
+	const indices = Object.keys(diagnostics.chunkByteLength)
+		.map(Number)
+		.toSorted((left, right) => left - right);
+	const chunkBytes = indices.map((index) => diagnostics.chunkByteLength[index]);
+	const totalBytes = chunkBytes.reduce((total, bytes) => total + bytes, 0);
+	const milestones = (source) => {
+		let contiguousBytes = 0;
+		let contiguousConfirmedAt = diagnostics.startedAt;
+		const prefixBytes = [];
+		const prefixConfirmedAt = [];
+		for (const [offset, index] of indices.entries()) {
+			contiguousBytes += chunkBytes[offset];
+			contiguousConfirmedAt = Math.max(
+				contiguousConfirmedAt,
+				diagnostics[source][index],
+			);
+			prefixBytes.push(contiguousBytes);
+			prefixConfirmedAt.push(contiguousConfirmedAt);
+		}
+		return Array.from({ length: 21 }, (_, index) => index * 5).map(
+			(percent) => {
+				if (percent === 0) {
+					return {
+						percent,
+						targetBytes: 0,
+						contiguousBytes: 0,
+						chunkIndex: null,
+						confirmedAt: diagnostics.startedAt,
+						elapsedMs: 0,
+					};
+				}
+				const targetBytes = Math.ceil((totalBytes * percent) / 100);
+				const chunkIndex = prefixBytes.findIndex(
+					(bytes) => bytes >= targetBytes,
+				);
+				return {
+					percent,
+					targetBytes,
+					contiguousBytes: prefixBytes[chunkIndex],
+					chunkIndex,
+					confirmedAt: prefixConfirmedAt[chunkIndex],
+					elapsedMs: prefixConfirmedAt[chunkIndex] - diagnostics.startedAt,
+				};
+			},
+		);
+	};
+	const sourceCounts = {};
+	if (diagnostics.persistChunkReads) {
+		for (const index of indices) {
+			const source = diagnostics.chunkPersistenceConfirmationSource[index];
+			sourceCounts[source] = (sourceCounts[source] ?? 0) + 1;
+		}
+	}
+	return {
+		percentages: Array.from({ length: 21 }, (_, index) => index * 5),
+		available: {
+			definition:
+				"contiguous file-prefix bytes materialized and available to the receiver library",
+			source: "chunkMaterializeFinishedAt",
+			milestones: milestones("chunkMaterializeFinishedAt"),
+		},
+		peerbitDurable: {
+			definition:
+				"contiguous file-prefix bytes whose exact signed manifest-entry blocks were confirmed in the receiver's local Peerbit block store",
+			source: "chunkPersistenceConfirmedAt",
+			claimed: diagnostics.persistChunkReads,
+			sourceCounts: Object.fromEntries(
+				Object.entries(sourceCounts).sort(([left], [right]) =>
+					left.localeCompare(right),
+				),
+			),
+			milestones: diagnostics.persistChunkReads
+				? milestones("chunkPersistenceConfirmedAt")
+				: null,
+		},
+		sinkAccepted: {
+			definition:
+				"contiguous file-prefix bytes accepted by the configured benchmark sink; this is not a Peerbit or filesystem durability claim",
+			source: "chunkWriteFinishedAt",
+			sink: downloadSink,
+			durable: false,
+			milestones: milestones("chunkWriteFinishedAt"),
+		},
+	};
+};
+
+const refreshReceiverProgress = (result) => {
+	result.readTransfer.receiverProgress = createReceiverProgress(
+		result.readerDiagnostics.lastReadDiagnostics,
+		result.downloadSink,
+	);
+};
+
+const createEagerTelemetry = (step) => ({
+	entries: 2 + step,
+	bytes: 2_000 + step * 100,
+	peakEntries: 3 + step,
+	peakBytes: 3_000 + step * 100,
+	evictions: step,
+	expirations: step,
+	pendingEntries: 0,
+	pendingBytes: 0,
+	peakPendingEntries: 1 + step,
+	peakPendingBytes: 500 + step * 10,
+	admitted: 5 + step,
+	hits: 3 + step,
+	rejectedCid: step,
+	rejectedCodec: step,
+	rejectedSize: step,
+	rejectedPending: step,
+	rejectedIntegrity: step,
+	rejectedLifecycle: step,
+	limits: {
+		maxEntries: 100,
+		maxBytes: 10_000,
+		maxBlockBytes: 5_000,
+		ttlMs: 10_000,
+		validationConcurrency: 2,
+		maxPendingBytes: 5_000,
+		maxPendingEntries: 10,
+	},
+});
+
+const createRuntimeIdentity = (role) => ({
+	programAddress: "benchmark-program-address",
+	peerId: `${role}-peer-id`,
+	peerHash: `${role}-peer-hash`,
+	sessionId: `${role}-session-id`,
+});
+
+const createResourcePage = ({ role, startedAt, capturedAt, step }) => ({
+	role,
+	capturedAt,
+	storage: {
+		capturedAt: startedAt,
+		origin: "http://127.0.0.1:4173",
+		peerbitLog: {
+			api: "SharedLog.getMemoryUsage",
+			scope: "file-share-log-logical-usage",
+			available: true,
+			usageBytes: (role === "writer" ? 100 : 80) + step * 10,
+			error: null,
+		},
+		backingStorage: {
+			api: "navigator.storage.estimate",
+			scope: "browser-origin-aggregate",
+			available: true,
+			usageBytes: (role === "writer" ? 1_000 : 900) + step * 50,
+			quotaBytes: 100_000,
+			usageDetails: { indexedDB: 500 + step * 25 },
+			error: null,
+		},
+	},
+	runtime: {
+		capturedAt: Math.min(startedAt + 1, capturedAt),
+		programReady: true,
+		identity: createRuntimeIdentity(role),
+		nativeGraph: { active: true, useHeads: true },
+		eagerBlocks: {
+			telemetryAvailable: true,
+			enabled: true,
+			telemetry: createEagerTelemetry(step),
+		},
+		pubsub: {
+			runtimeSnapshotAvailable: true,
+			snapshot: {
+				fanout: {
+					root: { uploadLimitBps: 5_000_000 },
+					node: { uploadLimitBps: 20_000_000 },
+				},
+			},
+			error: null,
+		},
+	},
+});
+
+const createResourceSnapshotSet = ({ label, startedAt, finishedAt, step }) => ({
+	label,
+	startedAt,
+	finishedAt,
+	writer: createResourcePage({
+		role: "writer",
+		startedAt,
+		capturedAt: finishedAt,
+		step,
+	}),
+	reader: createResourcePage({
+		role: "reader",
+		startedAt,
+		capturedAt: finishedAt,
+		step,
+	}),
+});
+
+const createResourceEvidence = ({
+	beforeTimedRead = [1_168, 1_170],
+	afterSink = [1_202, 1_204],
+	beforeSoak = [1_205, 1_210],
+	afterSoak = [1_261, 1_264],
+} = {}) => {
+	const snapshots = {
+		beforeTimedRead: createResourceSnapshotSet({
+			label: "beforeTimedRead",
+			startedAt: beforeTimedRead[0],
+			finishedAt: beforeTimedRead[1],
+			step: 0,
+		}),
+		afterSink: createResourceSnapshotSet({
+			label: "afterSink",
+			startedAt: afterSink[0],
+			finishedAt: afterSink[1],
+			step: 1,
+		}),
+		beforeSoak: createResourceSnapshotSet({
+			label: "beforeSoak",
+			startedAt: beforeSoak[0],
+			finishedAt: beforeSoak[1],
+			step: 2,
+		}),
+		afterSoak: createResourceSnapshotSet({
+			label: "afterSoak",
+			startedAt: afterSoak[0],
+			finishedAt: afterSoak[1],
+			step: 3,
+		}),
+	};
+	const interval = (before, after) => {
+		const storage = (role) => ({
+			role,
+			peerbitLogUsageDeltaBytes:
+				after[role].storage.peerbitLog.usageBytes -
+				before[role].storage.peerbitLog.usageBytes,
+			backingStorageUsageDeltaBytes:
+				after[role].storage.backingStorage.usageBytes -
+				before[role].storage.backingStorage.usageBytes,
+		});
+		const eager = (role) =>
+			Object.fromEntries(
+				EAGER_COUNTERS.map((key) => [
+					key,
+					after[role].runtime.eagerBlocks.telemetry[key] -
+						before[role].runtime.eagerBlocks.telemetry[key],
+				]),
+			);
+		return {
+			from: before.label,
+			to: after.label,
+			writerStorage: storage("writer"),
+			readerStorage: storage("reader"),
+			writerEager: eager("writer"),
+			readerEager: eager("reader"),
+		};
+	};
+	return {
+		schemaVersion: 2,
+		storageDefinition: RESOURCE_STORAGE_DEFINITION,
+		eagerDefinition: RESOURCE_EAGER_DEFINITION,
+		snapshots,
+		intervals: {
+			timedReadEnvelope: interval(
+				snapshots.beforeTimedRead,
+				snapshots.afterSink,
+			),
+			postTransferWork: interval(snapshots.afterSink, snapshots.beforeSoak),
+			soak: interval(snapshots.beforeSoak, snapshots.afterSoak),
+			total: interval(snapshots.beforeTimedRead, snapshots.afterSoak),
+		},
+	};
+};
+
+const createShutdownOutcomes = ({
+	writerStartedAt = 1_266,
+	writerFinishedAt = 1_271,
+	readerStartedAt = 1_266,
+	readerFinishedAt = 1_273,
+} = {}) => ({
+	writer: {
+		role: "writer",
+		status: "fulfilled",
+		startedAt: writerStartedAt,
+		finishedAt: writerFinishedAt,
+		durationMs: writerFinishedAt - writerStartedAt,
+		programClosed: true,
+		peerStopped: true,
+		identity: createRuntimeIdentity("writer"),
+		error: null,
+	},
+	reader: {
+		role: "reader",
+		status: "fulfilled",
+		startedAt: readerStartedAt,
+		finishedAt: readerFinishedAt,
+		durationMs: readerFinishedAt - readerStartedAt,
+		programClosed: true,
+		peerStopped: true,
+		identity: createRuntimeIdentity("reader"),
+		error: null,
+	},
+});
+
 const shiftTimedDownloadEvidence = (result, offset) => {
 	for (const key of [
 		"downloadStartedAt",
 		"downloadFinishedAt",
 		"downloadCompletionObservedAt",
+		"postTransferSoakStartedAt",
+		"postTransferSoakFinishedAt",
 	]) {
 		result.timestamps[key] += offset;
 	}
@@ -298,16 +768,36 @@ const shiftTimedDownloadEvidence = (result, offset) => {
 	diagnostics.startedAt += offset;
 	diagnostics.finishedAt += offset;
 	for (const key of [
+		"chunkResolveStartedAt",
+		"chunkResolveFinishedAt",
 		"chunkWriteStartedAt",
 		"chunkWriteFinishedAt",
 		"chunkMaterializeStartedAt",
 		"chunkMaterializeFinishedAt",
 		"chunkHashStartedAt",
 		"chunkHashFinishedAt",
+		"chunkPersistenceConfirmedAt",
 	]) {
+		if (!diagnostics[key]) {
+			continue;
+		}
 		for (const index of Object.keys(diagnostics[key])) {
 			diagnostics[key][index] += offset;
 		}
+	}
+	refreshReceiverProgress(result);
+	for (const snapshot of Object.values(result.resourceEvidence.snapshots)) {
+		snapshot.startedAt += offset;
+		snapshot.finishedAt += offset;
+		for (const role of ["writer", "reader"]) {
+			snapshot[role].capturedAt += offset;
+			snapshot[role].storage.capturedAt += offset;
+			snapshot[role].runtime.capturedAt += offset;
+		}
+	}
+	for (const outcome of Object.values(result.shutdownOutcomes)) {
+		outcome.startedAt += offset;
+		outcome.finishedAt += offset;
 	}
 	const telemetry = result.downloadMemoryTelemetry;
 	telemetry.startedAt += offset;
@@ -319,216 +809,237 @@ const shiftTimedDownloadEvidence = (result, offset) => {
 	]) {
 		series.startedAt += offset;
 		series.finishedAt += offset;
+		series.lastManualSampleAt += offset;
+		series.terminalSampleAt += offset;
 		for (const sample of series.samples) {
 			sample.capturedAt += offset;
 		}
 	}
 };
 
-const validResult = () => ({
-	schema: { ...BENCHMARK_RESULT_SCHEMA },
-	runNonce: RUN_NONCE,
-	invocation: structuredClone(INVOCATION),
-	provenance: structuredClone(PROVENANCE),
-	status: "passed",
-	mode: "adaptive",
-	readerLocalChunkTarget: null,
-	readerLocalChunkMaxOvershoot: null,
-	readerTerminalTopology: null,
-	readerLocalChunkBlockCount: null,
-	readerLocalChunkIndexRowCount: null,
-	readerLocalityCohortKey: null,
-	readerLocalityControl: null,
-	networkMode: "local",
-	fileName: FILE_NAME,
-	fileSizeMb: FILE_MB,
-	integrityVerified: true,
-	integrityVerifiedAt: 1_205,
-	integrity: {
-		fixtureMode: "deterministic",
-		fixtureFormat: "aes-256-ctr-v1",
-		fixtureSeed: "fixture-seed",
-		expectedSizeBytes: FILE_SIZE_BYTES,
-		sourceSizeBytes: FILE_SIZE_BYTES,
-		manifestSizeBytes: FILE_SIZE_BYTES,
-		downloadedSizeBytes: FILE_SIZE_BYTES,
-		sourceSha256Base64: SHA256,
-		manifestSha256Base64: SHA256,
-		libraryComputedSha256Base64: SHA256,
-		downloadedSha256Base64: null,
-		sourceCrc32Hex: "00000000",
-		downloadedCrc32Hex: "00000000",
+const validResult = () => {
+	const result = {
+		schema: { ...BENCHMARK_RESULT_SCHEMA },
+		runNonce: RUN_NONCE,
+		invocation: structuredClone(INVOCATION),
+		provenance: structuredClone(PROVENANCE),
+		status: "passed",
+		mode: "adaptive",
+		readerLocalChunkTarget: null,
+		readerLocalChunkMaxOvershoot: null,
+		readerTerminalTopology: null,
+		readerLocalChunkBlockCount: null,
+		readerLocalChunkIndexRowCount: null,
+		readerLocalityCohortKey: null,
+		readerLocalityControl: null,
+		networkMode: "local",
+		fileName: FILE_NAME,
+		fileSizeMb: FILE_MB,
+		integrityVerified: true,
+		integrityVerifiedAt: 1_205,
+		integrity: {
+			fixtureMode: "deterministic",
+			fixtureFormat: "aes-256-ctr-v1",
+			fixtureSeed: "fixture-seed",
+			expectedSizeBytes: FILE_SIZE_BYTES,
+			sourceSizeBytes: FILE_SIZE_BYTES,
+			manifestSizeBytes: FILE_SIZE_BYTES,
+			downloadedSizeBytes: FILE_SIZE_BYTES,
+			sourceSha256Base64: SHA256,
+			manifestSha256Base64: SHA256,
+			libraryComputedSha256Base64: SHA256,
+			downloadedSha256Base64: null,
+			sourceCrc32Hex: "00000000",
+			downloadedCrc32Hex: "00000000",
+			downloadSink: "hash-only",
+			sinkPersistence: "none",
+			sinkPersistenceVerified: null,
+			sizeVerified: true,
+			manifestVerified: true,
+			sha256Verified: true,
+			librarySha256Verified: true,
+			persistedSinkSha256Verified: null,
+			crc32Verified: true,
+			verified: true,
+		},
+		uploadDurationMs: 101,
+		timeToWriterReadyMs: 100,
+		timeToWriterReadyDefinition: TIME_TO_WRITER_READY_DEFINITION,
+		timeToReaderReadyMs: 120,
+		timeToReaderReadyDefinition: TIME_TO_READER_READY_DEFINITION,
+		listingDurationMs: 19,
+		listingDurationDefinition: LISTING_DURATION_DEFINITION,
+		postUploadMonitorDurationMs: 50,
+		postUploadMonitorSchedulingToleranceMs: 1_250,
+		postUploadMonitorSchedulingToleranceDefinition:
+			POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION,
+		postTransferSoakActualMs: 50,
+		postTransferSoakDefinition: POST_TRANSFER_SOAK_DEFINITION,
+		postTransferSoakSchedulingToleranceMs: 1_250,
+		postTransferSoakSchedulingToleranceDefinition:
+			POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION,
+		postUploadMonitorMs: 50,
+		postTransferSoakMs: 50,
+		pollMs: 1_000,
+		uploadTimeoutMs: 600_000,
+		downloadTimeoutMs: 600_000,
+		minReadySeeders: 2,
+		readyTimeoutMs: 180_000,
+		downloadDurationMs: 30,
+		downloadDurationDefinition: DOWNLOAD_DURATION_DEFINITION,
+		transferTimeoutSchedulingToleranceMs: 5_000,
+		transferTimeoutSchedulingToleranceDefinition:
+			TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
 		downloadSink: "hash-only",
-		sinkPersistence: "none",
-		sinkPersistenceVerified: null,
-		sizeVerified: true,
-		manifestVerified: true,
-		sha256Verified: true,
-		librarySha256Verified: true,
-		persistedSinkSha256Verified: null,
-		crc32Verified: true,
-		verified: true,
-	},
-	uploadDurationMs: 101,
-	timeToWriterReadyMs: 100,
-	timeToWriterReadyDefinition: TIME_TO_WRITER_READY_DEFINITION,
-	timeToReaderReadyMs: 120,
-	timeToReaderReadyDefinition: TIME_TO_READER_READY_DEFINITION,
-	listingDurationMs: 19,
-	listingDurationDefinition: LISTING_DURATION_DEFINITION,
-	postUploadMonitorDurationMs: 50,
-	postUploadMonitorSchedulingToleranceMs: 1_250,
-	postUploadMonitorSchedulingToleranceDefinition:
-		POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION,
-	postUploadMonitorMs: 50,
-	pollMs: 1_000,
-	uploadTimeoutMs: 600_000,
-	downloadTimeoutMs: 600_000,
-	minReadySeeders: 2,
-	readyTimeoutMs: 180_000,
-	downloadDurationMs: 30,
-	downloadDurationDefinition: DOWNLOAD_DURATION_DEFINITION,
-	transferTimeoutSchedulingToleranceMs: 5_000,
-	transferTimeoutSchedulingToleranceDefinition:
-		TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
-	downloadSink: "hash-only",
-	requestedDownloadSink: "hash-only",
-	downloadMemoryTelemetry: createDownloadMemoryTelemetry(1_170, 1_200),
-	sinkWriteCalls: 2,
-	sinkWriteDurationMs: 8.5,
-	sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
-	sinkServerWriteCalls: null,
-	sinkServerWriteDurationMs: null,
-	sinkServerWriteDurationDefinition: null,
-	readTransfer: {
-		chunkCount: 2,
-		totalBytes: FILE_SIZE_BYTES,
-		sources: { remote: { chunkCount: 2, bytes: FILE_SIZE_BYTES } },
-		demandWait: {
-			definition: DEMAND_WAIT_DEFINITION,
-			sampleCount: 2,
-			sumMs: 12,
-			p50Ms: 4,
-			p95Ms: 8,
-			p99Ms: 8,
-			maxMs: 8,
-			over1sCount: 0,
-			over5sCount: 0,
-			over10sCount: 0,
+		requestedDownloadSink: "hash-only",
+		downloadMemoryTelemetry: createDownloadMemoryTelemetry(1_170, 1_200),
+		resourceEvidence: createResourceEvidence(),
+		shutdownOutcomes: createShutdownOutcomes(),
+		sinkWriteCalls: 2,
+		sinkWriteDurationMs: 8.5,
+		sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
+		sinkServerWriteCalls: null,
+		sinkServerWriteDurationMs: null,
+		sinkServerWriteDurationDefinition: null,
+		readTransfer: {
+			chunkCount: 2,
+			totalBytes: FILE_SIZE_BYTES,
+			sources: { remote: { chunkCount: 2, bytes: FILE_SIZE_BYTES } },
+			demandWait: {
+				definition: DEMAND_WAIT_DEFINITION,
+				sampleCount: 2,
+				sumMs: 12,
+				p50Ms: 4,
+				p95Ms: 8,
+				p99Ms: 8,
+				maxMs: 8,
+				over1sCount: 0,
+				over5sCount: 0,
+				over10sCount: 0,
+			},
+			stages: {
+				libraryStreamWallMs: 30,
+				sinkWriteAwaitMs: 9,
+				sinkAwaitSubtractedDiagnosticMs: 21,
+				demandWaitMs: 12,
+				materializeMs: 4,
+				contentHashMs: 3,
+				otherStreamReadMs: 2,
+			},
 		},
-		stages: {
-			libraryStreamWallMs: 30,
-			sinkWriteAwaitMs: 9,
-			sinkAwaitSubtractedDiagnosticMs: 21,
-			demandWaitMs: 12,
-			materializeMs: 4,
-			contentHashMs: 3,
-			otherStreamReadMs: 2,
+		libraryStreamWallMs: 30,
+		libraryStreamWallDefinition: LIBRARY_STREAM_WALL_DEFINITION,
+		primaryDownloadMetric: "libraryStreamWallMs",
+		primaryDownloadAuthoritative: true,
+		primaryDownloadMetricDefinition: PRIMARY_DOWNLOAD_METRIC_DEFINITION,
+		sinkWriteAwaitMs: 9,
+		sinkWriteAwaitDefinition: SINK_WRITE_AWAIT_DEFINITION,
+		sinkAwaitSubtractedDiagnosticMs: 21,
+		sinkAwaitSubtractedDiagnosticDefinition:
+			SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION,
+		phaseDurationsMs: {
+			timeToUploadSettled: 101,
+			timeToWriterReady: 100,
+			timeToReaderReady: 120,
+			writerListingLag: 0,
+			readerListingLag: 19,
+			readerAfterWriter: 20,
+			postUploadMonitor: 50,
+			download: 30,
 		},
-	},
-	libraryStreamWallMs: 30,
-	libraryStreamWallDefinition: LIBRARY_STREAM_WALL_DEFINITION,
-	primaryDownloadMetric: "libraryStreamWallMs",
-	primaryDownloadAuthoritative: true,
-	primaryDownloadMetricDefinition: PRIMARY_DOWNLOAD_METRIC_DEFINITION,
-	sinkWriteAwaitMs: 9,
-	sinkWriteAwaitDefinition: SINK_WRITE_AWAIT_DEFINITION,
-	sinkAwaitSubtractedDiagnosticMs: 21,
-	sinkAwaitSubtractedDiagnosticDefinition:
-		SINK_AWAIT_SUBTRACTED_DIAGNOSTIC_DEFINITION,
-	phaseDurationsMs: {
-		timeToUploadSettled: 101,
-		timeToWriterReady: 100,
-		timeToReaderReady: 120,
-		writerListingLag: 0,
-		readerListingLag: 19,
-		readerAfterWriter: 20,
-		postUploadMonitor: 50,
-		download: 30,
-	},
-	timestamps: {
-		uploadStartedAt: 1000,
-		progressSettledAt: 1090,
-		writerListedAt: 1100,
-		uploadSettledAt: 1101,
-		readerListedAt: 1120,
-		postMonitorStartedAt: 1120,
-		postMonitorFinishedAt: 1170,
-		downloadStartedAt: 1170,
-		downloadFinishedAt: 1200,
-		downloadCompletionObservedAt: 1201,
-	},
-	baselineWriterSeeders: 2,
-	baselineReaderSeeders: 2,
-	seederDropPolicy: { ...SEEDER_DROP_POLICY },
-	droppedSeeders: false,
-	unexpectedSeederDrop: false,
-	errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
-	knownPeerbitFailureSignatures: [...KNOWN_PEERBIT_FAILURE_SIGNATURES],
-	errorCollectionComplete: true,
-	errorCount: 0,
-	errors: [],
-	requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
-	requestFailureCollectionComplete: true,
-	requestFailureCount: 0,
-	requestFailures: [],
-	writerDiagnostics: {
-		lastUploadDiagnostics: createUploadDiagnostics(),
-	},
-	readerDiagnostics: {
-		lastReadDiagnostics: {
-			transferId: "benchmark-read-transfer-id",
+		timestamps: {
+			uploadStartedAt: 1000,
+			progressSettledAt: 1090,
+			writerListedAt: 1100,
+			uploadSettledAt: 1101,
+			readerListedAt: 1120,
+			postMonitorStartedAt: 1120,
+			postMonitorFinishedAt: 1170,
+			downloadStartedAt: 1170,
+			downloadFinishedAt: 1200,
+			downloadCompletionObservedAt: 1201,
+			postTransferSoakStartedAt: 1210,
+			postTransferSoakFinishedAt: 1260,
+		},
+		baselineWriterSeeders: 2,
+		baselineReaderSeeders: 2,
+		seederDropPolicy: { ...SEEDER_DROP_POLICY },
+		droppedSeeders: false,
+		unexpectedSeederDrop: false,
+		errorCollectionDefinition: ERROR_COLLECTION_DEFINITION,
+		knownPeerbitFailureSignatures: [...KNOWN_PEERBIT_FAILURE_SIGNATURES],
+		errorCollectionComplete: true,
+		errorCount: 0,
+		errors: [],
+		requestFailureCollectionDefinition: REQUEST_FAILURE_COLLECTION_DEFINITION,
+		requestFailureCollectionComplete: true,
+		requestFailureCount: 0,
+		requestFailures: [],
+		writerDiagnostics: {
+			lastUploadDiagnostics: createUploadDiagnostics(),
+		},
+		readerDiagnostics: {
+			lastReadDiagnostics: {
+				transferId: "benchmark-read-transfer-id",
+				fileId: FILE_ID,
+				fileName: FILE_NAME,
+				startedAt: 1_170,
+				finishedAt: 1_200,
+				persistChunkReads: false,
+				computedFinalHash: SHA256,
+				chunkResolved: { 0: "remote", 1: "remote" },
+				chunkByteLength: { 0: 3 * 1024 * 1024, 1: 2 * 1024 * 1024 },
+				chunkDemandWaitMs: { 0: 8, 1: 4 },
+				chunkResolveStartedAt: { 0: 1_170, 1: 1_185 },
+				chunkResolveFinishedAt: { 0: 1_171, 1: 1_186 },
+				chunkWriteStartedAt: { 0: 1_180, 1: 1_192 },
+				chunkWriteFinishedAt: { 0: 1_185, 1: 1_196 },
+				chunkMaterializeStartedAt: { 0: 1_171, 1: 1_186 },
+				chunkMaterializeFinishedAt: { 0: 1_173, 1: 1_188 },
+				chunkHashStartedAt: { 0: 1_173, 1: 1_188 },
+				chunkHashFinishedAt: { 0: 1_174, 1: 1_190 },
+				chunkPersistenceConfirmedAt: {},
+				chunkPersistenceConfirmationSource: {},
+			},
+		},
+		writerManifestEvidence: {
+			capturedAt: 1_100,
 			fileId: FILE_ID,
 			fileName: FILE_NAME,
-			startedAt: 1_170,
-			finishedAt: 1_200,
-			computedFinalHash: SHA256,
-			chunkResolved: { 0: "remote", 1: "remote" },
-			chunkByteLength: { 0: 3 * 1024 * 1024, 1: 2 * 1024 * 1024 },
-			chunkDemandWaitMs: { 0: 8, 1: 4 },
-			chunkWriteStartedAt: { 0: 1_180, 1: 1_192 },
-			chunkWriteFinishedAt: { 0: 1_185, 1: 1_196 },
-			chunkMaterializeStartedAt: { 0: 1_171, 1: 1_186 },
-			chunkMaterializeFinishedAt: { 0: 1_173, 1: 1_188 },
-			chunkHashStartedAt: { 0: 1_173, 1: 1_188 },
-			chunkHashFinishedAt: { 0: 1_174, 1: 1_190 },
+			sizeBytes: FILE_SIZE_BYTES,
+			finalHash: SHA256,
 		},
-	},
-	writerManifestEvidence: {
-		capturedAt: 1_100,
-		fileId: FILE_ID,
-		fileName: FILE_NAME,
-		sizeBytes: FILE_SIZE_BYTES,
-		finalHash: SHA256,
-	},
-	readerManifestEvidence: {
-		capturedAt: 1_120,
-		fileId: FILE_ID,
-		fileName: FILE_NAME,
-		sizeBytes: FILE_SIZE_BYTES,
-		finalHash: SHA256,
-	},
-	snapshots: [
-		{
-			label: "seeders-ready",
-			writerSeeders: 2,
-			readerSeeders: 2,
-			at: 900,
+		readerManifestEvidence: {
+			capturedAt: 1_120,
+			fileId: FILE_ID,
+			fileName: FILE_NAME,
+			sizeBytes: FILE_SIZE_BYTES,
+			finalHash: SHA256,
 		},
-		{
-			label: "after-1",
-			writerSeeders: 2,
-			readerSeeders: 2,
-			at: 1130,
-		},
-		{
-			label: "terminal",
-			writerSeeders: 2,
-			readerSeeders: 2,
-			at: 1210,
-		},
-	],
-});
+		snapshots: [
+			{
+				label: "seeders-ready",
+				writerSeeders: 2,
+				readerSeeders: 2,
+				at: 900,
+			},
+			{
+				label: "after-1",
+				writerSeeders: 2,
+				readerSeeders: 2,
+				at: 1130,
+			},
+			{
+				label: "terminal",
+				writerSeeders: 2,
+				readerSeeders: 2,
+				at: 1265,
+			},
+		],
+	};
+	refreshReceiverProgress(result);
+	return result;
+};
 
 const createSinkFixture = (downloadSink) => {
 	const invocation = createBenchmarkInvocation({
@@ -542,6 +1053,7 @@ const createSinkFixture = (downloadSink) => {
 		uploadTimeoutMs: 600_000,
 		downloadTimeoutMs: 600_000,
 		postUploadMonitorMs: 50,
+		postTransferSoakMs: 50,
 		pollMs: 1_000,
 		minReadySeeders: 2,
 		readyTimeoutMs: 180_000,
@@ -564,6 +1076,7 @@ const createSinkFixture = (downloadSink) => {
 		result.sinkServerWriteDurationDefinition =
 			"loopback-request-body-receive-and-node-filesystem-write-only";
 	}
+	refreshReceiverProgress(result);
 	return {
 		result,
 		options: { ...options, expectedInvocation: invocation },
@@ -587,6 +1100,7 @@ const createReaderLocalityFixture = ({
 		uploadTimeoutMs: 600_000,
 		downloadTimeoutMs: 600_000,
 		postUploadMonitorMs: 50,
+		postTransferSoakMs: 50,
 		pollMs: 1_000,
 		minReadySeeders: 1,
 		readyTimeoutMs: 180_000,
@@ -762,12 +1276,19 @@ const createReaderLocalityFixture = ({
 		initialLocalChunkBlockCount: actualBlockCount,
 		startedAt: 1_600,
 		finishedAt: 1_630,
+		chunkResolveStartedAt: { 0: 1_600, 1: 1_615 },
+		chunkResolveFinishedAt: { 0: 1_601, 1: 1_616 },
 		chunkWriteStartedAt: { 0: 1_610, 1: 1_622 },
 		chunkWriteFinishedAt: { 0: 1_615, 1: 1_626 },
 		chunkMaterializeStartedAt: { 0: 1_601, 1: 1_616 },
 		chunkMaterializeFinishedAt: { 0: 1_603, 1: 1_618 },
 		chunkHashStartedAt: { 0: 1_603, 1: 1_618 },
 		chunkHashFinishedAt: { 0: 1_604, 1: 1_620 },
+		chunkPersistenceConfirmedAt: { 0: 1_605, 1: 1_621 },
+		chunkPersistenceConfirmationSource: {
+			0: "manifest-head-batch-local",
+			1: "manifest-head-batch-remote",
+		},
 	});
 	result.writerManifestEvidence.fileName = fileName;
 	result.readerManifestEvidence.fileName = fileName;
@@ -778,20 +1299,35 @@ const createReaderLocalityFixture = ({
 	result.timestamps.downloadStartedAt = 1_600;
 	result.timestamps.downloadFinishedAt = 1_630;
 	result.timestamps.downloadCompletionObservedAt = 1_631;
+	result.timestamps.postTransferSoakStartedAt = 2_041;
+	result.timestamps.postTransferSoakFinishedAt = 2_091;
 	result.integrityVerifiedAt = 1_837;
 	result.downloadMemoryTelemetry = createDownloadMemoryTelemetry(
 		1_600,
 		1_630,
 		invocation,
+		{ afterSoakStartedAt: 2_092, shutdownFinishedAt: 2_101 },
 	);
-	result.downloadMemoryTelemetry.startedAt = 1_380;
+	result.resourceEvidence = createResourceEvidence({
+		beforeTimedRead: [1_377, 1_380],
+		afterSink: [1_836, 1_837],
+		beforeSoak: [2_040, 2_041],
+		afterSoak: [2_092, 2_094],
+	});
+	result.shutdownOutcomes = createShutdownOutcomes({
+		writerStartedAt: 2_096,
+		writerFinishedAt: 2_099,
+		readerStartedAt: 2_096,
+		readerFinishedAt: 2_101,
+	});
+	result.downloadMemoryTelemetry.startedAt = 1_375;
 	for (const series of [
 		result.downloadMemoryTelemetry.readerJsHeap,
 		result.downloadMemoryTelemetry.writerJsHeap,
 		result.downloadMemoryTelemetry.hostRss,
 	]) {
-		series.startedAt = 1_380;
-		series.samples[0].capturedAt = 1_381;
+		series.startedAt = 1_375;
+		series.samples[0].capturedAt = 1_376;
 	}
 	result.readerLocalityControl = {
 		profile: "observer-topology-exact-manifest-prefix",
@@ -823,26 +1359,22 @@ const createReaderLocalityFixture = ({
 		},
 		writerTopologyBeforeUpload: topology(990, true),
 		readerTopologyBeforeUpload: topology(991, false),
-		writerTopologyBeforeTimedRead:
-			structuredClone(
-				preTimedReadTopologyObservations.at(-1).writerTopology,
-			),
-		readerTopologyBeforeTimedRead:
-			structuredClone(
-				preTimedReadTopologyObservations.at(-1).readerTopology,
-			),
+		writerTopologyBeforeTimedRead: structuredClone(
+			preTimedReadTopologyObservations.at(-1).writerTopology,
+		),
+		readerTopologyBeforeTimedRead: structuredClone(
+			preTimedReadTopologyObservations.at(-1).readerTopology,
+		),
 		preTimedReadTopologyStartedAt: 1_381,
 		preTimedReadTopologyDeadlineAt: 6_381,
 		preTimedReadTopologyFinishedAt: 1_583,
 		preTimedReadTopologyObservations,
-		writerTopologyAfterTimedRead:
-			structuredClone(
-				postTimedReadTopologyObservations.at(-1).writerTopology,
-			),
-		readerTopologyAfterTimedRead:
-			structuredClone(
-				postTimedReadTopologyObservations.at(-1).readerTopology,
-			),
+		writerTopologyAfterTimedRead: structuredClone(
+			postTimedReadTopologyObservations.at(-1).writerTopology,
+		),
+		readerTopologyAfterTimedRead: structuredClone(
+			postTimedReadTopologyObservations.at(-1).readerTopology,
+		),
 		postTimedReadTopologyStartedAt: 1_634,
 		postTimedReadTopologyDeadlineAt: 6_634,
 		postTimedReadTopologyFinishedAt: 1_836,
@@ -935,13 +1467,14 @@ const createReaderLocalityFixture = ({
 			label: "terminal",
 			writerSeeders: 1,
 			readerSeeders: 1,
-			at: 2_041,
+			at: 2_095,
 		},
 	];
 	result.baselineWriterSeeders = 1;
 	result.baselineReaderSeeders = 1;
 	result.droppedSeeders = false;
 	result.unexpectedSeederDrop = false;
+	refreshReceiverProgress(result);
 	return {
 		result,
 		options: {
@@ -956,6 +1489,95 @@ test("accepts a complete deterministic transfer result", () => {
 	assert.equal(
 		validateBenchmarkResult(validResult(), options).status,
 		"passed",
+	);
+});
+
+test("requires exact receiver progress and rejects false durability claims", () => {
+	for (const mutate of [
+		(result) => {
+			result.readTransfer.receiverProgress.percentages[1] = 6;
+		},
+		(result) => {
+			result.readTransfer.receiverProgress.available.milestones[10].confirmedAt += 1;
+		},
+		(result) => {
+			delete result.readTransfer.receiverProgress.available.milestones[10]
+				.elapsedMs;
+		},
+		(result) => {
+			result.readTransfer.receiverProgress.available.source =
+				"chunkWriteFinishedAt";
+		},
+		(result) => {
+			result.readTransfer.receiverProgress.sinkAccepted.durable = true;
+		},
+		(result) => {
+			result.readTransfer.receiverProgress.sinkAccepted.sink = "opfs";
+		},
+		(result) => {
+			result.readTransfer.receiverProgress.peerbitDurable.sourceCounts = {
+				fabricated: 1,
+			};
+		},
+		(result) => {
+			result.readTransfer.receiverProgress.sinkAccepted.milestones.at(
+				-1,
+			).contiguousBytes -= 1;
+		},
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(
+			() => validateBenchmarkResult(result, options),
+			/read-transfer timing decomposition is inconsistent/,
+		);
+	}
+
+	const observerWithDurability = validResult();
+	observerWithDurability.readerDiagnostics.lastReadDiagnostics.chunkPersistenceConfirmedAt =
+		{ 0: 1_180 };
+	observerWithDurability.readerDiagnostics.lastReadDiagnostics.chunkPersistenceConfirmationSource =
+		{ 0: "fabricated" };
+	assert.throws(
+		() => validateBenchmarkResult(observerWithDurability, options),
+		/chunkPersistenceConfirmedAt contains unexpected or missing fields/,
+	);
+
+	const durableSourceMismatch = createReaderLocalityFixture();
+	durableSourceMismatch.result.readTransfer.receiverProgress.peerbitDurable.sourceCounts =
+		{ fabricated: 2 };
+	assert.throws(
+		() =>
+			validateBenchmarkResult(
+				durableSourceMismatch.result,
+				durableSourceMismatch.options,
+			),
+		/read-transfer timing decomposition is inconsistent/,
+	);
+
+	const durableOutsideRead = createReaderLocalityFixture();
+	durableOutsideRead.result.readerDiagnostics.lastReadDiagnostics.chunkPersistenceConfirmedAt[1] =
+		durableOutsideRead.result.readerDiagnostics.lastReadDiagnostics.finishedAt +
+		1;
+	assert.throws(
+		() =>
+			validateBenchmarkResult(
+				durableOutsideRead.result,
+				durableOutsideRead.options,
+			),
+		/outside the canonical library read window/,
+	);
+
+	const unknownDurabilitySource = createReaderLocalityFixture();
+	unknownDurabilitySource.result.readerDiagnostics.lastReadDiagnostics.chunkPersistenceConfirmationSource[0] =
+		"unknown-source";
+	assert.throws(
+		() =>
+			validateBenchmarkResult(
+				unknownDurabilitySource.result,
+				unknownDurabilitySource.options,
+			),
+		/not a recognized persistence source/,
 	);
 });
 
@@ -1004,7 +1626,7 @@ test("requires a trustworthy aggregate-integrity timestamp before the final snap
 					label: "during-99",
 					writerSeeders: 2,
 					readerSeeders: 2,
-					at: 1_211,
+					at: 1_265,
 				});
 			},
 			/must end with exactly one terminal seeder snapshot/,
@@ -1033,8 +1655,8 @@ test("requires the terminal snapshot after controlled-locality topology", () => 
 	);
 
 	const sameMillisecond = createReaderLocalityFixture();
-	sameMillisecond.result.snapshots.at(-1).at =
-		sameMillisecond.result.readerLocalityControl.terminalTopologyFinishedAt;
+	sameMillisecond.result.readerLocalityControl.terminalTopologyFinishedAt =
+		sameMillisecond.result.resourceEvidence.snapshots.beforeSoak.startedAt;
 	assert.equal(
 		validateBenchmarkResult(sameMillisecond.result, sameMillisecond.options)
 			.status,
@@ -1042,7 +1664,287 @@ test("requires the terminal snapshot after controlled-locality topology", () => 
 	);
 });
 
-test("accepts one recovered seeder dip under the v9 policy", () => {
+test("accepts explicit disabled eager-cache evidence", () => {
+	const result = validResult();
+	for (const snapshot of Object.values(result.resourceEvidence.snapshots)) {
+		for (const role of ["writer", "reader"]) {
+			snapshot[role].runtime.eagerBlocks.enabled = false;
+			snapshot[role].runtime.eagerBlocks.telemetry = null;
+		}
+	}
+	for (const interval of Object.values(result.resourceEvidence.intervals)) {
+		interval.writerEager = null;
+		interval.readerEager = null;
+	}
+	assert.equal(validateBenchmarkResult(result, options).status, "passed");
+});
+
+test("requires ordered exact resource, soak, and shutdown evidence", () => {
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				delete result.resourceEvidence;
+			},
+			/missing resourceEvidence/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.schemaVersion = 1;
+			},
+			/resource evidence contract is invalid/,
+		],
+		[
+			(result) => {
+				delete result.resourceEvidence.snapshots.beforeSoak;
+			},
+			/resourceEvidence\.snapshots contains unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.extra = {};
+			},
+			/resourceEvidence\.snapshots contains unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.beforeTimedRead.finishedAt =
+					result.timestamps.downloadStartedAt + 1;
+			},
+			/resource snapshots, soak, integrity, and terminal evidence are out of order/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.beforeSoak.startedAt =
+					result.integrityVerifiedAt - 1;
+			},
+			/resource snapshots, soak, integrity, and terminal evidence are out of order/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.beforeSoak.finishedAt =
+					result.timestamps.postTransferSoakStartedAt + 1;
+			},
+			/resource snapshots, soak, integrity, and terminal evidence are out of order/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.startedAt =
+					result.resourceEvidence.snapshots.beforeTimedRead.startedAt + 1;
+			},
+			/resource snapshots, soak, integrity, and terminal evidence are out of order/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.beforeTimedRead.finishedAt =
+					result.resourceEvidence.snapshots.beforeTimedRead.startedAt + 20_000;
+			},
+			/capture window is invalid or unbounded/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.writer.storage.peerbitLog.scope =
+					"origin-wide";
+			},
+			/peerbitLog contract is invalid/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.reader.storage.backingStorage.available = false;
+			},
+			/backingStorage contract is invalid/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.reader.storage.backingStorage.usageDetails =
+					Object.fromEntries(
+						Array.from({ length: 65 }, (_, index) => [`kind-${index}`, 1]),
+					);
+			},
+			/too many storage categories/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.writer.runtime.nativeGraph.useHeads =
+					null;
+			},
+			/nativeGraph contract is invalid/,
+		],
+		[
+			(result) => {
+				delete result.resourceEvidence.snapshots.afterSink.writer.runtime
+					.identity.sessionId;
+			},
+			/identity contains unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.writer.runtime.identity.sessionId =
+					"replacement-session";
+			},
+			/writer runtime provenance changed/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.beforeSoak.reader.storage.origin =
+					"http://127.0.0.1:4174";
+			},
+			/reader runtime provenance changed/,
+		],
+		[
+			(result) => {
+				for (const snapshot of Object.values(
+					result.resourceEvidence.snapshots,
+				)) {
+					snapshot.reader.runtime.identity.peerId =
+						snapshot.writer.runtime.identity.peerId;
+				}
+				result.shutdownOutcomes.reader.identity.peerId =
+					result.shutdownOutcomes.writer.identity.peerId;
+			},
+			/does not identify two distinct peers/,
+		],
+		[
+			(result) => {
+				for (const snapshot of Object.values(
+					result.resourceEvidence.snapshots,
+				)) {
+					snapshot.reader.runtime.identity.sessionId =
+						snapshot.writer.runtime.identity.sessionId;
+				}
+				result.shutdownOutcomes.reader.identity.sessionId =
+					result.shutdownOutcomes.writer.identity.sessionId;
+			},
+			/does not identify two distinct peers/,
+		],
+		[
+			(result) => {
+				for (const snapshot of Object.values(
+					result.resourceEvidence.snapshots,
+				)) {
+					snapshot.reader.runtime.identity.programAddress = "different-program";
+				}
+				result.shutdownOutcomes.reader.identity.programAddress =
+					"different-program";
+			},
+			/does not identify two distinct peers in one program/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.reader.runtime.pubsub.snapshot.fanout.root.uploadLimitBps = 0;
+			},
+			/fanout\.root\.uploadLimitBps/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.writer.runtime.pubsub.snapshot.fanout.node.uploadLimitBps += 1;
+			},
+			/writer runtime provenance changed/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.afterSink.writer.runtime.eagerBlocks.telemetry.admitted = 0;
+			},
+			/writer eager-cache admitted regressed/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.snapshots.beforeSoak.reader.runtime.eagerBlocks.telemetry.hits = 0;
+			},
+			/reader eager-cache hits regressed/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.intervals.timedReadEnvelope.writerStorage.peerbitLogUsageDeltaBytes += 1;
+			},
+			/resource interval deltas contradict/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.intervals.postTransferWork.from =
+					"beforeTimedRead";
+			},
+			/resource interval deltas contradict/,
+		],
+		[
+			(result) => {
+				result.resourceEvidence.intervals.soak.readerStorage.backingStorageUsageDeltaBytes += 1;
+			},
+			/resource interval deltas contradict/,
+		],
+		[
+			(result) => {
+				result.timestamps.postTransferSoakFinishedAt -= 1;
+				result.postTransferSoakActualMs -= 1;
+			},
+			/post-transfer soak duration or scheduling contract is invalid/,
+		],
+		[
+			(result) => {
+				result.timestamps.postTransferSoakStartedAt =
+					result.integrityVerifiedAt - 1;
+				result.timestamps.postTransferSoakFinishedAt =
+					result.timestamps.postTransferSoakStartedAt + 50;
+			},
+			/post-transfer soak duration or scheduling contract is invalid/,
+		],
+		[
+			(result) => {
+				result.postTransferSoakMs -= 1;
+			},
+			/postTransferSoakMs does not match the requested invocation/,
+		],
+		[
+			(result) => {
+				result.shutdownOutcomes.writer.status = "rejected";
+				result.shutdownOutcomes.writer.error = "failed";
+			},
+			/not a successful bounded shutdown/,
+		],
+		[
+			(result) => {
+				result.shutdownOutcomes.reader.durationMs += 1;
+			},
+			/not a successful bounded shutdown/,
+		],
+		[
+			(result) => {
+				result.shutdownOutcomes.writer.programClosed = false;
+			},
+			/not a successful bounded shutdown/,
+		],
+		[
+			(result) => {
+				result.shutdownOutcomes.reader.identity.sessionId = "stale-session";
+			},
+			/shutdown identities do not match/,
+		],
+		[
+			(result) => {
+				const outcome = result.shutdownOutcomes.reader;
+				outcome.finishedAt = outcome.startedAt + 31_251;
+				outcome.durationMs = 31_251;
+			},
+			/not a successful bounded shutdown/,
+		],
+		[
+			(result) => {
+				result.shutdownOutcomes.writer.startedAt = 1_278;
+				result.shutdownOutcomes.writer.finishedAt = 1_280;
+				result.shutdownOutcomes.writer.durationMs = 2;
+				result.shutdownOutcomes.reader.startedAt = 1_278;
+				result.shutdownOutcomes.reader.finishedAt = 1_285;
+				result.shutdownOutcomes.reader.durationMs = 7;
+			},
+			/invalid live or terminal checkpoint ordering/,
+		],
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(() => validateBenchmarkResult(result, options), pattern);
+	}
+});
+
+test("accepts one recovered seeder dip under the v10 policy", () => {
 	const result = validResult();
 	result.snapshots[1].writerSeeders = 1;
 	result.droppedSeeders = true;
@@ -1077,7 +1979,7 @@ test("rejects a terminal below-baseline seeder snapshot", () => {
 	);
 });
 
-test("rejects missing, altered, and contradictory v9 seeder-drop evidence", () => {
+test("rejects missing, altered, and contradictory v10 seeder-drop evidence", () => {
 	for (const [mutate, pattern] of [
 		[
 			(result) => {
@@ -1401,6 +2303,8 @@ test("rejects milestones crossed before a partial-tail trigger", () => {
 		indices.map((index) => [index, 0]),
 	);
 	for (const key of [
+		"chunkResolveStartedAt",
+		"chunkResolveFinishedAt",
 		"chunkWriteStartedAt",
 		"chunkWriteFinishedAt",
 		"chunkMaterializeStartedAt",
@@ -1440,6 +2344,7 @@ test("rejects milestones crossed before a partial-tail trigger", () => {
 	result.sinkWriteDurationMs = 0;
 	result.sinkWriteAwaitMs = 0;
 	result.sinkAwaitSubtractedDiagnosticMs = 30;
+	refreshReceiverProgress(result);
 
 	const diagnostics = result.writerDiagnostics.lastUploadDiagnostics;
 	diagnostics.chunkSize = chunkSize;
@@ -1520,6 +2425,24 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
+				result.downloadMemoryTelemetry.postTransferSoakMs += 1;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.operationTimeoutMs += 1;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.liveSampleMaxGapMs += 1;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
 				result.downloadMemoryTelemetry.readerJsHeap.samplingErrors.push("boom");
 			},
 			/contains memory sampling errors/,
@@ -1551,7 +2474,7 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
-				result.downloadMemoryTelemetry.readerJsHeap.sampleCount = 3;
+				result.downloadMemoryTelemetry.readerJsHeap.sampleCount = 5;
 			},
 			/invalid bounded sample series/,
 		],
@@ -1567,13 +2490,14 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 			(result) => {
 				result.downloadMemoryTelemetry.readerJsHeap.samples[0].capturedAt = 1_171;
 			},
-			/does not bracket the click-to-sink observation window/,
+			/does not bracket the click-to-post-shutdown observation window/,
 		],
 		[
 			(result) => {
-				result.downloadMemoryTelemetry.writerJsHeap.samples[1].capturedAt = 1_199;
+				result.downloadMemoryTelemetry.writerJsHeap.samples.at(-1).capturedAt =
+					1_201;
 			},
-			/does not bracket the click-to-sink observation window/,
+			/reorder the sampler window/,
 		],
 		[
 			(result) => {
@@ -1590,11 +2514,15 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		[
 			(result) => {
 				const series = result.downloadMemoryTelemetry.writerJsHeap;
-				series.samples[1].capturedAt =
-					result.timestamps.downloadCompletionObservedAt +
+				series.samples.at(-1).capturedAt =
+					Math.max(
+						result.shutdownOutcomes.writer.finishedAt,
+						result.shutdownOutcomes.reader.finishedAt,
+					) +
 					DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS +
 					1;
-				series.finishedAt = series.samples[1].capturedAt + 1;
+				series.finishedAt = series.samples.at(-1).capturedAt + 1;
+				series.terminalSampleAt = series.samples.at(-1).capturedAt;
 			},
 			/ends after the bounded telemetry cleanup window/,
 		],
@@ -1606,9 +2534,41 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 		],
 		[
 			(result) => {
+				delete result.downloadMemoryTelemetry.readerJsHeap.startTotalBytes;
+			},
+			/unexpected or missing fields/,
+		],
+		[
+			(result) => {
+				const sample = result.downloadMemoryTelemetry.readerJsHeap.samples[0];
+				sample.totalBytes = sample.usedBytes - 1;
+			},
+			/heap totals are inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.writerJsHeap.peakBackingStorageBytes += 1;
+			},
+			/heap summaries are inconsistent/,
+		],
+		[
+			(result) => {
 				result.downloadMemoryTelemetry.hostRss.samples[0].combinedBytes += 1;
 			},
 			/RSS totals are inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.peakNodeExternalBytes += 1;
+			},
+			/host RSS summaries are inconsistent/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[0].nodeArrayBuffersBytes =
+					-1;
+			},
+			/nodeArrayBuffersBytes/,
 		],
 		[
 			(result) => {
@@ -1662,6 +2622,186 @@ test("requires bounded, error-free memory telemetry covering the canonical read"
 	}
 });
 
+test("accepts a short phase with no periodic sample when live endpoints cover it", () => {
+	const result = validResult();
+	const series = result.downloadMemoryTelemetry.readerJsHeap;
+	series.samples = series.samples.filter(
+		(sample) => sample.sampleKind !== "periodic",
+	);
+	series.sampleCount = series.samples.length;
+	series.periodicSampleCount = 0;
+	const peak = (key) =>
+		Math.max(...series.samples.map((sample) => sample[key]));
+	series.peakBytes = peak("usedBytes");
+	series.peakUsedBytes = peak("usedBytes");
+	series.peakTotalBytes = peak("totalBytes");
+	series.peakEmbedderHeapUsedBytes = peak("embedderHeapUsedBytes");
+	series.peakBackingStorageBytes = peak("backingStorageBytes");
+	assert.equal(validateBenchmarkResult(result, options).status, "passed");
+});
+
+test("rejects a long live phase with an uncovered periodic-sampling gap", () => {
+	const result = validResult();
+	result.timestamps.postTransferSoakStartedAt = 20_000;
+	result.timestamps.postTransferSoakFinishedAt = 20_050;
+	result.resourceEvidence = createResourceEvidence({
+		beforeTimedRead: [1_168, 1_170],
+		afterSink: [1_202, 1_204],
+		beforeSoak: [19_995, 20_000],
+		afterSoak: [20_051, 20_054],
+	});
+	result.snapshots.at(-1).at = 20_055;
+	result.shutdownOutcomes = createShutdownOutcomes({
+		writerStartedAt: 20_056,
+		writerFinishedAt: 20_061,
+		readerStartedAt: 20_056,
+		readerFinishedAt: 20_063,
+	});
+	result.downloadMemoryTelemetry = createDownloadMemoryTelemetry(
+		1_170,
+		1_200,
+		INVOCATION,
+		{ afterSoakStartedAt: 20_051, shutdownFinishedAt: 20_063 },
+	);
+	assert.throws(
+		() => validateBenchmarkResult(result, options),
+		/live-sample gap/,
+	);
+});
+
+test("requires sufficient full-window capacity and distinct memory checkpoints", () => {
+	for (const [mutate, pattern] of [
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.samplingWindowBudgetMs += 1;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.endpointSampleAllowance = 2;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.capacityExhaustedBeforeTerminal = true;
+				result.downloadMemoryTelemetry.samplingCapacitySufficient = false;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.manualCheckpointComplete = false;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.terminalCheckpointComplete = false;
+			},
+			/telemetry contract is invalid/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.maxSamples -= 1;
+			},
+			/invalid bounded sample series/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.writerJsHeap.periodicSampleLimit += 1;
+			},
+			/invalid bounded sample series/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.periodicSampleCount += 1;
+			},
+			/invalid bounded sample series/,
+		],
+		[
+			(result) => {
+				const series = result.downloadMemoryTelemetry.readerJsHeap;
+				series.capacityExhaustedBeforeTerminal = true;
+				series.samplingCapacitySufficient = false;
+			},
+			/invalid bounded sample series/,
+		],
+		[
+			(result) => {
+				delete result.downloadMemoryTelemetry.readerJsHeap.samples[0]
+					.sampleKind;
+			},
+			/invalid sample kind/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.readerJsHeap.samples[1].sampleKind =
+					"initial";
+			},
+			/invalid live or terminal checkpoint ordering/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.writerJsHeap.samples[1].sampleKind =
+					"manual";
+			},
+			/duplicate manual samples/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples.at(-1).sampleKind =
+					"periodic";
+			},
+			/invalid live or terminal checkpoint ordering/,
+		],
+		[
+			(result) => {
+				result.downloadMemoryTelemetry.hostRss.samples[1].sampleKind =
+					"terminal";
+			},
+			/duplicate terminal samples/,
+		],
+		[
+			(result) => {
+				const series = result.downloadMemoryTelemetry.readerJsHeap;
+				const manual = series.samples.find(
+					(sample) => sample.sampleKind === "manual",
+				);
+				manual.capturedAt = result.shutdownOutcomes.reader.finishedAt + 1;
+				series.lastManualSampleAt = manual.capturedAt;
+			},
+			/invalid live or terminal checkpoint ordering/,
+		],
+		[
+			(result) => {
+				const series = result.downloadMemoryTelemetry.writerJsHeap;
+				const manual = series.samples.find(
+					(sample) => sample.sampleKind === "manual",
+				);
+				manual.capturedAt =
+					result.resourceEvidence.snapshots.afterSoak.startedAt + 1;
+				series.lastManualSampleAt = manual.capturedAt;
+			},
+			/invalid live or terminal checkpoint ordering/,
+		],
+		[
+			(result) => {
+				const series = result.downloadMemoryTelemetry.hostRss;
+				const terminal = series.samples.at(-1);
+				terminal.capturedAt = result.shutdownOutcomes.reader.finishedAt - 1;
+				series.terminalSampleAt = terminal.capturedAt;
+			},
+			/invalid live or terminal checkpoint ordering/,
+		],
+	]) {
+		const result = validResult();
+		mutate(result);
+		assert.throws(() => validateBenchmarkResult(result, options), pattern);
+	}
+});
+
 test("accepts exact observer-locality control and rejects contradictory evidence", () => {
 	const fixture = createReaderLocalityFixture();
 	assert.equal(
@@ -1683,15 +2823,13 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		],
 		[
 			(result) => {
-				result.readerLocalityControl.transportCounterPreReadStartToleranceMs =
-					999;
+				result.readerLocalityControl.transportCounterPreReadStartToleranceMs = 999;
 			},
 			/locality control contract is invalid/,
 		],
 		[
 			(result) => {
-				result.readerLocalityControl.transportCounterPostReadCaptureMaxDelayMs =
-					10_000;
+				result.readerLocalityControl.transportCounterPostReadCaptureMaxDelayMs = 10_000;
 			},
 			/locality control contract is invalid/,
 		],
@@ -1761,8 +2899,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 			(result) => {
 				result.readerLocalityControl.writerTopologyAfterTimedRead.replicatorHashes =
 					["reader-peer", "writer-peer"];
-				result.readerLocalityControl.writerTopologyAfterTimedRead.replicatorCount =
-					2;
+				result.readerLocalityControl.writerTopologyAfterTimedRead.replicatorCount = 2;
 			},
 			/immediate post-read topology evidence is inconsistent/,
 		],
@@ -1797,8 +2934,7 @@ test("accepts exact observer-locality control and rejects contradictory evidence
 		],
 		[
 			(result) => {
-				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].peerHashIdentityMatch =
-					false;
+				result.readerLocalityControl.preTimedReadTopologyObservations[1].writerTopology.transportStreams[0].peerHashIdentityMatch = false;
 			},
 			/relevant pubsub stream 0 is not authoritative/,
 		],
@@ -2261,14 +3397,14 @@ test("bounds Node-file server timing against its browser sink timing", () => {
 	);
 });
 
-test("rejects a status-only passed payload at the v9 evidence envelope", () => {
+test("rejects a status-only passed payload at the v10 evidence envelope", () => {
 	assert.throws(
 		() => validateBenchmarkResultEnvelope({ status: "passed" }, options),
 		/missing schema/,
 	);
 });
 
-test("requires explicit error evidence on failed v9 envelopes", () => {
+test("requires explicit error evidence on failed v10 envelopes", () => {
 	const completeFailure = validResult();
 	completeFailure.status = "failed";
 	completeFailure.failure = { message: "synthetic browser failure" };
@@ -2605,6 +3741,34 @@ for (const [name, mutate, pattern] of [
 			result.readerDiagnostics.lastReadDiagnostics.chunkWriteStartedAt[1] = 1_184;
 		},
 		/ordered and non-overlapping/,
+	],
+	[
+		"resolve completes after materialization starts",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkResolveFinishedAt[0] = 1_172;
+		},
+		/lifecycle is not causal/,
+	],
+	[
+		"materialization completes after hashing starts",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkMaterializeFinishedAt[0] = 1_174;
+		},
+		/lifecycle is not causal/,
+	],
+	[
+		"hashing completes after sink writing starts",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkHashFinishedAt[0] = 1_181;
+		},
+		/lifecycle is not causal/,
+	],
+	[
+		"next chunk materializes before the previous sink write finishes",
+		(result) => {
+			result.readerDiagnostics.lastReadDiagnostics.chunkMaterializeStartedAt[1] = 1_184;
+		},
+		/lifecycle is not causal/,
 	],
 	[
 		"raw read byte coverage",

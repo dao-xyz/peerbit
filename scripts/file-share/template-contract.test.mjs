@@ -17,14 +17,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v9 result envelope`, async () => {
+	test(`${name} emits the atomic v10 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 9",
+			"version: 10",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -115,9 +115,25 @@ test("seeder probe records enforceable convergence timing evidence", async () =>
 		"timeToTargetMs",
 		"targetSampleLabel",
 		"effectiveSampleIntervalMs",
+		"const remainingMs = deadlineAt - Date.now()",
+		"remainingMs,",
+		"timeoutMs: number",
 	]) {
 		assert.ok(contents.includes(required), `missing ${required}`);
 	}
+	assert.doesNotMatch(
+		contents,
+		/withDeadline\(\s*Promise\.all\([\s\S]*?\),\s*deadlineAt,/,
+		"the seeder sample must pass a relative remaining duration to withDeadline",
+	);
+	const deadlineHelper = contents.slice(
+		contents.indexOf("const withDeadline"),
+		contents.indexOf("const persistResult"),
+	);
+	assert.ok(
+		!deadlineHelper.includes("Date.now()"),
+		"withDeadline must not reinterpret a relative duration as an epoch",
+	);
 });
 
 test("upload probe fails closed and records bounded scheduling tolerances", async () => {
@@ -149,13 +165,18 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS",
 		"Measured transfer duration exceeded",
 		"PW_DOWNLOAD_SINK",
+		"PW_POST_TRANSFER_SOAK_MS",
 		"installHashOnlyMockSaveFilePicker",
 		"installMockSaveFilePicker",
 		"installNodeBackedMockSaveFilePicker",
 		"summarizeReadTransferDiagnostics",
 		"libraryComputedSha256Base64",
 		'import { withDeadline } from "./generated.promise-deadline.mjs"',
-		'import { startDownloadMemoryTelemetry } from "./generated.download-memory-telemetry.mjs"',
+		'from "./generated.download-memory-telemetry.mjs"',
+		"DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION",
+		"DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS",
+		"assertDownloadMemoryLiveSampleCoverage",
+		"startDownloadMemoryTelemetry",
 		"UPLOAD_TIMEOUT_MS +",
 		"READY_TIMEOUT_MS +",
 		"const boundedReaderListedPromise =",
@@ -244,9 +265,30 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"unexpectedSeederDrop",
 		"downloadMemoryTelemetryController =",
 		"downloadMemoryTelemetryController.snapshot()",
-		"await downloadMemoryTelemetryController.stopSampling()",
 		"await downloadMemoryTelemetryController.cleanup()",
+		"postTransferSoakMs: POST_TRANSFER_SOAK_MS",
+		"samplingWindowBudgetMs: TEST_OUTER_TIMEOUT_MS",
+		'stage = "post-transfer-soak"',
+		"postTransferSoakStartedAt = Date.now()",
+		"postTransferSoakFinishedAt = Date.now()",
+		"await downloadMemoryTelemetryController.sampleNow()",
+		"resourceSnapshots.beforeSoak =",
+		"resourceSnapshots.afterSoak =",
+		'"programAddress",',
+		'"peerId",',
+		'"peerHash",',
+		'"sessionId",',
+		"shutdownEvidence.programClosed !== true",
+		"shutdownEvidence.peerStopped !== true",
+		"shutdownIdentityMatchesSnapshots",
+		"schemaVersion: 2",
+		"timedReadEnvelope:",
+		"postTransferWork:",
+		"soak: buildInterval(snapshots.beforeSoak, snapshots.afterSoak)",
 		"downloadMemoryTelemetry.complete !== true",
+		"downloadMemoryTelemetry.manualCheckpointComplete !== true",
+		"downloadMemoryTelemetry.terminalCheckpointComplete !== true",
+		"downloadMemoryTelemetry.samplingCapacitySufficient !== true",
 		"series.samplingErrors.length > 0",
 		"downloadMemoryTelemetry,",
 		"let integrityVerifiedAt: number | null = null",
@@ -318,7 +360,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.ok(
 		contents.lastIndexOf('phase: "pre-timed-read",') <
-				contents.indexOf("writerTopologyBeforeTimedRead =") &&
+			contents.indexOf("writerTopologyBeforeTimedRead =") &&
 			contents.indexOf("writerTopologyBeforeTimedRead =") <
 				contents.indexOf("const downloadCompletion = armSavedViaPicker(") &&
 			contents.indexOf("const downloadCompletion = armSavedViaPicker(") <
@@ -327,15 +369,10 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.ok(
 		contents.indexOf("const download = await downloadCompletion") <
-			contents.indexOf(
-				"await downloadMemoryTelemetryController.stopSampling()",
-			) &&
-			contents.indexOf(
-				"await downloadMemoryTelemetryController.stopSampling()",
-			) < contents.indexOf("writerTopologyAfterTimedRead =") &&
+			contents.indexOf("writerTopologyAfterTimedRead =") &&
 			contents.indexOf("writerTopologyAfterTimedRead =") <
 				contents.indexOf('stage = "verify-integrity"'),
-		"memory telemetry sampling must stop at sink completion before the immediate topology snapshot and integrity work",
+		"post-read topology must remain immediate while memory sampling continues",
 	);
 	assert.ok(
 		contents.indexOf("writerTopologyAfterTimedRead =") <
@@ -346,20 +383,17 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.ok(
 		contents.indexOf("writerTopologyAfterTimedRead =") <
-			contents.lastIndexOf(
-				"requireMonotonicTransportCounterDelta(",
-			) &&
+			contents.lastIndexOf("requireMonotonicTransportCounterDelta(") &&
 			contents.lastIndexOf("requireMonotonicTransportCounterDelta(") <
 				contents.indexOf('stage = "verify-integrity"'),
 		"the immediate post-read gate must enforce local per-key monotonicity before integrity work",
 	);
 	assert.ok(
-		contents.indexOf(
-			"await downloadMemoryTelemetryController.stopSampling()",
-		) < contents.lastIndexOf('phase: "post-timed-read",') &&
+		contents.indexOf("const download = await downloadCompletion") <
+			contents.lastIndexOf('phase: "post-timed-read",') &&
 			contents.lastIndexOf('phase: "post-timed-read",') <
 				contents.indexOf("writerTopologyAfterTimedRead ="),
-		"post-read pubsub counters must stabilize immediately after memory sampling stops",
+		"post-read pubsub counters must stabilize immediately after sink completion",
 	);
 	assert.match(
 		contents,
@@ -370,6 +404,29 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		contents.indexOf("integrityVerifiedAt = Date.now()") <
 			contents.indexOf("await downloadMemoryTelemetryController.cleanup()"),
 		"CDP cleanup must start only after transfer integrity evidence is finalized",
+	);
+	assert.ok(
+		contents.indexOf("resourceSnapshots.afterSink =") <
+			contents.indexOf("resourceSnapshots.beforeSoak =") &&
+			contents.indexOf("resourceSnapshots.beforeSoak =") <
+				contents.indexOf("postTransferSoakStartedAt = Date.now()") &&
+			contents.indexOf("postTransferSoakStartedAt = Date.now()") <
+				contents.indexOf("postTransferSoakFinishedAt = Date.now()") &&
+			contents.indexOf("postTransferSoakFinishedAt = Date.now()") <
+				contents.indexOf(
+					"await downloadMemoryTelemetryController.sampleNow()",
+				) &&
+			contents.indexOf("await downloadMemoryTelemetryController.sampleNow()") <
+				contents.indexOf("resourceSnapshots.afterSoak =") &&
+			contents.indexOf("resourceSnapshots.afterSoak =") <
+				contents.indexOf("const [writerShutdown, readerShutdown]") &&
+			contents.indexOf("const [writerShutdown, readerShutdown]") <
+				contents.indexOf("await downloadMemoryTelemetryController.cleanup()"),
+		"memory sampling must remain armed through the bounded soak and peer shutdown",
+	);
+	assert.ok(
+		!contents.includes("downloadMemoryTelemetryController.stopSampling()"),
+		"the template must not stop memory sampling before soak and shutdown cleanup",
 	);
 	assert.ok(
 		!contents.includes("MIN_READY_SEEDERS, 180_000"),
@@ -439,6 +496,10 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"lastUploadDiagnostics:",
 		"(program as any)?.lastUploadDiagnostics ?? null",
 		'requireUploadDiagnostics: scenario === "upload"',
+		'requireRuntimeEvidence: scenario === "upload"',
+		"getBenchmarkRuntimeSnapshot",
+		"getStorageSnapshot",
+		"shutdown:",
 		"peerbit-benchmark-locality-prefix-preload",
 		"peerbit-benchmark-locality-preload-aggregate-deadline",
 		"peerbit-benchmark-locality-exact-manifest-import",
@@ -452,7 +513,7 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"signal: aggregateController.signal",
 		"aggregateController.abort(aggregateTimeoutError)",
 		"const manifestEntryHeads = (file as any).chunkEntryHeads",
-		'const documentId = \\`\\${file.id}:\\${index}\\`',
+		"const documentId = \\`\\${file.id}:\\${index}\\`",
 		"program.retainChunkRead(documentId, file.id)",
 		"program.retainChunkEntryHead(\n\t\t\t\t\t\t\t\t\t\t\thead,\n\t\t\t\t\t\t\t\t\t\t\tfile.id,\n\t\t\t\t\t\t\t\t\t\t\tdocumentId",
 		"const rawEntry = await blocks.get(head",
@@ -742,7 +803,7 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"utf8",
 	);
 	for (const required of [
-		'DOWNLOAD_MEMORY_PROFILE = "download-memory-v2"',
+		'DOWNLOAD_MEMORY_PROFILE = "download-memory-v3"',
 		"DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS = 5_000",
 		"DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS = 4_000",
 		"DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS = 9_000",
@@ -753,22 +814,37 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16",
 		"DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS = 16",
 		"DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512",
+		"DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE = 3",
 		"startBoundedSerialSampler",
 		"withDownloadMemoryOperationDeadline",
 		"onLateResolution",
-		"terminalSampleFailure = true",
-		"samples.length >= maxSamples - 1",
-		"await activeSample",
-		"await takeSample(true)",
+		"samplingWindowBudgetMs",
+		"sampleNow",
+		"serialSampleChain",
+		"capacityExhaustedBeforeTerminal",
+		"manualCheckpointComplete",
+		"terminalCheckpointComplete",
+		'await enqueueSample("terminal")',
+		'sampleKind === "manual"',
+		'sampleKind === "terminal"',
 		"newCDPSession(page)",
 		'"Page JS heap CDP session creation"',
-		"Performance.getMetrics",
-		'metric.name === "JSHeapUsedSize"',
+		"Runtime.getHeapUsage",
+		"embedderHeapUsedSize",
+		"backingStorageSize",
+		"startEmbedderHeapUsedBytes",
+		"peakBackingStorageBytes",
 		"newBrowserCDPSession()",
 		'"Browser RSS CDP session creation"',
 		"SystemInfo.getProcessInfo",
 		'"ps"',
-		"process.memoryUsage().rss",
+		"process.memoryUsage()",
+		"nodeExternalBytes",
+		"nodeArrayBuffersBytes",
+		"startNodeExternalBytes",
+		"peakNodeArrayBuffersBytes",
+		"never added to the combined RSS total",
+		"postTransferSoakMs",
 		"playwright-worker-node-including-in-process-local-bootstrap",
 		"samplingErrorOverflowCount",
 		"cleanupWarningOverflowCount",
@@ -780,10 +856,65 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		);
 	}
 	assert.ok(
-		contents.indexOf("await activeSample") <
-			contents.indexOf("await takeSample(true)"),
-		"stop must drain an active sample before the forced terminal sample",
+		contents.indexOf("await scheduledSamplePromise") <
+			contents.indexOf('await enqueueSample("terminal")'),
+		"stop must drain a scheduled sample before the forced terminal sample",
 	);
+});
+
+test("post-transfer soak is invocation-bound and forwarded by both runners", async () => {
+	const [invocation, runner, matrix, uploadTemplate, seederTemplate] =
+		await Promise.all(
+			[
+				"benchmark-invocation.mjs",
+				"run-file-share-benchmark.mjs",
+				"run-file-share-benchmark-matrix.mjs",
+				path.join("templates", "upload-benchmark.local.e2e.spec.ts"),
+				path.join("templates", "seeder-probe.e2e.spec.ts"),
+			].map((file) =>
+				readFile(path.join(repoRoot, "scripts", "file-share", file), "utf8"),
+			),
+		);
+	for (const required of [
+		"version: 5",
+		"postTransferSoakMs: 60_000",
+		"postTransferSoakMs ??",
+		'scenario === "upload" ? DEFAULTS.postTransferSoakMs : 0',
+		"PW_POST_TRANSFER_SOAK_MS: String(invocation.postTransferSoakMs)",
+	]) {
+		assert.ok(invocation.includes(required), `invocation missing ${required}`);
+	}
+	for (const required of [
+		'args["post-transfer-soak-ms"]',
+		'"--post-transfer-soak-ms"',
+		"postTransferSoakMs,",
+	]) {
+		assert.ok(runner.includes(required), `runner missing ${required}`);
+	}
+	for (const required of [
+		'args["post-transfer-soak-ms"]',
+		'["--post-transfer-soak-ms", String(postTransferSoakMs)]',
+		"postTransferSoakMs: optionalNumber(postTransferSoakMs)",
+	]) {
+		assert.ok(matrix.includes(required), `matrix missing ${required}`);
+	}
+	for (const [label, contents] of [
+		["upload", uploadTemplate],
+		["seeder", seederTemplate],
+	]) {
+		assert.ok(
+			contents.includes("PW_POST_TRANSFER_SOAK_MS"),
+			`${label} template does not bind the soak environment`,
+		);
+		assert.ok(
+			contents.includes("postTransferSoakMs:"),
+			`${label} template does not check the invocation soak`,
+		);
+		assert.ok(
+			contents.includes("?.version !== 5"),
+			`${label} template does not require invocation schema v5`,
+		);
+	}
 });
 
 test("matrix fail-closes every result envelope and fully validates passes", async () => {

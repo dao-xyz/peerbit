@@ -2,60 +2,207 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
+	DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
 	DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
 	DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES,
 	DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS,
+	DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
+	DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+	assertDownloadMemoryLiveSampleCoverage,
+	calculateDownloadMemoryMaxLiveSampleGapMs,
 	calculateDownloadMemoryMaxSamples,
 	startBoundedSerialSampler,
 	startDownloadMemoryTelemetry,
 	withDownloadMemoryOperationDeadline,
 } from "./templates/download-memory-telemetry.mjs";
 
+test("requires bounded non-terminal coverage for each exact live phase", () => {
+	const maxGapMs = calculateDownloadMemoryMaxLiveSampleGapMs({
+		schedulingToleranceMs: 5_000,
+	});
+	assert.equal(
+		maxGapMs,
+		DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS +
+			DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS +
+			5_000,
+	);
+	assert.deepEqual(
+		assertDownloadMemoryLiveSampleCoverage({
+			samples: [
+				{ capturedAt: 99, sampleKind: "initial" },
+				{ capturedAt: 101, sampleKind: "manual" },
+				{ capturedAt: 102, sampleKind: "terminal" },
+			],
+			phaseStartedAt: 100,
+			phaseFinishedAt: 101,
+			maxGapMs,
+			label: "short phase",
+		}),
+		{
+			firstSampleAt: 99,
+			lastSampleAt: 101,
+			startOverhangMs: 1,
+			endOverhangMs: 0,
+			maxObservedGapMs: 2,
+			sampleCount: 2,
+		},
+	);
+	assert.throws(
+		() =>
+			assertDownloadMemoryLiveSampleCoverage({
+				samples: [
+					{ capturedAt: 1, sampleKind: "initial" },
+					{ capturedAt: maxGapMs + 2, sampleKind: "manual" },
+				],
+				phaseStartedAt: 2,
+				phaseFinishedAt: maxGapMs + 1,
+				maxGapMs,
+				label: "long phase",
+			}),
+		/live-sample gap/,
+	);
+	assert.throws(
+		() =>
+			assertDownloadMemoryLiveSampleCoverage({
+				samples: [
+					{ capturedAt: 1, sampleKind: "initial" },
+					{ capturedAt: 10, sampleKind: "terminal" },
+				],
+				phaseStartedAt: 2,
+				phaseFinishedAt: 9,
+				maxGapMs,
+				label: "terminal-only endpoint",
+			}),
+		/do not bracket/,
+	);
+});
+
+const createFakeTimerClock = () => {
+	let currentTime = 0;
+	let nextId = 1;
+	const timers = new Map();
+	return {
+		now: () => currentTime,
+		setTimer: (callback, timeoutMs) => {
+			const id = nextId++;
+			timers.set(id, { callback, dueAt: currentTime + timeoutMs });
+			return id;
+		},
+		clearTimer: (id) => timers.delete(id),
+		advanceBy: (durationMs) => {
+			currentTime += durationMs;
+		},
+		runNext: async () => {
+			const next = [...timers.entries()].sort(
+				([leftId, left], [rightId, right]) =>
+					left.dueAt - right.dueAt || leftId - rightId,
+			)[0];
+			assert.ok(next, "expected a scheduled fake timer");
+			const [id, { callback, dueAt }] = next;
+			timers.delete(id);
+			currentTime = Math.max(currentTime, dueAt);
+			callback();
+			await Promise.resolve();
+			await Promise.resolve();
+		},
+	};
+};
+
 test("derives a deadline-bounded sample cap with an absolute result-size ceiling", () => {
 	assert.equal(
 		calculateDownloadMemoryMaxSamples({
-			downloadTimeoutMs: 600_000,
-			schedulingToleranceMs: 5_000,
+			samplingWindowBudgetMs: 600_000,
 		}),
 		123,
 	);
 	assert.equal(
 		calculateDownloadMemoryMaxSamples({
-			downloadTimeoutMs: Number.MAX_SAFE_INTEGER - 10_000,
-			schedulingToleranceMs: 5_000,
+			samplingWindowBudgetMs: 665_001,
+		}),
+		137,
+	);
+	assert.equal(
+		calculateDownloadMemoryMaxSamples({
+			samplingWindowBudgetMs: Number.MAX_SAFE_INTEGER,
 		}),
 		DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES,
 	);
 	assert.throws(
 		() =>
 			calculateDownloadMemoryMaxSamples({
-				downloadTimeoutMs: 0,
-				schedulingToleranceMs: 5_000,
+				samplingWindowBudgetMs: 0,
 			}),
-		/bounded timeout values/,
+		/positive bounded sampling window budget/,
+	);
+	assert.throws(
+		() =>
+			calculateDownloadMemoryMaxSamples({
+				samplingWindowBudgetMs: -1,
+			}),
+		/positive bounded sampling window budget/,
+	);
+	assert.throws(
+		() => calculateDownloadMemoryMaxSamples({}),
+		/positive bounded sampling window budget/,
+	);
+	assert.equal(
+		calculateDownloadMemoryMaxSamples({
+			samplingWindowBudgetMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+		}),
+		4,
 	);
 });
 
-test("serializes samples, reserves the forced endpoint, and cleans up once", async () => {
+test("serializes periodic and live samples while reserving the terminal endpoint", async () => {
+	const clock = createFakeTimerClock();
 	let active = 0;
 	let peakActive = 0;
 	let cleanupCount = 0;
 	let value = 0;
+	let releasePeriodic;
+	const periodicGate = new Promise((resolve) => {
+		releasePeriodic = resolve;
+	});
 	const sampler = await startBoundedSerialSampler({
 		intervalMs: 1,
-		maxSamples: 3,
+		maxSamples: 5,
+		now: clock.now,
+		setTimer: clock.setTimer,
+		clearTimer: clock.clearTimer,
 		readSample: async () => {
 			active += 1;
 			peakActive = Math.max(peakActive, active);
-			await delay(2);
+			const nextValue = (value += 1);
+			if (nextValue === 2) {
+				await periodicGate;
+			}
 			active -= 1;
-			return { value: (value += 1) };
+			return { value: nextValue };
 		},
 		cleanup: async () => {
 			cleanupCount += 1;
 		},
 	});
-	await delay(12);
+	await clock.runNext();
+	while (value < 2) {
+		await Promise.resolve();
+	}
+	const firstCheckpoint = sampler.sampleNow();
+	const secondCheckpoint = sampler.sampleNow();
+	assert.strictEqual(firstCheckpoint, secondCheckpoint);
+	assert.equal(peakActive, 1);
+	releasePeriodic();
+	const checkpoint = await firstCheckpoint;
+	assert.equal(peakActive, 1);
+	assert.deepEqual(
+		checkpoint.samples.map((sample) => sample.sampleKind),
+		["initial", "periodic", "manual"],
+	);
+	assert.equal(checkpoint.manualSampleCount, 1);
+	assert.equal(checkpoint.terminalSampleAttempted, false);
+	assert.deepEqual(await sampler.sampleNow(), checkpoint);
+	assert.equal(value, 3);
+	clock.advanceBy(1);
 	const [firstStop, secondStop] = await Promise.all([
 		sampler.stop(),
 		sampler.stop(),
@@ -63,15 +210,92 @@ test("serializes samples, reserves the forced endpoint, and cleans up once", asy
 	assert.deepEqual(firstStop, secondStop);
 	assert.equal(peakActive, 1);
 	assert.equal(cleanupCount, 1);
-	assert.equal(firstStop.samples.length, 3);
+	assert.deepEqual(
+		firstStop.samples.map((sample) => sample.sampleKind),
+		["initial", "periodic", "manual", "terminal"],
+	);
+	assert.equal(firstStop.lastManualSampleAt < firstStop.terminalSampleAt, true);
+	assert.equal(firstStop.terminalSampleAttempted, true);
+	assert.equal(firstStop.terminalSampleCaptured, true);
+	assert.equal(firstStop.capacityExhaustedBeforeTerminal, false);
 	assert.equal(firstStop.finishedAt >= firstStop.startedAt, true);
+});
+
+test("reports premature periodic capacity exhaustion and still captures terminal evidence", async () => {
+	const clock = createFakeTimerClock();
+	let value = 0;
+	const sampler = await startBoundedSerialSampler({
+		intervalMs: 5,
+		maxSamples: 3,
+		now: clock.now,
+		setTimer: clock.setTimer,
+		clearTimer: clock.clearTimer,
+		readSample: async () => ({ value: (value += 1) }),
+	});
+
+	await clock.runNext();
+	const exhausted = sampler.snapshot();
+	assert.equal(exhausted.capacityExhaustedBeforeTerminal, true);
+	assert.equal(exhausted.samplingCapacitySufficient, false);
+	assert.equal(exhausted.terminalSampleAttempted, false);
+
+	const live = await sampler.sampleNow();
+	assert.deepEqual(
+		live.samples.map((sample) => sample.sampleKind),
+		["initial", "manual"],
+	);
+	clock.advanceBy(1);
+	const terminal = await sampler.stopSampling();
+	assert.deepEqual(
+		terminal.samples.map((sample) => sample.sampleKind),
+		["initial", "manual", "terminal"],
+	);
+	assert.equal(terminal.capacityExhaustedBeforeTerminal, true);
+	assert.equal(terminal.terminalSampleAttempted, true);
+	assert.equal(terminal.terminalSampleCaptured, true);
+	assert.equal(terminal.lastManualSampleAt < terminal.terminalSampleAt, true);
+});
+
+test("cleanup waits for an in-flight live checkpoint before taking the terminal sample", async () => {
+	let sampleCalls = 0;
+	let releaseCheckpoint;
+	const checkpointGate = new Promise((resolve) => {
+		releaseCheckpoint = resolve;
+	});
+	let cleanupCount = 0;
+	const sampler = await startBoundedSerialSampler({
+		intervalMs: 60_000,
+		maxSamples: 3,
+		readSample: async () => {
+			sampleCalls += 1;
+			if (sampleCalls === 2) {
+				await checkpointGate;
+			}
+			return { value: sampleCalls };
+		},
+		cleanup: async () => {
+			cleanupCount += 1;
+		},
+	});
+	const checkpoint = sampler.sampleNow();
+	const cleanup = sampler.cleanup();
+	await Promise.resolve();
+	assert.equal(cleanupCount, 0);
+	releaseCheckpoint();
+	await checkpoint;
+	const result = await cleanup;
+	assert.equal(cleanupCount, 1);
+	assert.deepEqual(
+		result.samples.map((sample) => sample.sampleKind),
+		["initial", "manual", "terminal"],
+	);
 });
 
 test("bounds and truncates repeated sampling failures", async () => {
 	const longMessage = "x".repeat(DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH * 2);
 	const sampler = await startBoundedSerialSampler({
 		intervalMs: 1,
-		maxSamples: 2,
+		maxSamples: 20,
 		readSample: async () => {
 			throw new Error(longMessage);
 		},
@@ -215,20 +439,30 @@ test("absorbs late operation settlement and cleans late-created values", async (
 	assert.equal(lateCleanupCount, 1);
 });
 
-test("collects forced endpoint heap and attributed RSS samples", async () => {
+test("collects forced endpoint runtime-heap and attributed host samples", async () => {
 	let detachedPageSessions = 0;
 	let detachedBrowserSessions = 0;
-	const page = (usedBytes) => ({
+	const page = (initialUsedBytes) => ({
 		context: () => ({
-			newCDPSession: async () => ({
-				send: async (method) =>
-					method === "Performance.getMetrics"
-						? { metrics: [{ name: "JSHeapUsedSize", value: usedBytes }] }
-						: {},
-				detach: async () => {
-					detachedPageSessions += 1;
-				},
-			}),
+			newCDPSession: async () => {
+				let sampleIndex = 0;
+				return {
+					send: async (method) => {
+						assert.equal(method, "Runtime.getHeapUsage");
+						const usedBytes = initialUsedBytes + sampleIndex;
+						sampleIndex += 1;
+						return {
+							usedSize: usedBytes,
+							totalSize: usedBytes + 10,
+							embedderHeapUsedSize: usedBytes + 20,
+							backingStorageSize: usedBytes + 30,
+						};
+					},
+					detach: async () => {
+						detachedPageSessions += 1;
+					},
+				};
+			},
 		}),
 	});
 	const browser = {
@@ -250,14 +484,73 @@ test("collects forced endpoint heap and attributed RSS samples", async () => {
 		writer: page(200),
 		downloadTimeoutMs: 60_000,
 		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 60_000,
+		samplingWindowBudgetMs: 130_000,
 	});
+	const [firstCheckpoint, secondCheckpoint] = await Promise.all([
+		telemetry.sampleNow(),
+		telemetry.sampleNow(),
+	]);
+	assert.deepEqual(firstCheckpoint, secondCheckpoint);
+	assert.equal(firstCheckpoint.manualCheckpointComplete, true);
+	assert.equal(firstCheckpoint.terminalCheckpointComplete, false);
 	const result = await telemetry.stop();
 	assert.equal(result.complete, true);
 	assert.equal(result.cleanupComplete, true);
-	assert.equal(result.readerJsHeap.sampleCount, 2);
-	assert.equal(result.writerJsHeap.sampleCount, 2);
-	assert.equal(result.hostRss.sampleCount, 2);
+	assert.equal(result.readerJsHeap.sampleCount, 3);
+	assert.equal(result.writerJsHeap.sampleCount, 3);
+	assert.equal(result.hostRss.sampleCount, 3);
+	assert.equal(result.profile, "download-memory-v3");
+	assert.equal(result.operationTimeoutMs, DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS);
+	assert.equal(
+		result.liveSampleMaxGapMs,
+		DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS +
+			DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS +
+			5_000,
+	);
+	assert.equal(
+		result.liveSampleCoverageDefinition,
+		DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
+	);
+	assert.equal(result.postTransferSoakMs, 60_000);
+	assert.equal(result.samplingWindowBudgetMs, 130_000);
+	assert.equal(result.samplingCapacitySufficient, true);
+	assert.equal(result.capacityExhaustedBeforeTerminal, false);
+	assert.equal(result.manualCheckpointComplete, true);
+	assert.equal(result.terminalCheckpointComplete, true);
+	assert.equal(result.readerJsHeap.metric, "Runtime.getHeapUsage");
+	assert.equal(result.readerJsHeap.startUsedBytes, 100);
+	assert.equal(result.readerJsHeap.endUsedBytes, 102);
+	assert.equal(result.readerJsHeap.peakTotalBytes, 112);
+	assert.equal(result.readerJsHeap.endEmbedderHeapUsedBytes, 122);
+	assert.equal(result.readerJsHeap.peakBackingStorageBytes, 132);
+	assert.deepEqual(
+		result.readerJsHeap.samples.map((sample) => sample.sampleKind),
+		["initial", "manual", "terminal"],
+	);
 	assert.equal(result.hostRss.samples[0].browserBytes > 0, true);
+	assert.equal(result.hostRss.samples[0].nodeExternalBytes >= 0, true);
+	assert.equal(result.hostRss.samples[0].nodeArrayBuffersBytes >= 0, true);
+	assert.equal(
+		result.hostRss.startNodeExternalBytes,
+		result.hostRss.samples[0].nodeExternalBytes,
+	);
+	assert.equal(
+		result.hostRss.endNodeArrayBuffersBytes,
+		result.hostRss.samples.at(-1).nodeArrayBuffersBytes,
+	);
+	assert.equal(
+		result.hostRss.peakNodeExternalBytes,
+		Math.max(
+			...result.hostRss.samples.map((sample) => sample.nodeExternalBytes),
+		),
+	);
+	assert.equal(
+		result.hostRss.peakNodeArrayBuffersBytes,
+		Math.max(
+			...result.hostRss.samples.map((sample) => sample.nodeArrayBuffersBytes),
+		),
+	);
 	assert.equal(
 		result.hostRss.samples[0].combinedBytes,
 		result.hostRss.samples[0].browserBytes +
@@ -273,13 +566,13 @@ test("records post-sampling CDP timeouts as cleanup warnings", async () => {
 		context: () => ({
 			newCDPSession: async () => ({
 				send: async (method) => {
-					if (method === "Performance.getMetrics") {
-						return { metrics: [{ name: "JSHeapUsedSize", value: 100 }] };
-					}
-					if (method === "Performance.disable" && hangOnCleanup) {
-						return await new Promise(() => {});
-					}
-					return {};
+					assert.equal(method, "Runtime.getHeapUsage");
+					return {
+						usedSize: 100,
+						totalSize: 110,
+						embedderHeapUsedSize: 120,
+						backingStorageSize: 130,
+					};
 				},
 				detach: async () => {
 					detachStarted += 1;
@@ -304,6 +597,8 @@ test("records post-sampling CDP timeouts as cleanup warnings", async () => {
 		writer: page(false),
 		downloadTimeoutMs: 60_000,
 		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 0,
+		samplingWindowBudgetMs: 65_000,
 		operationTimeoutMs: 3,
 		cleanupTimeoutMs: 8,
 	});
@@ -318,7 +613,7 @@ test("records post-sampling CDP timeouts as cleanup warnings", async () => {
 	assert.equal(result.readerJsHeap.cleanupWarnings.length, 1);
 	assert.match(
 		result.readerJsHeap.cleanupWarnings[0],
-		/Performance\.disable exceeded 3ms; Page JS heap CDP detach exceeded 3ms/,
+		/Page JS heap CDP detach exceeded 3ms/,
 	);
 	assert.equal(detachStarted, 2);
 });
@@ -326,10 +621,15 @@ test("records post-sampling CDP timeouts as cleanup warnings", async () => {
 test("bounds setup and detaches a CDP session created after its deadline", async () => {
 	let lateDetachCount = 0;
 	const session = (usedBytes, onDetach = () => {}) => ({
-		send: async (method) =>
-			method === "Performance.getMetrics"
-				? { metrics: [{ name: "JSHeapUsedSize", value: usedBytes }] }
-				: {},
+		send: async (method) => {
+			assert.equal(method, "Runtime.getHeapUsage");
+			return {
+				usedSize: usedBytes,
+				totalSize: usedBytes + 10,
+				embedderHeapUsedSize: usedBytes + 20,
+				backingStorageSize: usedBytes + 30,
+			};
+		},
 		detach: async () => onDetach(),
 	});
 	const lateReaderSession = session(100, () => {
@@ -362,6 +662,8 @@ test("bounds setup and detaches a CDP session created after its deadline", async
 		writer,
 		downloadTimeoutMs: 60_000,
 		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 0,
+		samplingWindowBudgetMs: 65_000,
 		operationTimeoutMs: 3,
 		cleanupTimeoutMs: 8,
 	});

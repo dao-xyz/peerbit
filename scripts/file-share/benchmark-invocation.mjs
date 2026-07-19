@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 export const BENCHMARK_INVOCATION_SCHEMA = {
 	id: "peerbit-file-share-benchmark-invocation",
-	version: 4,
+	version: 5,
 };
 
 export const TINY_FILE_CUTOFF_BYTES = 5_000_000;
@@ -26,6 +26,7 @@ const DEPLOYED_APP_HARNESS_MESSAGE =
 
 const DEFAULTS = {
 	uploadTimeoutMs: 600_000,
+	postTransferSoakMs: 60_000,
 	postUploadMonitorMs: 5_000,
 	pollMs: 1_000,
 	readyTimeoutMs: 180_000,
@@ -164,6 +165,7 @@ export const createBenchmarkInvocation = ({
 	downloadSink,
 	uploadTimeoutMs,
 	downloadTimeoutMs,
+	postTransferSoakMs,
 	postUploadMonitorMs,
 	pollMs,
 	minReadySeeders,
@@ -218,6 +220,16 @@ export const createBenchmarkInvocation = ({
 		downloadTimeoutMs ?? resolvedUploadTimeoutMs,
 		"downloadTimeoutMs",
 	);
+	const resolvedPostTransferSoakMs = requireNonNegativeSafeInteger(
+		postTransferSoakMs ??
+			(scenario === "upload" ? DEFAULTS.postTransferSoakMs : 0),
+		"postTransferSoakMs",
+	);
+	if (scenario !== "upload" && resolvedPostTransferSoakMs !== 0) {
+		throw new Error(
+			"postTransferSoakMs is only supported by upload benchmarks",
+		);
+	}
 	const resolvedPostUploadMonitorMs = requireNonNegativeSafeInteger(
 		postUploadMonitorMs ?? DEFAULTS.postUploadMonitorMs,
 		"postUploadMonitorMs",
@@ -331,6 +343,7 @@ export const createBenchmarkInvocation = ({
 		downloadSink: resolvedDownloadSink,
 		uploadTimeoutMs: resolvedUploadTimeoutMs,
 		downloadTimeoutMs: resolvedDownloadTimeoutMs,
+		postTransferSoakMs: resolvedPostTransferSoakMs,
 		postUploadMonitorMs: resolvedPostUploadMonitorMs,
 		pollMs: resolvedPollMs,
 		minReadySeeders: resolvedMinReadySeeders,
@@ -390,6 +403,7 @@ export const createPlaywrightBenchmarkEnvironment = ({
 		PW_MIN_READY_SEEDERS: String(invocation.minReadySeeders),
 		PW_NETWORK_MODE: invocation.networkMode,
 		PW_POLL_MS: String(invocation.pollMs),
+		PW_POST_TRANSFER_SOAK_MS: String(invocation.postTransferSoakMs),
 		PW_POST_UPLOAD_MONITOR_MS: String(invocation.postUploadMonitorMs),
 		PW_PROTOCOL: stringValue(invocation.protocol),
 		PW_READY_TIMEOUT_MS: String(invocation.readyTimeoutMs),
@@ -404,9 +418,7 @@ export const createPlaywrightBenchmarkEnvironment = ({
 		PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: stringValue(
 			invocation.readerLocalChunkMaxOvershoot,
 		),
-		PW_READER_TERMINAL_TOPOLOGY: stringValue(
-			invocation.readerTerminalTopology,
-		),
+		PW_READER_TERMINAL_TOPOLOGY: stringValue(invocation.readerTerminalTopology),
 		PW_UPLOAD_TIMEOUT_MS: String(invocation.uploadTimeoutMs),
 		PW_VERBOSE: invocation.verbose ? "1" : "0",
 		PW_VITE_CONFIG: stringValue(invocation.viteConfig),

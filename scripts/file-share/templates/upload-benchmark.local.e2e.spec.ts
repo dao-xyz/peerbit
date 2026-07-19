@@ -4,7 +4,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { startBootstrapPeer } from "./bootstrapPeer";
-import { startDownloadMemoryTelemetry } from "./generated.download-memory-telemetry.mjs";
+import {
+	DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION,
+	DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS,
+	DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
+	assertDownloadMemoryLiveSampleCoverage,
+	startDownloadMemoryTelemetry,
+} from "./generated.download-memory-telemetry.mjs";
 import { sha256AndCrc32OpfsSavedViaPicker } from "./generated.opfs-readback.mjs";
 import { withDeadline } from "./generated.promise-deadline.mjs";
 import {
@@ -52,6 +58,9 @@ const PUBSUB_PROTOCOL = "/peerbit/topic-control-plane/2.0.0";
 const POST_UPLOAD_MONITOR_MS = Number(
 	process.env.PW_POST_UPLOAD_MONITOR_MS || "5000",
 );
+const POST_TRANSFER_SOAK_MS = Number(
+	process.env.PW_POST_TRANSFER_SOAK_MS ?? "60000",
+);
 const UPLOAD_TIMEOUT_MS = Number(process.env.PW_UPLOAD_TIMEOUT_MS || "600000");
 const DOWNLOAD_TIMEOUT_MS = Number(
 	process.env.PW_DOWNLOAD_TIMEOUT_MS ||
@@ -62,6 +71,11 @@ const READY_TIMEOUT_MS = Number(process.env.PW_READY_TIMEOUT_MS);
 const POST_MONITOR_SCHEDULING_TOLERANCE_MS = Math.max(250, POLL_MS + 250);
 const POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION =
 	"max(250ms, pollMs + 250ms) for the final poll and event-loop scheduling";
+const POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_MS = Math.max(250, POLL_MS + 250);
+const POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION =
+	"max(250ms, pollMs + 250ms) for the requested post-transfer timer and event-loop scheduling";
+const RESOURCE_SNAPSHOT_TIMEOUT_MS = 15_000;
+const PAGE_SHUTDOWN_TIMEOUT_MS = 30_000;
 const TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS = Math.max(
 	5_000,
 	POLL_MS + 1_000,
@@ -88,6 +102,7 @@ const TEST_OUTER_TIMEOUT_MS = Math.max(
 		DOWNLOAD_TIMEOUT_MS +
 		LOCALITY_CONTROL_OUTER_TIMEOUT_BUDGET_MS +
 		POST_UPLOAD_MONITOR_MS +
+		POST_TRANSFER_SOAK_MS +
 		5 * 60 * 1000,
 );
 const TIME_TO_WRITER_READY_DEFINITION =
@@ -125,7 +140,7 @@ const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 9,
+	version: 10,
 } as const;
 const SEEDER_DROP_POLICY = {
 	id: "peerbit-file-share-seeder-drop-policy",
@@ -231,6 +246,17 @@ if (
 		`Invalid PW_READY_TIMEOUT_MS='${process.env.PW_READY_TIMEOUT_MS}'`,
 	);
 }
+if (!Number.isSafeInteger(POST_TRANSFER_SOAK_MS) || POST_TRANSFER_SOAK_MS < 0) {
+	throw new Error(
+		`Invalid PW_POST_TRANSFER_SOAK_MS='${process.env.PW_POST_TRANSFER_SOAK_MS}'`,
+	);
+}
+if (
+	!Number.isSafeInteger(TEST_OUTER_TIMEOUT_MS) ||
+	TEST_OUTER_TIMEOUT_MS <= 0
+) {
+	throw new Error("Benchmark lifecycle timeout exceeds the safe integer range");
+}
 if (process.env.PW_BENCH !== "1") {
 	throw new Error("Upload benchmark must run against the production preview");
 }
@@ -257,6 +283,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
 	downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
 	postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
+	postTransferSoakMs: POST_TRANSFER_SOAK_MS,
 	pollMs: POLL_MS,
 	minReadySeeders: MIN_READY_SEEDERS,
 	readyTimeoutMs: READY_TIMEOUT_MS,
@@ -275,7 +302,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 4
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 5
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -717,7 +744,9 @@ const requireMonotonicTransportCounterDelta = (
 	const beforeKeys = before.counters.map(({ key }) => key);
 	const afterKeys = after.counters.map(({ key }) => key);
 	if (JSON.stringify(beforeKeys) !== JSON.stringify(afterKeys)) {
-		throw new Error(`${label} pubsub counter key set changed during timed read`);
+		throw new Error(
+			`${label} pubsub counter key set changed during timed read`,
+		);
 	}
 	for (const [index, afterCounter] of after.counters.entries()) {
 		if (afterCounter.bytes < before.counters[index].bytes) {
@@ -769,10 +798,7 @@ const collectStableCounterpartTransportTopology = async ({
 	while (Date.now() <= deadlineAt) {
 		const remainingMs = Math.max(1, deadlineAt - Date.now());
 		const [writerTopology, readerTopology] = await withDeadline(
-			Promise.all([
-				getTopologySnapshot(writer),
-				getTopologySnapshot(reader),
-			]),
+			Promise.all([getTopologySnapshot(writer), getTopologySnapshot(reader)]),
 			remainingMs,
 			`${phase} transport topology capture exceeded its bounded deadline`,
 		);
@@ -798,31 +824,23 @@ const collectStableCounterpartTransportTopology = async ({
 				`${phase} topology capture does not preserve the controlled peer identities and window`,
 			);
 		}
-		const writerSummary = summarizeCounterpartPubsubTransport(
-			writerTopology,
-			{
-				direction: "outbound",
-				expectedPeerHash: expectedReaderPeerHash,
-				expectedRemotePeerId: expectedReaderPeerId,
-				label: `${phase} writer topology`,
-			},
-		);
-		const readerSummary = summarizeCounterpartPubsubTransport(
-			readerTopology,
-			{
-				direction: "inbound",
-				expectedPeerHash: expectedWriterPeerHash,
-				expectedRemotePeerId: expectedWriterPeerId,
-				label: `${phase} reader topology`,
-			},
-		);
+		const writerSummary = summarizeCounterpartPubsubTransport(writerTopology, {
+			direction: "outbound",
+			expectedPeerHash: expectedReaderPeerHash,
+			expectedRemotePeerId: expectedReaderPeerId,
+			label: `${phase} writer topology`,
+		});
+		const readerSummary = summarizeCounterpartPubsubTransport(readerTopology, {
+			direction: "inbound",
+			expectedPeerHash: expectedWriterPeerHash,
+			expectedRemotePeerId: expectedWriterPeerId,
+			label: `${phase} reader topology`,
+		});
 		lastSummaries = { writer: writerSummary, reader: readerSummary };
 		if (previous) {
 			for (const side of ["writer", "reader"] as const) {
 				const previousKeys = previous[side].counters.map(({ key }) => key);
-				const currentKeys = lastSummaries[side].counters.map(
-					({ key }) => key,
-				);
+				const currentKeys = lastSummaries[side].counters.map(({ key }) => key);
 				if (JSON.stringify(previousKeys) === JSON.stringify(currentKeys)) {
 					for (const [index, current] of lastSummaries[
 						side
@@ -842,11 +860,11 @@ const collectStableCounterpartTransportTopology = async ({
 		);
 		const signature =
 			counterpartByteSkew <= TRANSPORT_COUNTER_MAX_COUNTERPART_BYTE_SKEW
-			? JSON.stringify({
-					writer: writerSummary,
-					reader: readerSummary,
-				})
-			: null;
+				? JSON.stringify({
+						writer: writerSummary,
+						reader: readerSummary,
+					})
+				: null;
 		if (signature !== null && signature === stableSignature) {
 			stableCount += 1;
 		} else {
@@ -951,6 +969,403 @@ const getDiagnostics = async (page: Page) => {
 	} catch {
 		return null;
 	}
+};
+
+type BenchmarkPageRole = "writer" | "reader";
+
+const EAGER_MONOTONIC_COUNTERS = [
+	"evictions",
+	"expirations",
+	"admitted",
+	"hits",
+	"rejectedCid",
+	"rejectedCodec",
+	"rejectedSize",
+	"rejectedPending",
+	"rejectedIntegrity",
+	"rejectedLifecycle",
+] as const;
+const EAGER_TELEMETRY_KEYS = [
+	"entries",
+	"bytes",
+	"peakEntries",
+	"peakBytes",
+	"evictions",
+	"expirations",
+	"pendingEntries",
+	"pendingBytes",
+	"peakPendingEntries",
+	"peakPendingBytes",
+	"admitted",
+	"hits",
+	"rejectedCid",
+	"rejectedCodec",
+	"rejectedSize",
+	"rejectedPending",
+	"rejectedIntegrity",
+	"rejectedLifecycle",
+	"limits",
+] as const;
+const EAGER_LIMIT_KEYS = [
+	"maxEntries",
+	"maxBytes",
+	"maxBlockBytes",
+	"ttlMs",
+	"validationConcurrency",
+	"maxPendingBytes",
+	"maxPendingEntries",
+] as const;
+
+const hasExactRecordKeys = (value: unknown, expectedKeys: readonly string[]) =>
+	value != null &&
+	typeof value === "object" &&
+	!Array.isArray(value) &&
+	JSON.stringify(Object.keys(value).sort()) ===
+		JSON.stringify([...expectedKeys].sort());
+
+type BenchmarkPageResourceSnapshot = {
+	role: BenchmarkPageRole;
+	capturedAt: number;
+	storage: Record<string, unknown>;
+	runtime: Record<string, unknown>;
+};
+
+type BenchmarkResourceSnapshotSet = {
+	label: "beforeTimedRead" | "afterSink" | "beforeSoak" | "afterSoak";
+	startedAt: number;
+	finishedAt: number;
+	writer: BenchmarkPageResourceSnapshot;
+	reader: BenchmarkPageResourceSnapshot;
+};
+
+const capturePageResourceSnapshot = async (
+	page: Page,
+	role: BenchmarkPageRole,
+): Promise<BenchmarkPageResourceSnapshot> => {
+	const snapshot = await withDeadline(
+		page.evaluate(async () => {
+			const hooks = (window as any).__peerbitFileShareTestHooks;
+			if (typeof hooks?.getStorageSnapshot !== "function") {
+				throw new Error("Missing getStorageSnapshot benchmark hook");
+			}
+			if (typeof hooks?.getBenchmarkRuntimeSnapshot !== "function") {
+				throw new Error("Missing getBenchmarkRuntimeSnapshot benchmark hook");
+			}
+			const [storage, runtime] = await Promise.all([
+				hooks.getStorageSnapshot(),
+				hooks.getBenchmarkRuntimeSnapshot(),
+			]);
+			return { capturedAt: Date.now(), storage, runtime };
+		}),
+		RESOURCE_SNAPSHOT_TIMEOUT_MS,
+		`${role} resource snapshot exceeded ${RESOURCE_SNAPSHOT_TIMEOUT_MS}ms`,
+	);
+	if (
+		snapshot == null ||
+		typeof snapshot !== "object" ||
+		Array.isArray(snapshot) ||
+		!Number.isSafeInteger(snapshot.capturedAt) ||
+		snapshot.storage == null ||
+		typeof snapshot.storage !== "object" ||
+		Array.isArray(snapshot.storage) ||
+		snapshot.runtime == null ||
+		typeof snapshot.runtime !== "object" ||
+		Array.isArray(snapshot.runtime)
+	) {
+		throw new Error(`${role} resource snapshot is malformed`);
+	}
+	return { role, ...snapshot } as BenchmarkPageResourceSnapshot;
+};
+
+const captureResourceSnapshotSet = async (
+	writer: Page,
+	reader: Page,
+	label: BenchmarkResourceSnapshotSet["label"],
+): Promise<BenchmarkResourceSnapshotSet> => {
+	const startedAt = Date.now();
+	const [writerSnapshot, readerSnapshot] = await Promise.all([
+		capturePageResourceSnapshot(writer, "writer"),
+		capturePageResourceSnapshot(reader, "reader"),
+	]);
+	const finishedAt = Date.now();
+	for (const snapshot of [writerSnapshot, readerSnapshot]) {
+		if (snapshot.capturedAt < startedAt || snapshot.capturedAt > finishedAt) {
+			throw new Error(
+				`${snapshot.role} resource snapshot clock is inconsistent`,
+			);
+		}
+	}
+	return {
+		label,
+		startedAt,
+		finishedAt,
+		writer: writerSnapshot,
+		reader: readerSnapshot,
+	};
+};
+
+const requirePreTimedRuntimeEvidence = (
+	snapshot: BenchmarkResourceSnapshotSet,
+) => {
+	for (const role of ["writer", "reader"] as const) {
+		const runtime = snapshot[role].runtime as Record<string, any>;
+		const identity = runtime.identity;
+		const nativeGraph = runtime.nativeGraph;
+		const eagerBlocks = runtime.eagerBlocks;
+		const pubsub = runtime.pubsub;
+		const fanout = pubsub?.snapshot?.fanout;
+		if (
+			!hasExactRecordKeys(runtime, [
+				"capturedAt",
+				"programReady",
+				"identity",
+				"nativeGraph",
+				"eagerBlocks",
+				"pubsub",
+			]) ||
+			!Number.isSafeInteger(runtime.capturedAt) ||
+			runtime.capturedAt < snapshot.startedAt ||
+			runtime.capturedAt > snapshot[role].capturedAt ||
+			runtime.programReady !== true ||
+			!hasExactRecordKeys(identity, [
+				"programAddress",
+				"peerId",
+				"peerHash",
+				"sessionId",
+			]) ||
+			[
+				identity?.programAddress,
+				identity?.peerId,
+				identity?.peerHash,
+				identity?.sessionId,
+			].some((value) => typeof value !== "string" || value.length === 0) ||
+			!hasExactRecordKeys(nativeGraph, ["active", "useHeads"]) ||
+			typeof nativeGraph?.active !== "boolean" ||
+			typeof nativeGraph.useHeads !== "boolean" ||
+			(nativeGraph.active === false && nativeGraph.useHeads !== false) ||
+			!hasExactRecordKeys(eagerBlocks, [
+				"telemetryAvailable",
+				"enabled",
+				"telemetry",
+			]) ||
+			eagerBlocks.telemetryAvailable !== true ||
+			typeof eagerBlocks.enabled !== "boolean" ||
+			!hasExactRecordKeys(pubsub, [
+				"runtimeSnapshotAvailable",
+				"snapshot",
+				"error",
+			]) ||
+			pubsub?.runtimeSnapshotAvailable !== true ||
+			pubsub.error !== null ||
+			!hasExactRecordKeys(pubsub.snapshot, ["fanout"]) ||
+			!hasExactRecordKeys(fanout, ["root", "node"]) ||
+			!hasExactRecordKeys(fanout?.root, ["uploadLimitBps"]) ||
+			!hasExactRecordKeys(fanout?.node, ["uploadLimitBps"]) ||
+			!Number.isSafeInteger(fanout?.root?.uploadLimitBps) ||
+			fanout.root.uploadLimitBps <= 0 ||
+			!Number.isSafeInteger(fanout?.node?.uploadLimitBps) ||
+			fanout.node.uploadLimitBps <= 0
+		) {
+			throw new Error(
+				`${role} did not expose complete effective benchmark runtime evidence`,
+			);
+		}
+		if (eagerBlocks.enabled) {
+			const telemetry = eagerBlocks.telemetry;
+			const limits = telemetry?.limits;
+			if (
+				!hasExactRecordKeys(telemetry, EAGER_TELEMETRY_KEYS) ||
+				EAGER_TELEMETRY_KEYS.filter((key) => key !== "limits").some(
+					(key) => !Number.isSafeInteger(telemetry[key]) || telemetry[key] < 0,
+				) ||
+				!hasExactRecordKeys(limits, EAGER_LIMIT_KEYS) ||
+				EAGER_LIMIT_KEYS.some(
+					(key) => !Number.isSafeInteger(limits[key]) || limits[key] <= 0,
+				) ||
+				telemetry.entries > telemetry.peakEntries ||
+				telemetry.peakEntries > limits.maxEntries ||
+				telemetry.bytes > telemetry.peakBytes ||
+				telemetry.peakBytes > limits.maxBytes ||
+				telemetry.pendingEntries > telemetry.peakPendingEntries ||
+				telemetry.peakPendingEntries > limits.maxPendingEntries ||
+				telemetry.pendingBytes > telemetry.peakPendingBytes ||
+				telemetry.peakPendingBytes > limits.maxPendingBytes
+			) {
+				throw new Error(`${role} eager-cache runtime evidence is invalid`);
+			}
+		} else if (eagerBlocks.telemetry !== null) {
+			throw new Error(`${role} disabled eager-cache evidence is invalid`);
+		}
+	}
+	const writerIdentity = (snapshot.writer.runtime as Record<string, any>)
+		.identity;
+	const readerIdentity = (snapshot.reader.runtime as Record<string, any>)
+		.identity;
+	if (
+		writerIdentity.programAddress !== readerIdentity.programAddress ||
+		writerIdentity.peerId === readerIdentity.peerId ||
+		writerIdentity.peerHash === readerIdentity.peerHash ||
+		writerIdentity.sessionId === readerIdentity.sessionId
+	) {
+		throw new Error(
+			"Benchmark runtime evidence does not identify two distinct peers in one program",
+		);
+	}
+};
+
+const shutdownBenchmarkPage = async (page: Page, role: BenchmarkPageRole) => {
+	const startedAt = Date.now();
+	try {
+		const shutdownEvidence = await withDeadline(
+			page.evaluate(async () => {
+				const shutdown = (window as any).__peerbitFileShareTestHooks?.shutdown;
+				if (typeof shutdown !== "function") {
+					throw new Error("Missing shutdown benchmark hook");
+				}
+				return await shutdown();
+			}),
+			PAGE_SHUTDOWN_TIMEOUT_MS,
+			`${role} shutdown exceeded ${PAGE_SHUTDOWN_TIMEOUT_MS}ms`,
+		);
+		if (
+			!hasExactRecordKeys(shutdownEvidence, [
+				"programClosed",
+				"peerStopped",
+				"identity",
+			]) ||
+			shutdownEvidence.programClosed !== true ||
+			shutdownEvidence.peerStopped !== true ||
+			!hasExactRecordKeys(shutdownEvidence.identity, [
+				"programAddress",
+				"peerId",
+				"peerHash",
+				"sessionId",
+			]) ||
+			[
+				shutdownEvidence.identity?.programAddress,
+				shutdownEvidence.identity?.peerId,
+				shutdownEvidence.identity?.peerHash,
+				shutdownEvidence.identity?.sessionId,
+			].some((value) => typeof value !== "string" || value.length === 0)
+		) {
+			throw new Error(`${role} shutdown postconditions are malformed or false`);
+		}
+		const finishedAt = Date.now();
+		return {
+			role,
+			status: "fulfilled" as const,
+			startedAt,
+			finishedAt,
+			durationMs: finishedAt - startedAt,
+			programClosed: true,
+			peerStopped: true,
+			identity: shutdownEvidence.identity,
+			error: null,
+		};
+	} catch (error) {
+		const finishedAt = Date.now();
+		return {
+			role,
+			status: "rejected" as const,
+			startedAt,
+			finishedAt,
+			durationMs: finishedAt - startedAt,
+			programClosed: false,
+			peerStopped: false,
+			identity: null,
+			error: (error instanceof Error ? error.message : String(error)).slice(
+				0,
+				512,
+			),
+		};
+	}
+};
+
+const storageUsageDelta = (
+	before: BenchmarkPageResourceSnapshot,
+	after: BenchmarkPageResourceSnapshot,
+) => {
+	const beforeStorage = before.storage as Record<string, any>;
+	const afterStorage = after.storage as Record<string, any>;
+	const delta = (left: unknown, right: unknown) =>
+		typeof left === "number" &&
+		Number.isFinite(left) &&
+		typeof right === "number" &&
+		Number.isFinite(right)
+			? right - left
+			: null;
+	return {
+		role: before.role,
+		peerbitLogUsageDeltaBytes: delta(
+			beforeStorage.peerbitLog?.usageBytes,
+			afterStorage.peerbitLog?.usageBytes,
+		),
+		backingStorageUsageDeltaBytes: delta(
+			beforeStorage.backingStorage?.usageBytes,
+			afterStorage.backingStorage?.usageBytes,
+		),
+	};
+};
+
+const eagerTelemetryDelta = (
+	before: BenchmarkPageResourceSnapshot,
+	after: BenchmarkPageResourceSnapshot,
+) => {
+	const beforeTelemetry = (before.runtime as Record<string, any>).eagerBlocks
+		?.telemetry;
+	const afterTelemetry = (after.runtime as Record<string, any>).eagerBlocks
+		?.telemetry;
+	if (!beforeTelemetry || !afterTelemetry) {
+		return null;
+	}
+	return Object.fromEntries(
+		EAGER_MONOTONIC_COUNTERS.map((key) => [
+			key,
+			Number.isSafeInteger(beforeTelemetry[key]) &&
+			Number.isSafeInteger(afterTelemetry[key])
+				? afterTelemetry[key] - beforeTelemetry[key]
+				: null,
+		]),
+	);
+};
+
+const buildResourceEvidence = (snapshots: {
+	beforeTimedRead: BenchmarkResourceSnapshotSet;
+	afterSink: BenchmarkResourceSnapshotSet;
+	beforeSoak: BenchmarkResourceSnapshotSet;
+	afterSoak: BenchmarkResourceSnapshotSet;
+}) => {
+	const buildInterval = (
+		before: BenchmarkResourceSnapshotSet,
+		after: BenchmarkResourceSnapshotSet,
+	) => ({
+		from: before.label,
+		to: after.label,
+		writerStorage: storageUsageDelta(before.writer, after.writer),
+		readerStorage: storageUsageDelta(before.reader, after.reader),
+		writerEager: eagerTelemetryDelta(before.writer, after.writer),
+		readerEager: eagerTelemetryDelta(before.reader, after.reader),
+	});
+	return {
+		schemaVersion: 2,
+		storageDefinition:
+			"Peerbit logical usage and browser origin-wide navigator.storage estimates; deltas are later minus earlier",
+		eagerDefinition:
+			"deltas of monotonic eager-cache admission, hit, eviction, expiration, and rejection counters; null when eager telemetry is disabled or unavailable",
+		snapshots,
+		intervals: {
+			timedReadEnvelope: buildInterval(
+				snapshots.beforeTimedRead,
+				snapshots.afterSink,
+			),
+			postTransferWork: buildInterval(
+				snapshots.afterSink,
+				snapshots.beforeSoak,
+			),
+			soak: buildInterval(snapshots.beforeSoak, snapshots.afterSoak),
+			total: buildInterval(snapshots.beforeTimedRead, snapshots.afterSoak),
+		},
+	};
 };
 
 const probeVisibilityPath = async (page: Page) => {
@@ -1122,6 +1537,20 @@ test.describe("generated transfer-validity benchmark", () => {
 		let downloadStartedAt: number | undefined;
 		let downloadFinishedAt: number | undefined;
 		let downloadCompletionObservedAt: number | undefined;
+		let postTransferSoakStartedAt: number | undefined;
+		let postTransferSoakFinishedAt: number | undefined;
+		const resourceSnapshots: Partial<
+			Record<
+				BenchmarkResourceSnapshotSet["label"],
+				BenchmarkResourceSnapshotSet
+			>
+		> = {};
+		let resourceEvidence: ReturnType<typeof buildResourceEvidence> | null =
+			null;
+		let shutdownOutcomes: {
+			writer: Awaited<ReturnType<typeof shutdownBenchmarkPage>>;
+			reader: Awaited<ReturnType<typeof shutdownBenchmarkPage>>;
+		} | null = null;
 		let shareUrl: string | undefined;
 		let writerVisibilityProbe: Record<string, unknown> | null = null;
 		let readerVisibilityProbe: Record<string, unknown> | null = null;
@@ -1939,6 +2368,8 @@ test.describe("generated transfer-validity benchmark", () => {
 				writer,
 				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
 				schedulingToleranceMs: TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS,
+				postTransferSoakMs: POST_TRANSFER_SOAK_MS,
+				samplingWindowBudgetMs: TEST_OUTER_TIMEOUT_MS,
 			});
 			downloadMemoryTelemetry = downloadMemoryTelemetryController.snapshot();
 			const initialMemorySeries = [
@@ -1958,12 +2389,17 @@ test.describe("generated transfer-validity benchmark", () => {
 					"Download memory telemetry did not collect clean initial samples",
 				);
 			}
+			resourceSnapshots.beforeTimedRead = await captureResourceSnapshotSet(
+				writer,
+				reader,
+				"beforeTimedRead",
+			);
+			requirePreTimedRuntimeEvidence(resourceSnapshots.beforeTimedRead);
 			if (readerLocalityControl) {
 				stage = "stabilize-pre-timed-read-transport";
 				const identities = getControlledPeerIdentities();
 				const startedAt = Date.now();
-				const deadlineAt =
-					startedAt + TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS;
+				const deadlineAt = startedAt + TRANSPORT_COUNTER_STABILITY_TIMEOUT_MS;
 				readerLocalityControl.preTimedReadTopologyStartedAt = startedAt;
 				readerLocalityControl.preTimedReadTopologyDeadlineAt = deadlineAt;
 				const finalObservation =
@@ -2026,8 +2462,6 @@ test.describe("generated transfer-validity benchmark", () => {
 			await downloadButton.click();
 			const download = await downloadCompletion;
 			downloadCompletionObservedAt = Date.now();
-			downloadMemoryTelemetry =
-				await downloadMemoryTelemetryController.stopSampling();
 			if (readerLocalityControl) {
 				stage = "stabilize-post-timed-read-transport";
 				const identities = getControlledPeerIdentities();
@@ -2059,12 +2493,12 @@ test.describe("generated transfer-validity benchmark", () => {
 					});
 				const finishedAt = Date.now();
 				const captureDelayMs = finishedAt - downloadCompletionObservedAt;
-				readerLocalityControl.postTimedReadTopologyCaptureDelayMs = captureDelayMs;
+				readerLocalityControl.postTimedReadTopologyCaptureDelayMs =
+					captureDelayMs;
 				if (
 					!Number.isSafeInteger(captureDelayMs) ||
 					captureDelayMs < 0 ||
-					captureDelayMs >
-						TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS ||
+					captureDelayMs > TRANSPORT_COUNTER_POST_READ_CAPTURE_MAX_DELAY_MS ||
 					finishedAt > deadlineAt ||
 					finishedAt > latestAcceptedFinishedAt
 				) {
@@ -2133,25 +2567,11 @@ test.describe("generated transfer-validity benchmark", () => {
 				}
 				stage = "validate-download-completion";
 			}
-			const memorySeries = [
-				downloadMemoryTelemetry.readerJsHeap,
-				downloadMemoryTelemetry.writerJsHeap,
-				downloadMemoryTelemetry.hostRss,
-			];
-			if (
-				downloadMemoryTelemetry.complete !== true ||
-				downloadMemoryTelemetry.finishedAt == null ||
-				memorySeries.some(
-					(series) =>
-						series.sampleCount < 2 ||
-						series.samplingErrors.length > 0 ||
-						series.samplingErrorOverflowCount !== 0,
-				)
-			) {
-				throw new Error(
-					"Download memory telemetry did not complete without sampling errors",
-				);
-			}
+			resourceSnapshots.afterSink = await captureResourceSnapshotSet(
+				writer,
+				reader,
+				"afterSink",
+			);
 			if (
 				!Number.isSafeInteger(download.sinkCompletedAt) ||
 				download.sinkCompletedAt < downloadClickStartedAt ||
@@ -2247,6 +2667,7 @@ test.describe("generated transfer-validity benchmark", () => {
 			const summarizedReadTransfer = summarizeReadTransferDiagnostics(
 				rawReadDiagnostics,
 				expectedSizeBytes,
+				{ downloadSink: DOWNLOAD_SINK },
 			);
 			const {
 				streamReadExclusiveMs: sinkAwaitSubtractedDiagnosticMs,
@@ -2396,29 +2817,6 @@ test.describe("generated transfer-validity benchmark", () => {
 				);
 			}
 			integrityVerifiedAt = Date.now();
-			// Sampling is finalized at sink completion above, but CDP cleanup is
-			// deliberately deferred until the transfer and its SHA-256/CRC-32
-			// evidence are complete. A slow Performance.disable/detach must not
-			// erase an otherwise valid transfer result.
-			downloadMemoryTelemetry =
-				await downloadMemoryTelemetryController.cleanup();
-			const finalizedMemorySeries = [
-				downloadMemoryTelemetry.readerJsHeap,
-				downloadMemoryTelemetry.writerJsHeap,
-				downloadMemoryTelemetry.hostRss,
-			];
-			if (
-				downloadMemoryTelemetry.cleanupComplete !== true ||
-				finalizedMemorySeries.some(
-					(series) =>
-						series.samplingErrors.length > 0 ||
-						series.samplingErrorOverflowCount !== 0,
-				)
-			) {
-				throw new Error(
-					"Download memory telemetry cleanup reported a non-timeout failure",
-				);
-			}
 			if (readerLocalityControl) {
 				stage = "verify-terminal-reader-topology";
 				readerLocalityControl.integrityVerifiedAt = integrityVerifiedAt;
@@ -2446,8 +2844,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					terminalTopologyFinishedAt;
 				readerLocalityControl.terminalTopologyObservations =
 					terminalTopologyObservations;
-				readerLocalityControl.terminalTopologyRole =
-					READER_TERMINAL_TOPOLOGY;
+				readerLocalityControl.terminalTopologyRole = READER_TERMINAL_TOPOLOGY;
 				readerLocalityControl.terminalTopologyExpectationSatisfied = true;
 				readerLocalityControl.status = "complete";
 				logStage("reader-terminal-topology-stable", {
@@ -2456,6 +2853,113 @@ test.describe("generated transfer-validity benchmark", () => {
 						readerLocalityControl.terminalTopologyExpectationSatisfied,
 				});
 			}
+			resourceSnapshots.beforeSoak = await captureResourceSnapshotSet(
+				writer,
+				reader,
+				"beforeSoak",
+			);
+			stage = "post-transfer-soak";
+			postTransferSoakStartedAt = Date.now();
+			logStage(stage, { postTransferSoakMs: POST_TRANSFER_SOAK_MS });
+			if (POST_TRANSFER_SOAK_MS > 0) {
+				await new Promise<void>((resolve) =>
+					setTimeout(resolve, POST_TRANSFER_SOAK_MS),
+				);
+			}
+			postTransferSoakFinishedAt = Date.now();
+			const actualPostTransferSoakMs =
+				postTransferSoakFinishedAt - postTransferSoakStartedAt;
+			if (
+				actualPostTransferSoakMs < POST_TRANSFER_SOAK_MS ||
+				actualPostTransferSoakMs >
+					POST_TRANSFER_SOAK_MS + POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_MS
+			) {
+				throw new Error(
+					"Post-transfer soak duration is outside its requested scheduling bound",
+				);
+			}
+			downloadMemoryTelemetry =
+				await downloadMemoryTelemetryController.sampleNow();
+			const liveCheckpointSeries = [
+				downloadMemoryTelemetry.readerJsHeap,
+				downloadMemoryTelemetry.writerJsHeap,
+				downloadMemoryTelemetry.hostRss,
+			];
+			if (
+				downloadMemoryTelemetry.downloadTimeoutMs !== DOWNLOAD_TIMEOUT_MS ||
+				downloadMemoryTelemetry.schedulingToleranceMs !==
+					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS ||
+				downloadMemoryTelemetry.operationTimeoutMs !==
+					DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS ||
+				downloadMemoryTelemetry.postTransferSoakMs !== POST_TRANSFER_SOAK_MS ||
+				downloadMemoryTelemetry.samplingWindowBudgetMs !==
+					TEST_OUTER_TIMEOUT_MS ||
+				downloadMemoryTelemetry.liveSampleMaxGapMs !==
+					DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS +
+						DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS +
+						TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS ||
+				downloadMemoryTelemetry.liveSampleCoverageDefinition !==
+					DOWNLOAD_MEMORY_LIVE_SAMPLE_COVERAGE_DEFINITION ||
+				downloadMemoryTelemetry.endpointSampleAllowance !== 3 ||
+				downloadMemoryTelemetry.manualCheckpointComplete !== true ||
+				downloadMemoryTelemetry.samplingCapacitySufficient !== true ||
+				downloadMemoryTelemetry.capacityExhaustedBeforeTerminal !== false ||
+				liveCheckpointSeries.some(
+					(series) =>
+						series.manualSampleCount !== 1 ||
+						!Number.isSafeInteger(series.lastManualSampleAt) ||
+						series.lastManualSampleAt < postTransferSoakFinishedAt ||
+						series.lastManualSampleAt - postTransferSoakFinishedAt >
+							DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS +
+								TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS ||
+						series.samples.at(-1)?.sampleKind !== "manual",
+				)
+			) {
+				throw new Error(
+					"Download memory telemetry did not capture a live bounded after-soak checkpoint",
+				);
+			}
+			if (downloadStartedAt == null || downloadFinishedAt == null) {
+				throw new Error("Download memory phase boundaries are unavailable");
+			}
+			for (const [seriesName, series] of [
+				["readerJsHeap", downloadMemoryTelemetry.readerJsHeap],
+				["writerJsHeap", downloadMemoryTelemetry.writerJsHeap],
+				["hostRss", downloadMemoryTelemetry.hostRss],
+			] as const) {
+				for (const [phase, phaseStartedAt, phaseFinishedAt] of [
+					["transfer", downloadStartedAt, downloadFinishedAt],
+					["soak", postTransferSoakStartedAt, postTransferSoakFinishedAt],
+				] as const) {
+					assertDownloadMemoryLiveSampleCoverage({
+						samples: series.samples,
+						phaseStartedAt,
+						phaseFinishedAt,
+						maxGapMs: downloadMemoryTelemetry.liveSampleMaxGapMs,
+						label: `${seriesName}.${phase}`,
+					});
+				}
+			}
+			resourceSnapshots.afterSoak = await captureResourceSnapshotSet(
+				writer,
+				reader,
+				"afterSoak",
+			);
+			if (
+				!resourceSnapshots.beforeTimedRead ||
+				!resourceSnapshots.afterSink ||
+				!resourceSnapshots.beforeSoak ||
+				!resourceSnapshots.afterSoak
+			) {
+				throw new Error("Benchmark resource snapshot sequence is incomplete");
+			}
+			resourceEvidence = buildResourceEvidence({
+				beforeTimedRead: resourceSnapshots.beforeTimedRead,
+				afterSink: resourceSnapshots.afterSink,
+				beforeSoak: resourceSnapshots.beforeSoak,
+				afterSoak: resourceSnapshots.afterSoak,
+			});
+
 			const terminalSeederSnapshot = await snapshot(
 				SEEDER_DROP_POLICY.terminalSnapshotLabel,
 			);
@@ -2468,6 +2972,116 @@ test.describe("generated transfer-validity benchmark", () => {
 			if (errors.length > 0) {
 				throw new Error(
 					`Observed transfer/delivery errors: ${JSON.stringify(errors)}`,
+				);
+			}
+
+			const [writerDiagnostics, finalReaderDiagnostics] = await Promise.all([
+				getDiagnostics(writer),
+				getDiagnostics(reader),
+			]);
+			if (
+				readerLocalityControl &&
+				(!writerDiagnostics || !finalReaderDiagnostics)
+			) {
+				throw new Error(
+					"Controlled-locality benchmark is missing final peer diagnostics",
+				);
+			}
+			if (errors.length > 0) {
+				throw new Error(
+					`Observed transfer/delivery errors while collecting diagnostics: ${JSON.stringify(errors)}`,
+				);
+			}
+
+			stage = "shutdown";
+			const [writerShutdown, readerShutdown] = await Promise.all([
+				shutdownBenchmarkPage(writer, "writer"),
+				shutdownBenchmarkPage(reader, "reader"),
+			]);
+			shutdownOutcomes = {
+				writer: writerShutdown,
+				reader: readerShutdown,
+			};
+			const shutdownIdentityMatchesSnapshots = (
+				role: BenchmarkPageRole,
+				shutdown: typeof writerShutdown,
+			) => {
+				if (shutdown.status !== "fulfilled") {
+					return false;
+				}
+				return [
+					resourceSnapshots.beforeTimedRead,
+					resourceSnapshots.afterSink,
+					resourceSnapshots.beforeSoak,
+					resourceSnapshots.afterSoak,
+				].every((snapshotSet) => {
+					const identity = (snapshotSet?.[role].runtime as Record<string, any>)
+						?.identity;
+					return ["programAddress", "peerId", "peerHash", "sessionId"].every(
+						(key) => identity?.[key] === shutdown.identity[key],
+					);
+				});
+			};
+			if (
+				writerShutdown.status !== "fulfilled" ||
+				readerShutdown.status !== "fulfilled" ||
+				writerShutdown.programClosed !== true ||
+				writerShutdown.peerStopped !== true ||
+				readerShutdown.programClosed !== true ||
+				readerShutdown.peerStopped !== true ||
+				!shutdownIdentityMatchesSnapshots("writer", writerShutdown) ||
+				!shutdownIdentityMatchesSnapshots("reader", readerShutdown)
+			) {
+				throw new Error(
+					`Benchmark peer shutdown failed: ${JSON.stringify(shutdownOutcomes)}`,
+				);
+			}
+			downloadMemoryTelemetry =
+				await downloadMemoryTelemetryController.cleanup();
+			const finalizedMemorySeries = [
+				downloadMemoryTelemetry.readerJsHeap,
+				downloadMemoryTelemetry.writerJsHeap,
+				downloadMemoryTelemetry.hostRss,
+			];
+			if (
+				downloadMemoryTelemetry.complete !== true ||
+				downloadMemoryTelemetry.cleanupComplete !== true ||
+				downloadMemoryTelemetry.manualCheckpointComplete !== true ||
+				downloadMemoryTelemetry.terminalCheckpointComplete !== true ||
+				downloadMemoryTelemetry.samplingCapacitySufficient !== true ||
+				downloadMemoryTelemetry.capacityExhaustedBeforeTerminal !== false ||
+				downloadMemoryTelemetry.finishedAt == null ||
+				downloadMemoryTelemetry.finishedAt <
+					Math.max(writerShutdown.finishedAt, readerShutdown.finishedAt) ||
+				finalizedMemorySeries.some(
+					(series) =>
+						series.sampleCount < 3 ||
+						series.manualSampleCount !== 1 ||
+						!Number.isSafeInteger(series.lastManualSampleAt) ||
+						series.lastManualSampleAt < postTransferSoakFinishedAt! ||
+						series.lastManualSampleAt >
+							resourceSnapshots.afterSoak!.startedAt ||
+						series.lastManualSampleAt >
+							Math.min(writerShutdown.startedAt, readerShutdown.startedAt) ||
+						series.terminalSampleAttempted !== true ||
+						series.terminalSampleCaptured !== true ||
+						!Number.isSafeInteger(series.terminalSampleAt) ||
+						series.terminalSampleAt <
+							Math.max(writerShutdown.finishedAt, readerShutdown.finishedAt) ||
+						series.samples.at(-1)?.sampleKind !== "terminal" ||
+						series.samplingCapacitySufficient !== true ||
+						series.capacityExhaustedBeforeTerminal !== false ||
+						series.samplingErrors.length > 0 ||
+						series.samplingErrorOverflowCount !== 0,
+				)
+			) {
+				throw new Error(
+					"Download memory telemetry did not finalize cleanly after peer shutdown",
+				);
+			}
+			if (errors.length > 0) {
+				throw new Error(
+					`Observed transfer/delivery errors through peer shutdown: ${JSON.stringify(errors)}`,
 				);
 			}
 
@@ -2499,23 +3113,6 @@ test.describe("generated transfer-validity benchmark", () => {
 			) {
 				throw new Error(
 					"Measured transfer duration exceeded its requested timeout and scheduling tolerance",
-				);
-			}
-			const [writerDiagnostics, finalReaderDiagnostics] = await Promise.all([
-				getDiagnostics(writer),
-				getDiagnostics(reader),
-			]);
-			if (
-				readerLocalityControl &&
-				(!writerDiagnostics || !finalReaderDiagnostics)
-			) {
-				throw new Error(
-					"Controlled-locality benchmark is missing final peer diagnostics",
-				);
-			}
-			if (errors.length > 0) {
-				throw new Error(
-					`Observed transfer/delivery errors while collecting diagnostics: ${JSON.stringify(errors)}`,
 				);
 			}
 			const collectedErrors = [...errors];
@@ -2562,6 +3159,15 @@ test.describe("generated transfer-validity benchmark", () => {
 					POST_MONITOR_SCHEDULING_TOLERANCE_MS,
 				postUploadMonitorSchedulingToleranceDefinition:
 					POST_MONITOR_SCHEDULING_TOLERANCE_DEFINITION,
+				postTransferSoakMs: POST_TRANSFER_SOAK_MS,
+				postTransferSoakActualMs:
+					postTransferSoakFinishedAt! - postTransferSoakStartedAt!,
+				postTransferSoakDefinition:
+					"idle observation window beginning after transfer integrity and any requested terminal-topology validation, ending before terminal resource capture and peer shutdown",
+				postTransferSoakSchedulingToleranceMs:
+					POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_MS,
+				postTransferSoakSchedulingToleranceDefinition:
+					POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION,
 				downloadDurationMs: downloadFinishedAt - downloadStartedAt,
 				downloadDurationDefinition: DOWNLOAD_DURATION_DEFINITION,
 				transferTimeoutSchedulingToleranceMs:
@@ -2571,6 +3177,8 @@ test.describe("generated transfer-validity benchmark", () => {
 				downloadSink: download.sink,
 				requestedDownloadSink: DOWNLOAD_SINK,
 				downloadMemoryTelemetry,
+				resourceEvidence,
+				shutdownOutcomes,
 				sinkWriteCalls: download.sinkWriteCalls,
 				sinkWriteDurationMs: download.sinkWriteDurationMs,
 				sinkWriteDurationDefinition: SINK_WRITE_DURATION_DEFINITION,
@@ -2605,6 +3213,8 @@ test.describe("generated transfer-validity benchmark", () => {
 					downloadStartedAt,
 					downloadFinishedAt,
 					downloadCompletionObservedAt,
+					postTransferSoakStartedAt,
+					postTransferSoakFinishedAt,
 				},
 				writerManifestEvidence,
 				readerManifestEvidence,
@@ -2679,6 +3289,12 @@ test.describe("generated transfer-validity benchmark", () => {
 				stage,
 				requestedDownloadSink: DOWNLOAD_SINK,
 				downloadMemoryTelemetry,
+				resourceEvidence: resourceEvidence ?? {
+					schemaVersion: 2,
+					snapshots: resourceSnapshots,
+					intervals: null,
+				},
+				shutdownOutcomes,
 				integrity,
 				integrityVerified,
 				integrityVerifiedAt,
@@ -2692,6 +3308,16 @@ test.describe("generated transfer-validity benchmark", () => {
 				transferTimeoutSchedulingToleranceDefinition:
 					TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_DEFINITION,
 				postUploadMonitorMs: POST_UPLOAD_MONITOR_MS,
+				postTransferSoakMs: POST_TRANSFER_SOAK_MS,
+				postTransferSoakActualMs:
+					postTransferSoakStartedAt != null &&
+					postTransferSoakFinishedAt != null
+						? postTransferSoakFinishedAt - postTransferSoakStartedAt
+						: null,
+				postTransferSoakSchedulingToleranceMs:
+					POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_MS,
+				postTransferSoakSchedulingToleranceDefinition:
+					POST_TRANSFER_SOAK_SCHEDULING_TOLERANCE_DEFINITION,
 				pollMs: POLL_MS,
 				uploadTimeoutMs: UPLOAD_TIMEOUT_MS,
 				downloadTimeoutMs: DOWNLOAD_TIMEOUT_MS,
