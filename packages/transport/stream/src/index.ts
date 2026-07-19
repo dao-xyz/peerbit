@@ -529,12 +529,13 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 		if (this.outboundStreams.length <= 1) return;
 		if (reset && this._outboundPruneTimer) {
 			clearTimeout(this._outboundPruneTimer);
+			this._outboundPruneTimer = undefined;
 		}
 		if (!this._outboundPruneTimer) {
-			this._outboundPruneTimer = setTimeout(
-				() => this.pruneOutboundCandidates(),
-				PeerStreams.OUTBOUND_GRACE_MS,
-			);
+			this._outboundPruneTimer = setTimeout(() => {
+				this._outboundPruneTimer = undefined;
+				this.pruneOutboundCandidates();
+			}, PeerStreams.OUTBOUND_GRACE_MS);
 		}
 	}
 	constructor(init: PeerStreamsInit) {
@@ -926,8 +927,9 @@ export class PeerStreams extends TypedEventEmitter<PeerStreamEvents> {
 	 */
 
 	async attachOutboundStream(stream: Stream) {
-		if (this.outboundStreams[0] && stream.id === this.outboundStreams[0].raw.id)
+		if (this.outboundStreams.some((candidate) => candidate.raw === stream)) {
 			return; // duplicate
+		}
 		this._addOutboundCandidate(stream);
 		if (this.outboundStreams.length === 1) {
 			this.dispatchEvent(new CustomEvent("stream:outbound"));
