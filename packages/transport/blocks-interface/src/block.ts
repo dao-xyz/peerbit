@@ -1,7 +1,7 @@
 import * as dagCbor from "@ipld/dag-cbor";
 import { CID } from "multiformats";
 import { base58btc } from "multiformats/bases/base58";
-import { type Block, decode, encode } from "multiformats/block";
+import { type Block, createUnsafe, encode } from "multiformats/block";
 import * as raw from "multiformats/codecs/raw";
 import type { MultihashHasher } from "multiformats/hashes/interface";
 import { sha256 } from "multiformats/hashes/sha2";
@@ -19,6 +19,15 @@ export const codecCodes = {
 export const codecMap = {
 	raw,
 	"dag-cbor": dagCbor,
+};
+
+export type VerifyBlockBytesOptions = {
+	hasher?: MultihashHasher<number>;
+	/**
+	 * The codec expected by the caller. Only its multicodec code is consulted;
+	 * verification deliberately does not decode untrusted block bytes.
+	 */
+	codec?: { code: number };
 };
 
 export const cidifyString = (str: string): CID => {
@@ -40,6 +49,37 @@ export const stringifyCid = (cid: any): string => {
 	return cid.toString(defaultBase);
 };
 
+/**
+ * Verify that bytes match a CID without decoding their logical value.
+ *
+ * This is the appropriate boundary for transports and block stores that only
+ * move opaque bytes. In particular, it prevents a mismatching DAG-CBOR payload
+ * from allocating a decoded object graph before its digest is rejected.
+ */
+export const verifyBlockBytes = async (
+	expectedCID: CID | string,
+	bytes: Uint8Array,
+	options: VerifyBlockBytesOptions = {},
+): Promise<CID> => {
+	const cidObject =
+		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
+	const codec =
+		options.codec || codecCodes[cidObject.code as keyof typeof codecCodes];
+	if (!codec) {
+		throw unsupportedCodecError();
+	}
+	if (codec.code !== cidObject.code) {
+		throw new Error("CID codec does not match");
+	}
+
+	const digest = await (options.hasher || defaultHasher).digest(bytes);
+	const resolved = CID.create(cidObject.version, codec.code, digest);
+	if (!resolved.equals(cidObject)) {
+		throw new Error("CID does not match");
+	}
+	return resolved;
+};
+
 export const checkDecodeBlock = async (
 	expectedCID: CID | string,
 	bytes: Uint8Array,
@@ -49,28 +89,22 @@ export const checkDecodeBlock = async (
 		typeof expectedCID === "string" ? cidifyString(expectedCID) : expectedCID;
 	const codec =
 		options.codec || codecCodes[cidObject.code as keyof typeof codecCodes];
+	const resolved = await verifyBlockBytes(cidObject, bytes, {
+		codec,
+		hasher: options.hasher,
+	});
 	if (codec?.code === raw.code) {
-		const hasher = options?.hasher || defaultHasher;
-		const digest = await hasher.digest(bytes);
-		const resolved = CID.create(cidObject.version, raw.code, digest);
-		if (!resolved.equals(cidObject)) {
-			throw new Error("CID does not match");
-		}
 		return {
 			bytes,
 			cid: resolved,
 			value: bytes,
 		} as Block<Uint8Array, typeof raw.code, number, 1>;
 	}
-	const block = await decode({
+	return createUnsafe({
 		bytes,
+		cid: resolved,
 		codec,
-		hasher: options?.hasher || defaultHasher,
-	});
-	if (!block.cid.equals(cidObject)) {
-		throw new Error("CID does not match");
-	}
-	return block as Block<any, any, any, 1>;
+	}) as Block<any, any, any, 1>;
 };
 export const getBlockValue = async <T>(
 	block: Block<T, any, any, any>,
