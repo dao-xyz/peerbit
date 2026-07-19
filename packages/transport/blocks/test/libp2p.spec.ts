@@ -1,4 +1,5 @@
 import { serialize } from "@dao-xyz/borsh";
+import { createBlock, stringifyCid } from "@peerbit/blocks-interface";
 import { TestSession } from "@peerbit/libp2p-test-utils";
 import { waitForNeighbour } from "@peerbit/stream";
 import {
@@ -151,6 +152,139 @@ describe("transport", function () {
 			remote: { timeout: 5000 },
 		});
 		expect(new Uint8Array(readData!)).to.deep.equal(data);
+	});
+
+	it("persists verified remote reads through the known-CID path", async () => {
+		const onPut = sinon.spy();
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c, { onPut }) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		onPut.resetHistory();
+
+		const requesterRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const put = sinon.spy(requesterRemoteBlocks.localStore, "put");
+		const putKnown = sinon.spy(requesterRemoteBlocks.localStore, "putKnown");
+
+		try {
+			const readData = await store(session, 1).get(cid, {
+				remote: {
+					timeout: 5_000,
+					from: [store(session, 0).publicKeyHash],
+					replicate: true,
+				},
+			});
+
+			expect(new Uint8Array(readData!)).to.deep.equal(data);
+			expect(put.callCount).to.equal(0);
+			expect(putKnown.callCount).to.equal(1);
+			expect(putKnown.getCall(0).args[0]).to.equal(cid);
+			expect(putKnown.getCall(0).args[1]).to.deep.equal(data);
+			expect(onPut.callCount).to.equal(1);
+			expect(onPut.getCall(0).args[0]).to.equal(cid);
+			expect(await store(session, 1).has(cid)).to.equal(true);
+		} finally {
+			put.restore();
+			putKnown.restore();
+		}
+	});
+
+	it("preserves a verified DAG-CBOR CID when replicating remotely", async () => {
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const block = await createBlock({ hello: "world" }, "dag-cbor");
+		const cid = stringifyCid(block.cid);
+		await store(session, 0).put({ block, cid });
+
+		const requesterRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const put = sinon.spy(requesterRemoteBlocks.localStore, "put");
+		const putKnown = sinon.spy(requesterRemoteBlocks.localStore, "putKnown");
+
+		try {
+			const readData = await store(session, 1).get(cid, {
+				remote: {
+					timeout: 5_000,
+					from: [store(session, 0).publicKeyHash],
+					replicate: true,
+				},
+			});
+
+			expect(new Uint8Array(readData!)).to.deep.equal(block.bytes);
+			expect(put.callCount).to.equal(0);
+			expect(putKnown.callCount).to.equal(1);
+			expect(putKnown.getCall(0).args[0]).to.equal(cid);
+			expect(putKnown.getCall(0).args[1]).to.deep.equal(block.bytes);
+			expect(await store(session, 1).has(cid)).to.equal(true);
+		} finally {
+			put.restore();
+			putKnown.restore();
+		}
+	});
+
+	it("does not persist a corrupt remote response", async () => {
+		const onPut = sinon.spy();
+		session = await TestSession.connected(2, {
+			services: { blocks: (c) => new DirectBlock(c, { onPut }) },
+		});
+		await waitForNeighbour(store(session, 0), store(session, 1));
+
+		const data = new Uint8Array([5, 4, 3]);
+		const cid = await store(session, 0).put(data);
+		onPut.resetHistory();
+
+		const requesterRemoteBlocks = (store(session, 1) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const providerRemoteBlocks = (store(session, 0) as any)[
+			"remoteBlocks"
+		] as RemoteBlocks;
+		const put = sinon.spy(requesterRemoteBlocks.localStore, "put");
+		const putKnown = sinon.spy(requesterRemoteBlocks.localStore, "putKnown");
+		const originalPublish = providerRemoteBlocks.options.publish;
+		let corruptResponseCount = 0;
+
+		providerRemoteBlocks.options.publish = async (message, options) => {
+			if (message instanceof BlockResponse) {
+				corruptResponseCount++;
+				await requesterRemoteBlocks.onMessage(
+					new BlockResponse(message.cid, new Uint8Array([9, 9, 9])),
+					{ from: store(session, 0).publicKeyHash },
+				);
+				return;
+			}
+			return originalPublish(message, options);
+		};
+
+		try {
+			const readData = await store(session, 1).get(cid, {
+				remote: {
+					timeout: 250,
+					from: [store(session, 0).publicKeyHash],
+					replicate: true,
+				},
+			});
+
+			expect(readData).to.equal(undefined);
+			expect(corruptResponseCount).to.be.greaterThan(0);
+			expect(put.callCount).to.equal(0);
+			expect(putKnown.callCount).to.equal(0);
+			expect(onPut.callCount).to.equal(0);
+			expect(await store(session, 1).has(cid)).to.equal(false);
+		} finally {
+			providerRemoteBlocks.options.publish = originalPublish;
+			put.restore();
+			putKnown.restore();
+		}
 	});
 
 	it("puts known cid blocks through direct block storage", async () => {

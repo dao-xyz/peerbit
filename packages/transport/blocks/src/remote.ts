@@ -697,7 +697,9 @@ export class RemoteBlocks implements IBlocks {
 				const cidObject = cidifyString(cid);
 				value = await this._readFromPeers(cid, cidObject, remoteOptions);
 				if (remoteOptions?.replicate && value) {
-					await this.put(value);
+					// _readFromPeers verifies the response bytes against cid before it
+					// resolves, so avoid hashing the full block a second time here.
+					await this.putKnown(cid, value);
 				}
 			}
 		}
