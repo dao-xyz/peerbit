@@ -137,6 +137,160 @@ describe("Create", function () {
 		}
 	});
 
+	it("uses the default pubsub upload limit for root and node fanout channels", async () => {
+		const client = await Peerbit.create();
+		try {
+			const pubsub = client.services.pubsub as any;
+			expect(pubsub.fanoutRootChannelOptions.uploadLimitBps).to.equal(
+				5_000_000,
+			);
+			expect(pubsub.fanoutNodeChannelOptions.uploadLimitBps).to.equal(
+				5_000_000,
+			);
+			expect(client.sharedLogNativeDefaults).to.equal(undefined);
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("propagates an explicit pubsub upload limit to all local fanout defaults", async () => {
+		const client = await Peerbit.create({
+			pubsubUploadLimitBps: 20_000_000,
+		});
+		try {
+			const pubsub = client.services.pubsub as any;
+			expect(pubsub.fanoutRootChannelOptions.uploadLimitBps).to.equal(
+				20_000_000,
+			);
+			expect(pubsub.fanoutNodeChannelOptions.uploadLimitBps).to.equal(
+				20_000_000,
+			);
+			expect(
+				client.sharedLogNativeDefaults?.fanout?.channel?.uploadLimitBps,
+			).to.equal(20_000_000);
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("rejects invalid pubsub upload limits before creating a client", async () => {
+		for (const value of [
+			0,
+			-1,
+			null as unknown as number,
+			Number.NaN,
+			Number.POSITIVE_INFINITY,
+			Number.NEGATIVE_INFINITY,
+			1.5,
+			Number.MAX_SAFE_INTEGER + 1,
+		]) {
+			await expect(
+				Peerbit.create({ pubsubUploadLimitBps: value }),
+			).to.be.rejectedWith(
+				RangeError,
+				"pubsubUploadLimitBps must be a positive safe integer",
+			);
+		}
+	});
+
+	it("normalizes an own undefined pubsub service as absent", async () => {
+		const client = await Peerbit.create({
+			pubsubUploadLimitBps: 20_000_000,
+			libp2p: {
+				services: {
+					pubsub: undefined,
+				},
+			},
+		});
+		try {
+			const pubsub = client.services.pubsub as any;
+			expect(pubsub).to.exist;
+			expect(pubsub.fanoutRootChannelOptions.uploadLimitBps).to.equal(
+				20_000_000,
+			);
+			expect(pubsub.fanoutNodeChannelOptions.uploadLimitBps).to.equal(
+				20_000_000,
+			);
+		} finally {
+			await client.stop();
+		}
+	});
+
+	it("accepts the positive safe-integer pubsub upload limit boundaries", async () => {
+		for (const value of [1, Number.MAX_SAFE_INTEGER]) {
+			const client = await Peerbit.create({ pubsubUploadLimitBps: value });
+			try {
+				expect(
+					(client.services.pubsub as any).fanoutRootChannelOptions
+						.uploadLimitBps,
+				).to.equal(value);
+				expect(
+					(client.services.pubsub as any).fanoutNodeChannelOptions
+						.uploadLimitBps,
+				).to.equal(value);
+			} finally {
+				await client.stop();
+			}
+		}
+	});
+
+	it("rejects a pubsub upload limit that an external libp2p would ignore", async () => {
+		const external = await Peerbit.create();
+		try {
+			await expect(
+				Peerbit.create({
+					libp2p: external.libp2p,
+					pubsubUploadLimitBps: 20_000_000,
+				}),
+			).to.be.rejectedWith(
+				Error,
+				"The 'pubsubUploadLimitBps' option requires Peerbit.create to build the pubsub service",
+			);
+		} finally {
+			await external.stop();
+		}
+	});
+
+	it("rejects defined pubsub service overrides before opening resources", async () => {
+		for (const [label, pubsub] of [
+			["custom", (): undefined => undefined],
+			["null", null],
+			["false", false],
+		] as const) {
+			const clientDirectory = path.join(
+				"tmp",
+				"peerbit",
+				"tests",
+				`create-reject-pubsub-${label}-${uuid()}`,
+			);
+			let storeFactoryCalls = 0;
+			await expect(
+				Peerbit.create({
+					directory: clientDirectory,
+					pubsubUploadLimitBps: 20_000_000,
+					libp2p: {
+						services: { pubsub } as any,
+					},
+					storage: {
+						storeFactory: (directory) => {
+							storeFactoryCalls++;
+							return createStore(directory);
+						},
+					},
+				}),
+			).to.be.rejectedWith(
+				Error,
+				"The 'pubsubUploadLimitBps' option requires 'libp2p.services.pubsub' to be omitted or undefined",
+			);
+			expect(storeFactoryCalls, label).to.equal(0);
+
+			// A retry proves the rejected call did not leave any directory store
+			// open or locked.
+			const retry = await Peerbit.create({ directory: clientDirectory });
+			await retry.stop();
+		}
+	});
+
 	it("throws when network options are combined with an external libp2p", async () => {
 		const external = await Peerbit.create();
 		try {

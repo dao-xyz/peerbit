@@ -10,6 +10,7 @@ import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
+import { Peerbit } from "peerbit";
 import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
@@ -27,6 +28,127 @@ describe("append delivery options", () => {
 
 	afterEach(async () => {
 		await session?.stop();
+	});
+
+	it("carries the top-level client upload limit into an opened SharedLog fanout channel", async () => {
+		const peer = await Peerbit.create({
+			pubsubUploadLimitBps: 20_000_000,
+		});
+		try {
+			const fanout = peer.services.fanout;
+			const root = fanout.publicKeyHash;
+			const store = await peer.open(new EventStore<string, any>(), {
+				args: { fanout: { root } },
+			});
+			const channel = (store.log as any)._fanoutChannel;
+
+			expect(
+				fanout.getChannelStats(channel.topic, channel.root)?.uploadLimitBps,
+			).to.equal(20_000_000);
+		} finally {
+			await peer.stop();
+		}
+	});
+
+	it("merges defined fanout channel overrides without mutation or implicit opt-in", async () => {
+		session = await TestSession.connected(1);
+		const peer = session.peers[0] as any;
+		const defaults = {
+			fanout: {
+				channel: {
+					uploadLimitBps: 20_000_000,
+					msgRate: 30,
+					repair: true,
+				},
+			},
+		};
+		const defaultsSnapshot = structuredClone(defaults);
+		peer.sharedLogNativeDefaults = defaults;
+		const fanout = getDeliveryServices(session.peers[0]).fanout;
+		const root = fanout.publicKeyHash;
+
+		const inherited = await peer.open(new EventStore<string, any>(), {
+			args: { fanout: { root } },
+		});
+		const inheritedChannel = (inherited.log as any)._fanoutChannel;
+		expect(
+			fanout.getChannelStats(inheritedChannel.topic, inheritedChannel.root)
+				?.uploadLimitBps,
+		).to.equal(20_000_000);
+
+		const numbered = await peer.open(new EventStore<string, any>(), {
+			args: {
+				fanout: { root, channel: { uploadLimitBps: 7_000_000 } },
+			},
+		});
+		const numberedChannel = (numbered.log as any)._fanoutChannel;
+		expect(
+			fanout.getChannelStats(numberedChannel.topic, numberedChannel.root)
+				?.uploadLimitBps,
+		).to.equal(7_000_000);
+
+		const zeroAndFalseArgs = {
+			fanout: {
+				root,
+				channel: {
+					uploadLimitBps: 0,
+					msgRate: undefined,
+					repair: false,
+				},
+			},
+		};
+		const zeroAndFalseSnapshot = structuredClone(zeroAndFalseArgs);
+		const zeroAndFalse = await peer.open(new EventStore<string, any>(), {
+			args: zeroAndFalseArgs,
+		});
+		const zeroAndFalseChannel = (zeroAndFalse.log as any)._fanoutChannel;
+		const zeroAndFalseProperties = (zeroAndFalse.log as any)._logProperties
+			.fanout.channel;
+		expect(
+			fanout.getChannelStats(
+				zeroAndFalseChannel.topic,
+				zeroAndFalseChannel.root,
+			)?.uploadLimitBps,
+		).to.equal(0);
+		expect(zeroAndFalseProperties.msgRate).to.equal(30);
+		expect(zeroAndFalseProperties.repair).to.equal(false);
+
+		const undefinedOverrideArgs = {
+			fanout: { root, channel: { uploadLimitBps: undefined } },
+		};
+		const undefinedOverride = await peer.open(new EventStore<string, any>(), {
+			args: undefinedOverrideArgs,
+		});
+		const undefinedOverrideChannel = (undefinedOverride.log as any)
+			._fanoutChannel;
+		expect(
+			fanout.getChannelStats(
+				undefinedOverrideChannel.topic,
+				undefinedOverrideChannel.root,
+			)?.uploadLimitBps,
+		).to.equal(20_000_000);
+		expect(
+			Object.prototype.hasOwnProperty.call(
+				undefinedOverrideArgs.fanout.channel,
+				"uploadLimitBps",
+			),
+		).to.equal(true);
+		expect(undefinedOverrideArgs.fanout.channel.uploadLimitBps).to.equal(
+			undefined,
+		);
+
+		const noFanout = await peer.open(new EventStore<string, any>());
+		expect((noFanout.log as any)._fanoutChannel).to.equal(undefined);
+		expect((noFanout.log as any)._logProperties.fanout).to.equal(undefined);
+
+		expect(defaults).to.deep.equal(defaultsSnapshot);
+		expect(zeroAndFalseArgs).to.deep.equal(zeroAndFalseSnapshot);
+		expect((zeroAndFalse.log as any)._logProperties.fanout).not.to.equal(
+			zeroAndFalseArgs.fanout,
+		);
+		expect(zeroAndFalseProperties).not.to.equal(
+			zeroAndFalseArgs.fanout.channel,
+		);
 	});
 
 	it("awaits transport acks and applies an explicit priority for target=replicators", async () => {
