@@ -439,9 +439,193 @@ test("absorbs late operation settlement and cleans late-created values", async (
 	assert.equal(lateCleanupCount, 1);
 });
 
-test("collects forced endpoint runtime-heap and attributed host samples", async () => {
+const createRuntimeHeapPage = () => ({
+	context: () => ({
+		newCDPSession: async () => ({
+			send: async (method) => {
+				assert.equal(method, "Runtime.getHeapUsage");
+				return {
+					usedSize: 100,
+					totalSize: 110,
+					embedderHeapUsedSize: 120,
+					backingStorageSize: 130,
+				};
+			},
+			detach: async () => {},
+		}),
+	}),
+});
+
+test("requires one or two unique browser instances", async () => {
+	const browser = { newBrowserCDPSession: async () => ({}) };
+	const options = {
+		reader: createRuntimeHeapPage(),
+		writer: createRuntimeHeapPage(),
+		downloadTimeoutMs: 60_000,
+		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 0,
+		samplingWindowBudgetMs: 65_000,
+	};
+	await assert.rejects(
+		startDownloadMemoryTelemetry({
+			...options,
+			browsers: [],
+			expectedBrowserCount: 1,
+		}),
+		/requires exactly 1 browser/,
+	);
+	await assert.rejects(
+		startDownloadMemoryTelemetry({
+			...options,
+			browsers: [browser, browser],
+			expectedBrowserCount: 2,
+		}),
+		/requires unique browser instances/,
+	);
+	await assert.rejects(
+		startDownloadMemoryTelemetry({
+			...options,
+			browsers: [
+				browser,
+				{ newBrowserCDPSession: async () => ({}) },
+				{ newBrowserCDPSession: async () => ({}) },
+			],
+			expectedBrowserCount: 2,
+		}),
+		/requires exactly 2 browsers/,
+	);
+});
+
+test("fails closed on conflicting cross-browser PID types and detaches every session", async () => {
+	let detachedBrowserSessions = 0;
+	const browser = (processInfo, detachFails = false) => ({
+		newBrowserCDPSession: async () => ({
+			send: async (method) => {
+				assert.equal(method, "SystemInfo.getProcessInfo");
+				return { processInfo };
+			},
+			detach: async () => {
+				detachedBrowserSessions += 1;
+				if (detachFails) {
+					throw new Error("synthetic browser detach failure");
+				}
+			},
+		}),
+	});
+	const telemetry = await startDownloadMemoryTelemetry({
+		browsers: [
+			browser([{ id: process.pid, type: "browser" }], true),
+			browser([
+				{ id: process.ppid, type: "browser" },
+				{ id: process.pid, type: "renderer" },
+			]),
+		],
+		expectedBrowserCount: 2,
+		reader: createRuntimeHeapPage(),
+		writer: createRuntimeHeapPage(),
+		downloadTimeoutMs: 60_000,
+		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 0,
+		samplingWindowBudgetMs: 65_000,
+	});
+	const initial = telemetry.snapshot();
+	assert.equal(initial.hostRss.sampleCount, 0);
+	assert.equal(
+		initial.hostRss.samplingErrors.some((message) =>
+			message.includes("conflicting process types"),
+		),
+		true,
+	);
+	const result = await telemetry.stop();
+	assert.equal(detachedBrowserSessions, 2);
+	assert.equal(
+		result.hostRss.samplingErrors.includes("synthetic browser detach failure"),
+		true,
+	);
+});
+
+test("fails closed when separate sessions report the same browser root", async () => {
+	const browser = () => ({
+		newBrowserCDPSession: async () => ({
+			send: async (method) => {
+				assert.equal(method, "SystemInfo.getProcessInfo");
+				return {
+					processInfo: [{ id: process.pid, type: "browser" }],
+				};
+			},
+			detach: async () => {},
+		}),
+	});
+	const telemetry = await startDownloadMemoryTelemetry({
+		browsers: [browser(), browser()],
+		expectedBrowserCount: 2,
+		reader: createRuntimeHeapPage(),
+		writer: createRuntimeHeapPage(),
+		downloadTimeoutMs: 60_000,
+		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 0,
+		samplingWindowBudgetMs: 65_000,
+	});
+	assert.equal(
+		telemetry
+			.snapshot()
+			.hostRss.samplingErrors.some((message) =>
+				message.includes("distinct browser root processes"),
+			),
+		true,
+	);
+	await telemetry.stop();
+});
+
+test("applies the Chromium process cap after cross-browser PID deduplication", async () => {
+	let detachedBrowserSessions = 0;
+	const browser = (processInfo) => ({
+		newBrowserCDPSession: async () => ({
+			send: async () => ({ processInfo }),
+			detach: async () => {
+				detachedBrowserSessions += 1;
+			},
+		}),
+	});
+	const telemetry = await startDownloadMemoryTelemetry({
+		browsers: [
+			browser(
+				Array.from({ length: 128 }, (_, index) => ({
+					id: index + 1,
+					type: index === 0 ? "browser" : "renderer",
+				})),
+			),
+			browser(
+				Array.from({ length: 129 }, (_, index) => ({
+					id: index + 129,
+					type: index === 0 ? "browser" : "renderer",
+				})),
+			),
+		],
+		expectedBrowserCount: 2,
+		reader: createRuntimeHeapPage(),
+		writer: createRuntimeHeapPage(),
+		downloadTimeoutMs: 60_000,
+		schedulingToleranceMs: 5_000,
+		postTransferSoakMs: 0,
+		samplingWindowBudgetMs: 65_000,
+	});
+	assert.equal(
+		telemetry
+			.snapshot()
+			.hostRss.samplingErrors.some((message) =>
+				message.includes("process count exceeds the telemetry cap"),
+			),
+		true,
+	);
+	await telemetry.stop();
+	assert.equal(detachedBrowserSessions, 2);
+});
+
+test("collects forced endpoint heaps and deduplicated multi-browser host samples", async () => {
 	let detachedPageSessions = 0;
 	let detachedBrowserSessions = 0;
+	const browserSessionSendCounts = [0, 0];
 	const page = (initialUsedBytes) => ({
 		context: () => ({
 			newCDPSession: async () => {
@@ -465,21 +649,24 @@ test("collects forced endpoint runtime-heap and attributed host samples", async 
 			},
 		}),
 	});
-	const browser = {
+	const browser = (index, processInfo) => ({
 		newBrowserCDPSession: async () => ({
 			send: async (method) => {
 				assert.equal(method, "SystemInfo.getProcessInfo");
-				return {
-					processInfo: [{ id: process.pid, type: "browser" }],
-				};
+				browserSessionSendCounts[index] += 1;
+				return { processInfo };
 			},
 			detach: async () => {
 				detachedBrowserSessions += 1;
 			},
 		}),
-	};
+	});
 	const telemetry = await startDownloadMemoryTelemetry({
-		browser,
+		browsers: [
+			browser(0, [{ id: process.pid, type: "browser" }]),
+			browser(1, [{ id: process.ppid, type: "browser" }]),
+		],
+		expectedBrowserCount: 2,
 		reader: page(100),
 		writer: page(200),
 		downloadTimeoutMs: 60_000,
@@ -500,6 +687,8 @@ test("collects forced endpoint runtime-heap and attributed host samples", async 
 	assert.equal(result.readerJsHeap.sampleCount, 3);
 	assert.equal(result.writerJsHeap.sampleCount, 3);
 	assert.equal(result.hostRss.sampleCount, 3);
+	assert.equal(result.hostRss.browserInstanceCount, 2);
+	assert.equal(result.hostRss.browserSessionCount, 2);
 	assert.equal(result.profile, "download-memory-v3");
 	assert.equal(result.operationTimeoutMs, DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS);
 	assert.equal(
@@ -529,6 +718,12 @@ test("collects forced endpoint runtime-heap and attributed host samples", async 
 		["initial", "manual", "terminal"],
 	);
 	assert.equal(result.hostRss.samples[0].browserBytes > 0, true);
+	assert.equal(result.hostRss.samples[0].browserInstanceCount, 2);
+	assert.equal(result.hostRss.samples[0].browserRootProcessCount, 2);
+	assert.equal(result.hostRss.samples[0].browserProcessCount, 2);
+	assert.deepEqual(Object.keys(result.hostRss.samples[0].browserRoleBytes), [
+		"browser",
+	]);
 	assert.equal(result.hostRss.samples[0].nodeExternalBytes >= 0, true);
 	assert.equal(result.hostRss.samples[0].nodeArrayBuffersBytes >= 0, true);
 	assert.equal(
@@ -557,7 +752,8 @@ test("collects forced endpoint runtime-heap and attributed host samples", async 
 			result.hostRss.samples[0].nodeBytes,
 	);
 	assert.equal(detachedPageSessions, 2);
-	assert.equal(detachedBrowserSessions, 1);
+	assert.equal(detachedBrowserSessions, 2);
+	assert.deepEqual(browserSessionSendCounts, [3, 3]);
 });
 
 test("records post-sampling CDP timeouts as cleanup warnings", async () => {
@@ -592,7 +788,8 @@ test("records post-sampling CDP timeouts as cleanup warnings", async () => {
 		}),
 	};
 	const telemetry = await startDownloadMemoryTelemetry({
-		browser,
+		browsers: [browser],
+		expectedBrowserCount: 1,
 		reader: page(true),
 		writer: page(false),
 		downloadTimeoutMs: 60_000,
@@ -657,7 +854,8 @@ test("bounds setup and detaches a CDP session created after its deadline", async
 		}),
 	};
 	const telemetry = await startDownloadMemoryTelemetry({
-		browser,
+		browsers: [browser],
+		expectedBrowserCount: 1,
 		reader,
 		writer,
 		downloadTimeoutMs: 60_000,

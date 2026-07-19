@@ -17,14 +17,14 @@ const templates = [
 ];
 
 for (const name of templates) {
-	test(`${name} emits the atomic v10 result envelope`, async () => {
+	test(`${name} emits the atomic v11 result envelope`, async () => {
 		const contents = await readFile(
 			path.join(repoRoot, "scripts", "file-share", "templates", name),
 			"utf8",
 		);
 		for (const required of [
 			'id: "peerbit-file-share-benchmark"',
-			"version: 10",
+			"version: 11",
 			"PW_BENCHMARK_RUN_NONCE",
 			"PW_BENCHMARK_INVOCATION",
 			"PW_BENCHMARK_PROVENANCE",
@@ -202,6 +202,8 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 		"PW_READER_LOCAL_CHUNK_TARGET",
 		"PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT",
 		"PW_READER_TERMINAL_TOPOLOGY",
+		"PW_READER_PERSIST_CHUNK_READS",
+		"PW_BROWSER_STORAGE_MODE",
 		"LOCALITY_CONTROL_POLL_MS",
 		"seedReplicationRole",
 		"openWithSeededReplicationRole",
@@ -297,22 +299,101 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	}
 	assert.match(
 		contents,
+		/const launchPersistentBenchmarkBrowsers = async \(\) => \{[\s\S]*?try \{\s*writerProfileDir = await mkdtemp\([\s\S]*?readerProfileDir = await mkdtemp\([\s\S]*?\} catch \(error\) \{[\s\S]*?await cleanupPersistentBenchmarkBrowsers\(/,
+		"persistent profile creation must be guarded from the first temporary directory onward",
+	);
+	const persistentBrowserCleanup = contents.slice(
+		contents.indexOf("const cleanupPersistentBenchmarkBrowsers ="),
+		contents.indexOf("const launchPersistentBenchmarkBrowsers ="),
+	);
+	const persistentContextCloseIndex = persistentBrowserCleanup.indexOf(
+		"contexts.map((context) => context.close())",
+	);
+	const persistentProfileRemoveIndex = persistentBrowserCleanup.indexOf(
+		"profileDirs.map((profileDir) =>",
+	);
+	const persistentBrowserCloseIndex = persistentBrowserCleanup.indexOf(
+		"fallbackBrowsers.map((browser)",
+	);
+	const persistentCleanupFailureIndex = persistentBrowserCleanup.indexOf(
+		"throwCleanupFailures(",
+	);
+	assert.ok(
+		persistentContextCloseIndex !== -1 &&
+			persistentBrowserCloseIndex !== -1 &&
+			persistentProfileRemoveIndex !== -1 &&
+			persistentCleanupFailureIndex !== -1 &&
+			persistentContextCloseIndex < persistentBrowserCloseIndex &&
+			persistentBrowserCloseIndex < persistentProfileRemoveIndex &&
+			persistentProfileRemoveIndex < persistentCleanupFailureIndex,
+		"persistent cleanup must close contexts, attempt browser fallback, remove profiles, and then surface every failure",
+	);
+	const pageAcquisitionOwnership = contents.slice(
+		contents.indexOf("\t\tlet writer: Page;"),
+		contents.indexOf("\t\tconst errors: string[]"),
+	);
+	for (const required of [
+		"writerContext.newPage()",
+		"readerContext.newPage()",
+		"Promise.allSettled([",
+		"cleanupPersistentBenchmarkBrowsers(browserPair)",
+		"bootstrap?.stop()",
+		"throw new AggregateError(",
+	]) {
+		assert.ok(
+			pageAcquisitionOwnership.includes(required),
+			`page acquisition ownership is missing ${required}`,
+		);
+	}
+	assert.equal(
+		pageAcquisitionOwnership.includes("bootstrap?.stop().catch(() => {})"),
+		false,
+		"page acquisition must not swallow bootstrap cleanup failures",
+	);
+	const finalOwnershipCleanup = contents.slice(
+		contents.lastIndexOf("\t\t} finally {"),
+		contents.lastIndexOf("\t});"),
+	);
+	for (const required of [
+		"throw new AggregateError(",
+		"benchmarkFailure",
+		"Promise.allSettled([",
+		"cleanupPersistentBenchmarkBrowsers(browserPair)",
+		"bootstrap?.stop()",
+	]) {
+		assert.ok(
+			finalOwnershipCleanup.includes(required),
+			`final ownership cleanup is missing ${required}`,
+		);
+	}
+	assert.match(
+		contents,
 		/const terminalSeederSnapshot = await snapshot\([\s\S]*?noteSeederDrop\(terminalSeederSnapshot\);[\s\S]*?if \(unexpectedSeederDrop\)/,
 		"the final numeric seeder snapshot must participate in the v9 drop policy before acceptance",
 	);
 	const lateFailureCatch = contents.slice(
 		contents.lastIndexOf("\t\t} catch (error: any) {"),
 	);
-	assert.ok(
-		lateFailureCatch.includes(
-			"\n\t\t\t\tintegrity,\n\t\t\t\tintegrityVerified,\n\t\t\t\tintegrityVerifiedAt,",
-		),
+	assert.match(
+		lateFailureCatch,
+		/integrity,\s+integrityVerified,\s+integrityVerifiedAt,/,
 		"late failures must preserve completed integrity evidence and its gate timestamp",
 	);
 	assert.ok(
 		!lateFailureCatch.includes("integrityVerified: false"),
 		"the catch path must not overwrite completed integrity state",
 	);
+	for (const required of [
+		"catch (failureHandlingError)",
+		"[error, failureHandlingError]",
+		"Benchmark execution and failed-result handling both failed",
+		"throw benchmarkFailure",
+	]) {
+		assert.ok(
+			lateFailureCatch.includes(required),
+			`late failure handling must preserve ${required}`,
+		);
+	}
 	assert.ok(
 		lateFailureCatch.includes("readerLocalityControl,") &&
 			!lateFailureCatch.includes("preTimedReadTopologyObservations = []") &&
@@ -326,18 +407,18 @@ test("upload probe fails closed and records bounded scheduling tolerances", asyn
 	);
 	assert.match(
 		contents,
-		/hooks\.preloadLocalChunkPrefix\(\s*expectedFileName,\s*requestedTarget,\s*timeout,\s*\)/,
-		"the nonzero locality preload must pass the requested download timeout in the hook's third argument",
+		/hooks\.preloadLocalChunkPrefix\(\s*expectedFileName,\s*requestedTarget,\s*timeout,\s*persist,\s*\)/,
+		"the locality preload must pass the requested download timeout and persistence policy",
 	);
 	assert.match(
 		contents,
-		/const preloadLocalChunkPrefix = async \(\s*page: Page,\s*fileName: string,\s*target: number,\s*timeoutMs: number,\s*\)/,
-		"the Playwright locality helper must keep page, file, target, and timeout in a fixed order",
+		/const preloadLocalChunkPrefix = async \(\s*page: Page,\s*fileName: string,\s*target: number,\s*timeoutMs: number,\s*persistChunkReads: boolean,\s*\)/,
+		"the Playwright locality helper must keep page, file, target, timeout, and persistence in a fixed order",
 	);
 	assert.match(
 		contents,
-		/preloadLocalChunkPrefix\(\s*reader,\s*fileName,\s*READER_LOCAL_CHUNK_TARGET,\s*DOWNLOAD_TIMEOUT_MS,\s*\)/,
-		"the nonzero locality call site must pass the configured download timeout after its target",
+		/preloadLocalChunkPrefix\(\s*reader,\s*fileName,\s*READER_LOCAL_CHUNK_TARGET,\s*DOWNLOAD_TIMEOUT_MS,\s*READER_PERSIST_CHUNK_READS!,\s*\)/,
+		"the locality call site must pass the configured download timeout and persistence policy",
 	);
 	assert.ok(
 		contents.includes(
@@ -811,6 +892,7 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"DOWNLOAD_MEMORY_TERMINAL_ALLOWANCE_MS = 30_000",
 		"DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES = 4_096",
 		"DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES = 256",
+		"DOWNLOAD_MEMORY_MAX_BROWSERS = 2",
 		"DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16",
 		"DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS = 16",
 		"DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512",
@@ -835,6 +917,11 @@ test("download memory support is bounded, serial, and cleanup-safe", async () =>
 		"startEmbedderHeapUsedBytes",
 		"peakBackingStorageBytes",
 		"newBrowserCDPSession()",
+		"normalizeBrowsers",
+		"mergeChromiumProcessInfo",
+		"requires unique browser instances",
+		"conflicting process types",
+		"Promise.allSettled",
 		'"Browser RSS CDP session creation"',
 		"SystemInfo.getProcessInfo",
 		'"ps"',
@@ -876,7 +963,7 @@ test("post-transfer soak is invocation-bound and forwarded by both runners", asy
 			),
 		);
 	for (const required of [
-		"version: 5",
+		"version: 6",
 		"postTransferSoakMs: 60_000",
 		"postTransferSoakMs ??",
 		'scenario === "upload" ? DEFAULTS.postTransferSoakMs : 0',
@@ -911,7 +998,7 @@ test("post-transfer soak is invocation-bound and forwarded by both runners", asy
 			`${label} template does not check the invocation soak`,
 		);
 		assert.ok(
-			contents.includes("?.version !== 5"),
+			contents.includes("?.version !== 6"),
 			`${label} template does not require invocation schema v5`,
 		);
 	}

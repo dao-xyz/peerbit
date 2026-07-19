@@ -12,6 +12,7 @@ import {
 	createBenchmarkInvocation,
 	createNonceIsolatedResultPath,
 	createPlaywrightBenchmarkEnvironment,
+	resolveBenchmarkBrowserStorageMode,
 	resolveBenchmarkDownloadSink,
 	resolveBenchmarkPreviewOptions,
 	resolveBenchmarkPreviewProtocol,
@@ -48,6 +49,7 @@ test("resolves every default and requested optional knob", () => {
 	assert.deepEqual(
 		{
 			downloadSink: resolved.downloadSink,
+			browserStorageMode: resolved.browserStorageMode,
 			uploadTimeoutMs: resolved.uploadTimeoutMs,
 			downloadTimeoutMs: resolved.downloadTimeoutMs,
 			postTransferSoakMs: resolved.postTransferSoakMs,
@@ -61,6 +63,7 @@ test("resolves every default and requested optional knob", () => {
 			readerLocalChunkTarget: resolved.readerLocalChunkTarget,
 			readerLocalChunkMaxOvershoot: resolved.readerLocalChunkMaxOvershoot,
 			readerTerminalTopology: resolved.readerTerminalTopology,
+			readerPersistChunkReads: resolved.readerPersistChunkReads,
 			protocol: resolved.protocol,
 			viteMode: resolved.viteMode,
 			viteConfig: resolved.viteConfig,
@@ -72,6 +75,7 @@ test("resolves every default and requested optional knob", () => {
 		},
 		{
 			downloadSink: "hash-only",
+			browserStorageMode: "memory",
 			uploadTimeoutMs: 101,
 			downloadTimeoutMs: 202,
 			postTransferSoakMs: 0,
@@ -85,6 +89,7 @@ test("resolves every default and requested optional knob", () => {
 			readerLocalChunkTarget: null,
 			readerLocalChunkMaxOvershoot: null,
 			readerTerminalTopology: null,
+			readerPersistChunkReads: null,
 			protocol: "http",
 			viteMode: null,
 			viteConfig: null,
@@ -95,7 +100,7 @@ test("resolves every default and requested optional knob", () => {
 			serverHost: "127.0.0.1",
 		},
 	);
-	assert.equal(BENCHMARK_INVOCATION_SCHEMA.version, 5);
+	assert.equal(BENCHMARK_INVOCATION_SCHEMA.version, 6);
 });
 
 test("uses the same ready-seeder baseline for comparable replication modes", () => {
@@ -140,11 +145,13 @@ test("removes all ambient PW variables and installs the exact invocation", () =>
 	assert.equal(environment.HOST, "127.0.0.1");
 	assert.equal(environment.PW_FILE_MB, "5");
 	assert.equal(environment.PW_DOWNLOAD_SINK, "hash-only");
+	assert.equal(environment.PW_BROWSER_STORAGE_MODE, "memory");
 	assert.equal(environment.PW_POST_TRANSFER_SOAK_MS, "60000");
 	assert.equal(environment.PW_POST_UPLOAD_MONITOR_MS, "5000");
 	assert.equal(environment.PW_READER_LOCAL_CHUNK_TARGET, "");
 	assert.equal(environment.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT, "");
 	assert.equal(environment.PW_READER_TERMINAL_TOPOLOGY, "");
+	assert.equal(environment.PW_READER_PERSIST_CHUNK_READS, "");
 	assert.equal(environment.PW_FUTURE_BYPASS, undefined);
 	assert.equal(environment.PW_PORT, undefined);
 	assert.equal(environment.PW_BENCH, "1");
@@ -165,12 +172,14 @@ test("binds both terminal topology expectations to one observer-prefix cohort", 
 		assert.equal(resolved.readerLocalChunkTarget, 0);
 		assert.equal(resolved.readerLocalChunkMaxOvershoot, 0);
 		assert.equal(resolved.readerTerminalTopology, readerTerminalTopology);
+		assert.equal(resolved.readerPersistChunkReads, true);
 		assert.equal(resolved.minReadySeeders, 1);
 		const environment = createPlaywrightBenchmarkEnvironment({
 			baseEnvironment: {
 				PW_READER_LOCAL_CHUNK_TARGET: "attacker",
 				PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: "attacker",
 				PW_READER_TERMINAL_TOPOLOGY: "attacker",
+				PW_READER_PERSIST_CHUNK_READS: "attacker",
 			},
 			invocation: resolved,
 			resultFile: "/tmp/result.json",
@@ -183,7 +192,25 @@ test("binds both terminal topology expectations to one observer-prefix cohort", 
 			environment.PW_READER_TERMINAL_TOPOLOGY,
 			readerTerminalTopology,
 		);
+		assert.equal(environment.PW_READER_PERSIST_CHUNK_READS, "1");
 	}
+	const transient = invocation({
+		mode: "fixed1",
+		readerLocalChunkTarget: 0,
+		readerLocalChunkMaxOvershoot: 0,
+		readerTerminalTopology: "observer",
+		readerPersistChunkReads: false,
+	});
+	assert.equal(transient.readerPersistChunkReads, false);
+	assert.equal(
+		createPlaywrightBenchmarkEnvironment({
+			invocation: transient,
+			resultFile: "/tmp/result.json",
+			runNonce: "123e4567-e89b-42d3-a456-426614174000",
+			provenance: { bound: true },
+		}).PW_READER_PERSIST_CHUNK_READS,
+		"0",
+	);
 	for (const [overrides, pattern] of [
 		[
 			{
@@ -266,6 +293,37 @@ test("binds both terminal topology expectations to one observer-prefix cohort", 
 			},
 			/Unsupported readerTerminalTopology/,
 		],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 1,
+				readerLocalChunkMaxOvershoot: 0,
+				readerTerminalTopology: "observer",
+				readerPersistChunkReads: false,
+			},
+			/requires? readerLocalChunkTarget = 0/i,
+		],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 0,
+				readerLocalChunkMaxOvershoot: 0,
+				readerTerminalTopology: "replicator",
+				readerPersistChunkReads: false,
+			},
+			/requires? readerTerminalTopology = observer/i,
+		],
+		[{ readerPersistChunkReads: false }, /provided exactly when/],
+		[
+			{
+				mode: "fixed1",
+				readerLocalChunkTarget: 0,
+				readerLocalChunkMaxOvershoot: 0,
+				readerTerminalTopology: "observer",
+				readerPersistChunkReads: "false",
+			},
+			/must be a boolean/,
+		],
 	]) {
 		assert.throws(() => invocation(overrides), pattern);
 	}
@@ -306,6 +364,43 @@ test("defaults to the hash-only sink and validates explicit sink cohorts", () =>
 				scenario: "seeder-probe",
 				fileMb: 1,
 				downloadSink: "hash-only",
+			}),
+		/only supported by upload benchmarks/,
+	);
+});
+
+test("binds the requested browser storage backend", () => {
+	assert.equal(
+		resolveBenchmarkBrowserStorageMode(undefined, { scenario: "upload" }),
+		"memory",
+	);
+	for (const mode of ["memory", "opfs"]) {
+		const resolved = invocation({ browserStorageMode: mode });
+		assert.equal(resolved.browserStorageMode, mode);
+		assert.equal(
+			createPlaywrightBenchmarkEnvironment({
+				invocation: resolved,
+				resultFile: "/tmp/result.json",
+				runNonce: "123e4567-e89b-42d3-a456-426614174000",
+				provenance: { bound: true },
+			}).PW_BROWSER_STORAGE_MODE,
+			mode,
+		);
+	}
+	assert.throws(
+		() => invocation({ browserStorageMode: "indexeddb" }),
+		/Unsupported benchmark browser storage/,
+	);
+	assert.equal(
+		invocation({ scenario: "seeder-probe", fileMb: 1 }).browserStorageMode,
+		null,
+	);
+	assert.throws(
+		() =>
+			invocation({
+				scenario: "seeder-probe",
+				fileMb: 1,
+				browserStorageMode: "memory",
 			}),
 		/only supported by upload benchmarks/,
 	);

@@ -110,6 +110,80 @@ test("keeps exact observer-locality cohorts separate in aggregates", () => {
 	);
 });
 
+test("keeps storage and explicit reader-persistence cohorts separate in merged aggregates", () => {
+	const base = {
+		status: "passed",
+		mode: "fixed1",
+		readerLocalChunkTarget: 0,
+		readerLocalChunkMaxOvershoot: 0,
+		readerLocalChunkBlockCount: 0,
+		readerLocalChunkIndexRowCount: 0,
+		readerLocalityCohortKey: "reused-locality-key",
+		browserStorageMode: "memory",
+		readerPersistChunkReads: true,
+	};
+	const invocationOnly = {
+		...base,
+		browserStorageMode: undefined,
+		readerPersistChunkReads: undefined,
+		invocation: {
+			browserStorageMode: "memory",
+			readerPersistChunkReads: true,
+		},
+	};
+	delete invocationOnly.browserStorageMode;
+	delete invocationOnly.readerPersistChunkReads;
+	const differentStorage = {
+		...base,
+		browserStorageMode: "opfs",
+	};
+	const differentPersistence = {
+		...base,
+		readerPersistChunkReads: false,
+	};
+	const legacy = { ...base };
+	delete legacy.browserStorageMode;
+	delete legacy.readerPersistChunkReads;
+
+	const groups = groupUploadResultsByLocalityCohort([
+		base,
+		invocationOnly,
+		differentStorage,
+		differentPersistence,
+		legacy,
+	]);
+
+	assert.deepEqual(
+		groups.map(({ dimensions, results }) => ({
+			browserStorageMode: dimensions.browserStorageMode,
+			readerPersistChunkReads: dimensions.readerPersistChunkReads,
+			runs: results.length,
+		})),
+		[
+			{
+				browserStorageMode: "memory",
+				readerPersistChunkReads: true,
+				runs: 2,
+			},
+			{
+				browserStorageMode: "opfs",
+				readerPersistChunkReads: true,
+				runs: 1,
+			},
+			{
+				browserStorageMode: "memory",
+				readerPersistChunkReads: false,
+				runs: 1,
+			},
+			{
+				browserStorageMode: null,
+				readerPersistChunkReads: null,
+				runs: 1,
+			},
+		],
+	);
+});
+
 test("propagates end-to-end readiness and labels post-settlement listing", () => {
 	const results = [
 		{
@@ -602,6 +676,49 @@ test("compares modes only inside one exact runtime pair", () => {
 		summarizeUploadPerformance([adaptive]).runtimeEvidence
 			.effectiveRuntimeConfiguration.cohortKey,
 	);
+});
+
+test("compares modes only inside one storage and reader-persistence cohort", () => {
+	const { adaptive, fixed1 } = comparableRuntimeModeResults();
+	for (const result of [adaptive, fixed1]) {
+		result.browserStorageMode = "memory";
+		result.readerPersistChunkReads = true;
+	}
+
+	const comparison = compareUploadPerformanceModes([adaptive, fixed1]);
+	assert.deepEqual(
+		{
+			browserStorageMode: comparison.browserStorageMode,
+			readerPersistChunkReads: comparison.readerPersistChunkReads,
+		},
+		{
+			browserStorageMode: "memory",
+			readerPersistChunkReads: true,
+		},
+	);
+
+	for (const [key, value] of [
+		["browserStorageMode", "opfs"],
+		["readerPersistChunkReads", false],
+	]) {
+		const mutated = structuredClone(fixed1);
+		mutated[key] = value;
+		assert.equal(
+			compareUploadPerformanceModes([adaptive, mutated]),
+			null,
+			`comparison must reject a ${key} mutation`,
+		);
+	}
+
+	for (const key of ["browserStorageMode", "readerPersistChunkReads"]) {
+		const missingEvidence = structuredClone(fixed1);
+		delete missingEvidence[key];
+		assert.equal(
+			compareUploadPerformanceModes([adaptive, missingEvidence]),
+			null,
+			`comparison must reject mixed legacy/current ${key} evidence`,
+		);
+	}
 });
 
 test("rejects a mode comparison across an upload-limit mismatch", () => {

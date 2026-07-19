@@ -12,6 +12,7 @@ import {
 	assertBenchmarkFileSize,
 	assertCoreBenchmarkUsesLocalApp,
 	createBenchmarkInvocation,
+	resolveBenchmarkBrowserStorageMode,
 	resolveBenchmarkDownloadSink,
 	resolveBenchmarkPreviewOptions,
 } from "./benchmark-invocation.mjs";
@@ -51,6 +52,7 @@ import {
 	defaultExamplesSource,
 	defaultFileShareLocalPackages,
 	parseArgs,
+	preflightBetterSqlite3Runtime,
 	repoRoot,
 	run,
 } from "./common.mjs";
@@ -73,6 +75,18 @@ const RUNNER_PATH = path.join(
 const DEFAULT_FIXTURE_SEED = "peerbit-file-share-benchmark-v1";
 
 const optionalNumber = (value) => (value == null ? undefined : Number(value));
+const optionalBoolean = (value, label) => {
+	if (value == null) {
+		return undefined;
+	}
+	if (value === "true") {
+		return true;
+	}
+	if (value === "false") {
+		return false;
+	}
+	throw new Error(`${label} must be exactly "true" or "false"`);
+};
 
 const runGit = (args, { cwd = repoRoot, capture = false } = {}) => {
 	console.log(`$ git ${args.join(" ")}`);
@@ -554,6 +568,7 @@ const runVariantBenchmark = async ({
 	uploadTimeoutMs,
 	downloadTimeoutMs,
 	downloadSink,
+	browserStorageMode,
 	postTransferSoakMs,
 	postUploadMonitorMs,
 	pollMs,
@@ -568,6 +583,7 @@ const runVariantBenchmark = async ({
 	readerLocalChunkTarget,
 	readerLocalChunkMaxOvershoot,
 	readerTerminalTopology,
+	readerPersistChunkReads,
 	protocol,
 	fixtureSeed,
 	enableVisibilityProbe,
@@ -624,6 +640,9 @@ const runVariantBenchmark = async ({
 			? ["--download-timeout-ms", String(downloadTimeoutMs)]
 			: []),
 		...(downloadSink != null ? ["--download-sink", downloadSink] : []),
+		...(browserStorageMode != null
+			? ["--browser-storage", browserStorageMode]
+			: []),
 		...(postTransferSoakMs != null
 			? ["--post-transfer-soak-ms", String(postTransferSoakMs)]
 			: []),
@@ -653,6 +672,9 @@ const runVariantBenchmark = async ({
 			: []),
 		...(readerTerminalTopology != null
 			? ["--reader-terminal-topology", readerTerminalTopology]
+			: []),
+		...(readerPersistChunkReads != null
+			? ["--reader-persist-chunk-reads", readerPersistChunkReads]
 			: []),
 		...(protocol ? ["--protocol", protocol] : []),
 		...(fixtureSeed ? ["--fixture-seed", fixtureSeed] : []),
@@ -771,6 +793,10 @@ const main = async () => {
 	const downloadSink = resolveBenchmarkDownloadSink(args["download-sink"], {
 		scenario,
 	});
+	const browserStorageMode = resolveBenchmarkBrowserStorageMode(
+		args["browser-storage"],
+		{ scenario },
+	);
 	const integrationMode = args["integration-mode"] ?? "link";
 	const localPackages =
 		args["local-packages"] ?? defaultFileShareLocalPackages.join(",");
@@ -792,6 +818,7 @@ const main = async () => {
 	const readerLocalChunkTarget = args["reader-local-chunk-target"];
 	const readerLocalChunkMaxOvershoot = args["reader-local-chunk-max-overshoot"];
 	const readerTerminalTopology = args["reader-terminal-topology"];
+	const readerPersistChunkReads = args["reader-persist-chunk-reads"];
 	const { protocol } = previewOptions;
 	const fixtureSeed = args["fixture-seed"];
 	const enableVisibilityProbe = Boolean(args["enable-visibility-probe"]);
@@ -846,6 +873,24 @@ const main = async () => {
 	if ((readerLocalChunkTarget == null) !== (readerTerminalTopology == null)) {
 		throw new Error(
 			"--reader-terminal-topology must be provided exactly when --reader-local-chunk-target is provided",
+		);
+	}
+	const parsedReaderPersistChunkReads = optionalBoolean(
+		readerPersistChunkReads,
+		"--reader-persist-chunk-reads",
+	);
+	if (parsedReaderPersistChunkReads != null && readerLocalChunkTarget == null) {
+		throw new Error(
+			"--reader-persist-chunk-reads requires --reader-local-chunk-target",
+		);
+	}
+	if (
+		parsedReaderPersistChunkReads === false &&
+		(Number(readerLocalChunkTarget) !== 0 ||
+			readerTerminalTopology !== "observer")
+	) {
+		throw new Error(
+			"--reader-persist-chunk-reads false requires --reader-local-chunk-target 0 and --reader-terminal-topology observer",
 		);
 	}
 	if (
@@ -930,6 +975,9 @@ const main = async () => {
 				`Variant ${variant} cannot run the file-share matrix; missing effective packages: ${missingRequiredPackages.join(", ") || "all packages"}`,
 			);
 		}
+		await preflightBetterSqlite3Runtime(peerbitRoot, {
+			packageNames: effectiveLocalPackageNames,
+		});
 		preparedVariants.set(variant, {
 			variant,
 			variantRef:
@@ -998,6 +1046,7 @@ const main = async () => {
 				uploadTimeoutMs,
 				downloadTimeoutMs,
 				downloadSink,
+				browserStorageMode,
 				postTransferSoakMs,
 				postUploadMonitorMs,
 				pollMs,
@@ -1009,6 +1058,7 @@ const main = async () => {
 				readerLocalChunkTarget,
 				readerLocalChunkMaxOvershoot,
 				readerTerminalTopology,
+				readerPersistChunkReads,
 				protocol,
 				fixtureSeed,
 				enableVisibilityProbe,
@@ -1045,6 +1095,7 @@ const main = async () => {
 				fileMb,
 				fixtureSeed: fixtureSeed ?? DEFAULT_FIXTURE_SEED,
 				downloadSink,
+				browserStorageMode,
 				uploadTimeoutMs: optionalNumber(uploadTimeoutMs),
 				downloadTimeoutMs: optionalNumber(downloadTimeoutMs),
 				postTransferSoakMs: optionalNumber(postTransferSoakMs),
@@ -1060,6 +1111,7 @@ const main = async () => {
 					readerLocalChunkMaxOvershoot,
 				),
 				readerTerminalTopology,
+				readerPersistChunkReads: parsedReaderPersistChunkReads,
 				baseUrl: null,
 				protocol,
 				viteMode: null,
@@ -1323,6 +1375,10 @@ const main = async () => {
 		readerLocalChunkMaxOvershoot:
 			optionalNumber(readerLocalChunkMaxOvershoot) ?? null,
 		readerTerminalTopology: readerTerminalTopology ?? null,
+		readerPersistChunkReads:
+			readerLocalChunkTarget == null
+				? null
+				: (parsedReaderPersistChunkReads ?? true),
 		readerLocalityCohorts: [
 			...new Set(
 				allResults
@@ -1335,6 +1391,7 @@ const main = async () => {
 		modes,
 		scenario,
 		downloadSink,
+		browserStorageMode,
 		integrationMode,
 		localPackages,
 		requestedLocalPackageNames:
