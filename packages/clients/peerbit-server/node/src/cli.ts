@@ -482,13 +482,51 @@ export const cli = async (args?: string[]) => {
 								createClient(await getKeypair(args.directory), remote),
 							),
 						);
-						const resolvedOrRejected = await Promise.allSettled(
-							apis.map((x) => x.peer.id.get()),
+						const identityStatuses = await Promise.all(
+							apis.map(async (api, index) => {
+								let observed: string;
+								try {
+									observed = peerIdFromString(
+										await api.peer.id.get(),
+									).toString();
+								} catch {
+									return "offline" as const;
+								}
+								const pinned = all[index].peerId;
+								if (!pinned) return "unpinned" as const;
+								let expected: string;
+								try {
+									expected = peerIdFromString(pinned).toString();
+								} catch {
+									return "mismatch" as const;
+								}
+								if (observed !== expected) return "mismatch" as const;
+								try {
+									const verified = peerIdFromString(
+										await api.peer.id.verify(),
+									).toString();
+									return verified === expected
+										? ("verified" as const)
+										: ("mismatch" as const);
+								} catch {
+									return "unverified" as const;
+								}
+							}),
 						);
 
 						if (all.length > 0) {
 							const rows: string[][] = [];
 							for (const [ix, remote] of all.entries()) {
+								const status =
+									identityStatuses[ix] === "verified"
+										? chalk.green("Y")
+										: identityStatuses[ix] === "unpinned"
+											? chalk.yellow("Y (unpinned)")
+											: identityStatuses[ix] === "mismatch"
+												? chalk.red("ID MISMATCH")
+												: identityStatuses[ix] === "unverified"
+													? chalk.red("ID UNVERIFIED")
+													: chalk.red("N");
 								const row = [
 									remote.name,
 									remote.group || "",
@@ -497,15 +535,13 @@ export const cli = async (args?: string[]) => {
 										: remote.origin?.type === "hetzner"
 											? `hetzner\n${remote.origin.location}\n${remote.origin.serverId}`
 											: "",
-									resolvedOrRejected[ix].status === "fulfilled"
-										? chalk.green("Y")
-										: chalk.red("N"),
+									status,
 									remote.address,
 								];
 								rows.push(row);
 							}
 							const table = Table(
-								["Name", "Group", "Origin", "Online", "Address"].map((x) => {
+								["Name", "Group", "Origin", "Status", "Address"].map((x) => {
 									return { value: x, align: "left" };
 								}),
 								rows,
@@ -537,6 +573,11 @@ export const cli = async (args?: string[]) => {
 								alias: "g",
 								default: DEFAULT_REMOTE_GROUP,
 							})
+							.option("peer-id", {
+								describe:
+									"Expected server peer ID for first enrollment (an existing pin cannot be replaced)",
+								type: "string",
+							})
 							.option("directory", {
 								describe: "Peerbit directory",
 								defaultDescription: "~.peerbit",
@@ -551,8 +592,40 @@ export const cli = async (args?: string[]) => {
 						if (args.name === "localhost") {
 							throw new Error("Remote can not be named 'localhost'");
 						}
-						const api = await createClient(await getKeypair(args.directory), {
+						const remotes = new Remotes(getRemotesPath(args.directory));
+						const existing = remotes.getByName(args.name);
+						const pinnedPeerId = existing?.peerId
+							? peerIdFromString(existing.peerId).toString()
+							: undefined;
+						const suppliedPeerId = args["peer-id"]
+							? peerIdFromString(args["peer-id"]).toString()
+							: undefined;
+						if (
+							pinnedPeerId &&
+							suppliedPeerId &&
+							pinnedPeerId !== suppliedPeerId
+						) {
+							throw new Error(
+								`Remote '${args.name}' is already pinned to ${pinnedPeerId}. Remove it before enrolling a different server identity.`,
+							);
+						}
+						const keypair = await getKeypair(args.directory);
+						const discovery = await createClient(keypair, {
 							address: args.address,
+						});
+						const discoveredPeerId = peerIdFromString(
+							await discovery.peer.id.get(),
+						).toString();
+						const expectedPeerId =
+							pinnedPeerId ?? suppliedPeerId ?? discoveredPeerId;
+						if (expectedPeerId !== discoveredPeerId) {
+							throw new Error(
+								`Server peer ID mismatch: expected ${expectedPeerId}, received ${discoveredPeerId}`,
+							);
+						}
+						const api = await createClient(keypair, {
+							address: args.address,
+							peerId: expectedPeerId,
 						});
 						try {
 							await api.program.list();
@@ -562,12 +635,13 @@ export const cli = async (args?: string[]) => {
 						if (!fs.existsSync(args.directory)) {
 							fs.mkdirSync(args.directory, { recursive: true });
 						}
-						const remotes = new Remotes(getRemotesPath(args.directory));
 						remotes.add({
 							name: args.name,
 							address: args.address,
 							group: args.group,
+							peerId: expectedPeerId,
 						});
+						console.log(`Pinned server peer ID: ${expectedPeerId}`);
 					},
 				})
 				.command({
@@ -666,6 +740,7 @@ export const cli = async (args?: string[]) => {
 										address: "http://localhost:" + LOCAL_API_PORT,
 										name: "localhost",
 										group: DEFAULT_REMOTE_GROUP,
+										peerId: (await keypair.publicKey.toPeerId()).toString(),
 									});
 								} else {
 									const remote = remotes.getByName(name);
@@ -684,6 +759,19 @@ export const cli = async (args?: string[]) => {
 									selectedRemotes.push(remote);
 								}
 							}
+						}
+
+						const newlyPinned: RemoteObject[] = [];
+						for (const remote of selectedRemotes) {
+							if (remote.peerId) continue;
+							const discovery = await createClient(keypair, {
+								address: remote.address,
+								origin: remote.origin,
+							});
+							remote.peerId = peerIdFromString(
+								await discovery.peer.id.get(),
+							).toString();
+							newlyPinned.push(remote);
 						}
 
 						const maxNameLength = selectedRemotes
@@ -730,6 +818,12 @@ export const cli = async (args?: string[]) => {
 										`Failed to connect to '${api.name}': ${error?.toString()}`,
 									);
 								}
+							}
+							for (const remote of newlyPinned) {
+								remotes.add(remote);
+								console.warn(
+									`Pinned existing remote '${remote.name}' to server peer ID ${remote.peerId}`,
+								);
 							}
 
 							const rl = readline.createInterface({

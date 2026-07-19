@@ -1,7 +1,12 @@
 /* eslint-disable no-console */
 import { deserialize, getSchema } from "@dao-xyz/borsh";
 import { peerIdFromString } from "@libp2p/peer-id";
-import { fromBase64, getPublicKeyFromPeerId } from "@peerbit/crypto";
+import {
+	fromBase64,
+	getPublicKeyFromPeerId,
+	randomBytes,
+	toBase64,
+} from "@peerbit/crypto";
 import {
 	Program,
 	getProgramFromVariant,
@@ -25,6 +30,7 @@ import { getKeypair, getNodePath, getTrustPath } from "./config.js";
 import { create } from "./peerbit.js";
 import {
 	ADDRESS_PATH,
+	AUTH_PATH,
 	BOOTSTRAP_PATH,
 	INSTALL_PATH,
 	LOCAL_API_PORT,
@@ -41,7 +47,14 @@ import {
 	VERSIONS_PATH,
 } from "./routes.js";
 import { JSONArgs, Session } from "./session.js";
-import { getBody, verifyRequest } from "./signed-request.js";
+import {
+	ReplayCapacityError,
+	RequestAuthenticator,
+	RequestBodyTooLargeError,
+	createAuthDescriptor,
+	getBody,
+	verifyRequestBody,
+} from "./signed-request.js";
 import { Trust } from "./trust.js";
 import type {
 	InstallDependency,
@@ -51,6 +64,7 @@ import type {
 } from "./types.js";
 
 const MAX_LISTENER_LIMIT = 1e5;
+const AUTH_DESCRIPTOR_CACHE_MS = 30_000;
 
 const getInstallDir = (): string | null => {
 	return (
@@ -332,6 +346,14 @@ export const startApiServer = async (
 		trust: Trust;
 		session?: Session;
 		port?: number;
+		signedRequests?: {
+			maxPastAgeSeconds?: number;
+			maxFutureSkewSeconds?: number;
+			maxBodyBytes?: number;
+			maxReplayEntries?: number;
+			wallClockMs?: () => number;
+			monotonicClockMs?: () => number;
+		};
 	},
 ): Promise<http.Server> => {
 	const port = properties?.port ?? LOCAL_API_PORT;
@@ -371,22 +393,69 @@ export const startApiServer = async (
 	if (!client.peerId.equals(await client.identity.publicKey.toPeerId())) {
 		throw new Error("Expecting node identity to equal peerId");
 	}
+	const audience = {
+		serverPeerId: client.peerId.toString(),
+		bootId: toBase64(randomBytes(32)),
+	};
+	const wallClockMs = properties.signedRequests?.wallClockMs ?? Date.now;
+	let cachedAuthDescriptor:
+		| {
+				descriptor: Awaited<ReturnType<typeof createAuthDescriptor>>;
+				at: number;
+		  }
+		| undefined;
+	let authDescriptorPromise:
+		| Promise<Awaited<ReturnType<typeof createAuthDescriptor>>>
+		| undefined;
+	const getAuthDescriptor = () => {
+		const now = wallClockMs();
+		if (
+			cachedAuthDescriptor &&
+			now >= cachedAuthDescriptor.at &&
+			now - cachedAuthDescriptor.at < AUTH_DESCRIPTOR_CACHE_MS
+		) {
+			return Promise.resolve(cachedAuthDescriptor.descriptor);
+		}
+		if (!authDescriptorPromise) {
+			authDescriptorPromise = createAuthDescriptor(
+				client.identity,
+				audience,
+				now,
+			)
+				.then((descriptor) => {
+					cachedAuthDescriptor = { descriptor, at: now };
+					return descriptor;
+				})
+				.finally(() => {
+					authDescriptorPromise = undefined;
+				});
+		}
+		return authDescriptorPromise;
+	};
+	const authenticator = new RequestAuthenticator({
+		...audience,
+		...properties.signedRequests,
+		isTrusted: (key) =>
+			key.equals(client.identity.publicKey) ||
+			properties.trust.isTrusted(key.hashcode()),
+	});
 
 	const getVerifiedBody = async (req: http.IncomingMessage) => {
-		const body = await getBody(req);
-		const result = await verifyRequest(
+		const verified = await authenticator.verify(
 			req.headers,
 			req.method!,
 			req.url!,
-			body,
 		);
-		if (result.equals(client.identity.publicKey)) {
-			return body;
-		}
-		if (properties.trust.isTrusted(result.hashcode())) {
-			return body;
-		}
-		throw new Error("Not trusted");
+		const body = await getBody(req, verified.bodyLength);
+		const decoded = verifyRequestBody(verified, body);
+		// Consume only after the signed bytes have arrived and matched. This keeps a
+		// raced bad body from burning the nonce while remaining atomic before dispatch.
+		authenticator.consume(verified);
+		return decoded;
+	};
+	const closeResponseConnection = (res: http.ServerResponse) => {
+		res.shouldKeepAlive = false;
+		res.setHeader("Connection", "close");
 	};
 
 	const e404 = "404";
@@ -406,14 +475,41 @@ export const startApiServer = async (
 				if (req.url) {
 					let body: string;
 					try {
-						body =
-							req.url.startsWith(PEER_ID_PATH) ||
-							req.url.startsWith(ADDRESS_PATH)
-								? await getBody(req)
-								: await getVerifiedBody(req);
+						const isPublicRequest =
+							req.method === "GET" &&
+							(req.url === PEER_ID_PATH ||
+								req.url === ADDRESS_PATH ||
+								req.url === AUTH_PATH);
+						if (
+							isPublicRequest &&
+							(req.headers["transfer-encoding"] != null ||
+								(req.headers["content-length"] != null &&
+									req.headers["content-length"] !== "0"))
+						) {
+							closeResponseConnection(res);
+							res.writeHead(400);
+							res.end("Public GET endpoints do not accept a request body");
+							return;
+						}
+						body = isPublicRequest ? "" : await getVerifiedBody(req);
 					} catch (error: any) {
-						res.writeHead(401);
-						res.end("Not authorized: " + error.toString());
+						const status =
+							error instanceof RequestBodyTooLargeError
+								? 413
+								: error instanceof ReplayCapacityError
+									? 503
+									: 401;
+						// Authentication can fail before the body is read. Disable keep-alive so
+						// an attacker cannot retain this connection by continuing to stream it.
+						closeResponseConnection(res);
+						res.writeHead(status);
+						res.end(
+							status === 413
+								? "Request body is too large"
+								: status === 503
+									? "Authentication is temporarily unavailable"
+									: "Not authorized",
+						);
 						return;
 					}
 
@@ -996,6 +1092,12 @@ export const startApiServer = async (
 						} else {
 							r404();
 						}
+					} else if (req.url === AUTH_PATH && req.method === "GET") {
+						const authDescriptor = await getAuthDescriptor();
+						res.setHeader("Cache-Control", "no-store");
+						res.setHeader("Content-Type", "application/json");
+						res.writeHead(200);
+						res.end(JSON.stringify(authDescriptor));
 					} else if (req.url.startsWith(PEER_ID_PATH)) {
 						res.writeHead(200);
 						res.end(client.peerId.toString());

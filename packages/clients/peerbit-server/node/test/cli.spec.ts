@@ -6,10 +6,12 @@ import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import { type ChildProcess, exec, execSync } from "child_process";
 import fs from "fs";
+import http from "http";
 import path from "path";
 import readline from "readline";
 import { v4 as uuid } from "uuid";
-import { getTrustPath } from "../src/config.js";
+import { getRemotesPath, getTrustPath } from "../src/config.js";
+import { Remotes } from "../src/remotes.js";
 import { Trust } from "../src/trust.js";
 import { __dirname, modulesPath } from "./utils.js";
 
@@ -225,6 +227,24 @@ describe("cli", () => {
 			}
 			expect(rejected).to.be.true;
 
+			const legacyRemotes = new Remotes(getRemotesPath(strangerDirectory));
+			legacyRemotes.add({
+				name: "legacy",
+				address: `http://localhost:${PORT}`,
+				group: "default",
+			});
+			rejected = false;
+			try {
+				runCommand(`remote connect legacy --directory ${strangerDirectory}`);
+			} catch {
+				rejected = true;
+			}
+			expect(rejected).to.be.true;
+			expect(
+				new Remotes(getRemotesPath(strangerDirectory)).getByName("legacy")
+					?.peerId,
+			).to.equal(undefined);
+
 			runCommand(
 				`remote add authorized http://localhost:${PORT} --directory ${adminDirectory}`,
 			);
@@ -259,6 +279,55 @@ describe("cli", () => {
 	});
 
 	describe("remote", () => {
+		it("does not mark an echo-only pinned identity as verified", async () => {
+			const expected = (await Ed25519Keypair.create()).publicKey
+				.toPeerId()
+				.toString();
+			const fake = http.createServer((request, response) => {
+				if (request.url === "/peer/id") {
+					response.end(expected);
+					return;
+				}
+				response.setHeader("Content-Type", "application/json");
+				response.end(
+					JSON.stringify({
+						version: "2",
+						serverPeerId: expected,
+						bootId: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+						serverTime: "1750000000",
+						signature: "invalid",
+					}),
+				);
+			});
+			await new Promise<void>((resolve, reject) => {
+				fake.once("error", reject);
+				fake.listen(0, "127.0.0.1", () => resolve());
+			});
+			try {
+				const address = fake.address();
+				if (!address || typeof address === "string") {
+					throw new Error("Failed to resolve fake server address");
+				}
+				fs.mkdirSync(configDirectory, { recursive: true });
+				new Remotes(getRemotesPath(configDirectory)).add({
+					name: "echo",
+					address: `http://127.0.0.1:${address.port}`,
+					group: "default",
+					peerId: expected,
+				});
+				const terminal = runCommandProcess(
+					`remote ls --directory ${configDirectory}`,
+				);
+				await new Promise<void>((resolve, reject) => {
+					terminal.process.once("error", reject);
+					terminal.process.once("close", () => resolve());
+				});
+				expect(terminal.out.join("\n")).to.include("UNVERIFIED");
+			} finally {
+				await new Promise<void>((resolve) => fake.close(() => resolve()));
+			}
+		});
+
 		it("rejets on invalid remote", async () => {
 			let rejected = false;
 			try {
@@ -277,6 +346,55 @@ describe("cli", () => {
 			);
 			const terminal = await connect("xyz123");
 			await checkPeerId(terminal);
+
+			const remotes = new Remotes(getRemotesPath(configDirectory));
+			const saved = remotes.getByName("xyz123")!;
+			const other = await Ed25519Keypair.create();
+			expect(remotes.remove("xyz123")).to.equal(true);
+			remotes.add({ ...saved, peerId: other.publicKey.toPeerId().toString() });
+			expect(runCommand(`remote ls --directory ${configDirectory}`)).to.include(
+				"MISMATCH",
+			);
+		});
+
+		it("keeps an existing identity pin when re-adding the name", async () => {
+			await start();
+			runCommand(
+				`remote add stable http://localhost:${PORT} --directory ${configDirectory}`,
+			);
+			const before = new Remotes(getRemotesPath(configDirectory)).getByName(
+				"stable",
+			)!;
+
+			const administratorId = runCommand(
+				`id --directory ${configDirectory}`,
+			).trim();
+			const replacementPort = PORT + 20_000;
+			const replacement = runCommandProcess(
+				`start --reset --port-api ${replacementPort} --port-node 0 --directory ${path.join(configDirectory, "replacement-server")} --grant-access ${administratorId}`,
+			);
+			processes.push(replacement);
+			await waitForResolved(() =>
+				expect(
+					replacement.out.some((line) => line.includes("API available")),
+				).to.equal(true),
+			);
+
+			let rejected = false;
+			try {
+				runCommand(
+					`remote add stable http://localhost:${replacementPort} --directory ${configDirectory}`,
+				);
+			} catch (error: any) {
+				rejected = true;
+				expect(`${error?.message || ""}${error?.stderr || ""}`).to.include(
+					"Server peer ID mismatch",
+				);
+			}
+			expect(rejected).to.equal(true);
+			expect(
+				new Remotes(getRemotesPath(configDirectory)).getByName("stable"),
+			).to.deep.equal(before);
 		});
 
 		describe("connect", () => {
