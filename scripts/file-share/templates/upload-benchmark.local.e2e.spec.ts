@@ -37,6 +37,8 @@ const READER_LOCAL_CHUNK_MAX_OVERSHOOT = process.env
 	.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT
 	? Number(process.env.PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT)
 	: null;
+const READER_TERMINAL_TOPOLOGY =
+	process.env.PW_READER_TERMINAL_TOPOLOGY || null;
 const LOCALITY_CONTROL_POLL_MS = Math.min(POLL_MS, 100);
 const LOCALITY_CONTROL_STABLE_SAMPLE_COUNT = 3;
 const POST_UPLOAD_MONITOR_MS = Number(
@@ -113,7 +115,7 @@ const FIXTURE_SEED =
 	process.env.PW_FIXTURE_SEED || "peerbit-file-share-benchmark-v1";
 const RESULT_SCHEMA = {
 	id: "peerbit-file-share-benchmark",
-	version: 7,
+	version: 8,
 } as const;
 const SEEDER_DROP_POLICY = {
 	id: "peerbit-file-share-seeder-drop-policy",
@@ -171,6 +173,24 @@ if (
 ) {
 	throw new Error(
 		"PW_READER_LOCAL_CHUNK_TARGET and PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT must be provided together",
+	);
+}
+if (
+	(READER_LOCAL_CHUNK_TARGET === null) !==
+	(READER_TERMINAL_TOPOLOGY === null)
+) {
+	throw new Error(
+		"PW_READER_TERMINAL_TOPOLOGY must be provided exactly when PW_READER_LOCAL_CHUNK_TARGET is provided",
+	);
+}
+if (
+	READER_TERMINAL_TOPOLOGY !== null &&
+	!(["observer", "replicator"] as const).includes(
+		READER_TERMINAL_TOPOLOGY as "observer" | "replicator",
+	)
+) {
+	throw new Error(
+		`Invalid PW_READER_TERMINAL_TOPOLOGY='${process.env.PW_READER_TERMINAL_TOPOLOGY}'`,
 	);
 }
 if (
@@ -232,6 +252,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 	readyTimeoutMs: READY_TIMEOUT_MS,
 	readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
 	readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
+	readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
 	baseUrl: process.env.PW_BASE_URL || null,
 	protocol: process.env.PW_PROTOCOL || null,
 	viteMode: process.env.PW_VITE_MODE || null,
@@ -244,7 +265,7 @@ const expectedInvocationValues: Record<string, unknown> = {
 if (
 	(INVOCATION.schema as Record<string, unknown> | undefined)?.id !==
 		"peerbit-file-share-benchmark-invocation" ||
-	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 3
+	(INVOCATION.schema as Record<string, unknown> | undefined)?.version !== 4
 ) {
 	throw new Error("Unsupported PW_BENCHMARK_INVOCATION schema");
 }
@@ -619,6 +640,21 @@ const topologyHasExactWriterReaderPair = (
 	);
 };
 
+const topologyMatchesTerminalExpectation = (
+	writerTopology: Record<string, any>,
+	readerTopology: Record<string, any>,
+	expectedWriterPeerHash: string,
+	expectedReaderPeerHash: string,
+) =>
+	READER_TERMINAL_TOPOLOGY === "observer"
+		? topologyHasExactWriterSingleton(writerTopology, readerTopology)
+		: topologyHasExactWriterReaderPair(
+				writerTopology,
+				readerTopology,
+				expectedWriterPeerHash,
+				expectedReaderPeerHash,
+			);
+
 const getDiagnostics = async (page: Page) => {
 	try {
 		return await page.evaluate(async () => {
@@ -823,14 +859,17 @@ test.describe("generated transfer-validity benchmark", () => {
 			READER_LOCAL_CHUNK_TARGET === null
 				? null
 				: {
-						profile: "observer-topology-persistent-read-preloaded-prefix",
-						requestedYieldedChunkCount: READER_LOCAL_CHUNK_TARGET,
-						maxReadAheadOvershootChunkCount: READER_LOCAL_CHUNK_MAX_OVERSHOOT!,
+						profile: "observer-topology-exact-manifest-prefix",
+						provisioningMethod: "exact-manifest-head-import",
+						requestedLocalChunkBlockCount: READER_LOCAL_CHUNK_TARGET,
+						maxSpeculativeOvershootChunkCount:
+							READER_LOCAL_CHUNK_MAX_OVERSHOOT!,
 						countMetric:
 							"exact local Documents index rows and manifest entry blocks",
 						writerUploadRole: "fixed1",
 						readerUploadRole: "observer",
 						readerTimedReadPolicy: "persist-chunk-reads",
+						expectedTerminalTopology: READER_TERMINAL_TOPOLOGY,
 						stabilityPollIntervalMs: LOCALITY_CONTROL_POLL_MS,
 						requiredStableObservationCount:
 							LOCALITY_CONTROL_STABLE_SAMPLE_COUNT,
@@ -857,7 +896,7 @@ test.describe("generated transfer-validity benchmark", () => {
 						terminalTopologyDeadlineAt: null as number | null,
 						terminalTopologyFinishedAt: null as number | null,
 						terminalTopologyRole: null as string | null,
-						readerJoinedReplicationDuringTimedRead: null as boolean | null,
+						terminalTopologyExpectationSatisfied: null as boolean | null,
 						terminalTopologyObservations: [] as Array<{
 							capturedAt: number;
 							writerTopology: Record<string, unknown>;
@@ -865,7 +904,7 @@ test.describe("generated transfer-validity benchmark", () => {
 						}>,
 						actualLocalChunkBlockCount: null as number | null,
 						actualLocalChunkIndexRowCount: null as number | null,
-						readAheadOvershootChunkCount: null as number | null,
+						speculativeOvershootChunkCount: null as number | null,
 						cohortKey: null as string | null,
 						failure: null as string | null,
 					};
@@ -1013,6 +1052,10 @@ test.describe("generated transfer-validity benchmark", () => {
 					reader,
 					fileName,
 				);
+				const expectedTerminalIndexRowCount =
+					READER_TERMINAL_TOPOLOGY === "replicator"
+						? lastObservation.chunkCount
+						: 0;
 				if (
 					localityObservationIsIdle(lastObservation) &&
 					lastObservation.fileId === readerManifestEvidence?.fileId &&
@@ -1020,6 +1063,11 @@ test.describe("generated transfer-validity benchmark", () => {
 					lastObservation.blockCount !== null &&
 					lastObservation.blockChunkIndices !== null &&
 					lastObservation.blockCount === lastObservation.chunkCount &&
+					lastObservation.indexRowCount === expectedTerminalIndexRowCount &&
+					Array.isArray(lastObservation.indexedChunkIndices) &&
+					lastObservation.indexedChunkIndices.length ===
+						expectedTerminalIndexRowCount &&
+					isContiguousPrefix(lastObservation.indexedChunkIndices) &&
 					isContiguousPrefix(lastObservation.blockChunkIndices) &&
 					lastObservation.persistChunkReads === true
 				) {
@@ -1075,7 +1123,9 @@ test.describe("generated transfer-validity benchmark", () => {
 					break;
 				}
 				if (
-					topologyHasExactWriterReaderPair(
+					writerTopology?.peerHash === expectedWriterPeerHash &&
+					readerTopology?.peerHash === expectedReaderPeerHash &&
+					topologyMatchesTerminalExpectation(
 						writerTopology,
 						readerTopology,
 						expectedWriterPeerHash,
@@ -1092,7 +1142,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				await reader.waitForTimeout(LOCALITY_CONTROL_POLL_MS);
 			}
 			throw new Error(
-				`Timed reader did not converge to the exact two-replicator topology: ${JSON.stringify(lastObservation)}`,
+				`Timed reader did not converge to requested terminal topology ${READER_TERMINAL_TOPOLOGY}: ${JSON.stringify(lastObservation)}`,
 			);
 		};
 
@@ -1434,8 +1484,8 @@ test.describe("generated transfer-validity benchmark", () => {
 					);
 				}
 				logStage("reader-locality-preload", {
-					requestedYieldedChunkCount: READER_LOCAL_CHUNK_TARGET,
-					maxReadAheadOvershootChunkCount: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
+					requestedLocalChunkBlockCount: READER_LOCAL_CHUNK_TARGET,
+					maxSpeculativeOvershootChunkCount: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
 				});
 				const preloadEvidence = (await preloadLocalChunkPrefix(
 					reader,
@@ -1447,15 +1497,27 @@ test.describe("generated transfer-validity benchmark", () => {
 				const preloadScheduler = preloadEvidence.downloadSchedulerAfterClose as
 					| LocalitySchedulerObservation
 					| undefined;
-				const preloadReadDiagnostics =
-					preloadEvidence.readDiagnostics as Record<string, unknown> | null;
 				const preloadStartedAt = preloadEvidence.startedAt as number;
 				const preloadFinishedAt = preloadEvidence.finishedAt as number;
+				const expectedImportedIndices = Array.from(
+					{ length: READER_LOCAL_CHUNK_TARGET },
+					(_, index) => index,
+				);
 				if (
 					preloadEvidence.fileId !== readerManifestEvidence.fileId ||
-					preloadEvidence.yieldedChunkCount !== READER_LOCAL_CHUNK_TARGET ||
-					!Number.isSafeInteger(preloadEvidence.yieldedByteCount) ||
-					(preloadEvidence.yieldedByteCount as number) < 0 ||
+					preloadEvidence.provisioningMethod !== "exact-manifest-head-import" ||
+					preloadEvidence.transferId !== null ||
+					preloadEvidence.requestedManifestEntryCount !==
+						READER_LOCAL_CHUNK_TARGET ||
+					preloadEvidence.importedManifestEntryCount !==
+						READER_LOCAL_CHUNK_TARGET ||
+					JSON.stringify(preloadEvidence.importedManifestEntryIndices) !==
+						JSON.stringify(expectedImportedIndices) ||
+					JSON.stringify(preloadEvidence.localManifestEntryIndicesAfter) !==
+						JSON.stringify(expectedImportedIndices) ||
+					!Number.isSafeInteger(preloadEvidence.rawFetchedByteCount) ||
+					(preloadEvidence.rawFetchedByteCount as number) < 0 ||
+					preloadEvidence.maxConcurrentImports !== 8 ||
 					preloadEvidence.persistChunkReads !== true ||
 					!Array.isArray(preloadEvidence.activeTransfersAfterClose) ||
 					preloadEvidence.activeTransfersAfterClose.length !== 0 ||
@@ -1465,7 +1527,8 @@ test.describe("generated transfer-validity benchmark", () => {
 					!Number.isSafeInteger(preloadEvidence.startedAt) ||
 					!Number.isSafeInteger(preloadEvidence.finishedAt) ||
 					preloadFinishedAt < preloadStartedAt ||
-					preloadEvidence.aggregateTimedOut !== false
+					preloadEvidence.aggregateTimedOut !== false ||
+					preloadEvidence.readDiagnostics !== null
 				) {
 					throw new Error(
 						"Reader locality preload did not close with clean transfer resources",
@@ -1473,12 +1536,13 @@ test.describe("generated transfer-validity benchmark", () => {
 				}
 				if (READER_LOCAL_CHUNK_TARGET === 0) {
 					if (
-						preloadEvidence.transferId !== null ||
-						preloadReadDiagnostics !== null ||
 						preloadEvidence.aggregateTimeoutMs !== null ||
-						preloadEvidence.aggregateDeadlineAt !== null
+						preloadEvidence.aggregateDeadlineAt !== null ||
+						preloadEvidence.rawFetchedByteCount !== 0
 					) {
-						throw new Error("Zero-prefix preload unexpectedly opened a read");
+						throw new Error(
+							"Zero-prefix preload unexpectedly imported a manifest entry",
+						);
 					}
 				} else if (
 					preloadEvidence.aggregateTimeoutMs !== DOWNLOAD_TIMEOUT_MS ||
@@ -1486,17 +1550,10 @@ test.describe("generated transfer-validity benchmark", () => {
 						preloadStartedAt + DOWNLOAD_TIMEOUT_MS ||
 					preloadFinishedAt - preloadStartedAt >
 						DOWNLOAD_TIMEOUT_MS + TRANSFER_TIMEOUT_SCHEDULING_TOLERANCE_MS ||
-					typeof preloadEvidence.transferId !== "string" ||
-					preloadEvidence.transferId.length === 0 ||
-					!preloadReadDiagnostics ||
-					preloadReadDiagnostics.transferId !== preloadEvidence.transferId ||
-					preloadReadDiagnostics.persistChunkReads !== true ||
-					preloadReadDiagnostics.finishedAt !== null ||
-					preloadReadDiagnostics.failureAt !== null ||
-					preloadReadDiagnostics.failureMessage !== null
+					(preloadEvidence.rawFetchedByteCount as number) <= 0
 				) {
 					throw new Error(
-						"Partial-prefix preload diagnostics do not prove a bounded clean iterator close",
+						"Exact manifest-prefix import did not prove a bounded clean preload",
 					);
 				}
 
@@ -1508,7 +1565,7 @@ test.describe("generated transfer-validity benchmark", () => {
 					preDownloadObservation.blockCount;
 				readerLocalityControl.actualLocalChunkIndexRowCount =
 					preDownloadObservation.indexRowCount;
-				readerLocalityControl.readAheadOvershootChunkCount =
+				readerLocalityControl.speculativeOvershootChunkCount =
 					preDownloadObservation.blockCount! - READER_LOCAL_CHUNK_TARGET;
 				readerLocalityControl.cohortKey = `observer-persistent-prefix-b${preDownloadObservation.blockCount}-i${preDownloadObservation.indexRowCount}`;
 				const [writerTopology, readerTopology] = await Promise.all([
@@ -1578,7 +1635,8 @@ test.describe("generated transfer-validity benchmark", () => {
 			await downloadButton.click();
 			const download = await downloadCompletion;
 			downloadCompletionObservedAt = Date.now();
-			downloadMemoryTelemetry = await downloadMemoryTelemetryController.stop();
+			downloadMemoryTelemetry =
+				await downloadMemoryTelemetryController.stopSampling();
 			const memorySeries = [
 				downloadMemoryTelemetry.readerJsHeap,
 				downloadMemoryTelemetry.writerJsHeap,
@@ -1842,6 +1900,29 @@ test.describe("generated transfer-validity benchmark", () => {
 				);
 			}
 			integrityVerifiedAt = Date.now();
+			// Sampling is finalized at sink completion above, but CDP cleanup is
+			// deliberately deferred until the transfer and its SHA-256/CRC-32
+			// evidence are complete. A slow Performance.disable/detach must not
+			// erase an otherwise valid transfer result.
+			downloadMemoryTelemetry =
+				await downloadMemoryTelemetryController.cleanup();
+			const finalizedMemorySeries = [
+				downloadMemoryTelemetry.readerJsHeap,
+				downloadMemoryTelemetry.writerJsHeap,
+				downloadMemoryTelemetry.hostRss,
+			];
+			if (
+				downloadMemoryTelemetry.cleanupComplete !== true ||
+				finalizedMemorySeries.some(
+					(series) =>
+						series.samplingErrors.length > 0 ||
+						series.samplingErrorOverflowCount !== 0,
+				)
+			) {
+				throw new Error(
+					"Download memory telemetry cleanup reported a non-timeout failure",
+				);
+			}
 			if (readerLocalityControl) {
 				stage = "verify-terminal-reader-topology";
 				readerLocalityControl.integrityVerifiedAt = integrityVerifiedAt;
@@ -1869,13 +1950,14 @@ test.describe("generated transfer-validity benchmark", () => {
 					terminalTopologyFinishedAt;
 				readerLocalityControl.terminalTopologyObservations =
 					terminalTopologyObservations;
-				readerLocalityControl.terminalTopologyRole = "replicator";
-				readerLocalityControl.readerJoinedReplicationDuringTimedRead = true;
+				readerLocalityControl.terminalTopologyRole =
+					READER_TERMINAL_TOPOLOGY;
+				readerLocalityControl.terminalTopologyExpectationSatisfied = true;
 				readerLocalityControl.status = "complete";
 				logStage("reader-terminal-topology-stable", {
 					terminalTopologyRole: readerLocalityControl.terminalTopologyRole,
-					readerJoinedReplicationDuringTimedRead:
-						readerLocalityControl.readerJoinedReplicationDuringTimedRead,
+					terminalTopologyExpectationSatisfied:
+						readerLocalityControl.terminalTopologyExpectationSatisfied,
 				});
 			}
 			const terminalSeederSnapshot = await snapshot(
@@ -1951,6 +2033,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				mode: MODE,
 				readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
 				readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
+				readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
 				readerLocalChunkBlockCount:
 					readerLocalityControl?.actualLocalChunkBlockCount ?? null,
 				readerLocalChunkIndexRowCount:
@@ -2062,7 +2145,7 @@ test.describe("generated transfer-validity benchmark", () => {
 		} catch (error: any) {
 			if (downloadMemoryTelemetryController) {
 				downloadMemoryTelemetry =
-					await downloadMemoryTelemetryController.stop();
+					await downloadMemoryTelemetryController.cleanup();
 			}
 			if (readerLocalityControl) {
 				readerLocalityControl.status = "failed";
@@ -2088,6 +2171,7 @@ test.describe("generated transfer-validity benchmark", () => {
 				mode: MODE,
 				readerLocalChunkTarget: READER_LOCAL_CHUNK_TARGET,
 				readerLocalChunkMaxOvershoot: READER_LOCAL_CHUNK_MAX_OVERSHOOT,
+				readerTerminalTopology: READER_TERMINAL_TOPOLOGY,
 				readerLocalChunkBlockCount:
 					readerLocalityControl?.actualLocalChunkBlockCount ?? null,
 				readerLocalChunkIndexRowCount:
@@ -2148,7 +2232,7 @@ test.describe("generated transfer-validity benchmark", () => {
 			console.error(`FILE_SHARE_BENCHMARK_RESULT ${JSON.stringify(result)}`);
 			throw error;
 		} finally {
-			await downloadMemoryTelemetryController?.stop().catch(() => {});
+			await downloadMemoryTelemetryController?.cleanup().catch(() => {});
 			await cleanupDownload?.().catch(() => {});
 			await nodeSinkController?.cleanup().catch(() => {});
 			if (preparedFile) {

@@ -3,7 +3,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-export const DOWNLOAD_MEMORY_PROFILE = "download-memory-v1";
+export const DOWNLOAD_MEMORY_PROFILE = "download-memory-v2";
 export const DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS = 5_000;
 export const DOWNLOAD_MEMORY_OPERATION_TIMEOUT_MS = 4_000;
 export const DOWNLOAD_MEMORY_CLEANUP_TIMEOUT_MS = 9_000;
@@ -14,6 +14,7 @@ export const DOWNLOAD_MEMORY_WINDOW_DEFINITION =
 export const DOWNLOAD_MEMORY_MAX_SAMPLES_PER_SERIES = 4_096;
 export const DOWNLOAD_MEMORY_ENDPOINT_SAMPLE_ALLOWANCE = 2;
 export const DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS = 16;
+export const DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS = 16;
 export const DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH = 512;
 export const DOWNLOAD_MEMORY_MAX_BROWSER_ROLES = 32;
 export const DOWNLOAD_MEMORY_MAX_BROWSER_PROCESSES = 256;
@@ -53,6 +54,17 @@ const cloneValue = (value) => structuredClone(value);
 const boundedErrorMessage = (error) => {
 	const message = error instanceof Error ? error.message : String(error);
 	return message.slice(0, DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH);
+};
+
+const isOnlyOperationTimeouts = (error) => {
+	if (error?.code === "DOWNLOAD_MEMORY_OPERATION_TIMEOUT") {
+		return true;
+	}
+	return (
+		error instanceof AggregateError &&
+		error.errors.length > 0 &&
+		error.errors.every(isOnlyOperationTimeouts)
+	);
 };
 
 export const withDownloadMemoryOperationDeadline = async (
@@ -137,19 +149,33 @@ export const startBoundedSerialSampler = async ({
 	const startedAt = now();
 	const samples = [];
 	const samplingErrors = [];
+	const cleanupWarnings = [];
 	let samplingErrorOverflowCount = 0;
+	let cleanupWarningOverflowCount = 0;
 	let finishedAt = null;
 	let timer;
 	let activeSample;
 	let stopped = false;
 	let terminalSampleFailure = false;
-	let stopPromise;
+	let stopSamplingPromise;
+	let cleanupPromise;
 
 	const recordError = (error) => {
 		if (samplingErrors.length < DOWNLOAD_MEMORY_MAX_SAMPLING_ERRORS) {
 			samplingErrors.push(boundedErrorMessage(error));
 		} else {
 			samplingErrorOverflowCount += 1;
+		}
+	};
+	const recordCleanupWarning = (error) => {
+		const message = `cleanup-timeout: ${boundedErrorMessage(error)}`.slice(
+			0,
+			DOWNLOAD_MEMORY_MAX_ERROR_MESSAGE_LENGTH,
+		);
+		if (cleanupWarnings.length < DOWNLOAD_MEMORY_MAX_CLEANUP_WARNINGS) {
+			cleanupWarnings.push(message);
+		} else {
+			cleanupWarningOverflowCount += 1;
 		}
 	};
 
@@ -164,7 +190,11 @@ export const startBoundedSerialSampler = async ({
 				"Memory sample",
 				operationTimeoutMs,
 			);
-			if (values == null || typeof values !== "object" || Array.isArray(values)) {
+			if (
+				values == null ||
+				typeof values !== "object" ||
+				Array.isArray(values)
+			) {
 				throw new Error("Memory sampler returned a non-object sample");
 			}
 			samples.push({ capturedAt: now(), ...values });
@@ -177,11 +207,7 @@ export const startBoundedSerialSampler = async ({
 	};
 
 	const schedule = () => {
-		if (
-			stopped ||
-			terminalSampleFailure ||
-			samples.length >= maxSamples - 1
-		) {
+		if (stopped || terminalSampleFailure || samples.length >= maxSamples - 1) {
 			return;
 		}
 		timer = setTimer(() => {
@@ -200,39 +226,59 @@ export const startBoundedSerialSampler = async ({
 		samples: cloneValue(samples),
 		samplingErrors: [...samplingErrors],
 		samplingErrorOverflowCount,
+		cleanupWarnings: [...cleanupWarnings],
+		cleanupWarningOverflowCount,
 	});
 
 	await takeSample();
 	schedule();
 
-	return {
-		snapshot,
-		stop: () => {
-			if (stopPromise) {
-				return stopPromise;
+	const stopSampling = () => {
+		if (stopSamplingPromise) {
+			return stopSamplingPromise;
+		}
+		stopped = true;
+		stopSamplingPromise = (async () => {
+			if (timer !== undefined) {
+				clearTimer(timer);
+				timer = undefined;
 			}
-			stopped = true;
-			stopPromise = (async () => {
-				if (timer !== undefined) {
-					clearTimer(timer);
-					timer = undefined;
-				}
-				await activeSample;
-				await takeSample(true);
-				try {
-					await withDownloadMemoryOperationDeadline(
-						Promise.resolve().then(() => cleanup()),
-						"Memory sampler cleanup",
-						cleanupTimeoutMs,
-					);
-				} catch (error) {
+			await activeSample;
+			await takeSample(true);
+			finishedAt = now();
+			return snapshot();
+		})();
+		return stopSamplingPromise;
+	};
+	const runCleanup = () => {
+		if (cleanupPromise) {
+			return cleanupPromise;
+		}
+		cleanupPromise = (async () => {
+			await stopSampling();
+			try {
+				await withDownloadMemoryOperationDeadline(
+					Promise.resolve().then(() => cleanup()),
+					"Memory sampler cleanup",
+					cleanupTimeoutMs,
+				);
+			} catch (error) {
+				if (isOnlyOperationTimeouts(error)) {
+					recordCleanupWarning(error);
+				} else {
 					recordError(error);
 				}
-				finishedAt = now();
-				return snapshot();
-			})();
-			return stopPromise;
-		},
+			}
+			return snapshot();
+		})();
+		return cleanupPromise;
+	};
+
+	return {
+		snapshot,
+		stopSampling,
+		cleanup: runCleanup,
+		stop: runCleanup,
 	};
 };
 
@@ -253,6 +299,8 @@ const summarizeHeap = (scope, state) => {
 		samples: state.samples,
 		samplingErrors: state.samplingErrors,
 		samplingErrorOverflowCount: state.samplingErrorOverflowCount,
+		cleanupWarnings: state.cleanupWarnings,
+		cleanupWarningOverflowCount: state.cleanupWarningOverflowCount,
 	};
 };
 
@@ -325,7 +373,7 @@ const startPageJsHeapSampler = async ({
 					operationTimeoutMs,
 				);
 			} catch (error) {
-				cleanupErrors.push(boundedErrorMessage(error));
+				cleanupErrors.push(error);
 			}
 			try {
 				await withDownloadMemoryOperationDeadline(
@@ -334,17 +382,23 @@ const startPageJsHeapSampler = async ({
 					operationTimeoutMs,
 				);
 			} catch (error) {
-				cleanupErrors.push(boundedErrorMessage(error));
+				cleanupErrors.push(error);
 			} finally {
 				session = undefined;
 			}
 			if (cleanupErrors.length > 0) {
-				throw new Error(cleanupErrors.join("; "));
+				throw new AggregateError(
+					cleanupErrors,
+					cleanupErrors.map(boundedErrorMessage).join("; "),
+				);
 			}
 		},
 	});
 	return {
 		snapshot: () => summarizeHeap(scope, sampler.snapshot()),
+		stopSampling: async () =>
+			summarizeHeap(scope, await sampler.stopSampling()),
+		cleanup: async () => summarizeHeap(scope, await sampler.cleanup()),
 		stop: async () => summarizeHeap(scope, await sampler.stop()),
 	};
 };
@@ -425,14 +479,14 @@ const summarizeHostRss = (state) => {
 		startBrowserProcessCount: first?.browserProcessCount ?? null,
 		endBrowserProcessCount: last?.browserProcessCount ?? null,
 		peakBrowserProcessCount: peak("browserProcessCount"),
-		startBrowserRoleBytes: first
-			? cloneValue(first.browserRoleBytes)
-			: null,
+		startBrowserRoleBytes: first ? cloneValue(first.browserRoleBytes) : null,
 		endBrowserRoleBytes: last ? cloneValue(last.browserRoleBytes) : null,
 		peakBrowserRoleBytes,
 		samples: state.samples,
 		samplingErrors: state.samplingErrors,
 		samplingErrorOverflowCount: state.samplingErrorOverflowCount,
+		cleanupWarnings: state.cleanupWarnings,
+		cleanupWarningOverflowCount: state.cleanupWarningOverflowCount,
 	};
 };
 
@@ -480,8 +534,7 @@ const startHostRssSampler = async ({
 					processInfo
 						.map((process) => Number(process.id))
 						.filter(
-							(processId) =>
-								Number.isSafeInteger(processId) && processId > 0,
+							(processId) => Number.isSafeInteger(processId) && processId > 0,
 						),
 				),
 			];
@@ -511,8 +564,7 @@ const startHostRssSampler = async ({
 			}
 			if (
 				Object.keys(browserRoleBytes).length === 0 ||
-				Object.keys(browserRoleBytes).length >
-					DOWNLOAD_MEMORY_MAX_BROWSER_ROLES
+				Object.keys(browserRoleBytes).length > DOWNLOAD_MEMORY_MAX_BROWSER_ROLES
 			) {
 				throw new Error("Chromium process-role attribution is unbounded");
 			}
@@ -550,6 +602,8 @@ const startHostRssSampler = async ({
 	});
 	return {
 		snapshot: () => summarizeHostRss(sampler.snapshot()),
+		stopSampling: async () => summarizeHostRss(await sampler.stopSampling()),
+		cleanup: async () => summarizeHostRss(await sampler.cleanup()),
 		stop: async () => summarizeHostRss(await sampler.stop()),
 	};
 };
@@ -590,13 +644,16 @@ export const startDownloadMemoryTelemetry = async ({
 		}),
 	]);
 	let complete = false;
-	let stopPromise;
+	let cleanupComplete = false;
+	let stopSamplingPromise;
+	let cleanupPromise;
 	const build = ({ readerJsHeap, writerJsHeap, hostRss }) => ({
 		profile: DOWNLOAD_MEMORY_PROFILE,
 		sampleIntervalMs: DOWNLOAD_MEMORY_SAMPLE_INTERVAL_MS,
 		windowDefinition: DOWNLOAD_MEMORY_WINDOW_DEFINITION,
 		maxSamplesPerSeries,
 		complete,
+		cleanupComplete,
 		startedAt: Math.min(
 			readerJsHeap.startedAt,
 			writerJsHeap.startedAt,
@@ -616,6 +673,35 @@ export const startDownloadMemoryTelemetry = async ({
 		writerJsHeap,
 		hostRss,
 	});
+	const stopSampling = () => {
+		if (stopSamplingPromise) {
+			return stopSamplingPromise;
+		}
+		stopSamplingPromise = Promise.all([
+			readerSampler.stopSampling(),
+			writerSampler.stopSampling(),
+			hostSampler.stopSampling(),
+		]).then(([readerJsHeap, writerJsHeap, hostRss]) => {
+			complete = true;
+			return build({ readerJsHeap, writerJsHeap, hostRss });
+		});
+		return stopSamplingPromise;
+	};
+	const runCleanup = () => {
+		if (cleanupPromise) {
+			return cleanupPromise;
+		}
+		cleanupPromise = Promise.all([
+			readerSampler.cleanup(),
+			writerSampler.cleanup(),
+			hostSampler.cleanup(),
+		]).then(([readerJsHeap, writerJsHeap, hostRss]) => {
+			complete = true;
+			cleanupComplete = true;
+			return build({ readerJsHeap, writerJsHeap, hostRss });
+		});
+		return cleanupPromise;
+	};
 	return {
 		snapshot: () =>
 			build({
@@ -623,19 +709,8 @@ export const startDownloadMemoryTelemetry = async ({
 				writerJsHeap: writerSampler.snapshot(),
 				hostRss: hostSampler.snapshot(),
 			}),
-		stop: () => {
-			if (stopPromise) {
-				return stopPromise;
-			}
-			stopPromise = Promise.all([
-				readerSampler.stop(),
-				writerSampler.stop(),
-				hostSampler.stop(),
-			]).then(([readerJsHeap, writerJsHeap, hostRss]) => {
-				complete = true;
-				return build({ readerJsHeap, writerJsHeap, hostRss });
-			});
-			return stopPromise;
-		},
+		stopSampling,
+		cleanup: runCleanup,
+		stop: runCleanup,
 	};
 };

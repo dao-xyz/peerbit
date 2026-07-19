@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 
 export const BENCHMARK_INVOCATION_SCHEMA = {
 	id: "peerbit-file-share-benchmark-invocation",
-	version: 3,
+	version: 4,
 };
 
 export const TINY_FILE_CUTOFF_BYTES = 5_000_000;
@@ -16,6 +16,10 @@ export const BENCHMARK_DOWNLOAD_SINKS = Object.freeze([
 ]);
 export const DEFAULT_BENCHMARK_DOWNLOAD_SINK = "hash-only";
 export const MAX_READER_LOCAL_CHUNK_OVERSHOOT = 8;
+export const READER_TERMINAL_TOPOLOGIES = Object.freeze([
+	"observer",
+	"replicator",
+]);
 
 const DEPLOYED_APP_HARNESS_MESSAGE =
 	"The locally instrumented core benchmark harness cannot use --base-url because it cannot attribute an external deployment to the selected Peerbit checkout; use a dedicated deployed-app benchmark harness that records deployment provenance";
@@ -169,6 +173,7 @@ export const createBenchmarkInvocation = ({
 	targetSeeders,
 	readerLocalChunkTarget,
 	readerLocalChunkMaxOvershoot,
+	readerTerminalTopology,
 	baseUrl,
 	protocol,
 	viteMode,
@@ -235,12 +240,32 @@ export const createBenchmarkInvocation = ({
 					readerLocalChunkMaxOvershoot,
 					"readerLocalChunkMaxOvershoot",
 				);
+	const resolvedReaderTerminalTopology =
+		readerTerminalTopology == null || readerTerminalTopology === ""
+			? null
+			: String(readerTerminalTopology);
+	if (
+		resolvedReaderTerminalTopology !== null &&
+		!READER_TERMINAL_TOPOLOGIES.includes(resolvedReaderTerminalTopology)
+	) {
+		throw new Error(
+			`Unsupported readerTerminalTopology ${JSON.stringify(resolvedReaderTerminalTopology)}; expected one of ${READER_TERMINAL_TOPOLOGIES.join(", ")}`,
+		);
+	}
 	if (
 		(resolvedReaderLocalChunkTarget === null) !==
 		(resolvedReaderLocalChunkMaxOvershoot === null)
 	) {
 		throw new Error(
 			"readerLocalChunkTarget and readerLocalChunkMaxOvershoot must be provided together",
+		);
+	}
+	if (
+		(resolvedReaderLocalChunkTarget === null) !==
+		(resolvedReaderTerminalTopology === null)
+	) {
+		throw new Error(
+			"readerTerminalTopology must be provided exactly when readerLocalChunkTarget is provided",
 		);
 	}
 	if (
@@ -315,6 +340,7 @@ export const createBenchmarkInvocation = ({
 		targetSeeders: resolvedTargetSeeders,
 		readerLocalChunkTarget: resolvedReaderLocalChunkTarget,
 		readerLocalChunkMaxOvershoot: resolvedReaderLocalChunkMaxOvershoot,
+		readerTerminalTopology: resolvedReaderTerminalTopology,
 		baseUrl: resolvedBaseUrl,
 		protocol: previewOptions.protocol,
 		viteMode: previewOptions.viteMode,
@@ -377,6 +403,9 @@ export const createPlaywrightBenchmarkEnvironment = ({
 		),
 		PW_READER_LOCAL_CHUNK_MAX_OVERSHOOT: stringValue(
 			invocation.readerLocalChunkMaxOvershoot,
+		),
+		PW_READER_TERMINAL_TOPOLOGY: stringValue(
+			invocation.readerTerminalTopology,
 		),
 		PW_UPLOAD_TIMEOUT_MS: String(invocation.uploadTimeoutMs),
 		PW_VERBOSE: invocation.verbose ? "1" : "0",
