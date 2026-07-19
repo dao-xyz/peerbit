@@ -12,6 +12,7 @@ import { waitForResolved } from "@peerbit/time";
 import { type RemoteOrigin, getRetiredAWSManagementError } from "./remotes.js";
 import {
 	ADDRESS_PATH,
+	AUTH_PATH,
 	BOOTSTRAP_PATH,
 	INSTALL_PATH,
 	LOCAL_API_PORT,
@@ -28,13 +29,18 @@ import {
 	TRUST_PATH,
 	VERSIONS_PATH,
 } from "./routes.js";
-import { signRequest } from "./signed-request.js";
+import {
+	type AuthDescriptor,
+	signRequest,
+	verifyAuthDescriptor,
+} from "./signed-request.js";
 import type { InstallDependency, StartProgram } from "./types.js";
 
 export const createClient = async (
 	keypair: Identity<Ed25519PublicKey>,
-	remote: { address: string; origin?: RemoteOrigin } = {
+	remote: { address: string; origin?: RemoteOrigin; peerId?: string } = {
 		address: "http://localhost:" + LOCAL_API_PORT,
+		peerId: keypair.publicKey.toPeerId().toString(),
 	},
 ) => {
 	// Add missing protocol
@@ -58,18 +64,100 @@ export const createClient = async (
 	}
 
 	const { default: axios } = await import("axios");
-	const axiosInstance = axios.create();
+	const axiosInstance = axios.create({
+		adapter: ["http", "fetch"],
+		maxRedirects: 0,
+		fetchOptions: { redirect: "manual" },
+		// The signature covers these exact bytes, so no later Axios transform may
+		// serialize or otherwise rewrite the request body.
+		transformRequest: [(data) => data],
+	});
+	const unsignedAxiosInstance = axios.create({
+		adapter: ["http", "fetch"],
+		maxRedirects: 0,
+		fetchOptions: { redirect: "manual" },
+	});
+	const endpointUrl = (path: string) => new URL(path, endpoint).toString();
+	let descriptorPromise: Promise<AuthDescriptor> | undefined;
+	const getAuthDescriptor = () => {
+		if (!remote.peerId) {
+			throw new Error(
+				"A pinned server peer ID is required for authenticated requests",
+			);
+		}
+		if (!descriptorPromise) {
+			descriptorPromise = unsignedAxiosInstance
+				.get(endpointUrl(AUTH_PATH), {
+					timeout: 5000,
+					maxContentLength: 16 * 1024,
+					maxBodyLength: 16 * 1024,
+					validateStatus: (status) => status === 200,
+				})
+				.then((response) => verifyAuthDescriptor(response.data, remote.peerId!))
+				.catch((error) => {
+					descriptorPromise = undefined;
+					throw new Error(
+						"Server does not support signed-request v2 or its identity does not match: " +
+							error?.toString(),
+					);
+				});
+		}
+		return descriptorPromise;
+	};
 	axiosInstance.interceptors.request.use(async (config) => {
-		const url = new URL(config.url!);
+		const url = new URL(config.url!, config.baseURL);
+		const method = config.method!.toUpperCase();
+		const target = url.pathname + url.search;
+		config.method = method;
+		if (
+			method === "GET" &&
+			(target === PEER_ID_PATH ||
+				target === ADDRESS_PATH ||
+				target === AUTH_PATH)
+		) {
+			return config;
+		}
+		let signedBody: string | Uint8Array | undefined;
+		if (config.data == null) {
+			config.data = undefined;
+			signedBody = undefined;
+		} else if (typeof config.data === "string") {
+			signedBody = config.data;
+		} else if (config.data instanceof Uint8Array) {
+			// Copy only this view (not its possibly larger backing buffer), then use a
+			// standalone ArrayBuffer accepted unchanged by both HTTP and fetch adapters.
+			signedBody = Uint8Array.from(config.data);
+			config.data = signedBody.buffer;
+		} else {
+			throw new Error("Authenticated request bodies must be strings or bytes");
+		}
+		const descriptor = await getAuthDescriptor();
 		await signRequest(
-			config.headers,
-			config.method!,
-			url.pathname + url.search,
-			config.data,
+			config.headers as unknown as Record<string, string>,
+			method,
+			target,
+			signedBody,
 			keypair,
+			{
+				serverPeerId: descriptor.serverPeerId,
+				bootId: descriptor.bootId,
+			},
 		);
 		return config;
 	});
+	axiosInstance.interceptors.response.use(
+		(response) => response,
+		(error) => {
+			if (error?.response?.status === 401 || error?.response == null) {
+				// A server restart changes the boot audience. Do not replay the failed
+				// operation; only force the next operation to discover a new descriptor.
+				// Network failure is included because an old keep-alive connection can be
+				// the first observable symptom of a process restart.
+				descriptorPromise = undefined;
+			}
+			return Promise.reject(error);
+		},
+	);
 
 	const validateStatus = (status: number) => {
 		return (status >= 200 && status < 300) || status === 404;
@@ -81,8 +169,6 @@ export const createClient = async (
 		}
 		return resp;
 	};
-
-	const endpointUrl = (path: string) => new URL(path, endpoint).toString();
 
 	const getId = async () =>
 		(
@@ -102,6 +188,7 @@ export const createClient = async (
 				},
 			)
 		).toString();
+	const verifyId = async () => (await getAuthDescriptor()).serverPeerId;
 
 	const close = async (address: string) => {
 		return throwIfNot200(
@@ -133,6 +220,7 @@ export const createClient = async (
 		peer: {
 			id: {
 				get: getId,
+				verify: verifyId,
 			},
 			addresses: {
 				get: async () => {

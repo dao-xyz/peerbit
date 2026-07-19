@@ -25,6 +25,8 @@ export interface RemoteObject {
 	address: string;
 	name: string;
 	group: string;
+	/** Stable server identity pinned when the remote is enrolled. */
+	peerId?: string;
 	origin?: RemoteOrigin;
 }
 
@@ -66,7 +68,16 @@ export class Remotes {
 	add(remote: RemoteObject) {
 		const existing = this.data.remotes.findIndex((x) => x.name === remote.name);
 		if (existing >= 0) {
-			this.data.remotes[existing] = remote;
+			const current = this.data.remotes[existing];
+			if (current.peerId && remote.peerId && current.peerId !== remote.peerId) {
+				throw new Error(
+					`Remote '${remote.name}' is pinned to a different server identity. Remove it before replacing the pin.`,
+				);
+			}
+			this.data.remotes[existing] = {
+				...remote,
+				peerId: current.peerId ?? remote.peerId,
+			};
 		} else {
 			this.data.remotes.push(remote);
 		}

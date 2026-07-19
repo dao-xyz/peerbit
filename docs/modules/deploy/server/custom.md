@@ -152,10 +152,39 @@ This setup is currently supported on Linux and has been tested on Ubuntu 22.04.
 5. Back on the administrator machine, register the authenticated endpoint:
 
    ```sh
-   peerbit remote add production https://node.example.com
+   peerbit remote add production https://node.example.com \
+     --peer-id <server-peer-id>
    ```
 
-   `remote add` verifies authenticated access before saving the entry, so a
-   missing or different `--grant-access` identity will be rejected.
+   Use the server peer ID printed when the node starts. `remote add` verifies
+   the signed authentication descriptor and authenticated access before saving
+   the entry, so a substituted server identity or a missing/different
+   `--grant-access` identity is rejected. If `--peer-id` is omitted, the CLI
+   pins the identity returned over the configured TLS connection and prints it;
+   compare that value out of band before administering a server you do not
+   operate yourself. Re-running `remote add` for an existing name retains its
+   saved identity pin and rejects a different server. Remove and re-add the
+   remote only for an intentional, independently verified identity rotation.
+
+## Signed-management protocol upgrades
+
+Server releases using signed-request v2 reject the replayable legacy signature
+format. Upgrade a remote server first with the old client (the existing
+`self update` command completes before the server restarts), then upgrade the
+administrator CLI and reconnect with the server peer ID pinned. Existing remote
+records without a peer ID are pinned on their first successful connection and
+the CLI prints the pinned value. There is no automatic downgrade to the legacy
+protocol.
+
+Signed requests are valid only for a short clock-skew window and one server
+process lifetime. The signed `/peer/auth` descriptor is generated on discovery,
+briefly cached to bound signing work, and is itself freshness checked. Keep
+client and server clocks synchronized. A multi-process API behind a load
+balancer requires sticky routing to the process that issued `/peer/auth`; the
+standard Peerbit deployment runs one API process.
+These signatures authenticate management traffic but do not encrypt it; use
+HTTPS for remote administration. An intermediary that can continuously block
+or replace traffic can still deny service even though it cannot forge a valid
+server descriptor or management request.
 
 Run `peerbit --help` or `peerbit start --help` for more options.
