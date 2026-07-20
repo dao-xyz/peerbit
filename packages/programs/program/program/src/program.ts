@@ -78,22 +78,14 @@ const getAllParent = (a: Program, arr: Program[] = [], includeThis = false) => {
 };
 
 export type ProgramClient = Client<Program>;
-class ProgramHandler extends Handler<Program> {
-	constructor(properties: { client: ProgramClient }) {
-		super({
-			identity: properties.client.identity,
-			client: properties.client,
-			shouldMonitor: (p) => p instanceof Program,
-			getDependencies: (program) => program.allPrograms,
-			load: Program.load,
-		});
-	}
-}
-export { ProgramHandler };
 
 type ExtractArgs<T> = T extends Program<infer Args> ? Args : never;
 
 const PROGRAM_INSTANCE_SYMBOL = Symbol.for("@peerbit/program/Program");
+const localProgramInstances = new WeakSet<object>();
+const objectIsPrototypeOf = Object.prototype.isPrototypeOf;
+const arrayFindIndex = Array.prototype.findIndex;
+const arraySplice = Array.prototype.splice;
 
 type TerminalOperation = "close" | "drop";
 type TerminalCall = {
@@ -112,6 +104,103 @@ type TerminalRetryContext = {
 	commit: TerminalBaseCommit;
 	consumed: boolean;
 	promise: Promise<boolean>;
+};
+type TerminalBaseProgress = {
+	version: number;
+	type: TerminalOperation;
+	from?: Program;
+	result: boolean;
+	releasedParentReferences: number;
+};
+type TerminalProtocolState = {
+	closed?: boolean;
+	commitVersion: number;
+	commitEpoch: number;
+	progressVersion?: number;
+	progress?: TerminalBaseProgress;
+	pendingTerminalTail?: PendingTerminalTail;
+	dropDeletePending?: boolean;
+	commitsByParent?: WeakMap<
+		Manageable<any>,
+		Partial<Record<TerminalOperation, TerminalBaseCommit>>
+	>;
+	rootCommits?: Partial<Record<TerminalOperation, TerminalBaseCommit>>;
+	retryContexts?: TerminalRetryContext[];
+	outerCleanupLeases?: Set<object>;
+};
+const terminalProtocolStates = new WeakMap<object, TerminalProtocolState>();
+const terminalProtocolState = (program: object): TerminalProtocolState => {
+	let state = terminalProtocolStates.get(program);
+	if (!state) {
+		state = { commitVersion: 0, commitEpoch: 0 };
+		terminalProtocolStates.set(program, state);
+	}
+	return state;
+};
+const markTerminalBaseProgress = (
+	program: Program,
+	type: TerminalOperation,
+	from: Program | undefined,
+	result: boolean,
+	releasedParentReferences: number,
+): void => {
+	const state = terminalProtocolState(program);
+	const version = (state.progressVersion ?? 0) + 1;
+	state.progressVersion = version;
+	state.progress = Object.freeze({
+		version,
+		type,
+		from,
+		result,
+		releasedParentReferences,
+	});
+};
+const terminalBaseProgress = (
+	program: Program,
+	afterVersion: number,
+	type: TerminalOperation,
+	from: Program | undefined,
+	result: boolean,
+): TerminalBaseProgress | undefined => {
+	const progress = terminalProtocolState(program).progress;
+	return progress &&
+		progress.version > afterVersion &&
+		progress.type === type &&
+		progress.from === from &&
+		progress.result === result
+		? progress
+		: undefined;
+};
+const recordTerminalBaseCommit = (
+	program: Program,
+	type: TerminalOperation,
+	from: Program | undefined,
+	result: boolean,
+	releasedParentReferences: number,
+): void => {
+	const state = terminalProtocolState(program);
+	const version = state.commitVersion + 1;
+	state.commitVersion = version;
+	const commit = Object.freeze({
+		epoch: state.commitEpoch,
+		version,
+		type,
+		from,
+		result,
+		releasedParentReferences,
+	});
+	if (from) {
+		const commits =
+			state.commitsByParent?.get(from) ??
+			({} as Partial<Record<TerminalOperation, TerminalBaseCommit>>);
+		commits[type] = commit;
+		const commitsByParent =
+			state.commitsByParent || (state.commitsByParent = new WeakMap());
+		commitsByParent.set(from, commits);
+	} else {
+		const commits = state.rootCommits || (state.rootCommits = {});
+		commits[type] = commit;
+	}
 };
 type PendingTerminalTail = {
 	type: TerminalOperation;
@@ -162,6 +251,7 @@ export abstract class Program<
 
 	constructor() {
 		(this as any)[PROGRAM_INSTANCE_SYMBOL] = true;
+		localProgramInstances.add(this);
 	}
 
 	private _node: ProgramClient;
@@ -169,26 +259,10 @@ export abstract class Program<
 	private _acceptsParentAttachments = true;
 
 	private _events: TypedEventTarget<ProgramEvents>;
-	private _closed: boolean;
 	private _terminalCalls: TerminalCall[] | undefined;
-	private _dropDeletePending: boolean | undefined;
 	private _failedTerminalChildren: FailedTerminalChild[] | undefined;
 	private _emittedTerminalEvents: Set<TerminalOperation> | undefined;
-	private _terminalBaseCommitVersion: number | undefined;
-	private _terminalBaseCommitEpoch: number | undefined;
-	private _terminalBaseCommitsByParent:
-		| WeakMap<
-				Manageable<any>,
-				Partial<Record<TerminalOperation, TerminalBaseCommit>>
-		  >
-		| undefined;
-	private _rootTerminalBaseCommits:
-		| Partial<Record<TerminalOperation, TerminalBaseCommit>>
-		| undefined;
-	private _terminalRetryContexts: TerminalRetryContext[] | undefined;
-	private _pendingTerminalTail: PendingTerminalTail | undefined;
 	private _terminalLifecycleCallbackRunning = false;
-	private _terminalOuterCleanupLeases: Set<object> | undefined;
 	private _pendingInverseParentReleases: Map<Program, number> | undefined;
 
 	parents: (Program<any> | undefined)[];
@@ -244,27 +318,25 @@ export abstract class Program<
 	}
 
 	get closed(): boolean {
-		if (this._closed == null) {
-			return true;
-		}
-		return this._closed;
+		return terminalProtocolState(this).closed ?? true;
 	}
 	set closed(closed: boolean) {
-		this._closed = closed;
+		terminalProtocolState(this).closed = closed;
 	}
 
 	get acceptsParentAttachments(): boolean {
 		// Program clones are borsh-created without running class field initializers.
 		return (
 			this._acceptsParentAttachments !== false &&
-			(this._terminalOuterCleanupLeases?.size ?? 0) === 0
+			(terminalProtocolState(this).outerCleanupLeases?.size ?? 0) === 0
 		);
 	}
 
 	get pendingTerminalOperation(): TerminalOperation | undefined {
+		const state = terminalProtocolState(this);
 		return (
-			this._pendingTerminalTail?.type ||
-			(this._dropDeletePending ? "drop" : undefined)
+			state.pendingTerminalTail?.type ||
+			(state.dropDeletePending ? "drop" : undefined)
 		);
 	}
 
@@ -295,24 +367,28 @@ export abstract class Program<
 		node: ProgramClient,
 		options?: ProgramInitializationOptions<Args, this>,
 	) {
-		if ((this._terminalOuterCleanupLeases?.size ?? 0) > 0) {
+		const terminalState = terminalProtocolState(this);
+		if ((terminalState.outerCleanupLeases?.size ?? 0) > 0) {
 			throw new Error(
 				"Program terminal cleanup must finish before the program can reopen",
 			);
 		}
-		if (this.closed) {
-			if (this._pendingTerminalTail || this._dropDeletePending) {
+		if (closedGetterIntrinsic.call(this)) {
+			if (
+				terminalState.pendingTerminalTail ||
+				terminalState.dropDeletePending
+			) {
 				throw new Error(
 					"Program terminal cleanup must finish before the program can reopen",
 				);
 			}
-			this._terminalBaseCommitEpoch = (this._terminalBaseCommitEpoch ?? 0) + 1;
+			terminalState.commitEpoch += 1;
 			this._acceptsParentAttachments = true;
 			this._failedTerminalChildren = undefined;
 			this._emittedTerminalEvents?.clear();
 			this._emittedTerminalEvents = undefined;
-			this._terminalBaseCommitsByParent = undefined;
-			this._rootTerminalBaseCommits = undefined;
+			terminalState.commitsByParent = undefined;
+			terminalState.rootCommits = undefined;
 		}
 		// check that a  discriminator exist
 		const schema = getSchema(this.constructor);
@@ -334,7 +410,7 @@ export abstract class Program<
 			);
 		}
 
-		if (!this.closed) {
+		if (!closedGetterIntrinsic.call(this)) {
 			addParent(this, options?.parent);
 			return;
 		} else {
@@ -349,7 +425,7 @@ export abstract class Program<
 		);
 
 		await this._eventOptions?.onBeforeOpen?.(this);
-		this.closed = false;
+		closedSetterIntrinsic.call(this, false);
 	}
 
 	async afterOpen() {
@@ -516,23 +592,24 @@ export abstract class Program<
 	) => void;
 
 	[TERMINAL_BASE_CHECKPOINT](): number {
-		return this._terminalBaseCommitVersion ?? 0;
+		return terminalProtocolState(this).commitVersion;
 	}
 
 	[TERMINAL_OUTER_CLEANUP_RETAIN](): object {
 		const lease = {};
+		const state = terminalProtocolState(this);
 		const leases =
-			this._terminalOuterCleanupLeases ||
-			(this._terminalOuterCleanupLeases = new Set());
+			state.outerCleanupLeases || (state.outerCleanupLeases = new Set());
 		leases.add(lease);
 		return lease;
 	}
 
 	[TERMINAL_OUTER_CLEANUP_RELEASE](lease: object): void {
-		this._terminalOuterCleanupLeases?.delete(lease);
-		if (this._terminalOuterCleanupLeases?.size === 0) {
-			this._terminalOuterCleanupLeases = undefined;
-			this.reconcilePendingInverseParentReleases();
+		const state = terminalProtocolState(this);
+		state.outerCleanupLeases?.delete(lease);
+		if (state.outerCleanupLeases?.size === 0) {
+			state.outerCleanupLeases = undefined;
+			reconcilePendingInverseParentReleasesIntrinsic.call(this);
 		}
 	}
 
@@ -541,9 +618,10 @@ export abstract class Program<
 		type: TerminalOperation,
 		from?: Manageable<any>,
 	): TerminalBaseCommit | undefined {
+		const state = terminalProtocolState(this);
 		const commit = from
-			? this._terminalBaseCommitsByParent?.get(from)?.[type]
-			: this._rootTerminalBaseCommits?.[type];
+			? state.commitsByParent?.get(from)?.[type]
+			: state.rootCommits?.[type];
 		return commit && commit.version > afterVersion ? commit : undefined;
 	}
 
@@ -551,7 +629,8 @@ export abstract class Program<
 		commit: TerminalBaseCommit,
 		operation: () => Promise<boolean>,
 	): Promise<boolean> {
-		if (commit.epoch !== (this._terminalBaseCommitEpoch ?? 0)) {
+		const state = terminalProtocolState(this);
+		if (commit.epoch !== state.commitEpoch) {
 			throw new Error(
 				"Program terminal cleanup belongs to a stale open lifecycle",
 			);
@@ -561,15 +640,14 @@ export abstract class Program<
 			consumed: false,
 			promise: Promise.resolve(commit.result),
 		};
-		const contexts =
-			this._terminalRetryContexts || (this._terminalRetryContexts = []);
+		const contexts = state.retryContexts || (state.retryContexts = []);
 		contexts.push(context);
 		try {
 			return await operation();
 		} finally {
 			const index = contexts.indexOf(context);
 			if (index !== -1) contexts.splice(index, 1);
-			if (contexts.length === 0) this._terminalRetryContexts = undefined;
+			if (contexts.length === 0) state.retryContexts = undefined;
 		}
 	}
 
@@ -577,7 +655,7 @@ export abstract class Program<
 		type: TerminalOperation,
 		from?: Program,
 	): Promise<boolean> | undefined {
-		const context = this._terminalRetryContexts?.find(
+		const context = terminalProtocolState(this).retryContexts?.find(
 			(candidate) =>
 				!candidate.consumed &&
 				candidate.commit.type === type &&
@@ -586,38 +664,6 @@ export abstract class Program<
 		if (!context) return undefined;
 		context.consumed = true;
 		return context.promise;
-	}
-
-	private recordTerminalBaseCommit(
-		type: TerminalOperation,
-		from: Program | undefined,
-		result: boolean,
-		releasedParentReferences: number,
-	): void {
-		const version = (this._terminalBaseCommitVersion ?? 0) + 1;
-		this._terminalBaseCommitVersion = version;
-		const commit = {
-			epoch: this._terminalBaseCommitEpoch ?? 0,
-			version,
-			type,
-			from,
-			result,
-			releasedParentReferences,
-		};
-		if (from) {
-			const commits =
-				this._terminalBaseCommitsByParent?.get(from) ??
-				({} as Partial<Record<TerminalOperation, TerminalBaseCommit>>);
-			commits[type] = commit;
-			const commitsByParent =
-				this._terminalBaseCommitsByParent ||
-				(this._terminalBaseCommitsByParent = new WeakMap());
-			commitsByParent.set(from, commits);
-		} else {
-			const commits =
-				this._rootTerminalBaseCommits || (this._rootTerminalBaseCommits = {});
-			commits[type] = commit;
-		}
 	}
 
 	private retainInverseParentRelease(from: Program | undefined): void {
@@ -653,8 +699,7 @@ export abstract class Program<
 
 	private isOutermostBaseTerminalOperation(type: TerminalOperation): boolean {
 		const current = type === "close" ? this.close : this.drop;
-		const base =
-			type === "close" ? Program.prototype.close : Program.prototype.drop;
+		const base = type === "close" ? closeIntrinsic : dropIntrinsic;
 		return current === base;
 	}
 
@@ -663,7 +708,7 @@ export abstract class Program<
 		from: Program | undefined,
 		hadParentReference: boolean,
 	) {
-		if (this.closed) {
+		if (closedGetterIntrinsic.call(this)) {
 			this._clear();
 			return true;
 		}
@@ -677,7 +722,11 @@ export abstract class Program<
 		const retryingTerminalAttempt = emittedTerminalEvents.has(type);
 		if (!emittedTerminalEvents.has(type)) {
 			emittedTerminalEvents.add(type);
-			this.emitEvent(new CustomEvent(type, { detail: this }), true);
+			emitEventIntrinsic.call(
+				this,
+				new CustomEvent(type, { detail: this }),
+				true,
+			);
 		}
 
 		const children = [...(this.children ?? [])];
@@ -703,7 +752,7 @@ export abstract class Program<
 			const attempt = {
 				child,
 				operation:
-					previous?.operation ?? child.pendingTerminalOperation ?? type,
+					previous?.operation ?? trustedPendingTerminalOperation(child) ?? type,
 				previous,
 				checkpoint: 0,
 				startedClosed: false,
@@ -714,24 +763,24 @@ export abstract class Program<
 			};
 			attempts.push(attempt);
 			const run = async () => {
-				attempt.startedClosed = child.closed;
+				attempt.startedClosed = trustedProgramClosed(child);
 				attempt.ownerReferencesBefore =
 					child.parents?.filter((parent) => parent === this).length ?? 0;
 				attempt.inverseOwnerReferencesBefore =
 					this.children?.filter((candidate) => candidate === child).length ?? 0;
 				if (
-					child.closed &&
+					trustedProgramClosed(child) &&
 					(attempt.operation === "close" || retryingTerminalAttempt) &&
 					!previous &&
-					!child.pendingTerminalOperation
+					!trustedPendingTerminalOperation(child)
 				) {
 					return true;
 				}
-				attempt.cleanupLease ??= child[TERMINAL_OUTER_CLEANUP_RETAIN]();
-				attempt.checkpoint = child[TERMINAL_BASE_CHECKPOINT]();
+				attempt.cleanupLease ??= terminalCleanupRetainIntrinsic.call(child);
+				attempt.checkpoint = terminalBaseCheckpointIntrinsic.call(child);
 				const invoke = () => child[attempt.operation](this as Program);
 				const result = await (previous?.commit
-					? child[TERMINAL_BASE_RETRY](previous.commit, invoke)
+					? terminalBaseRetryIntrinsic.call(child, previous.commit, invoke)
 					: invoke());
 				const ownerReferencesAfter =
 					child.parents?.filter((parent) => parent === this).length ?? 0;
@@ -766,7 +815,7 @@ export abstract class Program<
 					inverseOwnerReferencesAfter < attempt.inverseOwnerReferencesBefore;
 				if (
 					!attempt.startedClosed &&
-					!child.closed &&
+					!trustedProgramClosed(child) &&
 					!committedRelease &&
 					!releasedOwnerReference &&
 					!repairedStaleInverseReference
@@ -808,14 +857,15 @@ export abstract class Program<
 						child.parents?.filter((parent) => parent === this).length ?? 0;
 					const commit =
 						attempt.previous?.commit ||
-						child[TERMINAL_BASE_COMMIT](
+						terminalBaseCommitIntrinsic.call(
+							child,
 							attempt.checkpoint,
 							attempt.operation,
 							this,
 						);
 					const baseProgressed =
 						commit != null ||
-						child.closed !== attempt.startedClosed ||
+						trustedProgramClosed(child) !== attempt.startedClosed ||
 						ownerReferencesAfter !== attempt.ownerReferencesBefore;
 					const retainCleanupLease =
 						baseProgressed ||
@@ -825,7 +875,7 @@ export abstract class Program<
 						? attempt.cleanupLease
 						: undefined;
 					if (!retainCleanupLease && attempt.cleanupLease) {
-						child[TERMINAL_OUTER_CLEANUP_RELEASE](attempt.cleanupLease);
+						terminalCleanupReleaseIntrinsic.call(child, attempt.cleanupLease);
 						attempt.cleanupLease = undefined;
 					}
 					failedChildren.push({
@@ -833,21 +883,21 @@ export abstract class Program<
 						operation:
 							attempt.operation === "drop" && !baseProgressed
 								? "drop"
-								: commit || child.closed
+								: commit || trustedProgramClosed(child)
 									? attempt.operation
 									: "close",
 						commit,
 						cleanupLease,
 					});
 				} else if (attempt.cleanupLease) {
-					child[TERMINAL_OUTER_CLEANUP_RELEASE](attempt.cleanupLease);
+					terminalCleanupReleaseIntrinsic.call(child, attempt.cleanupLease);
 					attempt.cleanupLease = undefined;
 				}
 				firstChildError ??= result.reason;
 				continue;
 			}
 			if (attempt.cleanupLease) {
-				child[TERMINAL_OUTER_CLEANUP_RELEASE](attempt.cleanupLease);
+				terminalCleanupReleaseIntrinsic.call(child, attempt.cleanupLease);
 				attempt.cleanupLease = undefined;
 			}
 			// A managed child's Handler may already have reconciled the inverse edge
@@ -865,7 +915,10 @@ export abstract class Program<
 		}
 		for (const previous of previousFailures) {
 			if (!claimedFailures.has(previous) && previous.cleanupLease) {
-				previous.program[TERMINAL_OUTER_CLEANUP_RELEASE](previous.cleanupLease);
+				terminalCleanupReleaseIntrinsic.call(
+					previous.program,
+					previous.cleanupLease,
+				);
 				previous.cleanupLease = undefined;
 			}
 		}
@@ -874,21 +927,25 @@ export abstract class Program<
 		if (firstChildError !== undefined) throw firstChildError;
 
 		this._clear();
-		this.closed = true;
-		this._pendingTerminalTail = {
+		closedSetterIntrinsic.call(this, true);
+		terminalProtocolState(this).pendingTerminalTail = {
 			type,
 			from,
 			hadParentReference,
 			eventEmitted: true,
 			callbackCompleted: false,
 		};
-		await this.finishTerminalTail();
+		const releasedParentReferences =
+			await finishTerminalTailIntrinsic.call(this);
+		markTerminalBaseProgress(this, type, from, true, releasedParentReferences);
 		return true;
 	}
 
-	private async finishTerminalTail(): Promise<void> {
-		const tail = this._pendingTerminalTail;
-		if (!tail) return;
+	private async finishTerminalTail(): Promise<number> {
+		const state = terminalProtocolState(this);
+		const tail = state.pendingTerminalTail;
+		if (!tail) return 0;
+		let releasedParentReferences = 0;
 		if (!tail.eventEmitted) {
 			tail.eventEmitted = true;
 			const emittedTerminalEvents =
@@ -896,7 +953,11 @@ export abstract class Program<
 				(this._emittedTerminalEvents = new Set<TerminalOperation>());
 			if (!emittedTerminalEvents.has(tail.type)) {
 				emittedTerminalEvents.add(tail.type);
-				this.emitEvent(new CustomEvent(tail.type, { detail: this }), true);
+				emitEventIntrinsic.call(
+					this,
+					new CustomEvent(tail.type, { detail: this }),
+					true,
+				);
 			}
 		}
 		if (!tail.callbackCompleted) {
@@ -928,31 +989,43 @@ export abstract class Program<
 		this._seedPeerTopicsFromSubscribers = undefined;
 		this._eventOptions = undefined;
 		if (tail.hadParentReference) {
-			const parentIndex =
-				this.parents?.findIndex((parent) => parent === tail.from) ?? -1;
+			const parentIndex = this.parents
+				? arrayFindIndex.call(this.parents, (parent) => parent === tail.from)
+				: -1;
 			if (parentIndex !== -1) {
-				this.parents.splice(parentIndex, 1);
-				this.retainInverseParentRelease(tail.from);
+				arraySplice.call(this.parents, parentIndex, 1);
+				retainInverseParentReleaseIntrinsic.call(this, tail.from);
+				releasedParentReferences = 1;
 			}
 		}
-		this._pendingTerminalTail = undefined;
+		state.pendingTerminalTail = undefined;
+		return releasedParentReferences;
 	}
 
 	private async end(type: TerminalOperation, from?: Program): Promise<boolean> {
-		if (this.closed) {
+		const terminalState = terminalProtocolState(this);
+		if (closedGetterIntrinsic.call(this)) {
 			if (
-				this._pendingTerminalTail &&
-				this._pendingTerminalTail.type !== type
+				terminalState.pendingTerminalTail &&
+				terminalState.pendingTerminalTail.type !== type
 			) {
 				throw new Error(
-					`Program has pending ${this._pendingTerminalTail.type} cleanup; retry it before ${type}`,
+					`Program has pending ${terminalState.pendingTerminalTail.type} cleanup; retry it before ${type}`,
 				);
 			}
-			if (this._pendingTerminalTail) {
-				await this.finishTerminalTail();
+			if (terminalState.pendingTerminalTail) {
+				const releasedParentReferences =
+					await finishTerminalTailIntrinsic.call(this);
+				markTerminalBaseProgress(
+					this,
+					type,
+					from,
+					true,
+					releasedParentReferences,
+				);
 				return true;
 			}
-			if (this._dropDeletePending && type === "close") {
+			if (terminalState.dropDeletePending && type === "close") {
 				throw new Error(
 					"Program has pending drop deletion; retry drop before close",
 				);
@@ -966,14 +1039,18 @@ export abstract class Program<
 		let parentIdx = -1;
 		let close = true;
 		if (this.parents) {
-			parentIdx = this.parents.findIndex((x) => x === from);
+			parentIdx = arrayFindIndex.call(
+				this.parents,
+				(parent) => parent === from,
+			);
 			if (parentIdx !== -1) {
 				if (this.parents.length === 1) {
 					close = true;
 				} else {
-					this.parents.splice(parentIdx, 1);
-					this.retainInverseParentRelease(from);
+					arraySplice.call(this.parents, parentIdx, 1);
+					retainInverseParentReleaseIntrinsic.call(this, from);
 					close = false;
+					markTerminalBaseProgress(this, type, from, false, 1);
 				}
 			} else if (from) {
 				throw new TerminalOperationNotStartedError(
@@ -985,9 +1062,12 @@ export abstract class Program<
 		if (close) {
 			// Establish the reuse fence synchronously once this call owns terminal
 			// shutdown. Non-terminal parent releases remain attachable.
-			this.preventParentAttachments();
+			preventParentAttachmentsIntrinsic.call(this);
 		}
-		return close && (await this.processEnd(type, from, parentIdx !== -1));
+		return (
+			close &&
+			(await processEndIntrinsic.call(this, type, from, parentIdx !== -1))
+		);
 	}
 	private performTerminalOperation(
 		type: TerminalOperation,
@@ -995,26 +1075,28 @@ export abstract class Program<
 	): Promise<boolean> {
 		if (type === "close") {
 			this._emittedEventsFor = undefined;
-			return this.end("close", from);
+			return endIntrinsic.call(this, "close", from);
 		}
-		return this.performDrop(from);
+		return performDropIntrinsic.call(this, from);
 	}
 
 	private async performDrop(from?: Program): Promise<boolean> {
-		if (this.closed && this._dropDeletePending) {
-			await this.delete();
-			this._dropDeletePending = false;
+		const terminalState = terminalProtocolState(this);
+		if (closedGetterIntrinsic.call(this) && terminalState.dropDeletePending) {
+			await deleteIntrinsic.call(this);
+			terminalState.dropDeletePending = false;
+			markTerminalBaseProgress(this, "drop", from, true, 0);
 			return true;
 		}
 
-		const dropped = await this.end("drop", from);
+		const dropped = await endIntrinsic.call(this, "drop", from);
 		if (dropped) {
 			// Remember the committed terminal transition before deletion. If rm()
 			// fails, a later drop retry must resume here instead of rejecting merely
 			// because Program.end() already made `closed` observable.
-			this._dropDeletePending = true;
-			await this.delete();
-			this._dropDeletePending = false;
+			terminalState.dropDeletePending = true;
+			await deleteIntrinsic.call(this);
+			terminalState.dropDeletePending = false;
 		}
 		return dropped;
 	}
@@ -1030,7 +1112,7 @@ export abstract class Program<
 				),
 			);
 		}
-		const retry = this.consumeTerminalRetry(type, from);
+		const retry = consumeTerminalRetryIntrinsic.call(this, type, from);
 		if (retry) return retry;
 		const calls = this._terminalCalls || (this._terminalCalls = []);
 		const matching = calls.find(
@@ -1061,39 +1143,55 @@ export abstract class Program<
 		const parentIndex =
 			this.parents?.findIndex((parent) => parent === from) ?? -1;
 		const terminal =
-			this.closed || parentIndex === -1 || (this.parents?.length ?? 0) === 1;
+			closedGetterIntrinsic.call(this) ||
+			parentIndex === -1 ||
+			(this.parents?.length ?? 0) === 1;
 		const call: TerminalCall = { type, from, terminal, promise };
 		calls.push(call);
 
 		const execute = () => {
 			let operation: Promise<boolean>;
-			const ownerReferencesBefore =
-				this.parents?.filter((parent) => parent === from).length ?? 0;
+			const progressCheckpoint =
+				terminalProtocolState(this).progressVersion ?? 0;
 			try {
-				operation = this.performTerminalOperation(type, from);
+				operation = performTerminalOperationIntrinsic.call(this, type, from);
 			} catch (error) {
 				reject(error);
 				return;
 			}
 			void operation.then((result) => {
-				const ownerReferencesAfter =
-					this.parents?.filter((parent) => parent === from).length ?? 0;
-				this.recordTerminalBaseCommit(
+				const progress = terminalBaseProgress(
+					this,
+					progressCheckpoint,
 					type,
 					from,
 					result,
-					Math.max(0, ownerReferencesBefore - ownerReferencesAfter),
 				);
+				if (progress) {
+					// Only module-private progress emitted by the captured base terminal path
+					// can mint a commit. Public closed/parents/pending state is insufficient.
+					recordTerminalBaseCommit(
+						this,
+						type,
+						from,
+						result,
+						progress.releasedParentReferences,
+					);
+				}
 				// Program only owns the base promise. A subclass may still be doing
 				// post-super terminal cleanup, so managed/embedded calls defer inverse-
 				// edge removal to the caller's outer cleanup lease. A non-terminal owner
 				// release leaves the child live and can reconcile immediately; an
 				// inherited base method is itself the full public operation.
 				if (
-					(this._terminalOuterCleanupLeases?.size ?? 0) === 0 &&
-					(!result || this.isOutermostBaseTerminalOperation(type))
+					(terminalProtocolState(this).outerCleanupLeases?.size ?? 0) === 0 &&
+					(!result ||
+						isOutermostBaseTerminalOperationIntrinsic.call(this, type))
 				) {
-					this.reconcilePendingInverseParentReleases(result ? undefined : from);
+					reconcilePendingInverseParentReleasesIntrinsic.call(
+						this,
+						result ? undefined : from,
+					);
 				}
 				resolve(result);
 			}, reject);
@@ -1108,8 +1206,8 @@ export abstract class Program<
 		}
 
 		void promise.then(
-			() => this.finishTerminalCall(call),
-			() => this.finishTerminalCall(call),
+			() => finishTerminalCallIntrinsic.call(this, call),
+			() => finishTerminalCallIntrinsic.call(this, call),
 		);
 		return promise;
 	}
@@ -1127,11 +1225,11 @@ export abstract class Program<
 
 	close(from?: Program): Promise<boolean> {
 		this._emittedEventsFor = undefined;
-		return this.terminalOperation("close", from);
+		return terminalOperationIntrinsic.call(this, "close", from);
 	}
 
 	drop(from?: Program): Promise<boolean> {
-		return this.terminalOperation("drop", from);
+		return terminalOperationIntrinsic.call(this, "drop", from);
 	}
 
 	emitEvent(event: CustomEvent, parents = false) {
@@ -1467,7 +1565,9 @@ export abstract class Program<
 	}
 
 	clone(): this {
-		return deserialize(serialize(this), this.constructor);
+		const clone = deserialize(serialize(this), this.constructor);
+		localProgramInstances.add(clone);
+		return clone;
 	}
 
 	getTopics?(): string[];
@@ -1549,6 +1649,7 @@ export abstract class Program<
 			return undefined;
 		}
 		const der = deserialize(bytes, Program);
+		localProgramInstances.add(der);
 		der.address = address;
 		return der as P;
 	}
@@ -1568,6 +1669,144 @@ export abstract class Program<
 		return p as T;
 	}
 }
+
+type ProgramTerminalIntrinsics = {
+	emitEvent(this: Program, event: CustomEvent, parents?: boolean): void;
+	consumeTerminalRetry(
+		this: Program,
+		type: TerminalOperation,
+		from?: Program,
+	): Promise<boolean> | undefined;
+	retainInverseParentRelease(this: Program, from?: Program): void;
+	reconcilePendingInverseParentReleases(this: Program, from?: Program): void;
+	isOutermostBaseTerminalOperation(
+		this: Program,
+		type: TerminalOperation,
+	): boolean;
+	processEnd(
+		this: Program,
+		type: TerminalOperation,
+		from: Program | undefined,
+		hadParentReference: boolean,
+	): Promise<boolean>;
+	finishTerminalTail(this: Program): Promise<number>;
+	end(this: Program, type: TerminalOperation, from?: Program): Promise<boolean>;
+	performTerminalOperation(
+		this: Program,
+		type: TerminalOperation,
+		from?: Program,
+	): Promise<boolean>;
+	performDrop(this: Program, from?: Program): Promise<boolean>;
+	terminalOperation(
+		this: Program,
+		type: TerminalOperation,
+		from?: Program,
+	): Promise<boolean>;
+	finishTerminalCall(this: Program, call: TerminalCall): void;
+	preventParentAttachments(this: Program): void;
+	close(this: Program, from?: Program): Promise<boolean>;
+	drop(this: Program, from?: Program): Promise<boolean>;
+	delete(this: Program): Promise<void>;
+};
+
+// Capture the complete base terminal path once during module evaluation. Borsh
+// creates loaded Programs with Object.create(Program.prototype), so native #
+// methods cannot be used here; captured ordinary intrinsics preserve clone
+// compatibility without redispatching through attacker-writable properties.
+const programTerminalIntrinsics =
+	Program.prototype as unknown as ProgramTerminalIntrinsics;
+const closedDescriptor = Object.getOwnPropertyDescriptor(
+	Program.prototype,
+	"closed",
+)!;
+const closedGetterIntrinsic = closedDescriptor.get as (
+	this: Program,
+) => boolean;
+const closedSetterIntrinsic = closedDescriptor.set as (
+	this: Program,
+	closed: boolean,
+) => void;
+const supportsTrustedProgramProtocol = (program: object): boolean =>
+	localProgramInstances.has(program) ||
+	objectIsPrototypeOf.call(Program.prototype, program);
+const trustedProgramClosed = (program: Program): boolean =>
+	supportsTrustedProgramProtocol(program)
+		? closedGetterIntrinsic.call(program)
+		: program.closed;
+const trustedPendingTerminalOperation = (
+	program: Program,
+): TerminalOperation | undefined => {
+	if (!supportsTrustedProgramProtocol(program)) {
+		return program.pendingTerminalOperation;
+	}
+	const state = terminalProtocolState(program);
+	return (
+		state.pendingTerminalTail?.type ||
+		(state.dropDeletePending ? "drop" : undefined)
+	);
+};
+const emitEventIntrinsic = programTerminalIntrinsics.emitEvent;
+const consumeTerminalRetryIntrinsic =
+	programTerminalIntrinsics.consumeTerminalRetry;
+const retainInverseParentReleaseIntrinsic =
+	programTerminalIntrinsics.retainInverseParentRelease;
+const reconcilePendingInverseParentReleasesIntrinsic =
+	programTerminalIntrinsics.reconcilePendingInverseParentReleases;
+const isOutermostBaseTerminalOperationIntrinsic =
+	programTerminalIntrinsics.isOutermostBaseTerminalOperation;
+const processEndIntrinsic = programTerminalIntrinsics.processEnd;
+const finishTerminalTailIntrinsic =
+	programTerminalIntrinsics.finishTerminalTail;
+const endIntrinsic = programTerminalIntrinsics.end;
+const performTerminalOperationIntrinsic =
+	programTerminalIntrinsics.performTerminalOperation;
+const performDropIntrinsic = programTerminalIntrinsics.performDrop;
+const terminalOperationIntrinsic = programTerminalIntrinsics.terminalOperation;
+const finishTerminalCallIntrinsic =
+	programTerminalIntrinsics.finishTerminalCall;
+const preventParentAttachmentsIntrinsic =
+	programTerminalIntrinsics.preventParentAttachments;
+const closeIntrinsic = programTerminalIntrinsics.close;
+const dropIntrinsic = programTerminalIntrinsics.drop;
+const deleteIntrinsic = programTerminalIntrinsics.delete;
+
+// Capture the proof protocol alongside the terminal path. Handler must never
+// rediscover these globally named symbols from an untrusted instance or from a
+// prototype that application code can replace after import.
+const terminalBaseCheckpointIntrinsic =
+	Program.prototype[TERMINAL_BASE_CHECKPOINT];
+const terminalBaseCommitIntrinsic = Program.prototype[TERMINAL_BASE_COMMIT];
+const terminalBaseRetryIntrinsic = Program.prototype[TERMINAL_BASE_RETRY];
+const terminalCleanupRetainIntrinsic =
+	Program.prototype[TERMINAL_OUTER_CLEANUP_RETAIN];
+const terminalCleanupReleaseIntrinsic =
+	Program.prototype[TERMINAL_OUTER_CLEANUP_RELEASE];
+
+class ProgramHandler extends Handler<Program> {
+	constructor(properties: { client: ProgramClient }) {
+		super({
+			identity: properties.client.identity,
+			client: properties.client,
+			shouldMonitor: (p) => p instanceof Program,
+			getDependencies: (program) => program.allPrograms,
+			load: Program.load,
+			terminalProtocol: {
+				supports: supportsTrustedProgramProtocol,
+				closed: (program) => closedGetterIntrinsic.call(program as Program),
+				checkpoint: (program) => terminalBaseCheckpointIntrinsic.call(program),
+				commit: (program, afterVersion, type, from) =>
+					terminalBaseCommitIntrinsic.call(program, afterVersion, type, from),
+				retry: (program, commit, operation) =>
+					terminalBaseRetryIntrinsic.call(program, commit, operation),
+				retainCleanup: (program) =>
+					terminalCleanupRetainIntrinsic.call(program),
+				releaseCleanup: (program, lease) =>
+					terminalCleanupReleaseIntrinsic.call(program, lease),
+			},
+		});
+	}
+}
+export { ProgramHandler };
 
 export const getProgramFromVariants = <
 	T extends Program,

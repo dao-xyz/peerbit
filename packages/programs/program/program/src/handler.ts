@@ -110,6 +110,44 @@ type CleanupResidual = {
 	activeReservations: number;
 };
 
+type ArrayPropertyBaseline<V> = {
+	hadOwnProperty: boolean;
+	value: V[] | undefined;
+};
+
+type ArrayPropertyState<V> = ArrayPropertyBaseline<V> & {
+	reference: V[] | undefined;
+};
+
+type InitializationRollbackOwnerPhase =
+	| "pending-pre-base"
+	| "committed"
+	| "consumed";
+
+type InitializationRollbackOwner = {
+	address: Address;
+	owner: Manageable<any> | undefined;
+	phase: InitializationRollbackOwnerPhase;
+	parents: ArrayPropertyBaseline<Manageable<any> | undefined>;
+	children: ArrayPropertyBaseline<Manageable<any>>;
+	ownerChildren?: ArrayPropertyBaseline<Manageable<any>>;
+	ownerChildrenWorkingReference?: Manageable<any>[];
+	ownerChildrenWorkingSnapshot?: ArrayPropertyBaseline<Manageable<any>>;
+	ownerChildrenDivergedFromExpected?: boolean;
+	ownerChildrenPreservationTarget?: ArrayPropertyState<Manageable<any>>;
+	observedOwners: Set<Manageable<any>>;
+	childCandidates: Set<Manageable<any>>;
+};
+
+type InitializationRollbackBaseline = {
+	parents: ArrayPropertyBaseline<Manageable<any> | undefined>;
+	children: ArrayPropertyBaseline<Manageable<any>>;
+	parent?: Manageable<any>;
+	parentChildren?: ArrayPropertyBaseline<Manageable<any>>;
+	parentChildrenWorkingReference?: Manageable<any>[];
+	parentChildrenWorkingSnapshot?: ArrayPropertyBaseline<Manageable<any>>;
+};
+
 type OpeningReservationGroup = {
 	participantReferences: Map<Manageable<any>, number>;
 	reservations: Set<OpeningReservation<any>>;
@@ -207,6 +245,129 @@ export type ProgramInitializationOptions<Args, T extends Manageable<Args>> = {
 	WithParent<T> &
 	EventOptions;
 
+type HandlerTerminalProtocol = {
+	supports: (program: Manageable<any>) => boolean;
+	closed: (program: Manageable<any>) => boolean;
+	checkpoint: (program: Manageable<any>) => number;
+	commit: (
+		program: Manageable<any>,
+		afterVersion: number,
+		type: TerminalOperation,
+		from?: Manageable<any>,
+	) => TerminalBaseCommit | undefined;
+	retry: (
+		program: Manageable<any>,
+		commit: TerminalBaseCommit,
+		operation: () => Promise<boolean>,
+	) => Promise<boolean>;
+	retainCleanup: (program: Manageable<any>) => object;
+	releaseCleanup: (program: Manageable<any>, lease: object) => void;
+};
+
+type HandlerProperties<T extends Manageable<any>> = {
+	client: { services: { blocks: Blocks }; stop: () => Promise<void> };
+	load: (
+		address: Address,
+		blocks: Blocks,
+		options?: { timeout?: number },
+	) => Promise<T | undefined>;
+	shouldMonitor: (thing: any) => boolean;
+	identity: Identity;
+	getDependencies?: (program: T) => Manageable<any>[];
+};
+
+type HandlerConstructorProperties<T extends Manageable<any>> =
+	HandlerProperties<T> & {
+		terminalProtocol?: HandlerTerminalProtocol;
+	};
+
+// Terminal proof dispatch is a trust boundary. Keep both the canonical callback
+// table and the support cache in module-private state: Programs can reach their
+// public Peerbit Handler, so TypeScript-private fields or public constructor
+// properties would remain writable at runtime between checkpoint and commit.
+const handlerTerminalProtocols = new WeakMap<
+	object,
+	Readonly<HandlerTerminalProtocol>
+>();
+const handlerTerminalProtocolSupport = new WeakMap<
+	object,
+	WeakMap<Manageable<any>, boolean>
+>();
+const monitoredTerminalPrograms = new WeakMap<object, Manageable<any>>();
+
+const supportsTerminalBaseCommitProof = (
+	handler: object,
+	program: Manageable<any>,
+): boolean => {
+	let support = handlerTerminalProtocolSupport.get(handler);
+	if (!support) {
+		support = new WeakMap();
+		handlerTerminalProtocolSupport.set(handler, support);
+	}
+	const cached = support.get(program);
+	if (cached != null) return cached;
+	const supports =
+		handlerTerminalProtocols.get(handler)?.supports(program) === true;
+	support.set(program, supports);
+	return supports;
+};
+
+const terminalCheckpoint = (
+	handler: object,
+	program: Manageable<any>,
+): number => {
+	if (!supportsTerminalBaseCommitProof(handler, program)) return 0;
+	return handlerTerminalProtocols.get(handler)?.checkpoint(program) ?? 0;
+};
+
+const terminalClosed = (handler: object, program: Manageable<any>): boolean => {
+	if (!supportsTerminalBaseCommitProof(handler, program)) return program.closed;
+	return handlerTerminalProtocols.get(handler)!.closed(program);
+};
+
+const terminalCommit = (
+	handler: object,
+	program: Manageable<any>,
+	checkpoint: number,
+	type: TerminalOperation,
+	from?: Manageable<any>,
+): TerminalBaseCommit | undefined => {
+	if (!supportsTerminalBaseCommitProof(handler, program)) return undefined;
+	return handlerTerminalProtocols
+		.get(handler)
+		?.commit(program, checkpoint, type, from);
+};
+
+const retryCommittedTerminalCall = (
+	handler: object,
+	program: Manageable<any>,
+	commit: TerminalBaseCommit,
+	operation: () => Promise<boolean>,
+): Promise<boolean> => {
+	if (!supportsTerminalBaseCommitProof(handler, program)) return operation();
+	return (
+		handlerTerminalProtocols.get(handler)?.retry(program, commit, operation) ??
+		operation()
+	);
+};
+
+const retainTerminalCleanupLease = (
+	handler: object,
+	program: Manageable<any>,
+): object | undefined => {
+	if (!supportsTerminalBaseCommitProof(handler, program)) return undefined;
+	return handlerTerminalProtocols.get(handler)?.retainCleanup(program);
+};
+
+const releaseTerminalCleanupLease = (
+	handler: object,
+	program: Manageable<any>,
+	lease: object | undefined,
+): void => {
+	if (!lease || !supportsTerminalBaseCommitProof(handler, program)) return;
+	handlerTerminalProtocols.get(handler)?.releaseCleanup(program, lease);
+};
+
 const assertCanAttachParent = (child: Manageable<any>) => {
 	if (child.acceptsParentAttachments === false) {
 		throw new Error("Program is terminating and cannot accept another parent");
@@ -230,6 +391,7 @@ export const addParent = (child: Manageable<any>, parent?: Manageable<any>) => {
  * reservations, so a client must use a single Handler for a program graph.
  */
 export class Handler<T extends Manageable<any>> {
+	readonly properties: HandlerProperties<T>;
 	items: Map<string, T>;
 	private _openQueue: Map<string, PQueue>;
 	private _openingPromises: Map<string, Promise<T>>;
@@ -258,21 +420,21 @@ export class Handler<T extends Manageable<any>> {
 	>;
 	private _terminalOperationsByAddress: Map<Address, TerminalOperationState<T>>;
 	private _initializationRollbacks: WeakSet<Manageable<any>>;
+	private _initializationRollbackOwners: Map<
+		Manageable<any>,
+		InitializationRollbackOwner
+	>;
 	private _replacementClosures: WeakSet<Manageable<any>>;
 
-	constructor(
-		readonly properties: {
-			client: { services: { blocks: Blocks }; stop: () => Promise<void> };
-			load: (
-				address: Address,
-				blocks: Blocks,
-				options?: { timeout?: number },
-			) => Promise<T | undefined>;
-			shouldMonitor: (thing: any) => boolean;
-			identity: Identity;
-			getDependencies?: (program: T) => Manageable<any>[];
-		},
-	) {
+	constructor(properties: HandlerConstructorProperties<T>) {
+		const { terminalProtocol, ...publicProperties } = properties;
+		this.properties = publicProperties;
+		if (terminalProtocol) {
+			handlerTerminalProtocols.set(
+				this,
+				Object.freeze({ ...terminalProtocol }),
+			);
+		}
 		this._openQueue = new Map();
 		this._openingPromises = new Map();
 		this._openingReservations = new Set();
@@ -290,6 +452,7 @@ export class Handler<T extends Manageable<any>> {
 		this._terminalOperationsByProgram = new WeakMap();
 		this._terminalOperationsByAddress = new Map();
 		this._initializationRollbacks = new WeakSet();
+		this._initializationRollbackOwners = new Map();
 		this._replacementClosures = new WeakSet();
 		this.items = new Map();
 	}
@@ -326,6 +489,7 @@ export class Handler<T extends Manageable<any>> {
 			this._openAdmissions.size > 0 ||
 			this._failedInitializations.size > 0 ||
 			this._cleanupResiduals.size > 0 ||
+			this._initializationRollbackOwners.size > 0 ||
 			this._terminalOperationsByAddress.size > 0
 		) {
 			throw new Error(
@@ -428,6 +592,7 @@ export class Handler<T extends Manageable<any>> {
 				outerTail: Promise.resolve(),
 				outerCalls: new Set(),
 			};
+			monitoredTerminalPrograms.set(state, program);
 			this._terminalOperationsByProgram.set(program, state);
 		}
 
@@ -451,7 +616,7 @@ export class Handler<T extends Manageable<any>> {
 			const close = program.close;
 			state.closeOperation = close;
 			const closeWrapper = (...args: any[]) =>
-				this.runTerminalOperation(state, "close", close, args, closeWrapper);
+				this.#runTerminalOperation(state, "close", close, args, closeWrapper);
 			state.closeWrapper = closeWrapper;
 			program.close = closeWrapper;
 		}
@@ -466,19 +631,27 @@ export class Handler<T extends Manageable<any>> {
 			const drop = droppable.drop;
 			state.dropOperation = drop;
 			const dropWrapper = (...args: any[]) =>
-				this.runTerminalOperation(state, "drop", drop, args, dropWrapper);
+				this.#runTerminalOperation(state, "drop", drop, args, dropWrapper);
 			state.dropWrapper = dropWrapper;
 			droppable.drop = dropWrapper;
 		}
 	}
 
-	private runTerminalOperation(
+	#runTerminalOperation(
 		state: TerminalOperationState<T>,
 		type: TerminalOperation,
 		operation: (...args: any[]) => Promise<boolean>,
 		args: any[],
 		invokedWrapper: (...args: any[]) => Promise<boolean>,
 	): Promise<boolean> {
+		const program = monitoredTerminalPrograms.get(state);
+		if (!program) {
+			return Promise.reject(
+				new Error(
+					"Program terminal operation has no trusted monitored identity",
+				),
+			);
+		}
 		const from = args[0] as Manageable<any> | undefined;
 		const synchronousInvocation = state.synchronouslyInvokingWrapper;
 		if (synchronousInvocation) {
@@ -501,7 +674,7 @@ export class Handler<T extends Manageable<any>> {
 				// captured before being re-wrapped. Peel that stale wrapper back to its
 				// raw operation; the current outer wrapper still monitors the full promise.
 				try {
-					return Promise.resolve(operation.apply(state.program, args));
+					return Promise.resolve(operation.apply(program, args));
 				} catch (error) {
 					return Promise.reject(error);
 				}
@@ -513,7 +686,7 @@ export class Handler<T extends Manageable<any>> {
 			);
 		}
 		if (
-			state.program.terminalLifecycleCallbackRunning ||
+			program.terminalLifecycleCallbackRunning ||
 			(this._terminalLifecycleCallbacks > 0 && state.activeCalls > 0)
 		) {
 			return Promise.reject(
@@ -523,11 +696,11 @@ export class Handler<T extends Manageable<any>> {
 			);
 		}
 		const parentIndex =
-			state.program.parents?.findIndex((parent) => parent === from) ?? -1;
+			program.parents?.findIndex((parent) => parent === from) ?? -1;
 		const terminal =
-			state.program.closed ||
+			terminalClosed(this, program) ||
 			parentIndex === -1 ||
-			(state.program.parents?.length ?? 0) === 1;
+			(program.parents?.length ?? 0) === 1;
 		const currentWrapper =
 			type === "close" ? state.closeWrapper : state.dropWrapper;
 		if (
@@ -558,7 +731,7 @@ export class Handler<T extends Manageable<any>> {
 			return matching.promise;
 		}
 		try {
-			this.assertTerminalGraphCanStart(state.program);
+			this.assertTerminalGraphCanStart(program);
 		} catch (error) {
 			return Promise.reject(error);
 		}
@@ -575,7 +748,7 @@ export class Handler<T extends Manageable<any>> {
 				(call.type === type || (type === "close" && call.type === "drop")),
 		);
 		const ownerReferences =
-			state.program.parents?.filter((parent) => parent === from).length ?? 0;
+			program.parents?.filter((parent) => parent === from).length ?? 0;
 		const reservedOwnerReferences = compatibleCalls.filter(
 			(call) => call.claimedOwnerReference,
 		).length;
@@ -614,6 +787,7 @@ export class Handler<T extends Manageable<any>> {
 			promise: tracked,
 		};
 		const hasPredecessor = state.outerCalls.size > 0;
+		const terminalCompletedBeforeCall = state.terminalCompleted;
 		state.outerCalls.add(outerCall);
 		state.activeCalls += 1;
 		state.terminalCompleted = false;
@@ -634,25 +808,37 @@ export class Handler<T extends Manageable<any>> {
 				);
 			}
 
-			const startedClosed = state.program.closed;
-			const startedAcceptingParents = state.program.acceptsParentAttachments;
-			const startedParents = [...(state.program.parents ?? [])];
-			const checkpoint = this.terminalCheckpoint(state.program);
+			const startedClosed = terminalClosed(this, program);
+			const startedAcceptingParents = program.acceptsParentAttachments;
+			const startedParentsState = this.captureArrayPropertyState<
+				Manageable<any> | undefined
+			>(program, "parents");
+			const startedParents = [...(startedParentsState.value ?? [])];
+			const startedParentChildReferences = new Map<Manageable<any>, number>();
+			for (const parent of startedParents) {
+				if (parent == null || startedParentChildReferences.has(parent))
+					continue;
+				startedParentChildReferences.set(
+					parent,
+					parent.children?.filter((child) => child === program).length ?? 0,
+				);
+			}
+			const checkpoint = terminalCheckpoint(this, program);
 			const existingCleanupLease = state.cleanupLease;
 			if (!state.cleanupLease) {
-				state.cleanupLease = state.program[TERMINAL_OUTER_CLEANUP_RETAIN]?.();
+				state.cleanupLease = retainTerminalCleanupLease(this, program);
 			}
 			const releaseProvisionalCleanupLease = () => {
 				if (!existingCleanupLease && state.cleanupLease) {
-					state.program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(state.cleanupLease);
+					releaseTerminalCleanupLease(this, program, state.cleanupLease);
 					state.cleanupLease = undefined;
 				}
 			};
+			let rejectedUncommittedTerminalResult = false;
 			try {
 				const invoke = () => {
 					outerCall.ownerReferencesBeforeInvoke =
-						state.program.parents?.filter((parent) => parent === from).length ??
-						0;
+						program.parents?.filter((parent) => parent === from).length ?? 0;
 					let operationResult: Promise<boolean>;
 					const previousSynchronouslyInvokingWrapper =
 						state.synchronouslyInvokingWrapper;
@@ -663,25 +849,56 @@ export class Handler<T extends Manageable<any>> {
 					};
 					try {
 						operationResult = this.invokeLifecycleMethod(() =>
-							operation.apply(state.program, args),
+							operation.apply(program, args),
 						);
 					} finally {
 						state.synchronouslyInvokingWrapper =
 							previousSynchronouslyInvokingWrapper;
 						outerCall.ownerReferencesAfterInvoke =
-							state.program.parents?.filter((parent) => parent === from)
-								.length ?? 0;
+							program.parents?.filter((parent) => parent === from).length ?? 0;
 					}
 					return operationResult!;
 				};
 				const result =
 					recovering && failedCall?.commit
-						? await this.retryCommittedTerminalCall(
-								state.program,
+						? await retryCommittedTerminalCall(
+								this,
+								program,
 								failedCall.commit,
 								invoke,
 							)
 						: await invoke();
+				const completionCommit =
+					failedCall?.commit ||
+					terminalCommit(this, program, checkpoint, type, from);
+				const supportsBaseCommitProof = supportsTerminalBaseCommitProof(
+					this,
+					program,
+				);
+				const observedReleasedParentReferences = Math.max(
+					0,
+					startedParents.filter((parent) => parent === from).length -
+						(program.parents?.filter((parent) => parent === from).length ?? 0),
+				);
+				if (
+					supportsBaseCommitProof &&
+					(recovering || !startedClosed || !terminalCompletedBeforeCall) &&
+					completionCommit == null
+				) {
+					rejectedUncommittedTerminalResult = true;
+					throw new Error(
+						`Program at ${state.address} reported ${type} success without reaching its base terminal operation`,
+					);
+				}
+				if (
+					completionCommit != null &&
+					(completionCommit.result !== result ||
+						terminalClosed(this, program) !== completionCommit.result)
+				) {
+					throw new Error(
+						`Program at ${state.address} did not preserve the exact base terminal result`,
+					);
+				}
 				if (recovering) {
 					const recoveryOwner = failedCall?.args[0] as
 						| Manageable<any>
@@ -689,49 +906,59 @@ export class Handler<T extends Manageable<any>> {
 					const releasedDuringRetry = Math.max(
 						0,
 						startedParents.filter((parent) => parent === recoveryOwner).length -
-							(state.program.parents?.filter(
-								(parent) => parent === recoveryOwner,
-							).length ?? 0),
+							(program.parents?.filter((parent) => parent === recoveryOwner)
+								.length ?? 0),
 					);
+					const rollbackOwner = this._initializationRollbackOwners.get(program);
+					const retryingCommittedInitializationRollback =
+						rollbackOwner?.phase === "committed" &&
+						rollbackOwner.owner === recoveryOwner &&
+						failedCall?.type === "close";
 					this.removeReleasedParentChildReferences(
-						state.program,
+						program,
 						recoveryOwner,
-						Math.max(
-							failedCall?.commit?.releasedParentReferences ??
-								failedCall?.releasedParentReferences ??
-								0,
-							releasedDuringRetry,
-						),
+						retryingCommittedInitializationRollback
+							? releasedDuringRetry
+							: Math.max(
+									failedCall?.commit?.releasedParentReferences ??
+										failedCall?.releasedParentReferences ??
+										0,
+									releasedDuringRetry,
+								),
 					);
 					state.failed = false;
 					state.failedOperation = undefined;
 					state.failedCall = undefined;
 					this.releaseRetainedTerminalIdentity(state);
 				} else {
-					const commit = this.terminalCommit(
-						state.program,
-						checkpoint,
-						type,
-						from,
-					);
 					this.removeReleasedParentChildReferences(
-						state.program,
+						program,
 						from,
-						commit?.releasedParentReferences ?? 0,
+						completionCommit?.releasedParentReferences ??
+							(supportsBaseCommitProof ? 0 : observedReleasedParentReferences),
 					);
 				}
-				if (result && state.program.closed && !state.failed) {
+				if (result && terminalClosed(this, program) && !state.failed) {
 					state.terminalCompleted = true;
 				}
 				if (state.cleanupLease) {
-					state.program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(state.cleanupLease);
+					releaseTerminalCleanupLease(this, program, state.cleanupLease);
 					state.cleanupLease = undefined;
 				}
 				return result;
 			} catch (error) {
 				const observedCommit =
 					failedCall?.commit ||
-					this.terminalCommit(state.program, checkpoint, type, from);
+					terminalCommit(this, program, checkpoint, type, from);
+				if (rejectedUncommittedTerminalResult && observedCommit == null) {
+					const observedParents = [...(program.parents ?? [])];
+					this.restoreUncommittedParentReferences(program, startedParentsState);
+					this.restoreUncommittedParentChildReferences(
+						program,
+						startedParentChildReferences,
+						observedParents,
+					);
+				}
 				if (
 					!recovering &&
 					error instanceof TerminalOperationNotStartedError &&
@@ -741,15 +968,14 @@ export class Handler<T extends Manageable<any>> {
 					// explicit precondition error made no lifecycle mutation.
 					releaseProvisionalCleanupLease();
 					if (
-						state.program.closed === startedClosed &&
-						state.program.acceptsParentAttachments ===
-							startedAcceptingParents &&
-						this.sameParents(state.program.parents ?? [], startedParents)
+						terminalClosed(this, program) === startedClosed &&
+						program.acceptsParentAttachments === startedAcceptingParents &&
+						this.sameParents(program.parents ?? [], startedParents)
 					) {
 						state.terminalCompleted = startedClosed;
 						throw error;
 					}
-					state.cleanupLease = state.program[TERMINAL_OUTER_CLEANUP_RETAIN]?.();
+					state.cleanupLease = retainTerminalCleanupLease(this, program);
 				}
 				if (startedClosed && !recovering) {
 					// A fresh drop of an already-cleanly-closed program, or a drop queued
@@ -761,19 +987,18 @@ export class Handler<T extends Manageable<any>> {
 				const commit = observedCommit;
 				const baseProgressed =
 					commit != null ||
-					state.program.closed !== startedClosed ||
-					!this.sameParents(state.program.parents ?? [], startedParents);
+					terminalClosed(this, program) !== startedClosed ||
+					!this.sameParents(program.parents ?? [], startedParents);
 				const recoveryType: TerminalOperation =
 					type === "drop" && !baseProgressed
 						? "drop"
-						: commit || state.program.closed
+						: commit || terminalClosed(this, program)
 							? type
 							: "close";
 				const releasedParentReferences = Math.max(
 					failedCall?.releasedParentReferences ?? 0,
 					startedParents.filter((parent) => parent === from).length -
-						(state.program.parents?.filter((parent) => parent === from)
-							.length ?? 0),
+						(program.parents?.filter((parent) => parent === from).length ?? 0),
 				);
 				state.failed = true;
 				state.failedOperation = recoveryType;
@@ -785,13 +1010,13 @@ export class Handler<T extends Manageable<any>> {
 				};
 				state.terminalCompleted = false;
 				const monitored = this.items.get(state.address);
-				if (!monitored || monitored === state.program) {
-					this.items.set(state.address, state.program);
+				if (!monitored || monitored === program) {
+					this.items.set(state.address, program as T);
 				} else {
 					// `items` is address-keyed, but embedded opening graphs may contain a
 					// distinct instance with the same address as a monitored root. Never
 					// orphan that root by replacing it with this failed cleanup identity.
-					const residual = this.reserveCleanupResidual(state.program);
+					const residual = this.reserveCleanupResidual(program);
 					residual.terminalState = state;
 				}
 				this._terminalOperationsByAddress.set(state.address, state);
@@ -850,27 +1075,459 @@ export class Handler<T extends Manageable<any>> {
 		);
 	}
 
-	private terminalCheckpoint(program: Manageable<any>): number {
-		return program[TERMINAL_BASE_CHECKPOINT]?.() ?? 0;
+	private captureArrayProperty<V>(
+		target: object,
+		property: "parents" | "children",
+	): ArrayPropertyBaseline<V> {
+		const value = (target as Record<"parents" | "children", V[] | undefined>)[
+			property
+		];
+		return {
+			hadOwnProperty: Object.prototype.hasOwnProperty.call(target, property),
+			value: value == null ? undefined : [...value],
+		};
 	}
 
-	private terminalCommit(
-		program: Manageable<any>,
-		checkpoint: number,
-		type: TerminalOperation,
-		from?: Manageable<any>,
-	): TerminalBaseCommit | undefined {
-		return program[TERMINAL_BASE_COMMIT]?.(checkpoint, type, from);
+	private captureArrayPropertyState<V>(
+		target: object,
+		property: "parents" | "children",
+	): ArrayPropertyState<V> {
+		return {
+			...this.captureArrayProperty<V>(target, property),
+			reference: (target as Record<"parents" | "children", V[] | undefined>)[
+				property
+			],
+		};
 	}
 
-	private retryCommittedTerminalCall(
+	private restoreArrayProperty<V>(
+		target: object,
+		property: "parents" | "children",
+		baseline: ArrayPropertyBaseline<V>,
+	): void {
+		if (!baseline.hadOwnProperty) {
+			delete (
+				target as Partial<Record<"parents" | "children", V[] | undefined>>
+			)[property];
+			return;
+		}
+		(target as Record<"parents" | "children", V[] | undefined>)[property] =
+			baseline.value == null ? undefined : [...baseline.value];
+	}
+
+	private rollbackOwnerChildrenMatchWorkingSnapshot(
+		rollback: InitializationRollbackOwner,
+	): boolean {
+		const owner = rollback.owner;
+		const snapshot = rollback.ownerChildrenWorkingSnapshot;
+		if (!owner || !snapshot) return true;
+		const currentReference = owner.children;
+		const currentValues = currentReference;
+		const expectedValues = snapshot.value;
+		return (
+			Object.prototype.hasOwnProperty.call(owner, "children") ===
+				snapshot.hadOwnProperty &&
+			currentReference === rollback.ownerChildrenWorkingReference &&
+			((currentValues == null && expectedValues == null) ||
+				(currentValues != null &&
+					expectedValues != null &&
+					currentValues.length === expectedValues.length &&
+					currentValues.every(
+						(child, index) => child === expectedValues[index],
+					)))
+		);
+	}
+
+	private updateRollbackOwnerChildrenWorkingSnapshot(
+		rollback: InitializationRollbackOwner,
+	): void {
+		const owner = rollback.owner;
+		if (!owner) return;
+		const state = this.captureArrayPropertyState<Manageable<any>>(
+			owner,
+			"children",
+		);
+		rollback.ownerChildrenWorkingReference = state.reference;
+		rollback.ownerChildrenWorkingSnapshot = {
+			hadOwnProperty: state.hadOwnProperty,
+			value: state.value,
+		};
+	}
+
+	private adoptExactGeneratedRollbackOwnerChildrenReference(
+		rollback: InitializationRollbackOwner,
+	): void {
+		const owner = rollback.owner;
+		const snapshot = rollback.ownerChildrenWorkingSnapshot;
+		if (!owner || !snapshot || rollback.ownerChildrenWorkingReference != null) {
+			return;
+		}
+		const current = owner.children;
+		const expected = snapshot.value;
+		if (
+			!snapshot.hadOwnProperty ||
+			!Object.prototype.hasOwnProperty.call(owner, "children") ||
+			current == null ||
+			expected == null ||
+			current.length !== expected.length ||
+			!current.every((child, index) => child === expected[index])
+		) {
+			return;
+		}
+		// An absent/undefined baseline forces Program.beforeOpen() to allocate the
+		// expected owner array before opening nested programs. If nested open fails
+		// before Handler's callback, adopt that exact generated reference only when
+		// its full shape still matches the one Handler created.
+		rollback.ownerChildrenWorkingReference = current;
+	}
+
+	private recordRollbackOwnerChildrenDivergence(
+		rollback: InitializationRollbackOwner,
+	): void {
+		const owner = rollback.owner;
+		if (!owner || this.rollbackOwnerChildrenMatchWorkingSnapshot(rollback)) {
+			return;
+		}
+		rollback.ownerChildrenDivergedFromExpected = true;
+		rollback.ownerChildrenPreservationTarget = this.captureArrayPropertyState<
+			Manageable<any>
+		>(owner, "children");
+	}
+
+	private recordRollbackOwnerChildrenIdentityDivergence(
+		rollback: InitializationRollbackOwner,
+	): void {
+		const owner = rollback.owner;
+		const snapshot = rollback.ownerChildrenWorkingSnapshot;
+		if (!owner || !snapshot) return;
+		const currentReference = owner.children;
+		const currentHadOwnProperty = Object.prototype.hasOwnProperty.call(
+			owner,
+			"children",
+		);
+		const preservationTarget = rollback.ownerChildrenPreservationTarget;
+		const preservationTargetIsCurrent =
+			preservationTarget == null ||
+			(preservationTarget.hadOwnProperty === currentHadOwnProperty &&
+				preservationTarget.reference === currentReference);
+		if (
+			currentHadOwnProperty === snapshot.hadOwnProperty &&
+			currentReference === rollback.ownerChildrenWorkingReference &&
+			preservationTargetIsCurrent
+		) {
+			return;
+		}
+		rollback.ownerChildrenDivergedFromExpected = true;
+		rollback.ownerChildrenPreservationTarget = this.captureArrayPropertyState<
+			Manageable<any>
+		>(owner, "children");
+	}
+
+	/**
+	 * Restore the failed generation's inverse edge count without discarding
+	 * unrelated children attached to the owner while the open was in flight.
+	 */
+	private restoreRollbackOwnerChildren(
 		program: Manageable<any>,
-		commit: TerminalBaseCommit,
-		operation: () => Promise<boolean>,
-	): Promise<boolean> {
-		return program[TERMINAL_BASE_RETRY]
-			? program[TERMINAL_BASE_RETRY](commit, operation)
-			: operation();
+		rollback: InitializationRollbackOwner,
+	): void {
+		const owner = rollback.owner;
+		const baseline = rollback.ownerChildren;
+		if (!owner || !baseline) return;
+
+		const baselineValues = baseline.value ?? [];
+		const currentHadOwnProperty = Object.prototype.hasOwnProperty.call(
+			owner,
+			"children",
+		);
+		const currentReference = owner.children;
+		const currentValues = currentReference ?? [];
+		const currentUnrelated = currentValues.filter((child) => child !== program);
+		const baselineUnrelated = baselineValues.filter(
+			(child) => child !== program,
+		);
+		const unrelatedChildrenChanged =
+			currentUnrelated.length !== baselineUnrelated.length ||
+			currentUnrelated.some(
+				(child, index) => child !== baselineUnrelated[index],
+			);
+		const ownerPropertyChanged =
+			rollback.ownerChildrenDivergedFromExpected === true ||
+			unrelatedChildrenChanged ||
+			!currentHadOwnProperty ||
+			currentReference == null ||
+			(rollback.ownerChildrenWorkingReference != null &&
+				currentReference !== rollback.ownerChildrenWorkingReference);
+
+		// Match the surviving baseline siblings into the current unrelated sequence.
+		// Candidate occurrences can then be restored around those anchors without
+		// reordering, deleting, or resurrecting any unrelated child.
+		const currentIndicesByChild = new Map<Manageable<any>, number[]>();
+		for (let index = 0; index < currentUnrelated.length; index++) {
+			const child = currentUnrelated[index]!;
+			const indices = currentIndicesByChild.get(child) ?? [];
+			indices.push(index);
+			currentIndicesByChild.set(child, indices);
+		}
+		const cursorsByChild = new Map<Manageable<any>, number>();
+		const matchedCurrentIndexByBaselineIndex = new Map<number, number>();
+		let lastMatchedCurrentIndex = -1;
+		for (let index = 0; index < baselineValues.length; index++) {
+			const child = baselineValues[index]!;
+			if (child === program) continue;
+			const indices = currentIndicesByChild.get(child);
+			if (!indices) continue;
+			let cursor = cursorsByChild.get(child) ?? 0;
+			while (
+				cursor < indices.length &&
+				indices[cursor]! <= lastMatchedCurrentIndex
+			) {
+				cursor += 1;
+			}
+			cursorsByChild.set(child, cursor + 1);
+			const currentIndex = indices[cursor];
+			if (currentIndex == null) continue;
+			matchedCurrentIndexByBaselineIndex.set(index, currentIndex);
+			lastMatchedCurrentIndex = currentIndex;
+		}
+
+		const previousAnchorByBaselineIndex: Array<number | undefined> = [];
+		let previousAnchor: number | undefined;
+		for (let index = 0; index < baselineValues.length; index++) {
+			previousAnchorByBaselineIndex[index] = previousAnchor;
+			previousAnchor =
+				matchedCurrentIndexByBaselineIndex.get(index) ?? previousAnchor;
+		}
+		const nextAnchorByBaselineIndex: Array<number | undefined> = [];
+		let nextAnchor: number | undefined;
+		for (let index = baselineValues.length - 1; index >= 0; index--) {
+			nextAnchorByBaselineIndex[index] = nextAnchor;
+			nextAnchor = matchedCurrentIndexByBaselineIndex.get(index) ?? nextAnchor;
+		}
+
+		const candidateOccurrencesBySlot = new Array<number>(
+			currentUnrelated.length + 1,
+		).fill(0);
+		for (let index = 0; index < baselineValues.length; index++) {
+			if (baselineValues[index] !== program) continue;
+			const previous = previousAnchorByBaselineIndex[index];
+			const next = nextAnchorByBaselineIndex[index];
+			const slot = previous == null ? (next ?? 0) : previous + 1;
+			candidateOccurrencesBySlot[slot] += 1;
+		}
+
+		const restored: Manageable<any>[] = [];
+		for (let slot = 0; slot <= currentUnrelated.length; slot++) {
+			for (
+				let occurrence = candidateOccurrencesBySlot[slot]!;
+				occurrence > 0;
+				occurrence--
+			) {
+				restored.push(program);
+			}
+			const child = currentUnrelated[slot];
+			if (child) restored.push(child);
+		}
+
+		if (restored.length > 0) {
+			const preservedReference =
+				rollback.ownerChildrenPreservationTarget?.reference;
+			if (preservedReference) {
+				preservedReference.splice(0, preservedReference.length, ...restored);
+				owner.children = preservedReference;
+			} else if (currentHadOwnProperty && currentReference) {
+				currentReference.splice(0, currentReference.length, ...restored);
+				owner.children = currentReference;
+			} else {
+				owner.children = restored;
+			}
+		} else if (rollback.ownerChildrenPreservationTarget) {
+			const target = rollback.ownerChildrenPreservationTarget;
+			if (!target.hadOwnProperty) {
+				delete (owner as Partial<Manageable<any>>).children;
+			} else if (target.reference) {
+				target.reference.splice(0, target.reference.length);
+				owner.children = target.reference;
+			} else {
+				(owner as { children?: Manageable<any>[] }).children = undefined;
+			}
+		} else if (ownerPropertyChanged) {
+			if (!currentHadOwnProperty) {
+				delete (owner as Partial<Manageable<any>>).children;
+			} else if (currentReference) {
+				currentReference.splice(0, currentReference.length);
+				owner.children = currentReference;
+			} else {
+				(owner as { children?: Manageable<any>[] }).children = undefined;
+			}
+		} else if (baseline.hadOwnProperty) {
+			(owner as { children?: Manageable<any>[] }).children =
+				baseline.value == null ? undefined : [];
+		} else {
+			delete (owner as Partial<Manageable<any>>).children;
+		}
+		this.updateRollbackOwnerChildrenWorkingSnapshot(rollback);
+	}
+
+	private restoreInitializationRollbackBaseline(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+		restoreChildren: boolean,
+	): void {
+		this.restoreArrayProperty(program, "parents", rollback.parents);
+		if (restoreChildren) {
+			this.restoreArrayProperty(program, "children", rollback.children);
+		}
+		this.restoreRollbackOwnerChildren(program, rollback);
+	}
+
+	private rollbackOwnerReferenceCount(
+		program: Manageable<any>,
+		owner: Manageable<any> | undefined,
+	): number {
+		return (
+			program.parents?.filter((candidate) => candidate === owner).length ?? 0
+		);
+	}
+
+	private rollbackInverseReferenceCount(
+		program: Manageable<any>,
+		owner: Manageable<any> | undefined,
+	): number {
+		return (
+			owner?.children?.filter((candidate) => candidate === program).length ?? 0
+		);
+	}
+
+	private initializationRollbackOwnerAlreadyConsumed(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): boolean {
+		const baselineForward =
+			rollback.parents.value?.filter(
+				(candidate) => candidate === rollback.owner,
+			).length ?? 0;
+		const currentForward = this.rollbackOwnerReferenceCount(
+			program,
+			rollback.owner,
+		);
+		if (!rollback.owner) {
+			// Root rollback has no inverse owner edge. A closed program with no
+			// remaining undefined-parent reference supplies the corresponding exact
+			// detachment evidence without manufacturing another private root lease.
+			return terminalClosed(this, program) && currentForward === 0;
+		}
+		const baselineInverse =
+			rollback.ownerChildren?.value?.filter(
+				(candidate) => candidate === program,
+			).length ?? 0;
+		const currentInverse = this.rollbackInverseReferenceCount(
+			program,
+			rollback.owner,
+		);
+		return (
+			(terminalClosed(this, program) &&
+				currentForward === 0 &&
+				currentInverse === 0) ||
+			(currentForward < baselineForward && currentInverse < baselineInverse)
+		);
+	}
+
+	private initializationRollbackOwnerDetached(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): boolean {
+		return (
+			this.rollbackOwnerReferenceCount(program, rollback.owner) === 0 &&
+			(!rollback.owner ||
+				this.rollbackInverseReferenceCount(program, rollback.owner) === 0)
+		);
+	}
+
+	private recordInitializationRollbackOwners(
+		rollback: InitializationRollbackOwner,
+		owners: Iterable<Manageable<any> | undefined>,
+	): void {
+		for (const owner of owners) {
+			if (owner) rollback.observedOwners.add(owner);
+		}
+	}
+
+	private recordInitializationRollbackPostCloseState(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): void {
+		this.recordInitializationRollbackOwners(rollback, program.parents ?? []);
+		// The delegated base close is expected to splice the candidate from the
+		// installed array, so content drift alone is not concurrent adoption here.
+		// A property/reference change, however, belongs to the caller and must
+		// replace any older preservation target before baseline restoration.
+		this.recordRollbackOwnerChildrenIdentityDivergence(rollback);
+	}
+
+	private reconcileInitializationRollbackOwnerReferences(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): void {
+		for (const owner of rollback.observedOwners) {
+			const forwardReferences = this.rollbackOwnerReferenceCount(
+				program,
+				owner,
+			);
+			const inverseReferences = this.rollbackInverseReferenceCount(
+				program,
+				owner,
+			);
+			this.removeReleasedParentChildReferences(
+				program,
+				owner,
+				Math.max(0, inverseReferences - forwardReferences),
+			);
+		}
+	}
+
+	private initializationRollbackGraphDetached(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): boolean {
+		return (
+			(program.parents?.length ?? 0) === 0 &&
+			[...rollback.observedOwners].every(
+				(owner) => this.rollbackInverseReferenceCount(program, owner) === 0,
+			)
+		);
+	}
+
+	private rollbackReleasedExactOwnerReference(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+		forwardBefore: number,
+		inverseBefore: number,
+	): boolean {
+		const baselineForward =
+			rollback.parents.value?.filter(
+				(candidate) => candidate === rollback.owner,
+			).length ?? 0;
+		const baselineInverse = rollback.owner
+			? (rollback.ownerChildren?.value?.filter(
+					(candidate) => candidate === program,
+				).length ?? 0)
+			: 0;
+		const forwardAfter = this.rollbackOwnerReferenceCount(
+			program,
+			rollback.owner,
+		);
+		const inverseAfter = this.rollbackInverseReferenceCount(
+			program,
+			rollback.owner,
+		);
+		return (
+			forwardBefore === baselineForward + 1 &&
+			forwardAfter === baselineForward &&
+			(!rollback.owner ||
+				(inverseBefore === baselineInverse + 1 &&
+					inverseAfter === baselineInverse))
+		);
 	}
 
 	private addCleanupResidual(
@@ -884,7 +1541,7 @@ export class Handler<T extends Manageable<any>> {
 			residual.cleanupLease &&
 			cleanupLease !== residual.cleanupLease
 		) {
-			program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(cleanupLease);
+			releaseTerminalCleanupLease(this, program, cleanupLease);
 		}
 		residual.failures.push(failure);
 	}
@@ -898,7 +1555,7 @@ export class Handler<T extends Manageable<any>> {
 			return existing;
 		}
 		const retainedLease =
-			cleanupLease ?? program[TERMINAL_OUTER_CLEANUP_RETAIN]?.();
+			cleanupLease ?? retainTerminalCleanupLease(this, program);
 		const residual: CleanupResidual = {
 			program,
 			failures: [],
@@ -941,7 +1598,11 @@ export class Handler<T extends Manageable<any>> {
 			);
 		}
 		if (residual.cleanupLease) {
-			residual.program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(residual.cleanupLease);
+			releaseTerminalCleanupLease(
+				this,
+				residual.program,
+				residual.cleanupLease,
+			);
 			residual.cleanupLease = undefined;
 		}
 		this._cleanupResiduals.delete(residual.program);
@@ -974,14 +1635,15 @@ export class Handler<T extends Manageable<any>> {
 				`Program at ${residual.program.address} cannot retry its failed ${failure.type} cleanup`,
 			);
 		}
-		const checkpoint = this.terminalCheckpoint(residual.program);
+		const checkpoint = terminalCheckpoint(this, residual.program);
 		const invoke = () =>
 			this.invokeLifecycleMethod(() =>
 				operation.apply(residual.program, failure.args),
 			);
 		try {
 			if (failure.commit) {
-				await this.retryCommittedTerminalCall(
+				await retryCommittedTerminalCall(
+					this,
 					residual.program,
 					failure.commit,
 					invoke,
@@ -990,7 +1652,8 @@ export class Handler<T extends Manageable<any>> {
 				await invoke();
 			}
 		} catch (error) {
-			failure.commit ??= this.terminalCommit(
+			failure.commit ??= terminalCommit(
+				this,
 				residual.program,
 				checkpoint,
 				failure.type,
@@ -1005,7 +1668,7 @@ export class Handler<T extends Manageable<any>> {
 			state.activeCalls > 0 ||
 			state.failed ||
 			!state.terminalCompleted ||
-			!state.program.closed
+			!terminalClosed(this, state.program)
 		) {
 			return;
 		}
@@ -1013,7 +1676,10 @@ export class Handler<T extends Manageable<any>> {
 			this.items.delete(state.address);
 		}
 		this.restoreTerminalOperations(state);
-		if (this._failedInitializations.get(state.address) === state.program) {
+		if (
+			!this._initializationRollbackOwners.has(state.program) &&
+			this._failedInitializations.get(state.address) === state.program
+		) {
 			this._failedInitializations.delete(state.address);
 		}
 		if (this._terminalOperationsByAddress.get(state.address) === state) {
@@ -1069,13 +1735,14 @@ export class Handler<T extends Manageable<any>> {
 		if (
 			preferred &&
 			matches.includes(preferred as T) &&
-			(!liveOnly || !preferred.closed)
+			(!liveOnly || !terminalClosed(this, preferred))
 		) {
 			return preferred as T;
 		}
 		return liveOnly
-			? matches.find((candidate) => !candidate.closed)
-			: (matches.find((candidate) => !candidate.closed) ?? matches[0]);
+			? matches.find((candidate) => !terminalClosed(this, candidate))
+			: (matches.find((candidate) => !terminalClosed(this, candidate)) ??
+					matches[0]);
 	}
 
 	private attachExistingProgram<S extends T>(
@@ -1087,7 +1754,7 @@ export class Handler<T extends Manageable<any>> {
 		addParent(program, parent);
 		if (parent == null && this.items.get(address) !== program) {
 			const direct = this.items.get(address);
-			if (direct && !direct.closed && direct !== program) {
+			if (direct && !terminalClosed(this, direct) && direct !== program) {
 				throw new Error(
 					`Program at ${address} is already monitored as another live instance`,
 				);
@@ -1103,6 +1770,18 @@ export class Handler<T extends Manageable<any>> {
 		requestedProgram?: Manageable<any>,
 		allowSettledAncestorRepair = requestedProgram != null,
 	): void {
+		const rollbackOwner = [
+			...this._initializationRollbackOwners.entries(),
+		].find(
+			([program, rollback]) =>
+				program.address.toString() === address.toString() ||
+				rollback.address.toString() === address.toString(),
+		);
+		if (rollbackOwner) {
+			throw new Error(
+				`Program at ${address} failed initialization cleanup and has pending rollback cleanup that must be retried before reopen`,
+			);
+		}
 		const residual = [...this._cleanupResiduals.values()].find(
 			(candidate) =>
 				candidate.program.address.toString() === address.toString(),
@@ -1158,7 +1837,7 @@ export class Handler<T extends Manageable<any>> {
 			const ownFailed = candidateState?.failed === true;
 			const ownAttachmentFence =
 				candidate.acceptsParentAttachments === false &&
-				(!candidate.closed ||
+				(!terminalClosed(this, candidate) ||
 					candidate.pendingTerminalOperation != null ||
 					ownActive ||
 					ownFailed);
@@ -1247,10 +1926,177 @@ export class Handler<T extends Manageable<any>> {
 		}
 	}
 
+	private installInitializationRollbackOwner(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): { forward: number; inverse: number } {
+		// Compare with the state left by the previous Handler restoration before
+		// that restoration runs again. A caller may have adopted the property while
+		// rollback was quarantined; observing here avoids confusing the later base
+		// close splice with a concurrent mutation.
+		this.recordRollbackOwnerChildrenDivergence(rollback);
+		this.restoreInitializationRollbackBaseline(program, rollback, false);
+		const parents = [...(rollback.parents.value ?? []), rollback.owner];
+		program.parents = parents;
+		if (rollback.owner) {
+			if (rollback.owner.children) {
+				rollback.owner.children.push(program);
+			} else {
+				rollback.owner.children = [program];
+			}
+			this.updateRollbackOwnerChildrenWorkingSnapshot(rollback);
+		}
+		return {
+			forward: this.rollbackOwnerReferenceCount(program, rollback.owner),
+			inverse: this.rollbackInverseReferenceCount(program, rollback.owner),
+		};
+	}
+
+	private async retryPendingInitializationRollbackOwner(
+		program: Manageable<any>,
+		rollback: InitializationRollbackOwner,
+	): Promise<void> {
+		if (rollback.phase !== "pending-pre-base") return;
+		if (this.initializationRollbackOwnerAlreadyConsumed(program, rollback)) {
+			// A previous stop attempt can fail the private retry and then close the
+			// monitored ancestor, which spends the restored baseline edge while the
+			// rollback record remains pending. That terminal/detached graph is already
+			// the successful cleanup result; reinstalling its baseline plus private lease
+			// would resurrect a closed child or an owner edge that was consumed once.
+			rollback.phase = "consumed";
+			return;
+		}
+
+		// Re-wrap replacements before borrowing the private owner edge. The retry must
+		// pass through the same Handler terminal monitor as ordinary close calls.
+		this.monitorTerminalOperations(rollback.address, program as T);
+		const checkpoint = terminalCheckpoint(this, program);
+		const installed = this.installInitializationRollbackOwner(
+			program,
+			rollback,
+		);
+		let invocationSettled = false;
+		const childCleanupErrors: unknown[] = [];
+		try {
+			const closed = await (
+				program.close as unknown as (from?: Manageable<any>) => Promise<boolean>
+			).call(program, rollback.owner);
+			invocationSettled = true;
+			const releasedExactOwner = this.rollbackReleasedExactOwnerReference(
+				program,
+				rollback,
+				installed.forward,
+				installed.inverse,
+			);
+			if (!releasedExactOwner || (closed && !terminalClosed(this, program))) {
+				throw new Error(
+					`Program at ${rollback.address} did not release its initialization rollback owner`,
+				);
+			}
+			rollback.phase = "consumed";
+		} catch (error) {
+			if (
+				!invocationSettled &&
+				terminalCommit(this, program, checkpoint, "close", rollback.owner)
+			) {
+				// Base close already owns this generation. Its public retry contract
+				// consumes the recorded commit and must not see a manufactured owner.
+				rollback.phase = "committed";
+			}
+			throw error;
+		} finally {
+			// A replacement close can attach a parent while releasing the private
+			// rollback lease. Capture every such owner before restoring the saved
+			// forward edge shape, otherwise its inverse children edge can become
+			// unreachable to the final graph reconciliation.
+			this.recordInitializationRollbackPostCloseState(program, rollback);
+			this.restoreInitializationRollbackBaseline(program, rollback, false);
+			await this.cleanupChildReferenceExcesses(
+				rollback.address,
+				program,
+				rollback.children,
+				rollback.childCandidates,
+				childCleanupErrors,
+			);
+			if (childCleanupErrors.length > 0) {
+				logger.error(
+					`Initialization rollback retry at ${rollback.address} encountered ${childCleanupErrors.length} child cleanup error(s)`,
+				);
+			}
+		}
+	}
+
+	private observeTerminalGraph(
+		program: Manageable<any>,
+		childCandidates: Set<Manageable<any>>,
+		owners: Set<Manageable<any>>,
+	): void {
+		for (const child of program.children ?? []) {
+			if (child !== program) childCandidates.add(child);
+		}
+		for (const parent of program.parents ?? []) {
+			if (parent) owners.add(parent);
+		}
+		try {
+			for (const dependency of this.properties.getDependencies?.(
+				program as T,
+			) ?? []) {
+				if (dependency !== program) childCandidates.add(dependency);
+			}
+		} catch (error) {
+			// A terminal object may make application dependency getters unavailable.
+			// Current graph edges remain authoritative; do not turn observation into a
+			// second, unrelated terminal failure.
+			logger.trace(
+				`Could not enumerate terminal dependencies for ${program.address}: ${String(error)}`,
+			);
+		}
+	}
+
+	private reconcileClosedProgramParents(
+		program: Manageable<any>,
+		owners: Set<Manageable<any>>,
+	): void {
+		for (const parent of program.parents ?? []) {
+			if (parent) owners.add(parent);
+		}
+		program.parents?.splice(0, program.parents.length);
+		for (const owner of owners) {
+			let childIndex = owner.children?.indexOf(program) ?? -1;
+			while (childIndex !== -1) {
+				owner.children.splice(childIndex, 1);
+				childIndex = owner.children.indexOf(program);
+			}
+		}
+	}
+
 	private async closeCompletely(program: Manageable<any>): Promise<void> {
+		const terminalChildCandidates = new Set<Manageable<any>>();
+		const terminalOwners = new Set<Manageable<any>>();
+		this.observeTerminalGraph(program, terminalChildCandidates, terminalOwners);
 		await this.waitForTerminalOperations(program);
+		this.observeTerminalGraph(program, terminalChildCandidates, terminalOwners);
+		let rollbackOwner = this._initializationRollbackOwners.get(program);
+		if (rollbackOwner) {
+			this.recordInitializationRollbackOwners(
+				rollbackOwner,
+				program.parents ?? [],
+			);
+		}
+		if (rollbackOwner?.phase === "pending-pre-base") {
+			await this.retryPendingInitializationRollbackOwner(
+				program,
+				rollbackOwner,
+			);
+			await this.waitForTerminalOperations(program);
+			this.observeTerminalGraph(
+				program,
+				terminalChildCandidates,
+				terminalOwners,
+			);
+		}
 		let terminalState = this._terminalOperationsByProgram.get(program);
-		while (!program.closed || terminalState?.failed) {
+		while (!terminalClosed(this, program) || terminalState?.failed) {
 			if (terminalState) {
 				// Applications/tests may replace a failed wrapped method before stop.
 				// Re-wrap any replacement in the existing identity-specific state before
@@ -1260,9 +2106,17 @@ export class Handler<T extends Manageable<any>> {
 			const wasRecovering = terminalState?.failed === true;
 			const failedCall = terminalState?.failedCall;
 			const ownersBefore = [...(program.parents ?? [])];
+			this.observeTerminalGraph(
+				program,
+				terminalChildCandidates,
+				terminalOwners,
+			);
+			if (rollbackOwner) {
+				this.recordInitializationRollbackOwners(rollbackOwner, ownersBefore);
+			}
 			const owner = wasRecovering
 				? (failedCall?.args[0] as Manageable<any> | undefined)
-				: program.closed
+				: terminalClosed(this, program)
 					? undefined
 					: ownersBefore[0];
 			const ownerReferencesBefore = ownersBefore.filter(
@@ -1286,12 +2140,21 @@ export class Handler<T extends Manageable<any>> {
 				operation as (...args: any[]) => Promise<boolean>
 			).apply(program, operationArgs);
 			await this.waitForTerminalOperations(program);
+			this.observeTerminalGraph(
+				program,
+				terminalChildCandidates,
+				terminalOwners,
+			);
 			terminalState = this._terminalOperationsByProgram.get(program);
+			rollbackOwner = this._initializationRollbackOwners.get(program);
+			if (rollbackOwner?.phase === "committed" && !terminalState?.failed) {
+				rollbackOwner.phase = "consumed";
+			}
 			if (
 				terminalState?.failed &&
 				terminalState.failedCall === failedCall &&
 				terminalState.failedOperation === operationType &&
-				((closed && program.closed) ||
+				((closed && terminalClosed(this, program)) ||
 					(failedCall?.commit != null && closed === failedCall.commit.result))
 			) {
 				// This also supports a test/application replacing the wrapped method
@@ -1302,10 +2165,15 @@ export class Handler<T extends Manageable<any>> {
 				terminalState.failed = false;
 				terminalState.failedOperation = undefined;
 				terminalState.failedCall = undefined;
-				terminalState.terminalCompleted = closed && program.closed;
+				terminalState.terminalCompleted =
+					closed && terminalClosed(this, program);
 				this.releaseRetainedTerminalIdentity(terminalState);
 				if (terminalState.cleanupLease) {
-					program[TERMINAL_OUTER_CLEANUP_RELEASE]?.(terminalState.cleanupLease);
+					releaseTerminalCleanupLease(
+						this,
+						program,
+						terminalState.cleanupLease,
+					);
 					terminalState.cleanupLease = undefined;
 				}
 				this.finishTerminalOperation(terminalState);
@@ -1325,8 +2193,15 @@ export class Handler<T extends Manageable<any>> {
 					Math.max(0, inverseEdges - ownerReferencesAfter),
 				);
 			}
-			if (program.closed && !terminalState?.failed) {
-				return;
+			if (rollbackOwner) {
+				this.recordInitializationRollbackOwners(rollbackOwner, ownersAfter);
+				this.reconcileInitializationRollbackOwnerReferences(
+					program,
+					rollbackOwner,
+				);
+			}
+			if (terminalClosed(this, program) && !terminalState?.failed) {
+				break;
 			}
 			if (wasRecovering && !terminalState?.failed) {
 				// The failed outer call has now completed. Its base ownership transition
@@ -1344,6 +2219,57 @@ export class Handler<T extends Manageable<any>> {
 				throw new Error(
 					`Program at ${program.address} did not make ownership progress while stopping (${ownersBefore.length} -> ${ownersAfter.length})`,
 				);
+			}
+		}
+		this.observeTerminalGraph(program, terminalChildCandidates, terminalOwners);
+		if (terminalClosed(this, program)) {
+			const childCleanupErrors: unknown[] = [];
+			await this.cleanupChildReferenceExcesses(
+				program.address,
+				program,
+				{ hadOwnProperty: true, value: [] },
+				terminalChildCandidates,
+				childCleanupErrors,
+				(child) => {
+					const childRollback = this._initializationRollbackOwners.get(child);
+					return childRollback != null && childRollback.phase !== "consumed";
+				},
+			);
+			this.observeTerminalGraph(
+				program,
+				terminalChildCandidates,
+				terminalOwners,
+			);
+			this.reconcileClosedProgramParents(program, terminalOwners);
+			if (childCleanupErrors.length > 0) {
+				throw childCleanupErrors[0];
+			}
+		}
+		rollbackOwner = this._initializationRollbackOwners.get(program);
+		if (rollbackOwner) {
+			this.recordInitializationRollbackOwners(
+				rollbackOwner,
+				program.parents ?? [],
+			);
+			if (terminalClosed(this, program) && !terminalState?.failed) {
+				this.reconcileInitializationRollbackOwnerReferences(
+					program,
+					rollbackOwner,
+				);
+			}
+			if (
+				!terminalClosed(this, program) ||
+				terminalState?.failed ||
+				rollbackOwner.phase !== "consumed" ||
+				!this.initializationRollbackGraphDetached(program, rollbackOwner)
+			) {
+				throw new Error(
+					`Program at ${rollbackOwner.address} still has initialization rollback cleanup`,
+				);
+			}
+			this._initializationRollbackOwners.delete(program);
+			if (this._failedInitializations.get(rollbackOwner.address) === program) {
+				this._failedInitializations.delete(rollbackOwner.address);
 			}
 		}
 	}
@@ -1366,12 +2292,67 @@ export class Handler<T extends Manageable<any>> {
 		}
 	}
 
+	private restoreUncommittedParentChildReferences(
+		program: Manageable<any>,
+		startedReferences: Map<Manageable<any>, number>,
+		observedParents: (Manageable<any> | undefined)[],
+	): void {
+		const affectedParents = new Set<Manageable<any>>(startedReferences.keys());
+		for (const parent of observedParents) {
+			if (parent != null) affectedParents.add(parent);
+		}
+		for (const parent of affectedParents) {
+			const expectedReferences = startedReferences.get(parent) ?? 0;
+			let currentReferences =
+				parent.children?.filter((child) => child === program).length ?? 0;
+			while (currentReferences > expectedReferences) {
+				const childIndex = parent.children?.lastIndexOf(program) ?? -1;
+				if (childIndex === -1) break;
+				parent.children!.splice(childIndex, 1);
+				currentReferences -= 1;
+			}
+			while (currentReferences < expectedReferences) {
+				(parent.children || (parent.children = [])).push(program);
+				currentReferences += 1;
+			}
+		}
+	}
+
+	private restoreUncommittedParentReferences(
+		program: Manageable<any>,
+		baseline: ArrayPropertyState<Manageable<any> | undefined>,
+	): void {
+		if (!baseline.hadOwnProperty) {
+			delete (program as Partial<Manageable<any>>).parents;
+			return;
+		}
+		if (baseline.reference) {
+			baseline.reference.splice(
+				0,
+				baseline.reference.length,
+				...(baseline.value ?? []),
+			);
+			program.parents = baseline.reference;
+			return;
+		}
+		program.parents = undefined;
+	}
+
 	private assertNoFailedInitialization(address: Address) {
+		if (
+			[...this._initializationRollbackOwners.values()].some(
+				(rollback) => rollback.address.toString() === address.toString(),
+			)
+		) {
+			throw new Error(
+				`Program at ${address} failed initialization cleanup and has pending rollback cleanup that must be stopped before reopen`,
+			);
+		}
 		const failed = this._failedInitializations.get(address);
 		if (!failed) {
 			return;
 		}
-		if (failed.closed) {
+		if (terminalClosed(this, failed)) {
 			if (this._terminalOperationsByAddress.get(address)?.failed) {
 				return;
 			}
@@ -1410,6 +2391,7 @@ export class Handler<T extends Manageable<any>> {
 		// parent traversal consumes the recorded commit through the new wrapper
 		// instead of calling the replacement outside Handler monitoring.
 		const pendingTerminalGraphs: Manageable<any>[] = [
+			...this._initializationRollbackOwners.keys(),
 			...this.items.values(),
 			...this._cleanupResiduals.keys(),
 		];
@@ -1431,7 +2413,20 @@ export class Handler<T extends Manageable<any>> {
 		// owners. Drain every ownership reference so stop cannot discard a still-live
 		// program from Handler state.
 		const closeErrors: unknown[] = [];
-		for (const [address, program] of [...this.items]) {
+		const cleanupTargets: Array<[Address, T]> = [];
+		const targetedPrograms = new Set<Manageable<any>>();
+		// Private rollback owners go first. Their public graph was intentionally
+		// restored, so they must not depend on an ancestor still exposing an edge.
+		for (const [program, rollback] of this._initializationRollbackOwners) {
+			cleanupTargets.push([rollback.address, program as T]);
+			targetedPrograms.add(program);
+		}
+		for (const [address, program] of this.items) {
+			if (targetedPrograms.has(program)) continue;
+			cleanupTargets.push([address, program]);
+			targetedPrograms.add(program);
+		}
+		for (const [address, program] of cleanupTargets) {
 			try {
 				await this.closeCompletely(program);
 			} catch (error) {
@@ -1439,7 +2434,7 @@ export class Handler<T extends Manageable<any>> {
 			}
 			const terminalState = this._terminalOperationsByProgram.get(program);
 			if (
-				program.closed &&
+				terminalClosed(this, program) &&
 				!terminalState?.failed &&
 				(terminalState?.activeCalls ?? 0) === 0 &&
 				this.items.get(address) === program
@@ -1447,8 +2442,9 @@ export class Handler<T extends Manageable<any>> {
 				this.items.delete(address);
 			}
 			if (
-				program.closed &&
+				terminalClosed(this, program) &&
 				!terminalState?.failed &&
+				!this._initializationRollbackOwners.has(program) &&
 				this._failedInitializations.get(address) === program
 			) {
 				this._failedInitializations.delete(address);
@@ -1467,7 +2463,7 @@ export class Handler<T extends Manageable<any>> {
 			}
 			const terminalState = this._terminalOperationsByProgram.get(program);
 			if (
-				program.closed &&
+				terminalClosed(this, program) &&
 				residual.failures.length === 0 &&
 				residual.terminalState == null &&
 				!terminalState?.failed &&
@@ -1478,6 +2474,11 @@ export class Handler<T extends Manageable<any>> {
 		}
 		if (closeErrors.length > 0) {
 			throw closeErrors[0];
+		}
+		if (this._initializationRollbackOwners.size > 0) {
+			throw new Error(
+				"Program handler still has initialization rollback owners after cleanup",
+			);
 		}
 
 		this.items = new Map();
@@ -1502,7 +2503,10 @@ export class Handler<T extends Manageable<any>> {
 		if (this.items.get(address) === program) {
 			this.items.delete(address);
 		}
-		if (this._failedInitializations.get(address) === program) {
+		if (
+			!this._initializationRollbackOwners.has(program) &&
+			this._failedInitializations.get(address) === program
+		) {
 			this._failedInitializations.delete(address);
 		}
 		// TODO remove item from this._openQueue?
@@ -1539,7 +2543,11 @@ export class Handler<T extends Manageable<any>> {
 			parent,
 			parentReferencesBefore - parentReferencesAfter,
 		);
-		if (!closed || !program.closed || parentReferencesAfter > 0) {
+		if (
+			!closed ||
+			!terminalClosed(this, program) ||
+			parentReferencesAfter > 0
+		) {
 			throw new Error(
 				`Program at ${address} cannot be replaced because close was not terminal`,
 			);
@@ -1558,7 +2566,7 @@ export class Handler<T extends Manageable<any>> {
 		this.assertNoFailedInitialization(address);
 		this.assertNoTerminalOperation(address, toOpen);
 		const prev = this.findMonitoredProgram(address, false, toOpen);
-		if (prev?.closed) {
+		if (prev && terminalClosed(this, prev)) {
 			if (this.items.get(address) === prev) {
 				this.items.delete(address);
 			}
@@ -1593,7 +2601,7 @@ export class Handler<T extends Manageable<any>> {
 			false,
 			requestedProgram,
 		);
-		if (existing?.closed) {
+		if (existing && terminalClosed(this, existing)) {
 			if (this.items.get(address) === existing) {
 				this.items.delete(address);
 			}
@@ -1630,15 +2638,225 @@ export class Handler<T extends Manageable<any>> {
 		return existing as S;
 	}
 
+	private async cleanupInitializationRollbackChildOccurrence(
+		address: Address,
+		program: Manageable<any>,
+		child: Manageable<any>,
+		cleanupErrors: unknown[],
+	): Promise<void> {
+		const referencesBefore =
+			child.parents?.filter((parent) => parent === program).length ?? 0;
+		let retainedFailure = false;
+		let cleanupReservation: CleanupResidual | undefined;
+		if (!terminalClosed(this, child) && referencesBefore > 0) {
+			const checkpoint = terminalCheckpoint(this, child);
+			cleanupReservation = this.acquireCleanupReservation(child);
+			try {
+				await (
+					child.close as unknown as (from?: Manageable<any>) => Promise<boolean>
+				).call(child, program);
+			} catch (cleanupError) {
+				retainedFailure = true;
+				const terminalState = this._terminalOperationsByProgram.get(child as T);
+				const handlerOwnsFailure =
+					terminalState?.failed === true &&
+					terminalState.failedCall?.type === "close" &&
+					this.sameTerminalArgs(terminalState.failedCall.args, [program]);
+				if (!handlerOwnsFailure) {
+					cleanupReservation.failures.push({
+						type: "close",
+						args: [program],
+						commit: terminalCommit(this, child, checkpoint, "close", program),
+					});
+				}
+				this.releaseCleanupReservation(cleanupReservation);
+				cleanupReservation = undefined;
+				cleanupErrors.push(cleanupError);
+				logger.error(
+					`Failed to close partially opened child of ${address}: ${String(
+						cleanupError,
+					)}`,
+				);
+			}
+		}
+		let referencesAfter =
+			child.parents?.filter((parent) => parent === program).length ?? 0;
+		if (
+			!retainedFailure &&
+			referencesAfter >= referencesBefore &&
+			referencesAfter > 0
+		) {
+			const parentIndex = child.parents.lastIndexOf(program);
+			child.parents.splice(parentIndex, 1);
+			referencesAfter -= 1;
+		}
+		if (cleanupReservation) {
+			this.releaseCleanupReservation(cleanupReservation);
+		}
+		const remainingProgramReferences =
+			child.parents?.filter((parent) => parent === program).length ?? 0;
+		if (!retainedFailure) {
+			const inverseReferences =
+				program.children?.filter((candidate) => candidate === child).length ??
+				0;
+			if (inverseReferences > remainingProgramReferences) {
+				const childIndex = program.children.indexOf(child);
+				if (childIndex !== -1) program.children.splice(childIndex, 1);
+			}
+		}
+	}
+
+	private rollbackChildReferenceExcess(
+		program: Manageable<any>,
+		child: Manageable<any>,
+		baselineCount: number,
+	): number {
+		const inverseReferences =
+			program.children?.filter((candidate) => candidate === child).length ?? 0;
+		const forwardReferences =
+			child.parents?.filter((parent) => parent === program).length ?? 0;
+		return Math.max(
+			0,
+			Math.max(inverseReferences, forwardReferences) - baselineCount,
+		);
+	}
+
+	private async cleanupChildReferenceExcesses(
+		address: Address,
+		program: Manageable<any>,
+		baseline: ArrayPropertyBaseline<Manageable<any>>,
+		childCandidates: Set<Manageable<any>>,
+		cleanupErrors: unknown[],
+		preserveChild?: (child: Manageable<any>) => boolean,
+	): Promise<void> {
+		const baselineChildCounts = new Map<Manageable<any>, number>();
+		for (const child of baseline.value ?? []) {
+			baselineChildCounts.set(child, (baselineChildCounts.get(child) ?? 0) + 1);
+			childCandidates.add(child);
+		}
+
+		// A blocked count records evidence on which one cleanup attempt made no
+		// progress. New evidence above that high-water mark is still processed, while
+		// an adversarial false/no-op close cannot make this scan loop forever.
+		const blockedAt = new Map<Manageable<any>, number>();
+		while (true) {
+			for (const child of program.children ?? []) {
+				childCandidates.add(child);
+			}
+			let next:
+				| { child: Manageable<any>; baselineCount: number; excess: number }
+				| undefined;
+			for (const child of childCandidates) {
+				if (child === program || preserveChild?.(child)) continue;
+				const baselineCount = baselineChildCounts.get(child) ?? 0;
+				const excess = this.rollbackChildReferenceExcess(
+					program,
+					child,
+					baselineCount,
+				);
+				const blockedCount = blockedAt.get(child);
+				if (excess > 0 && (blockedCount == null || excess > blockedCount)) {
+					next = { child, baselineCount, excess };
+					break;
+				}
+			}
+			if (!next) break;
+			await this.cleanupInitializationRollbackChildOccurrence(
+				address,
+				program,
+				next.child,
+				cleanupErrors,
+			);
+			const excessAfter = this.rollbackChildReferenceExcess(
+				program,
+				next.child,
+				next.baselineCount,
+			);
+			if (excessAfter >= next.excess) {
+				blockedAt.set(next.child, excessAfter);
+			} else {
+				blockedAt.delete(next.child);
+			}
+		}
+
+		// A failed generation can erase both sides of a newly opened child edge, and
+		// a hostile extra-occurrence close can over-release a legitimate baseline.
+		// Retain either remaining excess ownership or a still-live ownerless program;
+		// deciding after the full scan avoids retaining an already-drained duplicate.
+		for (const child of childCandidates) {
+			if (child === program) continue;
+			const baselineCount = baselineChildCounts.get(child) ?? 0;
+			const excess = this.rollbackChildReferenceExcess(
+				program,
+				child,
+				baselineCount,
+			);
+			if (preserveChild?.(child)) {
+				if (excess > 0) {
+					cleanupErrors.push(
+						new Error(
+							`Child program at ${child.address} still has initialization rollback cleanup`,
+						),
+					);
+				}
+				continue;
+			}
+			if (terminalClosed(this, child) || this._cleanupResiduals.has(child)) {
+				continue;
+			}
+			if (
+				this.items.get(child.address.toString()) === (child as T) ||
+				this._terminalOperationsByProgram.get(child as T)?.failed === true
+			) {
+				// The normal managed identity/terminal retry path already owns this
+				// program. A second residual would replay the same owner release after the
+				// managed close has drained it.
+				continue;
+			}
+			if (excess > 0) {
+				this.addCleanupResidual(child, { type: "close", args: [program] });
+			} else if ((child.parents?.length ?? 0) === 0) {
+				this.addCleanupResidual(child, { type: "close", args: [undefined] });
+			}
+		}
+	}
+
+	private restoreInitializationRollbackChildren(
+		program: Manageable<any>,
+		baseline: ArrayPropertyBaseline<Manageable<any>>,
+	): void {
+		const remainingByChild = new Map<Manageable<any>, number>();
+		const restored: Manageable<any>[] = [];
+		for (const child of baseline.value ?? []) {
+			let remaining = remainingByChild.get(child);
+			if (remaining == null) {
+				remaining = terminalClosed(this, child)
+					? 0
+					: (child.parents?.filter((parent) => parent === program).length ?? 0);
+			}
+			if (remaining > 0) {
+				restored.push(child);
+				remaining -= 1;
+			}
+			remainingByChild.set(child, remaining);
+		}
+		if (!baseline.hadOwnProperty) {
+			if (restored.length === 0) {
+				delete (program as Partial<Manageable<any>>).children;
+			} else {
+				program.children = restored;
+			}
+			return;
+		}
+		(program as { children?: Manageable<any>[] }).children =
+			baseline.value == null ? undefined : restored;
+	}
+
 	private async rollbackFailedInitialization(
 		address: Address,
 		program: Manageable<any>,
-		state: {
-			parents?: (Manageable<any> | undefined)[];
-			children?: Manageable<any>[];
-			parent?: Manageable<any>;
-			parentChildReferences: number;
-		},
+		state: InitializationRollbackBaseline,
+		knownPrograms: Iterable<Manageable<any>>,
 	): Promise<void> {
 		if (this.items.get(address) === program) {
 			this.items.delete(address);
@@ -1646,132 +2864,135 @@ export class Handler<T extends Manageable<any>> {
 
 		const cleanupErrors: unknown[] = [];
 		const childrenAfterFailure = [...(program.children ?? [])];
-		try {
-			if (!program.closed) {
-				await program.close();
-			}
-		} catch (cleanupError) {
-			cleanupErrors.push(cleanupError);
-			logger.error(
-				`Failed to close partially opened program at ${address}: ${String(
-					cleanupError,
-				)}`,
+		const rollbackOwner: InitializationRollbackOwner = {
+			address,
+			owner: state.parent,
+			phase: "pending-pre-base",
+			parents: state.parents,
+			children: state.children,
+			ownerChildren: state.parentChildren,
+			ownerChildrenWorkingReference: state.parentChildrenWorkingReference,
+			ownerChildrenWorkingSnapshot: state.parentChildrenWorkingSnapshot,
+			observedOwners: new Set(
+				(state.parents.value ?? []).filter(
+					(owner): owner is Manageable<any> => owner != null,
+				),
+			),
+			childCandidates: new Set(
+				[
+					...(state.children.value ?? []),
+					...childrenAfterFailure,
+					...knownPrograms,
+				].filter((candidate) => candidate !== program),
+			),
+		};
+		if (state.parent) rollbackOwner.observedOwners.add(state.parent);
+		let retainRollbackOwner = false;
+		// Snapshot comparison must happen before close(). A successful base close is
+		// expected to splice its exact owner edge from this same array, whereas a
+		// caller mutation that already changed the array is concurrent state that the
+		// rollback must preserve.
+		this.adoptExactGeneratedRollbackOwnerChildrenReference(rollbackOwner);
+		this.recordRollbackOwnerChildrenDivergence(rollbackOwner);
+		if (!terminalClosed(this, program)) {
+			const checkpoint = terminalCheckpoint(this, program);
+			const forwardBefore = this.rollbackOwnerReferenceCount(
+				program,
+				rollbackOwner.owner,
 			);
-		}
-
-		// beforeOpen() can attach nested children before the parent itself becomes
-		// open. Remove only relationships added by this failed generation, then
-		// restore the exact caller-visible parent/child arrays captured at entry.
-		const baselineChildCounts = new Map<Manageable<any>, number>();
-		for (const child of state.children ?? []) {
-			baselineChildCounts.set(child, (baselineChildCounts.get(child) ?? 0) + 1);
-		}
-		const currentChildCounts = new Map<Manageable<any>, number>();
-		for (const child of childrenAfterFailure) {
-			currentChildCounts.set(child, (currentChildCounts.get(child) ?? 0) + 1);
-		}
-		for (const [child, currentCount] of currentChildCounts) {
-			const baselineCount = baselineChildCounts.get(child) ?? 0;
-			let extra = currentCount - baselineCount;
-			while (extra > 0) {
-				const referencesBefore =
-					child.parents?.filter((parent) => parent === program).length ?? 0;
-				let retainedFailure = false;
-				let cleanupReservation: CleanupResidual | undefined;
-				if (!child.closed && referencesBefore > 0) {
-					const checkpoint = this.terminalCheckpoint(child);
-					cleanupReservation = this.acquireCleanupReservation(child);
-					try {
-						await (
-							child.close as unknown as (
-								from?: Manageable<any>,
-							) => Promise<boolean>
-						).call(child, program);
-					} catch (cleanupError) {
-						retainedFailure = true;
-						const terminalState = this._terminalOperationsByProgram.get(
-							child as T,
-						);
-						const handlerOwnsFailure =
-							terminalState?.failed === true &&
-							terminalState.failedCall?.type === "close" &&
-							this.sameTerminalArgs(terminalState.failedCall.args, [program]);
-						if (handlerOwnsFailure) {
-						} else {
-							cleanupReservation.failures.push({
-								type: "close",
-								args: [program],
-								commit: this.terminalCommit(
-									child,
-									checkpoint,
-									"close",
-									program,
-								),
-							});
-						}
-						this.releaseCleanupReservation(cleanupReservation);
-						cleanupReservation = undefined;
-						cleanupErrors.push(cleanupError);
-						logger.error(
-							`Failed to close partially opened child of ${address}: ${String(
-								cleanupError,
-							)}`,
-						);
-					}
-				}
-				let referencesAfter =
-					child.parents?.filter((parent) => parent === program).length ?? 0;
+			const inverseBefore = this.rollbackInverseReferenceCount(
+				program,
+				rollbackOwner.owner,
+			);
+			try {
+				// Manageable's historical Closeable surface omits the ownership argument.
+				// Keep the widening local to this exact Handler-controlled call.
+				const closed = await (
+					program.close as unknown as (
+						from?: Manageable<any>,
+					) => Promise<boolean>
+				).call(program, state.parent);
+				const releasedExactOwner = this.rollbackReleasedExactOwnerReference(
+					program,
+					rollbackOwner,
+					forwardBefore,
+					inverseBefore,
+				);
 				if (
-					!retainedFailure &&
-					referencesAfter >= referencesBefore &&
-					referencesAfter > 0
+					closed &&
+					terminalClosed(this, program) &&
+					releasedExactOwner &&
+					this.initializationRollbackOwnerDetached(program, rollbackOwner)
 				) {
-					const parentIndex = child.parents.lastIndexOf(program);
-					child.parents.splice(parentIndex, 1);
-					referencesAfter -= 1;
+					// A terminal close consumed the failed generation completely.
+				} else if (!closed && releasedExactOwner) {
+					// Only the failed generation's one lease was released. The still-live
+					// instance remains quarantined until stop closes its baseline owners.
+					rollbackOwner.phase = "consumed";
+					retainRollbackOwner = true;
+				} else {
+					const cleanupError = new Error(
+						`Program at ${address} did not release its initialization rollback owner`,
+					);
+					cleanupErrors.push(cleanupError);
+					retainRollbackOwner = true;
+					logger.error(cleanupError.message);
 				}
-				if (cleanupReservation) {
-					this.releaseCleanupReservation(cleanupReservation);
-				}
-				extra -= 1;
+			} catch (cleanupError) {
+				rollbackOwner.phase = terminalCommit(
+					this,
+					program,
+					checkpoint,
+					"close",
+					state.parent,
+				)
+					? "committed"
+					: "pending-pre-base";
+				retainRollbackOwner = true;
+				cleanupErrors.push(cleanupError);
+				logger.error(
+					`Failed to close partially opened program at ${address}: ${String(
+						cleanupError,
+					)}`,
+				);
+			} finally {
+				this.recordInitializationRollbackPostCloseState(program, rollbackOwner);
 			}
-			const remainingProgramReferences =
-				child.parents?.filter((parent) => parent === program).length ?? 0;
-			if (
-				!child.closed &&
-				baselineCount === 0 &&
-				(remainingProgramReferences > 0 || (child.parents?.length ?? 0) === 0)
-			) {
-				// A failed nested cleanup must remain reachable by stop(); restoring the
-				// caller-visible arrays alone would otherwise orphan a live resource.
-				if (!this._cleanupResiduals.has(child)) {
-					this.addCleanupResidual(child, {
-						type: "close",
-						args: [remainingProgramReferences > 0 ? program : undefined],
-					});
-				}
-			}
+		} else {
+			this.recordInitializationRollbackPostCloseState(program, rollbackOwner);
 		}
 
-		(program as { parents?: (Manageable<any> | undefined)[] }).parents =
-			state.parents ? [...state.parents] : undefined;
-		(program as { children?: Manageable<any>[] }).children = state.children
-			? [...state.children]
-			: undefined;
-		if (state.parent) {
-			let currentReferences =
-				state.parent.children?.filter((child) => child === program).length ?? 0;
-			while (currentReferences > state.parentChildReferences) {
-				const childIndex = state.parent.children.lastIndexOf(program);
-				if (childIndex === -1) {
-					break;
-				}
-				state.parent.children.splice(childIndex, 1);
-				currentReferences -= 1;
-			}
+		// beforeOpen() and application terminal callbacks can attach nested children
+		// at any awaited rollback boundary. Consume every occurrence beyond the
+		// baseline, including a forward-only edge hidden from program.children.
+		await this.cleanupChildReferenceExcesses(
+			address,
+			program,
+			rollbackOwner.children,
+			rollbackOwner.childCandidates,
+			cleanupErrors,
+		);
+
+		// Nested-child cleanup above can await arbitrary application code after the
+		// close boundary. Re-capture immediately before the synchronous restore so
+		// no owner or property identity adopted in that interval is erased.
+		this.recordInitializationRollbackPostCloseState(program, rollbackOwner);
+		this.restoreInitializationRollbackBaseline(program, rollbackOwner, false);
+		this.restoreInitializationRollbackChildren(program, state.children);
+		this.reconcileInitializationRollbackOwnerReferences(program, rollbackOwner);
+		if (
+			!retainRollbackOwner &&
+			!this.initializationRollbackGraphDetached(program, rollbackOwner)
+		) {
+			retainRollbackOwner = true;
+		}
+		if (retainRollbackOwner) {
+			this._initializationRollbackOwners.set(program, rollbackOwner);
+		} else {
+			this._initializationRollbackOwners.delete(program);
 		}
 
-		if (!program.closed) {
+		if (retainRollbackOwner || !terminalClosed(this, program)) {
 			// Never manufacture a terminal state after close() failed. Keep the
 			// partially initialized instance identity-tracked so later opens cannot
 			// reuse it and stop() can retry cleanup.
@@ -1815,7 +3036,7 @@ export class Handler<T extends Manageable<any>> {
 	): void {
 		for (const state of reservation.provisionalTerminalStates) {
 			if (
-				!state.program.closed ||
+				!terminalClosed(this, state.program) ||
 				state.activeCalls > 0 ||
 				state.pending.size > 0 ||
 				state.failed ||
@@ -1982,7 +3203,10 @@ export class Handler<T extends Manageable<any>> {
 	}
 
 	private assertParentCanOwnOpen(parent: Manageable<any>): void {
-		if (this._initializationRollbacks.has(parent)) {
+		if (
+			this._initializationRollbacks.has(parent) ||
+			this._initializationRollbackOwners.has(parent)
+		) {
 			throw new Error(
 				"Parent program is finishing initialization rollback cleanup",
 			);
@@ -2003,7 +3227,7 @@ export class Handler<T extends Manageable<any>> {
 		) {
 			throw new Error("Parent program is finishing terminal cleanup");
 		}
-		if (parent.closed) {
+		if (terminalClosed(this, parent)) {
 			throw new Error("Parent program is closed");
 		}
 	}
@@ -2343,7 +3567,7 @@ export class Handler<T extends Manageable<any>> {
 					const existing = this.findMonitoredProgram(address);
 					if (existing) {
 						// Be defensive: stale handles shouldn't be returned from the cache.
-						if (existing.closed) {
+						if (terminalClosed(this, existing)) {
 							if (this.items.get(address) === existing) {
 								this.items.delete(address);
 							}
@@ -2387,7 +3611,7 @@ export class Handler<T extends Manageable<any>> {
 					throw new Error("Parent program can not be equal to the program");
 				}
 
-				if (!program.closed) {
+				if (!terminalClosed(this, program)) {
 					this.assertNoFailedInitialization(program.address);
 					this.assertNoTerminalOperation(program.address, program);
 					const existing = this.findMonitoredProgram(program.address);
@@ -2490,13 +3714,36 @@ export class Handler<T extends Manageable<any>> {
 				return existing as S;
 			}
 
+			const parentChildrenState = options.parent
+				? this.captureArrayPropertyState<Manageable<any>>(
+						options.parent,
+						"children",
+					)
+				: undefined;
 			const rollbackState = {
-				parents: program.parents ? [...program.parents] : undefined,
-				children: program.children ? [...program.children] : undefined,
+				parents: this.captureArrayProperty<Manageable<any> | undefined>(
+					program,
+					"parents",
+				),
+				children: this.captureArrayProperty<Manageable<any>>(
+					program,
+					"children",
+				),
 				parent: options.parent,
-				parentChildReferences:
-					options.parent?.children?.filter((child) => child === program)
-						.length ?? 0,
+				parentChildren:
+					parentChildrenState == null
+						? undefined
+						: {
+								hadOwnProperty: parentChildrenState.hadOwnProperty,
+								value: parentChildrenState.value,
+							},
+				parentChildrenWorkingReference: parentChildrenState?.reference,
+				parentChildrenWorkingSnapshot: options.parent
+					? {
+							hadOwnProperty: true,
+							value: [...(parentChildrenState?.value ?? []), program],
+						}
+					: undefined,
 			};
 			this.monitorTerminalOperations(address, program);
 			try {
@@ -2514,6 +3761,15 @@ export class Handler<T extends Manageable<any>> {
 					program.beforeOpen(this.properties.client, {
 						...programOptions,
 						onBeforeOpen: async (p) => {
+							if (options.parent) {
+								rollbackState.parentChildrenWorkingReference =
+									options.parent.children;
+								rollbackState.parentChildrenWorkingSnapshot =
+									this.captureArrayProperty<Manageable<any>>(
+										options.parent,
+										"children",
+									);
+							}
 							if (this.properties.shouldMonitor(program)) {
 								this.items.set(address, program);
 							}
@@ -2585,6 +3841,7 @@ export class Handler<T extends Manageable<any>> {
 							address,
 							program,
 							rollbackState,
+							rollbackPrograms,
 						);
 					} finally {
 						for (const rollbackProgram of rollbackPrograms) {
@@ -2607,7 +3864,7 @@ export class Handler<T extends Manageable<any>> {
 			if (typeof storeOrAddress === "string") {
 				return storeOrAddress;
 			}
-			resolvedWithoutSaving = storeOrAddress.closed;
+			resolvedWithoutSaving = terminalClosed(this, storeOrAddress);
 			resolvedDependencyAddresses =
 				await this.resolveDependencyAddresses(storeOrAddress);
 			const address = resolvedDependencyAddresses.get(storeOrAddress);
@@ -2718,7 +3975,7 @@ export class Handler<T extends Manageable<any>> {
 				// stale closed cache entry, however, is evicted before fn() starts the
 				// new generation visible to parent opens.
 				const existing = this.findMonitoredProgram(address);
-				if (existing?.closed) {
+				if (existing && terminalClosed(this, existing)) {
 					this.assertNoTerminalOperation(
 						address,
 						typeof storeOrAddress === "string" ? undefined : storeOrAddress,
