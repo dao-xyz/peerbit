@@ -3723,7 +3723,7 @@ describe(`shared`, () => {
 				publicClosedReads += 1;
 				return true;
 			},
-			set: () => undefined,
+			set: () => {},
 		});
 		candidate.close = async (from) =>
 			Program.prototype.close.call(candidate, from);
@@ -3917,7 +3917,7 @@ describe(`shared`, () => {
 					closedReads += 1;
 					return true;
 				},
-				set: () => undefined,
+				set: () => {},
 			},
 			pendingTerminalOperation: {
 				configurable: true,
