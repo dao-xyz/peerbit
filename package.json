@@ -195,7 +195,7 @@
 			"protobufjs": "7.6.3",
 			"qs": "6.15.2",
 			"rollup@4": "4.59.0",
-			"shell-quote": "1.8.4",
+			"shell-quote": "1.9.0",
 			"smol-toml": "1.6.1",
 			"tmp@0.2": "0.2.7",
 			"vite@7.3.6>esbuild": "0.28.1",
