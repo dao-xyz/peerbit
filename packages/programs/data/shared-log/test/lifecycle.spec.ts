@@ -39,6 +39,101 @@ describe("lifecycle", () => {
 			expect(closeLog.called).to.be.true;
 		});
 
+		it("keeps a reopened warmup generation behind an active closing send", async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const sharedLog = db.log as any;
+			let releaseOldSimple: (() => void) | undefined;
+			let markOldSimpleStarted!: () => void;
+			const oldSimpleStarted = new Promise<void>((resolve) => {
+				markOldSimpleStarted = resolve;
+			});
+			let activeSimpleSends = 0;
+			let maxActiveSimpleSends = 0;
+			const simpleEntryBatches: string[][] = [];
+			const send = sinon
+				.stub(sharedLog, "sendRepairEntriesWithTransport")
+				.callsFake(async (...args: unknown[]) => {
+					if (args[2] !== "simple") {
+						return;
+					}
+					activeSimpleSends += 1;
+					maxActiveSimpleSends = Math.max(
+						maxActiveSimpleSends,
+						activeSimpleSends,
+					);
+					simpleEntryBatches.push([
+						...(args[1] as Map<string, unknown>).keys(),
+					]);
+					try {
+						if (simpleEntryBatches.length === 1) {
+							markOldSimpleStarted();
+							await new Promise<void>((resolve) => {
+								releaseOldSimple = resolve;
+							});
+						}
+					} finally {
+						activeSimpleSends -= 1;
+					}
+				});
+
+			try {
+				sharedLog.dispatchMaybeMissingEntries(
+					"target",
+					new Map([["old", { hash: "old" }]]),
+					{
+						bypassRecentDedupe: true,
+						mode: "join-warmup",
+						retryScheduleMs: [0, 1],
+					},
+				);
+				await oldSimpleStarted;
+				const runningState = sharedLog._joinWarmupSendStateByTarget.get(
+					"target",
+				);
+				const oldGeneration = runningState.generation;
+
+				await db.close();
+				expect(
+					sharedLog._joinWarmupSendStateByTarget.get("target"),
+				).to.equal(runningState);
+				await session.peers[0].open(db);
+				expect(
+					sharedLog._joinWarmupSendStateByTarget.get("target"),
+				).to.equal(runningState);
+
+				sharedLog.dispatchMaybeMissingEntries(
+					"target",
+					new Map([["new", { hash: "new" }]]),
+					{
+						bypassRecentDedupe: true,
+						mode: "join-warmup",
+						retryScheduleMs: [0, 1],
+					},
+				);
+				await delay(20);
+				const reopenedState =
+					sharedLog._joinWarmupSendStateByTarget.get("target");
+				expect(reopenedState.generation).to.not.equal(oldGeneration);
+				expect(
+					sharedLog._joinWarmupGenerationByTarget.get("target"),
+				).to.equal(reopenedState.generation);
+				expect(simpleEntryBatches).to.deep.equal([["old"]]);
+				expect(maxActiveSimpleSends).to.equal(1);
+
+				expect(releaseOldSimple).to.be.a("function");
+				releaseOldSimple!();
+				await waitForResolved(() =>
+					expect(simpleEntryBatches).to.deep.equal([["old"], ["new"]]),
+				);
+				expect(maxActiveSimpleSends).to.equal(1);
+			} finally {
+				releaseOldSimple?.();
+				await delay(300);
+				send.restore();
+			}
+		});
+
 		for (const target of [
 			"entry coordinates index",
 			"replication range index",
@@ -162,6 +257,55 @@ describe("lifecycle", () => {
 				releaseLookup();
 				lookup.restore();
 				send.restore();
+			}
+		});
+	}
+
+	for (const operation of ["close", "drop"] as const) {
+		it(`${operation} cancels warmup work created while subscription callbacks drain`, async () => {
+			session = await TestSession.connected(1);
+			const db = await session.peers[0].open(new EventStore());
+			const sharedLog = db.log as any;
+			const target = "late-subscription-target";
+			const drainSubscriptionCallbacks = sinon
+				.stub(sharedLog, "drainSubscriptionChangeCallbacks")
+				.callsFake(async () => {
+					const generation = sharedLog.getJoinWarmupGeneration(target);
+					sharedLog.scheduleJoinWarmupRetries(
+						target,
+						generation,
+						[60_000],
+						new Map([["late-entry", { hash: "late-entry" }]]),
+						false,
+					);
+					expect(
+						sharedLog._joinWarmupGenerationByTarget.get(target),
+					).to.equal(generation);
+					expect(
+						sharedLog._joinWarmupRetryTimersByTarget.get(target)?.size,
+					).to.equal(1);
+				});
+			const drainReceiveHandlers = sinon
+				.stub(sharedLog, "drainReceiveHandlers")
+				.callsFake(async () => {
+					expect(
+						sharedLog._joinWarmupGenerationByTarget.has(target),
+					).to.be.false;
+					expect(
+						sharedLog._joinWarmupRetryTimersByTarget.has(target),
+					).to.be.false;
+					expect(
+						sharedLog._joinWarmupScheduledRetriesByTarget.has(target),
+					).to.be.false;
+				});
+
+			try {
+				await db[operation]();
+				expect(drainSubscriptionCallbacks.calledOnce).to.be.true;
+				expect(drainReceiveHandlers.calledOnce).to.be.true;
+			} finally {
+				drainSubscriptionCallbacks.restore();
+				drainReceiveHandlers.restore();
 			}
 		});
 	}
