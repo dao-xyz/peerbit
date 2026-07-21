@@ -2860,6 +2860,213 @@ resolutions.forEach((resolution) => {
 						meta: properties.meta,
 					} as any);
 				};
+				const observeIterationRequests = (
+					target: Index<EntryReplicated<R>>,
+				) => {
+					const requests: any[] = [];
+					return {
+						index: {
+							iterate: (request?: any, options?: any) => {
+								requests.push(request);
+								return target.iterate(request, options);
+							},
+						} as unknown as Index<EntryReplicated<R>>,
+						requests,
+					};
+				};
+				const createSparseRebalanceChanges = (
+					componentCount: number,
+					boundaryIndex?: number,
+				) => {
+					const step = 1 / componentCount;
+					const width = step / 4;
+					const seamOffset = 1 - width / 2;
+					const offsetAt = (index: number) => (seamOffset + index * step) % 1;
+					const centerAt = (index: number) => (offsetAt(index) + width / 2) % 1;
+					const gapAt = (index: number) =>
+						(offsetAt(index) + width + (step - width) / 2) % 1;
+					const ranges = Array.from({ length: componentCount }, (_, index) =>
+						createReplicationRangeFromNormalized({
+							publicKey: a,
+							offset: offsetAt(index),
+							width,
+							mode:
+								index === boundaryIndex
+									? ReplicationIntent.NonStrict
+									: ReplicationIntent.Strict,
+							timestamp: BigInt(index + 1),
+						}),
+					);
+					return {
+						changes: ranges.map(
+							(range): ReplicationChange<ReplicationRangeIndexable<R>> => ({
+								range,
+								type: "added",
+								timestamp: range.timestamp,
+							}),
+						),
+						centerAt,
+						gapAt,
+						ranges,
+					};
+				};
+				const createTestEntry = (
+					gid: string,
+					coordinate: number | number[],
+					assignedToRangeBoundary = false,
+				) =>
+					createEntryReplicated({
+						coordinate: (Array.isArray(coordinate)
+							? coordinate.map(denormalizeFn)
+							: denormalizeFn(coordinate)) as
+							| NumberFromType<R>
+							| NumberFromType<R>[],
+						assignedToRangeBoundary,
+						hash: gid,
+						meta: new Meta({
+							clock: new LamportClock({ id: randomBytes(32) }),
+							gid,
+							next: [],
+							type: 0,
+							data: undefined,
+						}),
+					});
+				const expectFilteredBoundedRequests = (requests: any[]) => {
+					for (const request of requests) {
+						expect(request?.query).to.not.equal(undefined);
+						expect(request.query.or).to.be.an("array");
+						expect(request.query.or.length).to.be.at.most(128);
+					}
+				};
+
+				it("processes replacement overlap accumulated while a debounce run is blocked", async () => {
+					await create(
+						createEntryReplicated({
+							coordinate: denormalizeFn(0.1),
+							assignedToRangeBoundary: false,
+							hash: "left",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "left",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						createEntryReplicated({
+							coordinate: denormalizeFn(0.4),
+							assignedToRangeBoundary: false,
+							hash: "overlap",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "overlap",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						createEntryReplicated({
+							coordinate: denormalizeFn(0.7),
+							assignedToRangeBoundary: false,
+							hash: "right",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "right",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+
+					let markBlocked!: () => void;
+					const blocked = new Promise<void>((resolve) => {
+						markBlocked = resolve;
+					});
+					let releaseBlocked!: () => void;
+					const release = new Promise<void>((resolve) => {
+						releaseBlocked = resolve;
+					});
+					const batches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						batches.push(changes);
+						if (batches.length === 1) {
+							markBlocked();
+							await release;
+						}
+					}, 60_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.01,
+						timestamp: 1n,
+					});
+					const previous = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0,
+						width: 0.6,
+						timestamp: 2n,
+					});
+					const current = createReplicationRangeFromNormalized({
+						id: previous.id,
+						publicKey: a,
+						offset: 0.2,
+						width: 0.6,
+						timestamp: 3n,
+					});
+
+					try {
+						const firstRun = debounce.add({
+							range: blocker,
+							type: "added",
+							timestamp: blocker.timestamp,
+						});
+						await blocked;
+						const previousPending = debounce.add({
+							range: previous,
+							type: "replaced",
+							timestamp: previous.timestamp,
+						});
+						const currentPending = debounce.add({
+							range: current,
+							type: "added",
+							timestamp: current.timestamp,
+						});
+						const flushed = debounce.flush();
+						releaseBlocked();
+						await Promise.all([
+							firstRun,
+							previousPending,
+							currentPending,
+							flushed,
+						]);
+
+						expect(batches).to.have.length(2);
+						expect(batches[1].map((change) => change.type)).to.deep.equal([
+							"replaced",
+							"added",
+						]);
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(
+								batches[1],
+								index,
+								new Cache<string>({ max: 1000, ttl: 1e5 }),
+							),
+						);
+						expect(result.map((entry) => entry.gid)).to.have.members([
+							"left",
+							"overlap",
+							"right",
+						]);
+						expect(result).to.have.length(3);
+					} finally {
+						releaseBlocked();
+						debounce.close();
+					}
+				});
 
 				it("uses bounded batches and closes the rebalance iterator", async () => {
 					const entries = Array.from({ length: 1049 }, (_, i) =>
@@ -2912,6 +3119,342 @@ resolutions.forEach((resolution) => {
 					expect(nextCalls).to.deep.equal([1048, 1048]);
 					expect(allCalls).to.equal(0);
 					expect(closeCalls).to.equal(1);
+				});
+
+				it("commits rebalance history only after complete successful iteration", async () => {
+					const range = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.2,
+						width: 0.2,
+						mode: ReplicationIntent.Strict,
+						timestamp: 1n,
+					});
+					const entry = createEntryReplicated({
+						coordinate: denormalizeFn(0.25),
+						assignedToRangeBoundary: false,
+						hash: "entry",
+						meta: new Meta({
+							clock: new LamportClock({ id: randomBytes(32) }),
+							gid: "entry",
+							next: [],
+							type: 0,
+							data: undefined,
+						}),
+					});
+					const changes: ReplicationChange<ReplicationRangeIndexable<R>>[] = [
+						{ range, type: "added", timestamp: range.timestamp },
+					];
+					const makeIndex = (failure?: "next" | "close") => {
+						let offset = 0;
+						let closeCalls = 0;
+						const iterator = {
+							next: async () => {
+								if (failure === "next") {
+									throw new Error("query failed");
+								}
+								offset = 1;
+								return [{ value: entry }] as any;
+							},
+							all: async () => [{ value: entry }] as any,
+							done: () => offset >= 1,
+							close: async () => {
+								closeCalls++;
+								if (failure === "close") {
+									throw new Error("close failed");
+								}
+							},
+							pending: async () => 1 - offset,
+						};
+						return {
+							index: {
+								iterate: () => iterator,
+							} as unknown as Index<EntryReplicated<R>>,
+							get closeCalls() {
+								return closeCalls;
+							},
+						};
+					};
+
+					const failedCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const failed = makeIndex("next");
+					let failedError: unknown;
+					try {
+						await consumeAllFromAsyncIterator(
+							toRebalance(changes, failed.index, failedCache),
+						);
+					} catch (error) {
+						failedError = error;
+					}
+					expect(failedError).to.be.instanceOf(Error);
+					expect(failed.closeCalls).to.equal(1);
+					expect(failedCache.has(range.rangeHash)).to.be.false;
+
+					const interruptedCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const interrupted = makeIndex();
+					for await (const _entry of toRebalance(
+						changes,
+						interrupted.index,
+						interruptedCache,
+					)) {
+						break;
+					}
+					expect(interrupted.closeCalls).to.equal(1);
+					expect(interruptedCache.has(range.rangeHash)).to.be.false;
+
+					const closeFailureCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const closeFailure = makeIndex("close");
+					let closeError: unknown;
+					try {
+						await consumeAllFromAsyncIterator(
+							toRebalance(changes, closeFailure.index, closeFailureCache),
+						);
+					} catch (error) {
+						closeError = error;
+					}
+					expect(closeError).to.be.instanceOf(Error);
+					expect(closeFailure.closeCalls).to.equal(1);
+					expect(closeFailureCache.has(range.rangeHash)).to.be.false;
+
+					const successfulCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const successful = makeIndex();
+					await consumeAllFromAsyncIterator(
+						toRebalance(changes, successful.index, successfulCache),
+					);
+					expect(successful.closeCalls).to.equal(1);
+					expect(successfulCache.has(range.rangeHash)).to.be.true;
+				});
+
+				it("queries 1024 exact sparse components without filling their gaps", async () => {
+					const sparse = createSparseRebalanceChanges(1024, 512);
+					await create(
+						createTestEntry("seam", sparse.centerAt(0)),
+						createTestEntry("inside", sparse.centerAt(10)),
+						createTestEntry("multi", [
+							sparse.centerAt(10),
+							sparse.centerAt(300),
+						]),
+						createTestEntry("boundary", sparse.centerAt(700), true),
+						createTestEntry("gap", sparse.gapAt(10)),
+					);
+					const cache = new Cache<string>({ max: 5000, ttl: 1e5 });
+					const observed = observeIterationRequests(index);
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance(sparse.changes, observed.index, cache),
+					);
+					expect(result.map((entry) => entry.gid)).to.have.members([
+						"seam",
+						"inside",
+						"multi",
+						"boundary",
+					]);
+					expect(result).to.have.length(4);
+					expect(
+						result.filter((entry) => entry.gid === "multi"),
+					).to.have.length(1);
+					expect(
+						result.filter((entry) => entry.gid === "boundary"),
+					).to.have.length(1);
+					expect(result.some((entry) => entry.gid === "gap")).to.be.false;
+
+					expect(observed.requests).to.have.length(9);
+					expectFilteredBoundedRequests(observed.requests);
+					expect(observed.requests[0].query.or).to.have.length(1);
+					expect(
+						observed.requests[1].query.or.some(
+							(query: any) => Array.isArray(query.or) && query.or.length === 2,
+						),
+					).to.be.true;
+					expect(cache.has(sparse.ranges[1023].rangeHash)).to.be.true;
+				});
+
+				it("queries 4096 evenly spaced components exactly in bounded batches", async () => {
+					const sparse = createSparseRebalanceChanges(4096);
+					await create(
+						createTestEntry("seam", sparse.centerAt(0)),
+						createTestEntry("middle", sparse.centerAt(2048)),
+						createTestEntry("multi", [
+							sparse.centerAt(127),
+							sparse.centerAt(128),
+						]),
+						createTestEntry("gap", sparse.gapAt(2048)),
+					);
+					const cache = new Cache<string>({ max: 5000, ttl: 1e5 });
+					const observed = observeIterationRequests(index);
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance(sparse.changes, observed.index, cache),
+					);
+					expect(result.map((entry) => entry.gid)).to.have.members([
+						"seam",
+						"middle",
+						"multi",
+					]);
+					expect(result).to.have.length(3);
+					expect(
+						result.filter((entry) => entry.gid === "multi"),
+					).to.have.length(1);
+					expect(result.some((entry) => entry.gid === "gap")).to.be.false;
+					expect(observed.requests).to.have.length(32);
+					expectFilteredBoundedRequests(observed.requests);
+					expect(
+						observed.requests[0].query.or.some(
+							(query: any) => Array.isArray(query.or) && query.or.length === 2,
+						),
+					).to.be.true;
+					expect(cache.has(sparse.ranges[4095].rangeHash)).to.be.true;
+				});
+
+				it("does not commit history after a middle-batch failure or early return", async () => {
+					const sparse = createSparseRebalanceChanges(300);
+					const middleEntry = createTestEntry("middle", sparse.centerAt(200));
+					const makeSequentialIndex = (properties?: {
+						failure?: "next" | "close";
+						includeMiddleEntry?: boolean;
+					}) => {
+						const requests: any[] = [];
+						const closed: number[] = [];
+						let active = 0;
+						return {
+							index: {
+								iterate: (request?: any) => {
+									expect(active).to.equal(0);
+									active++;
+									const pass = requests.length;
+									requests.push(request);
+									let done = false;
+									return {
+										next: async () => {
+											if (pass === 1 && properties?.failure === "next") {
+												throw new Error("middle query failed");
+											}
+											done = true;
+											return pass === 1 && properties?.includeMiddleEntry
+												? ([{ value: middleEntry }] as any)
+												: [];
+										},
+										all: async () => {
+											throw new Error(
+												"unbounded iterator drain should not be used",
+											);
+										},
+										done: () => done,
+										close: async () => {
+											closed.push(pass);
+											active--;
+											if (pass === 1 && properties?.failure === "close") {
+												throw new Error("middle close failed");
+											}
+										},
+										pending: async () => (done ? 0 : 1),
+									};
+								},
+							} as unknown as Index<EntryReplicated<R>>,
+							requests,
+							closed,
+							get active() {
+								return active;
+							},
+						};
+					};
+
+					for (const failure of ["next", "close"] as const) {
+						const cache = new Cache<string>({ max: 5000, ttl: 1e5 });
+						const observed = makeSequentialIndex({ failure });
+						let caught: unknown;
+						try {
+							await consumeAllFromAsyncIterator(
+								toRebalance(sparse.changes, observed.index, cache),
+							);
+						} catch (error) {
+							caught = error;
+						}
+						expect(caught).to.be.instanceOf(Error);
+						expect(observed.closed).to.deep.equal([0, 1]);
+						expect(observed.active).to.equal(0);
+						expect(observed.requests).to.have.length(2);
+						expectFilteredBoundedRequests(observed.requests);
+						expect(cache.has(sparse.ranges[299].rangeHash)).to.be.false;
+					}
+
+					const interruptedCache = new Cache<string>({
+						max: 5000,
+						ttl: 1e5,
+					});
+					const interrupted = makeSequentialIndex({
+						includeMiddleEntry: true,
+					});
+					const iterator = toRebalance(
+						sparse.changes,
+						interrupted.index,
+						interruptedCache,
+					)[Symbol.asyncIterator]();
+					const first = await iterator.next();
+					expect(first.done).to.be.false;
+					expect(first.value?.gid).to.equal("middle");
+					await iterator.return?.();
+					expect(interrupted.closed).to.deep.equal([0, 1]);
+					expect(interrupted.active).to.equal(0);
+					expect(interrupted.requests).to.have.length(2);
+					expectFilteredBoundedRequests(interrupted.requests);
+					expect(interruptedCache.has(sparse.ranges[299].rangeHash)).to.be
+						.false;
+
+					const successfulCache = new Cache<string>({
+						max: 5000,
+						ttl: 1e5,
+					});
+					const successful = makeSequentialIndex();
+					expect(
+						await consumeAllFromAsyncIterator(
+							toRebalance(sparse.changes, successful.index, successfulCache),
+						),
+					).to.be.empty;
+					expect(successful.closed).to.deep.equal([0, 1, 2]);
+					expect(successful.active).to.equal(0);
+					expect(successful.requests).to.have.length(3);
+					expectFilteredBoundedRequests(successful.requests);
+					expect(successfulCache.has(sparse.ranges[299].rangeHash)).to.be.true;
+				});
+
+				it("keeps empty-source boundary retry separate from a proven no-op", async () => {
+					await create(
+						createTestEntry("ordinary", 0.2),
+						createTestEntry("boundary", 0.8, true),
+					);
+					const emptyCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const emptyObserved = observeIterationRequests(index);
+					const retried = await consumeAllFromAsyncIterator(
+						toRebalance([], emptyObserved.index, emptyCache),
+					);
+					expect(retried.map((entry) => entry.gid)).to.deep.equal(["boundary"]);
+					expect(emptyObserved.requests).to.have.length(1);
+					expectFilteredBoundedRequests(emptyObserved.requests);
+					expect(emptyObserved.requests[0].query.or).to.have.length(1);
+
+					const range = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.1,
+						width: 0.2,
+						mode: ReplicationIntent.Strict,
+						timestamp: 1n,
+					});
+					const noOpCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					noOpCache.add(range.rangeHash);
+					const noOpObserved = observeIterationRequests(index);
+					const noOp = await consumeAllFromAsyncIterator(
+						toRebalance(
+							[
+								{ range, type: "removed", timestamp: 1n },
+								{ range, type: "added", timestamp: 2n },
+							],
+							noOpObserved.index,
+							noOpCache,
+						),
+					);
+					expect(noOp).to.be.empty;
+					expect(noOpObserved.requests).to.be.empty;
+					expect(noOpCache.has(range.rangeHash)).to.be.true;
 				});
 
 				it("bounds disjoint rapid replacement chains and keeps synthetic fragments out of history", () => {
@@ -3298,8 +3841,8 @@ resolutions.forEach((resolution) => {
 								);
 								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
 
-								// Replacement is self-describing: even an empty/expired bounded
-								// history must query only old△new, never their overlapping union.
+								// An empty/expired history cannot prove that the old overlap was ever
+								// processed, so replacement falls back to the correctness-safe union.
 								result = await consumeAllFromAsyncIterator(
 									toRebalance(
 										[
@@ -3318,7 +3861,12 @@ resolutions.forEach((resolution) => {
 										new Cache<string>({ max: 1, ttl: 1 }),
 									),
 								);
-								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+								]);
+								expect(result).to.have.length(3);
 
 								const third = createReplicationRangeFromNormalized({
 									id: first.id,
@@ -3350,8 +3898,12 @@ resolutions.forEach((resolution) => {
 										new Cache<string>({ max: 1, ttl: 1 }),
 									),
 								);
-								expect(result.map((x) => x.gid)).to.have.members(["b", "c"]);
-								expect(result).to.have.length(2);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+								]);
+								expect(result).to.have.length(3);
 
 								const otherOld = createReplicationRangeFromNormalized({
 									publicKey: a,
@@ -3394,8 +3946,14 @@ resolutions.forEach((resolution) => {
 										new Cache<string>({ max: 1, ttl: 1 }),
 									),
 								);
-								expect(result.map((x) => x.gid)).to.have.members(["c", "e"]);
-								expect(result).to.have.length(2);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+									"d",
+									"e",
+								]);
+								expect(result).to.have.length(5);
 
 								const unrelated = createReplicationRangeFromNormalized({
 									publicKey: a,
@@ -4069,6 +4627,11 @@ resolutions.forEach((resolution) => {
 								mode: ReplicationIntent.Strict,
 								timestamp: 2n,
 							});
+							const expansionHistory = new Cache<string>({
+								max: 1000,
+								ttl: 1e5,
+							});
+							expansionHistory.add(nonStrict.rangeHash);
 							let result = await consumeAllFromAsyncIterator(
 								toRebalance(
 									[
@@ -4084,7 +4647,7 @@ resolutions.forEach((resolution) => {
 										},
 									],
 									index,
-									new Cache<string>({ max: 1000, ttl: 1e5 }),
+									expansionHistory,
 								),
 							);
 							expect(result.map((entry) => entry.gid)).to.have.members([
@@ -4101,6 +4664,11 @@ resolutions.forEach((resolution) => {
 								mode: ReplicationIntent.NonStrict,
 								timestamp: 3n,
 							});
+							const contractionHistory = new Cache<string>({
+								max: 1000,
+								ttl: 1e5,
+							});
+							contractionHistory.add(expandedStrict.rangeHash);
 							result = await consumeAllFromAsyncIterator(
 								toRebalance(
 									[
@@ -4116,7 +4684,7 @@ resolutions.forEach((resolution) => {
 										},
 									],
 									index,
-									new Cache<string>({ max: 1000, ttl: 1e5 }),
+									contractionHistory,
 								),
 							);
 							expect(result.map((entry) => entry.gid)).to.have.members([
@@ -4178,6 +4746,11 @@ resolutions.forEach((resolution) => {
 								mode: ReplicationIntent.Strict,
 								timestamp: 3n,
 							});
+							const historyWith = (processed: ReplicationRangeIndexable<R>) => {
+								const history = new Cache<string>({ max: 1000, ttl: 1e5 });
+								history.add(processed.rangeHash);
+								return history;
+							};
 
 							// Equal geometry contributes only the independent boundary query;
 							// the ordinary in-range entry must not be replayed.
@@ -4198,7 +4771,7 @@ resolutions.forEach((resolution) => {
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(range),
 										),
 									)
 								).map((x) => x.gid),
@@ -4221,7 +4794,7 @@ resolutions.forEach((resolution) => {
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(rangeNonStrict),
 										),
 									)
 								).map((x) => x.gid),
@@ -4246,7 +4819,7 @@ resolutions.forEach((resolution) => {
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(rangeNonStrict),
 										),
 									)
 								).map((x) => x.gid),
@@ -4269,7 +4842,7 @@ resolutions.forEach((resolution) => {
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(rangeStrictAgain),
 										),
 									)
 								).map((x) => x.gid),
