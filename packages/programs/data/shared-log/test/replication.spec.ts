@@ -2618,6 +2618,67 @@ testSetups.forEach((setup) => {
 							expect(getJoinRepairDispatches()).greaterThan(0);
 						});
 
+						it("control per commmit put before join recovers through scheduled authoritative repair when warmup is dropped", async () => {
+							const entryCount = 12;
+							let droppedWarmupEntries = 0;
+							let authoritativeDispatches = 0;
+							let dispatchStub: sinon.SinonStub | undefined;
+
+							try {
+								await init({
+									min: 1,
+									beforeOther: async () => {
+										for (let i = 0; i < entryCount; i++) {
+											await db1.add("hello", {
+												replicas: new AbsoluteReplicas(3),
+												meta: { next: [] },
+											});
+										}
+									},
+									beforeOpenJoiners: () => {
+										const originalDispatch = (
+											db1.log as any
+										).dispatchMaybeMissingEntries.bind(db1.log);
+										dispatchStub = sinon
+											.stub(db1.log as any, "dispatchMaybeMissingEntries")
+											.callsFake((...args: any[]) => {
+												const [target, entries, options] = args as [
+													string,
+													Map<string, any>,
+													{ mode?: string },
+												];
+												if (options?.mode === "join-warmup") {
+													droppedWarmupEntries += entries.size;
+													return;
+												}
+												if (options?.mode === "join-authoritative") {
+													authoritativeDispatches += 1;
+												}
+												return originalDispatch(target, entries, options);
+											});
+									},
+								});
+
+								await waitForDb1Replicators();
+								await waitForResolved(() => {
+									expect(authoritativeDispatches).greaterThan(0);
+								}, commitReplicationWait);
+
+								const check = async (store: EventStore<string, any>) => {
+									const entries = await store.log.log.toArray();
+									expect(entries.length).equal(entryCount);
+									for (const entry of entries) {
+										expect(decodeReplicas(entry).getValue(store.log)).equal(3);
+									}
+								};
+								await waitForResolved(() => check(db2), commitReplicationWait);
+								await waitForResolved(() => check(db3), commitReplicationWait);
+								expect(droppedWarmupEntries).greaterThan(0);
+							} finally {
+								dispatchStub?.restore();
+							}
+						});
+
 						it("control per commmit put before join converges under deterministic delayed repair traffic", async () => {
 							// Keep this as a convergence regression, not a throughput benchmark. The
 							// direct frontier regression below already covers the multi-flush repair

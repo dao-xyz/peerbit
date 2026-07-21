@@ -1,6 +1,7 @@
 import { Cache } from "@peerbit/cache";
 import { expect } from "chai";
 import sinon from "sinon";
+import { SharedLog } from "../src/index.js";
 import { SimpleSyncronizer } from "../src/sync/simple.js";
 
 const emptyLog = {
@@ -9,6 +10,48 @@ const emptyLog = {
 };
 
 describe("sync-repair-session", () => {
+	it("keeps join warmup bounded to one rateless pass per batch", async () => {
+		const log = new SharedLog<unknown>();
+		const internals = log as any;
+		internals._assumeSyncedRepairSuppressedUntil = 0;
+		internals._repairMetrics = {
+			"join-warmup": {
+				dispatches: 0,
+				entries: 0,
+				ratelessFirstPasses: 0,
+				simpleFallbackPasses: 0,
+			},
+		};
+		const send = sinon
+			.stub(internals, "sendRepairEntriesWithTransport")
+			.resolves();
+
+		for (const hash of ["first", "second"]) {
+			internals.dispatchMaybeMissingEntries(
+				"target",
+				new Map([[hash, { hash }]]),
+				{
+					bypassRecentDedupe: true,
+					mode: "join-warmup",
+				},
+			);
+		}
+		await Promise.resolve();
+
+		expect(send.callCount).to.equal(2);
+		expect(send.getCalls().map((call) => call.args[2])).to.deep.equal([
+			"rateless",
+			"rateless",
+		]);
+		expect(internals._repairRetryTimers.size).to.equal(0);
+		expect(internals._repairMetrics["join-warmup"]).to.deep.equal({
+			dispatches: 2,
+			entries: 2,
+			ratelessFirstPasses: 2,
+			simpleFallbackPasses: 0,
+		});
+	});
+
 	it("deduplicates known hash aliases without changing coordinate requests", async () => {
 		const send = sinon.stub().resolves();
 		const coordinateToHash = new Cache<string>({ max: 10 });

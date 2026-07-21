@@ -2758,9 +2758,10 @@ const REPLICATOR_LIVENESS_PROBE_FAILURES_TO_EVICT = 2;
 const CHURN_REPAIR_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 45_000,
 ];
-const JOIN_WARMUP_RETRY_SCHEDULE_MS = [
-	0, 1_000, 3_000, 7_000, 15_000, 30_000, 60_000,
-];
+// Join warmup is a best-effort latency accelerator. Receipt-driven
+// join-authoritative repair owns loss recovery after the initial warmup sweep.
+// Retrying a fixed warmup snapshot can overlap large sends and amplify work.
+const JOIN_WARMUP_RETRY_SCHEDULE_MS = [0];
 const JOIN_AUTHORITATIVE_RETRY_SCHEDULE_MS = [
 	0, 1_000, 3_000, 7_000, 15_000, 30_000, 60_000,
 ];
