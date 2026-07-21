@@ -120,6 +120,54 @@ describe("MemoryStore", () => {
 		}
 	});
 
+	it("rejects aggregate overflow and deletes back to exact zero", () => {
+		const store = new MemoryStore();
+		const maximum = new Uint8Array(0);
+		Object.defineProperty(maximum, "byteLength", {
+			value: Number.MAX_SAFE_INTEGER,
+		});
+		store.put("maximum", maximum);
+		expect(store.size()).to.equal(Number.MAX_SAFE_INTEGER);
+
+		const extra = new Uint8Array(1);
+		expect(() => store.put("extra", extra)).to.throw(
+			RangeError,
+			"aggregate size",
+		);
+		expect(store.get("extra")).to.be.undefined;
+		expect(store.get("maximum")).to.equal(maximum);
+		expect(store.size()).to.equal(Number.MAX_SAFE_INTEGER);
+
+		store.del("maximum");
+		expect(store.size()).to.equal(0);
+	});
+
+	it("keeps the prior value and size when a replacement would overflow", () => {
+		const store = new MemoryStore();
+		const large = new Uint8Array(0);
+		Object.defineProperty(large, "byteLength", {
+			value: Number.MAX_SAFE_INTEGER - 2,
+		});
+		const original = new Uint8Array(2);
+		store.put("large", large);
+		store.put("replace", original);
+		expect(store.size()).to.equal(Number.MAX_SAFE_INTEGER);
+
+		const replacement = new Uint8Array(3);
+		expect(() => store.put("replace", replacement)).to.throw(
+			RangeError,
+			"aggregate size",
+		);
+		expect(store.get("replace")).to.equal(original);
+		expect(store.get("large")).to.equal(large);
+		expect(store.size()).to.equal(Number.MAX_SAFE_INTEGER);
+
+		store.del("replace");
+		expect(store.size()).to.equal(Number.MAX_SAFE_INTEGER - 2);
+		store.del("large");
+		expect(store.size()).to.equal(0);
+	});
+
 	if (isNode) {
 		it("uses credited length after a backing buffer is detached", function () {
 			if (typeof structuredClone !== "function") {
@@ -163,6 +211,8 @@ describe("MemoryStore", () => {
 			expect(value.byteLength).to.equal(12);
 			expect(store.size()).to.equal(4);
 
+			store.put("value", value);
+			expect(store.size()).to.equal(12);
 			store.put("value", new Uint8Array(3));
 			expect(store.size()).to.equal(3);
 			store.del("value");

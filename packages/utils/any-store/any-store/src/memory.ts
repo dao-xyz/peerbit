@@ -1,5 +1,13 @@
 import { type AnyStore } from "@peerbit/any-store-interface";
 
+/**
+ * An in-memory store that retains the Uint8Array instances supplied to put().
+ *
+ * A value's byteLength is credited when put() succeeds. Later caller-owned
+ * mutations, including resizing or detaching its backing buffer, can change the
+ * value returned by get() without retroactively changing size(). Put the value
+ * again to credit its new length.
+ */
 export class MemoryStore implements AnyStore {
 	private store: Map<string, Uint8Array>;
 	private sublevels: Map<string, MemoryStore>;
@@ -64,9 +72,16 @@ export class MemoryStore implements AnyStore {
 			);
 		}
 		const previousByteLength = this.storedByteLengths.get(key) ?? 0;
+		const nextStoredBytes = this.storedBytes - previousByteLength + byteLength;
+		if (!Number.isSafeInteger(nextStoredBytes) || nextStoredBytes < 0) {
+			throw new RangeError(
+				"MemoryStore aggregate size must be a non-negative safe integer",
+			);
+		}
+
 		this.store.set(key, value);
 		this.storedByteLengths.set(key, byteLength);
-		this.storedBytes += byteLength - previousByteLength;
+		this.storedBytes = nextStoredBytes;
 	}
 
 	// Remove a value and key from the cache
