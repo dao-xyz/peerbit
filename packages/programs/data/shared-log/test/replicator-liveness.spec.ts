@@ -810,18 +810,20 @@ describe("waitForReplicator liveness", () => {
 			// Exercise the separate hash-only removal path used after pubsub loses
 			// the public-key mapping for a previously learned/relayed replicator.
 			log._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
-			await hooks.probeReplicatorLiveness(peerHash);
+			const eviction = hooks.probeReplicatorLiveness(peerHash);
+			releaseSnapshotSynchronizer.resolve();
+			releaseStoppedSynchronizer.resolve();
+			await Promise.all([
+				eviction,
+				delayedSnapshotReceive,
+				delayedStoppedReceive,
+			]);
 			expect(
 				await replicationIndex.count({ query: { hash: peerHash } }),
 			).to.equal(0);
 
-			// This handler entered before eviction and must not restore removed state
-			// merely because it reaches the apply lane afterward.
-			releaseSnapshotSynchronizer.resolve();
-			await delayedSnapshotReceive;
-			expect(
-				await replicationIndex.count({ query: { hash: peerHash } }),
-			).to.equal(0);
+			// Both handlers entered before eviction and reached the apply lane after
+			// the removal. Neither may restore or rewrite the removed generation.
 			expect(log.latestReplicationInfoMessage.has(peerHash)).to.be.false;
 
 			// A later arrival from the same slower-clock sender is authoritative and
@@ -840,10 +842,8 @@ describe("waitForReplicator liveness", () => {
 			).to.be.greaterThan(0);
 			expect(log.latestReplicationInfoMessage.get(peerHash)).to.equal(1n);
 
-			// A pre-eviction stopped message is fenced by the same local generation;
-			// it cannot delete the newly restored range or replace its watermark.
-			releaseStoppedSynchronizer.resolve();
-			await delayedStoppedReceive;
+			// The pre-eviction stopped message was fenced by the same local generation;
+			// it cannot have deleted the newly restored range or replaced its watermark.
 			expect(
 				await replicationIndex.count({ query: { hash: peerHash } }),
 			).to.be.greaterThan(0);

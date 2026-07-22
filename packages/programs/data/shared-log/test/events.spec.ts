@@ -5,6 +5,7 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
+import { SyncCapabilitiesMessage } from "../src/exchange-heads.js";
 import {
 	AllReplicatingSegmentsMessage,
 	StoppedReplicating,
@@ -393,12 +394,18 @@ describe("events", () => {
 				._onSubscription({
 					detail: { from: remoteKey, topics: [db1.log.topic] },
 				})
-				.finally(() => {
-					reconnectSettled = true;
-				});
-
+					.finally(() => {
+						reconnectSettled = true;
+					});
 			releaseBlocker.resolve();
 			await cleanupStarted.promise;
+			expect(log._receiveCleanupGateByPeer.has(remoteHash)).to.be.true;
+			await db1.log.onMessage(new SyncCapabilitiesMessage(), {
+				from: remoteKey,
+			} as any);
+			expect(
+				log._openingSyncCapabilitiesByPeer.get(remoteHash)?.capabilities,
+			).to.equal(1);
 			await Promise.resolve();
 			expect(reconnectSettled).to.be.false;
 			releaseCleanup.resolve();
@@ -410,7 +417,8 @@ describe("events", () => {
 				await replicationIndex.count({ query: { hash: remoteHash } }),
 			).to.be.greaterThan(0);
 			expect(db1.log.uniqueReplicators.has(remoteHash)).to.be.true;
-			expect(log._peerSyncCapabilities.has(remoteHash)).to.be.false;
+			expect(log._peerSyncCapabilities.get(remoteHash)).to.equal(1);
+			expect(log._openingSyncCapabilitiesByPeer.has(remoteHash)).to.be.false;
 			expect(log._gidPeersHistory.has(gid)).to.be.false;
 			expect(disconnected.calledOnceWith(remoteHash)).to.be.true;
 			expect(leaves).to.deep.equal([]);
@@ -477,15 +485,14 @@ describe("events", () => {
 			} as any);
 			await synchronizerEntered.promise;
 
-			await log._onUnsubscription({
+			const unsubscribe = log._onUnsubscription({
 				detail: { from: remoteKey, topics: [db1.log.topic] },
 			});
+			releaseSynchronizer.resolve();
+			await Promise.all([delayedReceive, unsubscribe]);
 			await log._onSubscription({
 				detail: { from: remoteKey, topics: [db1.log.topic] },
 			});
-
-			releaseSynchronizer.resolve();
-			await delayedReceive;
 			expect(
 				await replicationIndex.count({ query: { hash: remoteHash } }),
 			).to.equal(0);
@@ -526,9 +533,9 @@ describe("events", () => {
 			await log._onUnsubscription({
 				detail: { from: remoteKey, topics: [db1.log.topic] },
 			});
-			expect(
-				(log.latestReplicationInfoMessage.get(remoteHash) ?? 0n) > 1n,
-			).to.be.true;
+			// Successful cleanup retires both the old receive generation and its
+			// sender-clock watermark; the unsubscribe fence rejects late traffic.
+			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
 
 			await log._onSubscription({
 				detail: { from: remoteKey, topics: [db1.log.topic] },

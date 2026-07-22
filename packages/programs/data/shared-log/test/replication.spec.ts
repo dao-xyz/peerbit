@@ -45,7 +45,6 @@ import {
 } from "../src/sync/simple.js";
 import {
 	type TestSetupConfig,
-	checkBounded,
 	checkReplicas,
 	collectMessages,
 	collectMessagesFn,
@@ -1106,7 +1105,14 @@ testSetups.forEach((setup) => {
 					);
 				});
 
-				const dataMessages1 = getReceivedHeads(message1);
+				// Authoritative join repair is intentionally allowed to resend entries
+				// until receipt confirmation. Keep this assertion scoped to ordinary sync,
+				// as the dynamic sibling above does, so repair timing cannot make it flaky.
+				const dataMessages1 = getReceivedHeads(
+					message1.filter(
+						([msg]) => !isRepairHintExchangeHeadsMessage(msg),
+					),
+				);
 				if (setup.name === "u64-iblt") {
 					const uniqueBounceBack = new Set(
 						dataMessages1.map((x) => x.entry.hash),

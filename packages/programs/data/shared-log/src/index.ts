@@ -283,8 +283,18 @@ type PendingIHave<T> = {
 	resetTimeout: () => void;
 	requesting: Set<string>;
 	clear: () => void;
-	callback: (entry: Entry<T>) => void;
+	callback: (entry: Entry<T>) => MaybePromise<void>;
 	expiresAt?: number;
+};
+
+type PeerReceiveLeaseBucket = {
+	active: number;
+	drain?: DeferredPromise<void>;
+};
+
+type PeerReceiveLeaseState = {
+	current: PeerReceiveLeaseBucket;
+	activeBuckets: Set<PeerReceiveLeaseBucket>;
 };
 
 const toLocalPublicSignKey = (
@@ -3287,6 +3297,14 @@ export class SharedLog<
 	private _subscriptionChangeCallbacks?: Set<Promise<void>>;
 	private _acceptSubscriptionChangeCallbacks = false;
 	private _replicationLifecycleController?: AbortController;
+	private _activeReceiveHandlersByPeer!: Map<string, PeerReceiveLeaseState>;
+	private _receiveHandlerDrainByPeer!: Map<string, Set<Promise<void>>>;
+	private _receiveCleanupGateByPeer!: Map<string, number>;
+	private _subscriptionOpeningEpochByPeer!: Map<string, object>;
+	private _openingSyncCapabilitiesByPeer!: Map<
+		string,
+		{ epoch: object; capabilities: number }
+	>;
 	private _onFanoutDataFn?: (arg: any) => void;
 	private _onFanoutUnicastFn?: (arg: any) => void;
 	private _fanoutChannel?: FanoutChannel;
@@ -3302,6 +3320,7 @@ export class SharedLog<
 	private _closeController!: AbortController;
 	private _respondToIHaveTimeout!: any;
 	private _checkedPrune!: CheckedPruneCoordinator<T, R>;
+	private _pendingIHaveCallbacks!: Set<Promise<void>>;
 	private _pendingIHaveExpiryTimer?: ReturnType<typeof setTimeout>;
 	private _pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
 
@@ -4444,6 +4463,7 @@ export class SharedLog<
 		this.rpc = new RPC();
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
 		this._pendingIHave = new Map();
+		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
@@ -4451,6 +4471,11 @@ export class SharedLog<
 		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._subscriptionEpochByPeer = new Map();
 		this._pendingReplicatorLeaveByPeer = new Set();
+		this._activeReceiveHandlersByPeer = new Map();
+		this._receiveHandlerDrainByPeer = new Map();
+		this._receiveCleanupGateByPeer = new Map();
+		this._subscriptionOpeningEpochByPeer = new Map();
+		this._openingSyncCapabilitiesByPeer = new Map();
 		this._gidPeersHistory = new Map();
 		this._repairRetryTimers = new Set();
 		this._recentRepairDispatch = new Map();
@@ -5830,6 +5855,184 @@ export class SharedLog<
 		}
 	}
 
+	private isPeerReceiveAdmissionOpen(
+		peerHash: string,
+		replicationLifecycleController: AbortController | undefined,
+		subscriptionEpoch: object | null,
+		options?: {
+			allowReplicationInfoBlocked?: boolean;
+			allowCleanupGate?: boolean;
+		},
+	) {
+		return (
+			this.isReplicationLifecycleActive(replicationLifecycleController) &&
+			this.isCurrentSubscriptionEpoch(peerHash, subscriptionEpoch) &&
+			(options?.allowReplicationInfoBlocked === true ||
+				!this._replicationInfoBlockedPeers.has(peerHash)) &&
+			(options?.allowCleanupGate === true ||
+				(this._receiveCleanupGateByPeer.get(peerHash) ?? 0) === 0)
+		);
+	}
+
+	private acquirePeerReceiveLease(
+		peerHash: string,
+		replicationLifecycleController: AbortController | undefined,
+		subscriptionEpoch: object | null,
+		options?: {
+			allowReplicationInfoBlocked?: boolean;
+			allowCleanupGate?: boolean;
+		},
+	): (() => void) | undefined {
+		if (
+			!this.isPeerReceiveAdmissionOpen(
+				peerHash,
+				replicationLifecycleController,
+				subscriptionEpoch,
+				options,
+			)
+		) {
+			return;
+		}
+
+		let state = this._activeReceiveHandlersByPeer.get(peerHash);
+		if (!state) {
+			const current: PeerReceiveLeaseBucket = { active: 0 };
+			state = { current, activeBuckets: new Set() };
+			this._activeReceiveHandlersByPeer.set(peerHash, state);
+		}
+		const bucket = state.current;
+		bucket.active += 1;
+		state.activeBuckets.add(bucket);
+		let released = false;
+		return () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			bucket.active -= 1;
+			if (bucket.active > 0) {
+				return;
+			}
+			state.activeBuckets.delete(bucket);
+			bucket.drain?.resolve();
+			if (
+				state.activeBuckets.size === 0 &&
+				state.current.active === 0 &&
+				this._activeReceiveHandlersByPeer.get(peerHash) === state
+			) {
+				this._activeReceiveHandlersByPeer.delete(peerHash);
+			}
+		};
+	}
+
+	private async drainPeerReceiveHandlers(peerHash: string): Promise<void> {
+		const state = this._activeReceiveHandlersByPeer.get(peerHash);
+		if (!state || state.activeBuckets.size === 0) {
+			return;
+		}
+
+		// Rotate before awaiting so a reconnect/opening generation can keep receiving
+		// sync traffic without joining the drain for the previous subscription. Cleanup
+		// callers gate admission first; terminal callers also repeat until empty.
+		const buckets = [...state.activeBuckets];
+		state.current = { active: 0 };
+		const drain = Promise.all(
+			buckets.map((bucket) => {
+				bucket.drain ??= pDefer<void>();
+				return bucket.drain.promise;
+			}),
+		).then(() => undefined);
+		let drains = this._receiveHandlerDrainByPeer.get(peerHash);
+		if (!drains) {
+			drains = new Set();
+			this._receiveHandlerDrainByPeer.set(peerHash, drains);
+		}
+		drains.add(drain);
+		try {
+			await drain;
+		} finally {
+			drains.delete(drain);
+			if (drains.size === 0) {
+				this._receiveHandlerDrainByPeer.delete(peerHash);
+			}
+		}
+	}
+
+	private async drainReceiveHandlers(): Promise<void> {
+		for (;;) {
+			const peers = [...this._activeReceiveHandlersByPeer.keys()];
+			if (peers.length === 0) {
+				return;
+			}
+			await Promise.all(
+				peers.map((peerHash) => this.drainPeerReceiveHandlers(peerHash)),
+			);
+		}
+	}
+
+	private runPendingIHaveCallback(
+		pending: PendingIHave<T>,
+		entry: Entry<T>,
+	): void {
+		const replicationLifecycleController =
+			this._replicationLifecycleController;
+		if (!this.isReplicationLifecycleActive(replicationLifecycleController)) {
+			if (this._pendingIHave.get(entry.hash) === pending) {
+				pending.clear();
+				this._pendingIHave.delete(entry.hash);
+			}
+			return;
+		}
+
+		// Register before invoking the callback so a synchronous terminal reentry
+		// cannot make close/drop miss work that has already been admitted.
+		const completion = pDefer<void>();
+		const observed = completion.promise.catch((error) => {
+			if (!(this.isTerminating() && isNotStartedError(error as Error))) {
+				logger.error(error?.toString?.() ?? String(error));
+			}
+		});
+		this._pendingIHaveCallbacks.add(observed);
+		void observed.finally(() => {
+			this._pendingIHaveCallbacks.delete(observed);
+			if (this._pendingIHave.get(entry.hash) === pending) {
+				pending.clear();
+				this._pendingIHave.delete(entry.hash);
+			}
+		});
+
+		try {
+			Promise.resolve(pending.callback(entry)).then(
+				() => completion.resolve(),
+				(error) => completion.reject(error),
+			);
+		} catch (error) {
+			completion.reject(error);
+		}
+	}
+
+	private async drainPendingIHaveCallbacks(): Promise<void> {
+		while (this._pendingIHaveCallbacks.size > 0) {
+			await Promise.all([...this._pendingIHaveCallbacks]);
+		}
+	}
+
+	private blockPeerReceiveAdmission(peerHash: string) {
+		this._receiveCleanupGateByPeer.set(
+			peerHash,
+			(this._receiveCleanupGateByPeer.get(peerHash) ?? 0) + 1,
+		);
+	}
+
+	private unblockPeerReceiveAdmission(peerHash: string) {
+		const remaining = (this._receiveCleanupGateByPeer.get(peerHash) ?? 1) - 1;
+		if (remaining > 0) {
+			this._receiveCleanupGateByPeer.set(peerHash, remaining);
+		} else {
+			this._receiveCleanupGateByPeer.delete(peerHash);
+		}
+	}
+
 	private handleReplicationLifecycleSendError(
 		error: unknown,
 		controller = this._replicationLifecycleController,
@@ -6851,7 +7054,16 @@ export class SharedLog<
 				options.replicationLifecycleController,
 			);
 		const isMe = this.node.identity.publicKey.hashcode() === keyHash;
+		let receiveAdmissionBlocked = false;
+		const blockAndDrainPeerReceives = async () => {
+			if (!receiveAdmissionBlocked) {
+				this.blockPeerReceiveAdmission(keyHash);
+				receiveAdmissionBlocked = true;
+			}
+			await this.drainPeerReceiveHandlers(keyHash);
+		};
 		const cleanupDisconnectedPeer = async () => {
+			await blockAndDrainPeerReceives();
 			this.removePeerFromGidPeerHistory(keyHash);
 			this.cleanupPeerDisconnectTracking(keyHash);
 			this.removeRepairFrontierTarget(keyHash);
@@ -6889,8 +7101,9 @@ export class SharedLog<
 				})
 				.all();
 			// Liveness evidence can arrive without a subscription transition while
-			// this scan is pending. Revalidate immediately before the first
-			// destructive mutation; subscription removals omit this predicate.
+			// this scan is pending. Stop new receives, drain those already admitted,
+			// then revalidate immediately before the first destructive mutation.
+			await blockAndDrainPeerReceives();
 			if (options?.shouldRemove && !options.shouldRemove()) {
 				return;
 			}
@@ -6950,10 +7163,19 @@ export class SharedLog<
 			await cleanupDisconnectedPeer();
 
 			if (!isMe) {
+				// Replication-info handlers release their receive lease before joining
+				// this lane. Fence every handler queued behind this successful removal,
+				// regardless of whether it came from liveness, startup pruning, or an
+				// unsubscribe transition.
+				this.advanceReplicationInfoRecoveryEpoch(keyHash);
 				this.rebalanceParticipationDebounced?.call();
 			}
 			removed = true;
 			options?.onRemoved?.({ wasReplicator });
+		}).finally(() => {
+			if (receiveAdmissionBlocked) {
+				this.unblockPeerReceiveAdmission(keyHash);
+			}
 		});
 		return removed;
 	}
@@ -9052,10 +9274,22 @@ export class SharedLog<
 			return;
 		}
 
-		void Promise.allSettled(this.prune(toPrune));
+		const pruneTasks = this.prune(toPrune);
+		const confirmationTasks: Promise<void>[] = [];
 		for (const hash of responseStillApplies) {
-			void this._checkedPrune.getPendingDelete(hash)?.resolve(publicKeyHash);
+			const pendingDelete = this._checkedPrune.getPendingDelete(hash);
+			if (pendingDelete) {
+				confirmationTasks.push(
+					Promise.resolve(pendingDelete.resolve(publicKeyHash)),
+				);
+			}
 		}
+		// The restarted prune session owns its own bounded timeout and revalidates
+		// before deletion. Only the peer-derived confirmations must remain inside
+		// this receive lease; waiting for the whole prune session could stall close
+		// or disconnect until its background timeout.
+		void Promise.allSettled(pruneTasks);
+		await Promise.allSettled(confirmationTasks);
 	}
 
 	async append(
@@ -12650,6 +12884,7 @@ export class SharedLog<
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
 		this._pendingIHave = new Map();
+		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
@@ -12659,6 +12894,11 @@ export class SharedLog<
 		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._subscriptionEpochByPeer = new Map();
 		this._pendingReplicatorLeaveByPeer = new Set();
+		this._activeReceiveHandlersByPeer = new Map();
+		this._receiveHandlerDrainByPeer = new Map();
+		this._receiveCleanupGateByPeer = new Map();
+		this._subscriptionOpeningEpochByPeer = new Map();
+		this._openingSyncCapabilitiesByPeer = new Map();
 		this._repairRetryTimers = new Set();
 		this._recentRepairDispatch = new Map();
 		this._repairSweepRunning = false;
@@ -14075,7 +14315,18 @@ export class SharedLog<
 		this._replicatorLivenessFailures.delete(peerHash);
 		this._replicatorLastActivityAt.delete(peerHash);
 		this._peerSyncCapabilities.delete(peerHash);
+		this.cleanupPendingIHavePeer(peerHash);
 		this._checkedPrune.cleanupPeer(peerHash);
+	}
+
+	private cleanupPendingIHavePeer(peerHash: string) {
+		for (const [hash, pending] of this._pendingIHave) {
+			pending.requesting.delete(peerHash);
+			if (pending.requesting.size === 0) {
+				pending.clear();
+				this._pendingIHave.delete(hash);
+			}
+		}
 	}
 
 	private markReplicatorActivity(peerHash: string, now = Date.now()) {
@@ -14101,8 +14352,8 @@ export class SharedLog<
 	}
 
 	private advanceReplicationInfoRecoveryEpoch(peerHash: string) {
-		// Handlers admitted before a successful liveness removal must not restore
-		// state when they eventually reach the apply lane. Reset the sender's
+		// Handlers admitted before a successful peer removal must not restore state
+		// when they eventually reach the apply lane. Reset the sender's
 		// ordering watermark with the local epoch so a later arrival can be
 		// accepted without comparing its clock to this receiver's clock.
 		this.advanceReplicationInfoReceiveEpoch(peerHash);
@@ -14137,7 +14388,6 @@ export class SharedLog<
 					) {
 						return;
 					}
-					this.advanceReplicationInfoRecoveryEpoch(peerHash);
 					if (this._pendingReplicatorLeaveByPeer.delete(peerHash)) {
 						this.events.dispatchEvent(
 							new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
@@ -14324,7 +14574,6 @@ export class SharedLog<
 						if (!ownsProbe()) {
 							return;
 						}
-						this.advanceReplicationInfoRecoveryEpoch(peerHash);
 						this._replicatorLivenessTargetsSize = -1;
 					},
 				});
@@ -15259,8 +15508,14 @@ export class SharedLog<
 		}
 		captureSync(() => {
 			this._pendingIHave?.clear();
+			this._pendingIHaveCallbacks?.clear();
 			this.latestReplicationInfoMessage?.clear();
 			this._replicationInfoReceiveEpochByPeer?.clear();
+			this._activeReceiveHandlersByPeer?.clear();
+			this._receiveHandlerDrainByPeer?.clear();
+			this._receiveCleanupGateByPeer?.clear();
+			this._subscriptionOpeningEpochByPeer?.clear();
+			this._openingSyncCapabilitiesByPeer?.clear();
 			this._gidPeersHistory?.clear();
 			this._peerSyncCapabilities?.clear();
 			this._liveRawGossipBatches?.clear();
@@ -15334,7 +15589,9 @@ export class SharedLog<
 		this.preventParentAttachments();
 		this.stopSubscriptionChangeCallbackAdmission();
 		await this.drainSubscriptionChangeCallbacks();
+		await this.drainReceiveHandlers();
 		await this.drainReplicationInfoApplyQueues();
+		await this.drainPendingIHaveCallbacks();
 		this.ensureNativeDurabilityRuntimeState();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
@@ -15456,7 +15713,9 @@ export class SharedLog<
 		this.preventParentAttachments();
 		this.stopSubscriptionChangeCallbackAdmission();
 		await this.drainSubscriptionChangeCallbacks();
+		await this.drainReceiveHandlers();
 		await this.drainReplicationInfoApplyQueues();
+		await this.drainPendingIHaveCallbacks();
 		this.cancelCurrentReplicationStateAnnouncementRetry();
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state (same reasoning as in `close()`).
@@ -15673,6 +15932,7 @@ export class SharedLog<
 		const stashBackedRawMessage = isStashBackedRawExchangeHeadsMessage(msg)
 			? msg
 			: undefined;
+		let releasePeerReceiveLease: (() => void) | undefined;
 		try {
 			this.throwIfNativeDurableCommitFailed();
 			if (!context.from) {
@@ -15686,6 +15946,27 @@ export class SharedLog<
 				this._replicationLifecycleController;
 			const receiveSubscriptionEpoch =
 				this.getSubscriptionEpoch(receiveFromHash);
+			const isOpeningSubscriptionReceive =
+				this._subscriptionOpeningEpochByPeer.get(receiveFromHash) ===
+				receiveSubscriptionEpoch;
+			const isOpeningCapabilityAdvertisement =
+				msg instanceof SyncCapabilitiesMessage && isOpeningSubscriptionReceive;
+			releasePeerReceiveLease = this.acquirePeerReceiveLease(
+				receiveFromHash,
+				receiveReplicationLifecycleController,
+				receiveSubscriptionEpoch,
+				{
+					// The replication-info fence existed before receive leases and is
+					// intentionally narrower than the subscription itself. Keep admitting
+					// sync negotiation/data while the new subscription drains the previous
+					// apply generation; replication-info branches recheck the fence below.
+					allowReplicationInfoBlocked: isOpeningSubscriptionReceive,
+					allowCleanupGate: isOpeningCapabilityAdvertisement,
+				},
+			);
+			if (!releasePeerReceiveLease) {
+				return;
+			}
 			const receiveReplicationInfoReceiveEpoch =
 				this.getReplicationInfoReceiveEpoch(receiveFromHash);
 			if (!context.from.equals(this.node.identity.publicKey)) {
@@ -17664,6 +17945,13 @@ export class SharedLog<
 				let pendingIHaveExtended = 0;
 				const leaderResponseHashes: string[] = [];
 				for (let i = 0; i < msg.hashes.length; i++) {
+					if (
+						!this.isReplicationLifecycleActive(
+							receiveReplicationLifecycleController,
+						)
+					) {
+						return;
+					}
 					const hash = msg.hashes[i]!;
 
 					const nativeEntryGid = nativeLeaderHints.nativeEntryGids?.[i];
@@ -17799,8 +18087,21 @@ export class SharedLog<
 								resetTimeout: () => this.resetPendingIHaveTimeout(pendingIHave),
 								clear: () => this.clearPendingIHaveTimeout(pendingIHave),
 								callback: async (entry: Entry<T>) => {
-									this.removePeerFromGidPeerHistory(from, entry.meta.gid);
-									this.removePruneRequestSent(entry.hash, from);
+									if (
+										!this.isReplicationLifecycleActive(
+											receiveReplicationLifecycleController,
+										) ||
+										requesting.size === 0
+									) {
+										return;
+									}
+									for (const requester of requesting) {
+										this.removePeerFromGidPeerHistory(
+											requester,
+											entry.meta.gid,
+										);
+										this.removePruneRequestSent(entry.hash, requester);
+									}
 									let isLeader = false;
 									await this._waitForEntryReplicators(
 										entry,
@@ -17819,12 +18120,19 @@ export class SharedLog<
 											},
 										},
 									);
+									if (
+										!this.isReplicationLifecycleActive(
+											receiveReplicationLifecycleController,
+										) ||
+										requesting.size === 0
+									) {
+										return;
+									}
 									if (isLeader) {
 										this.responseToPruneDebouncedFn.add({
 											hashes: [entry.hash],
-											peers: requesting,
+											peers: new Set(requesting),
 										});
-										this._pendingIHave.delete(hash);
 									}
 								},
 							};
@@ -17867,19 +18175,32 @@ export class SharedLog<
 				}
 			} else if (msg instanceof ResponseIPrune) {
 				const lateResponses: string[] = [];
+				const responseTasks: Promise<void>[] = [];
 				for (const hash of msg.hashes) {
 					const pendingDelete = this._checkedPrune.getPendingDelete(hash);
 					if (pendingDelete) {
-						void pendingDelete.resolve(context.from.hashcode());
+						responseTasks.push(
+							Promise.resolve(
+								pendingDelete.resolve(context.from.hashcode()),
+							),
+						);
 					} else {
 						lateResponses.push(hash);
 					}
 				}
 				if (lateResponses.length > 0) {
-					void this.recoverCheckedPruneFromLateResponses(
-						lateResponses,
-						context.from.hashcode(),
-					).catch((error) => logger.error(error.toString()));
+					responseTasks.push(
+						this.recoverCheckedPruneFromLateResponses(
+							lateResponses,
+							context.from.hashcode(),
+						),
+					);
+				}
+				const results = await Promise.allSettled(responseTasks);
+				for (const result of results) {
+					if (result.status === "rejected") {
+						logger.error(result.reason?.toString?.() ?? String(result.reason));
+					}
 				}
 			} else if (msg instanceof ConfirmEntriesMessage) {
 				this.markEntriesKnownByPeer(msg.hashes, context.from.hashcode());
@@ -17887,10 +18208,25 @@ export class SharedLog<
 				return;
 			} else if (msg instanceof SyncCapabilitiesMessage) {
 				if (!context.from.equals(this.node.identity.publicKey)) {
-					this._peerSyncCapabilities.set(
-						context.from.hashcode(),
-						msg.capabilities,
-					);
+					const openingEpoch =
+						this._subscriptionOpeningEpochByPeer.get(receiveFromHash);
+					if (
+						this._replicationInfoBlockedPeers.has(receiveFromHash) &&
+						openingEpoch === receiveSubscriptionEpoch
+					) {
+						// A prior unsubscribe cleanup may still be ahead of this reconnect
+						// barrier. Stage the new generation's one-shot advertisement so that
+						// cleanup cannot erase it before the opening transition commits.
+						this._openingSyncCapabilitiesByPeer.set(receiveFromHash, {
+							epoch: openingEpoch,
+							capabilities: msg.capabilities,
+						});
+					} else {
+						this._peerSyncCapabilities.set(
+							receiveFromHash,
+							msg.capabilities,
+						);
+					}
 				}
 				return;
 			} else if (await this.syncronizer.onMessage(msg, context)) {
@@ -17907,10 +18243,14 @@ export class SharedLog<
 					return;
 				}
 				const replicationLifecycleController =
-					this._replicationLifecycleController;
+					receiveReplicationLifecycleController;
 				if (
 					!replicationLifecycleController ||
-					!this.isReplicationLifecycleActive(replicationLifecycleController)
+					!this.isPeerReceiveAdmissionOpen(
+						receiveFromHash,
+						replicationLifecycleController,
+						receiveSubscriptionEpoch,
+					)
 				) {
 					return;
 				}
@@ -17920,8 +18260,10 @@ export class SharedLog<
 					replicationSegments = await this.getMyReplicationSegments();
 				} catch (error) {
 					if (
-						!this.isReplicationLifecycleActive(
+						!this.isPeerReceiveAdmissionOpen(
+							receiveFromHash,
 							replicationLifecycleController,
+							receiveSubscriptionEpoch,
 						) &&
 						isNotStartedError(error as Error)
 					) {
@@ -17930,7 +18272,11 @@ export class SharedLog<
 					throw error;
 				}
 				if (
-					!this.isReplicationLifecycleActive(replicationLifecycleController)
+					!this.isPeerReceiveAdmissionOpen(
+						receiveFromHash,
+						replicationLifecycleController,
+						receiveSubscriptionEpoch,
+					)
 				) {
 					return;
 				}
@@ -17951,7 +18297,11 @@ export class SharedLog<
 						),
 					);
 				if (
-					!this.isReplicationLifecycleActive(replicationLifecycleController)
+					!this.isPeerReceiveAdmissionOpen(
+						receiveFromHash,
+						replicationLifecycleController,
+						receiveSubscriptionEpoch,
+					)
 				) {
 					return;
 				}
@@ -18014,6 +18364,8 @@ export class SharedLog<
 					return;
 				}
 				const messageTimestamp = context.message.header.timestamp;
+				releasePeerReceiveLease?.();
+				releasePeerReceiveLease = undefined;
 				await this.withReplicationInfoApplyQueue(fromHash, async () => {
 					try {
 						// The peer may have unsubscribed after this message was queued.
@@ -18097,6 +18449,8 @@ export class SharedLog<
 					return;
 				}
 				const messageTimestamp = context.message.header.timestamp;
+				releasePeerReceiveLease?.();
+				releasePeerReceiveLease = undefined;
 				await this.withReplicationInfoApplyQueue(fromHash, async () => {
 					if (
 						!this.isReplicationLifecycleActive(
@@ -18195,6 +18549,8 @@ export class SharedLog<
 				// Every return and every locally swallowed receive error passes this
 				// boundary. Release a native wire stash exactly once first, then surface
 				// any durable mutation poison that arose while handling the message.
+				releasePeerReceiveLease?.();
+				releasePeerReceiveLease = undefined;
 				this.throwIfNativeDurableCommitFailed();
 			}
 		}
@@ -18837,30 +19193,35 @@ export class SharedLog<
 		checkLeaders: (options: WaitForReplicatorsOptions<R>) => Promise<LeaderMap>,
 	): Promise<LeaderMap | false> {
 		const timeout = options.timeout ?? this.waitForReplicatorTimeout;
+		const closeSignal = this._closeController.signal;
+		const replicationLifecycleSignal =
+			this._replicationLifecycleController?.signal;
 
 		return new Promise((resolve, reject) => {
 			let settled = false;
+			const checks = new Set<Promise<void>>();
 			const removeListeners = () => {
 				this.events.removeEventListener("replication:change", roleListener);
 				this.events.removeEventListener("replicator:mature", roleListener);
-				this._closeController.signal.removeEventListener(
-					"abort",
-					abortListener,
-				);
+				closeSignal.removeEventListener("abort", abortListener);
+				replicationLifecycleSignal?.removeEventListener("abort", abortListener);
 			};
 			const settleResolve = (value: LeaderMap | false) => {
 				if (settled) return;
 				settled = true;
 				removeListeners();
 				clearTimeout(timer);
-				resolve(value);
+				// Leader planning may persist coordinates. Keep the caller (and any
+				// receive lease it owns) alive until checks admitted before this
+				// timeout/abort have finished their local side effects.
+				void Promise.allSettled([...checks]).then(() => resolve(value));
 			};
 			const settleReject = (error: unknown) => {
 				if (settled) return;
 				settled = true;
 				removeListeners();
 				clearTimeout(timer);
-				reject(error);
+				void Promise.allSettled([...checks]).then(() => reject(error));
 			};
 			const abortListener = () => {
 				settleResolve(false);
@@ -18894,9 +19255,14 @@ export class SharedLog<
 				settleResolve(leaders);
 			};
 			const runCheck = () => {
-				void check().catch((error) => {
-					settleReject(error);
-				});
+				if (settled) return;
+				let running!: Promise<void>;
+				running = check()
+					.catch((error) => {
+						settleReject(error);
+					})
+					.finally(() => checks.delete(running));
+				checks.add(running);
 			};
 
 			const roleListener = () => {
@@ -18905,7 +19271,15 @@ export class SharedLog<
 
 			this.events.addEventListener("replication:change", roleListener);
 			this.events.addEventListener("replicator:mature", roleListener);
-			this._closeController.signal.addEventListener("abort", abortListener);
+			closeSignal.addEventListener("abort", abortListener);
+			replicationLifecycleSignal?.addEventListener("abort", abortListener);
+			// AbortSignal does not replay an abort event to listeners added after it
+			// fired. Recheck after registration so work started concurrently with the
+			// terminal fence cannot wait for the full leader-selection timeout.
+			if (closeSignal.aborted || replicationLifecycleSignal?.aborted) {
+				abortListener();
+				return;
+			}
 			runCheck();
 		});
 	}
@@ -22066,25 +22440,64 @@ export class SharedLog<
 			return;
 		}
 		if (subscribed) {
-			// Fence replication-info messages immediately, then wait behind every
-			// previously admitted mutation for this identity. A reconnect must not
-			// create state that an older removal can erase halfway through.
-			this._replicationInfoBlockedPeers.add(peerHash);
-			await this.withReplicationInfoApplyQueue(peerHash, async () => {});
+			const pendingOpeningCapabilities =
+				this._openingSyncCapabilitiesByPeer.get(peerHash);
 			if (
-				!this.isReplicationLifecycleActive(replicationLifecycleController) ||
-				!ownsSubscriptionEpoch()
+				pendingOpeningCapabilities &&
+				pendingOpeningCapabilities.epoch !== expectedSubscriptionEpoch
 			) {
-				return;
+				this._openingSyncCapabilitiesByPeer.delete(peerHash);
 			}
-			// The timestamp watermark belongs to the previous subscription epoch.
-			// Sender clocks are not synchronized, so carrying a local unsubscribe
-			// timestamp forward could reject every valid announcement after reconnect.
-			this.latestReplicationInfoMessage.delete(peerHash);
-			this._pendingReplicatorLeaveByPeer.delete(peerHash);
-			this._replicationInfoBlockedPeers.delete(peerHash);
+			this._subscriptionOpeningEpochByPeer.set(
+				peerHash,
+				expectedSubscriptionEpoch,
+			);
+			// Fence new messages immediately, drain handlers admitted by the previous
+			// subscription, then wait behind every queued replication mutation. A
+			// reconnect must not inherit metadata or ranges from the old connection.
+			try {
+				this._replicationInfoBlockedPeers.add(peerHash);
+				await this.drainPeerReceiveHandlers(peerHash);
+				await this.withReplicationInfoApplyQueue(peerHash, async () => {});
+				if (
+					!this.isReplicationLifecycleActive(replicationLifecycleController) ||
+					!ownsSubscriptionEpoch()
+				) {
+					return;
+				}
+				// The timestamp watermark belongs to the previous subscription epoch.
+				// Sender clocks are not synchronized, so carrying a local unsubscribe
+				// timestamp forward could reject every valid announcement after reconnect.
+				this.latestReplicationInfoMessage.delete(peerHash);
+				this._pendingReplicatorLeaveByPeer.delete(peerHash);
+				const openingCapabilities =
+					this._openingSyncCapabilitiesByPeer.get(peerHash);
+				if (openingCapabilities?.epoch === expectedSubscriptionEpoch) {
+					this._peerSyncCapabilities.set(
+						peerHash,
+						openingCapabilities.capabilities,
+					);
+					this._openingSyncCapabilitiesByPeer.delete(peerHash);
+				}
+				this._replicationInfoBlockedPeers.delete(peerHash);
+			} finally {
+				if (
+					this._openingSyncCapabilitiesByPeer.get(peerHash)?.epoch ===
+					expectedSubscriptionEpoch
+				) {
+					this._openingSyncCapabilitiesByPeer.delete(peerHash);
+				}
+				if (
+					this._subscriptionOpeningEpochByPeer.get(peerHash) ===
+					expectedSubscriptionEpoch
+				) {
+					this._subscriptionOpeningEpochByPeer.delete(peerHash);
+				}
+			}
 		}
 		if (!subscribed) {
+			this._subscriptionOpeningEpochByPeer.delete(peerHash);
+			this._openingSyncCapabilitiesByPeer.delete(peerHash);
 			this._replicationInfoBlockedPeers.add(peerHash);
 
 			const now = BigInt(+new Date());
@@ -23291,7 +23704,7 @@ export class SharedLog<
 
 		if (ih) {
 			ih.clear();
-			ih.callback(entry);
+			this.runPendingIHaveCallback(ih, entry);
 		}
 
 		this.syncronizer.onEntryAdded(entry);
@@ -23305,7 +23718,7 @@ export class SharedLog<
 			}
 			const entry = materializeEntry();
 			ih.clear();
-			ih.callback(entry);
+			this.runPendingIHaveCallback(ih, entry);
 			this.syncronizer.onEntryAdded(entry);
 			return;
 		}
