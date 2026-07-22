@@ -311,14 +311,18 @@ describe(`e2e`, function () {
 			expect((await db2.log.getReplicators()).size).to.equal(2),
 		);
 
-		let eps = 10;
+		const eps = 10n;
+		// Keep the boundary offset in bigint arithmetic. At epoch-scale nanoseconds,
+		// a Number's ULP is larger than `eps`, which can round this back into db2's
+		// preceding millisecond range and make the expected leader nondeterministic.
+		const entry = toEntry(BigInt(someTimeInTheFuture) * 1_000_000n + eps);
 		const isLeader1 = await db1.log.isLeader({
-			entry: toEntry(someTimeInTheFuture * 1e6 + eps),
+			entry,
 			replicas: 1,
 		});
 		expect(isLeader1).to.be.true;
 		const isLeader2 = await db2.log.isLeader({
-			entry: toEntry(someTimeInTheFuture * 1e6 + eps),
+			entry,
 			replicas: 1,
 		});
 		expect(isLeader2).to.be.false;

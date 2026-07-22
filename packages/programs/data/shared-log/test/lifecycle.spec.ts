@@ -298,29 +298,26 @@ describe("lifecycle", () => {
 			args: { replicate: { factor: 1 } },
 		});
 		const sharedLog = db.log;
-		const getMyReplicationSegments =
-			sharedLog.getMyReplicationSegments.bind(sharedLog);
-		const capturedSegments = await getMyReplicationSegments();
-		expect(capturedSegments).to.have.length(1);
-		let markLookupStarted!: () => void;
-		const lookupStarted = new Promise<void>((resolve) => {
-			markLookupStarted = resolve;
+		const requestMessage = new RequestReplicationInfoMessage();
+		let markSynchronizerEntered!: () => void;
+		const synchronizerEntered = new Promise<void>((resolve) => {
+			markSynchronizerEntered = resolve;
 		});
-		let releaseLookup!: () => void;
-		const lookupGate = new Promise<void>((resolve) => {
-			releaseLookup = resolve;
+		let releaseSynchronizer!: () => void;
+		const synchronizerGate = new Promise<void>((resolve) => {
+			releaseSynchronizer = resolve;
 		});
-		let gateFirstLookup = true;
-		const lookup = sinon
-			.stub(sharedLog, "getMyReplicationSegments")
-			.callsFake(async () => {
-				if (!gateFirstLookup) {
-					return getMyReplicationSegments();
+		const originalSynchronizerOnMessage =
+			sharedLog.syncronizer.onMessage.bind(sharedLog.syncronizer);
+		const synchronizer = sinon
+			.stub(sharedLog.syncronizer, "onMessage")
+			.callsFake(async (message: unknown, context: unknown) => {
+				if (message === requestMessage) {
+					markSynchronizerEntered();
+					await synchronizerGate;
+					return false;
 				}
-				gateFirstLookup = false;
-				markLookupStarted();
-				await lookupGate;
-				return capturedSegments;
+				return originalSynchronizerOnMessage(message as any, context as any);
 			});
 		const sent: unknown[] = [];
 		const send = sinon
@@ -331,34 +328,41 @@ describe("lifecycle", () => {
 			});
 		const requester = (await Ed25519Keypair.create()).publicKey;
 		let request: Promise<unknown> | undefined;
+		let closing: Promise<unknown> | undefined;
 
 		try {
-			request = sharedLog.onMessage(new RequestReplicationInfoMessage(), {
+			request = sharedLog.onMessage(requestMessage, {
 				from: requester,
 			} as any);
-			await lookupStarted;
+			await synchronizerEntered;
 
-			await db.close();
-			await session.peers[0].open(db);
-			const nonemptyBeforeRelease = sent.filter(
-				(message) =>
-					message instanceof AllReplicatingSegmentsMessage &&
-					message.segments.length > 0,
-			).length;
+			let closeSettled = false;
+			closing = db.close().then(() => {
+				closeSettled = true;
+			});
+			await waitForResolved(() =>
+				expect(sharedLog.acceptsParentAttachments).to.be.false,
+			);
+			await delay(20);
+			expect(closeSettled).to.be.false;
 
-			releaseLookup();
-			await request;
+			releaseSynchronizer();
+			await Promise.all([request, closing]);
 			expect(
 				sent.filter(
 					(message) =>
 						message instanceof AllReplicatingSegmentsMessage &&
 						message.segments.length > 0,
-				).length,
-			).to.equal(nonemptyBeforeRelease);
+				),
+			).to.have.length(0);
+
+			await session.peers[0].open(db);
+			expect((sharedLog as any)._activeReceiveHandlersByPeer.size).to.equal(0);
 		} finally {
-			releaseLookup();
+			releaseSynchronizer();
 			await request?.catch(() => {});
-			lookup.restore();
+			await closing?.catch(() => {});
+			synchronizer.restore();
 			send.restore();
 		}
 	});
