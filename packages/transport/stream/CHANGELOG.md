@@ -1,5 +1,24 @@
 # Changelog
 
+## 5.1.4
+
+### Patch Changes
+
+- [#1108](https://github.com/dao-xyz/peerbit/pull/1108) [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound unsolicited raw direct-block responses by retained and pending entries
+  and bytes, copy only the block range, and require CID integrity validation
+  before cache admission or provider learning. Decoding codecs such as DAG-CBOR
+  remain on the requested-read path and are never eagerly materialized. Add
+  matching TypeScript/rust-core accounting and TTL behavior plus local telemetry.
+  SharedLog now leaves eager retention off unless callers explicitly enable it;
+  the requested-read path and wire protocol are unchanged.
+
+- [#1089](https://github.com/dao-xyz/peerbit/pull/1089) [`8fce4d2`](https://github.com/dao-xyz/peerbit/commit/8fce4d2c4e188590ebde4cc3c88c1005715c6e0f) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Handle rejected best-effort raw stream closes during stream pruning without emitting uncaught browser errors.
+
+- [#1101](https://github.com/dao-xyz/peerbit/pull/1101) [`562b6d7`](https://github.com/dao-xyz/peerbit/commit/562b6d7519854249e3a69d139cbc421cc134e356) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Keep distinct outbound streams when mux-local IDs collide, and reliably reschedule candidate pruning as connections arrive during the grace period.
+
+- Updated dependencies [[`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651)]:
+  - @peerbit/cache@3.1.1
+
 ## 5.1.3
 
 ### Patch Changes

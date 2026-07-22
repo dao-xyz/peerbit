@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.3
+
+### Patch Changes
+
+- [#1107](https://github.com/dao-xyz/peerbit/pull/1107) [`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Verify remote block bytes against their CID without decoding DAG-CBOR in the transport.
+
 ## 2.1.2
 
 ### Patch Changes

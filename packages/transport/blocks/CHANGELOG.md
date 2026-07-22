@@ -1,5 +1,30 @@
 # Changelog
 
+## 4.2.6
+
+### Patch Changes
+
+- [#1108](https://github.com/dao-xyz/peerbit/pull/1108) [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound unsolicited raw direct-block responses by retained and pending entries
+  and bytes, copy only the block range, and require CID integrity validation
+  before cache admission or provider learning. Decoding codecs such as DAG-CBOR
+  remain on the requested-read path and are never eagerly materialized. Add
+  matching TypeScript/rust-core accounting and TTL behavior plus local telemetry.
+  SharedLog now leaves eager retention off unless callers explicitly enable it;
+  the requested-read path and wire protocol are unchanged.
+
+- [#1095](https://github.com/dao-xyz/peerbit/pull/1095) [`b385da5`](https://github.com/dao-xyz/peerbit/commit/b385da50f88b0cb17b77faf684ee869200dac3fd) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Preserve foreground read priority through queued, coalesced, and proxied remote block requests while reserving bounded provider capacity for demand reads.
+
+- [#1103](https://github.com/dao-xyz/peerbit/pull/1103) [`ae5d2e5`](https://github.com/dao-xyz/peerbit/commit/ae5d2e5b01832676c34c79f84eda4447db570cc2) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Persist verified remote block responses with their known CID, avoiding a redundant full-block hash while retaining response integrity validation.
+
+- [#1104](https://github.com/dao-xyz/peerbit/pull/1104) [`088acea`](https://github.com/dao-xyz/peerbit/commit/088aceafc31ab11ad75a3c97052c31394445ac93) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Only learn block response senders as providers after their payload validates against the requested CID.
+
+- [#1107](https://github.com/dao-xyz/peerbit/pull/1107) [`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Verify remote block bytes against their CID without decoding DAG-CBOR in the transport.
+
+- Updated dependencies [[`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`8fce4d2`](https://github.com/dao-xyz/peerbit/commit/8fce4d2c4e188590ebde4cc3c88c1005715c6e0f), [`562b6d7`](https://github.com/dao-xyz/peerbit/commit/562b6d7519854249e3a69d139cbc421cc134e356), [`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253)]:
+  - @peerbit/stream@5.1.4
+  - @peerbit/cache@3.1.1
+  - @peerbit/blocks-interface@2.1.3
+
 ## 4.2.5
 
 ### Patch Changes

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.43
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @peerbit/program@6.0.39
+
 ## 0.4.42
 
 ### Patch Changes

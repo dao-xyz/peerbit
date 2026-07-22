@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/pubsub",
-	"version": "5.3.3",
+	"version": "5.3.4",
 	"description": "Direct streaming for libp2p",
 	"type": "module",
 	"types": "./dist/src/index.d.ts",

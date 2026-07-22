@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.2.9
+
+### Patch Changes
+
+- Updated dependencies [[`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`b385da5`](https://github.com/dao-xyz/peerbit/commit/b385da50f88b0cb17b77faf684ee869200dac3fd), [`ae5d2e5`](https://github.com/dao-xyz/peerbit/commit/ae5d2e5b01832676c34c79f84eda4447db570cc2), [`088acea`](https://github.com/dao-xyz/peerbit/commit/088aceafc31ab11ad75a3c97052c31394445ac93), [`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253)]:
+  - @peerbit/blocks@4.2.6
+  - @peerbit/cache@3.1.1
+  - @peerbit/blocks-interface@2.1.3
+
 ## 6.2.8
 
 ### Patch Changes

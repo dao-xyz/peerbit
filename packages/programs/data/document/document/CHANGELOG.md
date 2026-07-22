@@ -1,5 +1,18 @@
 # Changelog
 
+## 13.1.12
+
+### Patch Changes
+
+- Updated dependencies [[`92f4d9d`](https://github.com/dao-xyz/peerbit/commit/92f4d9d73ae2fd0a8477dc850829058943bf08cf), [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`d7c1e95`](https://github.com/dao-xyz/peerbit/commit/d7c1e950da83763fa5d10f248182d54e5cd07551), [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`a21a308`](https://github.com/dao-xyz/peerbit/commit/a21a308310b9d50a3489f0fe1fbf3595b7c81f57), [`c3aa1ed`](https://github.com/dao-xyz/peerbit/commit/c3aa1ed8c7ea288b4172c2d4d3b71065b50e0faf), [`d7c1e95`](https://github.com/dao-xyz/peerbit/commit/d7c1e950da83763fa5d10f248182d54e5cd07551), [`bd89d0d`](https://github.com/dao-xyz/peerbit/commit/bd89d0dd083941faafb2bd4e347cb34ccb69c5f4)]:
+  - @peerbit/shared-log@13.2.11
+  - @peerbit/cache@3.1.1
+  - @peerbit/pubsub@5.3.4
+  - @peerbit/log@6.2.9
+  - @peerbit/program@6.0.39
+  - @peerbit/rpc@6.1.7
+  - @peerbit/document-interface@3.2.52
+
 ## 13.1.11
 
 ### Patch Changes

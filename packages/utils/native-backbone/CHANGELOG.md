@@ -1,5 +1,12 @@
 # @peerbit/native-backbone
 
+## 0.2.2
+
+### Patch Changes
+
+- Updated dependencies [[`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253)]:
+  - @peerbit/blocks-interface@2.1.3
+
 ## 0.2.1
 
 ### Patch Changes
