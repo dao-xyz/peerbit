@@ -2,7 +2,13 @@ import { type PublicSignKey, randomBytes } from "@peerbit/crypto";
 import { TestSession } from "@peerbit/test-utils";
 import { delay, waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
+import sinon from "sinon";
 import { v4 as uuid } from "uuid";
+import {
+	AllReplicatingSegmentsMessage,
+	StoppedReplicating,
+} from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
 describe("events", () => {
@@ -119,6 +125,514 @@ describe("events", () => {
 		).removeReplicator(foreignKey);
 
 		expect(changes).to.deep.equal([peerKey.hashcode()]);
+	});
+
+	it("fences a reconnect until an in-flight unsubscribe removal is coherent", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const replicationIndex = db1.log.replicationIndex as any;
+		await waitForResolved(async () => {
+			expect(
+				await replicationIndex
+					.iterate({ query: { hash: remoteHash } })
+					.all(),
+			).to.have.length.greaterThan(0);
+			expect(db1.log.uniqueReplicators.has(remoteHash)).to.be.true;
+		});
+
+		const deleteStarted = pDefer<void>();
+		const releaseDelete = pDefer<void>();
+		const originalDel = replicationIndex.del.bind(replicationIndex);
+		let blockNextRemovalDelete = true;
+		const del = sinon
+			.stub(replicationIndex, "del")
+			.callsFake((async (query: any, options?: any) => {
+				if (
+					blockNextRemovalDelete &&
+					query?.query?.hash === remoteHash
+				) {
+					blockNextRemovalDelete = false;
+					deleteStarted.resolve();
+					await releaseDelete.promise;
+				}
+				return originalDel(query, options);
+			}) as any);
+		const disconnected = sinon.spy(log.syncronizer, "onPeerDisconnected");
+		const leaves: string[] = [];
+		db1.log.events.addEventListener("replicator:leave", (event) => {
+			leaves.push(event.detail.publicKey.hashcode());
+		});
+
+		try {
+			const unsubscribeEvent = {
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			} as any;
+			const subscribeEvent = {
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			} as any;
+
+			const oldUnsubscribe = log._onUnsubscription(unsubscribeEvent);
+			await deleteStarted.promise;
+
+			// The old removal has crossed into its destructive queue item. Reconnect
+			// must stay blocked behind it instead of creating state midway through.
+			let reconnectSettled = false;
+			const reconnect = log._onSubscription(subscribeEvent).finally(() => {
+				reconnectSettled = true;
+			});
+			await Promise.resolve();
+			expect(reconnectSettled).to.be.false;
+			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.true;
+
+			releaseDelete.resolve();
+			await Promise.all([oldUnsubscribe, reconnect]);
+			await waitForResolved(async () => {
+				expect(
+					await replicationIndex
+						.iterate({ query: { hash: remoteHash } })
+						.all(),
+				).to.have.length.greaterThan(0);
+				expect(log.uniqueReplicators.has(remoteHash)).to.be.true;
+				expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.true;
+			});
+
+			const gid = "reconnected-generation";
+			log._peerSyncCapabilities.set(remoteHash, 7);
+			log._gidPeersHistory.set(gid, new Set([remoteHash]));
+
+			expect(log._peerSyncCapabilities.get(remoteHash)).to.equal(7);
+			expect(log._replicatorLastActivityAt.has(remoteHash)).to.be.true;
+			expect(log._gidPeersHistory.get(gid)?.has(remoteHash)).to.be.true;
+			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.false;
+			expect(disconnected.calledOnceWith(remoteHash)).to.be.true;
+			expect(leaves).to.deep.equal([]);
+
+			// A later unsubscribe still owns the current epoch and must perform the
+			// complete removal, including sync-related cleanup and one leave event.
+			await log._onUnsubscription(unsubscribeEvent);
+			expect(
+				await replicationIndex
+					.iterate({ query: { hash: remoteHash } })
+					.all(),
+			).to.have.length(0);
+			expect(log.uniqueReplicators.has(remoteHash)).to.be.false;
+			expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.false;
+			expect(log._peerSyncCapabilities.has(remoteHash)).to.be.false;
+			expect(log._replicatorLastActivityAt.has(remoteHash)).to.be.false;
+			expect(log._gidPeersHistory.has(gid)).to.be.false;
+			expect(disconnected.callCount).to.equal(2);
+			expect(disconnected.alwaysCalledWith(remoteHash)).to.be.true;
+			expect(leaves).to.deep.equal([remoteHash]);
+		} finally {
+			del.restore();
+			releaseDelete.resolve();
+			disconnected.restore();
+		}
+	});
+
+	it("does not let a superseded reconnect reopen a peer", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const replicationIndex = db1.log.replicationIndex as any;
+		await waitForResolved(async () => {
+			expect(
+				await replicationIndex
+					.iterate({ query: { hash: remoteHash } })
+					.all(),
+			).to.have.length.greaterThan(0);
+			expect(db1.log.uniqueReplicators.has(remoteHash)).to.be.true;
+		});
+
+		const deleteStarted = pDefer<void>();
+		const releaseDelete = pDefer<void>();
+		const originalDel = replicationIndex.del.bind(replicationIndex);
+		let blockNextRemovalDelete = true;
+		const del = sinon
+			.stub(replicationIndex, "del")
+			.callsFake((async (query: any, options?: any) => {
+				if (
+					blockNextRemovalDelete &&
+					query?.query?.hash === remoteHash
+				) {
+					blockNextRemovalDelete = false;
+					deleteStarted.resolve();
+					await releaseDelete.promise;
+				}
+				return originalDel(query, options);
+			}) as any);
+		const unblock = sinon.spy(log._replicationInfoBlockedPeers, "delete");
+		const scheduleRequests = sinon.spy(log, "scheduleReplicationInfoRequests");
+		const disconnected = sinon.spy(log.syncronizer, "onPeerDisconnected");
+		const leaves: string[] = [];
+		db1.log.events.addEventListener("replicator:leave", (event) => {
+			leaves.push(event.detail.publicKey.hashcode());
+		});
+
+		const unsubscribeEvent = {
+			detail: { from: remoteKey, topics: [db1.log.topic] },
+		} as any;
+		const subscribeEvent = {
+			detail: { from: remoteKey, topics: [db1.log.topic] },
+		} as any;
+
+		try {
+			const firstUnsubscribe = log._onUnsubscription(unsubscribeEvent);
+			await deleteStarted.promise;
+			const supersededSubscribe = log._onSubscription(subscribeEvent);
+			await Promise.resolve();
+			const winningUnsubscribe = log._onUnsubscription(unsubscribeEvent);
+			await Promise.resolve();
+			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.true;
+
+			releaseDelete.resolve();
+			await Promise.all([
+				firstUnsubscribe,
+				supersededSubscribe,
+				winningUnsubscribe,
+			]);
+
+			expect(
+				await replicationIndex
+					.iterate({ query: { hash: remoteHash } })
+					.all(),
+			).to.have.length(0);
+			expect(log.uniqueReplicators.has(remoteHash)).to.be.false;
+			expect(log._replicatorJoinEmitted.has(remoteHash)).to.be.false;
+			expect(log._replicationInfoBlockedPeers.has(remoteHash)).to.be.true;
+			expect(unblock.neverCalledWith(remoteHash)).to.be.true;
+			expect(scheduleRequests.notCalled).to.be.true;
+			expect(disconnected.callCount).to.equal(2);
+			expect(disconnected.alwaysCalledWith(remoteHash)).to.be.true;
+			expect(leaves).to.deep.equal([remoteHash]);
+		} finally {
+			del.restore();
+			unblock.restore();
+			scheduleRequests.restore();
+			releaseDelete.resolve();
+			disconnected.restore();
+		}
+	});
+
+	it("cleans old sync state when reconnect supersedes a queued removal", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const replicationIndex = db1.log.replicationIndex as any;
+		await waitForResolved(async () => {
+			expect(
+				await replicationIndex.count({ query: { hash: remoteHash } }),
+			).to.be.greaterThan(0);
+		});
+
+		const blockerStarted = pDefer<void>();
+		const releaseBlocker = pDefer<void>();
+		const blocker = log.withReplicationInfoApplyQueue(
+			remoteHash,
+			async () => {
+				blockerStarted.resolve();
+				await releaseBlocker.promise;
+			},
+		);
+		await blockerStarted.promise;
+
+		const cleanupStarted = pDefer<void>();
+		const releaseCleanup = pDefer<void>();
+		const originalDisconnect =
+			log.syncronizer.onPeerDisconnected.bind(log.syncronizer);
+		const disconnected = sinon
+			.stub(log.syncronizer, "onPeerDisconnected")
+			.callsFake(async (...args: unknown[]) => {
+				const peerHash = args[0] as string;
+				cleanupStarted.resolve();
+				await releaseCleanup.promise;
+				return originalDisconnect(peerHash);
+			});
+		const leaves: string[] = [];
+		db1.log.events.addEventListener("replicator:leave", (event) => {
+			leaves.push(event.detail.publicKey.hashcode());
+		});
+		const gid = "stale-before-reconnect";
+		log._peerSyncCapabilities.set(remoteHash, 7);
+		log._gidPeersHistory.set(gid, new Set([remoteHash]));
+
+		try {
+			const unsubscribe = log._onUnsubscription({
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			});
+			let reconnectSettled = false;
+			const reconnect = log
+				._onSubscription({
+					detail: { from: remoteKey, topics: [db1.log.topic] },
+				})
+				.finally(() => {
+					reconnectSettled = true;
+				});
+
+			releaseBlocker.resolve();
+			await cleanupStarted.promise;
+			await Promise.resolve();
+			expect(reconnectSettled).to.be.false;
+			releaseCleanup.resolve();
+			await Promise.all([blocker, unsubscribe, reconnect]);
+
+			// The stale removal must preserve current membership, but its ordered
+			// disconnect cleanup must run before reconnect starts using the lane.
+			expect(
+				await replicationIndex.count({ query: { hash: remoteHash } }),
+			).to.be.greaterThan(0);
+			expect(db1.log.uniqueReplicators.has(remoteHash)).to.be.true;
+			expect(log._peerSyncCapabilities.has(remoteHash)).to.be.false;
+			expect(log._gidPeersHistory.has(gid)).to.be.false;
+			expect(disconnected.calledOnceWith(remoteHash)).to.be.true;
+			expect(leaves).to.deep.equal([]);
+		} finally {
+			releaseBlocker.resolve();
+			releaseCleanup.resolve();
+			disconnected.restore();
+		}
+	});
+
+	it("does not apply a replication message superseded while the synchronizer yields", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const replicationIndex = db1.log.replicationIndex as any;
+		let remoteRange: any;
+		await waitForResolved(async () => {
+			const ranges = await replicationIndex
+				.iterate({ query: { hash: remoteHash } })
+				.all();
+			expect(ranges).to.have.length.greaterThan(0);
+			remoteRange = ranges[0].value;
+		});
+
+		await log.removeReplicator(remoteKey, { noEvent: true });
+		expect(
+			await replicationIndex.count({ query: { hash: remoteHash } }),
+		).to.equal(0);
+
+		const delayedMessage = new AllReplicatingSegmentsMessage({
+			segments: [remoteRange.toReplicationRange()],
+		});
+		const synchronizerEntered = pDefer<void>();
+		const releaseSynchronizer = pDefer<void>();
+		const originalSynchronizerOnMessage =
+			log.syncronizer.onMessage.bind(log.syncronizer);
+		const synchronizer = sinon
+			.stub(log.syncronizer, "onMessage")
+			.callsFake(async (message: unknown, context: unknown) => {
+				if (message === delayedMessage) {
+					synchronizerEntered.resolve();
+					await releaseSynchronizer.promise;
+					return false;
+				}
+				return originalSynchronizerOnMessage(message, context);
+			});
+		const scheduleRequests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {});
+
+		try {
+			const delayedReceive = db1.log.onMessage(delayedMessage, {
+				from: remoteKey,
+				message: { header: { timestamp: BigInt(Date.now()) } },
+			} as any);
+			await synchronizerEntered.promise;
+
+			await log._onUnsubscription({
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			});
+			await log._onSubscription({
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			});
+
+			releaseSynchronizer.resolve();
+			await delayedReceive;
+			expect(
+				await replicationIndex.count({ query: { hash: remoteHash } }),
+			).to.equal(0);
+		} finally {
+			releaseSynchronizer.resolve();
+			synchronizer.restore();
+			scheduleRequests.restore();
+		}
+	});
+
+	it("scopes replication timestamps to a reconnect generation", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const replicationIndex = db1.log.replicationIndex as any;
+		let remoteRange: any;
+		await waitForResolved(async () => {
+			const ranges = await replicationIndex
+				.iterate({ query: { hash: remoteHash } })
+				.all();
+			expect(ranges).to.have.length.greaterThan(0);
+			remoteRange = ranges[0].value;
+		});
+		const scheduleRequests = sinon
+			.stub(log, "scheduleReplicationInfoRequests")
+			.callsFake(() => {});
+
+		try {
+			await log._onUnsubscription({
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			});
+			expect(
+				(log.latestReplicationInfoMessage.get(remoteHash) ?? 0n) > 1n,
+			).to.be.true;
+
+			await log._onSubscription({
+				detail: { from: remoteKey, topics: [db1.log.topic] },
+			});
+			expect(log.latestReplicationInfoMessage.has(remoteHash)).to.be.false;
+
+			await db1.log.onMessage(
+				new AllReplicatingSegmentsMessage({
+					segments: [remoteRange.toReplicationRange()],
+				}),
+				{
+					from: remoteKey,
+					// Simulate a sender whose wall clock trails this receiver.
+					message: { header: { timestamp: 1n } },
+				} as any,
+			);
+
+			expect(
+				await replicationIndex.count({ query: { hash: remoteHash } }),
+			).to.be.greaterThan(0);
+			expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(1n);
+		} finally {
+			scheduleRequests.restore();
+		}
+	});
+
+	it("ignores a stopped-segment message older than the latest snapshot", async () => {
+		session = await TestSession.connected(2);
+
+		const db1 = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		await session.peers[1].open(db1.clone(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const remoteHash = remoteKey.hashcode();
+		const log = db1.log as any;
+		const replicationIndex = db1.log.replicationIndex as any;
+		let remoteRange: any;
+		await waitForResolved(async () => {
+			const ranges = await replicationIndex
+				.iterate({ query: { hash: remoteHash } })
+				.all();
+			expect(ranges).to.have.length.greaterThan(0);
+			remoteRange = ranges[0].value;
+		});
+
+		log.latestReplicationInfoMessage.delete(remoteHash);
+		const newerTimestamp = BigInt(Date.now() + 1_000);
+		await db1.log.onMessage(
+			new AllReplicatingSegmentsMessage({
+				segments: [remoteRange.toReplicationRange()],
+			}),
+			{
+				from: remoteKey,
+				message: { header: { timestamp: newerTimestamp } },
+			} as any,
+		);
+		await db1.log.onMessage(
+			new StoppedReplicating({ segmentIds: [remoteRange.id] }),
+			{
+				from: remoteKey,
+				message: { header: { timestamp: newerTimestamp - 1n } },
+			} as any,
+		);
+
+		expect(
+			await replicationIndex.count({ query: { hash: remoteHash } }),
+		).to.be.greaterThan(0);
+		expect(log.latestReplicationInfoMessage.get(remoteHash)).to.equal(
+			newerTimestamp,
+		);
+	});
+
+	it("drains admitted replication mutations before close and reopen", async () => {
+		session = await TestSession.connected(1);
+		const db = await session.peers[0].open(new EventStore(), {
+			args: { replicate: 1, timeUntilRoleMaturity: 0 },
+		});
+		const log = db.log as any;
+		const mutationStarted = pDefer<void>();
+		const releaseMutation = pDefer<void>();
+		const mutation = log.withReplicationInfoApplyQueue(
+			"synthetic-remote-peer",
+			async () => {
+				mutationStarted.resolve();
+				await releaseMutation.promise;
+			},
+		);
+		await mutationStarted.promise;
+
+		let closeSettled = false;
+		const close = db.close().finally(() => {
+			closeSettled = true;
+		});
+		await delay(25);
+		expect(closeSettled).to.be.false;
+
+		releaseMutation.resolve();
+		await Promise.all([mutation, close]);
+		await session.peers[0].open(db);
+		expect(log._replicationInfoApplyQueueByPeer.size).to.equal(0);
 	});
 
 	it("replicate:join not emitted on update", async () => {
