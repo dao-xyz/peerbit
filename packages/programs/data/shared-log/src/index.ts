@@ -3333,6 +3333,10 @@ export class SharedLog<
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
+	// Local receive generations fence replication-info handlers that were admitted
+	// before a liveness eviction but reach the per-peer apply lane after it. Unlike
+	// message timestamps, these tokens never compare clocks from different peers.
+	private _replicationInfoReceiveEpochByPeer!: Map<string, object>;
 	// Subscription callbacks can overlap because removing a replicator mutates the
 	// replication index asynchronously. Keep that lifecycle separate from message
 	// timestamps so a reconnect can synchronously revoke an older unsubscribe.
@@ -4444,6 +4448,7 @@ export class SharedLog<
 		this._replicationInfoBlockedPeers = new Set();
 		this._replicationInfoRequestByPeer = new Map();
 		this._replicationInfoApplyQueueByPeer = new Map();
+		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._subscriptionEpochByPeer = new Map();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._gidPeersHistory = new Map();
@@ -12651,6 +12656,7 @@ export class SharedLog<
 		// Terminal close/drop drains the previous lifecycle before another open can
 		// install fresh lanes and opaque per-subscription ownership tokens.
 		this._replicationInfoApplyQueueByPeer = new Map();
+		this._replicationInfoReceiveEpochByPeer = new Map();
 		this._subscriptionEpochByPeer = new Map();
 		this._pendingReplicatorLeaveByPeer = new Set();
 		this._repairRetryTimers = new Set();
@@ -14094,6 +14100,15 @@ export class SharedLog<
 		return false;
 	}
 
+	private advanceReplicationInfoRecoveryEpoch(peerHash: string) {
+		// Handlers admitted before a successful liveness removal must not restore
+		// state when they eventually reach the apply lane. Reset the sender's
+		// ordering watermark with the local epoch so a later arrival can be
+		// accepted without comparing its clock to this receiver's clock.
+		this.advanceReplicationInfoReceiveEpoch(peerHash);
+		this.latestReplicationInfoMessage.delete(peerHash);
+	}
+
 	private async evictReplicatorFromLiveness(
 		peerHash: string,
 		publicKey: PublicSignKey,
@@ -14101,8 +14116,6 @@ export class SharedLog<
 		subscriptionEpoch: object | null,
 		observedActivityAt: number | undefined,
 	) {
-		const watermark = BigInt(+new Date());
-
 		try {
 			await this.removeReplicator(publicKey, {
 				noEvent: true,
@@ -14124,12 +14137,7 @@ export class SharedLog<
 					) {
 						return;
 					}
-					const previousWatermark =
-						this.latestReplicationInfoMessage.get(peerHash);
-					if (!previousWatermark || previousWatermark < watermark) {
-						this.latestReplicationInfoMessage.set(peerHash, watermark);
-					}
-
+					this.advanceReplicationInfoRecoveryEpoch(peerHash);
 					if (this._pendingReplicatorLeaveByPeer.delete(peerHash)) {
 						this.events.dispatchEvent(
 							new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
@@ -14313,6 +14321,10 @@ export class SharedLog<
 						observedActivityAt,
 					subscriptionEpoch,
 					onRemoved: () => {
+						if (!ownsProbe()) {
+							return;
+						}
+						this.advanceReplicationInfoRecoveryEpoch(peerHash);
 						this._replicatorLivenessTargetsSize = -1;
 					},
 				});
@@ -15248,6 +15260,7 @@ export class SharedLog<
 		captureSync(() => {
 			this._pendingIHave?.clear();
 			this.latestReplicationInfoMessage?.clear();
+			this._replicationInfoReceiveEpochByPeer?.clear();
 			this._gidPeersHistory?.clear();
 			this._peerSyncCapabilities?.clear();
 			this._liveRawGossipBatches?.clear();
@@ -15673,6 +15686,8 @@ export class SharedLog<
 				this._replicationLifecycleController;
 			const receiveSubscriptionEpoch =
 				this.getSubscriptionEpoch(receiveFromHash);
+			const receiveReplicationInfoReceiveEpoch =
+				this.getReplicationInfoReceiveEpoch(receiveFromHash);
 			if (!context.from.equals(this.node.identity.publicKey)) {
 				this.markReplicatorActivity(receiveFromHash);
 			}
@@ -17990,6 +18005,10 @@ export class SharedLog<
 					!this.isReplicationLifecycleActive(
 						receiveReplicationLifecycleController,
 					) ||
+					!this.isCurrentReplicationInfoReceiveEpoch(
+						receiveFromHash,
+						receiveReplicationInfoReceiveEpoch,
+					) ||
 					this._replicationInfoBlockedPeers.has(fromHash)
 				) {
 					return;
@@ -18005,6 +18024,10 @@ export class SharedLog<
 							!this.isCurrentSubscriptionEpoch(
 								fromHash,
 								receiveSubscriptionEpoch,
+							) ||
+							!this.isCurrentReplicationInfoReceiveEpoch(
+								fromHash,
+								receiveReplicationInfoReceiveEpoch,
 							) ||
 							this._replicationInfoBlockedPeers.has(fromHash)
 						) {
@@ -18065,6 +18088,10 @@ export class SharedLog<
 					!this.isReplicationLifecycleActive(
 						receiveReplicationLifecycleController,
 					) ||
+					!this.isCurrentReplicationInfoReceiveEpoch(
+						receiveFromHash,
+						receiveReplicationInfoReceiveEpoch,
+					) ||
 					this._replicationInfoBlockedPeers.has(fromHash)
 				) {
 					return;
@@ -18078,6 +18105,10 @@ export class SharedLog<
 						!this.isCurrentSubscriptionEpoch(
 							fromHash,
 							receiveSubscriptionEpoch,
+						) ||
+						!this.isCurrentReplicationInfoReceiveEpoch(
+							fromHash,
+							receiveReplicationInfoReceiveEpoch,
 						) ||
 						this._replicationInfoBlockedPeers.has(fromHash)
 					) {
@@ -21889,6 +21920,23 @@ export class SharedLog<
 			// tails admitted while the previous snapshot was settling.
 			await Promise.resolve();
 		}
+	}
+
+	private advanceReplicationInfoReceiveEpoch(peerHash: string): object {
+		const next = {};
+		this._replicationInfoReceiveEpochByPeer.set(peerHash, next);
+		return next;
+	}
+
+	private getReplicationInfoReceiveEpoch(peerHash: string): object | null {
+		return this._replicationInfoReceiveEpochByPeer.get(peerHash) ?? null;
+	}
+
+	private isCurrentReplicationInfoReceiveEpoch(
+		peerHash: string,
+		epoch: object | null,
+	): boolean {
+		return this.getReplicationInfoReceiveEpoch(peerHash) === epoch;
 	}
 
 	private advanceSubscriptionEpoch(peerHash: string): object {

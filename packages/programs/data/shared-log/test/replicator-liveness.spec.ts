@@ -5,8 +5,10 @@ import { expect } from "chai";
 import pDefer from "p-defer";
 import sinon from "sinon";
 import {
+	AllReplicatingSegmentsMessage,
 	ReplicationPingMessage,
 	RequestReplicationInfoMessage,
+	StoppedReplicating,
 } from "../src/replication.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -721,6 +723,136 @@ describe("waitForReplicator liveness", () => {
 			db0.log.rpc.send = originalSend;
 			hooks.confirmReplicatorSubscriberPresence =
 				originalConfirmSubscriberPresence;
+		}
+	});
+
+	it("uses a local receive generation when relearning an unresolved liveness-evicted peer", async () => {
+		session = await TestSession.connected(2);
+
+		const store = new EventStore<string, any>();
+		const db0 = await session.peers[0].open(store, {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+		await session.peers[1].open(store.clone(), {
+			args: {
+				replicate: { factor: 1 },
+				timeUntilRoleMaturity: 0,
+			},
+		});
+
+		const remoteKey = session.peers[1].identity.publicKey;
+		const peerHash = remoteKey.hashcode();
+		const hooks = getLivenessTestHooks(db0);
+		const log = db0.log as any;
+		const replicationIndex = db0.log.replicationIndex as any;
+		let remoteRange: any;
+		await waitForResolved(async () => {
+			const ranges = await replicationIndex
+				.iterate({ query: { hash: peerHash } })
+				.all();
+			expect(ranges).to.have.length.greaterThan(0);
+			remoteRange = ranges[0].value;
+		});
+
+		// Model a sender whose clock trails this receiver with tiny timestamps. The
+		// delayed old-generation messages deliberately carry later values than the
+		// recovery snapshot, proving that the local epoch owns the eviction boundary.
+		log.latestReplicationInfoMessage.set(peerHash, 1n);
+		const delayedSnapshot = new AllReplicatingSegmentsMessage({
+			segments: [remoteRange.toReplicationRange()],
+		});
+		const delayedStopped = new StoppedReplicating({
+			segmentIds: [remoteRange.id],
+		});
+		const snapshotSynchronizerEntered = pDefer<void>();
+		const stoppedSynchronizerEntered = pDefer<void>();
+		const releaseSnapshotSynchronizer = pDefer<void>();
+		const releaseStoppedSynchronizer = pDefer<void>();
+		const originalSynchronizerOnMessage = log.syncronizer.onMessage.bind(
+			log.syncronizer,
+		);
+		const synchronizer = sinon
+			.stub(log.syncronizer, "onMessage")
+			.callsFake(async (message: unknown, context: unknown) => {
+				if (message === delayedSnapshot) {
+					snapshotSynchronizerEntered.resolve();
+					await releaseSnapshotSynchronizer.promise;
+					return false;
+				}
+				if (message === delayedStopped) {
+					stoppedSynchronizerEntered.resolve();
+					await releaseStoppedSynchronizer.promise;
+					return false;
+				}
+				return originalSynchronizerOnMessage(message, context);
+			});
+		const resolvePublicKey = sinon
+			.stub(log, "_resolvePublicKeyFromHash")
+			.resolves(undefined);
+
+		try {
+			const delayedSnapshotReceive = db0.log.onMessage(delayedSnapshot, {
+				from: remoteKey,
+				message: { header: { timestamp: 2n } },
+			} as any);
+			const delayedStoppedReceive = db0.log.onMessage(delayedStopped, {
+				from: remoteKey,
+				message: { header: { timestamp: 3n } },
+			} as any);
+			await Promise.all([
+				snapshotSynchronizerEntered.promise,
+				stoppedSynchronizerEntered.promise,
+			]);
+
+			// Exercise the separate hash-only removal path used after pubsub loses
+			// the public-key mapping for a previously learned/relayed replicator.
+			log._replicatorLastActivityAt.set(peerHash, Date.now() - 60_000);
+			await hooks.probeReplicatorLiveness(peerHash);
+			expect(
+				await replicationIndex.count({ query: { hash: peerHash } }),
+			).to.equal(0);
+
+			// This handler entered before eviction and must not restore removed state
+			// merely because it reaches the apply lane afterward.
+			releaseSnapshotSynchronizer.resolve();
+			await delayedSnapshotReceive;
+			expect(
+				await replicationIndex.count({ query: { hash: peerHash } }),
+			).to.equal(0);
+			expect(log.latestReplicationInfoMessage.has(peerHash)).to.be.false;
+
+			// A later arrival from the same slower-clock sender is authoritative and
+			// must be accepted without comparing its timestamp to the receiver clock.
+			await db0.log.onMessage(
+				new AllReplicatingSegmentsMessage({
+					segments: [remoteRange.toReplicationRange()],
+				}),
+				{
+					from: remoteKey,
+					message: { header: { timestamp: 1n } },
+				} as any,
+			);
+			expect(
+				await replicationIndex.count({ query: { hash: peerHash } }),
+			).to.be.greaterThan(0);
+			expect(log.latestReplicationInfoMessage.get(peerHash)).to.equal(1n);
+
+			// A pre-eviction stopped message is fenced by the same local generation;
+			// it cannot delete the newly restored range or replace its watermark.
+			releaseStoppedSynchronizer.resolve();
+			await delayedStoppedReceive;
+			expect(
+				await replicationIndex.count({ query: { hash: peerHash } }),
+			).to.be.greaterThan(0);
+			expect(log.latestReplicationInfoMessage.get(peerHash)).to.equal(1n);
+		} finally {
+			releaseSnapshotSynchronizer.resolve();
+			releaseStoppedSynchronizer.resolve();
+			synchronizer.restore();
+			resolvePublicKey.restore();
 		}
 	});
 });
