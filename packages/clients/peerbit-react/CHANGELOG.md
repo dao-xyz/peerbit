@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.1.35
+
+### Patch Changes
+
+- [#1100](https://github.com/dao-xyz/peerbit/pull/1100) [`82c3e80`](https://github.com/dao-xyz/peerbit/commit/82c3e802b713426f51a1884c370a582fa1b6eba1) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Negotiate a Peerbit Yamux profile with a 4 MiB initial stream window between
+  updated peers, while retaining standard Yamux fallback for older peers. This
+  removes repeated flow-control stalls during concurrent large block responses
+  without breaking mixed-version connections.
+
+- [#1099](https://github.com/dao-xyz/peerbit/pull/1099) [`bd89d0d`](https://github.com/dao-xyz/peerbit/commit/bd89d0dd083941faafb2bd4e347cb34ccb69c5f4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose a validated `pubsubUploadLimitBps` runtime option through `Peerbit.create` and the browser node `PeerProvider`, applying it to root and node pubsub shard channels and as the overridable default for opted-in SharedLog fanout channels.
+
+- Updated dependencies [[`82c3e80`](https://github.com/dao-xyz/peerbit/commit/82c3e802b713426f51a1884c370a582fa1b6eba1), [`bd89d0d`](https://github.com/dao-xyz/peerbit/commit/bd89d0dd083941faafb2bd4e347cb34ccb69c5f4)]:
+  - peerbit@5.3.10
+  - @peerbit/program@6.0.39
+  - @peerbit/canonical-client@1.1.42
+  - @peerbit/program-react@0.4.43
+
 ## 1.1.34
 
 ### Patch Changes

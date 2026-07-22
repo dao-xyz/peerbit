@@ -1,5 +1,31 @@
 # Changelog
 
+## 8.0.0
+
+### Major Changes
+
+- [#1106](https://github.com/dao-xyz/peerbit/pull/1106) [`c97020d`](https://github.com/dao-xyz/peerbit/commit/c97020d5fba5fc35c5735622df95c76c05530c89) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Replace the legacy replayable HTTP administration signature with strict
+  signed-request v2. Requests are now framed unambiguously, bound to a pinned
+  server identity and per-process boot ID, freshness checked, protected by
+  single-use nonces, and verified against the exact request target and raw body
+  digest. Remote records persist the server identity used for audience pinning.
+  Existing remote names retain that pin until explicitly removed, so routine
+  re-enrollment cannot silently accept a substituted server identity.
+
+  Legacy signed requests are intentionally rejected. Upgrade remote servers
+  before their administrator clients, then reconnect with the server peer ID
+  pinned.
+
+### Patch Changes
+
+- [#1105](https://github.com/dao-xyz/peerbit/pull/1105) [`9d33c80`](https://github.com/dao-xyz/peerbit/commit/9d33c80994372bfbf98061b87ee0157483ed347d) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Persist trust-list removals so revoked administrator keys remain revoked after a server restart, and report whether API revocation removed an existing key.
+
+- Updated dependencies [[`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`b385da5`](https://github.com/dao-xyz/peerbit/commit/b385da50f88b0cb17b77faf684ee869200dac3fd), [`ae5d2e5`](https://github.com/dao-xyz/peerbit/commit/ae5d2e5b01832676c34c79f84eda4447db570cc2), [`088acea`](https://github.com/dao-xyz/peerbit/commit/088aceafc31ab11ad75a3c97052c31394445ac93), [`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253), [`d7c1e95`](https://github.com/dao-xyz/peerbit/commit/d7c1e950da83763fa5d10f248182d54e5cd07551), [`82c3e80`](https://github.com/dao-xyz/peerbit/commit/82c3e802b713426f51a1884c370a582fa1b6eba1), [`bd89d0d`](https://github.com/dao-xyz/peerbit/commit/bd89d0dd083941faafb2bd4e347cb34ccb69c5f4)]:
+  - @peerbit/blocks@4.2.6
+  - @peerbit/pubsub@5.3.4
+  - peerbit@5.3.10
+  - @peerbit/program@6.0.39
+
 ## 7.0.2
 
 ### Patch Changes

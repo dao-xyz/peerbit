@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.1
+
+### Patch Changes
+
+- [#1108](https://github.com/dao-xyz/peerbit/pull/1108) [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Release deleted cache values immediately and keep size accounting exact across
+  delete/re-add and custom-size replacement cycles. Refresh replacement order so
+  head-only FIFO/TTL trimming cannot retain older expired entries behind it.
+
 ## 3.1.0
 
 ### Minor Changes

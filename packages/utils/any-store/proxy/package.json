@@ -1,6 +1,6 @@
 {
 	"name": "@peerbit/any-store-proxy",
-	"version": "1.0.50",
+	"version": "1.0.51",
 	"description": "Canonical module adapters for @peerbit/any-store",
 	"author": "Peerbit contributors",
 	"license": "MIT",

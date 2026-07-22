@@ -1,5 +1,17 @@
 # @peerbit/network-rust
 
+## 0.1.3
+
+### Patch Changes
+
+- [#1108](https://github.com/dao-xyz/peerbit/pull/1108) [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound unsolicited raw direct-block responses by retained and pending entries
+  and bytes, copy only the block range, and require CID integrity validation
+  before cache admission or provider learning. Decoding codecs such as DAG-CBOR
+  remain on the requested-read path and are never eagerly materialized. Add
+  matching TypeScript/rust-core accounting and TTL behavior plus local telemetry.
+  SharedLog now leaves eager retention off unless callers explicitly enable it;
+  the requested-read path and wire protocol are unchanged.
+
 ## 0.1.2
 
 ### Patch Changes

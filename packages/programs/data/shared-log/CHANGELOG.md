@@ -1,5 +1,40 @@
 # Changelog
 
+## 13.2.11
+
+### Patch Changes
+
+- [#1088](https://github.com/dao-xyz/peerbit/pull/1088) [`92f4d9d`](https://github.com/dao-xyz/peerbit/commit/92f4d9d73ae2fd0a8477dc850829058943bf08cf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Allow directed shared-log delivery to select a transport priority.
+
+- [#1108](https://github.com/dao-xyz/peerbit/pull/1108) [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound unsolicited raw direct-block responses by retained and pending entries
+  and bytes, copy only the block range, and require CID integrity validation
+  before cache admission or provider learning. Decoding codecs such as DAG-CBOR
+  remain on the requested-read path and are never eagerly materialized. Add
+  matching TypeScript/rust-core accounting and TTL behavior plus local telemetry.
+  SharedLog now leaves eager retention off unless callers explicitly enable it;
+  the requested-read path and wire protocol are unchanged.
+
+- [#1109](https://github.com/dao-xyz/peerbit/pull/1109) [`d7c1e95`](https://github.com/dao-xyz/peerbit/commit/d7c1e950da83763fa5d10f248182d54e5cd07551) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose bounded eager block-cache telemetry and a detached native-graph runtime snapshot through the public shared-log API.
+
+- [#1097](https://github.com/dao-xyz/peerbit/pull/1097) [`a21a308`](https://github.com/dao-xyz/peerbit/commit/a21a308310b9d50a3489f0fe1fbf3595b7c81f57) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Repair silently dropped best-effort replication announcements with an
+  eight-peer, fairly rotating cohort of acknowledged full-state transport
+  deliveries. Each mutation generation performs at most three attempts per
+  target, and newer state preempts stale in-flight sends. Acknowledgement confirms
+  delivery of the signed envelope rather than receiver-local application.
+
+- [#1122](https://github.com/dao-xyz/peerbit/pull/1122) [`c3aa1ed`](https://github.com/dao-xyz/peerbit/commit/c3aa1ed8c7ea288b4172c2d4d3b71065b50e0faf) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Serialize and coalesce delayed join-warmup retries per peer so large late-join synchronization does not accumulate overlapping full-backlog sends. The retry window and wire protocol remain unchanged. This releases the Peerbit-side fix from [#1117](https://github.com/dao-xyz/peerbit/issues/1117).
+
+- [#1099](https://github.com/dao-xyz/peerbit/pull/1099) [`bd89d0d`](https://github.com/dao-xyz/peerbit/commit/bd89d0dd083941faafb2bd4e347cb34ccb69c5f4) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose a validated `pubsubUploadLimitBps` runtime option through `Peerbit.create` and the browser node `PeerProvider`, applying it to root and node pubsub shard channels and as the overridable default for opted-in SharedLog fanout channels.
+
+- Updated dependencies [[`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`b385da5`](https://github.com/dao-xyz/peerbit/commit/b385da50f88b0cb17b77faf684ee869200dac3fd), [`ae5d2e5`](https://github.com/dao-xyz/peerbit/commit/ae5d2e5b01832676c34c79f84eda4447db570cc2), [`088acea`](https://github.com/dao-xyz/peerbit/commit/088aceafc31ab11ad75a3c97052c31394445ac93), [`c3d5ed8`](https://github.com/dao-xyz/peerbit/commit/c3d5ed8b3b7bf291c95d515e196e6e0a429d9253), [`d7c1e95`](https://github.com/dao-xyz/peerbit/commit/d7c1e950da83763fa5d10f248182d54e5cd07551)]:
+  - @peerbit/blocks@4.2.6
+  - @peerbit/cache@3.1.1
+  - @peerbit/blocks-interface@2.1.3
+  - @peerbit/pubsub@5.3.4
+  - @peerbit/log@6.2.9
+  - @peerbit/program@6.0.39
+  - @peerbit/rpc@6.1.7
+
 ## 13.2.10
 
 ### Patch Changes

@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.3.4
+
+### Patch Changes
+
+- [#1109](https://github.com/dao-xyz/peerbit/pull/1109) [`d7c1e95`](https://github.com/dao-xyz/peerbit/commit/d7c1e950da83763fa5d10f248182d54e5cd07551) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Expose a bounded, read-only runtime snapshot for effective root and node fanout upload limits.
+
+- Updated dependencies [[`55e9c94`](https://github.com/dao-xyz/peerbit/commit/55e9c9444467343dd74a25fc2fb330f69bc05651), [`8fce4d2`](https://github.com/dao-xyz/peerbit/commit/8fce4d2c4e188590ebde4cc3c88c1005715c6e0f), [`562b6d7`](https://github.com/dao-xyz/peerbit/commit/562b6d7519854249e3a69d139cbc421cc134e356)]:
+  - @peerbit/stream@5.1.4
+
 ## 5.3.3
 
 ### Patch Changes
