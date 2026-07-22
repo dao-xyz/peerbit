@@ -128,6 +128,206 @@ describe("sync-repair-session", () => {
 		}
 	});
 
+	it("serializes join warmup sends per target without globalizing the lane", async () => {
+		const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		const releaseFirstSimpleByTarget = new Map<string, () => void>();
+		try {
+			const log = new SharedLog<unknown>();
+			log.closed = false;
+			const internals = log as any;
+			internals._assumeSyncedRepairSuppressedUntil = 0;
+			internals._repairMetrics = {
+				"join-warmup": {
+					dispatches: 0,
+					entries: 0,
+					ratelessFirstPasses: 0,
+					simpleFallbackPasses: 0,
+				},
+			};
+			let activeSimpleSends = 0;
+			let maxActiveSimpleSends = 0;
+			const activeSimpleSendsByTarget = new Map<string, number>();
+			const maxActiveSimpleSendsByTarget = new Map<string, number>();
+			const simpleCallsByTarget = new Map<string, number>();
+			sinon
+				.stub(internals, "sendRepairEntriesWithTransport")
+				.callsFake(async (...args: unknown[]) => {
+					if (args[2] !== "simple") {
+						return;
+					}
+					const target = args[0] as string;
+					const callNumber = (simpleCallsByTarget.get(target) ?? 0) + 1;
+					simpleCallsByTarget.set(target, callNumber);
+					activeSimpleSends += 1;
+					maxActiveSimpleSends = Math.max(
+						maxActiveSimpleSends,
+						activeSimpleSends,
+					);
+					const activeForTarget =
+						(activeSimpleSendsByTarget.get(target) ?? 0) + 1;
+					activeSimpleSendsByTarget.set(target, activeForTarget);
+					maxActiveSimpleSendsByTarget.set(
+						target,
+						Math.max(
+							maxActiveSimpleSendsByTarget.get(target) ?? 0,
+							activeForTarget,
+						),
+					);
+					try {
+						if (callNumber === 1) {
+							await new Promise<void>((resolve) => {
+								releaseFirstSimpleByTarget.set(target, resolve);
+							});
+						}
+					} finally {
+						activeSimpleSends -= 1;
+						activeSimpleSendsByTarget.set(target, activeForTarget - 1);
+					}
+				});
+
+			for (const target of ["target-a", "target-b"]) {
+				internals.dispatchMaybeMissingEntries(
+					target,
+					new Map([[`${target}-entry`, { hash: `${target}-entry` }]]),
+					{
+						bypassRecentDedupe: true,
+						mode: "join-warmup",
+						retryScheduleMs: [0, 10, 20],
+					},
+				);
+			}
+			await clock.tickAsync(20);
+
+			expect([...simpleCallsByTarget.entries()]).to.have.deep.members([
+				["target-a", 1],
+				["target-b", 1],
+			]);
+			expect(maxActiveSimpleSends).to.equal(2);
+			expect([...maxActiveSimpleSendsByTarget.entries()]).to.have.deep.members([
+				["target-a", 1],
+				["target-b", 1],
+			]);
+			expect(
+				internals._joinWarmupSendStateByTarget.get("target-a").pending,
+			).to.be.true;
+			expect(
+				internals._joinWarmupSendStateByTarget.get("target-b").pending,
+			).to.be.true;
+
+			for (const release of releaseFirstSimpleByTarget.values()) {
+				release();
+			}
+			await clock.tickAsync(0);
+			await clock.tickAsync(249);
+			expect([...simpleCallsByTarget.values()]).to.deep.equal([1, 1]);
+			await clock.tickAsync(1);
+
+			expect([...simpleCallsByTarget.entries()]).to.have.deep.members([
+				["target-a", 2],
+				["target-b", 2],
+			]);
+			expect(maxActiveSimpleSends).to.equal(2);
+			expect([...maxActiveSimpleSendsByTarget.entries()]).to.have.deep.members([
+				["target-a", 1],
+				["target-b", 1],
+			]);
+			expect(internals._repairRetryTimers.size).to.equal(0);
+		} finally {
+			for (const release of releaseFirstSimpleByTarget.values()) {
+				release();
+			}
+			await clock.tickAsync(1_000);
+			clock.restore();
+		}
+	});
+
+	it("rechecks peer knowledge before a coalesced warmup reaches transport", async () => {
+		const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
+		let releaseFirstSimple: (() => void) | undefined;
+		try {
+			const log = new SharedLog<unknown>();
+			log.closed = false;
+			const internals = log as any;
+			internals._assumeSyncedRepairSuppressedUntil = 0;
+			internals._repairMetrics = {
+				"join-warmup": {
+					dispatches: 0,
+					entries: 0,
+					ratelessFirstPasses: 0,
+					simpleFallbackPasses: 0,
+				},
+			};
+			internals._entryKnownPeerObservedAt = new Map();
+			const sendRepairEntriesWithTransport =
+				internals.sendRepairEntriesWithTransport.bind(internals);
+			sinon
+				.stub(internals, "sendRepairEntriesWithTransport")
+				.callsFake(async (...args: unknown[]) => {
+					if (args[2] !== "simple") {
+						return;
+					}
+					await sendRepairEntriesWithTransport(
+						args[0],
+						args[1],
+						args[2],
+						args[3],
+					);
+				});
+			const pushedEntryBatches: string[][] = [];
+			sinon
+				.stub(internals, "pushRepairEntries")
+				.callsFake(async (...args: unknown[]) => {
+					pushedEntryBatches.push([
+						...(args[1] as Map<string, unknown>).keys(),
+					]);
+					if (pushedEntryBatches.length === 1) {
+						await new Promise<void>((resolve) => {
+							releaseFirstSimple = resolve;
+						});
+					}
+				});
+
+			internals.dispatchMaybeMissingEntries(
+				"target",
+				new Map([
+					["still-missing", { hash: "still-missing" }],
+					["newly-known", { hash: "newly-known" }],
+				]),
+				{
+					bypassRecentDedupe: true,
+					mode: "join-warmup",
+					retryScheduleMs: [0, 10, 20],
+				},
+			);
+			await clock.tickAsync(20);
+
+			expect(pushedEntryBatches).to.deep.equal([
+				["still-missing", "newly-known"],
+			]);
+			expect(
+				internals._joinWarmupSendStateByTarget.get("target").pending,
+			).to.be.true;
+			internals.markEntriesKnownByPeer(["newly-known"], "target");
+
+			expect(releaseFirstSimple).to.be.a("function");
+			releaseFirstSimple!();
+			await clock.tickAsync(0);
+			await clock.tickAsync(249);
+			expect(pushedEntryBatches).to.have.length(1);
+			await clock.tickAsync(1);
+
+			expect(pushedEntryBatches).to.deep.equal([
+				["still-missing", "newly-known"],
+				["still-missing"],
+			]);
+			expect(internals._repairRetryTimers.size).to.equal(0);
+		} finally {
+			releaseFirstSimple?.();
+			await clock.tickAsync(1_000);
+			clock.restore();
+		}
+	});
+
 	it("releases each warmup delay slot without retaining earlier scan batches", async () => {
 		const clock = sinon.useFakeTimers({ shouldClearNativeTimers: true });
 		try {
