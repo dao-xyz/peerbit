@@ -369,6 +369,59 @@ describe("rateless-iblt-syncronizer", () => {
 		}
 	});
 
+	it("skips an oversized all-boundary Simple prelude and dispatches Rateless", async () => {
+		const sentMessages: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sentMessages.push(message);
+		});
+		const entries = createDispatchTestEntries(undefined, 1_001);
+		for (const entry of entries.values()) {
+			entry.assignedToRangeBoundary = true;
+		}
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries,
+				targets: ["target"],
+			});
+
+			expect(
+				sentMessages.filter((message) => message instanceof RequestMaybeSync),
+			).to.have.length(0);
+			expect(
+				sentMessages.filter((message) => message instanceof StartSync),
+			).to.have.length(1);
+		} finally {
+			await sync.close();
+		}
+	});
+
+	it("keeps a bounded mixed-boundary Simple prelude before Rateless", async () => {
+		const sentMessages: TransportMessage[] = [];
+		const sync = createDispatchTestSynchronizer((message) => {
+			sentMessages.push(message);
+		});
+
+		try {
+			await sync.onMaybeMissingEntries({
+				entries: createDispatchTestEntries(0),
+				targets: ["target"],
+			});
+
+			const simpleRequests = sentMessages.filter(
+				(message): message is RequestMaybeSync =>
+					message instanceof RequestMaybeSync,
+			);
+			expect(simpleRequests).to.have.length(1);
+			expect(simpleRequests[0].hashes).to.deep.equal(["hash-0"]);
+			expect(
+				sentMessages.filter((message) => message instanceof StartSync),
+			).to.have.length(1);
+		} finally {
+			await sync.close();
+		}
+	});
+
 	it("frees an outgoing encoder once when post-prepare profiling throws", async () => {
 		const profileError = new Error("prepare profile failed");
 		const free = sinon.spy(EncoderWrapper.prototype, "free");
@@ -1142,7 +1195,7 @@ describe("rateless-iblt-syncronizer", () => {
 		}
 	});
 
-	it("does not abort an accepted response when a newer target process replaces it", async () => {
+	it("does not replace an active target process while its response is shipping", async () => {
 		let releaseShipment!: () => void;
 		const shipmentReleased = new Promise<void>((resolve) => {
 			releaseShipment = resolve;
@@ -1167,6 +1220,7 @@ describe("rateless-iblt-syncronizer", () => {
 				entries: createDispatchTestEntries(),
 				targets: ["peer-a"],
 			});
+			const process = [...sync.outgoingSyncProcesses.values()][0];
 			const handling = sync.onMessage(
 				new ResponseMaybeSync({ hashes: ["hash-399"] }),
 				{ from: { hashcode: () => "peer-a" } } as any,
@@ -1178,6 +1232,7 @@ describe("rateless-iblt-syncronizer", () => {
 				targets: ["peer-a"],
 			});
 			expect(sync.outgoingSyncProcesses.size).to.equal(1);
+			expect([...sync.outgoingSyncProcesses.values()][0]).to.equal(process);
 			expect(leaseSignal?.aborted).to.equal(false);
 
 			releaseShipment();
@@ -2086,7 +2141,7 @@ describe("rateless-iblt-syncronizer", () => {
 		}
 	});
 
-	it("prefers delayed Simple fallback authorization after rateless replacement", async () => {
+	it("keeps an active target process and sends only uncovered hashes simply", async () => {
 		const sends: TransportMessage[] = [];
 		const sync = createDispatchTestSynchronizer((message) => {
 			sends.push(message);
@@ -2099,19 +2154,25 @@ describe("rateless-iblt-syncronizer", () => {
 				targets: ["peer-a"],
 			});
 			const process = [...sync.outgoingSyncProcesses.values()][0];
-			await process.startSimpleFallback();
-			expect(process.simpleFallbackStarted).to.equal(true);
-			expect(sync.outgoingSyncProcesses.size).to.equal(1);
-			expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(400);
 
 			await sync.onMaybeMissingEntries({
-				entries: createDispatchTestEntries(),
+				entries: createDispatchTestEntries(undefined, 401),
 				targets: ["peer-a"],
 			});
-			const replacement = [...sync.outgoingSyncProcesses.values()][0];
-			expect(replacement).not.to.equal(process);
-			expect(replacement.simpleFallbackStarted).to.equal(false);
-			const replacementStart = sends
+			const retained = [...sync.outgoingSyncProcesses.values()][0];
+			expect(retained).to.equal(process);
+			expect(
+				sends.filter(
+					(message): message is StartSync => message instanceof StartSync,
+				),
+			).to.have.length(1);
+			const simpleRequest = sends.find(
+				(message): message is RequestMaybeSync =>
+					message instanceof RequestMaybeSync,
+			);
+			expect(simpleRequest?.hashes).to.deep.equal(["hash-400"]);
+			expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(1);
+			const retainedStart = sends
 				.filter((message): message is StartSync => message instanceof StartSync)
 				.at(-1)!;
 
@@ -2128,26 +2189,21 @@ describe("rateless-iblt-syncronizer", () => {
 					return { messages: 0, fused: false, entries: leases.length };
 				});
 			try {
-				await sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-0"] }), {
+				await sync.onMessage(new ResponseMaybeSync({ hashes: ["hash-400"] }), {
 					from,
 				} as any);
 
 				expect(directRatelessShip.called).to.equal(false);
 				expect(simpleShip.calledOnce).to.equal(true);
-				expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(
-					399,
-				);
+				expect((sync.simple as any).pendingMaybeSyncResponseCount).to.equal(0);
 			} finally {
 				directRatelessShip.restore();
 				simpleShip.restore();
 			}
 
-			await sync.onMessage(
-				new RequestAll({ syncId: replacementStart.syncId }),
-				{
-					from,
-				} as any,
-			);
+			await sync.onMessage(new RequestAll({ syncId: retainedStart.syncId }), {
+				from,
+			} as any);
 			expect(sync.outgoingSyncProcesses.size).to.equal(0);
 		} finally {
 			await sync.close();

@@ -1754,7 +1754,20 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 
-		if (naiveHashes.length > 0) {
+		const useAllCoordinatesForIblt =
+			allCoordinatesToSyncWithIblt.length === 0 ||
+			naiveHashes.length > maxSyncWithSimpleMethod;
+		if (useAllCoordinatesForIblt) {
+			// If every entry is a range-boundary special case, or the special-case
+			// set itself is too large for the Simple prelude, use one bounded
+			// Rateless process for the full set. Sending the oversized Simple
+			// prelude first can complete or abort the repair lifecycle before
+			// StartSync is ever dispatched.
+			allCoordinatesToSyncWithIblt = [];
+			for (const entry of properties.entries.values()) {
+				allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
+			}
+		} else if (naiveHashes.length > 0) {
 			// If there are special-case entries, sync them simply in parallel
 			if (priorityFn && naiveEntriesForPriority) {
 				await this.simple.onMaybeMissingEntries({
@@ -1775,16 +1788,9 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			}
 		}
 
-		if (
-			allCoordinatesToSyncWithIblt.length === 0 ||
-			naiveHashes.length > maxSyncWithSimpleMethod
-		) {
-			// Fallback: if nothing left for IBLT (or simple set is too large), include all in IBLT
-			allCoordinatesToSyncWithIblt = [];
-			for (const entry of properties.entries.values()) {
-				allCoordinatesToSyncWithIblt.push(coerceBigInt(entry.hashNumber));
-			}
-		}
+		const simplePreludeEntries = useAllCoordinatesForIblt
+			? 0
+			: naiveHashes.length;
 
 		if (profile) {
 			emitSyncProfileDuration(profile, selectStartedAt, {
@@ -1793,7 +1799,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				symbols: allCoordinatesToSyncWithIblt.length,
 				targets: properties.targets.length,
 				details: {
-					naiveEntries: naiveHashes.length,
+					naiveEntries: simplePreludeEntries,
 					priority: priorityFn != null,
 				},
 			});
@@ -1852,6 +1858,33 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
 				continue;
 			}
+			const activeProcess = this.outgoingSyncProcessByTarget.get(target);
+			if (
+				activeProcess &&
+				!activeProcess.signal.aborted &&
+				this.isRatelessDispatchLifecycleActive(
+					activeProcess.targetLifecycle.lifecycle,
+					target,
+				)
+			) {
+				// A repair sweep can flush adjacent batches for the same target
+				// faster than its first StartSync reaches the transport. Replacing
+				// that process here aborts the in-flight send; repeated large
+				// batches can therefore starve Rateless sync entirely. Keep the
+				// unambiguous active process and use bounded Simple sync only for
+				// hashes that it does not already authorize.
+				const uncoveredHashes = outgoingHashes.filter(
+					(hash) => !activeProcess.authorizedHashes.has(hash),
+				);
+				if (uncoveredHashes.length > 0) {
+					await this.simple.onMaybeMissingHashes({
+						hashes: uncoveredHashes,
+						targets: [target],
+						signal,
+					});
+				}
+				continue;
+			}
 			const startedSymbols = this.startOutgoingRatelessSyncForTarget({
 				targetLifecycle,
 				coordinates: allCoordinatesToSyncWithIblt,
@@ -1872,7 +1905,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					phase: "start-sync-send",
 					cancelled: true,
 					ibltEntries: allCoordinatesToSyncWithIblt.length,
-					naiveEntries: naiveHashes.length,
+					naiveEntries: simplePreludeEntries,
 				},
 				{ messages, symbols },
 			);
@@ -1882,7 +1915,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			{
 				mode: "rateless",
 				ibltEntries: allCoordinatesToSyncWithIblt.length,
-				naiveEntries: naiveHashes.length,
+				naiveEntries: simplePreludeEntries,
 			},
 			{ messages, symbols },
 		);
