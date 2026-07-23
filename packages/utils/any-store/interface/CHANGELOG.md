@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+### Patch Changes
+
+- [#1115](https://github.com/dao-xyz/peerbit/pull/1115) [`d39179d`](https://github.com/dao-xyz/peerbit/commit/d39179d938ef55bbed7c9ca319d72c2a41583a30) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Track insertion-time MemoryStore byte size during mutations so repeated size checks stay constant-time, reject aggregate counter overflow atomically, and document AnyStore's backend-accounted size contract, including caller-owned buffers that are later resized or detached.
+
 ## 1.1.1
 
 ### Patch Changes
