@@ -21,15 +21,14 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: "pages"
+  group: pages-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  build_pr:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
@@ -48,6 +47,37 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Build site
+        run: pnpm --filter peerbit-org... build
+
+      - name: Typecheck site
+        run: pnpm --filter peerbit-org typecheck
+
+      - name: Test deployment preflight
+        run: node --test apps/peerbit-org/scripts/validateSiteDeployment.test.mjs
+
+  build:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment:
+      name: github-pages
+      deployment: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile=false
+
+      - name: Build production site
         env:
           SUPABASE_UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
         run: pnpm --filter peerbit-org... build
@@ -59,13 +89,12 @@ jobs:
         run: node --test apps/peerbit-org/scripts/validateSiteDeployment.test.mjs
 
       - name: Validate production site endpoint
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         env:
           SUPABASE_UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
         run: pnpm --filter peerbit-org validate:deployment
 
       - name: Sync Updates email
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && env.UPDATES_SYNC_URL != '' && env.UPDATES_SYNC_SECRET != ''
+        if: env.UPDATES_SYNC_URL != '' && env.UPDATES_SYNC_SECRET != ''
         env:
           UPDATES_SYNC_URL: ${{ secrets.SUPABASE_UPDATES_SYNC_URL }}
           UPDATES_SYNC_SECRET: ${{ secrets.SUPABASE_UPDATES_SYNC_SECRET }}
@@ -76,7 +105,6 @@ jobs:
             --data-binary @apps/peerbit-org/dist/content/docs/updates/index.json
 
       - name: Upload Pages artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         uses: actions/upload-pages-artifact@v3
         with:
           path: apps/peerbit-org/dist
@@ -86,6 +114,9 @@ jobs:
     needs: build
     runs-on: ubuntu-22.04
     timeout-minutes: 20
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
