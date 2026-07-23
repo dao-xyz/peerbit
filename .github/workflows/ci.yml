@@ -8,6 +8,10 @@ on:
       - "docs/**"
   pull_request:
     types: ["opened", "reopened", "synchronize"]
+
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -151,7 +155,6 @@ jobs:
     timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -254,11 +257,50 @@ jobs:
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
-      - name: Upload coverage reports to Codecov
-        if: always() && steps.coverage_files.outputs.count != '0' && env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v5
+      - name: Upload coverage artifact
+        if: always() && steps.coverage_files.outputs.count != '0'
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ env.CODECOV_TOKEN }}
+          name: coverage-${{ strategy.job-index }}
+          path: "**/.coverage/**"
+          include-hidden-files: true
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  coverage_push:
+    if: ${{ always() && github.event_name == 'push' && !cancelled() }}
+    name: Upload coverage
+    needs: test_push
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+      - name: Collect coverage files
+        id: coverage_files
+        shell: bash
+        run: |
+          mapfile -d '' files < <(find coverage -type f -path '*/.coverage/*' -print0)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No downloaded coverage files found" >&2
+            exit 1
+          fi
+          printf -v joined '%s,' "${files[@]}"
+          echo "files=${joined%,}" >> "$GITHUB_OUTPUT"
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        with:
+          use_oidc: true
           slug: ${{ github.repository }}
           files: ${{ steps.coverage_files.outputs.files }}
           disable_search: true
@@ -273,7 +315,6 @@ jobs:
     timeout-minutes: 30
     env:
       PEERBIT_TEST_SESSION: mock
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     strategy:
       fail-fast: false
       matrix:
@@ -377,17 +418,6 @@ jobs:
         run: |
           echo "No coverage files found under */.coverage/"
           exit 1
-      - name: Upload coverage reports to Codecov
-        if: always() && steps.coverage_files.outputs.count != '0' && env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ env.CODECOV_TOKEN }}
-          slug: ${{ github.repository }}
-          files: ${{ steps.coverage_files.outputs.files }}
-          disable_search: true
-          fail_ci_if_error: false
-          verbose: true
-
   fanout_gate_pr:
     if: github.event_name == 'pull_request'
     name: Fanout Gate (PR)

@@ -11,6 +11,27 @@ import {
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const readRepositoryFile = (path) =>
 	readFile(resolve(repositoryRoot, path), "utf8");
+const workflowJob = (workflow, jobName) => {
+	const marker = `  ${jobName}:\n`;
+	const start = workflow.indexOf(marker);
+	assert(start >= 0, `workflow must contain the ${jobName} job`);
+	const remainder = workflow.slice(start + marker.length);
+	const nextJob = remainder.search(/^  [A-Za-z0-9_-]+:\n/m);
+	return nextJob < 0
+		? workflow.slice(start)
+		: workflow.slice(start, start + marker.length + nextJob);
+};
+const workflowSteps = (job) => {
+	const lines = job.split("\n");
+	const starts = lines.flatMap((line, index) =>
+		/^      - /.test(line) ? [index] : [],
+	);
+	return starts.map((start, index) =>
+		lines.slice(start, starts[index + 1] ?? lines.length).join("\n"),
+	);
+};
+const actionSteps = (job, action) =>
+	workflowSteps(job).filter((step) => step.includes(`uses: ${action}@`));
 
 const packageManifest = JSON.parse(await readRepositoryFile("package.json"));
 const scripts = packageManifest.scripts;
@@ -64,6 +85,59 @@ assert.equal(
 const releaseWorkflow = await readRepositoryFile(
 	".github/workflows/release.yml",
 );
+assert.match(
+	releaseWorkflow,
+	/^permissions:\n  contents: read$/m,
+	"release workflow jobs must inherit a read-only GITHUB_TOKEN by default",
+);
+assert.doesNotMatch(
+	releaseWorkflow,
+	/^\s+(?:contents|issues|pull-requests): write$/m,
+	"release jobs must perform GitHub writes only through the explicit bot PAT",
+);
+assert.match(
+	releaseWorkflow,
+	/release:\n    if: \$\{\{ vars\.ACTIONS_SECRETS_MIGRATED == 'true' && github\.ref == 'refs\/heads\/master'/,
+	"stable releases must require completed credential migration and the master ref",
+);
+assert.match(
+	releaseWorkflow,
+	/release-rc:\n    if: \$\{\{ vars\.ACTIONS_SECRETS_MIGRATED == 'true' && github\.ref == 'refs\/heads\/master'/,
+	"release candidates must require completed credential migration and the master ref",
+);
+const stableReleaseJob = workflowJob(releaseWorkflow, "release");
+const releaseCandidateJob = workflowJob(releaseWorkflow, "release-rc");
+for (const [name, job] of [
+	["stable", stableReleaseJob],
+	["release candidate", releaseCandidateJob],
+]) {
+	assert.match(
+		job,
+		/^    environment: npm-release$/m,
+		`${name} publication must obtain secrets from the master-restricted release environment`,
+	);
+	const checkouts = actionSteps(job, "actions/checkout");
+	assert.equal(
+		checkouts.length,
+		1,
+		`${name} publication must have one checkout`,
+	);
+	assert.match(
+		checkouts[0],
+		/persist-credentials: false/,
+		`${name} checkout must not persist the Peerbit Bot PAT`,
+	);
+	assert.doesNotMatch(
+		checkouts[0],
+		/^\s+token:/m,
+		`${name} checkout must use only the read-only workflow token`,
+	);
+	assert.match(
+		job,
+		/git config --local credential\.helper '!gh auth git-credential'/,
+		`${name} publication must resolve git credentials from the step-scoped bot token`,
+	);
+}
 const frozenInstalls = releaseWorkflow.match(
 	/pnpm install --frozen-lockfile(?:\s|$)/g,
 );
@@ -99,10 +173,60 @@ assert.doesNotMatch(
 );
 
 const ciWorkflow = await readRepositoryFile(".github/workflows/ci.yml");
-const securityJobStart = ciWorkflow.indexOf("  security_dependency_contracts:");
-const securityJobEnd = ciWorkflow.indexOf("\n  test_push:", securityJobStart);
-assert(securityJobStart >= 0 && securityJobEnd > securityJobStart);
-const securityJob = ciWorkflow.slice(securityJobStart, securityJobEnd);
+assert.match(
+	ciWorkflow,
+	/^permissions:\n  contents: read$/m,
+	"ordinary CI must use a read-only GITHUB_TOKEN",
+);
+assert.doesNotMatch(
+	ciWorkflow,
+	/\$\{\{\s*secrets\./,
+	"CI must not depend on long-lived repository secrets",
+);
+const pullRequestJob = workflowJob(ciWorkflow, "test_pr");
+assert.doesNotMatch(
+	pullRequestJob,
+	/\$\{\{\s*secrets\./,
+	"pull-request tests must not receive repository secrets",
+);
+assert.doesNotMatch(
+	pullRequestJob,
+	/codecov-action/,
+	"pull-request coverage must not upload with the repository Codecov token",
+);
+const pushTestJob = workflowJob(ciWorkflow, "test_push");
+assert.doesNotMatch(
+	pushTestJob,
+	/id-token: write|codecov-action/,
+	"repository tests and dependency installation must not receive an OIDC identity",
+);
+assert.match(
+	pushTestJob,
+	/name: Upload coverage artifact[\s\S]*?include-hidden-files: true/,
+	"trusted push tests must hand hidden coverage files to the isolated uploader",
+);
+const coverageJob = workflowJob(ciWorkflow, "coverage_push");
+assert.match(
+	coverageJob,
+	/permissions:\n      contents: read\n      id-token: write/,
+	"the isolated coverage upload must receive only read access and an OIDC identity",
+);
+assert.match(
+	coverageJob,
+	/uses: codecov\/codecov-action@[0-9a-f]{40} # v5[\s\S]*?use_oidc: true/,
+	"the isolated coverage upload must use a commit-pinned Codecov action with OIDC",
+);
+assert.doesNotMatch(
+	coverageJob,
+	/merge-multiple: true/,
+	"coverage artifacts must stay in separate directories to avoid filename collisions",
+);
+assert.doesNotMatch(
+	coverageJob,
+	/(?:CODECOV_TOKEN|^\s+token:)/m,
+	"the isolated coverage upload must not use a long-lived Codecov token",
+);
+const securityJob = workflowJob(ciWorkflow, "security_dependency_contracts");
 assert.match(securityJob, /needs: build_workspace/);
 assert.match(securityJob, /node-version: \[22\.x, 24\.x\]/);
 assert.match(securityJob, /node-version: \$\{\{ matrix\.node-version \}\}/);
@@ -112,6 +236,59 @@ const gateIndex = securityJob.indexOf("pnpm run release:security-gate");
 assert(
 	restoreIndex >= 0 && gateIndex > restoreIndex,
 	"CI must run the same release gate only after restoring built artifacts",
+);
+
+const nightlyWorkflow = await readRepositoryFile(
+	".github/workflows/nightly-sims.yml",
+);
+assert.match(
+	nightlyWorkflow,
+	/^permissions:\n  contents: read$/m,
+	"nightly simulations must use a read-only GITHUB_TOKEN",
+);
+
+const siteWorkflow = await readRepositoryFile(".github/workflows/site.yml");
+assert.match(
+	siteWorkflow,
+	/^permissions:\n  contents: read$/m,
+	"site builds must inherit only read access",
+);
+assert.match(
+	siteWorkflow,
+	/group: pages-\$\{\{ github\.event\.pull_request\.number \|\| github\.ref \}\}/,
+	"pull requests must not share a cancellation group with production deploys",
+);
+const sitePullRequestJob = workflowJob(siteWorkflow, "build_pr");
+assert.doesNotMatch(
+	sitePullRequestJob,
+	/^\s+(?:pages|id-token): write$/m,
+	"the pull-request site build must not receive deployment permissions",
+);
+assert.match(
+	sitePullRequestJob,
+	/^    if: github\.event_name == 'pull_request'$/m,
+	"the secret-free site build must be pull-request-only",
+);
+assert.doesNotMatch(
+	sitePullRequestJob,
+	/\$\{\{\s*secrets\./,
+	"the pull-request site build must not reference any secrets",
+);
+const siteProductionJob = workflowJob(siteWorkflow, "build");
+assert.match(
+	siteProductionJob,
+	/^    if: github\.event_name == 'push' && github\.ref == 'refs\/heads\/master'$/m,
+	"the secret-bearing production build must be push-only on master",
+);
+assert.match(
+	siteProductionJob,
+	/environment:\n      name: github-pages\n      deployment: false/,
+	"production site secrets must come from the master-restricted Pages environment",
+);
+const siteDeployJob = workflowJob(siteWorkflow, "deploy");
+assert.match(
+	siteDeployJob,
+	/permissions:\n      pages: write\n      id-token: write/,
 );
 
 const publishedSecuritySmoke = await readRepositoryFile(
@@ -171,6 +348,70 @@ for (const packagePath of [
 const postReleaseWorkflow = await readRepositoryFile(
 	".github/workflows/post-release.yml",
 );
+assert.match(
+	postReleaseWorkflow,
+	/^permissions:\n  contents: read$/m,
+	"post-release jobs must inherit only read access",
+);
+assert.doesNotMatch(
+	postReleaseWorkflow,
+	/^\s+(?:contents|pull-requests): write$/m,
+	"post-release GitHub writes must use the explicit bot PAT",
+);
+for (const [name, job] of [
+	["workspace restore", workflowJob(postReleaseWorkflow, "restore")],
+	[
+		"bootstrap rollout",
+		workflowJob(postReleaseWorkflow, "bootstrap-rollout-pr"),
+	],
+]) {
+	assert.match(
+		job,
+		/head_branch == 'master'/,
+		`${name} must require a successful master release`,
+	);
+	assert.match(
+		job,
+		/vars\.ACTIONS_SECRETS_MIGRATED == 'true'/,
+		`${name} must wait for repository-wide secret migration`,
+	);
+	assert.match(
+		job,
+		/^    environment: post-release$/m,
+		`${name} must obtain bot credentials from the master-restricted post-release environment`,
+	);
+}
+const postReleaseCheckouts = actionSteps(
+	postReleaseWorkflow,
+	"actions/checkout",
+);
+assert.equal(postReleaseCheckouts.length, 3);
+for (const checkout of postReleaseCheckouts) {
+	assert.match(
+		checkout,
+		/persist-credentials: false/,
+		"every post-release checkout must avoid persisting default or bot credentials",
+	);
+	if (checkout.includes("PEERBIT_BOOTSTRAP_PR_TOKEN")) {
+		assert.match(
+			checkout,
+			/uses: actions\/checkout@[0-9a-f]{40} # v4/,
+			"the token-bearing cross-repository checkout must be commit-pinned",
+		);
+	}
+}
+const pullRequestActions = actionSteps(
+	postReleaseWorkflow,
+	"peter-evans/create-pull-request",
+);
+assert.equal(pullRequestActions.length, 2);
+for (const pullRequestAction of pullRequestActions) {
+	assert.match(
+		pullRequestAction,
+		/uses: peter-evans\/create-pull-request@[0-9a-f]{40} # v6/,
+		"every bot-credentialed pull-request action must be commit-pinned",
+	);
+}
 assert.match(
 	postReleaseWorkflow,
 	/name: Use Node\.js[\s\S]*?node-version: 22/,
