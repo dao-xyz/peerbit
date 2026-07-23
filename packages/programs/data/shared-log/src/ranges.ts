@@ -141,7 +141,10 @@ export class EntryReplicatedU32 implements EntryReplicated<"u32"> {
 		if (!properties.meta && !properties.metaBytes) {
 			throw new Error("Expected meta or metaBytes");
 		}
-		if (!properties.meta && (properties.gid == null || properties.wallTime == null)) {
+		if (
+			!properties.meta &&
+			(properties.gid == null || properties.wallTime == null)
+		) {
 			throw new Error("Expected gid and wallTime with metaBytes");
 		}
 		this.coordinates = properties.coordinates;
@@ -211,7 +214,10 @@ export class EntryReplicatedU64 implements EntryReplicated<"u64"> {
 		if (!properties.meta && !properties.metaBytes) {
 			throw new Error("Expected meta or metaBytes");
 		}
-		if (!properties.meta && (properties.gid == null || properties.wallTime == null)) {
+		if (
+			!properties.meta &&
+			(properties.gid == null || properties.wallTime == null)
+		) {
 			throw new Error("Expected gid and wallTime with metaBytes");
 		}
 		this.coordinates = properties.coordinates;
@@ -841,6 +847,7 @@ export class ReplicationRangeIndexableU32
 	equalRange(other: ReplicationRangeIndexableU32) {
 		return (
 			this.hash === other.hash &&
+			this.mode === other.mode &&
 			this.start1 === other.start1 &&
 			this.end1 === other.end1 &&
 			this.start2 === other.start2 &&
@@ -1020,6 +1027,7 @@ export class ReplicationRangeIndexableU64
 	equalRange(other: ReplicationRangeIndexableU64) {
 		return (
 			this.hash === other.hash &&
+			this.mode === other.mode &&
 			this.start1 === other.start1 &&
 			this.end1 === other.end1 &&
 			this.start2 === other.start2 &&
@@ -2538,33 +2546,49 @@ export const createAssignedRangesQuery = (
 			end2: number | bigint;
 			mode: ReplicationIntent;
 		};
+		/** Internal query-only marker. This wrapper field is never serialized. */
+		rebalanceBoundaryOnly?: boolean;
 	}[],
-	options?: { strict?: boolean },
+	options?: { strict?: boolean; includeBoundaryWhenEmpty?: boolean },
 ) => {
 	let ors: Query[] = [];
-	let onlyStrict = true;
+	let includeBoundary =
+		changes.length === 0 && options?.includeBoundaryWhenEmpty !== false;
 	// TODO what if the ranges are many many?
 	for (const change of changes) {
+		if (change.rebalanceBoundaryOnly) {
+			includeBoundary = true;
+			continue;
+		}
 		const matchRange = matchEntriesInRangeQuery(change.range);
 		ors.push(matchRange);
 		if (change.range.mode === ReplicationIntent.NonStrict) {
-			onlyStrict = false;
+			includeBoundary = true;
 		}
 	}
 
 	// entry is assigned to a range boundary, meaning it is due to be inspected
-	if (!options?.strict) {
-		if (!onlyStrict || changes.length === 0) {
-			ors.push(
-				new BoolQuery({
-					key: "assignedToRangeBoundary",
-					value: true,
-				}),
-			);
-		}
+	if (!options?.strict && includeBoundary) {
+		ors.push(
+			new BoolQuery({
+				key: "assignedToRangeBoundary",
+				value: true,
+			}),
+		);
 	}
 
 	// entry is not sufficiently replicated, and we are to still keep it
+	if (ors.length === 0) {
+		// The index query language rejects Or([]). Use an explicit contradiction
+		// for a non-empty source batch that mergeReplicationChanges proved is a no-op.
+		// Keep the exported helper's historical Or return shape for source consumers.
+		return new Or([
+			new And([
+				new BoolQuery({ key: "assignedToRangeBoundary", value: true }),
+				new BoolQuery({ key: "assignedToRangeBoundary", value: false }),
+			]),
+		]);
+	}
 	return new Or(ors);
 };
 
@@ -2587,7 +2611,15 @@ export type ReplicationChange<
 			type: "replaced";
 			range: T;
 	  }
-) & { timestamp: bigint };
+) & {
+	timestamp: bigint;
+	/**
+	 * Internal, non-wire query intent emitted by mergeReplicationChanges.
+	 * When set, createAssignedRangesQuery performs only the global boundary
+	 * re-evaluation and deliberately ignores this wrapper's range geometry.
+	 */
+	rebalanceBoundaryOnly?: boolean;
+};
 
 export const debounceAggregationChanges = <
 	T extends ReplicationRangeIndexable<any>,
@@ -2610,17 +2642,27 @@ export const debounceAggregationChanges = <
 					// updates produce a `replaced` + `added` pair; collapsing by id would drop the
 					// "removed" portion and prevent correct rebalancing/pruning.
 					//
-					// Preserve each distinct replaced range as well. Adaptive replication can
+					// Preserve each distinct retired range as well. Adaptive replication can
 					// shrink a segment several times before the debounced rebalance runs; if we
 					// keep only the newest `replaced` range, entries from earlier wider ranges are
-					// never revisited and can stay resident after they become prunable.
+					// never revisited and can stay resident after they become prunable. Full reset
+					// announcements have the same requirement: a queued A -> B -> C chain emits
+					// removed(A), added(B), removed(B), added(C), so collapsing removals by id
+					// would omit A-only entries.
+					// Segment ids are peer-supplied and only identify state within an owner, so
+					// live additions must include the owner hash to avoid cross-peer collisions.
 					const key =
-						change.type === "replaced"
+						change.type === "replaced" || change.type === "removed"
 							? `${change.type}:${change.range.idString}:${change.range.rangeHash}`
-							: `${change.type}:${change.range.idString}`;
+							: `${change.type}:${change.range.hash}:${change.range.idString}`;
 					const prev = aggregated.get(key);
 					if (prev) {
-						if (prev.range.timestamp < change.range.timestamp) {
+						// Replication ingress rejects strictly stale observations, while equal
+						// timestamps are valid and ordered by arrival. Replace equal/newer keyed
+						// values and move them to the Map tail so a rapid A -> B -> C update
+						// emits replaced(A), replaced(B), added(C) in observed order.
+						if (prev.range.timestamp <= change.range.timestamp) {
+							aggregated.delete(key);
 							aggregated.set(key, change);
 						}
 					} else {
@@ -2639,115 +2681,537 @@ export const debounceAggregationChanges = <
 	);
 };
 
+type IndexedReplicationChange<R extends NumericType> = {
+	change: ReplicationChange<ReplicationRangeIndexable<R>>;
+	index: number;
+	wasInHistory: boolean;
+};
+
+const flattenReplicationChanges = <R extends NumericType>(
+	changesOrChangesArr:
+		| ReplicationChanges<ReplicationRangeIndexable<R>>
+		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
+): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
+	const first = changesOrChangesArr[0];
+	return Array.isArray(first)
+		? (
+				changesOrChangesArr as ReplicationChanges<
+					ReplicationRangeIndexable<R>
+				>[]
+			).flat()
+		: [
+				...(changesOrChangesArr as ReplicationChanges<
+					ReplicationRangeIndexable<R>
+				>),
+			];
+};
+
+type ReplicationProfileDelta = {
+	before: number;
+	beforeNonStrict: number;
+	after: number;
+	afterNonStrict: number;
+};
+
+const diffReplicationProfiles = <R extends NumericType>(
+	before: ReplicationRangeIndexable<R>[],
+	after: ReplicationRangeIndexable<R>[],
+): { geometry: Array<[bigint, bigint]>; boundary: boolean } => {
+	const events = new Map<bigint, ReplicationProfileDelta>();
+	const updateEvent = (
+		point: bigint,
+		property: keyof ReplicationProfileDelta,
+		delta: number,
+	) => {
+		let event = events.get(point);
+		if (!event) {
+			event = {
+				before: 0,
+				beforeNonStrict: 0,
+				after: 0,
+				afterNonStrict: 0,
+			};
+			events.set(point, event);
+		}
+		event[property] += delta;
+	};
+	const addRange = (range: ReplicationRangeIndexable<R>, isBefore: boolean) => {
+		const coverageProperty = isBefore ? "before" : "after";
+		const nonStrictProperty = isBefore ? "beforeNonStrict" : "afterNonStrict";
+		for (const [start, end] of toSegmentsBigInt(range)) {
+			if (start >= end) {
+				continue;
+			}
+			updateEvent(start, coverageProperty, 1);
+			updateEvent(end, coverageProperty, -1);
+			if (range.mode === ReplicationIntent.NonStrict) {
+				updateEvent(start, nonStrictProperty, 1);
+				updateEvent(end, nonStrictProperty, -1);
+			}
+		}
+	};
+	for (const range of before) {
+		addRange(range, true);
+	}
+	for (const range of after) {
+		addRange(range, false);
+	}
+
+	const points = [...events.keys()].sort((a, b) =>
+		a < b ? -1 : a > b ? 1 : 0,
+	);
+	const geometry: Array<[bigint, bigint]> = [];
+	let boundary = false;
+	let beforeCoverage = 0;
+	let beforeNonStrict = 0;
+	let afterCoverage = 0;
+	let afterNonStrict = 0;
+	for (let i = 0; i + 1 < points.length; i++) {
+		const point = points[i];
+		const event = events.get(point)!;
+		beforeCoverage += event.before;
+		beforeNonStrict += event.beforeNonStrict;
+		afterCoverage += event.after;
+		afterNonStrict += event.afterNonStrict;
+		const next = points[i + 1];
+		if (point >= next) {
+			continue;
+		}
+		if (beforeCoverage > 0 !== afterCoverage > 0) {
+			geometry.push([point, next]);
+		}
+		if (beforeNonStrict > 0 !== afterNonStrict > 0) {
+			boundary = true;
+		}
+	}
+	return { geometry: mergeBigIntSegments(geometry), boundary };
+};
+
+const buildStrictQueryRanges = <R extends NumericType>(
+	segments: Array<[bigint, bigint]>,
+	template: ReplicationRangeIndexable<R>,
+): ReplicationRangeIndexable<R>[] => {
+	const merged = mergeBigIntSegments(
+		segments
+			.filter(([start, end]) => start < end)
+			.map(([start, end]) => [start, end]),
+	);
+	if (merged.length === 0) {
+		return [];
+	}
+
+	const max = isU32Range(template) ? BigInt(MAX_U32) : MAX_U64;
+	const arcs: Array<{
+		first: [bigint, bigint];
+		second?: [bigint, bigint];
+	}> = [];
+	if (
+		merged.length > 1 &&
+		merged[0][0] === 0n &&
+		merged[merged.length - 1][1] === max
+	) {
+		arcs.push({
+			first: merged[merged.length - 1],
+			second: merged[0],
+		});
+		for (let i = 1; i + 1 < merged.length; i++) {
+			arcs.push({ first: merged[i] });
+		}
+	} else {
+		for (const segment of merged) {
+			arcs.push({ first: segment });
+		}
+	}
+
+	const proto = Object.getPrototypeOf(template);
+	return arcs.map(({ first, second }) => {
+		const [start1, end1] = toOriginalType(first, template);
+		const [start2, end2] = second
+			? toOriginalType(second, template)
+			: ([start1, end1] as [NumberFromType<R>, NumberFromType<R>]);
+		const widthBigInt =
+			first[1] - first[0] + (second ? second[1] - second[0] : 0n);
+		const width = (
+			isU32Range(template) ? Number(widthBigInt) : widthBigInt
+		) as NumberFromType<R>;
+		return Object.assign(Object.create(proto), {
+			...template,
+			start1,
+			end1,
+			start2,
+			end2,
+			width,
+			mode: ReplicationIntent.Strict,
+		}) as ReplicationRangeIndexable<R>;
+	});
+};
+
+const replicationRangeGeometryKey = <R extends NumericType>(
+	range: ReplicationRangeIndexable<R>,
+) =>
+	toSegmentsBigInt(range)
+		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+		.map(([start, end]) => `${start}:${end}`)
+		.join("|");
+
+// SQLite's query builder produces a left-deep OR expression. Keep a wide safety
+// margin below SQLite's default expression-depth limit (1000), including the
+// nested comparisons needed for wrapped ranges.
+const MAX_REBALANCE_QUERY_RANGES = 128;
+
+type RebalanceOwnedInterval = {
+	start: bigint;
+	end: bigint;
+	batch: number;
+};
+
+type RebalanceQueryPlan<R extends NumericType> = {
+	boundaryChanges?: ReplicationChange<ReplicationRangeIndexable<R>>[];
+	geometryBatches: ReplicationChange<ReplicationRangeIndexable<R>>[][];
+	ownedIntervals: RebalanceOwnedInterval[];
+};
+
+const createRebalanceQueryPlan = <R extends NumericType>(
+	changes: ReplicationChange<ReplicationRangeIndexable<R>>[],
+	includeBoundaryWhenEmpty: boolean,
+): RebalanceQueryPlan<R> => {
+	const boundarySource = changes.find(
+		(change) =>
+			change.rebalanceBoundaryOnly ||
+			change.range.mode === ReplicationIntent.NonStrict,
+	);
+	const boundaryChanges =
+		boundarySource || includeBoundaryWhenEmpty
+			? boundarySource
+				? [{ ...boundarySource, rebalanceBoundaryOnly: true }]
+				: []
+			: undefined;
+	const geometryChanges = changes.filter(
+		(change) => !change.rebalanceBoundaryOnly,
+	);
+	if (geometryChanges.length === 0) {
+		return { boundaryChanges, geometryBatches: [], ownedIntervals: [] };
+	}
+
+	const template = geometryChanges[geometryChanges.length - 1];
+	const exactSegments = mergeBigIntSegments(
+		geometryChanges
+			.flatMap((change) => toSegmentsBigInt(change.range))
+			.filter(([start, end]) => start < end)
+			.map(([start, end]) => [start, end]),
+	);
+	const exactRanges = buildStrictQueryRanges(exactSegments, template.range);
+	const exactChanges: ReplicationChange<ReplicationRangeIndexable<R>>[] =
+		exactRanges.map((range) => ({
+			range,
+			type: "replaced",
+			timestamp: template.timestamp,
+		}));
+	const geometryBatches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+		[];
+	for (
+		let offset = 0;
+		offset < exactChanges.length;
+		offset += MAX_REBALANCE_QUERY_RANGES
+	) {
+		geometryBatches.push(
+			exactChanges.slice(offset, offset + MAX_REBALANCE_QUERY_RANGES),
+		);
+	}
+
+	// A row can contain coordinates in several query batches. Assign every exact
+	// linear interval to its batch up front so candidates can be de-duplicated with
+	// O(component-count) plan memory instead of an unbounded set of emitted hashes.
+	// The two linear pieces of a wrapped seam range inherit the same batch tag.
+	const ownedIntervals = exactRanges
+		.flatMap((range, rangeIndex) =>
+			toSegmentsBigInt(range)
+				.filter(([start, end]) => start < end)
+				.map(([start, end]) => ({
+					start,
+					end,
+					batch: Math.floor(rangeIndex / MAX_REBALANCE_QUERY_RANGES),
+				})),
+		)
+		.sort((a, b) =>
+			a.start < b.start
+				? -1
+				: a.start > b.start
+					? 1
+					: a.end < b.end
+						? -1
+						: a.end > b.end
+							? 1
+							: 0,
+		);
+	for (let i = 1; i < ownedIntervals.length; i++) {
+		if (ownedIntervals[i - 1].end > ownedIntervals[i].start) {
+			throw new Error("Rebalance query intervals must not overlap");
+		}
+	}
+
+	return { boundaryChanges, geometryBatches, ownedIntervals };
+};
+
+const findOwningRebalanceBatch = (
+	coordinates: Array<number | bigint>,
+	intervals: RebalanceOwnedInterval[],
+): number | undefined => {
+	let minimum: number | undefined;
+	for (const value of coordinates) {
+		const coordinate = typeof value === "number" ? BigInt(value) : value;
+		let low = 0;
+		let high = intervals.length - 1;
+		while (low <= high) {
+			const middle = low + Math.floor((high - low) / 2);
+			const interval = intervals[middle];
+			if (coordinate < interval.start) {
+				high = middle - 1;
+			} else if (coordinate >= interval.end) {
+				low = middle + 1;
+			} else {
+				minimum =
+					minimum == null ? interval.batch : Math.min(minimum, interval.batch);
+				break;
+			}
+		}
+		if (minimum === 0) {
+			break;
+		}
+	}
+	return minimum;
+};
+
+const rotateRebalanceHistory = <R extends NumericType>(
+	changes: ReplicationChange<ReplicationRangeIndexable<R>>[],
+	rebalanceHistory: Cache<string>,
+) => {
+	// Only original source changes may enter history, and observed order defines
+	// the terminal state: add -> remove ends absent; remove -> add ends present.
+	for (const change of changes) {
+		if (change.type === "added") {
+			rebalanceHistory.add(change.range.rangeHash);
+		} else {
+			rebalanceHistory.del(change.range.rangeHash);
+		}
+	}
+};
+
 export const mergeReplicationChanges = <R extends NumericType>(
 	changesOrChangesArr:
 		| ReplicationChanges<ReplicationRangeIndexable<R>>
 		| ReplicationChanges<ReplicationRangeIndexable<R>>[],
 	rebalanceHistory: Cache<string>,
+	options?: { updateHistory?: boolean },
 ): ReplicationChange<ReplicationRangeIndexable<R>>[] => {
-	let first = changesOrChangesArr[0];
-	let changes: ReplicationChange<ReplicationRangeIndexable<R>>[];
-	if (!Array.isArray(first)) {
-		changes = changesOrChangesArr as ReplicationChange<
-			ReplicationRangeIndexable<R>
-		>[];
-	} else {
-		changes = changesOrChangesArr.flat() as ReplicationChange<
-			ReplicationRangeIndexable<R>
-		>[];
+	// Work from an immutable snapshot. In particular, synthetic difference ranges
+	// must never become input events or rebalance-history entries.
+	const changes = flattenReplicationChanges(changesOrChangesArr);
+	const originals: IndexedReplicationChange<R>[] = changes.map(
+		(change, index) => ({
+			change,
+			index,
+			wasInHistory: rebalanceHistory.has(change.range.rangeHash),
+		}),
+	);
+	if (originals.length === 0) {
+		return [];
 	}
 
-	// group by hash so we can cancel out changes
-	const grouped = new Map<
+	const consumed = new Set<number>();
+	const fragmentGroups = new Map<
 		string,
-		ReplicationChange<ReplicationRangeIndexable<R>>[]
+		{
+			segments: Array<[bigint, bigint]>;
+			template: IndexedReplicationChange<R>;
+		}
 	>();
-	for (const change of changes) {
-		const prev = grouped.get(change.range.hash);
-		if (prev) {
-			prev.push(change);
-		} else {
-			grouped.set(change.range.hash, [change]);
+	let boundarySource: IndexedReplicationChange<R> | undefined;
+	const addFragments = (
+		owner: string,
+		segments: Array<[bigint, bigint]>,
+		template: IndexedReplicationChange<R>,
+	) => {
+		if (segments.length === 0) {
+			return;
 		}
-	}
-
-	let all: ReplicationChange<ReplicationRangeIndexable<R>>[] = [];
-	for (const [_k, v] of grouped) {
-		if (v.length > 1) {
-			// sort by timestamp so newest is last
-			v.sort((a, b) =>
-				a.range.timestamp < b.range.timestamp
-					? -1
-					: a.range.timestamp > b.range.timestamp
-						? 1
-						: 0,
-			);
-
-			let results: ReplicationChange<ReplicationRangeIndexable<R>>[] = [];
-			let consumed: Set<number> = new Set();
-			for (let i = 0; i < v.length; i++) {
-				// If segment is removed and we have previously processed it then go over each
-				// overlapping added segment and remove the overlap. Equivalent to: (1 - 1 + 1) = 1.
-				if (v[i].type === "removed" || v[i].type === "replaced") {
-					if (rebalanceHistory.has(v[i].range.rangeHash)) {
-						let adjusted = false;
-						const vStart = v.length;
-						for (let j = i + 1; j < vStart; j++) {
-							const newer = v[j];
-							if (newer.type === "added" && !newer.matured) {
-								adjusted = true;
-								const {
-									rangesFromA: updatedRemoved,
-									rangesFromB: updatedNewer,
-								} = symmetricDifferenceRanges(v[i].range, newer.range);
-
-								for (const diff of updatedRemoved) {
-									results.push({
-										range: diff,
-										type: "removed" as const,
-										timestamp: v[i].timestamp,
-									});
-								}
-								for (const diff of updatedNewer) {
-									v.push({
-										range: diff,
-										type: "added" as const,
-										timestamp: newer.timestamp,
-									});
-								}
-								consumed.add(j);
-							}
-						}
-						rebalanceHistory.del(v[i].range.rangeHash);
-						if (!adjusted) {
-							results.push(v[i]);
-						}
-					} else {
-						results.push(v[i]);
-					}
-				} else if (v[i].type === "added") {
-					// TODO should the below clause be used?
-					// after testing it seems that certain changes are not propagating as expected using this
-					/* if (rebalanceHistory.has(v[i].range.rangeHash)) {
-						continue;
-					} */
-
-					rebalanceHistory.add(v[i].range.rangeHash);
-					if (!consumed.has(i)) {
-						results.push(v[i]);
-					}
-				} else {
-					results.push(v[i]);
-				}
+		const existing = fragmentGroups.get(owner);
+		if (existing) {
+			existing.segments.push(...segments);
+			if (
+				existing.template.change.range.timestamp <
+				template.change.range.timestamp
+			) {
+				existing.template = template;
 			}
-
-			all.push(...results);
 		} else {
-			rebalanceHistory.add(v[0].range.rangeHash);
-			all.push(v[0]);
+			fragmentGroups.set(owner, {
+				segments: [...segments],
+				template,
+			});
+		}
+	};
+	const requireBoundary = (source: IndexedReplicationChange<R>) => {
+		if (!boundarySource) {
+			boundarySource = source;
+		}
+	};
+
+	// Replacement provenance is exact: a segment id describes a sequence of real
+	// states. Compare each adjacent state once, then union the resulting query arcs.
+	const replacementGroups = new Map<string, IndexedReplicationChange<R>[]>();
+	for (const original of originals) {
+		if (
+			original.change.type !== "replaced" &&
+			(original.change.type !== "added" || original.change.matured)
+		) {
+			continue;
+		}
+		const key = `${original.change.range.hash}:${original.change.range.idString}`;
+		const group = replacementGroups.get(key);
+		if (group) {
+			group.push(original);
+		} else {
+			replacementGroups.set(key, [original]);
 		}
 	}
-	return all;
+	for (const statesUnsorted of replacementGroups.values()) {
+		if (
+			!statesUnsorted.some((state) => state.change.type === "replaced") ||
+			!statesUnsorted.some((state) => state.change.type === "added")
+		) {
+			continue;
+		}
+		// Range timestamps express role age and may intentionally stay fixed across
+		// adaptive geometry updates. The debounced batch order is the authoritative
+		// state-transition order.
+		const states = [...statesUnsorted].sort((a, b) => a.index - b.index);
+		if (states[states.length - 1].change.type !== "added") {
+			continue;
+		}
+		// The overlap between adjacent replacement states is safe to omit only if
+		// the first state was successfully processed before this batch. A replacement
+		// event describes retired geometry, not proof that its overlap was queried.
+		// Without that proof, leave the complete real states in the result so their
+		// union (including the overlap) is inspected.
+		if (!states[0].wasInHistory) {
+			continue;
+		}
+		for (let i = 0; i + 1 < states.length; i++) {
+			const previous = states[i];
+			const next = states[i + 1];
+			const difference = diffReplicationProfiles(
+				[previous.change.range],
+				[next.change.range],
+			);
+			addFragments(previous.change.range.hash, difference.geometry, next);
+			if (difference.boundary) {
+				requireBoundary(next);
+			}
+		}
+		for (const state of states) {
+			consumed.add(state.index);
+		}
+	}
+
+	// Plain reset-style removals/additions have no id provenance. Only removals
+	// whose old state was actually processed may cancel new owner state. Compare
+	// their aggregate owner profiles; leave all unrelated/unmatched changes whole.
+	const plainGroups = new Map<string, IndexedReplicationChange<R>[]>();
+	for (const original of originals) {
+		if (
+			consumed.has(original.index) ||
+			(original.change.type !== "removed" && original.change.type !== "added")
+		) {
+			continue;
+		}
+		const group = plainGroups.get(original.change.range.hash);
+		if (group) {
+			group.push(original);
+		} else {
+			plainGroups.set(original.change.range.hash, [original]);
+		}
+	}
+	for (const ownerChanges of plainGroups.values()) {
+		const removed = ownerChanges.filter(
+			(original) => original.change.type === "removed" && original.wasInHistory,
+		);
+		const added = ownerChanges.filter(
+			(original) =>
+				original.change.type === "added" && !original.change.matured,
+		);
+		if (removed.length === 0 || added.length === 0) {
+			continue;
+		}
+		const difference = diffReplicationProfiles(
+			removed.map((original) => original.change.range),
+			added.map((original) => original.change.range),
+		);
+		const newestAdded = added.reduce((newest, current) =>
+			newest.change.range.timestamp >= current.change.range.timestamp
+				? newest
+				: current,
+		);
+		addFragments(
+			newestAdded.change.range.hash,
+			difference.geometry,
+			newestAdded,
+		);
+		if (difference.boundary) {
+			requireBoundary(newestAdded);
+		}
+		for (const original of [...removed, ...added]) {
+			consumed.add(original.index);
+		}
+	}
+
+	const results: ReplicationChange<ReplicationRangeIndexable<R>>[] = originals
+		.filter((original) => !consumed.has(original.index))
+		.map((original) => original.change);
+	for (const { segments, template } of fragmentGroups.values()) {
+		for (const range of buildStrictQueryRanges(
+			segments,
+			template.change.range,
+		)) {
+			results.push({
+				range,
+				type: "replaced",
+				timestamp: template.change.timestamp,
+			});
+		}
+	}
+
+	// Query type and owner do not affect range matching. Remove exact geometry
+	// duplicates while preferring a non-strict original when it carries boundary
+	// semantics of its own.
+	const deduplicated: ReplicationChange<ReplicationRangeIndexable<R>>[] = [];
+	const positions = new Map<string, number>();
+	for (const result of results) {
+		if (result.rebalanceBoundaryOnly) {
+			continue;
+		}
+		const key = replicationRangeGeometryKey(result.range);
+		const previousPosition = positions.get(key);
+		if (previousPosition == null) {
+			positions.set(key, deduplicated.length);
+			deduplicated.push(result);
+		} else if (
+			deduplicated[previousPosition].range.mode === ReplicationIntent.Strict &&
+			result.range.mode === ReplicationIntent.NonStrict
+		) {
+			deduplicated[previousPosition] = result;
+		}
+	}
+	if (boundarySource) {
+		deduplicated.push({
+			...boundarySource.change,
+			rebalanceBoundaryOnly: true,
+		});
+	}
+	if (options?.updateHistory !== false) {
+		rotateRebalanceHistory(changes, rebalanceHistory);
+	}
+	return deduplicated;
 };
 
 const REBALANCE_ITERATOR_BATCH_SIZE = 1048;
@@ -2760,30 +3224,87 @@ export const toRebalance = <R extends "u32" | "u64">(
 	rebalanceHistory: Cache<string>,
 	options?: { forceFresh?: boolean },
 ): AsyncIterable<EntryReplicated<R>> => {
-	const change = options?.forceFresh
-		? Array.isArray(changeOrChanges[0])
-			? (
-					changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>[]
-				).flat()
-			: (changeOrChanges as ReplicationChanges<ReplicationRangeIndexable<R>>)
-		: mergeReplicationChanges(changeOrChanges, rebalanceHistory);
+	const sourceChanges = flattenReplicationChanges(changeOrChanges);
+	const queryChanges = options?.forceFresh
+		? sourceChanges
+		: mergeReplicationChanges(sourceChanges, rebalanceHistory, {
+				updateHistory: false,
+			});
+	const plan = createRebalanceQueryPlan(
+		queryChanges,
+		sourceChanges.length === 0,
+	);
 	return {
 		[Symbol.asyncIterator]: async function* () {
-			const iterator = index.iterate({
-				query: createAssignedRangesQuery(change),
-			});
+			let completed = false;
 			try {
-				while (iterator.done() !== true) {
-					const entries = await iterator.next(REBALANCE_ITERATOR_BATCH_SIZE);
-					if (entries.length === 0) {
-						break;
+				const passes: Array<{
+					changes: ReplicationChange<ReplicationRangeIndexable<R>>[];
+					geometryBatch?: number;
+				}> = [];
+				if (plan.boundaryChanges) {
+					passes.push({ changes: plan.boundaryChanges });
+				}
+				for (let batch = 0; batch < plan.geometryBatches.length; batch++) {
+					passes.push({
+						changes: plan.geometryBatches[batch],
+						geometryBatch: batch,
+					});
+				}
+
+				for (const pass of passes) {
+					const isGeometry = pass.geometryBatch != null;
+					const iterator = index.iterate({
+						query: createAssignedRangesQuery(pass.changes, {
+							strict: isGeometry,
+							includeBoundaryWhenEmpty: !isGeometry,
+						}),
+					});
+					let passCompleted = false;
+					try {
+						while (iterator.done() !== true) {
+							const entries = await iterator.next(
+								REBALANCE_ITERATOR_BATCH_SIZE,
+							);
+							if (entries.length === 0) {
+								break;
+							}
+							for (const entry of entries) {
+								if (isGeometry) {
+									if (
+										plan.boundaryChanges &&
+										entry.value.assignedToRangeBoundary
+									) {
+										continue;
+									}
+									if (
+										findOwningRebalanceBatch(
+											entry.value.coordinates,
+											plan.ownedIntervals,
+										) !== pass.geometryBatch
+									) {
+										continue;
+									}
+								}
+								yield entry.value;
+							}
+						}
+						passCompleted = iterator.done() === true;
+					} finally {
+						await iterator.close();
 					}
-					for (const entry of entries) {
-						yield entry.value;
+					if (!passCompleted) {
+						return;
 					}
 				}
+				completed = true;
 			} finally {
-				await iterator.close();
+				// An early consumer return, iterator error, incomplete empty batch, or
+				// close failure in any sequential pass must leave history untouched so the
+				// next event retries the complete query. forceFresh preserves its bypass.
+				if (completed && !options?.forceFresh) {
+					rotateRebalanceHistory(sourceChanges, rebalanceHistory);
+				}
 			}
 		},
 	};

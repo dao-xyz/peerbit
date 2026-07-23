@@ -1,3 +1,4 @@
+import { serialize } from "@dao-xyz/borsh";
 import { Cache } from "@peerbit/cache";
 import {
 	Ed25519Keypair,
@@ -32,6 +33,7 @@ import {
 	getDistance,
 	getSamples as getSamplesMap,
 	mergeRanges,
+	mergeReplicationChanges,
 	toRebalance,
 } from "../src/ranges.js";
 
@@ -2732,6 +2734,107 @@ resolutions.forEach((resolution) => {
 					).to.deep.equal([0.1]);
 				});
 
+				it("keeps the latest equal-timestamp added state in observed order", async () => {
+					const emitted: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					let releaseFirstRun: () => void = undefined!;
+					const firstRunStarted = new Promise<void>((resolve) => {
+						releaseFirstRun = resolve;
+					});
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						emitted.push(changes);
+						if (emitted.length === 1) {
+							await firstRunStarted;
+						}
+					}, 1_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.02,
+						mode: ReplicationIntent.Strict,
+						timestamp: 1n,
+					});
+					const roleTimestamp = 7n;
+					const first = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.05,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+					const second = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0.35,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+					const current = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0.65,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+
+					void debounce.add({
+						range: blocker,
+						type: "added",
+						timestamp: blocker.timestamp,
+					});
+					void debounce.add({
+						range: first,
+						type: "replaced",
+						timestamp: roleTimestamp,
+					});
+					void debounce.add({
+						range: second,
+						type: "added",
+						timestamp: roleTimestamp,
+					});
+					void debounce.add({
+						range: second,
+						type: "replaced",
+						timestamp: roleTimestamp,
+					});
+					void debounce.add({
+						range: current,
+						type: "added",
+						timestamp: roleTimestamp,
+					});
+					releaseFirstRun();
+					await debounce.invoke();
+					debounce.close();
+
+					const batch = emitted[1];
+					expect(batch.map((change) => change.type)).to.deep.equal([
+						"replaced",
+						"replaced",
+						"added",
+					]);
+					const finalAdded = batch.filter((change) => change.type === "added");
+					expect(finalAdded).to.have.length(1);
+					expect(finalAdded[0].range.equalRange(current)).to.be.true;
+
+					const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					cache.add(first.rangeHash);
+					cache.add(second.rangeHash);
+					const merged = mergeReplicationChanges(batch, cache);
+					const queryRanges = merged
+						.filter((change) => !change.rebalanceBoundaryOnly)
+						.map((change) => change.range);
+					for (const point of [0.1, 0.4, 0.7]) {
+						expect(
+							queryRanges.some((range) => range.contains(denormalizeFn(point))),
+						).to.be.true;
+					}
+					expect([...cache.map.keys()]).to.deep.equal([current.rangeHash]);
+				});
+
 				const consumeAllFromAsyncIterator = async (
 					iter: AsyncIterable<EntryReplicated<R>>,
 				): Promise<EntryReplicated<R>[]> => {
@@ -2757,6 +2860,432 @@ resolutions.forEach((resolution) => {
 						meta: properties.meta,
 					} as any);
 				};
+				const observeIterationRequests = (
+					target: Index<EntryReplicated<R>>,
+				) => {
+					const requests: any[] = [];
+					return {
+						index: {
+							iterate: (request?: any, options?: any) => {
+								requests.push(request);
+								return target.iterate(request, options);
+							},
+						} as unknown as Index<EntryReplicated<R>>,
+						requests,
+					};
+				};
+				const createSparseRebalanceChanges = (
+					componentCount: number,
+					boundaryIndex?: number,
+				) => {
+					const step = 1 / componentCount;
+					const width = step / 4;
+					const seamOffset = 1 - width / 2;
+					const offsetAt = (index: number) => (seamOffset + index * step) % 1;
+					const centerAt = (index: number) => (offsetAt(index) + width / 2) % 1;
+					const gapAt = (index: number) =>
+						(offsetAt(index) + width + (step - width) / 2) % 1;
+					const ranges = Array.from({ length: componentCount }, (_, index) =>
+						createReplicationRangeFromNormalized({
+							publicKey: a,
+							offset: offsetAt(index),
+							width,
+							mode:
+								index === boundaryIndex
+									? ReplicationIntent.NonStrict
+									: ReplicationIntent.Strict,
+							timestamp: BigInt(index + 1),
+						}),
+					);
+					return {
+						changes: ranges.map(
+							(range): ReplicationChange<ReplicationRangeIndexable<R>> => ({
+								range,
+								type: "added",
+								timestamp: range.timestamp,
+							}),
+						),
+						centerAt,
+						gapAt,
+						ranges,
+					};
+				};
+				const createTestEntry = (
+					gid: string,
+					coordinate: number | number[],
+					assignedToRangeBoundary = false,
+				) =>
+					createEntryReplicated({
+						coordinate: (Array.isArray(coordinate)
+							? coordinate.map(denormalizeFn)
+							: denormalizeFn(coordinate)) as
+							| NumberFromType<R>
+							| NumberFromType<R>[],
+						assignedToRangeBoundary,
+						hash: gid,
+						meta: new Meta({
+							clock: new LamportClock({ id: randomBytes(32) }),
+							gid,
+							next: [],
+							type: 0,
+							data: undefined,
+						}),
+					});
+				const expectFilteredBoundedRequests = (requests: any[]) => {
+					for (const request of requests) {
+						expect(request?.query).to.not.equal(undefined);
+						expect(request.query.or).to.be.an("array");
+						expect(request.query.or.length).to.be.at.most(128);
+					}
+				};
+
+				it("preserves same-id additions from different owners while a debounce run is blocked", async () => {
+					const b = (await Ed25519Keypair.create()).publicKey;
+					await create(
+						createTestEntry("first-owner", 0.1),
+						createTestEntry("second-owner", 0.7),
+					);
+
+					let markBlocked!: () => void;
+					const blocked = new Promise<void>((resolve) => {
+						markBlocked = resolve;
+					});
+					let releaseBlocked!: () => void;
+					const release = new Promise<void>((resolve) => {
+						releaseBlocked = resolve;
+					});
+					const batches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						batches.push(changes);
+						if (batches.length === 1) {
+							markBlocked();
+							await release;
+						}
+					}, 60_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.01,
+						timestamp: 1n,
+					});
+					const sharedId = randomBytes(32);
+					const roleTimestamp = 7n;
+					const first = createReplicationRangeFromNormalized({
+						id: sharedId,
+						publicKey: a,
+						offset: 0.05,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+					const second = createReplicationRangeFromNormalized({
+						id: sharedId,
+						publicKey: b,
+						offset: 0.65,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: roleTimestamp,
+					});
+					expect(first.idString).to.equal(second.idString);
+					expect(first.hash).to.not.equal(second.hash);
+
+					try {
+						const firstRun = debounce.add({
+							range: blocker,
+							type: "added",
+							timestamp: blocker.timestamp,
+						});
+						await blocked;
+						const pending = [
+							debounce.add({
+								range: first,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: second,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+						];
+						const flushed = debounce.flush();
+						releaseBlocked();
+						await Promise.all([firstRun, ...pending, flushed]);
+
+						expect(batches).to.have.length(2);
+						expect(batches[1].map((change) => change.type)).to.deep.equal([
+							"added",
+							"added",
+						]);
+						expect(batches[1].map((change) => change.range.hash)).to.deep.equal(
+							[a.hashcode(), b.hashcode()],
+						);
+
+						const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(batches[1], index, cache),
+						);
+						expect(result.map((entry) => entry.gid)).to.have.members([
+							"first-owner",
+							"second-owner",
+						]);
+						expect(result).to.have.length(2);
+						expect(cache.has(first.rangeHash)).to.be.true;
+						expect(cache.has(second.rangeHash)).to.be.true;
+					} finally {
+						releaseBlocked();
+						debounce.close();
+					}
+				});
+
+				it("processes replacement overlap accumulated while a debounce run is blocked", async () => {
+					await create(
+						createEntryReplicated({
+							coordinate: denormalizeFn(0.1),
+							assignedToRangeBoundary: false,
+							hash: "left",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "left",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						createEntryReplicated({
+							coordinate: denormalizeFn(0.4),
+							assignedToRangeBoundary: false,
+							hash: "overlap",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "overlap",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+						createEntryReplicated({
+							coordinate: denormalizeFn(0.7),
+							assignedToRangeBoundary: false,
+							hash: "right",
+							meta: new Meta({
+								clock: new LamportClock({ id: randomBytes(32) }),
+								gid: "right",
+								next: [],
+								type: 0,
+								data: undefined,
+							}),
+						}),
+					);
+
+					let markBlocked!: () => void;
+					const blocked = new Promise<void>((resolve) => {
+						markBlocked = resolve;
+					});
+					let releaseBlocked!: () => void;
+					const release = new Promise<void>((resolve) => {
+						releaseBlocked = resolve;
+					});
+					const batches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						batches.push(changes);
+						if (batches.length === 1) {
+							markBlocked();
+							await release;
+						}
+					}, 60_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.01,
+						timestamp: 1n,
+					});
+					const previous = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0,
+						width: 0.6,
+						timestamp: 2n,
+					});
+					const current = createReplicationRangeFromNormalized({
+						id: previous.id,
+						publicKey: a,
+						offset: 0.2,
+						width: 0.6,
+						timestamp: 3n,
+					});
+
+					try {
+						const firstRun = debounce.add({
+							range: blocker,
+							type: "added",
+							timestamp: blocker.timestamp,
+						});
+						await blocked;
+						const previousPending = debounce.add({
+							range: previous,
+							type: "replaced",
+							timestamp: previous.timestamp,
+						});
+						const currentPending = debounce.add({
+							range: current,
+							type: "added",
+							timestamp: current.timestamp,
+						});
+						const flushed = debounce.flush();
+						releaseBlocked();
+						await Promise.all([
+							firstRun,
+							previousPending,
+							currentPending,
+							flushed,
+						]);
+
+						expect(batches).to.have.length(2);
+						expect(batches[1].map((change) => change.type)).to.deep.equal([
+							"replaced",
+							"added",
+						]);
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(
+								batches[1],
+								index,
+								new Cache<string>({ max: 1000, ttl: 1e5 }),
+							),
+						);
+						expect(result.map((entry) => entry.gid)).to.have.members([
+							"left",
+							"overlap",
+							"right",
+						]);
+						expect(result).to.have.length(3);
+					} finally {
+						releaseBlocked();
+						debounce.close();
+					}
+				});
+
+				it("preserves chained reset removals accumulated while a debounce run is blocked", async () => {
+					await create(
+						createTestEntry("first-only", 0.1),
+						createTestEntry("second-only", 0.4),
+						createTestEntry("current-only", 0.7),
+					);
+
+					let markBlocked!: () => void;
+					const blocked = new Promise<void>((resolve) => {
+						markBlocked = resolve;
+					});
+					let releaseBlocked!: () => void;
+					const release = new Promise<void>((resolve) => {
+						releaseBlocked = resolve;
+					});
+					const batches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						batches.push(changes);
+						if (batches.length === 1) {
+							markBlocked();
+							await release;
+						}
+					}, 60_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.01,
+						timestamp: 1n,
+					});
+					const roleTimestamp = 7n;
+					const first = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.05,
+						width: 0.1,
+						timestamp: roleTimestamp,
+					});
+					const second = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0.35,
+						width: 0.1,
+						timestamp: roleTimestamp,
+					});
+					const current = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0.65,
+						width: 0.1,
+						timestamp: roleTimestamp,
+					});
+
+					try {
+						const firstRun = debounce.add({
+							range: blocker,
+							type: "added",
+							timestamp: blocker.timestamp,
+						});
+						await blocked;
+						const pending = [
+							debounce.add({
+								range: first,
+								type: "removed",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: second,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: second,
+								type: "removed",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: current,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+						];
+						const flushed = debounce.flush();
+						releaseBlocked();
+						await Promise.all([firstRun, ...pending, flushed]);
+
+						expect(batches).to.have.length(2);
+						expect(batches[1].map((change) => change.type)).to.deep.equal([
+							"removed",
+							"removed",
+							"added",
+						]);
+						expect(
+							batches[1]
+								.filter((change) => change.type === "removed")
+								.map((change) => change.range.rangeHash),
+						).to.deep.equal([first.rangeHash, second.rangeHash]);
+
+						const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+						cache.add(first.rangeHash);
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(batches[1], index, cache),
+						);
+						expect(result.map((entry) => entry.gid)).to.have.members([
+							"first-only",
+							"second-only",
+							"current-only",
+						]);
+						expect(result).to.have.length(3);
+						expect([...cache.map.keys()]).to.deep.equal([current.rangeHash]);
+					} finally {
+						releaseBlocked();
+						debounce.close();
+					}
+				});
 
 				it("uses bounded batches and closes the rebalance iterator", async () => {
 					const entries = Array.from({ length: 1049 }, (_, i) =>
@@ -2809,6 +3338,436 @@ resolutions.forEach((resolution) => {
 					expect(nextCalls).to.deep.equal([1048, 1048]);
 					expect(allCalls).to.equal(0);
 					expect(closeCalls).to.equal(1);
+				});
+
+				it("commits rebalance history only after complete successful iteration", async () => {
+					const range = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.2,
+						width: 0.2,
+						mode: ReplicationIntent.Strict,
+						timestamp: 1n,
+					});
+					const entry = createEntryReplicated({
+						coordinate: denormalizeFn(0.25),
+						assignedToRangeBoundary: false,
+						hash: "entry",
+						meta: new Meta({
+							clock: new LamportClock({ id: randomBytes(32) }),
+							gid: "entry",
+							next: [],
+							type: 0,
+							data: undefined,
+						}),
+					});
+					const changes: ReplicationChange<ReplicationRangeIndexable<R>>[] = [
+						{ range, type: "added", timestamp: range.timestamp },
+					];
+					const makeIndex = (failure?: "next" | "close") => {
+						let offset = 0;
+						let closeCalls = 0;
+						const iterator = {
+							next: async () => {
+								if (failure === "next") {
+									throw new Error("query failed");
+								}
+								offset = 1;
+								return [{ value: entry }] as any;
+							},
+							all: async () => [{ value: entry }] as any,
+							done: () => offset >= 1,
+							close: async () => {
+								closeCalls++;
+								if (failure === "close") {
+									throw new Error("close failed");
+								}
+							},
+							pending: async () => 1 - offset,
+						};
+						return {
+							index: {
+								iterate: () => iterator,
+							} as unknown as Index<EntryReplicated<R>>,
+							get closeCalls() {
+								return closeCalls;
+							},
+						};
+					};
+
+					const failedCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const failed = makeIndex("next");
+					let failedError: unknown;
+					try {
+						await consumeAllFromAsyncIterator(
+							toRebalance(changes, failed.index, failedCache),
+						);
+					} catch (error) {
+						failedError = error;
+					}
+					expect(failedError).to.be.instanceOf(Error);
+					expect(failed.closeCalls).to.equal(1);
+					expect(failedCache.has(range.rangeHash)).to.be.false;
+
+					const interruptedCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const interrupted = makeIndex();
+					for await (const _entry of toRebalance(
+						changes,
+						interrupted.index,
+						interruptedCache,
+					)) {
+						break;
+					}
+					expect(interrupted.closeCalls).to.equal(1);
+					expect(interruptedCache.has(range.rangeHash)).to.be.false;
+
+					const closeFailureCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const closeFailure = makeIndex("close");
+					let closeError: unknown;
+					try {
+						await consumeAllFromAsyncIterator(
+							toRebalance(changes, closeFailure.index, closeFailureCache),
+						);
+					} catch (error) {
+						closeError = error;
+					}
+					expect(closeError).to.be.instanceOf(Error);
+					expect(closeFailure.closeCalls).to.equal(1);
+					expect(closeFailureCache.has(range.rangeHash)).to.be.false;
+
+					const successfulCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const successful = makeIndex();
+					await consumeAllFromAsyncIterator(
+						toRebalance(changes, successful.index, successfulCache),
+					);
+					expect(successful.closeCalls).to.equal(1);
+					expect(successfulCache.has(range.rangeHash)).to.be.true;
+				});
+
+				it("queries 1024 exact sparse components without filling their gaps", async () => {
+					const sparse = createSparseRebalanceChanges(1024, 512);
+					await create(
+						createTestEntry("seam", sparse.centerAt(0)),
+						createTestEntry("inside", sparse.centerAt(10)),
+						createTestEntry("multi", [
+							sparse.centerAt(10),
+							sparse.centerAt(300),
+						]),
+						createTestEntry("boundary", sparse.centerAt(700), true),
+						createTestEntry("gap", sparse.gapAt(10)),
+					);
+					const cache = new Cache<string>({ max: 5000, ttl: 1e5 });
+					const observed = observeIterationRequests(index);
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance(sparse.changes, observed.index, cache),
+					);
+					expect(result.map((entry) => entry.gid)).to.have.members([
+						"seam",
+						"inside",
+						"multi",
+						"boundary",
+					]);
+					expect(result).to.have.length(4);
+					expect(
+						result.filter((entry) => entry.gid === "multi"),
+					).to.have.length(1);
+					expect(
+						result.filter((entry) => entry.gid === "boundary"),
+					).to.have.length(1);
+					expect(result.some((entry) => entry.gid === "gap")).to.be.false;
+
+					expect(observed.requests).to.have.length(9);
+					expectFilteredBoundedRequests(observed.requests);
+					expect(observed.requests[0].query.or).to.have.length(1);
+					expect(
+						observed.requests[1].query.or.some(
+							(query: any) => Array.isArray(query.or) && query.or.length === 2,
+						),
+					).to.be.true;
+					expect(cache.has(sparse.ranges[1023].rangeHash)).to.be.true;
+				});
+
+				it("queries 4096 evenly spaced components exactly in bounded batches", async () => {
+					const sparse = createSparseRebalanceChanges(4096);
+					await create(
+						createTestEntry("seam", sparse.centerAt(0)),
+						createTestEntry("middle", sparse.centerAt(2048)),
+						createTestEntry("multi", [
+							sparse.centerAt(127),
+							sparse.centerAt(128),
+						]),
+						createTestEntry("gap", sparse.gapAt(2048)),
+					);
+					const cache = new Cache<string>({ max: 5000, ttl: 1e5 });
+					const observed = observeIterationRequests(index);
+
+					const result = await consumeAllFromAsyncIterator(
+						toRebalance(sparse.changes, observed.index, cache),
+					);
+					expect(result.map((entry) => entry.gid)).to.have.members([
+						"seam",
+						"middle",
+						"multi",
+					]);
+					expect(result).to.have.length(3);
+					expect(
+						result.filter((entry) => entry.gid === "multi"),
+					).to.have.length(1);
+					expect(result.some((entry) => entry.gid === "gap")).to.be.false;
+					expect(observed.requests).to.have.length(32);
+					expectFilteredBoundedRequests(observed.requests);
+					expect(
+						observed.requests[0].query.or.some(
+							(query: any) => Array.isArray(query.or) && query.or.length === 2,
+						),
+					).to.be.true;
+					expect(cache.has(sparse.ranges[4095].rangeHash)).to.be.true;
+				});
+
+				it("does not commit history after a middle-batch failure or early return", async () => {
+					const sparse = createSparseRebalanceChanges(300);
+					const middleEntry = createTestEntry("middle", sparse.centerAt(200));
+					const makeSequentialIndex = (properties?: {
+						failure?: "next" | "close";
+						includeMiddleEntry?: boolean;
+					}) => {
+						const requests: any[] = [];
+						const closed: number[] = [];
+						let active = 0;
+						return {
+							index: {
+								iterate: (request?: any) => {
+									expect(active).to.equal(0);
+									active++;
+									const pass = requests.length;
+									requests.push(request);
+									let done = false;
+									return {
+										next: async () => {
+											if (pass === 1 && properties?.failure === "next") {
+												throw new Error("middle query failed");
+											}
+											done = true;
+											return pass === 1 && properties?.includeMiddleEntry
+												? ([{ value: middleEntry }] as any)
+												: [];
+										},
+										all: async () => {
+											throw new Error(
+												"unbounded iterator drain should not be used",
+											);
+										},
+										done: () => done,
+										close: async () => {
+											closed.push(pass);
+											active--;
+											if (pass === 1 && properties?.failure === "close") {
+												throw new Error("middle close failed");
+											}
+										},
+										pending: async () => (done ? 0 : 1),
+									};
+								},
+							} as unknown as Index<EntryReplicated<R>>,
+							requests,
+							closed,
+							get active() {
+								return active;
+							},
+						};
+					};
+
+					for (const failure of ["next", "close"] as const) {
+						const cache = new Cache<string>({ max: 5000, ttl: 1e5 });
+						const observed = makeSequentialIndex({ failure });
+						let caught: unknown;
+						try {
+							await consumeAllFromAsyncIterator(
+								toRebalance(sparse.changes, observed.index, cache),
+							);
+						} catch (error) {
+							caught = error;
+						}
+						expect(caught).to.be.instanceOf(Error);
+						expect(observed.closed).to.deep.equal([0, 1]);
+						expect(observed.active).to.equal(0);
+						expect(observed.requests).to.have.length(2);
+						expectFilteredBoundedRequests(observed.requests);
+						expect(cache.has(sparse.ranges[299].rangeHash)).to.be.false;
+					}
+
+					const interruptedCache = new Cache<string>({
+						max: 5000,
+						ttl: 1e5,
+					});
+					const interrupted = makeSequentialIndex({
+						includeMiddleEntry: true,
+					});
+					const iterator = toRebalance(
+						sparse.changes,
+						interrupted.index,
+						interruptedCache,
+					)[Symbol.asyncIterator]();
+					const first = await iterator.next();
+					expect(first.done).to.be.false;
+					expect(first.value?.gid).to.equal("middle");
+					await iterator.return?.();
+					expect(interrupted.closed).to.deep.equal([0, 1]);
+					expect(interrupted.active).to.equal(0);
+					expect(interrupted.requests).to.have.length(2);
+					expectFilteredBoundedRequests(interrupted.requests);
+					expect(interruptedCache.has(sparse.ranges[299].rangeHash)).to.be
+						.false;
+
+					const successfulCache = new Cache<string>({
+						max: 5000,
+						ttl: 1e5,
+					});
+					const successful = makeSequentialIndex();
+					expect(
+						await consumeAllFromAsyncIterator(
+							toRebalance(sparse.changes, successful.index, successfulCache),
+						),
+					).to.be.empty;
+					expect(successful.closed).to.deep.equal([0, 1, 2]);
+					expect(successful.active).to.equal(0);
+					expect(successful.requests).to.have.length(3);
+					expectFilteredBoundedRequests(successful.requests);
+					expect(successfulCache.has(sparse.ranges[299].rangeHash)).to.be.true;
+				});
+
+				it("keeps empty-source boundary retry separate from a proven no-op", async () => {
+					await create(
+						createTestEntry("ordinary", 0.2),
+						createTestEntry("boundary", 0.8, true),
+					);
+					const emptyCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					const emptyObserved = observeIterationRequests(index);
+					const retried = await consumeAllFromAsyncIterator(
+						toRebalance([], emptyObserved.index, emptyCache),
+					);
+					expect(retried.map((entry) => entry.gid)).to.deep.equal(["boundary"]);
+					expect(emptyObserved.requests).to.have.length(1);
+					expectFilteredBoundedRequests(emptyObserved.requests);
+					expect(emptyObserved.requests[0].query.or).to.have.length(1);
+
+					const range = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.1,
+						width: 0.2,
+						mode: ReplicationIntent.Strict,
+						timestamp: 1n,
+					});
+					const noOpCache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					noOpCache.add(range.rangeHash);
+					const noOpObserved = observeIterationRequests(index);
+					const noOp = await consumeAllFromAsyncIterator(
+						toRebalance(
+							[
+								{ range, type: "removed", timestamp: 1n },
+								{ range, type: "added", timestamp: 2n },
+							],
+							noOpObserved.index,
+							noOpCache,
+						),
+					);
+					expect(noOp).to.be.empty;
+					expect(noOpObserved.requests).to.be.empty;
+					expect(noOpCache.has(range.rangeHash)).to.be.true;
+				});
+
+				it("bounds disjoint rapid replacement chains and keeps synthetic fragments out of history", () => {
+					const transitionCount = 64;
+					const id = randomBytes(32);
+					const states = Array.from(
+						{ length: transitionCount + 1 },
+						(_, index) =>
+							createReplicationRangeFromNormalized({
+								id,
+								publicKey: a,
+								offset: (0.91 + index / (transitionCount + 1)) % 1,
+								width: 0.004,
+								mode: ReplicationIntent.Strict,
+								timestamp: BigInt(index + 1),
+							}),
+					);
+					const changes: ReplicationChange<ReplicationRangeIndexable<R>>[] = [
+						...states.slice(0, -1).map(
+							(range): ReplicationChange<ReplicationRangeIndexable<R>> => ({
+								range,
+								type: "replaced",
+								timestamp: range.timestamp,
+							}),
+						),
+						{
+							range: states[states.length - 1],
+							type: "added",
+							timestamp: states[states.length - 1].timestamp,
+						},
+					];
+					const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+					cache.add(states[0].rangeHash);
+
+					const result = mergeReplicationChanges(changes, cache);
+					expect(result.some((change) => change.rebalanceBoundaryOnly)).to.be
+						.false;
+					expect(result).to.have.length(states.length);
+					const queryKeys = result.map((change) =>
+						[
+							change.range.start1,
+							change.range.end1,
+							change.range.start2,
+							change.range.end2,
+						].join(":"),
+					);
+					expect(new Set(queryKeys).size).to.equal(queryKeys.length);
+
+					for (const retired of states.slice(0, -1)) {
+						expect(cache.has(retired.rangeHash)).to.be.false;
+					}
+					const finalHash = states[states.length - 1].rangeHash;
+					expect(cache.has(finalHash)).to.be.true;
+					expect([...cache.map.keys()]).to.deep.equal([finalHash]);
+					for (const change of result) {
+						if (change.range.rangeHash !== finalHash) {
+							expect(cache.has(change.range.rangeHash)).to.be.false;
+						}
+					}
+				});
+
+				it("rotates rebalance history in observed terminal event order", () => {
+					const range = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.2,
+						width: 0.1,
+						mode: ReplicationIntent.Strict,
+						timestamp: 5n,
+					});
+
+					const addThenRemove = new Cache<string>({ max: 1000, ttl: 1e5 });
+					addThenRemove.add(range.rangeHash);
+					mergeReplicationChanges(
+						[
+							{ range, type: "added", timestamp: 5n },
+							{ range, type: "removed", timestamp: 6n },
+						],
+						addThenRemove,
+					);
+					expect(addThenRemove.has(range.rangeHash)).to.be.false;
+
+					const removeThenAdd = new Cache<string>({ max: 1000, ttl: 1e5 });
+					removeThenAdd.add(range.rangeHash);
+					mergeReplicationChanges(
+						[
+							{ range, type: "removed", timestamp: 6n },
+							{ range, type: "added", timestamp: 7n },
+						],
+						removeThenAdd,
+					);
+					expect(removeThenAdd.has(range.rangeHash)).to.be.true;
+					expect([...removeThenAdd.map.keys()]).to.deep.equal([
+						range.rangeHash,
+					]);
 				});
 
 				rotations.forEach((rotation) => {
@@ -3018,6 +3977,30 @@ resolutions.forEach((resolution) => {
 											data: undefined,
 										}),
 									}),
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.45)),
+										assignedToRangeBoundary: false,
+										hash: "d",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "d",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
+									createEntryReplicated({
+										coordinate: denormalizeFn(rotate(0.55)),
+										assignedToRangeBoundary: false,
+										hash: "e",
+										meta: new Meta({
+											clock: new LamportClock({ id: randomBytes(32) }),
+											gid: "e",
+											next: [],
+											type: 0,
+											data: undefined,
+										}),
+									}),
 								);
 
 								const first = createReplicationRangeFromNormalized({
@@ -3028,9 +4011,11 @@ resolutions.forEach((resolution) => {
 
 								// second covers first and a little bit more
 								const second = createReplicationRangeFromNormalized({
+									id: first.id,
 									publicKey: a,
 									offset: rotate(0),
 									width: 0.3,
+									timestamp: 2n,
 								});
 
 								// the differential makes it so that only range:
@@ -3074,6 +4059,184 @@ resolutions.forEach((resolution) => {
 									),
 								);
 								expect(result.map((x) => x.gid)).to.deep.equal(["c"]);
+
+								// An empty/expired history cannot prove that the old overlap was ever
+								// processed, so replacement falls back to the correctness-safe union.
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "replaced",
+												timestamp: 1n,
+											},
+											{
+												range: second,
+												type: "added",
+												timestamp: 2n,
+											},
+										],
+										index,
+										new Cache<string>({ max: 1, ttl: 1 }),
+									),
+								);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+								]);
+								expect(result).to.have.length(3);
+
+								const third = createReplicationRangeFromNormalized({
+									id: first.id,
+									publicKey: a,
+									offset: rotate(0),
+									width: 0.1,
+									timestamp: 3n,
+								});
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "replaced",
+												timestamp: 1n,
+											},
+											{
+												range: second,
+												type: "replaced",
+												timestamp: 2n,
+											},
+											{
+												range: third,
+												type: "added",
+												timestamp: 3n,
+											},
+										],
+										index,
+										new Cache<string>({ max: 1, ttl: 1 }),
+									),
+								);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+								]);
+								expect(result).to.have.length(3);
+
+								const otherOld = createReplicationRangeFromNormalized({
+									publicKey: a,
+									offset: rotate(0.4),
+									width: 0.2,
+									timestamp: 1n,
+								});
+								const otherNew = createReplicationRangeFromNormalized({
+									id: otherOld.id,
+									publicKey: a,
+									offset: rotate(0.4),
+									width: 0.1,
+									timestamp: 2n,
+								});
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "replaced",
+												timestamp: 1n,
+											},
+											{
+												range: second,
+												type: "added",
+												timestamp: 2n,
+											},
+											{
+												range: otherOld,
+												type: "replaced",
+												timestamp: 1n,
+											},
+											{
+												range: otherNew,
+												type: "added",
+												timestamp: 2n,
+											},
+										],
+										index,
+										new Cache<string>({ max: 1, ttl: 1 }),
+									),
+								);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+									"d",
+									"e",
+								]);
+								expect(result).to.have.length(5);
+
+								const unrelated = createReplicationRangeFromNormalized({
+									publicKey: a,
+									offset: rotate(0),
+									width: 0.2,
+									timestamp: 4n,
+								});
+								expect(unrelated.idString).to.not.equal(first.idString);
+
+								// A same-owner segment with a different id is independent. It must
+								// remain an ordinary add while only the matching old/new id is
+								// reduced to its symmetric difference.
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "replaced",
+												timestamp: 1n,
+											},
+											{
+												range: second,
+												type: "added",
+												timestamp: 2n,
+											},
+											{
+												range: unrelated,
+												type: "added",
+												timestamp: 4n,
+											},
+										],
+										index,
+										new Cache<string>({ max: 1, ttl: 1 }),
+									),
+								);
+								expect(result.map((x) => x.gid)).to.have.members([
+									"a",
+									"b",
+									"c",
+								]);
+								expect(result).to.have.length(3);
+
+								// With no matching added companion, keep the replacement range
+								// whole. An equal-looking range under another id cannot cancel it.
+								result = await consumeAllFromAsyncIterator(
+									toRebalance(
+										[
+											{
+												range: first,
+												type: "replaced",
+												timestamp: 1n,
+											},
+											{
+												range: unrelated,
+												type: "added",
+												timestamp: 4n,
+											},
+										],
+										index,
+										new Cache<string>({ max: 1, ttl: 1 }),
+									),
+								);
+								expect(result.map((x) => x.gid)).to.have.members(["a", "b"]);
+								expect(result).to.have.length(2);
 							});
 
 							it("removed still rebalances when previously processed", async () => {
@@ -3203,9 +4366,11 @@ resolutions.forEach((resolution) => {
 
 								// second covers first and a little bit more
 								const second = createReplicationRangeFromNormalized({
+									id: first.id,
 									publicKey: a,
 									offset: rotate(0),
 									width: 0.3,
+									timestamp: 2n,
 								});
 
 								// the differential makes it so that only range:
@@ -3506,6 +4671,248 @@ resolutions.forEach((resolution) => {
 							expect(result.map((x) => x.gid)).to.deep.eq(["a", "b"]);
 						});
 
+						it("preserves different-id equal-geometry mode transitions without replaying unchanged state", () => {
+							const strict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+								timestamp: 1n,
+							});
+							const nonStrict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.NonStrict,
+								timestamp: 2n,
+							});
+							expect(nonStrict.idString).to.not.equal(strict.idString);
+
+							const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+							cache.add(strict.rangeHash);
+							let merged = mergeReplicationChanges(
+								[
+									{ range: strict, type: "removed", timestamp: 1n },
+									{ range: nonStrict, type: "added", timestamp: 2n },
+								],
+								cache,
+							);
+							expect(merged).to.have.length(1);
+							expect(merged[0]).to.include({
+								range: nonStrict,
+								type: "added",
+								rebalanceBoundaryOnly: true,
+							});
+							expect(serialize(merged[0].range)).to.deep.equal(
+								serialize(nonStrict),
+							);
+							expect((merged[0].range as any).rebalanceBoundaryOnly).to.be
+								.undefined;
+							expect(cache.has(strict.rangeHash)).to.be.false;
+							expect(cache.has(nonStrict.rangeHash)).to.be.true;
+
+							const unchangedNonStrict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.NonStrict,
+								timestamp: 3n,
+							});
+							expect(unchangedNonStrict.idString).to.not.equal(
+								nonStrict.idString,
+							);
+							merged = mergeReplicationChanges(
+								[
+									{ range: nonStrict, type: "removed", timestamp: 2n },
+									{
+										range: unchangedNonStrict,
+										type: "added",
+										timestamp: 3n,
+									},
+								],
+								cache,
+							);
+							expect(merged).to.be.empty;
+							expect(cache.has(nonStrict.rangeHash)).to.be.false;
+							expect(cache.has(unchangedNonStrict.rangeHash)).to.be.true;
+
+							const strictAgain = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+								timestamp: 4n,
+							});
+							expect(strictAgain.idString).to.not.equal(
+								unchangedNonStrict.idString,
+							);
+							merged = mergeReplicationChanges(
+								[
+									{
+										range: unchangedNonStrict,
+										type: "removed",
+										timestamp: 3n,
+									},
+									{ range: strictAgain, type: "added", timestamp: 4n },
+								],
+								cache,
+							);
+							expect(merged).to.have.length(1);
+							expect(merged[0]).to.include({
+								range: strictAgain,
+								type: "added",
+								rebalanceBoundaryOnly: true,
+							});
+							expect(serialize(merged[0].range)).to.deep.equal(
+								serialize(strictAgain),
+							);
+							expect(cache.has(unchangedNonStrict.rangeHash)).to.be.false;
+							expect(cache.has(strictAgain.rangeHash)).to.be.true;
+
+							const unchangedStrict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+								timestamp: 5n,
+							});
+							expect(unchangedStrict.idString).to.not.equal(
+								strictAgain.idString,
+							);
+							merged = mergeReplicationChanges(
+								[
+									{ range: strictAgain, type: "removed", timestamp: 4n },
+									{ range: unchangedStrict, type: "added", timestamp: 5n },
+								],
+								cache,
+							);
+							expect(merged).to.be.empty;
+							expect(cache.has(strictAgain.rangeHash)).to.be.false;
+							expect(cache.has(unchangedStrict.rangeHash)).to.be.true;
+						});
+
+						it("keeps boundary work independent for same-id containment mode transitions", async () => {
+							await create(
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0.6)),
+									assignedToRangeBoundary: true,
+									hash: "boundary",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "boundary",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0.05)),
+									assignedToRangeBoundary: false,
+									hash: "overlap",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "overlap",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+								createEntryReplicated({
+									coordinate: denormalizeFn(rotate(0.25)),
+									assignedToRangeBoundary: false,
+									hash: "delta",
+									meta: new Meta({
+										clock: new LamportClock({ id: randomBytes(32) }),
+										gid: "delta",
+										next: [],
+										type: 0,
+										data: undefined,
+									}),
+								}),
+							);
+
+							const nonStrict = createReplicationRangeFromNormalized({
+								publicKey: a,
+								offset: rotate(0),
+								width: 0.2,
+								mode: ReplicationIntent.NonStrict,
+								timestamp: 1n,
+							});
+							const expandedStrict = createReplicationRangeFromNormalized({
+								id: nonStrict.id,
+								publicKey: a,
+								offset: rotate(0),
+								width: 0.3,
+								mode: ReplicationIntent.Strict,
+								timestamp: 2n,
+							});
+							const expansionHistory = new Cache<string>({
+								max: 1000,
+								ttl: 1e5,
+							});
+							expansionHistory.add(nonStrict.rangeHash);
+							let result = await consumeAllFromAsyncIterator(
+								toRebalance(
+									[
+										{
+											range: nonStrict,
+											type: "replaced",
+											timestamp: 1n,
+										},
+										{
+											range: expandedStrict,
+											type: "added",
+											timestamp: 2n,
+										},
+									],
+									index,
+									expansionHistory,
+								),
+							);
+							expect(result.map((entry) => entry.gid)).to.have.members([
+								"boundary",
+								"delta",
+							]);
+							expect(result).to.have.length(2);
+
+							const contractedNonStrict = createReplicationRangeFromNormalized({
+								id: nonStrict.id,
+								publicKey: a,
+								offset: rotate(0),
+								width: 0.2,
+								mode: ReplicationIntent.NonStrict,
+								timestamp: 3n,
+							});
+							const contractionHistory = new Cache<string>({
+								max: 1000,
+								ttl: 1e5,
+							});
+							contractionHistory.add(expandedStrict.rangeHash);
+							result = await consumeAllFromAsyncIterator(
+								toRebalance(
+									[
+										{
+											range: expandedStrict,
+											type: "replaced",
+											timestamp: 2n,
+										},
+										{
+											range: contractedNonStrict,
+											type: "added",
+											timestamp: 3n,
+										},
+									],
+									index,
+									contractionHistory,
+								),
+							);
+							expect(result.map((entry) => entry.gid)).to.have.members([
+								"boundary",
+								"delta",
+							]);
+							expect(result).to.have.length(2);
+						});
+
 						it("boundary assigned included when updated mixed strictness", async () => {
 							await create(
 								createEntryReplicated({
@@ -3539,15 +4946,33 @@ resolutions.forEach((resolution) => {
 								offset: rotate(0.5),
 								width: 0.2,
 								mode: ReplicationIntent.Strict,
+								timestamp: 1n,
 							});
 
 							const rangeNonStrict = createReplicationRangeFromNormalized({
+								id: range.id,
 								publicKey: a,
 								offset: rotate(0.5),
 								width: 0.2,
 								mode: ReplicationIntent.NonStrict,
+								timestamp: 2n,
 							});
+							const rangeStrictAgain = createReplicationRangeFromNormalized({
+								id: range.id,
+								publicKey: a,
+								offset: rotate(0.5),
+								width: 0.2,
+								mode: ReplicationIntent.Strict,
+								timestamp: 3n,
+							});
+							const historyWith = (processed: ReplicationRangeIndexable<R>) => {
+								const history = new Cache<string>({ max: 1000, ttl: 1e5 });
+								history.add(processed.rangeHash);
+								return history;
+							};
 
+							// Equal geometry contributes only the independent boundary query;
+							// the ordinary in-range entry must not be replayed.
 							expect(
 								(
 									await consumeAllFromAsyncIterator(
@@ -3556,45 +4981,20 @@ resolutions.forEach((resolution) => {
 												{
 													range: range,
 													type: "replaced",
-													timestamp: 0n,
+													timestamp: 1n,
 												},
-
 												{
 													range: rangeNonStrict,
 													type: "added",
-													timestamp: 1n,
+													timestamp: 2n,
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(range),
 										),
 									)
 								).map((x) => x.gid),
-							).to.deep.eq(["a", "b"]);
-
-							expect(
-								(
-									await consumeAllFromAsyncIterator(
-										toRebalance(
-											[
-												{
-													range: range,
-													type: "replaced",
-													timestamp: 0n,
-												},
-
-												{
-													range: rangeNonStrict,
-													type: "added",
-													timestamp: 1n,
-												},
-											],
-											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
-										),
-									)
-								).map((x) => x.gid),
-							).to.deep.eq(["a", "b"]);
+							).to.deep.eq(["a"]);
 
 							expect(
 								(
@@ -3604,21 +5004,45 @@ resolutions.forEach((resolution) => {
 												{
 													range: rangeNonStrict,
 													type: "replaced",
-													timestamp: 0n,
+													timestamp: 2n,
 												},
-
 												{
-													range: rangeNonStrict,
+													range: rangeStrictAgain,
 													type: "added",
-													timestamp: 1n,
+													timestamp: 3n,
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(rangeNonStrict),
 										),
 									)
 								).map((x) => x.gid),
-							).to.deep.eq(["a", "b"]);
+							).to.deep.eq(["a"]);
+
+							// No semantic or geometric change is a genuine no-op, not the
+							// explicit empty-batch boundary retry operation.
+							expect(
+								(
+									await consumeAllFromAsyncIterator(
+										toRebalance(
+											[
+												{
+													range: rangeNonStrict,
+													type: "replaced",
+													timestamp: 2n,
+												},
+												{
+													range: rangeNonStrict,
+													type: "added",
+													timestamp: 2n,
+												},
+											],
+											index,
+											historyWith(rangeNonStrict),
+										),
+									)
+								).map((x) => x.gid),
+							).to.deep.eq([]);
 
 							expect(
 								(
@@ -3626,23 +5050,22 @@ resolutions.forEach((resolution) => {
 										toRebalance(
 											[
 												{
-													range: range,
+													range: rangeStrictAgain,
 													type: "replaced",
-													timestamp: 0n,
+													timestamp: 3n,
 												},
-
 												{
-													range: range,
+													range: rangeStrictAgain,
 													type: "added",
-													timestamp: 1n,
+													timestamp: 3n,
 												},
 											],
 											index,
-											new Cache<string>({ max: 1000, ttl: 1e5 }),
+											historyWith(rangeStrictAgain),
 										),
 									)
 								).map((x) => x.gid),
-							).to.deep.eq(["b"]);
+							).to.deep.eq([]);
 						});
 
 						it("many items", async () => {
