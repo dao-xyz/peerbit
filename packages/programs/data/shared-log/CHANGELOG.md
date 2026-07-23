@@ -1,5 +1,19 @@
 # Changelog
 
+## 13.2.12
+
+### Patch Changes
+
+- [#1116](https://github.com/dao-xyz/peerbit/pull/1116) [`02efd08`](https://github.com/dao-xyz/peerbit/commit/02efd08c1d06a58ea8f42b5fbce7e62598cbad90) Thanks [@peerbit-org](https://github.com/peerbit-org)! - Bound replication-range rebalance work during rapid replacement and full-reset bursts while preserving retired geometry, mode transitions, and deterministic range history.
+
+- Updated dependencies [[`d39179d`](https://github.com/dao-xyz/peerbit/commit/d39179d938ef55bbed7c9ca319d72c2a41583a30)]:
+  - @peerbit/any-store@2.2.13
+  - @peerbit/log@6.2.10
+  - @peerbit/blocks@4.2.7
+  - @peerbit/program@6.0.40
+  - @peerbit/pubsub@5.3.5
+  - @peerbit/rpc@6.1.8
+
 ## 13.2.11
 
 ### Patch Changes
