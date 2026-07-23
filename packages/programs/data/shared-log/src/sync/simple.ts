@@ -250,6 +250,61 @@ export const SYNC_MESSAGE_PRIORITY = CONVERGENCE_MESSAGE_PRIORITY;
 const SIMPLE_SYNC_RETRY_AFTER_MS = 10_000;
 const EXCHANGE_HEAD_RESPONSE_DEDUPE_TTL_MS = SIMPLE_SYNC_RETRY_AFTER_MS - 1_000;
 const RECENT_KNOWN_EXCHANGE_HEAD_SUPPRESSION_MS = 30_000;
+const PENDING_MAYBE_SYNC_RESPONSE_TTL_MS = 30_000;
+// Bound retained request/response associations globally. Ten thousand hashes
+// covers several full default-size request batches while keeping adversarial or
+// abandoned requests to a small, predictable amount of heap.
+const MAX_PENDING_MAYBE_SYNC_RESPONSE_HASHES = 10_000;
+
+type PendingMaybeSyncResponse = {
+	hashes: Set<string>;
+	target: string;
+	targetLifecycle: SyncDispatchTargetLifecycle;
+	expiresAt: number;
+};
+
+type PendingMaybeSyncResponseAuthorization = {
+	batch: PendingMaybeSyncResponse;
+	hash: string;
+};
+
+type PendingMaybeSyncResponseReservation = {
+	release: () => void;
+	newlyAuthorizedByTarget: Map<string, string[]>;
+	retained: () => boolean;
+	signal: AbortSignal;
+};
+
+export type AuthorizedMaybeSyncResponseLease = {
+	hashes: string[];
+	signal: AbortSignal;
+	release: () => void;
+};
+
+type SyncDispatchLifecycle = {
+	ownershipLifecycleController: AbortController;
+	callerSignal?: AbortSignal;
+	controller: AbortController;
+	targets: Map<string, SyncDispatchTargetLifecycle>;
+	onOwnerOrCallerAbort: () => void;
+	dispatchFinished: boolean;
+	disposed: boolean;
+	abortAllOnTargetDisconnect: boolean;
+};
+
+type SyncDispatchTargetEpoch = {
+	id: number;
+};
+
+type SyncDispatchTargetLifecycle = {
+	lifecycle: SyncDispatchLifecycle;
+	target: string;
+	epoch: SyncDispatchTargetEpoch;
+	controller: AbortController;
+	batches: Set<PendingMaybeSyncResponse>;
+	responseLeases: number;
+	activeWaiters: number;
+};
 
 const createDeferred = <T>() => {
 	let resolve!: (value: T | PromiseLike<T>) => void;
@@ -266,6 +321,7 @@ type RepairSessionTargetState = {
 	requestedCount: number;
 	requestedTotalCount: number;
 	attempts: number;
+	targetEpoch: SyncDispatchTargetEpoch;
 };
 
 type RepairSessionState = {
@@ -305,6 +361,18 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	) => boolean;
 	private sendRawExchangeHeads?: RawExchangeHeadsSender;
 	private recentlySentExchangeHeads: Map<string, Map<string, number>>;
+	private pendingMaybeSyncResponses: Map<
+		string,
+		Map<string, PendingMaybeSyncResponseAuthorization>
+	>;
+	private pendingMaybeSyncResponseCount: number;
+	private pendingMaybeSyncResponseWaiters: Set<() => void>;
+	private pendingMaybeSyncResponseBatches: Set<PendingMaybeSyncResponse>;
+	private pendingMaybeSyncResponseExpiryTimer?: ReturnType<typeof setTimeout>;
+	private syncDispatchLifecycleController: AbortController;
+	private syncDispatchTargetEpochCounter: number;
+	private syncDispatchTargetEpochs: Map<string, SyncDispatchTargetEpoch>;
+	private syncDispatchTargets: Map<string, Set<SyncDispatchTargetLifecycle>>;
 	private repairSessionCounter: number;
 	private repairSessions: Map<string, RepairSessionState>;
 
@@ -341,6 +409,14 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		this.isEntryRecentlyKnownByPeer = properties.isEntryRecentlyKnownByPeer;
 		this.sendRawExchangeHeads = properties.sendRawExchangeHeads;
 		this.recentlySentExchangeHeads = new Map();
+		this.pendingMaybeSyncResponses = new Map();
+		this.pendingMaybeSyncResponseCount = 0;
+		this.pendingMaybeSyncResponseWaiters = new Set();
+		this.pendingMaybeSyncResponseBatches = new Set();
+		this.syncDispatchLifecycleController = new AbortController();
+		this.syncDispatchTargetEpochCounter = 0;
+		this.syncDispatchTargetEpochs = new Map();
+		this.syncDispatchTargets = new Map();
 		this.repairSessionCounter = 0;
 		this.repairSessions = new Map();
 	}
@@ -457,6 +533,609 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			out.push(hash);
 		}
 		return out;
+	}
+
+	private forgetRecentlySentExchangeHeads(
+		hashes: Iterable<string>,
+		peer: PublicSignKey,
+	): void {
+		const recentlySent = this.recentlySentExchangeHeads.get(peer.hashcode());
+		if (!recentlySent) {
+			return;
+		}
+		for (const hash of hashes) {
+			recentlySent.delete(hash);
+		}
+		if (recentlySent.size === 0) {
+			this.recentlySentExchangeHeads.delete(peer.hashcode());
+		}
+	}
+
+	private getOrCreateSyncDispatchTargetEpoch(
+		target: string,
+	): SyncDispatchTargetEpoch {
+		let epoch = this.syncDispatchTargetEpochs.get(target);
+		if (!epoch) {
+			epoch = { id: ++this.syncDispatchTargetEpochCounter };
+			this.syncDispatchTargetEpochs.set(target, epoch);
+		}
+		return epoch;
+	}
+
+	private captureSyncDispatchLifecycle(
+		targets: string[],
+		callerSignal?: AbortSignal,
+		options?: {
+			abortAllOnTargetDisconnect?: boolean;
+			ownershipLifecycleController?: AbortController;
+			targetEpochs?: Map<string, SyncDispatchTargetEpoch>;
+			createTargetEpochs?: boolean;
+		},
+	): SyncDispatchLifecycle {
+		const ownershipLifecycleController =
+			options?.ownershipLifecycleController ??
+			this.syncDispatchLifecycleController;
+		const lifecycle = {
+			ownershipLifecycleController,
+			callerSignal,
+			controller: new AbortController(),
+			targets: new Map<string, SyncDispatchTargetLifecycle>(),
+			onOwnerOrCallerAbort: () => {
+				const reason =
+					callerSignal?.aborted === true
+						? callerSignal.reason
+						: ownershipLifecycleController.signal.reason;
+				this.abortSyncDispatchLifecycle(lifecycle, reason);
+			},
+			dispatchFinished: false,
+			disposed: false,
+			abortAllOnTargetDisconnect: options?.abortAllOnTargetDisconnect === true,
+		} satisfies SyncDispatchLifecycle;
+
+		for (const target of [...new Set(targets)]) {
+			const expectedEpoch = options?.targetEpochs?.get(target);
+			const currentEpoch = this.syncDispatchTargetEpochs.get(target);
+			const epoch =
+				expectedEpoch ??
+				currentEpoch ??
+				(options?.createTargetEpochs === false
+					? undefined
+					: this.getOrCreateSyncDispatchTargetEpoch(target));
+			if (!epoch) {
+				continue;
+			}
+			const targetLifecycle: SyncDispatchTargetLifecycle = {
+				lifecycle,
+				target,
+				epoch,
+				controller: new AbortController(),
+				batches: new Set(),
+				responseLeases: 0,
+				activeWaiters: 0,
+			};
+			lifecycle.targets.set(target, targetLifecycle);
+			let activeForTarget = this.syncDispatchTargets.get(target);
+			if (!activeForTarget) {
+				activeForTarget = new Set();
+				this.syncDispatchTargets.set(target, activeForTarget);
+			}
+			activeForTarget.add(targetLifecycle);
+			if (this.syncDispatchTargetEpochs.get(target) !== epoch) {
+				this.abortSyncDispatchTarget(
+					targetLifecycle,
+					new Error("sync target lifecycle is stale"),
+				);
+			}
+		}
+
+		ownershipLifecycleController.signal.addEventListener(
+			"abort",
+			lifecycle.onOwnerOrCallerAbort,
+			{ once: true },
+		);
+		if (callerSignal && callerSignal !== ownershipLifecycleController.signal) {
+			callerSignal.addEventListener("abort", lifecycle.onOwnerOrCallerAbort, {
+				once: true,
+			});
+		}
+		if (
+			this.closed === true ||
+			ownershipLifecycleController !== this.syncDispatchLifecycleController ||
+			ownershipLifecycleController.signal.aborted ||
+			callerSignal?.aborted
+		) {
+			lifecycle.onOwnerOrCallerAbort();
+		}
+		return lifecycle;
+	}
+
+	private abortSyncDispatchTarget(
+		targetLifecycle: SyncDispatchTargetLifecycle,
+		reason?: unknown,
+	): void {
+		if (!targetLifecycle.controller.signal.aborted) {
+			targetLifecycle.controller.abort(reason);
+		}
+		for (const batch of [...targetLifecycle.batches]) {
+			this.removePendingMaybeSyncResponseBatch(batch);
+		}
+		this.notifyPendingMaybeSyncResponseWaiters();
+		this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
+	}
+
+	private abortSyncDispatchLifecycle(
+		lifecycle: SyncDispatchLifecycle,
+		reason?: unknown,
+	): void {
+		if (!lifecycle.controller.signal.aborted) {
+			lifecycle.controller.abort(reason);
+		}
+		for (const targetLifecycle of lifecycle.targets.values()) {
+			this.abortSyncDispatchTarget(targetLifecycle, reason);
+		}
+		this.notifyPendingMaybeSyncResponseWaiters();
+		this.maybeDisposeSyncDispatchLifecycle(lifecycle);
+	}
+
+	private finishSyncDispatchLifecycle(lifecycle: SyncDispatchLifecycle): void {
+		lifecycle.dispatchFinished = true;
+		this.maybeDisposeSyncDispatchLifecycle(lifecycle);
+	}
+
+	private maybeDisposeSyncDispatchLifecycle(
+		lifecycle: SyncDispatchLifecycle,
+	): void {
+		if (
+			lifecycle.disposed ||
+			!lifecycle.dispatchFinished ||
+			[...lifecycle.targets.values()].some(
+				(target) =>
+					target.batches.size > 0 ||
+					target.responseLeases > 0 ||
+					target.activeWaiters > 0,
+			)
+		) {
+			return;
+		}
+		lifecycle.disposed = true;
+		lifecycle.ownershipLifecycleController.signal.removeEventListener(
+			"abort",
+			lifecycle.onOwnerOrCallerAbort,
+		);
+		if (
+			lifecycle.callerSignal &&
+			lifecycle.callerSignal !== lifecycle.ownershipLifecycleController.signal
+		) {
+			lifecycle.callerSignal.removeEventListener(
+				"abort",
+				lifecycle.onOwnerOrCallerAbort,
+			);
+		}
+		for (const targetLifecycle of lifecycle.targets.values()) {
+			const activeForTarget = this.syncDispatchTargets.get(
+				targetLifecycle.target,
+			);
+			activeForTarget?.delete(targetLifecycle);
+			if (activeForTarget?.size === 0) {
+				this.syncDispatchTargets.delete(targetLifecycle.target);
+			}
+		}
+	}
+
+	private isSyncDispatchLifecycleActive(
+		lifecycle: SyncDispatchLifecycle,
+		target?: string,
+	): boolean {
+		if (
+			this.closed === true ||
+			lifecycle.disposed ||
+			lifecycle.ownershipLifecycleController !==
+				this.syncDispatchLifecycleController ||
+			lifecycle.ownershipLifecycleController.signal.aborted ||
+			lifecycle.callerSignal?.aborted ||
+			lifecycle.controller.signal.aborted
+		) {
+			return false;
+		}
+		if (target === undefined) {
+			return true;
+		}
+		const targetLifecycle = lifecycle.targets.get(target);
+		return (
+			targetLifecycle !== undefined &&
+			!targetLifecycle.controller.signal.aborted &&
+			this.syncDispatchTargetEpochs.get(target) === targetLifecycle.epoch
+		);
+	}
+
+	private getSyncDispatchSignal(
+		lifecycle: SyncDispatchLifecycle,
+		target: string,
+	): AbortSignal {
+		return (
+			lifecycle.targets.get(target)?.controller.signal ??
+			lifecycle.controller.signal
+		);
+	}
+
+	private notifyPendingMaybeSyncResponseWaiters(): void {
+		const waiters = [...this.pendingMaybeSyncResponseWaiters];
+		this.pendingMaybeSyncResponseWaiters.clear();
+		for (const wake of waiters) {
+			wake();
+		}
+	}
+
+	private schedulePendingMaybeSyncResponseExpiry(): void {
+		if (
+			this.pendingMaybeSyncResponseExpiryTimer ||
+			this.pendingMaybeSyncResponseBatches.size === 0
+		) {
+			return;
+		}
+		let earliest = Number.POSITIVE_INFINITY;
+		for (const batch of this.pendingMaybeSyncResponseBatches) {
+			earliest = Math.min(earliest, batch.expiresAt);
+		}
+		this.pendingMaybeSyncResponseExpiryTimer = setTimeout(
+			() => {
+				this.pendingMaybeSyncResponseExpiryTimer = undefined;
+				const now = Date.now();
+				for (const batch of [...this.pendingMaybeSyncResponseBatches]) {
+					if (batch.expiresAt <= now) {
+						this.removePendingMaybeSyncResponseBatch(batch);
+					}
+				}
+				this.schedulePendingMaybeSyncResponseExpiry();
+			},
+			Math.max(0, earliest - Date.now()),
+		);
+		this.pendingMaybeSyncResponseExpiryTimer.unref?.();
+	}
+
+	private removePendingMaybeSyncResponseBatch(
+		batch: PendingMaybeSyncResponse,
+	): void {
+		const pendingForTarget = this.pendingMaybeSyncResponses.get(batch.target);
+		let removed = 0;
+		if (pendingForTarget) {
+			for (const hash of batch.hashes) {
+				if (pendingForTarget.get(hash)?.batch !== batch) {
+					continue;
+				}
+				pendingForTarget.delete(hash);
+				removed += 1;
+			}
+			if (pendingForTarget.size === 0) {
+				this.pendingMaybeSyncResponses.delete(batch.target);
+			}
+		}
+		this.pendingMaybeSyncResponseCount -= removed;
+		this.pendingMaybeSyncResponseBatches.delete(batch);
+		batch.targetLifecycle.batches.delete(batch);
+		batch.hashes.clear();
+		if (
+			this.pendingMaybeSyncResponseBatches.size === 0 &&
+			this.pendingMaybeSyncResponseExpiryTimer
+		) {
+			clearTimeout(this.pendingMaybeSyncResponseExpiryTimer);
+			this.pendingMaybeSyncResponseExpiryTimer = undefined;
+		}
+		this.notifyPendingMaybeSyncResponseWaiters();
+		this.maybeDisposeSyncDispatchLifecycle(batch.targetLifecycle.lifecycle);
+	}
+
+	private clearPendingMaybeSyncResponses(target?: string): void {
+		const batches =
+			target === undefined
+				? [...this.pendingMaybeSyncResponseBatches]
+				: [
+						...new Set(
+							[
+								...(this.pendingMaybeSyncResponses.get(target)?.values() ?? []),
+							].map((authorization) => authorization.batch),
+						),
+					];
+		for (const batch of batches) {
+			this.removePendingMaybeSyncResponseBatch(batch);
+		}
+		this.notifyPendingMaybeSyncResponseWaiters();
+	}
+
+	private tryReservePendingMaybeSyncResponse(properties: {
+		hashes: Iterable<string>;
+		targets: string[];
+		lifecycle: SyncDispatchLifecycle;
+	}): PendingMaybeSyncResponseReservation | undefined {
+		const hashes = [...new Set(properties.hashes)];
+		const targets = [...new Set(properties.targets)];
+		if (
+			!this.isSyncDispatchLifecycleActive(properties.lifecycle) ||
+			targets.some(
+				(target) =>
+					!this.isSyncDispatchLifecycleActive(properties.lifecycle, target),
+			)
+		) {
+			return undefined;
+		}
+
+		const hashesToAddByTarget = new Map<string, string[]>();
+		let required = 0;
+		for (const target of targets) {
+			const targetLifecycle = properties.lifecycle.targets.get(target)!;
+			const hashesToAdd: string[] = [];
+			for (const hash of hashes) {
+				let existing = this.pendingMaybeSyncResponses.get(target)?.get(hash);
+				if (
+					existing &&
+					!this.isSyncDispatchLifecycleActive(
+						existing.batch.targetLifecycle.lifecycle,
+						target,
+					)
+				) {
+					this.removePendingMaybeSyncResponseBatch(existing.batch);
+					existing = undefined;
+				}
+				if (existing) {
+					const existingTarget = existing.batch.targetLifecycle;
+					if (
+						existingTarget.epoch === targetLifecycle.epoch &&
+						existingTarget.lifecycle.ownershipLifecycleController ===
+							properties.lifecycle.ownershipLifecycleController &&
+						existingTarget.lifecycle.callerSignal ===
+							properties.lifecycle.callerSignal
+					) {
+						continue;
+					}
+					return undefined;
+				}
+				hashesToAdd.push(hash);
+			}
+			if (hashesToAdd.length > 0) {
+				hashesToAddByTarget.set(target, hashesToAdd);
+				required += hashesToAdd.length;
+			}
+		}
+
+		if (
+			required >
+			MAX_PENDING_MAYBE_SYNC_RESPONSE_HASHES -
+				this.pendingMaybeSyncResponseCount
+		) {
+			return undefined;
+		}
+
+		const addedBatches: PendingMaybeSyncResponse[] = [];
+		for (const [target, hashesToAdd] of hashesToAddByTarget) {
+			const targetLifecycle = properties.lifecycle.targets.get(target)!;
+			const batch: PendingMaybeSyncResponse = {
+				hashes: new Set(hashesToAdd),
+				target,
+				targetLifecycle,
+				expiresAt: Date.now() + PENDING_MAYBE_SYNC_RESPONSE_TTL_MS,
+			};
+			let pendingForTarget = this.pendingMaybeSyncResponses.get(target);
+			if (!pendingForTarget) {
+				pendingForTarget = new Map();
+				this.pendingMaybeSyncResponses.set(target, pendingForTarget);
+			}
+			for (const hash of hashesToAdd) {
+				pendingForTarget.set(hash, { batch, hash });
+			}
+			this.pendingMaybeSyncResponseCount += hashesToAdd.length;
+			this.pendingMaybeSyncResponseBatches.add(batch);
+			targetLifecycle.batches.add(batch);
+			addedBatches.push(batch);
+		}
+		this.schedulePendingMaybeSyncResponseExpiry();
+
+		let released = false;
+		const release = () => {
+			if (released) {
+				return;
+			}
+			released = true;
+			for (const batch of addedBatches) {
+				this.removePendingMaybeSyncResponseBatch(batch);
+			}
+		};
+		const retained = () =>
+			this.isSyncDispatchLifecycleActive(properties.lifecycle) &&
+			addedBatches.every(
+				(batch) =>
+					this.pendingMaybeSyncResponseBatches.has(batch) &&
+					batch.hashes.size > 0,
+			);
+		if (!this.isSyncDispatchLifecycleActive(properties.lifecycle)) {
+			release();
+			return undefined;
+		}
+		return {
+			release,
+			newlyAuthorizedByTarget: hashesToAddByTarget,
+			retained,
+			signal: properties.lifecycle.controller.signal,
+		};
+	}
+
+	private waitForPendingMaybeSyncResponseChange(
+		lifecycle: SyncDispatchLifecycle,
+		targets: string[],
+	): Promise<void> {
+		if (
+			!this.isSyncDispatchLifecycleActive(lifecycle) ||
+			targets.some(
+				(target) => !this.isSyncDispatchLifecycleActive(lifecycle, target),
+			)
+		) {
+			return Promise.resolve();
+		}
+		const targetLifecycles = targets
+			.map((target) => lifecycle.targets.get(target))
+			.filter(
+				(target): target is SyncDispatchTargetLifecycle => target !== undefined,
+			);
+		for (const targetLifecycle of targetLifecycles) {
+			targetLifecycle.activeWaiters += 1;
+		}
+		return new Promise<void>((resolve) => {
+			let settled = false;
+			const wake = () => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				this.pendingMaybeSyncResponseWaiters.delete(wake);
+				for (const targetLifecycle of targetLifecycles) {
+					targetLifecycle.activeWaiters -= 1;
+				}
+				resolve();
+				this.maybeDisposeSyncDispatchLifecycle(lifecycle);
+			};
+			this.pendingMaybeSyncResponseWaiters.add(wake);
+			if (
+				!this.isSyncDispatchLifecycleActive(lifecycle) ||
+				targets.some(
+					(target) => !this.isSyncDispatchLifecycleActive(lifecycle, target),
+				)
+			) {
+				wake();
+			}
+		});
+	}
+
+	private async reservePendingMaybeSyncResponse(properties: {
+		hashes: Iterable<string>;
+		targets: string[];
+		lifecycle: SyncDispatchLifecycle;
+	}): Promise<PendingMaybeSyncResponseReservation | undefined> {
+		while (
+			this.isSyncDispatchLifecycleActive(properties.lifecycle) &&
+			properties.targets.every((target) =>
+				this.isSyncDispatchLifecycleActive(properties.lifecycle, target),
+			)
+		) {
+			const reservation = this.tryReservePendingMaybeSyncResponse(properties);
+			if (reservation) {
+				return reservation;
+			}
+			await this.waitForPendingMaybeSyncResponseChange(
+				properties.lifecycle,
+				properties.targets,
+			);
+		}
+		return undefined;
+	}
+
+	expectMaybeSyncResponse(properties: {
+		hashes: Iterable<string>;
+		targets: string[];
+		signal?: AbortSignal;
+	}): PendingMaybeSyncResponseReservation | undefined {
+		const targets = [...new Set(properties.targets)];
+		const lifecycle = this.captureSyncDispatchLifecycle(
+			targets,
+			properties.signal,
+			{ abortAllOnTargetDisconnect: true },
+		);
+		const reservation = this.tryReservePendingMaybeSyncResponse({
+			hashes: properties.hashes,
+			targets,
+			lifecycle,
+		});
+		let retainedReservation: PendingMaybeSyncResponseReservation | undefined;
+		if (reservation) {
+			const leasedTargets = [...lifecycle.targets.values()];
+			for (const targetLifecycle of leasedTargets) {
+				targetLifecycle.responseLeases += 1;
+			}
+			let released = false;
+			retainedReservation = {
+				...reservation,
+				release: () => {
+					if (released) {
+						return;
+					}
+					released = true;
+					reservation.release();
+					for (const targetLifecycle of leasedTargets) {
+						targetLifecycle.responseLeases -= 1;
+					}
+					this.maybeDisposeSyncDispatchLifecycle(lifecycle);
+				},
+			};
+		}
+		this.finishSyncDispatchLifecycle(lifecycle);
+		return retainedReservation;
+	}
+
+	consumeAuthorizedMaybeSyncResponse(
+		hashes: Iterable<string>,
+		from: PublicSignKey,
+	): AuthorizedMaybeSyncResponseLease[] {
+		const fromHash = from.hashcode();
+		const pendingForTarget = this.pendingMaybeSyncResponses.get(fromHash);
+		if (!pendingForTarget) {
+			return [];
+		}
+		const acceptedByLifecycle = new Map<
+			SyncDispatchTargetLifecycle,
+			string[]
+		>();
+		const seen = new Set<string>();
+		for (const hash of hashes) {
+			if (seen.has(hash)) {
+				continue;
+			}
+			seen.add(hash);
+			const authorization = pendingForTarget.get(hash);
+			if (!authorization) {
+				continue;
+			}
+			const batch = authorization.batch;
+			const targetLifecycle = batch.targetLifecycle;
+			if (
+				!this.isSyncDispatchLifecycleActive(targetLifecycle.lifecycle, fromHash)
+			) {
+				this.removePendingMaybeSyncResponseBatch(batch);
+				continue;
+			}
+			if (pendingForTarget.get(hash)?.batch !== batch) {
+				continue;
+			}
+			let accepted = acceptedByLifecycle.get(targetLifecycle);
+			if (!accepted) {
+				accepted = [];
+				acceptedByLifecycle.set(targetLifecycle, accepted);
+				targetLifecycle.responseLeases += 1;
+			}
+			pendingForTarget.delete(hash);
+			batch.hashes.delete(hash);
+			this.pendingMaybeSyncResponseCount -= 1;
+			accepted.push(hash);
+			if (batch.hashes.size === 0) {
+				this.removePendingMaybeSyncResponseBatch(batch);
+			}
+		}
+		if (pendingForTarget.size === 0) {
+			this.pendingMaybeSyncResponses.delete(fromHash);
+		}
+		this.notifyPendingMaybeSyncResponseWaiters();
+		return [...acceptedByLifecycle].map(([targetLifecycle, acceptedHashes]) => {
+			let released = false;
+			return {
+				hashes: acceptedHashes,
+				signal: targetLifecycle.controller.signal,
+				release: () => {
+					if (released) {
+						return;
+					}
+					released = true;
+					targetLifecycle.responseLeases -= 1;
+					this.maybeDisposeSyncDispatchLifecycle(targetLifecycle.lifecycle);
+				},
+			};
+		});
 	}
 
 	private isRepairSessionComplete(session: RepairSessionState): boolean {
@@ -602,7 +1281,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				}
 				state.attempts += 1;
 				try {
-					await this.requestSync([...state.unresolved], [target]);
+					await this.requestSync([...state.unresolved], [target], {
+						targetEpochs: new Map([[target, state.targetEpoch]]),
+						createTargetEpochs: false,
+					});
 				} catch {
 					// Best-effort: keep unresolved and let retries/timeout determine outcome.
 				}
@@ -703,6 +1385,7 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				requestedCount: trackedHashes.length,
 				requestedTotalCount: allHashes.length,
 				attempts: 0,
+				targetEpoch: this.getOrCreateSyncDispatchTargetEpoch(target),
 			});
 		}
 
@@ -762,42 +1445,124 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 	async onMaybeMissingEntries(properties: {
 		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
+		signal?: AbortSignal;
 	}): Promise<void> {
+		if (properties.signal?.aborted) {
+			return;
+		}
 		await this.onMaybeMissingHashes({
 			hashes: this.getPrioritizedHashes(properties.entries),
 			targets: properties.targets,
+			signal: properties.signal,
 		});
 	}
 
 	async onMaybeMissingHashes(properties: {
 		hashes: Iterable<string>;
 		targets: string[];
+		signal?: AbortSignal;
 	}): Promise<void> {
+		const targets = [...new Set(properties.targets)];
+		const lifecycle = this.captureSyncDispatchLifecycle(
+			targets,
+			properties.signal,
+		);
+		if (!this.isSyncDispatchLifecycleActive(lifecycle)) {
+			this.finishSyncDispatchLifecycle(lifecycle);
+			return;
+		}
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
-		const hashes = [...properties.hashes];
-		const chunks = this.chunk(hashes, this.maxHashesPerMessage);
-		try {
-			await chunks.reduce(
-				(promise, chunk) =>
-					promise.then(() =>
-						this.rpc.send(new RequestMaybeSync({ hashes: chunk }), {
-							priority: SYNC_MESSAGE_PRIORITY,
-							mode: new SilentDelivery({
-								to: properties.targets,
-								redundancy: 1,
-							}),
-						}),
+		const hashes = [...new Set(properties.hashes)];
+		const targetsPerAuthorizationWindow = Math.max(
+			1,
+			Math.min(targets.length, MAX_PENDING_MAYBE_SYNC_RESPONSE_HASHES),
+		);
+		const chunks = this.chunk(
+			hashes,
+			Math.max(
+				1,
+				Math.min(
+					this.maxHashesPerMessage,
+					Math.floor(
+						MAX_PENDING_MAYBE_SYNC_RESPONSE_HASHES /
+							targetsPerAuthorizationWindow,
 					),
-				Promise.resolve(),
-			);
+				),
+			),
+		);
+		let messages = 0;
+		try {
+			for (const chunk of chunks) {
+				if (!this.isSyncDispatchLifecycleActive(lifecycle)) {
+					break;
+				}
+				for (const target of targets) {
+					if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+						continue;
+					}
+					const reservation = await this.reservePendingMaybeSyncResponse({
+						hashes: chunk,
+						targets: [target],
+						lifecycle,
+					});
+					if (
+						!reservation ||
+						!this.isSyncDispatchLifecycleActive(lifecycle, target)
+					) {
+						continue;
+					}
+					const hashesToSend =
+						reservation.newlyAuthorizedByTarget.get(target) ?? [];
+					if (hashesToSend.length === 0) {
+						continue;
+					}
+					if (!reservation.retained()) {
+						reservation.release();
+						continue;
+					}
+					try {
+						await this.rpc.send(
+							new RequestMaybeSync({ hashes: hashesToSend }),
+							{
+								priority: SYNC_MESSAGE_PRIORITY,
+								mode: new SilentDelivery({
+									to: [target],
+									redundancy: 1,
+								}),
+								signal: this.getSyncDispatchSignal(lifecycle, target),
+							},
+						);
+						messages += 1;
+					} catch (error) {
+						reservation.release();
+						if (
+							!this.isSyncDispatchLifecycleActive(lifecycle) ||
+							!this.isSyncDispatchLifecycleActive(lifecycle, target)
+						) {
+							continue;
+						}
+						throw error;
+					}
+					if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+						break;
+					}
+				}
+				if (!this.isSyncDispatchLifecycleActive(lifecycle)) {
+					break;
+				}
+			}
 		} finally {
+			this.finishSyncDispatchLifecycle(lifecycle);
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
 					name: "simple.onMaybeMissingEntries",
 					entries: hashes.length,
-					messages: chunks.length,
-					targets: properties.targets.length,
+					messages,
+					targets: targets.length,
+					details: !this.isSyncDispatchLifecycleActive(lifecycle)
+						? { cancelled: true }
+						: undefined,
 				});
 			}
 		}
@@ -813,11 +1578,25 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		hashes: string[],
 		to: PublicSignKey,
 		canReceiveRaw: boolean,
+		signal?: AbortSignal,
 	): Promise<{ messages: number; fused: boolean }> {
+		if (signal?.aborted) {
+			return { messages: 0, fused: false };
+		}
 		if (canReceiveRaw && this.sendRawExchangeHeads) {
-			const sentMessages = await this.sendRawExchangeHeads(hashes, [
-				to.hashcode(),
-			]);
+			let sentMessages: number | undefined;
+			try {
+				sentMessages = await this.sendRawExchangeHeads(
+					hashes,
+					[to.hashcode()],
+					{ signal },
+				);
+			} catch (error) {
+				if (signal?.aborted) {
+					return { messages: 0, fused: true };
+				}
+				throw error;
+			}
 			if (sentMessages !== undefined) {
 				return { messages: sentMessages, fused: true };
 			}
@@ -831,12 +1610,112 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				)
 			: createExchangeHeadsMessages(this.log, hashes);
 		for await (const message of messageGenerator) {
-			messages += 1;
-			await this.rpc.send(message, {
-				mode: new SilentDelivery({ to: [to], redundancy: 1 }),
-			});
+			if (signal?.aborted) {
+				break;
+			}
+			try {
+				await this.rpc.send(message, {
+					mode: new SilentDelivery({ to: [to], redundancy: 1 }),
+					signal,
+				});
+				messages += 1;
+			} catch (error) {
+				if (signal?.aborted) {
+					break;
+				}
+				throw error;
+			}
 		}
 		return { messages, fused: false };
+	}
+
+	/**
+	 * Ships hashes that the caller has already authorized for this exact sender.
+	 *
+	 * This deliberately does not consult or extend Simple's bounded pending-response
+	 * window. Rateless sync owns a separate, target-scoped authorization lifecycle
+	 * and uses this helper only after intersecting the response with that process's
+	 * exact advertised hash set.
+	 */
+	async shipAuthorizedMaybeSyncResponse(properties: {
+		hashes: string[];
+		from: PublicSignKey;
+		response: ResponseMaybeSync | ResponseMaybeSyncCapabilities;
+		signal: AbortSignal;
+	}): Promise<{ messages: number; fused: boolean; entries: number }> {
+		const hashes = this.filterRecentlySentExchangeHeads(
+			properties.hashes,
+			properties.from,
+		);
+		try {
+			const shipped = await this.shipExchangeHeads(
+				hashes,
+				properties.from,
+				canReceiveRawExchangeHeads(properties.response),
+				properties.signal,
+			);
+			return {
+				...shipped,
+				entries: hashes.length,
+			};
+		} catch (error) {
+			this.forgetRecentlySentExchangeHeads(hashes, properties.from);
+			throw error;
+		} finally {
+			if (properties.signal.aborted) {
+				this.forgetRecentlySentExchangeHeads(hashes, properties.from);
+			}
+		}
+	}
+
+	async shipAuthorizedMaybeSyncResponseLeases(properties: {
+		leases: AuthorizedMaybeSyncResponseLease[];
+		from: PublicSignKey;
+		response: ResponseMaybeSync | ResponseMaybeSyncCapabilities;
+		source?: string;
+	}): Promise<{ messages: number; fused: boolean; entries: number }> {
+		if (properties.leases.length === 0) {
+			return { messages: 0, fused: false, entries: 0 };
+		}
+		const profile = this.syncOptions?.profile;
+		const startedAt = syncProfileStart(profile);
+		let messages = 0;
+		let fused = false;
+		let entries = 0;
+		let firstError: unknown;
+		for (const lease of properties.leases) {
+			try {
+				const shipped = await this.shipAuthorizedMaybeSyncResponse({
+					hashes: lease.hashes,
+					from: properties.from,
+					response: properties.response,
+					signal: lease.signal,
+				});
+				messages += shipped.messages;
+				fused ||= shipped.fused;
+				entries += shipped.entries;
+			} catch (error) {
+				firstError ??= error;
+			} finally {
+				lease.release();
+			}
+		}
+		if (profile) {
+			emitSyncProfileDuration(profile, startedAt, {
+				name: "simple.exchangeHeads",
+				entries,
+				messages,
+				targets: 1,
+				details: {
+					source: properties.source ?? "responseMaybeSync",
+					fused,
+				},
+			});
+		}
+		if (firstError !== undefined) {
+			throw firstError;
+		}
+		return { messages, fused, entries };
 	}
 
 	async onMessage(
@@ -854,74 +1733,77 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			// TODO perhaps send less messages to more receivers for performance reasons?
 			// TODO wait for previous send to target before trying to send more?
 
-			const profile = this.syncOptions?.profile;
-			const startedAt = syncProfileStart(profile);
-			const hashes = this.filterRecentlySentExchangeHeads(msg.hashes, from);
-			let messages = 0;
-			let fused = false;
-			try {
-				({ messages, fused } = await this.shipExchangeHeads(
-					hashes,
-					context.from!,
-					canReceiveRawExchangeHeads(msg),
-				));
-			} finally {
-				if (profile) {
-					emitSyncProfileDuration(profile, startedAt, {
-						name: "simple.exchangeHeads",
-						entries: hashes.length,
-						messages,
-						targets: 1,
-						details: { source: "responseMaybeSync", fused },
-					});
-				}
+			const pending = this.consumeAuthorizedMaybeSyncResponse(msg.hashes, from);
+			if (pending.length === 0) {
+				return true;
 			}
+			await this.shipAuthorizedMaybeSyncResponseLeases({
+				leases: pending,
+				from,
+				response: msg,
+			});
 			return true;
 		} else if (
 			msg instanceof RequestMaybeSyncCoordinate ||
 			msg instanceof RequestMaybeSyncCoordinateCapabilities
 		) {
-			const profile = this.syncOptions?.profile;
-			const lookupStartedAt = syncProfileStart(profile);
-			const hashes = await getHashesFromSymbols(
-				msg.hashNumbers,
-				this.entryIndex,
-				this.coordinateToHash,
-				this.resolveHashesForSymbols,
-				this.resolveHashListForSymbols,
-			);
-			if (profile) {
-				emitSyncProfileDuration(profile, lookupStartedAt, {
-					name: "simple.coordinateLookup",
-					entries: hashLookupResultSize(hashes),
-					symbols: msg.hashNumbers.length,
-				});
-			}
-
-			const exchangeStartedAt = syncProfileStart(profile);
-			const hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
-			let messages = 0;
-			let fused = false;
+			const target = from.hashcode();
+			const lifecycle = this.captureSyncDispatchLifecycle([target]);
 			try {
-				// dont set priority 1 here because this will block other messages that should higher priority
-				({ messages, fused } = await this.shipExchangeHeads(
-					hashesToSend,
-					context.from!,
-					canReceiveRawExchangeHeads(msg),
-				));
-			} finally {
+				if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+					return true;
+				}
+				const profile = this.syncOptions?.profile;
+				const lookupStartedAt = syncProfileStart(profile);
+				const hashes = await getHashesFromSymbols(
+					msg.hashNumbers,
+					this.entryIndex,
+					this.coordinateToHash,
+					this.resolveHashesForSymbols,
+					this.resolveHashListForSymbols,
+				);
+				if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+					return true;
+				}
 				if (profile) {
-					emitSyncProfileDuration(profile, exchangeStartedAt, {
-						name: "simple.exchangeHeads",
-						entries: hashesToSend.length,
-						messages,
-						targets: 1,
-						details: { source: "requestMaybeSyncCoordinate", fused },
+					emitSyncProfileDuration(profile, lookupStartedAt, {
+						name: "simple.coordinateLookup",
+						entries: hashLookupResultSize(hashes),
+						symbols: msg.hashNumbers.length,
 					});
 				}
-			}
 
-			return true;
+				const exchangeStartedAt = syncProfileStart(profile);
+				const hashesToSend = this.filterRecentlySentExchangeHeads(hashes, from);
+				let messages = 0;
+				let fused = false;
+				try {
+					// dont set priority 1 here because this will block other messages that should higher priority
+					({ messages, fused } = await this.shipExchangeHeads(
+						hashesToSend,
+						context.from!,
+						canReceiveRawExchangeHeads(msg),
+						this.getSyncDispatchSignal(lifecycle, target),
+					));
+				} finally {
+					if (profile) {
+						emitSyncProfileDuration(profile, exchangeStartedAt, {
+							name: "simple.exchangeHeads",
+							entries: hashesToSend.length,
+							messages,
+							targets: 1,
+							details: {
+								source: "requestMaybeSyncCoordinate",
+								fused,
+							},
+						});
+					}
+				}
+
+				return true;
+			} finally {
+				this.finishSyncDispatchLifecycle(lifecycle);
+			}
 		} else {
 			return false; // no message was consumed
 		}
@@ -953,6 +1835,14 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		from: PublicSignKey,
 		options?: { skipCheck?: boolean },
 	) {
+		const fromHash = from.hashcode();
+		const targetEpoch = this.getOrCreateSyncDispatchTargetEpoch(fromHash);
+		const ownershipLifecycleController = this.syncDispatchLifecycleController;
+		const isCapturedLifecycleActive = () =>
+			this.closed !== true &&
+			this.syncDispatchLifecycleController === ownershipLifecycleController &&
+			!ownershipLifecycleController.signal.aborted &&
+			this.syncDispatchTargetEpochs.get(fromHash) === targetEpoch;
 		const requestHashes: SyncableKey[] = [];
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
@@ -961,6 +1851,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			options?.skipCheck === true
 				? undefined
 				: await this.resolveKnownSyncKeys(keys);
+		if (!isCapturedLifecycleActive()) {
+			return;
+		}
 		if (profile) {
 			emitSyncProfileDuration(profile, resolveKnownStartedAt, {
 				name: "simple.queueSync.resolveKnown",
@@ -973,7 +1866,6 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 				},
 			});
 		}
-		const fromHash = from.hashcode();
 		let queuedHashAliases: Map<string, SyncableKey> | undefined;
 		const getQueuedSyncKeyForBatch = (key: SyncableKey) => {
 			if (this.syncInFlightQueue.has(key)) {
@@ -1001,6 +1893,9 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		try {
 			const loopStartedAt = syncProfileStart(profile);
 			for (const key of keys) {
+				if (!isCapturedLifecycleActive()) {
+					return;
+				}
 				const coordinateOrHash = getQueuedSyncKeyForBatch(key) ?? key;
 				const inFlight = this.syncInFlightQueue.get(coordinateOrHash);
 				if (inFlight) {
@@ -1013,13 +1908,16 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 						}
 						inverted.add(coordinateOrHash);
 					}
-				} else if (
-					options?.skipCheck ||
-					!(await this.checkHasCoordinateOrHash(
-						coordinateOrHash,
-						knownKeys,
-					))
-				) {
+				} else {
+					const has =
+						options?.skipCheck !== true &&
+						(await this.checkHasCoordinateOrHash(coordinateOrHash, knownKeys));
+					if (!isCapturedLifecycleActive()) {
+						return;
+					}
+					if (has) {
+						continue;
+					}
 					// Track the initial sender so we can retry if the first request is lost.
 					this.syncInFlightQueue.set(coordinateOrHash, [from]);
 					let inverted = this.syncInFlightQueueInverted.get(fromHash);
@@ -1050,7 +1948,11 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			}
 
 			requestHashes.length > 0 &&
-				(await this.requestSync(requestHashes, [fromHash]));
+				(await this.requestSync(requestHashes, [fromHash], {
+					ownershipLifecycleController,
+					targetEpochs: new Map([[fromHash, targetEpoch]]),
+					createTargetEpochs: false,
+				}));
 		} finally {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
@@ -1066,10 +1968,24 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		}
 	}
 
-	private async requestSync(hashes: SyncableKey[], to: Set<string> | string[]) {
-		if (hashes.length === 0) {
+	private async requestSync(
+		hashes: SyncableKey[],
+		to: Set<string> | string[],
+		options?: {
+			ownershipLifecycleController?: AbortController;
+			targetEpochs?: Map<string, SyncDispatchTargetEpoch>;
+			createTargetEpochs?: boolean;
+		},
+	) {
+		const targets = [...new Set(to)];
+		if (hashes.length === 0 || targets.length === 0) {
 			return;
 		}
+		const lifecycle = this.captureSyncDispatchLifecycle(targets, undefined, {
+			ownershipLifecycleController: options?.ownershipLifecycleController,
+			targetEpochs: options?.targetEpochs,
+			createTargetEpochs: options?.createTargetEpochs,
+		});
 		const profile = this.syncOptions?.profile;
 		const startedAt = syncProfileStart(profile);
 		let coordinateMessages = 0;
@@ -1079,7 +1995,10 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 
 		try {
 			const now = +new Date();
-			for (const node of to) {
+			for (const node of targets) {
+				if (!this.isSyncDispatchLifecycleActive(lifecycle, node)) {
+					continue;
+				}
 				let map = this.syncInFlight.get(node);
 				if (!map) {
 					map = new Map();
@@ -1102,48 +2021,85 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			coordinateHashCount = coordinateHashes.length;
 			stringHashCount = stringHashes.length;
 
-				if (coordinateHashes.length > 0) {
-					const chunks = this.chunk(
-						coordinateHashes,
-						this.maxCoordinatesPerMessage,
-					);
-					coordinateMessages = chunks.length;
+			if (coordinateHashes.length > 0) {
+				const chunks = this.chunk(
+					coordinateHashes,
+					this.maxCoordinatesPerMessage,
+				);
+				for (const target of targets) {
 					for (const chunk of chunks) {
-						await this.rpc.send(
-							this.syncOptions?.rawExchangeHeads
-								? new RequestMaybeSyncCoordinateCapabilities({
-										hashNumbers: chunk,
-									})
-								: new RequestMaybeSyncCoordinate({ hashNumbers: chunk }),
-							{
-								mode: new SilentDelivery({ to, redundancy: 1 }),
-								priority: SYNC_MESSAGE_PRIORITY,
-							},
-						);
+						if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+							break;
+						}
+						try {
+							await this.rpc.send(
+								this.syncOptions?.rawExchangeHeads
+									? new RequestMaybeSyncCoordinateCapabilities({
+											hashNumbers: chunk,
+										})
+									: new RequestMaybeSyncCoordinate({
+											hashNumbers: chunk,
+										}),
+								{
+									mode: new SilentDelivery({
+										to: [target],
+										redundancy: 1,
+									}),
+									priority: SYNC_MESSAGE_PRIORITY,
+									signal: this.getSyncDispatchSignal(lifecycle, target),
+								},
+							);
+							coordinateMessages += 1;
+						} catch (error) {
+							if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+								break;
+							}
+							throw error;
+						}
 					}
 				}
-				if (stringHashes.length > 0) {
-					const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
-					stringMessages = chunks.length;
+			}
+			if (stringHashes.length > 0) {
+				const chunks = this.chunk(stringHashes, this.maxHashesPerMessage);
+				for (const target of targets) {
 					for (const chunk of chunks) {
-						await this.rpc.send(
-							this.syncOptions?.rawExchangeHeads
-								? new ResponseMaybeSyncCapabilities({ hashes: chunk })
-								: new ResponseMaybeSync({ hashes: chunk }),
-							{
-								mode: new SilentDelivery({ to, redundancy: 1 }),
-								priority: SYNC_MESSAGE_PRIORITY,
-							},
-						);
+						if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+							break;
+						}
+						try {
+							await this.rpc.send(
+								this.syncOptions?.rawExchangeHeads
+									? new ResponseMaybeSyncCapabilities({
+											hashes: chunk,
+										})
+									: new ResponseMaybeSync({ hashes: chunk }),
+								{
+									mode: new SilentDelivery({
+										to: [target],
+										redundancy: 1,
+									}),
+									priority: SYNC_MESSAGE_PRIORITY,
+									signal: this.getSyncDispatchSignal(lifecycle, target),
+								},
+							);
+							stringMessages += 1;
+						} catch (error) {
+							if (!this.isSyncDispatchLifecycleActive(lifecycle, target)) {
+								break;
+							}
+							throw error;
+						}
 					}
 				}
+			}
 		} finally {
+			this.finishSyncDispatchLifecycle(lifecycle);
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
 					name: "simple.requestSync",
 					entries: hashes.length,
 					messages: coordinateMessages + stringMessages,
-					targets: Array.isArray(to) ? to.length : to.size,
+					targets: targets.length,
 					details: {
 						coordinateHashes: coordinateHashCount,
 						stringHashes: stringHashCount,
@@ -1214,8 +2170,29 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			: this.log.has(key);
 	}
 	async open() {
+		this.syncDispatchLifecycleController.abort();
+		this.clearPendingMaybeSyncResponses();
+		this.syncDispatchTargetEpochs.clear();
+		this.syncDispatchLifecycleController = new AbortController();
+		const openLifecycleController = this.syncDispatchLifecycleController;
 		this.closed = false;
-		const requestSyncLoop = async () => {
+		const isOpenLifecycleActive = () =>
+			this.closed !== true &&
+			this.syncDispatchLifecycleController === openLifecycleController &&
+			!openLifecycleController.signal.aborted;
+		let requestSyncLoop!: () => Promise<void>;
+		const scheduleRequestSyncLoop = () => {
+			if (!isOpenLifecycleActive()) {
+				return;
+			}
+			this.syncMoreInterval = setTimeout(() => {
+				void requestSyncLoop().catch(() => {
+					// The loop is best-effort. Observe all failures so a transport or
+					// storage rejection cannot become an unhandled process rejection.
+				});
+			}, 3e3);
+		};
+		requestSyncLoop = async () => {
 			/**
 			 * This method fetches entries that we potentially want.
 			 * In a case in which we become replicator of a segment,
@@ -1224,75 +2201,108 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 			 * so we don't get flooded with the same entry
 			 */
 
-			const requestHashes: SyncableKey[] = [];
-			const from: Set<string> = new Set();
-			const now = Date.now();
-			for (const [key, value] of this.syncInFlightQueue) {
-				if (this.closed) {
-					return;
-				}
+			if (!isOpenLifecycleActive()) {
+				return;
+			}
+			try {
+				const requestHashes: SyncableKey[] = [];
+				const from: Set<string> = new Set();
+				const now = Date.now();
+				for (const [key] of this.syncInFlightQueue) {
+					if (!isOpenLifecycleActive()) {
+						return;
+					}
 
-				const has = await this.checkHasCoordinateOrHash(key);
-
-				if (!has) {
-					if (value.length === 0) {
-						// No remaining peers to ask; drop the pending key to avoid leaking.
-						this.clearSyncProcessKey(key);
+					const has = await this.checkHasCoordinateOrHash(key);
+					if (!isOpenLifecycleActive()) {
+						return;
+					}
+					const value = this.syncInFlightQueue.get(key);
+					if (!value) {
 						continue;
 					}
 
-					// Ask one peer per key per loop. If a previous request is still considered
-					// "recent", wait until the retry window elapses.
-					const candidate = value[0]!;
-					const publicKeyHash = candidate.hashcode();
-					const inflightTimestamp = this.syncInFlight
-						.get(publicKeyHash)
-						?.get(key)?.timestamp;
-					if (
-						inflightTimestamp == null ||
-						now - inflightTimestamp >= SIMPLE_SYNC_RETRY_AFTER_MS
-					) {
-						requestHashes.push(key);
-						from.add(publicKeyHash);
-						if (value.length > 1) {
-							// Rotate for fairness across multiple possible sources.
-							value.push(value.shift()!);
+					if (!has) {
+						if (value.length === 0) {
+							this.clearSyncProcessKey(key);
+							continue;
 						}
-					}
-				} else {
-					this.clearSyncProcessKey(key);
-				}
-			}
 
-			const nowMin10s = +new Date() - 2e4;
-			for (const [key, map] of this.syncInFlight) {
-				// cleanup "old" missing syncs
-				for (const [hash, { timestamp }] of map) {
-					if (timestamp < nowMin10s) {
-						map.delete(hash);
+						const candidate = value[0]!;
+						const publicKeyHash = candidate.hashcode();
+						const inflightTimestamp = this.syncInFlight
+							.get(publicKeyHash)
+							?.get(key)?.timestamp;
+						if (
+							inflightTimestamp == null ||
+							now - inflightTimestamp >= SIMPLE_SYNC_RETRY_AFTER_MS
+						) {
+							requestHashes.push(key);
+							from.add(publicKeyHash);
+							if (value.length > 1) {
+								value.push(value.shift()!);
+							}
+						}
+					} else {
+						this.clearSyncProcessKey(key);
 					}
 				}
-				if (map.size === 0) {
-					this.syncInFlight.delete(key);
-				}
-			}
-			this.requestSync(requestHashes, from).finally(() => {
-				if (this.closed) {
+
+				if (!isOpenLifecycleActive()) {
 					return;
 				}
-				this.syncMoreInterval = setTimeout(requestSyncLoop, 3e3);
-			});
+				const nowMin10s = +new Date() - 2e4;
+				for (const [key, map] of this.syncInFlight) {
+					for (const [hash, { timestamp }] of map) {
+						if (timestamp < nowMin10s) {
+							map.delete(hash);
+						}
+					}
+					if (map.size === 0) {
+						this.syncInFlight.delete(key);
+					}
+				}
+				if (!isOpenLifecycleActive()) {
+					return;
+				}
+				const targetEpochs = new Map<string, SyncDispatchTargetEpoch>();
+				for (const target of from) {
+					const epoch = this.syncDispatchTargetEpochs.get(target);
+					if (epoch) {
+						targetEpochs.set(target, epoch);
+					}
+				}
+				await this.requestSync(requestHashes, from, {
+					ownershipLifecycleController: openLifecycleController,
+					targetEpochs,
+					createTargetEpochs: false,
+				});
+				if (!isOpenLifecycleActive()) {
+					return;
+				}
+			} catch {
+				if (!isOpenLifecycleActive()) {
+					return;
+				}
+				// Retry on the next interval; the rejection is deliberately observed.
+			}
+			scheduleRequestSyncLoop();
 		};
 
-		requestSyncLoop();
+		void requestSyncLoop().catch(() => {
+			// Defensive observation for failures outside the loop's best-effort body.
+		});
 	}
 
 	async close() {
 		this.closed = true;
+		this.syncDispatchLifecycleController.abort();
+		this.syncDispatchTargetEpochs.clear();
 		this.syncInFlightQueue.clear();
 		this.syncInFlightQueueInverted.clear();
 		this.syncInFlight.clear();
 		this.recentlySentExchangeHeads.clear();
+		this.clearPendingMaybeSyncResponses();
 		for (const sessionId of [...this.repairSessions.keys()]) {
 			this.finalizeRepairSession(sessionId, false);
 		}
@@ -1472,8 +2482,25 @@ export class SimpleSyncronizer<R extends "u32" | "u64">
 		return this.clearSyncProcessPublicKeyHash(publicKeyHash);
 	}
 	private clearSyncProcessPublicKeyHash(publicKeyHash: string) {
+		this.syncDispatchTargetEpochs.delete(publicKeyHash);
+		for (const targetLifecycle of [
+			...(this.syncDispatchTargets.get(publicKeyHash) ?? []),
+		]) {
+			if (targetLifecycle.lifecycle.abortAllOnTargetDisconnect) {
+				this.abortSyncDispatchLifecycle(
+					targetLifecycle.lifecycle,
+					new Error("sync target disconnected"),
+				);
+			} else {
+				this.abortSyncDispatchTarget(
+					targetLifecycle,
+					new Error("sync target disconnected"),
+				);
+			}
+		}
 		this.syncInFlight.delete(publicKeyHash);
 		this.recentlySentExchangeHeads.delete(publicKeyHash);
+		this.clearPendingMaybeSyncResponses(publicKeyHash);
 		const map = this.syncInFlightQueueInverted.get(publicKeyHash);
 		if (map) {
 			for (const hash of map) {

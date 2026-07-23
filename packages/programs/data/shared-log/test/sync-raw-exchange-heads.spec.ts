@@ -215,11 +215,12 @@ describe("raw exchange-head sync", () => {
 			await waitForResolved(() =>
 				session.peers[0].dial(session.peers[1].getMultiaddrs()),
 			);
-			await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+			await (
+				db1.log.syncronizer as SimpleSyncronizer<any>
+			).onMaybeMissingHashes({
 				hashes,
-				db1.node.identity.publicKey,
-				{ skipCheck: true },
-			);
+				targets: [db2.node.identity.publicKey.hashcode()],
+			});
 			await waitForResolved(
 				() => {
 					expect(db2.log.log.length).to.equal(entryCount);
@@ -3326,11 +3327,10 @@ describe("raw exchange-head sync", () => {
 		await waitForResolved(() =>
 			session.peers[0].dial(session.peers[1].getMultiaddrs()),
 		);
-		await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+		await (db1.log.syncronizer as SimpleSyncronizer<any>).onMaybeMissingHashes({
 			hashes,
-			db1.node.identity.publicKey,
-			{ skipCheck: true },
-		);
+			targets: [db2.node.identity.publicKey.hashcode()],
+		});
 		await waitForResolved(
 			() => {
 				expect(db2.log.log.length).to.equal(entryCount);
@@ -3841,11 +3841,12 @@ describe("raw exchange-head sync", () => {
 			await waitForResolved(() =>
 				session.peers[0].dial(session.peers[1].getMultiaddrs()),
 			);
-			await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+			await (
+				db1.log.syncronizer as SimpleSyncronizer<any>
+			).onMaybeMissingHashes({
 				hashes,
-				db1.node.identity.publicKey,
-				{ skipCheck: true },
-			);
+				targets: [db2.node.identity.publicKey.hashcode()],
+			});
 			await waitForResolved(
 				() => {
 					expect(db2.log.log.length).to.equal(entryCount);

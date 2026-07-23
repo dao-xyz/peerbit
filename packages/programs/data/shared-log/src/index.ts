@@ -5162,7 +5162,11 @@ export class SharedLog<
 	private async sendFusedRawExchangeHeadsPlan(
 		plan: RawExchangeHeadSendPlan,
 		to: string[] | Set<string>,
-		options?: { priority?: number; reserved?: Uint8Array },
+		options?: {
+			priority?: number;
+			reserved?: Uint8Array;
+			signal?: AbortSignal;
+		},
 	): Promise<number | undefined> {
 		const backbone = this._nativeBackbone;
 		if (!backbone?.encodeRawExchangeSyncPayload) {
@@ -5175,6 +5179,7 @@ export class SharedLog<
 				options: {
 					mode: SilentDelivery;
 					priority?: number;
+					signal?: AbortSignal;
 				},
 			) => Promise<Uint8Array | undefined>;
 		};
@@ -5190,8 +5195,16 @@ export class SharedLog<
 		}
 
 		const topic = this.rpc.topic;
-		const payloads: Uint8Array[] = [];
-		const encodeChunk = (from: number, until: number): boolean => {
+		const payloads: {
+			payload: Uint8Array;
+			entries: number;
+			bytes: number;
+		}[] = [];
+		const encodeChunk = (
+			from: number,
+			until: number,
+			bytes: number,
+		): boolean => {
 			const payload = backbone.encodeRawExchangeSyncPayload!({
 				topic,
 				hashes:
@@ -5207,7 +5220,7 @@ export class SharedLog<
 			if (!payload) {
 				return false;
 			}
-			payloads.push(payload);
+			payloads.push({ payload, entries: until - from, bytes });
 			return true;
 		};
 		// Same greedy chunking rule as `createRawExchangeHeadsMessages`: close
@@ -5223,7 +5236,7 @@ export class SharedLog<
 			size += length;
 			totalBytes += length;
 			if (size > MAX_RAW_EXCHANGE_MESSAGE_SIZE) {
-				if (!encodeChunk(chunkStart, i + 1)) {
+				if (!encodeChunk(chunkStart, i + 1, size)) {
 					return undefined;
 				}
 				chunkStart = i + 1;
@@ -5231,33 +5244,55 @@ export class SharedLog<
 			}
 		}
 		if (chunkStart < plan.hashes.length) {
-			if (!encodeChunk(chunkStart, plan.hashes.length)) {
+			if (!encodeChunk(chunkStart, plan.hashes.length, size)) {
 				return undefined;
 			}
 		}
 		// Every payload is encoded before anything is published, so a caller
 		// falling back on `undefined` never double-sends part of a plan.
 		const profile = this._logProperties?.sync?.profile;
-		if (profile) {
-			emitSyncProfileEvent(profile, {
-				name: "sharedLog.rawSend.fused",
-				component: "shared-log",
-				entries: plan.hashes.length,
-				bytes: totalBytes,
-				messages: payloads.length,
-			});
+		let attemptedMessages = 0;
+		let sentMessages = 0;
+		let sentEntries = 0;
+		let sentBytes = 0;
+		try {
+			for (const item of payloads) {
+				if (options?.signal?.aborted) {
+					break;
+				}
+				attemptedMessages += 1;
+				await pubsub.publishPreEncodedData(
+					item.payload,
+					{ topics: [topic] },
+					{
+						mode: new SilentDelivery({ redundancy: 1, to: [...to] }),
+						priority: options?.priority,
+						signal: options?.signal,
+					},
+				);
+				sentMessages += 1;
+				sentEntries += item.entries;
+				sentBytes += item.bytes;
+			}
+		} finally {
+			if (profile) {
+				emitSyncProfileEvent(profile, {
+					name: "sharedLog.rawSend.fused",
+					component: "shared-log",
+					entries: sentEntries,
+					bytes: sentBytes,
+					messages: sentMessages,
+					details: {
+						attemptedMessages,
+						cancelled: options?.signal?.aborted || undefined,
+						plannedBytes: totalBytes,
+						plannedEntries: plan.hashes.length,
+						plannedMessages: payloads.length,
+					},
+				});
+			}
 		}
-		for (const payload of payloads) {
-			await pubsub.publishPreEncodedData(
-				payload,
-				{ topics: [topic] },
-				{
-					mode: new SilentDelivery({ redundancy: 1, to: [...to] }),
-					priority: options?.priority,
-				},
-			);
-		}
-		return payloads.length;
+		return sentMessages;
 	}
 
 	/**
@@ -5268,7 +5303,11 @@ export class SharedLog<
 	private async trySendFusedRawExchangeHeads(
 		hashes: string[],
 		to: string[],
-		options?: { priority?: number; reserved?: Uint8Array },
+		options?: {
+			priority?: number;
+			reserved?: Uint8Array;
+			signal?: AbortSignal;
+		},
 	): Promise<number | undefined> {
 		if (!this._nativeBackbone?.encodeRawExchangeSyncPayload) {
 			return undefined;
@@ -14039,7 +14078,7 @@ export class SharedLog<
 		const sendRawExchangeHeads = (
 			hashes: string[],
 			to: string[],
-			sendOptions?: { priority?: number },
+			sendOptions?: { priority?: number; signal?: AbortSignal },
 		) => this.trySendFusedRawExchangeHeads(hashes, to, sendOptions);
 		if (options?.syncronizer) {
 			this.syncronizer = new options.syncronizer({

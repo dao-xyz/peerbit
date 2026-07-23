@@ -127,7 +127,7 @@ export type SharedLogNativeWireSync = {
 export type RawExchangeHeadsSender = (
 	hashes: string[],
 	to: string[],
-	options?: { priority?: number },
+	options?: { priority?: number; signal?: AbortSignal },
 ) => Promise<number | undefined>;
 
 export type HashSymbolInput = readonly bigint[] | BigUint64Array;
@@ -212,6 +212,7 @@ export interface Syncronizer<R extends "u32" | "u64"> {
 	onMaybeMissingEntries(properties: {
 		entries: Map<string, SyncEntryCoordinates<R>>;
 		targets: string[];
+		signal?: AbortSignal;
 	}): Promise<void> | void;
 
 	onMessage(
