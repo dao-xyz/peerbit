@@ -42,6 +42,8 @@ import {
 	syncProfileStart,
 } from "./profile.js";
 import {
+	ResponseMaybeSync,
+	ResponseMaybeSyncCapabilities,
 	SYNC_MESSAGE_PRIORITY,
 	SimpleSyncronizer,
 } from "./simple.js";
@@ -607,81 +609,160 @@ const buildEncoderOrDecoderFromRange = async <
 	await ribltReady;
 	const encoder =
 		type === "encoder" ? new EncoderWrapper() : new DecoderWrapper();
-
-	const rangeQueryStartedAt = syncProfileStart(profile);
-	let hashNumbers: Array<bigint | number> | BigUint64Array | undefined;
-	let source = "index";
-	const resolved = await resolveHashNumbersInRange?.({
-		end1: ranges.end1,
-		start1: ranges.start1,
-		end2: ranges.end2,
-		start2: ranges.start2,
-	});
-	if (resolved) {
-		source = "native";
-		hashNumbers =
-			typeof BigUint64Array !== "undefined" &&
-			resolved instanceof BigUint64Array
-				? resolved
-				: [...resolved];
-	} else {
-		const entries = await entryIndex
-			.iterate(
-				{
-					// Range sync for IBLT is done in hashNumber space.
-					query: matchEntriesByHashNumberInRangeQuery({
-						end1: ranges.end1,
-						start1: ranges.start1,
-						end2: ranges.end2,
-						start2: ranges.start2,
-					}),
-				},
-				{
-					shape: {
-						hash: true,
-						hashNumber: true,
-					},
-				},
-			)
-			.all();
-		hashNumbers = entries.map((entry) => entry.value.hashNumber);
-	}
-	if (profile) {
-		emitSyncProfileDuration(profile, rangeQueryStartedAt, {
-			name: "rateless.rangeQuery",
-			entries: hashNumbers.length,
-			details: { type, source },
+	let transferred = false;
+	try {
+		const rangeQueryStartedAt = syncProfileStart(profile);
+		let hashNumbers: Array<bigint | number> | BigUint64Array | undefined;
+		let source = "index";
+		const resolved = await resolveHashNumbersInRange?.({
+			end1: ranges.end1,
+			start1: ranges.start1,
+			end2: ranges.end2,
+			start2: ranges.start2,
 		});
-	}
+		if (resolved) {
+			source = "native";
+			hashNumbers =
+				typeof BigUint64Array !== "undefined" &&
+				resolved instanceof BigUint64Array
+					? resolved
+					: [...resolved];
+		} else {
+			const entries = await entryIndex
+				.iterate(
+					{
+						// Range sync for IBLT is done in hashNumber space.
+						query: matchEntriesByHashNumberInRangeQuery({
+							end1: ranges.end1,
+							start1: ranges.start1,
+							end2: ranges.end2,
+							start2: ranges.start2,
+						}),
+					},
+					{
+						shape: {
+							hash: true,
+							hashNumber: true,
+						},
+					},
+				)
+				.all();
+			hashNumbers = entries.map((entry) => entry.value.hashNumber);
+		}
+		if (profile) {
+			emitSyncProfileDuration(profile, rangeQueryStartedAt, {
+				name: "rateless.rangeQuery",
+				entries: hashNumbers.length,
+				details: { type, source },
+			});
+		}
 
-	if (hashNumbers.length === 0) {
-		return false;
-	}
+		if (hashNumbers.length === 0) {
+			return false;
+		}
 
-	const addSymbolsStartedAt = syncProfileStart(profile);
-	if (
-		typeof BigUint64Array !== "undefined" &&
-		typeof (encoder as RibltSymbolAdder).add_symbols === "function"
-	) {
-		const symbols =
-			hashNumbers instanceof BigUint64Array
-				? hashNumbers
-				: BigUint64Array.from(hashNumbers, coerceBigInt);
-		addSymbolsToRiblt(encoder as RibltSymbolAdder, symbols);
-	} else {
-		for (const hashNumber of hashNumbers) {
-			encoder.add_symbol(coerceBigInt(hashNumber));
+		const addSymbolsStartedAt = syncProfileStart(profile);
+		if (
+			typeof BigUint64Array !== "undefined" &&
+			typeof (encoder as RibltSymbolAdder).add_symbols === "function"
+		) {
+			const symbols =
+				hashNumbers instanceof BigUint64Array
+					? hashNumbers
+					: BigUint64Array.from(hashNumbers, coerceBigInt);
+			addSymbolsToRiblt(encoder as RibltSymbolAdder, symbols);
+		} else {
+			for (const hashNumber of hashNumbers) {
+				encoder.add_symbol(coerceBigInt(hashNumber));
+			}
+		}
+		if (profile) {
+			emitSyncProfileDuration(profile, addSymbolsStartedAt, {
+				name: "rateless.rangeAddSymbols",
+				entries: hashNumbers.length,
+				symbols: hashNumbers.length,
+				details: { type },
+			});
+		}
+		transferred = true;
+		return encoder as E;
+	} finally {
+		if (!transferred) {
+			encoder.free();
 		}
 	}
-	if (profile) {
-		emitSyncProfileDuration(profile, addSymbolsStartedAt, {
-			name: "rateless.rangeAddSymbols",
-			entries: hashNumbers.length,
-			symbols: hashNumbers.length,
-			details: { type },
-		});
-	}
-	return encoder as E;
+};
+
+type RatelessDispatchLifecycle = {
+	ownershipLifecycleController: AbortController;
+	callerSignal?: AbortSignal;
+	controller: AbortController;
+	targets: Map<string, RatelessDispatchTargetLifecycle>;
+	onOwnerOrCallerAbort: () => void;
+	dispatchFinished: boolean;
+	disposed: boolean;
+};
+
+type RatelessDispatchTargetLifecycle = {
+	lifecycle: RatelessDispatchLifecycle;
+	target: string;
+	controller: AbortController;
+	retainedByProcess: boolean;
+	responseLeases: number;
+};
+
+type OutgoingRatelessSyncProcess = {
+	target: string;
+	targetLifecycle: RatelessDispatchTargetLifecycle;
+	outgoingHashes: string[];
+	authorizedHashes: ReadonlySet<string>;
+	consumedResponseHashes: Set<string>;
+	encoder: EncoderWrapper;
+	timeout?: ReturnType<typeof setTimeout>;
+	refresh: () => void;
+	next: (message: { lastSeqNo: bigint }) => CodedSymbolBatch;
+	free: (reason?: unknown) => void;
+	processController: AbortController;
+	signal: AbortSignal;
+	callerSignal?: AbortSignal;
+};
+
+type AuthorizedRatelessResponseLease = {
+	process: OutgoingRatelessSyncProcess;
+	authorized: string[];
+	remaining: string[];
+	signal: AbortSignal;
+	release: (options?: { rollback?: boolean }) => void;
+};
+
+type IncomingRatelessSyncProcess = {
+	key: string;
+	syncId: string;
+	sender: string;
+	from: PublicSignKey;
+	ownershipLifecycleController: AbortController;
+	controller: AbortController;
+	decoder?: DecoderWrapper;
+	completedSynchronizations: Cache<string>;
+	timeout?: ReturnType<typeof setTimeout>;
+	refresh: () => void;
+	process: (message: {
+		seqNo: bigint;
+		symbols: CodedSymbolInput;
+	}) => Promise<boolean | undefined>;
+	free: (reason?: unknown) => void;
+	complete: () => void;
+};
+
+type RatelessRepairSessionLifecycle = {
+	id: string;
+	ownershipLifecycleController: AbortController;
+	controller: AbortController;
+	trackedSession: RepairSession;
+	onOwnershipAbort: () => void;
+	cancelled: boolean;
+	settled: boolean;
+	deadlineTimer?: ReturnType<typeof setTimeout>;
 };
 
 export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
@@ -689,6 +770,7 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 {
 	simple: SimpleSyncronizer<D>;
 	private repairSessionCounter: number;
+	private ratelessRepairSessions: Map<string, RatelessRepairSessionLifecycle>;
 
 	startedOrCompletedSynchronizations: Cache<string>;
 	private localRangeEncoderCacheVersion = 0;
@@ -698,36 +780,26 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	> = new Map();
 	private localRangeEncoderCacheMax = 2;
 
-	ingoingSyncProcesses: Map<
-		string,
-		{
-			decoder: DecoderWrapper;
-			timeout: ReturnType<typeof setTimeout>;
-			refresh: () => void;
-			process: (message: {
-				seqNo: bigint;
-				symbols: CodedSymbolInput;
-			}) => Promise<boolean | undefined>;
-			free: () => void;
-		}
-	>;
+	ingoingSyncProcesses: Map<string, IncomingRatelessSyncProcess>;
 
-	outgoingSyncProcesses: Map<
+	outgoingSyncProcesses: Map<string, OutgoingRatelessSyncProcess>;
+	private outgoingSyncProcessByTarget: Map<string, OutgoingRatelessSyncProcess>;
+	private ratelessDispatchLifecycleController: AbortController;
+	private ratelessDispatchTargets: Map<
 		string,
-		{
-			outgoingHashes: string[];
-			encoder: EncoderWrapper;
-			timeout: ReturnType<typeof setTimeout>;
-			refresh: () => void;
-			next: (message: { lastSeqNo: bigint }) => CodedSymbolBatch;
-			free: () => void;
-		}
+		Set<RatelessDispatchTargetLifecycle>
 	>;
+	private ratelessClosed: boolean;
 
 	constructor(readonly properties: SynchronizerComponents<D>) {
 		this.simple = new SimpleSyncronizer(properties);
 		this.repairSessionCounter = 0;
+		this.ratelessRepairSessions = new Map();
 		this.outgoingSyncProcesses = new Map();
+		this.outgoingSyncProcessByTarget = new Map();
+		this.ratelessDispatchLifecycleController = new AbortController();
+		this.ratelessDispatchTargets = new Map();
+		this.ratelessClosed = false;
 		this.ingoingSyncProcesses = new Map();
 		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
 	}
@@ -775,6 +847,121 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		return scored.map((x) => x.entry);
 	}
 
+	private isRatelessRepairSessionActive(
+		session: RatelessRepairSessionLifecycle,
+	): boolean {
+		return (
+			!this.ratelessClosed &&
+			!session.cancelled &&
+			!session.controller.signal.aborted &&
+			!session.ownershipLifecycleController.signal.aborted &&
+			session.ownershipLifecycleController ===
+				this.ratelessDispatchLifecycleController &&
+			this.ratelessRepairSessions.get(session.id) === session
+		);
+	}
+
+	private cancelRatelessRepairSession(
+		session: RatelessRepairSessionLifecycle,
+		reason: unknown = new Error("rateless repair session cancelled"),
+	): void {
+		if (session.cancelled) {
+			return;
+		}
+		session.cancelled = true;
+		if (session.deadlineTimer !== undefined) {
+			clearTimeout(session.deadlineTimer);
+			session.deadlineTimer = undefined;
+		}
+		session.controller.abort(reason);
+		session.trackedSession.cancel();
+	}
+
+	private disposeRatelessRepairSession(
+		session: RatelessRepairSessionLifecycle,
+	): void {
+		if (session.settled) {
+			return;
+		}
+		session.settled = true;
+		if (session.deadlineTimer !== undefined) {
+			clearTimeout(session.deadlineTimer);
+			session.deadlineTimer = undefined;
+		}
+		session.ownershipLifecycleController.signal.removeEventListener(
+			"abort",
+			session.onOwnershipAbort,
+		);
+		if (this.ratelessRepairSessions.get(session.id) === session) {
+			this.ratelessRepairSessions.delete(session.id);
+		}
+	}
+
+	private cancelRatelessRepairSessions(reason: unknown): void {
+		for (const session of [...this.ratelessRepairSessions.values()]) {
+			this.cancelRatelessRepairSession(session, reason);
+		}
+	}
+
+	private waitForRatelessRepairRetry(
+		delayMs: number,
+		signal: AbortSignal,
+	): Promise<boolean> {
+		if (delayMs <= 0) {
+			return Promise.resolve(!signal.aborted);
+		}
+		if (signal.aborted) {
+			return Promise.resolve(false);
+		}
+		return new Promise<boolean>((resolve) => {
+			let settled = false;
+			let timer: ReturnType<typeof setTimeout>;
+			const settle = (elapsed: boolean) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clearTimeout(timer);
+				signal.removeEventListener("abort", onAbort);
+				resolve(elapsed);
+			};
+			const onAbort = () => settle(false);
+			timer = setTimeout(() => settle(true), delayMs);
+			timer.unref?.();
+			signal.addEventListener("abort", onAbort, { once: true });
+			if (signal.aborted) {
+				onAbort();
+			}
+		});
+	}
+
+	private waitForRatelessRepairDispatch(
+		dispatch: Promise<void> | void,
+		signal: AbortSignal,
+	): Promise<boolean> {
+		const dispatchPromise = Promise.resolve(dispatch);
+		return new Promise<boolean>((resolve) => {
+			let settled = false;
+			const settle = (completed: boolean) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				signal.removeEventListener("abort", onAbort);
+				resolve(completed);
+			};
+			const onAbort = () => settle(false);
+			signal.addEventListener("abort", onAbort, { once: true });
+			void dispatchPromise.then(
+				() => settle(true),
+				() => settle(true),
+			);
+			if (signal.aborted) {
+				onAbort();
+			}
+		});
+	}
+
 	startRepairSession(properties: {
 		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
@@ -814,7 +1001,6 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				trackedEntries.set(entry.hash, entry);
 			}
 
-			let cancelled = false;
 			const trackedSession = this.simple.startRepairSession({
 				entries: trackedEntries,
 				targets,
@@ -822,33 +1008,91 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				timeoutMs,
 				retryIntervalsMs,
 			});
+			const ownershipLifecycleController =
+				this.ratelessDispatchLifecycleController;
+			let session!: RatelessRepairSessionLifecycle;
+			const cancel = (
+				reason: unknown = new Error("rateless repair session cancelled"),
+			) => this.cancelRatelessRepairSession(session, reason);
+			session = {
+				id,
+				ownershipLifecycleController,
+				controller: new AbortController(),
+				trackedSession,
+				onOwnershipAbort: () =>
+					cancel(
+						ownershipLifecycleController.signal.reason ??
+							new Error("rateless repair generation ended"),
+					),
+				cancelled: false,
+				settled: false,
+				deadlineTimer: undefined,
+			};
+			this.ratelessRepairSessions.set(id, session);
+			session.deadlineTimer = setTimeout(
+				() => cancel(new Error("rateless convergent repair session timed out")),
+				Math.max(0, timeoutMs - (Date.now() - startedAt)),
+			);
+			session.deadlineTimer.unref?.();
+			ownershipLifecycleController.signal.addEventListener(
+				"abort",
+				session.onOwnershipAbort,
+				{ once: true },
+			);
+			if (
+				this.ratelessClosed ||
+				ownershipLifecycleController.signal.aborted ||
+				ownershipLifecycleController !==
+					this.ratelessDispatchLifecycleController
+			) {
+				cancel(
+					ownershipLifecycleController.signal.reason ??
+						new Error("rateless repair generation is not active"),
+				);
+			}
 
 			const runDispatchSchedule = async () => {
 				let previousDelay = 0;
 				for (const delayMs of retryIntervalsMs) {
-					if (cancelled) {
+					if (!this.isRatelessRepairSessionActive(session)) {
 						return;
 					}
 					const elapsed = Date.now() - startedAt;
 					if (elapsed >= timeoutMs) {
 						return;
 					}
-					const waitMs = Math.max(0, delayMs - previousDelay);
+					const waitMs = Math.min(
+						Math.max(0, delayMs - previousDelay),
+						timeoutMs - elapsed,
+					);
 					previousDelay = delayMs;
-					if (waitMs > 0) {
-						await new Promise<void>((resolve) => {
-							const timer = setTimeout(resolve, waitMs);
-							timer.unref?.();
-						});
+					if (
+						!(await this.waitForRatelessRepairRetry(
+							waitMs,
+							session.controller.signal,
+						))
+					) {
+						return;
 					}
-					if (cancelled) {
+					if (
+						!this.isRatelessRepairSessionActive(session) ||
+						Date.now() - startedAt >= timeoutMs
+					) {
 						return;
 					}
 					try {
-						await this.onMaybeMissingEntries({
-							entries: properties.entries,
-							targets,
-						});
+						if (
+							!(await this.waitForRatelessRepairDispatch(
+								this.onMaybeMissingEntries({
+									entries: properties.entries,
+									targets,
+									signal: session.controller.signal,
+								}),
+								session.controller.signal,
+							))
+						) {
+							return;
+						}
 					} catch {
 						// Best-effort schedule: tracked session timeout/result decides completion.
 					}
@@ -856,22 +1100,23 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			};
 
 			const done = (async (): Promise<RepairSessionResult[]> => {
-				await runDispatchSchedule();
-				const trackedResults = await trackedSession.done;
-				return trackedResults.map((result) => ({
-					...result,
-					requestedTotal: requestedHashes.length,
-					truncated: true,
-				}));
+				try {
+					await runDispatchSchedule();
+					const trackedResults = await trackedSession.done;
+					return trackedResults.map((result) => ({
+						...result,
+						requestedTotal: requestedHashes.length,
+						truncated: true,
+					}));
+				} finally {
+					this.disposeRatelessRepairSession(session);
+				}
 			})();
 
 			return {
 				id,
 				done,
-				cancel: () => {
-					cancelled = true;
-					trackedSession.cancel();
-				},
+				cancel: () => cancel(),
 			};
 		}
 
@@ -927,38 +1172,77 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 		)}:${String(ranges.end2)}`;
 	}
 
-	private decoderFromCachedEncoder(encoder: EncoderWrapper): DecoderWrapper {
+	private decoderFromCachedEncoder(
+		encoder: EncoderWrapper,
+		beforeDecoderTransfer?: () => void,
+	): DecoderWrapper {
 		const clone = encoder.clone();
-		const decoder = clone.to_decoder();
-		clone.free();
-		return decoder;
+		let cloneFreed = false;
+		let decoder: DecoderWrapper | undefined;
+		let decoderTransferred = false;
+		const freeClone = () => {
+			if (cloneFreed) {
+				return;
+			}
+			cloneFreed = true;
+			clone.free();
+		};
+		try {
+			decoder = clone.to_decoder();
+			beforeDecoderTransfer?.();
+			freeClone();
+			decoderTransferred = true;
+			return decoder;
+		} finally {
+			try {
+				freeClone();
+			} finally {
+				if (!decoderTransferred) {
+					decoder?.free();
+				}
+			}
+		}
 	}
 
-	private async getLocalDecoderForRange(ranges: {
-		start1: NumberOrBigint;
-		end1: NumberOrBigint;
-		start2: NumberOrBigint;
-		end2: NumberOrBigint;
-	}): Promise<DecoderWrapper | false> {
+	private async getLocalDecoderForRange(
+		ranges: {
+			start1: NumberOrBigint;
+			end1: NumberOrBigint;
+			start2: NumberOrBigint;
+			end2: NumberOrBigint;
+		},
+		options?: {
+			ownershipLifecycleController?: AbortController;
+			signal?: AbortSignal;
+		},
+	): Promise<DecoderWrapper | false> {
+		const isActive = () =>
+			options?.signal?.aborted !== true &&
+			(options?.ownershipLifecycleController === undefined ||
+				this.isIncomingSyncGenerationActive(
+					options.ownershipLifecycleController,
+				));
+		if (!isActive()) {
+			return false;
+		}
 		const profile = this.properties.sync?.profile;
 		const key = this.localRangeEncoderCacheKey(ranges);
 		const cached = this.localRangeEncoderCache.get(key);
 		if (cached && cached.version === this.localRangeEncoderCacheVersion) {
 			const startedAt = syncProfileStart(profile);
 			cached.lastUsed = Date.now();
-			try {
-				return this.decoderFromCachedEncoder(cached.encoder);
-			} finally {
+			return this.decoderFromCachedEncoder(cached.encoder, () => {
 				if (profile) {
 					emitSyncProfileDuration(profile, startedAt, {
 						name: "rateless.localDecoder",
 						cacheHit: true,
 					});
 				}
-			}
+			});
 		}
 
 		const startedAt = syncProfileStart(profile);
+		const cacheVersion = this.localRangeEncoderCacheVersion;
 		const encoder = (await buildEncoderOrDecoderFromRange(
 			ranges,
 			this.properties.entryIndex,
@@ -975,6 +1259,25 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				});
 			}
 			return false;
+		}
+		if (!isActive()) {
+			encoder.free();
+			return false;
+		}
+		if (cacheVersion !== this.localRangeEncoderCacheVersion) {
+			try {
+				return this.decoderFromCachedEncoder(encoder, () => {
+					if (profile) {
+						emitSyncProfileDuration(profile, startedAt, {
+							name: "rateless.localDecoder",
+							cacheHit: false,
+							details: { cacheInvalidated: true },
+						});
+					}
+				});
+			} finally {
+				encoder.free();
+			}
 		}
 
 		const now = Date.now();
@@ -1007,24 +1310,256 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			this.localRangeEncoderCache.delete(oldestKey);
 		}
 
-		try {
-			return this.decoderFromCachedEncoder(encoder);
-		} finally {
+		return this.decoderFromCachedEncoder(encoder, () => {
 			if (profile) {
 				emitSyncProfileDuration(profile, startedAt, {
 					name: "rateless.localDecoder",
 					cacheHit: false,
 				});
 			}
+		});
+	}
+
+	private captureRatelessDispatchLifecycle(
+		targets: string[],
+		callerSignal?: AbortSignal,
+	): RatelessDispatchLifecycle {
+		const ownershipLifecycleController =
+			this.ratelessDispatchLifecycleController;
+		const lifecycle = {
+			ownershipLifecycleController,
+			callerSignal,
+			controller: new AbortController(),
+			targets: new Map<string, RatelessDispatchTargetLifecycle>(),
+			onOwnerOrCallerAbort: () => {
+				const reason =
+					callerSignal?.aborted === true
+						? callerSignal.reason
+						: ownershipLifecycleController.signal.reason;
+				this.abortRatelessDispatchLifecycle(lifecycle, reason);
+			},
+			dispatchFinished: false,
+			disposed: false,
+		} satisfies RatelessDispatchLifecycle;
+
+		for (const target of [...new Set(targets)]) {
+			const targetLifecycle: RatelessDispatchTargetLifecycle = {
+				lifecycle,
+				target,
+				controller: new AbortController(),
+				retainedByProcess: false,
+				responseLeases: 0,
+			};
+			lifecycle.targets.set(target, targetLifecycle);
+			let activeForTarget = this.ratelessDispatchTargets.get(target);
+			if (!activeForTarget) {
+				activeForTarget = new Set();
+				this.ratelessDispatchTargets.set(target, activeForTarget);
+			}
+			activeForTarget.add(targetLifecycle);
 		}
+
+		ownershipLifecycleController.signal.addEventListener(
+			"abort",
+			lifecycle.onOwnerOrCallerAbort,
+			{ once: true },
+		);
+		if (callerSignal && callerSignal !== ownershipLifecycleController.signal) {
+			callerSignal.addEventListener("abort", lifecycle.onOwnerOrCallerAbort, {
+				once: true,
+			});
+		}
+		if (
+			this.ratelessClosed ||
+			ownershipLifecycleController !==
+				this.ratelessDispatchLifecycleController ||
+			ownershipLifecycleController.signal.aborted ||
+			callerSignal?.aborted
+		) {
+			lifecycle.onOwnerOrCallerAbort();
+		}
+		return lifecycle;
+	}
+
+	private abortRatelessDispatchTarget(
+		targetLifecycle: RatelessDispatchTargetLifecycle,
+		reason?: unknown,
+	): void {
+		if (!targetLifecycle.controller.signal.aborted) {
+			targetLifecycle.controller.abort(reason);
+		}
+		this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
+	}
+
+	private abortRatelessDispatchLifecycle(
+		lifecycle: RatelessDispatchLifecycle,
+		reason?: unknown,
+	): void {
+		if (!lifecycle.controller.signal.aborted) {
+			lifecycle.controller.abort(reason);
+		}
+		for (const targetLifecycle of lifecycle.targets.values()) {
+			this.abortRatelessDispatchTarget(targetLifecycle, reason);
+		}
+		this.maybeDisposeRatelessDispatchLifecycle(lifecycle);
+	}
+
+	private finishRatelessDispatchLifecycle(
+		lifecycle: RatelessDispatchLifecycle,
+	): void {
+		lifecycle.dispatchFinished = true;
+		this.maybeDisposeRatelessDispatchLifecycle(lifecycle);
+	}
+
+	private maybeDisposeRatelessDispatchLifecycle(
+		lifecycle: RatelessDispatchLifecycle,
+	): void {
+		if (
+			lifecycle.disposed ||
+			!lifecycle.dispatchFinished ||
+			[...lifecycle.targets.values()].some(
+				(target) => target.retainedByProcess || target.responseLeases > 0,
+			)
+		) {
+			return;
+		}
+		lifecycle.disposed = true;
+		lifecycle.ownershipLifecycleController.signal.removeEventListener(
+			"abort",
+			lifecycle.onOwnerOrCallerAbort,
+		);
+		if (
+			lifecycle.callerSignal &&
+			lifecycle.callerSignal !== lifecycle.ownershipLifecycleController.signal
+		) {
+			lifecycle.callerSignal.removeEventListener(
+				"abort",
+				lifecycle.onOwnerOrCallerAbort,
+			);
+		}
+		for (const targetLifecycle of lifecycle.targets.values()) {
+			const activeForTarget = this.ratelessDispatchTargets.get(
+				targetLifecycle.target,
+			);
+			activeForTarget?.delete(targetLifecycle);
+			if (activeForTarget?.size === 0) {
+				this.ratelessDispatchTargets.delete(targetLifecycle.target);
+			}
+		}
+	}
+
+	private isRatelessDispatchLifecycleActive(
+		lifecycle: RatelessDispatchLifecycle,
+		target?: string,
+	): boolean {
+		if (
+			this.ratelessClosed ||
+			lifecycle.disposed ||
+			lifecycle.ownershipLifecycleController !==
+				this.ratelessDispatchLifecycleController ||
+			lifecycle.ownershipLifecycleController.signal.aborted ||
+			lifecycle.callerSignal?.aborted ||
+			lifecycle.controller.signal.aborted
+		) {
+			return false;
+		}
+		if (target === undefined) {
+			return true;
+		}
+		const targetLifecycle = lifecycle.targets.get(target);
+		return (
+			targetLifecycle !== undefined &&
+			!targetLifecycle.controller.signal.aborted &&
+			this.ratelessDispatchTargets.get(target)?.has(targetLifecycle) === true
+		);
+	}
+
+	private getIncomingSyncProcessKey(sender: string, syncId: string): string {
+		return `${sender.length}:${sender}${syncId}`;
+	}
+
+	private isIncomingSyncGenerationActive(
+		ownershipLifecycleController: AbortController,
+	): boolean {
+		return (
+			!this.ratelessClosed &&
+			ownershipLifecycleController ===
+				this.ratelessDispatchLifecycleController &&
+			!ownershipLifecycleController.signal.aborted
+		);
+	}
+
+	private isIncomingSyncProcessActive(
+		process: IncomingRatelessSyncProcess,
+	): boolean {
+		return (
+			this.isIncomingSyncGenerationActive(
+				process.ownershipLifecycleController,
+			) &&
+			!process.controller.signal.aborted &&
+			this.ingoingSyncProcesses.get(process.key) === process
+		);
 	}
 
 	async onMaybeMissingEntries(properties: {
 		entries: Map<string, SyncEntryCoordinates<D>>;
 		targets: string[];
+		signal?: AbortSignal;
 	}): Promise<void> {
+		// Capture this rateless open generation synchronously, before any await.
+		// In particular, signal-less internal repair work must not resume after
+		// close/open and borrow the newly opened Simple generation.
+		const lifecycle = this.captureRatelessDispatchLifecycle(
+			properties.targets,
+			properties.signal,
+		);
+		try {
+			await this.onMaybeMissingEntriesWithLifecycle(properties, lifecycle);
+		} finally {
+			this.finishRatelessDispatchLifecycle(lifecycle);
+		}
+	}
+
+	private async onMaybeMissingEntriesWithLifecycle(
+		properties: {
+			entries: Map<string, SyncEntryCoordinates<D>>;
+			targets: string[];
+			signal?: AbortSignal;
+		},
+		lifecycle: RatelessDispatchLifecycle,
+	): Promise<void> {
+		const signal = lifecycle.controller.signal;
 		const profile = this.properties.sync?.profile;
 		const startedAt = syncProfileStart(profile);
+		let topLevelProfileEmitted = false;
+		const emitTopLevelProfile = (
+			details: Record<string, string | number | boolean | undefined>,
+			measurements: { messages?: number; symbols?: number } = {},
+		) => {
+			if (!profile || topLevelProfileEmitted) {
+				return;
+			}
+			topLevelProfileEmitted = true;
+			emitSyncProfileDuration(profile, startedAt, {
+				name: "rateless.onMaybeMissingEntries",
+				entries: properties.entries.size,
+				targets: properties.targets.length,
+				...measurements,
+				details,
+			});
+		};
+		const emitCancelledTopLevelProfile = (
+			phase: string,
+			mode: "simple-small" | "rateless" = "rateless",
+		) =>
+			emitTopLevelProfile(
+				{
+					mode,
+					phase,
+					cancelled: true,
+				},
+				{ messages: 0, symbols: 0 },
+			);
 		// NOTE: this method is best-effort dispatch, not a per-hash convergence API.
 		// It may require follow-up repair rounds under churn/loss to fully close all gaps.
 		// Strategy:
@@ -1035,6 +1570,15 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 		let minSyncIbltSize = 333; // TODO: make configurable
 		let maxSyncWithSimpleMethod = 1e3;
+		if (signal?.aborted) {
+			emitCancelledTopLevelProfile(
+				"before-dispatch",
+				properties.entries.size <= minSyncIbltSize
+					? "simple-small"
+					: "rateless",
+			);
+			return;
+		}
 		const priorityFn = this.properties.sync?.priority;
 		const maxSimpleEntries = this.properties.sync?.maxSimpleEntries;
 
@@ -1052,16 +1596,16 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				await this.simple.onMaybeMissingEntries({
 					entries: properties.entries,
 					targets: properties.targets,
+					signal,
 				});
-			} finally {
-				if (profile) {
-					emitSyncProfileDuration(profile, startedAt, {
-						name: "rateless.onMaybeMissingEntries",
-						entries: properties.entries.size,
-						targets: properties.targets.length,
-						details: { mode: "simple-small" },
-					});
+				if (signal?.aborted) {
+					return;
 				}
+			} finally {
+				emitTopLevelProfile({
+					mode: "simple-small",
+					cancelled: signal?.aborted || undefined,
+				});
 			}
 			return;
 		}
@@ -1149,12 +1693,18 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				await this.simple.onMaybeMissingEntries({
 					entries: naiveEntriesForPriority,
 					targets: properties.targets,
+					signal,
 				});
 			} else {
 				await this.simple.onMaybeMissingHashes({
 					hashes: naiveHashes,
 					targets: properties.targets,
+					signal,
 				});
+			}
+			if (signal?.aborted) {
+				emitCancelledTopLevelProfile("simple-prelude");
+				return;
 			}
 		}
 
@@ -1181,6 +1731,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				},
 			});
 		}
+		if (signal?.aborted) {
+			emitCancelledTopLevelProfile("entry-selection");
+			return;
+		}
 
 		if (allCoordinatesToSyncWithIblt.length === 0) {
 			if (profile) {
@@ -1190,13 +1744,8 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 					targets: properties.targets.length,
 					details: { mode: "simple-only" },
 				});
-				emitSyncProfileDuration(profile, startedAt, {
-					name: "rateless.onMaybeMissingEntries",
-					entries: properties.entries.size,
-					targets: properties.targets.length,
-					details: { mode: "simple-only" },
-				});
 			}
+			emitTopLevelProfile({ mode: "simple-only" });
 			return;
 		}
 
@@ -1207,6 +1756,10 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 						(entry) => entry.hash,
 					);
 		await ribltReady;
+		if (signal?.aborted) {
+			emitCancelledTopLevelProfile("riblt-ready");
+			return;
+		}
 
 		// For smaller sets, the original `sqrt(n)` heuristic can occasionally under-provision
 		// low-degree symbols early, causing an unnecessary `MoreSymbols` round-trip. Use a
@@ -1215,146 +1768,392 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			Math.sqrt(allCoordinatesToSyncWithIblt.length),
 		); // TODO choose better
 		initialSymbolCount = Math.max(64, initialSymbolCount);
-		const prepareStartedAt = syncProfileStart(profile);
-		const { encoder, start, end, initialSymbols } = prepareStartSyncEncoder(
-			allCoordinatesToSyncWithIblt,
-			this.properties.numbers.maxValue,
-			initialSymbolCount,
-		);
-		if (profile) {
-			emitSyncProfileDuration(profile, prepareStartedAt, {
-				name: "rateless.prepareStartSyncEncoder",
-				entries: allCoordinatesToSyncWithIblt.length,
-				symbols: initialSymbols?.length,
-				details: {
-					initialSymbolCount,
-					includesInitialSymbols: initialSymbols != null,
-				},
-			});
+		if (signal?.aborted) {
+			emitCancelledTopLevelProfile("before-encoder-prepare");
+			return;
 		}
-
-		let startSyncSymbols = initialSymbols;
-		if (!startSyncSymbols) {
-			const produceStartedAt = syncProfileStart(profile);
-			startSyncSymbols = produceNextCodedSymbols(encoder, initialSymbolCount);
-			if (profile) {
-				emitSyncProfileDuration(profile, produceStartedAt, {
-					name: "rateless.produceStartSyncSymbols",
-					symbols: startSyncSymbols.length,
-				});
+		const authorizedHashes = new Set(outgoingHashes);
+		let messages = 0;
+		let symbols = 0;
+		for (const [target, targetLifecycle] of lifecycle.targets) {
+			if (!this.isRatelessDispatchLifecycleActive(lifecycle)) {
+				break;
+			}
+			if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
+				continue;
+			}
+			const startedSymbols = this.startOutgoingRatelessSyncForTarget({
+				targetLifecycle,
+				coordinates: allCoordinatesToSyncWithIblt,
+				outgoingHashes,
+				authorizedHashes,
+				initialSymbolCount,
+				entryCount: properties.entries.size,
+			});
+			if (startedSymbols !== undefined) {
+				messages += 1;
+				symbols += startedSymbols;
 			}
 		}
-
-		const startSync = new StartSync({
-			from: start,
-			to: end,
-			symbols: startSyncSymbols,
-		});
-		const syncId = getSyncIdString(startSync);
-
-		const clear = () => {
-			encoder.free();
-			clearTimeout(this.outgoingSyncProcesses.get(syncId)?.timeout);
-			this.outgoingSyncProcesses.delete(syncId);
-		};
-		const createTimeout = () => {
-			return setTimeout(clear, 1e4); // TODO arg
-		};
-
-		let lastSeqNo = -1n;
-		// Keep follow-up symbol payloads bounded. Each symbol is serialized as an
-		// object with three bigint fields, so very large batches can dominate heap under
-		// concurrent churn even though the native RIBLT encoder itself is compact.
-		const nextBatch = Math.max(
-			MIN_MORE_SYMBOLS_BATCH_SIZE,
-			Math.min(
-				MAX_MORE_SYMBOLS_BATCH_SIZE,
-				Math.ceil(allCoordinatesToSyncWithIblt.length / 4),
-			),
-		);
-		const obj = {
-			encoder,
-			timeout: createTimeout(),
-			refresh: () => {
-				let prevTimeout = obj.timeout;
-				if (prevTimeout) {
-					clearTimeout(prevTimeout);
-				}
-				obj.timeout = createTimeout();
-			},
-			next: (properties: { lastSeqNo: bigint }): CodedSymbolBatch => {
-				if (properties.lastSeqNo <= lastSeqNo) {
-					return CodedSymbolBatch.fromSymbols([]);
-				}
-				lastSeqNo++;
-				obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
-
-				const produceStartedAt = syncProfileStart(profile);
-				const symbols = produceNextCodedSymbols(encoder, nextBatch);
-				if (profile) {
-					emitSyncProfileDuration(profile, produceStartedAt, {
-						name: "rateless.produceMoreSymbols",
-						syncId,
-						symbols: symbols.length,
-					});
-				}
-				return symbols;
-			},
-			free: clear,
-			outgoingHashes,
-		};
-
-		this.outgoingSyncProcesses.set(syncId, obj);
-		if (profile) {
-			emitSyncProfileEvent(profile, {
-				name: "rateless.dispatchMode",
-				entries: properties.entries.size,
-				symbols: startSyncSymbols.length,
-				targets: properties.targets.length,
-				syncId,
-				details: { mode: "rateless" },
-			});
-		}
-		const sendStartedAt = syncProfileStart(profile);
-		const sendResult = this.simple.rpc.send(startSync, {
-			mode: new SilentDelivery({ to: properties.targets, redundancy: 1 }),
-			priority: SYNC_MESSAGE_PRIORITY,
-		});
-		if (profile) {
-			void Promise.resolve(sendResult).then(
-				() =>
-					emitSyncProfileDuration(profile, sendStartedAt, {
-						name: "rateless.sendStartSync",
-						messages: 1,
-						symbols: startSyncSymbols.length,
-						targets: properties.targets.length,
-						syncId,
-					}),
-				() =>
-					emitSyncProfileDuration(profile, sendStartedAt, {
-						name: "rateless.sendStartSync",
-						messages: 1,
-						symbols: startSyncSymbols.length,
-						targets: properties.targets.length,
-						syncId,
-						details: { rejected: true },
-					}),
-			);
-		}
-		if (profile) {
-			emitSyncProfileDuration(profile, startedAt, {
-				name: "rateless.onMaybeMissingEntries",
-				entries: properties.entries.size,
-				messages: 1,
-				symbols: startSyncSymbols.length,
-				targets: properties.targets.length,
-				details: {
+		if (signal.aborted) {
+			emitTopLevelProfile(
+				{
 					mode: "rateless",
+					phase: "start-sync-send",
+					cancelled: true,
 					ibltEntries: allCoordinatesToSyncWithIblt.length,
 					naiveEntries: naiveHashes.length,
 				},
-			});
+				{ messages, symbols },
+			);
+			return;
 		}
+		emitTopLevelProfile(
+			{
+				mode: "rateless",
+				ibltEntries: allCoordinatesToSyncWithIblt.length,
+				naiveEntries: naiveHashes.length,
+			},
+			{ messages, symbols },
+		);
+	}
+
+	private startOutgoingRatelessSyncForTarget(properties: {
+		targetLifecycle: RatelessDispatchTargetLifecycle;
+		coordinates: bigint[];
+		outgoingHashes: string[];
+		authorizedHashes: ReadonlySet<string>;
+		initialSymbolCount: number;
+		entryCount: number;
+	}): number | undefined {
+		const lifecycle = properties.targetLifecycle.lifecycle;
+		const target = properties.targetLifecycle.target;
+		const profile = this.properties.sync?.profile;
+		if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
+			return undefined;
+		}
+
+		const prepareStartedAt = syncProfileStart(profile);
+		const { encoder, start, end, initialSymbols } = prepareStartSyncEncoder(
+			properties.coordinates,
+			this.properties.numbers.maxValue,
+			properties.initialSymbolCount,
+		);
+		let encoderFreed = false;
+		let encoderTransferred = false;
+		let obj!: OutgoingRatelessSyncProcess;
+		let processConstructed = false;
+		const freeEncoder = () => {
+			if (encoderFreed) {
+				return;
+			}
+			encoderFreed = true;
+			encoder.free();
+		};
+		try {
+			if (profile) {
+				emitSyncProfileDuration(profile, prepareStartedAt, {
+					name: "rateless.prepareStartSyncEncoder",
+					entries: properties.coordinates.length,
+					symbols: initialSymbols?.length,
+					targets: 1,
+					details: {
+						initialSymbolCount: properties.initialSymbolCount,
+						includesInitialSymbols: initialSymbols != null,
+					},
+				});
+			}
+			if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
+				freeEncoder();
+				return undefined;
+			}
+
+			let startSyncSymbols = initialSymbols;
+			if (!startSyncSymbols) {
+				const produceStartedAt = syncProfileStart(profile);
+				startSyncSymbols = produceNextCodedSymbols(
+					encoder,
+					properties.initialSymbolCount,
+				);
+				if (profile) {
+					emitSyncProfileDuration(profile, produceStartedAt, {
+						name: "rateless.produceStartSyncSymbols",
+						symbols: startSyncSymbols.length,
+						targets: 1,
+					});
+				}
+			}
+			if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
+				freeEncoder();
+				return undefined;
+			}
+
+			const startSync = new StartSync({
+				from: start,
+				to: end,
+				symbols: startSyncSymbols,
+			});
+			const syncId = getSyncIdString(startSync);
+			const targetSignal = properties.targetLifecycle.controller.signal;
+			const processController = new AbortController();
+			const processSignal = processController.signal;
+			let cleared = false;
+			let lastSeqNo = -1n;
+			let onTargetAbort: (() => void) | undefined;
+			const clear = (
+				reason: unknown = new Error("rateless outgoing process closed"),
+			) => {
+				if (cleared) {
+					return;
+				}
+				cleared = true;
+
+				// Timeout/replacement owns only the encoder process. Response leases
+				// retain the original open/caller/target lifecycle independently, so a
+				// response already accepted for delivery can finish after this process
+				// expires while close, caller abort, and disconnect still cancel it.
+				processController.abort(reason);
+				if (onTargetAbort) {
+					targetSignal.removeEventListener("abort", onTargetAbort);
+				}
+				if (obj.timeout) {
+					clearTimeout(obj.timeout);
+				}
+				if (this.outgoingSyncProcesses.get(syncId) === obj) {
+					this.outgoingSyncProcesses.delete(syncId);
+				}
+				if (this.outgoingSyncProcessByTarget.get(target) === obj) {
+					this.outgoingSyncProcessByTarget.delete(target);
+				}
+				properties.targetLifecycle.retainedByProcess = false;
+				freeEncoder();
+				this.maybeDisposeRatelessDispatchLifecycle(lifecycle);
+			};
+			const createTimeout = () => {
+				const timeout = setTimeout(
+					() => clear(new Error("rateless outgoing process timed out")),
+					1e4,
+				); // TODO arg
+				timeout.unref?.();
+				return timeout;
+			};
+			onTargetAbort = () => clear(targetSignal.reason);
+
+			// Keep follow-up symbol payloads bounded. Each symbol is serialized as an
+			// object with three bigint fields, so very large batches can dominate heap under
+			// concurrent churn even though the native RIBLT encoder itself is compact.
+			const nextBatch = Math.max(
+				MIN_MORE_SYMBOLS_BATCH_SIZE,
+				Math.min(
+					MAX_MORE_SYMBOLS_BATCH_SIZE,
+					Math.ceil(properties.coordinates.length / 4),
+				),
+			);
+			obj = {
+				target,
+				targetLifecycle: properties.targetLifecycle,
+				encoder,
+				timeout: undefined,
+				refresh: () => {
+					if (obj.timeout) {
+						clearTimeout(obj.timeout);
+					}
+					obj.timeout = createTimeout();
+				},
+				next: (message: { lastSeqNo: bigint }): CodedSymbolBatch => {
+					if (processSignal.aborted) {
+						return CodedSymbolBatch.fromSymbols([]);
+					}
+					if (message.lastSeqNo <= lastSeqNo) {
+						return CodedSymbolBatch.fromSymbols([]);
+					}
+					lastSeqNo++;
+					obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
+
+					const produceStartedAt = syncProfileStart(profile);
+					const symbols = produceNextCodedSymbols(encoder, nextBatch);
+					if (profile) {
+						emitSyncProfileDuration(profile, produceStartedAt, {
+							name: "rateless.produceMoreSymbols",
+							syncId,
+							symbols: symbols.length,
+							targets: 1,
+						});
+					}
+					return symbols;
+				},
+				free: clear,
+				outgoingHashes: properties.outgoingHashes,
+				authorizedHashes: properties.authorizedHashes,
+				consumedResponseHashes: new Set(),
+				processController,
+				signal: processSignal,
+				callerSignal: lifecycle.callerSignal,
+			};
+			processConstructed = true;
+
+			if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
+				clear();
+				return undefined;
+			}
+			// Without a wire process id on ResponseMaybeSync, retaining at most one
+			// process per target keeps sender/hash authorization unambiguous.
+			this.outgoingSyncProcessByTarget
+				.get(target)
+				?.free(new Error("rateless outgoing process replaced"));
+			if (!this.isRatelessDispatchLifecycleActive(lifecycle, target)) {
+				clear();
+				return undefined;
+			}
+			properties.targetLifecycle.retainedByProcess = true;
+			this.outgoingSyncProcesses.set(syncId, obj);
+			this.outgoingSyncProcessByTarget.set(target, obj);
+			obj.timeout = createTimeout();
+			targetSignal.addEventListener("abort", onTargetAbort, { once: true });
+			encoderTransferred = true;
+			if (targetSignal.aborted) {
+				clear(targetSignal.reason);
+				return undefined;
+			}
+			if (profile) {
+				emitSyncProfileEvent(profile, {
+					name: "rateless.dispatchMode",
+					entries: properties.entryCount,
+					symbols: startSyncSymbols.length,
+					targets: 1,
+					syncId,
+					details: { mode: "rateless" },
+				});
+			}
+
+			const sendStartedAt = syncProfileStart(profile);
+			let sendResult: Promise<unknown>;
+			try {
+				sendResult = Promise.resolve(
+					this.simple.rpc.send(startSync, {
+						mode: new SilentDelivery({
+							to: [target],
+							redundancy: 1,
+						}),
+						priority: SYNC_MESSAGE_PRIORITY,
+						signal: processSignal,
+					}),
+				);
+			} catch (error) {
+				sendResult = Promise.reject(error);
+			}
+			void sendResult.then(
+				() => {
+					if (profile) {
+						emitSyncProfileDuration(profile, sendStartedAt, {
+							name: "rateless.sendStartSync",
+							messages: 1,
+							symbols: startSyncSymbols.length,
+							targets: 1,
+							syncId,
+						});
+					}
+				},
+				() => {
+					clear();
+					if (profile) {
+						emitSyncProfileDuration(profile, sendStartedAt, {
+							name: "rateless.sendStartSync",
+							messages: 1,
+							symbols: startSyncSymbols.length,
+							targets: 1,
+							syncId,
+							details: {
+								rejected: true,
+								cancelled: processSignal.aborted || undefined,
+							},
+						});
+					}
+				},
+			);
+			if (processSignal.aborted) {
+				clear();
+				return undefined;
+			}
+			return startSyncSymbols.length;
+		} catch (error) {
+			if (processConstructed) {
+				obj.free(error);
+			}
+			throw error;
+		} finally {
+			if (!encoderTransferred) {
+				freeEncoder();
+			}
+		}
+	}
+
+	private consumeAuthorizedRatelessResponse(
+		hashes: Iterable<string>,
+		from: PublicSignKey,
+	): AuthorizedRatelessResponseLease | undefined {
+		const target = from.hashcode();
+		const process = this.outgoingSyncProcessByTarget.get(target);
+		if (
+			!process ||
+			process.signal.aborted ||
+			!this.isRatelessDispatchLifecycleActive(
+				process.targetLifecycle.lifecycle,
+				target,
+			)
+		) {
+			return undefined;
+		}
+		const authorized: string[] = [];
+		const remaining: string[] = [];
+		const seen = new Set<string>();
+		for (const hash of hashes) {
+			if (seen.has(hash)) {
+				continue;
+			}
+			seen.add(hash);
+			if (
+				!process.authorizedHashes.has(hash) ||
+				process.consumedResponseHashes.has(hash)
+			) {
+				remaining.push(hash);
+				continue;
+			}
+			process.consumedResponseHashes.add(hash);
+			authorized.push(hash);
+		}
+		if (authorized.length === 0) {
+			return {
+				process,
+				authorized,
+				remaining,
+				signal: process.targetLifecycle.controller.signal,
+				release: () => {},
+			};
+		}
+
+		const targetLifecycle = process.targetLifecycle;
+		targetLifecycle.responseLeases += 1;
+		let released = false;
+		return {
+			process,
+			authorized,
+			remaining,
+			signal: targetLifecycle.controller.signal,
+			release: (options) => {
+				if (released) {
+					return;
+				}
+				released = true;
+				if (options?.rollback) {
+					for (const hash of authorized) {
+						process.consumedResponseHashes.delete(hash);
+					}
+				}
+				targetLifecycle.responseLeases -= 1;
+				this.maybeDisposeRatelessDispatchLifecycle(targetLifecycle.lifecycle);
+			},
+		};
 	}
 
 	async onMessage(
@@ -1363,60 +2162,185 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	): Promise<boolean> {
 		const profile = this.properties.sync?.profile;
 		if (message instanceof StartSync) {
+			const from = context.from;
+			const ownershipLifecycleController =
+				this.ratelessDispatchLifecycleController;
+			if (
+				!from ||
+				!this.isIncomingSyncGenerationActive(ownershipLifecycleController)
+			) {
+				return true;
+			}
+			const sender = from.hashcode();
 			const syncId = getSyncIdString(message);
-			if (this.ingoingSyncProcesses.has(syncId)) {
+			const key = this.getIncomingSyncProcessKey(sender, syncId);
+			const completedSynchronizations = this.startedOrCompletedSynchronizations;
+			if (this.ingoingSyncProcesses.has(key)) {
 				return true;
 			}
 
-			if (this.startedOrCompletedSynchronizations.has(syncId)) {
+			if (completedSynchronizations.has(key)) {
 				return true;
 			}
 
-			this.startedOrCompletedSynchronizations.add(syncId);
+			const controller = new AbortController();
+			let freed = false;
+			let completed = false;
+			let onOwnershipAbort: (() => void) | undefined;
+			let obj!: IncomingRatelessSyncProcess;
+			const free = (
+				reason: unknown = new Error("incoming rateless process closed"),
+			) => {
+				if (freed) {
+					return;
+				}
+				freed = true;
+				// Abort first: no queued process/send continuation may observe the
+				// object detached while its native decoder is still usable.
+				controller.abort(reason);
+				if (onOwnershipAbort) {
+					ownershipLifecycleController.signal.removeEventListener(
+						"abort",
+						onOwnershipAbort,
+					);
+				}
+				if (obj.timeout) {
+					clearTimeout(obj.timeout);
+					obj.timeout = undefined;
+				}
+				if (this.ingoingSyncProcesses.get(key) === obj) {
+					this.ingoingSyncProcesses.delete(key);
+				}
+				const ownedDecoder = obj.decoder;
+				obj.decoder = undefined;
+				ownedDecoder?.free();
+			};
+			const complete = () => {
+				if (completed || !this.isIncomingSyncProcessActive(obj)) {
+					return;
+				}
+				completed = true;
+				completedSynchronizations.add(key);
+				free(new Error("incoming rateless process completed"));
+			};
+			obj = {
+				key,
+				syncId,
+				sender,
+				from,
+				ownershipLifecycleController,
+				controller,
+				completedSynchronizations,
+				timeout: undefined,
+				refresh: () => {},
+				process: async () => undefined,
+				free,
+				complete,
+			};
+			this.ingoingSyncProcesses.set(key, obj);
+			onOwnershipAbort = () => free(ownershipLifecycleController.signal.reason);
+			ownershipLifecycleController.signal.addEventListener(
+				"abort",
+				onOwnershipAbort,
+				{ once: true },
+			);
+			if (!this.isIncomingSyncProcessActive(obj)) {
+				free(ownershipLifecycleController.signal.reason);
+				return true;
+			}
 
 			const wrapped = message.end < message.start;
 			const decoderStartedAt = syncProfileStart(profile);
-			const decoder = await this.getLocalDecoderForRange({
-				start1: message.start,
-				end1: wrapped ? this.properties.numbers.maxValue : message.end,
-				start2: 0n,
-				end2: wrapped ? message.end : 0n,
-			});
-			if (profile) {
-				emitSyncProfileDuration(profile, decoderStartedAt, {
-					name: "rateless.getLocalDecoderForRange",
-					syncId,
-					details: { wrapped, found: decoder !== false },
-				});
+			let decoder: DecoderWrapper | false;
+			try {
+				decoder = await this.getLocalDecoderForRange(
+					{
+						start1: message.start,
+						end1: wrapped ? this.properties.numbers.maxValue : message.end,
+						start2: 0n,
+						end2: wrapped ? message.end : 0n,
+					},
+					{
+						ownershipLifecycleController,
+						signal: controller.signal,
+					},
+				);
+			} catch (error) {
+				free(error);
+				if (
+					!this.isIncomingSyncGenerationActive(ownershipLifecycleController)
+				) {
+					return true;
+				}
+				throw error;
+			}
+			if (!this.isIncomingSyncProcessActive(obj)) {
+				decoder && decoder.free();
+				free(controller.signal.reason);
+				return true;
+			}
+			if (decoder) {
+				// Transfer the native decoder before invoking diagnostics. A profile
+				// sink is caller code and may throw; from this point process cleanup
+				// owns the decoder on every exit.
+				obj.decoder = decoder;
+			}
+			try {
+				if (profile) {
+					emitSyncProfileDuration(profile, decoderStartedAt, {
+						name: "rateless.getLocalDecoderForRange",
+						syncId,
+						details: { wrapped, found: decoder !== false },
+					});
+				}
+			} catch (error) {
+				free(error);
+				throw error;
 			}
 
 			if (!decoder) {
 				const sendStartedAt = syncProfileStart(profile);
-				await this.simple.rpc.send(
-					new RequestAll({
-						syncId: message.syncId,
-					}),
-					{
-						mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-						priority: SYNC_MESSAGE_PRIORITY,
-					},
-				);
-				if (profile) {
-					emitSyncProfileDuration(profile, sendStartedAt, {
-						name: "rateless.sendRequestAll",
-						messages: 1,
-						targets: 1,
-						syncId,
-					});
+				try {
+					await this.simple.rpc.send(
+						new RequestAll({
+							syncId: message.syncId,
+						}),
+						{
+							mode: new SilentDelivery({ to: [obj.from], redundancy: 1 }),
+							priority: SYNC_MESSAGE_PRIORITY,
+							signal: controller.signal,
+						},
+					);
+					if (!this.isIncomingSyncProcessActive(obj)) {
+						return true;
+					}
+					if (profile) {
+						emitSyncProfileDuration(profile, sendStartedAt, {
+							name: "rateless.sendRequestAll",
+							messages: 1,
+							targets: 1,
+							syncId,
+						});
+					}
+				} catch (error) {
+					const wasActive = this.isIncomingSyncProcessActive(obj);
+					free(error);
+					if (!wasActive) {
+						return true;
+					}
+					throw error;
 				}
+				complete();
 				return true;
 			}
 
 			const createTimeout = () => {
-				return setTimeout(() => {
-					decoder.free();
-					this.ingoingSyncProcesses.delete(syncId);
-				}, 2e4); // TODO arg
+				const timeout = setTimeout(
+					() => free(new Error("incoming rateless process timed out")),
+					2e4,
+				); // TODO arg
+				timeout.unref?.();
+				return timeout;
 			};
 
 			let messageQueue: {
@@ -1424,165 +2348,193 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 				symbols: CodedSymbolInput;
 			}[] = [];
 			let lastSeqNo = -1n;
-			const obj = {
-				decoder,
-				timeout: createTimeout(),
-				refresh: () => {
-					let prevTimeout = obj.timeout;
-					if (prevTimeout) {
-						clearTimeout(prevTimeout);
+			obj.refresh = () => {
+				if (!this.isIncomingSyncProcessActive(obj)) {
+					return;
+				}
+				if (obj.timeout) {
+					clearTimeout(obj.timeout);
+				}
+				obj.timeout = createTimeout();
+			};
+			obj.process = async (newMessage: {
+				seqNo: bigint;
+				symbols: CodedSymbolInput;
+			}): Promise<boolean | undefined> => {
+				if (!this.isIncomingSyncProcessActive(obj)) {
+					return undefined;
+				}
+				obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
+
+				if (newMessage.seqNo <= lastSeqNo) {
+					return undefined;
+				}
+
+				messageQueue.push(newMessage);
+				messageQueue.sort((a, b) => Number(a.seqNo - b.seqNo));
+				if (messageQueue[0].seqNo !== lastSeqNo + 1n) {
+					return;
+				}
+
+				const finalizeIfDecoded = (): boolean => {
+					if (!this.isIncomingSyncProcessActive(obj)) {
+						return true;
 					}
-					obj.timeout = createTimeout();
-				},
-				process: async (newMessage: {
-					seqNo: bigint;
-					symbols: CodedSymbolInput;
-				}): Promise<boolean | undefined> => {
-					obj.refresh(); // TODO use timestamp instead and collective pruning/refresh
-
-					if (newMessage.seqNo <= lastSeqNo) {
-						return undefined;
+					if (!decoder.decoded()) {
+						return false;
 					}
 
-					messageQueue.push(newMessage);
-					messageQueue.sort((a, b) => Number(a.seqNo - b.seqNo));
-					if (messageQueue[0].seqNo !== lastSeqNo + 1n) {
-						return;
+					const remoteStartedAt = syncProfileStart(profile);
+					const allMissingSymbolsInRemote = getRemoteSymbolValues(decoder);
+					if (profile) {
+						emitSyncProfileDuration(profile, remoteStartedAt, {
+							name: "rateless.remoteSymbols",
+							entries: allMissingSymbolsInRemote.length,
+							symbols: allMissingSymbolsInRemote.length,
+							syncId,
+						});
 					}
 
-					const finalizeIfDecoded = (): boolean => {
-						if (!decoder.decoded()) {
-							return false;
-						}
+					// The IBLT decoder is based on a local snapshot. Entries can arrive via
+					// overlapping repair before we issue the follow-up simple request, so
+					// re-check local presence to avoid stale duplicate bounce-back.
+					void this.simple
+						.queueSync(allMissingSymbolsInRemote, obj.from)
+						.catch((error) => logger.error(error));
+					obj.complete();
+					return true;
+				};
 
-						const remoteStartedAt = syncProfileStart(profile);
-						const allMissingSymbolsInRemote = getRemoteSymbolValues(decoder);
+				while (
+					messageQueue.length > 0 &&
+					messageQueue[0].seqNo === lastSeqNo + 1n
+				) {
+					const symbolMessage = messageQueue.shift();
+					if (!symbolMessage) {
+						break;
+					}
+
+					lastSeqNo = symbolMessage.seqNo;
+
+					const addBatchAndDecode:
+						| ((symbols: BigUint64Array) => boolean)
+						| undefined = (decoder as BatchDecoderWrapper)
+						.add_coded_symbols_and_try_decode;
+					if (typeof BigUint64Array !== "undefined" && addBatchAndDecode) {
+						const flatStartedAt = syncProfileStart(profile);
+						const flatSymbols = flatFromCodedSymbols(symbolMessage.symbols);
 						if (profile) {
-							emitSyncProfileDuration(profile, remoteStartedAt, {
-								name: "rateless.remoteSymbols",
-								entries: allMissingSymbolsInRemote.length,
-								symbols: allMissingSymbolsInRemote.length,
+							emitSyncProfileDuration(profile, flatStartedAt, {
+								name: "rateless.symbolBatchToFlat",
+								symbols: flatSymbols.length / CODED_SYMBOL_WORDS,
 								syncId,
 							});
 						}
 
-						// The IBLT decoder is based on a local snapshot. Entries can arrive via
-						// overlapping repair before we issue the follow-up simple request, so
-						// re-check local presence to avoid stale duplicate bounce-back.
-						this.simple.queueSync(allMissingSymbolsInRemote, context.from!);
-						obj.free();
-						return true;
-					};
-
-					while (
-						messageQueue.length > 0 &&
-						messageQueue[0].seqNo === lastSeqNo + 1n
-					) {
-						const symbolMessage = messageQueue.shift();
-						if (!symbolMessage) {
-							break;
+						const decodeStartedAt = syncProfileStart(profile);
+						const decoded = addBatchAndDecode.call(decoder, flatSymbols);
+						if (profile) {
+							emitSyncProfileDuration(profile, decodeStartedAt, {
+								name: "rateless.decodeBatch",
+								symbols: flatSymbols.length / CODED_SYMBOL_WORDS,
+								syncId,
+								details: { decoded },
+							});
 						}
+						if (decoded && finalizeIfDecoded()) {
+							return true;
+						}
+						continue;
+					}
 
-						lastSeqNo = symbolMessage.seqNo;
+					const decodeLoopStartedAt = syncProfileStart(profile);
+					let symbolsProcessed = 0;
+					for (const symbol of CodedSymbolBatch.from(symbolMessage.symbols)) {
+						symbolsProcessed += 1;
+						const normalizedSymbol =
+							symbol instanceof SymbolSerialized
+								? symbol
+								: new SymbolSerialized({
+										count: symbol.count,
+										hash: symbol.hash,
+										symbol: symbol.symbol,
+									});
 
-						const addBatchAndDecode:
-							| ((symbols: BigUint64Array) => boolean)
-							| undefined = (decoder as BatchDecoderWrapper)
-							.add_coded_symbols_and_try_decode;
-						if (typeof BigUint64Array !== "undefined" && addBatchAndDecode) {
-							const flatStartedAt = syncProfileStart(profile);
-							const flatSymbols = flatFromCodedSymbols(symbolMessage.symbols);
-							if (profile) {
-								emitSyncProfileDuration(profile, flatStartedAt, {
-									name: "rateless.symbolBatchToFlat",
-									symbols: flatSymbols.length / CODED_SYMBOL_WORDS,
-									syncId,
-								});
-							}
-
-							const decodeStartedAt = syncProfileStart(profile);
-							const decoded = addBatchAndDecode.call(decoder, flatSymbols);
-							if (profile) {
-								emitSyncProfileDuration(profile, decodeStartedAt, {
-									name: "rateless.decodeBatch",
-									symbols: flatSymbols.length / CODED_SYMBOL_WORDS,
-									syncId,
-									details: { decoded },
-								});
-							}
-							if (decoded && finalizeIfDecoded()) {
+						decoder.add_coded_symbol(normalizedSymbol);
+						try {
+							decoder.try_decode();
+							if (finalizeIfDecoded()) {
 								return true;
 							}
-							continue;
-						}
-
-						const decodeLoopStartedAt = syncProfileStart(profile);
-						let symbolsProcessed = 0;
-						for (const symbol of CodedSymbolBatch.from(symbolMessage.symbols)) {
-							symbolsProcessed += 1;
-							const normalizedSymbol =
-								symbol instanceof SymbolSerialized
-									? symbol
-									: new SymbolSerialized({
-											count: symbol.count,
-											hash: symbol.hash,
-											symbol: symbol.symbol,
-										});
-
-							decoder.add_coded_symbol(normalizedSymbol);
-							try {
-								decoder.try_decode();
-								if (finalizeIfDecoded()) {
-									return true;
-								}
-							} catch (error: any) {
-								if (
-									error?.message === "Invalid degree" ||
-									error === "Invalid degree"
-								) {
-									logger.trace(
-										"Decoder reported invalid degree; waiting for more symbols",
-									);
-									continue;
-								}
-								throw error;
+						} catch (error: any) {
+							if (
+								error?.message === "Invalid degree" ||
+								error === "Invalid degree"
+							) {
+								logger.trace(
+									"Decoder reported invalid degree; waiting for more symbols",
+								);
+								continue;
 							}
-						}
-						if (profile) {
-							emitSyncProfileDuration(profile, decodeLoopStartedAt, {
-								name: "rateless.decodeSymbolLoop",
-								symbols: symbolsProcessed,
-								syncId,
-							});
+							throw error;
 						}
 					}
-					return false;
-				},
-				free: () => {
-					decoder.free();
-					clearTimeout(this.ingoingSyncProcesses.get(syncId)?.timeout);
-					this.ingoingSyncProcesses.delete(syncId);
-				},
+					if (profile) {
+						emitSyncProfileDuration(profile, decodeLoopStartedAt, {
+							name: "rateless.decodeSymbolLoop",
+							symbols: symbolsProcessed,
+							syncId,
+						});
+					}
+				}
+				return false;
 			};
-
-			this.ingoingSyncProcesses.set(syncId, obj);
-
-			if (await obj.process({ seqNo: 0n, symbols: message.symbols })) {
+			obj.timeout = createTimeout();
+			let initialResult: boolean | undefined;
+			try {
+				initialResult = await obj.process({
+					seqNo: 0n,
+					symbols: message.symbols,
+				});
+			} catch (error) {
+				const wasActive = this.isIncomingSyncProcessActive(obj);
+				free(error);
+				if (!wasActive) {
+					return true;
+				}
+				throw error;
+			}
+			if (initialResult === true) {
+				return true;
+			}
+			if (!this.isIncomingSyncProcessActive(obj)) {
 				return true;
 			}
 
 			// not done, request more symbols
 			const sendStartedAt = syncProfileStart(profile);
-			await this.simple.rpc.send(
-				new RequestMoreSymbols({
-					lastSeqNo: 0n,
-					syncId: message.syncId,
-				}),
-				{
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: SYNC_MESSAGE_PRIORITY,
-				},
-			);
+			try {
+				await this.simple.rpc.send(
+					new RequestMoreSymbols({
+						lastSeqNo: 0n,
+						syncId: message.syncId,
+					}),
+					{
+						mode: new SilentDelivery({ to: [obj.from], redundancy: 1 }),
+						priority: SYNC_MESSAGE_PRIORITY,
+						signal: controller.signal,
+					},
+				);
+			} catch (error) {
+				if (!this.isIncomingSyncProcessActive(obj)) {
+					return true;
+				}
+				free(error);
+				throw error;
+			}
+			if (!this.isIncomingSyncProcessActive(obj)) {
+				return true;
+			}
 			if (profile) {
 				emitSyncProfileDuration(profile, sendStartedAt, {
 					name: "rateless.sendRequestMoreSymbols",
@@ -1594,50 +2546,79 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 
 			return true;
 		} else if (message instanceof MoreSymbols) {
-			const syncId = getSyncIdString(message);
-			const obj = this.ingoingSyncProcesses.get(syncId);
-			if (!obj) {
+			const from = context.from;
+			if (!from) {
 				return true;
 			}
-			const outProcess = await obj.process(message);
+			const sender = from.hashcode();
+			const syncId = getSyncIdString(message);
+			const key = this.getIncomingSyncProcessKey(sender, syncId);
+			const obj = this.ingoingSyncProcesses.get(key);
+			if (
+				!obj ||
+				obj.sender !== sender ||
+				!this.isIncomingSyncProcessActive(obj)
+			) {
+				return true;
+			}
+			let outProcess: boolean | undefined;
+			try {
+				outProcess = await obj.process(message);
+			} catch (error) {
+				const wasActive = this.isIncomingSyncProcessActive(obj);
+				obj.free(error);
+				if (!wasActive) {
+					return true;
+				}
+				throw error;
+			}
 
 			if (outProcess === true) {
 				return true;
 			} else if (outProcess === undefined) {
 				return true; // we don't have enough information, or received information that is redundant
 			}
+			if (!this.isIncomingSyncProcessActive(obj)) {
+				return true;
+			}
 
 			// we are not done
 
 			const sendStartedAt = syncProfileStart(profile);
-			const sendResult = this.simple.rpc.send(
-				new RequestMoreSymbols({
-					lastSeqNo: message.seqNo,
-					syncId: message.syncId,
-				}),
-				{
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: SYNC_MESSAGE_PRIORITY,
-				},
-			);
-			if (profile) {
-				void Promise.resolve(sendResult).then(
-					() =>
-						emitSyncProfileDuration(profile, sendStartedAt, {
-							name: "rateless.sendRequestMoreSymbols",
-							messages: 1,
-							targets: 1,
-							syncId,
-						}),
-					() =>
-						emitSyncProfileDuration(profile, sendStartedAt, {
-							name: "rateless.sendRequestMoreSymbols",
-							messages: 1,
-							targets: 1,
-							syncId,
-							details: { rejected: true },
-						}),
+			try {
+				await this.simple.rpc.send(
+					new RequestMoreSymbols({
+						lastSeqNo: message.seqNo,
+						syncId: message.syncId,
+					}),
+					{
+						mode: new SilentDelivery({ to: [obj.from], redundancy: 1 }),
+						priority: SYNC_MESSAGE_PRIORITY,
+						signal: obj.controller.signal,
+					},
 				);
+			} catch {
+				if (profile) {
+					emitSyncProfileDuration(profile, sendStartedAt, {
+						name: "rateless.sendRequestMoreSymbols",
+						messages: 1,
+						targets: 1,
+						syncId,
+						details: { rejected: true },
+					});
+				}
+				return true;
+			}
+			if (!this.isIncomingSyncProcessActive(obj)) {
+				return true;
+			}
+			if (profile) {
+				emitSyncProfileDuration(profile, sendStartedAt, {
+					name: "rateless.sendRequestMoreSymbols",
+					messages: 1,
+					targets: 1,
+					syncId,
+				});
 			}
 
 			return true;
@@ -1647,19 +2628,37 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (!obj) {
 				return true;
 			}
+			if (context.from?.hashcode() !== obj.target) {
+				return true;
+			}
+			const signal = obj.signal;
+			if (signal.aborted) {
+				return true;
+			}
 			const symbols = obj.next(message);
+			if (signal.aborted) {
+				return true;
+			}
 			const sendStartedAt = syncProfileStart(profile);
-			await this.properties.rpc.send(
-				new MoreSymbols({
-					lastSeqNo: message.lastSeqNo,
-					syncId: message.syncId,
-					symbols,
-				}),
-				{
-					mode: new SilentDelivery({ to: [context.from!], redundancy: 1 }),
-					priority: SYNC_MESSAGE_PRIORITY,
-				},
-			);
+			try {
+				await this.properties.rpc.send(
+					new MoreSymbols({
+						lastSeqNo: message.lastSeqNo,
+						syncId: message.syncId,
+						symbols,
+					}),
+					{
+						mode: new SilentDelivery({ to: [obj.target], redundancy: 1 }),
+						priority: SYNC_MESSAGE_PRIORITY,
+						signal,
+					},
+				);
+			} catch (error) {
+				if (signal?.aborted) {
+					return true;
+				}
+				throw error;
+			}
 			if (profile) {
 				emitSyncProfileDuration(profile, sendStartedAt, {
 					name: "rateless.sendMoreSymbols",
@@ -1675,11 +2674,115 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 			if (!p) {
 				return true;
 			}
+			if (context.from?.hashcode() !== p.target) {
+				return true;
+			}
+			if (p.signal.aborted) {
+				return true;
+			}
+			const callerSignal = p.callerSignal;
+			// RequestAll ends only this target's rateless attempt. Other target
+			// encoders and response authorizations remain independently owned.
+			p.free();
 			await this.simple.onMaybeMissingHashes({
 				hashes: p.outgoingHashes,
-				targets: [context.from!.hashcode()],
+				targets: [p.target],
+				signal: callerSignal,
 			});
 			return true;
+		} else if (
+			message instanceof ResponseMaybeSync ||
+			message instanceof ResponseMaybeSyncCapabilities
+		) {
+			const from = context.from!;
+			const response = this.consumeAuthorizedRatelessResponse(
+				message.hashes,
+				from,
+			);
+			if (!response || response.authorized.length === 0) {
+				return this.simple.onMessage(message, context);
+			}
+
+			const remainingMessage =
+				message instanceof ResponseMaybeSyncCapabilities
+					? new ResponseMaybeSyncCapabilities({
+							hashes: response.remaining,
+							capabilities: message.capabilities,
+						})
+					: new ResponseMaybeSync({ hashes: response.remaining });
+			// Consume both authorization domains synchronously. In particular, a
+			// slow rateless shipment must not leave the Simple remainder sitting in
+			// its expiring pending-response window until after the first await.
+			const simpleLeases =
+				response.remaining.length > 0
+					? this.simple.consumeAuthorizedMaybeSyncResponse(
+							response.remaining,
+							from,
+						)
+					: [];
+
+			let firstError: unknown;
+			let rollbackRatelessAuthorization = false;
+			try {
+				const responseStartedAt = syncProfileStart(profile);
+				let responseShipment = {
+					messages: 0,
+					fused: false,
+					entries: 0,
+				};
+				try {
+					responseShipment = await this.simple.shipAuthorizedMaybeSyncResponse({
+						hashes: response.authorized,
+						from,
+						response: message,
+						signal: response.signal,
+					});
+				} catch (error) {
+					firstError = error;
+					rollbackRatelessAuthorization = true;
+				}
+				if (profile) {
+					try {
+						emitSyncProfileDuration(profile, responseStartedAt, {
+							name: "simple.exchangeHeads",
+							entries: responseShipment.entries,
+							messages: responseShipment.messages,
+							targets: 1,
+							details: {
+								source: "ratelessResponseMaybeSync",
+								fused: responseShipment.fused,
+							},
+						});
+					} catch (error) {
+						firstError ??= error;
+					}
+				}
+
+				if (simpleLeases.length > 0) {
+					try {
+						await this.simple.shipAuthorizedMaybeSyncResponseLeases({
+							leases: simpleLeases,
+							from,
+							response: remainingMessage,
+						});
+					} catch (error) {
+						firstError ??= error;
+					}
+				}
+				if (firstError !== undefined) {
+					throw firstError;
+				}
+				return true;
+			} finally {
+				response.release({ rollback: rollbackRatelessAuthorization });
+				// The Simple helper owns these leases once entered and releases each
+				// one in its own finally. Keep this outer ownership release as the
+				// final safety net for diagnostics or setup failures that happen
+				// before the helper can take responsibility.
+				for (const lease of simpleLeases) {
+					lease.release();
+				}
+			}
 		}
 		return this.simple.onMessage(message, context);
 	}
@@ -1724,18 +2827,44 @@ export class RatelessIBLTSynchronizer<D extends "u32" | "u64">
 	}
 
 	onPeerDisconnected(key: PublicSignKey | string) {
-		return this.simple.onPeerDisconnected(key);
+		const target = typeof key === "string" ? key : key.hashcode();
+		for (const process of [...this.ingoingSyncProcesses.values()]) {
+			if (process.sender === target) {
+				process.free(new Error("incoming rateless peer disconnected"));
+			}
+		}
+		for (const targetLifecycle of [
+			...(this.ratelessDispatchTargets.get(target) ?? []),
+		]) {
+			this.abortRatelessDispatchTarget(
+				targetLifecycle,
+				new Error("rateless sync target disconnected"),
+			);
+		}
+		return this.simple.onPeerDisconnected(target);
 	}
 
 	open(): Promise<void> | void {
+		const reason = new Error("rateless sync generation replaced");
+		this.cancelRatelessRepairSessions(reason);
+		this.ratelessDispatchLifecycleController.abort(reason);
+		this.ratelessDispatchLifecycleController = new AbortController();
+		this.startedOrCompletedSynchronizations = new Cache({ max: 1e4 });
+		this.ratelessClosed = false;
 		return this.simple.open();
 	}
 
 	close(): Promise<void> | void {
-		for (const [, obj] of this.ingoingSyncProcesses) {
+		this.ratelessClosed = true;
+		// Abort ownership first. Process abort listeners then cancel any in-flight
+		// StartSync/MoreSymbols send before they detach or free native state.
+		const reason = new Error("rateless synchronizer closed");
+		this.cancelRatelessRepairSessions(reason);
+		this.ratelessDispatchLifecycleController.abort(reason);
+		for (const obj of [...this.ingoingSyncProcesses.values()]) {
 			obj.free();
 		}
-		for (const [, obj] of this.outgoingSyncProcesses) {
+		for (const obj of [...this.outgoingSyncProcesses.values()]) {
 			obj.free();
 		}
 		this.clearLocalRangeEncoderCache();
