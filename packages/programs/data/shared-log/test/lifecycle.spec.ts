@@ -39,7 +39,7 @@ describe("lifecycle", () => {
 			expect(closeLog.called).to.be.true;
 		});
 
-		it("keeps a reopened warmup generation behind an active closing send", async () => {
+		it("starts a reopened warmup independently of a blocked old send", async () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
 			const sharedLog = db.log as any;
@@ -88,19 +88,20 @@ describe("lifecycle", () => {
 					},
 				);
 				await oldSimpleStarted;
-				const runningState = sharedLog._joinWarmupSendStateByTarget.get(
-					"target",
-				);
+				const runningState =
+					sharedLog._joinWarmupSendStateByTarget.get("target");
 				const oldGeneration = runningState.generation;
 
+				sharedLog.poisonReplicationOwnership(
+					new Error("forced ownership poison"),
+				);
 				await db.close();
-				expect(
-					sharedLog._joinWarmupSendStateByTarget.get("target"),
-				).to.equal(runningState);
+				expect(sharedLog._joinWarmupSendStateByTarget.get("target")).to.equal(
+					runningState,
+				);
 				await session.peers[0].open(db);
-				expect(
-					sharedLog._joinWarmupSendStateByTarget.get("target"),
-				).to.equal(runningState);
+				expect(sharedLog._joinWarmupSendStateByTarget.get("target")).to.be
+					.undefined;
 
 				sharedLog.dispatchMaybeMissingEntries(
 					"target",
@@ -111,22 +112,21 @@ describe("lifecycle", () => {
 						retryScheduleMs: [0, 1],
 					},
 				);
-				await delay(20);
-				const reopenedState =
-					sharedLog._joinWarmupSendStateByTarget.get("target");
-				expect(reopenedState.generation).to.not.equal(oldGeneration);
-				expect(
-					sharedLog._joinWarmupGenerationByTarget.get("target"),
-				).to.equal(reopenedState.generation);
-				expect(simpleEntryBatches).to.deep.equal([["old"]]);
-				expect(maxActiveSimpleSends).to.equal(1);
-
-				expect(releaseOldSimple).to.be.a("function");
-				releaseOldSimple!();
 				await waitForResolved(() =>
 					expect(simpleEntryBatches).to.deep.equal([["old"], ["new"]]),
 				);
-				expect(maxActiveSimpleSends).to.equal(1);
+				const reopenedState =
+					sharedLog._joinWarmupSendStateByTarget.get("target");
+				expect(reopenedState.generation).to.not.equal(oldGeneration);
+				expect(sharedLog._joinWarmupGenerationByTarget.get("target")).to.equal(
+					reopenedState.generation,
+				);
+				expect(maxActiveSimpleSends).to.equal(2);
+
+				expect(releaseOldSimple).to.be.a("function");
+				releaseOldSimple!();
+				await delay(20);
+				expect(simpleEntryBatches).to.deep.equal([["old"], ["new"]]);
 			} finally {
 				releaseOldSimple?.();
 				await delay(300);
@@ -262,7 +262,7 @@ describe("lifecycle", () => {
 	}
 
 	for (const operation of ["close", "drop"] as const) {
-		it(`${operation} cancels warmup work created while subscription callbacks drain`, async () => {
+		it(`${operation} prevents warmup work while subscription callbacks drain`, async () => {
 			session = await TestSession.connected(1);
 			const db = await session.peers[0].open(new EventStore());
 			const sharedLog = db.log as any;
@@ -278,12 +278,13 @@ describe("lifecycle", () => {
 						new Map([["late-entry", { hash: "late-entry" }]]),
 						false,
 					);
-					expect(
-						sharedLog._joinWarmupGenerationByTarget.get(target),
-					).to.equal(generation);
-					expect(
-						sharedLog._joinWarmupRetryTimersByTarget.get(target)?.size,
-					).to.equal(1);
+					expect(sharedLog._joinWarmupGenerationByTarget.get(target)).to.equal(
+						generation,
+					);
+					expect(sharedLog._joinWarmupRetryTimersByTarget.has(target)).to.be
+						.false;
+					expect(sharedLog._joinWarmupScheduledRetriesByTarget.has(target)).to
+						.be.false;
 				});
 			const drainReceiveHandlers = sinon
 				.stub(sharedLog, "drainReceiveHandlers")

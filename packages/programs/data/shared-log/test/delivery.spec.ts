@@ -11,7 +11,10 @@ import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
 import pDefer from "p-defer";
 import { Peerbit } from "peerbit";
-import { ExchangeHeadsMessage } from "../src/exchange-heads.js";
+import {
+	EXCHANGE_HEADS_REPAIR_HINT,
+	ExchangeHeadsMessage,
+} from "../src/exchange-heads.js";
 import { NoPeersError } from "../src/index.js";
 import { EventStore } from "./utils/stores/index.js";
 
@@ -22,6 +25,16 @@ type DeliveryPeerServices = TestSession["peers"][number]["services"] & {
 const getDeliveryServices = (
 	peer: TestSession["peers"][number],
 ): DeliveryPeerServices => peer.services as DeliveryPeerServices;
+
+const hasNonRepairExchangeHeadsForEntry = (
+	messages: ExchangeHeadsMessage<any>[],
+	hash: string,
+) =>
+	messages.some(
+		(message) =>
+			(message.reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) === 0 &&
+			message.heads.some(({ entry }) => entry.hash === hash),
+	);
 
 describe("append delivery options", () => {
 	let session: TestSession;
@@ -517,17 +530,17 @@ describe("append delivery options", () => {
 			},
 		);
 
-		let exchangeHeadsRpcSends = 0;
+		const exchangeHeadsRpcMessages: ExchangeHeadsMessage<any>[] = [];
 		const rpcAny: any = db1.log.rpc;
 		const originalSend = rpcAny.send.bind(rpcAny);
 		rpcAny.send = async (...args: any[]) => {
 			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcSends++;
+				exchangeHeadsRpcMessages.push(args[0]);
 			}
 			return originalSend(...args);
 		};
 
-		await db1.add("fanout-delivery", { target: "all" });
+		const { entry } = await db1.add("fanout-delivery", { target: "all" });
 
 		await waitForResolved(async () => {
 			const values = (await db2.log.log.toArray()).map(
@@ -536,66 +549,70 @@ describe("append delivery options", () => {
 			expect(values).to.include("fanout-delivery");
 		});
 
-		expect(exchangeHeadsRpcSends).to.equal(0);
+		expect(
+			hasNonRepairExchangeHeadsForEntry(exchangeHeadsRpcMessages, entry.hash),
+		).to.equal(false);
 	});
 
-		it("resolves fanout root via topic-root-control-plane when root is omitted", async () => {
-			session = await TestSession.connected(2);
+	it("resolves fanout root via topic-root-control-plane when root is omitted", async () => {
+		session = await TestSession.connected(2);
 
-			const writerRoot = getDeliveryServices(session.peers[0]).fanout.publicKeyHash;
-			// Configure a deterministic root for this log topic without mutating the
-			// pubsub shard-root candidate set (which can otherwise break RPC delivery).
-			const store = new EventStore<string, any>();
-			const topic = store.log.topic;
-			for (const peer of session.peers) {
-				const plane = getDeliveryServices(peer).fanout.topicRootControlPlane;
-				expect(plane, "expected fanout to expose topicRootControlPlane").to.exist;
-				plane.setTopicRoot(topic, writerRoot);
-				expect(await plane.resolveTopicRoot(topic)).to.equal(writerRoot);
-			}
+		const writerRoot = getDeliveryServices(session.peers[0]).fanout
+			.publicKeyHash;
+		// Configure a deterministic root for this log topic without mutating the
+		// pubsub shard-root candidate set (which can otherwise break RPC delivery).
+		const store = new EventStore<string, any>();
+		const topic = store.log.topic;
+		for (const peer of session.peers) {
+			const plane = getDeliveryServices(peer).fanout.topicRootControlPlane;
+			expect(plane, "expected fanout to expose topicRootControlPlane").to.exist;
+			plane.setTopicRoot(topic, writerRoot);
+			expect(await plane.resolveTopicRoot(topic)).to.equal(writerRoot);
+		}
 
-			const fanout = {
-				channel: {
-					msgRate: 10,
+		const fanout = {
+			channel: {
+				msgRate: 10,
 				msgSize: 256,
 				uploadLimitBps: 1_000_000,
 				maxChildren: 8,
 				repair: true,
-				},
-				join: { timeoutMs: 10_000 },
-			};
+			},
+			join: { timeoutMs: 10_000 },
+		};
 
-			const db1 = await session.peers[0].open(store, {
-				args: { fanout },
-			});
-			const db2 = await EventStore.open<EventStore<string, any>>(
-				db1.address!,
+		const db1 = await session.peers[0].open(store, {
+			args: { fanout },
+		});
+		const db2 = await EventStore.open<EventStore<string, any>>(
+			db1.address!,
 			session.peers[1],
 			{
 				args: { fanout },
-				},
-			);
+			},
+		);
 
-			await waitForResolved(async () => {
-				const ch: any = (db1.log as any)._fanoutChannel;
-				expect(ch, "expected shared-log to open a fanout channel").to.exist;
-				const peers = ch.getPeerHashes({ includeSelf: true });
-				expect(peers, "expected fanout overlay to include remote peer").to.include(
-					session.peers[1].identity.publicKey.hashcode(),
-				);
-			});
+		await waitForResolved(async () => {
+			const ch: any = (db1.log as any)._fanoutChannel;
+			expect(ch, "expected shared-log to open a fanout channel").to.exist;
+			const peers = ch.getPeerHashes({ includeSelf: true });
+			expect(
+				peers,
+				"expected fanout overlay to include remote peer",
+			).to.include(session.peers[1].identity.publicKey.hashcode());
+		});
 
-			let exchangeHeadsRpcSends = 0;
-			const rpcAny: any = db1.log.rpc;
-			const originalSend = rpcAny.send.bind(rpcAny);
-			rpcAny.send = async (...args: any[]) => {
+		const exchangeHeadsRpcMessages: ExchangeHeadsMessage<any>[] = [];
+		const rpcAny: any = db1.log.rpc;
+		const originalSend = rpcAny.send.bind(rpcAny);
+		rpcAny.send = async (...args: any[]) => {
 			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcSends++;
+				exchangeHeadsRpcMessages.push(args[0]);
 			}
 			return originalSend(...args);
 		};
 
-		await db1.add("fanout-root-auto", { target: "all" });
+		const { entry } = await db1.add("fanout-root-auto", { target: "all" });
 
 		await waitForResolved(async () => {
 			const values = (await db2.log.log.toArray()).map(
@@ -604,7 +621,9 @@ describe("append delivery options", () => {
 			expect(values).to.include("fanout-root-auto");
 		});
 
-		expect(exchangeHeadsRpcSends).to.equal(0);
+		expect(
+			hasNonRepairExchangeHeadsForEntry(exchangeHeadsRpcMessages, entry.hash),
+		).to.equal(false);
 	});
 
 	it("does not fall back to rpc on target=all when a fanout member drops", async () => {
@@ -633,30 +652,34 @@ describe("append delivery options", () => {
 				args: { fanout },
 			},
 		);
-		await EventStore.open<EventStore<string, any>>(db1.address!, session.peers[2], {
-			args: { fanout },
-		});
+		await EventStore.open<EventStore<string, any>>(
+			db1.address!,
+			session.peers[2],
+			{
+				args: { fanout },
+			},
+		);
 
 		const fanoutChannel: any = (db1.log as any)._fanoutChannel;
 		await waitForResolved(() => {
 			const peers = new Set(fanoutChannel.getPeerHashes());
-			expect(peers.has(session.peers[1].identity.publicKey.hashcode())).to.equal(
-				true,
-			);
+			expect(
+				peers.has(session.peers[1].identity.publicKey.hashcode()),
+			).to.equal(true);
 		});
 
-		let exchangeHeadsRpcSends = 0;
+		const exchangeHeadsRpcMessages: ExchangeHeadsMessage<any>[] = [];
 		const rpcAny: any = db1.log.rpc;
 		const originalSend = rpcAny.send.bind(rpcAny);
 		rpcAny.send = async (...args: any[]) => {
 			if (args[0] instanceof ExchangeHeadsMessage) {
-				exchangeHeadsRpcSends++;
+				exchangeHeadsRpcMessages.push(args[0]);
 			}
 			return originalSend(...args);
 		};
 
 		await session.peers[2].stop();
-		await db1.add("fanout-churn", { target: "all" });
+		const { entry } = await db1.add("fanout-churn", { target: "all" });
 
 		await waitForResolved(
 			async () => {
@@ -668,7 +691,9 @@ describe("append delivery options", () => {
 			{ timeout: 30_000 },
 		);
 
-		expect(exchangeHeadsRpcSends).to.equal(0);
+		expect(
+			hasNonRepairExchangeHeadsForEntry(exchangeHeadsRpcMessages, entry.hash),
+		).to.equal(false);
 	});
 
 	it("does not fall back to rpc when fanout publish fails", async () => {
@@ -698,7 +723,10 @@ describe("append delivery options", () => {
 		const rpcAny: any = db1.log.rpc;
 		const originalSend = rpcAny.send.bind(rpcAny);
 		rpcAny.send = async (...args: any[]) => {
-			if (args[0] instanceof ExchangeHeadsMessage) {
+			if (
+				args[0] instanceof ExchangeHeadsMessage &&
+				(args[0].reserved[0] & EXCHANGE_HEADS_REPAIR_HINT) === 0
+			) {
 				exchangeHeadsRpcSends++;
 			}
 			return originalSend(...args);

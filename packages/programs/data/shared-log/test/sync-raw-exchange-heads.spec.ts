@@ -13,6 +13,7 @@ import { RequestV0 } from "@peerbit/rpc";
 import { TestSession } from "@peerbit/test-utils";
 import { waitForResolved } from "@peerbit/time";
 import { expect } from "chai";
+import pDefer from "p-defer";
 import sinon from "sinon";
 import { v4 as uuid } from "uuid";
 import {
@@ -215,11 +216,12 @@ describe("raw exchange-head sync", () => {
 			await waitForResolved(() =>
 				session.peers[0].dial(session.peers[1].getMultiaddrs()),
 			);
-			await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+			await (
+				db1.log.syncronizer as SimpleSyncronizer<any>
+			).onMaybeMissingHashes({
 				hashes,
-				db1.node.identity.publicKey,
-				{ skipCheck: true },
-			);
+				targets: [db2.node.identity.publicKey.hashcode()],
+			});
 			await waitForResolved(
 				() => {
 					expect(db2.log.log.length).to.equal(entryCount);
@@ -2396,6 +2398,152 @@ describe("raw exchange-head sync", () => {
 		}
 	});
 
+	it("materializes a raw batch hash when a waiter registers during the lower join", async () => {
+		const session = await TestSession.disconnected(2, {
+			indexer: (directory) => createRustIndexer(directory),
+		});
+
+		try {
+			const setup = {
+				domain: createReplicationDomainHash("u32"),
+				type: "u32" as const,
+				syncronizer: SimpleSyncronizer,
+				name: "u32-simple-raw",
+			};
+			const store = new EventStore<string, any>();
+			const baseArgs: any = {
+				setup,
+				nativeGraph: true,
+				nativeBackbone: { optional: false },
+				replicate: false,
+				sync: {
+					rawExchangeHeads: true,
+				},
+				timeUntilRoleMaturity: 0,
+			};
+			const source = await session.peers[0].open(store.clone(), {
+				args: {
+					...baseArgs,
+					keep: () => true,
+				},
+			});
+			const target = await session.peers[1].open(store.clone(), {
+				args: baseArgs,
+			});
+
+			const entries: { hash: string; gid: string }[] = [];
+			for (let i = 0; i < 2; i++) {
+				const { entry } = await source.add(uuid(), {
+					meta: {
+						next: [],
+						gidSeed: new Uint8Array([i & 0xff, (i >>> 8) & 0xff]),
+					},
+				});
+				entries.push({ hash: entry.hash, gid: entry.meta.gid });
+			}
+
+			const sharedLog = target.log as any;
+			const backbone = sharedLog._nativeBackbone;
+			const targetHash = target.node.identity.publicKey.hashcode();
+			for (let i = 0; i < entries.length; i++) {
+				for (const [coordinateIndex, coordinate] of backbone
+					.getGidCoordinates(entries[i]!.gid, 2)
+					.entries()) {
+					const start = BigInt(String(coordinate));
+					backbone.putRange({
+						id: `target-late-waiter-${i}-${coordinateIndex}`,
+						hash: targetHash,
+						timestamp: 0,
+						start1: start,
+						end1: start + 1n,
+						start2: start,
+						end2: start + 1n,
+						width: 1,
+						mode: 0,
+					});
+				}
+			}
+
+			let message: RawExchangeHeadsMessage | undefined;
+			for await (const generated of createRawExchangeHeadsMessages(
+				source.log.log,
+				entries.map((entry) => entry.hash),
+			)) {
+				message = generated as RawExchangeHeadsMessage;
+				break;
+			}
+			expect(message).to.be.instanceOf(RawExchangeHeadsMessage);
+
+			const lowerJoinEntered = pDefer<void>();
+			const releaseLowerJoin = pDefer<void>();
+			const lowerLog = target.log.log as any;
+			const originalJoinPrepared =
+				lowerLog.joinPreparedAppendFactsBatch.bind(lowerLog);
+			const lowerJoinStub = sinon
+				.stub(lowerLog, "joinPreparedAppendFactsBatch")
+				.callsFake(async (...args: any[]) => {
+					lowerJoinEntered.resolve();
+					await releaseLowerJoin.promise;
+					return originalJoinPrepared(...args);
+				});
+			const prepareLazySpy = sinon.spy(Entry, "prepareMultihashBytesLazy");
+			const entryAddedHashSpy = sinon.spy(sharedLog, "onEntryAddedHash");
+			const entryAddedSpy = sinon.spy(
+				target.log.syncronizer as any,
+				"onEntryAdded",
+			);
+			const entryAddedHashesSpy = sinon.spy(
+				target.log.syncronizer as any,
+				"onEntryAddedHashes",
+			);
+			let waiterCallbackCount = 0;
+			let waiterEntry: Entry<any> | undefined;
+			try {
+				const receiving = target.log.onMessage(message!, {
+					from: source.node.identity.publicKey,
+				} as any);
+				await lowerJoinEntered.promise;
+
+				const waiterHash = entries[0]!.hash;
+				sharedLog._pendingIHave.set(waiterHash, {
+					requesting: new Set(["requester"]),
+					resetTimeout: () => {},
+					clear: () => {},
+					callback: (entry: Entry<any>) => {
+						waiterCallbackCount++;
+						waiterEntry = entry;
+					},
+				});
+				releaseLowerJoin.resolve();
+				await receiving;
+				await waitForResolved(() =>
+					expect(sharedLog._pendingIHave.has(waiterHash)).to.equal(false),
+				);
+
+				expect(waiterCallbackCount).to.equal(1);
+				expect(waiterEntry?.hash).to.equal(waiterHash);
+				expect(prepareLazySpy.callCount).to.equal(1);
+				expect(entryAddedHashSpy.callCount).to.equal(1);
+				expect(entryAddedHashSpy.firstCall.args[0]).to.equal(waiterHash);
+				expect(entryAddedSpy.callCount).to.equal(1);
+				expect(entryAddedSpy.firstCall.args[0]).to.equal(waiterEntry);
+				expect(entryAddedHashesSpy.callCount).to.equal(1);
+				expect(entryAddedHashesSpy.firstCall.args[0]).to.deep.equal([
+					entries[1]!.hash,
+				]);
+			} finally {
+				releaseLowerJoin.resolve();
+				entryAddedHashesSpy.restore();
+				entryAddedSpy.restore();
+				entryAddedHashSpy.restore();
+				prepareLazySpy.restore();
+				lowerJoinStub.restore();
+			}
+		} finally {
+			await session.stop();
+		}
+	});
+
 	it("selects retained native raw receive hashes before wrapping entries", async () => {
 		const session = await TestSession.disconnected(2, {
 			indexer: (directory) => createRustIndexer(directory),
@@ -3326,11 +3474,10 @@ describe("raw exchange-head sync", () => {
 		await waitForResolved(() =>
 			session.peers[0].dial(session.peers[1].getMultiaddrs()),
 		);
-		await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+		await (db1.log.syncronizer as SimpleSyncronizer<any>).onMaybeMissingHashes({
 			hashes,
-			db1.node.identity.publicKey,
-			{ skipCheck: true },
-		);
+			targets: [db2.node.identity.publicKey.hashcode()],
+		});
 		await waitForResolved(
 			() => {
 				expect(db2.log.log.length).to.equal(entryCount);
@@ -3841,11 +3988,12 @@ describe("raw exchange-head sync", () => {
 			await waitForResolved(() =>
 				session.peers[0].dial(session.peers[1].getMultiaddrs()),
 			);
-			await (db2.log.syncronizer as SimpleSyncronizer<any>).queueSync(
+			await (
+				db1.log.syncronizer as SimpleSyncronizer<any>
+			).onMaybeMissingHashes({
 				hashes,
-				db1.node.identity.publicKey,
-				{ skipCheck: true },
-			);
+				targets: [db2.node.identity.publicKey.hashcode()],
+			});
 			await waitForResolved(
 				() => {
 					expect(db2.log.log.length).to.equal(entryCount);
