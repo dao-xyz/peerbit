@@ -1627,6 +1627,22 @@ type WaitForReplicatorsOptions<R extends "u32" | "u64"> =
 
 type WaitForReplicator = { key: string; replicator: boolean };
 
+type PendingMaturityRecord<R extends "u32" | "u64"> = {
+	range: ReplicationChange<ReplicationRangeIndexable<R>>;
+	timeout: ReturnType<typeof setTimeout>;
+	expiresAt: number;
+	from: PublicSignKey;
+	rebalance: boolean;
+	ownershipLifecycleController: AbortController;
+};
+
+type ReplicationRangeDeletionOutcome<R extends "u32" | "u64"> = {
+	removed: ReplicationRangeIndexable<R>[];
+	retained: ReplicationRangeIndexable<R>[];
+	ownerHasRanges: boolean;
+	error?: unknown;
+};
+
 type EntryLeaderPlan<R extends "u32" | "u64"> = {
 	coordinates: NumberFromType<R>[];
 	coordinateStrings?: string[];
@@ -2702,6 +2718,14 @@ const REPLICATION_ANNOUNCEMENT_REPAIR_MAX_ATTEMPTS = 3;
 // an unbounded burst of separately signed, acknowledged messages. A cursor
 // retained across generations rotates best-effort coverage over later changes.
 const REPLICATION_ANNOUNCEMENT_REPAIR_TARGETS_PER_GENERATION = 8;
+// Index backends flatten logical queries before execution and have practical
+// expression limits well below a large local range set. Keep exact range
+// lookups/deletes bounded while the mutation lane preserves operation ordering.
+const REPLICATION_RANGE_ID_QUERY_BATCH_SIZE = 100;
+// A normal peer owns far fewer ranges. This intentionally generous ceiling keeps
+// decoded, untrusted announcements from forcing unbounded conversion/query work
+// without changing the wire schema or constraining ordinary replication plans.
+const MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT = 4096;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE = 0.01;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_CPU_LIMIT = 0.005;
 const RECALCULATE_PARTICIPATION_MIN_RELATIVE_CHANGE_WITH_MEMORY_LIMIT = 0.001;
@@ -3366,6 +3390,8 @@ export class SharedLog<
 	private _closeController!: AbortController;
 	private _respondToIHaveTimeout!: any;
 	private _checkedPrune!: CheckedPruneCoordinator<T, R>;
+	private _admittedPruneRemoves!: Set<Promise<unknown>>;
+	private _pruneRemovesClosing = false;
 	private _pendingIHaveCallbacks!: Set<Promise<void>>;
 	private _pendingIHaveExpiryTimer?: ReturnType<typeof setTimeout>;
 	private _pendingIHaveExpiryDeadline = Number.POSITIVE_INFINITY;
@@ -3377,16 +3403,7 @@ export class SharedLog<
 	private _pendingIHave!: Map<string, PendingIHave<T>>;
 
 	// public key hash to range id to range
-	pendingMaturity!: Map<
-		string,
-		Map<
-			string,
-			{
-				range: ReplicationChange;
-				timeout: ReturnType<typeof setTimeout>;
-			}
-		>
-	>; // map of peerId to timeout
+	pendingMaturity!: Map<string, Map<string, PendingMaturityRecord<R>>>; // map of peerId to timeout
 
 	private latestReplicationInfoMessage!: Map<string, bigint>;
 	// Peers that have unsubscribed from this log's topic. We ignore replication-info
@@ -3398,6 +3415,26 @@ export class SharedLog<
 		{ attempts: number; timer?: ReturnType<typeof setTimeout> }
 	>;
 	private _replicationInfoApplyQueueByPeer!: Map<string, Promise<void>>;
+	// Range ids are global primary keys while receive lanes are per peer. Keep
+	// reads and writes that decide one mutation in a single global lane.
+	private _replicationRangeMutationTail: Promise<void> = Promise.resolve();
+	private _replicationRangeMutationsClosing = false;
+	// Log.remove awaits program onChange callbacks before its physical delete.
+	// Track when checked prune holds the ownership lane across that lower-log
+	// removal so the callback wrapper can identify its direct invocation.
+	private _checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
+	// Reject public local role/terminal operations invoked directly by that
+	// program callback rather than letting it await the lane that is awaiting the
+	// callback. Remote/internal mutations and unrelated external callers remain
+	// queued/drained normally.
+	private _checkedPruneRemovalCallbackInvocationDepth = 0;
+	// If durable post-state cannot be reconciled to every native/runtime mirror,
+	// reject later writers and planners until reopen rehydrates those mirrors.
+	private _replicationRangeMutationFailure?: unknown;
+	// Background repair work can outlive the await that admitted it. Replace this
+	// opaque token on poison and every terminal/open boundary so an older runner
+	// can neither dispatch nor mutate a freshly opened lifecycle.
+	private _repairLifecycleController = new AbortController();
 	// Local receive generations fence replication-info handlers that were admitted
 	// before a liveness eviction but reach the per-peer apply lane after it. Unlike
 	// message timestamps, these tokens never compare clocks from different peers.
@@ -3420,7 +3457,107 @@ export class SharedLog<
 
 	private remoteBlocks!: RemoteBlocks;
 
+	private throwIfReplicationOwnershipPoisoned(): void {
+		if (this._replicationRangeMutationFailure !== undefined) {
+			throw new Error(
+				"Replication ownership recovery is required before further planning",
+				{ cause: this._replicationRangeMutationFailure },
+			);
+		}
+	}
+
+	private startRepairLifecycle(): AbortController {
+		this._repairLifecycleController?.abort();
+		this._repairLifecycleController = new AbortController();
+		return this._repairLifecycleController;
+	}
+
+	private stopRepairLifecycle(): void {
+		this._repairLifecycleController?.abort();
+	}
+
+	private isRepairLifecycleActive(controller: AbortController): boolean {
+		return (
+			controller === this._repairLifecycleController &&
+			!controller.signal.aborted &&
+			this._replicationRangeMutationFailure === undefined &&
+			!this.closed
+		);
+	}
+
+	private captureReplicationOwnershipLifecycle(): AbortController {
+		const controller = this._repairLifecycleController;
+		this.throwIfReplicationOwnershipLifecycleInactive(controller);
+		return controller;
+	}
+
+	private throwIfReplicationOwnershipLifecycleInactive(
+		controller: AbortController,
+	): void {
+		this.throwIfReplicationOwnershipPoisoned();
+		if (!this.isRepairLifecycleActive(controller)) {
+			throw new TerminalOperationNotStartedError(
+				"Replication ownership lifecycle is no longer active",
+			);
+		}
+	}
+
+	private poisonReplicationOwnership(failure: unknown): unknown {
+		this._replicationRangeMutationFailure ??= failure;
+		this.stopRepairLifecycle();
+		// Pending aggregate changes belong to the poisoned ownership generation.
+		// Closing also resolves ignored `add()` promises, while the guarded
+		// callback below observes any already-running rejection.
+		this.replicationChangeDebounceFn?.close?.();
+		this.pruneDebouncedFn?.close?.();
+		this.rebalanceParticipationDebounced?.close();
+		for (const hash of this._checkedPrune?.retries.keys() ?? []) {
+			this._checkedPrune.clearRetry(hash);
+		}
+		this.cancelCurrentReplicationStateAnnouncementRetry();
+		this.cancelAllJoinWarmupTargets();
+		for (const timer of this._repairRetryTimers) {
+			clearTimeout(timer);
+		}
+		this._repairRetryTimers.clear();
+		for (const timer of this._joinAuthoritativeRepairTimersByDelay.values()) {
+			clearTimeout(timer);
+		}
+		this._joinAuthoritativeRepairTimersByDelay.clear();
+		this._joinAuthoritativeRepairPeersByDelay.clear();
+		this._repairSweepPendingModes.clear();
+		for (const peers of this._repairSweepPendingPeersByMode.values()) {
+			peers.clear();
+		}
+		this._repairSweepJoinWarmupGenerationByTarget.clear();
+		this._repairSweepOptimisticGidPeersPending.clear();
+		this._repairSweepOptimisticGidsByPeer.clear();
+		for (const targets of this._repairFrontierByMode.values()) {
+			targets.clear();
+		}
+		for (const targets of this._repairFrontierActiveTargetsByMode.values()) {
+			targets.clear();
+		}
+		for (const targets of this._repairFrontierBypassKnownPeersByMode.values()) {
+			targets.clear();
+		}
+		if (this._appendBackfillTimer) {
+			clearTimeout(this._appendBackfillTimer);
+			this._appendBackfillTimer = undefined;
+		}
+		this._appendBackfillPendingByTarget.clear();
+		for (const pendingRanges of this.pendingMaturity?.values() ?? []) {
+			for (const pending of pendingRanges.values()) {
+				clearTimeout(pending.timeout);
+			}
+			pendingRanges.clear();
+		}
+		this.pendingMaturity?.clear();
+		return this._replicationRangeMutationFailure;
+	}
+
 	private throwIfNativeDurableCommitFailed(): void {
+		this.throwIfReplicationOwnershipPoisoned();
 		if (this._nativeStrictDurableTransactionFailure !== undefined) {
 			throw new Error(
 				"Native durable transaction recovery is required before another mutation",
@@ -4523,6 +4660,7 @@ export class SharedLog<
 		this.log = new Log(properties);
 		this.rpc = new RPC();
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
+		this._admittedPruneRemoves = new Set();
 		this._pendingIHave = new Map();
 		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
@@ -5331,7 +5469,13 @@ export class SharedLog<
 		isLeader: boolean,
 		deliveryArg: false | true | DeliveryOptions | undefined,
 		nativeDeliveryPlan?: AppendDeliveryPlan,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
+		const throwIfInactive = () =>
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		throwIfInactive();
 		const { delivery, reliability, requireRecipients, minAcks, wrap } =
 			this._parseDeliveryOptions(deliveryArg);
 		const pending: Promise<void>[] = [];
@@ -5357,6 +5501,7 @@ export class SharedLog<
 			}
 			try {
 				const subscribers = await this._getTopicSubscribers(this.topic);
+				throwIfInactive();
 				const hasRemoteSubscriber = subscribers?.some(
 					(subscriber) => subscriber.hashcode() !== selfHash,
 				);
@@ -5364,6 +5509,7 @@ export class SharedLog<
 					return;
 				}
 			} catch {
+				throwIfInactive();
 				return;
 			}
 		}
@@ -5373,6 +5519,7 @@ export class SharedLog<
 				await this.getFullReplicaRepairCandidates(undefined, {
 					includeSubscribers: false,
 				});
+			throwIfInactive();
 			if (minReplicasValue >= Math.max(1, fullReplicaDeliveryCandidates.size)) {
 				for (const peer of fullReplicaDeliveryCandidates) {
 					if (!leaders.has(peer)) {
@@ -5391,12 +5538,15 @@ export class SharedLog<
 		for await (const message of createExchangeHeadsMessages(this.log, [
 			entry,
 		])) {
+			throwIfInactive();
 			const leaderCountBeforeReferenceMerge = leaders.size;
 			await this._mergeLeadersFromGidReferences(
 				message,
 				minReplicasValue,
 				leaders,
+				ownershipLifecycleController,
 			);
+			throwIfInactive();
 			const canUseNativeDeliveryPlan =
 				!!nativeDeliveryPlan &&
 				nativeDeliveryPlan.hasRemoteRecipients &&
@@ -5404,6 +5554,7 @@ export class SharedLog<
 			if (canUseNativeDeliveryPlan) {
 				if (!delivery) {
 					for (const peer of nativeDeliveryPlan.repairTargets) {
+						throwIfInactive();
 						this.queueAppendBackfill(peer, entryReplicatedForRepair);
 					}
 					if (nativeDeliveryPlan.defaultSendSilent) {
@@ -5412,6 +5563,7 @@ export class SharedLog<
 							selfHash,
 						);
 						if (rawTargets) {
+							throwIfInactive();
 							this.queueLiveRawGossip(
 								entry.hash,
 								message.heads[0]?.gidRefrences ?? [],
@@ -5421,6 +5573,7 @@ export class SharedLog<
 							continue;
 						}
 					}
+					throwIfInactive();
 					this.emitPlainLiveSendProfile(message);
 					this.rpc
 						.send(message, {
@@ -5447,6 +5600,7 @@ export class SharedLog<
 					for (const peer of nativeDeliveryPlan.ackTo) {
 						track(
 							(async () => {
+								throwIfInactive();
 								await this._sendAckWithUnifiedHints({
 									peer,
 									message,
@@ -5454,12 +5608,14 @@ export class SharedLog<
 									priority: delivery.priority,
 									fanoutUnicastOptions,
 								});
+								throwIfInactive();
 							})(),
 						);
 					}
 				}
 
 				if (nativeDeliveryPlan.silentTo.length > 0) {
+					throwIfInactive();
 					this.rpc
 						.send(message, {
 							mode: new SilentDelivery({
@@ -5471,6 +5627,7 @@ export class SharedLog<
 						.catch((error) => logger.error(error));
 				}
 				for (const peer of nativeDeliveryPlan.repairTargets) {
+					throwIfInactive();
 					this.queueAppendBackfill(peer, entryReplicatedForRepair);
 				}
 				continue;
@@ -5492,6 +5649,7 @@ export class SharedLog<
 			if (!hasRemotePeers && allowSubscriberFallback) {
 				try {
 					const subscribers = await this._getTopicSubscribers(this.topic);
+					throwIfInactive();
 					if (subscribers && subscribers.length > 0) {
 						for (const subscriber of subscribers) {
 							const hash = subscriber.hashcode();
@@ -5504,6 +5662,7 @@ export class SharedLog<
 						hasRemotePeers = set.has(selfHash) ? set.size > 1 : set.size > 0;
 					}
 				} catch {
+					throwIfInactive();
 					// Best-effort only; keep discovered recipients as-is.
 				}
 			}
@@ -5516,6 +5675,7 @@ export class SharedLog<
 
 			if (!delivery) {
 				for (const peer of authoritativeRecipients) {
+					throwIfInactive();
 					if (peer === selfHash) {
 						continue;
 					}
@@ -5529,6 +5689,7 @@ export class SharedLog<
 				if (isLeader) {
 					const rawTargets = this.canUseLiveRawGossip(set, selfHash);
 					if (rawTargets) {
+						throwIfInactive();
 						this.queueLiveRawGossip(
 							entry.hash,
 							message.heads[0]?.gidRefrences ?? [],
@@ -5538,6 +5699,7 @@ export class SharedLog<
 						continue;
 					}
 				}
+				throwIfInactive();
 				this.emitPlainLiveSendProfile(message);
 				this.rpc
 					.send(message, {
@@ -5603,6 +5765,7 @@ export class SharedLog<
 				for (const peer of ackTo) {
 					track(
 						(async () => {
+							throwIfInactive();
 							await this._sendAckWithUnifiedHints({
 								peer,
 								message,
@@ -5610,12 +5773,14 @@ export class SharedLog<
 								priority: delivery.priority,
 								fanoutUnicastOptions,
 							});
+							throwIfInactive();
 						})(),
 					);
 				}
 			}
 
 			if (silentTo?.length) {
+				throwIfInactive();
 				this.rpc
 					.send(message, {
 						mode: new SilentDelivery({ redundancy: 1, to: silentTo }),
@@ -5624,6 +5789,7 @@ export class SharedLog<
 					.catch((error) => logger.error(error));
 			}
 			for (const peer of repairTargets) {
+				throwIfInactive();
 				// Direct append delivery is intentionally optimistic. Queue one delayed,
 				// batched maybe-sync pass for the intended recipients so stable 3-peer
 				// append workloads do not depend on perfect first-try delivery ordering.
@@ -5633,6 +5799,7 @@ export class SharedLog<
 
 		if (pending.length > 0) {
 			await Promise.all(pending);
+			throwIfInactive();
 		}
 	}
 
@@ -5640,22 +5807,41 @@ export class SharedLog<
 		message: ExchangeHeadsMessage<any>,
 		minReplicasValue: number,
 		leaders: LeaderMap,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
+		const throwIfInactive = () =>
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		throwIfInactive();
 		const gidReferences = message.heads[0]?.gidRefrences;
 		if (!gidReferences || gidReferences.length === 0) {
 			return;
 		}
 
 		for (const gidReference of gidReferences) {
+			throwIfInactive();
 			const entryFromGid = this.log.entryIndex.getHeads(gidReference, false);
 			for (const gidEntry of await entryFromGid.all()) {
+				throwIfInactive();
 				let coordinates = await this.getCoordinates(gidEntry);
+				throwIfInactive();
 				let found: Map<string, { intersecting: boolean }>;
 				if (coordinates == null) {
-					found = await this.findLeadersFromEntry(gidEntry, minReplicasValue);
+					found = await this.findLeadersFromEntry(
+						gidEntry,
+						minReplicasValue,
+						undefined,
+						ownershipLifecycleController,
+					);
 				} else {
-					found = await this._findLeaders(coordinates);
+					found = await this._findLeaders(
+						coordinates,
+						undefined,
+						ownershipLifecycleController,
+					);
 				}
+				throwIfInactive();
 
 				for (const [key, value] of found) {
 					leaders.set(key, value);
@@ -5664,11 +5850,21 @@ export class SharedLog<
 		}
 	}
 
-	private async _appendDeliverToAllFanout(entry: Entry<T>) {
+	private async _appendDeliverToAllFanout(
+		entry: Entry<T>,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		const throwIfInactive = () =>
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		throwIfInactive();
 		for await (const message of createExchangeHeadsMessages(this.log, [
 			entry,
 		])) {
+			throwIfInactive();
 			await this._publishExchangeHeadsViaFanout(message);
+			throwIfInactive();
 		}
 	}
 
@@ -6178,8 +6374,17 @@ export class SharedLog<
 		this.rebalanceParticipationDebounced?.close();
 		this.rebalanceParticipationDebounced = undefined;
 
-		this.rebalanceParticipationDebounced = debounceFixedInterval(
-			() => this.rebalanceParticipation(),
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		let rebalanceParticipationDebounced!: ReturnType<
+			typeof debounceFixedInterval
+		>;
+		rebalanceParticipationDebounced = debounceFixedInterval(
+			() =>
+				this.rebalanceParticipation(
+					ownershipLifecycleController,
+					rebalanceParticipationDebounced,
+				),
 			/* Math.max(
 				REBALANCE_DEBOUNCE_INTERVAL,
 				Math.log(
@@ -6192,6 +6397,7 @@ export class SharedLog<
 				onError: (error) => this.onRebalanceParticipationError(error),
 			},
 		);
+		this.rebalanceParticipationDebounced = rebalanceParticipationDebounced;
 	}
 
 	private queueCurrentReplicationStateAnnouncementRetry(
@@ -6394,6 +6600,7 @@ export class SharedLog<
 			this.queueCurrentReplicationStateAnnouncementRepair();
 			return;
 		}
+		this.validatePersistedReplicationRangeSnapshot(segments);
 
 		const subscribers =
 			(await this.node.services.pubsub.getSubscribers(this.topic)) ?? [];
@@ -6554,7 +6761,11 @@ export class SharedLog<
 			| AllReplicatingSegmentsMessage
 			| AddedReplicationSegmentMessage
 			| StoppedReplicating,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<void> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		// Advance before every post-mutation send, including successful ones. An
 		// authoritative retry already in flight may have captured the previous
 		// local state; the generation mismatch forces one more current snapshot
@@ -6564,9 +6775,18 @@ export class SharedLog<
 		try {
 			await this.rpc.send(message, {
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
+				signal: ownershipLifecycleController.signal,
 			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			this.queueCurrentReplicationStateAnnouncementRepair();
 		} catch (error) {
+			// An old send can reject only after poison or close has installed a new
+			// ownership generation. Never enqueue its retry work into that generation.
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			// The local replication-index mutation precedes all calls to this
 			// wrapper. Preserve the explicit caller's rejection, but independently
 			// schedule an authoritative snapshot so peers eventually observe the
@@ -6594,6 +6814,7 @@ export class SharedLog<
 				void this.replicationAnnouncementRetryDebounced?.call();
 				return;
 			}
+			this.validatePersistedReplicationRangeSnapshot(segments);
 
 			await this.rpc.send(new AllReplicatingSegmentsMessage({ segments }), {
 				priority: CONVERGENCE_MESSAGE_PRIORITY,
@@ -6669,7 +6890,13 @@ export class SharedLog<
 
 	private deleteCoordinatesForHashes(
 		hashes: Iterable<string>,
+		ownershipLifecycleController?: AbortController,
 	): MaybePromise<void> {
+		if (ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		}
 		const values = normalizedHashValues(hashes);
 		if (values.length === 0) {
 			return;
@@ -6679,13 +6906,22 @@ export class SharedLog<
 			EntryReplicated<R>
 		>;
 		if (coordinateIndex.delIdsNoReturn) {
-			return mapMaybePromise(
-				coordinateIndex.delIdsNoReturn(values),
-				() => undefined,
-			);
+			return mapMaybePromise(coordinateIndex.delIdsNoReturn(values), () => {
+				if (ownershipLifecycleController) {
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+				}
+			});
 		}
 		if (coordinateIndex.delIds) {
-			return mapMaybePromise(coordinateIndex.delIds(values), () => undefined);
+			return mapMaybePromise(coordinateIndex.delIds(values), () => {
+				if (ownershipLifecycleController) {
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+				}
+			});
 		}
 		return mapMaybePromise(
 			this.entryCoordinatesIndex.del({
@@ -6698,7 +6934,13 @@ export class SharedLog<
 								),
 							),
 			}),
-			() => undefined,
+			() => {
+				if (ownershipLifecycleController) {
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+				}
+			},
 		);
 	}
 
@@ -6732,8 +6974,16 @@ export class SharedLog<
 		}
 	}
 
-	private async ensureCurrentHeadCoordinatesIndexed() {
+	private async ensureCurrentHeadCoordinatesIndexed(
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const heads = await this.log.getHeads(true).all();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const headsByHash = new Map(heads.map((head) => [head.hash, head]));
 		const nativeCoordinateState =
 			this._nativeBackbone ?? this._nativeSharedLogState;
@@ -6747,12 +6997,21 @@ export class SharedLog<
 							.all()
 					).map((entry) => entry.value.hash),
 				);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const staleHashes = [...indexedHashes].filter(
 			(hash) => !headsByHash.has(hash),
 		);
 
 		if (staleHashes.length > 0) {
-			await this.deleteCoordinatesForHashes(staleHashes);
+			await this.deleteCoordinatesForHashes(
+				staleHashes,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 
 		const missingHeads: EntryLeaderBatchItem<R>[] = [];
@@ -6768,7 +7027,13 @@ export class SharedLog<
 		}
 
 		if (missingHeads.length > 0) {
-			await this.planEntryLeaderBatch(missingHeads);
+			await this.planEntryLeaderBatch(
+				missingHeads,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 	}
 
@@ -6789,10 +7054,17 @@ export class SharedLog<
 				msg: AddedReplicationSegmentMessage | AllReplicatingSegmentsMessage,
 			) => void;
 		} = {},
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<ReplicationRangeIndexable<R>[]> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
 		let offsetWasProvided = false;
 		if (isUnreplicationOptions(options)) {
-			await this.unreplicate();
+			await this._unreplicate(
+				undefined,
+				replicationOwnershipLifecycleController,
+			);
 			return [];
 		}
 		if ((options as ExistingReplicationOptions).type === "resume") {
@@ -6817,6 +7089,9 @@ export class SharedLog<
 
 			// initial role in a dynamic setup
 			const maybeRange = await this.getDynamicRange();
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			if (!maybeRange) {
 				// not allowed
 				return [];
@@ -6859,6 +7134,9 @@ export class SharedLog<
 					const indexed = await this.replicationIndex.get(toId(rangeArg.id), {
 						shape: { id: true, timestamp: true },
 					});
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						replicationOwnershipLifecycleController,
+					);
 					if (indexed) {
 						timestamp = indexed.value.timestamp;
 					}
@@ -6913,6 +7191,9 @@ export class SharedLog<
 						range,
 						this.indexableDomain.numbers,
 					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						replicationOwnershipLifecycleController,
+					);
 					const mergeableFiltered: ReplicationRangeIndexable<R>[] = [];
 					const toKeep: Set<string> = new Set();
 
@@ -6959,26 +7240,90 @@ export class SharedLog<
 			// but ({ replicate: 0.5, offset: 0.5 }) means that we want to add a range
 			// TODO make behaviour more clear
 		}
-		if (rangesToUnreplicate.length > 0) {
-			await this.removeReplicationRanges(
-				rangesToUnreplicate,
-				this.node.identity.publicKey,
-			);
-		}
+		const confirmedPreliminaryRemovals: ReplicationRangeIndexable<R>[] = [];
+		try {
+			if (rangesToUnreplicate.length > 0) {
+				await this.removeReplicationRanges(
+					rangesToUnreplicate,
+					this.node.identity.publicKey,
+					{
+						onRemoved: (removed) => {
+							confirmedPreliminaryRemovals.push(...removed);
+						},
+					},
+					replicationOwnershipLifecycleController,
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
+				if (confirmedPreliminaryRemovals.length > 0 && rebalance !== false) {
+					const timestamp = BigInt(Date.now());
+					for (const range of confirmedPreliminaryRemovals) {
+						this.replicationChangeDebounceFn.add({
+							range,
+							type: "removed",
+							timestamp,
+						});
+					}
+				}
+			}
 
-		await this.startAnnounceReplicating(rangesToReplicate, {
-			reset: resetRanges ?? false,
-			checkDuplicates,
-			announce,
-			rebalance,
-		});
-
-		if (rangesToUnreplicate.length > 0) {
-			await this.sendReplicationAnnouncement(
-				new StoppedReplicating({
-					segmentIds: rangesToUnreplicate.map((x) => x.id),
-				}),
+			await this.startAnnounceReplicating(
+				rangesToReplicate,
+				{
+					reset: resetRanges ?? false,
+					checkDuplicates,
+					announce,
+					rebalance,
+				},
+				replicationOwnershipLifecycleController,
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+
+			if (confirmedPreliminaryRemovals.length > 0) {
+				await this.sendReplicationAnnouncement(
+					new StoppedReplicating({
+						segmentIds: confirmedPreliminaryRemovals.map((x) => x.id),
+					}),
+					replicationOwnershipLifecycleController,
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
+			}
+		} catch (operationError) {
+			if (
+				confirmedPreliminaryRemovals.length === 0 ||
+				!this.isRepairLifecycleActive(replicationOwnershipLifecycleController)
+			) {
+				throw operationError;
+			}
+
+			let announcementError: unknown;
+			try {
+				const segments = (await this.getMyReplicationSegments()).map((range) =>
+					range.toReplicationRange(),
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
+				this.validatePersistedReplicationRangeSnapshot(segments);
+				await this.sendReplicationAnnouncement(
+					new AllReplicatingSegmentsMessage({ segments }),
+					replicationOwnershipLifecycleController,
+				);
+			} catch (error) {
+				announcementError = error;
+			}
+			if (announcementError !== undefined) {
+				throw new AggregateError(
+					[operationError, announcementError],
+					"Replication ranges changed durably but their corrective announcement failed",
+				);
+			}
+			throw operationError;
 		}
 
 		return rangesToReplicate;
@@ -7026,6 +7371,11 @@ export class SharedLog<
 			) => void;
 		},
 	) {
+		this.throwIfCheckedPruneRemoveBlocksLocalOperation(
+			"replication range mutation",
+		);
+		const replicationOwnershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		const entryRangeId = (entry: Entry<T>) =>
 			sha256Sync(
 				concat([
@@ -7048,6 +7398,9 @@ export class SharedLog<
 				offset: await this.domain.fromEntry(rangeOrEntry),
 				normalized: false,
 			};
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 		} else if (Array.isArray(rangeOrEntry)) {
 			let ranges: (ReplicationRangeMessage<any> | FixedReplicationOptions)[] =
 				[];
@@ -7060,6 +7413,9 @@ export class SharedLog<
 						normalized: false,
 						strict: true,
 					});
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						replicationOwnershipLifecycleController,
+					);
 				} else {
 					ranges.push(entry);
 				}
@@ -7074,16 +7430,44 @@ export class SharedLog<
 			range = rangeOrEntry ?? true;
 		}
 
-		return this._replicate(range, options);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
+		return this._replicate(
+			range,
+			options,
+			replicationOwnershipLifecycleController,
+		);
 	}
 
 	async unreplicate(rangeOrEntry?: Entry<T> | { id: Uint8Array }[]) {
+		this.throwIfCheckedPruneRemoveBlocksLocalOperation(
+			"replication range mutation",
+		);
+		const replicationOwnershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		return this._unreplicate(
+			rangeOrEntry,
+			replicationOwnershipLifecycleController,
+		);
+	}
+
+	private async _unreplicate(
+		rangeOrEntry: Entry<T> | { id: Uint8Array }[] | undefined,
+		replicationOwnershipLifecycleController: AbortController,
+	) {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
 		let segmentIds: Uint8Array[];
 		if (rangeOrEntry instanceof Entry) {
 			let range: FixedReplicationOptions = {
 				factor: 1,
 				offset: await this.domain.fromEntry(rangeOrEntry),
 			};
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			const indexed = this.replicationIndex.iterate({
 				query: {
 					width: 1,
@@ -7092,6 +7476,9 @@ export class SharedLog<
 				},
 			});
 			segmentIds = (await indexed.all()).map((x) => x.id.key as Uint8Array);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			if (segmentIds.length === 0) {
 				warn("No segment found to unreplicate");
 				return;
@@ -7105,7 +7492,12 @@ export class SharedLog<
 		} else {
 			this._isReplicating = false;
 			this._isAdaptiveReplicating = false;
-			await this.removeReplicator(this.node.identity.publicKey);
+			await this.removeReplicator(this.node.identity.publicKey, {
+				replicationOwnershipLifecycleController,
+			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			try {
 				await this.replicationChangeDebounceFn.flush?.();
 			} catch (error: any) {
@@ -7113,12 +7505,21 @@ export class SharedLog<
 					throw error;
 				}
 			}
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			await this.pruneIndexedEntriesNoLongerLed({
 				useDefaultRoleAge: true,
 			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			await this.pruneCurrentHeadsNoLongerLed({
 				useDefaultRoleAge: true,
 			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			return;
 		}
 
@@ -7132,13 +7533,57 @@ export class SharedLog<
 			segmentIds,
 			this.node.identity.publicKey,
 		);
-		await this.removeReplicationRanges(
-			rangesToRemove,
-			this.node.identity.publicKey,
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
 		);
-		await this.sendReplicationAnnouncement(
-			new StoppedReplicating({ segmentIds }),
+		if (rangesToRemove.length === 0) {
+			return;
+		}
+		const removedSegmentIds: Uint8Array[] = [];
+		let mutationError: unknown;
+		try {
+			await this.removeReplicationRanges(
+				rangesToRemove,
+				this.node.identity.publicKey,
+				{
+					onRemoved: (ranges) => {
+						removedSegmentIds.push(...ranges.map((range) => range.id));
+					},
+				},
+				replicationOwnershipLifecycleController,
+			);
+		} catch (error) {
+			mutationError = error;
+		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
 		);
+		if (removedSegmentIds.length === 0) {
+			if (mutationError !== undefined) {
+				throw mutationError;
+			}
+			return;
+		}
+		try {
+			await this.sendReplicationAnnouncement(
+				new StoppedReplicating({ segmentIds: removedSegmentIds }),
+				replicationOwnershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+		} catch (announcementError) {
+			if (mutationError !== undefined) {
+				throw new AggregateError(
+					[mutationError, announcementError],
+					"Replication ranges were removed but their announcement failed",
+				);
+			}
+			throw announcementError;
+		}
+		if (mutationError !== undefined) {
+			throw mutationError;
+		}
 	}
 
 	private async removeReplicator(
@@ -7149,10 +7594,17 @@ export class SharedLog<
 			noEvent?: boolean;
 			onRemoved?: (state: { wasReplicator: boolean }) => void;
 			replicationLifecycleController?: AbortController;
+			replicationOwnershipLifecycleController?: AbortController;
 			shouldRemove?: () => boolean;
 			subscriptionEpoch?: object | null;
 		},
 	): Promise<boolean> {
+		const replicationOwnershipLifecycleController =
+			options?.replicationOwnershipLifecycleController ??
+			this.captureReplicationOwnershipLifecycle();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
 		const keyHash = typeof key === "string" ? key : key.hashcode();
 		const expectedJoinWarmupGeneration =
 			options?.expectedJoinWarmupGeneration !== undefined
@@ -7163,9 +7615,9 @@ export class SharedLog<
 			this.isCurrentSubscriptionEpoch(keyHash, options.subscriptionEpoch);
 		const ownsReplicationLifecycle = () =>
 			options?.replicationLifecycleController === undefined ||
-			this.isReplicationLifecycleActive(
-				options.replicationLifecycleController,
-			);
+			this.isReplicationLifecycleActive(options.replicationLifecycleController);
+		const ownsReplicationOwnershipLifecycle = () =>
+			this.isRepairLifecycleActive(replicationOwnershipLifecycleController);
 		const cancelExpectedJoinWarmupTarget = () => {
 			if (
 				expectedJoinWarmupGeneration !== null &&
@@ -7177,14 +7629,24 @@ export class SharedLog<
 		};
 		const isMe = this.node.identity.publicKey.hashcode() === keyHash;
 		let receiveAdmissionBlocked = false;
+		const receiveCleanupGateByPeer = this._receiveCleanupGateByPeer;
 		const blockAndDrainPeerReceives = async () => {
 			if (!receiveAdmissionBlocked) {
-				this.blockPeerReceiveAdmission(keyHash);
+				receiveCleanupGateByPeer.set(
+					keyHash,
+					(receiveCleanupGateByPeer.get(keyHash) ?? 0) + 1,
+				);
 				receiveAdmissionBlocked = true;
 			}
 			await this.drainPeerReceiveHandlers(keyHash);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 		};
 		const cleanupDisconnectedPeer = async () => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			await blockAndDrainPeerReceives();
 			this.removePeerFromGidPeerHistory(keyHash);
 			this.cleanupPeerDisconnectTracking(keyHash);
@@ -7194,6 +7656,9 @@ export class SharedLog<
 			this._recentRepairDispatch.delete(keyHash);
 			if (!isMe) {
 				await this.syncronizer.onPeerDisconnected(keyHash);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
 			}
 		};
 		let removed = false;
@@ -7202,6 +7667,9 @@ export class SharedLog<
 		// removal on the same queue so a newer reset cannot be deleted underneath
 		// itself by an older unsubscribe callback.
 		await this.withReplicationInfoApplyQueue(keyHash, async () => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 			if (!ownsReplicationLifecycle()) {
 				return;
 			}
@@ -7217,45 +7685,86 @@ export class SharedLog<
 			if (options?.shouldRemove && !options.shouldRemove()) {
 				return;
 			}
-			const wasReplicator = this.uniqueReplicators.has(keyHash);
-
-			const deleted = await this.replicationIndex
-				.iterate({
-					query: { hash: keyHash },
-				})
-				.all();
-			// Liveness evidence can arrive without a subscription transition while
-			// this scan is pending. Stop new receives, drain those already admitted,
-			// then revalidate immediately before the first destructive mutation.
+			// Stop and drain admitted receives before taking the global range lane.
+			// User receive hooks may re-enter replicate()/unreplicate(); holding the
+			// range lane while waiting for such a hook would deadlock on our own tail.
 			await blockAndDrainPeerReceives();
-			if (options?.shouldRemove && !options.shouldRemove()) {
+			if (
+				!ownsReplicationOwnershipLifecycle() ||
+				!ownsReplicationLifecycle() ||
+				!ownsSubscriptionEpoch() ||
+				(options?.shouldRemove && !options.shouldRemove())
+			) {
+				if (
+					!ownsSubscriptionEpoch() &&
+					options?.cleanupIfSubscriptionSuperseded
+				) {
+					await cleanupDisconnectedPeer();
+				}
 				return;
 			}
-			// Liveness removal must not cancel a still-current warmup until fresh
-			// activity has been rechecked at the destructive boundary.
-			cancelExpectedJoinWarmupTarget();
-
-			await this.replicationIndex.del({ query: { hash: keyHash } });
-			for (const result of deleted) {
-				this.deleteNativeReplicationRange(result.value);
+			let wasReplicator = false;
+			let deleted: ReplicationRangeIndexable<R>[] = [];
+			let ownerHasRanges = false;
+			let mutationError: unknown;
+			const mutationCommitted = await this.withReplicationRangeMutationQueue(
+				async () => {
+					if (
+						!ownsReplicationOwnershipLifecycle() ||
+						!ownsReplicationLifecycle() ||
+						!ownsSubscriptionEpoch() ||
+						(options?.shouldRemove && !options.shouldRemove())
+					) {
+						return false;
+					}
+					wasReplicator = this.uniqueReplicators.has(keyHash);
+					deleted = (
+						await this.replicationIndex
+							.iterate({
+								query: { hash: keyHash },
+							})
+							.all()
+					).map((result) => result.value);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						replicationOwnershipLifecycleController,
+					);
+					// Liveness evidence can arrive while the scan is pending. Admission is
+					// already blocked and older receives are drained; revalidate immediately
+					// before destructive mutation.
+					if (
+						!ownsReplicationOwnershipLifecycle() ||
+						!ownsReplicationLifecycle() ||
+						!ownsSubscriptionEpoch() ||
+						(options?.shouldRemove && !options.shouldRemove())
+					) {
+						return false;
+					}
+					cancelExpectedJoinWarmupTarget();
+					const deletion = await this.deleteReplicationRangesCoherently(
+						deleted,
+						keyHash,
+					);
+					deleted = deletion.removed;
+					ownerHasRanges = deletion.ownerHasRanges;
+					mutationError = deletion.error;
+					return true;
+				},
+				replicationOwnershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+			if (!mutationCommitted) {
+				if (
+					!ownsSubscriptionEpoch() &&
+					options?.cleanupIfSubscriptionSuperseded
+				) {
+					await cleanupDisconnectedPeer();
+				}
+				return;
 			}
 
-			// Once the range indexes have removed the peer, make membership agree
-			// before any later awaited bookkeeping can fail.
-			this.uniqueReplicators.delete(keyHash);
-			this._replicatorJoinEmitted.delete(keyHash);
-
-			await this.updateOldestTimestampFromIndex();
-
-			if (isMe) {
-				// announce that we are no longer replicating
-
-				await this.sendReplicationAnnouncement(
-					new AllReplicatingSegmentsMessage({ segments: [] }),
-				);
-			}
-
-			if (options?.noEvent !== true) {
+			if (options?.noEvent !== true && deleted.length > 0) {
 				const publicKey = toLocalPublicSignKey(key);
 				if (publicKey) {
 					this.events.dispatchEvent(
@@ -7270,17 +7779,18 @@ export class SharedLog<
 			const timestamp = BigInt(+new Date());
 			for (const x of deleted) {
 				this.replicationChangeDebounceFn.add({
-					range: x.value,
+					range: x,
 					type: "removed",
 					timestamp,
 				});
 			}
 
 			const pendingMaturity = this.pendingMaturity.get(keyHash);
-			if (pendingMaturity) {
+			if (!ownerHasRanges && pendingMaturity) {
 				for (const [_k, v] of pendingMaturity) {
 					clearTimeout(v.timeout);
 				}
+				pendingMaturity.clear();
 				this.pendingMaturity.delete(keyHash);
 			}
 
@@ -7297,10 +7807,40 @@ export class SharedLog<
 				this.rebalanceParticipationDebounced?.call();
 			}
 			removed = true;
-			options?.onRemoved?.({ wasReplicator });
+			if (!ownerHasRanges) {
+				options?.onRemoved?.({ wasReplicator });
+			}
+			let announcementError: unknown;
+			if (isMe && !ownerHasRanges) {
+				try {
+					await this.sendReplicationAnnouncement(
+						new AllReplicatingSegmentsMessage({ segments: [] }),
+						replicationOwnershipLifecycleController,
+					);
+				} catch (error) {
+					announcementError = error;
+				}
+			}
+			if (mutationError !== undefined && announcementError !== undefined) {
+				throw new AggregateError(
+					[mutationError, announcementError],
+					"Replication ranges were removed but their announcement failed",
+				);
+			}
+			if (mutationError !== undefined) {
+				throw mutationError;
+			}
+			if (announcementError !== undefined) {
+				throw announcementError;
+			}
 		}).finally(() => {
 			if (receiveAdmissionBlocked) {
-				this.unblockPeerReceiveAdmission(keyHash);
+				const remaining = (receiveCleanupGateByPeer.get(keyHash) ?? 1) - 1;
+				if (remaining > 0) {
+					receiveCleanupGateByPeer.set(keyHash, remaining);
+				} else {
+					receiveCleanupGateByPeer.delete(keyHash);
+				}
 			}
 		});
 		return removed;
@@ -7326,75 +7866,228 @@ export class SharedLog<
 		ids: Uint8Array[],
 		from: PublicSignKey,
 	) {
-		let idMatcher = new Or(
-			ids.map((x) => new ByteMatchQuery({ key: "id", value: x })),
-		);
-
-		// make sure we are not removing something that is owned by the replicator
-		let identityMatcher = new StringMatch({
-			key: "hash",
-			value: from.hashcode(),
-		});
-
-		let query = new And([idMatcher, identityMatcher]);
-		return (await this.replicationIndex.iterate({ query }).all()).map(
-			(x) => x.value,
-		);
+		const uniqueIds = [
+			...new Map(ids.map((id) => [toHexString(id), id])).values(),
+		];
+		const resolvedById = new Map<string, ReplicationRangeIndexable<R>>();
+		const ownerHash = from.hashcode();
+		for (
+			let i = 0;
+			i < uniqueIds.length;
+			i += REPLICATION_RANGE_ID_QUERY_BATCH_SIZE
+		) {
+			const query = new And([
+				new StringMatch({ key: "hash", value: ownerHash }),
+				new Or(
+					uniqueIds
+						.slice(i, i + REPLICATION_RANGE_ID_QUERY_BATCH_SIZE)
+						.map((id) => new ByteMatchQuery({ key: "id", value: id })),
+				),
+			]);
+			for (const result of await this.replicationIndex
+				.iterate({ query })
+				.all()) {
+				resolvedById.set(result.value.idString, result.value);
+			}
+		}
+		return [...resolvedById.values()];
 	}
-	private async removeReplicationRanges(
+	private removeReplicationRanges(
 		ranges: ReplicationRangeIndexable<R>[],
 		from: PublicSignKey,
-	) {
+		options?: {
+			onRemoved?: (ranges: ReplicationRangeIndexable<R>[]) => void;
+			shouldRemove?: () => boolean;
+		},
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<boolean> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
+		return this.withReplicationRangeMutationQueue(
+			() => this.removeReplicationRangesUnlocked(ranges, from, options),
+			replicationOwnershipLifecycleController,
+		);
+	}
+
+	private async removeReplicationRangesUnlocked(
+		ranges: ReplicationRangeIndexable<R>[],
+		from: PublicSignKey,
+		options?: {
+			onRemoved?: (ranges: ReplicationRangeIndexable<R>[]) => void;
+			shouldRemove?: () => boolean;
+		},
+	): Promise<boolean> {
 		if (ranges.length === 0) {
-			return;
+			return false;
 		}
-		const pendingMaturity = this.pendingMaturity.get(from.hashcode());
-		if (pendingMaturity) {
-			for (const id of ranges) {
-				const info = pendingMaturity.get(id.toString());
-				if (info) {
-					clearTimeout(info.timeout);
-					pendingMaturity.delete(id.toString());
+		if (options?.shouldRemove && !options.shouldRemove()) {
+			return false;
+		}
+		const expectedRangeById = new Map(
+			ranges.map((range) => [range.idString, range]),
+		);
+		const expectedRanges = [...expectedRangeById.values()];
+		const refreshedRanges: ReplicationRangeIndexable<R>[] = [];
+		const ownerHash = from.hashcode();
+		for (
+			let i = 0;
+			i < expectedRanges.length;
+			i += REPLICATION_RANGE_ID_QUERY_BATCH_SIZE
+		) {
+			const results = await this.replicationIndex
+				.iterate({
+					query: new And([
+						new StringMatch({ key: "hash", value: ownerHash }),
+						new Or(
+							expectedRanges
+								.slice(i, i + REPLICATION_RANGE_ID_QUERY_BATCH_SIZE)
+								.map(
+									(range) =>
+										new ByteMatchQuery({
+											key: "id",
+											value: range.id,
+										}),
+								),
+						),
+					]),
+				})
+				.all();
+			for (const result of results) {
+				const expected = expectedRangeById.get(result.value.idString);
+				if (expected?.rangeHash === result.value.rangeHash) {
+					refreshedRanges.push(result.value);
 				}
 			}
-			if (pendingMaturity.size === 0) {
-				this.pendingMaturity.delete(from.hashcode());
+		}
+		ranges = refreshedRanges;
+		if (
+			ranges.length === 0 ||
+			(options?.shouldRemove && !options.shouldRemove())
+		) {
+			return false;
+		}
+		const deletion = await this.deleteReplicationRangesCoherently(
+			ranges,
+			ownerHash,
+		);
+		ranges = deletion.removed;
+		options?.onRemoved?.(ranges);
+
+		if (ranges.length > 0) {
+			this.events.dispatchEvent(
+				new CustomEvent<ReplicationChangeEvent>("replication:change", {
+					detail: { publicKey: from },
+				}),
+			);
+		}
+
+		if (ranges.length > 0 && !from.equals(this.node.identity.publicKey)) {
+			this.rebalanceParticipationDebounced?.call();
+		}
+		if (deletion.error !== undefined) {
+			// The caller will observe the failure and cannot publish its normal
+			// negative work. Queue only rows proven absent by the durable probe.
+			const timestamp = BigInt(Date.now());
+			for (const range of ranges) {
+				this.replicationChangeDebounceFn.add({
+					range,
+					type: "removed",
+					timestamp,
+				});
+			}
+			throw deletion.error;
+		}
+		return ranges.length > 0;
+	}
+
+	private validateReplicationRangeAnnouncement(
+		ranges: readonly { mode: unknown }[],
+	): void {
+		if (ranges.length > MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT) {
+			throw new Error(
+				`Replication range announcement exceeds the ${MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT}-range limit`,
+			);
+		}
+		for (let index = 0; index < ranges.length; index++) {
+			const mode = ranges[index].mode;
+			if (
+				mode !== ReplicationIntent.Strict &&
+				mode !== ReplicationIntent.NonStrict
+			) {
+				throw new Error(
+					`Invalid replication range mode at index ${index}: ${String(mode)}`,
+				);
 			}
 		}
+	}
 
-		await this.replicationIndex.del({
-			query: new Or(
-				ranges.map((x) => new ByteMatchQuery({ key: "id", value: x.id })),
-			),
-		});
-		for (const range of ranges) {
-			this.deleteNativeReplicationRange(range);
+	private validatePersistedReplicationRangeSnapshot(
+		ranges: readonly { mode: unknown }[],
+	): void {
+		try {
+			this.validateReplicationRangeAnnouncement(ranges);
+		} catch (cause) {
+			const failure = new Error(
+				"Persisted replication ownership is invalid and cannot be announced",
+				{ cause },
+			);
+			this.poisonReplicationOwnership(failure);
+			throw failure;
 		}
+	}
 
-		const otherSegmentsIterator = this.replicationIndex.iterate(
-			{ query: { hash: from.hashcode() } },
-			{ shape: { id: true } },
-		);
-		if ((await otherSegmentsIterator.next(1)).length === 0) {
-			this.uniqueReplicators.delete(from.hashcode());
-			this._replicatorJoinEmitted.delete(from.hashcode());
-		}
-		await otherSegmentsIterator.close();
-
-		await this.updateOldestTimestampFromIndex();
-
-		this.events.dispatchEvent(
-			new CustomEvent<ReplicationChangeEvent>("replication:change", {
-				detail: { publicKey: from },
-			}),
-		);
-
-		if (!from.equals(this.node.identity.publicKey)) {
-			this.rebalanceParticipationDebounced?.call();
+	private validateStoppedReplicationAnnouncement(
+		segmentIds: readonly Uint8Array[],
+	): void {
+		if (segmentIds.length > MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT) {
+			throw new Error(
+				`Stopped-replication announcement exceeds the ${MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT}-segment limit`,
+			);
 		}
 	}
 
 	private async addReplicationRange(
+		ranges: ReplicationRangeIndexable<any>[],
+		from: PublicSignKey,
+		options: {
+			reset?: boolean;
+			rebalance?: boolean;
+			checkDuplicates?: boolean;
+			timestamp?: number;
+			allowLegacyOrderedReplacementPairs?: boolean;
+			onConfirmedDurableStateChanged?: () => void;
+		} = {},
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		this.validateReplicationRangeAnnouncement(ranges);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
+		// Authorization can be asynchronous or re-entrant. Never invoke it while
+		// holding the global mutation lane.
+		if (this._isTrustedReplicator && !(await this._isTrustedReplicator(from))) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+			return undefined;
+		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
+		return this.withReplicationRangeMutationQueue(
+			() =>
+				this.addReplicationRangeUnlocked(
+					ranges,
+					from,
+					options,
+					replicationOwnershipLifecycleController,
+				),
+			replicationOwnershipLifecycleController,
+		);
+	}
+
+	private async addReplicationRangeUnlocked(
 		ranges: ReplicationRangeIndexable<any>[],
 		from: PublicSignKey,
 		{
@@ -7402,16 +8095,88 @@ export class SharedLog<
 			checkDuplicates,
 			timestamp: ts,
 			rebalance,
+			allowLegacyOrderedReplacementPairs,
+			onConfirmedDurableStateChanged,
 		}: {
 			reset?: boolean;
 			rebalance?: boolean;
 			checkDuplicates?: boolean;
 			timestamp?: number;
+			allowLegacyOrderedReplacementPairs?: boolean;
+			onConfirmedDurableStateChanged?: () => void;
 		} = {},
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
-		if (this._isTrustedReplicator && !(await this._isTrustedReplicator(from))) {
-			return undefined;
+		this.validateReplicationRangeAnnouncement(ranges);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
+		const fromHash = from.hashcode();
+		const incomingRangesById = new Map<
+			string,
+			ReplicationRangeIndexable<any>
+		>();
+		const incomingRangeCountsById = new Map<string, number>();
+		for (const range of ranges) {
+			if (range.hash !== fromHash) {
+				throw new Error(
+					`Replication range owner mismatch for id ${range.idString}: expected ${fromHash}, received ${range.hash}`,
+				);
+			}
+			const count = (incomingRangeCountsById.get(range.idString) ?? 0) + 1;
+			incomingRangeCountsById.set(range.idString, count);
+			if (
+				count > 1 &&
+				(!allowLegacyOrderedReplacementPairs || reset === true || count > 2)
+			) {
+				throw new Error(
+					`Duplicate replication range id in announcement: ${range.idString}`,
+				);
+			}
+			// Released peers represented a non-reset replacement as the retired
+			// geometry followed by the current geometry under the same id. The
+			// sender is already authorized to replace that id with the final item,
+			// so collapsing an exact two-item incremental pair to its last item
+			// preserves rolling-upgrade compatibility without broadening authority.
+			incomingRangesById.set(range.idString, range);
 		}
+		const incomingRanges = [...incomingRangesById.values()];
+		for (
+			let i = 0;
+			i < incomingRanges.length;
+			i += REPLICATION_RANGE_ID_QUERY_BATCH_SIZE
+		) {
+			const existing = await this.replicationIndex
+				.iterate(
+					{
+						query: new Or(
+							incomingRanges
+								.slice(i, i + REPLICATION_RANGE_ID_QUERY_BATCH_SIZE)
+								.map(
+									(range) =>
+										new ByteMatchQuery({
+											key: "id",
+											value: range.id,
+										}),
+								),
+						),
+					},
+					{ reference: true },
+				)
+				.all();
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+			const conflicting = existing.find(
+				(result) => result.value.hash !== fromHash,
+			)?.value;
+			if (conflicting) {
+				throw new Error(
+					`Replication range id is already owned by another replicator: ${conflicting.idString}`,
+				);
+			}
+		}
+		ranges = incomingRanges;
 		// Preserve what the peer announced before duplicate filtering can empty the
 		// working array. A repeated authoritative/non-empty announcement is still
 		// proof of live membership after this process reopens.
@@ -7419,10 +8184,40 @@ export class SharedLog<
 		let isNewReplicator = false;
 		let timestamp = BigInt(ts ?? +new Date());
 		rebalance = rebalance == null ? true : rebalance;
+		// Complete every fallible policy lookup before a reset crosses its
+		// destructive boundary. Later failures are handled by the positive-write
+		// rollback path and publish confirmed negative state.
+		const now = +new Date();
+		const minRoleAge =
+			ranges.length > 0 ? await this.getDefaultMinRoleAge() : 0;
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
 
 		let diffs: ReplicationChanges<ReplicationRangeIndexable<R>>;
 		let deleted: ReplicationRangeIndexable<R>[] | undefined = undefined;
+		let previousRangesById = new Map<string, ReplicationRangeIndexable<R>>();
 		let isStoppedReplicating = false;
+		let wasReplicatorBeforeDestructiveReset = false;
+		let resetFailureLeaveEmitted = false;
+		const publishConfirmedResetStop = (ownerHasRanges: boolean) => {
+			if (ownerHasRanges || resetFailureLeaveEmitted) {
+				return;
+			}
+			const stoppedTransition =
+				wasReplicatorBeforeDestructiveReset ||
+				this.uniqueReplicators.has(fromHash);
+			this.uniqueReplicators.delete(fromHash);
+			this._replicatorJoinEmitted.delete(fromHash);
+			if (stoppedTransition) {
+				resetFailureLeaveEmitted = true;
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicatorLeaveEvent>("replicator:leave", {
+						detail: { publicKey: from },
+					}),
+				);
+			}
+		};
 		if (reset) {
 			deleted = (
 				await this.replicationIndex
@@ -7431,6 +8226,9 @@ export class SharedLog<
 					})
 					.all()
 			).map((x) => x.value);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
 
 			let prevCount = deleted.length;
 
@@ -7439,7 +8237,11 @@ export class SharedLog<
 				deleted.length === ranges.length &&
 				ranges.every((range) => {
 					const existing = existingById.get(range.idString);
-					return existing != null && existing.equalRange(range);
+					return (
+						existing != null &&
+						existing.equalRange(range) &&
+						existing.mode === range.mode
+					);
 				});
 
 			// Avoid churn on repeated full-state announcements that don't change any
@@ -7448,16 +8250,50 @@ export class SharedLog<
 			if (hasSameRanges) {
 				diffs = [];
 			} else {
-				await this.replicationIndex.del({ query: { hash: from.hashcode() } });
+				wasReplicatorBeforeDestructiveReset =
+					this.uniqueReplicators.has(fromHash);
+				const deletion = await this.deleteReplicationRangesCoherently(
+					deleted,
+					fromHash,
+					{ preserveOwnerMembership: ranges.length > 0 },
+				);
+				deleted = deletion.removed;
 
 				diffs = [
 					...deleted.map((x) => {
 						return { range: x, type: "removed" as const, timestamp };
 					}),
-					...ranges.map((x) => {
-						return { range: x, type: "added" as const, timestamp };
-					}),
+					...(deletion.error === undefined
+						? ranges.map((x) => {
+								return { range: x, type: "added" as const, timestamp };
+							})
+						: []),
 				];
+				if (deletion.error !== undefined) {
+					if (diffs.length > 0) {
+						this.events.dispatchEvent(
+							new CustomEvent<ReplicationChangeEvent>("replication:change", {
+								detail: { publicKey: from },
+							}),
+						);
+						if (rebalance) {
+							for (const diff of diffs) {
+								this.replicationChangeDebounceFn.add(diff);
+							}
+						}
+						if (!from.equals(this.node.identity.publicKey)) {
+							this.rebalanceParticipationDebounced?.call();
+						}
+						if (
+							from.equals(this.node.identity.publicKey) &&
+							this._replicationRangeMutationFailure === undefined
+						) {
+							onConfirmedDurableStateChanged?.();
+						}
+					}
+					publishConfirmedResetStop(deletion.ownerHasRanges);
+					throw deletion.error;
+				}
 			}
 
 			isNewReplicator = prevCount === 0 && ranges.length > 0;
@@ -7477,47 +8313,62 @@ export class SharedLog<
 						{ reference: true },
 					)
 					.all();
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
 				for (const result of results) {
 					existing.push(result.value);
 				}
 			}
 
-			let prevCountForOwner: number | undefined = undefined;
-			if (existing.length === 0) {
-				prevCountForOwner = await this.replicationIndex.count({
-					query: new StringMatch({ key: "hash", value: from.hashcode() }),
-				});
-				isNewReplicator = prevCountForOwner === 0;
-			} else {
-				isNewReplicator = false;
-			}
+			const prevCountForOwner = await this.replicationIndex.count({
+				query: new StringMatch({ key: "hash", value: fromHash }),
+			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+			isNewReplicator = prevCountForOwner === 0;
 
-			if (
-				checkDuplicates &&
-				(existing.length > 0 || (prevCountForOwner ?? 0) > 0)
-			) {
+			if (checkDuplicates && prevCountForOwner > 0) {
 				let deduplicated: ReplicationRangeIndexable<any>[] = [];
 
 				// TODO also deduplicate/de-overlap among the ranges that ought to be inserted?
 				for (const range of ranges) {
-					if (
-						!(await countCoveringRangesSameOwner(this.replicationIndex, range))
-					) {
+					const hasCoveringRange = await countCoveringRangesSameOwner(
+						this.replicationIndex,
+						range,
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						replicationOwnershipLifecycleController,
+					);
+					if (!hasCoveringRange) {
 						deduplicated.push(range);
 					}
 				}
 				ranges = deduplicated;
 			}
-			let existingMap = new Map<string, ReplicationRangeIndexable<any>>();
+			let existingMap = new Map<string, ReplicationRangeIndexable<R>>();
 			for (const result of existing) {
 				existingMap.set(result.idString, result);
 			}
+			const projectedCount =
+				prevCountForOwner +
+				ranges.reduce(
+					(count, range) => count + (existingMap.has(range.idString) ? 0 : 1),
+					0,
+				);
+			if (projectedCount > MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT) {
+				throw new Error(
+					`Replication range ownership exceeds the ${MAX_REPLICATION_RANGES_PER_ANNOUNCEMENT}-range limit`,
+				);
+			}
+			previousRangesById = existingMap;
 
 			let changes: ReplicationChanges<ReplicationRangeIndexable<R>> = ranges
 				.map((x) => {
 					const prev = existingMap.get(x.idString);
 					if (prev) {
-						if (prev.equalRange(x)) {
+						if (prev.equalRange(x) && prev.mode === x.mode) {
 							return [];
 						}
 						return [
@@ -7545,17 +8396,180 @@ export class SharedLog<
 			diffs = changes;
 		}
 
-		const fromHash = from.hashcode();
-		// Track replicator membership transitions synchronously so join/leave events are
-		// idempotent even if we process concurrent reset messages/unsubscribes.
-		// Only a full-state (reset) announcement can signal that a peer stopped
-		// replicating: a non-reset message whose segments deduplicate to nothing
-		// means "nothing new", not "stopped". Removing the peer here would let
-		// uniqueReplicators diverge from replicationIndex while the peer's
-		// ranges stay indexed.
+		let isAllMature = true;
+
+		const appliedPositiveRanges: ReplicationChange<
+			ReplicationRangeIndexable<R>
+		>[] = [];
+		const rollbackAppliedPositiveRanges = async () => {
+			for (const applied of [...appliedPositiveRanges].reverse()) {
+				const range = applied.range;
+				const current = (
+					await this.replicationIndex
+						.iterate({
+							query: new And([
+								new StringMatch({ key: "hash", value: range.hash }),
+								new ByteMatchQuery({ key: "id", value: range.id }),
+							]),
+						})
+						.all()
+				)[0]?.value;
+				if (!current || current.rangeHash !== range.rangeHash) {
+					continue;
+				}
+				const previous = reset
+					? undefined
+					: previousRangesById.get(range.idString);
+				if (previous) {
+					await this.replicationIndex.put(previous);
+					this.putNativeReplicationRange(previous);
+				} else {
+					await this.replicationIndex.del({
+						query: new And([
+							new StringMatch({ key: "hash", value: range.hash }),
+							new ByteMatchQuery({ key: "id", value: range.id }),
+						]),
+					});
+					this.deleteNativeReplicationRange(range);
+				}
+			}
+			appliedPositiveRanges.length = 0;
+			await this.updateOldestTimestampFromIndex();
+		};
+		const poisonFromPositiveRollback = (
+			rollbackError: unknown,
+			primaryError?: unknown,
+		) => {
+			const errors =
+				primaryError === undefined || primaryError === rollbackError
+					? [rollbackError]
+					: [primaryError, rollbackError];
+			const failure = new AggregateError(
+				errors,
+				"Replication-range positive mutation rollback failed",
+			);
+			this.poisonReplicationOwnership(failure);
+			return failure;
+		};
+
+		try {
+			for (const diff of diffs) {
+				if (diff.type !== "added") {
+					continue;
+				}
+				appliedPositiveRanges.push(diff);
+				await this.replicationIndex.put(diff.range);
+				this.putNativeReplicationRange(diff.range);
+			}
+			if (reset && diffs.length > 0) {
+				await this.updateOldestTimestampFromIndex();
+			}
+		} catch (error) {
+			let outcomeError = error;
+			if (appliedPositiveRanges.length > 0) {
+				try {
+					await rollbackAppliedPositiveRanges();
+				} catch (rollbackError) {
+					outcomeError = poisonFromPositiveRollback(rollbackError, error);
+				}
+			}
+			if (reset) {
+				const negativeDiffs = diffs.filter((diff) => diff.type !== "added");
+				if (negativeDiffs.length > 0) {
+					this.events.dispatchEvent(
+						new CustomEvent<ReplicationChangeEvent>("replication:change", {
+							detail: { publicKey: from },
+						}),
+					);
+					if (rebalance) {
+						for (const diff of negativeDiffs) {
+							this.replicationChangeDebounceFn.add(diff);
+						}
+					}
+					if (
+						from.equals(this.node.identity.publicKey) &&
+						this._replicationRangeMutationFailure === undefined
+					) {
+						onConfirmedDurableStateChanged?.();
+					}
+				}
+				if (!from.equals(this.node.identity.publicKey)) {
+					this.rebalanceParticipationDebounced?.call();
+				}
+				try {
+					const ownerHasRanges =
+						(await this.replicationIndex.count({
+							query: { hash: fromHash },
+						})) > 0;
+					publishConfirmedResetStop(ownerHasRanges);
+				} catch (membershipProbeError) {
+					const failure = new AggregateError(
+						outcomeError === membershipProbeError
+							? [membershipProbeError]
+							: [outcomeError, membershipProbeError],
+						"Could not determine replication membership after failed reset rollback",
+					);
+					this.poisonReplicationOwnership(failure);
+					outcomeError = failure;
+				}
+			}
+			throw outcomeError;
+		}
+		if (diffs.length > 0) {
+			// From this point onward the durable/native range mutation has
+			// committed and its rollback window has closed. If any later local
+			// bookkeeping fails, the caller must publish an authoritative snapshot
+			// instead of leaving peers on the pre-mutation geometry.
+			onConfirmedDurableStateChanged?.();
+		}
+
+		const clearPendingMaturityForRange = (
+			range: ReplicationRangeIndexable<R>,
+		) => {
+			const pendingFromPeer = this.pendingMaturity.get(range.hash);
+			const pending = pendingFromPeer?.get(range.idString);
+			if (!pending || !pendingFromPeer) {
+				return;
+			}
+			clearTimeout(pending.timeout);
+			pendingFromPeer.delete(range.idString);
+			if (pendingFromPeer.size === 0) {
+				this.pendingMaturity.delete(range.hash);
+			}
+		};
+		for (const diff of diffs) {
+			if (diff.type !== "added") {
+				clearPendingMaturityForRange(diff.range);
+			}
+		}
+		for (const applied of appliedPositiveRanges) {
+			const range = applied.range;
+			if (!reset) {
+				this.oldestOpenTime = Math.min(
+					Number(range.timestamp),
+					this.oldestOpenTime,
+				);
+			}
+			if (!isMatured(range, now, minRoleAge)) {
+				isAllMature = false;
+				this.schedulePendingMaturity(
+					applied,
+					from,
+					{
+						rebalance,
+						waitMs: Math.max(minRoleAge - (now - Number(range.timestamp)), 0),
+					},
+					replicationOwnershipLifecycleController,
+				);
+			}
+		}
+
+		// Membership becomes visible only after every awaited positive mutation has
+		// completed. A non-reset duplicate remains positive liveness evidence.
 		const announcedStopped = reset === true && !announcedReplication;
 		const stoppedTransition = announcedStopped
-			? this.uniqueReplicators.delete(fromHash)
+			? wasReplicatorBeforeDestructiveReset ||
+				this.uniqueReplicators.delete(fromHash)
 			: false;
 		if (announcedStopped) {
 			this._replicatorJoinEmitted.delete(fromHash);
@@ -7563,97 +8577,7 @@ export class SharedLog<
 			this.uniqueReplicators.add(fromHash);
 		}
 
-		let now = +new Date();
-		let minRoleAge = await this.getDefaultMinRoleAge();
-		let isAllMature = true;
-
-		for (const diff of diffs) {
-			if (diff.type === "added") {
-				/* if (this.closed) {
-					return;
-				} */
-				await this.replicationIndex.put(diff.range);
-				this.putNativeReplicationRange(diff.range);
-
-				if (!reset) {
-					this.oldestOpenTime = Math.min(
-						Number(diff.range.timestamp),
-						this.oldestOpenTime,
-					);
-				}
-
-				const isMature = isMatured(diff.range, now, minRoleAge);
-
-				if (
-					!isMature /* && diff.range.hash !== this.node.identity.publicKey.hashcode() */
-				) {
-					// second condition is to avoid the case where we are adding a range that we own
-					isAllMature = false;
-					let pendingRanges = this.pendingMaturity.get(diff.range.hash);
-					if (!pendingRanges) {
-						pendingRanges = new Map();
-						this.pendingMaturity.set(diff.range.hash, pendingRanges);
-					}
-
-					let waitForMaturityTime = Math.max(
-						minRoleAge - (now - Number(diff.range.timestamp)),
-						0,
-					);
-
-					const setupTimeout = () =>
-						setTimeout(async () => {
-							this.events.dispatchEvent(
-								new CustomEvent<ReplicationChangeEvent>("replicator:mature", {
-									detail: { publicKey: from },
-								}),
-							);
-
-							if (rebalance && diff.range.mode !== ReplicationIntent.Strict) {
-								this.replicationChangeDebounceFn.add({
-									...diff,
-									matured: true,
-								});
-							}
-							pendingRanges.delete(diff.range.idString);
-							if (pendingRanges.size === 0) {
-								this.pendingMaturity.delete(diff.range.hash);
-							}
-						}, waitForMaturityTime);
-
-					let prevPendingMaturity = pendingRanges.get(diff.range.idString);
-					if (prevPendingMaturity) {
-						// only reset the timer if the new range is older than the previous one, this means that waitForMaturityTime less than the previous one
-						clearTimeout(prevPendingMaturity.timeout);
-						prevPendingMaturity.timeout = setupTimeout();
-					} else {
-						pendingRanges.set(diff.range.idString, {
-							range: diff,
-							timeout: setupTimeout(),
-						});
-					}
-				}
-			} else if (diff.type === "removed") {
-				this.deleteNativeReplicationRange(diff.range);
-				const pendingFromPeer = this.pendingMaturity.get(diff.range.hash);
-				if (pendingFromPeer) {
-					const prev = pendingFromPeer.get(diff.range.idString);
-					if (prev) {
-						clearTimeout(prev.timeout);
-						pendingFromPeer.delete(diff.range.idString);
-					}
-					if (pendingFromPeer.size === 0) {
-						this.pendingMaturity.delete(diff.range.hash);
-					}
-				}
-			}
-			// else replaced, do nothing
-		}
-
 		if (diffs.length > 0) {
-			if (reset) {
-				await this.updateOldestTimestampFromIndex();
-			}
-
 			this.events.dispatchEvent(
 				new CustomEvent<ReplicationChangeEvent>("replication:change", {
 					detail: { publicKey: from },
@@ -7722,13 +8646,66 @@ export class SharedLog<
 				msg: AllReplicatingSegmentsMessage | AddedReplicationSegmentMessage,
 			) => void;
 		} = {},
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
-		await this.ensureCurrentHeadCoordinatesIndexed();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
+		await this.ensureCurrentHeadCoordinatesIndexed(
+			replicationOwnershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
+		);
 
-		const change = await this.addReplicationRange(
-			range,
-			this.node.identity.publicKey,
-			options,
+		let confirmedDurableStateChanged = false;
+		let change: ReplicationChanges<ReplicationRangeIndexable<R>> | undefined;
+		try {
+			change = await this.addReplicationRange(
+				range,
+				this.node.identity.publicKey,
+				{
+					...options,
+					onConfirmedDurableStateChanged: () => {
+						confirmedDurableStateChanged = true;
+					},
+				},
+				replicationOwnershipLifecycleController,
+			);
+		} catch (mutationError) {
+			if (
+				!confirmedDurableStateChanged ||
+				!this.isRepairLifecycleActive(replicationOwnershipLifecycleController)
+			) {
+				throw mutationError;
+			}
+
+			let announcementError: unknown;
+			try {
+				const segments = (await this.getMyReplicationSegments()).map((range) =>
+					range.toReplicationRange(),
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
+				this.validatePersistedReplicationRangeSnapshot(segments);
+				await this.sendReplicationAnnouncement(
+					new AllReplicatingSegmentsMessage({ segments }),
+					replicationOwnershipLifecycleController,
+				);
+			} catch (error) {
+				announcementError = error;
+			}
+			if (announcementError !== undefined) {
+				throw new AggregateError(
+					[mutationError, announcementError],
+					"Replication state changed durably but its corrective announcement failed",
+				);
+			}
+			throw mutationError;
+		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			replicationOwnershipLifecycleController,
 		);
 
 		if (!change) {
@@ -7736,8 +8713,13 @@ export class SharedLog<
 		}
 
 		if (change) {
-			let addedOrReplaced = change.filter((x) => x.type !== "removed");
-			if (addedOrReplaced.length > 0) {
+			// Local replacements are represented as a negative `replaced` fact for
+			// the retired geometry followed by an `added` fact for the durable
+			// replacement. Only the positive/current fact belongs on the wire:
+			// announcing both would send the same range id twice, which receivers
+			// correctly reject as an ambiguous ownership announcement.
+			const added = change.filter((x) => x.type === "added");
+			if (added.length > 0) {
 				// Provider discovery keep-alive (best-effort). This enables bounded targeted fetches
 				// without relying on any global subscriber list.
 				try {
@@ -7761,17 +8743,23 @@ export class SharedLog<
 					| undefined = undefined;
 				if (options.reset) {
 					message = new AllReplicatingSegmentsMessage({
-						segments: addedOrReplaced.map((x) => x.range.toReplicationRange()),
+						segments: added.map((x) => x.range.toReplicationRange()),
 					});
 				} else {
 					message = new AddedReplicationSegmentMessage({
-						segments: addedOrReplaced.map((x) => x.range.toReplicationRange()),
+						segments: added.map((x) => x.range.toReplicationRange()),
 					});
 				}
 				if (options.announce) {
 					return options.announce(message);
 				} else {
-					await this.sendReplicationAnnouncement(message);
+					await this.sendReplicationAnnouncement(
+						message,
+						replicationOwnershipLifecycleController,
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						replicationOwnershipLifecycleController,
+					);
 				}
 			}
 		}
@@ -8041,18 +9029,39 @@ export class SharedLog<
 		return mode === "churn" || bypassKnownPeerHints === true;
 	}
 
-	private async sleepTracked(delayMs: number) {
+	private async sleepTracked(
+		delayMs: number,
+		repairLifecycleController: AbortController,
+	) {
 		if (delayMs <= 0) {
-			return;
+			return this.isRepairLifecycleActive(repairLifecycleController);
+		}
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return false;
 		}
 		await new Promise<void>((resolve) => {
-			const timer = setTimeout(() => {
+			let settled = false;
+			const settle = () => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clearTimeout(timer);
 				this._repairRetryTimers.delete(timer);
+				repairLifecycleController.signal.removeEventListener("abort", settle);
 				resolve();
-			}, delayMs);
+			};
+			const timer = setTimeout(settle, delayMs);
 			timer.unref?.();
 			this._repairRetryTimers.add(timer);
+			repairLifecycleController.signal.addEventListener("abort", settle, {
+				once: true,
+			});
+			if (repairLifecycleController.signal.aborted) {
+				settle();
+			}
 		});
+		return this.isRepairLifecycleActive(repairLifecycleController);
 	}
 
 	private queueRepairFrontierEntries(
@@ -8060,7 +9069,12 @@ export class SharedLog<
 		target: string,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		options?: { bypassKnownPeerHints?: boolean },
-	) {
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
+	): boolean {
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return false;
+		}
 		let targets = this._repairFrontierByMode.get(mode);
 		if (!targets) {
 			targets = new Map();
@@ -8077,9 +9091,18 @@ export class SharedLog<
 		if (options?.bypassKnownPeerHints === true) {
 			this._repairFrontierBypassKnownPeersByMode.get(mode)?.add(target);
 		}
+		return true;
 	}
 
-	private clearRepairFrontierHashes(target: string, hashes: Iterable<string>) {
+	private clearRepairFrontierHashes(
+		target: string,
+		hashes: Iterable<string>,
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
+	) {
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return;
+		}
 		const hashList = [...hashes];
 		if (hashList.length === 0) {
 			return;
@@ -8184,7 +9207,11 @@ export class SharedLog<
 		}
 	}
 
-	private async sleepJoinWarmupTracked(target: string, delayMs: number) {
+	private async sleepJoinWarmupTracked(
+		target: string,
+		delayMs: number,
+		repairLifecycleController: AbortController,
+	) {
 		if (delayMs <= 0) {
 			return;
 		}
@@ -8196,7 +9223,9 @@ export class SharedLog<
 					return;
 				}
 				settled = true;
-				this.untrackJoinWarmupTimer(target, trackedTimer);
+				if (repairLifecycleController === this._repairLifecycleController) {
+					this.untrackJoinWarmupTimer(target, trackedTimer);
+				}
 				resolve();
 			};
 			const handle = setTimeout(settle, delayMs);
@@ -8212,9 +9241,11 @@ export class SharedLog<
 		delaysMs: Iterable<number>,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		bypassKnownPeerHints: boolean,
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
 	) {
 		if (
-			this.closed ||
+			!this.isRepairLifecycleActive(repairLifecycleController) ||
 			this._joinWarmupGenerationByTarget.get(target) !== generation
 		) {
 			return;
@@ -8260,6 +9291,7 @@ export class SharedLog<
 				scheduled,
 				delayMs,
 				slot,
+				repairLifecycleController,
 			);
 		}
 	}
@@ -8269,7 +9301,11 @@ export class SharedLog<
 		scheduled: JoinWarmupScheduledRetries<R>,
 		delayMs: number,
 		slot: JoinWarmupScheduledRetrySlot<R>,
+		repairLifecycleController: AbortController,
 	) {
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return;
+		}
 		const nextDueAt = slot.cohorts[slot.head]?.dueAt;
 		if (nextDueAt == null) {
 			return;
@@ -8284,6 +9320,9 @@ export class SharedLog<
 		let trackedTimer!: JoinWarmupRetryTimer;
 		const handle = setTimeout(
 			() => {
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					return;
+				}
 				this.untrackJoinWarmupTimer(target, trackedTimer);
 				if (slot.timer !== trackedTimer) {
 					return;
@@ -8330,6 +9369,7 @@ export class SharedLog<
 						scheduled.generation,
 						dueEntries,
 						bypassKnownPeerHints,
+						repairLifecycleController,
 					);
 				}
 				if (slot.head === slot.cohorts.length) {
@@ -8343,7 +9383,13 @@ export class SharedLog<
 					slot.cohorts = slot.cohorts.slice(slot.head);
 					slot.head = 0;
 				}
-				this.armJoinWarmupRetrySlot(target, current, delayMs, slot);
+				this.armJoinWarmupRetrySlot(
+					target,
+					current,
+					delayMs,
+					slot,
+					repairLifecycleController,
+				);
 			},
 			Math.max(0, nextDueAt - Date.now()),
 		);
@@ -8430,7 +9476,12 @@ export class SharedLog<
 	private async pushRepairEntries(
 		target: string,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
+		isStillCurrent: () => boolean = () => true,
+		signal?: AbortSignal,
 	) {
+		if (!isStillCurrent()) {
+			return;
+		}
 		const hashes = [...entries.keys()];
 		if (
 			this._logProperties?.sync?.rawExchangeHeads === true &&
@@ -8441,8 +9492,11 @@ export class SharedLog<
 			const sentMessages = await this.trySendFusedRawExchangeHeads(
 				hashes,
 				[target],
-				{ priority: SYNC_MESSAGE_PRIORITY, reserved },
+				{ priority: SYNC_MESSAGE_PRIORITY, reserved, signal },
 			);
+			if (!isStillCurrent()) {
+				return;
+			}
 			if (sentMessages !== undefined) {
 				return;
 			}
@@ -8451,19 +9505,27 @@ export class SharedLog<
 				hashes,
 				this._logProperties?.sync?.profile,
 			)) {
+				if (!isStillCurrent()) {
+					return;
+				}
 				message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 				await this.rpc.send(message, {
 					priority: SYNC_MESSAGE_PRIORITY,
 					mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+					signal,
 				});
 			}
 			return;
 		}
 		for await (const message of createExchangeHeadsMessages(this.log, hashes)) {
+			if (!isStillCurrent()) {
+				return;
+			}
 			message.reserved[0] |= EXCHANGE_HEADS_REPAIR_HINT;
 			await this.rpc.send(message, {
 				priority: SYNC_MESSAGE_PRIORITY,
 				mode: new SilentDelivery({ to: [target], redundancy: 1 }),
+				signal,
 			});
 		}
 	}
@@ -8472,8 +9534,17 @@ export class SharedLog<
 		target: string,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		transport: RepairTransportMode,
-		options?: { bypassKnownPeers?: boolean; bypassRecentKnownPeers?: boolean },
+		options?: {
+			bypassKnownPeers?: boolean;
+			bypassRecentKnownPeers?: boolean;
+			isStillCurrent?: () => boolean;
+			signal?: AbortSignal;
+		},
 	) {
+		const isStillCurrent = options?.isStillCurrent ?? (() => true);
+		if (!isStillCurrent()) {
+			return;
+		}
 		const unknownEntries = new Map<string, RepairDispatchEntry<R>>();
 		const knownHashes: string[] = [];
 		for (const [hash, entry] of entries) {
@@ -8491,6 +9562,9 @@ export class SharedLog<
 				knownHashes.push(hash);
 			}
 		}
+		if (!isStillCurrent()) {
+			return;
+		}
 		this.clearRepairFrontierHashes(target, knownHashes);
 		if (unknownEntries.size === 0) {
 			return;
@@ -8498,16 +9572,25 @@ export class SharedLog<
 		if (transport === "simple") {
 			// Fallback repair should not depend on the target completing the
 			// RequestMaybeSync -> ResponseMaybeSync round trip.
-			await this.pushRepairEntries(target, unknownEntries);
+			await this.pushRepairEntries(
+				target,
+				unknownEntries,
+				isStillCurrent,
+				options?.signal,
+			);
 			return;
 		}
 
 		const syncEntries = this._logProperties?.sync?.priority
 			? this.materializeRepairDispatchEntries(unknownEntries)
 			: (unknownEntries as Map<string, SyncEntryCoordinates<R>>);
+		if (!isStillCurrent()) {
+			return;
+		}
 		await this.syncronizer.onMaybeMissingEntries({
 			entries: syncEntries,
 			targets: [target],
+			signal: options?.signal,
 		});
 	}
 
@@ -8516,9 +9599,11 @@ export class SharedLog<
 		generation: object,
 		entries: ReadonlyMap<string, RepairDispatchEntry<R>>,
 		bypassKnownPeerHints: boolean,
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
 	) {
 		if (
-			this.closed ||
+			!this.isRepairLifecycleActive(repairLifecycleController) ||
 			this._joinWarmupGenerationByTarget.get(target) !== generation
 		) {
 			return;
@@ -8548,21 +9633,34 @@ export class SharedLog<
 		if (state.running) {
 			return;
 		}
-		void this.drainJoinWarmupSends(target, state).catch((error: any) =>
-			logger.error(error),
-		);
+		void this.drainJoinWarmupSends(
+			target,
+			state,
+			repairLifecycleController,
+		).catch((error: any) => {
+			if (this.isRepairLifecycleActive(repairLifecycleController)) {
+				logger.error(error);
+			}
+		});
 	}
 
 	private async drainJoinWarmupSends(
 		target: string,
 		state: JoinWarmupSendState<R>,
+		repairLifecycleController: AbortController,
 	) {
-		if (state.running) {
+		if (
+			state.running ||
+			!this.isRepairLifecycleActive(repairLifecycleController)
+		) {
 			return;
 		}
 		state.running = true;
 		try {
 			while (state.pending) {
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					return;
+				}
 				state.pending = false;
 				const generation = state.generation;
 				const entries = new Map(state.entries);
@@ -8573,9 +9671,13 @@ export class SharedLog<
 					0,
 					state.lastCompletedAt + JOIN_WARMUP_SEND_SPACING_MS - Date.now(),
 				);
-				await this.sleepJoinWarmupTracked(target, spacingMs);
+				await this.sleepJoinWarmupTracked(
+					target,
+					spacingMs,
+					repairLifecycleController,
+				);
 				if (
-					this.closed ||
+					!this.isRepairLifecycleActive(repairLifecycleController) ||
 					state.generation !== generation ||
 					this._joinWarmupGenerationByTarget.get(target) !== generation
 				) {
@@ -8586,28 +9688,37 @@ export class SharedLog<
 				}
 				this._repairMetrics["join-warmup"].simpleFallbackPasses += 1;
 				try {
-					await this.sendRepairEntriesWithTransport(
-						target,
-						entries,
-						"simple",
-						{
-							bypassKnownPeers: bypassKnownPeerHints,
-							bypassRecentKnownPeers: bypassKnownPeerHints,
-						},
-					);
+					await this.sendRepairEntriesWithTransport(target, entries, "simple", {
+						bypassKnownPeers: bypassKnownPeerHints,
+						bypassRecentKnownPeers: bypassKnownPeerHints,
+						isStillCurrent: () =>
+							this.isRepairLifecycleActive(repairLifecycleController),
+						signal: repairLifecycleController.signal,
+					});
 				} catch (error: any) {
-					logger.error(error);
+					if (this.isRepairLifecycleActive(repairLifecycleController)) {
+						logger.error(error);
+					}
 				} finally {
-					state.lastCompletedAt = Date.now();
+					if (this.isRepairLifecycleActive(repairLifecycleController)) {
+						state.lastCompletedAt = Date.now();
+					}
 				}
 			}
 		} finally {
 			state.running = false;
 			if (this._joinWarmupSendStateByTarget.get(target) === state) {
-				if (state.pending) {
-					void this.drainJoinWarmupSends(target, state).catch((error: any) =>
-						logger.error(error),
-					);
+				const currentRepairLifecycleController =
+					this._repairLifecycleController;
+				if (
+					state.pending &&
+					this.isRepairLifecycleActive(currentRepairLifecycleController)
+				) {
+					void this.drainJoinWarmupSends(
+						target,
+						state,
+						currentRepairLifecycleController,
+					).catch((error: any) => logger.error(error));
 				} else if (!this._joinWarmupGenerationByTarget.has(target)) {
 					this._joinWarmupSendStateByTarget.delete(target);
 				}
@@ -8624,8 +9735,13 @@ export class SharedLog<
 			bypassRecentDedupe?: boolean;
 			bypassKnownPeerHints?: boolean;
 		},
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
 	) {
-		if (entries.size === 0) {
+		if (
+			entries.size === 0 ||
+			!this.isRepairLifecycleActive(repairLifecycleController)
+		) {
 			return;
 		}
 
@@ -8675,6 +9791,9 @@ export class SharedLog<
 			options.mode,
 			options.bypassKnownPeerHints,
 		);
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return;
+		}
 
 		await Promise.resolve(
 			this.sendRepairEntriesWithTransport(
@@ -8684,6 +9803,9 @@ export class SharedLog<
 				{
 					bypassKnownPeers: bypassKnownPeerHints,
 					bypassRecentKnownPeers: bypassKnownPeerHints,
+					isStillCurrent: () =>
+						this.isRepairLifecycleActive(repairLifecycleController),
+					signal: repairLifecycleController.signal,
 				},
 			),
 		).catch((error: any) => logger.error(error));
@@ -8693,9 +9815,15 @@ export class SharedLog<
 		mode: RepairDispatchMode,
 		target: string,
 		retryScheduleMs?: number[],
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
 	) {
 		const activeTargets = this._repairFrontierActiveTargetsByMode.get(mode);
-		if (!activeTargets || activeTargets.has(target) || this.closed) {
+		if (
+			!activeTargets ||
+			activeTargets.has(target) ||
+			!this.isRepairLifecycleActive(repairLifecycleController)
+		) {
 			return;
 		}
 		activeTargets.add(target);
@@ -8717,11 +9845,14 @@ export class SharedLog<
 			let attemptIndex = 0;
 			try {
 				for (;;) {
-					if (this.closed) {
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 						return;
 					}
 					const pending = this._repairFrontierByMode.get(mode)?.get(target);
 					if (!pending || pending.size === 0) {
+						if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+							return;
+						}
 						this._repairFrontierBypassKnownPeersByMode
 							.get(mode)
 							?.delete(target);
@@ -8732,24 +9863,40 @@ export class SharedLog<
 						(mode === "join-warmup" || mode === "join-authoritative") &&
 						this.isAssumeSyncedRepairSuppressed()
 					) {
-						await this.sleepTracked(
-							Math.max(
-								250,
-								this._assumeSyncedRepairSuppressedUntil - Date.now(),
-							),
-						);
+						if (
+							!(await this.sleepTracked(
+								Math.max(
+									250,
+									this._assumeSyncedRepairSuppressedUntil - Date.now(),
+								),
+								repairLifecycleController,
+							))
+						) {
+							return;
+						}
 						continue;
 					}
 
-					await this.sendMaybeMissingEntriesNow(target, pending, {
-						mode,
-						transport: getRepairTransportForAttempt(mode, attemptIndex),
-						bypassRecentDedupe: true,
-						bypassKnownPeerHints:
-							this._repairFrontierBypassKnownPeersByMode
-								.get(mode)
-								?.has(target) === true,
-					});
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
+					await this.sendMaybeMissingEntriesNow(
+						target,
+						pending,
+						{
+							mode,
+							transport: getRepairTransportForAttempt(mode, attemptIndex),
+							bypassRecentDedupe: true,
+							bypassKnownPeerHints:
+								this._repairFrontierBypassKnownPeersByMode
+									.get(mode)
+									?.has(target) === true,
+						},
+						repairLifecycleController,
+					);
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
 
 					const remaining = this._repairFrontierByMode.get(mode)?.get(target);
 					if (!remaining || remaining.size === 0) {
@@ -8764,37 +9911,61 @@ export class SharedLog<
 								)
 							: steadyStateDelay;
 					attemptIndex = Math.min(attemptIndex + 1, retrySchedule.length - 1);
-					await this.sleepTracked(waitMs);
+					if (!(await this.sleepTracked(waitMs, repairLifecycleController))) {
+						return;
+					}
 				}
 			} finally {
 				activeTargets.delete(target);
 				if (
-					!this.closed &&
+					this.isRepairLifecycleActive(repairLifecycleController) &&
 					(this._repairFrontierByMode.get(mode)?.get(target)?.size || 0) > 0
 				) {
-					this.ensureRepairFrontierRunner(mode, target, retryScheduleMs);
+					this.ensureRepairFrontierRunner(
+						mode,
+						target,
+						retryScheduleMs,
+						repairLifecycleController,
+					);
 				}
 			}
 		})().catch((error: any) => {
 			activeTargets.delete(target);
-			logger.error(error);
+			if (this.isRepairLifecycleActive(repairLifecycleController)) {
+				logger.error(error);
+			}
 		});
 	}
 
-	private flushAppendBackfill() {
-		if (this._appendBackfillPendingByTarget.size === 0) {
+	private flushAppendBackfill(
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
+	) {
+		if (
+			!this.isRepairLifecycleActive(repairLifecycleController) ||
+			this._appendBackfillPendingByTarget.size === 0
+		) {
 			return;
 		}
 		const pending = this._appendBackfillPendingByTarget;
 		this._appendBackfillPendingByTarget = new Map();
 		for (const [target, entries] of pending) {
-			this.dispatchMaybeMissingEntries(target, entries, {
-				mode: "append-backfill",
-			});
+			this.dispatchMaybeMissingEntries(
+				target,
+				entries,
+				{
+					mode: "append-backfill",
+				},
+				repairLifecycleController,
+			);
 		}
 	}
 
 	private queueAppendBackfill(target: string, entry: EntryReplicated<R>) {
+		const repairLifecycleController = this._repairLifecycleController;
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return;
+		}
 		let entries = this._appendBackfillPendingByTarget.get(target);
 		if (!entries) {
 			entries = new Map();
@@ -8802,7 +9973,7 @@ export class SharedLog<
 		}
 		entries.set(entry.hash, entry);
 		if (entries.size >= this.repairSweepTargetBufferSize) {
-			this.flushAppendBackfill();
+			this.flushAppendBackfill(repairLifecycleController);
 			return;
 		}
 		if (this._appendBackfillTimer || this.closed) {
@@ -8813,10 +9984,10 @@ export class SharedLog<
 			if (this._appendBackfillTimer === timer) {
 				this._appendBackfillTimer = undefined;
 			}
-			if (this.closed) {
+			if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 				return;
 			}
-			this.flushAppendBackfill();
+			this.flushAppendBackfill(repairLifecycleController);
 		}, APPEND_BACKFILL_DELAY_MS);
 		timer.unref?.();
 		this._repairRetryTimers.add(timer);
@@ -8832,22 +10003,38 @@ export class SharedLog<
 			bypassKnownPeerHints?: boolean;
 			retryScheduleMs?: number[];
 		},
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
 	) {
-		if (entries.size === 0) {
+		if (
+			entries.size === 0 ||
+			!this.isRepairLifecycleActive(repairLifecycleController)
+		) {
 			return;
 		}
 
 		if (this.isFrontierTrackedRepairMode(options.mode)) {
-			this.queueRepairFrontierEntries(options.mode, target, entries, {
-				bypassKnownPeerHints: this.shouldBypassKnownPeerHints(
+			if (
+				!this.queueRepairFrontierEntries(
 					options.mode,
-					options.bypassKnownPeerHints,
-				),
-			});
+					target,
+					entries,
+					{
+						bypassKnownPeerHints: this.shouldBypassKnownPeerHints(
+							options.mode,
+							options.bypassKnownPeerHints,
+						),
+					},
+					repairLifecycleController,
+				)
+			) {
+				return;
+			}
 			this.ensureRepairFrontierRunner(
 				options.mode,
 				target,
 				options.retryScheduleMs,
+				repairLifecycleController,
 			);
 			return;
 		}
@@ -8912,6 +10099,9 @@ export class SharedLog<
 		);
 
 		const run = (transport: RepairTransportMode) => {
+			if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+				return;
+			}
 			if (
 				transport === "simple" &&
 				options.mode === "join-warmup" &&
@@ -8922,6 +10112,7 @@ export class SharedLog<
 					joinWarmupGeneration,
 					filteredEntries,
 					bypassKnownPeerHints,
+					repairLifecycleController,
 				);
 				return;
 			}
@@ -8938,6 +10129,9 @@ export class SharedLog<
 					{
 						bypassKnownPeers: bypassKnownPeerHints,
 						bypassRecentKnownPeers: bypassKnownPeerHints,
+						isStillCurrent: () =>
+							this.isRepairLifecycleActive(repairLifecycleController),
+						signal: repairLifecycleController.signal,
 					},
 				),
 			).catch((error: any) => logger.error(error));
@@ -8959,8 +10153,10 @@ export class SharedLog<
 				return;
 			}
 			const timer = setTimeout(() => {
-				this._repairRetryTimers.delete(timer);
-				if (this.closed) {
+				if (repairLifecycleController === this._repairLifecycleController) {
+					this._repairRetryTimers.delete(timer);
+				}
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 					return;
 				}
 				void run(transport);
@@ -8975,15 +10171,23 @@ export class SharedLog<
 				delayedJoinWarmupRetries,
 				filteredEntries,
 				bypassKnownPeerHints,
+				repairLifecycleController,
 			);
 		}
 	}
 
-	private scheduleRepairSweep(options: {
-		mode: RepairDispatchMode;
-		peers?: Iterable<string>;
-		joinWarmupGenerations?: ReadonlyMap<string, object>;
-	}) {
+	private scheduleRepairSweep(
+		options: {
+			mode: RepairDispatchMode;
+			peers?: Iterable<string>;
+			joinWarmupGenerations?: ReadonlyMap<string, object>;
+		},
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
+	) {
+		if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+			return;
+		}
 		const pendingPeers = this._repairSweepPendingPeersByMode.get(options.mode);
 		if (pendingPeers) {
 			for (const peer of options.peers ?? []) {
@@ -9010,12 +10214,19 @@ export class SharedLog<
 		this._repairSweepPendingModes.add(options.mode);
 		if (!this._repairSweepRunning && !this.closed) {
 			this._repairSweepRunning = true;
-			void this.runRepairSweep();
+			void this.runRepairSweep(repairLifecycleController);
 		}
 	}
 
-	private scheduleJoinAuthoritativeRepair(peers: Set<string>) {
-		if (this.closed || peers.size === 0) {
+	private scheduleJoinAuthoritativeRepair(
+		peers: Set<string>,
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
+	) {
+		if (
+			!this.isRepairLifecycleActive(repairLifecycleController) ||
+			peers.size === 0
+		) {
 			return;
 		}
 
@@ -9034,11 +10245,11 @@ export class SharedLog<
 			}
 
 			const timer = setTimeout(() => {
-				this._repairRetryTimers.delete(timer);
-				this._joinAuthoritativeRepairTimersByDelay.delete(delayMs);
-				if (this.closed) {
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
 					return;
 				}
+				this._repairRetryTimers.delete(timer);
+				this._joinAuthoritativeRepairTimersByDelay.delete(delayMs);
 
 				const peersForSweep = new Set(
 					this._joinAuthoritativeRepairPeersByDelay.get(delayMs) ?? [],
@@ -9062,9 +10273,15 @@ export class SharedLog<
 		}
 	}
 
-	private async runRepairSweep() {
+	private async runRepairSweep(
+		repairLifecycleController: AbortController = this
+			._repairLifecycleController,
+	) {
 		try {
-			while (!this.closed) {
+			while (this.isRepairLifecycleActive(repairLifecycleController)) {
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					return;
+				}
 				const pendingModes = new Set(this._repairSweepPendingModes);
 				const pendingPeersByMode = cloneRepairPendingPeersByMode(
 					this._repairSweepPendingPeersByMode,
@@ -9077,9 +10294,11 @@ export class SharedLog<
 					peers.clear();
 				}
 				this._repairSweepJoinWarmupGenerationByTarget.clear();
-				const pendingJoinWarmupPeers =
-					pendingPeersByMode.get("join-warmup");
+				const pendingJoinWarmupPeers = pendingPeersByMode.get("join-warmup");
 				const pruneStaleJoinWarmupPeers = () => {
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return false;
+					}
 					for (const peer of [...(pendingJoinWarmupPeers ?? [])]) {
 						if (
 							this._joinWarmupGenerationByTarget.get(peer) !==
@@ -9160,6 +10379,9 @@ export class SharedLog<
 					await this.getFullReplicaRepairCandidates(pendingRepairPeers, {
 						includeSubscribers: false,
 					});
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					return;
+				}
 				pruneStaleJoinWarmupPeers();
 				const fullReplicaRepairCandidateCount = Math.max(
 					1,
@@ -9173,6 +10395,9 @@ export class SharedLog<
 					["churn", new Map()],
 				]);
 				const flushTarget = (mode: RepairDispatchMode, target: string) => {
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
 					const targets = pendingByMode.get(mode);
 					const entries = targets?.get(target);
 					if (!entries || entries.size === 0) {
@@ -9190,15 +10415,20 @@ export class SharedLog<
 						}
 						return;
 					}
-					this.dispatchMaybeMissingEntries(target, entries, {
-						bypassRecentDedupe: true,
-						bypassKnownPeerHints:
-							mode === "churn" ||
-							this._repairFrontierBypassKnownPeersByMode
-								.get(mode)
-								?.has(target) === true,
-						mode,
-					});
+					this.dispatchMaybeMissingEntries(
+						target,
+						entries,
+						{
+							bypassRecentDedupe: true,
+							bypassKnownPeerHints:
+								mode === "churn" ||
+								this._repairFrontierBypassKnownPeersByMode
+									.get(mode)
+									?.has(target) === true,
+							mode,
+						},
+						repairLifecycleController,
+					);
 					targets?.delete(target);
 				};
 				const queueEntryForTarget = (
@@ -9206,6 +10436,9 @@ export class SharedLog<
 					target: string,
 					entry: RepairDispatchEntry<any>,
 				) => {
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
 					if (
 						mode === "join-warmup" &&
 						this._joinWarmupGenerationByTarget.get(target) !==
@@ -9248,15 +10481,21 @@ export class SharedLog<
 					!this.hasCustomFindLeaders()
 				) {
 					const repairDispatchPlan = pruneStaleJoinWarmupPeers()
-						? await this.planResidentRepairDispatchBatch({
-							pendingModes,
-							pendingPeersByMode,
-							optimisticGidPeersByMode,
-							fullReplicaRepairCandidates,
-							fullReplicaRepairCandidateCount,
-							selfHash: this.node.identity.publicKey.hashcode(),
-							})
+						? await this.planResidentRepairDispatchBatch(
+								{
+									pendingModes,
+									pendingPeersByMode,
+									optimisticGidPeersByMode,
+									fullReplicaRepairCandidates,
+									fullReplicaRepairCandidateCount,
+									selfHash: this.node.identity.publicKey.hashcode(),
+								},
+								repairLifecycleController,
+							)
 						: new Map();
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
 					pruneStaleJoinWarmupPeers();
 					for (const [mode, targets] of repairDispatchPlan) {
 						for (const [target, hashes] of targets) {
@@ -9272,13 +10511,16 @@ export class SharedLog<
 					const iterator = this.entryCoordinatesIndex.iterate({});
 					try {
 						while (
-							!this.closed &&
+							this.isRepairLifecycleActive(repairLifecycleController) &&
 							!iterator.done() &&
 							pruneStaleJoinWarmupPeers()
 						) {
 							const entries = await iterator.next(
 								REPAIR_SWEEP_ENTRY_BATCH_SIZE,
 							);
+							if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+								return;
+							}
 							if (!pruneStaleJoinWarmupPeers()) {
 								break;
 							}
@@ -9286,16 +10528,22 @@ export class SharedLog<
 							const requestedReplicasBatch = entryReplicatedBatch.map((entry) =>
 								decodeReplicas(entry).getValue(this),
 							);
-							const repairDispatchPlan = await this.planRepairDispatchBatch({
-								entries: entryReplicatedBatch,
-								requestedReplicasBatch,
-								pendingModes,
-								pendingPeersByMode,
-								optimisticGidPeersByMode,
-								fullReplicaRepairCandidates,
-								fullReplicaRepairCandidateCount,
-								selfHash: this.node.identity.publicKey.hashcode(),
-							});
+							const repairDispatchPlan = await this.planRepairDispatchBatch(
+								{
+									entries: entryReplicatedBatch,
+									requestedReplicasBatch,
+									pendingModes,
+									pendingPeersByMode,
+									optimisticGidPeersByMode,
+									fullReplicaRepairCandidates,
+									fullReplicaRepairCandidateCount,
+									selfHash: this.node.identity.publicKey.hashcode(),
+								},
+								repairLifecycleController,
+							);
+							if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+								return;
+							}
 							if (!pruneStaleJoinWarmupPeers()) {
 								break;
 							}
@@ -9318,6 +10566,9 @@ export class SharedLog<
 					}
 				}
 
+				if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+					return;
+				}
 				for (const [
 					,
 					optimisticGidPeersConsumed,
@@ -9359,6 +10610,9 @@ export class SharedLog<
 				}
 
 				for (const mode of pendingModes) {
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
 					if (mode !== "join-authoritative" && mode !== "churn") {
 						continue;
 					}
@@ -9383,32 +10637,56 @@ export class SharedLog<
 				}
 
 				for (const [mode, targets] of pendingByMode) {
+					if (!this.isRepairLifecycleActive(repairLifecycleController)) {
+						return;
+					}
 					for (const target of [...targets.keys()]) {
 						flushTarget(mode, target);
 					}
 				}
 			}
 		} catch (error: any) {
-			if (!isNotStartedError(error)) {
+			if (
+				this.isRepairLifecycleActive(repairLifecycleController) &&
+				!isNotStartedError(error)
+			) {
 				logger.error(`Repair sweep failed: ${error?.message ?? error}`);
 			}
 		} finally {
+			if (repairLifecycleController !== this._repairLifecycleController) {
+				return;
+			}
 			this._repairSweepRunning = false;
-			if (!this.closed && this._repairSweepPendingModes.size > 0) {
+			if (
+				this.isRepairLifecycleActive(repairLifecycleController) &&
+				this._repairSweepPendingModes.size > 0
+			) {
 				this._repairSweepRunning = true;
-				void this.runRepairSweep();
+				void this.runRepairSweep(repairLifecycleController);
 			}
 		}
 	}
 
-	private async pruneDebouncedFnAddIfNotKeeping(args: {
-		key: string;
-		value: {
-			entry: CheckedPruneEntry<T, R>;
-			leaders: CheckedPruneLeaderMap;
-		};
-	}): Promise<boolean> {
+	private async pruneDebouncedFnAddIfNotKeeping(
+		args: {
+			key: string;
+			value: {
+				entry: CheckedPruneEntry<T, R>;
+				leaders: CheckedPruneLeaderMap;
+			};
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<boolean> {
 		if (this.closed || !this.pruneDebouncedFn) {
+			return false;
+		}
+		const checkedPruneCoordinator = this._checkedPrune;
+		const pruneDebouncedFn = this.pruneDebouncedFn;
+		const isCurrent = () =>
+			this.isRepairLifecycleActive(ownershipLifecycleController) &&
+			this._checkedPrune === checkedPruneCoordinator &&
+			this.pruneDebouncedFn === pruneDebouncedFn;
+		if (!isCurrent()) {
 			return false;
 		}
 		if (this.keep) {
@@ -9416,13 +10694,20 @@ export class SharedLog<
 			if (isPromiseLike(keepResult) ? await keepResult : keepResult) {
 				return false;
 			}
+			if (!isCurrent()) {
+				return false;
+			}
 		}
-		this._checkedPrune.trackCandidate(
+		checkedPruneCoordinator.trackCandidate(
 			args.key,
 			args.value.entry,
 			args.value.leaders,
 		);
-		void this.pruneDebouncedFn.add(args);
+		void pruneDebouncedFn.add(args).catch((error) => {
+			if (isCurrent() && !isNotStartedError(error as Error)) {
+				logger.error(error);
+			}
+		});
 		return true;
 	}
 
@@ -9447,48 +10732,92 @@ export class SharedLog<
 		entry: CheckedPruneEntry<T, R>;
 		leaders: CheckedPruneLeaderMap;
 		selfReplicating?: boolean;
+		requireFreshLeaderDecision?: boolean;
+		ownershipLifecycleController?: AbortController;
+		checkedPruneCoordinator?: CheckedPruneCoordinator<T, R>;
 	}): Promise<{
 		leaders: CheckedPruneLeaderMap;
 		localLeader: boolean;
 	}> {
+		const checkedPruneCoordinator =
+			args.checkedPruneCoordinator ?? this._checkedPrune;
+		const throwIfInactive = () => {
+			if (args.ownershipLifecycleController) {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					args.ownershipLifecycleController,
+				);
+				if (this._checkedPrune !== checkedPruneCoordinator) {
+					throw new TerminalOperationNotStartedError(
+						"Checked prune lifecycle is no longer active",
+					);
+				}
+				return;
+			}
+			this.throwIfReplicationOwnershipPoisoned();
+		};
+		throwIfInactive();
 		const selfHash = this.node.identity.publicKey.hashcode();
 		if (args.leaders.has(selfHash)) {
 			if (args.selfReplicating === false) {
 				return { leaders: args.leaders, localLeader: false };
 			}
-			if (args.selfReplicating == null && !(await this.isReplicating())) {
-				return { leaders: args.leaders, localLeader: false };
+			if (args.selfReplicating == null) {
+				throwIfInactive();
+				const selfReplicating = await this.isReplicating();
+				throwIfInactive();
+				if (!selfReplicating) {
+					return { leaders: args.leaders, localLeader: false };
+				}
 			}
+			throwIfInactive();
 			return { leaders: args.leaders, localLeader: true };
 		}
 
-		if (!this.hasActiveCheckedPruneWork(args.hash)) {
+		throwIfInactive();
+		if (!checkedPruneCoordinator.hasActiveWork(args.hash)) {
 			return { leaders: args.leaders, localLeader: false };
 		}
 
 		if (args.selfReplicating === false) {
 			return { leaders: args.leaders, localLeader: false };
 		}
-		if (args.selfReplicating == null && !(await this.isReplicating())) {
-			return { leaders: args.leaders, localLeader: false };
+		if (args.selfReplicating == null) {
+			throwIfInactive();
+			const selfReplicating = await this.isReplicating();
+			throwIfInactive();
+			if (!selfReplicating) {
+				return { leaders: args.leaders, localLeader: false };
+			}
 		}
 
 		try {
+			throwIfInactive();
 			const currentLeaders = await this.findLeadersFromEntry(
 				args.entry,
 				decodeReplicas(args.entry).getValue(this),
 			);
+			throwIfInactive();
 			if (currentLeaders.size > 0) {
 				return {
 					leaders: currentLeaders,
 					localLeader: currentLeaders.has(selfHash),
 				};
 			}
-		} catch {
+			if (args.requireFreshLeaderDecision) {
+				throw new Error(
+					"Could not establish current leaders at the checked-prune delete boundary",
+				);
+			}
+		} catch (error) {
+			throwIfInactive();
+			if (args.requireFreshLeaderDecision) {
+				throw error;
+			}
 			// Best-effort only. If the fresh check fails, keep the original prune
 			// decision instead of hiding a legitimately prunable entry.
 		}
 
+		throwIfInactive();
 		return { leaders: args.leaders, localLeader: false };
 	}
 
@@ -9502,8 +10831,12 @@ export class SharedLog<
 			>;
 			profile?: SyncProfileFn;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	) {
-		if (entries.length === 0 || this.closed) {
+		if (
+			entries.length === 0 ||
+			!this.isRepairLifecycleActive(ownershipLifecycleController)
+		) {
 			return;
 		}
 		const selfHash = this.node.identity.publicKey.hashcode();
@@ -9552,9 +10885,15 @@ export class SharedLog<
 			nativeBackboneLeaderMaps?.planLeaderSamplesForGidsBatch
 		) {
 			const firstOptions = leaderItems[0]?.options;
-			const context = await this.createLeaderSelectionContext({
-				roleAge: firstOptions?.roleAge,
-			});
+			const context = await this.createLeaderSelectionContext(
+				{
+					roleAge: firstOptions?.roleAge,
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			nativeLeaderMaps = nativeBackboneLeaderMaps.planLeaderSamplesForGidsBatch(
 				leaderItems.map((item) => ({
 					gid: this.getEntryGid(item.entry),
@@ -9574,7 +10913,13 @@ export class SharedLog<
 				};
 			}
 		} else if (leaderItems.length > 0) {
-			const missingPlans = await this.planEntryLeaderBatch(leaderItems);
+			const missingPlans = await this.planEntryLeaderBatch(
+				leaderItems,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			for (let i = 0; i < missingPlans.length; i++) {
 				plans[leaderItemIndexes[i]!] = missingPlans[i];
 			}
@@ -9592,7 +10937,7 @@ export class SharedLog<
 		let enqueuedPrune = 0;
 		let cancelledLocalLeader = 0;
 		for (let i = 0; i < entries.length; i++) {
-			if (this.closed) {
+			if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
 				continue;
 			}
 			const entry = entries[i]!;
@@ -9600,6 +10945,9 @@ export class SharedLog<
 
 			if (leaders.has(selfHash)) {
 				await this.cancelCheckedPruneForLocalLeader(entry.hash);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				cancelledLocalLeader++;
 				continue;
 			}
@@ -9612,10 +10960,16 @@ export class SharedLog<
 				continue;
 			}
 
-			await this.pruneDebouncedFnAddIfNotKeeping({
-				key: entry.hash,
-				value: { entry, leaders },
-			});
+			await this.pruneDebouncedFnAddIfNotKeeping(
+				{
+					key: entry.hash,
+					value: { entry, leaders },
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			enqueuedPrune++;
 			this.responseToPruneDebouncedFn.delete(entry.hash);
 		}
@@ -9629,18 +10983,30 @@ export class SharedLog<
 		});
 	}
 
-	private async pruneIndexedEntriesNoLongerLed(options?: {
-		useDefaultRoleAge?: boolean;
-	}) {
+	private async pruneIndexedEntriesNoLongerLed(
+		options?: {
+			useDefaultRoleAge?: boolean;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const iterator = this.entryCoordinatesIndex.iterate({});
 		let enqueuedPrune = false;
 		try {
-			while (!this.closed && !iterator.done()) {
+			while (
+				this.isRepairLifecycleActive(ownershipLifecycleController) &&
+				!iterator.done()
+			) {
 				const entries = await iterator.next(REPAIR_SWEEP_ENTRY_BATCH_SIZE);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				for (const entry of entries) {
 					const entryReplicated = entry.value;
-					if (this.closed) {
+					if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
 						continue;
 					}
 
@@ -9648,10 +11014,17 @@ export class SharedLog<
 						entryReplicated.coordinates,
 						entryReplicated,
 						options?.useDefaultRoleAge ? undefined : { roleAge: 0 },
+						ownershipLifecycleController,
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
 					);
 
 					if (leaders.has(selfHash)) {
 						await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
+						this.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
 						continue;
 					}
 
@@ -9664,33 +11037,57 @@ export class SharedLog<
 					}
 
 					enqueuedPrune =
-						(await this.pruneDebouncedFnAddIfNotKeeping({
-							key: entryReplicated.hash,
-							value: { entry: entryReplicated, leaders },
-						})) || enqueuedPrune;
+						(await this.pruneDebouncedFnAddIfNotKeeping(
+							{
+								key: entryReplicated.hash,
+								value: { entry: entryReplicated, leaders },
+							},
+							ownershipLifecycleController,
+						)) || enqueuedPrune;
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 					this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
 				}
 			}
 		} finally {
 			await iterator.close();
 		}
-		if (enqueuedPrune && !this.closed) {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		if (enqueuedPrune) {
 			await this.pruneDebouncedFn.flush();
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 	}
 
-	private async pruneCurrentHeadsNoLongerLed(options?: {
-		useDefaultRoleAge?: boolean;
-	}) {
+	private async pruneCurrentHeadsNoLongerLed(
+		options?: {
+			useDefaultRoleAge?: boolean;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const nativeHeads = this.log.entryIndex.getHeadsForAppend();
 		const heads: ShallowOrFullEntry<T>[] = nativeHeads
-			? await this.pruneHeadEntriesFromNativeHeadFacts(nativeHeads)
+			? await this.pruneHeadEntriesFromNativeHeadFacts(
+					nativeHeads,
+					ownershipLifecycleController,
+				)
 			: await this.log.getHeads(true).all();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		let enqueuedPrune = false;
 
 		for (const head of heads) {
-			if (this.closed) {
+			if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
 				break;
 			}
 
@@ -9698,10 +11095,17 @@ export class SharedLog<
 				head,
 				maxReplicas(this, [head]),
 				options?.useDefaultRoleAge ? undefined : { roleAge: 0 },
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 
 			if (leaders.has(selfHash)) {
 				await this.cancelCheckedPruneForLocalLeader(head.hash);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				continue;
 			}
 
@@ -9714,15 +11118,24 @@ export class SharedLog<
 			}
 
 			enqueuedPrune =
-				(await this.pruneDebouncedFnAddIfNotKeeping({
-					key: head.hash,
-					value: { entry: head, leaders },
-				})) || enqueuedPrune;
+				(await this.pruneDebouncedFnAddIfNotKeeping(
+					{
+						key: head.hash,
+						value: { entry: head, leaders },
+					},
+					ownershipLifecycleController,
+				)) || enqueuedPrune;
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			this.responseToPruneDebouncedFn.delete(head.hash);
 		}
 
-		if (enqueuedPrune && !this.closed) {
+		if (enqueuedPrune) {
 			await this.pruneDebouncedFn.flush();
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 	}
 
@@ -9731,7 +11144,11 @@ export class SharedLog<
 			hash: string;
 			meta: { gid: string; clock: { timestamp: Timestamp } };
 		}>,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<ShallowEntry[]> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (heads.length === 0) {
 			return [];
 		}
@@ -9741,6 +11158,9 @@ export class SharedLog<
 				shape: { hash: true, meta: { data: true } },
 			})
 			.all()) as Array<{ hash: string; meta: { data?: Uint8Array } }>;
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const dataByHash = new Map(
 			headDataRows
 				.filter((entry) => entry.meta.data)
@@ -9793,16 +11213,23 @@ export class SharedLog<
 		this._checkedPrune.clearRetry(hash);
 	}
 
-	private scheduleCheckedPruneRetry(args: {
-		entry: CheckedPruneEntry<T, R>;
-		leaders: CheckedPruneLeaderMap | Set<string>;
-	}) {
-		if (this.closed) return;
-		if (this._checkedPrune.hasPendingDelete(args.entry.hash)) return;
+	private scheduleCheckedPruneRetry(
+		args: {
+			entry: CheckedPruneEntry<T, R>;
+			leaders: CheckedPruneLeaderMap | Set<string>;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		const checkedPruneCoordinator = this._checkedPrune;
+		const isCurrent = () =>
+			this.isRepairLifecycleActive(ownershipLifecycleController) &&
+			this._checkedPrune === checkedPruneCoordinator;
+		if (!isCurrent()) return;
+		if (checkedPruneCoordinator.hasPendingDelete(args.entry.hash)) return;
 
 		const hash = args.entry.hash;
 		const state =
-			this._checkedPrune.getRetry(hash) ??
+			checkedPruneCoordinator.getRetry(hash) ??
 			({
 				attempts: 0,
 				entry: args.entry,
@@ -9826,41 +11253,55 @@ export class SharedLog<
 		);
 
 		state.attempts = attempt;
-		state.timer = setTimeout(async () => {
-			const st = this._checkedPrune.getRetry(hash);
-			if (st) st.timer = undefined;
-			if (this.closed) return;
-			if (this._checkedPrune.hasPendingDelete(hash)) return;
-			const retryEntry = st?.entry ?? args.entry;
-			const retryLeaders = st?.leaders ?? args.leaders;
+		state.timer = setTimeout(() => {
+			const run = async () => {
+				const st = checkedPruneCoordinator.getRetry(hash);
+				if (st) st.timer = undefined;
+				if (!isCurrent()) return;
+				if (checkedPruneCoordinator.hasPendingDelete(hash)) return;
+				const retryEntry = st?.entry ?? args.entry;
+				const retryLeaders = st?.leaders ?? args.leaders;
 
-			let leadersMap: CheckedPruneLeaderMap | undefined;
-			try {
-				const replicas = decodeReplicas(retryEntry).getValue(this);
-				leadersMap = await this.findLeadersFromEntry(retryEntry, replicas, {
-					roleAge: 0,
-				});
-			} catch {
-				// Best-effort only.
-			}
+				let leadersMap: CheckedPruneLeaderMap | undefined;
+				try {
+					const replicas = decodeReplicas(retryEntry).getValue(this);
+					leadersMap = await this.findLeadersFromEntry(
+						retryEntry,
+						replicas,
+						{ roleAge: 0 },
+						ownershipLifecycleController,
+					);
+				} catch {
+					if (!isCurrent()) {
+						return;
+					}
+					// A current-generation planning failure is best-effort; fall back
+					// to the last confirmed leader set below.
+				}
+				if (!isCurrent()) return;
 
-			if (!leadersMap || leadersMap.size === 0) {
-				leadersMap = this.checkedPruneLeadersToMap(retryLeaders);
-			}
+				if (!leadersMap || leadersMap.size === 0) {
+					leadersMap = this.checkedPruneLeadersToMap(retryLeaders);
+				}
 
-			try {
 				const leadersForRetry =
 					leadersMap ?? new Map<string, { intersecting: boolean }>();
-				await this.pruneDebouncedFnAddIfNotKeeping({
-					key: hash,
-					value: { entry: retryEntry, leaders: leadersForRetry },
-				});
-			} catch {
-				// Best-effort only; pruning will be re-attempted on future changes.
-			}
+				await this.pruneDebouncedFnAddIfNotKeeping(
+					{
+						key: hash,
+						value: { entry: retryEntry, leaders: leadersForRetry },
+					},
+					ownershipLifecycleController,
+				);
+			};
+			void run().catch((error) => {
+				if (isCurrent() && !isNotStartedError(error as Error)) {
+					logger.error(error);
+				}
+			});
 		}, delayMs);
 		state.timer.unref?.();
-		this._checkedPrune.setRetry(hash, state);
+		checkedPruneCoordinator.setRetry(hash, state);
 	}
 
 	private async recoverCheckedPruneFromLateResponses(
@@ -9950,16 +11391,27 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (this._isAdaptiveReplicating) {
 			this.markLocalAppendActivity();
 		}
 
-		const { appendOptions, minReplicasValue } =
-			this.createLogAppendOptions(options);
+		const { appendOptions, minReplicasValue } = this.createLogAppendOptions(
+			options,
+			ownershipLifecycleController,
+		);
 		const result = await this.log.append(data, appendOptions);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		await this.processLocalAppend(result.entry, result.removed, options, {
 			minReplicasValue,
+			ownershipLifecycleController,
 		});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return result;
 	}
 
@@ -9972,6 +11424,8 @@ export class SharedLog<
 		removed: ShallowOrFullEntry<T>[];
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyValidated does not accept canAppend or onChange hooks",
@@ -9981,14 +11435,24 @@ export class SharedLog<
 			this.markLocalAppendActivity();
 		}
 
-		const { appendOptions, minReplicasValue } =
-			this.createLogAppendOptions(options);
+		const { appendOptions, minReplicasValue } = this.createLogAppendOptions(
+			options,
+			ownershipLifecycleController,
+		);
 		appendOptions.__peerbitCanAppendAlreadyValidated = true;
-		appendOptions.onChange = (change) => this.onChange(change);
+		appendOptions.onChange = (change) =>
+			this.onChange(change, ownershipLifecycleController);
 		const result = await this.log.append(data, appendOptions);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		await this.processLocalAppend(result.entry, result.removed, options, {
 			minReplicasValue,
+			ownershipLifecycleController,
 		});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return result;
 	}
 
@@ -10007,6 +11471,8 @@ export class SharedLog<
 		appendCommit: PreparedLocalAppendCommit<R>;
 	}> {
 		this.throwIfNativeDurableCommitFailed();
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyPrepared does not accept canAppend or onChange hooks",
@@ -10028,10 +11494,17 @@ export class SharedLog<
 				payloadData: properties?.payloadData,
 			},
 		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePreparedCommit =
 			await this.processNativePreparedTargetNoneAppend(result, options, {
 				minReplicasValue,
+				ownershipLifecycleController,
 			});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (nativePreparedCommit) {
 			return {
 				entry: result.entry,
@@ -10043,21 +11516,39 @@ export class SharedLog<
 		let deferredCoordinateDeleteHashes: string[] | undefined;
 		if (this.canCoalescePreparedAppendCoordinateDeletes(result, options)) {
 			deferredCoordinateDeleteHashes =
-				this.applyChangeWithDeferredCoordinateDeletes(result.change);
+				this.applyChangeWithDeferredCoordinateDeletes(result.change, {
+					ownershipLifecycleController,
+				});
 			nativeAppendPlan = await this.planNativeLocalAppendFacts(
 				result.appendFacts,
 				minReplicasValue,
+				undefined,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 			if (!nativeAppendPlan) {
 				if (deferredCoordinateDeleteHashes) {
-					await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+					await this.deleteCoordinatesForHashes(
+						deferredCoordinateDeleteHashes,
+						ownershipLifecycleController,
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 				}
 				deferredCoordinateDeleteHashes = undefined;
 			}
 		} else {
-			const changeResult = this.applyChange(result.change);
+			const changeResult = this.applyChange(result.change, {
+				ownershipLifecycleController,
+			});
 			if (isPromiseLike(changeResult)) {
 				await changeResult;
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			}
 		}
 		try {
@@ -10067,13 +11558,20 @@ export class SharedLog<
 					appendFacts: result.appendFacts,
 					nativeAppendPlan,
 					extraCoordinateDeleteHashes: deferredCoordinateDeleteHashes,
+					ownershipLifecycleController,
 				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				await this.deleteCoordinatesForHashes(
+					deferredCoordinateDeleteHashes,
+					ownershipLifecycleController,
+				);
 			}
 			throw error;
 		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return {
 			entry: result.entry,
 			removed: result.removed,
@@ -10093,8 +11591,17 @@ export class SharedLog<
 			appendFacts: PreparedAppendFacts;
 		},
 		options: SharedAppendOptions<T> | undefined,
-		properties: { minReplicasValue: number },
+		properties: {
+			minReplicasValue: number;
+			ownershipLifecycleController?: AbortController;
+		},
 	): Promise<PreparedLocalAppendCommit<R> | undefined> {
+		const ownershipLifecycleController =
+			properties.ownershipLifecycleController ??
+			this.captureReplicationOwnershipLifecycle();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (
 			options?.target !== "none" ||
 			options?.replicate === true ||
@@ -10117,6 +11624,10 @@ export class SharedLog<
 						? plannedCoordinateDeleteHashes
 						: undefined,
 			},
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
 		);
 		if (!nativeAppendPlan) {
 			return undefined;
@@ -10128,6 +11639,7 @@ export class SharedLog<
 				? this.applyChangeWithDeferredCoordinateDeletes(result.change, {
 						forgetNativeCoordinates:
 							!nativeAppendPlan.committedNativeCoordinateDeletes,
+						ownershipLifecycleController,
 					})
 				: this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 						result.appendFacts,
@@ -10136,22 +11648,33 @@ export class SharedLog<
 						{
 							forgetNativeCoordinates:
 								!nativeAppendPlan.committedNativeCoordinateDeletes,
+							ownershipLifecycleController,
 						},
 					);
-			await this.persistPreparedCoordinate({
-				prepared: nativeAppendPlan.preparedCoordinate,
-				hash: result.appendFacts.hash,
-				nextHashes: result.appendFacts.next,
-				deleteHashes: deferredCoordinateDeleteHashes,
-				coordinates: nativeAppendPlan.coordinates,
-				replicas: nativeAppendPlan.coordinates.length,
-				commitNative: nativeAppendPlan.committedNativeCoordinateState !== true,
-				commitNativeBackbone:
-					nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-			});
+			await this.persistPreparedCoordinate(
+				{
+					prepared: nativeAppendPlan.preparedCoordinate,
+					hash: result.appendFacts.hash,
+					nextHashes: result.appendFacts.next,
+					deleteHashes: deferredCoordinateDeleteHashes,
+					coordinates: nativeAppendPlan.coordinates,
+					replicas: nativeAppendPlan.coordinates.length,
+					commitNative:
+						nativeAppendPlan.committedNativeCoordinateState !== true,
+					commitNativeBackbone:
+						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				await this.deleteCoordinatesForHashes(
+					deferredCoordinateDeleteHashes,
+					ownershipLifecycleController,
+				);
 			}
 			throw error;
 		}
@@ -10165,18 +11688,32 @@ export class SharedLog<
 					nativeAppendPlan.preparedCoordinate,
 				);
 				leaders = (
-					await this.planEntryLeaders(pruneEntry, properties.minReplicasValue, {
-						persist: false,
-					})
+					await this.planEntryLeaders(
+						pruneEntry,
+						properties.minReplicasValue,
+						{
+							persist: false,
+						},
+						ownershipLifecycleController,
+					)
 				).leaders;
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			}
 			pruneEntry ??= this.materializePreparedCoordinateEntry(
 				nativeAppendPlan.preparedCoordinate,
 			);
-			this.pruneDebouncedFnAddIfNotKeeping({
-				key: pruneEntry.hash,
-				value: { entry: pruneEntry, leaders },
-			});
+			await this.pruneDebouncedFnAddIfNotKeeping(
+				{
+					key: pruneEntry.hash,
+					value: { entry: pruneEntry, leaders },
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
@@ -10220,6 +11757,8 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (this._isAdaptiveReplicating) {
 			this.markLocalAppendActivity();
 		}
@@ -10237,9 +11776,13 @@ export class SharedLog<
 				properties,
 				minReplicasValue,
 				deferHeadCoordinatePersistence,
+				ownershipLifecycleController,
 			);
 		if (nativeBackboneResult) {
 			return mapMaybePromise(nativeBackboneResult, (result) => {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				if (result) {
 					return result;
 				}
@@ -10250,6 +11793,7 @@ export class SharedLog<
 					properties,
 					minReplicasValue,
 					deferHeadCoordinatePersistence,
+					ownershipLifecycleController,
 				);
 			});
 		}
@@ -10260,6 +11804,7 @@ export class SharedLog<
 			properties,
 			minReplicasValue,
 			deferHeadCoordinatePersistence,
+			ownershipLifecycleController,
 		);
 	}
 
@@ -10284,6 +11829,8 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (this._isAdaptiveReplicating) {
 			this.markLocalAppendActivity();
 		}
@@ -10298,8 +11845,14 @@ export class SharedLog<
 			properties,
 			minReplicasValue,
 			this.shouldDeferHeadCoordinatePersistence(options),
+			ownershipLifecycleController,
 		);
-		return mapMaybePromise(result, (commitOnly) => commitOnly ?? undefined);
+		return mapMaybePromise(result, (commitOnly) => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return commitOnly ?? undefined;
+		});
 	}
 
 	private appendLocallyPreparedPayloadCommitOnlyFallback(
@@ -10309,7 +11862,11 @@ export class SharedLog<
 		properties: PreparedPayloadCommitOnlyProperties | undefined,
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
+		ownershipLifecycleController: AbortController,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const resultMaybe = asTrustedLowerLog(
 			this.log,
 		).appendLocallyPreparedCommitOnly(undefined as T, appendOptions, {
@@ -10319,13 +11876,17 @@ export class SharedLog<
 			includeMaterializationBytes: false,
 			includeAppendFactsBytes: !deferHeadCoordinatePersistence,
 		});
-		return mapMaybePromise(resultMaybe, (result) =>
-			this.finishPreparedPayloadCommitOnlyAppend(
+		return mapMaybePromise(resultMaybe, (result) => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return this.finishPreparedPayloadCommitOnlyAppend(
 				result,
 				options,
 				minReplicasValue,
-			),
-		);
+				ownershipLifecycleController,
+			);
+		});
 	}
 
 	private appendLocallyPreparedPayloadNativeBackboneCommitOnly(
@@ -10335,9 +11896,13 @@ export class SharedLog<
 		properties: PreparedPayloadCommitOnlyProperties | undefined,
 		minReplicasValue: number,
 		deferHeadCoordinatePersistence: boolean,
+		ownershipLifecycleController: AbortController,
 	):
 		| MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined>
 		| undefined {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (
 			!this._nativeBackbone ||
 			options?.target !== "none" ||
@@ -10352,6 +11917,7 @@ export class SharedLog<
 				properties,
 				minReplicasValue,
 				options?.replicate === false,
+				ownershipLifecycleController,
 			);
 		}
 		const hasDocumentIndexCommit =
@@ -10369,6 +11935,7 @@ export class SharedLog<
 				properties,
 				minReplicasValue,
 				true,
+				ownershipLifecycleController,
 			);
 		}
 		if (
@@ -10384,6 +11951,7 @@ export class SharedLog<
 				properties,
 				minReplicasValue,
 				true,
+				ownershipLifecycleController,
 			);
 		}
 		if (options?.replicate !== false) {
@@ -10889,7 +12457,11 @@ export class SharedLog<
 		properties: PreparedPayloadCommitOnlyProperties | undefined,
 		minReplicasValue: number,
 		runtimeOnlyCoordinates: boolean,
+		ownershipLifecycleController: AbortController,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const backbone = this._nativeBackbone;
 		if (!backbone || !this.canUseNativeBackboneResidentCoordinateState()) {
 			return undefined;
@@ -10900,224 +12472,379 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
-		return mapMaybePromise(this.createLeaderSelectionContext(), (context) => {
-			const nativeLeaderOptions = this.createNativeLeaderOptions(context);
-			let backboneAppend:
-				| ReturnType<
-						NativePeerbitBackbone["preparePlainStorageAppendTransaction"]
-				  >
-				| ReturnType<
-						NativePeerbitBackbone["preparePlainCommittedStorageAppendTransaction"]
-				  >
-				| ReturnType<
-						NativePeerbitBackbone["preparePlainCommittedNoNextStorageAppendTransaction"]
-				  >
-				| undefined;
-			// The write-through durable wrapper, when active, is captured here so a
-			// just-committed block can be mirrored to durable without disturbing the
-			// strict-native commit path. When the wrapper is active the log's block
-			// store is the wrapper (not the raw wasm map), so `localStore ===
-			// backbone.blocks` is false — but the store is still native-backed, so we
-			// must commit blocks in the backbone (the committed native prepare variant
-			// is the one that emits the document-signer journal record; the
-			// block-deferring variant does not, which would otherwise leave
-			// document-signers.wal unwritten and break same-signer facts after
-			// reopen). The block is then mirrored to durable out-of-band below.
-			const durableWrapperActive =
-				this.remoteBlocks?.localStore !== backbone.blocks;
-			const durableWrapper = durableWrapperActive
-				? (this.remoteBlocks?.localStore as unknown as {
-						beginNativeDeleteCleanup?: (cids: string[]) => number | undefined;
-						cancelNativeDeleteCleanup?: (cleanupToken: unknown) => void;
-						mirrorToDurable?: (
-							cid: string,
-							bytes: Uint8Array,
-							options?: { nativeTrimmed?: boolean },
-						) => Promise<unknown>;
-						rollbackFailedNativeCommits?: (
-							cids: string[],
-							restoreNativeCids?: string[],
-						) => Promise<void>;
-					})
-				: undefined;
-			const commitBlocksInBackbone =
-				this.remoteBlocks?.localStore === backbone.blocks ||
-				durableWrapperActive;
-			let nativeBackboneDocumentIndexCommitted = false;
-			let nativeBackboneDocumentDeleteCommitted = false;
-			let nativeDocumentRollback: NativeBackboneDocumentRollback | undefined;
-			let nativeCoordinateRollback:
-				| NativeBackboneCoordinateRollback<R>
-				| undefined;
-			let nativeDeleteCleanupToken: unknown;
-			let nativeStrictTransaction:
-				| NativeStrictDurableTransactionHandle
-				| undefined;
-			const prepareBackboneAppend = async (input: {
-				wallTime: bigint;
-				logical: number;
-				gid: string;
-				next?: string[];
-				type: number;
-				metaData?: Uint8Array;
-				payloadData: Uint8Array;
-				trimLengthTo?: number;
-			}) => {
-				const next = input.next ?? [];
-				const appendInput = {
-					wallTime: input.wallTime,
-					logical: input.logical,
-					gid: input.gid,
-					next,
-					type: input.type,
-					metaData: input.metaData,
-					payloadData: input.payloadData,
-					replicas: minReplicasValue,
-					roleAgeMs: nativeLeaderOptions.roleAge,
-					now: nativeLeaderOptions.now,
-					selfHash: nativeLeaderOptions.selfHash,
-					selfReplicating: nativeLeaderOptions.selfReplicating,
-					trimLengthTo: input.trimLengthTo,
-					resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-				};
-				const nativeBackboneDocumentIndex =
-					properties?.nativeBackboneDocumentIndex ??
-					properties?.prepareNativeBackboneDocumentIndex?.({
+		return mapMaybePromise(
+			this.createLeaderSelectionContext(
+				undefined,
+				ownershipLifecycleController,
+			),
+			(context) => {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				const nativeLeaderOptions = this.createNativeLeaderOptions(context);
+				let backboneAppend:
+					| ReturnType<
+							NativePeerbitBackbone["preparePlainStorageAppendTransaction"]
+					  >
+					| ReturnType<
+							NativePeerbitBackbone["preparePlainCommittedStorageAppendTransaction"]
+					  >
+					| ReturnType<
+							NativePeerbitBackbone["preparePlainCommittedNoNextStorageAppendTransaction"]
+					  >
+					| undefined;
+				// The write-through durable wrapper, when active, is captured here so a
+				// just-committed block can be mirrored to durable without disturbing the
+				// strict-native commit path. When the wrapper is active the log's block
+				// store is the wrapper (not the raw wasm map), so `localStore ===
+				// backbone.blocks` is false — but the store is still native-backed, so we
+				// must commit blocks in the backbone (the committed native prepare variant
+				// is the one that emits the document-signer journal record; the
+				// block-deferring variant does not, which would otherwise leave
+				// document-signers.wal unwritten and break same-signer facts after
+				// reopen). The block is then mirrored to durable out-of-band below.
+				const durableWrapperActive =
+					this.remoteBlocks?.localStore !== backbone.blocks;
+				const durableWrapper = durableWrapperActive
+					? (this.remoteBlocks?.localStore as unknown as {
+							beginNativeDeleteCleanup?: (cids: string[]) => number | undefined;
+							cancelNativeDeleteCleanup?: (cleanupToken: unknown) => void;
+							mirrorToDurable?: (
+								cid: string,
+								bytes: Uint8Array,
+								options?: { nativeTrimmed?: boolean },
+							) => Promise<unknown>;
+							rollbackFailedNativeCommits?: (
+								cids: string[],
+								restoreNativeCids?: string[],
+							) => Promise<void>;
+						})
+					: undefined;
+				const commitBlocksInBackbone =
+					this.remoteBlocks?.localStore === backbone.blocks ||
+					durableWrapperActive;
+				let nativeBackboneDocumentIndexCommitted = false;
+				let nativeBackboneDocumentDeleteCommitted = false;
+				let nativeDocumentRollback: NativeBackboneDocumentRollback | undefined;
+				let nativeCoordinateRollback:
+					| NativeBackboneCoordinateRollback<R>
+					| undefined;
+				let nativeDeleteCleanupToken: unknown;
+				let nativeStrictTransaction:
+					| NativeStrictDurableTransactionHandle
+					| undefined;
+				const prepareBackboneAppend = async (input: {
+					wallTime: bigint;
+					logical: number;
+					gid: string;
+					next?: string[];
+					type: number;
+					metaData?: Uint8Array;
+					payloadData: Uint8Array;
+					trimLengthTo?: number;
+				}) => {
+					const next = input.next ?? [];
+					const appendInput = {
 						wallTime: input.wallTime,
+						logical: input.logical,
 						gid: input.gid,
-						payloadSize: input.payloadData.byteLength,
-					});
-				const nativeBackboneDocumentIndexForAppend =
-					nativeBackboneDocumentIndex &&
-					input.trimLengthTo == null &&
-					nativeBackboneDocumentIndex.deleteTrimmedHeads === true
-						? {
-								...nativeBackboneDocumentIndex,
-								deleteTrimmedHeads: false,
-							}
-						: nativeBackboneDocumentIndex;
-				const nativeBackboneDocumentDeleteKey =
-					properties?.nativeBackboneDocumentDeleteKey;
-				if (
-					nativeBackboneDocumentDeleteKey &&
-					nativeBackboneDocumentIndexForAppend
-				) {
-					throw new Error(
-						"Native backbone append cannot both put and delete a document index row",
-					);
-				}
-				const appendInputWithDocumentIndex =
-					nativeBackboneDocumentIndexForAppend
-						? {
-								...appendInput,
-								documentIndex: {
-									...nativeBackboneDocumentIndexForAppend,
-									useLatestContext:
-										properties?.useNativeExistingDocumentContext === true,
-								},
-							}
-						: nativeBackboneDocumentDeleteKey
+						next,
+						type: input.type,
+						metaData: input.metaData,
+						payloadData: input.payloadData,
+						replicas: minReplicasValue,
+						roleAgeMs: nativeLeaderOptions.roleAge,
+						now: nativeLeaderOptions.now,
+						selfHash: nativeLeaderOptions.selfHash,
+						selfReplicating: nativeLeaderOptions.selfReplicating,
+						trimLengthTo: input.trimLengthTo,
+						resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+					};
+					const nativeBackboneDocumentIndex =
+						properties?.nativeBackboneDocumentIndex ??
+						properties?.prepareNativeBackboneDocumentIndex?.({
+							wallTime: input.wallTime,
+							gid: input.gid,
+							payloadSize: input.payloadData.byteLength,
+						});
+					const nativeBackboneDocumentIndexForAppend =
+						nativeBackboneDocumentIndex &&
+						input.trimLengthTo == null &&
+						nativeBackboneDocumentIndex.deleteTrimmedHeads === true
+							? {
+									...nativeBackboneDocumentIndex,
+									deleteTrimmedHeads: false,
+								}
+							: nativeBackboneDocumentIndex;
+					const nativeBackboneDocumentDeleteKey =
+						properties?.nativeBackboneDocumentDeleteKey;
+					if (
+						nativeBackboneDocumentDeleteKey &&
+						nativeBackboneDocumentIndexForAppend
+					) {
+						throw new Error(
+							"Native backbone append cannot both put and delete a document index row",
+						);
+					}
+					const appendInputWithDocumentIndex =
+						nativeBackboneDocumentIndexForAppend
 							? {
 									...appendInput,
-									documentDeleteKey: nativeBackboneDocumentDeleteKey,
-								}
-							: appendInput;
-				nativeDocumentRollback = this.snapshotNativeBackboneDocument(
-					nativeBackboneDocumentIndexForAppend ??
-						(nativeBackboneDocumentDeleteKey
-							? { key: nativeBackboneDocumentDeleteKey }
-							: undefined),
-				);
-				nativeStrictTransaction =
-					await this.beginNativeStrictDurableTransaction(
-						nativeDocumentRollback ? [nativeDocumentRollback] : [],
-					);
-				if (next.length === 0) {
-					if (commitBlocksInBackbone) {
-						if (
-							nativeBackboneDocumentIndex &&
-							properties?.useNativeExistingDocumentContext === true
-						) {
-							backboneAppend =
-								backbone.preparePlainCommittedStorageAppendTransaction(
-									appendInputWithDocumentIndex,
-								);
-						} else if (
-							nativeBackboneDocumentIndex &&
-							properties?.resolveTrimmedEntries === false
-						) {
-							backboneAppend =
-								backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
-									{
-										...appendInput,
-										documentIndex: nativeBackboneDocumentIndexForAppend,
+									documentIndex: {
+										...nativeBackboneDocumentIndexForAppend,
+										useLatestContext:
+											properties?.useNativeExistingDocumentContext === true,
 									},
-								);
+								}
+							: nativeBackboneDocumentDeleteKey
+								? {
+										...appendInput,
+										documentDeleteKey: nativeBackboneDocumentDeleteKey,
+									}
+								: appendInput;
+					nativeDocumentRollback = this.snapshotNativeBackboneDocument(
+						nativeBackboneDocumentIndexForAppend ??
+							(nativeBackboneDocumentDeleteKey
+								? { key: nativeBackboneDocumentDeleteKey }
+								: undefined),
+					);
+					nativeStrictTransaction =
+						await this.beginNativeStrictDurableTransaction(
+							nativeDocumentRollback ? [nativeDocumentRollback] : [],
+						);
+					this.throwIfReplicationOwnershipPoisoned();
+					if (next.length === 0) {
+						if (commitBlocksInBackbone) {
+							if (
+								nativeBackboneDocumentIndex &&
+								properties?.useNativeExistingDocumentContext === true
+							) {
+								backboneAppend =
+									backbone.preparePlainCommittedStorageAppendTransaction(
+										appendInputWithDocumentIndex,
+									);
+							} else if (
+								nativeBackboneDocumentIndex &&
+								properties?.resolveTrimmedEntries === false
+							) {
+								backboneAppend =
+									backbone.preparePlainCommittedNoNextStorageAppendDocumentIndexCompactTransaction(
+										{
+											...appendInput,
+											documentIndex: nativeBackboneDocumentIndexForAppend,
+										},
+									);
+							} else {
+								backboneAppend =
+									backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+										appendInputWithDocumentIndex,
+									);
+							}
 						} else {
 							backboneAppend =
-								backbone.preparePlainCommittedNoNextStorageAppendTransaction(
+								backbone.preparePlainNoNextStorageAppendTransaction(
 									appendInputWithDocumentIndex,
 								);
 						}
 					} else {
-						backboneAppend =
-							backbone.preparePlainNoNextStorageAppendTransaction(
-								appendInputWithDocumentIndex,
+						backboneAppend = commitBlocksInBackbone
+							? backbone.preparePlainCommittedStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								)
+							: backbone.preparePlainStorageAppendTransaction(
+									appendInputWithDocumentIndex,
+								);
+					}
+					if (nativeBackboneDocumentIndex) {
+						nativeBackboneDocumentIndexCommitted = true;
+					}
+					nativeBackboneDocumentDeleteCommitted =
+						!!nativeBackboneDocumentDeleteKey;
+					const useTrimmedHashesOnly =
+						properties?.resolveTrimmedEntries === false;
+					const nativeTrimmedHashes =
+						backboneAppend.trimmedHashes ??
+						backboneAppend.trimmed.map((entry) => entry.hash);
+					const committedHash =
+						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+					const committedNext = backboneAppend.entry.next ?? next;
+					nativeCoordinateRollback = this.snapshotResidentCoordinateEntries([
+						...(committedHash ? [committedHash] : []),
+						...committedNext,
+						...nativeTrimmedHashes,
+					]);
+					await this.setNativeStrictDurableTransactionOperation(
+						nativeStrictTransaction,
+						committedHash ? [committedHash] : [],
+						nativeTrimmedHashes,
+						nativeCoordinateRollback,
+						combineCoordinateDeleteHashes(committedNext, nativeTrimmedHashes),
+					);
+					const rollbackCommitted = async (
+						cause: unknown,
+						committedCids: string[],
+					): Promise<never> => {
+						durableWrapper?.cancelNativeDeleteCleanup?.(
+							nativeDeleteCleanupToken,
+						);
+						let compensated = false;
+						try {
+							await this.rollbackFailedNativeBackboneTransaction({
+								committedHashes: committedCids,
+								trimmedEntries: backboneAppend?.trimmed,
+								coordinateEntries: nativeCoordinateRollback,
+								documents: nativeDocumentRollback
+									? [nativeDocumentRollback]
+									: undefined,
+								durableWrapper,
+							});
+							compensated = true;
+						} catch {
+							// close/reopen completes recovery if durable compensation failed
+						}
+						if (compensated) {
+							await this.completeNativeStrictDurableTransaction(
+								nativeStrictTransaction,
+							);
+						} else {
+							this.releaseNativeStrictDurableTransaction(
+								nativeStrictTransaction,
+							);
+						}
+						return this.failNativeDurableCommit(cause, {
+							committedCids,
+							failedCids: committedCids,
+						});
+					};
+					if (
+						durableWrapper &&
+						commitBlocksInBackbone &&
+						nativeTrimmedHashes.length > 0 &&
+						!durableWrapper.beginNativeDeleteCleanup
+					) {
+						return rollbackCommitted(
+							new Error(
+								"Native durable block wrapper cannot preannounce trim cleanup",
+							),
+							committedHash ? [committedHash] : [],
+						);
+					}
+					nativeDeleteCleanupToken = commitBlocksInBackbone
+						? durableWrapper?.beginNativeDeleteCleanup?.(nativeTrimmedHashes)
+						: undefined;
+					const preparedResult = {
+						...backboneAppend.entry,
+						nativeIndexMutationLockOwner:
+							nativeStrictTransaction?.lowerHashMutationLockOwner,
+						gid: backboneAppend.coordinate.gid,
+						getBytes: commitBlocksInBackbone
+							? (hash: string) => backbone.blocks.get(hash)
+							: undefined,
+						trimmedEntries: useTrimmedHashesOnly
+							? undefined
+							: backboneAppend.trimmed,
+						trimmedEntryHashes: useTrimmedHashesOnly
+							? backboneAppend.trimmedHashes
+							: undefined,
+						nativeBlocksDeleted: commitBlocksInBackbone,
+						nativeDeleteCleanupToken,
+						documentPreviousContext: backboneAppend.documentPreviousContext,
+					};
+					if (durableWrapper?.mirrorToDurable) {
+						// The block was committed into the wasm map (commitBlocksInBackbone is
+						// true) but not into durable, because the log's finishBlocks path is
+						// left UNCHANGED for strict-native mode (getBytes only, no bytes, so
+						// no putKnown* through the wrapper). Returning the promise here prevents
+						// lower-log index/head/trim publication until the mirror settles.
+						if (!committedHash) {
+							durableWrapper.cancelNativeDeleteCleanup?.(
+								nativeDeleteCleanupToken,
+							);
+							return rollbackCommitted(
+								new Error("Native commit returned no entry CID to mirror"),
+								[],
+							);
+						}
+						const committedBytes =
+							backboneAppend.entry.bytes ?? backbone.blocks.get(committedHash);
+						if (!committedBytes) {
+							durableWrapper.cancelNativeDeleteCleanup?.(
+								nativeDeleteCleanupToken,
+							);
+							return rollbackCommitted(
+								new Error(
+									`Native committed block ${committedHash} is missing from the hot store`,
+								),
+								[committedHash],
+							);
+						}
+						return durableWrapper
+							.mirrorToDurable(committedHash, committedBytes, {
+								nativeTrimmed: nativeTrimmedHashes.includes(committedHash),
+							})
+							.then(
+								(nativeCommitOwnershipToken) => ({
+									...preparedResult,
+									nativeCommitOwnershipToken,
+								}),
+								(error) => {
+									durableWrapper.cancelNativeDeleteCleanup?.(
+										nativeDeleteCleanupToken,
+									);
+									return rollbackCommitted(error, [committedHash]);
+								},
 							);
 					}
-				} else {
-					backboneAppend = commitBlocksInBackbone
-						? backbone.preparePlainCommittedStorageAppendTransaction(
-								appendInputWithDocumentIndex,
-							)
-						: backbone.preparePlainStorageAppendTransaction(
-								appendInputWithDocumentIndex,
-							);
-				}
-				if (nativeBackboneDocumentIndex) {
-					nativeBackboneDocumentIndexCommitted = true;
-				}
-				nativeBackboneDocumentDeleteCommitted =
-					!!nativeBackboneDocumentDeleteKey;
-				const useTrimmedHashesOnly =
-					properties?.resolveTrimmedEntries === false;
-				const nativeTrimmedHashes =
-					backboneAppend.trimmedHashes ??
-					backboneAppend.trimmed.map((entry) => entry.hash);
-				const committedHash =
-					backboneAppend.entry.cid ?? backboneAppend.entry.hash;
-				const committedNext = backboneAppend.entry.next ?? next;
-				nativeCoordinateRollback = this.snapshotResidentCoordinateEntries([
-					...(committedHash ? [committedHash] : []),
-					...committedNext,
-					...nativeTrimmedHashes,
-				]);
-				await this.setNativeStrictDurableTransactionOperation(
-					nativeStrictTransaction,
-					committedHash ? [committedHash] : [],
-					nativeTrimmedHashes,
-					nativeCoordinateRollback,
-					combineCoordinateDeleteHashes(committedNext, nativeTrimmedHashes),
-				);
-				const rollbackCommitted = async (
-					cause: unknown,
-					committedCids: string[],
+					if (durableWrapper) {
+						durableWrapper.cancelNativeDeleteCleanup?.(
+							nativeDeleteCleanupToken,
+						);
+						return rollbackCommitted(
+							new Error("Native durable block wrapper has no mirror method"),
+							committedHash ? [committedHash] : [],
+						);
+					}
+					return preparedResult;
+				};
+				const hasKnownNoNext =
+					appendOptions.meta?.next != null &&
+					appendOptions.meta.next.length === 0;
+				const appendGenericNativeCommit = () =>
+					asTrustedLowerLog(this.log).appendLocallyPreparedNativeCommitOnly(
+						undefined as T,
+						appendOptions,
+						{
+							payloadData,
+							resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+							skipMissingNextJoin: properties?.skipMissingNextJoin,
+							retainMaterializationBytes: this._logProperties?.trim != null,
+							deferNativeTransactionAcknowledgement: true,
+						},
+						prepareBackboneAppend,
+					);
+				const rollbackLowerPublication = async (
+					error: unknown,
 				): Promise<never> => {
 					durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
-					let compensated = false;
-					try {
-						await this.rollbackFailedNativeBackboneTransaction({
-							committedHashes: committedCids,
-							trimmedEntries: backboneAppend?.trimmed,
-							coordinateEntries: nativeCoordinateRollback,
-							documents: nativeDocumentRollback
-								? [nativeDocumentRollback]
-								: undefined,
-							durableWrapper,
-						});
-						compensated = true;
-					} catch {
-						// close/reopen completes recovery if durable compensation failed
+					let compensated = !backboneAppend;
+					if (backboneAppend && !(error instanceof NativeDurableCommitError)) {
+						const committedHash =
+							backboneAppend.entry.cid ?? backboneAppend.entry.hash;
+						try {
+							await this.rollbackFailedNativeBackboneTransaction({
+								committedHashes: committedHash ? [committedHash] : [],
+								coordinateEntries: nativeCoordinateRollback,
+								documents: nativeDocumentRollback
+									? [nativeDocumentRollback]
+									: undefined,
+								skipBlockCompensation: true,
+								restoreGraphFromIndex: true,
+							});
+							compensated = true;
+						} catch {
+							// Lower-log compensation already handled durable/native blocks.
+							// Preserve the index publication error for this caller.
+						}
 					}
 					if (compensated) {
 						await this.completeNativeStrictDurableTransaction(
@@ -11126,384 +12853,246 @@ export class SharedLog<
 					} else {
 						this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
 					}
-					return this.failNativeDurableCommit(cause, {
-						committedCids,
-						failedCids: committedCids,
-					});
+					throw error;
 				};
-				if (
-					durableWrapper &&
-					commitBlocksInBackbone &&
-					nativeTrimmedHashes.length > 0 &&
-					!durableWrapper.beginNativeDeleteCleanup
-				) {
-					return rollbackCommitted(
-						new Error(
-							"Native durable block wrapper cannot preannounce trim cleanup",
-						),
-						committedHash ? [committedHash] : [],
-					);
-				}
-				nativeDeleteCleanupToken = commitBlocksInBackbone
-					? durableWrapper?.beginNativeDeleteCleanup?.(nativeTrimmedHashes)
-					: undefined;
-				const preparedResult = {
-					...backboneAppend.entry,
-					nativeIndexMutationLockOwner:
-						nativeStrictTransaction?.lowerHashMutationLockOwner,
-					gid: backboneAppend.coordinate.gid,
-					getBytes: commitBlocksInBackbone
-						? (hash: string) => backbone.blocks.get(hash)
-						: undefined,
-					trimmedEntries: useTrimmedHashesOnly
-						? undefined
-						: backboneAppend.trimmed,
-					trimmedEntryHashes: useTrimmedHashesOnly
-						? backboneAppend.trimmedHashes
-						: undefined,
-					nativeBlocksDeleted: commitBlocksInBackbone,
-					nativeDeleteCleanupToken,
-					documentPreviousContext: backboneAppend.documentPreviousContext,
-				};
-				if (durableWrapper?.mirrorToDurable) {
-					// The block was committed into the wasm map (commitBlocksInBackbone is
-					// true) but not into durable, because the log's finishBlocks path is
-					// left UNCHANGED for strict-native mode (getBytes only, no bytes, so
-					// no putKnown* through the wrapper). Returning the promise here prevents
-					// lower-log index/head/trim publication until the mirror settles.
-					if (!committedHash) {
-						durableWrapper.cancelNativeDeleteCleanup?.(
-							nativeDeleteCleanupToken,
-						);
-						return rollbackCommitted(
-							new Error("Native commit returned no entry CID to mirror"),
-							[],
-						);
-					}
-					const committedBytes =
-						backboneAppend.entry.bytes ?? backbone.blocks.get(committedHash);
-					if (!committedBytes) {
-						durableWrapper.cancelNativeDeleteCleanup?.(
-							nativeDeleteCleanupToken,
-						);
-						return rollbackCommitted(
-							new Error(
-								`Native committed block ${committedHash} is missing from the hot store`,
-							),
-							[committedHash],
-						);
-					}
-					return durableWrapper
-						.mirrorToDurable(committedHash, committedBytes, {
-							nativeTrimmed: nativeTrimmedHashes.includes(committedHash),
-						})
-						.then(
-							(nativeCommitOwnershipToken) => ({
-								...preparedResult,
-								nativeCommitOwnershipToken,
-							}),
-							(error) => {
-								durableWrapper.cancelNativeDeleteCleanup?.(
-									nativeDeleteCleanupToken,
-								);
-								return rollbackCommitted(error, [committedHash]);
-							},
-						);
-				}
-				if (durableWrapper) {
-					durableWrapper.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
-					return rollbackCommitted(
-						new Error("Native durable block wrapper has no mirror method"),
-						committedHash ? [committedHash] : [],
-					);
-				}
-				return preparedResult;
-			};
-			const hasKnownNoNext =
-				appendOptions.meta?.next != null &&
-				appendOptions.meta.next.length === 0;
-			const appendGenericNativeCommit = () =>
-				asTrustedLowerLog(this.log).appendLocallyPreparedNativeCommitOnly(
-					undefined as T,
-					appendOptions,
-					{
-						payloadData,
-						resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-						skipMissingNextJoin: properties?.skipMissingNextJoin,
-						retainMaterializationBytes: this._logProperties?.trim != null,
-						deferNativeTransactionAcknowledgement: true,
-					},
-					prepareBackboneAppend,
-				);
-			const rollbackLowerPublication = async (
-				error: unknown,
-			): Promise<never> => {
-				durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
-				let compensated = !backboneAppend;
-				if (backboneAppend && !(error instanceof NativeDurableCommitError)) {
-					const committedHash =
-						backboneAppend.entry.cid ?? backboneAppend.entry.hash;
-					try {
-						await this.rollbackFailedNativeBackboneTransaction({
-							committedHashes: committedHash ? [committedHash] : [],
-							coordinateEntries: nativeCoordinateRollback,
-							documents: nativeDocumentRollback
-								? [nativeDocumentRollback]
-								: undefined,
-							skipBlockCompensation: true,
-							restoreGraphFromIndex: true,
-						});
-						compensated = true;
-					} catch {
-						// Lower-log compensation already handled durable/native blocks.
-						// Preserve the index publication error for this caller.
-					}
-				}
-				if (compensated) {
-					await this.completeNativeStrictDurableTransaction(
-						nativeStrictTransaction,
-					);
-				} else {
-					this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
-				}
-				throw error;
-			};
-			let result: MaybePromise<
-				TrustedLowerLogCommitOnlyAppendResult<T> | undefined
-			>;
-			try {
-				const directNoNextResult = hasKnownNoNext
-					? asTrustedLowerLog(
-							this.log,
-						).appendLocallyPreparedNativeKnownNoNextCommitOnly(
-							undefined as T,
-							appendOptions,
-							{
-								payloadData,
-								resolveTrimmedEntries: properties?.resolveTrimmedEntries,
-								retainMaterializationBytes: this._logProperties?.trim != null,
-								deferNativeTransactionAcknowledgement: true,
-							},
-							prepareBackboneAppend,
-						)
-					: undefined;
-				result =
-					directNoNextResult === undefined
-						? appendGenericNativeCommit()
-						: directNoNextResult;
-				if (isPromiseLike(result)) {
-					result = result.catch(rollbackLowerPublication);
-				}
-			} catch (error) {
-				return rollbackLowerPublication(error);
-			}
-			return mapMaybePromise(result, async (prepared) => {
-				if (!prepared || !backboneAppend) {
-					await this.completeNativeStrictDurableTransaction(
-						nativeStrictTransaction,
-					);
-					return undefined;
-				}
-				const coordinateFields = this.createCoordinateFieldsFromNativePlanFacts(
-					{
-						appendFacts: prepared.appendFacts,
-						plan: backboneAppend.coordinate,
-					},
-				);
-				if (!coordinateFields) {
-					throw new Error(
-						"Native backbone append transaction returned mismatched coordinate facts",
-					);
-				}
-				let preparedCoordinate: PreparedCoordinatePersistence<R> | undefined;
-				const getPreparedCoordinate = (): PreparedCoordinatePersistence<R> =>
-					(preparedCoordinate ??= {
-						assignedToRangeBoundary: coordinateFields.assignedToRangeBoundary,
-						fields: coordinateFields,
-					});
-				const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
-					prepared.appendFacts.next,
-					prepared.removedHashes ?? prepared.removed.map((entry) => entry.hash),
-				);
-				const rollbackCoordinateEntries =
-					nativeCoordinateRollback ??
-					this.snapshotResidentCoordinateEntries([
-						prepared.appendFacts.hash,
-						...plannedCoordinateDeleteHashes,
-					]);
-				const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
-					const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
-						prepared.appendFacts,
-						{
-							hashNumber: backboneAppend!.coordinate
-								.hashNumber as NumberFromType<R>,
-							coordinateFields,
-						},
-					);
-					if (nativeBackboneDocumentIndexCommitted) {
-						appendCommit.nativeBackboneDocumentIndexCommitted = true;
-						appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
-							backboneAppend!.documentTrimmedHeadsProcessed;
-					}
-					if (nativeBackboneDocumentDeleteCommitted) {
-						appendCommit.nativeBackboneDocumentDeleteCommitted = true;
-						appendCommit.nativeBackboneDocumentIndexCommitted = true;
-					}
-					appendCommit.documentPreviousContext =
-						prepared.documentPreviousContext;
-					return {
-						get entry() {
-							return prepared.entry;
-						},
-						removed: prepared.removed,
-						removedHashes: prepared.removedHashes,
-						appendCommit,
-					};
-				};
-				const coordinateIndex = this.entryCoordinatesIndex as PutAndDeleteIndex<
-					EntryReplicated<R>
+				let result: MaybePromise<
+					TrustedLowerLogCommitOnlyAppendResult<T> | undefined
 				>;
-				const rollback = async (error: unknown): Promise<never> => {
-					const rollbackFailures: unknown[] = [];
-					try {
-						await this.markNativeStrictDurableTransactionRollback(
+				try {
+					const directNoNextResult = hasKnownNoNext
+						? asTrustedLowerLog(
+								this.log,
+							).appendLocallyPreparedNativeKnownNoNextCommitOnly(
+								undefined as T,
+								appendOptions,
+								{
+									payloadData,
+									resolveTrimmedEntries: properties?.resolveTrimmedEntries,
+									retainMaterializationBytes: this._logProperties?.trim != null,
+									deferNativeTransactionAcknowledgement: true,
+								},
+								prepareBackboneAppend,
+							)
+						: undefined;
+					result =
+						directNoNextResult === undefined
+							? appendGenericNativeCommit()
+							: directNoNextResult;
+					if (isPromiseLike(result)) {
+						result = result.catch(rollbackLowerPublication);
+					}
+				} catch (error) {
+					return rollbackLowerPublication(error);
+				}
+				return mapMaybePromise(result, async (prepared) => {
+					if (!prepared || !backboneAppend) {
+						await this.completeNativeStrictDurableTransaction(
 							nativeStrictTransaction,
 						);
-					} catch (rollbackError) {
-						const retentionFailures =
-							this.retainNativeStrictDurableTransactionAfterMarkerFailure(
-								nativeStrictTransaction,
-								prepared.nativeCommittedAppendFinalizer,
-								rollbackError,
-							);
-						throw new AggregateError(
-							[error, ...retentionFailures],
-							"Native rollback marker could not be persisted; recovery is required",
+						return undefined;
+					}
+					const coordinateFields =
+						this.createCoordinateFieldsFromNativePlanFacts({
+							appendFacts: prepared.appendFacts,
+							plan: backboneAppend.coordinate,
+						});
+					if (!coordinateFields) {
+						throw new Error(
+							"Native backbone append transaction returned mismatched coordinate facts",
 						);
 					}
-					try {
-						await prepared.nativeCommittedAppendFinalizer?.rollback();
-					} catch (rollbackError) {
-						rollbackFailures.push(rollbackError);
-					}
-					try {
-						await this.rollbackNativeBackboneCoordinateAppendDurably(
+					let preparedCoordinate: PreparedCoordinatePersistence<R> | undefined;
+					const getPreparedCoordinate = (): PreparedCoordinatePersistence<R> =>
+						(preparedCoordinate ??= {
+							assignedToRangeBoundary: coordinateFields.assignedToRangeBoundary,
+							fields: coordinateFields,
+						});
+					const plannedCoordinateDeleteHashes = combineCoordinateDeleteHashes(
+						prepared.appendFacts.next,
+						prepared.removedHashes ??
+							prepared.removed.map((entry) => entry.hash),
+					);
+					const rollbackCoordinateEntries =
+						nativeCoordinateRollback ??
+						this.snapshotResidentCoordinateEntries([
 							prepared.appendFacts.hash,
-							rollbackCoordinateEntries,
+							...plannedCoordinateDeleteHashes,
+						]);
+					const finish = (): PreparedPayloadCommitOnlyResult<T, R> => {
+						const appendCommit = this.createPreparedLocalAppendCommitFromFacts(
+							prepared.appendFacts,
+							{
+								hashNumber: backboneAppend!.coordinate
+									.hashNumber as NumberFromType<R>,
+								coordinateFields,
+							},
 						);
-					} catch (rollbackError) {
-						rollbackFailures.push(rollbackError);
-					}
-					if (nativeDocumentRollback) {
+						if (nativeBackboneDocumentIndexCommitted) {
+							appendCommit.nativeBackboneDocumentIndexCommitted = true;
+							appendCommit.nativeBackboneDocumentIndexTrimmedHeadsProcessed =
+								backboneAppend!.documentTrimmedHeadsProcessed;
+						}
+						if (nativeBackboneDocumentDeleteCommitted) {
+							appendCommit.nativeBackboneDocumentDeleteCommitted = true;
+							appendCommit.nativeBackboneDocumentIndexCommitted = true;
+						}
+						appendCommit.documentPreviousContext =
+							prepared.documentPreviousContext;
+						return {
+							get entry() {
+								return prepared.entry;
+							},
+							removed: prepared.removed,
+							removedHashes: prepared.removedHashes,
+							appendCommit,
+						};
+					};
+					const coordinateIndex = this
+						.entryCoordinatesIndex as PutAndDeleteIndex<EntryReplicated<R>>;
+					const rollback = async (error: unknown): Promise<never> => {
+						const rollbackFailures: unknown[] = [];
 						try {
-							this.restoreNativeBackboneDocument(nativeDocumentRollback);
-							const flushed = this.flushNativeBackboneCoordinateJournal();
-							if (isPromiseLike(flushed)) {
-								await flushed;
-							}
+							await this.markNativeStrictDurableTransactionRollback(
+								nativeStrictTransaction,
+							);
+						} catch (rollbackError) {
+							const retentionFailures =
+								this.retainNativeStrictDurableTransactionAfterMarkerFailure(
+									nativeStrictTransaction,
+									prepared.nativeCommittedAppendFinalizer,
+									rollbackError,
+								);
+							throw new AggregateError(
+								[error, ...retentionFailures],
+								"Native rollback marker could not be persisted; recovery is required",
+							);
+						}
+						try {
+							await prepared.nativeCommittedAppendFinalizer?.rollback();
 						} catch (rollbackError) {
 							rollbackFailures.push(rollbackError);
 						}
-					}
-					if (rollbackFailures.length > 0) {
-						this.releaseNativeStrictDurableTransaction(nativeStrictTransaction);
-						throw new AggregateError(
-							[error, ...rollbackFailures],
-							"Shared-log append and compensation both failed",
-						);
-					}
-					await this.completeNativeStrictDurableTransaction(
-						nativeStrictTransaction,
-					);
-					throw error;
-				};
-				try {
-					await this.setNativeStrictDurableTransactionExpectedRows(
-						nativeStrictTransaction,
-						[prepared.shallowEntry],
-					);
-					const hasNativeCoordinatePut =
-						this.canUseBackboneOnlyCoordinatePersistence() ||
-						coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
-						coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
-					const persisted = hasNativeCoordinatePut
-						? this.persistBackboneCoordinateFieldsNativeTransaction({
-								coordinateIndex,
-								fields: coordinateFields,
-								hash: prepared.appendFacts.hash,
-								deleteHashes: [],
-								coordinates: backboneAppend.coordinate
-									.coordinates as NumberFromType<R>[],
-								skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
-							})
-						: this.persistPreparedCoordinate({
-								prepared: getPreparedCoordinate(),
-								hash: prepared.appendFacts.hash,
-								nextHashes: [],
-								deleteHashes: [],
-								coordinates: backboneAppend.coordinate
-									.coordinates as NumberFromType<R>[],
-								replicas: backboneAppend.coordinate.coordinates.length,
-								commitNative: true,
-								commitNativeBackbone: false,
-							});
-					if (isPromiseLike(persisted)) {
-						await persisted;
-					}
-					if (!prepared.nativeCommittedAppendFinalizer) {
-						throw new Error("Missing deferred native append finalizer");
-					}
-					await this.flushNativeBackboneCoordinateJournal();
-					await prepared.nativeCommittedAppendFinalizer.acknowledge(() =>
-						this.markNativeStrictDurableTransactionLowerMarker(
+						try {
+							await this.rollbackNativeBackboneCoordinateAppendDurably(
+								prepared.appendFacts.hash,
+								rollbackCoordinateEntries,
+							);
+						} catch (rollbackError) {
+							rollbackFailures.push(rollbackError);
+						}
+						if (nativeDocumentRollback) {
+							try {
+								this.restoreNativeBackboneDocument(nativeDocumentRollback);
+								const flushed = this.flushNativeBackboneCoordinateJournal();
+								if (isPromiseLike(flushed)) {
+									await flushed;
+								}
+							} catch (rollbackError) {
+								rollbackFailures.push(rollbackError);
+							}
+						}
+						if (rollbackFailures.length > 0) {
+							this.releaseNativeStrictDurableTransaction(
+								nativeStrictTransaction,
+							);
+							throw new AggregateError(
+								[error, ...rollbackFailures],
+								"Shared-log append and compensation both failed",
+							);
+						}
+						await this.completeNativeStrictDurableTransaction(
 							nativeStrictTransaction,
-						),
-					);
-				} catch (error) {
-					return rollback(error);
-				}
-				this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
-					prepared.appendFacts,
-					prepared.removed,
-					prepared.materializeEntry,
-					{
-						forgetNativeCoordinates: false,
-						removedHashes: prepared.removedHashes,
-					},
-				);
-				try {
-					await this.completeNativeStrictDurableTransaction(
-						nativeStrictTransaction,
-					);
-				} catch (error) {
-					warn(`Failed to retire committed native intent: ${String(error)}`);
-				}
-				if (
-					commitBlocksInBackbone &&
-					!runtimeOnlyCoordinates &&
-					this.remoteBlocks.hasNotifyStoredHook()
-				) {
-					this.remoteBlocks.notifyStoredDeferred(prepared.appendFacts.hash);
-				}
-				const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
-				if (!backboneAppend.isLeader && !delayAdaptiveRebalance) {
-					const leaders = backboneAppend.leaders;
-					if (leaders) {
-						const pruneEntry = this.materializePreparedCoordinateEntry(
-							getPreparedCoordinate(),
 						);
-						this.pruneDebouncedFnAddIfNotKeeping({
-							key: pruneEntry.hash,
-							value: { entry: pruneEntry, leaders },
-						});
+						throw error;
+					};
+					try {
+						await this.setNativeStrictDurableTransactionExpectedRows(
+							nativeStrictTransaction,
+							[prepared.shallowEntry],
+						);
+						const hasNativeCoordinatePut =
+							this.canUseBackboneOnlyCoordinatePersistence() ||
+							coordinateIndex.putSharedLogCoordinateFieldsEncodedAndDeleteHashesNoReturn ||
+							coordinateIndex.putSharedLogCoordinateFieldsAndDeleteHashesNoReturn;
+						const persisted = hasNativeCoordinatePut
+							? this.persistBackboneCoordinateFieldsNativeTransaction({
+									coordinateIndex,
+									fields: coordinateFields,
+									hash: prepared.appendFacts.hash,
+									deleteHashes: [],
+									coordinates: backboneAppend.coordinate
+										.coordinates as NumberFromType<R>[],
+									skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
+								})
+							: this.persistPreparedCoordinate({
+									prepared: getPreparedCoordinate(),
+									hash: prepared.appendFacts.hash,
+									nextHashes: [],
+									deleteHashes: [],
+									coordinates: backboneAppend.coordinate
+										.coordinates as NumberFromType<R>[],
+									replicas: backboneAppend.coordinate.coordinates.length,
+									commitNative: true,
+									commitNativeBackbone: false,
+								});
+						if (isPromiseLike(persisted)) {
+							await persisted;
+						}
+						if (!prepared.nativeCommittedAppendFinalizer) {
+							throw new Error("Missing deferred native append finalizer");
+						}
+						await this.flushNativeBackboneCoordinateJournal();
+						await prepared.nativeCommittedAppendFinalizer.acknowledge(() =>
+							this.markNativeStrictDurableTransactionLowerMarker(
+								nativeStrictTransaction,
+							),
+						);
+					} catch (error) {
+						return rollback(error);
 					}
-				}
-				if (!delayAdaptiveRebalance) {
-					this.rebalanceParticipationDebounced?.call();
-				}
-				return finish();
-			});
-		});
+					this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
+						prepared.appendFacts,
+						prepared.removed,
+						prepared.materializeEntry,
+						{
+							forgetNativeCoordinates: false,
+							removedHashes: prepared.removedHashes,
+						},
+					);
+					try {
+						await this.completeNativeStrictDurableTransaction(
+							nativeStrictTransaction,
+						);
+					} catch (error) {
+						warn(`Failed to retire committed native intent: ${String(error)}`);
+					}
+					if (
+						commitBlocksInBackbone &&
+						!runtimeOnlyCoordinates &&
+						this.remoteBlocks.hasNotifyStoredHook()
+					) {
+						this.remoteBlocks.notifyStoredDeferred(prepared.appendFacts.hash);
+					}
+					const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
+					if (!backboneAppend.isLeader && !delayAdaptiveRebalance) {
+						const leaders = backboneAppend.leaders;
+						if (leaders) {
+							const pruneEntry = this.materializePreparedCoordinateEntry(
+								getPreparedCoordinate(),
+							);
+							this.pruneDebouncedFnAddIfNotKeeping({
+								key: pruneEntry.hash,
+								value: { entry: pruneEntry, leaders },
+							});
+						}
+					}
+					if (!delayAdaptiveRebalance) {
+						this.rebalanceParticipationDebounced?.call();
+					}
+					return finish();
+				});
+			},
+		);
 	}
 
 	private finishPreparedPayloadCommitOnlyAppend(
@@ -11518,7 +13107,11 @@ export class SharedLog<
 			| undefined,
 		options: SharedAppendOptions<T> | undefined,
 		minReplicasValue: number,
+		ownershipLifecycleController: AbortController,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (!result) {
 			return undefined;
 		}
@@ -11529,7 +13122,10 @@ export class SharedLog<
 					result.appendFacts,
 					result.removed,
 					result.materializeEntry,
-					{ removedHashes: result.removedHashes },
+					{
+						removedHashes: result.removedHashes,
+						ownershipLifecycleController,
+					},
 				);
 			const deleteHashes =
 				deferredCoordinateDeleteHashes &&
@@ -11543,17 +13139,25 @@ export class SharedLog<
 					: result.appendFacts.next;
 			if (deleteHashes.length > 0) {
 				return mapMaybePromise(
-					this.deleteCoordinatesForHashes(deleteHashes),
-					() => ({
-						get entry() {
-							return result.entry;
-						},
-						removed: result.removed,
-						removedHashes: result.removedHashes,
-						appendCommit: this.createPreparedLocalAppendCommitFromFacts(
-							result.appendFacts,
-						),
-					}),
+					this.deleteCoordinatesForHashes(
+						deleteHashes,
+						ownershipLifecycleController,
+					),
+					() => {
+						this.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
+						return {
+							get entry() {
+								return result.entry;
+							},
+							removed: result.removed,
+							removedHashes: result.removedHashes,
+							appendCommit: this.createPreparedLocalAppendCommitFromFacts(
+								result.appendFacts,
+							),
+						};
+					},
 				);
 			}
 			return {
@@ -11572,6 +13176,7 @@ export class SharedLog<
 			result,
 			options,
 			minReplicasValue,
+			ownershipLifecycleController,
 		);
 		if (nativeTransaction) {
 			return nativeTransaction;
@@ -11581,6 +13186,7 @@ export class SharedLog<
 			result,
 			options,
 			minReplicasValue,
+			ownershipLifecycleController,
 		);
 	}
 
@@ -11594,7 +13200,11 @@ export class SharedLog<
 		},
 		options: SharedAppendOptions<T> | undefined,
 		minReplicasValue: number,
+		ownershipLifecycleController: AbortController,
 	): MaybePromise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const coordinateIndex = this.getNativeTransactionCoordinateIndex(
 			result,
 			options,
@@ -11606,6 +13216,7 @@ export class SharedLog<
 			result,
 			minReplicasValue,
 			coordinateIndex,
+			ownershipLifecycleController,
 		);
 	}
 
@@ -11641,12 +13252,17 @@ export class SharedLog<
 		},
 		minReplicasValue: number,
 		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>,
+		ownershipLifecycleController: AbortController,
 	): Promise<PreparedPayloadCommitOnlyResult<T, R> | undefined> {
 		const nativePreparedCommit =
 			await this.processNativePreparedTargetNoneAppendTransaction(result, {
 				minReplicasValue,
 				coordinateIndex,
+				ownershipLifecycleController,
 			});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (!nativePreparedCommit) {
 			return undefined;
 		}
@@ -11673,8 +13289,14 @@ export class SharedLog<
 		properties: {
 			minReplicasValue: number;
 			coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+			ownershipLifecycleController: AbortController;
 		},
 	): Promise<PreparedLocalAppendCommit<R> | undefined> {
+		const ownershipLifecycleController =
+			properties.ownershipLifecycleController;
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const plannedCoordinateDeleteHashes =
 			result.change?.removed.map((entry) => entry.hash) ??
 			result.removed.map((entry) => entry.hash);
@@ -11687,6 +13309,10 @@ export class SharedLog<
 						? plannedCoordinateDeleteHashes
 						: undefined,
 			},
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
 		);
 		if (!nativeAppendPlan) {
 			return undefined;
@@ -11698,6 +13324,7 @@ export class SharedLog<
 				? this.applyChangeWithDeferredCoordinateDeletes(result.change, {
 						forgetNativeCoordinates:
 							!nativeAppendPlan.committedNativeCoordinateDeletes,
+						ownershipLifecycleController,
 					})
 				: this.applyPreparedAppendFactsWithDeferredCoordinateDeletes(
 						result.appendFacts,
@@ -11707,22 +13334,33 @@ export class SharedLog<
 							forgetNativeCoordinates:
 								!nativeAppendPlan.committedNativeCoordinateDeletes,
 							removedHashes: result.removedHashes,
+							ownershipLifecycleController,
 						},
 					);
-			await this.persistPreparedCoordinateNativeTransaction({
-				coordinateIndex: properties.coordinateIndex,
-				prepared: nativeAppendPlan.preparedCoordinate,
-				hash: result.appendFacts.hash,
-				nextHashes: result.appendFacts.next,
-				deleteHashes: deferredCoordinateDeleteHashes,
-				coordinates: nativeAppendPlan.coordinates,
-				commitNative: nativeAppendPlan.committedNativeCoordinateState !== true,
-				commitNativeBackbone:
-					nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-			});
+			await this.persistPreparedCoordinateNativeTransaction(
+				{
+					coordinateIndex: properties.coordinateIndex,
+					prepared: nativeAppendPlan.preparedCoordinate,
+					hash: result.appendFacts.hash,
+					nextHashes: result.appendFacts.next,
+					deleteHashes: deferredCoordinateDeleteHashes,
+					coordinates: nativeAppendPlan.coordinates,
+					commitNative:
+						nativeAppendPlan.committedNativeCoordinateState !== true,
+					commitNativeBackbone:
+						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				await this.deleteCoordinatesForHashes(
+					deferredCoordinateDeleteHashes,
+					ownershipLifecycleController,
+				);
 			}
 			throw error;
 		}
@@ -11736,18 +13374,32 @@ export class SharedLog<
 					nativeAppendPlan.preparedCoordinate,
 				);
 				leaders = (
-					await this.planEntryLeaders(pruneEntry, properties.minReplicasValue, {
-						persist: false,
-					})
+					await this.planEntryLeaders(
+						pruneEntry,
+						properties.minReplicasValue,
+						{
+							persist: false,
+						},
+						ownershipLifecycleController,
+					)
 				).leaders;
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			}
 			pruneEntry ??= this.materializePreparedCoordinateEntry(
 				nativeAppendPlan.preparedCoordinate,
 			);
-			this.pruneDebouncedFnAddIfNotKeeping({
-				key: pruneEntry.hash,
-				value: { entry: pruneEntry, leaders },
-			});
+			await this.pruneDebouncedFnAddIfNotKeeping(
+				{
+					key: pruneEntry.hash,
+					value: { entry: pruneEntry, leaders },
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
@@ -11768,11 +13420,16 @@ export class SharedLog<
 		},
 		options: SharedAppendOptions<T> | undefined,
 		minReplicasValue: number,
+		ownershipLifecycleController: AbortController,
 	): Promise<PreparedPayloadCommitOnlyResult<T, R>> {
 		const nativePreparedCommit =
 			await this.processNativePreparedTargetNoneAppend(result, options, {
 				minReplicasValue,
+				ownershipLifecycleController,
 			});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (nativePreparedCommit) {
 			return {
 				get entry() {
@@ -11791,22 +13448,39 @@ export class SharedLog<
 					result.appendFacts,
 					result.removed,
 					result.materializeEntry,
-					{ removedHashes: result.removedHashes },
+					{
+						removedHashes: result.removedHashes,
+						ownershipLifecycleController,
+					},
 				);
 			nativeAppendPlan = await this.planNativeLocalAppendFacts(
 				result.appendFacts,
 				minReplicasValue,
+				undefined,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 			if (!nativeAppendPlan) {
 				if (deferredCoordinateDeleteHashes) {
-					await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+					await this.deleteCoordinatesForHashes(
+						deferredCoordinateDeleteHashes,
+						ownershipLifecycleController,
+					);
 				}
 				deferredCoordinateDeleteHashes = undefined;
 			}
 		} else {
 			this.onEntryAddedHash(result.appendFacts.hash, result.materializeEntry);
 			if (result.removed.length > 0) {
-				await this.applyRemovedChange(result.removed);
+				await this.applyRemovedChange(
+					result.removed,
+					ownershipLifecycleController,
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			}
 		}
 		const entry = result.entry;
@@ -11817,13 +13491,20 @@ export class SharedLog<
 					appendFacts: result.appendFacts,
 					nativeAppendPlan,
 					extraCoordinateDeleteHashes: deferredCoordinateDeleteHashes,
+					ownershipLifecycleController,
 				})) ?? nativeAppendPlan;
 		} catch (error) {
 			if (deferredCoordinateDeleteHashes) {
-				await this.deleteCoordinatesForHashes(deferredCoordinateDeleteHashes);
+				await this.deleteCoordinatesForHashes(
+					deferredCoordinateDeleteHashes,
+					ownershipLifecycleController,
+				);
 			}
 			throw error;
 		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return {
 			get entry() {
 				return result.entry;
@@ -11856,6 +13537,7 @@ export class SharedLog<
 		options: SharedAppendOptions<T> | undefined,
 		properties: PreparedPayloadsManyIndependentProperties<T> | undefined,
 		minReplicasValue: number,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<
 		| {
 				entries: Entry<T>[];
@@ -11865,6 +13547,9 @@ export class SharedLog<
 		  }
 		| undefined
 	> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const backbone = this._nativeBackbone;
 		const payloadDatas = properties?.payloadDatas;
 		const documentIndexes = properties?.nativeBackboneDocumentIndexes;
@@ -11941,7 +13626,13 @@ export class SharedLog<
 		) {
 			return undefined;
 		}
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 		let backboneAppends: NativeBackboneAppendResult[] | undefined;
 		let batchDocumentRollbacks: NativeBackboneDocumentRollback[] = [];
@@ -11954,6 +13645,9 @@ export class SharedLog<
 			| undefined;
 		let appended: TrustedLowerLogCommitOnlyAppendBatchResult<T> | undefined;
 		try {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			appended = await asTrustedLowerLog(
 				this.log,
 			).appendLocallyPreparedNativeKnownNoNextCommitOnlyBatch(
@@ -11969,6 +13663,9 @@ export class SharedLog<
 					deferNativeTransactionAcknowledgement: true,
 				},
 				async (inputs) => {
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 					batchDocumentRollbacks = documentIndexes
 						.map((index) => this.snapshotNativeBackboneDocument(index))
 						.filter(
@@ -11978,8 +13675,14 @@ export class SharedLog<
 						await this.beginNativeStrictDurableTransaction(
 							batchDocumentRollbacks,
 						);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 					const documentDeleteTrimmedHeadsForAppend =
 						deleteTrimmedHeads && inputs[0]?.trimLengthTo != null;
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 					backboneAppends = usesLatestDocumentContext
 						? backbone.preparePlainCommittedStorageAppendDocumentIndexLatestBatchTransaction(
 								{
@@ -12030,6 +13733,9 @@ export class SharedLog<
 						await this.completeNativeStrictDurableTransaction(
 							nativeStrictTransaction,
 						);
+						this.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
 						return undefined;
 					}
 					const committedAppends = backboneAppends;
@@ -12064,6 +13770,9 @@ export class SharedLog<
 							...(append.trimmedHashes ??
 								append.trimmed.map((entry) => entry.hash)),
 						]),
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
 					);
 					const rollbackCommitted = async (cause: unknown): Promise<never> => {
 						durableWrapper?.cancelNativeDeleteCleanup?.(
@@ -12111,6 +13820,9 @@ export class SharedLog<
 					}
 					nativeDeleteCleanupToken =
 						durableWrapper?.beginNativeDeleteCleanup?.(nativeTrimmedHashes);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 					const preparedRows = committedAppends.map((append) => ({
 						cid: append.entry.hash,
 						hash: append.entry.hash,
@@ -12175,6 +13887,9 @@ export class SharedLog<
 								})
 							: Promise.resolve();
 					return Promise.allSettled([durableMirror]).then(async (settled) => {
+						this.throwIfReplicationOwnershipLifecycleInactive(
+							ownershipLifecycleController,
+						);
 						const rejected =
 							settled[0]?.status === "rejected"
 								? (settled[0] as PromiseRejectedResult).reason
@@ -12218,6 +13933,9 @@ export class SharedLog<
 					});
 				},
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		} catch (error) {
 			durableWrapper?.cancelNativeDeleteCleanup?.(nativeDeleteCleanupToken);
 			let compensated = !backboneAppends;
@@ -12251,6 +13969,9 @@ export class SharedLog<
 		if (!appended || !backboneAppends) {
 			await this.completeNativeStrictDurableTransaction(
 				nativeStrictTransaction,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 			return undefined;
 		}
@@ -12343,6 +14064,9 @@ export class SharedLog<
 						}),
 				),
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			for (let i = 0; i < appended.appendFacts.length; i++) {
 				const facts = appended.appendFacts[i]!;
 				const backboneAppend = backboneAppends[i]!;
@@ -12379,24 +14103,40 @@ export class SharedLog<
 							.coordinates as NumberFromType<R>[],
 						skipGenericTransientCoordinateIndex: runtimeOnlyCoordinates,
 					},
+					ownershipLifecycleController,
 				);
 				if (isPromiseLike(persisted)) {
 					await persisted;
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 				}
 			}
 			if (!appended.nativeCommittedAppendFinalizer) {
 				throw new Error("Missing deferred native append batch finalizer");
 			}
 			await this.flushNativeBackboneCoordinateJournal();
-			await appended.nativeCommittedAppendFinalizer.acknowledge(() =>
-				this.markNativeStrictDurableTransactionLowerMarker(
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			await appended.nativeCommittedAppendFinalizer.acknowledge(() => {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+				return this.markNativeStrictDurableTransactionLowerMarker(
 					nativeStrictTransaction,
-				),
+				);
+			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 		} catch (error) {
 			return rollbackBatch(error);
 		}
 
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const appendCommits: PreparedLocalAppendCommit<R>[] = [];
 		for (let i = 0; i < coordinateRows.length; i++) {
 			const {
@@ -12435,9 +14175,18 @@ export class SharedLog<
 			await this.completeNativeStrictDurableTransaction(
 				nativeStrictTransaction,
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		} catch (error) {
+			if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
+				throw error;
+			}
 			warn(`Failed to retire committed native intent: ${String(error)}`);
 		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!delayAdaptiveRebalance) {
 			this.rebalanceParticipationDebounced?.call();
@@ -12469,6 +14218,8 @@ export class SharedLog<
 		if (data.length === 0) {
 			return { entries: [], removed: [], appendCommits: [] };
 		}
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (options?.canAppend || options?.onChange) {
 			throw new Error(
 				"appendLocallyPreparedManyIndependent does not accept canAppend or onChange hooks",
@@ -12488,7 +14239,11 @@ export class SharedLog<
 				options,
 				properties,
 				minReplicasValue,
+				ownershipLifecycleController,
 			);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (nativeBackboneBatch) {
 			return nativeBackboneBatch;
 		}
@@ -12499,22 +14254,36 @@ export class SharedLog<
 			payloadDatas: properties?.payloadDatas,
 			nexts: properties?.nexts,
 		});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (!result) {
 			return undefined;
 		}
 
-		const changeResult = this.applyChange(result.change);
+		const changeResult = this.applyChange(result.change, {
+			ownershipLifecycleController,
+		});
 		if (isPromiseLike(changeResult)) {
 			await changeResult;
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 		const deferHeadCoordinatePersistence =
 			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (deferHeadCoordinatePersistence) {
-			await this.deleteCoordinatesForHashes([
-				...result.entries.flatMap((entry) => entry.meta.next),
-				...result.removed.map((entry) => entry.hash),
-			]);
+			await this.deleteCoordinatesForHashes(
+				[
+					...result.entries.flatMap((entry) => entry.meta.next),
+					...result.removed.map((entry) => entry.hash),
+				],
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return {
 				entries: result.entries,
 				removed: result.removed,
@@ -12532,19 +14301,28 @@ export class SharedLog<
 					? await this.planNativeLocalAppendEntries(
 							result.entries,
 							minReplicasValue,
+							ownershipLifecycleController,
 						)
 					: await this.planNativeAppendEntries(
 							result.entries,
 							minReplicasValue,
 							options?.delivery,
 							options,
+							ownershipLifecycleController,
 						);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (
 			nativeAppendPlans &&
 			(await this.processLocalAppendManyNativePlanned(result.entries, options, {
 				nativeAppendPlans,
+				ownershipLifecycleController,
 			}))
 		) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return {
 				entries: result.entries,
 				removed: result.removed,
@@ -12564,7 +14342,11 @@ export class SharedLog<
 					minReplicasValue,
 					deferHeadCoordinatePersistence: false,
 					nativeAppendPlan: nativeAppendPlans?.[i],
+					ownershipLifecycleController,
 				},
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 			if (processedPlan) {
 				nativeAppendPlans ??= [];
@@ -12616,28 +14398,45 @@ export class SharedLog<
 		if (data.length === 0) {
 			return { entries: [], removed: [] };
 		}
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		if (this._isAdaptiveReplicating) {
 			this.markLocalAppendActivity();
 		}
 
-		const { appendOptions, minReplicasValue } =
-			this.createLogAppendOptions(options);
+		const { appendOptions, minReplicasValue } = this.createLogAppendOptions(
+			options,
+			ownershipLifecycleController,
+		);
 		const result = await this.log.appendMany(data, appendOptions);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const deferHeadCoordinatePersistence =
 			this.shouldDeferHeadCoordinatePersistence(options);
 
 		if (deferHeadCoordinatePersistence) {
-			await this.deleteCoordinatesForHashes([
-				...result.entries.flatMap((entry) => entry.meta.next),
-				...result.removed.map((entry) => entry.hash),
-			]);
+			await this.deleteCoordinatesForHashes(
+				[
+					...result.entries.flatMap((entry) => entry.meta.next),
+					...result.removed.map((entry) => entry.hash),
+				],
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return result;
 		}
 
 		if (this.canCoalesceLocalAppendMany(result.entries, options)) {
 			await this.processLocalAppendManyCoalesced(result, options, {
 				minReplicasValue,
+				ownershipLifecycleController,
 			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return result;
 		}
 
@@ -12648,20 +14447,29 @@ export class SharedLog<
 					? await this.planNativeLocalAppendEntries(
 							result.entries,
 							minReplicasValue,
+							ownershipLifecycleController,
 						)
 					: await this.planNativeAppendEntries(
 							result.entries,
 							minReplicasValue,
 							options?.delivery,
 							options,
+							ownershipLifecycleController,
 						);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		for (let i = 0; i < result.entries.length; i++) {
 			const entry = result.entries[i]!;
 			await this.processLocalAppend(entry, [], options, {
 				minReplicasValue,
 				deferHeadCoordinatePersistence: false,
 				nativeAppendPlan: nativeAppendPlans?.[i],
+				ownershipLifecycleController,
 			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 		return result;
 	}
@@ -12702,18 +14510,34 @@ export class SharedLog<
 		options: SharedAppendOptions<T> | undefined,
 		properties: {
 			minReplicasValue: number;
+			ownershipLifecycleController: AbortController;
 		},
 	): Promise<void> {
+		const ownershipLifecycleController =
+			properties.ownershipLifecycleController;
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const head = result.entries[result.entries.length - 1]!;
-		await this.deleteCoordinatesForHashes([
-			...result.entries[0]!.meta.next,
-			...result.entries.slice(0, -1).map((entry) => entry.hash),
-			...result.removed.map((entry) => entry.hash),
-		]);
+		await this.deleteCoordinatesForHashes(
+			[
+				...result.entries[0]!.meta.next,
+				...result.entries.slice(0, -1).map((entry) => entry.hash),
+				...result.removed.map((entry) => entry.hash),
+			],
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		await this.processLocalAppend(head, result.removed, options, {
 			minReplicasValue: properties.minReplicasValue,
 			deferHeadCoordinatePersistence: false,
+			ownershipLifecycleController,
 		});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 	}
 
 	private async processLocalAppendManyNativePlanned(
@@ -12721,8 +14545,14 @@ export class SharedLog<
 		options: SharedAppendOptions<T> | undefined,
 		properties: {
 			nativeAppendPlans: NativeAppendEntryPlan<R>[];
+			ownershipLifecycleController: AbortController;
 		},
 	): Promise<boolean> {
+		const ownershipLifecycleController =
+			properties.ownershipLifecycleController;
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (
 			entries.length === 0 ||
 			options?.target !== "none" ||
@@ -12749,16 +14579,26 @@ export class SharedLog<
 					prepared: plan.preparedCoordinate,
 				};
 			}),
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
 		);
 
 		if (!delayAdaptiveRebalance) {
 			for (let i = 0; i < entries.length; i++) {
 				const plan = properties.nativeAppendPlans[i]!;
 				if (!plan.isLeader) {
-					this.pruneDebouncedFnAddIfNotKeeping({
-						key: entries[i]!.hash,
-						value: { entry: entries[i]!, leaders: plan.leaders! },
-					});
+					await this.pruneDebouncedFnAddIfNotKeeping(
+						{
+							key: entries[i]!.hash,
+							value: { entry: entries[i]!, leaders: plan.leaders! },
+						},
+						ownershipLifecycleController,
+					);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
 				}
 			}
 			this.rebalanceParticipationDebounced?.call();
@@ -12766,7 +14606,10 @@ export class SharedLog<
 		return true;
 	}
 
-	private createLogAppendOptions(options?: SharedAppendOptions<T>): {
+	private createLogAppendOptions(
+		options?: SharedAppendOptions<T>,
+		ownershipLifecycleController?: AbortController,
+	): {
 		appendOptions: TrustedLogAppendOptions<T>;
 		minReplicasValue: number;
 	} {
@@ -12790,7 +14633,15 @@ export class SharedLog<
 			};
 		}
 
-		if (options?.onChange) {
+		if (ownershipLifecycleController) {
+			appendOptions.onChange = async (change) => {
+				await this.onChange(change, ownershipLifecycleController);
+				if (options?.onChange) {
+					return options.onChange(change);
+				}
+				return this._logProperties?.onChange?.(change);
+			};
+		} else if (options?.onChange) {
 			appendOptions.onChange = async (change) => {
 				await this.onChange(change);
 				return options.onChange!(change);
@@ -12906,17 +14757,30 @@ export class SharedLog<
 		appendFacts: PreparedAppendFacts,
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (!nativePlanner || !this.canPlanNativeAppendFacts(appendFacts)) {
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const fullReplicaDeliveryCandidates =
 			await this.getFullReplicaRepairCandidates(undefined, {
 				includeSubscribers: false,
 			});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
@@ -12965,13 +14829,23 @@ export class SharedLog<
 		appendFacts: PreparedAppendFacts,
 		replicas: number,
 		options?: { deleteHashes?: string[] },
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (!nativePlanner || !this.canPlanNativeAppendFacts(appendFacts)) {
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const hashNumber = this.getAppendFactsHashNumber(appendFacts);
 		const nativeLeaderOptions = this.createNativeLeaderOptions(context);
 		const plan =
@@ -13029,17 +14903,30 @@ export class SharedLog<
 		entry: Entry<T>,
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (!nativePlanner || !this.canPlanNativeHashGid(entry)) {
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const fullReplicaDeliveryCandidates =
 			await this.getFullReplicaRepairCandidates(undefined, {
 				includeSubscribers: false,
 			});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const hashNumber = this.getEntryHashNumber(entry);
@@ -13087,13 +14974,23 @@ export class SharedLog<
 	private async planNativeLocalAppendEntry(
 		entry: Entry<T>,
 		replicas: number,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (!nativePlanner || !this.canPlanNativeHashGid(entry)) {
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const hashNumber = this.getEntryHashNumber(entry);
 		const plan = nativePlanner.planLocalAppendForGidCompact(
 			{
@@ -13133,7 +15030,11 @@ export class SharedLog<
 	private async planNativeLocalAppendEntries(
 		entries: Entry<T>[],
 		replicas: number,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (
 			!nativePlanner ||
@@ -13143,7 +15044,13 @@ export class SharedLog<
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const entriesWithHashNumbers = entries.map((entry) => ({
 			entry,
 			hashNumber: this.getEntryHashNumber(entry),
@@ -13201,7 +15108,11 @@ export class SharedLog<
 		replicas: number,
 		deliveryArg: false | true | DeliveryOptions | undefined,
 		options: SharedAppendOptions<T> | undefined,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<NativeAppendEntryPlan<R>[] | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const target = options?.target;
 		const nativePlanner = this._nativeBackbone ?? this._nativeSharedLogState;
 		if (
@@ -13214,11 +15125,20 @@ export class SharedLog<
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext();
+		const context = await this.createLeaderSelectionContext(
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const fullReplicaDeliveryCandidates =
 			await this.getFullReplicaRepairCandidates(undefined, {
 				includeSubscribers: false,
 			});
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const { delivery, reliability, requireRecipients, minAcks } =
 			this._parseDeliveryOptions(deliveryArg);
 		const entriesWithHashNumbers = entries.map((entry) => ({
@@ -13285,8 +15205,15 @@ export class SharedLog<
 			deferHeadCoordinatePersistence?: boolean;
 			nativeAppendPlan?: NativeAppendEntryPlan<R>;
 			extraCoordinateDeleteHashes?: string[];
+			ownershipLifecycleController?: AbortController;
 		},
 	): Promise<NativeAppendEntryPlan<R> | undefined> {
+		const ownershipLifecycleController =
+			properties.ownershipLifecycleController ??
+			this.captureReplicationOwnershipLifecycle();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const deferHeadCoordinatePersistence =
 			properties.deferHeadCoordinatePersistence ??
 			(entry.meta.type !== EntryType.CUT &&
@@ -13294,13 +15221,22 @@ export class SharedLog<
 
 		if (options?.replicate) {
 			await this.replicate(entry, { checkDuplicates: true });
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 
 		if (deferHeadCoordinatePersistence) {
-			await this.deleteCoordinatesForHashes([
-				...(properties.appendFacts?.next ?? entry.meta.next),
-				...removed.map((entry) => entry.hash),
-			]);
+			await this.deleteCoordinatesForHashes(
+				[
+					...(properties.appendFacts?.next ?? entry.meta.next),
+					...removed.map((entry) => entry.hash),
+				],
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return;
 		}
 
@@ -13315,23 +15251,31 @@ export class SharedLog<
 						? await this.planNativeLocalAppendFacts(
 								properties.appendFacts,
 								properties.minReplicasValue,
+								undefined,
+								ownershipLifecycleController,
 							)
 						: await this.planNativeLocalAppendEntry(
 								entry,
 								properties.minReplicasValue,
+								ownershipLifecycleController,
 							)
 					: properties.appendFacts
 						? await this.planNativeAppendFacts(
 								properties.appendFacts,
 								properties.minReplicasValue,
 								deliveryArg,
+								ownershipLifecycleController,
 							)
 						: await this.planNativeAppendEntry(
 								entry,
 								properties.minReplicasValue,
 								deliveryArg,
+								ownershipLifecycleController,
 							);
 		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap | undefined;
 		let isLeader: boolean;
@@ -13343,39 +15287,50 @@ export class SharedLog<
 			nativeDeliveryPlan = nativeAppendPlan.delivery;
 			if (!isLeader && !leaders) {
 				leaders = (
-					await this.planEntryLeaders(entry, properties.minReplicasValue, {
-						persist: false,
-					})
+					await this.planEntryLeaders(
+						entry,
+						properties.minReplicasValue,
+						{
+							persist: false,
+						},
+						ownershipLifecycleController,
+					)
 				).leaders;
 			}
 			if (properties.appendFacts) {
-				await this.persistPreparedCoordinate({
-					prepared: nativeAppendPlan.preparedCoordinate,
-					hash: properties.appendFacts.hash,
-					nextHashes: properties.appendFacts.next,
-					deleteHashes: properties.extraCoordinateDeleteHashes,
-					coordinates,
-					replicas: coordinates.length,
-					commitNative:
-						nativeAppendPlan.committedNativeCoordinateState !== true,
-					commitNativeBackbone:
-						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-				});
+				await this.persistPreparedCoordinate(
+					{
+						prepared: nativeAppendPlan.preparedCoordinate,
+						hash: properties.appendFacts.hash,
+						nextHashes: properties.appendFacts.next,
+						deleteHashes: properties.extraCoordinateDeleteHashes,
+						coordinates,
+						replicas: coordinates.length,
+						commitNative:
+							nativeAppendPlan.committedNativeCoordinateState !== true,
+						commitNativeBackbone:
+							nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
+					},
+					ownershipLifecycleController,
+				);
 			} else {
-				await this.persistCoordinate({
-					leaders: leaders ?? false,
-					coordinates,
-					replicas: coordinates.length,
-					entry,
-					assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
-					commitNative:
-						nativeAppendPlan.committedNativeCoordinateState !== true,
-					commitNativeBackbone:
-						nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
-					deleteHashes: properties.extraCoordinateDeleteHashes,
-					hashNumber: nativeAppendPlan.hashNumber,
-					prepared: nativeAppendPlan.preparedCoordinate,
-				});
+				await this.persistCoordinate(
+					{
+						leaders: leaders ?? false,
+						coordinates,
+						replicas: coordinates.length,
+						entry,
+						assignedToRangeBoundary: nativeAppendPlan.assignedToRangeBoundary,
+						commitNative:
+							nativeAppendPlan.committedNativeCoordinateState !== true,
+						commitNativeBackbone:
+							nativeAppendPlan.committedNativeBackboneCoordinateState !== true,
+						deleteHashes: properties.extraCoordinateDeleteHashes,
+						hashNumber: nativeAppendPlan.hashNumber,
+						prepared: nativeAppendPlan.preparedCoordinate,
+					},
+					ownershipLifecycleController,
+				);
 			}
 		} else {
 			({ coordinates, leaders, isLeader } = await this.planEntryLeaders(
@@ -13384,8 +15339,12 @@ export class SharedLog<
 				{
 					persist: {},
 				},
+				ownershipLifecycleController,
 			));
 		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 
 		if (options?.target !== "none") {
 			const hasDelivery = !(deliveryArg === undefined || deliveryArg === false);
@@ -13402,7 +15361,10 @@ export class SharedLog<
 			}
 
 			if (target === "all") {
-				await this._appendDeliverToAllFanout(entry);
+				await this._appendDeliverToAllFanout(
+					entry,
+					ownershipLifecycleController,
+				);
 			} else {
 				await this._appendDeliverToReplicators(
 					entry,
@@ -13413,16 +15375,26 @@ export class SharedLog<
 					isLeader,
 					deliveryArg,
 					nativeDeliveryPlan,
+					ownershipLifecycleController,
 				);
 			}
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 
 		const delayAdaptiveRebalance = this.shouldDelayAdaptiveRebalance();
 		if (!isLeader && !delayAdaptiveRebalance) {
-			this.pruneDebouncedFnAddIfNotKeeping({
-				key: entry.hash,
-				value: { entry, leaders: leaders! },
-			});
+			await this.pruneDebouncedFnAddIfNotKeeping(
+				{
+					key: entry.hash,
+					value: { entry, leaders: leaders! },
+				},
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 		// Keep the debounced rebalance loop alive even when the current write
 		// burst delays the actual rebalance; the loop will wake after the idle
@@ -13500,6 +15472,13 @@ export class SharedLog<
 	async open(options?: Args<T, D, R>): Promise<void> {
 		this.ensureNativeDurabilityRuntimeState();
 		this._nativeStrictDurableTransactionsClosing = false;
+		this._replicationRangeMutationsClosing = false;
+		this._checkedPruneRemoveBlocksLocalRangeMutationAdmission = 0;
+		this._checkedPruneRemovalCallbackInvocationDepth = 0;
+		this._pruneRemovesClosing = false;
+		this._replicationRangeMutationFailure = undefined;
+		this.startRepairLifecycle();
+		this._replicationRangeMutationTail = Promise.resolve();
 		this.resetSubscriptionChangeCallbackTracking();
 		const recoveringNativeDurableFailure =
 			this._nativeDurableCommitFailure !== undefined;
@@ -13533,6 +15512,7 @@ export class SharedLog<
 		);
 		this._respondToIHaveTimeout = options?.respondToIHaveTimeout ?? 2e4;
 		this._checkedPrune = new CheckedPruneCoordinator<T, R>();
+		this._admittedPruneRemoves = new Set();
 		this._pendingIHave = new Map();
 		this._pendingIHaveCallbacks = new Set();
 		this.latestReplicationInfoMessage = new Map();
@@ -13563,7 +15543,7 @@ export class SharedLog<
 		this._repairFrontierBypassKnownPeersByMode =
 			createRepairFrontierBypassKnownPeersByMode();
 		this._joinWarmupGenerationByTarget = new Map();
-		this._joinWarmupSendStateByTarget ??= new Map();
+		this._joinWarmupSendStateByTarget = new Map();
 		this._joinWarmupRetryTimersByTarget = new Map();
 		this._joinWarmupScheduledRetriesByTarget = new Map();
 		this._repairSweepOptimisticGidPeersPending = new Map();
@@ -13835,54 +15815,113 @@ export class SharedLog<
 			})) > 0;
 
 		this._gidPeersHistory = new Map();
-		this.replicationChangeDebounceFn = debounceAggregationChanges<
+		const replicationChangeOwnershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		let replicationChangeDebounceFn!: typeof this.replicationChangeDebounceFn;
+		replicationChangeDebounceFn = debounceAggregationChanges<
 			ReplicationRangeIndexable<R>
-		>(
-			(change) =>
-				this.onReplicationChange(change).then(() =>
-					this.rebalanceParticipationDebounced?.call(),
-				),
-			this.distributionDebounceTime,
-		);
-
-		this.pruneDebouncedFn = debouncedAccumulatorMap(
-			async (map) => {
-				const current = new Map<
-					string,
-					{
-						entry: CheckedPruneEntry<T, R>;
-						leaders: CheckedPruneLeaderMap;
-					}
-				>();
-				const selfReplicating = await this.isReplicating();
-				for (const [hash, value] of map) {
-					const checkedPruneLeaders =
-						await this.revalidateCheckedPruneOwnership({
-							hash,
-							entry: value.entry,
-							leaders: value.leaders,
-							selfReplicating,
-						});
-					if (checkedPruneLeaders.localLeader) {
-						const preserveRetry = this._checkedPrune.hasRetry(hash);
-						await this.cancelCheckedPruneForLocalLeader(hash, {
-							preserveRetry,
-						});
-						if (preserveRetry) {
-							this.scheduleCheckedPruneRetry({
-								entry: value.entry,
-								leaders: checkedPruneLeaders.leaders,
-							});
-						}
-						continue;
-					}
-					current.set(hash, {
-						...value,
-						leaders: checkedPruneLeaders.leaders,
-					});
+		>(async (change) => {
+			if (
+				this.replicationChangeDebounceFn !== replicationChangeDebounceFn ||
+				!this.isRepairLifecycleActive(
+					replicationChangeOwnershipLifecycleController,
+				)
+			) {
+				return;
+			}
+			try {
+				await this.onReplicationChange(change);
+				if (
+					this.replicationChangeDebounceFn === replicationChangeDebounceFn &&
+					this.isRepairLifecycleActive(
+						replicationChangeOwnershipLifecycleController,
+					)
+				) {
+					this.rebalanceParticipationDebounced?.call();
 				}
-				if (current.size > 0) {
-					this.prune(current);
+			} catch (error: any) {
+				if (
+					this.replicationChangeDebounceFn === replicationChangeDebounceFn &&
+					this.isRepairLifecycleActive(
+						replicationChangeOwnershipLifecycleController,
+					) &&
+					!isNotStartedError(error)
+				) {
+					logger.error(error?.toString?.() ?? String(error));
+				}
+			}
+		}, this.distributionDebounceTime);
+		this.replicationChangeDebounceFn = replicationChangeDebounceFn;
+
+		const pruneOwnershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		const checkedPruneCoordinator = this._checkedPrune;
+		let pruneDebouncedFn!: typeof this.pruneDebouncedFn;
+		const isPruneDebounceCurrent = () =>
+			this.isRepairLifecycleActive(pruneOwnershipLifecycleController) &&
+			this._checkedPrune === checkedPruneCoordinator &&
+			this.pruneDebouncedFn === pruneDebouncedFn;
+		pruneDebouncedFn = debouncedAccumulatorMap(
+			async (map) => {
+				if (!isPruneDebounceCurrent()) {
+					return;
+				}
+				try {
+					const current = new Map<
+						string,
+						{
+							entry: CheckedPruneEntry<T, R>;
+							leaders: CheckedPruneLeaderMap;
+						}
+					>();
+					const selfReplicating = await this.isReplicating();
+					if (!isPruneDebounceCurrent()) {
+						return;
+					}
+					for (const [hash, value] of map) {
+						const checkedPruneLeaders =
+							await this.revalidateCheckedPruneOwnership({
+								hash,
+								entry: value.entry,
+								leaders: value.leaders,
+								selfReplicating,
+								ownershipLifecycleController: pruneOwnershipLifecycleController,
+								checkedPruneCoordinator,
+							});
+						if (!isPruneDebounceCurrent()) {
+							return;
+						}
+						if (checkedPruneLeaders.localLeader) {
+							const preserveRetry = checkedPruneCoordinator.hasRetry(hash);
+							await this.cancelCheckedPruneForLocalLeader(hash, {
+								preserveRetry,
+							});
+							if (!isPruneDebounceCurrent()) {
+								return;
+							}
+							if (preserveRetry) {
+								this.scheduleCheckedPruneRetry(
+									{
+										entry: value.entry,
+										leaders: checkedPruneLeaders.leaders,
+									},
+									pruneOwnershipLifecycleController,
+								);
+							}
+							continue;
+						}
+						current.set(hash, {
+							...value,
+							leaders: checkedPruneLeaders.leaders,
+						});
+					}
+					if (current.size > 0 && isPruneDebounceCurrent()) {
+						this.prune(current, undefined, pruneOwnershipLifecycleController);
+					}
+				} catch (error) {
+					if (isPruneDebounceCurrent() && !isNotStartedError(error as Error)) {
+						logger.error(error);
+					}
 				}
 			},
 			PRUNE_DEBOUNCE_INTERVAL,
@@ -13894,6 +15933,7 @@ export class SharedLog<
 				}
 			},
 		);
+		this.pruneDebouncedFn = pruneDebouncedFn;
 
 		this.responseToPruneDebouncedFn = debounceAccumulator<
 			string,
@@ -13988,7 +16028,7 @@ export class SharedLog<
 				: (this._logProperties?.nativeGraph ?? { optional: true }),
 			onChange: async (change) => {
 				await this.onChange(change);
-				return this._logProperties?.onChange?.(change);
+				return this.invokeProgramOnChange(change);
 			},
 			canAppend: async (entry) => {
 				if (!(await this.canAppend(entry))) {
@@ -14209,7 +16249,7 @@ export class SharedLog<
 		await this.syncronizer.open();
 
 		this.interval = setInterval(() => {
-			this.rebalanceParticipationDebounced?.call();
+			void this.rebalanceParticipationDebounced?.call();
 		}, RECALCULATE_PARTICIPATION_DEBOUNCE_INTERVAL);
 	}
 
@@ -14231,17 +16271,53 @@ export class SharedLog<
 
 	private putNativeReplicationRange(range: ReplicationRangeIndexable<R>): void {
 		const nativeRange = this.toNativeReplicationRange(range);
-		this._nativeRangePlanner?.put(nativeRange);
-		this._nativeSharedLogState?.put(nativeRange);
-		this._nativeBackbone?.putRange(nativeRange);
+		const errors: unknown[] = [];
+		for (const operation of [
+			() => this._nativeRangePlanner?.put(nativeRange),
+			() => this._nativeSharedLogState?.put(nativeRange),
+			() => this._nativeBackbone?.putRange(nativeRange),
+		]) {
+			try {
+				operation();
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		if (errors.length === 1) {
+			throw errors[0];
+		}
+		if (errors.length > 1) {
+			throw new AggregateError(
+				errors,
+				"Failed to publish a replication range to every native mirror",
+			);
+		}
 	}
 
 	private deleteNativeReplicationRange(
 		range: ReplicationRangeIndexable<R>,
 	): void {
-		this._nativeRangePlanner?.delete(range.idString);
-		this._nativeSharedLogState?.delete(range.idString);
-		this._nativeBackbone?.deleteRange(range.idString);
+		const errors: unknown[] = [];
+		for (const operation of [
+			() => this._nativeRangePlanner?.delete(range.idString),
+			() => this._nativeSharedLogState?.delete(range.idString),
+			() => this._nativeBackbone?.deleteRange(range.idString),
+		]) {
+			try {
+				operation();
+			} catch (error) {
+				errors.push(error);
+			}
+		}
+		if (errors.length === 1) {
+			throw errors[0];
+		}
+		if (errors.length > 1) {
+			throw new AggregateError(
+				errors,
+				"Failed to remove a replication range from every native mirror",
+			);
+		}
 	}
 
 	private async hydrateNativeRangePlanner(
@@ -14690,34 +16766,142 @@ export class SharedLog<
 	private async updateTimestampOfOwnedReplicationRanges(
 		timestamp: number = +new Date(),
 	) {
-		const all = await this.replicationIndex
-			.iterate({
-				query: { hash: this.node.identity.publicKey.hashcode() },
-			})
-			.all();
-		let bnTimestamp = BigInt(timestamp);
-		for (const x of all) {
-			x.value.timestamp = bnTimestamp;
-			await this.replicationIndex.put(x.value);
-			this.putNativeReplicationRange(x.value);
-		}
-
-		if (all.length > 0) {
-			// emit mature event
-			const maturityTimeout = setTimeout(
-				() => {
-					this.events.dispatchEvent(
-						new CustomEvent<ReplicationChangeEvent>("replicator:mature", {
-							detail: { publicKey: this.node.identity.publicKey },
-						}),
-					);
-				},
-				await this.getDefaultMinRoleAge(),
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		return this.withReplicationRangeMutationQueue(async () => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
-			this._closeController.signal.addEventListener("abort", () => {
+			const all = await this.replicationIndex
+				.iterate({
+					query: { hash: this.node.identity.publicKey.hashcode() },
+				})
+				.all();
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			this.validatePersistedReplicationRangeSnapshot(
+				all.map((result) => result.value),
+			);
+			const minRoleAge = all.length > 0 ? await this.getDefaultMinRoleAge() : 0;
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+
+			const previousRanges = all.map((result) => result.value);
+			const bnTimestamp = BigInt(timestamp);
+			const updatedRanges = previousRanges.map(
+				(range) =>
+					Object.assign(Object.create(Object.getPrototypeOf(range)), range, {
+						timestamp: bnTimestamp,
+					}) as ReplicationRangeIndexable<R>,
+			);
+			let crossedWriteBoundary = false;
+			try {
+				for (const range of updatedRanges) {
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					// `put` may commit and then throw, so crossing the call boundary is
+					// already an ambiguous durable outcome.
+					crossedWriteBoundary = true;
+					await this.replicationIndex.put(range);
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+					this.putNativeReplicationRange(range);
+				}
+				if (updatedRanges.length > 0) {
+					await this.updateOldestTimestampFromIndex();
+					this.throwIfReplicationOwnershipLifecycleInactive(
+						ownershipLifecycleController,
+					);
+				}
+			} catch (primaryError) {
+				if (!crossedWriteBoundary) {
+					throw primaryError;
+				}
+				const recoveryErrors: unknown[] = [primaryError];
+				let durableRangesById:
+					| Map<string, ReplicationRangeIndexable<R>>
+					| undefined;
+				try {
+					const durableRanges =
+						await this.resolveReplicationRangesFromIdsAndKey(
+							updatedRanges.map((range) => range.id),
+							this.node.identity.publicKey,
+						);
+					durableRangesById = new Map(
+						durableRanges.map((range) => [range.idString, range]),
+					);
+				} catch (probeError) {
+					recoveryErrors.push(probeError);
+				}
+
+				if (durableRangesById) {
+					for (const previousRange of previousRanges) {
+						const durableRange = durableRangesById.get(previousRange.idString);
+						try {
+							if (durableRange) {
+								this.putNativeReplicationRange(durableRange);
+							} else {
+								this.deleteNativeReplicationRange(previousRange);
+							}
+						} catch (reconcileError) {
+							recoveryErrors.push(reconcileError);
+						}
+					}
+					try {
+						await this.updateOldestTimestampFromIndex();
+					} catch (oldestTimestampError) {
+						recoveryErrors.push(oldestTimestampError);
+					}
+				}
+
+				const failure = new AggregateError(
+					recoveryErrors,
+					"Failed to update owned replication-range timestamps coherently",
+				);
+				this.poisonReplicationOwnership(failure);
+				throw failure;
+			}
+
+			if (updatedRanges.length === 0) {
+				return;
+			}
+			const repairTimers = this._repairRetryTimers;
+			let maturityTimeout: ReturnType<typeof setTimeout>;
+			const cancelMaturity = () => {
 				clearTimeout(maturityTimeout);
-			});
-		}
+				repairTimers.delete(maturityTimeout);
+				ownershipLifecycleController.signal.removeEventListener(
+					"abort",
+					cancelMaturity,
+				);
+			};
+			maturityTimeout = setTimeout(() => {
+				repairTimers.delete(maturityTimeout);
+				ownershipLifecycleController.signal.removeEventListener(
+					"abort",
+					cancelMaturity,
+				);
+				if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
+					return;
+				}
+				this.events.dispatchEvent(
+					new CustomEvent<ReplicationChangeEvent>("replicator:mature", {
+						detail: { publicKey: this.node.identity.publicKey },
+					}),
+				);
+			}, minRoleAge);
+			maturityTimeout.unref?.();
+			repairTimers.add(maturityTimeout);
+			ownershipLifecycleController.signal.addEventListener(
+				"abort",
+				cancelMaturity,
+				{ once: true },
+			);
+		}, ownershipLifecycleController);
 	}
 
 	async afterOpen(): Promise<void> {
@@ -15464,19 +17648,44 @@ export class SharedLog<
 		return this.log.idString;
 	}
 
-	async onChange(change: Change<T>): Promise<void> {
-		const result = this.applyChange(change);
+	async onChange(
+		change: Change<T>,
+		ownershipLifecycleController?: AbortController,
+	): Promise<void> {
+		if (ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		}
+		const result = this.applyChange(change, {
+			ownershipLifecycleController,
+		});
 		if (isPromiseLike(result)) {
 			await result;
+		}
+		if (ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 	}
 
 	private applyChange(
 		change: Change<T>,
-		options?: { deferCoordinateIndexDeletes?: boolean },
+		options?: {
+			deferCoordinateIndexDeletes?: boolean;
+			ownershipLifecycleController?: AbortController;
+		},
 	): MaybePromise<string[] | undefined> {
+		if (options?.ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				options.ownershipLifecycleController,
+			);
+		}
 		if (options?.deferCoordinateIndexDeletes) {
-			return this.applyChangeWithDeferredCoordinateDeletes(change);
+			return this.applyChangeWithDeferredCoordinateDeletes(change, {
+				ownershipLifecycleController: options.ownershipLifecycleController,
+			});
 		}
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
@@ -15484,13 +17693,24 @@ export class SharedLog<
 		if (change.removed.length === 0) {
 			return undefined;
 		}
-		return this.applyRemovedChange(change.removed);
+		return this.applyRemovedChange(
+			change.removed,
+			options?.ownershipLifecycleController,
+		);
 	}
 
 	private applyChangeWithDeferredCoordinateDeletes(
 		change: Change<T>,
-		options?: { forgetNativeCoordinates?: boolean },
+		options?: {
+			forgetNativeCoordinates?: boolean;
+			ownershipLifecycleController?: AbortController;
+		},
 	): string[] | undefined {
+		if (options?.ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				options.ownershipLifecycleController,
+			);
+		}
 		for (const added of change.added) {
 			this.onEntryAdded(added.entry);
 		}
@@ -15526,8 +17746,17 @@ export class SharedLog<
 		appendFacts: PreparedAppendFacts,
 		removed: ShallowOrFullEntry<T>[],
 		materializeEntry: () => Entry<T>,
-		options?: { forgetNativeCoordinates?: boolean; removedHashes?: string[] },
+		options?: {
+			forgetNativeCoordinates?: boolean;
+			removedHashes?: string[];
+			ownershipLifecycleController?: AbortController;
+		},
 	): string[] | undefined {
+		if (options?.ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				options.ownershipLifecycleController,
+			);
+		}
 		this.onEntryAddedHash(appendFacts.hash, materializeEntry);
 		const removedHashes = options?.removedHashes;
 		if (
@@ -15552,9 +17781,23 @@ export class SharedLog<
 
 	private async applyRemovedChange(
 		removedEntries: ShallowOrFullEntry<T>[],
+		ownershipLifecycleController?: AbortController,
 	): Promise<undefined> {
 		for (const removed of removedEntries) {
-			await this.deleteCoordinates({ hash: removed.hash });
+			if (ownershipLifecycleController) {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+			}
+			await this.deleteCoordinates(
+				{ hash: removed.hash },
+				ownershipLifecycleController,
+			);
+			if (ownershipLifecycleController) {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
+			}
 			this.onEntryRemoved(removed.hash);
 		}
 		return undefined;
@@ -16060,6 +18303,7 @@ export class SharedLog<
 	}
 
 	private async _close(options?: { preserveDropRetryResources?: boolean }) {
+		this.stopRepairLifecycle();
 		const preserveDropRetryResources =
 			options?.preserveDropRetryResources === true;
 		let firstError: unknown;
@@ -16091,6 +18335,7 @@ export class SharedLog<
 		captureSync(() => {
 			for (const [_key, peerMap] of this.pendingMaturity ?? []) {
 				for (const [_key2, info] of peerMap) clearTimeout(info.timeout);
+				peerMap.clear();
 			}
 			this.pendingMaturity?.clear();
 			this.distributeQueue?.clear();
@@ -16180,6 +18425,7 @@ export class SharedLog<
 			this._liveRawGossipBatches?.clear();
 			this._nativeSharedLogState?.clearGidPeers();
 			this._nativeBackbone?.clearGidPeers();
+			this._replicationRangeMutationTail = Promise.resolve();
 		});
 		// Cancel every debounce independently so one faulty close hook cannot keep
 		// the remaining timers or indexes alive.
@@ -16243,20 +18489,33 @@ export class SharedLog<
 		if (this.classifyTerminalOwnership(from) === "nonterminal") {
 			return super.close(from);
 		}
+		this.throwIfCheckedPruneRemoveBlocksLocalOperation("close");
 		// Match Program.end()'s synchronous terminal admission fence before any
 		// SharedLog-specific await or observable teardown can admit a new owner.
 		this.preventParentAttachments();
-		this.stopSubscriptionChangeCallbackAdmission();
-		this.cancelAllJoinWarmupTargets();
-		await this.drainSubscriptionChangeCallbacks();
-		// An already-admitted subscription callback can create a fresh warmup
-		// generation while the first cancellation is draining.
-		this.cancelAllJoinWarmupTargets();
-		await this.drainReceiveHandlers();
-		await this.drainReplicationInfoApplyQueues();
-		await this.drainPendingIHaveCallbacks();
-		this.ensureNativeDurabilityRuntimeState();
-		this.cancelCurrentReplicationStateAnnouncementRetry();
+		this.stopRepairLifecycle();
+		const replicationRangeTerminalFence =
+			this.acquireReplicationRangeMutationTerminalFence();
+		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
+		try {
+			this.stopSubscriptionChangeCallbackAdmission();
+			this.cancelAllJoinWarmupTargets();
+			await this.drainSubscriptionChangeCallbacks();
+			// An already-admitted subscription callback can create a fresh warmup
+			// generation while the first cancellation is draining.
+			this.cancelAllJoinWarmupTargets();
+			await this.drainReceiveHandlers();
+			await this.drainReplicationInfoApplyQueues();
+			await replicationRangeTerminalFence.drained;
+			await pruneRemoveTerminalFence.drained;
+			await this.drainPendingIHaveCallbacks();
+			this.ensureNativeDurabilityRuntimeState();
+			this.cancelCurrentReplicationStateAnnouncementRetry();
+		} catch (error) {
+			// The terminal preamble has already disabled parent attachments and the
+			// network lifecycle. Keep mutation admission fenced for an exact retry.
+			throw error;
+		}
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state.
 		//
@@ -16357,6 +18616,7 @@ export class SharedLog<
 		if (this.classifyTerminalOwnership(from) === "nonterminal") {
 			return super.drop(from);
 		}
+		this.throwIfCheckedPruneRemoveBlocksLocalOperation("drop");
 		this.ensureNativeDurabilityRuntimeState();
 		const nativePersistence = this._nativeBackboneCoordinatePersistence;
 		if (
@@ -16374,16 +18634,28 @@ export class SharedLog<
 		// Adapter capability validation above is explicitly unstarted. Establish
 		// the terminal fence only after that precondition succeeds.
 		this.preventParentAttachments();
-		this.stopSubscriptionChangeCallbackAdmission();
-		this.cancelAllJoinWarmupTargets();
-		await this.drainSubscriptionChangeCallbacks();
-		// An already-admitted subscription callback can create a fresh warmup
-		// generation while the first cancellation is draining.
-		this.cancelAllJoinWarmupTargets();
-		await this.drainReceiveHandlers();
-		await this.drainReplicationInfoApplyQueues();
-		await this.drainPendingIHaveCallbacks();
-		this.cancelCurrentReplicationStateAnnouncementRetry();
+		this.stopRepairLifecycle();
+		const replicationRangeTerminalFence =
+			this.acquireReplicationRangeMutationTerminalFence();
+		const pruneRemoveTerminalFence = this.acquirePruneRemoveTerminalFence();
+		try {
+			this.stopSubscriptionChangeCallbackAdmission();
+			this.cancelAllJoinWarmupTargets();
+			await this.drainSubscriptionChangeCallbacks();
+			// An already-admitted subscription callback can create a fresh warmup
+			// generation while the first cancellation is draining.
+			this.cancelAllJoinWarmupTargets();
+			await this.drainReceiveHandlers();
+			await this.drainReplicationInfoApplyQueues();
+			await replicationRangeTerminalFence.drained;
+			await pruneRemoveTerminalFence.drained;
+			await this.drainPendingIHaveCallbacks();
+			this.cancelCurrentReplicationStateAnnouncementRetry();
+		} catch (error) {
+			// The terminal preamble is not safely reversible. Preserve the fence until
+			// a retry finishes cleanup.
+			throw error;
+		}
 		// Best-effort: announce that we are going offline before tearing down
 		// RPC/subscription state (same reasoning as in `close()`).
 		try {
@@ -16636,12 +18908,23 @@ export class SharedLog<
 			}
 			const receiveReplicationInfoReceiveEpoch =
 				this.getReplicationInfoReceiveEpoch(receiveFromHash);
-			if (!context.from.equals(this.node.identity.publicKey)) {
-				this.markReplicatorActivity(receiveFromHash);
-			}
-
 			if (msg instanceof ResponseRoleMessage) {
 				msg = msg.toReplicationInfoMessage(); // migration
+			}
+			if (
+				msg instanceof AllReplicatingSegmentsMessage ||
+				msg instanceof AddedReplicationSegmentMessage
+			) {
+				// Bound decoded untrusted vectors before per-peer/global mutation
+				// queues, trusted-replicator authorization, or liveness side effects.
+				this.validateReplicationRangeAnnouncement(msg.segments);
+			} else if (msg instanceof StoppedReplicating) {
+				// Bound the raw decoded vector before deduplication can hide the
+				// allocation cost, and before liveness or apply-queue side effects.
+				this.validateStoppedReplicationAnnouncement(msg.segmentIds);
+			}
+			if (!context.from.equals(this.node.identity.publicKey)) {
+				this.markReplicatorActivity(receiveFromHash);
 			}
 
 			const syncProfile = this._logProperties?.sync?.profile;
@@ -16868,6 +19151,7 @@ export class SharedLog<
 								);
 								return { columns: prepared.columns };
 							} catch {
+								this.throwIfReplicationOwnershipPoisoned();
 								return undefined;
 							}
 						};
@@ -17182,6 +19466,7 @@ export class SharedLog<
 										);
 								}
 							} catch {
+								this.throwIfReplicationOwnershipPoisoned();
 								nativeRawGroupAssignmentPlans = undefined;
 								nativeRawGroupLeaderPlans = undefined;
 							}
@@ -18047,7 +20332,19 @@ export class SharedLog<
 						};
 						const onAppendHashes = (hashes: string[]) => {
 							if (batchHashOnlyEntryAdded) {
-								this.syncronizer.onEntryAddedHashes?.(hashes);
+								let hashesWithoutWaiters: string[] | undefined;
+								for (const hash of hashes) {
+									if (this._pendingIHave.has(hash)) {
+										this.onEntryAddedHash(hash, () =>
+											materializeMergedEntry(hash),
+										);
+										continue;
+									}
+									(hashesWithoutWaiters ??= []).push(hash);
+								}
+								if (hashesWithoutWaiters) {
+									this.syncronizer.onEntryAddedHashes?.(hashesWithoutWaiters);
+								}
 								return;
 							}
 							for (const hash of hashes) {
@@ -18948,6 +21245,7 @@ export class SharedLog<
 					return;
 				}
 				const segments = replicationSegments.map((x) => x.toReplicationRange());
+				this.validatePersistedReplicationRangeSnapshot(segments);
 
 				await this.rpc
 					.send(new AllReplicatingSegmentsMessage({ segments }), {
@@ -19077,6 +21375,8 @@ export class SharedLog<
 								reset,
 								checkDuplicates: true,
 								timestamp: Number(messageTimestamp),
+								allowLegacyOrderedReplacementPairs:
+									msg instanceof AddedReplicationSegmentMessage,
 							},
 						);
 
@@ -19376,6 +21676,13 @@ export class SharedLog<
 		},
 	): Promise<void> {
 		this.throwIfNativeDurableCommitFailed();
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		const throwIfInactive = () =>
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		throwIfInactive();
 		let entriesToReplicate: Entry<T>[] = [];
 		const localHashes =
 			options?.replicate && this.log.length > 0
@@ -19385,12 +21692,15 @@ export class SharedLog<
 						),
 					)
 				: new Set<string>();
+		throwIfInactive();
 		if (options?.replicate && this.log.length > 0) {
 			// Replicate entries that are already joined locally; join ignores them.
 			for (const element of entries) {
+				throwIfInactive();
 				if (typeof element === "string") {
 					if (localHashes.has(element)) {
 						const entry = await this.log.get(element);
+						throwIfInactive();
 						if (entry) {
 							entriesToReplicate.push(entry);
 						}
@@ -19402,6 +21712,7 @@ export class SharedLog<
 				} else {
 					if (localHashes.has(element.hash)) {
 						const entry = await this.log.get(element.hash);
+						throwIfInactive();
 						if (entry) {
 							entriesToReplicate.push(entry);
 						}
@@ -19412,13 +21723,16 @@ export class SharedLog<
 
 		const onChangeForReplication = options?.replicate
 			? async (change: Change<T>) => {
+					throwIfInactive();
 					if (change.added) {
 						for (const entry of change.added) {
+							throwIfInactive();
 							if (entry.head) {
 								entriesToReplicate.push(entry.entry);
 							}
 						}
 					}
+					throwIfInactive();
 				}
 			: undefined;
 
@@ -19427,24 +21741,38 @@ export class SharedLog<
 			typeof options.replicate !== "boolean" &&
 			options.replicate.assumeSynced;
 		const seedAssumeSyncedPeerHistory = async (entry: Entry<T>) => {
+			throwIfInactive();
 			if (!assumeSynced) {
 				return;
 			}
 
 			const minReplicas = decodeReplicas(entry).getValue(this);
-			const { leaders } = await this.planEntryLeaders(entry, minReplicas, {
-				roleAge: 0,
-				persist: false,
-			});
+			const { leaders } = await this.planEntryLeaders(
+				entry,
+				minReplicas,
+				{
+					roleAge: 0,
+					persist: false,
+				},
+				ownershipLifecycleController,
+			);
 
+			throwIfInactive();
 			this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
 		};
 		const persistCoordinate = async (entry: Entry<T>) => {
+			throwIfInactive();
 			const minReplicas = decodeReplicas(entry).getValue(this);
-			const { leaders } = await this.planEntryLeaders(entry, minReplicas, {
-				persist: {},
-			});
+			const { leaders } = await this.planEntryLeaders(
+				entry,
+				minReplicas,
+				{
+					persist: {},
+				},
+				ownershipLifecycleController,
+			);
 
+			throwIfInactive();
 			if (assumeSynced) {
 				// make sure we dont start to initate syncing process outwards for this entry
 				this.addPeersToGidPeerHistory(entry.meta.gid, leaders.keys());
@@ -19454,8 +21782,11 @@ export class SharedLog<
 		let joinOptions = {
 			...options,
 			onChange: async (change: Change<T>) => {
+				throwIfInactive();
 				await onChangeForReplication?.(change);
+				throwIfInactive();
 				for (const entry of change.added) {
+					throwIfInactive();
 					if (!entry.head) {
 						continue;
 					}
@@ -19464,6 +21795,7 @@ export class SharedLog<
 						// we persist coordinates for all added entries here
 
 						await persistCoordinate(entry.entry);
+						throwIfInactive();
 					} else {
 						// else we persist after replication range update has been done so that
 						// the indexed info becomes up to date
@@ -19473,12 +21805,15 @@ export class SharedLog<
 			},
 		};
 
+		throwIfInactive();
 		await this.log.join(entries, joinOptions);
+		throwIfInactive();
 
 		if (options?.replicate) {
 			let messageToSend: AddedReplicationSegmentMessage | undefined = undefined;
 
 			if (assumeSynced) {
+				throwIfInactive();
 				// `assumeSynced` is an explicit contract that this join should trust the
 				// supplied history and avoid initiating outbound repair while the local
 				// replication ranges settle.
@@ -19486,9 +21821,11 @@ export class SharedLog<
 					Date.now() + ASSUME_SYNCED_REPAIR_SUPPRESSION_MS;
 				for (const entry of entriesToReplicate) {
 					await seedAssumeSyncedPeerHistory(entry);
+					throwIfInactive();
 				}
 			}
 
+			throwIfInactive();
 			await this.replicate(entriesToReplicate, {
 				rebalance: assumeSynced ? false : true,
 				checkDuplicates: assumeSynced ? false : true,
@@ -19500,6 +21837,7 @@ export class SharedLog<
 				// we override the announce step here to make sure we announce all new replication info
 				// in one large message instead
 				announce: (msg) => {
+					throwIfInactive();
 					if (msg instanceof AllReplicatingSegmentsMessage) {
 						throw new Error("Unexpected");
 					}
@@ -19514,16 +21852,23 @@ export class SharedLog<
 					}
 				},
 			});
+			throwIfInactive();
 
 			// it is importat that we call persistCoordinate after this.replicate(entries) as else there might be a prune job deleting the entry before replication duties has been assigned to self
 			for (const entry of entriesToPersist) {
 				await persistCoordinate(entry);
+				throwIfInactive();
 			}
 
 			if (messageToSend) {
-				await this.sendReplicationAnnouncement(messageToSend);
+				await this.sendReplicationAnnouncement(
+					messageToSend,
+					ownershipLifecycleController,
+				);
+				throwIfInactive();
 			}
 		}
+		throwIfInactive();
 	}
 
 	async waitForReplicator(
@@ -20494,6 +22839,7 @@ export class SharedLog<
 			trustedMissing,
 			validatePlan,
 		}) => {
+			this.throwIfReplicationOwnershipPoisoned();
 			if (!trustedMissing || entries.length === 0) {
 				return false;
 			}
@@ -20947,16 +23293,22 @@ export class SharedLog<
 		}
 	}
 
-	private persistPreparedCoordinate(properties: {
-		prepared: PreparedCoordinatePersistence<R>;
-		hash: string;
-		nextHashes: string[];
-		coordinates: NumberFromType<R>[];
-		replicas: number;
-		commitNative?: boolean;
-		commitNativeBackbone?: boolean;
-		deleteHashes?: string[];
-	}): MaybePromise<boolean> {
+	private persistPreparedCoordinate(
+		properties: {
+			prepared: PreparedCoordinatePersistence<R>;
+			hash: string;
+			nextHashes: string[];
+			coordinates: NumberFromType<R>[];
+			replicas: number;
+			commitNative?: boolean;
+			commitNativeBackbone?: boolean;
+			deleteHashes?: string[];
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): MaybePromise<boolean> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const { assignedToRangeBoundary, fields } = properties.prepared;
 		const deleteHashes = combineCoordinateDeleteHashes(
 			properties.nextHashes,
@@ -21029,6 +23381,9 @@ export class SharedLog<
 		}
 
 		const finish = (): MaybePromise<boolean> => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			const nativeDeleteHashes = combineCoordinateDeleteHashes(
 				properties.nextHashes,
 				properties.deleteHashes,
@@ -21080,16 +23435,22 @@ export class SharedLog<
 		return mapMaybePromise(putResult, finish);
 	}
 
-	private persistPreparedCoordinateNativeTransaction(properties: {
-		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
-		prepared: PreparedCoordinatePersistence<R>;
-		hash: string;
-		nextHashes: string[];
-		coordinates: NumberFromType<R>[];
-		deleteHashes?: string[];
-		commitNative?: boolean;
-		commitNativeBackbone?: boolean;
-	}): MaybePromise<boolean> {
+	private persistPreparedCoordinateNativeTransaction(
+		properties: {
+			coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+			prepared: PreparedCoordinatePersistence<R>;
+			hash: string;
+			nextHashes: string[];
+			coordinates: NumberFromType<R>[];
+			deleteHashes?: string[];
+			commitNative?: boolean;
+			commitNativeBackbone?: boolean;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): MaybePromise<boolean> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const { fields } = properties.prepared;
 		const putNative =
 			properties.coordinateIndex
@@ -21108,6 +23469,9 @@ export class SharedLog<
 			),
 		);
 		const finish = () => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			const nativeDeleteHashes = combineCoordinateDeleteHashes(
 				properties.nextHashes,
 				properties.deleteHashes,
@@ -21151,18 +23515,27 @@ export class SharedLog<
 		return mapMaybePromise(putResult, finish);
 	}
 
-	private persistBackboneCoordinateFieldsNativeTransaction(properties: {
-		coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
-		fields: SharedLogCoordinateNativeFields<R>;
-		hash: string;
-		coordinates: NumberFromType<R>[];
-		deleteHashes: string[];
-		skipGenericTransientCoordinateIndex?: boolean;
-	}): MaybePromise<boolean> {
+	private persistBackboneCoordinateFieldsNativeTransaction(
+		properties: {
+			coordinateIndex: PutAndDeleteIndex<EntryReplicated<R>>;
+			fields: SharedLogCoordinateNativeFields<R>;
+			hash: string;
+			coordinates: NumberFromType<R>[];
+			deleteHashes: string[];
+			skipGenericTransientCoordinateIndex?: boolean;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): MaybePromise<boolean> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const { fields } = properties;
 		const useBackboneOnlyCoordinatePersistence =
 			this.canUseBackboneOnlyCoordinatePersistence();
 		const finish = (): MaybePromise<boolean> => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			this._nativeSharedLogState?.commitEntryCoordinates(
 				properties.hash,
 				fields.gid,
@@ -21345,47 +23718,60 @@ export class SharedLog<
 		return persisted === false;
 	}
 
-	private async persistCoordinate(properties: {
-		coordinates: NumberFromType<R>[];
-		entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
-		leaders:
-			| Map<
-					string,
-					{
-						intersecting: boolean;
-					}
-			  >
-			| false;
-		replicas: number;
-		prev?: EntryReplicated<R>;
-		assignedToRangeBoundary?: boolean;
-		commitNative?: boolean;
-		commitNativeBackbone?: boolean;
-		deleteHashes?: string[];
-		hashNumber?: NumberFromType<R>;
-		nextHashes?: string[];
-		prepared?: PreparedCoordinatePersistence<R>;
-	}) {
+	private async persistCoordinate(
+		properties: {
+			coordinates: NumberFromType<R>[];
+			entry: ShallowOrFullEntry<any> | EntryReplicated<R>;
+			leaders:
+				| Map<
+						string,
+						{
+							intersecting: boolean;
+						}
+				  >
+				| false;
+			replicas: number;
+			prev?: EntryReplicated<R>;
+			assignedToRangeBoundary?: boolean;
+			commitNative?: boolean;
+			commitNativeBackbone?: boolean;
+			deleteHashes?: string[];
+			hashNumber?: NumberFromType<R>;
+			nextHashes?: string[];
+			prepared?: PreparedCoordinatePersistence<R>;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const prepared =
 			properties.prepared ?? this.createCoordinatePersistenceEntry(properties);
 		if (!prepared) {
 			return false;
 		}
-		return this.persistPreparedCoordinate({
-			prepared,
-			hash: properties.entry.hash,
-			nextHashes: properties.nextHashes ?? properties.entry.meta.next,
-			coordinates: properties.coordinates,
-			replicas: properties.replicas,
-			commitNative: properties.commitNative,
-			commitNativeBackbone: properties.commitNativeBackbone,
-			deleteHashes: properties.deleteHashes,
-		});
+		return this.persistPreparedCoordinate(
+			{
+				prepared,
+				hash: properties.entry.hash,
+				nextHashes: properties.nextHashes ?? properties.entry.meta.next,
+				coordinates: properties.coordinates,
+				replicas: properties.replicas,
+				commitNative: properties.commitNative,
+				commitNativeBackbone: properties.commitNativeBackbone,
+				deleteHashes: properties.deleteHashes,
+			},
+			ownershipLifecycleController,
+		);
 	}
 
 	private async persistCoordinatesBatch(
 		items: CoordinatePersistBatchItem<R>[],
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<boolean[]> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (items.length === 0) {
 			return [];
 		}
@@ -21457,10 +23843,18 @@ export class SharedLog<
 		} else {
 			const results: boolean[] = [];
 			for (const item of items) {
-				results.push(await this.persistCoordinate(item));
+				results.push(
+					await this.persistCoordinate(item, ownershipLifecycleController),
+				);
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			}
 			return results;
 		}
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 
 		const nativeCoordinateCommits = changed.filter(
 			({ item }) => item.commitNative !== false,
@@ -21545,7 +23939,15 @@ export class SharedLog<
 		return items.map((item) => changedHashes.has(item.entry.hash));
 	}
 
-	private async deleteCoordinates(properties: { hash: string }) {
+	private async deleteCoordinates(
+		properties: { hash: string },
+		ownershipLifecycleController?: AbortController,
+	) {
+		if (ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+		}
 		this._nativeSharedLogState?.deleteEntryCoordinates(properties.hash);
 		this._nativeBackbone?.deleteEntryCoordinates(properties.hash);
 		this._residentEntryCoordinatesByHash?.delete(properties.hash);
@@ -21556,6 +23958,11 @@ export class SharedLog<
 			await coordinateIndex.delIds([properties.hash]);
 		} else {
 			await this.entryCoordinatesIndex.del({ query: properties });
+		}
+		if (ownershipLifecycleController) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 	}
 
@@ -21627,10 +24034,31 @@ export class SharedLog<
 				  }
 				| false;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }>> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		// we consume a list of coordinates in this method since if we are leader of one coordinate we want to persist all of them
-		const set = await this._findLeaders(cursors, options);
-		await this.applyLeaderSelection(cursors, entry, set, options);
+		const set = await this._findLeaders(
+			cursors,
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		await this.applyLeaderSelection(
+			cursors,
+			entry,
+			set,
+			options,
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return set;
 	}
 
@@ -21731,7 +24159,11 @@ export class SharedLog<
 				| false;
 		},
 		assignedToRangeBoundary?: boolean,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<boolean> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const isLeader = leaders.has(selfHash);
 		let shouldPersistLocalLeader = false;
@@ -21746,15 +24178,24 @@ export class SharedLog<
 			options?.persist !== false &&
 			(shouldPersistLocalLeader || options?.persist)
 		) {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			!this.closed &&
-				(await this.persistCoordinate({
-					leaders,
-					coordinates: cursors,
-					replicas: cursors.length,
-					entry,
-					prev: options?.persist?.prev,
-					assignedToRangeBoundary,
-				}));
+				(await this.persistCoordinate(
+					{
+						leaders,
+						coordinates: cursors,
+						replicas: cursors.length,
+						entry,
+						prev: options?.persist?.prev,
+						assignedToRangeBoundary,
+					},
+					ownershipLifecycleController,
+				));
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 
 		return isLeader;
@@ -21764,7 +24205,11 @@ export class SharedLog<
 		entry: ShallowOrFullEntry<any> | EntryReplicated<R>,
 		replicas: number,
 		options?: LeaderSelectionOptions<R>,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<EntryLeaderPlan<R>> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		let coordinates: NumberFromType<R>[];
 		let leaders: LeaderMap;
 		let assignedToRangeBoundary: boolean | undefined;
@@ -21776,8 +24221,18 @@ export class SharedLog<
 					gid,
 					replicas,
 					options,
-				)) ?? (await this._findLeaderPlanFromHashGid(gid, replicas, options));
+					ownershipLifecycleController,
+				)) ??
+				(await this._findLeaderPlanFromHashGid(
+					gid,
+					replicas,
+					options,
+					ownershipLifecycleController,
+				));
 			if (plan) {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				coordinates = plan.coordinates as NumberFromType<R>[];
 				leaders = plan.leaders;
 				assignedToRangeBoundary =
@@ -21790,6 +24245,7 @@ export class SharedLog<
 					leaders,
 					options,
 					assignedToRangeBoundary,
+					ownershipLifecycleController,
 				);
 				return {
 					coordinates,
@@ -21801,19 +24257,38 @@ export class SharedLog<
 		}
 
 		coordinates = await this.createCoordinates(entry, replicas);
-		leaders = await this._findLeaders(coordinates, options);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		leaders = await this._findLeaders(
+			coordinates,
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const isLeader = await this.applyLeaderSelection(
 			coordinates,
 			entry,
 			leaders,
 			options,
+			undefined,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
 		);
 		return { coordinates, leaders, isLeader };
 	}
 
 	private async planEntryLeaderBatch(
 		items: Iterable<EntryLeaderBatchItem<R>>,
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<EntryLeaderPlan<R>[]> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const itemArray = [...items];
 		const firstItem = itemArray[0];
 		if (!firstItem) {
@@ -21823,6 +24298,10 @@ export class SharedLog<
 		if (this.canPlanNativeEntryLeaderBatch(itemArray)) {
 			const context = await this.createLeaderSelectionContext(
 				firstItem.options,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 			const nativeReceivePlanner =
 				this._nativeBackbone ?? this._nativeSharedLogState;
@@ -21890,8 +24369,14 @@ export class SharedLog<
 					}
 				}
 				if (!this.closed && persistItems.length > 0) {
-					await this.persistCoordinatesBatch(persistItems);
+					await this.persistCoordinatesBatch(
+						persistItems,
+						ownershipLifecycleController,
+					);
 				}
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				return plans;
 			}
 
@@ -21945,15 +24430,29 @@ export class SharedLog<
 				}
 			}
 			if (!this.closed && persistItems.length > 0) {
-				await this.persistCoordinatesBatch(persistItems);
+				await this.persistCoordinatesBatch(
+					persistItems,
+					ownershipLifecycleController,
+				);
 			}
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return plans;
 		}
 
 		const plans: EntryLeaderPlan<R>[] = [];
 		for (const item of itemArray) {
 			plans.push(
-				await this.planEntryLeaders(item.entry, item.replicas, item.options),
+				await this.planEntryLeaders(
+					item.entry,
+					item.replicas,
+					item.options,
+					ownershipLifecycleController,
+				),
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 		}
 		return plans;
@@ -21963,6 +24462,8 @@ export class SharedLog<
 		groups: Iterable<{ gid: string; maxMaxReplicas: number }>,
 		options?: { roleAge?: number; candidates?: Iterable<string> },
 	): Promise<EntryLeaderPlan<R>[] | undefined> {
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		const backbone = this._nativeBackbone;
 		if (!backbone) {
 			return undefined;
@@ -21972,7 +24473,13 @@ export class SharedLog<
 			return [];
 		}
 		try {
-			const context = await this.createLeaderSelectionContext(options);
+			const context = await this.createLeaderSelectionContext(
+				options,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			const nativePlans = backbone.planLeadersForGidsBatch(
 				groupArray.map((group) => ({
 					gid: group.gid,
@@ -21999,6 +24506,9 @@ export class SharedLog<
 				};
 			});
 		} catch {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return undefined;
 		}
 	}
@@ -22021,13 +24531,21 @@ export class SharedLog<
 			return undefined;
 		}
 
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
 		const fromHash = properties.from.hashcode();
 		try {
 			const replicaOptions = {
 				minReplicas: this.replicas.min?.getValue(this) || 1,
 				maxReplicas: this.replicas.max?.getValue(this),
 			};
-			const leaderSelectionContext = await this.createLeaderSelectionContext();
+			const leaderSelectionContext = await this.createLeaderSelectionContext(
+				undefined,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			if (backbone.planPreparedRawReceiveSelection) {
 				const nativeSelection = backbone.planPreparedRawReceiveSelection(
 					properties.hashes,
@@ -22153,6 +24671,9 @@ export class SharedLog<
 				usedLeaderSamplePlans,
 			};
 		} catch {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			return undefined;
 		}
 	}
@@ -22328,16 +24849,25 @@ export class SharedLog<
 		return plan.isLeader;
 	}
 
-	private async createLeaderSelectionContext(options?: {
-		roleAge?: number;
-		candidates?: Iterable<string>;
-	}): Promise<LeaderSelectionContext> {
+	private async createLeaderSelectionContext(
+		options?: {
+			roleAge?: number;
+			candidates?: Iterable<string>;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<LeaderSelectionContext> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const cached = this.getCachedLeaderSelectionContext(options);
 		if (cached) {
 			return cached;
 		}
 		const selfHash = this.node.identity.publicKey.hashcode();
 		const roleAge = options?.roleAge ?? (await this.getDefaultMinRoleAge());
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 
 		// Prefer `uniqueReplicators` (replicator cache) as soon as it has any data.
 		// If it is still warming up (for example, only contains self), supplement with
@@ -22349,6 +24879,9 @@ export class SharedLog<
 		} else {
 			selfReplicating =
 				this.knownSelfReplicating(selfHash) ?? (await this.isReplicating());
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			if (this.uniqueReplicators.size > 0) {
 				peerFilter = new Set(this.uniqueReplicators);
 				if (selfReplicating) {
@@ -22372,6 +24905,9 @@ export class SharedLog<
 				} catch {
 					// Best-effort only; keep current peerFilter.
 				}
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			} else {
 				try {
 					const subscribers =
@@ -22387,6 +24923,9 @@ export class SharedLog<
 				} catch {
 					// Best-effort only; if pubsub isn't ready, do a full scan.
 				}
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 			}
 		}
 
@@ -22397,6 +24936,11 @@ export class SharedLog<
 			peerFilter,
 			peerFilterArray: peerFilter ? [...peerFilter] : undefined,
 		};
+		// Every lookup above can yield while a mutation discovers an incoherent
+		// ownership mirror. Do not cache or publish that stale context.
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		this.setCachedLeaderSelectionContext(options, context);
 		return context;
 	}
@@ -22432,15 +24976,29 @@ export class SharedLog<
 			roleAge?: number;
 			candidates?: Iterable<string>;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }>> {
-		const context = await this.createLeaderSelectionContext(options);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		const context = await this.createLeaderSelectionContext(
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		let peerFilter = context.peerFilter;
 
 		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
 		if (nativePlanner) {
-			return nativePlanner.findLeaders(cursors, cursors.length, {
+			const leaders = nativePlanner.findLeaders(cursors, cursors.length, {
 				...this.createNativeLeaderOptions(context, options),
 			});
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return leaders;
 		}
 
 		if (!options?.candidates) {
@@ -22452,6 +25010,9 @@ export class SharedLog<
 				cursors.length,
 				context.selfReplicating,
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 
 		if (!options?.candidates) {
@@ -22460,12 +25021,15 @@ export class SharedLog<
 				context.roleAge,
 				peerFilter,
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			if (fullReplicaLeaders) {
 				return fullReplicaLeaders;
 			}
 		}
 
-		return getSamples<R>(
+		const leaders = await getSamples<R>(
 			cursors,
 			this.replicationIndex,
 			context.roleAge,
@@ -22475,6 +25039,10 @@ export class SharedLog<
 				uniqueReplicators: peerFilter,
 			},
 		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		return leaders;
 	}
 
 	private async includeIndexedLeaderCandidatesWhenUnderfilled(
@@ -22578,26 +25146,50 @@ export class SharedLog<
 			roleAge?: number;
 			candidates?: Iterable<string>;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<LeaderMap[]> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (entries.length === 0) {
 			return [];
 		}
 
 		const nativePlanner = this._nativeBackbone ?? this._nativeRangePlanner;
 		if (nativePlanner && !this.hasCustomFindLeaders()) {
-			const context = await this.createLeaderSelectionContext(options);
-			return nativePlanner.findLeadersBatch(
+			const context = await this.createLeaderSelectionContext(
+				options,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			const leaders = nativePlanner.findLeadersBatch(
 				entries.map((entry) => ({
 					cursors: entry.coordinates,
 					replicas: entry.coordinates.length,
 				})),
 				this.createNativeLeaderOptions(context, options),
 			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			return leaders;
 		}
 
 		const leaders: LeaderMap[] = [];
 		for (const entry of entries) {
-			leaders.push(await this.findLeaders(entry.coordinates, entry, options));
+			leaders.push(
+				await this.findLeaders(
+					entry.coordinates,
+					entry,
+					options,
+					ownershipLifecycleController,
+				),
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		}
 		return leaders;
 	}
@@ -22606,14 +25198,23 @@ export class SharedLog<
 		return this.findLeaders !== SharedLog.prototype.findLeaders;
 	}
 
-	private async planResidentRepairDispatchBatch(properties: {
-		pendingModes: Set<RepairDispatchMode>;
-		pendingPeersByMode: Map<RepairDispatchMode, Set<string>>;
-		optimisticGidPeersByMode: Map<RepairDispatchMode, Map<string, Set<string>>>;
-		fullReplicaRepairCandidates: Set<string>;
-		fullReplicaRepairCandidateCount: number;
-		selfHash: string;
-	}): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+	private async planResidentRepairDispatchBatch(
+		properties: {
+			pendingModes: Set<RepairDispatchMode>;
+			pendingPeersByMode: Map<RepairDispatchMode, Set<string>>;
+			optimisticGidPeersByMode: Map<
+				RepairDispatchMode,
+				Map<string, Set<string>>
+			>;
+			fullReplicaRepairCandidates: Set<string>;
+			fullReplicaRepairCandidateCount: number;
+			selfHash: string;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativeRepairPlanner =
 			this._nativeBackbone ?? this._nativeSharedLogState;
 		const pendingPeersByMode = new Map<string, Iterable<string>>();
@@ -22636,7 +25237,13 @@ export class SharedLog<
 			}
 		}
 
-		const context = await this.createLeaderSelectionContext({ roleAge: 0 });
+		const context = await this.createLeaderSelectionContext(
+			{ roleAge: 0 },
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const nativePlan =
 			nativeRepairPlanner!.planRepairDispatchForResidentEntries(
 				{
@@ -22658,16 +25265,25 @@ export class SharedLog<
 		return plan;
 	}
 
-	private async planRepairDispatchBatch(properties: {
-		entries: EntryReplicated<R>[];
-		requestedReplicasBatch: number[];
-		pendingModes: Set<RepairDispatchMode>;
-		pendingPeersByMode: Map<RepairDispatchMode, Set<string>>;
-		optimisticGidPeersByMode: Map<RepairDispatchMode, Map<string, Set<string>>>;
-		fullReplicaRepairCandidates: Set<string>;
-		fullReplicaRepairCandidateCount: number;
-		selfHash: string;
-	}): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+	private async planRepairDispatchBatch(
+		properties: {
+			entries: EntryReplicated<R>[];
+			requestedReplicasBatch: number[];
+			pendingModes: Set<RepairDispatchMode>;
+			pendingPeersByMode: Map<RepairDispatchMode, Set<string>>;
+			optimisticGidPeersByMode: Map<
+				RepairDispatchMode,
+				Map<string, Set<string>>
+			>;
+			fullReplicaRepairCandidates: Set<string>;
+			fullReplicaRepairCandidateCount: number;
+			selfHash: string;
+		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<Map<RepairDispatchMode, Map<string, string[]>>> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		const add = (
 			plan: Map<RepairDispatchMode, Map<string, string[]>>,
 			mode: RepairDispatchMode,
@@ -22712,7 +25328,13 @@ export class SharedLog<
 				}
 			}
 
-			const context = await this.createLeaderSelectionContext({ roleAge: 0 });
+			const context = await this.createLeaderSelectionContext(
+				{ roleAge: 0 },
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 			const nativePlan = nativeRepairPlanner.planRepairDispatchForEntries(
 				{
 					entries: properties.entries.map((entry, i) => ({
@@ -22742,6 +25364,10 @@ export class SharedLog<
 		const currentPeersBatch = await this.findEntryReplicatedLeaderBatch(
 			properties.entries,
 			{ roleAge: 0 },
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
 		);
 		const plan = new Map<RepairDispatchMode, Map<string, string[]>>();
 		for (let i = 0; i < properties.entries.length; i++) {
@@ -22801,7 +25427,11 @@ export class SharedLog<
 			roleAge?: number;
 			candidates?: Iterable<string>;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }> | undefined> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (
 			!this._nativeBackbone &&
 			!this._nativeSharedLogState &&
@@ -22810,7 +25440,13 @@ export class SharedLog<
 			return undefined;
 		}
 
-		const context = await this.createLeaderSelectionContext(options);
+		const context = await this.createLeaderSelectionContext(
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (this._nativeBackbone) {
 			return this._nativeBackbone.planLeadersForGid(
 				gid,
@@ -22844,6 +25480,7 @@ export class SharedLog<
 			roleAge?: number;
 			candidates?: Iterable<string>;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<
 		| {
 				coordinates: Array<number | bigint>;
@@ -22858,7 +25495,13 @@ export class SharedLog<
 		if (!planner) {
 			return undefined;
 		}
-		const context = await this.createLeaderSelectionContext(options);
+		const context = await this.createLeaderSelectionContext(
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return planner.planLeadersForGid(
 			gid,
 			replicas,
@@ -22873,6 +25516,7 @@ export class SharedLog<
 			roleAge?: number;
 			candidates?: Iterable<string>;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<
 		| {
 				coordinates: Array<number | bigint>;
@@ -22885,7 +25529,13 @@ export class SharedLog<
 		if (!planner) {
 			return undefined;
 		}
-		const context = await this.createLeaderSelectionContext(options);
+		const context = await this.createLeaderSelectionContext(
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return planner.planEntryAssignmentForGid(
 			gid,
 			replicas,
@@ -22899,12 +25549,20 @@ export class SharedLog<
 		options?: {
 			roleAge?: number;
 		},
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
 	): Promise<Map<string, { intersecting: boolean }>> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (this.canPlanNativeHashGid(entry)) {
 			const nativeResult = await this._findLeadersFromHashGid(
 				entry.meta.gid,
 				replicas,
 				options,
+				ownershipLifecycleController,
+			);
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
 			);
 			if (nativeResult) {
 				return nativeResult;
@@ -22912,7 +25570,17 @@ export class SharedLog<
 		}
 
 		const coordinates = await this.createCoordinates(entry, replicas);
-		const result = await this._findLeaders(coordinates, options);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		const result = await this._findLeaders(
+			coordinates,
+			options,
+			ownershipLifecycleController,
+		);
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		return result;
 	}
 
@@ -22950,6 +25618,99 @@ export class SharedLog<
 		});
 	}
 
+	private throwIfCheckedPruneRemoveBlocksLocalOperation(
+		operation: "replication range mutation" | "close" | "drop",
+	): void {
+		if (this._checkedPruneRemovalCallbackInvocationDepth > 0) {
+			throw new TerminalOperationNotStartedError(
+				`${operation} cannot start during a checked-prune removal callback`,
+			);
+		}
+	}
+
+	private invokeProgramOnChange(change: Change<T>) {
+		const onChange = this._logProperties?.onChange;
+		if (!onChange) {
+			return;
+		}
+		if (
+			change.removed.length === 0 ||
+			this._checkedPruneRemoveBlocksLocalRangeMutationAdmission === 0
+		) {
+			return onChange(change);
+		}
+
+		this._checkedPruneRemovalCallbackInvocationDepth++;
+		try {
+			// Deliberately return the callback promise without awaiting it. The
+			// reentrancy guard covers the callback's immediate invocation, while an
+			// independent operation started during a later async suspension must be
+			// allowed to queue/drain behind the admitted lower-log removal.
+			return onChange(change);
+		} finally {
+			this._checkedPruneRemovalCallbackInvocationDepth--;
+		}
+	}
+
+	private withReplicationRangeMutationQueue<T>(
+		fn: () => Promise<T>,
+		replicationOwnershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	): Promise<T> {
+		try {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				replicationOwnershipLifecycleController,
+			);
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		if (this._replicationRangeMutationsClosing) {
+			return Promise.reject(
+				new TerminalOperationNotStartedError(
+					"Replication range mutations are closing",
+				),
+			);
+		}
+		const run = (this._replicationRangeMutationTail ?? Promise.resolve())
+			.catch(() => {
+				// A failed predecessor must not leave the queue permanently rejected.
+			})
+			.then(() => {
+				// A predecessor can poison ownership, or close/reopen can replace the
+				// ownership generation, after this mutation was admitted. Recheck the
+				// exact captured generation before a queued follower touches state.
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					replicationOwnershipLifecycleController,
+				);
+				return fn();
+			});
+		this._replicationRangeMutationTail = run.then(
+			() => undefined,
+			() => undefined,
+		);
+		return run;
+	}
+
+	private acquireReplicationRangeMutationTerminalFence(): {
+		drained: Promise<void>;
+	} {
+		this._replicationRangeMutationsClosing = true;
+		return { drained: this.drainReplicationRangeMutationQueue() };
+	}
+
+	private async drainReplicationRangeMutationQueue(): Promise<void> {
+		for (;;) {
+			const tail = this._replicationRangeMutationTail;
+			if (!tail) {
+				return;
+			}
+			await tail.catch(() => {});
+			await Promise.resolve();
+			if (this._replicationRangeMutationTail === tail) {
+				return;
+			}
+		}
+	}
+
 	private async drainReplicationInfoApplyQueues(): Promise<void> {
 		for (;;) {
 			const tails = [...(this._replicationInfoApplyQueueByPeer?.values() ?? [])];
@@ -22961,6 +25722,409 @@ export class SharedLog<
 			// tails admitted while the previous snapshot was settling.
 			await Promise.resolve();
 		}
+	}
+
+	private trackAdmittedPruneRemove<T>(
+		remove: () => Promise<T>,
+		ownershipLifecycleController: AbortController,
+	): Promise<T> {
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
+		if (this._pruneRemovesClosing) {
+			return Promise.reject(
+				new TerminalOperationNotStartedError("Prune removals are closing"),
+			);
+		}
+
+		let operation: Promise<T>;
+		try {
+			// Invoke synchronously after admission so terminal close cannot establish
+			// its fence between the lifecycle check and the lower-log mutation.
+			operation = Promise.resolve(remove());
+		} catch (error) {
+			return Promise.reject(error);
+		}
+		this._admittedPruneRemoves.add(operation);
+		void operation.then(
+			() => {
+				this._admittedPruneRemoves.delete(operation);
+			},
+			() => {
+				this._admittedPruneRemoves.delete(operation);
+			},
+		);
+		return operation;
+	}
+
+	private acquirePruneRemoveTerminalFence(): { drained: Promise<void> } {
+		this._pruneRemovesClosing = true;
+		return { drained: this.drainAdmittedPruneRemoves() };
+	}
+
+	private async drainAdmittedPruneRemoves(): Promise<void> {
+		for (;;) {
+			const admitted = [...(this._admittedPruneRemoves ?? [])];
+			if (admitted.length === 0) {
+				return;
+			}
+			await Promise.allSettled(admitted);
+			await Promise.resolve();
+		}
+	}
+
+	private schedulePendingMaturity(
+		change: ReplicationChange<ReplicationRangeIndexable<R>>,
+		from: PublicSignKey,
+		options: { rebalance: boolean; waitMs: number },
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+	) {
+		if (!this.isRepairLifecycleActive(ownershipLifecycleController)) {
+			return;
+		}
+		let pendingRanges = this.pendingMaturity.get(change.range.hash);
+		if (!pendingRanges) {
+			pendingRanges = new Map();
+			this.pendingMaturity.set(change.range.hash, pendingRanges);
+		}
+		const previous = pendingRanges.get(change.range.idString);
+		if (previous) {
+			clearTimeout(previous.timeout);
+		}
+
+		const pendingMaturity: PendingMaturityRecord<R> = {
+			range: change,
+			timeout: undefined as unknown as ReturnType<typeof setTimeout>,
+			expiresAt: Date.now() + options.waitMs,
+			from,
+			rebalance: options.rebalance,
+			ownershipLifecycleController,
+		};
+		const rangeHash = change.range.hash;
+		const rangeIdString = change.range.idString;
+		pendingMaturity.timeout = setTimeout(() => {
+			if (
+				!this.isRepairLifecycleActive(
+					pendingMaturity.ownershipLifecycleController,
+				)
+			) {
+				if (pendingRanges.get(rangeIdString) === pendingMaturity) {
+					pendingRanges.delete(rangeIdString);
+					if (
+						pendingRanges.size === 0 &&
+						this.pendingMaturity.get(rangeHash) === pendingRanges
+					) {
+						this.pendingMaturity.delete(rangeHash);
+					}
+				}
+				return;
+			}
+			// Clearing or replacing the exact range invalidates this object. A timer
+			// already queued by the event loop must become a no-op.
+			if (pendingRanges.get(rangeIdString) !== pendingMaturity) {
+				return;
+			}
+			pendingRanges.delete(rangeIdString);
+			if (
+				pendingRanges.size === 0 &&
+				this.pendingMaturity.get(rangeHash) === pendingRanges
+			) {
+				this.pendingMaturity.delete(rangeHash);
+			}
+
+			this.events.dispatchEvent(
+				new CustomEvent<ReplicationChangeEvent>("replicator:mature", {
+					detail: { publicKey: pendingMaturity.from },
+				}),
+			);
+
+			if (
+				this.isRepairLifecycleActive(
+					pendingMaturity.ownershipLifecycleController,
+				) &&
+				pendingMaturity.rebalance &&
+				change.range.mode !== ReplicationIntent.Strict &&
+				change.type === "added"
+			) {
+				this.replicationChangeDebounceFn.add({
+					...change,
+					matured: true,
+				});
+			}
+		}, options.waitMs);
+		pendingRanges.set(rangeIdString, pendingMaturity);
+	}
+
+	/**
+	 * Delete exact durable ranges, then reconcile every native/runtime mirror to
+	 * the observed durable post-state. Backends may reject after committing all
+	 * or part of a delete, so a blind compensating put could resurrect data.
+	 *
+	 * This method must run inside the global replication-range mutation lane.
+	 */
+	private async deleteReplicationRangesCoherently(
+		ranges: ReplicationRangeIndexable<R>[],
+		ownerHash: string,
+		options?: { preserveOwnerMembership?: boolean },
+	): Promise<ReplicationRangeDeletionOutcome<R>> {
+		if (ranges.length === 0) {
+			const ownerHasRanges =
+				(await this.replicationIndex.count({ query: { hash: ownerHash } })) > 0;
+			if (!ownerHasRanges) {
+				this.uniqueReplicators.delete(ownerHash);
+				this._replicatorJoinEmitted.delete(ownerHash);
+			}
+			return {
+				removed: [],
+				retained: [],
+				ownerHasRanges,
+			};
+		}
+
+		const uniqueRanges = [
+			...new Map(ranges.map((range) => [range.idString, range])).values(),
+		];
+		const wasReplicator = this.uniqueReplicators.has(ownerHash);
+		const joinWasEmitted = this._replicatorJoinEmitted.has(ownerHash);
+		type Snapshot = {
+			range: ReplicationRangeIndexable<R>;
+			pending?: PendingMaturityRecord<R>;
+		};
+		const snapshots: Snapshot[] = uniqueRanges.map((range) => {
+			const pending = this.pendingMaturity.get(ownerHash)?.get(range.idString);
+			return {
+				range,
+				pending:
+					pending?.range.range.rangeHash === range.rangeHash
+						? pending
+						: undefined,
+			};
+		});
+
+		// Suspend exact maturity timers before the durable operation becomes
+		// ambiguous; confirmed survivors are restored below with their remaining age.
+		for (const snapshot of snapshots) {
+			if (snapshot.pending) {
+				clearTimeout(snapshot.pending.timeout);
+				const peerPending = this.pendingMaturity.get(ownerHash);
+				if (peerPending?.get(snapshot.range.idString) === snapshot.pending) {
+					peerPending.delete(snapshot.range.idString);
+					if (peerPending.size === 0) {
+						this.pendingMaturity.delete(ownerHash);
+					}
+				}
+			}
+		}
+
+		let primaryError: unknown;
+		const deletionErrors: unknown[] = [];
+		const reconciliationErrors: unknown[] = [];
+		// No backend transaction spans bounded calls. Attempt every batch and probe
+		// the exact post-state even after an ambiguous failure.
+		for (
+			let i = 0;
+			i < uniqueRanges.length;
+			i += REPLICATION_RANGE_ID_QUERY_BATCH_SIZE
+		) {
+			try {
+				await this.replicationIndex.del({
+					query: new And([
+						new StringMatch({ key: "hash", value: ownerHash }),
+						new Or(
+							uniqueRanges
+								.slice(i, i + REPLICATION_RANGE_ID_QUERY_BATCH_SIZE)
+								.map(
+									(range) =>
+										new ByteMatchQuery({
+											key: "id",
+											value: range.id,
+										}),
+								),
+						),
+					]),
+				});
+			} catch (error) {
+				deletionErrors.push(error);
+			}
+		}
+		if (deletionErrors.length === 1) {
+			primaryError = deletionErrors[0];
+		} else if (deletionErrors.length > 1) {
+			primaryError = new AggregateError(
+				deletionErrors,
+				"Multiple replication-range deletion batches failed",
+			);
+		}
+
+		const probeCurrentRows = async () => {
+			const currentById = new Map<string, ReplicationRangeIndexable<R>>();
+			for (
+				let i = 0;
+				i < uniqueRanges.length;
+				i += REPLICATION_RANGE_ID_QUERY_BATCH_SIZE
+			) {
+				const current = await this.replicationIndex
+					.iterate(
+						{
+							query: new Or(
+								uniqueRanges
+									.slice(i, i + REPLICATION_RANGE_ID_QUERY_BATCH_SIZE)
+									.map(
+										(range) =>
+											new ByteMatchQuery({
+												key: "id",
+												value: range.id,
+											}),
+									),
+							),
+						},
+						{ reference: true },
+					)
+					.all();
+				for (const result of current) {
+					currentById.set(result.value.idString, result.value);
+				}
+			}
+			return currentById;
+		};
+
+		let currentById: Map<string, ReplicationRangeIndexable<R>>;
+		try {
+			currentById = await probeCurrentRows();
+		} catch (error) {
+			primaryError ??= error;
+			try {
+				currentById = await probeCurrentRows();
+			} catch (retryError) {
+				const failure = new AggregateError(
+					primaryError === retryError
+						? [retryError]
+						: [primaryError, retryError],
+					"Could not determine durable replication-range state after deletion",
+				);
+				this.poisonReplicationOwnership(failure);
+				throw failure;
+			}
+		}
+
+		const removed: ReplicationRangeIndexable<R>[] = [];
+		const retained: ReplicationRangeIndexable<R>[] = [];
+		for (const snapshot of snapshots) {
+			const current = currentById.get(snapshot.range.idString);
+			if (
+				current?.hash === snapshot.range.hash &&
+				current.rangeHash === snapshot.range.rangeHash
+			) {
+				retained.push(snapshot.range);
+			} else {
+				removed.push(snapshot.range);
+			}
+		}
+		if (primaryError === undefined && retained.length > 0) {
+			primaryError = new Error(
+				"Replication-range deletion resolved without removing every selected row",
+			);
+		}
+		const retainedIds = new Set(retained.map((range) => range.idString));
+
+		const reconcileNative = (
+			snapshot: Snapshot,
+			current: ReplicationRangeIndexable<R> | undefined,
+		) => {
+			if (current) {
+				this.putNativeReplicationRange(current);
+			} else {
+				this.deleteNativeReplicationRange(snapshot.range);
+			}
+		};
+		for (const snapshot of snapshots) {
+			const current = currentById.get(snapshot.range.idString);
+			try {
+				reconcileNative(snapshot, current);
+			} catch (error) {
+				primaryError ??= error;
+				try {
+					reconcileNative(snapshot, current);
+				} catch (retryError) {
+					reconciliationErrors.push(retryError);
+				}
+			}
+
+			if (
+				snapshot.pending &&
+				retainedIds.has(snapshot.range.idString) &&
+				!this.pendingMaturity.get(ownerHash)?.has(snapshot.range.idString)
+			) {
+				this.schedulePendingMaturity(
+					snapshot.pending.range,
+					snapshot.pending.from,
+					{
+						rebalance: snapshot.pending.rebalance,
+						waitMs: Math.max(0, snapshot.pending.expiresAt - Date.now()),
+					},
+					snapshot.pending.ownershipLifecycleController,
+				);
+			}
+		}
+
+		let ownerHasRanges = wasReplicator;
+		let ownerStateKnown = false;
+		try {
+			ownerHasRanges =
+				(await this.replicationIndex.count({ query: { hash: ownerHash } })) > 0;
+			ownerStateKnown = true;
+		} catch (error) {
+			primaryError ??= error;
+			reconciliationErrors.push(error);
+		}
+		try {
+			await this.updateOldestTimestampFromIndex();
+		} catch (error) {
+			primaryError ??= error;
+			reconciliationErrors.push(error);
+		}
+		if (ownerStateKnown) {
+			try {
+				// Preserve membership only for a successful destructive reset that is
+				// immediately installing replacement rows.
+				const canPreserveOwnerMembership =
+					options?.preserveOwnerMembership === true &&
+					primaryError === undefined;
+				if (ownerHasRanges || canPreserveOwnerMembership) {
+					if (ownerHasRanges || wasReplicator) {
+						this.uniqueReplicators.add(ownerHash);
+					}
+					if (joinWasEmitted) {
+						this._replicatorJoinEmitted.add(ownerHash);
+					}
+				} else {
+					this.uniqueReplicators.delete(ownerHash);
+					this._replicatorJoinEmitted.delete(ownerHash);
+				}
+			} catch (error) {
+				primaryError ??= error;
+				reconciliationErrors.push(error);
+			}
+		}
+
+		let outcomeError = primaryError;
+		if (reconciliationErrors.length > 0) {
+			const errors = [
+				...(primaryError === undefined ? [] : [primaryError]),
+				...reconciliationErrors.filter((error) => error !== primaryError),
+			];
+			outcomeError = new AggregateError(
+				errors,
+				"Replication-range deletion and post-state reconciliation failed",
+			);
+			this.poisonReplicationOwnership(outcomeError);
+		}
+		return {
+			removed,
+			retained,
+			ownerHasRanges,
+			error: outcomeError,
+		};
 	}
 
 	private advanceReplicationInfoReceiveEpoch(peerHash: string): object {
@@ -23261,10 +26425,12 @@ export class SharedLog<
 			return;
 		}
 		if (replicationSegments.length > 0) {
+			const segments = replicationSegments.map((x) => x.toReplicationRange());
+			this.validatePersistedReplicationRangeSnapshot(segments);
 			await this.rpc
 				.send(
 					new AllReplicatingSegmentsMessage({
-						segments: replicationSegments.map((x) => x.toReplicationRange()),
+						segments,
 					}),
 					{
 						mode: new AcknowledgeDelivery({ redundancy: 1, to: [publicKey] }),
@@ -23354,21 +26520,53 @@ export class SharedLog<
 			}
 		>,
 		options?: { timeout?: number; unchecked?: boolean },
+		ownershipLifecycleController?: AbortController,
 	): Promise<any>[] {
+		if (!options?.unchecked && this.closed) {
+			return [];
+		}
+		ownershipLifecycleController ??=
+			this.captureReplicationOwnershipLifecycle();
+		this.throwIfReplicationOwnershipLifecycleInactive(
+			ownershipLifecycleController,
+		);
 		if (options?.unchecked) {
 			return [...entries.values()].map((x) => {
+				this.throwIfReplicationOwnershipLifecycleInactive(
+					ownershipLifecycleController,
+				);
 				this.deleteGidPeerHistory(x.entry.meta.gid);
 				this.removePruneRequestSent(x.entry.hash);
 				this._checkedPrune.clearConfirmedReplicators(x.entry.hash);
-				return this.log.remove(x.entry, {
-					recursively: true,
-				});
+				return this.trackAdmittedPruneRemove(
+					() =>
+						this.log.remove(x.entry, {
+							recursively: true,
+						}),
+					ownershipLifecycleController,
+				);
 			});
 		}
 
-		if (this.closed) {
-			return [];
-		}
+		const checkedPruneCoordinator = this._checkedPrune;
+		const closeController = this._closeController;
+		const isCheckedPruneLifecycleCurrent = () =>
+			this.isRepairLifecycleActive(ownershipLifecycleController) &&
+			this._checkedPrune === checkedPruneCoordinator &&
+			this._closeController === closeController;
+		const throwIfCheckedPruneLifecycleInactive = () => {
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
+			if (
+				this._checkedPrune !== checkedPruneCoordinator ||
+				this._closeController !== closeController
+			) {
+				throw new TerminalOperationNotStartedError(
+					"Checked prune lifecycle is no longer active",
+				);
+			}
+		};
 
 		// ask network if they have they entry,
 		// so I can delete it
@@ -23396,7 +26594,7 @@ export class SharedLog<
 				set.push(entry.hash);
 			}
 
-			const pendingPrev = this._checkedPrune.getPendingDelete(entry.hash);
+			const pendingPrev = checkedPruneCoordinator.getPendingDelete(entry.hash);
 			if (pendingPrev) {
 				// If a background prune is already in-flight, an explicit prune request should
 				// still respect the caller's timeout. Otherwise, tests (and user calls) can
@@ -23430,73 +26628,178 @@ export class SharedLog<
 
 			const minReplicas = decodeReplicas(entry);
 			const deferredPromise: DeferredPromise<void> = pDefer();
+			let finalOwnershipRevalidationFailed = false;
 
 			const clear = () => {
-				const pending = this._checkedPrune.getPendingDelete(entry.hash);
+				const pending = checkedPruneCoordinator.getPendingDelete(entry.hash);
 				if (pending?.promise === deferredPromise) {
-					this._checkedPrune.deletePendingDelete(entry.hash, pending);
+					checkedPruneCoordinator.deletePendingDelete(entry.hash, pending);
 				}
 				clearTimeout(timeout);
 			};
 
 			const resolve = () => {
+				try {
+					throwIfCheckedPruneLifecycleInactive();
+				} catch (error) {
+					reject(error);
+					return;
+				}
 				clearTimeout(timeout);
-				this.clearCheckedPruneRetry(entry.hash);
+				checkedPruneCoordinator.clearRetry(entry.hash);
 				cleanupTimer.push(
-					setTimeout(async () => {
-						this.deleteGidPeerHistory(entry.meta.gid);
-						this.removePruneRequestSent(entry.hash);
-						this._checkedPrune.clearConfirmedReplicators(entry.hash);
-
-						const ownership = await this.revalidateCheckedPruneOwnership({
-							hash: entry.hash,
-							entry,
-							leaders: this.checkedPruneLeadersToMap(leaders),
-							selfReplicating: true,
-						});
-						if (ownership.localLeader) {
-							clear();
-							if (!explicitTimeout) {
-								this.scheduleCheckedPruneRetry({ entry, leaders });
+					setTimeout(() => {
+						const run = async () => {
+							throwIfCheckedPruneLifecycleInactive();
+							const ownership = await this.revalidateCheckedPruneOwnership({
+								hash: entry.hash,
+								entry,
+								leaders: this.checkedPruneLeadersToMap(leaders),
+								selfReplicating: true,
+								ownershipLifecycleController,
+								checkedPruneCoordinator,
+							});
+							throwIfCheckedPruneLifecycleInactive();
+							if (ownership.localLeader) {
+								clear();
+								if (!explicitTimeout) {
+									this.scheduleCheckedPruneRetry(
+										{ entry, leaders },
+										ownershipLifecycleController,
+									);
+								}
+								deferredPromise.reject(
+									new Error("Failed to delete, is leader again"),
+								);
+								return;
 							}
-							deferredPromise.reject(
-								new Error("Failed to delete, is leader again"),
-							);
-							return;
-						}
 
-						this._checkedPrune.markRemoving(entry.hash);
-						return this.log
-							.remove(entry, {
-								recursively: true,
-							})
-							.then(() => {
+							try {
+								const removed = await this.withReplicationRangeMutationQueue(
+									async () => {
+										throwIfCheckedPruneLifecycleInactive();
+										// The network confirmation and preliminary planner check
+										// deliberately happen outside the global ownership lane. Once
+										// admitted here, re-read leadership and keep the lower-log
+										// delete in the same lane so a durable range mutation cannot
+										// commit between the decision and the destructive operation.
+										let finalOwnership: {
+											leaders: CheckedPruneLeaderMap;
+											localLeader: boolean;
+										};
+										try {
+											finalOwnership =
+												await this.revalidateCheckedPruneOwnership({
+													hash: entry.hash,
+													entry,
+													leaders: this.checkedPruneLeadersToMap(leaders),
+													selfReplicating: true,
+													requireFreshLeaderDecision: true,
+													ownershipLifecycleController,
+													checkedPruneCoordinator,
+												});
+										} catch (error) {
+											finalOwnershipRevalidationFailed = true;
+											throw error;
+										}
+										throwIfCheckedPruneLifecycleInactive();
+										if (finalOwnership.localLeader) {
+											return false;
+										}
+
+										this.deleteGidPeerHistory(entry.meta.gid);
+										checkedPruneCoordinator.removeRequestSent(entry.hash);
+										checkedPruneCoordinator.clearConfirmedReplicators(
+											entry.hash,
+										);
+										throwIfCheckedPruneLifecycleInactive();
+										checkedPruneCoordinator.markRemoving(entry.hash);
+										this._checkedPruneRemoveBlocksLocalRangeMutationAdmission++;
+										try {
+											await this.trackAdmittedPruneRemove(
+												() =>
+													this.log.remove(entry, {
+														recursively: true,
+													}),
+												ownershipLifecycleController,
+											);
+										} finally {
+											this
+												._checkedPruneRemoveBlocksLocalRangeMutationAdmission--;
+										}
+										clear();
+										checkedPruneCoordinator.markDone(entry.hash);
+										deferredPromise.resolve();
+										return true;
+									},
+									ownershipLifecycleController,
+								);
+								if (!removed) {
+									clear();
+									if (!explicitTimeout) {
+										this.scheduleCheckedPruneRetry(
+											{ entry, leaders },
+											ownershipLifecycleController,
+										);
+									}
+									deferredPromise.reject(
+										new Error("Failed to delete, is leader again"),
+									);
+									return;
+								}
+							} catch (error) {
 								clear();
-								this._checkedPrune.markDone(entry.hash);
-								deferredPromise.resolve();
-							})
-							.catch((e) => {
-								clear();
-								this._checkedPrune.markCancelled(entry.hash, {
-									preserveRetry: false,
+								checkedPruneCoordinator.markCancelled(entry.hash, {
+									preserveRetry:
+										!explicitTimeout && finalOwnershipRevalidationFailed,
 								});
-								deferredPromise.reject(e);
-							})
-							.finally(async () => {
+								if (!explicitTimeout && finalOwnershipRevalidationFailed) {
+									this.scheduleCheckedPruneRetry(
+										{ entry, leaders },
+										ownershipLifecycleController,
+									);
+								}
+								deferredPromise.reject(error);
+								return;
+							}
+
+							// The delete has already settled. Diagnostics are best-effort:
+							// poison/close/reopen must not turn an ignored timer callback into
+							// an unhandled rejection or mutate the next lifecycle.
+							if (!isCheckedPruneLifecycleCurrent()) {
+								return;
+							}
+							try {
 								this.deleteGidPeerHistory(entry.meta.gid);
-								this.removePruneRequestSent(entry.hash);
-								this._checkedPrune.clearConfirmedReplicators(entry.hash);
-
-								const ownership = await this.revalidateCheckedPruneOwnership({
-									hash: entry.hash,
-									entry,
-									leaders: this.checkedPruneLeadersToMap(leaders),
-									selfReplicating: true,
-								});
-								if (ownership.localLeader) {
+								checkedPruneCoordinator.removeRequestSent(entry.hash);
+								checkedPruneCoordinator.clearConfirmedReplicators(entry.hash);
+								const postRemoveOwnership =
+									await this.revalidateCheckedPruneOwnership({
+										hash: entry.hash,
+										entry,
+										leaders: this.checkedPruneLeadersToMap(leaders),
+										selfReplicating: true,
+										ownershipLifecycleController,
+										checkedPruneCoordinator,
+									});
+								if (
+									isCheckedPruneLifecycleCurrent() &&
+									postRemoveOwnership.localLeader
+								) {
 									logger.error("Unexpected: Is leader after delete");
 								}
-							});
+							} catch (error) {
+								if (
+									isCheckedPruneLifecycleCurrent() &&
+									!isNotStartedError(error as Error)
+								) {
+									logger.error(error);
+								}
+							}
+						};
+						void run().catch((error) => {
+							reject(error);
+						});
 					}, this.waitForPruneDelay),
 				);
 			};
@@ -23507,7 +26810,7 @@ export class SharedLog<
 					e instanceof Error &&
 					typeof e.message === "string" &&
 					e.message.startsWith("Timeout for checked pruning");
-				this._checkedPrune.markCancelled(entry.hash, {
+				checkedPruneCoordinator.markCancelled(entry.hash, {
 					preserveRetry: !explicitTimeout && isCheckedPruneTimeout,
 				});
 				deferredPromise.reject(e);
@@ -23531,8 +26834,11 @@ export class SharedLog<
 				// For internal/background prune flows (no explicit timeout), retry a few times
 				// to avoid "permanently prunable" entries when `_pendingIHave` expires under
 				// heavy load.
-				if (!explicitTimeout) {
-					this.scheduleCheckedPruneRetry({ entry, leaders });
+				if (!explicitTimeout && isCheckedPruneLifecycleCurrent()) {
+					this.scheduleCheckedPruneRetry(
+						{ entry, leaders },
+						ownershipLifecycleController,
+					);
 				}
 				reject(
 					new Error(
@@ -23542,13 +26848,19 @@ export class SharedLog<
 			}, checkedPruneTimeoutMs);
 			timeout.unref?.();
 
-			this._checkedPrune.setPendingDelete(
+			checkedPruneCoordinator.setPendingDelete(
 				entry.hash,
 				{
 					promise: deferredPromise,
 					clear,
 					reject,
 					resolve: async (publicKeyHash: string) => {
+						try {
+							throwIfCheckedPruneLifecycleInactive();
+						} catch (error) {
+							reject(error);
+							return;
+						}
 						const minReplicasObj = this.getClampedReplicas(minReplicas);
 						const minReplicasValue = minReplicasObj.getValue(this);
 
@@ -23571,8 +26883,14 @@ export class SharedLog<
 						) {
 							return;
 						}
+						try {
+							throwIfCheckedPruneLifecycleInactive();
+						} catch (error) {
+							reject(error);
+							return;
+						}
 
-						const existCounter = this._checkedPrune.addConfirmedReplicator(
+						const existCounter = checkedPruneCoordinator.addConfirmedReplicator(
 							entry.hash,
 							publicKeyHash,
 						);
@@ -23592,17 +26910,18 @@ export class SharedLog<
 		}
 
 		const emitMessages = async (entries: string[], to: string) => {
+			throwIfCheckedPruneLifecycleInactive();
 			const filteredSet: string[] = [];
 			for (const entry of entries) {
 				/* TODO why can we not have this statement? 
 				if (set.has(to)) {
 					continue;
 				} */
-				this._checkedPrune.addRequestSent(entry, to);
+				checkedPruneCoordinator.addRequestSent(entry, to);
 				filteredSet.push(entry);
 			}
 			if (filteredSet.length > 0) {
-				return this.rpc.send(
+				const result = await this.rpc.send(
 					new RequestIPrune({
 						hashes: filteredSet,
 					}),
@@ -23614,6 +26933,8 @@ export class SharedLog<
 						priority: CONVERGENCE_MESSAGE_PRIORITY,
 					},
 				);
+				throwIfCheckedPruneLifecycleInactive();
+				return result;
 			}
 		};
 
@@ -23636,12 +26957,15 @@ export class SharedLog<
 			let inFlight = false;
 			const timer = setInterval(() => {
 				if (inFlight) return;
-				if (this.closed) return;
+				if (!isCheckedPruneLifecycleCurrent()) {
+					clearInterval(timer);
+					return;
+				}
 
 				const pendingByPeer: [string, string[]][] = [];
 				for (const [peer, hashes] of peerToEntries) {
 					const pending = hashes.filter((h) =>
-						this._checkedPrune.hasPendingDelete(h),
+						checkedPruneCoordinator.hasPendingDelete(h),
 					);
 					if (pending.length > 0) {
 						pendingByPeer.push([peer, pending]);
@@ -23658,7 +26982,9 @@ export class SharedLog<
 						emitMessages(hashes, peer).catch(() => {}),
 					),
 				).finally(() => {
-					inFlight = false;
+					if (isCheckedPruneLifecycleCurrent()) {
+						inFlight = false;
+					}
 				});
 			}, resendIntervalMs);
 			timer.unref?.();
@@ -23669,11 +26995,11 @@ export class SharedLog<
 			for (const timer of cleanupTimer) {
 				clearTimeout(timer);
 			}
-			this._closeController.signal.removeEventListener("abort", cleanup);
+			closeController.signal.removeEventListener("abort", cleanup);
 		};
 
 		Promise.allSettled(promises).finally(cleanup);
-		this._closeController.signal.addEventListener("abort", cleanup);
+		closeController.signal.addEventListener("abort", cleanup);
 		return promises;
 	}
 
@@ -23681,6 +27007,7 @@ export class SharedLog<
 	 * For debugging
 	 */
 	async getPrunable(roleAge?: number) {
+		this.throwIfReplicationOwnershipPoisoned();
 		const heads = await this.log.getHeads(true).all();
 		let prunable: Entry<any>[] = [];
 		for (const head of heads) {
@@ -23696,6 +27023,7 @@ export class SharedLog<
 	}
 
 	async getNonPrunable(roleAge?: number) {
+		this.throwIfReplicationOwnershipPoisoned();
 		const heads = await this.log.getHeads(true).all();
 		let nonPrunable: Entry<any>[] = [];
 		for (const head of heads) {
@@ -23739,6 +27067,14 @@ export class SharedLog<
 			| ReplicationChanges<ReplicationRangeIndexable<R>>
 			| ReplicationChanges<ReplicationRangeIndexable<R>>[],
 	) {
+		const ownershipLifecycleController =
+			this.captureReplicationOwnershipLifecycle();
+		const isOwnershipLifecycleCurrent = () =>
+			this.isRepairLifecycleActive(ownershipLifecycleController);
+		const throwIfOwnershipLifecycleInactive = () =>
+			this.throwIfReplicationOwnershipLifecycleInactive(
+				ownershipLifecycleController,
+			);
 		/**
 		 * TODO use information of new joined/leaving peer to create a subset of heads
 		 * that we potentially need to share with other peers
@@ -23763,6 +27099,9 @@ export class SharedLog<
 		}
 
 		await this.log.trim();
+		if (!isOwnershipLifecycleCurrent()) {
+			return false;
+		}
 
 		// On removed ranges (peer leaves / shrink), gid-level history can hide
 		// per-entry gaps. Force a fresh delivery pass for reassigned entries.
@@ -23772,6 +27111,9 @@ export class SharedLog<
 		const gidPeersHistorySnapshot = new Map<string, Set<string> | undefined>();
 		const dedupeCutoff = Date.now() - RECENT_REPAIR_DISPATCH_TTL_MS;
 		for (const [target, hashes] of this._recentRepairDispatch) {
+			if (!isOwnershipLifecycleCurrent()) {
+				return false;
+			}
 			for (const [hash, ts] of hashes) {
 				if (ts <= dedupeCutoff) {
 					hashes.delete(hash);
@@ -23798,6 +27140,9 @@ export class SharedLog<
 				(change.type === "removed" || change.type === "replaced"),
 		);
 		for (const change of changes) {
+			if (!isOwnershipLifecycleCurrent()) {
+				return false;
+			}
 			if (
 				change.range.hash !== selfHash &&
 				(change.type === "removed" || change.type === "replaced")
@@ -23842,10 +27187,12 @@ export class SharedLog<
 				)
 			: changes;
 		const isCurrentJoinWarmupTarget = (target: string) =>
+			isOwnershipLifecycleCurrent() &&
 			warmupPeers.has(target) &&
 			this._joinWarmupGenerationByTarget.get(target) ===
 				joinWarmupGenerations.get(target);
 		const areJoinWarmupGenerationsCurrent = () =>
+			isOwnershipLifecycleCurrent() &&
 			[...warmupPeers].every(isCurrentJoinWarmupTarget);
 
 		try {
@@ -23854,6 +27201,9 @@ export class SharedLog<
 				Map<string, EntryReplicated<any>>
 			> = new Map();
 			const flushUncheckedDeliverTarget = (target: string) => {
+				if (!isOwnershipLifecycleCurrent()) {
+					return;
+				}
 				const entries = uncheckedDeliver.get(target);
 				if (!entries || entries.size === 0) {
 					return;
@@ -23868,25 +27218,33 @@ export class SharedLog<
 					: isWarmupTarget
 						? "join-warmup"
 						: "join-authoritative";
-				this.dispatchMaybeMissingEntries(target, entries, {
-					bypassRecentDedupe: isWarmupTarget || forceFreshDelivery,
-					bypassKnownPeerHints:
-						forceFreshDelivery ||
-						(mode === "join-authoritative" && addedPeers.has(target)),
-					mode,
-					retryScheduleMs:
-						mode === "join-warmup"
-							? JOIN_WARMUP_RETRY_SCHEDULE_MS
-							: mode === "join-authoritative"
-								? [0]
-								: undefined,
-				});
+				this.dispatchMaybeMissingEntries(
+					target,
+					entries,
+					{
+						bypassRecentDedupe: isWarmupTarget || forceFreshDelivery,
+						bypassKnownPeerHints:
+							forceFreshDelivery ||
+							(mode === "join-authoritative" && addedPeers.has(target)),
+						mode,
+						retryScheduleMs:
+							mode === "join-warmup"
+								? JOIN_WARMUP_RETRY_SCHEDULE_MS
+								: mode === "join-authoritative"
+									? [0]
+									: undefined,
+					},
+					ownershipLifecycleController,
+				);
 				uncheckedDeliver.delete(target);
 			};
 			const queueUncheckedDeliver = (
 				target: string,
 				entry: EntryReplicated<any>,
 			) => {
+				if (!isOwnershipLifecycleCurrent()) {
+					return;
+				}
 				if (warmupPeers.has(target) && !isCurrentJoinWarmupTarget(target)) {
 					return;
 				}
@@ -23915,9 +27273,8 @@ export class SharedLog<
 					},
 				)) {
 					if (
-						this.closed ||
-						(useJoinWarmupFastPath &&
-							!areJoinWarmupGenerationsCurrent())
+						!isOwnershipLifecycleCurrent() ||
+						(useJoinWarmupFastPath && !areJoinWarmupGenerationsCurrent())
 					) {
 						break;
 					}
@@ -23957,6 +27314,9 @@ export class SharedLog<
 								persist: false,
 							},
 						);
+						if (!isOwnershipLifecycleCurrent()) {
+							return false;
+						}
 						if (!areJoinWarmupGenerationsCurrent()) {
 							continue;
 						}
@@ -23994,14 +27354,25 @@ export class SharedLog<
 						);
 
 						if (!currentPeers.has(selfHash)) {
-							this.pruneDebouncedFnAddIfNotKeeping({
-								key: entryReplicated.hash,
-								value: { entry: entryReplicated, leaders: currentPeers },
-							});
+							throwIfOwnershipLifecycleInactive();
+							await this.pruneDebouncedFnAddIfNotKeeping(
+								{
+									key: entryReplicated.hash,
+									value: { entry: entryReplicated, leaders: currentPeers },
+								},
+								ownershipLifecycleController,
+							);
+							if (!isOwnershipLifecycleCurrent()) {
+								return false;
+							}
 
 							this.responseToPruneDebouncedFn.delete(entryReplicated.hash);
 						} else {
+							throwIfOwnershipLifecycleInactive();
 							await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
+							if (!isOwnershipLifecycleCurrent()) {
+								return false;
+							}
 						}
 						continue;
 					}
@@ -24026,6 +27397,9 @@ export class SharedLog<
 							roleAge: 0,
 						},
 					);
+					if (!isOwnershipLifecycleCurrent()) {
+						return false;
+					}
 
 					for (const [currentPeer] of currentPeers) {
 						if (currentPeer === this.node.identity.publicKey.hashcode()) {
@@ -24071,56 +27445,87 @@ export class SharedLog<
 					);
 
 					if (!isLeader) {
-						this.pruneDebouncedFnAddIfNotKeeping({
-							key: entryReplicated.hash,
-							value: { entry: entryReplicated, leaders: currentPeers },
-						});
+						throwIfOwnershipLifecycleInactive();
+						await this.pruneDebouncedFnAddIfNotKeeping(
+							{
+								key: entryReplicated.hash,
+								value: { entry: entryReplicated, leaders: currentPeers },
+							},
+							ownershipLifecycleController,
+						);
+						if (!isOwnershipLifecycleCurrent()) {
+							return false;
+						}
 
 						this.responseToPruneDebouncedFn.delete(entryReplicated.hash); // don't allow others to prune because of expecting me to replicating this entry
 					} else {
+						throwIfOwnershipLifecycleInactive();
 						await this.cancelCheckedPruneForLocalLeader(entryReplicated.hash);
+						if (!isOwnershipLifecycleCurrent()) {
+							return false;
+						}
 					}
 				}
 			}
 
 			if (forceFreshDelivery) {
+				throwIfOwnershipLifecycleInactive();
 				// Pure leave/shrink churn can have zero `addedPeers`, but the peers that
 				// received redistributed entries still need a follow-up repair pass if the
 				// immediate maybe-sync misses one entry.
-				this.scheduleRepairSweep({
-					mode: "churn",
-					peers: churnRepairPeers,
-				});
+				this.scheduleRepairSweep(
+					{
+						mode: "churn",
+						peers: churnRepairPeers,
+					},
+					ownershipLifecycleController,
+				);
 			} else if (useJoinWarmupFastPath) {
+				throwIfOwnershipLifecycleInactive();
 				// Pure join warmup uses the cheap immediate maybe-missing dispatch above,
 				// then defers the authoritative sweep so it does not compete with the
 				// write burst itself.
 				const peers = new Set(addedPeers);
+				const repairTimers = this._repairRetryTimers;
 				const timer = setTimeout(() => {
-					this._repairRetryTimers.delete(timer);
-					if (this.closed) {
+					repairTimers.delete(timer);
+					if (!isOwnershipLifecycleCurrent()) {
 						return;
 					}
-					this.scheduleRepairSweep({
-						mode: "join-warmup",
-						peers,
-						joinWarmupGenerations,
-					});
+					this.scheduleRepairSweep(
+						{
+							mode: "join-warmup",
+							peers,
+							joinWarmupGenerations,
+						},
+						ownershipLifecycleController,
+					);
 				}, 250);
 				timer.unref?.();
-				this._repairRetryTimers.add(timer);
+				repairTimers.add(timer);
 			} else if (authoritativeRepairPeers.size > 0) {
-				this.scheduleRepairSweep({
-					mode: "join-authoritative",
-					peers: authoritativeRepairPeers,
-				});
+				throwIfOwnershipLifecycleInactive();
+				this.scheduleRepairSweep(
+					{
+						mode: "join-authoritative",
+						peers: authoritativeRepairPeers,
+					},
+					ownershipLifecycleController,
+				);
 			}
 
 			if (!forceFreshDelivery && authoritativeRepairPeers.size > 0) {
-				this.scheduleJoinAuthoritativeRepair(authoritativeRepairPeers);
+				throwIfOwnershipLifecycleInactive();
+				this.scheduleJoinAuthoritativeRepair(
+					authoritativeRepairPeers,
+					ownershipLifecycleController,
+				);
 			}
 
 			for (const target of [...uncheckedDeliver.keys()]) {
+				if (!isOwnershipLifecycleCurrent()) {
+					return false;
+				}
 				flushUncheckedDeliverTarget(target);
 			}
 
@@ -24128,6 +27533,9 @@ export class SharedLog<
 				hasSelfRangeRemoval && !this._isAdaptiveReplicating
 					? await this.getMyReplicationSegments()
 					: undefined;
+			if (!isOwnershipLifecycleCurrent()) {
+				return false;
+			}
 			const hasFixedSelfRangeRemovalToZero =
 				localSegmentsAfterChange != null &&
 				localSegmentsAfterChange.length > 0 &&
@@ -24145,6 +27553,7 @@ export class SharedLog<
 					));
 
 			if (shouldRunLocalPruneScan) {
+				throwIfOwnershipLifecycleInactive();
 				// Adaptive range changes and fixed zero-width updates can make already-indexed
 				// local heads prunable even when the incremental rebalance scan misses them
 				// under churn or timing pressure. Re-scan after repair dispatches are flushed
@@ -24152,13 +27561,22 @@ export class SharedLog<
 				await this.pruneIndexedEntriesNoLongerLed({
 					useDefaultRoleAge: true,
 				});
+				if (!isOwnershipLifecycleCurrent()) {
+					return false;
+				}
 				await this.pruneCurrentHeadsNoLongerLed({
 					useDefaultRoleAge: true,
 				});
+				if (!isOwnershipLifecycleCurrent()) {
+					return false;
+				}
 			}
 
 			return changed;
 		} catch (error: any) {
+			if (!isOwnershipLifecycleCurrent()) {
+				return false;
+			}
 			if (isNotStartedError(error)) {
 				return false; // we are not started yet, so no changes
 			}
@@ -24225,9 +27643,15 @@ export class SharedLog<
 		);
 	}
 
-	async rebalanceParticipation() {
+	async rebalanceParticipation(
+		ownershipLifecycleController = this.captureReplicationOwnershipLifecycle(),
+		rebalanceParticipationDebounced = this.rebalanceParticipationDebounced,
+	) {
 		// update more participation rate to converge to the average expected rate or bounded by
 		// resources such as memory and or cpu
+		const isCurrent = () =>
+			this.isRepairLifecycleActive(ownershipLifecycleController) &&
+			this.rebalanceParticipationDebounced === rebalanceParticipationDebounced;
 
 		const isClosedStoreRace = (error: any) => {
 			const message =
@@ -24241,7 +27665,7 @@ export class SharedLog<
 		};
 
 		const fn = async () => {
-			if (this.closed) {
+			if (!isCurrent()) {
 				return false;
 			}
 
@@ -24252,13 +27676,17 @@ export class SharedLog<
 
 			if (this._isAdaptiveReplicating) {
 				if (this.shouldDelayAdaptiveRebalance()) {
-					this.rebalanceParticipationDebounced?.call();
+					if (isCurrent()) {
+						void rebalanceParticipationDebounced?.call();
+					}
 					return false;
 				}
 
 				const peers = this.replicationIndex;
 				const usedMemory = await this.getMemoryUsage();
+				if (!isCurrent()) return false;
 				let dynamicRange = await this.getDynamicRange();
+				if (!isCurrent()) return false;
 
 				if (!dynamicRange) {
 					return; // not allowed to replicate
@@ -24270,12 +27698,22 @@ export class SharedLog<
 				) {
 					// Memory pressure can leave prunable frontier heads even when the
 					// coordinate-index scan has no pending prune candidates.
-					await this.pruneIndexedEntriesNoLongerLed();
-					await this.pruneCurrentHeadsNoLongerLed();
+					await this.pruneIndexedEntriesNoLongerLed(
+						undefined,
+						ownershipLifecycleController,
+					);
+					if (!isCurrent()) return false;
+					await this.pruneCurrentHeadsNoLongerLed(
+						undefined,
+						ownershipLifecycleController,
+					);
+					if (!isCurrent()) return false;
 				}
 
 				const peersSize = (await peers.getSize()) || 1;
+				if (!isCurrent()) return false;
 				const totalParticipation = await this.calculateTotalParticipation();
+				if (!isCurrent()) return false;
 
 				const newFactor = this.replicationController.step({
 					memoryUsage: usedMemory,
@@ -24318,15 +27756,21 @@ export class SharedLog<
 					const canReplicate =
 						!this._isTrustedReplicator ||
 						(await this._isTrustedReplicator(this.node.identity.publicKey));
+					if (!isCurrent()) return false;
 					if (!canReplicate) {
 						return false;
 					}
 
 					try {
-						await this.startAnnounceReplicating([dynamicRange], {
-							checkDuplicates: false,
-							reset: false,
-						});
+						await this.startAnnounceReplicating(
+							[dynamicRange],
+							{
+								checkDuplicates: false,
+								reset: false,
+							},
+							ownershipLifecycleController,
+						);
+						if (!isCurrent()) return false;
 					} catch (error) {
 						if (
 							isTransientReplicationAnnouncementError(error) &&
@@ -24338,11 +27782,15 @@ export class SharedLog<
 					}
 
 					/* await this._updateRole(newRole, onRoleChange); */
-					this.rebalanceParticipationDebounced?.call();
+					if (isCurrent()) {
+						void rebalanceParticipationDebounced?.call();
+					}
 
 					return true;
 				} else {
-					this.rebalanceParticipationDebounced?.call();
+					if (isCurrent()) {
+						void rebalanceParticipationDebounced?.call();
+					}
 				}
 				return false;
 			}
