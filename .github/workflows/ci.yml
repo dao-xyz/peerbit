@@ -569,6 +569,31 @@ jobs:
       - name: Cargo test indexer core crate
         # Pure Rust crate without a package.json, so it is invoked directly.
         run: cargo test --manifest-path packages/utils/indexer/core/Cargo.toml
+      # --- @peerbit/transport-rust (native rust-libp2p node transport) --------
+      # This is the ONLY place the heavy libp2p 0.56 tree is compiled. It is
+      # NOT in the wasm pipeline and NOT in build_workspace or any test_push
+      # partition (the crate's package.json build is tsc-only and it has no
+      # test:cov script), so this adds one opt-in step to one already-slow job
+      # and nothing else. The target dir is cached keyed on the crate's
+      # Cargo.lock so the libp2p tree only cold-compiles when the lock changes.
+      - name: Cache transport-rust cargo target
+        uses: actions/cache@v4
+        with:
+          path: packages/transport/transport-rust/target
+          key: ${{ runner.os }}-transport-rust-target-${{ hashFiles('packages/transport/transport-rust/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-transport-rust-target-
+      - name: Cargo test @peerbit/transport-rust crate
+        # Native crate (peerbit_transport): unit tests + peerbit_wire codec
+        # reuse / byte-parity + identity bridge + protocol-id freeze + the full
+        # node transport chain building. Invoked directly (heavy libp2p tree).
+        run: cargo test --manifest-path packages/transport/transport-rust/Cargo.toml
+      - name: Live interop @peerbit/transport-rust <-> js-libp2p
+        # Boots the js-libp2p 3.3.4 Peerbit-config listener (all three
+        # /peerbit/* multicodecs, real @peerbit/stream-interface codec), then
+        # runs the rust dialer bin. Asserts the byte-identical DataMessage
+        # round-trip across the two stacks in both directions.
+        run: bash packages/transport/transport-rust/scripts/run-interop.sh
       - name: Test @peerbit/any-store-rust
         run: pnpm --filter @peerbit/any-store-rust run test
       - name: Test @peerbit/native-backbone
