@@ -3068,6 +3068,123 @@ resolutions.forEach((resolution) => {
 					}
 				});
 
+				it("preserves chained reset removals accumulated while a debounce run is blocked", async () => {
+					await create(
+						createTestEntry("first-only", 0.1),
+						createTestEntry("second-only", 0.4),
+						createTestEntry("current-only", 0.7),
+					);
+
+					let markBlocked!: () => void;
+					const blocked = new Promise<void>((resolve) => {
+						markBlocked = resolve;
+					});
+					let releaseBlocked!: () => void;
+					const release = new Promise<void>((resolve) => {
+						releaseBlocked = resolve;
+					});
+					const batches: ReplicationChange<ReplicationRangeIndexable<R>>[][] =
+						[];
+					const debounce = debounceAggregationChanges<
+						ReplicationRangeIndexable<R>
+					>(async (changes) => {
+						batches.push(changes);
+						if (batches.length === 1) {
+							markBlocked();
+							await release;
+						}
+					}, 60_000);
+					const blocker = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.9,
+						width: 0.01,
+						timestamp: 1n,
+					});
+					const roleTimestamp = 7n;
+					const first = createReplicationRangeFromNormalized({
+						publicKey: a,
+						offset: 0.05,
+						width: 0.1,
+						timestamp: roleTimestamp,
+					});
+					const second = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0.35,
+						width: 0.1,
+						timestamp: roleTimestamp,
+					});
+					const current = createReplicationRangeFromNormalized({
+						id: first.id,
+						publicKey: a,
+						offset: 0.65,
+						width: 0.1,
+						timestamp: roleTimestamp,
+					});
+
+					try {
+						const firstRun = debounce.add({
+							range: blocker,
+							type: "added",
+							timestamp: blocker.timestamp,
+						});
+						await blocked;
+						const pending = [
+							debounce.add({
+								range: first,
+								type: "removed",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: second,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: second,
+								type: "removed",
+								timestamp: roleTimestamp,
+							}),
+							debounce.add({
+								range: current,
+								type: "added",
+								timestamp: roleTimestamp,
+							}),
+						];
+						const flushed = debounce.flush();
+						releaseBlocked();
+						await Promise.all([firstRun, ...pending, flushed]);
+
+						expect(batches).to.have.length(2);
+						expect(batches[1].map((change) => change.type)).to.deep.equal([
+							"removed",
+							"removed",
+							"added",
+						]);
+						expect(
+							batches[1]
+								.filter((change) => change.type === "removed")
+								.map((change) => change.range.rangeHash),
+						).to.deep.equal([first.rangeHash, second.rangeHash]);
+
+						const cache = new Cache<string>({ max: 1000, ttl: 1e5 });
+						cache.add(first.rangeHash);
+						const result = await consumeAllFromAsyncIterator(
+							toRebalance(batches[1], index, cache),
+						);
+						expect(result.map((entry) => entry.gid)).to.have.members([
+							"first-only",
+							"second-only",
+							"current-only",
+						]);
+						expect(result).to.have.length(3);
+						expect([...cache.map.keys()]).to.deep.equal([current.rangeHash]);
+					} finally {
+						releaseBlocked();
+						debounce.close();
+					}
+				});
+
 				it("uses bounded batches and closes the rebalance iterator", async () => {
 					const entries = Array.from({ length: 1049 }, (_, i) =>
 						createEntryReplicated({
